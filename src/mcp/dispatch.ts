@@ -31,6 +31,7 @@ import { searchCountLine } from '../core/search/keyword-paging.ts';
 import { pageCapLine } from '../core/search/remote-page-cap.ts';
 import { dateLabelLine } from '../core/search/date-labels.ts';
 import { emptyRead, hiddenTakesNotice, localTranscriptsNotice, recallInteropNotices, wantsTranscriptHint } from '../core/interop-notices.ts';
+import { degradedStampFor, degradedStampLine, type DegradedStamp } from '../core/degraded-stamp.ts';
 import { assertUnscopedReadReachesPages } from '../core/sources-not-readable.ts';
 import { accessPolicyNotices } from '../core/access/policy-notice.ts';
 import { hiddenToolHint, hiddenToolNext, hiddenToolRoute, type ToolConnection } from './hidden-tool-hint.ts';
@@ -795,6 +796,18 @@ async function sessionSafetyNotices(engine: BrainEngine, opts: DispatchOpts, con
   return out;
 }
 
+/**
+ * Merges the handler-emitted response meta into a success result, then the GBRA-200 degraded stamp:
+ * `_meta.degraded` and one text block after every other block. The stamp is derived from every notice
+ * the call produced, before dedupe, so it rides every degraded call.
+ */
+function attachResponseMeta(out: ToolResult, responseMeta: Record<string, unknown>, stamp: DegradedStamp | null): void {
+  if (Object.keys(responseMeta).length > 0) out._meta = { ...(out._meta ?? {}), ...responseMeta };
+  if (!stamp) return;
+  out.content.push({ type: 'text', text: degradedStampLine(stamp) });
+  out._meta = { ...(out._meta ?? {}), degraded: stamp };
+}
+
 /** The one error result path: toAgentError → exactly one content block. */
 export function errorResult(e: unknown, opts: DispatchOpts, extra: { op?: string; mutating?: boolean; idempotent?: boolean; notices?: Notice[] } = {}): ToolResult {
   const carried = !!extra.notices?.length && e instanceof OperationError;
@@ -1297,9 +1310,7 @@ async function dispatchResolvedCall(
     // BEFORE and independently of the metaHook, so a hot-memory hook
     // failure can never drop the retrieval channel. Per-key merge, never
     // wholesale assignment. See docs/protocol/MCP_META_CHANNELS.md.
-    if (Object.keys(responseMeta).length > 0) {
-      out._meta = { ...(out._meta ?? {}), ...responseMeta };
-    }
+    attachResponseMeta(out, responseMeta, degradedStampFor(name, result, responseMeta, notices));
     // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.
     // The hook is wrapped in its own try/catch — any DB blip / cache miss /
     // helper crash degrades to no hook keys rather than flipping the whole

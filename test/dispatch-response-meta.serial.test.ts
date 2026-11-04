@@ -70,9 +70,12 @@ describe('dispatch response meta (WP2/D3/D8)', () => {
     // D8: the model-visible diagnosis block, then F3's degraded_recall notice
     // (agent contract v1: a recall-affecting stage always rides a notice).
     // F2: the keyword count line rides right after the rows, before the notices.
-    expect(out.content.length).toBe(4);
+    // GBRA-200: the degraded stamp is the last block and `_meta.degraded`.
+    expect(out.content.length).toBe(5);
     expect(out.content[1].text).toStartWith('[gbrain search] Rows are a ranked top-K');
     expect(out.content[3].text).toStartWith('[gbrain notice degraded_recall kind=degraded]');
+    expect(out.content[4].text).toStartWith('[gbrain degraded: embed_unavailable]');
+    expect((out._meta as Record<string, any>).degraded).toEqual({ reasons: ['embed_unavailable'] });
     expect(out.content[2].text).toContain('0 results');
     expect(out.content[2].text).toContain('retrieved 3');
     expect(out.content[2].text).toContain('degraded: embed_unavailable');
@@ -92,6 +95,7 @@ describe('dispatch response meta (WP2/D3/D8)', () => {
     const retrieval = (out._meta as Record<string, any>).retrieval;
     expect(retrieval.degraded).toBeUndefined();
     expect(retrieval.vector_enabled).toBe(true);
+    expect((out._meta as Record<string, any>).degraded).toBeUndefined();
   });
 
   test('non-empty results → body + degraded_recall notice only, _meta.retrieval still present (D3: on ALL responses)', async () => {
@@ -99,9 +103,10 @@ describe('dispatch response meta (WP2/D3/D8)', () => {
     nextMeta = DEGRADED_META;
     const out = await callSearch();
     // No empty-retrieval block; F3's degraded notice rides every affected HTTP call.
-    expect(out.content.length).toBe(3);
+    expect(out.content.length).toBe(4);
     expect(out.content[1].text).toStartWith('[gbrain search] Rows are a ranked top-K');
     expect(out.content[2].text).toStartWith('[gbrain notice degraded_recall kind=degraded]');
+    expect(out.content[3].text).toStartWith('[gbrain degraded: embed_unavailable]');
     const retrieval = (out._meta as Record<string, any>).retrieval;
     expect(retrieval.returned_count).toBe(1);
   });

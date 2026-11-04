@@ -456,7 +456,7 @@ Submit an LLM agent job that the worker dispatches via the gateway-native tool l
 
 ## `traverse_graph`
 
-Traverse link graph from a page. Remote callers default to bidirectional edges (GraphPath[]) at depth 2 (pass depth explicitly for deeper walks); trusted local no-filter callers get the legacy node shape at depth 5. The walk is breadth-first: each page comes back once at its shortest depth and each edge once, and a walk stops at 20,000 visited pages or 5,000 edge rows, keeping the shallowest (a stderr note says when).
+Traverse link graph from a page. Remote callers default to bidirectional edges (GraphPath[]) at depth 2 (pass depth explicitly for deeper walks); trusted local no-filter callers get the legacy node shape at depth 5. The walk is breadth-first: each page comes back once at its shortest depth and each edge once, and a walk stops at 20,000 visited pages or 5,000 edge rows, keeping the shallowest (a stderr note says when, and the result carries a `graph_walk_truncated` degraded notice; above depth 1 its fix repeats the walk one level shallower).
 
 | Parameter | Type | Guidance |
 | --- | --- | --- |

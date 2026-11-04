@@ -20,6 +20,83 @@ identifiers and attribution are available in the pre-removal Git revision
 - get_page's tool description states the order, and the four selector descriptions drop "One window selector only". `docs/guides/windowed-reads.md` and `docs/mcp/TOOL_REFERENCE.md` describe the rule.
 - Tests: `test/tool-args-empty-optional-sol.test.ts` replays Sol's recorded argument shape on every entry point (MCP over HTTP and stdio, `gbrain call`, the subagent registry and both SkillOpt registries). `test/get-page-body-modes.test.ts` checks the order, that the read equals the applied selector sent alone (`edit_target` included), and that a whole-page ask beside a selector returns no page body.
 
+## [0.60.569.0] - 2026-11-04
+
+**SkillOpt's iterative loop is deprecated and will be removed on or after 2026-12-03.** The loop tied a single rewrite on gbrain-evals' benchmarks at about 1.8 times the cost, and every edit it kept came from its first step, so it is being retired. `gbrain skillopt --loop`, a `--resume` of a run the loop started, `run_skillopt` with `optimizer_mode: "reflect"` and a queued `skillopt` job in loop mode now print the `skillopt_loop_deprecated` coaching notice once (over MCP, once per session) and otherwise run exactly as before. Nothing replaces the loop, so edit the skill directly or run the default one-shot rewrite, which stays. Nothing is removed and no default changes in this release.
+
+### Itemized changes
+
+- `src/core/skillopt/loop-deprecation.ts` (new): the notice text, the removal date and the one emitter, called by `gbrain skillopt` (after it resolves the mode, so a resumed loop run counts), the `run_skillopt` op (`ctx.emitNotice`, so MCP and `gbrain call` render it) and the `skillopt` job handler. `skillopt_loop_deprecated` is a new coaching code in `NOTICE_CODES`.
+- `gbrain skillopt --help`, the `run_skillopt` description and its `optimizer_mode` parameter, docs/guides/skillopt.md, the tutorial and the `skill-optimizer` skill mark the loop deprecated.
+- Ship policy: `.gstack/ship-policy.json` declares `stamp_placeholders: ["TBD"]` (and `min_gstack_version` 1.94.16.0, the first gstack that reads it), so a branch's own `since: 'TBD'` BEHAVIOR_CHANGES row that the slot restamp fills reads as a stamp instead of a change after /ship's review. It also declares `review_exclude_paths: ["docs/**", "test/fixtures/goldens/**"]`, so once this is on master /ship's reviewers leave docs and generated goldens out of their diffs and a large wave stays under their 2 MB ceiling; the privacy, gitleaks and doc checks still cover those files, and every code, test and config line is still reviewed.
+- `test/skillopt/loop-deprecation.serial.test.ts`: each entry point that runs the loop emits the notice exactly once and still runs it; the one-shot default, a one-shot job and the cycle phase emit none.
+
+## [0.60.568.0] - 2026-11-03
+
+**A brain opened from settings keeps its files in its own store.** On an engine opened from settings, every file operation (`file_upload`, `file_url`, page purge and the new `file_verify`) uses the engine's own `settings.storage`: a local path, or s3 with its endpoint and keys, and an optional one-segment key `prefix` so brains sharing a bucket each keep their own keys. The process storage config is never used there. `file_verify` lists which rows still have their object or re-hashes one. A brain the CLI or a server opens is unchanged, and there `file_verify` refuses `embedded_engine_required`; it is never an MCP tool. `file_register`, which lets a host record bytes it stored itself, ships separately. Contributed by @bradgessler (#8457).
+
+### Itemized changes
+
+- `src/core/storage/s3.ts`: `file_url` on an s3 store with an endpoint builds the URL from the endpoint the SDK resolves, instead of throwing.
+- A store that does not answer `file_verify` or `file_url` is the new `store_unavailable` code, never a file reported missing.
+- On an engine opened from settings, `delete_page` purge deletes a page's files from `settings.storage` too. A file it can't find there, or a store that doesn't answer, is reported in `blobs_remaining`, never as deleted; files an embedded engine's `file_upload` wrote before this release live in the process store, so delete those remaining paths by hand. Rows an embedded engine's `file_upload` wrote before this release point at the process store, so `file_url` and `file_verify` look for them in `settings.storage`.
+- `openEngine` refuses `engine_settings_invalid` for a `storage` setting missing a value its backend needs (so no backend falls back to a default path or environment credentials), an unknown field, a backend other than local or s3, or a prefix that is not one segment; an s3 store must name its endpoint, so no AWS_* variable or ~/.aws file picks it; `embeddedSettings()` reads back `hasSecret` instead of the secret.
+- `src/core/storage/local.ts` and `s3.ts` stream an object's size and SHA-256 (`hashObject`); other backends hash one download.
+- `test/embedded-file-store.test.ts`: real PGLite engines and a real local store; the unreachable store is a closed local port.
+
+## [0.60.567.0] - 2026-11-03
+
+**/ship now carries its unit, serial, slow and E2E lanes from a passed full-ci run instead of running them again.** `.gstack/pregate.json` declares `ship_lanes_from` (gstack 1.94+): `bun run test`, `bun run test:serial`, `bun run test:slow` and `bun run test:e2e` carry from the Test (`full-suite`) and E2E (`e2e-full-suite`) runs at the exact, clean tree, and print `LANE: <label> carried run=<id>/<attempt>`. A dirty tree, a newer red or running run, or a run whose `tree.json` misses a file the lane runs still runs the lane locally. Each lane's file list comes from `scripts/pregate-remote-gate.sh --list` on the full gate, so a tree that changes the CI reuse files never carries its own runs.
+
+### Itemized changes
+
+- `.gstack/pregate.json`: `ship_lanes_from` maps the four lane commands to the `test` and `e2e` run profiles. The E2E lane names both, because test.yml's reconciliation job runs two `test/e2e/` files. `bun run verify` and `bun run typecheck` still run locally: `tree.json` records test files only.
+- `.gstack/ship-policy.json`: `min_gstack_version` is 1.94.4.0. A gstack below 1.94.0.0 rejects `ship_lanes_from` as an unknown key.
+- `docs/ci-event-parity.md#ship-lanes` lists the exact lane commands and the carry conditions; AGENTS.md and CONTRIBUTING.md point /ship at it. `test/scripts/pregate-remote-gate.test.ts` keeps the table and the config in step.
+- Nightly shard weights refreshed (2026-11-03).
+
+## [0.60.566.0] - 2026-11-03
+
+**Two installs at once no longer drop each other's instruction-ledger entry, and a Codex skills opt-out reaches the file Codex used before.** Every install lane reads the brain-first ledger (`~/.gbrain/agent-instructions.json`) or the skill-loading ledger, edits the instruction file and rewrites the ledger. Two installs at once (say `setup claude-code` and `setup codex`) could each read the ledger before the other wrote it, and one entry was lost; a later opt-out then left that block, and its Claude Code allow rule, in place. Each install now holds one shared lock for the whole step, and the second waits for the first. Separately, Codex loads `AGENTS.override.md` when it is non-empty and `AGENTS.md` otherwise, so an explicit skills opt-out made after the override appeared left the index in `AGENTS.md`, where it came back once the override was removed.
+
+### Itemized changes
+
+- The brain-first and skill-loading ledgers share one lock (`~/.gbrain/agent-instructions.lock`), held across each install step: the ledger read, the file edit, the Claude Code permission edit and the ledger write (#8484). An install that waited reads the recorded choice again under the lock, so an opt-out the other install just recorded stays in force. An install that cannot take it within 10 seconds, or cannot create it, changes nothing and reports why (the skills outcome's reason is `ledger_locked`). A dry run takes no lock.
+- `gbrain setup codex --skill-loading off`, `--no-instructions` and `GBRAIN_SKILL_LOADING=off` also strip a spring index gbrain recorded in the other global instruction file of the same `CODEX_HOME` (`AGENTS.md` or `AGENTS.override.md`), and report it as a second skills line in the plain output (`paired` in `--json`), in `--dry-run` too (#8485). A plain re-run strips it only when brain-first instructions are declined on record for that Codex home, and no other Codex home, OpenClaw workspace or Claude profile is touched.
+
+## [0.60.565.0] - 2026-11-03
+
+**The per-file index describes how pages stored in segments are written and held.** The key-files entries for `write-through.ts` and `sync-entry-fault.ts` contradicted v0.60.560.0: the first said every page is rendered whole and `content` always holds the bytes written, and the second said a page-body fault at the freeze stops the run. They now describe the streamed write of a segmented page (measured at its snapshot's revision, checked against the scan cap before `source_path` binds, `inlineOnly` and `segmented_page`) and the `page_write_failed` hold that names `page_body_segmented` or `page_body_rows_unreadable`. The entries for full sync, `sync status`, the derived write-through and export also name `reexport_failures`, `last_error.request_id: null`, the `freeze_page_body_*` routing, the derived writer's `segmented_page` skip and the export's revision pin. Docs only.
+
+## [0.60.564.0] - 2026-11-03
+
+**A brain opened from settings brings its own AI providers.** `settings.ai` names the providers an embedded engine may call, with their keys and base URLs as values, and the models it uses for chat, expansion and reranking. Its embed, chat and rerank calls go only there, never to a key in the process environment, `~/.gbrain/config.json` or the process-wide gateway, so two brains in one process never spend each other's keys or see each other's cached query vectors. A call to a provider the settings don't name refuses `engine_scope_missing` and sends nothing. While such an engine is open, an AI call made outside any engine's scope refuses the same way unless the host configured a process gateway. Each engine's chat usage lands in its own database. Keys never show up in errors, logs, doctor output or `embeddedSettings()`, also for a call still in flight when the engine disconnects. Every other engine, and the CLI, keeps the process gateway exactly as before. Contributed by @bradgessler (#8456, #8085).
+
+### Itemized changes
+
+- `src/core/ai/engine-gateway.ts` (new) and `src/core/engine-scope.ts` (new): an embedded engine's gateway config, built from `settings.ai` and `settings.embedding` alone and held per engine until disconnect, and `withEngineScope(engine, fn)` (exported from `gbrain/engine-open`), which every operation handler, each persistence consumer tick and the subagent handler enter. `gateway.ts` reads that engine's config and model clients in its scope, refuses `engine_scope_missing` for a provider the engine lacks before anything is sent, pins native providers to the engine's base URLs (never `OPENAI_BASE_URL` or `ANTHROPIC_BASE_URL` from the process), skips OpenAI model discovery and the config-file fallback for it, and tags its query-embedding cache entries per engine; `anthropic-key.ts` answers the engine's own key. The scope resolves through `engineKey`, so page transactions, proxies and a recovered degraded engine share it. In a process that never opened an embedded engine no scope is entered at all.
+- Search on an embedded engine reranks with `settings.ai.models.reranker` unless the brain or the call names one, and a reranker provider the engine lacks is a `no_key` rerank skip, not a provider error.
+- `chat_usage_log` rows from an embedded engine's scope go to that engine's database; an unscoped call books only to a non-embedded engine.
+- The in-process facts queue runs each job in the engine scope it was enqueued from, so one brain's extraction never runs on another brain's keys.
+- `openEngine` refuses `engine_settings_invalid` for a malformed `ai` setting, an unknown provider, a provider with neither `apiKey` nor `baseUrl`, two providers that would share one environment key slot with different keys, or one that reads a login or endpoint from the environment (claude-cli, Azure OpenAI), naming the setting and never a key. `embeddedSettings()` reads each provider back as `{ baseUrl?, hasApiKey }`.
+- File storage is not an engine setting yet; it stays process-wide until Wave C.
+- `test/engine-gateway.test.ts`: fake-provider transports only, no network.
+
+## [0.60.563.0] - 2026-11-03
+
+**A degraded or partial read now says so on the result itself.** Search, query, recall and the other reads already recorded degraded stages (an embedding timeout, a failed arm, a keyword-only brain, a held file) in notices and `_meta` fields that a harness had to know to look for, and recall and think dropped their page search's stages entirely. Every degraded or partial read result now carries one stamp naming why with stable codes. An MCP result gets `_meta.degraded: { reasons: [...] }` and one extra text block, `[gbrain degraded: <reasons>] ...`, after the others; a CLI `--json` object gets a `degraded` key, and other CLI output gets that line on stderr. A clean result carries no stamp, and no existing field changed. The code table is in docs/protocol/MCP_META_CHANNELS.md.
+
+**A write refused for naming another source says where the connection can write.** A `remember` naming a `source_id` outside the connection's write grant is still refused `scope_denied` (a page write: `permission_denied`), and the refusal now carries `writable_source_ids`: the sources the connection's own grant lets it write, never another source, identical whether the named source exists or not. On `remember` the `fix` repeats the call against that source once the user agrees (`next: ask_user`, naming both sources), keeps the caller's visibility (a visibility the caller left out stays out, so the brain's default applies), and carries no request id; `forget`, `forget_fact` and page writes carry no fix.
+
+### Itemized changes
+
+- `src/core/degraded-stamp.ts` (new): `degradedStampFor` builds the stamp from a result's degraded stages, skipping stages that do not affect recall (`reranker_skipped`); `src/mcp/dispatch.ts` adds `_meta.degraded` and the text block, and `src/cli/op-notices.ts` adds the `--json` key or the stderr line. It covers search, query, recall, find_experts, context_pack, delta, entity, get_page (`file_held`), think and synthesize, search_exact, open_loops and rank_entities.
+- recall reports its page search's degraded stages in `_meta.retrieval.degraded` and its `degraded_recall` notice; think and synthesize report them as `GATHER_DEGRADED:<stage>` warnings; a keyword-only search or recall on Postgres reports `keyword_candidates_incomplete` when the rank bound applies.
+- A `traverse_graph` walk cut at the row cap (`graph_walk_truncated`) offers, over MCP, the same walk one level shallower; a depth-1 walk offers no fix. CLI flag validation is unchanged.
+- `src/core/persistence/write-grant.ts` (new): `grantedWriteSource` and `writeGrantRefusal`, used by `remember`, `forget`, `forget_fact` and page writes. The `user_message` names the caller's `source_id` only when it is a valid source id. `OperationError.writableSourceIds` is exported.
+- Docs: docs/protocol/AGENT_OPERATOR_v1.md, MCP_META_CHANNELS.md, MEMORY_VERBS_v1.md and the agent-operator-protocol skill.
+- Tests: `test/degraded-stamp.test.ts`, `test/degraded-stamp-cli.test.ts`, `test/degraded-stamp-paths.serial.test.ts`, `test/write-grant-refusal.test.ts`, plus golden and fixture updates for the stamp.
+
 ## [0.60.562.0] - 2026-11-03
 
 **A write to a page stored in segments can no longer publish a body nobody can read.** When a fact purge or a staging sweep collected a write's staging while the write was preparing, the write's last preparation step moved the staging back to `prepared`, so the publish passed its staging check, closed the page's old segment rows and published none. Every read of the page then refused `page_body_rows_unreadable` and a managed sync held its file on every retry. The write now refuses `body_staging_expired` (send it again) and the page keeps its previous body; the publish also refuses any generation whose rows do not cover the body it records. A new doctor check, `segmented_tiling`, lists pages an older version left like this, and `gbrain repair segmented-tiling --source <id>` republishes each from its file at HEAD, preview first, only when applied with the preview's hash.

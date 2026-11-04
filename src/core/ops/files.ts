@@ -11,6 +11,7 @@ import { hostFix, readFix } from './op-fix.ts';
 import { validateFilename, validatePageSlug, validateUploadPath } from './context.ts';
 import { privatePagesFilterForCaller, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { hookSessionCwd } from '../session-cwd.ts';
+import { embeddedSettingsRecord, isEmbeddedEngine } from '../embedded-engine.ts';
 
 // --- File Operations ---
 
@@ -104,7 +105,8 @@ const file_upload: Operation = {
     // read (file_url, files verify, restore) would trust a phantom object.
     // Typed error BEFORE any insert; git-tracked small files have their own
     // lane (`gbrain files upload-raw --page <slug>`).
-    if (!ctx.config.storage) {
+    const embedded = isEmbeddedEngine(ctx.engine) ? await embeddedFileStore(ctx, 'file_upload') : null;
+    if (!embedded && !ctx.config.storage) {
       const slugOk = pageSlug !== null && /^[a-z0-9][a-z0-9._/-]*$/i.test(pageSlug);
       // #5963: the git-tracked lane is refused on a managed worktree, so it is not offered there.
       if (slugOk && await (await import('../raw-file-upload.ts')).rawUploadRefusedFor(ctx.engine, pageSlug!, ctx.sourceId ?? 'default')) throw opError('storage_error',
@@ -119,7 +121,7 @@ const file_upload: Operation = {
       );
     }
     const { createStorage } = await import('../storage.ts');
-    const storage = await createStorage(ctx.config.storage as any);
+    const storage = embedded?.storage ?? await createStorage(ctx.config.storage as any);
 
     const { sqlQueryForEngine, executeRawJsonb, FILES_METADATA_MERGE_SQL } = await import('../sql-query.ts');
     const sql = sqlQueryForEngine(ctx.engine);
@@ -158,7 +160,7 @@ const file_upload: Operation = {
            mime_type = EXCLUDED.mime_type,
            ${FILES_METADATA_MERGE_SQL}`,
         [pageSlug, filename, storagePath, mimeType, stat.size, hash],
-        [{ storage: (ctx.config.storage as { backend: string }).backend }],
+        [embedded?.metadata ?? { storage: (ctx.config.storage as { backend: string }).backend }],
       );
     } catch (dbErr) {
       // Rollback: clean up storage if DB write failed
@@ -193,7 +195,8 @@ const file_url: Operation = {
     // #4302: resolve a REAL URL from the backend, after confirming the object
     // is actually there — the old `gbrain:files/<path>` placeholder pointed
     // at nothing and hid rows whose bytes had vanished.
-    if (!ctx.config.storage) {
+    const embedded = isEmbeddedEngine(ctx.engine);
+    if (!embedded && !ctx.config.storage) {
       throw opError(
         'storage_error',
         `No storage backend configured — cannot produce a URL for ${p.storage_path}.`,
@@ -201,8 +204,11 @@ const file_url: Operation = {
       );
     }
     const { createStorage } = await import('../storage.ts');
-    const storage = await createStorage(ctx.config.storage as any);
-    const present = await storage.exists(rows[0].storage_path as string).catch(() => false);
+    const storage = embedded ? await embeddedStorage(ctx, 'file_url') : await createStorage(ctx.config.storage as any);
+    const present = await storage.exists(rows[0].storage_path as string).catch(error => {
+      if (embedded) throw storeUnavailable('file_url', error);
+      return false;
+    });
     if (!present) {
       throw opError(
         'storage_error',
@@ -214,6 +220,61 @@ const file_url: Operation = {
   },
 };
 
+/** file_verify serves a host that stores bytes itself: it runs only on an engine opened from settings, against its settings.storage, which every file op on such an engine uses. */
+async function embeddedStorage(ctx: OperationContext, op: string) {
+  if (!isEmbeddedEngine(ctx.engine)) throw opError('embedded_engine_required', `${op} runs only on an engine an embedding host opened from settings (embedded_core: true).`,
+    'A brain the CLI or a server opens stores files only through file_upload (gbrain files upload), so there is nothing to check this way.');
+  const settings = embeddedSettingsRecord(ctx.engine)?.storage;
+  if (!settings) throw opError('storage_error', `This engine was opened with no settings.storage, so ${op} cannot check any stored object.`,
+    'Open the engine with storage (local or s3, with its values) in its settings; the process storage config is never used for an engine opened from settings. Nothing was recorded.');
+  const { settingsStorage } = await import('../storage.ts');
+  try { return (await settingsStorage(ctx.engine))!; } catch (error) { throw storeUnavailable(op, error); }
+}
+
+async function embeddedFileStore(ctx: OperationContext, op: string) {
+  const storage = await embeddedStorage(ctx, op);
+  const { backend, prefix } = embeddedSettingsRecord(ctx.engine)!.storage!;
+  return { storage, metadata: { storage: backend, ...(prefix ? { prefix } : {}) } };
+}
+
+function storeUnavailable(op: string, error: unknown) {
+  return opError('store_unavailable', `${op} could not ask the storage backend: ${error instanceof Error ? error.message : String(error)}`,
+    'The backend did not answer, so nothing is known about the object and nothing was recorded or reported missing. Check the backend with gbrain doctor --json, then call again.');
+}
+
+const file_verify: Operation = {
+  name: 'file_verify',
+  mutating: false,
+  idempotent: true,
+  outputRedaction: 'no_stored_text',
+  description: `Check files rows against the storage backend. Without storage_path, lists up to ${FILE_LIST_LIMIT} rows (optionally one page's) with whether each object is present; with it, reads that object back and says whether its size and SHA-256 match the row. Runs only on an engine opened from settings. A backend that fails the check is store_unavailable, never a file reported missing.`,
+  params: {
+    storage_path: { type: 'string', description: 'Read back and hash this one object' },
+    slug: { type: 'string', description: 'List only this page\'s files' },
+  },
+  scope: 'admin',
+  localOnly: true,
+  cliOnly: { argv: ['gbrain', 'files', 'verify'] },
+  handler: async (ctx, p) => {
+    const storage = await embeddedStorage(ctx, 'file_verify');
+    const readable = await fileReadableSql(ctx);
+    if (p.storage_path !== undefined) {
+      const rows = await ctx.engine.executeRaw<{ size_bytes: unknown; content_hash: string }>(`SELECT size_bytes, content_hash FROM files f WHERE f.storage_path = $1 AND ${readable}`, [p.storage_path as string]);
+      if (rows.length === 0) throw opError('storage_error', `File not found: ${p.storage_path}`, 'No file row this caller can read has that storage_path. List them with file_verify and no storage_path.');
+      const { hashStoredObject } = await import('../storage.ts');
+      let stored: { size: number; sha256: string } | null;
+      try { stored = await storage.exists(p.storage_path as string) ? await hashStoredObject(storage, p.storage_path as string) : null; }
+      catch (error) { throw storeUnavailable('file_verify', error); }
+      return { storage_path: p.storage_path, present: stored !== null,
+        size_matches: stored !== null && stored.size === Number(rows[0]!.size_bytes), hash_matches: stored !== null && stored.sha256 === rows[0]!.content_hash };
+    }
+    const slug = p.slug as string | undefined;
+    const rows = await ctx.engine.executeRaw<{ storage_path: string; page_slug: string | null }>(`SELECT storage_path, page_slug FROM files f
+      WHERE (${slug === undefined ? 'TRUE' : 'f.page_slug = $2'}) AND ${readable} ORDER BY storage_path LIMIT $1`, slug === undefined ? [FILE_LIST_LIMIT] : [FILE_LIST_LIMIT, slug]);
+    try { return await Promise.all(rows.map(async row => ({ ...row, present: await storage.exists(row.storage_path) }))); }
+    catch (error) { throw storeUnavailable('file_verify', error); }
+  },
+};
 
 // Ops in EXACTLY the canonical `operations` array order.
-export const filesOperations: Operation[] = [file_list, file_upload, file_url];
+export const filesOperations: Operation[] = [file_list, file_upload, file_url, file_verify];

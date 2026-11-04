@@ -3684,6 +3684,33 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "area": "files"
   },
   {
+    "name": "file_verify",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Check files rows against the storage backend. Without storage_path, lists up to 100 rows (optionally one page's) with whether each object is present; with it, reads that object back and says whether its size and SHA-256 match the row. Runs only on an engine opened from settings. A backend that fails the check is store_unavailable, never a file reported missing.",
+    "params": {
+      "storage_path": {
+        "type": "string",
+        "description": "Read back and hash this one object"
+      },
+      "slug": {
+        "type": "string",
+        "description": "List only this page's files"
+      }
+    },
+    "scope": "admin",
+    "localOnly": true,
+    "cliOnly": {
+      "argv": [
+        "gbrain",
+        "files",
+        "verify"
+      ]
+    },
+    "area": "files"
+  },
+  {
     "name": "submit_job",
     "idempotent": false,
     "outputRedaction": {
@@ -6791,7 +6818,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "skill catalog files are installed instructions read verbatim; redaction would corrupt approved revisions"
     },
-    "description": "Run SkillOpt against a single skill. Admin scope and remote skill allowlist required. shared_skill stages an exact catalog revision privately and requires explicit skill_editor and put_skill grants; only accepted body changes publish through the original revision CAS. Rate-limited per-skill via DB lock.",
+    "description": "Run SkillOpt against a single skill; its iterative loop (optimizer_mode \"reflect\") is deprecated. Admin scope and remote skill allowlist required. shared_skill stages an exact catalog revision privately and requires explicit skill_editor and put_skill grants; only accepted body changes publish through the original revision CAS. Rate-limited per-skill via DB lock.",
     "params": {
       "skill_name": {
         "type": "string",
@@ -6844,7 +6871,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
           "one-shot-rewrite",
           "reflect"
         ],
-        "description": "Default one-shot-rewrite: one gated rewrite. reflect opts into the iterative edit loop, which has not yet beaten one-shot on gbrain benchmarks."
+        "description": "Default one-shot-rewrite: one gated rewrite. reflect runs the iterative edit loop, which is deprecated (removed on or after 2026-12-03) and emits the skillopt_loop_deprecated notice."
       },
       "shared_skill": {
         "type": "boolean",

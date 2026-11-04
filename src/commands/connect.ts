@@ -48,7 +48,7 @@ import { brainFirstTarget, describeBrainFirstOutcome, installerBrainFirst, isBra
 import { describeTurnHookOutcome } from '../core/setup/turn-hook.ts';
 import { installerTurnHook, TURN_HOOK_NATIVE_INSPECT, turnHookFix } from '../core/setup/turn-hook-check.ts';
 import { resolveGbrainBin } from '../core/gbrain-bin.ts';
-import { describeSkillsBlockOutcome, indexLauncher, installerSkillsBlock, isSkillLoading, skillsOutcomeFailed, type SkillLoading } from '../core/setup/skills-block.ts';
+import { describeSkillsBlockOutcome, indexLauncher, installerSkillsBlock, isSkillLoading, skillsOutcomeFailed, skillsOutcomeShown, type SkillLoading } from '../core/setup/skills-block.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import {
   GBRAIN_REMOTE_TOKEN_ENV,
@@ -517,7 +517,7 @@ const defaultDeps: ConnectDeps = {
     const o = installerBrainFirst({ target, access: { kind: 'mcp', server: name }, writer, instructions: optOut ? false : undefined });
     const skills = installerSkillsBlock({ target, launcher: gbrainBin ?? indexLauncher() ?? 'gbrain', writer, brainFirstDeclined: o.decision.value === 'declined', skillLoading, audience: 'downstream' });
     const lines = [`${describeBrainFirstOutcome(o, false).trim()}${o.decision.value === 'accepted' ? ' (opt out with --no-instructions)' : ''}`];
-    if (skills.decision.value === 'spring' || skills.action !== 'skip') lines.push(describeSkillsBlockOutcome(skills, false).trim());
+    if (skillsOutcomeShown(skills)) lines.push(describeSkillsBlockOutcome(skills, false).trim());
     if (skillsOutcomeFailed(skills)) setCliExitVerdict(1);
     return lines.join('\n');
   },

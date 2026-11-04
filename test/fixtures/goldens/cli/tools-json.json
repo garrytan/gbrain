@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 268520,
-    "stdoutSha256": "242bc8215a968adddacad62e575c6877cfa2517f932c4ac613473bc406340488",
+    "stdoutBytes": 269584,
+    "stdoutSha256": "4a230961a0ca1344ea6f4d1bad0771d04484e2f3cc71e8475a48ff1f4ec4e0b9",
     "toolNames": [
       "remember",
       "entity",
@@ -90,6 +90,7 @@
       "file_list",
       "file_upload",
       "file_url",
+      "file_verify",
       "submit_job",
       "get_job",
       "wait_job",
@@ -4293,6 +4294,33 @@
         "scope": "admin"
       },
       {
+        "description": "Check files rows against the storage backend. Without storage_path, lists up to 100 rows (optionally one page's) with whether each object is present; with it, reads that object back and says whether its size and SHA-256 match the row. Runs only on an engine opened from settings. A backend that fails the check is store_unavailable, never a file reported missing.",
+        "idempotent": true,
+        "local_only": true,
+        "mutating": false,
+        "name": "file_verify",
+        "parameters": {
+          "slug": "string?",
+          "storage_path": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "slug": {
+              "description": "List only this page's files",
+              "type": "string"
+            },
+            "storage_path": {
+              "description": "Read back and hash this one object",
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "admin"
+      },
+      {
         "description": "Submit a background job. Remote callers may submit sync, import, lint or lint-fix for their authenticated filesystem source. Other kinds require local CLI or a dedicated operation.",
         "idempotent": false,
         "local_only": false,
@@ -7879,7 +7907,7 @@
         "scope": "admin"
       },
       {
-        "description": "Run SkillOpt against a single skill. Admin scope and remote skill allowlist required. shared_skill stages an exact catalog revision privately and requires explicit skill_editor and put_skill grants; only accepted body changes publish through the original revision CAS. Rate-limited per-skill via DB lock.",
+        "description": "Run SkillOpt against a single skill; its iterative loop (optimizer_mode \"reflect\") is deprecated. Admin scope and remote skill allowlist required. shared_skill stages an exact catalog revision privately and requires explicit skill_editor and put_skill grants; only accepted body changes publish through the original revision CAS. Rate-limited per-skill via DB lock.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -7948,7 +7976,7 @@
               "type": "boolean"
             },
             "optimizer_mode": {
-              "description": "Default one-shot-rewrite: one gated rewrite. reflect opts into the iterative edit loop, which has not yet beaten one-shot on gbrain benchmarks.",
+              "description": "Default one-shot-rewrite: one gated rewrite. reflect runs the iterative edit loop, which is deprecated (removed on or after 2026-12-03) and emits the skillopt_loop_deprecated notice.",
               "enum": [
                 "one-shot-rewrite",
                 "reflect"

@@ -1,6 +1,7 @@
 import { closeSync, openSync, readSync } from 'fs';
 import type { FileHandle } from 'fs/promises';
 import { createHash } from 'crypto';
+import { embeddedSettingsRecord } from './embedded-engine.ts';
 
 /**
  * StorageBackend — pluggable interface for binary file storage.
@@ -21,6 +22,8 @@ export interface StorageBackend {
   exists(path: string): Promise<boolean>;
   list(prefix: string): Promise<string[]>;
   getUrl(path: string): Promise<string>;
+  /** Size and SHA-256 of a stored object, streamed; a backend without it is hashed from one download (hashStoredObject). */
+  hashObject?(path: string): Promise<{ size: number; sha256: string }>;
 }
 
 export interface StorageConfig {
@@ -74,6 +77,36 @@ export function hashStorageFile(filePath: string): string {
   } finally {
     closeSync(fd);
   }
+}
+
+/** The store an engine opened from settings keeps its files in (settings.storage under its prefix); undefined for any other engine or with no settings.storage. */
+export async function settingsStorage(engine: object): Promise<StorageBackend | undefined> {
+  const settings = embeddedSettingsRecord(engine)?.storage;
+  if (!settings) return undefined;
+  const { prefix, ...config } = settings;
+  return prefixedStorage(await createStorage({ bucket: '', ...config }), prefix);
+}
+
+/** `backend` with every object key under `<prefix>/`; list() returns keys without it. No prefix returns `backend` itself. */
+export function prefixedStorage(backend: StorageBackend, prefix: string | undefined): StorageBackend {
+  if (!prefix) return backend;
+  const key = (path: string) => `${prefix}/${path}`;
+  return {
+    upload: (path, data, mime) => backend.upload(key(path), data, mime),
+    uploadFile: (path, filePath, mime, sha256) => backend.uploadFile(key(path), filePath, mime, sha256),
+    download: path => backend.download(key(path)),
+    delete: path => backend.delete(key(path)),
+    exists: path => backend.exists(key(path)),
+    list: async listPrefix => (await backend.list(key(listPrefix))).map(path => path.slice(prefix.length + 1)),
+    getUrl: path => backend.getUrl(key(path)),
+    ...(backend.hashObject ? { hashObject: (path: string) => backend.hashObject!(key(path)) } : {}),
+  };
+}
+
+export async function hashStoredObject(storage: StorageBackend, path: string): Promise<{ size: number; sha256: string }> {
+  if (storage.hashObject) return storage.hashObject(path);
+  const bytes = await storage.download(path);
+  return { size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
 }
 
 /** Upload a file under the hash the caller recorded; a file that changed since then is refused before it is published. */

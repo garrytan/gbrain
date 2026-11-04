@@ -646,7 +646,8 @@
         "hostIdFor",
         "isEmbeddedEngine",
         "openEngine",
-        "processHasEmbeddedEngines"
+        "processHasEmbeddedEngines",
+        "withEngineScope"
       ],
       "./eval/longmemeval/reader": [
         "READER_MAX_SESSION_CHARS",
