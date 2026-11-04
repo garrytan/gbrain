@@ -265,7 +265,7 @@ const file_register: Operation = {
     storage_path: { type: 'string', required: true, description: 'Where the host stored the object; must be the file_upload layout for page_slug, filename and content_hash' },
     filename: { type: 'string', required: true },
     content_hash: { type: 'string', required: true, description: 'SHA-256 of the bytes, 64 lowercase hex characters' },
-    size_bytes: { type: 'integer', required: true, minimum: 0 },
+    size_bytes: { type: 'integer', required: true },
     page_slug: { type: 'string', description: 'Page the file belongs to' },
     mime_type: { type: 'string' },
   },

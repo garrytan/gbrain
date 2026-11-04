@@ -3705,8 +3705,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "size_bytes": {
         "type": "integer",
-        "required": true,
-        "minimum": 0
+        "required": true
       },
       "page_slug": {
         "type": "string",

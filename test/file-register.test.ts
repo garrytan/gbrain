@@ -69,6 +69,17 @@ describe('file_register', () => {
     expect(await fileRows(engine)).toBe(1);
   });
 
+  test('an empty object registers with size 0, and a negative size refuses invalid_params and writes nothing', async () => {
+    const engine = await embedded();
+    await addPage(engine, 'notes/plan');
+    const empty = Buffer.alloc(0);
+    store('notes/plan/empty.txt', empty);
+    const params = { storage_path: 'notes/plan/empty.txt', filename: 'empty.txt', page_slug: 'notes/plan', content_hash: sha(empty), size_bytes: 0 };
+    expect(await run('file_register', ctxFor(engine), params)).toEqual({ status: 'registered', storage_path: 'notes/plan/empty.txt', size_bytes: 0 });
+    expect((await failure(() => run('file_register', ctxFor(engine), { ...params, storage_path: 'notes/plan/neg.txt', filename: 'neg.txt', size_bytes: -1 })))?.code).toBe('invalid_params');
+    expect(await fileRows(engine)).toBe(1);
+  });
+
   test('records the page and source a registration belongs to, so purging that page in a non-default source finds it', async () => {
     const engine = await embedded();
     await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-a', 'source-a') ON CONFLICT DO NOTHING");
