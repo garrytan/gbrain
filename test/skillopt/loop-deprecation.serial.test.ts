@@ -185,5 +185,6 @@ describe('background job handler', () => {
 test('the cycle phase runs the one-shot rewrite and prints no notice', async () => {
   await withEnv(ENV, () => runPhaseSkillopt({ engine, once: true }));
   expect(stderr).not.toContain('skillopt_loop_deprecated');
+  expect(captured.length).toBeGreaterThan(0);
   expect(captured.every((c) => c.optimizerMode === 'one-shot-rewrite')).toBe(true);
 });
