@@ -22,8 +22,8 @@ describe('engine-sql chunks: currentSpaceChunkFragment', () => {
   for (const column of ['embedding', 'embedding_voyage']) {
     test(`renders currentSpaceChunkPredicate's exact text for ${column}`, () => {
       const { text, params } = renderFragment(currentSpaceChunkFragment(column, 'voyage:voyage-4', 1024));
-      expect(text).toBe(currentSpaceChunkPredicate(quoteIdentifier(column), 1, 2));
-      expect(params).toEqual(['voyage:voyage-4', 1024]);
+      expect(text.replace(/\$[23]\b/g, '$1').replace(/\$4\b/g, '$2')).toBe(currentSpaceChunkPredicate(quoteIdentifier(column), 1, 2));
+      expect(params).toEqual(['voyage:voyage-4', 'voyage:voyage-4', 'voyage:voyage-4', 1024]);
     });
   }
 });

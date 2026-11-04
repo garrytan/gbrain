@@ -561,7 +561,7 @@ export async function setPageEmbeddingSignature(exec: SqlExecutor, slug: string,
 export function currentSpaceChunkFragment(column: string, model: string, dims: number | null): SqlFragment {
   const colId = trustedSql(quoteIdentifier(column));
   return sqlFragment`COALESCE(cc.${colId} IS NOT NULL
-              AND cc.model = ${model}
+              AND (cc.model IS NOT DISTINCT FROM ${model} OR COALESCE(cc.model = substr(${model}, strpos(${model}, ':') + 1), false))
               AND cc.embedded_text_hash = md5(cc.chunk_text)
               AND vector_dims(cc.${colId}) = ${dims}::int, false)`;
 }

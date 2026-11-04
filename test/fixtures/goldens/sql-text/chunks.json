@@ -483,11 +483,13 @@
             "params": [
               "array<>",
               "string",
+              "string",
+              "string",
               "number",
               "string"
             ],
-            "sql": "UPDATE content_chunks cc SET \"embedding\" = NULL, embedded_at = NULL, embedding_pending_since = now() FROM pages p WHERE cc.page_id = p.id AND p.deleted_at IS NULL AND p.source_id=ANY($1::text[]) AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived) AND cc.\"embedding\" IS NOT NULL AND NOT COALESCE(cc.\"embedding\" IS NOT NULL AND cc.model = $2 AND cc.embedded_text_hash = md5(cc.chunk_text) AND vector_dims(cc.\"embedding\") = $3::int, false) AND p.embedding_signature IS NOT NULL AND p.embedding_signature <> $4 RETURNING cc.page_id",
-            "textSha256": "3ce3ae1c80591bc67dd42aa8fd96381113d78112b8d9639f94c66c2fd990defb"
+            "sql": "UPDATE content_chunks cc SET \"embedding\" = NULL, embedded_at = NULL, embedding_pending_since = now() FROM pages p WHERE cc.page_id = p.id AND p.deleted_at IS NULL AND p.source_id=ANY($1::text[]) AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived) AND cc.\"embedding\" IS NOT NULL AND NOT COALESCE(cc.\"embedding\" IS NOT NULL AND (cc.model IS NOT DISTINCT FROM $2 OR COALESCE(cc.model = substr($3, strpos($4, ':') + 1), false)) AND cc.embedded_text_hash = md5(cc.chunk_text) AND vector_dims(cc.\"embedding\") = $5::int, false) AND p.embedding_signature IS NOT NULL AND p.embedding_signature <> $6 RETURNING cc.page_id",
+            "textSha256": "10416023424b9fd940b348652bfc09b03e0a973eb5306bbd45c19996d2357212"
           },
           {
             "event": "commit",
@@ -519,12 +521,14 @@
             "params": [
               "array<>",
               "string",
+              "string",
+              "string",
               "number",
               "string",
               "string"
             ],
-            "sql": "UPDATE content_chunks cc SET \"embedding\" = NULL, embedded_at = NULL, embedding_pending_since = now() FROM pages p WHERE cc.page_id = p.id AND p.deleted_at IS NULL AND p.source_id=ANY($1::text[]) AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived) AND cc.\"embedding\" IS NOT NULL AND NOT COALESCE(cc.\"embedding\" IS NOT NULL AND cc.model = $2 AND cc.embedded_text_hash = md5(cc.chunk_text) AND vector_dims(cc.\"embedding\") = $3::int, false) AND (p.embedding_signature IS NULL OR p.embedding_signature <> $4) AND p.source_id = $5 RETURNING cc.page_id",
-            "textSha256": "1e9cf1d1f6783e8c9bed7fe1cb42cdc67435878649e9e0527182294f3002aeaa"
+            "sql": "UPDATE content_chunks cc SET \"embedding\" = NULL, embedded_at = NULL, embedding_pending_since = now() FROM pages p WHERE cc.page_id = p.id AND p.deleted_at IS NULL AND p.source_id=ANY($1::text[]) AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived) AND cc.\"embedding\" IS NOT NULL AND NOT COALESCE(cc.\"embedding\" IS NOT NULL AND (cc.model IS NOT DISTINCT FROM $2 OR COALESCE(cc.model = substr($3, strpos($4, ':') + 1), false)) AND cc.embedded_text_hash = md5(cc.chunk_text) AND vector_dims(cc.\"embedding\") = $5::int, false) AND (p.embedding_signature IS NULL OR p.embedding_signature <> $6) AND p.source_id = $7 RETURNING cc.page_id",
+            "textSha256": "adb6bb2a4588ea9912dc4c7f1cf4ecfd20251136ee98b07f240e16c281768415"
           },
           {
             "event": "commit",
