@@ -16,7 +16,7 @@ import { hostFix, opTransport, readFix } from './op-fix.ts';
 import { renderAction, type Action } from '../agent-output.ts';
 import { assertExplicitSourceLive, federatedSearchScope, pageNotFoundError, parseSourceIdParam, validatePageSlug } from './context.ts';
 import { inlineBodyBytes } from './get-page-body.ts';
-import { pageTrustForRead } from './get-page-projection.ts';
+import { pageTrustForRead, readQuarantined } from './get-page-projection.ts';
 import { admitsTrust, type TrustTier } from '../trust/tier.ts';
 import { isCalendarDate } from '../link-validity.ts';
 import { replacedBecauseSql } from '../engine-sql/pages.ts';
@@ -127,7 +127,7 @@ async function pick(tx: BrainEngine, pageId: number, asOf: string, excludePrivat
              false, COALESCE(p.body_storage = 'segmented', false), false, p.source_path IS NOT NULL
         FROM pages p WHERE p.id = $1),
     seq AS (
-      SELECT r.*, lag(r.replaced_at) OVER w AS recorded_since, lag(r.reason) OVER w AS introduced_because, lead(r.tier) OVER w AS successor_tier,
+      SELECT r.*, lag(r.replaced_at) OVER w AS recorded_since, lag(${excludePrivate ? 'CASE WHEN r.visible THEN r.reason END' : 'r.reason'}) OVER w AS introduced_because, lead(r.tier) OVER w AS successor_tier,
              lag(r.ord) OVER w AS prev_ord, lead(r.ord) OVER w AS next_ord
         FROM rows r WINDOW w AS (ORDER BY r.ord)),
     pick AS (
@@ -341,12 +341,15 @@ export async function getPageAsOf(ctx: OperationContext, p: Record<string, unkno
   }
   if (excludePrivate && !row.visible) throw missing();
   if (!loaded) throw missing();
+  // #6259: a quarantined page (now, or in the chosen edition) keeps its body from a remote reader, as the plain read does.
+  const quarantined = readQuarantined(ctx, loaded.current.page, false)
+    ?? readQuarantined(ctx, { slug: identity.slug, source_id: identity.source_id, frontmatter: loaded.edition.frontmatter }, false);
   const verdict = verdictOf(asOf, picked);
   let { history, uncertain, why } = verdict;
   let view: Record<string, unknown> | 'gone' | null = null;
   const requested = typeof p.max_bytes === 'number' && Number.isSafeInteger(p.max_bytes) && p.max_bytes > 0 ? p.max_bytes : pin?.maxBytes ?? DEFAULT_WINDOW_BYTES;
   const quotes = (tier: string | null) => ctx.remote !== false && quotesStored(loaded.edition.type, tier);
-  if (!read.pinGone) view = await editionView(ctx, identity, loaded.edition, asOf, pin ? pin.offset : null, ctx.remote === false ? requested : Math.min(requested, MAX_WINDOW_BYTES), quotes(row.tier));
+  if (!read.pinGone && quarantined?.body_omitted !== true) view = await editionView(ctx, identity, loaded.edition, asOf, pin ? pin.offset : null, ctx.remote === false ? requested : Math.min(requested, MAX_WINDOW_BYTES), quotes(row.tier));
   if (read.pinGone || view === 'gone') { history = 'incomplete'; uncertain = true; why = 'edition_pruned'; view = null; }
   const reason = (s: string | null, tier: string | null) => {
     if (s === null || ctx.remote === false) return s;
@@ -371,7 +374,7 @@ export async function getPageAsOf(ctx: OperationContext, p: Record<string, unkno
       'A date correction, a renewal, a backfill and a withdrawn scheduled edition look alike in the page history; only the user can say which happened.');
   } else if (why !== null && why !== 'undated_editions') fix = recoveryFix(ctx, identity, asOf, why);
   const render = { transport: opTransport(ctx), isCallable: () => ctx.remote !== false, preapproved: () => false };
-  const base = { slug: identity.slug, source_id: identity.source_id, valid_time: validTime, ...(fix ? { fix: renderAction(fix, render) } : {}) };
+  const base = { slug: identity.slug, source_id: identity.source_id, valid_time: validTime, ...(quarantined ? { quarantined } : {}), ...(fix ? { fix: renderAction(fix, render) } : {}) };
   if (!view) return base;
   if (verdict.status === 'in_force') return { ...view, ...base };
   return { ...base, [chosen ? 'last_in_force' : 'earliest_known']: { ...view, valid_from: row.valid_from, valid_until: row.valid_until } };

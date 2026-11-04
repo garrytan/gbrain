@@ -235,9 +235,36 @@ for (const backend of testBackends()) {
       expect(early.compiled_truth).toContain('World edition one.');
       expect(early.valid_time.replaced_because).toBeNull();
       expect((await read(slug, '2026-03-01')).valid_time.replaced_because).toBe('reason-r2-private-time');
+      // reason-r3 is recorded on the hidden private edition it replaced, so a remote reader never sees it.
       const late = await read(slug, '2026-10-01', true);
-      expect(unquoteTranscriptText(late.valid_time.introduced_because, slug)).toBe('reason-r3-back-to-world');
+      expect(late.valid_time.introduced_because).toBeNull();
+      expect((await read(slug, '2026-10-01')).valid_time.introduced_because).toBe('reason-r3-back-to-world');
       for (const d of ['2025-01-01', '2026-03-01', '2026-10-01']) expect(JSON.stringify(await read(slug, d, true))).not.toContain('reason-r2');
+    });
+
+    test('a remote as_of read never shows the reason recorded on a hidden earlier edition', async () => {
+      const slug = fresh('hidden-reason');
+      await put(slug, 'Private January edition.', ["valid_from: '2026-01-01'", 'visibility: private']);
+      await put(slug, 'Public June edition.', ["valid_from: '2026-06-01'"], 'reason-june-made-public');
+      expect(await call('get_versions', { slug }, true)).toEqual([]);
+      const remote = await read(slug, '2026-07-01', true);
+      expect(remote.compiled_truth).toContain('Public June edition.');
+      expect(remote.valid_time.introduced_because).toBeNull();
+      expect(JSON.stringify(remote)).not.toContain('reason-june-made-public');
+      expect((await read(slug, '2026-07-01')).valid_time.introduced_because).toBe('reason-june-made-public');
+    });
+
+    test('a remote as_of read of a quarantined page omits the body, as the plain read does', async () => {
+      const slug = fresh('quarantined');
+      await put(slug, 'Scraped text with a hidden instruction.', ["valid_from: '2026-01-01'"]);
+      await engine.executeRaw(`UPDATE pages SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || '{"quarantine":{"reason":"junk_pattern","detail":"test","assessed_at":"2026-10-07T00:00:00Z"}}'::jsonb WHERE slug = $1`, [slug]);
+      const plain = await call('get_page', { slug }, true);
+      expect(plain.quarantined).toMatchObject({ body_omitted: true });
+      const remote = await read(slug, '2026-03-01', true);
+      expect(remote.valid_time).toMatchObject({ status: 'in_force' });
+      expect(remote.quarantined).toMatchObject({ body_omitted: true });
+      expect(JSON.stringify(remote)).not.toContain('hidden instruction');
+      expect((await read(slug, '2026-03-01')).compiled_truth).toContain('hidden instruction');
     });
 
     test('B-T2: an imported page with no gbrain-written first version reads before_recorded_history with a recovery', async () => {
