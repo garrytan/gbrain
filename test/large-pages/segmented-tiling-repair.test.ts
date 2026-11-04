@@ -14,20 +14,21 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../../src/core/persistence/sync-run.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
-import { readGitHold, writeGitHold } from '../../src/core/persistence/sync-holds.ts';
+import { readGitHold, readSyncImportProvenance, writeGitHold } from '../../src/core/persistence/sync-holds.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { materializeSegmentedBody } from '../../src/core/page-body/ingest.ts';
 import { untiledSegmentedPages } from '../../src/core/page-body/body-tiling.ts';
 import { resolveRepairScope, runRepair } from '../../src/core/repair/core.ts';
 import { AUTO_REPAIR_REGISTRY, repairRunner } from '../../src/core/repair/registry.ts';
-import { segmentedTilingRepair, SEGMENTED_TILING_RECEIPT_OP } from '../../src/core/repair/segmented-tiling.ts';
+import { segmentedTilingRepair, SEGMENTED_TILING_RECEIPT_OP, survey } from '../../src/core/repair/segmented-tiling.ts';
+import { readSyncStatus } from '../../src/core/persistence/sync-status.ts';
 import { segmentedTilingCheck } from '../../src/commands/doctor/checks/segmented-tiling.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { withManagedFixtureWrite } from '../helpers/managed-e2e-fixture-write.ts';
@@ -88,7 +89,10 @@ test('doctor lists the damaged page read-only; the repair republishes it from HE
   const held = await performManagedSync(engine, { sourceId: f.sourceId, noPull: true, noEmbed: true, noExtract: true });
   expect((held.held ?? []).map(hold => [hold.path, hold.code])).toEqual([[FILE, 'page_write_failed']]);
   const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [f.sourceId]);
-  expect(await readGitHold(engine, f.sourceId, source!.incarnation, FILE)).not.toBeNull();
+  const hold = (await readGitHold(engine, f.sourceId, source!.incarnation, FILE))!;
+  expect(hold.message).toContain(`gbrain repair segmented-tiling --source <source> --slug ${SLUG}`);
+  expect((await readSyncStatus(engine, f.sourceId, { detail: false })).holds.find(h => h.path === FILE)).toMatchObject({ fault_code: 'page_body_rows_unreadable', needs_human: true,
+    safe_actions: ['repair'], fix: { argv: ['gbrain', 'repair', 'segmented-tiling', '--source', f.sourceId, '--slug', SLUG] } });
 
   const before = await counts();
   const check = await segmentedTilingCheck(engine, [f.sourceId]);
@@ -221,6 +225,78 @@ test('a claim the owner purged stays out: the apply republishes the file through
   expect(body.compiled_truth).toContain(KEPT);
   expect(body.compiled_truth).not.toContain(PURGED);
   expect(await engine.executeRaw('SELECT count(*)::int AS n FROM content_chunks WHERE page_id=$1 AND chunk_text LIKE $2', [f.pageId, `%${PURGED}%`])).toEqual([{ n: 0 }]);
+}), 300_000);
+
+test('the republished page is recorded as imported from HEAD: the next sync holds no file_drift for a page the file imports', async () => withEnv(env, async () => {
+  const f = await managedFixture();
+  // A tag only the database holds: every import keeps it, so importing the file would also write the tag back into it.
+  await withManagedFixtureWrite(engine, [f.sourceId], tx => tx.addTag(SLUG, 'kept-example', { sourceId: f.sourceId }));
+  appendFileSync(join(f.root, FILE), '- **2026-11-01** | meeting — first follow-up\n');
+  commit(f.root);
+  expect((await performManagedSync(engine, { sourceId: f.sourceId, noPull: true, noEmbed: true, noExtract: true })).held ?? []).toEqual([]);
+  await damage(f.sourceId, f.pageId);
+  appendFileSync(join(f.root, FILE), '- **2026-11-02** | meeting — second\n');
+  commit(f.root);
+  expect(((await performManagedSync(engine, { sourceId: f.sourceId, noPull: true, noEmbed: true, noExtract: true })).held ?? []).map(hold => hold.code)).toEqual(['page_write_failed']);
+  const scope = await resolveRepairScope(engine, f.sourceId);
+  const run = (apply: boolean, expect?: string) => repairRunner(engine, { apply, logger }).then(runner => runner.run('segmented-tiling', scope, { explicit: true, sourceFlag: f.sourceId, ...(expect ? { expect } : {}) }));
+  expect(await run(true, (await run(false)).preview_hash!)).toMatchObject({ applied: 1 });
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [f.sourceId]);
+  const [republished] = await engine.executeRaw<{ revision: string }>('SELECT knowledge_revision::text AS revision FROM pages WHERE id=$1', [f.pageId]);
+  const blob = git(f.root, 'rev-parse', `HEAD:${FILE}`);
+  expect(await readSyncImportProvenance(engine, f.sourceId, source!.incarnation, f.pageId)).toMatchObject({ revision: republished!.revision, disk_blob_oid: blob, blob_oid: blob, origin: FILE });
+
+  const after = await performManagedSync(engine, { sourceId: f.sourceId, noPull: true, noEmbed: true, noExtract: true });
+  expect(after.held ?? []).toEqual([]);
+  expect(after.status).toBe('synced');
+  expect((await readSyncStatus(engine, f.sourceId, { detail: false })).holds).toEqual([]);
+}), 300_000);
+
+test('a republished page whose stored frontmatter the file no longer imports records no provenance, so sync guards the stored frontmatter', async () => withEnv(env, async () => {
+  const f = await managedFixture();
+  await damage(f.sourceId, f.pageId);
+  writeFileSync(join(f.root, FILE), readFileSync(join(f.root, FILE), 'utf8').replace('type: person', 'type: person\nstatus: active') + '- **2026-11-02** | meeting — second\n');
+  commit(f.root);
+  await performManagedSync(engine, { sourceId: f.sourceId, noPull: true, noEmbed: true, noExtract: true });
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [f.sourceId]);
+  const before = await readSyncImportProvenance(engine, f.sourceId, source!.incarnation, f.pageId);
+  const scope = await resolveRepairScope(engine, f.sourceId);
+  const run = (apply: boolean, expect?: string) => repairRunner(engine, { apply, logger }).then(runner => runner.run('segmented-tiling', scope, { explicit: true, sourceFlag: f.sourceId, ...(expect ? { expect } : {}) }));
+  expect(await run(true, (await run(false)).preview_hash!)).toMatchObject({ applied: 1 });
+  expect(await readSyncImportProvenance(engine, f.sourceId, source!.incarnation, f.pageId)).toEqual(before);
+  const after = await performManagedSync(engine, { sourceId: f.sourceId, noPull: true, noEmbed: true, noExtract: true });
+  expect((after.held ?? []).map(hold => hold.code)).toEqual(['file_drift']);
+}), 300_000);
+
+test('#8504: an archived source is never listed, a multi-source fix names a source, a preview over its limit says so, an unknown source refuses', async () => withEnv(env, async () => {
+  const f = await managedFixture();
+  const second = 'people/other-example.md';
+  writeFileSync(join(f.root, second), person(1260 * 1024).replace(/Person Example/g, 'Other Example'));
+  commit(f.root);
+  await performManagedSync(engine, { sourceId: f.sourceId, noPull: true, noEmbed: true, noExtract: true });
+  const [other] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [f.sourceId, 'people/other-example']);
+  const g = await managedFixture();
+  await damage(f.sourceId, f.pageId); await damage(f.sourceId, Number(other!.id)); await damage(g.sourceId, g.pageId);
+
+  const both = await segmentedTilingCheck(engine, [f.sourceId, g.sourceId]);
+  const [firstSource, otherSource] = [f.sourceId, g.sourceId].sort();
+  expect(both.fix?.argv).toEqual(['gbrain', 'repair', 'segmented-tiling', '--source', firstSource]);
+  expect(both.fix?.why).toContain(`gbrain repair segmented-tiling --source ${otherSource}`);
+
+  const limited = await survey(engine, { source_id: f.sourceId, slugs: [] }, 1);
+  expect([limited.pages.length + limited.held, limited.truncated]).toEqual([1, true]);
+  expect((await survey(engine, { source_id: f.sourceId, slugs: [] })).truncated).toBe(false);
+
+  await expect(resolveRepairScope(engine, 'missing-example')).rejects.toMatchObject({ code: 'invalid_params' });
+  const archive = (archived: boolean) => engine.transaction(async tx => {
+    await tx.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");
+    await tx.executeRaw('UPDATE sources SET archived=$2 WHERE id=$1', [g.sourceId, archived]);
+  });
+  await archive(true);
+  expect(await untiledSegmentedPages(engine, { sourceIds: [g.sourceId] })).toEqual([]);
+  expect((await segmentedTilingCheck(engine, [f.sourceId, g.sourceId])).fix?.why).not.toContain(g.sourceId);
+  await expect(resolveRepairScope(engine, g.sourceId)).rejects.toMatchObject({ code: 'invalid_params' });
+  await archive(false);
 }), 300_000);
 
 test('a source without a Git checkout refuses the preview: Git is the only copy it republishes', async () => withEnv(env, async () => {

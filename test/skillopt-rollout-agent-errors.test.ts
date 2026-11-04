@@ -61,17 +61,17 @@ afterAll(async () => {
 });
 
 describe('GST-1054: SkillOpt rollout tool errors carry the MCP error text', () => {
-  const twoSelectors = { slug: SLUG, lines: { from: 1, count: 1 }, bytes: { offset: 0, length: 8 } };
+  const asOfWindow = { slug: SLUG, known_as_of: '2026-10-01T12:00:00Z', body: 'window' };
   const missing = { slug: 'notes/missing-example' };
 
   for (const [name, handlers] of [['rollout', () => rollout], ['write-capture', () => writeCapture]] as const) {
     test(name + ': a refusal reaches the model with its code, suggestion and runnable fix, as MCP returns it', async () => {
-      const message = await thrownMessage(handlers(), twoSelectors);
-      expect(message).toBe(await mcpText(twoSelectors));
+      const message = await thrownMessage(handlers(), asOfWindow);
+      expect(message).toBe(await mcpText(asOfWindow));
       const body = JSON.parse(message) as { code: string; suggestion?: string; fix?: { argv?: string[]; next?: string; mcp?: { tool: string } } };
       expect(body.code).toBe('invalid_params');
-      expect(body.suggestion).toContain('Drop `bytes`');
-      expect(body.fix?.argv).toEqual(['gbrain', 'get', '--lines', '1-1', '--body', 'window', '--source', 'default', '--', SLUG]);
+      expect(body.suggestion).toContain('Drop `body` to read the page as recorded');
+      expect(body.fix?.argv).toEqual(['gbrain', 'get', '--known-as-of', '2026-10-01T12:00:00Z', '--source', 'default', '--', SLUG]);
       expect(body.fix?.next).toBe('run');
       expect(body.fix?.mcp?.tool).toBe('get_page');
     });

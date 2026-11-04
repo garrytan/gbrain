@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 271352,
-    "stdoutSha256": "3b86f387e3b0e1804aa1a99b97d49d939c69fee5be7861b6ed4fcb7084b3d4a6",
+    "stdoutBytes": 271176,
+    "stdoutSha256": "11b0723e57b0040255ec7b4ef698862ddcbc848a07bc76fafc1ba8f06590942c",
     "toolNames": [
       "remember",
       "entity",
@@ -424,7 +424,7 @@
         "scope": "write"
       },
       {
-        "description": "Read a page; `section`/`grep` reads one part. Pass at most one window selector: lines, bytes, around_chunk_id or cursor (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
+        "description": "Read a page; `section`/`grep` reads one part. Window selector order: cursor, around_chunk_id, lines, bytes (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -458,7 +458,7 @@
         "schema": {
           "properties": {
             "around_chunk_id": {
-              "description": "Window around a search hit chunk_id. One window selector only: not with lines, bytes or cursor.",
+              "description": "Window around a search hit chunk_id.",
               "type": "number"
             },
             "body": {
@@ -474,7 +474,7 @@
             },
             "bytes": {
               "additionalProperties": false,
-              "description": "Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start). One window selector only: not with lines, around_chunk_id or cursor.",
+              "description": "Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start).",
               "properties": {
                 "length": {
                   "type": "number"
@@ -502,7 +502,7 @@
               "type": "number"
             },
             "cursor": {
-              "description": "next_cursor: read on. One window selector only: not with lines, bytes or around_chunk_id.",
+              "description": "next_cursor: read on.",
               "type": "string"
             },
             "fuzzy": {
@@ -539,7 +539,7 @@
             },
             "lines": {
               "additionalProperties": false,
-              "description": "Window: 1-based lines. One window selector only: not with bytes, around_chunk_id or cursor.",
+              "description": "Window: 1-based lines.",
               "properties": {
                 "count": {
                   "type": "number"
@@ -7957,7 +7957,7 @@
         "scope": "admin"
       },
       {
-        "description": "Run SkillOpt against a single skill. Admin scope and remote skill allowlist required. shared_skill stages an exact catalog revision privately and requires explicit skill_editor and put_skill grants; only accepted body changes publish through the original revision CAS. Rate-limited per-skill via DB lock.",
+        "description": "Run SkillOpt against a single skill; its iterative loop (optimizer_mode \"reflect\") is deprecated. Admin scope and remote skill allowlist required. shared_skill stages an exact catalog revision privately and requires explicit skill_editor and put_skill grants; only accepted body changes publish through the original revision CAS. Rate-limited per-skill via DB lock.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -8026,7 +8026,7 @@
               "type": "boolean"
             },
             "optimizer_mode": {
-              "description": "Default one-shot-rewrite: one gated rewrite. reflect opts into the iterative edit loop, which has not yet beaten one-shot on gbrain benchmarks.",
+              "description": "Default one-shot-rewrite: one gated rewrite. reflect runs the iterative edit loop, which is deprecated (removed on or after 2026-12-03) and emits the skillopt_loop_deprecated notice.",
               "enum": [
                 "one-shot-rewrite",
                 "reflect"

@@ -488,6 +488,7 @@ test/search-vector-scope-parity.test.ts
 test/search/page-rank-cut.test.ts
 test/search/rerank-gate-hybrid.test.ts
 test/search/rerank-gate-telemetry.test.ts
+test/segmented-untiled-hold-gst1209.test.ts
 test/serve-head-watcher-managed.serial.test.ts
 test/shared-content-freshness.test.ts
 test/shared-skills-catalog.test.ts
@@ -505,6 +506,7 @@ test/sync-apply-held-deletions-gbra133.test.ts
 test/sync-capacity-preflight.test.ts
 test/sync-checkpoint-moved-6834.test.ts
 test/sync-classic-drift-7199.test.ts
+test/sync-disabled-cycle-window.test.ts
 test/sync-discovery-legacy-origin-7130.test.ts
 test/sync-drain-claims.test.ts
 test/sync-drain-effect-recovery-blocked.test.ts

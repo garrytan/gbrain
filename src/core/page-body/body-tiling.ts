@@ -88,7 +88,7 @@ export interface UntiledPage {
 }
 
 /**
- * GST-1209: the live (not deleted) pages stored in segments whose live generation's rows do not cover body_bytes gapless
+ * GST-1209: the live (not deleted) pages of unarchived sources stored in segments whose live generation's rows do not cover body_bytes gapless
  * from 0, so every read of them refuses page_body_rows_unreadable. One aggregate per page over its live rows, read-only;
  * `sourceIds` and `slugs` narrow the scan, `limit` bounds the list (ordered by source and slug).
  */
@@ -97,7 +97,7 @@ export async function untiledSegmentedPages(engine: Pick<BrainEngine, 'executeRa
   const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; revision: string; body_generation: unknown; body_bytes: unknown;
     segment_count: number | null; source_path: string | null; n: unknown; covered: unknown; gapless: boolean }>(
     `SELECT p.id, p.source_id, p.slug, p.knowledge_revision::text AS revision, p.body_generation, p.body_bytes, p.segment_count, p.source_path, t.n, t.covered, t.gapless
-       FROM pages p CROSS JOIN LATERAL (${liveTilingSql('p')}) t
+       FROM pages p JOIN sources s ON s.id = p.source_id AND s.archived IS NOT TRUE CROSS JOIN LATERAL (${liveTilingSql('p')}) t
       WHERE p.body_storage = 'segmented' AND p.deleted_at IS NULL AND ($1::text[] IS NULL OR p.source_id = ANY($1::text[]))
         AND ($2::text[] IS NULL OR p.slug = ANY($2::text[])) AND ${untiledSql('p', 't')}
       ORDER BY p.source_id, p.slug LIMIT $3`, [opts.sourceIds ? [...opts.sourceIds] : null, opts.slugs ? [...opts.slugs] : null, opts.limit ?? 1000]);
