@@ -382,6 +382,9 @@ gbrain sources set-sync <id> <on|off> [--dry-run] [--expect <on|off>]
                                (config.syncEnabled; an explicit gbrain sync --source
                                still runs). --dry-run prints the apply command, which
                                carries --expect; a moved state refuses preview_changed.
+                               Off: autopilot cycles work only on pages changed since
+                               the last cycle, so a file edited on disk is picked up
+                               by the next explicit sync, not by the cycle.
 gbrain sources host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>]
                                Managed brains: host a new, empty source in a bare
                                repository under <path> (see below). Previews without --expect.
