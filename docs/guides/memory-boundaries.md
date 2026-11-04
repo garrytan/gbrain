@@ -148,8 +148,8 @@ rewrites only the segments a body-text match touches (an edit that reaches the
 header or the timeline marker prepares the whole body instead); `within`
 restricts the match to a range a window read returned.
 
-A page bigger than one request (see the limits below) goes in an upload
-session: `begin_page_upload`, then `upload_page_part` from part 0, then
+A page bigger than one request (see the limits below) goes in an upload session:
+`begin_page_upload`, then `upload_page_part` from part 0, then
 `commit_page_upload`, which returns `put_page`'s receipt. `get_page_upload`
 resumes after a lost reply and `abort_page_upload` discards the session.
 On a remote brain, `gbrain put --file`, `gbrain capture --file` and
