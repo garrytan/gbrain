@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.573.0] - 2026-11-04
 
 **A host can record bytes it stored itself, and every file row names its page.** On an engine opened from settings, the new `file_register` records the `files` row for an object the host already wrote to `settings.storage` at the path `file_upload` would use (`<page_slug>/<filename>`, or `unsorted/<first 8 hash chars>-<filename>`), after reading it back and matching its size and SHA-256. It resolves the page in the caller's source under the caller's read policy and records the row's `source_id` and `page_id`. Registering the same path again updates that row, and never moves it to another source or another page, including a new page that took a renamed page's slug. `file_upload` now records its row's source and page on every engine, so purging a page in a source other than `default` removes its attachments. A brain the CLI or a server opens refuses `file_register` with `embedded_engine_required`; it is never an MCP tool. Contributed by @bradgessler (#8457).
 
