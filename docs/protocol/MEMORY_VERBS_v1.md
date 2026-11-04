@@ -144,7 +144,13 @@ Retrieve saved facts and (with `query`) budget-packed page snippets.
   error's `fix.mcp` is the call without it. One query
   embedding per call, no model call. Without an embedding provider, with
   embeddings turned off, or when the embed fails, facts rank by term share and
-  `facts_degraded.reason` says why. A server without question ranking ignores
+  `facts_degraded.reason` says why. A question over 12 content words is searched
+  on its last 24 and scored on the 12 of those the fewest candidate facts hold,
+  so an instruction preamble ahead of the turn does not crowd out its words.
+  When candidates were found and none cleared the admission rule, the response
+  carries `facts_below_floor: <n>`; it is absent when nothing matched. Over
+  2,000 characters is `invalid_params` reason `question_too_long` with detail
+  `max_chars=2000 received_chars=<n>`; the question is never cut. A server without question ranking ignores
   the parameter (or rejects it under `mcp.strict_params=reject`); clients detect
   support by `facts_order: "relevance"` in the response or `question` in the
   live tool schema, not by `protocol_version`.

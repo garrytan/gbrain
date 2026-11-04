@@ -181,6 +181,8 @@ export interface QuestionRecall {
   degraded?: FactsDegraded;
   /** Present when the cosine arm ran on a model with no measured admission floor. */
   calibration?: FactsCalibration;
+  /** Candidates found when none cleared the admission rule (an empty answer that is not an empty match). */
+  belowFloor?: number;
   /** The source holding the most uncomparable facts, for the `embed --stale --facts` fix. */
   unembeddedSource?: string;
   ambiguousEntity: EntityCandidate[] | null;
@@ -212,12 +214,13 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
     const [pool, uncomparable, rule] = await Promise.all([
       collectFactCandidates(ctx.engine, question, scope, embedding, {
         depth: { keyword: QUESTION_POOL_DEPTH, cosine: QUESTION_POOL_DEPTH, entity: QUESTION_POOL_DEPTH }, filters, cosineForAll: true,
-        hnswIterativeScan: resolveHnswIterativeScan(ctx.config),
+        hnswIterativeScan: resolveHnswIterativeScan(ctx.config), distinctiveTerms: true,
       }),
       embedding ? countUncomparableFacts(ctx.engine, scope, filters, embedding.length) : [],
       admissionRule(ctx.engine),
     ]);
-    const ranked = scoreFactCandidates(question, pool.candidates).filter(s => admitted(s, rule));
+    const scored = scoreFactCandidates(question, pool.candidates, pool.terms);
+    const ranked = scored.filter(s => admitted(s, rule));
     const unembedded = uncomparable.reduce((n, r) => n + r.n, 0);
     const why = reason ?? (embedding && !pool.column ? 'facts_embedding_column_missing' : undefined);
     const degraded: FactsDegraded | undefined = why || unembedded ? { ...(why ? { reason: why } : {}), ...(unembedded ? { unembedded } : {}) } : undefined;
@@ -231,6 +234,7 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
       rows: (await collapseFactReads(ctx.engine, ids.flatMap(id => byId.get(id) ?? []))).slice(0, input.limit),
       relevance: new Map(ranked.map(s => [s.candidate.id, Math.round(s.score * 1e4) / 1e4])),
       ambiguousEntity: null,
+      ...(scored.length && !ranked.length ? { belowFloor: scored.length } : {}),
       ...(degraded ? { degraded } : {}),
       ...(modelKey && FACT_ADMISSION_FLOOR_EVIDENCE[modelKey] === undefined ? { calibration: { status: 'unmeasured' as const, model_key: modelKey } } : {}),
       ...(uncomparable[0] ? { unembeddedSource: uncomparable[0].source_id } : {}),

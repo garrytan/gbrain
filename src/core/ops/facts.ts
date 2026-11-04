@@ -640,7 +640,7 @@ const recall: Operation = {
       total: packedFacts.length,
       facts_order: ranking ? 'relevance' : 'newest',
       ...(quoted.withheld ? { facts_degraded: { reason: 'saved_facts_withheld' } } : ranking?.degraded ? { facts_degraded: ranking.degraded } : {}),
-      ...(ranking?.calibration ? { facts_calibration: ranking.calibration } : {}),
+      ...(ranking?.calibration ? { facts_calibration: ranking.calibration } : {}), ...(ranking?.belowFloor ? { facts_below_floor: ranking.belowFloor } : {}),
       ...(ambiguousEntity ? { ambiguous_entity: { candidates: ambiguousEntity, suggestion: AMBIGUOUS_ENTITY_SUGGESTION } } : {}),
       ...(pending_consolidation_count !== undefined ? { pending_consolidation_count } : {}),
       // MEMORY_VERBS v1 envelope (G1B superset — additive on every response).
