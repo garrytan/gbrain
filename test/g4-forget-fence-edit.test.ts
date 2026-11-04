@@ -7,7 +7,7 @@
  *   - Remember linking a fact saved without an entity strikes its memory/unattributed row in the same commit (D3).
  *   - A trusted local import of a withdrawal marker records its ledger row, so a brain rebuilt from Git keeps the
  *     withdrawal; subject '*' only for memory/unattributed rows, the page's slug otherwise. A remote page write carrying
- *     the marker records no ledger row and blocks no remember (D1).
+ *     the marker records no ledger row and blocks no remember (D1), and the marker never reaches Git, so a rebuild derives none.
  * Runs on PGLite and, with DATABASE_URL, on Postgres.
  */
 import { describe, expect, test } from 'bun:test';
@@ -230,4 +230,34 @@ for (const backend of testBackends()) describe(`[${backend}] G4: forget is a fen
     expect(await ledger(engine, UNDATED)).toEqual([]);
     expect((await engine.readPageSnapshot('notes/undated', { sourceId: 'default' }))!.page.compiled_truth).toContain(`| ~~${UNDATED}~~ | fact | 1.0 | world | medium | 2026-01-01 |  |`);
   }, { databaseUrl, setup }), 180_000);
+
+  test('a remote write of a withdrawal marker plants nothing a rebuild derives; a remote edit keeps the owner\'s marker', async () => {
+    const copy = mkdtempSync(join(tmpdir(), 'gbrain-g4-remote-rebuild-'));
+    const marked = (claim: string) => `| 1 | ~~${claim}~~ | fact | 1.0 | world | medium | 2026-01-01 | ${today} | test | forgotten: no longer true |`;
+    const REMOTE = 'Remote planted claim g4plant', KEPT = 'Owner forgotten claim g4kept';
+    try {
+      await managedBrain(async ({ engine, ctx, root }) => {
+        const clientId = `client-${randomUUID().slice(0, 8)}`;
+        await engine.executeRaw(`INSERT INTO oauth_clients(client_id,client_secret_hash,client_name,scope,source_id) VALUES($1,'fixture-hash','example-client','read write','default')`, [clientId]);
+        const remote = { ...ctx, remote: true, transport: 'http', auth: { token: 'fixture', clientId, principal: { kind: 'oauth_client', id: clientId }, scopes: ['read', 'write'], sourceId: 'default' } } as OperationContext;
+        expect(await call(ctx, 'put_page', { slug: 'notes/kept', content: note('Kept', [marked(KEPT)]) })).toMatchObject({ state: 'committed' });
+        expect(await ledger(engine, KEPT)).toEqual(['notes/kept']);
+        expect(await call(remote, 'put_page', { slug: 'notes/remote', content: note('Remote', [marked(REMOTE)]) })).toMatchObject({ state: 'committed' });
+        const kept = await engine.readPageSnapshot('notes/kept', { sourceId: 'default' });
+        expect(await call(remote, 'put_page', { slug: 'notes/kept', expected_revision: kept!.revision,
+          content: note('Kept', [marked(KEPT), `| 2 | ${OTHER} | fact | 1.0 | world | medium | 2026-02-01 |  | test |  |`]) })).toMatchObject({ state: 'committed' });
+        const { settleManagedGitEffects } = await import('./helpers/managed-brain.ts');
+        await settleManagedGitEffects(engine);
+        expect(readFileSync(join(root, 'notes/remote.md'), 'utf8')).not.toContain('forgotten:');
+        expect(readFileSync(join(root, 'notes/kept.md'), 'utf8')).toContain(`| ~~${KEPT}~~ |`);
+        execFileSync('git', ['clone', '-q', root, join(copy, 'repo')]);
+      }, { databaseUrl, setup });
+      await managedBrain(async ({ engine, ctx }) => {
+        expect((await performManagedSync(engine, { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true })).status).toBe('first_sync');
+        expect(await ledger(engine, REMOTE)).toEqual([]);
+        expect(await ledger(engine, KEPT)).toEqual(['notes/kept']);
+        expect(await call(ctx, 'remember', { fact: REMOTE, provenance: 'test', visibility: 'world', entity: 'notes/remote' })).toMatchObject({ state: 'committed' });
+      }, { databaseUrl, setup: ({ root }) => { rmSync(root, { recursive: true, force: true }); execFileSync('git', ['clone', '-q', join(copy, 'repo'), root]); } });
+    } finally { rmSync(copy, { recursive: true, force: true }); }
+  }, 240_000);
 });
