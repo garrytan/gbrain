@@ -312,10 +312,10 @@ src/core/google/loops-extract.ts	runLoopsExtract	field	STREAM	tail slice(-12000)
 src/core/google/sweep-shared.ts	withStoredFactsFence	field	INLINE	asserts inline (assertInlineBody); importRendered refuses a segmented page first
 src/core/import-file.ts	applyImportTransaction	call:putPage	SEGW	lane 1d file (streaming ingest); code/image pages inline
 src/core/import-file.ts	importCodeFile	call:putPage	SEGW	lane 1d file (streaming ingest); code/image pages inline
-src/core/import-file.ts	importFromContent	call:contentHash	META	lane 1d file
-src/core/import-file.ts	importFromContent	call:putPage	SEGW	lane 1d file (streaming ingest); code/image pages inline
-src/core/import-file.ts	importFromContent	call:refreshPageBody	SEGW	lane 1d file (streaming ingest); code/image pages inline
-src/core/import-file.ts	importFromContent	field	SEGW	lane 1d file (streaming ingest); code/image pages inline
+src/core/import-file.ts	importScreenedContent	call:contentHash	META	lane 1d file
+src/core/import-file.ts	importScreenedContent	call:putPage	SEGW	lane 1d file (streaming ingest); code/image pages inline
+src/core/import-file.ts	importScreenedContent	call:refreshPageBody	SEGW	lane 1d file (streaming ingest); code/image pages inline
+src/core/import-file.ts	importScreenedContent	field	SEGW	lane 1d file (streaming ingest); code/image pages inline
 src/core/import-file.ts	importImageFile	field	SEGW	lane 1d file (streaming ingest); code/image pages inline
 src/core/import-identity.ts	decideImportIdentity	field	META	
 src/core/import-screen.ts	assessImportSanity	field	STREAM	
