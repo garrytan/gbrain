@@ -18,6 +18,8 @@ identifiers and attribution are available in the pre-removal Git revision
 
 - `src/core/ops/files.ts`: `file_register` accepts only the upload layout path, refuses `page_not_found` for a page that does not exist or that the caller's read policy hides, and refuses `invalid_params` for a path whose row belongs to another source or page id; the pre-check and the `ON CONFLICT … WHERE` guard both compare `page_id` with `IS DISTINCT FROM`.
 - `file_upload` writes `source_id` and the page's id in that source on each row it inserts (#8513). Rows written before this release keep `source_id = 'default'` and no page id; nothing rewrites them. The `gbrain files upload` CLI is unchanged.
+- `file_upload` refuses `unknown_source` for a source the brain has not registered, before it writes any bytes. When a row already holds the path, it takes the uploader's source and page id only if the uploader's source has that page. A row attached to a live page in another source stays with that source. Identical bytes return `already_exists` without moving it, and different bytes refuse `invalid_params` before any bytes are written.
+- Page purge and its verification match a file by slug only when the row has no page id, so purging one page never removes another page's attachment at the same slug.
 - `src/core/storage.ts`: `prefixedStorage` refuses a key with an empty, `.` or `..` segment or a leading `/` (`Path traversal blocked`), so on a local store a path such as `../brain-b/x` never reaches another brain's prefix.
 - `test/file-register.test.ts`: real PGLite engines and a real local store.
 
