@@ -8,12 +8,28 @@ import type { SearchResult } from '../types.ts';
 import { pageLeadSource, projectedLead } from '../page-window/bounded-lead.ts';
 import { isIdentityEntity } from '../entities/resolve.ts';
 import { normalizeAlias } from './alias-normalize.ts';
+import { contentTokenCount } from './title-match.ts';
 import { isPrivatePageForCaller } from './private-visibility.ts';
 
 // T3 — free-text alias hop tuning.
 const ALIAS_HOP_PRESENT_BOOST = 1.10; // bounded boost when canonical already in results
 const MAX_ALIAS_QUERY_TOKENS = 6;     // skip long queries (clearly not a chosen name)
 const MAX_ALIAS_INJECT = 3;           // cap injected pages per query (collision safety)
+// `search.qualified_aliases`: alias phrases of 3..MAX_ALIAS_QUERY_TOKENS
+// tokens (3+ content tokens) inside queries of up to 14 tokens.
+const MIN_QUALIFIED_ALIAS_TOKENS = 3;
+const MAX_QUALIFIED_QUERY_TOKENS = 14;
+
+/** Proper sub-phrases of the query a qualified alias could be: longest first, then leftmost. */
+function qualifiedAliasCandidates(qNorm: string): string[] {
+  const words = qNorm.split(' ');
+  if (words.length < MIN_QUALIFIED_ALIAS_TOKENS || words.length > MAX_QUALIFIED_QUERY_TOKENS) return [];
+  const out: string[] = [];
+  for (let size = Math.min(MAX_ALIAS_QUERY_TOKENS, words.length - 1); size >= MIN_QUALIFIED_ALIAS_TOKENS; size--) {
+    for (let i = 0; i + size <= words.length; i++) out.push(words.slice(i, i + size).join(' '));
+  }
+  return [...new Set(out)].filter(c => contentTokenCount(c) >= MIN_QUALIFIED_ALIAS_TOKENS);
+}
 
 /**
  * T3 — free-text alias hop (retrieval-maxpool incident, the named-thing fix).
@@ -71,22 +87,28 @@ export function isExcludedIdentity(slug: string, opts: Pick<IdentityTierOpts, 'e
 export interface AliasHopLookup {
   qNorm: string;
   tokens: string[];
+  /** `qualified` lookups: the sub-phrases probed, in preference order. */
+  qualified?: string[];
   aliasMap: Map<string, Array<{ slug: string; source_id: string }>>;
 }
 
 export async function lookupAliasHop(
   engine: import('../engine.ts').BrainEngine,
   query: string,
-  opts: IdentityTierOpts & { tokenHop?: boolean },
+  opts: IdentityTierOpts & { tokenHop?: boolean; qualified?: boolean },
 ): Promise<AliasHopLookup | null> {
   if (!query) return null;
   const qNorm = normalizeAlias(query);
-  if (!qNorm || qNorm.split(' ').length > MAX_ALIAS_QUERY_TOKENS) return null;
-  const tokens = opts.tokenHop
+  if (!qNorm) return null;
+  const qualified = opts.qualified ? qualifiedAliasCandidates(qNorm) : [];
+  const short = qNorm.split(' ').length <= MAX_ALIAS_QUERY_TOKENS;
+  if (!short && qualified.length === 0) return null;
+  const tokens = opts.tokenHop && short
     ? [...new Set(qNorm.split(' '))].filter((t) => t.length >= 2 && t !== qNorm)
     : [];
   try {
-    return { qNorm, tokens, aliasMap: await engine.resolveAliases([qNorm, ...tokens], opts) };
+    const aliasMap = await engine.resolveAliases([...new Set([...(short ? [qNorm] : []), ...qualified, ...tokens])], opts);
+    return { qNorm, tokens, aliasMap, ...(qualified.length ? { qualified } : {}) };
   } catch {
     return null; // pre-v110 table-missing OR transient error -> fail-open
   }
@@ -109,6 +131,19 @@ export async function applyAliasHop(
   return applyAliasHopLookup(engine, results, await lookupAliasHop(engine, query, opts), opts);
 }
 
+/**
+ * `search.qualified_aliases`: the one page a sub-phrase alias names. The
+ * longest (then leftmost) phrase with a visible claimant decides; two
+ * claimants there suppress the hop rather than fall back to a vaguer phrase.
+ */
+function qualifiedAliasCanonical(lookup: AliasHopLookup, opts: IdentityTierOpts): { slug: string; source_id: string } | null {
+  for (const phrase of lookup.qualified ?? []) {
+    const refs = (lookup.aliasMap.get(phrase) ?? []).filter(ref => !isExcludedIdentity(ref.slug, opts));
+    if (refs.length > 0) return refs.length === 1 ? refs[0] : null;
+  }
+  return null;
+}
+
 /** The apply half of the alias hop: boost or inject the looked-up canonicals into `results`. */
 export async function applyAliasHopLookup(
   engine: import('../engine.ts').BrainEngine,
@@ -118,14 +153,15 @@ export async function applyAliasHopLookup(
 ): Promise<SearchResult[]> {
   if (!lookup) return results;
   const refs = lookup.aliasMap.get(lookup.qNorm);
-  if (!refs || refs.length === 0) {
+  const qualifiedRef = refs?.length ? null : qualifiedAliasCanonical(lookup, opts);
+  if ((!refs || refs.length === 0) && !qualifiedRef) {
     return lookup.tokens.length > 0 ? applyAliasTokenHop(engine, results, lookup.tokens, lookup.aliasMap, opts) : results;
   }
 
   // Deterministic + capped. Source-scoped: each canonical is a (source_id, slug)
   // pair so a federated caller boosts/injects the RIGHT source's page, never
   // collapsing or cross-injecting (P0 source-isolation contract).
-  const ordered = aliasHopCanonicals(lookup, opts);
+  const ordered = qualifiedRef ? [qualifiedRef] : aliasHopCanonicals(lookup, opts);
   const out = [...results];
   let injectScore = topOrganicScore(out);
 
@@ -133,7 +169,8 @@ export async function applyAliasHopLookup(
     let idx = out.findIndex(r => r.slug === ref.slug && (r.source_id ?? 'default') === ref.source_id);
     if (idx >= 0) {
       const hit = out[idx];
-      if (Number.isFinite(hit.score)) hit.score *= ALIAS_HOP_PRESENT_BOOST;
+      // A qualified hit leads like an injected one, so present and absent pages place alike.
+      if (Number.isFinite(hit.score)) hit.score = qualifiedRef ? Math.max(hit.score * ALIAS_HOP_PRESENT_BOOST, injectScore += 1e-6) : hit.score * ALIAS_HOP_PRESENT_BOOST;
       hit.alias_hit = true;
       // Bubble the boosted row past lower-scored rows directly above it; never
       // re-sort the list, which would discard a reranked order (post-rerank

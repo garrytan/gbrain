@@ -124,6 +124,26 @@ export function isTitleMentionedInQuery(query: string, title: string): boolean {
   return containsTokenRun(qTokens, tTokens);
 }
 
+/** Content tokens a non-identity title needs before a qualified query may contain it. */
+const MIN_QUALIFIED_CONTENT_TOKENS = 3;
+
+/** Non-stopword token count of `text` (the qualified-match precision floor). */
+export function contentTokenCount(text: string): number {
+  return contentTokens(tokenizeTitle(text)).length;
+}
+
+/**
+ * Opt-in (`search.title_qualified`): `title` appears inside a longer,
+ * qualified query as a contiguous token run ("Acme Jane Doe" contains the
+ * person page "Jane Doe"). Generic titles need three content tokens; a person
+ * or company title (`identity`) needs two.
+ */
+export function isQualifiedTitleMatch(query: string, title: string, identity: boolean): boolean {
+  const tTokens = tokenizeTitle(title);
+  const floor = identity ? MIN_CONTENT_TOKENS : MIN_QUALIFIED_CONTENT_TOKENS;
+  return contentTokens(tTokens).length >= floor && containsTokenRun(tokenizeTitle(query), tTokens);
+}
+
 /** Share of the query's distinct content tokens a title must supply to count as the query's subject. */
 const TITLE_SUBJECT_MIN_COVERAGE = 0.5;
 

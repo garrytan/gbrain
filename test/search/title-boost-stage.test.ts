@@ -72,3 +72,28 @@ describe('applyTitleBoost — given-name variants (#7471)', () => {
     expect(other.title_match_boost).toBeUndefined();
   });
 });
+
+describe('applyTitleBoost — qualified (search.title_qualified)', () => {
+  test('a person title inside a longer query is boosted only when on, past the floor', () => {
+    const person = () => ({ ...mk('people/jane-doe', 'Jane Doe', 0.5), type: 'person' }) as SearchResult;
+    const off = person();
+    applyTitleBoost([off], 'Acme Jane Doe', DEFAULT_TITLE_BOOST, 0.85);
+    expect(off.score).toBe(0.5);
+    const on = person();
+    applyTitleBoost([on], 'Acme Jane Doe', DEFAULT_TITLE_BOOST, 0.85, true);
+    expect(on.score).toBeCloseTo(0.625, 6);
+    expect(on.title_match_boost).toBe(1.25);
+  });
+
+  test('a generic title needs three content tokens; forward matches keep the floor', () => {
+    const generic = mk('notes/supply-chain', 'Supply Chain', 0.5);
+    applyTitleBoost([generic], 'northwind supply chain review', DEFAULT_TITLE_BOOST, undefined, true);
+    expect(generic.score).toBe(0.5);
+    const long = mk('notes/review', 'Supply Chain Review', 0.5);
+    applyTitleBoost([long], 'northwind supply chain review', DEFAULT_TITLE_BOOST, 0.85, true);
+    expect(long.score).toBeCloseTo(0.625, 6);
+    const forward = mk('notes/forward', 'Supply Chain Review', 0.5);
+    applyTitleBoost([forward], 'supply chain', DEFAULT_TITLE_BOOST, 0.85, true);
+    expect(forward.score).toBe(0.5);
+  });
+});

@@ -162,6 +162,7 @@ export function buildPostFusionOpts(req: HybridRequest): PostFusionOpts {
     // The raw query drives the matcher; default factor when the knob is unset.
     query,
     titleBoost: resolvedMode.title_boost,
+    titleQualified: resolvedMode.title_qualified,
   };
   return postFusionOpts;
 }

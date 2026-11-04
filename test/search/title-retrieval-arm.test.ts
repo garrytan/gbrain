@@ -390,3 +390,28 @@ describe('hybridSearch wiring — title arm reaches the fused result set', () =>
     expect(results.map(r => r.slug)).toContain('projects/chronomancer');
   });
 });
+
+describe('hybridSearch wiring — qualified alias and title config (opt-in)', () => {
+  test('search.qualified_aliases reaches the alias hop', async () => {
+    await engine.putPage('projects/northwind', { type: 'note', title: 'Project N', compiled_truth: 'Unrelated body.' });
+    await engine.setPageAliases('projects/northwind', 'default', ['northwind supply chain review']);
+    const query = 'notes about the northwind supply chain review today';
+    const off = await hybridSearch(engine, query, { limit: 10, expansion: false });
+    expect(off.find(r => r.slug === 'projects/northwind')?.alias_hit).not.toBe(true);
+    await engine.setConfig('search.qualified_aliases', 'true');
+    const on = await hybridSearch(engine, query, { limit: 10, expansion: false });
+    expect(on[0]?.slug).toBe('projects/northwind');
+    expect(on[0]?.alias_hit).toBe(true);
+  });
+
+  test('search.title_qualified reaches the title boost', async () => {
+    await engine.putPage('notes/lattice', { type: 'note', title: 'Quantum Lattice Harmonics', compiled_truth: 'A reference document.' });
+    await installFixtureChunks(engine, 'notes/lattice', [{ chunk_index: 0, chunk_text: 'Quantum lattice harmonics overview reference.', chunk_source: 'compiled_truth' }]);
+    const query = 'quantum lattice harmonics overview';
+    const off = await hybridSearch(engine, query, { limit: 10, expansion: false });
+    expect(off.find(r => r.slug === 'notes/lattice')?.title_match_boost).toBeUndefined();
+    await engine.setConfig('search.title_qualified', 'true');
+    const on = await hybridSearch(engine, query, { limit: 10, expansion: false });
+    expect(on.find(r => r.slug === 'notes/lattice')?.title_match_boost).toBe(1.25);
+  });
+});

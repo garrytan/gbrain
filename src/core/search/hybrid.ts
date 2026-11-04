@@ -33,7 +33,8 @@ import type { RrfAttribution } from '../types.ts';
 import {
   isAmbiguousModalityQuery,
 } from './query-intent.ts';
-import { isTitlePhraseMatch, titleNameVariants } from './title-match.ts';
+import { isQualifiedTitleMatch, isTitlePhraseMatch, titleNameVariants } from './title-match.ts';
+import { isIdentityEntity } from '../entities/resolve.ts';
 import { applyGraphSignals, graphSignalPageIds } from './graph-signals.ts';
 import { applyAliasResolvedBoost, readAliasCanonicals } from './hybrid/alias-resolved.ts';
 import {
@@ -417,14 +418,19 @@ export function applyTitleBoost(
   query: string,
   factor: number,
   floorThreshold?: number,
+  qualified = false,
 ): void {
   if (!query || !Number.isFinite(factor) || factor <= 1.0) return;
   const queries = [query, ...titleNameVariants(query)];
   for (const r of results) {
     if (!Number.isFinite(r.score)) continue;
-    if (floorThreshold !== undefined && r.score < floorThreshold) continue;
     if (!r.title) continue;
-    if (queries.some(q => isTitlePhraseMatch(q, r.title!))) {
+    const forward = queries.some(q => isTitlePhraseMatch(q, r.title!));
+    // `search.title_qualified`: a title contained in a longer query matches
+    // too, without the floor (a weak row is exactly what it rescues).
+    const contained = qualified && !forward && queries.some(q => isQualifiedTitleMatch(q, r.title!, isIdentityEntity(r.slug, r.type)));
+    if (!contained && floorThreshold !== undefined && r.score < floorThreshold) continue;
+    if (forward || contained) {
       r.score *= factor;
       r.title_match_boost = factor; // attribution stamp (v0.40.4 convention)
     }
@@ -527,6 +533,8 @@ export interface PostFusionOpts extends PageReadPolicy {
    * metadata stages so a title hit can't bury a strong semantic match.
    */
   titleBoost?: number;
+  /** `search.title_qualified`: also boost a title contained in the query (applyTitleBoost). */
+  titleQualified?: boolean;
   /**
    * Ranker wave (Phase E3, Cat 13) — `search.metadata_boost_gate = lexical`
    * resolved to "the vector arm was the only voter" (metadata-boost-gate.ts).
@@ -643,7 +651,7 @@ export async function runPostFusionStages(
   // but guarded so a bad query/title can't throw the whole pipeline.
   if (opts.query && opts.titleBoost && opts.titleBoost > 1.0) {
     try {
-      applyTitleBoost(results, opts.query, opts.titleBoost, floorThreshold);
+      applyTitleBoost(results, opts.query, opts.titleBoost, floorThreshold, opts.titleQualified);
     } catch {
       // Non-fatal; preserves the per-stage contract.
     }
