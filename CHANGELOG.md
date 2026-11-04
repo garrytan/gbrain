@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.569.0] - 2026-11-04
 
 **Memory train (GBRA-286): `forget` edits the page files first, pasted documents ingest into pages and facts, `recall` can weigh how far a fact deserves belief, page versions carry a human reason and can be read by date, and agents can read and switch the saving rule. Every new mode is off by default, and every feature works on a brain with no Git repository.**
 
@@ -121,6 +121,7 @@ Before, the rule for what an agent saves lived in the MCP instructions, and only
 | `memory_conversation_mode` | any connection that can call `remember` | returns the rule for the rest of this conversation: all, salient, off (only what the user asks to keep) or brain; stores nothing |
 
 The new `memory.agent_writeback` key changes only what agents are told. The host capture lanes (Stop hook, compaction harvest, SessionEnd transcripts) keep following the operator's `memory.auto_writeback`, so a remote "off" can't discard banked session text and a remote "all" can't start capture the operator never enabled. An unreadable or unrecognized override makes agents act as if saving is off and `get_memory_settings` reports `degraded`. The MCP instructions gain one line telling the agent to use the switch, after the governing rule, wherever the tool is served (starter and full surfaces). `gbrain config set|get memory.agent_writeback` works from the CLI.
+
 ## [0.60.568.0] - 2026-11-03
 
 **A brain opened from settings keeps its files in its own store.** On an engine opened from settings, every file operation (`file_upload`, `file_url`, page purge and the new `file_verify`) uses the engine's own `settings.storage`: a local path, or s3 with its endpoint and keys, and an optional one-segment key `prefix` so brains sharing a bucket each keep their own keys. The process storage config is never used there. `file_verify` lists which rows still have their object or re-hashes one. A brain the CLI or a server opens is unchanged, and there `file_verify` refuses `embedded_engine_required`; it is never an MCP tool. `file_register`, which lets a host record bytes it stored itself, ships separately. Contributed by @bradgessler (#8457).
