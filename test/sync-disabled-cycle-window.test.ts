@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { makeAutopilotCycleHandler } from '../src/core/minions/handlers/autopilot-cycle.ts';
 import { SOURCE_FRESHNESS_PHASES } from '../src/core/cycle/phase-scope.ts';
-import { sourceFirstWalk } from '../src/core/cycle/source-window.ts';
+import { sourceCycleWindowStamp, sourceFirstWalk } from '../src/core/cycle/source-window.ts';
 import { performSync } from '../src/commands/sync.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -69,6 +69,15 @@ async function liveFacts(engine: BrainEngine, sourceId: string, slug: string) {
 }
 
 describe('#8573 sync-disabled source cycle window', () => {
+  test('a failed phase that read the window keeps it, extract included; a failed first-walk chunk keeps its cursor', () => {
+    const window = { at: '2026-01-02T00:00:00Z', slugs: ['a'] };
+    for (const phase of ['extract', 'extract_facts', 'recompute_emotional_weight']) {
+      expect(sourceCycleWindowStamp([{ phase, status: 'fail' }], '2026-01-01T00:00:00Z', window)).toEqual({ last_source_cycle_window_at: '2026-01-01T00:00:00Z' });
+      expect(sourceCycleWindowStamp([{ phase, status: 'fail' }], null, { ...window, walk: { startedAt: window.at, next: 'a' } })).toEqual({ last_source_cycle_window_at: '' });
+    }
+    expect(sourceCycleWindowStamp([{ phase: 'lint', status: 'fail' }], '2026-01-01T00:00:00Z', window)).toEqual({ last_source_cycle_window_at: window.at });
+  });
+
   test('a sync-disabled git source reconciles only pages changed since its last cycle; an explicit sync between cycles lands in the next window', async () => withEnv(env, async () => {
     for (const engine of engines) {
       const { id, dir } = await source(engine, { syncEnabled: false });

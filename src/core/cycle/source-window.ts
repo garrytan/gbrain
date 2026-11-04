@@ -62,14 +62,15 @@ export async function listSourceChangedPages(engine: BrainEngine, sourceId: stri
 
 /**
  * The config stamp that starts the next window: this listing's instant, or,
- * when a phase that consumed the window failed, the same window again
+ * when a phase that consumed the window (extract, extract_facts,
+ * recompute_emotional_weight) failed, the same window again
  * ('' = the first walk, resumed from its stamped cursor). A first-walk chunk
  * stamps its cursor; the last one stamps the walk's first instant.
  */
 export function sourceCycleWindowStamp(phases: ReadonlyArray<{ phase: string; status: string }>, since: string | null | undefined,
   window: SourceCycleWindow | undefined): Record<string, string | null> {
   if (!window?.at) return {};
-  const failed = phases.some(r => (r.phase === 'extract_facts' || r.phase === 'recompute_emotional_weight') && r.status === 'fail');
+  const failed = phases.some(r => (r.phase === 'extract' || r.phase === 'extract_facts' || r.phase === 'recompute_emotional_weight') && r.status === 'fail');
   if (failed) return { last_source_cycle_window_at: since ?? '' };
   if (!window.walk) return { last_source_cycle_window_at: window.at };
   return window.walk.next !== null
