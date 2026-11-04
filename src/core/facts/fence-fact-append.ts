@@ -43,6 +43,7 @@ import { withPendingFenceRows } from '../eligibility/fence-overlay.ts';
 import { withPageTierKept } from '../trust/fence-append.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { extractFactsFromFenceText, UNATTRIBUTED_MEMORY_SLUG } from './extract-from-fence.ts';
+import { rememberAcceptsPageCreatedSince } from '../persistence/page-identity.ts';
 import { fenceRowOf, type FenceRowInput } from './unfenced-facts.ts';
 
 export type FenceFactAppendInput = {
@@ -170,7 +171,8 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
   // The canonical parser/chunker and durable filesystem publication; the CAS binds this render to the snapshot.
   // #5575 ENG-1: the new row has no facts row yet; its chunks are cut at the append's tier.
   const prepared = await withPendingFenceRows({ ...page, rowNums: [rowNum], tier: input.pendingTier },
-    () => preparePageMutation(engine, { ...row, intent: { ...row.intent, content, ...(snapshot ? { expected_revision: snapshot.revision } : {}), force: false } }, config, undefined, signal, { unprojected: true }));
+    () => preparePageMutation(engine, { ...row, ...(snapshot && rememberAcceptsPageCreatedSince(row, snapshot) ? { page_id: snapshot.page.id } : {}),
+      intent: { ...row.intent, content, ...(snapshot ? { expected_revision: snapshot.revision } : {}), force: false } }, config, undefined, signal, { unprojected: true }));
   if (prepared.observedRevision !== (snapshot?.revision ?? null)) {
     throw opError('revision_conflict', 'The entity page changed during preparation.',
       `Another write changed ${row.slug} in source ${row.source_id} while request ${row.request_id} was prepared, so it did not save. Check that request's receipt; once it shows conflict, nothing was saved and submitting it again is safe.`,

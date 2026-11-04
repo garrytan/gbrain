@@ -5,7 +5,7 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
-import { pageIdentityError } from './page-identity.ts';
+import { pageIdentityError, rememberAcceptsPageCreatedSince } from './page-identity.ts';
 import { atomicStagingPath, atomicWriteFileSync, mkdirPrivate, validateAtomicStagingPath } from '../atomic-write.ts';
 import { flushDirectory } from '../fs-durable.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
@@ -612,7 +612,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         // A rename moves an existing page (its old slug is an additional key): not a new page.
         createdPage = snapshot === null && !prepared.additionalPageKeys?.length;
         await authorizePageVisibility(tx, row.authority, row.slug);
-        if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted page was deleted or recreated.');
+        if ((snapshot?.page.id ?? null) !== row.page_id && !rememberAcceptsPageCreatedSince(row, snapshot)) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted page was deleted or recreated.');
         await assertUnboundPublication(tx, row, snapshot?.page.source_path);
         if ((snapshot?.revision ?? null) !== prepared.observedRevision) throw new OperationError('revision_conflict', PAGE_CHANGED_DURING_PREPARATION_MESSAGE, 'Read its current revision and submit the updated intent with a new request_id.');
         for (const companion of companions) {

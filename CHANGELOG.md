@@ -23,11 +23,11 @@ Git stays the parent: a withdrawal is now a page write, published to Git before 
 | Situation | Before | Now |
 |---|---|---|
 | `forget` / `forget_fact` | the database expired the fact; the page files caught up later through a mirror | every page whose `## Facts` table carries the claim gets its row struck (`~~claim~~`, a `valid_until` date, `forgotten: <reason>`), all in one publication and one commit, then the ledger row and expiries in the same transaction |
-| `remember` without an entity | a database-only row | a row of the `memory/unattributed` page's `## Facts` table, created on first use, so Git, `recall` and search see it |
+| `remember` without an entity | a database-only row | a row of the `memory/unattributed` page's `## Facts` table, created on first use (concurrent first saves all land on it), so Git, `recall` and search see it |
 | Remembering that claim again with an entity | two copies | the entity row is written and the unattributed row struck in the same publication |
 | A member forgets a fact on their own member page | withdrawn for that page | unchanged: the withdrawal stays on that page, and other members' copies stay active |
 
-A forget now waits for the source's writer the way `remember` does: with the writer unavailable it returns the pending-write receipt, and the fact is still recalled until it publishes. With `sync.write_through` off, or on a source with no canonical owner, a forget of a claim a page file carries is refused (`sync_write_through_off`, `unbound_source`) instead of withdrawing it in the database only; a claim only database-only pages carry is still withdrawn. Migration v287 adds the multi-page recovery record (one record restores every file of an interrupted publication); it rewrites no data.
+A forget now waits for the source's writer the way `remember` does: with the writer unavailable it returns the pending-write receipt, and the fact is still recalled until it publishes. With `sync.write_through` off, from a sandboxed subagent, or on a source with no canonical owner, a forget of a claim a page file carries is refused (`sync_write_through_off`, `subagent_sandbox`, `unbound_source`) instead of withdrawing it in the database only; a claim only database-only pages carry is still withdrawn. Migration v287 adds the multi-page recovery record (one record restores every file of an interrupted publication); it rewrites no data.
 
 ### Review lists and review decisions through the page door (#7791, #7797)
 
@@ -95,6 +95,7 @@ A page can now say when its text takes effect, with `valid_from` and `valid_unti
 - The answer is the edition with the latest `valid_from` on or before the date, picked across the current page and every version gbrain kept. Its `valid_time` block says whether that edition was `in_force`, `not_in_force`, `not_yet_in_force` or `before_recorded_history`, and whether gbrain held enough history to be sure. Only an `in_force` answer returns the text at the top level, so an agent that skips the status cannot quote expired text as current.
 - When history is missing (pruned versions, a sync that imported several commits at once, a page that came from a file) or the dates look ambiguous (a corrected date and a renewal leave the same trace), the answer says `uncertain: true`, why, and how to recover: the file's `git log`, or asking the user for a backup. It never guesses.
 - Works the same on a brain with no Git repository, the default keyless install.
+- Over MCP, an `as_of` read follows the plain read's rules: a quarantined page's body is omitted, and an edition's `introduced_because` is shown only when the edition it replaced is one the caller may read.
 - `gbrain get --as-of` exits 15 when no edition was in force, and 16 (`host_upgrade_required`) when the brain host is too old to answer by date, printing nothing historical.
 - Writes say when they keep or change an edition's date (`valid_time_correction`, `valid_time_date_only`, `valid_from_unparsed`), and `get_versions` rows carry each version's `valid_from` and `valid_until`.
 - Behavior change: a plain `get_page` of a page whose own `valid_from` is in the future, or whose `valid_until` has passed, now also carries a `valid_time` status. Pages without those dates read exactly as before.

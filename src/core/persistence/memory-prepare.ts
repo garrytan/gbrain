@@ -1,7 +1,7 @@
 import type { BrainEngine, NewFact } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { opError } from '../ops/contract.ts';
-import { pageIdentityError } from './page-identity.ts';
+import { pageIdentityError, rememberAcceptsPageCreatedSince } from './page-identity.ts';
 import { assertPageRevision } from '../page-state/types.ts';
 import { assertFactNotWithdrawn, decideReplacement, decideSingleFact, prepareFactEmbedding, type SingleFactIntent } from '../facts/single-prepare.ts';
 import { supersededValidUntil } from '../facts/supersede-interval.ts';
@@ -79,9 +79,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     ...(p.member_page === true ? { page_slug: row.slug } : {}),
     ...(claim ? { slot: { ...claim, valid_from: String(p.valid_from) } } : {}) };
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
-  // GST-359 C2: a member page another write created after this one was accepted is the same page, not a recreation.
-  const createdSince = p.member_page === true && row.page_id === null && snapshot !== null && !snapshot.page.deleted_at;
-  if ((snapshot?.page.id ?? null) !== row.page_id && !createdSince) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted entity was deleted or recreated.');
+  if ((snapshot?.page.id ?? null) !== row.page_id && !rememberAcceptsPageCreatedSince(row, snapshot)) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted entity was deleted or recreated.');
   if (p.member_page === true && snapshot && !memberPageIsOwn(row.slug, snapshot.page.frontmatter)) throw memberPageNotOwned(row.slug);
   // A defaulted visibility never lands broader than the target page as it stands at publication.
   if (p.visibility_defaulted === true && snapshot) input.visibility = tightenToPage(input.visibility, await withFolderRestricted(engine, snapshot.page));

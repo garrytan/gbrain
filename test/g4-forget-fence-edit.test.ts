@@ -214,6 +214,28 @@ for (const backend of testBackends()) describe(`[${backend}] G4: forget is a fen
     expect(await ledger(engine, OTHER)).toEqual(['notes/b']);
   }, { databaseUrl, setup }), 180_000);
 
+  for (const shape of ['repository', 'repo-less'] as const) test(`three parallel first remembers without an entity all commit to memory/unattributed (${shape})`, () => managedBrain(async ({ engine, ctx }) => {
+    const facts = ['Parallel claim one g4par', 'Parallel claim two g4par', 'Parallel claim three g4par'];
+    const results = await Promise.all(facts.map(fact => call(ctx, 'remember', { fact, provenance: 'test', visibility: 'world', infer_entity: false })));
+    expect(results.map(r => r.state)).toEqual(['committed', 'committed', 'committed']);
+    const stored = await engine.executeRaw<{ fact: string }>(`SELECT fact FROM facts WHERE source_id='default' AND entity_slug IS NULL AND expired_at IS NULL AND fact LIKE '%g4par' ORDER BY fact`);
+    expect(stored.map(row => row.fact)).toEqual([...facts].sort());
+  }, { databaseUrl, ...(shape === 'repository' ? { setup } : {}) }), 180_000);
+
+  test('a sandboxed subagent forget refuses a claim a canonical file carries and withdraws nothing', () => managedBrain(async ({ engine, ctx, root }) => {
+    const slug = 'wiki/agents/7/notes-a';
+    expect(await call(ctx, 'put_page', { slug, content: note('A', [`| 1 | ${CLAIM} | fact | 1.0 | world | medium | 2026-01-01 |  | test |  |`]) })).toMatchObject({ state: 'committed' });
+    const { settleManagedGitEffects } = await import('./helpers/managed-brain.ts');
+    await settleManagedGitEffects(engine);
+    const id = (await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source_id='default' AND fact=$1 AND expired_at IS NULL`, [CLAIM]))[0]!.id;
+    const before = readFileSync(join(root, `${slug}.md`), 'utf8');
+    const refused = await call({ ...ctx, viaSubagent: true, subagentId: 7 } as OperationContext, 'forget', { id: String(id) }).catch((error: { code?: string; detail?: string }) => error);
+    expect({ code: refused.code, detail: refused.detail }).toEqual({ code: 'scope_denied', detail: 'subagent_sandbox' });
+    expect(readFileSync(join(root, `${slug}.md`), 'utf8')).toBe(before);
+    expect(await ledger(engine, CLAIM)).toEqual([]);
+    expect((await engine.executeRaw<{ active: boolean }>('SELECT expired_at IS NULL AS active FROM facts WHERE id=$1', [id]))[0]!.active).toBe(true);
+  }, { databaseUrl, setup }), 180_000);
+
   test('a source whose owner is unavailable still withdraws a claim only a database-only page carries', () => managedBrain(async ({ engine, ctx, root }) => {
     await engine.setConfig('sync.write_through', 'false');
     expect(await call(ctx, 'put_page', { slug: 'notes/b', content: note('B', [`| 1 | ${OTHER} | fact | 1.0 | world | medium | 2026-01-01 |  | test |  |`]) })).toMatchObject({ state: 'committed' });
