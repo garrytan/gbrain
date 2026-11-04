@@ -227,6 +227,8 @@ describe('who may call file_register', () => {
     for (const transport of ['stdio', 'http'] as const) expect(isCallable(operationsByName.file_register!, { transport, surface: 'full', scopes: ['admin'], publishGates: {} })).toBe(false);
     const result = await dispatchToolCall(engine, 'file_register', {}, { remote: true, transport: 'stdio' } as never);
     expect(result.isError).toBe(true);
+    const refusal = JSON.parse((result.content as Array<{ text: string }>)[0]!.text);
+    expect([refusal.code, refusal.fix?.argv?.slice(0, 3), refusal.fix?.inputs]).toEqual(['trusted_local_only', ['gbrain', 'files', 'verify'], undefined]);
     expect(await fileRows(engine)).toBe(0);
   });
 

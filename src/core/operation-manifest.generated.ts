@@ -3722,10 +3722,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "argv": [
         "gbrain",
         "files",
-        "upload",
-        "<file>",
-        "--page",
-        "<page_slug>"
+        "verify"
       ]
     },
     "area": "files"
