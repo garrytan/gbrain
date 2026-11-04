@@ -137,6 +137,10 @@ export interface ReportEvidence {
   storage: IngestStorage;
   created_pages: Array<{ slug: string; request_id: string; revision: string | null; proposed: boolean }>;
   created_facts: Array<{ id: number; entity_slug: string; request_id: string }>;
+  /** Writes still pending when a run ended; a resume settles them from their receipts. */
+  pending_pages?: Array<{ slug: string; request_id: string; proposed: boolean }>;
+  pending_facts?: Array<{ entity_slug: string; fact: string; request_id: string }>;
+  source_request_id?: string;
   support_fact_ids: number[];
   status: ReportStatus;
   undone_at?: string;

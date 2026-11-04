@@ -132,6 +132,10 @@ for (const storage of ['git', 'database'] as ReviewStorage[]) {
       fx = await reviewDoorFixture(engine, storage);
       await S.ambiguousNamesakeScenario(engine);
     }, 60_000);
+    test('a run left pending by a page write resumes and writes the claims it held back', async () => {
+      fx = await reviewDoorFixture(engine, storage);
+      await S.pendingPageResumeScenario(engine);
+    }, 90_000);
     test('a failed commit resumed keeps its ownership evidence, so undo retracts everything the attempt created', async () => {
       fx = await reviewDoorFixture(engine, storage);
       await S.failedCommitResumeUndoScenario(engine);

@@ -20,6 +20,7 @@ import { strikeFenceRow } from '../facts/forget.ts';
 import { checkFactAgainstSaved } from '../facts/backstop.ts';
 import { isUnverifiedExtraction, quarantineMarkers } from '../extraction-review.ts';
 import { tryAcquireDbLock } from '../db-lock.ts';
+import { isTerminal } from '../persistence/model.ts';
 import { withPublicationGuard } from '../persistence/publication-guard.ts';
 import { resolveFactWriteTarget } from '../persistence/fact-write-target.ts';
 import { privatePagesFilterForCaller, resolveExcludePrivatePages } from '../search/private-visibility.ts';
@@ -316,6 +317,25 @@ async function commitPlan(ctx: OperationContext, state: IngestAttemptState, plan
       ...(revision ? { expected_revision: revision } : {}) }, true);
     if (!r.ok) throw opError('ingest_commit_failed', 'The ingest report page could not be written (' + r.code + ').', r.message);
   };
+  // A resume settles the receipts an earlier run left pending before it writes anything again: a committed write is the
+  // attempt's own, one still pending is not submitted twice, and a refused one is planned and written again.
+  const { getWriteRequest } = await import('../persistence/journal.ts');
+  const receipt = (request_id: string) => getWriteRequest(ctx.engine, state.principal, request_id);
+  const pendingPages: NonNullable<ReportEvidence['pending_pages']> = [];
+  for (const pg of evidence.pending_pages ?? []) {
+    const row = await receipt(pg.request_id);
+    if (row?.state === 'committed') evidence.created_pages.push({ ...pg, revision: null });
+    else if (row && !isTerminal(row)) pendingPages.push(pg);
+  }
+  const pendingFacts: NonNullable<ReportEvidence['pending_facts']> = [];
+  for (const f of evidence.pending_facts ?? []) {
+    const row = await receipt(f.request_id);
+    const outcome = asRecord(row?.outcome);
+    if (row?.state === 'committed' && outcome.status !== 'duplicate' && Number.isFinite(Number(outcome.id))) evidence.created_facts.push({ id: Number(outcome.id), entity_slug: f.entity_slug, request_id: f.request_id });
+    else if (row && !isTerminal(row)) pendingFacts.push(f);
+  }
+  evidence.pending_pages = pendingPages;
+  evidence.pending_facts = pendingFacts;
   // The source page: create-only, keyed by the document hash; an existing page with this document is reused.
   const existing = await ctx.engine.readPageSnapshot(state.source_slug, { sourceId, includeDeleted: true });
   if (existing && !existing.page.deleted_at) {
@@ -325,6 +345,8 @@ async function commitPlan(ctx: OperationContext, state: IngestAttemptState, plan
       throw opError('ingest_commit_failed', 'Page ' + state.source_slug + ' already exists with other content.', 'Nothing else was written. Pass another slug, or omit it to file the document under its content hash.');
     }
     report.source_page = { slug: state.source_slug, status: evidence.source_created ? 'created' : 'existing' };
+  } else if (evidence.source_request_id && await receipt(evidence.source_request_id).then(row => !!row && !isTerminal(row))) {
+    report.source_page = { slug: state.source_slug, status: 'pending', request_id: evidence.source_request_id };
   } else {
     const r = await publish(ctx, sourceId, { slug: state.source_slug, content: sourcePageContent(state, title, text), ...(existing ? { expected_revision: existing.revision } : {}) });
     if (!r.ok) {
@@ -334,6 +356,7 @@ async function commitPlan(ctx: OperationContext, state: IngestAttemptState, plan
     report.source_page = { slug: state.source_slug, status: r.pending ? 'pending' : 'created', request_id: r.request_id };
     report.write_requests.push({ slug: state.source_slug, request_id: r.request_id, state: r.pending ? 'pending' : 'committed' });
     evidence.source_created = true;
+    evidence.source_request_id = r.request_id;
     await saveAttempt(ctx.engine, state);
   }
   await writeReport();
@@ -352,10 +375,16 @@ async function commitPlan(ctx: OperationContext, state: IngestAttemptState, plan
       const at = { ...base, slug: target.slug };
       const snap = await ctx.engine.readPageSnapshot(target.slug, { sourceId, includeDeleted: true });
       if (snap && !snap.page.deleted_at) return null;
+      const held = evidence.pending_pages!.find(x => x.slug === target.slug);
+      if (held) return { ...at, status: 'pending', request_id: held.request_id };
       const r = await publish(ctx, sourceId, { slug: target.slug, content: entityPageContent(target, proposed, state), ...(snap ? { expected_revision: snap.revision } : {}) });
       if (!r.ok) return { ...at, status: 'failed', reason: r.code };
       report.write_requests.push({ slug: target.slug, request_id: r.request_id, state: r.pending ? 'pending' : 'committed' });
-      if (r.pending) return { ...at, status: 'pending', request_id: r.request_id };
+      if (r.pending) {
+        evidence.pending_pages!.push({ slug: target.slug, request_id: r.request_id, proposed });
+        await saveAttempt(ctx.engine, state);
+        return { ...at, status: 'pending', request_id: r.request_id };
+      }
       evidence.created_pages.push({ slug: target.slug, request_id: r.request_id, revision: null, proposed });
       await saveAttempt(ctx.engine, state);
       return { ...at, status: proposed ? 'proposed' : 'created', request_id: r.request_id };
@@ -389,6 +418,8 @@ async function commitPlan(ctx: OperationContext, state: IngestAttemptState, plan
         row.copies.push({ entity_slug: c.entity_slug, status: pageRow?.status === 'pending' ? 'pending' : 'skipped', reason: pageRow?.status === 'pending' ? 'page_pending' : 'page_not_written' });
         continue;
       }
+      const held = evidence.pending_facts!.find(x => x.entity_slug === target.slug && x.fact === f.fact);
+      if (held) { row.copies.push({ entity_slug: target.slug, status: 'pending', request_id: held.request_id }); continue; }
       const check = await checkFactAgainstSaved(ctx.engine, sourceId, { fact: f.fact, kind: f.kind, visibility: state.options.visibility, entity_slug: target.slug }, { excludePrivate });
       if (check.verdict === 'withdrawn') { row.copies.push({ entity_slug: target.slug, status: 'skipped', reason: 'withdrawn' }); continue; }
       if (check.verdict === 'duplicate' && evidence.created_facts.some(x => x.id === check.id)) { row.copies.push({ entity_slug: target.slug, status: 'created', fact_id: check.id }); continue; }
@@ -407,9 +438,19 @@ async function commitPlan(ctx: OperationContext, state: IngestAttemptState, plan
         const pending = pendingOf(res);
         row.copies.push({ entity_slug: target.slug, status: pending ? 'pending' : 'created', ...(Number.isFinite(id) ? { fact_id: id } : {}), request_id });
         report.write_requests.push({ slug: target.slug, request_id, state: pending ? 'pending' : 'committed' });
-        if (!pending && Number.isFinite(id)) { evidence.created_facts.push({ id, entity_slug: target.slug, request_id }); await saveAttempt(ctx.engine, state); }
+        if (!pending && Number.isFinite(id)) evidence.created_facts.push({ id, entity_slug: target.slug, request_id });
+        if (pending) evidence.pending_facts!.push({ entity_slug: target.slug, fact: f.fact, request_id });
+        await saveAttempt(ctx.engine, state);
       } catch (error) {
         if (!(error instanceof OperationError)) throw error;
+        // remember's frozen verb contract reports a pending write as unavailable with writeError write_pending.
+        if (error.writeError === 'write_pending') {
+          row.copies.push({ entity_slug: target.slug, status: 'pending', request_id });
+          report.write_requests.push({ slug: target.slug, request_id, state: 'pending' });
+          evidence.pending_facts!.push({ entity_slug: target.slug, fact: f.fact, request_id });
+          await saveAttempt(ctx.engine, state);
+          continue;
+        }
         row.copies.push({ entity_slug: target.slug, status: 'failed', reason: error.code, request_id });
       }
     }
@@ -537,7 +578,8 @@ async function runIngest(ctx: OperationContext, p: Params): Promise<Record<strin
   report.status = resolveStatus({ failed: items.includes('failed'), pending: items.includes('pending'), incomplete: false });
   report.complete = report.status === 'complete';
   state.support_fact_ids = evidence.support_fact_ids;
-  state.phase = report.status === 'failed' ? 'failed' : 'complete';
+  // A write still pending keeps the attempt resumable: a resume settles its receipts and writes what waited on it.
+  state.phase = report.status === 'failed' ? 'failed' : report.status === 'pending' ? 'committing' : 'complete';
   state.report = finish(ctx, state, report);
   evidence.status = report.status;
   const revision = await snapshotRevision(ctx, sourceId, state.report_slug);

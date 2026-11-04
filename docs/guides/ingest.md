@@ -118,7 +118,9 @@ The attempt checkpoint is written before the first provider call and advanced af
 and the cumulative spend), on both storages, so a resume after a budget stop, a kill switch or a crashed process
 never pays for a finished window again. A resume needs the same document text (its hash must match). New options
 (keyed after keyless, `--trusted-extraction`) or a re-ingest after undo start a new attempt on the same source
-page; claim dedup keeps it from saving a claim twice.
+page; claim dedup keeps it from saving a claim twice. A run that ends with writes still pending (exit 10) resumes the
+same way once they settle: the resume reads each pending write's receipt, counts a committed one as the attempt's
+own (undo retracts it), never submits one still pending twice, and writes the claims that waited on a pending page.
 
 ## Storage
 

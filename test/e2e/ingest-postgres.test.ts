@@ -84,6 +84,7 @@ d('ingest and ingest_undo (live Postgres)', () => {
     test('undo unverifiable (' + label + ')', async () => { fx = await fixture(storage); await S.undoUnverifiableScenario(engine); }, 60_000);
     test('ambiguous namesake (' + label + ')', async () => { fx = await fixture(storage); await S.ambiguousNamesakeScenario(engine); }, 60_000);
     test('failed commit resumed keeps ownership (' + label + ')', async () => { fx = await fixture(storage); await S.failedCommitResumeUndoScenario(engine); }, 90_000);
+    test('pending page write resumes (' + label + ')', async () => { fx = await fixture(storage); await S.pendingPageResumeScenario(engine); }, 90_000);
   }
   test('Git target unavailable refuses before writes', async () => { fx = await fixture('git'); await S.storageUnavailableScenario(engine); }, 60_000);
 });

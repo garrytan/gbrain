@@ -718,6 +718,38 @@ export async function ambiguousNamesakeScenario(engine: BrainEngine): Promise<vo
 }
 
 /**
+ * Item B: a run whose entity page and claim are still pending (no write wait) ends pending, not complete; once publication settles,
+ * an explicit resume writes the claims it held back and counts the page it created as its own for undo.
+ */
+export async function pendingPageResumeScenario(engine: BrainEngine): Promise<void> {
+  await seedEntities(engine);
+  const stub = stubChat();
+  const content = 'Zentrix signed its first enterprise customer last week. Alice Example moved to Lisbon in March.';
+  try {
+    const first = await ingest(engine, { content, title: 'Call notes' }, { writeWaitMs: 0 } as never);
+    expect(first.status).toBe('pending');
+    expect(first.facts.find((f: Report) => f.fact === 'Zentrix signed its first enterprise customer.').copies).toEqual([expect.objectContaining({ entity_slug: 'companies/zentrix', status: 'pending', reason: 'page_pending' })]);
+    expect(first.facts.find((f: Report) => f.fact === 'Alice Example moved to Lisbon in March.').copies).toEqual([expect.objectContaining({ entity_slug: 'people/alice-example', status: 'pending' })]);
+    expect(first.actions.map((a: Report) => a.kind)).toContain('resume');
+    const unsettled = async () => Number((await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM persistence_requests WHERE state NOT IN ('committed', 'conflict', 'failed', 'cancelled')"))[0]!.n);
+    for (let i = 0; i < 100 && await unsettled(); i++) {
+      await drain(engine);
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    expect(await engine.getPage('companies/zentrix')).not.toBeNull();
+    const resumed = await ingest(engine, { content, title: 'Call notes', attempt_id: first.attempt_id, resume: true });
+    expect(resumed.repeated).toBeUndefined();
+    expect(resumed.status).toBe('complete');
+    expect(resumed.facts.find((f: Report) => f.fact === 'Zentrix signed its first enterprise customer.').copies).toEqual([expect.objectContaining({ entity_slug: 'companies/zentrix', status: 'created' })]);
+    expect(resumed.facts.find((f: Report) => f.fact === 'Alice Example moved to Lisbon in March.').copies).toEqual([expect.objectContaining({ entity_slug: 'people/alice-example', status: 'created' })]);
+    expect((await factsOn(engine, 'companies/zentrix')).map(f => f.fact)).toEqual(['Zentrix signed its first enterprise customer.']);
+    const preview = await undo(engine, { attempt_id: first.attempt_id });
+    expect(preview.delete.map((d: Report) => d.slug)).toEqual(expect.arrayContaining(['companies/zentrix', first.source_page.slug]));
+    expect(preview.retract.map((r: Report) => r.entity_slug).sort()).toEqual(['companies/zentrix', 'people/alice-example']);
+  } finally { stub.restore(); }
+}
+
+/**
  * Item C: a commit that dies after the first claim is written, then resumes: the resumed attempt still owns the source
  * page, the entity pages and the claim the failed run committed, so undo retracts and deletes all of them.
  */
