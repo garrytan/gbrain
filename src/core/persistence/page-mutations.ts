@@ -427,7 +427,7 @@ export async function preparePageAdmission(ctx: OperationContext,
     intent.timeline_section = isTimelineSection(input.timelineSection) ? input.timelineSection : timelineSectionOf(p.content, slug);
   }
   if (input.operation === 'put_page') await normalizeSubagentPageInput(ctx, intent);
-  const typeWarning = input.operation === 'put_page' && input.managedFileImport !== true
+  let typeWarning = input.operation === 'put_page' && input.managedFileImport !== true
     ? await undeclaredPageTypeWarning(ctx, { ...intent, slug }, sourceId) : null;
   if (input.operation === 'capture') {
     if (typeof p.content !== 'string' || !normalizeForHash(p.content) || detectBinaryNullByte(Buffer.from(p.content)) !== -1) {
@@ -447,6 +447,8 @@ export async function preparePageAdmission(ctx: OperationContext,
     }
     intent.content = mergeCaptureFrontmatter(p.content, { type, capturedVia: ctx.remote === false ? 'capture-cli' : 'capture-mcp',
       ...Object.fromEntries(['who','what','where','kind','depth'].filter(key => typeof p[key] === 'string').map(key => [key, p[key]])) });
+    // #8507: the default type stays writable under any pack (#4655), so a pack without it gets the warning put_page gives.
+    if (!explicitType) typeWarning = await undeclaredPageTypeWarning(ctx, { ...intent, slug }, sourceId, 'capture');
     intent.capture_hash = computeContentHash(normalizeForHash(p.content));
     // Only a file whose own path names this slug can be the page's origin; sync keys origins by path.
     if (typeof intent.capture_path === 'string' && captureSlug !== slug) {

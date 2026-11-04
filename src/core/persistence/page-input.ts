@@ -34,9 +34,9 @@ export interface PageTypeWarning {
 /**
  * #5880: put_page stores an explicit type the write source's active pack
  * neither declares nor aliases as-is (warn, never reject); the caller gets
- * this warning in the committed result and on its logger.
+ * this warning in the committed result and on its logger. #8507: so does a capture stored under the default type.
  */
-export async function undeclaredPageTypeWarning(ctx: OperationContext, intent: Record<string, unknown>, sourceId: string): Promise<PageTypeWarning | null> {
+export async function undeclaredPageTypeWarning(ctx: OperationContext, intent: Record<string, unknown>, sourceId: string, surface = 'put_page'): Promise<PageTypeWarning | null> {
   if (typeof intent.content !== 'string' || typeof intent.slug !== 'string') return null;
   let parsed: ReturnType<typeof parseMarkdown>;
   try { parsed = parseMarkdown(intent.content, `${intent.slug}.md`); }
@@ -49,7 +49,7 @@ export async function undeclaredPageTypeWarning(ctx: OperationContext, intent: R
     code: 'page_type_undeclared',
     type,
     pack: pack.manifest.name,
-    cause: `${undeclaredPageTypeMessage(type, pack, 'put_page')} The page was stored with this type as-is.`,
+    cause: `${undeclaredPageTypeMessage(type, pack, surface)} The page was stored with this type as-is.`,
     fix: `${undeclaredPageTypeSuggestion(pack)} To declare it: gbrain schema add-type ${safeCliToken(parsed.type) ?? '<type>'} (with its primitive and prefix)`,
     docs: 'docs/architecture/schema-packs.md#undeclared-page-types',
   };
