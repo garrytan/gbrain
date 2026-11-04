@@ -71,7 +71,7 @@ This skill guarantees:
    - List pages in gbrain by type or check backlinks for structural queries
    - Narrow with filters instead of grepping the brain checkout: `--types '["meeting"]'`,
      `--match keyword`, `gbrain query "<q>" --since 2026-09-01 --until 2026-09-30`, `--source <id>`.
-     Copyable examples: "Retrieval: gbrain first" in `skills/conventions/brain-first.md`.
+     Every call and flag: "Which gbrain call for which lookup" in `skills/conventions/brain-first.md`.
 3. **Read top results.** Read the top 3-5 pages from gbrain to get full context.
 4. **Synthesize answer** with citations. Every claim traces back to a specific page slug.
 5. **Flag gaps.** If the brain doesn't have info, say "the brain doesn't have information on X" rather than hallucinating. Read the result's notices first (see "When it fails"): a degraded or truncated result is not a gap.
@@ -82,7 +82,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 
 - Check each retrieval result for notices before answering: on MCP, extra text blocks whose first line looks like [gbrain notice empty_retrieval kind=degraded], mirrored in `_meta.gbrain_notices`; on the CLI, the `[AGENT]` block, `search_degraded`, or a `note: search degraded` line.
 - `empty_retrieval` with `kind=degraded` (or `search_degraded: keyword_only_no_embedding_provider`): an empty result is NOT proof the user has no notes. Tell the user "your brain is searching keywords only right now, so I may be missing notes on X", try exact names and synonyms with `gbrain search`, and point to the notice's fix (usually enabling embeddings).
-- `empty_retrieval` with "no retrieval degradation — this is a clean miss": then say "the brain doesn't have information on X".
+- `empty_retrieval` with "retrieval healthy": nothing was degraded, but this one query matched nothing. Before saying "the brain doesn't have information on X", try the display name, a synonym or a hybrid search (`--match hybrid`, the default).
 - `listing_truncated` or `budget_truncated`: the list was cut off. Say "showing the first N", and page or narrow the query before claiming something is absent.
 - `page_not_found` from `get_page`: the slug is wrong or in another source; search by title (and check `--source`) before reporting the page missing.
 

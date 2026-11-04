@@ -1828,13 +1828,33 @@ Bun blocks gbrain's postinstall on `bun install -g` (`Blocked 1 postinstall`); a
 
 ## Memory operating protocol
 
-**Retrieval: gbrain first.** For anything in the brain, run `gbrain search` (names,
-codes, phrases) or `gbrain query` (questions), then `gbrain get <slug>` on a hit.
-Don't grep, cat or SQL the brain checkout first. Filters agents miss:
-`--types '["meeting"]'`, `--match keyword` (every matching page), `--since`/`--until`
-on `query`, `--source <id>`, `--limit`, `--json`; `gbrain backlinks <slug>` and
-`gbrain timeline <slug>` for links and dated events. Copyable examples:
-[brain-first](skills/conventions/brain-first.md#retrieval-gbrain-first).
+**Which gbrain call for which lookup.** Details and caveats: [brain-first](skills/conventions/brain-first.md#which-gbrain-call-for-which-lookup).
+
+<!-- BEGIN GENERATED lookup-table (copied from skills/conventions/brain-first.md by bun run regen:all) -->
+Ask gbrain before you `grep`, `cat`, `ls` or run SQL on the brain checkout: it
+reads the index across every source, ranks, filters and names the slug to read
+next. With the gbrain MCP server connected, call the tool of the same name
+instead of the CLI (one connection, no per-call startup).
+
+| Lookup | CLI | MCP tool |
+|---|---|---|
+| Find a page by name or path | `gbrain find <name\|prefix\|glob> [--type T] [--source S]` | `find_pages` |
+| Count pages by kind or source | `gbrain stats --by source,type [--since 30d] [--collapse-aliases]` | `get_stats` (needs an admin-scope token) |
+| Answer a question, search a topic | `gbrain query "<question>" [--types '["meeting"]'] [--since 30d]` | `query` |
+| Pages with these words | `gbrain search "<words>" [--match keyword] [--source S]` | `search` |
+| Read a known page | `gbrain get <slug>` | `get_page` |
+| Read only the part a search hit points at | `gbrain get <slug> --around-chunk-id <chunk_id>` or `--lines '{"from":1,"count":200}'` | `get_page` |
+| What the brain knows about a person or company | `gbrain entity <slug>`, then `gbrain recall "<topic>" --json` | `entity`, `recall` |
+| Links, dated events, every page of a type | `gbrain backlinks <slug>`, `gbrain timeline <slug>`, `gbrain list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
+| Save a fact the user stated | `gbrain remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
+| Why a page didn't rank | `gbrain query "<q>" --explain-target <slug>` | `query` |
+
+Parse `--json` output instead of matching the text; notices go to stderr. Never
+send stderr to `/dev/null`: a refusal there (`no_brain`, `GBRAIN_DB_ACCESS`)
+then reads as "no results"; check the exit code too. Take
+`chunk_id` from a fresh `search --json` hit (an old one fails `revision_changed`),
+and read a degraded notice before concluding the brain has nothing.
+<!-- END GENERATED lookup-table -->
 
 Recall relevant saved context before answering. Resolve a person (an email sender, an attendee) only by an exact match (`gbrain whois <email or name>`), never a search's top hit ([identity rule](skills/conventions/brain-first.md#identity-exact-match)). Save explicit requests to remember with provenance; confirm corrections against the stored record. Automatic capture requires opt-in. Withdrawal (`forget`) removes a fact from active memory; history, source material, and private backups may remain. Never promise physical erasure. Verify changes with actual GBrain calls and distinguish a local test from a new-conversation test in the harness.
 
@@ -2333,7 +2353,7 @@ from recurring:
   narration. When a file's behavior changes, UPDATE its entry to the new truth.
 - **CI is the enforcement, not this prose.** `scripts/check-key-files-current-state.sh`
   (in `bun run verify`) fails on the bolded-release-clause marker in the reference
-  docs AND on size caps for CLAUDE, README, the index, and each subsystem. A written rule caused this disease; a guard
+  docs AND on size caps for CLAUDE, the index, and each subsystem. A written rule caused this disease; a guard
   cures it.
 - **After any CLAUDE.md or reference-doc edit, run `bun run build:llms`** — the
   llms bundle inlines/links these (config in `scripts/llms-config.ts`); the
@@ -3042,10 +3062,34 @@ Only after enabling the selected embedding provider, run `gbrain embed --stale`.
 Use `gbrain query` for expanded retrieval only when its provider use is intended;
 `--no-expand` opts out of expansion independently of the mode.
 
-Once imported, retrieve through gbrain rather than the files: search, then
-`gbrain get <slug>`. Filters (`--types`, `--match keyword`, `query --since/--until`,
-`--source`, `--json`) are in
-[Retrieval: gbrain first](skills/conventions/brain-first.md#retrieval-gbrain-first).
+Once imported, retrieve through gbrain rather than the files
+([brain-first](skills/conventions/brain-first.md#which-gbrain-call-for-which-lookup)):
+
+<!-- BEGIN GENERATED lookup-table (copied from skills/conventions/brain-first.md by bun run regen:all) -->
+Ask gbrain before you `grep`, `cat`, `ls` or run SQL on the brain checkout: it
+reads the index across every source, ranks, filters and names the slug to read
+next. With the gbrain MCP server connected, call the tool of the same name
+instead of the CLI (one connection, no per-call startup).
+
+| Lookup | CLI | MCP tool |
+|---|---|---|
+| Find a page by name or path | `gbrain find <name\|prefix\|glob> [--type T] [--source S]` | `find_pages` |
+| Count pages by kind or source | `gbrain stats --by source,type [--since 30d] [--collapse-aliases]` | `get_stats` (needs an admin-scope token) |
+| Answer a question, search a topic | `gbrain query "<question>" [--types '["meeting"]'] [--since 30d]` | `query` |
+| Pages with these words | `gbrain search "<words>" [--match keyword] [--source S]` | `search` |
+| Read a known page | `gbrain get <slug>` | `get_page` |
+| Read only the part a search hit points at | `gbrain get <slug> --around-chunk-id <chunk_id>` or `--lines '{"from":1,"count":200}'` | `get_page` |
+| What the brain knows about a person or company | `gbrain entity <slug>`, then `gbrain recall "<topic>" --json` | `entity`, `recall` |
+| Links, dated events, every page of a type | `gbrain backlinks <slug>`, `gbrain timeline <slug>`, `gbrain list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
+| Save a fact the user stated | `gbrain remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
+| Why a page didn't rank | `gbrain query "<q>" --explain-target <slug>` | `query` |
+
+Parse `--json` output instead of matching the text; notices go to stderr. Never
+send stderr to `/dev/null`: a refusal there (`no_brain`, `GBRAIN_DB_ACCESS`)
+then reads as "no results"; check the exit code too. Take
+`chunk_id` from a fresh `search --json` hit (an old one fails `revision_changed`),
+and read a degraded notice before concluding the brain has nothing.
+<!-- END GENERATED lookup-table -->
 
 ## Step 4.5: Wire the Knowledge Graph
 
@@ -4873,6 +4917,34 @@ wins; fix the row.
 [agent operator protocol](./conventions/agent-operator-protocol.md). Read the
 error's `code` (fall back to `error`), follow `fix.next`, then run `fix.verify`.
 
+## Which gbrain call for which lookup
+
+<!-- BEGIN GENERATED lookup-table (copied from skills/conventions/brain-first.md by bun run regen:all) -->
+Ask gbrain before you `grep`, `cat`, `ls` or run SQL on the brain checkout: it
+reads the index across every source, ranks, filters and names the slug to read
+next. With the gbrain MCP server connected, call the tool of the same name
+instead of the CLI (one connection, no per-call startup).
+
+| Lookup | CLI | MCP tool |
+|---|---|---|
+| Find a page by name or path | `gbrain find <name\|prefix\|glob> [--type T] [--source S]` | `find_pages` |
+| Count pages by kind or source | `gbrain stats --by source,type [--since 30d] [--collapse-aliases]` | `get_stats` (needs an admin-scope token) |
+| Answer a question, search a topic | `gbrain query "<question>" [--types '["meeting"]'] [--since 30d]` | `query` |
+| Pages with these words | `gbrain search "<words>" [--match keyword] [--source S]` | `search` |
+| Read a known page | `gbrain get <slug>` | `get_page` |
+| Read only the part a search hit points at | `gbrain get <slug> --around-chunk-id <chunk_id>` or `--lines '{"from":1,"count":200}'` | `get_page` |
+| What the brain knows about a person or company | `gbrain entity <slug>`, then `gbrain recall "<topic>" --json` | `entity`, `recall` |
+| Links, dated events, every page of a type | `gbrain backlinks <slug>`, `gbrain timeline <slug>`, `gbrain list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
+| Save a fact the user stated | `gbrain remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
+| Why a page didn't rank | `gbrain query "<q>" --explain-target <slug>` | `query` |
+
+Parse `--json` output instead of matching the text; notices go to stderr. Never
+send stderr to `/dev/null`: a refusal there (`no_brain`, `GBRAIN_DB_ACCESS`)
+then reads as "no results"; check the exit code too. Take
+`chunk_id` from a fresh `search --json` hit (an old one fails `revision_changed`),
+and read a degraded notice before concluding the brain has nothing.
+<!-- END GENERATED lookup-table -->
+
 ## Memory defaults
 
 Preserve the existing agent's identity and instructions. Ordinary setup adds
@@ -5388,11 +5460,11 @@ flowchart LR
     Synthesis --> Answer[Cited answer]
 ```
 
-**Two engines, one contract.** PGLite (Postgres 17 via WASM, zero-config, default) for personal brains up to ~50K pages. Postgres + pgvector (Supabase or self-hosted) for shared / large / multi-machine deployments. The contract-first `BrainEngine` interface in [`src/core/engine.ts`](src/core/engine.ts) defines the 140+ methods both engines implement; CLI and MCP server are generated from one source.
+**Two engines, one contract.** PGLite (Postgres 17 via WASM, zero-config, default) for personal brains up to ~50K pages. Postgres + pgvector (Supabase or self-hosted) for shared, large or multi-machine brains. Both implement one `BrainEngine` contract ([`src/core/engine.ts`](src/core/engine.ts)); CLI and MCP share one op registry.
 
-**Canonical files preserve file-backed knowledge.** Your brain repo holds Markdown that GBrain indexes for retrieval; deletes in git become soft-deletes in the database. DB-only pages, unresolved facts, revision history, and operational state need a separate database backup. See the [system-of-record contract](docs/architecture/system-of-record.md). You can publish public subsets, share team mounts, and run thin-client setups pointing at a colleague's brain server. Topologies in [`docs/architecture/topologies.md`](docs/architecture/topologies.md).
+**Canonical files preserve file-backed knowledge.** Your brain repo holds the Markdown; the database is an index rebuildable from it, and git deletes become soft-deletes. DB-only pages, unresolved facts, history and operational state need a database backup: [where your memory lives](docs/guides/where-your-memory-lives.md), [system of record](docs/architecture/system-of-record.md). Publish public subsets, share team mounts, or point a thin client at a colleague's brain. Topologies in [`docs/architecture/topologies.md`](docs/architecture/topologies.md).
 
-**Two organizational axes (brain ⊥ source).** A *brain* is a database (your personal brain, a team mount you joined). A *source* is a repo inside that brain (wiki, gstack, an essay, a knowledge base). Routing lives in `.gbrain-source` dotfiles and resolves via a documented 6-tier precedence chain. Full diagrams in [`docs/architecture/brains-and-sources.md`](docs/architecture/brains-and-sources.md).
+**Two organizational axes (brain ⊥ source).** A *brain* is a database (your personal brain, a team mount you joined). A *source* is a repo inside that brain. Routing uses `.gbrain-source` dotfiles and a 6-tier precedence chain. Diagrams in [`docs/architecture/brains-and-sources.md`](docs/architecture/brains-and-sources.md).
 
 **Why the graph matters.** Vector search finds similar text; graph retrieval follows stored relationships. Extracted edges are evidence to inspect, not proof that a relationship is true. Graph freshness depends on the write path and maintenance described in [memory boundaries](docs/guides/memory-boundaries.md#page-writes-and-the-graph-are-separate-outcomes). Deep dive: [retrieval architecture](docs/architecture/RETRIEVAL.md); [entity recall](docs/guides/entity-recall.md).
 
@@ -5408,6 +5480,7 @@ Start with `gbrain doctor`. For database access failures, use `gbrain engine sta
 
 - [`docs/INSTALL.md`](docs/INSTALL.md) — every install path, end to end
 - [`docs/guides/bootstrap.md`](docs/guides/bootstrap.md) — the persistent-personal-agent bootstrap contract (interview, identity files, hooks, private repo, security posture, uninstall), plus local harness mode (`gbrain bootstrap harness`) for wiring framework-spawned Claude Code/Codex sessions to a running serve
+- [Anatomy of a page](docs/guides/page-anatomy.md) — frontmatter, timeline, facts; [per-client facts](docs/guides/entity-scoped-facts.md)
 - [`docs/what-schemas-unlock.md`](docs/what-schemas-unlock.md) — why schemas matter: 7 killer use cases, the structural argument for typed page kinds, the agent-co-curates pattern
 - [`docs/schema-author-tutorial.md`](docs/schema-author-tutorial.md) — 5-minute walkthrough: fork the bundled pack, add a custom type, backfill existing pages, prove the wiring via `gbrain whoknows`
 - [`docs/architecture/`](docs/architecture/) — system design, topologies, retrieval theory
@@ -8233,224 +8306,6 @@ echo "Dream cycle complete at $(date)"
 ---
 
 *Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md). See also: [Quiet Hours](quiet-hours.md), [Operational Disciplines](operational-disciplines.md)*
-
----
-
-## docs/guides/github-source.md
-
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/github-source.md
-
-# GitHub source kind: issues and PRs live in the brain
-
-The `github` source kind mirrors issues, pull requests, comments, reviews,
-review comments, labels, assignees, milestones and open-PR CI checks into
-brain pages. One page per item, state in frontmatter, the full thread in the
-body, wikilinks between linked items and every `#<n>` mention. Closed items
-feed the existing dream-cycle atom extraction, so lessons and takes come from
-machinery you already run.
-
-The feature is opt-in and dormant until you register a github-kind source.
-
-## Setup
-
-### 1. Create a fine-grained token
-
-A fine-grained PAT with read permission on `Issues` and `Pull requests`
-(plus `Metadata`, which is mandatory) for the repos you want to track. The
-token must be reachable via an environment variable, by default `GH_TOKEN`.
-It is never stored in the brain; set it in the environment that runs
-`gbrain sync` (and `gbrain serve --http` if you use the webhook).
-
-### 2. Register the source
-
-```bash
-export GH_TOKEN=github_pat_...
-gbrain sources add gh \
-  --kind github \
-  --scope auto
-```
-
-`--scope auto` discovers every repo you own, collaborate on, or belong to as
-an org member. Pin an explicit list instead:
-
-```bash
-gbrain sources add gh \
-  --kind github \
-  --scope repos \
-  --repos owner/one,owner/two
-```
-
-Options:
-
-| Flag | Meaning | Default |
-|---|---|---|
-| `--token-env <var>` | env var holding the token | `GH_TOKEN` |
-| `--scope auto\|repos` | auto-discover vs explicit list | `auto` |
-| `--repos a/b,c/d` | repos when `--scope repos` | none |
-| `--dir <path>` | managed page directory | `$GBRAIN_HOME/clones/<id>-github` |
-
-Repo names are matched case-insensitively everywhere (GitHub treats them
-that way); pages and state always use the lowercase form. The `gh_handle`
-and `gh_involvement` config keys are reserved: tolerated when present,
-ignored by the sync.
-
-### 3. Sync
-
-```bash
-gbrain sync --source gh          # delta sweep since the last run
-gbrain sync --source gh --full   # full reconcile incl. deletions
-```
-
-The first sync is a full bootstrap and may take a while on large histories
-(the API rate bucket throttles it; every item is written atomically, so
-interruptions resume on the next run). Subsequent sweeps use the `since`
-filter and only touch changed items.
-
-Dream cycle and autopilot pick the source up automatically: the cycle's
-`sync` phase runs every registered source, and the `extract` / `patterns` /
-`consolidate` phases turn resolved items into atoms, lessons and takes.
-
-## Freshness model
-
-Three layers, fastest to cheapest:
-
-1. **Webhook (recommended)**: event-driven, sub-second item refreshes.
-   GitHub pushes the change to you the moment it happens; no polling, no
-   standing API traffic. See below.
-2. **Poll sweeps** (fallback): `gbrain sync --source gh` on your own cron or
-   via autopilot. Zero standing infrastructure. A sweep is one list call per
-   repo plus detail calls for changed items. Use it where a webhook cannot
-   reach the brain (no public URL, locked-down network).
-3. **Full reconcile** (daily recommended): `gbrain sync --source gh --full`
-   re-enumerates everything, refreshes strays and deletes pages for items
-   that vanished. Backed by the same mass-delete guard as git sources.
-   It is the audit that catches anything the webhook or sweeps missed.
-
-Every page carries `synced_at` and the API `updated_at` in frontmatter, so
-staleness is measurable and the next sweep skips fresh pages.
-
-A sweep with a failing item is partial: it keeps its cursor and does not stamp
-the source as freshly synced, so `gbrain doctor`'s `sync_freshness` shows it.
-`gbrain sync` prints `Sync PARTIAL [connector_item_failures]` with the failed
-item count and pages written (the failure reasons print above it) and exits 1,
-on `--source`, `--all` and delegated runs alike; a connector that stops early
-without naming a cause prints `[connector_partial]` and also exits 1. Only a
-sweep cut short by `--timeout` or cancellation stays `reason=timeout` with
-exit 0, because the next sweep continues it.
-An item that fails three sweeps in a row is held (below) and the cursor moves
-past it. Autopilot keeps a source synced after its first sync; a source that
-has never synced stays idle until you run `gbrain sync --source <id>` once.
-
-## Held items
-
-A connector item that fails with an item-scoped error on three consecutive
-syncs is **held**: it is recorded in the source's cursor state, and the sync
-moves on past it instead of wedging the whole source. A held item is never
-skipped silently:
-
-- `gbrain sources status` lists up to 10 held items per source (key, sender and
-  subject or title when known, error code, class, first and last failure,
-  attempts, next automatic retry), then `+N more; --json lists all`;
-- `gbrain doctor` reports a per-source count in the `connector_held_items`
-  check;
-- the sync summary prints the held count and the retry command;
-
-A held item does not block the source's freshness stamp. To re-attempt:
-
-```bash
-gbrain sources status <id>          # what is held and why
-gbrain sources retry-held <id>      # schedule every held item (add --dry-run to preview)
-gbrain sync --source <id>           # run the re-attempt now
-gbrain sources status <id>          # a recovered item leaves the list
-```
-
-`gbrain sync --source <id> --full` also clears every hold. A held item whose
-upstream copy changes is re-attempted once automatically.
-
-**The thresholds are fixed** so every brain behaves the same way and a held
-item always means the same thing:
-
-| Rule | Value | Why it is fixed |
-| --- | --- | --- |
-| Hold after | 3 consecutive attempted syncs that failed for that item, at the same upstream version | Long enough to ride out a flaky run, short enough that one bad item cannot pin the cursor for days |
-| Never counted | Rate limits, and source-level errors (auth, config, writer coordination, lock and statement timeouts, database contention) | They say nothing about the item |
-| Circuit breaker | A sync with at least 5 attempted items counts nothing when at least half of them failed transiently, or when at least 5 and at least half failed with the same error code | A provider outage must not hold healthy items |
-| Transient retry | A held item whose error was transient (5xx, network, unknown) is retried after 1 h, 6 h, 24 h, then daily, for 7 days; after that it stays held like a content error | Recovers on its own from a provider incident |
-| Cap | 100 held items per source; a sync that would hold more stops advancing its cursor and fails with `connector_holds_exhausted` | Many held items means something is wrong with the source, not with items |
-
-The overrides are `gbrain sources retry-held <id>` and
-`gbrain sync --source <id> --full`. See
-[write refusal reasons](write-refusals.md) for `connector_holds_exhausted`,
-`invalid_connector_text` and `connector_fence_below_timeline`.
-
-
-## Webhook (recommended: instant sync)
-
-Point GitHub webhooks at your `gbrain serve --http` instance:
-
-```bash
-gbrain sources webhook set gh --secret <your-secret>
-```
-
-The command prints the payload URL, secret and the exact event list to
-select. Register the webhook on each repo you track, with events: issues,
-pull requests, issue comments, PR reviews, PR review comments, labels,
-milestones, assignees, check runs, check suites, workflow runs. Each event
-submits a targeted `sync` job that refreshes exactly the item that changed
-(check events resolve the linked PR from the payload; events without an
-item reference are acknowledged and skipped). Push events follow the
-git-source behavior.
-
-Without a public URL, use a tunnel (Tailscale Funnel, ngrok, or any HTTPS
-host). The webhook is HMAC-signed per source with the same
-`X-Hub-Signature-256` verification as the push webhook. Out-of-scope
-repos are acknowledged but never materialized.
-
-## Pages
-
-- Item: `gh/<owner>/<repo>/<number>.md` (numbers are unique per repo across
-  issues and PRs, so one namespace is correct).
-- Repo card: `gh/<owner>/<repo>/index.md`.
-- Frontmatter: kind, repo, number, title, state, status (merged/draft/
-  open/closed), review decision, checks pass/fail/pending counts, labels,
-  assignees, milestone, URL, `updated_at`, `synced_at`, linked items.
-- Body: description, every comment, reviews, review comments with file and
-  line references. `#<n>` mentions and Closes/Fixes/Resolves references
-  become wikilinks, so graph traversal works across the whole history.
-
-## Retrieval
-
-Mirrored items are fully searchable through the normal `gbrain query` /
-`gbrain search` paths (hybrid keyword + vector over title, description,
-comments, reviews and checks). Two behaviors worth knowing:
-
-- **Empty-body items** (an issue or PR with no description) render a
-  `## Context` block with labels, milestone, assignees and repo, so they
-  stay recallable by those facets. Without a body, the chunk would hold
-  only the title, and compound titles tokenize poorly.
-- **Near-identical pages** (the same PR merged across several mirrored
-  repos) are de-duplicated at search time (Jaccard similarity,
-  `src/core/search/dedup.ts`). Content recall is unaffected:
-  the surviving copy carries the same text, and the hidden copy is still
-  reachable via a repo-scoped query or direct slug lookup. If you need
-  the per-repo copy to win, include the repo name in the query.
-
-## Rate limits
-
-The client honors `x-ratelimit` headers, backs off on 403/429 and pauses
-when the bucket runs low. Pagination follows GitHub's Link header, so large
-repositories are never truncated; an enumeration that hits the safety cap
-is treated as failed and never reconciled against the brain. A large
-bootstrap (tens of thousands of items) runs throttled over a few hours and
-resumes where it left off. The sweep cursor only advances after a fully
-successful run, so failed items are retried on the next sweep. Steady-state
-sweeps use a few dozen calls per hour.
-
-## Removing the source
-
-```bash
-gbrain sources remove gh --confirm-destructive
-```
 
 ---
 
