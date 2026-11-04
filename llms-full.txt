@@ -7650,9 +7650,7 @@ vars — incident-time escape hatches, not everyday knobs.
    (autopilot.git_pull=false)` once per tick (`{"event":"git_pull_disabled"}`
    under `--json`). Per-source `syncEnabled: false` still removes a source from
    automatic sync entirely; an explicit `gbrain sync --source <id>` keeps its
-   own `--pull`/`--no-pull` choice. Autopilot cycles of such a source work only
-   on the pages changed since its last cycle, so a file edited on disk reaches
-   the brain with the next explicit sync, not with the cycle. Managed brains never pull automatically
+   own `--pull`/`--no-pull` choice. Managed brains never pull automatically
    whatever this key says (item 8).
 
    **Say to your agent:** *"Stop autopilot from git-pulling my sources; I update the checkouts myself."*
