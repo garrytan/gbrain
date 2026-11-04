@@ -141,6 +141,7 @@ const file_upload: Operation = {
         inBackend = await storage.exists(storagePath);
       } catch { /* probe failure → treat as absent, re-upload below */ }
       if (inBackend) {
+        await ctx.engine.executeRaw('UPDATE files SET source_id = $2, page_id = $3 WHERE storage_path = $1', [storagePath, sourceId, page?.id ?? null]);
         return { status: 'already_exists', storage_path: storagePath };
       }
     }

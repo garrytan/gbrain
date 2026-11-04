@@ -125,6 +125,37 @@ describe('page purge', () => {
     expect(existsSync(join(storageDir, 'notes/plan/attachment.txt'))).toBe(false);
   });
 
+  test('re-uploading identical bytes to a page that took a renamed page\'s slug records the new page, so purging the renamed page keeps the attachment', async () => {
+    const page = '---\ntitle: Old\ntype: note\n---\n# Old\n\nBody.\n';
+    await importFromContent(engine, 'notes/old', page, { noEmbed: true, sourceId: 'default' });
+    const upload = join(storageDir, '..', 'attachment.txt');
+    writeFileSync(upload, 'same bytes');
+    await call('file_upload', { path: upload, page_slug: 'notes/old' });
+    await engine.executeRaw("UPDATE pages SET slug='notes/moved' WHERE slug='notes/old' AND source_id='default'");
+    await importFromContent(engine, 'notes/old', page, { noEmbed: true, sourceId: 'default' });
+    const [replacement] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug='notes/old' AND source_id='default'");
+    expect((await call('file_upload', { path: upload, page_slug: 'notes/old' })).status).toBe('already_exists');
+    expect(await engine.executeRaw('SELECT page_id FROM files')).toEqual([{ page_id: replacement!.id }]);
+    expect((await purgePage('notes/moved')).status).toBe('purged');
+    expect(await engine.executeRaw('SELECT page_id FROM files')).toEqual([{ page_id: replacement!.id }]);
+    expect(existsSync(join(storageDir, 'notes/old/attachment.txt'))).toBe(true);
+  });
+
+  test('purging a page that took a renamed page\'s slug keeps the attachment the renamed page still owns', async () => {
+    const page = '---\ntitle: Old\ntype: note\n---\n# Old\n\nBody.\n';
+    await importFromContent(engine, 'notes/old', page, { noEmbed: true, sourceId: 'default' });
+    const [owner] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug='notes/old' AND source_id='default'");
+    const upload = join(storageDir, '..', 'attachment.txt');
+    writeFileSync(upload, 'owned bytes');
+    await call('file_upload', { path: upload, page_slug: 'notes/old' });
+    await engine.executeRaw("UPDATE pages SET slug='notes/moved' WHERE id=$1", [owner!.id]);
+    await importFromContent(engine, 'notes/old', page, { noEmbed: true, sourceId: 'default' });
+    const result = await purgePage('notes/old');
+    expect([result.status, result.purge.removed.files]).toEqual(['purged', 0]);
+    expect(await engine.executeRaw('SELECT page_id FROM files')).toEqual([{ page_id: owner!.id }]);
+    expect(existsSync(join(storageDir, 'notes/old/attachment.txt'))).toBe(true);
+  });
+
   test('a file_upload under a source that is not registered refuses before writing, leaving the stored object and its row as they were', async () => {
     await importFromContent(engine, 'notes/plan', '---\ntitle: Plan\ntype: note\n---\n# Plan\n\nBody.\n', { noEmbed: true, sourceId: 'default' });
     const upload = join(storageDir, '..', 'attachment.txt');
