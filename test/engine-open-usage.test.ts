@@ -12,6 +12,7 @@ import { __setGenerateTextTransportForTests, chat, resetGateway } from '../src/c
 import { __chatUsageSinkCountForTests } from '../src/core/ai/chat-usage.ts';
 import { openEngine, withEngineScope, type EngineSettings } from '../src/core/engine-open.ts';
 import { createEngine } from '../src/core/engine-factory.ts';
+import { waitFor } from './helpers/wait-for.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 const key = () => `sk-usage-${randomBytes(12).toString('hex')}`;
@@ -21,7 +22,7 @@ const settingsFor = (database: EngineSettings['database']): EngineSettings => ({
   ai: { providers: { openai: { apiKey: key() } }, models: { chat: 'openai:gpt-5.6' } },
 });
 const usageRows = async (engine: BrainEngine) => Number((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM chat_usage_log'))[0]!.n);
-const settled = () => Bun.sleep(200);
+const booked = (engine: BrainEngine, n: number) => waitFor(async () => (await usageRows(engine)) >= n, { timeoutMs: 10_000, label: `${n} usage row(s)` });
 const hello = (engine: BrainEngine) => withEngineScope(engine, () => chat({ messages: [{ role: 'user', content: 'hello' }] }));
 
 afterEach(() => {
@@ -54,11 +55,11 @@ describe('embedded chat usage', () => {
     try {
       await engine.initSchema();
       await hello(engine);
-      await settled();
+      await booked(engine, 1);
       expect(await usageRows(engine)).toBe(1);
       await engine.reconnect();
       await hello(engine);
-      await settled();
+      await booked(engine, 2);
       expect(await usageRows(engine)).toBe(2);
     } finally {
       await engine.disconnect();

@@ -11,6 +11,7 @@ import { __setGenerateTextTransportForTests, chat, resetGateway } from '../../sr
 import { openEngine, withEngineScope, type EngineSettings } from '../../src/core/engine-open.ts';
 import { __aliasPolicyEngineCountForTests, readHonorAliases, remotePrivacyRelaxed } from '../../src/core/search/private-visibility.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { waitFor } from '../helpers/wait-for.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const describeE2E = DATABASE_URL ? describe : describe.skip;
@@ -51,11 +52,11 @@ describeE2E('embedded engine on Postgres (B3a)', () => {
     try {
       const start = await rows();
       await withEngineScope(engine, () => chat({ messages: [{ role: 'user', content: 'hello' }] }));
-      await Bun.sleep(200);
+      await waitFor(async () => (await rows()) >= start + 1, { timeoutMs: 10_000, label: 'first usage row' });
       expect(await rows()).toBe(start + 1);
       await engine.reconnect();
       await withEngineScope(engine, () => chat({ messages: [{ role: 'user', content: 'hello again' }] }));
-      await Bun.sleep(200);
+      await waitFor(async () => (await rows()) >= start + 2, { timeoutMs: 10_000, label: 'usage row after reconnect' });
       expect(await rows()).toBe(start + 2);
     } finally {
       await engine.disconnect();
