@@ -6,6 +6,7 @@ export const ollama: Recipe = {
   name: 'Ollama (local)',
   tier: 'openai-compat',
   implementation: 'openai-compatible',
+  compat: { refuse_redirects: true },
   base_url_default: 'http://localhost:11434/v1',
   auth_env: {
     required: [], // Ollama runs unauthenticated locally; users pass `ollama` as the key.

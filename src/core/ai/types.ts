@@ -469,6 +469,8 @@ export interface Recipe {
    */
   compat?: {
     fetch?: typeof fetch;
+    /** A redirect from this server fails the call: following it would send the caller's text to a host nobody configured. */
+    refuse_redirects?: boolean;
   };
   /**
    * v0.32 (D13=A): optional runtime readiness check for local-server

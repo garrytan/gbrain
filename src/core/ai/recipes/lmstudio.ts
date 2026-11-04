@@ -46,6 +46,7 @@ export const lmstudio: Recipe = {
   name: 'LM Studio (local)',
   tier: 'openai-compat',
   implementation: 'openai-compatible',
+  compat: { refuse_redirects: true },
   base_url_default: 'http://localhost:1234/v1',
   auth_env: {
     required: [],
