@@ -6,8 +6,9 @@
  *   - Best-effort: own try/catch in the dispatcher; any error here degrades
  *     to no-_meta rather than failing the tool call.
  *   - Cache key is (source_id, session_id, hash(takesHoldersAllowList sorted),
- *     caller identity hash). Visibility-aware: cache entries don't bleed across
- *     token tiers or across the people one credential reads for.
+ *     caller identity hash, verified principal/current source grant, topK).
+ *     Visibility-aware: entries don't bleed across token tiers, grants or
+ *     the people one credential reads for. Bearer tokens never enter the key.
  *   - 30s TTL per session. A successful mutating tool call on the engine
  *     drops that engine's entries (`invalidateHotMemoryForEngine`, called by
  *     dispatch on every MCP transport), and every hit revalidates the
@@ -35,7 +36,10 @@
  * so the felt-memory feature works on every transport.
  */
 
-import type { OperationContext } from './../operations.ts';
+import { createHash } from 'node:crypto';
+import type { OperationContext } from '../ops/contract.ts';
+import { authorizeOperationContext } from '../ops/context.ts';
+import { effectiveReadSourceId } from '../ops/request-state.ts';
 import type { BrainEngine, FactRow } from './../engine.ts';
 import { effectiveConfidence } from './decay.ts';
 import { collapseHotFacts } from './capture-dedup.ts';
@@ -135,13 +139,16 @@ export async function getBrainHotMemoryMeta(
   ctx: OperationContext,
   opts: { topK?: number; ttlMs?: number; sessionOnly?: boolean; untrusted?: boolean } = {},
 ): Promise<Record<string, unknown> | undefined> {
+  // Native/direct callers must pass the same authority check as dispatch, before caches or engine reads.
+  ctx = authorizeOperationContext(ctx, false);
+  const authorityKey = metadataAuthorityKey(ctx);
   // Don't inject on tool calls that themselves manipulate hot memory —
   // the agent doesn't need the brain's hot memory wrapped around its own
   // recall response.
   // GST-359 C2: nor on QM's memory pair, whose own answer is the member's memory.
   if (name === 'recall' || name === 'extract_facts' || name === 'forget_fact' || name === 'memory_recall' || name === 'memory_write') return undefined;
 
-  const sourceId = ctx.sourceId ?? 'default';
+  const sourceId = effectiveReadSourceId(ctx) ?? ctx.sourceId ?? 'default';
   // CX2-11: session identity is the TYPED OperationContext.sessionId field,
   // set from MCP `_meta.session_id` at the dispatch boundary. The old ad-hoc
   // `source_session` read is kept as a fallback for legacy embedders, but no
@@ -198,7 +205,7 @@ export async function getBrainHotMemoryMeta(
   // GST-359 C2: and the caller's identity (attested actor, member, audience): a member's own private facts ride the
   // payload, so two people behind one credential and one session id never share an entry. Unbound callers add nothing.
   const identityKey = ctx.remote === false ? '' : callerIdentityKey();
-  const cacheKey = `${engineCacheField(ctx.engine)}::${encodeCacheField(sourceId)}::${tier}::${encodeCacheField(sessionId ?? '_')}::${allowListHash}::${encodeCacheField(eligibilityCacheField(policy))}::${sessionOnly ? 'session-only' : 'fallback'}::${untrusted ? 'quoted' : 'raw'}${identityKey ? `::xid=${identityKey}` : ''}`;
+  const cacheKey = `${engineCacheField(ctx.engine)}::${encodeCacheField(sourceId)}::${tier}::${encodeCacheField(sessionId ?? '_')}::${allowListHash}::${encodeCacheField(eligibilityCacheField(policy))}::${sessionOnly ? 'session-only' : 'fallback'}::${untrusted ? 'quoted' : 'raw'}::topK=${topK}::authority=${authorityKey}${identityKey ? `::xid=${identityKey}` : ''}`;
 
   // Cache hit?
   const cached = _cache.get(cacheKey);
@@ -304,8 +311,8 @@ export async function getBrainHotMemoryMeta(
 /** Invalidate the cache for a (source_id, session_id) pair after extraction. */
 export function bumpHotMemoryCache(sourceId: string, sessionId: string | null): void {
   // Walk the cache and prune any entry matching this source+session
-  // regardless of visibility tier, allow-list hash, OR engine — key layout is
-  // engine::encField(source)::tier::encField(session)::allowHash::eligibility::scope. Pruning
+  // regardless of visibility tier, allow-list hash, principal/grants, topK OR engine — key layout starts with
+  // engine::encField(source)::tier::encField(session); all policy/authority/cap variants follow. Pruning
   // across engines is deliberate over-invalidation: a bump is a freshness
   // signal and a stale-drop on a sibling engine costs one rebuild, never a
   // leak. Components are ':'-encoded, so split('::') slices cleanly even
@@ -336,6 +343,17 @@ function engineCacheField(engine: object): string {
  * delimiter (F5). Cheap, reversible, and keeps keys human-readable. */
 function encodeCacheField(v: string): string {
   return v.replace(/:/g, '%3A');
+}
+
+/** Verified principal and current read grant only; never hash or retain bearer tokens. */
+function metadataAuthorityKey(ctx: OperationContext): string {
+  const auth = ctx.auth;
+  if (!auth) return 'authless';
+  return createHash('sha256').update(JSON.stringify([
+    auth.principal?.kind ?? null, auth.principal?.id ?? null, auth.clientId,
+    auth.sourceId ?? null, auth.allowedSources ? [...auth.allowedSources].sort() : null,
+    [...auth.scopes].sort(), auth.hasSourceGrant ?? null, auth.grantRevision ?? null,
+  ])).digest('hex');
 }
 
 /** Test helper: clear the cache. */

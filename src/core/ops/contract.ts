@@ -466,7 +466,14 @@ export function authTransport(auth: AuthInfo): 'oauth' | 'legacy' {
   return auth.clientId.startsWith('gbrain_cl_') ? 'oauth' : 'legacy';
 }
 
+/** Per-response state; only server-created instances can carry an actual authorized page source. */
+export interface OperationRequestState {
+  effectiveReadSourceId?: string;
+}
+
 export interface OperationContext {
+  /** Allocated by dispatch, never hydrated from tool arguments; preserved across read/write clones. */
+  readonly requestState?: OperationRequestState;
   engine: BrainEngine;
   config: GBrainConfig;
   logger: Logger;

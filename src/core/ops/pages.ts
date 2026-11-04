@@ -111,7 +111,11 @@ const get_page: Operation = {
     known_as_of: KNOWN_AS_OF_PARAM,
   },
   handler: async (ctx, p) => {
-    if (p.known_as_of !== undefined) return getPageKnownAsOf(ctx, p);
+    if (p.known_as_of !== undefined) {
+      const result = await getPageKnownAsOf(ctx, p);
+      if (ctx.requestState) ctx.requestState.effectiveReadSourceId = result.source_id as string;
+      return result;
+    }
     const slug = p.slug as string;
     const fuzzy = (p.fuzzy as boolean) || false;
     const includeDeleted = (p.include_deleted as boolean) === true;
@@ -190,6 +194,9 @@ const get_page: Operation = {
     }
     const readable = await pageTrustForRead(ctx, page, p.min_trust); // #5575: below the read floor reads as missing
     if (!readable) throw pageNotFoundError(ctx, slug, { includeDeleted, sourceIdParam });
+
+    // Only the resolved, visibility/trust-authorized page determines this response's ambient source.
+    if (ctx.requestState) ctx.requestState.effectiveReadSourceId = page.source_id;
 
     // v0.37.0 (D11): op-layer write-back for the `last_retrieved_at` stale
     // signal. Fire-and-forget — caller does NOT await. Internal callers
