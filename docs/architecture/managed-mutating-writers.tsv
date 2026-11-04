@@ -38,6 +38,7 @@ op	sync_brain	coordinator	Managed sync admits each changed file through the coor
 op	put_raw_data	no_canonical_write	raw_data side table; not guarded canonical content.
 op	log_ingest	no_canonical_write	ingest_log audit rows only.
 op	file_upload	no_canonical_write	File storage objects and their index rows, confined to the upload root.
+op	file_register	no_canonical_write	A files index row for an object an embedded host already stored at the upload layout path.
 op	submit_job	no_canonical_write	Queues a minion job; its handler owns any write and its own boundary.
 op	cancel_job	no_canonical_write	Minion queue state only.
 op	retry_job	no_canonical_write	Minion queue state only.

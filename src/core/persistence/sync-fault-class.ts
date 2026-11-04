@@ -101,8 +101,10 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   // (rows that do not tile it). Keyed by detail codes no receipt carries, so a write receipt with the bare code keeps its class.
   { code: 'freeze_page_body_segmented', class: 'page', safe_actions: ['upgrade'], needs_human: true, escalate: 'always: a sync path read a page stored in segments whole',
     human_reason: 'A sync path read this page stored in segments as one string, so its file is held and the rest of the source synced; upgrade gbrain, then run gbrain sources retry-held <source>, and report it with the gbrain version if it stays held.' },
-  { code: 'freeze_page_body_rows_unreadable', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'the page stays unreadable across syncs (a grant or row-level security policy hides its segment rows)',
-    human_reason: 'Give the role that reads the brain the same access to page_body_manifest and page_segment_texts it has to pages, then run gbrain sources retry-held <source>.' },
+  { code: 'freeze_page_body_rows_unreadable', class: 'page', safe_actions: ['repair'], needs_human: true, escalate: 'always: the page\'s segment rows do not cover its stored body, so no sync can read it',
+    human_reason: 'The segment rows of this page stored in segments do not cover its body, so every read of it refuses and no retry clears the hold; preview gbrain repair segmented-tiling --source <source> --slug <slug> '
+      + '(read-only; doctor segmented_tiling lists the page) and apply it with the user\'s agreement. If doctor does not list the page, the rows exist but the role that reads the brain cannot see them: '
+      + 'give it the same access to page_body_manifest and page_segment_texts it has to pages, then run gbrain sources retry-held <source>.' },
   { code: 'page_write_failed', class: 'page', safe_actions: ['upgrade'], needs_human: true, escalate: 'always: the writer cannot place the failure',
     human_reason: 'The write of this file keeps failing with an error gbrain cannot classify (an owner exception or an unplaced refusal); read its receipt (gbrain write-request <request_id>), report it with the gbrain version or fix the file when the error names its content, then run gbrain sources retry-held <source>.' },
   // GBRA-130 A-7: the file is not a readable regular file inside the source root (a symlink, a non-regular file, a permission error).

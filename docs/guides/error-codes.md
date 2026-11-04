@@ -1362,7 +1362,7 @@ More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An operation that serves an embedding host (file_verify) was called on an engine the CLI or a server opened, so it did nothing. | These operations trust a host that stores bytes itself; a brain opened the usual way stores files through file_upload, so the operations stay off there and its behavior is unchanged. | Call it on an engine opened from settings with settings.storage; a brain the CLI or a server opens stores files only through file_upload (gbrain files upload). | agent | `repeat the read that failed` | 1 | no |
+| An operation that serves an embedding host (file_register, file_verify) was called on an engine the CLI or a server opened, so it did nothing. | These operations trust a host that stores bytes itself; a brain opened the usual way stores files through file_upload, so the operations stay off there and its behavior is unchanged. | Call it on an engine opened from settings with settings.storage; a brain the CLI or a server opens stores files only through file_upload (gbrain files upload). | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
 
@@ -1522,7 +1522,17 @@ More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An engine opened from settings made an AI call (embed, chat, expansion or rerank) through a provider its settings.ai does not name, or a call ran outside any engine scope in a process holding such engines, so nothing was sent. | An embedded engine's AI calls reach only the providers and keys its host passed as values. Falling back to a process.env key, ~/.gbrain/config.json or the process-wide gateway would spend another brain's key and send this brain's text where its host never pointed it. | Pass the provider in settings.ai.providers (apiKey, and baseUrl when it is not the default) to openEngine, or point settings.ai.models (or settings.embedding) at a provider the engine has. | agent | `repeat the read that failed` | 1 | no |
+| An engine opened from settings made an AI call (embed, chat, expansion or rerank) through a provider its settings.ai does not name, or after it was disconnected, so nothing was sent. | An embedded engine's AI calls reach only the providers and keys its host passed as values. Falling back to a process.env key, ~/.gbrain/config.json or the process-wide gateway would spend another brain's key and send this brain's text where its host never pointed it. | Pass the provider in settings.ai.providers (apiKey, and baseUrl when it is not the default) to openEngine, or point settings.ai.models (or settings.embedding) at a provider the engine has. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
+
+### engine_scope_required
+
+<a id="engine_scope_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An AI call (embed, chat, expansion or rerank) ran outside any engine scope while this process holds engines opened from settings, so nothing was sent. | With no scope the call's brain is unknown. Using the process gateway, a process.env key or ~/.gbrain/config.json would spend a key no brain's host gave and could send one brain's text where its host never pointed it, so the call refuses whatever process gateway the host configured. | Run the call inside withEngineScope(engine, fn) for the engine it belongs to, or withLocalScope(fn) for a call that belongs to the process gateway (both exported from gbrain/engine-open). | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
 
@@ -4590,7 +4600,7 @@ Override: reason `database_contention`: retryable, exit 1, retryable.
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The object store an engine opened from settings names did not answer a file check (file_verify, file_url), so nothing was recorded and no file was reported missing. | A failed read says nothing about whether the object exists; reporting it missing could lead a host to re-upload or delete a file that is still there. | Check the store named in settings.storage (its path, or its endpoint, bucket and keys), then call again. | agent | `repeat the read that failed` | 1 | yes |
+| The object store an engine opened from settings names did not answer a file check (file_register, file_verify, file_url), so nothing was recorded and no file was reported missing. | A failed read says nothing about whether the object exists; reporting it missing could lead a host to re-upload or delete a file that is still there. | Check the store named in settings.storage (its path, or its endpoint, bucket and keys), then call again. | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
 

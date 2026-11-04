@@ -186,7 +186,7 @@ from recurring:
   narration. When a file's behavior changes, UPDATE its entry to the new truth.
 - **CI is the enforcement, not this prose.** `scripts/check-key-files-current-state.sh`
   (in `bun run verify`) fails on the bolded-release-clause marker in the reference
-  docs AND on size caps for CLAUDE, README, the index, and each subsystem. A written rule caused this disease; a guard
+  docs AND on size caps for CLAUDE, the index, and each subsystem. A written rule caused this disease; a guard
   cures it.
 - **After any CLAUDE.md or reference-doc edit, run `bun run build:llms`** — the
   llms bundle inlines/links these (config in `scripts/llms-config.ts`); the

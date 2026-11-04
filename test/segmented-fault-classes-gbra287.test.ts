@@ -2,7 +2,7 @@
  * GBRA-287: how the two stored-page-body fault codes are classified.
  *
  * 1. Protects: a managed-sync freeze hold naming `page_body_segmented` reads upgrade / a person, and one naming
- *    `page_body_rows_unreadable` reads retry / no person (the `freeze_<code>` rows), while a write receipt carrying
+ *    `page_body_rows_unreadable` reads repair / a person (GST-1209 follow-up: no retry clears it; the `freeze_<code>` rows), while a write receipt carrying
  *    either bare code keeps the class it had before (a caller refusal, a gbrain defect): the hold rows never leak into
  *    receipt diagnosis (`gbrain write-request`, writer failures, doctor).
  * 2. Fails when: the hold rows are keyed by the bare codes (receipts turn into sync faults), or holdVerdict stops
@@ -26,7 +26,7 @@ describe('GBRA-287: page-body fault classes', () => {
 
   test('a freeze hold is classified by the page-body code it names', () => {
     expect(holdVerdict(freezeHold('page_body_segmented'), undefined)).toMatchObject({ safe_actions: ['upgrade'], needs_human: true });
-    expect(holdVerdict(freezeHold('page_body_rows_unreadable'), undefined)).toMatchObject({ safe_actions: ['retry'], needs_human: false });
+    expect(holdVerdict(freezeHold('page_body_rows_unreadable'), undefined)).toMatchObject({ safe_actions: ['repair'], needs_human: true });
     expect(holdVerdict(freezeHold('storage_error'), undefined).human_reason).toContain('gbrain write-request');
   });
 });
