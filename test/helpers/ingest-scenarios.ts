@@ -639,3 +639,28 @@ export async function reportReadersScenario(engine: BrainEngine): Promise<void> 
   } finally { stub.restore(); }
 }
 
+
+/** A soft-deleted page at a name's natural slug stays deleted and restorable: ingest files the name beside it instead of reviving it. */
+export async function deletedPageScenario(engine: BrainEngine): Promise<void> {
+  await seedEntities(engine);
+  const original = '---\ntype: company\ntitle: ACMX\n---\n\nACMX is a page the owner deleted.\n';
+  await operationsByName.put_page!.handler(reviewCtx(engine), { slug: 'companies/acmx', content: original });
+  await drain(engine);
+  const live = await engine.readPageSnapshot('companies/acmx', { sourceId: 'default' });
+  await operationsByName.delete_page!.handler(reviewCtx(engine), { slug: 'companies/acmx', expected_revision: live!.revision });
+  await drain(engine);
+  resetGateway();
+  configureGateway({ env: {} } as never);
+  try {
+    const report = await ingest(engine, { content: 'We met the team at ACMX on Tuesday to talk about pricing.' });
+    expect(report.status).toBe('complete');
+    const acmx = report.pages.find((p: Report) => p.name === 'ACMX');
+    expect(acmx.status).toBe('proposed');
+    expect(acmx.slug).not.toBe('companies/acmx');
+    expect(acmx.slug.startsWith('companies/acmx-')).toBe(true);
+    const deleted = await engine.readPageSnapshot('companies/acmx', { sourceId: 'default', includeDeleted: true });
+    expect(deleted?.page.deleted_at).toBeTruthy();
+    expect(deleted?.page.compiled_truth).toContain('ACMX is a page the owner deleted.');
+  } finally { resetGateway(); }
+}
+

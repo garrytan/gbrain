@@ -52,6 +52,10 @@ for (const storage of ['git', 'database'] as ReviewStorage[]) {
       fx = await reviewDoorFixture(engine, storage);
       await S.keylessScenario(engine, fx);
     }, 60_000);
+    test('a soft-deleted page at the natural slug stays deleted and restorable; the name is filed beside it', async () => {
+      fx = await reviewDoorFixture(engine, storage);
+      await S.deletedPageScenario(engine);
+    }, 60_000);
     test('dry run makes no provider call and writes nothing', async () => {
       fx = await reviewDoorFixture(engine, storage);
       await S.dryRunScenario(engine);

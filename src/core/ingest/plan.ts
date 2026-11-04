@@ -15,6 +15,7 @@ import { resolveExcludePrivatePages, privatePagesFilterFragment } from '../searc
 import { canonicalTypeOf, loadSourcePack } from '../mentions/policy.ts';
 import { checkFactAgainstSaved } from '../facts/backstop.ts';
 import { INGEST_ENTITY_CAP, isJunkName, type ExtractedEntity, type ExtractedFact } from './extract.ts';
+import { INGEST_ATTEMPT_OP } from './checkpoint.ts';
 
 export type PagePlanStatus = 'existing' | 'create' | 'propose' | 'skipped';
 export interface PlannedPage {
@@ -71,11 +72,19 @@ export function firstMention(text: string, name: string): number {
 }
 
 interface SlugState { exists: boolean; readable: boolean }
+/**
+ * A soft-deleted page still occupies its slug (it stays restorable), unless an undone ingest attempt created it:
+ * re-ingesting after an undo reuses that slug.
+ */
 async function slugState(ctx: OperationContext, sourceId: string, slug: string, excludePrivate: boolean): Promise<SlugState> {
-  const rows = await ctx.engine.executeRaw<{ readable: boolean }>(
-    'SELECT ' + (excludePrivate ? privatePagesFilterFragment('p') : 'true') + ' AS readable FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL',
-    [sourceId, slug]);
-  return { exists: rows.length > 0, readable: rows.length > 0 && rows[0]!.readable === true };
+  const rows = await ctx.engine.executeRaw<{ readable: boolean; live: boolean; undone: boolean }>(
+    'SELECT ' + (excludePrivate ? privatePagesFilterFragment('p') : 'true') + ' AS readable, p.deleted_at IS NULL AS live,'
+      + " EXISTS (SELECT 1 FROM op_checkpoints c WHERE c.op = $3 AND c.fingerprint = p.frontmatter->>'ingest_attempt'"
+      + " AND c.completed_keys->0->>'phase' = 'undone') AS undone FROM pages p WHERE p.source_id = $1 AND p.slug = $2",
+    [sourceId, slug, INGEST_ATTEMPT_OP]);
+  const row = rows[0];
+  if (!row || (!row.live && row.undone)) return { exists: false, readable: false };
+  return { exists: true, readable: row.live && row.readable === true };
 }
 
 function insideGrant(ctx: OperationContext, slug: string): boolean {

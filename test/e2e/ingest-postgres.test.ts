@@ -64,6 +64,7 @@ d('ingest and ingest_undo (live Postgres)', () => {
     test('golden transcript (' + label + ')', async () => { fx = await fixture(storage); await S.goldenScenario(engine, fx); }, 90_000);
     test('undo through the fence (' + label + ')', async () => { fx = await fixture(storage); await S.undoScenario(engine, fx); }, 120_000);
     test('keyless run (' + label + ')', async () => { fx = await fixture(storage); await S.keylessScenario(engine, fx); }, 60_000);
+    test('a soft-deleted page stays deleted (' + label + ')', async () => { fx = await fixture(storage); await S.deletedPageScenario(engine); }, 60_000);
     test('dry run (' + label + ')', async () => { fx = await fixture(storage); await S.dryRunScenario(engine); }, 60_000);
     test('trusted extraction (' + label + ')', async () => { fx = await fixture(storage); await S.trustedScenario(engine); }, 60_000);
     test('budget stop then resume (' + label + ')', async () => { fx = await fixture(storage); await S.budgetResumeScenario(engine); }, 60_000);
