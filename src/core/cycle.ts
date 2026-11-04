@@ -586,7 +586,7 @@ export interface CycleOpts {
    * Validated via `assertValidSourceId` in `cycleLockIdFor` (defense-in-depth).
    */
   sourceId?: string;
-  /** #6803, #8573: a source cycle with no sync works on its pages changed after this (null: a bounded first walk); see cycle/source-window.ts. */
+  /** #6803, #8573: a source cycle with no sync works on a bounded window of its pages changed after this (null: from its oldest page); see cycle/source-window.ts. */
   sourceChangedSince?: string | null;
   /**
    * #4700 — bare `gbrain dream` may opt the brain's default-like source
@@ -3183,7 +3183,7 @@ async function runCycleUnscoped(
       await engine.updateSourceConfig(opts.sourceId, {
         last_source_cycle_at: nowIso,
         last_full_cycle_at: nowIso,
-        ...sourceCycleWindowStamp(phaseResults, opts.sourceChangedSince, sourceWindow),
+        ...sourceCycleWindowStamp(phaseResults, sourceWindow),
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);

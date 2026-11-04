@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { makeAutopilotCycleHandler } from '../src/core/minions/handlers/autopilot-cycle.ts';
 import { SOURCE_FRESHNESS_PHASES } from '../src/core/cycle/phase-scope.ts';
-import { sourceCycleWindowStamp, sourceFirstWalk } from '../src/core/cycle/source-window.ts';
+import { sourceCycleWindowStamp, sourceWindow } from '../src/core/cycle/source-window.ts';
 import { performSync } from '../src/commands/sync.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -29,8 +29,8 @@ const fixture = createConnectorFixture();
 const { engines, env, source } = fixture;
 beforeAll(fixture.setup, 120_000);
 afterAll(fixture.teardown);
-const DEFAULT_PAGE_LIMIT = sourceFirstWalk.pageLimit;
-afterEach(() => { sourceFirstWalk.pageLimit = DEFAULT_PAGE_LIMIT; });
+const DEFAULT_PAGE_LIMIT = sourceWindow.pageLimit;
+afterEach(() => { sourceWindow.pageLimit = DEFAULT_PAGE_LIMIT; });
 
 const NO_SYNC_PHASES = SOURCE_FRESHNESS_PHASES.filter(p => p !== 'sync');
 const PAGES = 12;
@@ -69,13 +69,17 @@ async function liveFacts(engine: BrainEngine, sourceId: string, slug: string) {
 }
 
 describe('#8573 sync-disabled source cycle window', () => {
-  test('a failed phase that read the window keeps it, extract included; a failed first-walk chunk keeps its cursor', () => {
-    const window = { at: '2026-01-02T00:00:00Z', slugs: ['a'] };
+  test('the window advances only when every phase that works on it ran without failing', () => {
+    const window = { since: { at: '2026-01-01T00:00:00Z', slug: 'b' }, next: { at: '2026-01-02T00:00:00Z', slug: '' }, slugs: ['a'] };
+    const ran = (fail?: string) => ['extract', 'extract_facts', 'recompute_emotional_weight'].map(phase => ({ phase, status: phase === fail ? 'fail' : 'ok' }));
+    expect(sourceCycleWindowStamp(ran(), window)).toEqual({ last_source_cycle_window_at: '2026-01-02T00:00:00Z', last_source_cycle_window_slug: '' });
     for (const phase of ['extract', 'extract_facts', 'recompute_emotional_weight']) {
-      expect(sourceCycleWindowStamp([{ phase, status: 'fail' }], '2026-01-01T00:00:00Z', window)).toEqual({ last_source_cycle_window_at: '2026-01-01T00:00:00Z' });
-      expect(sourceCycleWindowStamp([{ phase, status: 'fail' }], null, { ...window, walk: { startedAt: window.at, next: 'a' } })).toEqual({ last_source_cycle_window_at: '' });
+      expect(sourceCycleWindowStamp(ran(phase), window)).toEqual({ last_source_cycle_window_at: '2026-01-01T00:00:00Z', last_source_cycle_window_slug: 'b' });
+      expect(sourceCycleWindowStamp(ran().filter(r => r.phase !== phase), window)).toEqual({ last_source_cycle_window_at: '2026-01-01T00:00:00Z', last_source_cycle_window_slug: 'b' });
     }
-    expect(sourceCycleWindowStamp([{ phase: 'lint', status: 'fail' }], '2026-01-01T00:00:00Z', window)).toEqual({ last_source_cycle_window_at: window.at });
+    expect(sourceCycleWindowStamp(ran(), { ...window, since: { at: null, slug: '' } })).toMatchObject({ last_source_cycle_window_at: '2026-01-02T00:00:00Z' });
+    expect(sourceCycleWindowStamp(ran('extract'), { ...window, since: { at: null, slug: '' } })).toEqual({ last_source_cycle_window_at: '', last_source_cycle_window_slug: '' });
+    expect(sourceCycleWindowStamp([...ran(), { phase: 'lint', status: 'fail' }], window)).toMatchObject({ last_source_cycle_window_at: '2026-01-02T00:00:00Z' });
   });
 
   test('a sync-disabled git source reconciles only pages changed since its last cycle; an explicit sync between cycles lands in the next window', async () => withEnv(env, async () => {
@@ -119,7 +123,7 @@ describe('#8573 sync-disabled source cycle window', () => {
     }
   }), 180_000);
 
-  test('a source with no recorded cycle walks its pages in bounded chunks and resumes; a page changed during the walk lands after it', async () => withEnv(env, async () => {
+  test('a source with no recorded cycle walks its pages in bounded windows and resumes; a page changed during the walk lands in it', async () => withEnv(env, async () => {
     for (const engine of engines) {
       const { id } = await source(engine, { syncEnabled: false });
       await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
@@ -127,24 +131,47 @@ describe('#8573 sync-disabled source cycle window', () => {
         for (let i = 0; i < 5; i++) {
           await engine.putPage(`walk/n-${i}`, { title: `Note ${i}`, type: 'note', compiled_truth: `Body ${i}.` }, { sourceId: id });
         }
-        sourceFirstWalk.pageLimit = 2;
+        sourceWindow.pageLimit = 2;
         const one = await cycle(engine, id, 1);
         expect(one.scanned).toBe(2);
         expect(one.weight).toMatchObject({ mode: 'incremental', pages_recomputed: 2 });
-        expect(await config(engine, id)).toMatchObject({ last_source_cycle_window_at: '', last_source_cycle_walk_after: 'walk/n-1' });
-        const startedAt = (await config(engine, id)).last_source_cycle_walk_at as string;
-        expect(Number.isFinite(Date.parse(startedAt))).toBe(true);
+        expect(await config(engine, id)).toMatchObject({ last_source_cycle_window_slug: 'walk/n-1' });
 
-        // Edited after the first chunk passed it: the walk does not revisit it, the window after the walk does.
+        // Edited after the first window passed it: it moves to the end of the walk.
         await engine.putPage('walk/n-0', { title: 'Note 0', type: 'note', compiled_truth: 'Body 0, edited.' }, { sourceId: id });
         expect((await cycle(engine, id, 2)).weight).toMatchObject({ pages_recomputed: 2 });
-        expect(await config(engine, id)).toMatchObject({ last_source_cycle_walk_after: 'walk/n-3', last_source_cycle_walk_at: startedAt });
-        expect((await cycle(engine, id, 3)).weight).toMatchObject({ pages_recomputed: 1 });
-        expect(await config(engine, id)).toMatchObject({ last_source_cycle_window_at: startedAt, last_source_cycle_walk_after: null, last_source_cycle_walk_at: null });
+        expect(await config(engine, id)).toMatchObject({ last_source_cycle_window_slug: 'walk/n-3' });
+        expect((await cycle(engine, id, 3)).weight).toMatchObject({ pages_recomputed: 2 });
+        expect(await config(engine, id)).toMatchObject({ last_source_cycle_window_slug: '' });
+        expect((await cycle(engine, id, 4)).weight).toMatchObject({ mode: 'incremental', pages_recomputed: 0 });
+      } finally {
+        await disposePersistenceConsumer(engine);
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      }
+    }
+  }), 180_000);
 
-        const next = await cycle(engine, id, 4);
-        expect(next.weight).toMatchObject({ mode: 'incremental', pages_recomputed: 1 });
-        expect((await cycle(engine, id, 5)).weight).toMatchObject({ pages_recomputed: 0 });
+  test('a large change between cycles (a bulk explicit sync) is worked through in bounded windows; a cycle without the window phases does not advance it', async () => withEnv(env, async () => {
+    for (const engine of engines) {
+      sourceWindow.pageLimit = DEFAULT_PAGE_LIMIT;
+      const { id } = await source(engine, { syncEnabled: false });
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      try {
+        for (let i = 0; i < 5; i++) {
+          await engine.putPage(`bulk/n-${i}`, { title: `Note ${i}`, type: 'note', compiled_truth: `Body ${i}.` }, { sourceId: id });
+        }
+        await cycle(engine, id, 1);
+        expect((await cycle(engine, id, 2)).weight).toMatchObject({ pages_recomputed: 0 });
+        for (let i = 0; i < 5; i++) {
+          await engine.putPage(`bulk/n-${i}`, { title: `Note ${i}`, type: 'note', compiled_truth: `Body ${i}, re-imported.` }, { sourceId: id });
+        }
+        sourceWindow.pageLimit = 2;
+        const before = await config(engine, id);
+        await makeAutopilotCycleHandler(engine)({ id: 3, data: { source_id: id, phases: ['lint', 'backlinks'] } } as never);
+        expect(await config(engine, id)).toMatchObject({ last_source_cycle_window_at: before.last_source_cycle_window_at, last_source_cycle_window_slug: '' });
+        const counts: number[] = [];
+        for (let n = 4; n < 8; n++) counts.push(Number((await cycle(engine, id, n)).weight.pages_recomputed));
+        expect(counts).toEqual([2, 2, 1, 0]);
       } finally {
         await disposePersistenceConsumer(engine);
         await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
