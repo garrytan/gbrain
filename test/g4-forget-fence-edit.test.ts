@@ -13,7 +13,7 @@
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -44,6 +44,11 @@ const interruption = (code: string) => Object.assign(new Error(`database interru
 const commitsTouching = (root: string, rel: string) => git(root, 'log', '--format=%H', '--', rel).split('\n').filter(Boolean);
 const ledger = async (engine: BrainEngine, claim: string) => (await engine.executeRaw<{ subject: string }>(
   `SELECT subject FROM fact_withdrawals WHERE source_id='default' AND fact_hash=gbrain_fact_fingerprint($1) ORDER BY subject`, [claim])).map(row => row.subject);
+/** The source loses its canonical owner: no binding, and on PGLite activation listed it database-only (no automatic claim). */
+const unbind = async (engine: BrainEngine) => {
+  await engine.executeRaw(`DELETE FROM persistence_source_bindings WHERE source_id='default'`);
+  await engine.setConfig('persistence.database_only_sources', JSON.stringify(['default']));
+};
 const unlinkedFactId = async (engine: BrainEngine) => (await engine.executeRaw<{ id: number }>(
   `SELECT id FROM facts WHERE source_id='default' AND entity_slug IS NULL AND fact=$1 AND expired_at IS NULL`, [CLAIM]))[0]?.id;
 
@@ -176,6 +181,32 @@ for (const backend of testBackends()) describe(`[${backend}] G4: forget is a fen
       }, { databaseUrl, setup: ({ root }) => { rmSync(root, { recursive: true, force: true }); execFileSync('git', ['clone', '-q', join(copy, 'repo'), root]); } });
     } finally { rmSync(copy, { recursive: true, force: true }); }
   }, 240_000);
+
+  test('a source whose owner is unavailable refuses forgetting a claim its canonical file carries, and withdraws nothing', () => managedBrain(async ({ engine, ctx, root }) => {
+    expect(await call(ctx, 'put_page', { slug: 'notes/a', content: note('A', [`| 1 | ${CLAIM} | fact | 1.0 | world | medium | 2026-01-01 |  | test |  |`]) })).toMatchObject({ state: 'committed' });
+    const { settleManagedGitEffects } = await import('./helpers/managed-brain.ts');
+    await settleManagedGitEffects(engine);
+    const id = (await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source_id='default' AND fact=$1 AND expired_at IS NULL`, [CLAIM]))[0]!.id;
+    await unbind(engine);
+    const before = readFileSync(join(root, 'notes/a.md'), 'utf8');
+    const refused = await call(ctx, 'forget', { id: String(id) }).catch((error: { code?: string; detail?: string; message?: string }) => error);
+    expect({ code: refused.code, detail: refused.detail, message: refused.message })
+      .toEqual({ code: 'unavailable', detail: 'unbound_source', message: 'This source has no designated canonical owner.' });
+    expect(readFileSync(join(root, 'notes/a.md'), 'utf8')).toBe(before);
+    expect(await ledger(engine, CLAIM)).toEqual([]);
+    expect((await engine.executeRaw<{ active: boolean }>('SELECT expired_at IS NULL AS active FROM facts WHERE id=$1', [id]))[0]!.active).toBe(true);
+  }, { databaseUrl, setup }), 180_000);
+
+  test('a source whose owner is unavailable still withdraws a claim only a database-only page carries', () => managedBrain(async ({ engine, ctx, root }) => {
+    await engine.setConfig('sync.write_through', 'false');
+    expect(await call(ctx, 'put_page', { slug: 'notes/b', content: note('B', [`| 1 | ${OTHER} | fact | 1.0 | world | medium | 2026-01-01 |  | test |  |`]) })).toMatchObject({ state: 'committed' });
+    await engine.setConfig('sync.write_through', 'true');
+    expect(existsSync(join(root, 'notes/b.md'))).toBe(false);
+    const id = (await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source_id='default' AND fact=$1 AND expired_at IS NULL`, [OTHER]))[0]!.id;
+    await unbind(engine);
+    expect(await call(ctx, 'forget', { id: String(id) })).toMatchObject({ state: 'committed', expired: true });
+    expect(await ledger(engine, OTHER)).toEqual(['notes/b']);
+  }, { databaseUrl, setup }), 180_000);
 
   test('a local page write of a withdrawal marker records it under the page; a remote one records nothing and blocks no remember', () => managedBrain(async ({ engine, ctx }) => {
     const marked = (claim: string) => [`| 1 | ~~${claim}~~ | fact | 1.0 | world | medium | 2026-01-01 | ${today} | test | forgotten: no longer true |`];

@@ -6,7 +6,7 @@ import { opError, OperationError, verbError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, validatePageSlug } from '../ops/context.ts';
 import { isNullLikeEntity } from '../facts/write-single.ts';
-import { isFactWithdrawn } from '../facts/withdrawal.ts';
+import { isFactWithdrawn, planFactWithdrawal } from '../facts/withdrawal.ts';
 import { inferFactSubject, isEntityInferenceEnabled, type InferredVia } from '../facts/subject-infer.ts';
 import { parseFactsFence } from '../facts-fence.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
@@ -324,10 +324,15 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   const authority = await submissionAuthority(ctx, operation, sourceId, source.incarnation, slug);
   const snapshot = await ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
   const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);
-  // The pages a withdrawal strikes publish through the source's canonical worktree, as remember's do; a source whose
-  // root has no owner and refuses a claim publishes database-only, as its writes do.
-  const target = await resolveFactWriteTarget(ctx.engine, sourceId, source, { sandbox, fileBacked: true, remote })
-    .catch((error: unknown) => { if (error instanceof OperationError) return null; throw error; });
+  // The pages a withdrawal strikes publish through the source's canonical worktree, as remember's do. A source whose
+  // root has no owner refuses when a canonical file carries the claim (Git is the parent: a database-only withdrawal
+  // would come back on a rebuild from Git); a claim only database-only pages carry is withdrawn database-only.
+  const plan = await planFactWithdrawal(ctx.engine, id, sourceId, remote, ownPage ? undefined : excludePrivate, ownPage);
+  const struck = plan ? plan.slugs.filter(page => plan.subject === '*' || plan.subject === page) : [];
+  const fileBacked = struck.length > 0 && (await ctx.engine.executeRaw(
+    'SELECT 1 FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL AND source_path IS NOT NULL LIMIT 1', [sourceId, struck])).length > 0;
+  const target = await resolveFactWriteTarget(ctx.engine, sourceId, source, { sandbox, fileBacked, remote })
+    .catch((error: unknown) => { if (!fileBacked && error instanceof OperationError) return null; throw error; });
   if (target?.kind === 'publish' && target.databaseOnlyReason) authority.databaseOnlyReason = target.databaseOnlyReason;
   const binding = target?.kind === 'unbound' ? await claimWorktree(ctx.engine, sourceId, target.root, undefined, undefined, { automatic: true })
     : target?.binding ?? null;
