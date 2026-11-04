@@ -142,3 +142,38 @@ describe('ingest projection (importFromContent)', () => {
     expect((m.get('keep name') ?? []).map(r => r.slug)).toEqual(['p/x']);
   });
 });
+
+describe('qualified alias hop (search.qualified_aliases)', () => {
+  const query = 'notes about the northwind supply chain review today';
+
+  test('off: a multi-token alias inside a longer query does nothing', async () => {
+    await engine.putPage('projects/northwind', { type: 'note', title: 'Project N', compiled_truth: 'x' });
+    await engine.setPageAliases('projects/northwind', 'default', ['northwind supply chain review']);
+    expect(await applyAliasHop(engine, [], query, { sourceId: 'default' })).toEqual([]);
+  });
+
+  test('on: the one page claiming the alias leads whether it was absent or present', async () => {
+    await engine.putPage('projects/northwind', { type: 'note', title: 'Project N', compiled_truth: 'x' });
+    await engine.setPageAliases('projects/northwind', 'default', ['northwind supply chain review']);
+    const opts = { sourceId: 'default', qualified: true };
+    const absent = await applyAliasHop(engine, [res('notes/other', 1)], query, opts);
+    expect(absent[0].slug).toBe('projects/northwind');
+    expect(absent[0].alias_hit).toBe(true);
+    const present = await applyAliasHop(engine, [res('notes/other', 1), res('projects/northwind', 0.1)], query, opts);
+    expect(present.map(r => r.slug)).toEqual(['projects/northwind', 'notes/other']);
+  });
+
+  test('two claimants suppress the hop; excludes and the content-token floor hold', async () => {
+    for (const slug of ['projects/a', 'projects/b']) {
+      await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'x' });
+      await engine.setPageAliases(slug, 'default', ['northwind supply chain review']);
+    }
+    const opts = { sourceId: 'default', qualified: true };
+    expect(await applyAliasHop(engine, [], query, opts)).toEqual([]);
+    const visible = await applyAliasHop(engine, [], query, { ...opts, excludeSlugs: ['projects/b'] });
+    expect(visible.map(r => r.slug)).toEqual(['projects/a']);
+    await engine.putPage('notes/weak', { type: 'note', title: 'Weak', compiled_truth: 'x' });
+    await engine.setPageAliases('notes/weak', 'default', ['hall of light']);
+    expect(await applyAliasHop(engine, [], 'show me the hall of light now', opts)).toEqual([]);
+  });
+});

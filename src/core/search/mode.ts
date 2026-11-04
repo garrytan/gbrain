@@ -427,6 +427,10 @@ export interface ModeBundle {
    * bundle. Override: `search.rank_priors` (boolean).
    */
   rank_priors: boolean;
+  /** Alias hop on a 3+ content-token alias inside a longer query (alias-hop.ts). Off everywhere; `search.qualified_aliases`. */
+  qualified_aliases: boolean;
+  /** Title boost on a title contained in a longer query (title-match.ts). Off everywhere; `search.title_qualified`. */
+  title_qualified: boolean;
   /**
    * Ranker wave (Phase E2, Cat 13) — arm-confidence-weighted fusion of the
    * LEXICAL arms (arm-confidence.ts). When the keyword arm's scale-free
@@ -536,6 +540,8 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     diverse_pool_depth: 0,
     collapse: true,
     rank_priors: true,
+    qualified_aliases: false,
+    title_qualified: false,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
@@ -607,6 +613,8 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     diverse_pool_depth: 0,
     collapse: true,
     rank_priors: true,
+    qualified_aliases: false,
+    title_qualified: false,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
@@ -678,6 +686,8 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     diverse_pool_depth: 0,
     collapse: true,
     rank_priors: true,
+    qualified_aliases: false,
+    title_qualified: false,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
@@ -752,6 +762,8 @@ export interface SearchKeyOverrides {
   diverse_pool_depth?: number;
   collapse?: boolean;
   rank_priors?: boolean;
+  qualified_aliases?: boolean;
+  title_qualified?: boolean;
   // Ranker wave (Phase E2) — keyword-arm confidence floor override (null = off; (0, 1]).
   keyword_arm_confidence_floor?: number | null;
   // Ranker wave (Phase E3) — metadata boost gate override (`always` | `lexical`).
@@ -825,6 +837,8 @@ export interface SearchPerCallOpts {
   diverse_pool_depth?: number;
   collapse?: boolean;
   rank_priors?: boolean;
+  qualified_aliases?: boolean;
+  title_qualified?: boolean;
   // Ranker wave (Phase E2) — keyword-arm confidence floor per-call override (null = off; (0, 1]).
   keyword_arm_confidence_floor?: number | null;
   // Ranker wave (Phase E3) — metadata boost gate per-call override (`always` | `lexical`).
@@ -938,6 +952,8 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     diverse_pool_depth: pick('diverse_pool_depth'),
     collapse: pick('collapse'),
     rank_priors: pick('rank_priors'),
+    qualified_aliases: pick('qualified_aliases'),
+    title_qualified: pick('title_qualified'),
     keyword_arm_confidence_floor: pick('keyword_arm_confidence_floor'),
     metadata_boost_gate: pick('metadata_boost_gate'),
     resolved_mode,
@@ -1298,6 +1314,9 @@ export function knobsHash(
     // Collapse and rank priors (append-only, emitted only when turned off).
     ...(knobs.collapse === false ? ['col=0'] : []),
     ...(knobs.rank_priors === false ? ['rpr=0'] : []),
+    // Qualified alias / title matching (append-only, emitted only when on).
+    ...(knobs.qualified_aliases ? ['qa=1'] : []),
+    ...(knobs.title_qualified ? ['tq=1'] : []),
   ];
   // #5691 (append-only, no version bump): only a non-empty query prefix adds
   // a part, so every row written without one keeps its key.
@@ -1556,6 +1575,10 @@ export function loadOverridesFromConfig(
   if (col !== undefined) out.collapse = col;
   const rpr = parseBoolKnob(get('search.rank_priors'));
   if (rpr !== undefined) out.rank_priors = rpr;
+  const qa = parseBoolKnob(get('search.qualified_aliases'));
+  if (qa !== undefined) out.qualified_aliases = qa;
+  const tq = parseBoolKnob(get('search.title_qualified'));
+  if (tq !== undefined) out.title_qualified = tq;
   // Ranker wave (Phase E2) — keyword-arm confidence floor: the literal
   // `off`/`null` pins the knob off (null); a number in (0, 1] is the floor;
   // anything else falls through to the bundle. ONE range contract with the
@@ -1632,6 +1655,8 @@ export const KNOB_CONFIG_KEY: Readonly<Record<keyof ModeBundle, string>> = Objec
   diverse_pool_depth: 'search.diverse_pool_depth',
   collapse: 'search.collapse',
   rank_priors: 'search.rank_priors',
+  qualified_aliases: 'search.qualified_aliases',
+  title_qualified: 'search.title_qualified',
   keyword_arm_confidence_floor: 'search.keyword_arm_confidence_floor',
   metadata_boost_gate: 'search.metadata_boost_gate',
 });
