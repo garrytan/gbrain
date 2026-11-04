@@ -874,13 +874,15 @@ export async function extractFactsFromTurnWithOutcome(
       claim_value:  claimValue,
       claim_unit:   claimUnit,
       claim_period: claimPeriod,
-      ...(capture ? { visibility: capture.visibility, valid_until: capture.validUntil } : {}),
       // Date grounding: a validated extractor-stated event date wins over the
       // caller's fallback (backstop precedence). Malformed / out-of-range
       // dates are dropped, never guessed.
       ...(variant.dateGrounding && parseExtractedEventDate(candidate.valid_from)
         ? { valid_from: parseExtractedEventDate(candidate.valid_from)! }
         : {}),
+      // Temporary validity is anchored to the original observation, never a replay/event fallback.
+      ...(capture ? { visibility: capture.visibility, valid_until: capture.validUntil,
+        ...(capture.observedAt ? { valid_from: capture.observedAt } : {}) } : {}),
       ...(variant.attribution && candidate.attributed_to ? { attributed_to: candidate.attributed_to } : {}),
     });
   }

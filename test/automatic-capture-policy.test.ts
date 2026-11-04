@@ -117,6 +117,18 @@ test('expiry requires original literal timestamps and a valid bounded interval',
   }
 });
 
+test('temporary capture preserves its original observation even when event grounding is off or proposes a later date', async () => {
+  for (const managed of [false, true]) for (const grounding of ['off', 'on']) {
+    await setup(managed, [candidate('The synthetic review is temporarily blocked.', 'work', 'temporary', { valid_from: '2026-01-01', valid_until: expires })]);
+    await engine.setConfig('extraction.date_grounding', grounding);
+    await runFactsPipeline(turn, { engine, sourceId: 'default', sessionId: null, source: 'sweep:corpus', remote: false, turnAt: new Date('2026-01-02T12:00:00Z') });
+    const rows = await engine.executeRaw<{ valid_from: Date | string; valid_until: Date | string }>('SELECT valid_from,valid_until FROM facts');
+    expect(rows).toHaveLength(1);
+    expect(new Date(rows[0]!.valid_from).toISOString()).toBe(new Date(observed).toISOString());
+    expect(new Date(rows[0]!.valid_until).toISOString()).toBe(new Date(expires).toISOString());
+  }
+}, 60_000);
+
 test('folder restrictions on a target or origin clamp automatic sharing in both writers', async () => {
   for (const managed of [false, true]) for (const restricted of ['target', 'origin']) {
     await setup(managed, [candidate('A restricted synthetic project detail.', 'work')]);

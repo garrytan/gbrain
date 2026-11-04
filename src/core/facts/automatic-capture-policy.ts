@@ -34,16 +34,16 @@ function timestamp(value: string | null | undefined): Date | null {
 
 /** Prospective admission only: existing rows and history are never changed. */
 export function automaticCaptureDecision(metadata: AutomaticCaptureMetadata, originalText: string): {
-  visibility: FactVisibility; validUntil: Date | null;
+  visibility: FactVisibility; observedAt: Date | null; validUntil: Date | null;
 } | null {
   if (metadata.capture_lifetime !== 'durable' && metadata.capture_lifetime !== 'temporary') return null;
   const visibility = metadata.capture_scope === 'work' ? 'world' : 'private';
-  if (metadata.capture_lifetime === 'durable') return { visibility, validUntil: null };
+  if (metadata.capture_lifetime === 'durable') return { visibility, observedAt: null, validUntil: null };
   const observed = timestamp(metadata.observed_at);
   const until = timestamp(metadata.valid_until);
   // Original anchors must be in the retained input; never substitute the replay clock.
   if (!observed || !until || !originalText.includes(metadata.observed_at!) || !originalText.includes(metadata.valid_until!)) return null;
   const duration = until.getTime() - observed.getTime();
   if (duration <= 0 || duration > 365 * 86_400_000) return null;
-  return { visibility, validUntil: until };
+  return { visibility, observedAt: observed, validUntil: until };
 }

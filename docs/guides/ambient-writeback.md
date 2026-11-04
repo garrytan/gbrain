@@ -414,7 +414,9 @@ opt-in applies only to trusted-local automatic capture lanes. It asks the
 extractor to classify each atomic claim's scope and lifetime. A temporary
 claim is admitted only with a valid original ISO observation timestamp and
 an explicit ISO deadline present in the retained input (positive interval,
-at most 365 days). An undated temporary claim is omitted; file modification
+at most 365 days). The validated observation becomes the temporary fact's
+stored start time even when event grounding is disabled or proposes another
+date. An undated temporary claim is omitted; file modification
 time and replay time never supply a new lifetime. Existing rows are untouched.
 
 Under this opt-in, a work-only claim is proposed as `world` only when its
