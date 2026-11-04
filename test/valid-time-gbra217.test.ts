@@ -14,6 +14,8 @@
  *    longer writes (an unmarked pre-upgrade page) or volume (500 versions).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -81,6 +83,13 @@ describe('valid-time normaliser and verdict (pure)', () => {
     expect(exitCodeForCode('host_upgrade_required')).toBe(16);
     expect(() => assertValidTimeEcho({ as_of: '2026-07-01' }, { valid_time: { as_of: '2026-07-01' } }, { client: 'x', host: null })).not.toThrow();
     expect(() => assertValidTimeEcho({}, plain, { client: 'x', host: null })).not.toThrow();
+  });
+
+  test('B4: the minimum host version is the release whose CHANGELOG entry adds get_page as_of', () => {
+    const sections = readFileSync(join(import.meta.dir, '..', 'CHANGELOG.md'), 'utf8').split(/^## \[/m).slice(1);
+    const adding = sections.filter((s) => s.includes('get_page {slug, as_of')).map((s) => s.slice(0, s.indexOf(']')));
+    expect(adding.length).toBeGreaterThan(0);
+    expect(VALID_TIME_MIN_HOST_VERSION).toBe(adding[adding.length - 1]);
   });
 
   test('B2b: CLI rendering puts the header on stderr, no document under another status, exit 15', () => {
