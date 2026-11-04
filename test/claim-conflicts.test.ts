@@ -29,6 +29,7 @@ import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { AUDIT_ROW_SOURCES } from '../src/core/facts/audit-sources.ts';
 import { claimBucket, claimBucketSql, parseClaimParams, sameClaimSlot } from '../src/core/facts/typed-claim.ts';
 import { CLAIM_CONFLICTS_MODE_KEY, claimConflictsCyclePhase, claimConflictsModeRefusal, runClaimConflicts } from '../src/core/facts/claim-conflicts.ts';
+import { withDecideContested, type ContestedLookup } from '../src/core/facts/contested-claims.ts';
 import { CLAIM_CONFLICTS_MAX_PAIRS_KEY, parsePhaseConfigValue } from '../src/core/cycle/phase-config-values.ts';
 import { runCycle } from '../src/core/cycle.ts';
 import { buildTrustReview, renderTrustReview } from '../src/core/trust/review.ts';
@@ -94,6 +95,29 @@ describe('typed claims (pure)', () => {
     expect(parsePhaseConfigValue(CLAIM_CONFLICTS_MAX_PAIRS_KEY, '25')).toBe(25);
     expect(() => parsePhaseConfigValue(CLAIM_CONFLICTS_MAX_PAIRS_KEY, '0')).toThrow();
     expect(() => parsePhaseConfigValue(CLAIM_CONFLICTS_MAX_PAIRS_KEY, '1.5')).toThrow();
+  });
+
+  test('withDecideContested: labeled rows skip the read and keep their label; the first pending pair labels each side; a failed read degrades', async () => {
+    const policy = { remote: false, excludePrivate: false };
+    const trustLabel = { proposal_ref: 'tp3', role: 'challenged' as const };
+    let reads = 0;
+    const none = { executeRaw: async () => { reads++; return []; } } as unknown as Pick<BrainEngine, 'executeRaw'>;
+    expect(await withDecideContested(none, [{ id: 1, contested: trustLabel }], policy, {})).toEqual([{ id: 1, contested: trustLabel }]);
+    expect(reads).toBe(0);
+    const pairs = { executeRaw: async () => [
+      { id: '7', delivered: '1', new_fact_id: '1', old_fact_id: '2' },
+      { id: '9', delivered: '1', new_fact_id: '1', old_fact_id: '5' },
+      { id: '7', delivered: '2', new_fact_id: '1', old_fact_id: '2' },
+    ] } as unknown as Pick<BrainEngine, 'executeRaw'>;
+    expect(await withDecideContested(pairs, [{ id: 1 }, { id: 2 }, { id: 3 }], policy, {})).toEqual([
+      { id: 1, contested: { proposal_ref: 'dp7', role: 'challenger', fact_id: '2' } },
+      { id: 2, contested: { proposal_ref: 'dp7', role: 'challenged', fact_id: '1' } },
+      { id: 3 },
+    ]);
+    const state: ContestedLookup = {};
+    const failing = { executeRaw: async () => { throw new Error('relation missing'); } } as unknown as Pick<BrainEngine, 'executeRaw'>;
+    expect(await withDecideContested(failing, [{ id: 1 }], policy, state)).toEqual([{ id: 1 }]);
+    expect(state.degraded).toEqual({ reason: 'contested_unavailable' });
   });
 });
 
