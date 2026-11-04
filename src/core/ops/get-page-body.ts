@@ -93,23 +93,25 @@ type Selector =
 /** Several window selectors: the first of these applies, most specific first (GBRA-280: GPT-6.1 Sol sends them all and never followed the refusal's fix). */
 const SELECTOR_ORDER: readonly Selector['kind'][] = ['cursor', 'around', 'lines', 'bytes'];
 const PRECEDENCE_NOTE = 'get_page reads one window: cursor, then around_chunk_id, then lines, then bytes.';
+const CONTENT_SET_ASIDE_NOTE = "This window is not the page's content: put_page with it would replace the whole page with this window, so edit through edit_page with edit_target, or read with include_content alone.";
 const selectorParam = (s: Selector) => (s.kind === 'around' ? 'around_chunk_id' : s.kind);
 
 /** The response's account of a read that set window arguments aside: what applied, what was ignored, and the rule. */
-function selectorNote(applied: Selector, ignored: string[], staleChunk?: number): { applied: string; ignored: string[]; note: string } {
+function selectorNote(applied: Selector, ignored: string[], failed: Array<[string, string]> = []): { applied: string; ignored: string[]; note: string } {
   const list = (ks: string[]) => ks.length > 1 ? `${ks.slice(0, -1).join(', ')} and ${ks[ks.length - 1]}` : ks[0]!;
-  const rest = ignored.filter(k => staleChunk === undefined || k !== 'around_chunk_id');
-  const what = staleChunk === undefined
-    ? `Read the ${selectorParam(applied)} window; ignored ${list(rest)}`
-    : `around_chunk_id ${staleChunk} is not on this page at its current revision, so this is the ${selectorParam(applied)} window${rest.length ? `; ignored ${list(rest)}` : ''}`;
-  return { applied: selectorParam(applied), ignored, note: `${what}. ${PRECEDENCE_NOTE}` };
+  const rest = ignored.filter(k => !failed.some(([key]) => key === k));
+  const what = failed.length
+    ? `${failed.map(([, why]) => why).join('; ')}, so this is the ${selectorParam(applied)} window${rest.length ? `; ignored ${list(rest)}` : ''}`
+    : `Read the ${selectorParam(applied)} window; ignored ${list(rest)}`;
+  const notContent = ignored.includes('include_content') || ignored.includes('content_only') ? `${CONTENT_SET_ASIDE_NOTE} ` : '';
+  return { applied: selectorParam(applied), ignored, note: `${what}. ${notContent}${PRECEDENCE_NOTE}` };
 }
 
 export interface BodyRequest {
   mode: BodyMode;
   selector?: Selector;
-  /** The next selector by precedence: applies when an around_chunk_id selector's chunk is not on the page. */
-  fallback?: Selector;
+  /** The remaining selectors by precedence, tried in order when a cursor or around_chunk_id cannot read this page at its current revision. */
+  fallbacks?: Selector[];
   /** Window arguments the read set aside: lower-precedence selectors, and body 'full', include_content or content_only beside a selector. */
   ignored?: string[];
   view: WindowView;
@@ -159,7 +161,10 @@ export function parseBodyRequest(ctx: Pick<OperationContext, 'remote' | 'transpo
     selectors.push({ kind: 'cursor', raw: p.cursor });
   }
   selectors.sort((a, b) => SELECTOR_ORDER.indexOf(a.kind) - SELECTOR_ORDER.indexOf(b.kind));
-  const ignored: string[] = selectors.slice(1).map(selectorParam);
+  const view = p.view === undefined ? 'read' : p.view;
+  if (view !== 'read' && view !== 'markdown') throw invalidParam(ctx, 'get_page', 'view', "get_page: view must be 'read' or 'markdown'.", { choices: ['read', 'markdown'], example: 'markdown' });
+  const usable = view === 'markdown' && selectors.length > 1 ? selectors.filter(s => s.kind !== 'around') : selectors;
+  const ignored: string[] = selectors.filter(s => s !== usable[0]).map(selectorParam);
   const includeContent = p.include_content === true;
   const contentOnly = p.content_only === true;
   let mode: BodyMode;
@@ -177,9 +182,7 @@ export function parseBodyRequest(ctx: Pick<OperationContext, 'remote' | 'transpo
   } else if (includeContent || contentOnly) mode = 'full';
   else if (ctx.thinClient === true || ctx.remote === false) mode = 'full';
   else mode = 'auto';
-  const view = p.view === undefined ? 'read' : p.view;
-  if (view !== 'read' && view !== 'markdown') throw invalidParam(ctx, 'get_page', 'view', "get_page: view must be 'read' or 'markdown'.", { choices: ['read', 'markdown'], example: 'markdown' });
-  if (view === 'markdown' && (mode !== 'window' || selectors[0]?.kind === 'around')) {
+  if (view === 'markdown' && (mode !== 'window' || usable[0]?.kind === 'around')) {
     throw bad('view', "get_page: view: 'markdown' pages the round-trip markdown with body: 'window' and a lines, bytes or cursor selector.", { slug: 'notes/acme-example-log', body: 'window', view: 'markdown', bytes: { offset: 0, length: 1_000_000 } });
   }
   let maxBytes: number | undefined;
@@ -197,7 +200,7 @@ export function parseBodyRequest(ctx: Pick<OperationContext, 'remote' | 'transpo
     if (!int(p.outline_from) || p.outline_from < 0) throw bad('outline_from', 'get_page: outline_from must be a non-negative integer (the previous next_from_index).', 100);
     outlineFrom = p.outline_from;
   }
-  return { mode, ...(selectors[0] ? { selector: selectors[0] } : {}), ...(selectors[1] ? { fallback: selectors[1] } : {}), ...(ignored.length ? { ignored } : {}), view, ...(maxBytes !== undefined ? { maxBytes } : {}), contextLines, outlineFrom,
+  return { mode, ...(usable[0] ? { selector: usable[0] } : {}), ...(usable.length > 1 ? { fallbacks: usable.slice(1) } : {}), ...(ignored.length ? { ignored } : {}), view, ...(maxBytes !== undefined ? { maxBytes } : {}), contextLines, outlineFrom,
     legacyThin: typeof body !== 'string' && ctx.thinClient === true && !includeContent && !contentOnly && !selectors.length };
 }
 
@@ -546,27 +549,44 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
 
   // window: chosen, then measured as the final encoded frame; text that escapes heavily shrinks the window until it fits.
   let sel = req.selector;
-  if (sel && req.ignored) out.window_selector = selectorNote(sel, req.ignored);
+  const fallbacks = [...(req.fallbacks ?? [])];
+  const failed: Array<[string, string]> = [];
+  const note = (applied: Selector) => {
+    const ignored = [selectorParam(req.selector!), ...(req.ignored ?? [])].filter(k => k !== selectorParam(applied));
+    out.window_selector = selectorNote(applied, ignored, failed);
+  };
+  if (sel && req.ignored) note(sel);
   let cursorMax = req.maxBytes ?? DEFAULT_WINDOW_BYTES;
   const select = async (maxBytes: number): Promise<WindowSlice | null> => {
+    const fallBack = (e: unknown, key: string, why: string): Promise<WindowSlice | null> => {
+      const next = fallbacks.shift();
+      if (!next) throw e;
+      failed.push([key, why]);
+      sel = next;
+      note(next);
+      return select(maxBytes);
+    };
     if (!sel) return doc.from(0, maxBytes);
     if (sel.kind === 'lines') return doc.lines(sel.from, sel.count, maxBytes);
     if (sel.kind === 'bytes') return doc.bytes(sel.offset, Math.min(sel.length, maxBytes));
     if (sel.kind === 'cursor') {
       const c = decodeCursor(sel.raw);
       if (!c || c.page_id !== page.id) {
-        throw invalidParam(ctx, 'get_page', 'cursor', `get_page: cursor is not a window cursor for page ${page.slug}.`, { example: 'gpw1.…' });
+        return fallBack(invalidParam(ctx, 'get_page', 'cursor', `get_page: cursor is not a window cursor for page ${page.slug}.`, { example: 'gpw1.…' }),
+          'cursor', 'the cursor is not a window cursor for this page');
       }
       if (c.view !== req.view) {
-        throw invalidParam(ctx, 'get_page', 'view', `get_page: this cursor pages view '${c.view}'; pass view: '${c.view}' with it.`, { choices: ['read', 'markdown'], example: c.view });
+        return fallBack(invalidParam(ctx, 'get_page', 'view', `get_page: this cursor pages view '${c.view}'; pass view: '${c.view}' with it.`, { choices: ['read', 'markdown'], example: c.view }),
+          'cursor', `the cursor pages view '${c.view}'`);
       }
       if (c.revision !== revision) {
         const position = Math.min(c.offset, doc.total);
-        throw opError('revision_changed', `Page ${page.slug} changed since this cursor was issued (revision ${c.revision}, now ${revision}).`,
+        return fallBack(opError('revision_changed', `Page ${page.slug} changed since this cursor was issued (revision ${c.revision}, now ${revision}).`,
           `Continue from the same byte offset at the current revision (bytes: { offset: ${position}, length: ${c.max_bytes} }), or start over from the outline.`,
           { legacy_error: 'invalid_params', detail: JSON.stringify({ revision, cursor_revision: c.revision, offset: position }),
             fix: readFix('Reads on from the same byte offset at the current revision.', { argv: ['gbrain', 'get', '--source', page.source_id, '--', page.slug],
-              mcp: { tool: 'get_page', arguments: { slug: page.slug, source_id: page.source_id, body: 'window', ...(markdown ? { view: 'markdown' } : {}), bytes: { offset: position, length: c.max_bytes } } } }) });
+              mcp: { tool: 'get_page', arguments: { slug: page.slug, source_id: page.source_id, body: 'window', ...(markdown ? { view: 'markdown' } : {}), bytes: { offset: position, length: c.max_bytes } } } }) }),
+          'cursor', 'the page changed since the cursor was issued');
       }
       cursorMax = c.max_bytes;
       return doc.from(c.offset, Math.min(c.max_bytes, maxBytes));
@@ -575,11 +595,8 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
     let around: Awaited<ReturnType<typeof aroundChunk>>;
     try { around = await aroundChunk(ctx, page, doc, chunkId, req.contextLines, maxBytes, revision); }
     catch (e) {
-      if (!req.fallback || !(e instanceof OperationError) || (e.canonical ?? e.code) !== 'revision_changed') throw e;
-      const next = req.fallback;
-      sel = next;
-      out.window_selector = selectorNote(next, ['around_chunk_id', ...(req.ignored ?? []).filter(k => k !== 'around_chunk_id' && k !== selectorParam(next))], chunkId);
-      return select(maxBytes);
+      if (!(e instanceof OperationError) || (e.canonical ?? e.code) !== 'revision_changed') throw e;
+      return fallBack(e, 'around_chunk_id', `around_chunk_id ${chunkId} is not on this page at its current revision`);
     }
     out.anchor = around.anchor;
     if (around.span) out.chunk_span = around.span;

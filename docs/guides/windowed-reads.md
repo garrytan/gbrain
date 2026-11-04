@@ -42,8 +42,12 @@ with a partial mode and no selector, is `invalid_params` with an example. With
 several selectors, one window is read: `cursor`, then `around_chunk_id`, then
 `lines`, then `bytes`. `body: "full"`, `include_content` and `content_only` beside a
 selector are set aside too, so the read is still a window, never the whole page.
-An `around_chunk_id` whose chunk is no longer on the page gives way to the next
-selector. The response's `window_selector {applied, ignored, note}` says what was
+A cursor that can't read this page (another page's, another view's, or issued
+before the page changed) or an `around_chunk_id` whose chunk is no longer on the
+page gives way to the next selector; with `view: "markdown"`, `around_chunk_id`
+beside another selector is set aside. When `include_content` or `content_only` is
+set aside, the note says the window is not the page's content, so edit it with
+`edit_page` and `edit_target` rather than putting it back with `put_page`. The response's `window_selector {applied, ignored, note}` says what was
 read and what was set aside; a call with one selector has no `window_selector`. A window response
 carries `window {text, byte_start, byte_end, line_start, line_end}`,
 `size {total_bytes, total_lines}`, `truncated`, and when more follows

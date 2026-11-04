@@ -294,7 +294,7 @@ describe("GST-927: GBEV-3's replayed Sol shapes", () => {
     expect(r.compiled_truth).toBeUndefined();
     expect(r.content).toBeUndefined();
     expect(r.window_selector).toEqual({ applied: 'around_chunk_id', ignored: ['lines', 'bytes', 'body', 'include_content'],
-      note: 'Read the around_chunk_id window; ignored lines, bytes, body and include_content. get_page reads one window: cursor, then around_chunk_id, then lines, then bytes.' });
+      note: "Read the around_chunk_id window; ignored lines, bytes, body and include_content. This window is not the page's content: put_page with it would replace the whole page with this window, so edit through edit_page with edit_target, or read with include_content alone. get_page reads one window: cursor, then around_chunk_id, then lines, then bytes." });
   });
 
   test('lines beside bytes reads the lines window; an around_chunk_id not on the page falls back to the next selector', async () => {

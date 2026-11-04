@@ -186,7 +186,7 @@ Read a page by slug (supports optional fuzzy matching). Slug aliases left by ren
 | `grep` | string | Only the paragraphs containing this text (case-insensitive substring, not a regex), with line numbers and `total_matches`. Accepted on the starter surface; advertised on full. |
 | `context` | number | Applies only with grep (ignored without it): paragraphs of context either side (default 1, max 5). |
 
-The window parameters (`lines`, `bytes`, `around_chunk_id`, `cursor`) are advertised on the full surface. With several, one window is read: `cursor`, then `around_chunk_id`, then `lines`, then `bytes` (an `around_chunk_id` no longer on the page gives way to the next), and `body: "full"`, `include_content` and `content_only` beside a selector are set aside. The response's `window_selector` names what applied and what was ignored.
+The window parameters (`lines`, `bytes`, `around_chunk_id`, `cursor`) are advertised on the full surface. With several, one window is read: `cursor`, then `around_chunk_id`, then `lines`, then `bytes` (a cursor that can't read this page and an `around_chunk_id` no longer on it give way to the next, and `view: "markdown"` sets `around_chunk_id` aside beside another selector), and `body: "full"`, `include_content` and `content_only` beside a selector are set aside. The response's `window_selector` names what applied and what was ignored.
 
 ## `get_recent_salience`
 
