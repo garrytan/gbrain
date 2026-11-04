@@ -93,7 +93,7 @@ test('a segmented page whose rows do not tile its body is held at the freeze; th
   expect((result.held ?? []).map(hold => [hold.path, hold.code])).toEqual([['people/person-example.md', 'page_write_failed']]);
   expect(result.held![0]!.message).toContain('page_body_rows_unreadable');
   expect((await readSyncStatus(engine, f.sourceId, { detail: false })).holds).toEqual([expect.objectContaining({ code: 'page_write_failed',
-    path: 'people/person-example.md', needs_human: false, safe_actions: ['retry'] })]);
+    path: 'people/person-example.md', needs_human: true, safe_actions: ['repair'] })]);
   const [other] = await engine.executeRaw<{ compiled_truth: string }>("SELECT compiled_truth FROM pages WHERE source_id=$1 AND slug='people/other-example'", [f.sourceId]);
   expect(other!.compiled_truth).toContain('second');
   expect(await engine.executeRaw('SELECT last_commit FROM sources WHERE id=$1', [f.sourceId])).toEqual([{ last_commit: git(f.root, 'rev-parse', 'HEAD') }]);

@@ -21,7 +21,8 @@
  * versions the damaged generation by reference, screens the blob again and stages the body the screen's fence step and
  * the purge and withdrawal overlay admit (a purged claim the file still carries stays out), publishes it as a new generation through the
  * generation flip (which refuses one that does not tile), keeps the page's title, type, frontmatter, tags and trust tier,
- * clears the sync hold the preview saw and asks the next sync to re-screen the file (so a file that differs from the
+ * clears the sync hold the preview saw, records the new revision as imported from the HEAD blob when the file imports to
+ * the stored metadata (so the next sync holds no file_drift), asks the next sync to re-screen the file (so a file that differs from the
  * stored page in anything else imports normally), and writes the page's receipt, also appended to the `segmented-tiling`
  * audit log. Explicit-only: never from doctor, a remediation plan or an upgrade.
  */
@@ -33,6 +34,8 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { trustedCliRequired } from '../ops/op-fix.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
+import { stableJson } from '../persistence/digest.ts';
+import { withoutSafetyAssessments } from '../persistence/reconcile-safety.ts';
 import { withCoordinatedWrite, withWriteAttribution } from '../persistence/context.ts';
 import { readManagedMode } from '../persistence/managed-mode.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
@@ -40,7 +43,9 @@ import { checkOwner, ownerUnavailableError } from '../persistence/owner-refusal.
 import { hostIdFor } from '../persistence/identity.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { loadRepairBusySet, repairBusy, repairBusyError } from '../persistence/repair-busy.ts';
-import { clearGitHold, readGitHold, requestGitHoldRetry, type GitHoldRecord } from '../persistence/sync-holds.ts';
+import { clearGitHold, readGitHold, recordSyncImportProvenance, requestGitHoldRetry, syncImportParserFor, type GitHoldRecord } from '../persistence/sync-holds.ts';
+import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
+import { VERSION } from '../../version.ts';
 import { unreadPageImportScreen } from '../persistence/sync-screen.ts';
 import { PAGE_BODY_FAULT_CODES } from '../persistence/sync-fault-class.ts';
 import { preserveWithdrawnFenceRows } from '../facts/withdrawal.ts';
@@ -141,14 +146,15 @@ const segmentedReadHold = (hold: GitHoldRecord) => hold.code === 'page_write_fai
  * fence step and the purge and withdrawal overlay an import applies, so a purged claim the file still carries stays out.
  */
 async function stageable(engine: BrainEngine, page: { source_id: string; slug: string; source_path: string }, checkout: { root: string; incarnation: string },
-  content: string): Promise<{ held: string } | { truth: string; timeline: string; hold: GitHoldRecord | null }> {
+  content: string): Promise<{ held: string } | { truth: string; timeline: string; hold: GitHoldRecord | null; asStored: boolean }> {
   const hold = await readGitHold(engine, page.source_id, checkout.incarnation, page.source_path);
   if (hold && !segmentedReadHold(hold)) return { held: `its sync hold (${hold.code}) withholds the file; resolve that hold first (gbrain sources status ${page.source_id})` };
   const screen = await unreadPageImportScreen(engine, { sourceId: page.source_id, root: checkout.root, path: page.source_path, slug: page.slug, content,
     snapshot: await engine.readPageSnapshot(page.slug, { sourceId: page.source_id }) });
   if (screen.status === 'refused') return { held: `the next sync would hold the file (${screen.refusal.code}): ${screen.refusal.message}` };
   const parsed = screen.status === 'importable' && screen.parsed ? screen.parsed : parseMarkdown(content, `${page.slug}.md`);
-  const [stored] = await engine.executeRaw<{ type: string; frontmatter: Record<string, unknown> | null }>('SELECT type, frontmatter FROM pages WHERE source_id=$1 AND slug=$2', [page.source_id, page.slug]);
+  const [stored] = await engine.executeRaw<{ type: string; title: string; frontmatter: Record<string, unknown> | null; tags: string[] }>(`SELECT p.type, p.title, p.frontmatter,
+    COALESCE((SELECT jsonb_agg(t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS tags FROM pages p WHERE p.source_id=$1 AND p.slug=$2`, [page.source_id, page.slug]);
   const storedFrontmatter = stored?.frontmatter ?? {};
   const access = (fm: Record<string, unknown>) => JSON.stringify(['visibility', 'readable_by', 'pinned_question', ...Object.keys(PRIVACY_ALIASES)].map(key => fm[key] ?? null));
   if (access(parsed.frontmatter) !== access(storedFrontmatter)
@@ -164,14 +170,23 @@ async function stageable(engine: BrainEngine, page: { source_id: string; slug: s
   const marked = [QUARANTINE_KEY, EMBED_SKIP_KEY, CONTENT_FLAG_KEY].filter(key => settled.frontmatter[key] != null && storedFrontmatter[key] == null);
   if (marked.length) return { held: `the next sync's content gate would mark the page ${marked.join(', ')}, and this repair republishes the body under the stored frontmatter` };
   const body = screen.status === 'importable' && screen.fences ? screen.fences.after : { compiled_truth: parsed.compiled_truth, timeline: parsed.timeline ?? '' };
-  return { hold, truth: (await preserveWithdrawnFenceRows(engine, page.source_id, body.compiled_truth, page.slug)).trim(),
+  // The republished page is what an import of the file makes only when the metadata it keeps is what the file imports (an import keeps tags it lacks).
+  const storedTags = new Set(stored?.tags ?? []);
+  const asStored = settled.title === stored?.title && settled.type === stored?.type && settled.tags.every(tag => storedTags.has(tag))
+    && stableJson(withoutSafetyAssessments(settled.frontmatter)) === stableJson(withoutSafetyAssessments(storedFrontmatter));
+  return { hold, asStored, truth: (await preserveWithdrawnFenceRows(engine, page.source_id, body.compiled_truth, page.slug)).trim(),
     timeline: (await preserveWithdrawnFenceRows(engine, page.source_id, body.timeline ?? '', page.slug)).trim() };
 }
 
-/** Every damaged page of the selection, as the preview lists it (republishable pages and held ones). */
-async function survey(engine: BrainEngine, selection: Selection): Promise<{ pages: HealPage[]; listing: RepairListing[]; held: number }> {
-  const damaged = await untiledSegmentedPages(engine, { sourceIds: [selection.source_id], ...(selection.slugs.length ? { slugs: selection.slugs } : {}) });
-  if (!damaged.length) return { pages: [], listing: [], held: 0 };
+/** The most damaged pages one preview lists; a preview that finds more says so (`truncated`), and the next preview after the apply lists the rest. */
+export const PREVIEW_PAGE_LIMIT = 1000;
+
+/** Every damaged page of the selection, as the preview lists it (republishable pages and held ones), up to `limit`. */
+export async function survey(engine: BrainEngine, selection: Selection, limit = PREVIEW_PAGE_LIMIT): Promise<{ pages: HealPage[]; listing: RepairListing[]; held: number; truncated: boolean }> {
+  const found = await untiledSegmentedPages(engine, { sourceIds: [selection.source_id], ...(selection.slugs.length ? { slugs: selection.slugs } : {}), limit: limit + 1 });
+  const truncated = found.length > limit;
+  const damaged = found.slice(0, limit);
+  if (!damaged.length) return { pages: [], listing: [], held: 0, truncated };
   const checkout = await sourceCheckout(engine, selection.source_id);
   const { maxBytes } = await readPageBodyPolicy(engine);
   const pages: HealPage[] = [];
@@ -189,14 +204,14 @@ async function survey(engine: BrainEngine, selection: Selection): Promise<{ page
     pages.push(heal);
     listing.push({ item: label, class: 'republish', detail: describe(heal) });
   }
-  return { pages: pages.sort((a, b) => a.page_id - b.page_id), listing, held };
+  return { pages: pages.sort((a, b) => a.page_id - b.page_id), listing, held, truncated };
 }
 
 /**
  * Republishes one page's body (`stageable`'s) in the caller's transaction and clears the sync hold the preview saw (a newer
  * one stays for the requested re-screen); false when the page, or a fact withdrawal it carries, changed since the preview.
  */
-async function republish(tx: BrainEngine, page: HealPage, body: { truth: string; timeline: string }): Promise<{ generation: number; unsealed: boolean; hold_cleared: boolean } | false> {
+async function republish(tx: BrainEngine, page: HealPage, body: { truth: string; timeline: string; asStored: boolean }): Promise<{ generation: number; unsealed: boolean; hold_cleared: boolean } | false> {
   await tx.lockPageKeys([{ sourceId: page.source_id, slug: page.slug }]);
   const [now] = await untiledSegmentedPages(tx, { sourceIds: [page.source_id], slugs: [page.slug] });
   if (!now || now.page_id !== page.page_id || now.revision !== page.revision || now.body_generation !== page.body_generation) return false;
@@ -222,6 +237,15 @@ async function republish(tx: BrainEngine, page: HealPage, body: { truth: string;
     pageId: page.page_id, prepared, promotion: false, retireMaxRows: flipRetireMaxRows,
     meta: { title: row!.title, type: row!.type as never, frontmatter: frontmatter as never, page_kind: row!.page_kind as never } }));
   if (applied.complete) await sealSegmentedPage(tx, page.page_id);
+  // When the republished revision is what the file at HEAD imports, the import record names that blob and revision, so the next sync
+  // prescreens the file instead of holding it file_drift as a database-only edit. Kept metadata the file no longer imports stays guarded.
+  if (body.asStored) {
+    const [after] = await tx.executeRaw<{ revision: string }>('SELECT knowledge_revision::text AS revision FROM pages WHERE id=$1', [page.page_id]);
+    const pack = await loadActivePackForEngine(tx, { remote: false, sourceId: page.source_id }).catch(() => null);
+    await recordSyncImportProvenance(tx, { source_id: page.source_id, incarnation: page.incarnation, page_id: page.page_id, origin: page.source_path,
+      raw_sha256: page.blob_sha256, blob_oid: page.blob_oid, working: false, gbrain_version: VERSION, revision: after!.revision,
+      parser: syncImportParserFor(page.source_path, pack?.identity ?? null), disk_sha256: page.blob_sha256, disk_blob_oid: page.blob_oid });
+  }
   const hold_cleared = page.hold_observed_at !== null
     && await clearGitHold(tx, { sourceId: page.source_id, incarnation: page.incarnation, path: page.source_path, observedAt: page.hold_observed_at });
   await requestGitHoldRetry(tx, page.source_id, page.incarnation, [page.source_path]);
@@ -246,11 +270,12 @@ export const segmentedTilingRepair: RepairHandler = {
     const selection = selectionOf(scope, opts.slugs);
     const command = previewCommand(selection);
     if (!opts.apply) {
-      const { pages, listing, held } = await survey(engine, selection);
+      const { pages, listing, held, truncated } = await survey(engine, selection);
       const hash = hashOf(scope, selection, pages);
       if (pages.length) await saveApprovedSet<HealPage & { selection: Selection }>(engine, { command: 'segmented-tiling', hash }, pages.map(page => ({ ...page, selection })));
       return { items: pages.map((page, index) => item(page, hash, index === pages.length - 1)), preview_hash: hash, listing,
-        residuals: { pages_to_republish: pages.length, held }, details: { pages } };
+        residuals: { pages_to_republish: pages.length, held, ...(truncated ? { more_pages_not_listed: 1 } : {}) },
+        details: { pages, ...(truncated ? { truncated: true, next: `More than ${PREVIEW_PAGE_LIMIT} damaged pages: apply this preview, then run ${command} again to list the rest.` } : {}) } };
     }
     if (!opts.expect) {
       throw new OperationError('invalid_params', 'gbrain repair segmented-tiling --apply republishes only the set a preview printed.',

@@ -1322,6 +1322,13 @@
         },
         {
           "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Every live page stored in segments has segment rows that cover its whole body.",
+          "name": "segmented_tiling",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
           "details": {
             "count": "exact",
             "kept_unrenderable_rows": 0,
@@ -1631,13 +1638,6 @@
           "elapsed_ms": "<volatile>",
           "message": "Segmented page storage is on: pages over 1 MiB are stored in segments, up to 268435456 bytes on this Postgres brain.",
           "name": "segmented_storage",
-          "status": "ok"
-        },
-        {
-          "category": "brain",
-          "elapsed_ms": "<volatile>",
-          "message": "Every live page stored in segments has segment rows that cover its whole body.",
-          "name": "segmented_tiling",
           "status": "ok"
         },
         {

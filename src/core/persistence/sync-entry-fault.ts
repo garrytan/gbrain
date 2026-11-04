@@ -125,7 +125,9 @@ export function freezeFaultHold(run: object, entry: HoldEntry, slug: string, pag
   const text = (error instanceof Error ? error.message : String(error)).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 300);
   return { path: entry.path, source_path: entry.sourcePath, slug, page_id: pageId, code: 'page_write_failed',
     message: `${entry.path}: sync could not prepare its ${entry.action === 'delete' ? 'deletion' : 'import'} (${name}: ${text}), so it is held and the rest of the source synced. `
-      + 'The next syncs re-test it; if it stays held, report it with the gbrain version or fix the file when the error names it, then gbrain sources retry-held.',
+      + ((error as OperationError | null)?.code === 'page_body_rows_unreadable' && pageBody
+        ? `The page's segment rows do not cover its body, so no retry clears it: preview gbrain repair segmented-tiling --source <source> --slug ${slug}.`
+        : 'The next syncs re-test it; if it stays held, report it with the gbrain version or fix the file when the error names it, then gbrain sources retry-held.'),
     upstream_version: null,
     meta: { ...meta, write_failure: { code: pageBody ? (error as OperationError).code : 'storage_error', origin: 'freeze', error_class: name, errno: typeof errno === 'string' ? errno.slice(0, 32) : null, request_id: null, attempts: 1, gbrain_version: VERSION } } };
 }
