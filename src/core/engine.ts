@@ -371,6 +371,10 @@ export interface TakeHit {
   kind: TakeKind;
   holder: string;
   weight: number;
+  /** Validity window and cited source as stored on the row (null when unset). */
+  since_date?: string | null;
+  until_date?: string | null;
+  source?: string | null;
   score: number;            // search rank score (ts_rank for keyword, 1-cos_dist for vector)
 }
 

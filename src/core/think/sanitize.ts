@@ -201,6 +201,7 @@ export interface TakeForPrompt {
   weight: number;
   source?: string | null;
   since_date?: string | null;
+  until_date?: string | null;
   /** #5575 A6: the take's trust tier and short origin, rendered as attributes. */
   trust_tier?: TrustTier;
   origin?: string;
@@ -214,6 +215,7 @@ export function renderTakesBlock(takes: TakeForPrompt[]): { rendered: string; sa
     if (matched.length > 0) sanitizedCount++;
     const meta = [`kind=${t.kind}`, `who=${t.holder}`, `weight=${t.weight.toFixed(2)}`];
     if (t.since_date) meta.push(`since=${t.since_date}`);
+    if (t.until_date) meta.push(`until=${t.until_date}`);
     if (t.source) meta.push(`source="${String(t.source).replace(/"/g, '\\"').slice(0, 80)}"`);
     if (t.trust_tier) meta.push(trustAttributes({ trust_tier: t.trust_tier, origin: t.origin ?? 'legacy' }));
     lines.push(

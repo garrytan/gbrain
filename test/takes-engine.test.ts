@@ -117,6 +117,19 @@ describe('searchTakes', () => {
     const hits = await engine.searchTakes('consolidate');
     expect(hits.some(h => h.claim.includes('consolidate the mid-market'))).toBe(true);
   });
+
+  test('hits carry the stored validity window and source', async () => {
+    await engine.addTakesBatch([{
+      page_id: acmePageId, row_num: 60,
+      claim: 'Acme priced per seat during the pilot window',
+      kind: 'fact', holder: 'world', weight: 0.9,
+      since_date: '2025-09-01', until_date: '2026-01-31', source: 'pilot-review',
+    }]);
+    const hit = (await engine.searchTakes('pilot window')).find(h => h.page_id === acmePageId && h.row_num === 60);
+    expect(hit).toMatchObject({ since_date: '2025-09-01', until_date: '2026-01-31', source: 'pilot-review' });
+    const bare = (await engine.searchTakes('consolidate')).find(h => h.row_num === 50);
+    expect(bare).toMatchObject({ since_date: null, until_date: null, source: null });
+  });
 });
 
 describe('updateTake', () => {
@@ -424,5 +437,7 @@ describe('take embedding writes', () => {
     expect(result.embedded).toBeGreaterThan(0);
     const hits = await engine.searchTakesVector(new Float32Array(dims).fill(0.5), { limit: 10 });
     expect(hits.length).toBeGreaterThan(0);
+    // Vector hits project the same validity window + source as keyword hits.
+    expect(hits.every(h => 'since_date' in h && 'until_date' in h && 'source' in h)).toBe(true);
   });
 });
