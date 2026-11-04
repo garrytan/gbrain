@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.570.0] - 2026-11-04
+## [Unreleased]
 
 **Memory train (GBRA-286): `forget` edits the page files first, pasted documents ingest into pages and facts, `recall` can weigh how far a fact deserves belief, page versions carry a human reason and can be read by date, and agents can read and switch the saving rule. Every new mode is off by default, and every feature works on a brain with no Git repository.**
 
@@ -121,6 +121,16 @@ Before, the rule for what an agent saves lived in the MCP instructions, and only
 | `memory_conversation_mode` | any connection that can call `remember` | returns the rule for the rest of this conversation: all, salient, off (only what the user asks to keep) or brain; stores nothing |
 
 The new `memory.agent_writeback` key changes only what agents are told. The host capture lanes (Stop hook, compaction harvest, SessionEnd transcripts) keep following the operator's `memory.auto_writeback`, so a remote "off" can't discard banked session text and a remote "all" can't start capture the operator never enabled. An unreadable or unrecognized override makes agents act as if saving is off and `get_memory_settings` reports `degraded`. The MCP instructions gain one line telling the agent to use the switch, after the governing rule, wherever the tool is served (starter and full surfaces). `gbrain config set|get memory.agent_writeback` works from the CLI.
+
+## [0.60.570.0] - 2026-11-04
+
+**GPT-style get_page calls that send several window selectors now read a window instead of refusing.** GPT-6.1 Sol fills every get_page argument it can, so it sends `lines`, `bytes` and often a real `around_chunk_id` together, beside `body: "full"` and `include_content: true`. get_page refused every such call with `invalid_params`. The refusal carried a runnable fix, but on GBEV-30's SkillOpt re-read Sol followed it 0 times in 305, so 52% of its briefing reads and 84% of its fact-check reads failed. Now get_page reads one window, in a fixed order: `cursor`, then `around_chunk_id`, then `lines`, then `bytes`. A whole-page flag beside a selector is set aside, so the answer is still a window and never the page. The response's `window_selector` names what applied and what was ignored. A call with one selector behaves as before.
+
+### Itemized changes
+
+- `src/core/ops/get-page-body.ts`: `parseBodyRequest` still validates each selector on its own, then orders them cursor, around_chunk_id, lines, bytes, and the first one applies. `body: "full"`, `include_content` and `content_only` beside a selector are set aside, while `body: "none"` or `"outline"` beside one still refuses. When a cursor can't read this page (another page's, another view's, or issued before the page changed) or an `around_chunk_id`'s chunk is no longer on the page, and another selector was sent, the read falls back to the next one; on its own, each still refuses as before. With `view: "markdown"`, `around_chunk_id` beside another selector is set aside. A read that set anything aside returns `window_selector {applied, ignored, note}`; when that includes `include_content` or `content_only`, the note says the window is not the page's content and that edits go through `edit_page`.
+- get_page's tool description states the order, and the four selector descriptions drop "One window selector only". `docs/guides/windowed-reads.md` and `docs/mcp/TOOL_REFERENCE.md` describe the rule.
+- Tests: `test/tool-args-empty-optional-sol.test.ts` replays Sol's recorded argument shape on every entry point (MCP over HTTP and stdio, `gbrain call`, the subagent registry and both SkillOpt registries). `test/get-page-body-modes.test.ts` checks the order, that the read equals the applied selector sent alone (`edit_target` included), that a whole-page ask beside a selector returns no page body, and that a failed cursor or stale chunk falls through to the next selector.
 
 ## [0.60.569.0] - 2026-11-04
 

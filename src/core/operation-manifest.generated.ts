@@ -260,7 +260,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "explicit page read by slug/id; governed by page visibility, not output redaction (CEO-17 raw-read exception)"
     },
-    "description": "Read a page; `section`/`grep` reads one part. Pass at most one window selector: lines, bytes, around_chunk_id or cursor (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
+    "description": "Read a page; `section`/`grep` reads one part. Window selector order: cursor, around_chunk_id, lines, bytes (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
     "params": {
       "slug": {
         "type": "string",
@@ -299,7 +299,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
           "from",
           "count"
         ],
-        "description": "Window: 1-based lines. One window selector only: not with bytes, around_chunk_id or cursor.",
+        "description": "Window: 1-based lines.",
         "properties": {
           "from": {
             "type": "number",
@@ -318,7 +318,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
           "offset",
           "length"
         ],
-        "description": "Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start). One window selector only: not with lines, around_chunk_id or cursor.",
+        "description": "Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start).",
         "properties": {
           "offset": {
             "type": "number",
@@ -334,7 +334,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "around_chunk_id": {
         "type": "number",
         "minimum": 1,
-        "description": "Window around a search hit chunk_id. One window selector only: not with lines, bytes or cursor.",
+        "description": "Window around a search hit chunk_id.",
         "fullSurfaceOnly": true
       },
       "context_lines": {
@@ -344,7 +344,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "cursor": {
         "type": "string",
-        "description": "next_cursor: read on. One window selector only: not with lines, bytes or around_chunk_id.",
+        "description": "next_cursor: read on.",
         "fullSurfaceOnly": true
       },
       "max_bytes": {
