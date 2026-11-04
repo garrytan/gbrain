@@ -38,6 +38,7 @@ const ROWS: readonly Row[] = [
   ['access_group_members', 'out_of_scope', 'no_memory_text', 'group_id member_id'],
   ['access_groups', 'out_of_scope', 'no_memory_text', 'id'],
   ['access_member_links', 'out_of_scope', 'no_memory_text', 'system external_id member_id'],
+  ['access_member_sources', 'out_of_scope', 'no_memory_text', 'member_id source_id'],
   ['access_members', 'out_of_scope', 'no_memory_text', 'id display_name'],
   ['access_pending_coverage', 'out_of_scope', 'no_memory_text', 'source_id prefix reason detail'],
   ['access_policy_migrations', 'out_of_scope', 'no_memory_text', 'id source_id direction phase receipts'],

@@ -267,6 +267,10 @@ An attested read that names `source_id` or `source_ids` (`get_page`, `entity`, `
 `get_timeline`, `find_experts`, `volunteer_context`, `query`, `memory_recall`) reads those sources as their
 audience, never as the person; `--attest-read person` makes such reads run as the person, and `--attest-read scope`
 also refuses every call that names no person (`actor_required`) ([QM guide](../guides/qm.md#reads-that-name-sources)).
+A source bound to a member (`gbrain access member source add <member> <source>`, trusted local CLI only) is personal:
+an attested call reads its grant minus personal sources bound to anyone else, a read that names sources as their
+audience reads none, and a hidden source is refused like one outside the grant. Binding never widens a grant
+([QM guide](../guides/qm.md#each-persons-own-sources)).
 `gbrain access check --token <name>` shows the
 result ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
 

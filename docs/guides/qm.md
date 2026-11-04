@@ -51,6 +51,32 @@ serves only one person's own conversations; a `person` client that reads a sourc
 room client reads is flagged by `gbrain doctor` (`attest_read_shared_scope`). Unset
 (`none`) reads named sources as the scope and still serves calls that name no person.
 
+### Each person's own sources
+
+A client reads only the sources its credential is granted, usually the default
+source, so facts in a member's own DM or member source are not recalled until the
+client is granted that source. Grant the client every DM source and bind each one to
+its member, so a person reads their own and nobody else's:
+
+```bash
+gbrain auth rescope --client <client_id> --sources source-a,dm-alice-example,dm-bob-example
+gbrain access member source add alice-example dm-alice-example
+gbrain access member source add bob-example dm-bob-example
+gbrain access member source list
+```
+
+A bound source is personal. An attested call reads its credential's grant minus every
+personal source bound to someone else: alice-example's unnamed `memory_recall` reads
+source-a and dm-alice-example, never dm-bob-example. A read that names sources as
+their audience (the reads above, unless the client is `--attest-read person`) reads
+no personal source, not even the speaker's own, so a room never reads a DM. A hidden
+source named in `source_id` or `source_ids` is refused exactly like a source outside
+the grant (`permission_denied`). Binding only hides inside the grant: a source the
+credential is not granted stays unreadable. Unattested calls and member-bound
+credentials are unchanged. `gbrain access member source remove <member> <source>`
+previews first and says whether the source stays personal; `--yes` applies. Bindings
+are database state, so a repo-less brain works the same.
+
 ## What the tools do
 
 - `memory_recall {query, max_chars?, source_id?, source_ids?}` answers plain text, one fact per line
