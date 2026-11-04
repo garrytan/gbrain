@@ -58,7 +58,7 @@ const ERROR_NOTES: Partial<Record<typeof ERROR_CODES[number], string>> = {
 /** v2 changes to v1's fix rows (GST-900: a member-bound credential may name its own member). */
 const V2_REASON_FIXES: Partial<typeof ACTOR_REASON_FIXES> = {
   argument_mismatch: { fixed_by: 'calling_harness', fix: 'Send acting_user equal to the x-qm-actor header (with no header, on a credential bound to a member: that member id or a canonical id linked to it), or omit it.' },
-  argument_without_attestation: { fixed_by: 'calling_harness', fix: 'Remove acting_user, or send the x-qm-actor header from a credential holding the attest right; a credential bound to no member never sends acting_user alone.' },
+  argument_without_attestation: { fixed_by: 'calling_harness', fix: 'Remove acting_user, or send the x-qm-actor header from a credential holding the attest right; a credential bound to no member never sends acting_user alone. detail missing=<attest_right|x-qm-actor, comma-separated> names what this call lacked.' },
 };
 
 function toolEntry(name: string, version: QmContractVersion) {
@@ -95,7 +95,9 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
     tools: [...QM_MEMORY_OPS].sort().map(name => toolEntry(name, version)),
     memory_recall: {
       limits: { max_chars: { ...MEMORY_RECALL_MAX_CHARS, whole_number: true, unit: 'UTF-16 code units (JavaScript string length)' }, query_chars_ranked: MEMORY_RECALL_QUERY_CHARS, own_recent_window_hours: OWN_RECENT_WINDOW_HOURS },
-      arguments_checked: 'query and max_chars are checked before any read, also for an unlinked person (invalid_params)',
+      arguments_checked: v2
+        ? `query and max_chars are checked before any read, also for an unlinked person (invalid_params); a longer query is ranked on its first ${MEMORY_RECALL_QUERY_CHARS} characters and never refused (recall's question is refused over ${QUESTION_MAX_CHARS}: invalid_params reason question_too_long)`
+        : 'query and max_chars are checked before any read, also for an unlinked person (invalid_params)',
       content: { line: '- <fact> (<YYYY-MM-DD>; <kind>)', never: ['page bodies', 'fence markers', 'heading markers', 'line breaks or control characters inside a fact'], bounded_by: 'max_chars: as many whole lines as fit; facts left out set structuredContent.truncated, with no marker line, because every line is one fact' },
       order: ['own facts from the last ' + OWN_RECENT_WINDOW_HOURS + ' hours, newest first', 'facts the person may read, ranked by query'],
       ranking: 'keyword-only unless an embedding provider is configured (no embedding call on a keyless brain)',

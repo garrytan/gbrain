@@ -148,7 +148,7 @@
       "query_chars_ranked": 2000,
       "own_recent_window_hours": 24
     },
-    "arguments_checked": "query and max_chars are checked before any read, also for an unlinked person (invalid_params)",
+    "arguments_checked": "query and max_chars are checked before any read, also for an unlinked person (invalid_params); a longer query is ranked on its first 2000 characters and never refused (recall's question is refused over 2000: invalid_params reason question_too_long)",
     "content": {
       "line": "- <fact> (<YYYY-MM-DD>; <kind>)",
       "never": [
@@ -314,7 +314,7 @@
           {
             "reason": "argument_without_attestation",
             "fixed_by": "calling_harness",
-            "fix": "Remove acting_user, or send the x-qm-actor header from a credential holding the attest right; a credential bound to no member never sends acting_user alone."
+            "fix": "Remove acting_user, or send the x-qm-actor header from a credential holding the attest right; a credential bound to no member never sends acting_user alone. detail missing=<attest_right|x-qm-actor, comma-separated> names what this call lacked."
           },
           {
             "reason": "invalid_actor_id",

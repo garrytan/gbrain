@@ -106,4 +106,12 @@ describe('QM memory-provider contract v2 (GST-1094 scope read, GST-900)', () => 
     expect(scopeWrite.saved_as).toMatchObject({ page: 'memory/scope', visibility: 'world' });
     expect(scopeWrite.rule).toContain('attest_sources');
   });
+
+  test('it says what an over-long query, an over-long recall question and an unattested acting_user get (GST-1304)', () => {
+    expect(fixture.memory_recall.arguments_checked).toContain('a longer query is ranked on its first 2000 characters and never refused');
+    const notes = Object.fromEntries(fixture.errors.codes.map((c: { code: string; note?: string }) => [c.code, c.note]));
+    expect(notes.invalid_params).toContain('question_too_long');
+    const reasons = fixture.errors.codes.find((c: { code: string }) => c.code === 'actor_not_attested').reasons;
+    expect(reasons.find((r: { reason: string }) => r.reason === 'argument_without_attestation').fix).toContain('detail missing=');
+  });
 });

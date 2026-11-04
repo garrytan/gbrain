@@ -30,8 +30,8 @@ a repo exists, saved facts go through the same git-first writer door as `remembe
   first, then the facts they may read ranked by `query`. Never page bodies. The text
   holds as many whole lines as fit, with no marker line (every line is one fact;
   `structuredContent.truncated` says some were left out), and never exceeds `max_chars`
-  (a whole number of UTF-16 code units, 200-12000, default 6000). `query` is ranked
-  on its first 2,000 characters. `recall`'s `question` is capped at 2,000: a longer one is
+  (a whole number of UTF-16 code units, 200-12000, default 6000). A longer `query` is
+  ranked on its first 2,000 characters, never refused. `recall`'s `question` is capped at 2,000: a longer one is
   refused `invalid_params` with reason `question_too_long` and detail
   `max_chars=2000 received_chars=<n>`, nothing is read, so trim it before calling. Each fact is
   one line: line breaks and control characters in it become spaces. Ranking is

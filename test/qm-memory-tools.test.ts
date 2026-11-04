@@ -715,6 +715,33 @@ for (const kind of testBackends()) {
       expect((hidden.structuredContent as { error: { code: string } }).error.code).toBe('unknown_tool');
     }, 60_000);
 
+    test('acting_user without attestation names what is missing in detail: the header, the attest right, or both (GST-1304)', async () => {
+      const cases: Array<[Who, string]> = [
+        [{ token: 'qm' }, 'missing=x-qm-actor'],
+        [{ token: 'plain' }, 'missing=attest_right,x-qm-actor'],
+        [{ token: 'plain', actor: ALICE_ID }, 'missing=attest_right'],
+      ];
+      for (const [as, detail] of cases) {
+        const out = await call(as, 'memory_recall', { query: 'harbor ledger', acting_user: ALICE_ID });
+        expect(out.json).toMatchObject({ code: 'actor_not_attested', reason: 'argument_without_attestation', detail });
+        expect(out.structured?.error).toMatchObject({ code: 'actor_not_attested', reason: 'argument_without_attestation', detail });
+      }
+      const qmOnly = await call({ token: 'qm' }, 'memory_recall', { query: 'harbor ledger', acting_user: ALICE_ID });
+      expect(qmOnly.json.message).toContain('x-qm-actor');
+      expect(qmOnly.json.message).not.toContain('attest right');
+    }, 60_000);
+
+    test('a memory_recall query over query_chars_ranked is ranked on its first 2,000 characters, never refused (v1 contract; GST-1304)', async () => {
+      expect((await write(alice, [{ fact: 'Alice audits the harbor ledger canarylongquery', provenance: 'x' }])).structured!.status).toBe('committed');
+      const head = 'harbor ledger budget canarylongquery ';
+      const out = await recall(alice, head + 'filler words that pad the question '.repeat(80));
+      expect(out.isError).toBe(false);
+      expect(out.json.code).toBeUndefined();
+      expect(out.text).toContain('canarylongquery');
+      const tailOnly = await recall(alice, 'filler words that pad the question '.repeat(60) + ' harbor ledger budget');
+      expect(tailOnly.isError).toBe(false);
+    }, 60_000);
+
     test('a keyless brain ranks by keyword and makes no embedding call', async () => {
       let embedCalls = 0;
       try {

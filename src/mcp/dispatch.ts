@@ -974,11 +974,11 @@ function actorRefusal(e: OperationError, opts: DispatchOpts, op: string, header:
   return withStructuredError(errorResult(e, opts, { op }));
 }
 
-/** An error result with its JSON envelope's code, message, reason and fix also in `structuredContent.error`, which QM reads. */
+/** An error result with its JSON envelope's code, message, reason, detail and fix also in `structuredContent.error`, which QM reads. */
 function withStructuredError(out: ToolResult): ToolResult {
   try {
     const env = JSON.parse(out.content[0]!.text) as Record<string, unknown>;
-    out.structuredContent = { error: { code: env.code, message: env.message, ...(env.reason ? { reason: env.reason } : {}), ...(env.fix ? { fix: env.fix } : {}) } };
+    out.structuredContent = { error: { code: env.code, message: env.message, ...(env.reason ? { reason: env.reason } : {}), ...(env.detail ? { detail: env.detail } : {}), ...(env.fix ? { fix: env.fix } : {}) } };
   } catch { /* the text block still carries the code */ }
   return out;
 }
