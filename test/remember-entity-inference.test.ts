@@ -175,28 +175,6 @@ describe('remember entity inference (#5836)', () => {
     }
   });
 
-  test('an ingest write (provenance ingest:) dedups exact text only: it never supersedes a similar saved fact', async () => {
-    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, env: { OPENAI_API_KEY: 'sk-test-inference' } });
-    __setEmbedTransportForTests((async (opts: { values: string[] }) => ({ embeddings: opts.values.map(() => [1, ...new Array(1535).fill(0)]) })) as never);
-    await engine.setConfig('facts.supersession_thresholds', JSON.stringify({ 'openai:text-embedding-3-small@1536': 0.9 }));
-    try {
-      const saved = await remember({ fact: 'Ingest Example targets 40 percent gross margin', entity: 'companies/ingest-example' });
-      expect(saved.status).toBe('inserted');
-      const ingested = await remember({ fact: 'Ingest Example targets 45 percent gross margin', entity: 'companies/ingest-example', provenance: 'ingest:sources/doc-example' });
-      expect(ingested.status).toBe('inserted');
-      expect(ingested.superseded_fact_id).toBeUndefined();
-      const kept = await factRow(saved.id);
-      expect(kept.expired_at).toBeNull();
-      expect(kept.superseded_by).toBeNull();
-      const exact = await remember({ fact: 'Ingest Example targets 45 percent gross margin', entity: 'companies/ingest-example', provenance: 'ingest:sources/doc-example' });
-      expect(exact).toMatchObject({ status: 'duplicate', id: ingested.id });
-    } finally {
-      await engine.unsetConfig('facts.supersession_thresholds');
-      __setEmbedTransportForTests(null);
-      configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} });
-    }
-  });
-
   test('facts.entity_inference is a registered config key', async () => {
     const { KNOWN_CONFIG_KEYS } = await import('../src/core/config.ts');
     expect(KNOWN_CONFIG_KEYS).toContain('facts.entity_inference');

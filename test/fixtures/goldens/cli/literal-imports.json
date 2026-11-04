@@ -102,15 +102,6 @@
       "import": [
         "./commands/import.ts"
       ],
-      "ingest": [
-        "./commands/ingest.ts"
-      ],
-      "ingest-show": [
-        "./commands/ingest-show.ts"
-      ],
-      "ingest-undo": [
-        "./commands/ingest-undo.ts"
-      ],
       "jobs": [
         "./commands/jobs.ts"
       ],

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 279289,
-    "stdoutSha256": "88481c6c1855647d83eaf20c81e0e47258c8e2b729da6d701a57d4cfd1cb9e25",
+    "stdoutBytes": 275290,
+    "stdoutSha256": "d2ffb80186dba337dee73551f5c5fcda98d66f638cd26373687f65477511f6ae",
     "toolNames": [
       "remember",
       "entity",
@@ -146,8 +146,6 @@
       "extract_entities",
       "extraction_pending",
       "extraction_review",
-      "ingest",
-      "ingest_undo",
       "entity_identity_link",
       "entity_identity_unlink",
       "entity_identity_list",
@@ -6575,131 +6573,6 @@
           "required": [
             "action",
             "slugs"
-          ],
-          "type": "object"
-        },
-        "scope": "write"
-      },
-      {
-        "description": "Save a pasted document as a source page, proposed pages for new entities and facts on the entities it names, all planned and checked before any write. Returns a report: status per item, coverage, spend, approve and undo actions. attempt_id alone reads a report; with resume: true continues it.",
-        "idempotent": false,
-        "local_only": false,
-        "mutating": true,
-        "name": "ingest",
-        "parameters": {
-          "attempt_id": "string?",
-          "content": "string?",
-          "dry_run": "boolean?",
-          "max_usd": "number?",
-          "no_facts": "boolean?",
-          "request_id": "string?",
-          "resume": "boolean?",
-          "slug": "string?",
-          "source_id": "string?",
-          "title": "string?",
-          "trusted_extraction": "boolean?",
-          "type": "string?",
-          "valid_from": "string?",
-          "visibility": "string?"
-        },
-        "required_scopes": [],
-        "schema": {
-          "properties": {
-            "attempt_id": {
-              "description": "From a report: alone reads it; with resume continues it.",
-              "type": "string"
-            },
-            "content": {
-              "description": "Document text (max 200,000 chars).",
-              "type": "string"
-            },
-            "dry_run": {
-              "description": "Preview candidates, windows and cost; no provider call or write.",
-              "type": "boolean"
-            },
-            "max_usd": {
-              "description": "Spend cap for this ingest in USD (default ingest.max_usd, 0.50).",
-              "type": "number"
-            },
-            "no_facts": {
-              "description": "Save the document and its entity pages without facts.",
-              "type": "boolean"
-            },
-            "request_id": {
-              "description": "Idempotency key: a repeat with the same key returns the same attempt.",
-              "type": "string"
-            },
-            "resume": {
-              "description": "Continue an incomplete attempt (same content).",
-              "type": "boolean"
-            },
-            "slug": {
-              "description": "Slug of the source page (default inbox/ingest-<hash>).",
-              "type": "string"
-            },
-            "source_id": {
-              "description": "Source to write (default: your source).",
-              "type": "string"
-            },
-            "title": {
-              "description": "Source page title.",
-              "type": "string"
-            },
-            "trusted_extraction": {
-              "description": "Local owner only: create model-typed new entities as real pages instead of proposed.",
-              "type": "boolean"
-            },
-            "type": {
-              "description": "Source page type (default note).",
-              "type": "string"
-            },
-            "valid_from": {
-              "description": "When the document's facts became true (ISO date).",
-              "type": "string"
-            },
-            "visibility": {
-              "description": "world (default) or private (local CLI).",
-              "enum": [
-                "world",
-                "private"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [],
-          "type": "object"
-        },
-        "scope": "write"
-      },
-      {
-        "description": "Undo one ingest attempt. Without yes: a preview and plan_hash, no write. With yes and expect: <plan_hash>: strikes its facts and soft-deletes its pages, skipping anything edited, promoted, referenced or supported since.",
-        "idempotent": true,
-        "local_only": false,
-        "mutating": true,
-        "name": "ingest_undo",
-        "parameters": {
-          "attempt_id": "string",
-          "expect": "string?",
-          "yes": "boolean?"
-        },
-        "required_scopes": [],
-        "schema": {
-          "properties": {
-            "attempt_id": {
-              "description": "From the ingest report.",
-              "type": "string"
-            },
-            "expect": {
-              "description": "plan_hash from the preview.",
-              "type": "string"
-            },
-            "yes": {
-              "description": "Apply (needs expect).",
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "attempt_id"
           ],
           "type": "object"
         },

@@ -345,7 +345,6 @@ export async function prepareStagedUpload<T extends Publishable>(engine: BrainEn
     if (ref.bytes > PAGE_MAX_BYTES) return (await import('./upload-streamed.ts')).prepareStreamedUpload(engine, row, ref) as unknown as Promise<T>;
     const content = await stagedUploadText(engine, ref);
     if (content === null) throw bodyStagingGoneError(row.slug, ref.staging_id, null);
-    (await import('../ingest/namespace.ts')).assertStagedUploadNotReport(row.slug, { text: content });
     const { body_ref: _ref, ...rest } = row.intent as Record<string, unknown>;
     return prepare({ ...row, intent: { ...rest, content,
       ...(rest.kind === undefined && rest.timeline_section === undefined ? { timeline_section: timelineSectionOf(content, row.slug) } : {}) } });

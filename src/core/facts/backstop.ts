@@ -753,8 +753,7 @@ export type SavedFactCheck =
   | { verdict: 'new'; samePageShadow?: { id: number; score: number } };
 
 /**
- * The extract phase's per-claim check, shared by the facts pipeline and ingest's plan (which runs it with no writes and
- * again at write time): a withdrawn claim is never re-written (B-10; the fence writer rechecks under its page lock); an
+ * The extract phase's per-claim check: a withdrawn claim is never re-written (B-10; the fence writer rechecks under its page lock); an
  * exact or, with an embedding, cosine duplicate of a saved fact is that fact (correct per Codex Q7: fence rows have no
  * embeddings; FS lock + sync invariant means DB == fence at write time). cosineVerdict: the model's calibrated threshold
  * for explicit lanes; capture lanes never drop by cosine (#5888). excludePrivate keeps a private row a restricted
@@ -799,7 +798,9 @@ async function runPipelineBodyInner(
 ): Promise<PipelineResult> {
   const { extractFactsFromTurnWithOutcome, FactsExtractionError } = await import('./extract.ts');
   const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
+  const { cosineSimilarity } = await import('./classify.ts');
   const { writeFactsToFence, lookupSourceLocalPath } = await import('./fence-write.ts');
+  const { isFactWithdrawn } = await import('./withdrawal.ts');
 
   if (abortSignal?.aborted) {
     return { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], entity_slugs: [] };
@@ -909,14 +910,40 @@ async function runPipelineBodyInner(
     const resolvedSlug = resolved?.source === 'fallback_slugify' ? null : resolved?.slug ?? null;
     const resolutionSource = resolved?.source ?? null;
 
-    const check = await checkFactAgainstSaved(ctx.engine, ctx.sourceId, { ...f, kind: f.kind ?? 'fact', visibility, entity_slug: resolvedSlug }, { source: ctx.source, sessionId: ctx.sessionId });
-    if (check.verdict === 'withdrawn') { countWithdrawnSkip(counts); continue; }
-    if (check.verdict === 'duplicate') {
+    // B-10: a withdrawn claim for this entity is never re-written; the
+    // fence writer rechecks under its page lock.
+    if (await isFactWithdrawn(ctx.engine, ctx.sourceId, visibility, f.fact, resolvedSlug)) { countWithdrawnSkip(counts); continue; }
+
+    // Dedup against DB candidates (correct per Codex Q7: fence rows
+    // have no embeddings; FS lock + sync invariant means DB == fence
+    // at write time). cosineVerdict: the model's calibrated threshold for explicit lanes; capture lanes never drop by cosine (#5888).
+    const exact = await decideSingleFact(ctx.engine, ctx.sourceId, { entity_slug: resolvedSlug, fact: f.fact, kind: f.kind ?? 'fact', visibility, attributed_to: f.attributed_to ?? null }, null);
+    let matchedExistingId: number | null = exact?.candidate?.id ?? null;
+    if (matchedExistingId === null && resolvedSlug && f.embedding && !f.entity_inferred) {
+      const candidates = await ctx.engine.findCandidateDuplicates(
+        ctx.sourceId,
+        resolvedSlug,
+        f.fact,
+        { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null },
+      );
+      let top: { row: typeof candidates[number]; score: number } | null = null;
+      for (const c of candidates) {
+        if (!c.embedding) continue;
+        const s = cosineSimilarity(f.embedding, c.embedding);
+        if (!top || s > top.score) top = { row: c, score: s };
+      }
+      if (top && cosineVerdict(ctx.source, top.score, f.fact, top.row.fact, (await readSupersessionThreshold(ctx.engine, f.embedding_model, f.embedding.length)).threshold) === 'duplicate') {
+        matchedExistingId = top.row.id;
+      } else if (top && wouldDedupSamePage({ source: ctx.source, sessionId: ctx.sessionId, visibility }, top.row, top.score, f.fact)) {
+        wouldDedupSamePageCount++; warnSamePageShadow(ctx.sessionId, top.row.id, top.score);
+      }
+    }
+
+    if (matchedExistingId !== null) {
       counts.duplicate += 1;
-      counts.fact_ids.push(check.id);
+      counts.fact_ids.push(matchedExistingId);
       continue;
     }
-    if (check.samePageShadow) { wouldDedupSamePageCount++; warnSamePageShadow(ctx.sessionId, check.samePageShadow.id, check.samePageShadow.score); }
 
     survived.push({ f, resolvedSlug, resolutionSource });
   }

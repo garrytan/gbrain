@@ -1,9 +1,7 @@
 /**
  * GBRA-215: the source-scoped guard that review decisions (extraction_review promote, reject and distinct)
- * and ingest undo take while they re-read a page, re-check its eligibility and publish the decision. Two
- * decisions on one source never interleave between the check and the write, so an undo that previewed a
- * proposed page cannot delete it after a promotion landed, and a promotion cannot flip a page an undo is
- * retracting. The write itself still carries its expected revision; the guard orders the decisions.
+ * take while they re-read a page, re-check its eligibility and publish the decision. Two decisions on one
+ * source never interleave between the check and the write. The write itself still carries its expected revision; the guard orders the decisions.
  *
  * Built on the gbrain_cycle_locks lease (tryAcquireDbLock), so it holds across processes on both engines.
  * The wait is bounded and the lease is short: a holder that dies frees it when its TTL lapses.
@@ -22,7 +20,7 @@ export function publicationGuardId(sourceId: string): string {
 
 function guardBusy(sourceId: string, waitMs: number): OperationError {
   return opError('lock_busy', `Another review decision or undo on source ${sourceId} held the publication guard for the whole wait.`,
-    `Nothing was written. Another review decision or ingest undo on this source held the guard for ${Math.round(waitMs / 1000)}s; retry the same command once it finishes.`,
+    `Nothing was written. Another review decision on this source held the guard for ${Math.round(waitMs / 1000)}s; retry the same command once it finishes.`,
     { fix: readFix('Shows the gbrain_cycle_locks rows, the review-publication guard included, with holder and expiry, read-only.', { argv: ['gbrain', 'status', '--section', 'locks', '--json'] }) });
 }
 

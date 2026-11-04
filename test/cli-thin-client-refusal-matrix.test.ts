@@ -104,8 +104,8 @@ describe('A16b thin-client refusal matrix', () => {
     routing = await run(ROUTING_ROWS);
   }, 300_000);
 
-  test('the matrix covers all 74 handleCliOnly cases', () => {
-    expect(CASES.length).toBe(74); // GBRA-215: +3, ingest, ingest-show and ingest-undo (thinClient: refuse)
+  test('the matrix covers all 71 handleCliOnly cases', () => {
+    expect(CASES.length).toBe(71);
   });
 
   test('every handleCliOnly case, run bare on a thin client, matches the golden', () => {

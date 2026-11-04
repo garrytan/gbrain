@@ -365,9 +365,6 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   // Memory settings reads and the per-conversation switch return config and rule text, never corpus data.
   get_memory_settings: 'ok',
   memory_conversation_mode: 'ok', // base unused — per-shape override in EXPECTED_BY_SHAPE (above)
-  // Document ingest: the generic invocation omits content and attempt_id; undo omits the required attempt_id.
-  ingest: 'error',
-  ingest_undo: 'error',
   // mutating ops (fresh-slug targets; envelope-echo checks only)
   remember: 'ok',
   // GST-359 D: memory_write saves only as an attested person; the sweep's callers attest none (actor_required).

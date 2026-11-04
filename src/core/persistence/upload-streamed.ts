@@ -133,7 +133,6 @@ export async function prepareStreamedUpload(engine: BrainEngine, row: WriteReque
     throw opError('invalid_params', result.error ?? 'The uploaded page could not be prepared.', `Page ${row.slug} was not written. Fix what the message names, then upload it again with a new request_id.`);
   }
   const prepared: StreamedPreparedImport = ready;
-  (await import('../ingest/namespace.ts')).assertStagedUploadNotReport(row.slug, { frontmatter: prepared.frontmatter });
   const privateRequest = privateRequestGuarded(row.operation, p.kind) ? readPrivateRequest('', () => prepared.frontmatter) : null;
   if (privateRequest) assertPrivateRequestKept(row, privateRequest.frontmatter);
   if (coreMarking(snapshot?.page.frontmatter).core || coreMarking(prepared.frontmatter).core) {

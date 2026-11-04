@@ -94,9 +94,8 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const observedEmbeddingConfig = JSON.stringify(await engine.executeRaw(embeddingConfigSql));
   const { embedding, embedding_model, degraded } = await prepareFactEmbedding(input.fact, signal, await factEmbeddingDisabled(engine, config), clock?.deadlineAt);
   signal?.throwIfAborted();
-  // #5836: an inferred link dedups exact text only, so it never supersedes or drops a similar fact. So does an ingest
-  // write (provenance ingest:<source page>): a pasted document never retires a fact the user saved, which undo could not reinstate.
-  const dedupEmbedding = p.entity_inferred || String(p.provenance ?? '').startsWith('ingest:') ? null : embedding;
+  // #5836: an inferred link dedups exact text only, so it never supersedes or drops a similar fact.
+  const dedupEmbedding = p.entity_inferred ? null : embedding;
   // `replaces`: the caller names the fact this one replaces (checked; the cosine rule does not apply).
   const replaces = p.replaces !== undefined && p.replaces !== null ? Number(p.replaces) : null;
   const replace = (e: BrainEngine, target: number, lock: boolean) =>

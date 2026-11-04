@@ -1058,27 +1058,6 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
-      "ingest": {
-        "hasSwitchCase": true,
-        "phase": "post-connect",
-        "preConnectRules": [],
-        "thinClient": "refuse",
-        "thinClientRoutedSubcommands": []
-      },
-      "ingest-show": {
-        "hasSwitchCase": true,
-        "phase": "post-connect",
-        "preConnectRules": [],
-        "thinClient": "refuse",
-        "thinClientRoutedSubcommands": []
-      },
-      "ingest-undo": {
-        "hasSwitchCase": true,
-        "phase": "post-connect",
-        "preConnectRules": [],
-        "thinClient": "refuse",
-        "thinClientRoutedSubcommands": []
-      },
       "init": {
         "hasSwitchCase": false,
         "phase": "pre-connect",

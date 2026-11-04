@@ -12,9 +12,9 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [0.60.571.0] - 2026-11-04
 
-**Memory train (GBRA-286): `forget` edits the page files first, pasted documents ingest into pages and facts, `recall` can weigh how far a fact deserves belief, page versions carry a human reason and can be read by date, and agents can read and switch the saving rule. Every new mode is off by default, and every feature works on a brain with no Git repository.**
+**Memory train (GBRA-286): `forget` edits the page files first, `recall` can weigh how far a fact deserves belief, page versions carry a human reason and can be read by date, and agents can read and switch the saving rule. Every new mode is off by default, and every feature works on a brain with no Git repository.**
 
-This release folds eight approved memory PRs into one: #7616, #7791, #7797, #7809, #7803, #7810, #7798 + #7804 and #7795. Each was brought up to current master. Where a new path skipped a guard master added since (member-scoped access with `readable_by`, the trust-tier quote fence for remote readers, the private-request hold on content imports), the guard now applies there too, with a test that failed first.
+This release folds seven approved memory PRs into one: #7616, #7791, #7797, #7803, #7810, #7798 + #7804 and #7795. Each was brought up to current master. Where a new path skipped a guard master added since (member-scoped access with `readable_by`, the trust-tier quote fence for remote readers, the private-request hold on content imports), the guard now applies there too, with a test that failed first.
 
 ### Forget writes the page files first (#7616)
 
@@ -29,15 +29,11 @@ Git stays the parent: a withdrawal is now a page write, published to Git before 
 
 A forget now waits for the source's writer the way `remember` does: with the writer unavailable it returns the pending-write receipt, and the fact is still recalled until it publishes. Migration v287 adds the multi-page recovery record (one record restores every file of an interrupted publication); it rewrites no data.
 
-### Review lists, review decisions through the page door, and pasted-document ingest (#7791, #7797, #7809)
+### Review lists and review decisions through the page door (#7791, #7797)
 
 - `extraction_pending` gains two lists. `unattributed` (on by default) lists active facts saved without an entity, each with the relink action. `possible_duplicates` (opt-in through `include`) flags new entity pages whose name is a typo or acronym of another's. It only flags: nothing is merged and no identity is written.
 - `extraction_review` promote and reject are now page-door writes (`edit_page` of the frontmatter, `delete_page`), so on a source with a repository each decision is a Git commit. A new `distinct` action records that two flagged pages are different entities.
-- `ingest` (CLI `gbrain ingest`, MCP on the starter surface) turns a pasted document into a source page, a report page `ingest/<attempt_id>` and proposed entity pages and facts. It validates and checks grants before any provider call, extracts the whole document under the spend cap with a resumable checkpoint, and writes Git first on a repository source; on a repo-less source the database is the record. `ingest_undo` previews first and applies only with `--yes --expect <plan_hash>`, retracting only what that attempt created and nothing that was edited, promoted or relied on since.
-- A pasted document that asks for `visibility: private` in any spelling is refused with `visibility_not_applied` before any provider call unless the ingest itself is private. Remote report reads and the unattributed list hide pages and facts the caller can't read.
-- Reserved: generic writes to a page of type `ingest-report` or a slug `ingest/<attempt_id>` are refused. Reserving all of `ingest/` is behind `ingest.reserve_namespace` (default off).
-
-Guide: [ingest](docs/guides/ingest.md).
+- Remote reads of the unattributed list hide facts the caller can't read.
 
 ### Recall weighting, entity grouping and the keyless claim lane (#7803, #7810)
 
