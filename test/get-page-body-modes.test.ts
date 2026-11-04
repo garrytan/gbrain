@@ -207,6 +207,15 @@ describe('several window selectors (GBRA-280)', () => {
     expect([r.body, r.window.line_start, r.window_selector.applied]).toEqual(['window', 100, 'lines']);
   });
 
+  test('a cursor set aside does not size the window the next selector reads', async () => {
+    await put('logs/sel-size', conversation(6000));
+    const tiny = (await get(ctx(), { slug: 'logs/big', body: 'window', max_bytes: 50 })).next_cursor;
+    const r = await get(ctx(), { slug: 'logs/sel-size', cursor: tiny, lines: { from: 7, count: 20 } });
+    const alone = await get(ctx(), { slug: 'logs/sel-size', lines: { from: 7, count: 20 } });
+    expect([r.window_selector.applied, r.window]).toEqual(['lines', alone.window]);
+    expect(r.next_cursor ? decodeCursor(r.next_cursor)!.max_bytes : null).toBe(alone.next_cursor ? decodeCursor(alone.next_cursor)!.max_bytes : null);
+  });
+
   test('a set-aside include_content or content_only says the window is not the page and how to edit it', async () => {
     const r = await get(ctx(), { slug: 'logs/big', include_content: true, lines: { from: 100, count: 3 } });
     expect(r.window_selector.note).toBe("Read the lines window; ignored include_content. This window is not the page's content: put_page with it would replace the whole page with this window, so edit through edit_page with edit_target, or read with include_content alone. get_page reads one window: cursor, then around_chunk_id, then lines, then bytes.");

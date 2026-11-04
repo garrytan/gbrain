@@ -605,7 +605,9 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
     return around.window;
   };
   const cap = await resultByteCap({ remote: ctx.remote, transport: ctx.transport, engine: ctx.engine, config: ctx.config });
-  let maxBytes = await windowBudget(ctx, req.maxBytes ?? (sel?.kind === 'cursor' ? decodeCursor(sel.raw)?.max_bytes : undefined), DEFAULT_WINDOW_BYTES);
+  const startCursor = sel?.kind === 'cursor' ? decodeCursor(sel.raw) : null;
+  const cursorReads = startCursor !== null && startCursor.page_id === page.id && startCursor.view === req.view && startCursor.revision === revision;
+  let maxBytes = await windowBudget(ctx, req.maxBytes ?? (cursorReads ? startCursor.max_bytes : undefined), DEFAULT_WINDOW_BYTES);
   for (let attempt = 0; ; attempt++) {
     const win = await select(maxBytes);
     if (!win) return confirmed({ ...out, truncated: true });
