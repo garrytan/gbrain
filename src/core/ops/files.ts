@@ -130,10 +130,12 @@ const file_upload: Operation = {
       `No source "${sourceId}", so nothing was uploaded.`, 'Upload under a registered source (gbrain sources list).');
     const [page] = pageSlug ? await ctx.engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1 AND source_id = $2', [pageSlug, sourceId]) : [];
 
-    const { sqlQueryForEngine, executeRawJsonb, FILES_METADATA_MERGE_SQL } = await import('../sql-query.ts');
-    const sql = sqlQueryForEngine(ctx.engine);
-    const existing = await sql`SELECT id FROM files WHERE content_hash = ${hash} AND storage_path = ${storagePath}`;
-    if (existing.length > 0) {
+    const { executeRawJsonb, FILES_METADATA_MERGE_SQL } = await import('../sql-query.ts');
+    const [owner] = await ctx.engine.executeRaw<{ source_id: string; page_id: number | null; content_hash: string }>(
+      'SELECT source_id, page_id, content_hash FROM files WHERE storage_path = $1', [storagePath]);
+    // A row with a live page in another source is that source's attachment: an upload never moves it or replaces its bytes.
+    const foreign = owner !== undefined && owner.page_id !== null && owner.source_id !== sourceId;
+    if (owner?.content_hash === hash) {
       // #4302: only claim already_exists when the BACKEND really holds the
       // object — a DB row whose bytes vanished must re-upload, not lie.
       let inBackend = false;
@@ -141,10 +143,12 @@ const file_upload: Operation = {
         inBackend = await storage.exists(storagePath);
       } catch { /* probe failure → treat as absent, re-upload below */ }
       if (inBackend) {
-        await ctx.engine.executeRaw('UPDATE files SET source_id = $2, page_id = $3 WHERE storage_path = $1', [storagePath, sourceId, page?.id ?? null]);
+        if (page && !foreign) await ctx.engine.executeRaw('UPDATE files SET source_id = $2, page_id = $3 WHERE storage_path = $1', [storagePath, sourceId, page.id]);
         return { status: 'already_exists', storage_path: storagePath };
       }
     }
+    if (foreign) throw opError('invalid_params', `${storagePath} holds the attachment of a page in source '${owner!.source_id}', so nothing was uploaded.`,
+      'Upload it under another filename; an upload never replaces another source\'s attachment.');
 
     try {
       await uploadUnchangedFile(storage, storagePath, filePath, hash, mimeType || undefined);
@@ -154,7 +158,7 @@ const file_upload: Operation = {
     }
 
     try {
-      // The bytes at storagePath are now the caller's, so a conflicting row takes the caller's source and page id.
+      // The bytes at storagePath are now the caller's, so a conflicting row takes the caller's source and page id when that source has the page.
       // #4910: stamp the storage lane (doctor image_assets / files verify
       // classify on it) and merge metadata on conflict so legacy `{}` rows
       // heal on their next content change. Real object via executeRawJsonb —
@@ -167,8 +171,8 @@ const file_upload: Operation = {
            content_hash = EXCLUDED.content_hash,
            size_bytes = EXCLUDED.size_bytes,
            mime_type = EXCLUDED.mime_type,
-           source_id = EXCLUDED.source_id,
-           page_id = EXCLUDED.page_id,
+           source_id = CASE WHEN EXCLUDED.page_id IS NULL THEN files.source_id ELSE EXCLUDED.source_id END,
+           page_id = COALESCE(EXCLUDED.page_id, files.page_id),
            ${FILES_METADATA_MERGE_SQL}`,
         [pageSlug, filename, storagePath, mimeType, stat.size, hash, sourceId, page?.id ?? null],
         [embedded?.metadata ?? { storage: (ctx.config.storage as { backend: string }).backend }],
