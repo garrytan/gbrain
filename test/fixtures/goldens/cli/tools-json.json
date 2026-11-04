@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 269897,
-    "stdoutSha256": "39204fde48293f94039ada247d1125d6da50aa1adff8cbdf6dd434b5c9bc6959",
+    "stdoutBytes": 269862,
+    "stdoutSha256": "572b0651eccad5f6985053264f93a5c88014f50c0e243145dae36e74a73c735c",
     "toolNames": [
       "remember",
       "entity",
@@ -7907,7 +7907,7 @@
         "scope": "admin"
       },
       {
-        "description": "Run SkillOpt against a single skill; its iterative loop (optimizer_mode \"reflect\") is deprecated and removed on or after 2026-12-03. Admin scope and remote skill allowlist required. shared_skill stages an exact catalog revision privately and requires explicit skill_editor and put_skill grants; only accepted body changes publish through the original revision CAS. Rate-limited per-skill via DB lock.",
+        "description": "Run SkillOpt against a single skill; its iterative loop (optimizer_mode \"reflect\") is deprecated. Admin scope and remote skill allowlist required. shared_skill stages an exact catalog revision privately and requires explicit skill_editor and put_skill grants; only accepted body changes publish through the original revision CAS. Rate-limited per-skill via DB lock.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,

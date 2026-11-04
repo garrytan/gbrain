@@ -12,7 +12,8 @@ May 2026).
 > `optimizer_mode: "reflect"`, a `--resume` of a run the loop started and a
 > queued `skillopt` job in loop mode are deprecated and will be removed on or
 > after 2026-12-03. Each use prints the `skillopt_loop_deprecated` notice once
-> (MCP: once per session) and otherwise runs exactly as before. Nothing
+> (MCP: at most once per session; a queued job: in the worker's log) and
+> otherwise runs exactly as before. Nothing
 > replaces the loop: edit the skill directly, or run the default
 > [one-shot rewrite](#one-shot-rewrite-the-default), which stays.
 
@@ -74,14 +75,12 @@ The audit trail lives at `~/.gbrain/audit/skillopt-YYYY-Www.jsonl`
 (2026-11-01), the iterative loop and a one-shot rewrite both scored 0.54 on
 held-out tasks (paired bootstrap p = 1.00) and the loop cost about 1.8x as
 much. Every edit the loop kept came at its first step. `--loop` (MCP and job
-`optimizer_mode: "reflect"`) still runs the iterative loop. This default is
-reversible: it flips back if gbrain-evals' SkillOpt method benchmark shows the
-loop winning. A resume continues in the mode its run started in.
+`optimizer_mode: "reflect"`) still runs the iterative loop until it is removed
+on or after 2026-12-03. A resume continues in the mode its run started in.
 
 ## How the loop works (`--loop`, deprecated)
 
 Deprecated: removed on or after 2026-12-03 (see the banner at the top).
-
 
 For each step:
 

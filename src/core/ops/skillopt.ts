@@ -132,7 +132,7 @@ const run_skillopt: Operation = {
   name: 'run_skillopt',
   idempotent: true,
   outputRedaction: { exempt: 'skill catalog files are installed instructions read verbatim; redaction would corrupt approved revisions' },
-  description: 'Run SkillOpt against a single skill; its iterative loop (optimizer_mode "reflect") is deprecated and removed on or after 2026-12-03. Admin scope and remote skill allowlist required. shared_skill stages an exact catalog revision privately and requires explicit skill_editor and put_skill grants; only accepted body changes publish through the original revision CAS. Rate-limited per-skill via DB lock.',
+  description: 'Run SkillOpt against a single skill; its iterative loop (optimizer_mode "reflect") is deprecated. Admin scope and remote skill allowlist required. shared_skill stages an exact catalog revision privately and requires explicit skill_editor and put_skill grants; only accepted body changes publish through the original revision CAS. Rate-limited per-skill via DB lock.',
   params: {
     skill_name: { type: 'string', required: true, description: 'Kebab-case skill name (resolves to skills/<name>/SKILL.md)' },
     benchmark_path: { type: 'string', description: 'Absolute path to benchmark JSONL; defaults to skills/<name>/skillopt-benchmark.jsonl' },
@@ -193,7 +193,6 @@ const run_skillopt: Operation = {
     if (optimizerMode !== 'one-shot-rewrite' && optimizerMode !== 'reflect') {
       throw invalidParam(ctx, 'run_skillopt', 'optimizer_mode', "run_skillopt: optimizer_mode must be 'one-shot-rewrite' or 'reflect'", { example: 'reflect' });
     }
-    if (optimizerMode === 'reflect') ctx.emitNotice?.((await import('../skillopt/loop-deprecation.ts')).skillOptLoopDeprecatedNotice());
     const { clampRemoteReflectMaxTokens } = await import('../skillopt/output-cap.ts');
     let reflectMaxTokens: number | undefined;
     try {
@@ -261,6 +260,7 @@ const run_skillopt: Operation = {
       confine('benchmark_path', p.benchmark_path as string | undefined);
       confine('held_out_path', heldOutPath);
     }
+    if (optimizerMode === 'reflect') ctx.emitNotice?.((await import('../skillopt/loop-deprecation.ts')).skillOptLoopDeprecatedNotice());
     const result = await runSkillOpt({
       engine: ctx.engine,
       operationContext: ctx,

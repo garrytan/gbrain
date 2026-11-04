@@ -20,7 +20,7 @@ Every non-localOnly operation on the MCP surface: 164 tools across 25 areas. **S
 | `quarantine_list` | List quarantined (hidden) and optionally content-flagged pages by scanning page frontmatter, newest-updated first. | admin |  |  |
 | `run_doctor` | Run brain health checks and return a structured DoctorReport (thin-client doctor surface). | admin |  |  |
 | `run_onboard` | Probe brain health + optionally submit onboard remediations. | admin |  |  |
-| `run_skillopt` | Run SkillOpt against a single skill; its iterative loop (optimizer_mode "reflect") is deprecated and removed on or after 2026-12-03. | admin |  |  |
+| `run_skillopt` | Run SkillOpt against a single skill; its iterative loop (optimizer_mode "reflect") is deprecated. | admin |  |  |
 
 ## advisor
 
