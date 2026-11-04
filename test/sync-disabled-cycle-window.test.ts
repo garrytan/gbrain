@@ -56,7 +56,7 @@ async function cycle(engine: BrainEngine, sourceId: string, id: number, phases: 
   const weight = out.report.phases.find(p => p.phase === 'recompute_emotional_weight');
   expect(facts?.status).not.toBe('fail');
   expect(weight?.status).not.toBe('fail');
-  return { scanned: Number(facts!.details.pagesScanned), weight: weight!.details };
+  return { scanned: Number(facts!.details.pagesScanned), weight: weight!.details, extract: out.report.phases.find(p => p.phase === 'extract')?.details };
 }
 
 async function config(engine: BrainEngine, sourceId: string) {
@@ -88,6 +88,7 @@ describe('#8573 sync-disabled source cycle window', () => {
         const idle = await cycle(engine, id, 2);
         expect(idle.scanned).toBe(0);
         expect(idle.weight).toMatchObject({ mode: 'incremental', pages_recomputed: 0 });
+        expect(idle.extract).toMatchObject({ incremental: true, pages_processed: 0 });
 
         // The external scheduler's explicit sync between cycles imports a page with a facts fence.
         mkdirSync(join(dir, 'people'));
@@ -97,6 +98,7 @@ describe('#8573 sync-disabled source cycle window', () => {
         const after = await cycle(engine, id, 3);
         expect(after.scanned).toBe(1);
         expect(after.weight).toMatchObject({ mode: 'incremental', pages_recomputed: 1 });
+        expect(after.extract).toMatchObject({ incremental: true, pages_processed: 1 });
         expect(await liveFacts(engine, id, 'people/alice-example')).toBe(1);
         // The fact receipt page cycle 3 wrote after its listing is the next window; then the source is idle again.
         expect((await cycle(engine, id, 4)).scanned).toBe(1);

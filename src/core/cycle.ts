@@ -2391,9 +2391,10 @@ async function runCycleUnscoped(
         phaseResults.push({ ...result, duration_ms });
       } else {
         // If sync didn't run (phases exclude it) or failed, syncPagesAffected
-        // is undefined → extract falls back to full walk (safe default).
+        // is undefined → extract falls back to full walk (safe default), unless
+        // the cycle has a source window (#8573: a checkout whose sync is skipped).
         progress.start('cycle.extract');
-        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, cycleSignal, cycleSourceId), 'extract');
+        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, brainDir, dryRun, sourceWindow?.slugs ?? syncPagesAffected, cycleSignal, cycleSourceId), 'extract');
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
