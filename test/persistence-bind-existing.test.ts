@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
-import { localHostId, persistenceHome, registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
+import { hostIdFor, persistenceHome, registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
 import { physicalRootReservationPath, readPhysicalRootStamp, reservePhysicalRootRecord, writePhysicalRootStamp } from '../src/core/persistence/physical-root-record.ts';
 import { writerAdminState } from '../src/core/persistence/admin-intent.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
@@ -20,7 +20,7 @@ async function fixture(run: (f: { root: string; old: string; home: string; id: s
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'bind-existing-')));
   try { await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
     await resetPgliteState(engine);
-    const registration = await registerLocalWriter(engine, 'cli'), host = localHostId();
+    const registration = await registerLocalWriter(engine, 'cli'), host = hostIdFor(engine);
     const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
     const old = join(home, 'historical'), root = join(home, 'current'), id = randomUUID();
     mkdirSync(old); execFileSync('git', ['init', '--quiet', old]);
@@ -97,7 +97,7 @@ for (const hazard of ['missing-host', 'extra-host', 'source-present', 'source-ar
 
 for (const host of ['current', 'foreign']) for (const state of ['active', 'draining', 'recovering']) for (const relation of ['equal', 'ancestor', 'descendant']) {
   test(`overlap isolation uses the verified host: ${host} ${state} ${relation}`, () => fixture(async ({ root, home, params, call }) => {
-    const otherId = randomUUID(), hostId = host === 'current' ? localHostId() : randomUUID();
+    const otherId = randomUUID(), hostId = host === 'current' ? hostIdFor(engine) : randomUUID();
     const path = relation === 'equal' ? root : relation === 'ancestor' ? home : join(root, 'nested');
     await engine.executeRaw('INSERT INTO persistence_worktrees(id,owner_host_id,owner_epoch,topology_generation,state) VALUES($1::uuid,$2::uuid,1,1,$3)', [otherId, hostId, state]);
     await engine.executeRaw('INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path) VALUES($1::uuid,$2::uuid,$3,$4)', [otherId, hostId, path, join(home, 'locks', 'other.lock')]);

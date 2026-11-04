@@ -10,7 +10,7 @@ import { addSource } from '../src/core/sources-ops.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
-import { localHostId, readLocalWriter, registerLocalWriter, revokeLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
+import { hostIdFor, readLocalWriter, registerLocalWriter, revokeLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
 import { physicalRootReservationPath, reservePhysicalRootRecord, writePhysicalRootStamp } from '../src/core/persistence/physical-root-record.ts';
 import { recordManagedRoots, registeredManagedRoots } from '../src/core/persistence/root-registry.ts';
 import { recoverSourceTopologies } from '../src/core/persistence/topology-recovery.ts';
@@ -43,7 +43,7 @@ function fixture(run: (f: { root: string; old: string; home: string; id: string;
     engine = nextEngine(); await engine.connect({ database_path: datastore });
     try {
     await engine.initSchema(); await resetPgliteState(engine);
-    const registration = await registerLocalWriter(engine, 'cli'), host = localHostId();
+    const registration = await registerLocalWriter(engine, 'cli'), host = hostIdFor(engine);
     const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
     const parent = options.longPath ? join(home, ...Array.from({ length: 3 }, () => '\\'.repeat(174) + 'quote\"')) : home;
     mkdirSync(parent, { recursive: true });
@@ -323,7 +323,7 @@ for (const phase of ['reserved', 'sql_committed']) {
     const first = { ...params };
     await expect(queue(first, phase)).rejects.toThrow('queued recovery');
     const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
-    const old = join(home, 'healthy-old'), root = join(home, 'healthy-current'), healthy = randomUUID(), host = localHostId();
+    const old = join(home, 'healthy-old'), root = join(home, 'healthy-current'), healthy = randomUUID(), host = hostIdFor(engine);
     mkdirSync(old); execFileSync('git', ['init', '--quiet', old]);
     const coordinationPath = join(home, 'locks', 'healthy.lock');
     const reservation = reservePhysicalRootRecord(old, { brainId: brain.brain_id, worktreeId: healthy, hostId: host, coordinationPath });

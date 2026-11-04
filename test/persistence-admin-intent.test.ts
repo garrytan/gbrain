@@ -12,7 +12,7 @@ import { runPersistenceAdministration } from '../src/core/persistence/administra
 import { writerAdminState } from '../src/core/persistence/admin-intent.ts';
 import { PHYSICAL_ROOT_MARKER, physicalRootReservationPath } from '../src/core/persistence/physical-root-record.ts';
 import { parsePersistenceAdminArgs } from '../src/commands/persistence-admin.ts';
-import { localHostId, persistenceHome, registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
+import { hostIdFor, persistenceHome, registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
 import { createPersistenceIpcProvider } from '../src/core/persistence/provider.ts';
 import { requestPersistenceAdministration, startPersistenceIpcServer } from '../src/core/persistence/ipc.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
@@ -138,7 +138,7 @@ test('status, probe, dry runs and routine flags never create ownership or host i
 
 test('deliberate claim, activate and transfer require fresh state while preserving existing identity', () => fixture(async root => {
   writeFileSync(join(root, 'example.md'), 'generic example');
-  const host = localHostId();
+  const host = hostIdFor(engine);
   const identity = readFileSync(join(persistenceHome(), 'host.json'), 'utf8');
   const oldActivation = await reviewedWriterIntent(engine, 'writer_activate');
   expect(await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'default', path: root, ...await reviewedWriterIntent(engine, 'writer_claim') })).toMatchObject({ claimed: true, binding: { owner_host_id: host } });
@@ -192,7 +192,7 @@ test('transfer preparation rechecks raced topology before changing transfer stat
   writeFileSync(join(root, 'example.md'), 'generic example');
   await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'default', path: root, ...await reviewedWriterIntent(engine, 'writer_claim') });
   expect(await engine.executeRaw('SELECT owner_host_id,owner_epoch::text,state,manifest FROM persistence_worktrees'))
-    .toEqual([{ owner_host_id: localHostId(), owner_epoch: '1', state: 'active', manifest: null }]);
+    .toEqual([{ owner_host_id: hostIdFor(engine), owner_epoch: '1', state: 'active', manifest: null }]);
   await expectRacedTopologyRejection('writer_transfer_prepare', { source_id: 'default' }, [root]);
   expect(await runPersistenceAdministration(engine, 'writer_transfer_prepare', { source_id: 'default', ...await reviewedWriterIntent(engine, 'writer_transfer_prepare') })).toMatchObject({ prepared: true, owner_epoch: '1' });
 }));
@@ -203,12 +203,12 @@ test('transfer acceptance rechecks raced topology despite an unchanged prepared 
   await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'default', path: root, ...await reviewedWriterIntent(engine, 'writer_claim') });
   const prepared = await runPersistenceAdministration(engine, 'writer_transfer_prepare', { source_id: 'default', ...await reviewedWriterIntent(engine, 'writer_transfer_prepare') }) as { owner_epoch: string; manifest: { digest: string } };
   expect(await engine.executeRaw("SELECT owner_host_id,owner_epoch::text,state,manifest->>'digest' AS digest FROM persistence_worktrees"))
-    .toEqual([{ owner_host_id: localHostId(), owner_epoch: prepared.owner_epoch, state: 'draining', digest: prepared.manifest.digest }]);
+    .toEqual([{ owner_host_id: hostIdFor(engine), owner_epoch: prepared.owner_epoch, state: 'draining', digest: prepared.manifest.digest }]);
   for (const path of [join(successor, PHYSICAL_ROOT_MARKER), physicalRootReservationPath(successor), join(successor, '.gbrain-managed')]) expect(existsSync(path)).toBe(false);
   const params = { source_id: 'default', path: successor, expected_epoch: prepared.owner_epoch, manifest: prepared.manifest.digest };
   await expectRacedTopologyRejection('writer_transfer_accept', params, [root, successor]);
   expect(await runPersistenceAdministration(engine, 'writer_transfer_accept', { ...params, ...await reviewedWriterIntent(engine, 'writer_transfer_accept') }))
-    .toMatchObject({ transferred: true, binding: { local_path: successor, owner_host_id: localHostId(), state: 'active' } });
+    .toMatchObject({ transferred: true, binding: { local_path: successor, owner_host_id: hostIdFor(engine), state: 'active' } });
   expect(await engine.executeRaw('SELECT owner_epoch::text FROM persistence_worktrees')).toEqual([{ owner_epoch: '2' }]);
 }));
 
@@ -221,16 +221,16 @@ test('managed claim rechecks raced topology before creating ownership, a receipt
   for (const path of [join(candidate, PHYSICAL_ROOT_MARKER), physicalRootReservationPath(candidate), join(candidate, '.gbrain-managed')]) expect(existsSync(path)).toBe(false);
   await expectRacedTopologyRejection('writer_claim', { source_id: 'candidate-example', path: candidate }, [root, candidate]);
   expect(await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'candidate-example', path: candidate, ...await reviewedWriterIntent(engine, 'writer_claim') }))
-    .toMatchObject({ claimed: true, binding: { source_id: 'candidate-example', owner_host_id: localHostId(), local_path: candidate } });
+    .toMatchObject({ claimed: true, binding: { source_id: 'candidate-example', owner_host_id: hostIdFor(engine), local_path: candidate } });
 }));
 
 test('provider startup, remote lane forgery and remote intent cannot change writer topology', () => fixture(async root => {
-  const host = localHostId();
+  const host = hostIdFor(engine);
   await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'default', path: root, ...await reviewedWriterIntent(engine, 'writer_claim') });
   const before = await writerAdminState(engine);
   const provider = await createPersistenceIpcProvider(engine, { engine: 'pglite', embedding_disabled: true });
   expect(await writerAdminState(engine)).toBe(before);
-  expect(localHostId()).toBe(host);
+  expect(hostIdFor(engine)).toBe(host);
   const stdio = await registerLocalWriter(engine, 'stdio');
   const params = { source_id: 'default', path: root, ...await reviewedWriterIntent(engine, 'writer_claim') };
   await expect(withVerifiedLocalRegistration(engine, stdio, () => runPersistenceAdministration(engine, 'writer_claim', params))).rejects.toMatchObject({ code: 'permission_denied' });

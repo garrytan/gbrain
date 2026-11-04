@@ -214,7 +214,7 @@ export async function withExistingWorktreeLocks<T>(engine: BrainEngine, worktree
   try {
     await take(join(persistenceHome(), 'locks', `topology-${brain.brain_id}.lock`));
     const hosts = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM persistence_host_bindings WHERE worktree_id=$1::uuid ORDER BY host_id', [worktreeId]);
-    if (hosts.length !== 1 || hosts[0].host_id !== localHostId() || typeof hosts[0].coordination_path !== 'string') throw opError('recovery_required', 'The existing worktree has no unique local host binding.', 'Inspect its full host bindings; nothing was changed.');
+    if (hosts.length !== 1 || hosts[0].host_id !== hostIdFor(engine) || typeof hosts[0].coordination_path !== 'string') throw opError('recovery_required', 'The existing worktree has no unique local host binding.', 'Inspect its full host bindings; nothing was changed.');
     const path = hosts[0].coordination_path;
     if (!existsSync(dirname(path)) || realpathSync(dirname(path)) !== dirname(path)) throw opError('recovery_required', 'The recorded coordination parent is not canonical.', 'Restore the existing recorded parent; do not select another lock.');
     await take(path);
