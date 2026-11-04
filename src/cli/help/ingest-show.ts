@@ -7,5 +7,5 @@ export const help: CliHelpSpec = {
   flags: [
     { name: '--json', type: 'boolean', desc: 'Print the report as JSON.' },
   ],
-  examples: ['gbrain ingest-show <attempt_id> --json'],
+  examples: ['gbrain ingest-show <attempt_id>', 'gbrain ingest-show <attempt_id> --json'],
 };

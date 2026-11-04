@@ -2,7 +2,7 @@
  * Agent contract v1 D3/D4 (CLI-only half): curated help specs, their renderer
  * and the typed flag-value validator built from them.
  *
- * Protects: the 8 ops-critical commands carry a curated spec whose flags the
+ * Protects: the 8 ops-critical commands and the 3 ingest verbs carry a curated spec whose flags the
  * acceptance registry accepts (so help never advertises a flag the CLI then
  * rejects), `--yes` is listed wherever the handler parses it, the rendered
  * help shows type/values/consent, `curatedFlagError` turns a NaN number or an
@@ -23,15 +23,17 @@ import { curatedFlagError } from '../src/cli/help/validate.ts';
 import { unknownFlagError } from '../src/cli/cli-error.ts';
 
 const OPS_CRITICAL = ['apply-migrations', 'autopilot', 'diag', 'doctor', 'import', 'onboard', 'serve', 'status'];
-/** Handlers that parse `--yes` (doctor --remediate, apply-migrations parseArgs). */
-const PARSES_YES = ['apply-migrations', 'doctor'];
+/** GBRA-215: ingest and its show/undo verbs carry curated help too (pasted-document ingest, consent and preview flags). */
+const CURATED = [...OPS_CRITICAL, 'ingest', 'ingest-show', 'ingest-undo'].sort();
+/** Handlers that parse `--yes` (doctor --remediate, apply-migrations parseArgs, ingest-undo apply). */
+const PARSES_YES = ['apply-migrations', 'doctor', 'ingest-undo'];
 
 describe('curated help specs (D3)', () => {
-  test('exactly the ops-critical commands carry a curated help module', () => {
-    expect(CLI_COMMANDS.filter(r => r.help).map(r => r.name).sort()).toEqual(OPS_CRITICAL);
+  test('exactly the ops-critical commands and the ingest verbs carry a curated help module', () => {
+    expect(CLI_COMMANDS.filter(r => r.help).map(r => r.name).sort()).toEqual(CURATED);
   });
 
-  for (const command of OPS_CRITICAL) {
+  for (const command of CURATED) {
     test(`${command}: every curated flag is accepted by the generated registry and well-typed`, async () => {
       const spec = (await loadCuratedHelp(command))!;
       const accepted = new Set(CLI_FLAG_REGISTRY[command] ?? []);
