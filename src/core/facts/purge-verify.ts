@@ -594,7 +594,7 @@ export async function verifyPagePurge(engine: BrainEngine, input: { sourceId: st
   await keyed('core_edit_notices', 'SELECT 1 FROM core_edit_notices WHERE source_id=$1 AND slug=$2', [src, slug]);
   await keyed('page_aliases', 'SELECT 1 FROM page_aliases WHERE source_id=$1 AND slug=$2', [src, slug]);
   await keyed('slug_aliases', 'SELECT 1 FROM slug_aliases WHERE source_id=$1 AND canonical_slug=$2', [src, slug]);
-  await keyed('files', 'SELECT 1 FROM files WHERE page_slug=$2 AND (source_id=$1 OR source_id IS NULL)', [src, slug]);
+  await keyed('files', 'SELECT 1 FROM files WHERE page_id IS NULL AND page_slug=$2 AND (source_id=$1 OR source_id IS NULL)', [src, slug]);
   await keyed('write_gate_holds', 'SELECT 1 FROM write_gate_holds WHERE source_id=$1 AND slug=$2', [src, slug]);
   if (!await relationExists(engine, 'query_cache')) stores.push(missingCache('query_cache'));
   else await keyed('query_cache', 'SELECT 1 FROM query_cache WHERE $1::text IS NOT NULL', [src]);

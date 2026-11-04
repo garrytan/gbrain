@@ -163,8 +163,10 @@ export function makeAutopilotCycleHandler(engine: BrainEngine): MinionHandler {
       deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
       privateQueueOwnerJobId: job.id,
       ...(sourceId ? { sourceId } : {}),
-      // #6803: a connector cycle has no sync phase; its incremental set is the source's pages changed since its last cycle.
-      ...(connectorSource ? { sourceChangedSince: lastSourceCycleAt } : {}),
+      // #6803, #8573: a cycle that runs no sync for its source (a connector, a skipped automatic sync, no checkout) has no
+      // sync-derived page set; its incremental set is the source's pages changed since its last cycle.
+      ...(sourceId && (effectiveBrainDir === null || (effectivePhases !== undefined && !effectivePhases.includes('sync')))
+        ? { sourceChangedSince: lastSourceCycleAt } : {}),
       ...(effectivePhases !== undefined ? { phases: effectivePhases as any } : {}),
       // #7241: the phase in progress, for `gbrain jobs get` / get_job_progress while the cycle runs.
       onPhaseStart: (phase, index, count) => reportJobProgress(job, { phase, phase_index: index, phase_count: count, started_at: new Date().toISOString() }),

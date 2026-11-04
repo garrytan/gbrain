@@ -153,6 +153,25 @@ describe('settings.storage', () => {
   });
 });
 
+describe('prefixedStorage', () => {
+  test("refuses a key that would leave its prefix, so one brain never reaches another brain's objects", async () => {
+    const { LocalStorage } = await import('../src/core/storage/local.ts');
+    const { prefixedStorage } = await import('../src/core/storage.ts');
+    store('brain-b/notes/x.txt', Buffer.from('brain b bytes'));
+    const a = prefixedStorage(new LocalStorage(storageRoot), 'brain-a');
+    for (const path of ['../brain-b/notes/x.txt', 'notes/../../brain-b/notes/x.txt', './notes/x.txt', 'notes//x.txt', '/notes/x.txt', '', 'notes/x.txt/']) {
+      for (const call of [() => a.exists(path), () => a.download(path), () => a.delete(path), () => a.upload(path, Buffer.from('overwrite')), () => a.getUrl(path)]) {
+        expect([path, (await failure(call))?.message]).toEqual([path, `Path traversal blocked: ${path} resolves outside storage prefix brain-a`]);
+      }
+    }
+    expect((await failure(() => a.list('../brain-b')))?.message).toBe('Path traversal blocked: ../brain-b resolves outside storage prefix brain-a');
+    expect(readFileSync(join(storageRoot, 'brain-b/notes/x.txt'), 'utf8')).toBe('brain b bytes');
+    await a.upload('notes/x.txt', Buffer.from('brain a bytes'));
+    expect([await a.exists('notes/x.txt'), readFileSync(join(storageRoot, 'brain-a/notes/x.txt'), 'utf8')]).toEqual([true, 'brain a bytes']);
+    expect(await a.list('notes')).toEqual(['notes/x.txt']);
+  });
+});
+
 describe('hashing a stored object', () => {
   test('S3 streams the object body into its size and SHA-256', async () => {
     const { S3Storage } = await import('../src/core/storage/s3.ts');

@@ -21,6 +21,7 @@ import {
 import { SKILLOPT_HELP_TEXT } from '../core/skillopt/help.ts';
 import { runSkillOpt, parseSplit } from '../core/skillopt/orchestrator.ts';
 import { checkpointOptimizerMode, checkpointPath, loadCheckpoint } from '../core/skillopt/checkpoint.ts';
+import { noteSkillOptLoopDeprecated } from '../core/skillopt/loop-deprecation.ts';
 import { formatModelsUsedTable } from '../core/budget/models-used.ts';
 import { parsePositiveInt } from '../core/skillopt/output-cap.ts';
 import { serializeError, StructuredAgentError } from '../core/errors.ts';
@@ -157,6 +158,7 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
   // checkpoint ran (a checkpoint from before this default ran the loop).
   const resumed = parsed.resumeRunId && parsed.skillName ? loadCheckpoint(skillsDir, parsed.skillName, parsed.resumeRunId) : null;
   const optimizerMode: OptimizerMode = parsed.loop ? 'reflect' : resumed ? checkpointOptimizerMode(resumed) : 'one-shot-rewrite';
+  noteSkillOptLoopDeprecated(optimizerMode);
 
   // ── F4: --all batch mode ────────────────────────────────────────────────
   if (parsed.all) {
