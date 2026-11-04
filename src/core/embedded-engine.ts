@@ -108,7 +108,7 @@ export function settingsConnectionOptions(url: string): { host: string; port: nu
 const records = new WeakMap<object, EmbeddedRecord>();
 let embeddedProcess = false;
 let openEmbeddedEngines = 0;
-setEmbeddedKeyResolver(engine => (records.has(engineKey(engine)) ? engineKey(engine) : undefined));
+setEmbeddedKeyResolver(engine => (records.has(engineKey(engine)) ? engineKey(engine) : undefined), processHoldsEmbeddedEngines);
 
 function recordOf(engine: object): EmbeddedRecord | undefined {
   return records.get(engineKey(engine));

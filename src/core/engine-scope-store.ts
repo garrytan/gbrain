@@ -11,9 +11,17 @@ const LOCAL = Object.freeze({});
 
 /** Set by embedded-engine.ts when it loads (so before any engine is opened from settings): its engineKey, else undefined. */
 let embeddedKeyOf: (engine: object) => object | undefined = () => undefined;
+/** Set with it: whether an embedded engine is open in this process. */
+let holdsEmbedded: () => boolean = () => false;
 
-export function setEmbeddedKeyResolver(resolve: (engine: object) => object | undefined): void {
+export function setEmbeddedKeyResolver(resolve: (engine: object) => object | undefined, holds: () => boolean): void {
   embeddedKeyOf = resolve;
+  holdsEmbedded = holds;
+}
+
+/** True for a call that entered no scope while an embedded engine is open: its brain is unknown, so a reader takes the strict policy. */
+export function unscopedWithOpenEmbeddedEngines(): boolean {
+  return engineScopeStore.getStore() === undefined && holdsEmbedded();
 }
 
 /** The engineKey of `engine` when it was opened from settings, else undefined. */

@@ -22,7 +22,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from '../engine.ts';
-import { embeddedKey, embeddedKeyInScope } from '../engine-scope-store.ts';
+import { embeddedKey, embeddedKeyInScope, unscopedWithOpenEmbeddedEngines } from '../engine-scope-store.ts';
 import { requestConfigRows } from '../config-snapshot.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
@@ -510,6 +510,7 @@ const ALIAS_OPT_OUT_VALUES = ['false', '0', 'off', 'no'];
 function honorAliases(): boolean {
   const scoped = embeddedKeyInScope();
   if (scoped) return embeddedPolicy.get(scoped)?.honorAliases ?? true;
+  if (unscopedWithOpenEmbeddedEngines()) return true;
   return honorAliasEngines.size > 0 || aliasOptOutEngines.size === 0;
 }
 
@@ -758,6 +759,7 @@ function processPrivacyRelaxed(): boolean {
   if (process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1') return true;
   const scoped = embeddedKeyInScope();
   if (scoped) return embeddedPolicy.get(scoped)?.expose === true;
+  if (unscopedWithOpenEmbeddedEngines()) return false;
   return exposeEngines.size > 0 && strictEngines.size === 0;
 }
 

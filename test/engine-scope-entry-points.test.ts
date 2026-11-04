@@ -14,6 +14,7 @@ import { hybridSearch, hybridSearchCached } from '../src/core/search/hybrid.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { MinionWorker } from '../src/core/minions/worker.ts';
 import { waitFor } from './helpers/wait-for.ts';
+import { createEngine } from '../src/core/engine-factory.ts';
 
 const EMBEDDING = { model: 'openai:text-embedding-3-small', dimensions: 1536 };
 const key = (label: string) => `sk-${label}-${randomBytes(12).toString('hex')}`;
@@ -76,6 +77,25 @@ describe('entry points a host calls without a scope', () => {
       expect(new Set(sent)).toEqual(new Set([`Bearer ${keyA}`]));
     } finally {
       await Promise.all([a.disconnect(), b.disconnect()]);
+    }
+  }, 120_000);
+
+  test('inside an embedded engine\'s scope, search on a local engine leaves that scope and uses the process gateway', async () => {
+    installEmbedStub();
+    const keyA = key('a');
+    const a = await openEngine(settingsFor(keyA));
+    const local = await createEngine({ engine: 'pglite' });
+    try {
+      await local.connect({ engine: 'pglite' } as never);
+      await local.initSchema();
+      await withEngineScope(a, async () => {
+        await hybridSearch(local, 'acme-example note');
+        await hybridSearchCached(local, 'acme-example plan');
+      });
+      expect(sent.length).toBeGreaterThan(0);
+      expect(new Set(sent)).toEqual(new Set([`Bearer ${PROCESS_KEY}`]));
+    } finally {
+      await Promise.all([a.disconnect(), local.disconnect()]);
     }
   }, 120_000);
 

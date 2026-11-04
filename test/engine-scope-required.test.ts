@@ -18,6 +18,9 @@ import { openEngine, withEngineScope, withLocalScope, type EngineSettings } from
 import { createEngine } from '../src/core/engine-factory.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { spawnSync } from 'node:child_process';
+import { applyReranker } from '../src/core/search/rerank.ts';
+import type { SearchResult } from '../src/core/types.ts';
 
 const EMBEDDING = { model: 'openai:text-embedding-3-small', dimensions: 1536 };
 const key = (label: string) => `sk-${label}-${randomBytes(12).toString('hex')}`;
@@ -151,6 +154,52 @@ describe('a mixed process: a local CLI engine and two embedded engines', () => {
       }
     });
   }, 60_000);
+});
+
+describe('rerank in a process holding an embedded engine', () => {
+  test('an unscoped rerank skips as no_key: nothing was sent, so no provider failure is reported', async () => {
+    installStubs();
+    configureConflictingProcessGateway();
+    const engine = await openEngine(settingsFor(key('a')));
+    const seen: string[] = [];
+    try {
+      const results = [{ slug: 'notes/one', chunk_text: 'one', score: 1 }, { slug: 'notes/two', chunk_text: 'two', score: 0.5 }] as unknown as SearchResult[];
+      const out = await applyReranker('rerank query', results, {
+        enabled: true, topNIn: 2, topNOut: null, timeoutMs: 1000, model: 'voyage:rerank-3-lite',
+        onSkip: reason => { seen.push(`skip:${reason}`); }, onFailure: reason => { seen.push(`failure:${reason}`); },
+      });
+      expect(out).toBe(results);
+      expect(seen).toEqual(['skip:no_key']);
+      expect(sent).toEqual([]);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 60_000);
+});
+
+describe('a process that has not opened an embedded engine yet', () => {
+  test('a call that entered a local engine scope before the first embedded engine opened keeps that scope after it opens', () => {
+    const src = (path: string) => JSON.stringify(join(import.meta.dir, '..', 'src', path));
+    const script = `
+      const { __setGenerateTextTransportForTests, chat, configureGateway } = await import(${src('core/ai/gateway.ts')});
+      const { openEngine, withEngineScope } = await import(${src('core/engine-open.ts')});
+      __setGenerateTextTransportForTests(async () => ({ content: [{ type: 'text', text: 'ok' }], finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1 } }));
+      configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, chat_model: 'openai:gpt-5.6', env: { OPENAI_API_KEY: 'sk-process-local' } });
+      let release; const gate = new Promise(resolve => { release = resolve; });
+      const localEngine = { name: 'local-engine' };
+      const local = withEngineScope(localEngine, async () => {
+        await gate;
+        try { await chat({ messages: [{ role: 'user', content: 'hello' }] }); return 'ok'; } catch (error) { return error?.code ?? String(error); }
+      });
+      const engine = await openEngine({ embedded_core: true, engine: 'pglite', database: {}, host: { id: crypto.randomUUID() } });
+      release();
+      const outcome = await local;
+      await engine.disconnect();
+      console.log('OUTCOME=' + outcome);
+    `;
+    const run = spawnSync(process.execPath, ['-e', script], { encoding: 'utf-8', timeout: 60_000 });
+    expect(run.stdout).toContain('OUTCOME=ok');
+  }, 90_000);
 });
 
 describe('a process with no open embedded engine', () => {

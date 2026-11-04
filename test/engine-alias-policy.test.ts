@@ -10,8 +10,9 @@ import { openEngine, withEngineScope, withLocalScope, type EngineSettings } from
 import { createEngine } from '../src/core/engine-factory.ts';
 import {
   HONOR_ALIASES_KEY, REMOTE_PRIVATE_PAGES_KEY, __aliasPolicyEngineCountForTests, __resetPrivateVisibilityCacheForTests,
-  isPrivacyPrivatePage, readHonorAliases, remotePrivacyRelaxed,
+  currentCallerAccess, isPrivacyPrivatePage, readHonorAliases, remotePrivacyRelaxed,
 } from '../src/core/search/private-visibility.ts';
+import { waitFor } from './helpers/wait-for.ts';
 
 const settings = (): EngineSettings => ({ embedded_core: true, engine: 'pglite', database: {}, host: { id: randomUUID() } });
 const aliased = { type: 'note', frontmatter: { access: 'private' } };
@@ -55,6 +56,25 @@ describe('per-engine alias and privacy policy', () => {
     }
   }, 120_000);
 
+  test('an unscoped read stays strict while the process holds an embedded engine, whatever a local engine set', async () => {
+    const embedded = await openEngine(settings());
+    const local = await createEngine({ engine: 'pglite' });
+    try {
+      await local.connect({ engine: 'pglite' } as never);
+      await local.initSchema();
+      await local.setConfig(HONOR_ALIASES_KEY, 'false');
+      await local.setConfig(REMOTE_PRIVATE_PAGES_KEY, 'visible');
+      await readHonorAliases(local);
+      await remotePrivacyRelaxed(local);
+      expect(withLocalScope(() => isPrivacyPrivatePage(aliased))).toBe(false);
+      expect(withLocalScope(() => currentCallerAccess().hidePrivate)).toBe(false);
+      expect(isPrivacyPrivatePage(aliased)).toBe(true);
+      expect(currentCallerAccess().hidePrivate).toBe(true);
+    } finally {
+      await Promise.all([embedded.disconnect(), local.disconnect()]);
+    }
+  }, 120_000);
+
   test('open, read and close cycles retain no embedded engine in the policy sets', async () => {
     const refs: WeakRef<object>[] = [];
     for (let i = 0; i < 5; i++) {
@@ -67,9 +87,7 @@ describe('per-engine alias and privacy policy', () => {
       await engine.disconnect();
     }
     expect(__aliasPolicyEngineCountForTests()).toBe(0);
-    Bun.gc(true);
-    await Bun.sleep(50);
-    Bun.gc(true);
+    await waitFor(() => { Bun.gc(true); return refs.some(ref => ref.deref() === undefined); }, { timeoutMs: 10_000, intervalMs: 50, label: 'a closed engine collected' });
     expect(refs.filter(ref => ref.deref() !== undefined).length).toBeLessThan(refs.length);
   }, 120_000);
 });
