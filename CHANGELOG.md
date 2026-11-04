@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.572.0] - 2026-11-04
 
 **A source whose automatic sync is off no longer extracts and reconciles every page on every autopilot cycle.** A per-source cycle that runs no sync for its source (`config.syncEnabled=false`, a claimed source awaiting activation, a gbrain-owned content directory, or a source with no checkout) now extracts links and timeline, reconciles facts and recomputes emotional weight only for the source's pages changed since its previous cycle, as connector sources already did, at most 2,000 pages per cycle. Before, `extract_facts` walked the whole source each time and `extract` walked its whole checkout, so a sync-disabled source of about 27,000 pages or more hit the 30-minute job timeout on every cycle and never stamped its freshness. Pages an explicit `gbrain sync --source` imports between cycles land in the next window, and a large import is worked through over several cycles instead of timing out. A source with no recorded cycle starts from its oldest page and walks forward the same way. Reported by @mlahatte (#8573).
 
