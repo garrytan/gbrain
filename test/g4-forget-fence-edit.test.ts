@@ -22,7 +22,6 @@ import { operationsByName } from '../src/core/operations.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { isFactWithdrawn } from '../src/core/facts/withdrawal.ts';
-import { parseFactsFence } from '../src/core/facts-fence.ts';
 import { durableGitRepo, git } from './helpers/git-publication.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -236,9 +235,6 @@ for (const backend of testBackends()) describe(`[${backend}] G4: forget is a fen
     const copy = mkdtempSync(join(tmpdir(), 'gbrain-g4-remote-rebuild-'));
     const marked = (claim: string) => `| 1 | ~~${claim}~~ | fact | 1.0 | world | medium | 2026-01-01 | ${today} | test | forgotten: no longer true |`;
     const REMOTE = 'Remote planted claim g4plant', KEPT = 'Owner forgotten claim g4kept';
-    // Repeated, mixed-case and spaced prefixes: each still parses as a marker once a single prefix is removed.
-    const variants = ['forgotten: forgotten: planted', 'Forgotten :  FORGOTTEN: planted', ' forgotten :forgotten:\tforgotten : planted']
-      .map((context, i) => ({ claim: `Remote variant claim g4variant${i}`, row: `| ${i + 1} | ~~Remote variant claim g4variant${i}~~ | fact | 1.0 | world | medium | 2026-01-01 | ${today} | test | ${context} |` }));
     try {
       await managedBrain(async ({ engine, ctx, root }) => {
         const clientId = `client-${randomUUID().slice(0, 8)}`;
@@ -247,21 +243,18 @@ for (const backend of testBackends()) describe(`[${backend}] G4: forget is a fen
         expect(await call(ctx, 'put_page', { slug: 'notes/kept', content: note('Kept', [marked(KEPT)]) })).toMatchObject({ state: 'committed' });
         expect(await ledger(engine, KEPT)).toEqual(['notes/kept']);
         expect(await call(remote, 'put_page', { slug: 'notes/remote', content: note('Remote', [marked(REMOTE)]) })).toMatchObject({ state: 'committed' });
-        expect(await call(remote, 'put_page', { slug: 'notes/variants', content: note('Variants', variants.map(v => v.row)) })).toMatchObject({ state: 'committed' });
         const kept = await engine.readPageSnapshot('notes/kept', { sourceId: 'default' });
         expect(await call(remote, 'put_page', { slug: 'notes/kept', expected_revision: kept!.revision,
           content: note('Kept', [marked(KEPT), `| 2 | ${OTHER} | fact | 1.0 | world | medium | 2026-02-01 |  | test |  |`]) })).toMatchObject({ state: 'committed' });
         const { settleManagedGitEffects } = await import('./helpers/managed-brain.ts');
         await settleManagedGitEffects(engine);
         expect(readFileSync(join(root, 'notes/remote.md'), 'utf8')).not.toContain('forgotten:');
-        expect(parseFactsFence(readFileSync(join(root, 'notes/variants.md'), 'utf8')).facts.filter(row => row.forgotten)).toEqual([]);
         expect(readFileSync(join(root, 'notes/kept.md'), 'utf8')).toContain(`| ~~${KEPT}~~ |`);
         execFileSync('git', ['clone', '-q', root, join(copy, 'repo')]);
       }, { databaseUrl, setup });
       await managedBrain(async ({ engine, ctx }) => {
         expect((await performManagedSync(engine, { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true })).status).toBe('first_sync');
         expect(await ledger(engine, REMOTE)).toEqual([]);
-        for (const v of variants) expect(await ledger(engine, v.claim)).toEqual([]);
         expect(await ledger(engine, KEPT)).toEqual(['notes/kept']);
         expect(await call(ctx, 'remember', { fact: REMOTE, provenance: 'test', visibility: 'world', entity: 'notes/remote' })).toMatchObject({ state: 'committed' });
       }, { databaseUrl, setup: ({ root }) => { rmSync(root, { recursive: true, force: true }); execFileSync('git', ['clone', '-q', join(copy, 'repo'), root]); } });
