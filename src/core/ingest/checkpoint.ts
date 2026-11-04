@@ -12,7 +12,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { Principal } from '../persistence/model.ts';
 import type { ExtractedWindow } from './extract.ts';
-import type { IngestReport } from './report.ts';
+import type { IngestReport, ReportEvidence } from './report.ts';
 
 export const INGEST_ATTEMPT_OP = 'ingest-attempt';
 export const INGEST_IDENTITY_OP = 'ingest-identity';
@@ -56,6 +56,8 @@ export interface IngestAttemptState {
   /** Fact ids this attempt counted as support for an existing claim: undo of another attempt skips them. */
   support_fact_ids: number[];
   report: IngestReport | null;
+  /** Ownership evidence, saved as each write commits, so a resume or undo after a failed commit still owns what it wrote. */
+  evidence?: ReportEvidence;
 }
 
 export function newAttemptId(): string {

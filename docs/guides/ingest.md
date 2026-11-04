@@ -141,7 +141,9 @@ gbrain ingest-undo a3f9c2d1e0b4a5968 --yes --expect <plan_hash>        # apply e
 ```
 
 Undo retracts only what the attempt created, read from the report page's evidence (it outlives the write
-receipts' `persistence.receipt_retention_days` window, default 30) and cross-checked against the attempt record:
+receipts' `persistence.receipt_retention_days` window, default 30) and cross-checked against the attempt record,
+which saves the same evidence as each write commits, so an attempt that failed mid-commit, or was resumed after
+one, still owns everything it wrote:
 
 - the fence rows it appended are struck (`valid_until` today) in the page's own fence, through the page door on
   both storages, so a later edit, ingest or rebuild never brings them back; no withdrawal is recorded, so a later

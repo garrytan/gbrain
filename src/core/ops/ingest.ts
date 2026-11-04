@@ -324,7 +324,7 @@ async function commitPlan(ctx: OperationContext, state: IngestAttemptState, plan
       report.source_page = { slug: state.source_slug, status: 'failed' };
       throw opError('ingest_commit_failed', 'Page ' + state.source_slug + ' already exists with other content.', 'Nothing else was written. Pass another slug, or omit it to file the document under its content hash.');
     }
-    report.source_page = { slug: state.source_slug, status: 'existing' };
+    report.source_page = { slug: state.source_slug, status: evidence.source_created ? 'created' : 'existing' };
   } else {
     const r = await publish(ctx, sourceId, { slug: state.source_slug, content: sourcePageContent(state, title, text), ...(existing ? { expected_revision: existing.revision } : {}) });
     if (!r.ok) {
@@ -334,6 +334,7 @@ async function commitPlan(ctx: OperationContext, state: IngestAttemptState, plan
     report.source_page = { slug: state.source_slug, status: r.pending ? 'pending' : 'created', request_id: r.request_id };
     report.write_requests.push({ slug: state.source_slug, request_id: r.request_id, state: r.pending ? 'pending' : 'committed' });
     evidence.source_created = true;
+    await saveAttempt(ctx.engine, state);
   }
   await writeReport();
   // New entity pages, each revalidated under the entity-create lock.
@@ -341,7 +342,11 @@ async function commitPlan(ctx: OperationContext, state: IngestAttemptState, plan
   for (const page of plan.pages) {
     const base: ReportPage = { name: page.name, slug: page.slug, type: page.type, status: 'skipped', ...(page.near_names ? { near_names: page.near_names } : {}) };
     if (page.status === 'skipped') { report.pages.push({ ...base, reason: page.reason }); continue; }
-    if (page.status === 'existing') { const row = { ...base, status: 'existing' as const }; report.pages.push(row); written.set(page.slug, row); continue; }
+    if (page.status === 'existing') {
+      const own = evidence.created_pages.find(c => c.slug === page.slug);
+      const row: ReportPage = own ? { ...base, status: own.proposed ? 'proposed' : 'created', request_id: own.request_id } : { ...base, status: 'existing' };
+      report.pages.push(row); written.set(page.slug, row); continue;
+    }
     const create = (target: PlannedPage) => withEntityCreateLock(ctx, sourceId, async (): Promise<ReportPage | null> => {
       const proposed = target.status === 'propose';
       const at = { ...base, slug: target.slug };
@@ -352,6 +357,7 @@ async function commitPlan(ctx: OperationContext, state: IngestAttemptState, plan
       report.write_requests.push({ slug: target.slug, request_id: r.request_id, state: r.pending ? 'pending' : 'committed' });
       if (r.pending) return { ...at, status: 'pending', request_id: r.request_id };
       evidence.created_pages.push({ slug: target.slug, request_id: r.request_id, revision: null, proposed });
+      await saveAttempt(ctx.engine, state);
       return { ...at, status: proposed ? 'proposed' : 'created', request_id: r.request_id };
     });
     const conflict: ReportPage = { ...base, status: 'skipped', reason: 'create_conflict' };
@@ -385,6 +391,7 @@ async function commitPlan(ctx: OperationContext, state: IngestAttemptState, plan
       }
       const check = await checkFactAgainstSaved(ctx.engine, sourceId, { fact: f.fact, kind: f.kind, visibility: state.options.visibility, entity_slug: target.slug }, { excludePrivate });
       if (check.verdict === 'withdrawn') { row.copies.push({ entity_slug: target.slug, status: 'skipped', reason: 'withdrawn' }); continue; }
+      if (check.verdict === 'duplicate' && evidence.created_facts.some(x => x.id === check.id)) { row.copies.push({ entity_slug: target.slug, status: 'created', fact_id: check.id }); continue; }
       if (check.verdict === 'duplicate') {
         row.copies.push({ entity_slug: target.slug, status: 'support', fact_id: check.id });
         if (!evidence.support_fact_ids.includes(check.id)) evidence.support_fact_ids.push(check.id);
@@ -400,7 +407,7 @@ async function commitPlan(ctx: OperationContext, state: IngestAttemptState, plan
         const pending = pendingOf(res);
         row.copies.push({ entity_slug: target.slug, status: pending ? 'pending' : 'created', ...(Number.isFinite(id) ? { fact_id: id } : {}), request_id });
         report.write_requests.push({ slug: target.slug, request_id, state: pending ? 'pending' : 'committed' });
-        if (!pending && Number.isFinite(id)) evidence.created_facts.push({ id, entity_slug: target.slug, request_id });
+        if (!pending && Number.isFinite(id)) { evidence.created_facts.push({ id, entity_slug: target.slug, request_id }); await saveAttempt(ctx.engine, state); }
       } catch (error) {
         if (!(error instanceof OperationError)) throw error;
         row.copies.push({ entity_slug: target.slug, status: 'failed', reason: error.code, request_id });
@@ -424,7 +431,7 @@ async function commitPlan(ctx: OperationContext, state: IngestAttemptState, plan
     }
     report.facts.push(row);
   }
-  for (const p of evidence.created_pages) p.revision = await snapshotRevision(ctx, sourceId, p.slug);
+  for (const p of evidence.created_pages) p.revision ??= await snapshotRevision(ctx, sourceId, p.slug);
 }
 
 async function runIngest(ctx: OperationContext, p: Params): Promise<Record<string, unknown>> {
@@ -513,7 +520,8 @@ async function runIngest(ctx: OperationContext, p: Params): Promise<Record<strin
   if (now.storage !== state.topology.storage || now.source_incarnation !== state.topology.source_incarnation) {
     throw opError('ingest_storage_unavailable', 'Source ' + sourceId + ' changed storage while attempt ' + state.attempt_id + ' was extracting.', 'Nothing was written. Run the same ingest again; finished windows are kept.', { reason: 'topology_changed', docs: DOCS + '#storage' });
   }
-  const evidence: ReportEvidence = { attempt_id: state.attempt_id, principal: principalKey(principal), source_id: sourceId, source_slug: state.source_slug, source_created: false,
+  // A resumed attempt keeps the evidence its earlier runs saved as their writes committed.
+  const evidence: ReportEvidence = state.evidence ??= { attempt_id: state.attempt_id, principal: principalKey(principal), source_id: sourceId, source_slug: state.source_slug, source_created: false,
     storage: state.topology.storage, created_pages: [], created_facts: [], support_fact_ids: [], status: 'incomplete' };
   try {
     await commitPlan(ctx, state, plan, report, evidence, v.title, v.text);
@@ -562,6 +570,8 @@ async function readEvidence(ctx: OperationContext, state: IngestAttemptState): P
   if (!fm || snap!.page.type !== INGEST_REPORT_TYPE) throw unverifiable(state.attempt_id, 'its report page is missing');
   const ev = asRecord(fm.ingest) as unknown as ReportEvidence;
   if (ev.attempt_id !== state.attempt_id || ev.principal !== principalKey(state.principal) || ev.source_id !== state.source_id) throw unverifiable(state.attempt_id, 'its report page names another attempt or principal');
+  // The checkpoint's evidence is saved as each write commits, so it also covers writes after the report page's last update.
+  if (state.evidence) return { ...ev, ...state.evidence };
   return { ...ev, created_pages: Array.isArray(ev.created_pages) ? ev.created_pages : [], created_facts: Array.isArray(ev.created_facts) ? ev.created_facts : [], support_fact_ids: Array.isArray(ev.support_fact_ids) ? ev.support_fact_ids : [] };
 }
 

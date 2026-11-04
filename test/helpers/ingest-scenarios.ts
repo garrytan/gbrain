@@ -716,3 +716,41 @@ export async function ambiguousNamesakeScenario(engine: BrainEngine): Promise<vo
     expect((await factsOn(engine, 'people/alice-example-b')).length).toBe(0);
   } finally { stub.restore(); }
 }
+
+/**
+ * Item C: a commit that dies after the first claim is written, then resumes: the resumed attempt still owns the source
+ * page, the entity pages and the claim the failed run committed, so undo retracts and deletes all of them.
+ */
+export async function failedCommitResumeUndoScenario(engine: BrainEngine): Promise<void> {
+  await seedEntities(engine);
+  const stub = stubChat();
+  const remember = operationsByName.remember!;
+  let calls = 0;
+  (operationsByName as Record<string, unknown>).remember = { ...remember, handler: async (ctx: OperationContext, p: Record<string, unknown>) => {
+    if (++calls === 2) throw new Error('Connection terminated unexpectedly');
+    return remember.handler(ctx, p);
+  } };
+  let first: Report;
+  try {
+    first = await ingest(engine, { content: goldenDocument(), title: 'Call notes' });
+  } finally { (operationsByName as Record<string, unknown>).remember = remember; }
+  try {
+    expect(first.status).toBe('failed');
+    expect(first.failure.stage).toBe('commit');
+    const committed = (await factsOn(engine, 'companies/zentrix')).map(f => f.fact);
+    expect(committed).toEqual(['Zentrix signed its first enterprise customer.']);
+    // Undo before any resume already owns the claim the failed run committed.
+    expect((await undo(engine, { attempt_id: first.attempt_id })).retract.map((r: Report) => r.entity_slug)).toEqual(['companies/zentrix']);
+    const resumed = await ingest(engine, { content: goldenDocument(), title: 'Call notes', attempt_id: first.attempt_id, resume: true });
+    expect(resumed.status).toBe('complete');
+    expect(resumed.facts.find((f: Report) => f.fact === 'Zentrix signed its first enterprise customer.').copies).toEqual([expect.objectContaining({ entity_slug: 'companies/zentrix', status: 'created' })]);
+    const preview = await undo(engine, { attempt_id: first.attempt_id });
+    expect(preview.delete.map((d: Report) => d.slug)).toEqual(expect.arrayContaining(['companies/zentrix', 'companies/acmx', first.source_page.slug]));
+    const applied = await undo(engine, { attempt_id: first.attempt_id, yes: true, expect: preview.plan_hash });
+    expect(applied.status).toBe('undone');
+    const live = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM facts WHERE source = $1 AND valid_until IS NULL AND expired_at IS NULL', ['ingest:' + first.source_page.slug]);
+    expect(Number(live[0]!.n)).toBe(0);
+    expect(await engine.getPage(first.source_page.slug)).toBeNull();
+    expect(await engine.getPage('companies/zentrix')).toBeNull();
+  } finally { stub.restore(); }
+}
