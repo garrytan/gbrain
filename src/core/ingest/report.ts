@@ -134,6 +134,8 @@ export interface ReportEvidence {
   source_id: string;
   source_slug: string;
   source_created: boolean;
+  /** The source page's revision as the attempt wrote it; undo keeps the page when it moved since. */
+  source_revision?: string | null;
   storage: IngestStorage;
   created_pages: Array<{ slug: string; request_id: string; revision: string | null; proposed: boolean }>;
   created_facts: Array<{ id: number; entity_slug: string; request_id: string }>;

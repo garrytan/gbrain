@@ -786,3 +786,43 @@ export async function failedCommitResumeUndoScenario(engine: BrainEngine): Promi
     expect(await engine.getPage('companies/zentrix')).toBeNull();
   } finally { stub.restore(); }
 }
+
+/**
+ * Item D (and #8562): undo binds every page it deletes to the revision the attempt wrote. An owner who replaced the
+ * ingested document keeps it (skipped as edited), and an entity page edited after the undo re-checked it is kept too.
+ */
+export async function undoKeepsReplacedSourceScenario(engine: BrainEngine): Promise<void> {
+  const report = await goldenRun(engine);
+  const sourceSlug = report.source_page.slug;
+  const snap = (await engine.readPageSnapshot(sourceSlug, { sourceId: 'default' }))!;
+  await operationsByName.put_page!.handler(reviewCtx(engine), { slug: sourceSlug, expected_revision: snap.revision,
+    content: '---\ntype: note\ntitle: Owner notes\n---\n\nThe owner rewrote this page by hand.\n' });
+  await drain(engine);
+  const preview = await undo(engine, { attempt_id: report.attempt_id });
+  expect(preview.skipped).toEqual(expect.arrayContaining([{ kind: 'page', ref: sourceSlug, reason: 'edited' }]));
+  expect(preview.delete.map((d: Report) => d.slug)).not.toContain(sourceSlug);
+  // #8562: an owner edit of companies/acmx that lands right after the apply step re-checked the page. The re-check is
+  // made to read the page as it was before the edit, so the apply believes the revision the preview saw: neither the
+  // strike of its claim nor the delete may land on the edited page.
+  const before = (await undo(engine, { attempt_id: report.attempt_id })).plan_hash;
+  const stale = (await engine.readPageSnapshot('companies/acmx', { sourceId: 'default' }))!;
+  await operationsByName.edit_page!.handler(reviewCtx(engine), { slug: 'companies/acmx', expected_revision: stale.revision,
+    edits: [{ old_text: 'ACMX announced a new product line for small offices.', new_text: 'ACMX notes the owner wrote mid-undo.' }] });
+  await drain(engine);
+  const original = engine.readPageSnapshot;
+  let staleReads = 0;
+  // A transaction's engine inherits this wrapper, so the real read keeps its own receiver.
+  engine.readPageSnapshot = async function (this: BrainEngine, slug: string, opts?: Record<string, unknown>) {
+    if (slug === 'companies/acmx' && new Error().stack!.includes('planUndo')) { staleReads++; return stale; }
+    return original.call(this, slug, opts as never);
+  } as typeof engine.readPageSnapshot;
+  let applied: Report;
+  try {
+    applied = await undo(engine, { attempt_id: report.attempt_id, yes: true, expect: before });
+  } finally { delete (engine as Partial<BrainEngine>).readPageSnapshot; }
+  expect(staleReads).toBe(2);
+  await drain(engine);
+  expect(applied.status).toBe('undone');
+  expect((await engine.getPage(sourceSlug))!.compiled_truth).toContain('The owner rewrote this page by hand.');
+  expect((await engine.getPage('companies/acmx'))!.compiled_truth).toContain('ACMX notes the owner wrote mid-undo.');
+}

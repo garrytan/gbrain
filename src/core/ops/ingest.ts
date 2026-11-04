@@ -357,6 +357,7 @@ async function commitPlan(ctx: OperationContext, state: IngestAttemptState, plan
     report.write_requests.push({ slug: state.source_slug, request_id: r.request_id, state: r.pending ? 'pending' : 'committed' });
     evidence.source_created = true;
     evidence.source_request_id = r.request_id;
+    if (!r.pending) evidence.source_revision = await snapshotRevision(ctx, sourceId, state.source_slug);
     await saveAttempt(ctx.engine, state);
   }
   await writeReport();
@@ -473,6 +474,7 @@ async function commitPlan(ctx: OperationContext, state: IngestAttemptState, plan
     report.facts.push(row);
   }
   for (const p of evidence.created_pages) p.revision ??= await snapshotRevision(ctx, sourceId, p.slug);
+  if (evidence.source_created) evidence.source_revision ??= await snapshotRevision(ctx, sourceId, state.source_slug);
 }
 
 async function runIngest(ctx: OperationContext, p: Params): Promise<Record<string, unknown>> {
@@ -595,7 +597,7 @@ async function runIngest(ctx: OperationContext, p: Params): Promise<Record<strin
 
 interface UndoPlan {
   retract: Array<{ fact_id: number; entity_slug: string; row_num: number }>;
-  delete: Array<{ slug: string }>;
+  delete: Array<{ slug: string; revision: string }>;
   skipped: Array<{ kind: 'fact' | 'page'; ref: string; reason: string }>;
 }
 
@@ -643,35 +645,43 @@ async function planUndo(ctx: OperationContext, state: IngestAttemptState, ev: Re
     const snap = await ctx.engine.readPageSnapshot(pg.slug, { sourceId });
     if (!snap || snap.page.deleted_at) { out.skipped.push({ kind: 'page', ref: pg.slug, reason: 'not_found' }); continue; }
     if (pg.proposed && !isUnverifiedExtraction(asRecord(snap.page.frontmatter))) { out.skipped.push({ kind: 'page', ref: pg.slug, reason: 'promoted' }); continue; }
-    if (pg.revision && snap.revision !== pg.revision) { out.skipped.push({ kind: 'page', ref: pg.slug, reason: 'edited' }); continue; }
+    if (pg.revision ? snap.revision !== pg.revision : asRecord(snap.page.frontmatter).ingest_attempt !== state.attempt_id) { out.skipped.push({ kind: 'page', ref: pg.slug, reason: 'edited' }); continue; }
     // A claim another attempt relies on keeps its page, and the source page it cites.
     if (supportedOn.has(pg.slug) || (await referencedFrom(pg.slug)).length) { out.skipped.push({ kind: 'page', ref: pg.slug, reason: 'referenced' }); continue; }
-    out.delete.push({ slug: pg.slug });
+    out.delete.push({ slug: pg.slug, revision: snap.revision });
   }
   if (ev.source_created) {
+    // The source page is deleted only as the attempt wrote it (its revision, or its document hash when none was recorded).
+    const snap = await ctx.engine.readPageSnapshot(ev.source_slug, { sourceId });
     const others = await attemptsOfDocument(ctx.engine, sourceId, state.document_hash, state.attempt_id);
-    if (others.length) out.skipped.push({ kind: 'page', ref: ev.source_slug, reason: 'used_by_other_attempt' });
+    if (!snap || snap.page.deleted_at) out.skipped.push({ kind: 'page', ref: ev.source_slug, reason: 'not_found' });
+    else if (ev.source_revision ? snap.revision !== ev.source_revision : asRecord(snap.page.frontmatter).ingest_document !== state.document_hash) out.skipped.push({ kind: 'page', ref: ev.source_slug, reason: 'edited' });
+    else if (others.length) out.skipped.push({ kind: 'page', ref: ev.source_slug, reason: 'used_by_other_attempt' });
     else if (supportedOn.size || (await referencedFrom(ev.source_slug)).length) out.skipped.push({ kind: 'page', ref: ev.source_slug, reason: 'referenced' });
-    else out.delete.push({ slug: ev.source_slug });
+    else out.delete.push({ slug: ev.source_slug, revision: snap.revision });
   }
   return out;
 }
 
 const undoHash = (state: IngestAttemptState, plan: UndoPlan) => createHash('sha256').update(JSON.stringify({ a: state.attempt_id, r: plan.retract, d: plan.delete })).digest('hex').slice(0, 32);
 
-/** Strike the attempt's fence rows on one page through the door (valid_until today, no withdrawal), so a later write never re-projects them. */
-async function strikeRows(ctx: OperationContext, sourceId: string, slug: string, rowNums: number[], today: string): Promise<'struck' | 'changed' | 'segmented'> {
+/**
+ * Strike the attempt's fence rows on one page through the door (valid_until today, no withdrawal), so a later write never
+ * re-projects them. A page undo also deletes is struck only at the revision undo verified, and its new revision comes back.
+ */
+async function strikeRows(ctx: OperationContext, sourceId: string, slug: string, rowNums: number[], today: string, verified?: string): Promise<{ outcome: 'struck' | 'changed' | 'segmented'; revision?: string }> {
   const snap = await ctx.engine.readPageSnapshot(slug, { sourceId });
-  if (!snap || snap.page.deleted_at) return 'changed';
-  try { assertInlineBody(snap.page, 'ingest_undo'); } catch { return 'segmented'; }
+  if (!snap || snap.page.deleted_at || (verified && snap.revision !== verified)) return { outcome: 'changed' };
+  try { assertInlineBody(snap.page, 'ingest_undo'); } catch { return { outcome: 'segmented' }; }
   let body: string | null = snap.page.compiled_truth;
   for (const n of rowNums) {
     body = body === null ? null : strikeFenceRow(body, n, f => ({ ...f, active: false, validUntil: today, context: ['ingest undone', f.context?.trim()].filter(Boolean).join(' | ') }));
   }
-  if (body === null) return 'changed';
+  if (body === null) return { outcome: 'changed' };
   const content = serializePageToMarkdown({ ...snap.page, compiled_truth: body } as Page, snap.tags);
   const r = await publish(ctx, sourceId, { slug, content, expected_revision: snap.revision });
-  return r.ok ? 'struck' : 'changed';
+  if (!r.ok) return { outcome: 'changed' };
+  return { outcome: 'struck', ...(typeof r.response.revision === 'string' ? { revision: r.response.revision } : {}) };
 }
 
 async function runUndo(ctx: OperationContext, p: Params): Promise<Record<string, unknown>> {
@@ -703,16 +713,19 @@ async function runUndo(ctx: OperationContext, p: Params): Promise<Record<string,
     for (const r of current.retract) byPage.set(r.entity_slug, [...(byPage.get(r.entity_slug) ?? []), r.row_num]);
     let retracted = 0;
     const skipped = [...current.skipped];
+    // Every delete is bound to the revision this apply verified (#8562), or to the revision its own strike published.
+    const verified = new Map(current.delete.map(d => [d.slug, d.revision]));
     for (const [slug, rowNums] of byPage) {
-      const outcome = await strikeRows(ctx, sourceId, slug, rowNums, today);
+      const { outcome, revision } = await strikeRows(ctx, sourceId, slug, rowNums, today, verified.get(slug));
       if (outcome === 'struck') retracted += rowNums.length;
       else for (const n of rowNums) skipped.push({ kind: 'fact', ref: slug + '#' + n, reason: outcome });
+      if (verified.has(slug) && outcome !== 'segmented') verified.set(slug, revision ?? '');
     }
     const { submitPageMutation } = await import('../persistence/page-mutations.ts');
     let deleted = 0;
     for (const d of current.delete) {
-      const revision = await snapshotRevision(ctx, sourceId, d.slug);
-      if (!revision) continue;
+      const revision = verified.get(d.slug);
+      if (!revision) { skipped.push({ kind: 'page', ref: d.slug, reason: 'changed' }); continue; }
       try {
         await submitPageMutation(ctx, { operation: 'delete_page', params: { slug: d.slug, source_id: sourceId, expected_revision: revision, request_id: randomUUID() } });
         deleted++;

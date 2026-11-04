@@ -154,7 +154,10 @@ one, still owns everything it wrote:
   no other attempt uses it.
 
 It keeps anything edited, promoted or linked from another page since, support it counted for a claim that already
-existed, and claims another attempt counts as support, with their page and the source page they cite. Apply runs under the source's publication guard and refuses
+existed, and claims another attempt counts as support, with their page and the source page they cite. Each page it
+deletes, the source page included, must still be at the revision the attempt wrote (a source document the owner
+replaced is kept as `edited`), and the delete, like the strike of that page's rows, carries the revision the apply
+verified, so an edit that lands while undo runs keeps the page. Apply runs under the source's publication guard and refuses
 `preview_changed` when the plan moved since the preview. A repeat is a no-op. After a rebuild that renumbered the
 facts, or without the attempt record, undo refuses `ingest_undo_unverifiable` rather than guess. A page whose body is segmented keeps its rows
 (reported `segmented`).

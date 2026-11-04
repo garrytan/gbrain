@@ -140,6 +140,10 @@ for (const storage of ['git', 'database'] as ReviewStorage[]) {
       fx = await reviewDoorFixture(engine, storage);
       await S.failedCommitResumeUndoScenario(engine);
     }, 90_000);
+    test('undo keeps a replaced source document and a page edited after its re-check', async () => {
+      fx = await reviewDoorFixture(engine, storage);
+      await S.undoKeepsReplacedSourceScenario(engine);
+    }, 90_000);
   });
 }
 
