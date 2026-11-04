@@ -95,6 +95,21 @@ export async function installTopologyBinding(tx:BrainEngine,sourceId:string,inca
   return id;
 }
 
+/** Installs only a separately verified existing UUID; host retargeting is a complete-row CAS. */
+export async function installExistingTopologyBinding(tx: BrainEngine, input: {
+  sourceId: string; incarnation: string; worktreeId: string; root: string; host: Record<string, unknown>;
+}): Promise<void> {
+  const others = await tx.executeRaw<{ source_id: string; relative_path: string; local_path: string }>(`SELECT b.source_id,b.relative_path,h.local_path
+    FROM persistence_source_bindings b JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid`, [localHostId()]);
+  if (others.some(other => containsPath(join(other.local_path, other.relative_path), input.root) || containsPath(input.root, join(other.local_path, other.relative_path)))) throw opError('overlapping_path', 'The source overlaps a registered canonical directory.', 'Choose a non-overlapping canonical source directory; nothing was bound.');
+  const changed = await tx.executeRaw(`UPDATE persistence_host_bindings SET local_path=$3 WHERE worktree_id=$1::uuid AND host_id=$2::uuid
+    AND to_jsonb(persistence_host_bindings)=$4::text::jsonb RETURNING worktree_id`, [input.worktreeId, localHostId(), input.root, JSON.stringify(input.host)]);
+  if (changed.length !== 1) throw opError('source_changed', 'The complete host binding changed.', 'Review the new topology before binding; nothing was published.');
+  await tx.executeRaw('INSERT INTO sources(id,name,local_path,config,incarnation) VALUES($1,$1,$2,\'{}\'::jsonb,$3::uuid)', [input.sourceId, input.root, input.incarnation]);
+  await tx.executeRaw(`INSERT INTO persistence_source_bindings(source_id,source_incarnation,worktree_id,relative_path,topology_generation)
+    SELECT $1,$2::uuid,id,'',topology_generation FROM persistence_worktrees WHERE id=$3::uuid`, [input.sourceId, input.incarnation, input.worktreeId]);
+}
+
 /** #5219: the refusal for a vanished canonical checkout, with its exits. */
 function missingCheckoutError(sourceId:string,path:string,state?:{pages:number;members:number}):OperationError{
   return catalogueError('source_checkout_missing',

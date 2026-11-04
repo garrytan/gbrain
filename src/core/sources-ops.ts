@@ -1,4 +1,5 @@
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
+import { withSourceKeyReservationGuard } from './persistence/topology-locks.ts';
 import { managedPersistenceEnabled } from './persistence/ownership.ts';
 /**
  * gbrain sources-ops — pure async functions for source-management operations
@@ -584,11 +585,11 @@ export async function addSource(
     const displayName = opts.name ?? opts.id;
 
     try {
-      await engine.executeRaw(
+      await withSourceKeyReservationGuard(engine, opts.id, tx => tx.executeRaw(
         `INSERT INTO sources (id, name, local_path, config)
              VALUES ($1, $2, $3, $4::text::jsonb)`,
         [opts.id, displayName, finalPath, JSON.stringify(config)],
-      );
+      ));
     } catch (e) {
       rmSync(tempDir, { recursive: true, force: true });
       throw new SourceOpError(
@@ -656,11 +657,11 @@ export async function addSource(
       }
     }
     const displayName = opts.name ?? opts.id;
-    await engine.executeRaw(
+    await withSourceKeyReservationGuard(engine, opts.id, tx => tx.executeRaw(
       `INSERT INTO sources (id, name, local_path, config)
            VALUES ($1, $2, $3, $4::text::jsonb)`,
       [opts.id, displayName, finalPath, JSON.stringify(config)],
-    );
+    ));
   } else if (opts.google) {
     // ── Path D: --kind google (v0.47) ─────────────────────────────────────
     // API-backed source: no git repo, no clone. Credentials live in the
@@ -692,11 +693,11 @@ export async function addSource(
       federated: opts.federated ?? true,
     };
     const displayName = opts.name ?? opts.id;
-    await engine.executeRaw(
+    await withSourceKeyReservationGuard(engine, opts.id, tx => tx.executeRaw(
       `INSERT INTO sources (id, name, local_path, config)
            VALUES ($1, $2, $3, $4::text::jsonb)`,
       [opts.id, displayName, finalPath, JSON.stringify(config)],
-    );
+    ));
   } else if (opts.meetings || opts.slack) {
     await insertApiSource(engine, opts, opts.slack ? 'slack' : 'meetings');
   } else {
@@ -755,11 +756,11 @@ export async function addSource(
         config.federated = opts.federated;
       }
       const displayName = opts.name ?? opts.id;
-      await engine.executeRaw(
+      await withSourceKeyReservationGuard(engine, opts.id, tx => tx.executeRaw(
         `INSERT INTO sources (id, name, local_path, config)
              VALUES ($1, $2, $3, $4::text::jsonb)`,
         [opts.id, displayName, finalPath, JSON.stringify(config)],
-      );
+      ));
     }
   }
 

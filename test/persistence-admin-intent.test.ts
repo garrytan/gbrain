@@ -3,6 +3,9 @@ import { mkdtempSync, mkdirSync, existsSync, readFileSync, rmSync, writeFileSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { once } from 'node:events';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
@@ -17,6 +20,36 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 import { withEnv } from './helpers/with-env.ts';
+
+test('bind-existing rejects stale state and missing intent', () => fixture(async root => {
+  const registration = await registerLocalWriter(engine, 'cli');
+  const params = { source_id: 'bind-fixture', path: root, worktree_id: randomUUID(), reservation_file: join(root, '..', '.gbrain-owner-fixture.json'), expected_epoch: '1', expected_generation: '8', request_id: randomUUID() };
+  await withVerifiedLocalRegistration(engine, registration, async () => {
+    await expect(runPersistenceAdministration(engine, 'writer_bind_existing', params)).rejects.toMatchObject({ code: 'writer_admin_intent_required' });
+    await expect(runPersistenceAdministration(engine, 'writer_bind_existing', { ...params, admin_intent: 'writer_bind_existing', expected_state: '0'.repeat(64), expect: '1'.repeat(64) })).rejects.toMatchObject({ code: 'writer_admin_state_changed' });
+  });
+  expect(await engine.executeRaw('SELECT id FROM persistence_topology_changes')).toHaveLength(0);
+}));
+
+test('bind-existing parser keeps explicit flags and rejects force or duplicates', () => {
+  const parsed = parsePersistenceAdminArgs('writer', ['bind-existing', 'bind-fixture', '--path', '/fixture/root', '--worktree-id', '123e4567-e89b-42d3-a456-426614174000', '--reservation-file', '/fixture/record', '--expected-epoch', '1', '--expected-generation', '8', '--request-id', '123e4567-e89b-42d3-a456-426614174001', '--dry-run']);
+  expect(parsed).toMatchObject({ operation: 'writer_bind_existing', params: { source_id: 'bind-fixture', path: '/fixture/root', reservation_file: '/fixture/record', expected_epoch: '1', expected_generation: '8', dry_run: true } });
+  expect(() => parsePersistenceAdminArgs('writer', ['bind-existing', 'bind-fixture', '--force'])).toThrow();
+  expect(() => parsePersistenceAdminArgs('writer', ['bind-existing', 'bind-fixture', '--worktree-id', 'one', '--worktree-id', 'two'])).toThrow();
+});
+
+test('preview refuses without resident before engine creation', () => {
+  const home = mkdtempSync(join(tmpdir(), 'bind-no-resident-')), database = join(home, 'datastore');
+  try {
+    const configDir = join(home, '.gbrain'); mkdirSync(configDir);
+    const config = JSON.stringify({ engine: 'pglite', database_path: database }); writeFileSync(join(configDir, 'config.json'), config);
+    const result = spawnSync(process.execPath, ['--no-env-file', fileURLToPath(new URL('../src/cli.ts', import.meta.url)), 'sources', 'writer', 'bind-existing', 'bind-fixture', '--path', join(home, 'root'), '--worktree-id', randomUUID(), '--reservation-file', join(home, 'record'), '--expected-epoch', '1', '--expected-generation', '8', '--request-id', randomUUID(), '--dry-run', '--json'],
+      { env: { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, GBRAIN_HOME: home, NO_COLOR: '1' }, encoding: 'utf8', timeout: 30_000 });
+    expect(result.status).not.toBe(0); expect(result.stdout + result.stderr).toContain('owner_unavailable');
+    expect(existsSync(database)).toBe(false); expect(existsSync(join(configDir, 'persistence'))).toBe(false); expect(existsSync(join(configDir, 'notices'))).toBe(false);
+    expect(readFileSync(join(configDir, 'config.json'), 'utf8')).toBe(config);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+}, 60_000);
 
 let engine: PGLiteEngine;
 let schemaVersion: string;
@@ -201,12 +234,17 @@ test('provider startup, remote lane forgery and remote intent cannot change writ
   const stdio = await registerLocalWriter(engine, 'stdio');
   const params = { source_id: 'default', path: root, ...await reviewedWriterIntent(engine, 'writer_claim') };
   await expect(withVerifiedLocalRegistration(engine, stdio, () => runPersistenceAdministration(engine, 'writer_claim', params))).rejects.toMatchObject({ code: 'permission_denied' });
-  const ipc = (await startPersistenceIpcServer(join(root, 'admin.sock'), provider))!;
+  const socketDir = process.env.GBRAIN_TEST_IPC_DIR ? mkdtempSync(join(process.env.GBRAIN_TEST_IPC_DIR, 'i')) : root;
+  const ipc = (await startPersistenceIpcServer(join(socketDir, 's'), provider))!;
   const request = { version: 1 as const, kind: 'administration' as const, brain_id: provider.brainId, registration: stdio, operation: 'writer_claim' as const, params };
   try {
+    if (process.env.GBRAIN_TEST_IPC_DIR) expect(ipc.socketPath).toBe(join(socketDir, 's'));
     await expect(requestPersistenceAdministration(ipc.socketPath, request)).rejects.toMatchObject({ code: 'invalid_params' });
     await expect(requestPersistenceAdministration(ipc.socketPath, { ...request, registration: { ...stdio, lane: 'cli' } })).rejects.toMatchObject({ code: 'permission_denied' });
-  } finally { const closed = once(ipc.server, 'close'); ipc.close(); await closed; }
+  } finally {
+    const closed = once(ipc.server, 'close'); ipc.close(); await closed;
+    if (socketDir !== root) rmSync(socketDir, { recursive: true, force: true });
+  }
   const remote = await dispatchToolCall(engine, 'writer_claim', params, { remote: true, sourceId: 'default', config: { engine: 'pglite' } });
   expect(remote.isError).toBe(true);
   expect(JSON.parse(remote.content[0].text)).toMatchObject({ error: 'unknown_tool' });

@@ -158,7 +158,11 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     return { ...await setWriterAdminLock(engine, operation === 'writer_lock') };
   }
   // Early refusal before any native lock or preview; the checks inside each transaction stay authoritative.
-  if (['writer_claim', 'writer_activate', 'writer_transfer_prepare', 'writer_transfer_accept', 'writer_transfer_cancel'].includes(operation)) await assertWriterAdminUnlocked(engine);
+  if (['writer_claim', 'writer_bind_existing', 'writer_activate', 'writer_transfer_prepare', 'writer_transfer_accept', 'writer_transfer_cancel'].includes(operation)) await assertWriterAdminUnlocked(engine);
+  if (operation === 'writer_bind_existing') {
+    keys(params, ['source_id', 'path', 'worktree_id', 'reservation_file', 'expected_epoch', 'expected_generation', 'request_id', 'dry_run', 'admin_intent', 'expected_state', 'expect']);
+    return (await import('./bind-existing.ts')).bindExistingWorktree(engine, params);
+  }
   if (operation === 'writer_sync') return (await import('./sync-administration.ts')).runAuthenticatedSyncSlice(engine, params);
   if (operation === 'writer_refresh') {
     keys(params, ['source_id', 'dry_run', 'resume', 'abandon', 'wait_drain_ms', 'fetch_timeout_ms']);
