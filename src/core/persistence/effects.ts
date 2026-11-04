@@ -653,7 +653,8 @@ function embeddingStorageFailure(error: unknown): unknown {
 }
 
 async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, error: unknown, signal?: AbortSignal, target?: string, derived?: DerivedFailures): Promise<void> {
-  const code = error instanceof OperationError ? error.code : isLockOpenFailure(error) ? error.code : 'effect_unavailable';
+  const classified = classifyItemFailure(error);
+  const code = error instanceof OperationError ? error.code : isLockOpenFailure(error) ? error.code : classified.code;
   // Source replacement is final only without recovery. Unknown physical bytes
   // retain their record and continue to block this root for explicit repair.
   if (code === 'source_changed' && !effect.recovery) {
@@ -695,7 +696,6 @@ async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, err
   // A lost connection, a failed transaction or an abort is never the effect's own failure (GBRA-130); for links and
   // facts-backstop effects neither is a run-scoped refusal.
   const derivedKind = DERIVED_KINDS.includes(effect.kind);
-  const classified = classifyItemFailure(error);
   const runScoped = classified.scope !== 'item' && (derivedKind || !(error instanceof OperationError));
   if (DEPENDENCY_CODES.includes(code) || signal?.aborted || runScoped || (!derivedKind && transientDatabaseFailure(error))) {
     await retryEffect(engine, effect, code, 30_000); return;
@@ -1005,7 +1005,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
     const roots = new Map<string, unknown>();
     const guards = new Map<string, unknown>();
     const mirrors = new Map<string, boolean>();
-    const recorded: PersistenceEffect[] = [];
+    const recorded: Array<{ effect: PersistenceEffect; target?: string }> = [];
     let gates: Map<string, MirrorGate>;
     try { gates = await mirrorGates(engine, effects.map(effect => effect.request_id)); }
     catch (error) { for (const effect of effects) await recordFailure(engine, effect, error, opts.signal); return; }
@@ -1033,12 +1033,14 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
         if (!binding.local_path) { await completeEffect(engine, effect, { git: 'skipped', reason: 'no_repo_configured' }); continue; }
         if (!mirrors.has(effect.source_id)) mirrors.set(effect.source_id, await sourceMirrorReadOnly(engine, effect.source_id));
         if (mirrors.get(effect.source_id)) { await completeEffect(engine, effect, { git: 'skipped', reason: 'mirror_read_only' }); continue; }
-        if (await singleFileGitTarget(engine, effect, { ...binding, local_path: binding.local_path }, attempt) !== null) recorded.push(effect);
+        if (await singleFileGitTarget(engine, effect, { ...binding, local_path: binding.local_path }, attempt) !== null) {
+          recorded.push({ effect, ...(attempt.target === undefined ? {} : { target: attempt.target }) });
+        }
       } catch (error) { await recordFailure(engine, effect, error, opts.signal, attempt.target); }
     }
     if (!recorded.length) return;
     try {
-      for (const effect of recorded) await faultPoint(EFFECT_FAULT_POINTS.git, { effectId: effect.id, requestId: effect.request_id, sourceId: effect.source_id });
+      for (const { effect } of recorded) await faultPoint(EFFECT_FAULT_POINTS.git, { effectId: effect.id, requestId: effect.request_id, sourceId: effect.source_id });
       await engine.executeRaw(`UPDATE persistence_effects e SET
         state=CASE WHEN jsonb_array_length(COALESCE(e.data->'parked','[]'::jsonb))>0 THEN 'failed' ELSE 'committed' END,
         error_code=CASE WHEN jsonb_array_length(COALESCE(e.data->'parked','[]'::jsonb))>0 THEN 'targets_parked' END,
@@ -1046,8 +1048,8 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
         outcome=$2::text::jsonb,updated_at=now()
         FROM jsonb_to_recordset($1::text::jsonb) AS t(id bigint,token uuid)
         WHERE e.id=t.id AND e.execution_token=t.token AND e.recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
-      [JSON.stringify(recorded.map(effect => ({ id: String(effect.id), token: effect.execution_token }))), JSON.stringify(DURABILITY_NOT_ENABLED)]);
-    } catch (error) { for (const effect of recorded) await recordFailure(engine, effect, error, opts.signal); }
+      [JSON.stringify(recorded.map(({ effect }) => ({ id: String(effect.id), token: effect.execution_token }))), JSON.stringify(DURABILITY_NOT_ENABLED)]);
+    } catch (error) { for (const { effect, target } of recorded) await recordFailure(engine, effect, error, opts.signal, target); }
   };
   // A deferred effect that requeues itself (a page walk advancing its cursor,
   // or work unblocked by an earlier effect) is claimable again after the flush.
