@@ -586,7 +586,7 @@ export interface CycleOpts {
    * Validated via `assertValidSourceId` in `cycleLockIdFor` (defense-in-depth).
    */
   sourceId?: string;
-  /** #6803: a connector source's cycle (no sync phase) works on its pages changed after this (null: all); see cycle/source-window.ts. */
+  /** #6803, #8573: a source cycle with no sync works on its pages changed after this (null: a bounded first walk); see cycle/source-window.ts. */
   sourceChangedSince?: string | null;
   /**
    * #4700 — bare `gbrain dream` may opt the brain's default-like source

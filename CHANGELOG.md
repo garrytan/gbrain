@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A source whose automatic sync is off no longer re-reads every page on every autopilot cycle.** A per-source cycle that runs no sync for its source (`config.syncEnabled=false`, a claimed source awaiting activation, a gbrain-owned content directory, or a source with no checkout) now reconciles facts and emotional weight only for the source's pages changed since its previous cycle, as connector sources already did. Before, `extract_facts` walked the whole source each time, so a sync-disabled source of about 27,000 pages or more hit the 30-minute job timeout on every cycle and never stamped its freshness. Pages an explicit `gbrain sync --source` imports between cycles land in the next cycle's window, including a write whose transaction was still open while a cycle listed its pages. A source with no recorded cycle walks its pages in chunks of 2,000, one chunk per cycle, and resumes where the last one stopped. Reported by @mlahatte (#8573).
+
+### Itemized changes
+
+- `src/core/minions/handlers/autopilot-cycle.ts`: `sourceChangedSince` is passed to every per-source cycle whose phases leave out `sync` or that has no checkout, not only to connector sources.
+- `src/core/cycle/source-window.ts`: with no recorded cycle the window is one first-walk chunk in slug order (`sourceFirstWalk.pageLimit`, 2,000). The chunk's cursor and the walk's start are stamped in the source config (`last_source_cycle_walk_after`, `last_source_cycle_walk_at`); the last chunk stamps the walk's start as the window, so pages changed during the walk are picked up after it, and a failed chunk is retried. The listing instant is moved back to just before the oldest transaction still open on another connection (at most 10 minutes), because `pages.updated_at` is the writer's transaction start.
+- `test/sync-disabled-cycle-window.test.ts` (PGLite and Postgres): an idle cycle of a sync-disabled git source walks no page and an explicit sync's fact page is reconciled by the next cycle; a first walk runs in bounded, resumable chunks; a source with no checkout gets the window; a write committed after a cycle's listing lands in the next window.
+
 ## [0.60.569.0] - 2026-11-04
 
 **SkillOpt's iterative loop is deprecated and will be removed on or after 2026-12-03.** The loop tied a single rewrite on gbrain-evals' benchmarks at about 1.8 times the cost, and every edit it kept came from its first step, so it is being retired. `gbrain skillopt --loop`, a `--resume` of a run the loop started, `run_skillopt` with `optimizer_mode: "reflect"` and a queued `skillopt` job in loop mode now print the `skillopt_loop_deprecated` coaching notice once (over MCP, once per session) and otherwise run exactly as before. Nothing replaces the loop, so edit the skill directly or run the default one-shot rewrite, which stays. Nothing is removed and no default changes in this release.
