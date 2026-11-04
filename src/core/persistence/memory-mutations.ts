@@ -333,6 +333,11 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
     'SELECT 1 FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL AND source_path IS NOT NULL LIMIT 1', [sourceId, struck])).length > 0;
   const target = await resolveFactWriteTarget(ctx.engine, sourceId, source, { sandbox, fileBacked, remote })
     .catch((error: unknown) => { if (!fileBacked && error instanceof OperationError) return null; throw error; });
+  // Likewise with sync.write_through off: the struck file would not be written, so the claim would come back from Git.
+  if (fileBacked && target?.kind === 'publish' && target.databaseOnlyReason === 'disabled_by_config') {
+    throw verbError('unavailable', 'This brain has sync.write_through off, so forget cannot strike the claim in the page files that carry it.',
+      'Turn write-through back on (gbrain config set sync.write_through true), then forget the fact again; nothing was withdrawn.', 'sync_write_through_off');
+  }
   if (target?.kind === 'publish' && target.databaseOnlyReason) authority.databaseOnlyReason = target.databaseOnlyReason;
   const binding = target?.kind === 'unbound' ? await claimWorktree(ctx.engine, sourceId, target.root, undefined, undefined, { automatic: true })
     : target?.binding ?? null;
