@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
-import { normalizeClaimWhitespace, parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, type ParsedFact } from '../facts-fence.ts';
+import { renderFactsTable, type ParsedFact } from '../facts-fence.ts';
 import { OperationError, opError, type WithdrawnDetail } from '../ops/contract.ts';
 import { fenceOperationError } from '../fence-repair/refusal.ts';
 import { withdrawnFact, withdrawalFenceBlocks } from './withdrawal-overlay.ts';
@@ -202,27 +202,6 @@ export async function deriveFenceWithdrawals(tx: BrainEngine, sourceId: string, 
     GROUP BY m.visibility,gbrain_fact_fingerprint(m.fact)
     ON CONFLICT DO NOTHING RETURNING fact_hash`, [sourceId, slug === UNATTRIBUTED_MEMORY_SLUG ? '*' : slug, JSON.stringify(marked)]);
   return inserted.length;
-}
-
-/**
- * A remote write never records a withdrawal, but Git keeps no record of who wrote a row: a forget marker a remote caller
- * adds would become a withdrawal on the next trusted re-derivation of the file (a rebuild from Git, a reconcile, an
- * import). So before a remote write is admitted, each marker row the stored page does not already carry (same claim,
- * visibility and date) loses its `forgotten:` context. The row stays struck: an expired row with no ledger entry, as
- * the live brain already treats it. A marker the owner wrote survives a remote edit that keeps it.
- */
-export function remoteWithdrawalMarkersDropped(body: string, stored: readonly string[]): string {
-  const marker = (row: ParsedFact) => !row.active && row.forgotten === true;
-  const key = (row: ParsedFact) => [row.visibility, row.validUntil ?? '', normalizeClaimWhitespace(row.claim)].join('\n');
-  const parsed = parseFactsFence(body);
-  const owned = new Set(stored.flatMap(text => parseFactsFence(text).facts.filter(marker).map(key)));
-  const planted = (row: ParsedFact) => marker(row) && !owned.has(key(row));
-  if (!parsed.facts.some(planted)) return body;
-  if (parsed.warnings.length) throw opError('invalid_params',
-    'A remote write cannot add a forget marker (a struck Facts row with context "forgotten: ..."), and this Facts table does not parse cleanly enough to drop it.',
-    'Remove the marker (call forget_fact to forget a claim), fix the Facts table, then submit the content with a new request_id.');
-  return replaceOrInsertFactsFence(body, renderFactsTable(parsed.facts.map(row => planted(row)
-    ? { ...row, forgotten: false, context: row.context?.replace(/^\s*forgotten\s*:\s*/i, '') || undefined } : row)));
 }
 
 // Fingerprint each incoming claim once. Inside the join condition the planner

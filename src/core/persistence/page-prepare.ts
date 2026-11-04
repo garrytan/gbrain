@@ -69,7 +69,6 @@ import { DEFAULT_WRITE_GATE_CONFIG, writeGateApplies } from '../write-gate.ts';
 import { materializeTimeline, prepareCanonicalProjections, type TimelineRowsRemoved } from './canonical-projections.ts';
 import { assertTimelineNotOmitted, timelineWritePolicy } from './timeline-omission.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
-import { remoteWithdrawalMarkersDropped } from '../facts/withdrawal.ts';
 import { assertPrivateRequestKept, privateRequestGuarded, readPrivateRequest } from './visibility-request.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { prepareAutomaticLinks } from './links-preparation.ts';
@@ -861,8 +860,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   if (row.authority.remote && row.operation !== 'remember' && !row.operation.startsWith('takes_') && typeof content==='string') {
     const parsed=parseMarkdown(content,row.slug,{ activePack });
     assertRetirementStampUnchanged(row.slug, parsed.frontmatter, snapshot?.page.frontmatter);
-    const stored=[snapshot?.page.compiled_truth??'',snapshot?.page.timeline??''];
-    const compiled_truth=remoteWithdrawalMarkersDropped(preserveProtectedTakes(parsed.compiled_truth,stored[0]),stored), timeline=remoteWithdrawalMarkersDropped(preserveProtectedTakes(parsed.timeline??'',stored[1]),stored);
+    const compiled_truth=preserveProtectedTakes(parsed.compiled_truth,snapshot?.page.compiled_truth??''), timeline=preserveProtectedTakes(parsed.timeline??'',snapshot?.page.timeline??'');
     if (compiled_truth!==parsed.compiled_truth || timeline!==(parsed.timeline??'')) content=serializePageToMarkdown({
       ...(snapshot?.page??{id:0,source_id:row.source_id,created_at:new Date(),updated_at:new Date()}),...parsed,compiled_truth,timeline},parsed.tags);
   }
