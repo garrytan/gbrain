@@ -317,6 +317,44 @@ describe('A7: purge reaches change reasons', () => {
     }
   }), 180_000);
 
+  test('the default source whose repository is sync.repo_path (local_path NULL) gets its reason tombstoned like any other', async () => inHome(async () => {
+    for (const engine of engines) {
+      const claim = `Gate code is ${5500 + engines.indexOf(engine)}`;
+      const root = newRepo({ 'notes/legacy-a.md': page('A one.') });
+      const [before] = await engine.executeRaw<{ local_path: string | null }>("SELECT local_path FROM sources WHERE id = 'default'");
+      const configured = await engine.getConfig('sync.repo_path');
+      await engine.executeRaw("UPDATE sources SET local_path = NULL WHERE id = 'default'");
+      await engine.setConfig('sync.repo_path', root);
+      try {
+        const legacy: Source = { id: 'default', root };
+        await sync(engine, legacy);
+        write(root, { 'notes/legacy-a.md': page('A two.') });
+        const pushed = commit(root, 'edit', [`notes/legacy-a.md: Changed once ${claim} was rotated.`]);
+        await sync(engine, legacy);
+        expect((await reasonsOf(engine, 'default', 'notes/legacy-a')).reasons).toEqual([`Changed once ${claim} was rotated.`]);
+        await engine.executeRaw("UPDATE sources SET local_path = NULL WHERE id = 'default'");
+        const id = await seedFact(engine, 'default', 'people/legacy-holder-example', claim);
+
+        const done = await purge(engine, 'default', id);
+        expect(done.state).toBe('committed');
+        expect(done.purge.removed).toMatchObject({ reason_purge_tombstones: 1 });
+        expect(await engine.executeRaw("SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = 'default'"))
+          .toEqual([{ commit_sha: pushed, path: 'notes/legacy-a.md' }]);
+        expect((await reasonsOf(engine, 'default', 'notes/legacy-a')).reasons).toEqual(['[purged]']);
+
+        await importFromContent(engine, 'notes/legacy-a', page('A one.'), { noEmbed: true, sourceId: 'default' });
+        await engine.executeRaw("UPDATE sources SET last_commit = NULL, local_path = NULL WHERE id = 'default'");
+        await sync(engine, legacy);
+        expect(await bodyOf(engine, 'default', 'notes/legacy-a')).toContain('A two.');
+        expect((await reasonsOf(engine, 'default', 'notes/legacy-a')).reasons.at(-1)).toBeNull();
+      } finally {
+        await engine.executeRaw("DELETE FROM reason_purge_tombstones WHERE source_id = 'default'");
+        await engine.executeRaw("UPDATE sources SET local_path = $1, last_commit = NULL WHERE id = 'default'", [before?.local_path ?? null]);
+        if (configured === null) await engine.unsetConfig('sync.repo_path'); else await engine.setConfig('sync.repo_path', configured);
+      }
+    }
+  }), 180_000);
+
   test('a running Git effect carrying the claim blocks the purge with the pending-recovery refusal', async () => inHome(async () => {
     for (const engine of engines) {
       const claim = `Vault pin is ${7100 + engines.indexOf(engine)}`;

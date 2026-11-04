@@ -5,6 +5,7 @@
  * messages already in Git, which purge never rewrites: their (commit, path) pairs are tombstoned, text-free, so no later
  * sync, cold re-import or re-derive stores that reason again.
  */
+import { isAbsolute } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import { REASON_TRAILER_KEY } from '../persistence/change-reason.ts';
@@ -31,8 +32,10 @@ const scanFailed = (sourceId: string, rawId: string, detail: string) => opError(
 export async function scanPurgeTrailers(engine: BrainEngine, input: { sourceId: string; claim: string; rawId: string; limit?: number }): Promise<PurgeTrailerPlan> {
   const none: PurgeTrailerPlan = { sourceRoot: null, head: null, hits: [], commits: 0, limited: false };
   const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [input.sourceId]);
-  if (!source?.local_path) return none;
-  const scan = await scanTrailersCarrying(source.local_path, [input.claim], input.limit === undefined ? {} : { limit: input.limit });
+  // The default source's repository may be the legacy sync.repo_path (local_path NULL); a relative path names no repository.
+  const root = source?.local_path || (input.sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
+  if (!root || !isAbsolute(root)) return none;
+  const scan = await scanTrailersCarrying(root, [input.claim], input.limit === undefined ? {} : { limit: input.limit });
   if (scan.status === 'no_repository') return none;
   if (scan.status === 'failed') throw scanFailed(input.sourceId, input.rawId, scan.detail);
   if (scan.status === 'capped') {
@@ -42,7 +45,7 @@ export async function scanPurgeTrailers(engine: BrainEngine, input: { sourceId: 
         why: `Purges and tombstones the reasons found in the newest ${scan.cap} commits; older commits are not read.`,
         user_message: `This brain's Git history is longer than ${scan.cap} commits. Purge now and check only the newest commits for change reasons quoting this claim (choose how many), or stop?` } });
   }
-  return { sourceRoot: source.local_path, head: scan.head, hits: scan.hits, commits: scan.commits, limited: scan.limited };
+  return { sourceRoot: root, head: scan.head, hits: scan.hits, commits: scan.commits, limited: scan.limited };
 }
 
 /**
