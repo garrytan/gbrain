@@ -221,8 +221,13 @@ export function remoteWithdrawalMarkersDropped(body: string, stored: readonly st
   if (parsed.warnings.length) throw opError('invalid_params',
     'A remote write cannot add a forget marker (a struck Facts row with context "forgotten: ..."), and this Facts table does not parse cleanly enough to drop it.',
     'Remove the marker (call forget_fact to forget a claim), fix the Facts table, then submit the content with a new request_id.');
-  return replaceOrInsertFactsFence(body, renderFactsTable(parsed.facts.map(row => planted(row)
-    ? { ...row, forgotten: false, context: row.context?.replace(/^\s*forgotten\s*:\s*/i, '') || undefined } : row)));
+  const rewritten = replaceOrInsertFactsFence(body, renderFactsTable(parsed.facts.map(row => planted(row)
+    ? { ...row, forgotten: false, context: row.context?.replace(/^(\s*forgotten\s*:\s*)+/i, '') || undefined } : row)));
+  // Fail closed: the rewritten table is read by the parser a rebuild uses, and any marker it still finds refuses the write.
+  if (parseFactsFence(rewritten).facts.some(planted)) throw opError('invalid_params',
+    'A remote write cannot add a forget marker (a struck Facts row with context "forgotten: ..."), and this one could not be dropped.',
+    'Remove the marker (call forget_fact to forget a claim), then submit the content with a new request_id.');
+  return rewritten;
 }
 
 // Fingerprint each incoming claim once. Inside the join condition the planner
