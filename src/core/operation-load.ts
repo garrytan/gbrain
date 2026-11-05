@@ -12,6 +12,7 @@
 import type { Operation } from './ops/contract.ts';
 import { withOutputRedaction } from './search/output-redaction.ts';
 import { withEngineScope } from './engine-scope.ts';
+import { authorizeOperationContext } from './ops/context.ts';
 import { OPERATION_LOADERS } from './operation-loaders.generated.ts';
 
 // ---------------------------------------------------------------------------
@@ -127,7 +128,10 @@ export function finalizeOperation(op: Operation): void {
   }
   // The handler runs in its engine's scope, so an embedded engine's AI calls use that engine's gateway (engine-scope.ts).
   const handler = withOutputRedaction(op);
-  op.handler = (ctx, params) => withEngineScope(ctx.engine, () => handler(ctx, params));
+  op.handler = async (ctx, params) => {
+    const authorized = authorizeOperationContext(ctx, op.mutating === true);
+    return withEngineScope(authorized.engine, () => handler(authorized, params));
+  };
 }
 
 /** The finalized operation named `name`, loading only the module that defines it. */

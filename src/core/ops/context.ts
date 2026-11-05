@@ -629,34 +629,55 @@ export function validateFilename(name: string): void {
 }
 
 /**
- * v0.34.1 (#861, D9 — P0 leak seal): resolve the source-scope filter for a
- * read-side op handler. Returns an opts fragment ready to spread into the
- * engine call.
+ * Normalize authenticated source authority before handlers or read-side hooks.
+ * Read authority is a nonempty allowedSources, otherwise auth.sourceId; a
+ * transport default is never an authenticated grant. Writes require the
+ * explicit auth.sourceId independently of the read primary. The historical
+ * no-grant legacy token (hasSourceGrant === false, no federation field) retains its
+ * transport-resolved floor, as do authless local CLI/stdio callers.
  *
- * Precedence:
- *  1. `ctx.auth?.allowedSources` (federated read, #876) → emits
- *     `{sourceIds: [...]}`. Federated semantics subsume the scalar case.
- *  2. `ctx.sourceId` (scalar) → emits `{sourceId: '...'}`.
- *  3. Neither set → emits `{}`. Local CLI callers (and tests that don't
- *     populate ctx) keep the pre-v0.34 unscoped behavior.
- *
- * Both fields default to the engine's "no filter" behavior individually,
- * so unset values are safe — the engine sees the same shape it did
- * pre-v0.34. The leak this guards against is an authenticated MCP client
- * whose ctx.sourceId IS set but whose engine call was constructed without
- * threading it (operations.ts:968/1076/1092/935/1469/1471/2241 pre-fix).
- *
- * Helper rather than inline so every read-side handler routes through the
- * same precedence ladder — drift between sites is the bug class.
+ * Returns a fresh authenticated context/auth/read-grant array without changing
+ * the caller's context. Unrelated engine, fence and request-local state keep
+ * their identities. Read and write callers must use separate returned clones;
+ * normalization is repeatable and never marks an input as already authorized.
+ * Throws permission_denied for missing/invalid authority, including NO_SOURCES.
  */
-export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sourceIds?: string[] } {
+export function authorizeOperationContext(ctx: OperationContext, mutating: boolean): OperationContext {
   if (ctx.sourceId === NO_SOURCES || ctx.auth?.sourceId === NO_SOURCES) throw noSourceGrantError(undefined, ctx.auth);
+  const auth = ctx.auth;
+  if (!auth) return ctx;
+  const allowed = auth.allowedSources;
+  const legacyNoGrant = auth.hasSourceGrant === false && allowed === undefined;
+  if (
+    (auth.sourceId !== undefined && !isValidSourceId(auth.sourceId)) ||
+    (allowed !== undefined && (!Array.isArray(allowed) || ![...allowed].every(isValidSourceId))) ||
+    (!(allowed && allowed.length > 0) && auth.sourceId === undefined && !legacyNoGrant)
+  ) {
+    throw opError('permission_denied', 'No valid source grant is available for this request.',
+      "Ask the brain host's operator to grant this connection a source (command in fix).",
+      { fix: sourceGrantFix(auth) });
+  }
+  if (mutating && auth.sourceId === undefined && !legacyNoGrant) {
+    throw opError('permission_denied', 'No write source is granted for this request.',
+      "Ask the brain host's operator to grant this connection a write source; a read federation does not grant writes.",
+      { fix: grantFix(auth, { token: ['--sources', '<source>'], client: ['--source', '<source>'] },
+        'Grants this connection a write source; only the brain host operator can change grants.',
+        [{ name: 'source', how: 'Ask the user which source id this connection should write.' }]) });
+  }
+  const sourceId = !mutating && allowed && allowed.length > 0
+    ? (auth.sourceId !== undefined && allowed.includes(auth.sourceId) ? auth.sourceId : allowed[0]!)
+    : auth.sourceId ?? ctx.sourceId;
+  return { ...ctx, sourceId, auth: { ...auth, ...(allowed !== undefined ? { allowedSources: [...allowed] } : {}) } };
+}
+
+/** Canonical read filter: authenticated read grant, then authless transport floor. */
+export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sourceIds?: string[] } {
+  ctx = authorizeOperationContext(ctx, false);
   const allowed = ctx.auth?.allowedSources;
-  // Treat an empty `allowedSources: []` as "no federated read scope" — the
-  // op-handler defers to scalar `ctx.sourceId` below. An attacker-controlled
-  // value of `[]` MUST NOT widen scope to "all sources" by being interpreted
-  // as "no filter."
+  // Empty federation falls back to auth.sourceId, never to an authenticated
+  // transport default or to "all sources" (the engine's no-filter behavior).
   if (allowed && allowed.length > 0) return { sourceIds: allowed };
+
   // #1712: the __all__ sentinel spans the brain — but ONLY for trusted local
   // callers (strictly `remote === false`). For remote/untrusted callers the
   // literal stays as-is: it can never match a real source id (underscores are
@@ -900,13 +921,13 @@ function explicitReadDeniedFix(ctx: OperationContext, id: string): Action | unde
 
 /**
  * #5081: the sources an explicit `source_id` read may name beyond the scope.
- * A grant (`ctx.auth.allowedSources`) governs alone. Otherwise a bound stdio
+ * Authenticated read authority (federated or scalar) governs alone. Otherwise a bound stdio
  * connection uses its binding's set, and an unbound connection uses the set
  * its unqualified reads already span (`localFederatedSourceIds`), so an
  * explicit read there is never wider than an unqualified one.
  */
 function explicitReadAdmission(ctx: OperationContext): readonly string[] {
-  if (ctx.auth?.allowedSources !== undefined) return [];
+  if (ctx.auth && (ctx.auth.allowedSources !== undefined || ctx.auth.hasSourceGrant !== false)) return [];
   return ctx.explicitReadBinding?.sourceIds ?? ctx.localFederatedSourceIds ?? [];
 }
 
@@ -984,6 +1005,7 @@ export function federatedSearchScope(
   if (
     (sourceIdParam === undefined || sourceIdParam === ALL_SOURCES) &&
     ctx.auth?.allowedSources === undefined &&
+    (ctx.auth === undefined || ctx.auth.hasSourceGrant === false) &&
     scope.sourceId !== undefined &&
     scope.sourceIds === undefined &&
     ctx.localFederatedSourceIds !== undefined &&

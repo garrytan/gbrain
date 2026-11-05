@@ -99,7 +99,7 @@ describe('resolveRequestedScope — explicit source_id', () => {
   });
 
   test('empty federated grant cannot escape its scalar source through an explicit request', () => {
-    const emptyGrant = ctxOf({ remote: true, auth: { token: 't', clientId: 'c', scopes: [], allowedSources: [] } as any });
+    const emptyGrant = ctxOf({ remote: true, auth: { token: 't', clientId: 'c', scopes: [], sourceId: 'default', allowedSources: [] } as any });
     expect(resolveRequestedScope(emptyGrant, 'default')).toEqual({ sourceId: 'default' });
     expect(() => resolveRequestedScope(emptyGrant, 'z')).toThrow(OperationError);
     expect(resolveRequestedScope(emptyGrant, '__all__')).toEqual({ sourceId: 'default' });
