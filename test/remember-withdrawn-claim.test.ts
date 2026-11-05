@@ -68,8 +68,9 @@ describe('remember after forget of the same claim', () => {
     expect(await requestCount()).toBe(before);
 
     const batch = await call('remember', { items: [{ fact: CLAIM, entity: 'crm/acme-example', provenance: 'team update' }] });
-    expect(batch.body.failed).toBe(1);
-    expect(batch.body.items[0].error).toMatchObject({ code: 'invalid_params', message: FACT_WITHDRAWN_MESSAGE, suggestion: FACT_WITHDRAWN_SUGGESTION });
+    // #8621: a batch that saved nothing is refused with its item's error, never a success envelope.
+    expect(batch.isError).toBe(true);
+    expect(batch.body).toMatchObject({ code: 'invalid_params', message: `items[0]: ${FACT_WITHDRAWN_MESSAGE} None of the 1 item(s) was saved.`, suggestion: FACT_WITHDRAWN_SUGGESTION });
   });
 
   test('a withdrawal that lands after admission fails the receipt with fact_withdrawn, readable through get_write_request', async () => {

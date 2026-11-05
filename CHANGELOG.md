@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A write a refresh fence refused is never reported as success, and an interactive write waits the fence out.** While `gbrain sources refresh` drains, fast-forwards and syncs a checkout, writes to it are refused `worktree_refreshing`. That refusal was unregistered (class server, `fix: gbrain doctor`), `remember` with `items` whose every item it refused printed `undefined (fact #undefined)` and exited 0, and the same batch over MCP returned `isError: false`. The refusal is now retryable with `fix.next: wait` and `retry_after_ms`, an interactive write retries it with backoff for up to 10 s before refusing, and a batch that saved nothing is an error on every surface (#8621).
+
+### Itemized changes
+
+- `src/core/error-registry.ts`: registers `worktree_refreshing` (class retryable, actor provider). `src/core/persistence/journal.ts`: the fence refusal carries `retryable: true` and a read-only `gbrain sources writer status --source <id> --json` fix, so the envelope renders `next: wait`.
+- `src/core/persistence/admission-retry.ts`: `waitOutRefreshFence` re-runs an interactive write's whole admission (250 ms to 2 s backoff, 10 s cap shared by every item of a `remember` batch); nothing is held across a pause and a refused attempt journals nothing. Past the cap the refusal is returned with how long the call waited. Background writes and the managed sync keep their own retries; database-only sources are never fenced. Wired into `admitWrite`, `admitBatch` (`put-pages`) and `forget`.
+- `src/core/persistence/verb-errors.ts`: `remember` and the other memory verbs keep their frozen `unavailable` code for the fence and add `canonical: worktree_refreshing`, its `detail`, `fix` and `retryable`.
+- `src/core/remember-batch.ts`: a batch whose every item failed throws the first item's error (`items[<i>]: ... None of the <n> item(s) was saved.`); a batch with any failed item adds `status: "error"`. `src/cli/remember-format.ts` prints a batch as `saved X of N fact(s)` with one line per item.
+- `test/write-refusal-refresh-fence-8621.test.ts` (new) pauses a real refresh at its drained boundary on PGLite and Postgres and covers MCP, the wait, the cap, background writes, a database-only source and the CLI exit codes.
+
 ## [0.60.574.0] - 2026-11-04
 
 **A brain opened from settings no longer leaks into the process, or into another brain, when a call forgets its scope.** While an embedded engine is open, an embed, chat, expansion or rerank call that entered no scope now refuses `engine_scope_required` and sends nothing, even if the host configured a process gateway; it decides by scope presence alone. `withLocalScope(fn)` marks a call that belongs to the process gateway, and the CLI, `gbrain serve` and `gbrain jobs` enter it, so they behave exactly as before. `hybridSearch`, the import paths, minion jobs and `POST /mcp` enter their engine's scope themselves. Each embedded engine keeps its own chat-usage sink (it survives `reconnect()`), batch-shrink, no-key and structured-output memory, and alias and remote-privacy policy, and a closed per-call engine is no longer held by the policy sets. A host that reopens a brain per call can pass `settings.cache_namespace` to keep its query embeddings warm. `openEngine` now refuses a settings key it does not know. Everything here is behind `embedded_core`, which is off by default.

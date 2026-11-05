@@ -16,7 +16,8 @@ import type { OperationContext } from '../ops/contract.ts';
 import { fenceNormalizedNotice, mergeFencesNormalized, type FencesNormalized } from '../fence-repair/report.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { admitWriteGroupInTransaction, type WriteAdmission } from './journal.ts';
-import { retryWriteAdmission } from './admission-retry.ts';
+import { retryWriteAdmission, waitOutRefreshFence } from './admission-retry.ts';
+import { resolveAdmissionOrigin } from './admission-origin.ts';
 import { declareDurablePersistence } from './protocol.ts';
 import { digest } from './digest.ts';
 import { queueLinksReconcile } from './effect-journal.ts';
@@ -186,7 +187,7 @@ export async function admitBatch(ctx: OperationContext, batchId: string, admissi
     const key = digest([admission.operation, admission.authority]);
     groups.set(key, [...(groups.get(key) ?? []), index]);
   });
-  return retryWriteAdmission(`batch ${batchId}`, remaining => ctx.engine.transaction(async tx => {
+  return waitOutRefreshFence(resolveAdmissionOrigin(admissions[0]?.origin) === 'interactive', () => retryWriteAdmission(`batch ${batchId}`, remaining => ctx.engine.transaction(async tx => {
     await declareDurablePersistence(tx, `${Math.min(1000, remaining)}ms`, `${remaining}ms`);
     const rows: WriteRequest[] = new Array(admissions.length);
     for (const indexes of groups.values()) {
@@ -194,7 +195,7 @@ export async function admitBatch(ctx: OperationContext, batchId: string, admissi
       indexes.forEach((index, position) => { rows[index] = admitted[position]!; });
     }
     return rows;
-  }), BATCH_ADMISSION_BUDGET_MS, error => ctx.engine.reconnect({ error }));
+  }), BATCH_ADMISSION_BUDGET_MS, error => ctx.engine.reconnect({ error })));
 }
 
 async function prepareAll(caller: OperationContext, batchId: string, sourceId: string, pages: BatchPage[], repeats: Repeats) {

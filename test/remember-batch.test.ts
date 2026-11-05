@@ -102,6 +102,18 @@ describe('remember items[] batch', () => {
     expect(out.partial).toBe(true);
     expect(out.items[1].status).toBe('failed');
     expect(out.next).toContain('new request_id');
+    // #8621: a partial failure is an in-band error (the CLI exits 1), not a clean success.
+    expect(out).toMatchObject({ status: 'error', saved: 1, failed: 1 });
+  });
+
+  test('#8621: a batch whose every item failed throws the first item error instead of returning a success envelope', async () => {
+    const { handler, writes } = fakeSingle({ failWrite: () => true });
+    let err: unknown;
+    try { await runRememberBatch(ctx, { provenance: 'p', items: [{ fact: 'a' }, { fact: 'b' }] }, handler, ve); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(OperationError);
+    expect((err as OperationError).code).toBe('internal_error');
+    expect((err as Error).message).toBe('items[0]: boom None of the 2 item(s) was saved.');
+    expect(writes).toHaveLength(0);
   });
 
   test('rejects empty, oversized, unknown-field and fact+items calls', async () => {
