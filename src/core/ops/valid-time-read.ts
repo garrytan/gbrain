@@ -280,8 +280,9 @@ async function editionView(ctx: OperationContext, identity: Identity, e: Edition
     total = doc.bytes.length; lines = totalLines(doc.bytes);
     slice = windowFrom(doc.bytes, offset ?? 0, maxBytes);
   }
+  const text = fence(e.segmented && neutralize ? neutralizeToolCalls(slice.text) : slice.text);
   const out: Record<string, unknown> = { ...meta, body: 'window', size: { total_bytes: total, ...(lines !== undefined ? { total_lines: lines } : {}) },
-    window: quote ? { ...slice, text: fence(slice.text) } : slice, truncated: slice.byte_start > 0 || slice.byte_end < total };
+    window: text === slice.text ? slice : { ...slice, text }, truncated: slice.byte_start > 0 || slice.byte_end < total };
   if (slice.byte_end < total) {
     const cursor = encodeCursor({ page_id: identity.id, revision: e.versionId === null ? e.revision : `v:${e.versionId}`, view: 'read', offset: slice.byte_end, max_bytes: maxBytes });
     out.next_cursor = cursor;

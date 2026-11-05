@@ -473,5 +473,23 @@ for (const backend of testBackends()) {
       expect(e?.code).toBe('valid_time_undeclared');
       expect(JSON.stringify(e?.fix ?? (e as R)?.detail?.fix)).toContain("valid_from: '<DATE>'");
     }, 300_000);
+
+    test('a remote as_of window of a segmented conversation summarizes its tool calls, as the plain window does', async () => {
+      const slug = fresh('segmented-conversation');
+      const toolCall = JSON.stringify({ type: 'tool_use', id: 'toolu_probe', name: 'search', input: { query: 'canary-ledger-arguments' } });
+      const turns = Array.from({ length: 12_000 }, (_, i) => `**alice-example** (2026-10-01 9:00 AM): turn ${i} ${'x'.repeat(40)}`);
+      turns.splice(1, 0, `**bob-example** (2026-10-01 9:02 AM): ${toolCall}`);
+      try {
+        await importSegmented(engine, slug, ['---', 'title: Session', 'type: conversation', "valid_from: '2026-01-01'", '---', '', turns.join('\n\n'), ''].join('\n'));
+      } finally { await engine.setConfig('pages.segmented_storage', 'off'); }
+      const plain = await call('get_page', { slug, body: 'window' }, true);
+      expect(plain.window.text).toContain('arguments omitted');
+      expect(JSON.stringify(plain)).not.toContain('canary-ledger-arguments');
+      const dated = await read(slug, '2026-03-01', true);
+      expect(dated.body).toBe('window');
+      expect(dated.window.text).toContain('arguments omitted');
+      expect(JSON.stringify(dated)).not.toContain('canary-ledger-arguments');
+      expect((await read(slug, '2026-03-01')).window.text).toContain('canary-ledger-arguments');
+    }, 300_000);
   });
 }
