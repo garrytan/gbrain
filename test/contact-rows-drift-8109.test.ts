@@ -128,6 +128,9 @@ test('#8109: a last_used bump in the file does not block remember; the file keep
 
 for (const [name, edit] of [
   ['a policy field', (page: Editable) => { advance(page); page.frontmatter.visibility = 'public'; }],
+  ['a reader list', (page: Editable) => { advance(page); page.frontmatter.readable_by = ['alice-example']; }],
+  ['a lineage key', (page: Editable) => { advance(page); page.frontmatter.derived_from = ['notes/beta-example']; }],
+  ['a trust marker', (page: Editable) => { advance(page); page.frontmatter.trust_tier = 'agent_written'; }],
   ['the body', (page: Editable) => { advance(page); page.compiled_truth += '\n\nA line added by hand.'; }],
   ['the title', (page: Editable) => { page.title = 'Alice Renamed'; page.frontmatter.title = 'Alice Renamed'; }],
 ] as const) {

@@ -92,6 +92,7 @@ import { fenceRepairCommit } from './effect-model.ts';
 import { withoutSafetyAssessments } from './reconcile-safety.ts';
 import { POLICY_KEYS } from './reconcile-additive.ts';
 import { protectedReconcileKey } from './reconcile-merge.ts';
+import { PROTECTED_FRONTMATTER_KEYS } from '../frontmatter-recovery.ts';
 import { preparePagePurge, purgePageInTransaction, type PreparedPagePurge } from './page-purge.ts';
 import { withTrustKeep } from './context.ts';
 import { isFenceEditWrite, pageGateTrust, pageWriteTrust, recordAgentPageLowering, stampPageTrustMarker, storedPageTier } from '../trust/page-write.ts';
@@ -237,10 +238,11 @@ export async function fileMatchesSnapshot(engine: BrainEngine, slug: string, byt
 /**
  * #8109: the file a write publishes over a canonical file that differs from the database only in frontmatter, or null
  * when the write must refuse as drift. The file and the database must agree on everything but frontmatter (body,
- * timeline, title, type and tags, as fileMatchesSnapshot compares them), no drifted key may be a policy or protected
- * key, and the write must leave the stored frontmatter unchanged. The file then keeps its own frontmatter block and
+ * timeline, title, type and tags, as fileMatchesSnapshot compares them), no drifted key may be a policy, protected,
+ * access, lineage or trust-lowering key, and the write must leave the stored frontmatter unchanged. The file then keeps its own frontmatter block and
  * takes the write's body, so neither side's frontmatter is lost; the drift stays for reconcile.
  */
+const SPLICE_REFUSED_KEYS = new Set([...PROTECTED_FRONTMATTER_KEYS, 'trust_tier', 'transcript_import', 'source_url', 'clipped_at', 'clipper', 'dream_generated']);
 async function frontmatterDriftWrite(engine: BrainEngine, slug: string, fileText: string, snapshot: PageSnapshot, content: string,
   activePack?: ParseOpts['activePack']): Promise<string | null> {
   snapshot = (await materializedSnapshot(engine, snapshot))!;
@@ -253,7 +255,7 @@ async function frontmatterDriftWrite(engine: BrainEngine, slug: string, fileText
   const fileFrontmatter = comparableFrontmatter(withoutSafetyAssessments(file.frontmatter));
   const stored = comparableFrontmatter(withoutSafetyAssessments(snapshot.page.frontmatter ?? {}));
   const drifted = [...new Set([...Object.keys(fileFrontmatter), ...Object.keys(stored)])].filter(key => digest(fileFrontmatter[key] ?? null) !== digest(stored[key] ?? null));
-  if (!drifted.length || drifted.some(key => POLICY_KEYS.has(key) || protectedReconcileKey(key))) return null;
+  if (!drifted.length || drifted.some(key => POLICY_KEYS.has(key) || protectedReconcileKey(key) || SPLICE_REFUSED_KEYS.has(key))) return null;
   const incoming = parseMarkdown(content, slug, { activePack });
   if (digest(comparableFrontmatter(withoutSafetyAssessments(incoming.frontmatter))) !== digest(stored)
     || bare({ ...incoming, compiled_truth: '', timeline: '' }, incoming.tags) !== bare({ ...snapshot.page, compiled_truth: '', timeline: '' }, snapshot.tags)) return null;
