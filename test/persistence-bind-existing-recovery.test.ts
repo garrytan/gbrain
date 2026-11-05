@@ -418,7 +418,7 @@ for (const boundary of ['reserved', 'physical_ready']) for (const kind of ['clas
   test(`P2 ${kind} add cannot steal reserved source ID after ${boundary}`, fixture(async ({ params, apply, call, restart }) => {
     await expect(apply({ boundary(name) { if (name === boundary) throw new Error('classic bind interrupted'); } })).rejects.toThrow('classic bind interrupted');
     const opts = { id: String(params.source_id),
-      ...(kind === 'meetings' ? { meetings: { provider: 'fireflies' as const, record: 'database' as const, transcript: 'summary' as const, private: false } } : {}),
+      ...(kind === 'meetings' ? { meetings: { provider: 'fireflies' as const, record: 'database' as const, transcript: 'none' as const, private: false } } : {}),
       ...(kind === 'slack' ? { slack: { channels: ['C_TEST'], record: 'database' as const, private: false } } : {}),
     };
     await expect(addSource(engine, opts)).rejects.toMatchObject({ code: 'recovery_required' });
