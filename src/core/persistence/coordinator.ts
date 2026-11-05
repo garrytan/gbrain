@@ -483,6 +483,9 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
   const companions = prepared.target === 'skill_bundle' ? [] : prepared.companions ?? [];
   // GBRA-190 G4 (D2): the request's own page file first, then each companion's, in one recovery record and one commit.
   const files = skill ? prepared.files ?? [] : [...(prepared.file ? [prepared.file] : []), ...companions.flatMap(companion => companion.file ? [companion.file] : [])];
+  const guardKnowledgePages = async (db: BrainEngine) => {
+    for (const page of [{ slug: row.slug, file: prepared.file }, ...companions]) await assertKnowledgePublicationAllowed(db, { ...row, slug: page.slug }, page.file);
+  };
   const beliefReport = { appended: 0 };
   try {
     assertMutationProtocol(row);
@@ -527,7 +530,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       await releaseUnpublishedClaim(engine, row, 'writer_pool_capacity');
       return (await getWriteRequestById(engine, row.id))!;
     }
-    if (!skill) await assertKnowledgePublicationAllowed(engine, row, prepared.file);
+    if (!skill) await guardKnowledgePages(engine);
     if (skill && !prepared.noop) {
       if (!binding || !lock) throw opError('storage_error', 'Skill publication requires a canonical owner.',
         `Shared-skill request ${row.request_id} reached publication without this host holding source ${row.source_id}'s canonical worktree, so no skill file was written. Inspect the owner; the skill publishes only on the host that owns the source.`,
@@ -605,7 +608,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       const companionSnapshots = new Map<string, PageSnapshot | null>();
       if (skill) await assertSharedSkillPersistence(tx, row.source_id);
       else {
-        await assertKnowledgePublicationAllowed(tx, row, prepared.file);
+        await guardKnowledgePages(tx);
         await tx.lockPageKeys([{ sourceId: row.source_id, slug: row.slug },...(prepared.additionalPageKeys??[]),
           ...companions.map(companion => ({ sourceId: row.source_id, slug: companion.slug }))]);
         snapshot = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
