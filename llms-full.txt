@@ -10644,6 +10644,28 @@ the budget for migration SQL and for the batches above. It doesn't lift the
 30-second caps that v160, v200 and v234 set on themselves, or the timeouts of
 migration handlers.
 
+## Captured sessions belong to another synthesis source
+
+**Say to your agent:** *"Prepare automatic synthesis for this shared source, show me the backlog and cost, and keep my current limits."*
+
+A maintenance report with `source_routing.corpus_source_other` means those sessions
+are held for their own source. The source ownership guard remains in force.
+An operator can approve exact source identities through
+`autopilot.global_maintenance.synthesis_sources`, a JSON array of
+`{"source_id":"shared-notes","incarnation":"<current source incarnation UUID>"}`.
+Prepare the list from a read-only source inspection and obtain approval for the
+named processing scope and provider exposure before setting it. Read federation
+alone does not authorize paid synthesis. Only active shared (`federated: true`)
+sources with matching incarnations are accepted; a deleted/recreated source
+requires a new approval.
+
+The global lane takes one source turn per job, in source-id order, and persists
+its cursor before running. Its global cooldown, per-run synthesis budget,
+per-source daily submission cap, and completion/source guards stay in force.
+Other global phases run once. There is no separate synthesis budget per source
+within a job. An empty array disables synthesis in this lane; removing the key
+restores legacy routing. Enabling a list can begin processing an existing backlog.
+
 ## Global maintenance timeouts
 
 **Doctor warns `global_maintenance_timeouts`, or late maintenance phases

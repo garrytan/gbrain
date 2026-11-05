@@ -154,8 +154,28 @@ describe('#7850 synthesis re-checks the session source when the child runs', () 
     });
   }, 180_000);
 
+  test('an approved source turn carries its original incarnation onto every queued child', async () => {
+    await fixture(async ({ engine, cycle, corpus }) => {
+      await engine.executeRaw(`UPDATE sources SET config='{"federated":true}'::jsonb WHERE id=$1`, [cycle.id]);
+      const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [cycle.id]);
+      writeTranscript(join(ensureCorpusSpoolDir(corpus), sessionCorpusFileName('sess-approved', cycle.id)), 'the shared planning calendar');
+      const result = await runPhaseSynthesize(engine, { brainDir: cycle.root, sourceId: cycle.id,
+        sourceIncarnation: source.incarnation, dryRun: false });
+      expect(result.summary).toContain('1 transcript(s) synthesized');
+      const jobs = await engine.executeRaw<{ data: Record<string, unknown> }>("SELECT data FROM minion_jobs WHERE name='subagent' AND data->>'source_id'=$1", [cycle.id]);
+      expect(jobs.length).toBeGreaterThan(0);
+      for (const job of jobs) {
+        const data = typeof job.data === 'string' ? JSON.parse(job.data) : job.data;
+        expect(data.source_incarnation).toBe(source.incarnation);
+      }
+    });
+  }, 180_000);
+
   test('a child whose session belongs to another source, or whose source was recreated, is refused before any model call', async () => {
     await fixture(async ({ engine, cycle, other, corpus, calls }) => {
+      const approved = await runChild(engine, { source_id: cycle.id,
+        source_incarnation: '00000000-0000-4000-8000-000000000000' }).then(() => new Error('the child ran'), (e: Error) => e);
+      expect(approved.message).toMatch(/^session_source_changed: approved_source_changed/);
       const spool = ensureCorpusSpoolDir(corpus);
       const foreign = join(spool, sessionCorpusFileName('sess-foreign', other));
       writeTranscript(foreign, 'the client renewal terms');

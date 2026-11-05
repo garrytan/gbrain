@@ -2,7 +2,7 @@ import { observationDateLine, observationDateRule } from '../ai/date-grounding.t
 import { isConsumerDateGroundingOn } from '../facts/extract.ts';
 import { maintenancePreflight, publishMaintenancePage, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { reportFileHolds, reverseWriteDreamRefs, writeDreamPageFile } from './derived-write-through.ts';
-import { emptySessionSourceRouting, keepSessionSourceTranscripts, withSessionSourceRouting, type SessionSourceRouting } from './synthesize-source-routing.ts';
+import { emptySessionSourceRouting, keepSessionSourceTranscripts, refuseChangedSessionSource, withSessionSourceRouting, type SessionSourceRouting } from './synthesize-source-routing.ts';
 import { deferPublishOrThrow, finishDeferredPostprocess, loadCommittedOutputsOrDefer, postprocessManagedSynthesis, withPostprocessConflicts, withPublishPending, type PostprocessConflict, type RetainedOutput } from './synthesize-postprocess.ts';
 /**
  * Synthesize phase (v0.23; #4152 two-stage cascade) — conversation-to-brain
@@ -69,7 +69,7 @@ import { clampSubagentBudgets, CYCLE_DEADLINE_RESERVE_MS, MIN_PATTERNS_SUBAGENT_
 import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
 import { isQueueQuotaExceededError } from '../minions/admission.ts';
 import { waitForCompletionRenewing, TimeoutError } from '../minions/wait-for-completion.ts';
-import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
+import { UnrecoverableError, type MinionJobInput, type SubagentHandlerData } from '../minions/types.ts';
 import { resolveMaxOutputTokens } from '../minions/handlers/subagent.ts';
 import { BudgetMeter, loadAllowUnpriced, loadPricingOverrides, parseBudgetUsd } from './budget-meter.ts';
 import { runSubagentsInline, runDrainRenewalTick, percentile, INLINE_LOCK_MS } from './inline-drain.ts';
@@ -385,6 +385,8 @@ export interface SynthesizePhaseOpts {
    * correct (source_id, slug) row. Unset → legacy 'default'.
    */
   sourceId?: string;
+  /** Approved source-turn identity, retained through discovery and queued children. */
+  sourceIncarnation?: string;
   /** Internal: minion owner job id for private dream-inline queue recovery. */
   privateQueueOwnerJobId?: number | null;
   /**
@@ -436,6 +438,7 @@ async function runPhaseSynthesizeInner(
   }
   try {
     throwIfAborted(opts.signal, '[dream] synthesize');
+    if (opts.sourceIncarnation) await refuseChangedSessionSource(engine, { source_id: opts.sourceId, source_incarnation: opts.sourceIncarnation });
     const config = await loadSynthConfig(engine);
     // #4348: the calendar day that owns this run — explicit --date >
     // cycle.timezone config > host IANA timezone > UTC. Sampled ONCE at
@@ -497,6 +500,8 @@ async function runPhaseSynthesizeInner(
 
     const maintenance = opts.dryRun ? null : await maintenancePreflight(engine, opts.sourceId ?? 'default', opts.brainDir, { deadlineAtMs: opts.deadlineAtMs });
 
+    if (opts.sourceIncarnation && maintenance && maintenance.writer.sourceIncarnation !== opts.sourceIncarnation) throw new UnrecoverableError('session_source_changed: approved_source_changed');
+
     // v0.32.6 M2: pre-fetch prior contradictions from the most recent probe
     // run (if any). Surfaced as an informational block to the synthesize
     // subagent so it knows which slugs it should reconcile if it writes to
@@ -529,6 +534,7 @@ async function runPhaseSynthesizeInner(
           selfCaptureSessionIds: claudeCliSelfSessionIds(),
         })), { corpusDir: config.corpusDir, sourceId: opts.sourceId ?? 'default', readOnly: opts.dryRun }, routing);
 
+    if (opts.sourceIncarnation) await refuseChangedSessionSource(engine, { source_id: opts.sourceId, source_incarnation: opts.sourceIncarnation });
     if (transcripts.length === 0) {
       return ok('no transcripts to process', { transcripts_processed: 0, pages_written: 0 });
     }
@@ -931,6 +937,7 @@ async function runPhaseSynthesizeInner(
           // #1586: scope every child tool call to the cycle's resolved source
           // so put_page writes land there instead of the hardcoded 'default'.
           ...(opts.sourceId ? { source_id: opts.sourceId } : {}),
+          ...(opts.sourceIncarnation ? { source_incarnation: opts.sourceIncarnation } : {}),
         };
         // Keep producer identity stable when the corpus root moves. Source and
         // complete filename remain explicit so equal bytes in different source
