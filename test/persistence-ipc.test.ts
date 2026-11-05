@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import net, { type Server } from 'node:net';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync, statSync, writeFileSync, readFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { claimLocalIpcBinding, localIpcSocketPath } from '../src/core/context/ipc-path.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import {
   PERSISTENCE_IPC_MAX_BYTES, PersistenceIpcTransportError,
@@ -18,10 +19,13 @@ const dirs: string[] = [];
 const bindings: PersistenceIpcBinding[] = [];
 const rawServers: Server[] = [];
 
-function socketPath() {
+async function socketPath() {
   const dir = mkdtempSync(join(tmpdir(), 'gb-write-ipc-'));
   dirs.push(dir);
-  return join(dir, 'write.sock');
+  const claim = await claimLocalIpcBinding(join(dir, 'write.sock'));
+  expect(claim).not.toBeNull();
+  await claim!.release();
+  return claim!.socketPath;
 }
 
 function request(params: Record<string, unknown> = {}): PersistenceIpcRequest {
@@ -62,7 +66,7 @@ afterEach(async () => {
 
 describe('dedicated persistence IPC', () => {
   test('capabilities identify the durable brain and operations; socket is private', async () => {
-    const path = socketPath();
+    const path = await socketPath();
     await bind(path, async () => { throw new Error('Capabilities must not dispatch.'); });
     const capabilities = await requestPersistenceCapabilities(path);
     expect(capabilities.brain_id).toBe(BRAIN);
@@ -70,11 +74,11 @@ describe('dedicated persistence IPC', () => {
     expect(capabilities.operations).toContain('fetch');
     expect(capabilities.max_frame_bytes).toBe(PERSISTENCE_IPC_MAX_BYTES);
     if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600);
-    expect(persistenceSocketPathForConfig({ engine: 'pglite', database_path: tmpdir() })).toBe(join(tmpdir(), '.gbrain-persistence.sock'));
+    expect(persistenceSocketPathForConfig({ engine: 'pglite', database_path: tmpdir() })).toBe(localIpcSocketPath(join(tmpdir(), '.gbrain-persistence.sock')));
   });
 
   test('preserves explicit source, client cwd, principal credential, and request ID', async () => {
-    const path = socketPath();
+    const path = await socketPath();
     let received: PersistenceIpcRequest | undefined;
     await bind(path, async value => { received = value; return { status: 'created', revision: ID }; });
     const sent = request();
@@ -85,7 +89,7 @@ describe('dedicated persistence IPC', () => {
   });
 
   test('five million maximally escaped content bytes fit without truncation', async () => {
-    const path = socketPath();
+    const path = await socketPath();
     await bind(path, async value => ({ bytes: Buffer.byteLength(value.params.content as string), tail: (value.params.content as string).slice(-1) }));
     const content = '\0'.repeat(4_999_999) + 'z';
     const result = await requestPersistenceOperation(path, request({ content }));
@@ -93,7 +97,7 @@ describe('dedicated persistence IPC', () => {
   });
 
   test('oversized request refuses before delivery', async () => {
-    const path = socketPath();
+    const path = await socketPath();
     let calls = 0;
     await bind(path, async () => { calls++; return {}; });
     await expect(requestPersistenceOperation(path, request({ content: 'x'.repeat(PERSISTENCE_IPC_MAX_BYTES) }))).rejects.toThrow('transport limit');
@@ -101,7 +105,7 @@ describe('dedicated persistence IPC', () => {
   });
 
   test('unknown operations, forged context, wrong brain and missing IDs cannot dispatch', async () => {
-    const path = socketPath();
+    const path = await socketPath();
     let calls = 0;
     await bind(path, async () => { calls++; return {}; });
     for (const malformed of [
@@ -119,7 +123,7 @@ describe('dedicated persistence IPC', () => {
   });
 
   test('multiple frames on one connection dispatch at most once', async () => {
-    const path = socketPath();
+    const path = await socketPath();
     let calls = 0;
     await bind(path, async () => { calls++; await Bun.sleep(5); return { ok: true }; });
     await rawExchange(path, (JSON.stringify(request()) + '\n').repeat(2));
@@ -127,7 +131,7 @@ describe('dedicated persistence IPC', () => {
   });
 
   test('frozen pending envelopes and revision errors survive transport', async () => {
-    const path = socketPath();
+    const path = await socketPath();
     await bind(path, async () => {
       const error = new OperationError('unavailable', 'Write queued.', 'Retry the same request ID.');
       error.protocolVersion = 1;
@@ -144,7 +148,7 @@ describe('dedicated persistence IPC', () => {
   });
 
   test('private driver failures are not reflected', async () => {
-    const path = socketPath();
+    const path = await socketPath();
     await bind(path, async () => { throw new Error(`secret=${REGISTRATION.credential}`); });
     try { await requestPersistenceOperation(path, request()); throw new Error('Expected error.'); }
     catch (error) {
@@ -154,7 +158,7 @@ describe('dedicated persistence IPC', () => {
   });
 
   test('optional safe health survives IPC without private nested fields', async () => {
-    const path = socketPath();
+    const path = await socketPath();
     const diagnostic = { age_ms: 120000, assessment: 'stalled' as const,
       reason: 'cause_unknown' as const, next_action: 'inspect_owner' as const };
     await bind(path, async () => {
@@ -172,7 +176,7 @@ describe('dedicated persistence IPC', () => {
   });
 
   test('lost acknowledgement is unknown, keeps original ID, and never auto-retries', async () => {
-    const path = socketPath();
+    const path = await socketPath();
     let calls = 0;
     const server = net.createServer(socket => {
       socket.once('data', () => { calls++; socket.destroy(); });
@@ -180,6 +184,7 @@ describe('dedicated persistence IPC', () => {
     rawServers.push(server);
     server.listen(path);
     await once(server, 'listening');
+    if (process.platform !== 'win32') chmodSync(path, 0o600);
     try { await requestPersistenceOperation(path, request()); throw new Error('Expected lost response.'); }
     catch (error) {
       expect(error).toBeInstanceOf(PersistenceIpcTransportError);
@@ -190,7 +195,7 @@ describe('dedicated persistence IPC', () => {
   });
 
   test('timeout does not abort work already dispatched', async () => {
-    const path = socketPath();
+    const path = await socketPath();
     let finish!: () => void;
     const gate = new Promise<void>(resolve => { finish = resolve; });
     let completed = false;
@@ -202,7 +207,7 @@ describe('dedicated persistence IPC', () => {
   });
 
   test('live owners are preserved and close is idempotent', async () => {
-    const path = socketPath();
+    const path = await socketPath();
     const first = await bind(path, async () => ({ owner: 'first' }));
     const second = await startPersistenceIpcServer(path, { brainId: BRAIN, dispatch: async () => ({ owner: 'second' }) });
     expect(second).toBeNull();
@@ -215,9 +220,10 @@ describe('dedicated persistence IPC', () => {
   });
 
   test('ordinary files at the discovery path are never removed', async () => {
-    const path = socketPath();
+    const path = await socketPath();
     writeFileSync(path, 'keep');
-    await expect(startPersistenceIpcServer(path, { brainId: BRAIN, dispatch: async () => ({}) })).rejects.toThrow('not a socket');
+    const fallback = path !== join(dirs.at(-1)!, 'write.sock');
+    await expect(startPersistenceIpcServer(path, { brainId: BRAIN, dispatch: async () => ({}) })).rejects.toThrow(fallback ? 'Unsafe local IPC socket.' : 'not a socket');
     expect(readFileSync(path, 'utf8')).toBe('keep');
   });
 });

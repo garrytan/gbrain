@@ -672,6 +672,7 @@ vars — incident-time escape hatches, not everyday knobs.
    refresh. A refresh whose process is still running is never taken over, and
    one whose HEAD cannot be verified waits for the user
    ([`refresh_recovery_required`](write-refusals.md#refresh_recovery_required)).
+
    `gbrain sources writer status <source-id>` shows who holds a refresh and
    whether it is orphaned. A cron that keeps a managed
    brain current runs the refresh instead of `git pull`, through the same
@@ -717,6 +718,92 @@ vars — incident-time escape hatches, not everyday knobs.
    whatever this key says (item 8).
 
    **Say to your agent:** *"Stop autopilot from git-pulling my sources; I update the checkouts myself."*
+
+### Holding refresh starts
+
+`sources.refresh_hold` is an opt-in DB configuration for **sources refresh only**
+in the selected brain, across all sources. Absent or literal `false` is off;
+`true` holds starts, and malformed values also hold (fail closed). For a maintenance
+window, use the dedicated **DB-only** CLI below. Global `config get` still uses
+its usual file/env precedence and cannot capture this key's stored DB state.
+
+```sh
+gbrain sources refresh-hold get --json > hold-before.json
+printf %s true > hold-value.txt
+gbrain sources refresh-hold set --file hold-value.txt
+gbrain sources refresh-hold get --json
+```
+
+`get` always emits `{ "key": "sources.refresh_hold", "present": false,
+"value": null }` for absence, or `present: true` with the exact string (including
+`""`). `set --file` reads UTF-8 bytes without trimming or flag parsing:
+empty strings, `-` prefixes, BOMs, spaces, quotes and trailing newlines round-trip.
+Unreadable/invalid UTF-8 or NUL-containing files refuse before writing. `clear`
+removes only this DB key. These commands never read or modify the file/env value.
+
+With a resident PGLite owner, `get` uses its authenticated local CLI registration
+and a parameter-free, read-only owner extension to inspect this one DB key. The
+`refresh_held` inspection command therefore works while that owner retains the
+single-writer lock. An older owner without the extension refuses explicitly;
+there is no lock bypass or arbitrary config/SQL endpoint. Without an owner, the
+same command reads the DB directly.
+
+PGLite `set` and `clear` retain their direct, exclusive-access behavior: coordinate
+a separate stop window before setting or restoring the value, then restart the
+resident owner as appropriate. Capture/readback may run through the owner, but the
+mutation examples below require that window. These commands do not stop a service
+themselves. PostgreSQL keeps its existing direct connection behavior.
+
+Explicit, scheduled and owner-delegated refresh calls using this implementation
+refuse `refresh_held` before fetch, orphan adoption, a refresh row or a lock.
+This includes `--dry-run`, `--resume` and `--abandon`. The CLI exits nonzero;
+`--json` carries the typed refusal and a read-only config inspection fix.
+`gbrain sources refresh --help` lists the setting; doctor `worktree_refresh_stuck`
+warns while it is held, even without a stuck row.
+
+This is an **admission hold, not a quiescence barrier**: a round that passed the
+read before the hold was set finishes normally. Consumer recovery, ordinary sync,
+page writes and other schedulers are unaffected; no queue is cancelled or drained
+by setting the key. Wait for already admitted refresh processes to exit, inspect
+`gbrain sources writer status --json`, and separately exclude other writers before
+claiming a maintenance window. The hold cannot protect an older executable that
+does not read it, and it does not make DB and filesystem snapshots atomic.
+
+Only the maintenance owner restores the captured state, **after** draining the
+already admitted refresh processes. Use one controller; check DB state for drift
+immediately before restoring. The following Python example refuses unexpected DB
+state, preserves the saved string without shell substitution, then independently
+verifies presence and bytes. Run it on the same selected brain as the capture:
+
+```python
+import json, subprocess
+from pathlib import Path
+cmd = ["gbrain", "sources", "refresh-hold"]
+def read():
+    return json.loads(subprocess.check_output(cmd + ["get", "--json"]))
+saved = json.loads(Path("hold-before.json").read_text())
+if (set(saved) != {"key", "present", "value"}
+    or saved["key"] != "sources.refresh_hold"
+    or type(saved["present"]) is not bool
+    or not (isinstance(saved["value"], str) if saved["present"] else saved["value"] is None)):
+    raise RuntimeError("Invalid saved hold state; nothing restored")
+if read() != {"key": "sources.refresh_hold", "present": True, "value": "true"}:
+    raise RuntimeError("DB hold drifted; leave it in place and ask the maintenance owner")
+if saved["present"]:
+    Path("hold-value.txt").write_bytes(saved["value"].encode("utf-8"))
+    subprocess.run(cmd + ["set", "--file", "hold-value.txt"], check=True)
+else:
+    subprocess.run(cmd + ["clear"], check=True)
+if read() != saved:
+    raise RuntimeError("Hold restore readback differs from the saved state")
+```
+
+`clear` restores **absence only**; it must never substitute for restoring a held
+empty or malformed string. An interrupted controller leaves the hold in place,
+visible to doctor; there is no automatic expiry or resume. The drift check is
+not compare-and-swap: it does not exclude another controller between check and
+restore. Exclude competing controllers separately; do not claim a lock or an
+atomic maintenance window from these commands.
 
 ## How to Verify
 

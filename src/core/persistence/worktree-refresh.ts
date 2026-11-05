@@ -234,6 +234,19 @@ interface Plan {
 
 /** #7686: standing consent, default off, to publish a diverged checkout's local commits before the fast-forward. */
 export const REFRESH_PUBLISH_DIVERGED_KEY = 'sources.refresh_publish_diverged';
+/** Refresh-entry admission only; an already admitted round and consumer recovery finish normally. */
+export const REFRESH_HOLD_KEY = 'sources.refresh_hold';
+/** Live DB only, bypassing request snapshots. JSON wrapping also preserves a leading BOM in PGLite's text decoder. */
+export async function readRefreshHoldValue(engine: BrainEngine): Promise<string | null> {
+  const rows = await engine.executeRaw<{ stored: { value: string } }>(
+    "SELECT json_build_object('value', value) AS stored FROM config WHERE key=$1", [REFRESH_HOLD_KEY]);
+  return rows.length ? rows[0].stored.value : null;
+}
+export async function refreshHoldEnabled(engine: BrainEngine): Promise<boolean> {
+  const stored = await readRefreshHoldValue(engine);
+  // Only absent or literal false is off. A malformed operator value must not silently resume refreshes.
+  return stored !== null && stored !== 'false';
+}
 
 /** Steps 1.3/1: refusals before any database state; fetch moves only remote-tracking refs. */
 async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTimeoutMs: number, publishDiverged = false): Promise<Plan> {
@@ -572,6 +585,12 @@ function finished(row: WorktreeRefreshRow, sync: { synced: RefreshMemberSync[]; 
  * host only; refusals throw catalogue errors (`code`, cause, literal fix, docs).
  */
 export async function refreshWorktree(engine: BrainEngine, sourceId: string, opts: RefreshOptions = {}): Promise<WorktreeRefreshResult> {
+  // Before precheck's fetch, orphan adoption, resume/abandon or any refresh row/lock.
+  if (await refreshHoldEnabled(engine)) throw opError('refresh_held',
+    `${REFRESH_HOLD_KEY} holds new sources refresh calls in this brain; this call did not start.`,
+    `Ask the maintenance owner before restoring the saved ${REFRESH_HOLD_KEY} value (unset it only if originally absent). Already admitted refreshes and other writers are not stopped.`,
+    { docs: 'docs/guides/live-sync.md#holding-refresh-starts', fix: readFix('Reads DB-only hold presence and exact value; the maintenance owner restores the saved value with sources refresh-hold set --file, or clear only for saved absence.',
+      { argv: ['gbrain', 'sources', 'refresh-hold', 'get', '--json'] }) });
   try { return await runRefresh(engine, sourceId, opts); }
   catch (error) {
     if (error instanceof OperationError || classifyPgAccessError(error).reason !== 'unknown') throw error;

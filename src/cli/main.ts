@@ -1959,6 +1959,7 @@ async function handleCliOnly(command: string, args: string[]) {
   if (await dispatchPreConnectCommand(command, args)) return;
   if (await routeEngineFreeSubcommands(command, args)) return;
   if (await routeEngineFreeHelp(command, args)) return;
+  if (command === 'sources' && args[0] === 'refresh-hold' && !hasHelpFlag(args) && await (await import('../commands/sources-refresh-delegate.ts')).maybeDelegateSourcesRefreshHoldGet(loadConfig(), args.slice(1))) return;
   if (await runReadOnlyTimeoutDispatch(command, args)) return;
   const prepared = await prepareConnectedDispatch(command, args);
   if (!prepared) return;
