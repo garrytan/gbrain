@@ -268,6 +268,40 @@ describe('F7 coaching reaches agents', () => {
       __resetPostUpgradeNoticeForTests();
     }
   });
+
+  test('#8621: a partly failed remember batch (an MCP error) leaves the one-shot post-upgrade notice for the next call', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const { VERSION } = await import('../src/version.ts');
+    const { takePostUpgradeMcpNotice, __resetPostUpgradeNoticeForTests } = await import('../src/core/post-upgrade-notice.ts');
+    const { operations } = await import('../src/core/operations.ts');
+    const op = operations.find(o => o.name === 'remember')! as { handler: unknown };
+    const original = op.handler;
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-postup-batch-'));
+    try {
+      mkdirSync(join(home, '.gbrain'), { recursive: true });
+      writeFileSync(join(home, '.gbrain', 'upgrade-state.json'), JSON.stringify({ last_upgrade: { from: '0.0.1.0', to: VERSION } }));
+      const { __resetBehaviorNoticeForTests, BEHAVIOR_NOTICE_CODE, takeLocalBehaviorNotice } = await import('../src/core/behavior-change-notice.ts');
+      // A brain older than this release has pending behavior changes, so the stdio behavior notice is due.
+      await engine.executeRaw("UPDATE sources SET created_at = now() - interval '30 days'");
+      await withEnv({ HOME: home, GBRAIN_HOME: home, GBRAIN_NO_ONBOARD_NUDGE: undefined }, async () => {
+        __resetPostUpgradeNoticeForTests();
+        __resetBehaviorNoticeForTests();
+        op.handler = async () => ({ status: 'error', error: 'invalid_params', code: 'invalid_params', message: '1 of 2 item(s) failed.',
+          items: [{ index: 0, request_id: 'r0', status: 'failed', error: { code: 'invalid_params', message: 'refused' } }, { index: 1, request_id: 'r1', status: 'inserted', id: 7 }],
+          saved: 1, failed: 1, partial: true });
+        const res = await dispatchToolCall(engine as any, 'remember', { items: ['alice-example likes tea', 'alice-example likes jazz'], provenance: 'test' }, { remote: true, transport: 'stdio', sourceId: 'default' });
+        expect(res.isError).toBe(true);
+        expect(takePostUpgradeMcpNotice()?.code).toBe('post_upgrade');
+        expect((await takeLocalBehaviorNotice(engine as any, 'stdio', { cfg: null }))?.code).toBe(BEHAVIOR_NOTICE_CODE);
+      });
+    } finally {
+      op.handler = original;
+      rmSync(home, { recursive: true, force: true });
+      __resetPostUpgradeNoticeForTests();
+    }
+  });
 });
 
 describe('onboarding notices on the stdio channel', () => {

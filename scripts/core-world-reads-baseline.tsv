@@ -601,6 +601,7 @@ src/core/page-summary.ts	process_env	1	W6: settings plane out of the core
 src/core/path-confine.ts	fs_import	2	W7: filesystem boundary moves to the local app
 src/core/persistence/activation.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/admission-origin.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
+src/core/persistence/admission-retry.ts	als_store	1	GST-1387: one per-call refresh-fence wait deadline shared by a remember batch's items; carries no setting or process state
 src/core/persistence/atom-maintenance.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/atom-retry.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/attribution.ts	module_collection	1	W6: per-engine state, or mark as a constant table

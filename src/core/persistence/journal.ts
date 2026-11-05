@@ -3,13 +3,13 @@ import { WRITE_SWITCHES, writeSwitchOn } from './switches.ts';
 import type { BrainEngine } from '../engine.ts';
 import { getCode } from '../retry-matcher.ts';
 import { assertRecoveryStagingAbsent } from './staging.ts';
-import { OperationError, opError } from '../ops/contract.ts';
+import { markNotAdmitted, OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { digest, jsonBytes, requireUuid } from './digest.ts';
 import { authorizeWrite } from './authority.ts';
 import { journalLimitKey, oneYearCapacity, readJournalLimits, readReceiptRetentionDays } from './limits.ts';
-import { outstandingCapacityDetail, retryWriteAdmission } from './admission-retry.ts';
+import { outstandingCapacityDetail, retryWriteAdmission, waitOutRefreshFence } from './admission-retry.ts';
 import { PreadmitBrainChanged } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { backgroundPaused, backgroundWorktreeInactive, declaredBackground, readBackgroundPauseShare, resolveAdmissionOrigin, type AdmissionOrigin } from './admission-origin.ts';
@@ -270,11 +270,12 @@ export async function admitWrite(engine: BrainEngine, input: WriteAdmission, ove
   // #6355: a lent connection (the consumer's warm lane) whose session dropped is dead for every later attempt, so the
   // re-run takes a transaction from the engine's pool after the pool itself is rebuilt.
   let run = transaction;
-  return retryWriteAdmission(requestId, remaining => run(async tx => {
+  // GST-1387: an interactive write waits out a refresh fence (bounded), re-running its whole admission.
+  return waitOutRefreshFence(resolveAdmissionOrigin(input.origin) === 'interactive', () => retryWriteAdmission(requestId, remaining => run(async tx => {
     const brain = await declareDurablePersistence(tx, `${Math.min(100, remaining)}ms`, `${remaining}ms`);
     if (input.brainId !== undefined && brain !== input.brainId) throw new PreadmitBrainChanged();
     return apply(tx);
-  }), undefined, async error => { run = fn => engine.transaction(fn, { pipelineFirst: isPersistenceDeclaration }); await engine.reconnect({ error }); });
+  }), undefined, async error => { run = fn => engine.transaction(fn, { pipelineFirst: isPersistenceDeclaration }); await engine.reconnect({ error }); }));
 }
 /** Caller owns the transaction and retries its entire unit of work after rollback. */
 export async function admitWriteInTransaction(tx: BrainEngine, input: WriteAdmission, overrides?: Partial<JournalLimits>): Promise<WriteRequest> {
@@ -298,7 +299,7 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
     const [, , , , , counters, topology, prior] = await pipelined(tx, [
       () => assertGraduationAdmission(tx),
       async () => assertMutationProtocol({ target_kind: input.targetKind, protocol_version: input.protocolVersion }),
-      async () => { if (input.worktreeId) await assertWorktreeAdmission(tx, input); },
+      async () => { if (input.worktreeId) await assertWorktreeAdmission(tx, input, true); },
       // Source membership is locked before principal/counter/request guards. A
       // deleted/recreated source never receives work accepted for its old identity.
       async () => {
@@ -589,7 +590,7 @@ export async function chargePreparationAttempt(engine: SqlEngine, row: WriteRequ
  * binding (#6007: both read in one statement after the lock; the fence is
  * judged first, as before).
  */
-async function assertWorktreeAdmission(tx: BrainEngine, input: WriteAdmission): Promise<void> {
+async function assertWorktreeAdmission(tx: BrainEngine, input: WriteAdmission, replayable = false): Promise<void> {
   // Sent together: the server takes the share lock before it reads the fence and the binding.
   const [[worktree], [state]] = await pipelined(tx, [
     () => tx.executeRaw<{ state: string; owner_epoch: string }>('SELECT state,owner_epoch::text AS owner_epoch FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [input.worktreeId]),
@@ -601,14 +602,14 @@ async function assertWorktreeAdmission(tx: BrainEngine, input: WriteAdmission): 
     [input.sourceId, input.sourceIncarnation, input.worktreeId, input.topologyGeneration]),
   ]) as [Array<{ state: string; owner_epoch: string }>, Array<{ refresh: { id: string; state: string; source_ids: string[] } | string | null; bound: boolean }>];
   const refresh = typeof state?.refresh === 'string' ? JSON.parse(state.refresh) as { id: string; state: string; source_ids: string[] } : state?.refresh ?? null;
-  if (refresh) await assertWorktreeNotRefreshing(tx, input, refresh);
+  if (refresh) await assertWorktreeNotRefreshing(tx, input, refresh, replayable);
   // #6741 C: a background producer never takes a permanent request id against a worktree in recovery (a draining owner still replays).
   if (worktree?.state === 'recovering' && resolveAdmissionOrigin(input.origin) === 'background') throw backgroundWorktreeInactive(input.sourceId, worktree.state, ownerStatusFix(input.sourceId));
   if (!state?.bound || input.ownerEpoch != null && worktree && worktree.owner_epoch !== String(input.ownerEpoch)) throw opError('source_changed', 'The source binding changed during admission.',
     `Source ${input.sourceId}'s worktree binding changed (a claim, transfer or lifecycle change) while this write was being admitted, so nothing was accepted. Check the owner with the command in fix, then submit the write again; reusing the same request_id is safe because nothing was recorded.`,
     { fix: ownerStatusFix(input.sourceId) });
 }
-async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmission, refresh: { id: string; state: string; source_ids: string[] }): Promise<void> {
+async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmission, refresh: { id: string; state: string; source_ids: string[] }, replayable: boolean): Promise<void> {
   const managedSync = input.operation === 'submit_job' && String(input.intent.kind ?? '').startsWith('managed_sync_');
   if (refresh.state === 'syncing' && managedSync) return;
   if (refresh.state === 'syncing') {
@@ -623,8 +624,15 @@ async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmissio
   const error = catalogueError('worktree_refreshing',
     `Source ${input.sourceId}'s checkout is being fast-forwarded by refresh ${refresh.id} (${refresh.state}); this write was not journaled.`,
     `Retry the same request_id after retry_after_ms: 1000. Check progress with gbrain sources writer status ${input.sourceId}.`);
+  // A single write's replay of a request already accepted (its acknowledgement lost before the fence) reconciles to its
+  // receipt instead; a group admission never bypasses, since its other items may be new.
+  if (replayable && input.requestId && await getWriteRequest(tx, input.principal, input.requestId)) return;
   error.detail = 'retry_after_ms=1000';
-  throw error;
+  error.retryable = true;
+  // GST-1387: nothing was recorded, so the same call is retried after the delay (actor provider renders next: wait).
+  error.fix = { argv: ['gbrain', 'sources', 'writer', 'status', '--source', input.sourceId, '--json'], consent: [], actor: 'provider', requires_exclusive: false,
+    why: `A refresh of source ${input.sourceId}'s checkout holds its writes until it finishes syncing; this write was not recorded. Repeat the same call with the same request_id after about 1 s (retry_after_ms=1000); this read-only command shows the refresh's progress.` };
+  throw markNotAdmitted(error);
 }
 
 /**
