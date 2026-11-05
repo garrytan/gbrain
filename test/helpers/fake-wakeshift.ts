@@ -7,6 +7,8 @@
 import { createHash, createPublicKey, verify, type KeyObject } from 'node:crypto';
 import { parseWakeshiftKey } from '../../src/core/wakeshift/client.ts';
 
+const MANIFEST_EVENT_FIELDS = new Set(['name', 'description', 'arguments', 'payload', 'topic', 'filter', 'personal', 'delete_on_delivery']);
+
 export interface FakeCall { path: string; body: any; assertionOk: boolean; problem?: string }
 type Answer = { status: number; body: unknown; headers?: Record<string, string> };
 
@@ -55,7 +57,11 @@ export function startFakeWakeshift(rawKey: string): FakeWakeshift {
       }
       switch (path) {
         case '/app': return Response.json({ id: 'app_test', name: 'gbrain-test', key: { key_id: 'key_1', name: 'test key' } });
-        case '/manifest/merge': return Response.json({ events: body?.events ?? [] });
+        case '/manifest/merge': {
+          const extra = (body?.events ?? []).flatMap((e: Record<string, unknown>) => Object.keys(e).filter(k => !MANIFEST_EVENT_FIELDS.has(k)));
+          if (extra.length) return Response.json({ error: { code: 'bad_request', message: `invalid JSON: json: unknown field "${extra[0]}"` } }, { status: 400 });
+          return Response.json({ events: body?.events ?? [] });
+        }
         case '/event-subscriptions': {
           const k = `${body.call.user}|${body.name}|${JSON.stringify(body.arguments)}`;
           const created = !subs.has(k);

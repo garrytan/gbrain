@@ -29,7 +29,6 @@ export function wakeshiftManifest(): { events: Record<string, unknown>[] } {
   return {
     events: [{
       name: JOB_FINISHED,
-      title: 'gbrain job finished',
       description: 'A gbrain background job you are watching reached completed, failed, dead or cancelled. The payload is a pointer: call get_job with the id for the result.',
       arguments: { type: 'object', properties: { job: { type: 'integer', minimum: 1 } }, required: ['job'], additionalProperties: false },
       payload: JOB_PAYLOAD,
