@@ -563,6 +563,29 @@ describe('A7: a claim whose spacing a stored reason folded', () => {
       expect(after!.data).toEqual({ version: 2, commit_line: '[purged]' });
       const swept = await verifyFactPurge(engine, { target, plan, dryRun: false, removed: {} });
       expect(swept.stores.find(store => store.store === 'page_versions')).toMatchObject({ status: 'not_present' });
+
+      const slug = `policies/folded-example-${n}`;
+      await run(engine, 'default', 'put_page', { slug, content: page('Edition one.'), wait_ms: 30_000 });
+      const revision = String((await run(engine, 'default', 'get_page', { slug, include_content: true })).revision);
+      const second = await run(engine, 'default', 'put_page', { slug, content: page('Edition two.'), expected_revision: revision,
+        reason: `Board asked because ${claim} leaked.`, wait_ms: 30_000 });
+      expect((second.outcome ?? second).reason_recorded).toMatchObject({ reason: `Board asked because ${folded} leaked.`, git: 'no_repository' });
+      const [held] = await engine.executeRaw<PurgeTarget>(`INSERT INTO facts(source_id,fact,entity_slug,visibility,source,source_markdown_slug,row_num)
+        VALUES ('default',$1,NULL,'world','test',NULL,1) RETURNING id,source_id,visibility,fact,entity_slug,source_markdown_slug,
+        gbrain_fact_fingerprint(fact) AS fact_hash,embedding::text AS embedding,embedding_model`, [claim]);
+      const heldTarget = { ...held!, id: Number(held!.id) };
+      const heldPlan = await planFactPurge(engine, heldTarget, false);
+      expect(heldPlan.requests).toHaveLength(1);
+      const unswept = await verifyFactPurge(engine, { target: heldTarget, plan: heldPlan, dryRun: false, removed: {} });
+      expect(unswept.stores.find(store => store.store === 'persistence_requests')).toMatchObject({ remaining: 1 });
+      const repoless = await purge(engine, 'default', heldTarget.id);
+      expect(repoless.state).toBe('committed');
+      expect(repoless.stores.find((store: { store: string }) => store.store === 'persistence_requests')).toMatchObject({ status: 'deleted' });
+      const requests = await engine.executeRaw<{ intent: Record<string, unknown> | null; outcome: Record<string, any> | null }>(
+        `SELECT intent, outcome FROM persistence_requests WHERE source_id = 'default' AND slug = $1 AND (outcome->'reason_recorded') IS NOT NULL`, [slug]);
+      expect(requests.map(row => [row.intent?.reason ?? null, row.outcome?.reason_recorded?.reason])).toEqual([[null, '[purged]']]);
+      expect(await engine.executeRaw(`SELECT 1 FROM persistence_requests WHERE source_id = 'default'
+        AND (strpos(lower(COALESCE(intent::text, '')), $1) > 0 OR strpos(lower(COALESCE(outcome::text, '')), $1) > 0)`, [folded.toLowerCase()])).toHaveLength(0);
     }
   }), 120_000);
 });

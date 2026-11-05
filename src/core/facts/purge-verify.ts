@@ -514,8 +514,8 @@ export async function verifyFactPurge(engine: BrainEngine, input: { target: Purg
     [src, ...claimNeedles(claim), reasonNeedle(claim)], plan.versions, removed.page_versions, { ...prose, items: (input.prose ?? []).slice(0, 20) });
   stores[stores.length - 1] = await withSegmentedProse(engine, stores[stores.length - 1]!, src, [claim], deadline);
   await swept('persistence_requests', `SELECT 1 FROM persistence_requests WHERE source_id=$1 AND (${['intent', 'outcome', 'error_detail', 'error_message']
-      .map(c => `strpos(lower(COALESCE(${c}::text,'')),$2)>0 OR strpos(lower(COALESCE(${c}::text,'')),$3)>0`).join(' OR ')})`,
-    [src, needle, JSON.stringify(claim).slice(1, -1).toLowerCase()], plan.requests.length, removed.persistence_requests);
+      .map(c => `strpos(lower(COALESCE(${c}::text,'')),$2)>0 OR strpos(lower(COALESCE(${c}::text,'')),$3)>0 OR strpos(lower(COALESCE(${c}::text,'')),$4)>0`).join(' OR ')})`,
+    [src, needle, JSON.stringify(claim).slice(1, -1).toLowerCase(), JSON.stringify(reasonNeedle(claim)).slice(1, -1)], plan.requests.length, removed.persistence_requests);
   if (!dryRun && !await relationExists(engine, 'query_cache')) stores.push(missingCache('query_cache'));
   else await swept('query_cache', 'SELECT 1 FROM query_cache WHERE $1::text IS NOT NULL', [src], 0, removed.query_cache);
   const refs = plan.factIds.map(String);

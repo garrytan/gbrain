@@ -187,7 +187,7 @@ export async function planFactPurge(engine: BrainEngine, target: PurgeTarget, al
   const { stagings, held } = await stagingsHoldingClaim(engine, target.source_id, target.fact);
   // #6511 [R5]: a statement timeout of this unindexable substring search is deterministic on a large journal, not contention: the typed code, not a retry.
   const requests = await faultPoint('purge:carrying_lookup', { sourceId: target.source_id, operation: PURGE_OPERATION })
-    .then(() => findRequestsCarrying(engine, target.source_id, target.fact)).catch(error => {
+    .then(() => findRequestsCarrying(engine, target.source_id, target.fact, reasonNeedle(target.fact))).catch(error => {
     if ((error as { code?: unknown } | null)?.code !== '57014') throw error;
     throw opError('purge_lookup_timeout', 'This purge could not finish; nothing was purged. Do not assume the requested content was erased.',
       `The lookup of historical write requests carrying fact ${target.id} in source ${target.source_id} exceeded its statement budget while the purge was planned, so no plan was made and nothing was removed, tombstoned or redacted. `
@@ -514,7 +514,7 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
       await assertNoPendingPublication(tx, p.sourceId, plan.pages, admitted.id);
       const effectReasons = await redactGitEffectReasons(tx, p.sourceId, current.fact);
       const reasonTombstones = await recordReasonTombstones(tx, { sourceId: p.sourceId, claim: current.fact, rawId: p.rawId, plan: trailers });
-      const intents = await redactRequestIntents(tx, plan.requests, admitted.id, { needles: [current.fact] });
+      const intents = await redactRequestIntents(tx, plan.requests, admitted.id, { needles: [current.fact, reasonNeedle(current.fact)] });
       const ledgerPresent = await sourceHasBeliefEvents(tx, p.sourceId);
       const streams = ledgerPresent ? await factPurgeStreams(tx, p.sourceId, plan) : [];
       await tx.lockPageKeys([...new Set([...plan.pages.map(page => page.slug), ...streams])].map(slug => ({ sourceId: p.sourceId, slug })));
