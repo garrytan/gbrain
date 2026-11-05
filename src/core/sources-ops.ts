@@ -456,6 +456,19 @@ async function insertApiSource(engine: BrainEngine, opts: AddSourceOpts, kind: '
   );
 }
 
+/** Validate a clone URL before addSource performs any filesystem work. */
+function parseSourceRemoteUrl(remoteUrl: AddSourceOpts['remoteUrl']): { url: string; hostname: string } | null {
+  if (!remoteUrl) return null;
+  try {
+    return parseRemoteUrl(remoteUrl);
+  } catch (e) {
+    if (e instanceof RemoteUrlError) {
+      throw new SourceOpError('invalid_remote_url', e.message, e);
+    }
+    throw e;
+  }
+}
+
 export async function addSource(
   engine: BrainEngine,
   opts: AddSourceOpts,
@@ -535,17 +548,7 @@ export async function addSource(
   }
 
   // Validate URL before doing any filesystem work.
-  let parsedUrl: { url: string; hostname: string } | null = null;
-  if (opts.remoteUrl) {
-    try {
-      parsedUrl = parseRemoteUrl(opts.remoteUrl);
-    } catch (e) {
-      if (e instanceof RemoteUrlError) {
-        throw new SourceOpError('invalid_remote_url', e.message, e);
-      }
-      throw e;
-    }
-  }
+  const parsedUrl = parseSourceRemoteUrl(opts.remoteUrl);
 
   // Overlap check for any local path (existing behavior).
   let finalPath = opts.localPath ?? null;

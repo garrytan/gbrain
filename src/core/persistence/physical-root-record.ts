@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { BigIntStats } from 'node:fs';
 import { execFileSync } from '../spawn.ts';
-import { appendFileSync, closeSync, constants, existsSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { type BigIntStats, appendFileSync, closeSync, constants, existsSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { OperationError } from '../ops/contract.ts';
 import { gitChildEnv } from '../git-env.ts';
@@ -406,6 +405,11 @@ export function assertPhysicalRoot(path: string, identity: { worktreeId: string;
     if (!reservation || reservation.worktreeId !== identity.worktreeId || identity.coordinationPath && reservation.coordinationPath !== identity.coordinationPath) throw physicalRootError();
     assertPhysicalRootStamp(root, reservation);
   } catch (error) { if (error instanceof OperationError) throw error; throw physicalRootError(); }
+}
+
+/** Keep strict canonical filesystem reads at the physical-root boundary. */
+export function isCanonicalWorktreeRoot(root: string, discoverRoot: (path: string) => string): boolean {
+  return realpathSync(root) === root && realpathSync(discoverRoot(root)) === root;
 }
 
 export interface BindPhysicalIdentity { device: string; inode: string; birth: string; mode: string; uid: string; }

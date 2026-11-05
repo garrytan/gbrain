@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { dirname, join, isAbsolute, resolve } from 'node:path';
-import { realpathSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { trustedCliRequired } from '../ops/op-fix.ts';
@@ -14,7 +13,7 @@ import { digest, jsonBytes } from './digest.ts';
 import { isWriteRequestId } from './types.ts';
 import { containsPath, worktreeManifest } from './ownership.ts';
 import { compactStoredManifest, type WorktreeManifest } from './worktree-manifest.ts';
-import { PHYSICAL_ROOT_MARKER, abortMovedReservation, cleanMovedReservation, discardMovedReservationPreparation, inspectMovedReservation, physicalRootReservationPath, prepareMovedReservationAbort, prepareMovedReservationPublication, publishMovedReservation, publishedMovedReservationProof, verifyAbortedMovedReservation, verifyMovedReservation, type MovedReservationProof } from './physical-root-record.ts';
+import { PHYSICAL_ROOT_MARKER, abortMovedReservation, cleanMovedReservation, discardMovedReservationPreparation, inspectMovedReservation, isCanonicalWorktreeRoot, physicalRootReservationPath, prepareMovedReservationAbort, prepareMovedReservationPublication, publishMovedReservation, publishedMovedReservationProof, verifyAbortedMovedReservation, verifyMovedReservation, type MovedReservationProof } from './physical-root-record.ts';
 import { advanceTopology, assertSourceKeyUnreserved, lockTopologyPrincipal, topologyCanonicalStamp, withExistingWorktreeLocks } from './topology-locks.ts';
 import { priorTopologyChange, recordTopologyChange, releaseTopologyReservation, topologyReceipt, type TopologyChange } from './topology-receipts.ts';
 import { topologyTransaction } from './topology-transaction.ts';
@@ -94,7 +93,7 @@ async function makePlan(engine: BrainEngine, input: BindExistingInput, id: strin
   if (!brain || !hostId) throw refusal('recovery_required', 'The existing brain and host identities are required.');
   const { owner, hosts } = await readOwner(engine, input), host = hosts[0];
   if (owner.owner_host_id !== hostId || host.host_id !== hostId || owner.owner_epoch !== input.expectedEpoch || owner.topology_generation !== input.expectedGeneration || owner.state !== 'active' || owner.manifest?.prepared_at) throw refusal('source_changed', 'The existing owner, epoch, generation or active state does not match.');
-  if (realpathSync(input.path) !== input.path || realpathSync(discoverGitRoot(input.path)) !== input.path) throw refusal('recovery_required', 'The source path must be the discovered canonical Git worktree root.');
+  if (!isCanonicalWorktreeRoot(input.path, discoverGitRoot)) throw refusal('recovery_required', 'The source path must be the discovered canonical Git worktree root.');
   if (typeof host.coordination_path !== 'string') throw refusal('recovery_required', 'The recorded coordination path is required.');
   const physical = inspectMovedReservation(input.path, input.reservationFile, { brainId: brain.brain_id, worktreeId: input.worktreeId, hostId, coordinationPath: host.coordination_path });
   if (host.local_path !== input.path && host.local_path !== physical.historicalRoot) throw refusal('source_changed', 'The complete host binding names neither the current nor historical root.');
