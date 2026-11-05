@@ -417,6 +417,17 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": "retrieval",
     "description": "List pages with filters. For 'what's recent / what did I touch this week' use sort=updated_desc. Default 50 rows; truncated: continue with updated_after + updated_after_slug from the last row.",
     "params": {
+      "folder": {
+        "type": "string",
+        "description": "Exact top-level slug folder; empty string selects top-level pages."
+      },
+      "group_by": {
+        "type": "string",
+        "enum": [
+          "folder"
+        ],
+        "description": "Return paginated folder names and counts instead of page records."
+      },
       "type": {
         "type": "string",
         "description": "Page type."

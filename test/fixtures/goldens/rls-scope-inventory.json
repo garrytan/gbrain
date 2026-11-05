@@ -1954,6 +1954,45 @@
           "src-a,src-b"
         ]
       },
+      "listPageFolders#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "scoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": [
+          "*"
+        ]
+      },
+      "listPageFolders#sourceId": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "scoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": [
+          "src-a"
+        ]
+      },
+      "listPageFolders#sourceIds": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "scoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": [
+          "src-a,src-b"
+        ]
+      },
       "listPages#default": {
         "flagOffLanes": [
           "pool"
@@ -1994,6 +2033,19 @@
         ]
       },
       "listPages#excludePrivate": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "scoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": [
+          "*"
+        ]
+      },
+      "listPages#folder": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3447,7 +3499,7 @@
       }
     },
     "static": {
-      "callSites": 29,
+      "callSites": 30,
       "directMethods": {
         "_searchKeywordCJK": 1,
         "countChunklessPagesWithContent": 1,
@@ -3465,6 +3517,7 @@
         "listChunklessPagesWithContent": 1,
         "listCorpusSample": 1,
         "listLinkSources": 1,
+        "listPageFolders": 1,
         "listPages": 1,
         "listPrefixSampledPages": 1,
         "listStaleChunks": 1,
@@ -3593,6 +3646,7 @@
         "listFactsSince": "none",
         "listFilesForPage": "none",
         "listLinkSources": "direct",
+        "listPageFolders": "direct",
         "listPages": "direct",
         "listPrefixSampledPages": "direct",
         "listStaleChunks": "direct",

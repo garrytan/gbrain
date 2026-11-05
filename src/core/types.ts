@@ -310,7 +310,11 @@ export interface PageInput {
   ingested_at?: Date | null;
 }
 
+export interface PageFolder { name: string; count: number }
+
 export interface PageFilters {
+  /** Exact top-level slug folder; empty string selects pages without a slash. */
+  folder?: string;
   type?: PageType;
   tag?: string;
   limit?: number;

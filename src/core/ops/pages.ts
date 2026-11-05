@@ -465,6 +465,8 @@ const list_pages: Operation = {
   outputRedaction: 'retrieval',
   description: LIST_PAGES_DESCRIPTION,
   params: {
+    folder: { type: 'string', description: 'Exact top-level slug folder; empty string selects top-level pages.' },
+    group_by: { type: 'string', enum: ['folder'], description: 'Return paginated folder names and counts instead of page records.' },
     type: { type: 'string', description: 'Page type.' },
     tag: { type: 'string', description: 'Tag.' },
     limit: { type: 'number', description: 'Max rows (default 50; remote max 100).' },
@@ -497,6 +499,12 @@ const list_pages: Operation = {
     },
   },
   handler: async (ctx, p) => {
+    if (p.folder !== undefined && (typeof p.folder !== 'string' || p.folder.includes('/'))) {
+      throw invalidParam(ctx, 'list_pages', 'folder', 'folder must be one top-level folder name, or an empty string.');
+    }
+    if (p.group_by !== undefined && p.group_by !== 'folder') {
+      throw invalidParam(ctx, 'list_pages', 'group_by', 'group_by must be folder.');
+    }
     // Whitelist the sort enum at the handler before passing to the engine.
     // Engines also whitelist via PAGE_SORT_SQL but defending here keeps
     // unsupported strings from reaching the SQL layer.
@@ -567,7 +575,23 @@ const list_pages: Operation = {
     // list and never learns rows were dropped, and with the default
     // updated_desc sort the dropped rows are always the OLDEST, i.e. exactly
     // the pages such consumers exist to find.
+    if (p.group_by === 'folder') {
+      const rows = await ctx.engine.listPageFolders({type: p.type as any, tag: p.tag as string,
+        folder: p.folder as string | undefined, limit: limit + 1, offset,
+        includeDeleted: p.include_deleted === true, updated_after: updatedAfterKeyset ? undefined : updatedAfter,
+        updatedAfterKeyset, excludePrivate, ...scope});
+      const truncated = rows.length > limit;
+      const pagination = {truncated, limit, ...(requestedLimit !== undefined && requestedLimit > limit ? {clamped_from: requestedLimit} : {}),
+        ...(truncated ? {next: {offset: (offset ?? 0) + limit}} : {})};
+      ctx.emitResponseMeta?.('pagination', pagination);
+      const notice = listingTruncatedNotice(pagination, p);
+      if (!isLocal && notice) ctx.emitNotice?.(notice);
+      return {folders: rows.slice(0, limit)};
+    }
+    // Echo the filter so clients can detect older servers that silently ignore it.
+    if (p.folder !== undefined) ctx.emitResponseMeta?.('folder', p.folder);
     const rows = await ctx.engine.listPages({
+      folder: p.folder as string | undefined,
       type: p.type as any,
       tag: p.tag as string,
       limit: limit + 1,

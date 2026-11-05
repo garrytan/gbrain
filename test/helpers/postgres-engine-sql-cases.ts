@@ -84,7 +84,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'getPage': 'pages', 'readPageSnapshot': 'pages', 'readPageSnapshotsBatch': 'pages', 'lockPageKeys': 'pages', 'findDuplicatePage': 'pages', 'findDuplicatePages': 'pages',
   'putPage': 'pages', 'deletePage': 'pages', 'deletePages': 'pages', 'resolveSlugsByPaths': 'pages',
   'softDeletePage': 'pages', 'softDeletePages': 'pages', 'restorePage': 'pages', 'purgeDeletedPages': 'pages',
-  'refreshPageBody': 'pages', 'updatePageContextualRetrievalState': 'pages', 'listPages': 'pages',
+  'refreshPageBody': 'pages', 'updatePageContextualRetrievalState': 'pages', 'listPages': 'pages', 'listPageFolders': 'pages',
   'getAllSlugs': 'pages', 'listAllPageRefs': 'pages', 'listPrefixSampledPages': 'pages', 'listCorpusSample': 'pages',
   'resolveSlugs': 'pages', 'findByTitleFuzzy': 'pages', 'getPageTimestamps': 'pages',
   'createVersion': 'pages', 'getVersions': 'pages', 'revertToVersion': 'pages', 'updateSlug': 'pages',
@@ -313,7 +313,13 @@ export const SQL_CASES: SqlCase[] = [
   ]),
   ...variants('refreshPageBody', [['default', (e) => e.refreshPageBody(SLUG, SRC, 'body', 'tl', 'hash-2')]]),
   ...variants('updatePageContextualRetrievalState', [['default', (e) => e.updatePageContextualRetrievalState(SLUG, SRC, 'full', 'gen-1')]]),
+  ...variants('listPageFolders', [
+    ['default', (e) => e.listPageFolders()],
+    ['sourceId', (e) => e.listPageFolders({ sourceId: SRC, excludePrivate: true })],
+    ['sourceIds', (e) => e.listPageFolders({ sourceIds: SRCS })],
+  ]),
   ...variants('listPages', [
+    ['folder', (e) => e.listPages({ folder: 'shuttles' })],
     ['default', (e) => e.listPages()],
     ['type', (e) => e.listPages({ type: 'person' })],
     ['tag', (e) => e.listPages({ tag: 'founder' })],

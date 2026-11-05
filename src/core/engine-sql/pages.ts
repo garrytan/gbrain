@@ -14,7 +14,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow } from '../types.ts';
-import type { Page, PageInput, PageFilters, StalePageRow } from '../types.ts';
+import type { Page, PageInput, PageFilters, PageFolder, StalePageRow } from '../types.ts';
 import type { GetVersionsOpts, PageVersionRows } from '../page-state/version-types.ts';
 import { PAGE_SORT_SQL } from '../types.ts';
 import type { PageWriteOptions } from '../page-state/types.ts';
@@ -393,7 +393,17 @@ export async function updatePageContextualRetrievalState(
     `);
   }
 
-export async function listPages(exec: ScopedRead, filters?: PageFilters): Promise<Page[]> {
+export function listPages(exec: ScopedRead, filters?: PageFilters): Promise<Page[]> {
+  return listPageRows(exec, filters, false);
+}
+
+export function listPageFolders(exec: ScopedRead, filters?: PageFilters): Promise<PageFolder[]> {
+  return listPageRows(exec, filters, true);
+}
+
+function listPageRows(exec: ScopedRead, filters: PageFilters | undefined, folders: false): Promise<Page[]>;
+function listPageRows(exec: ScopedRead, filters: PageFilters | undefined, folders: true): Promise<PageFolder[]>;
+async function listPageRows(exec: ScopedRead, filters: PageFilters | undefined, folders: boolean): Promise<Page[] | PageFolder[]> {
     const limit = filters?.limit || 100;
     const offset = filters?.offset || 0;
     const updatedAfter = filters?.updated_after;
@@ -448,6 +458,19 @@ export async function listPages(exec: ScopedRead, filters?: PageFilters): Promis
       ? sqlFragment`AND p.effective_date <= ${filters.effective_before}::timestamptz`
       : sqlFragment``;
 
+    const folderExpression = sqlFragment`CASE WHEN position('/' in p.slug) > 0 THEN split_part(p.slug, '/', 1) ELSE '' END`;
+    const folderCondition = filters?.folder !== undefined
+      ? sqlFragment`AND ${folderExpression} = ${filters.folder}` : sqlFragment``;
+    if (folders) {
+      const { rows } = await exec.run<{ name: string; count: string | number }>(sqlFragment`
+        SELECT ${folderExpression} AS name, count(*) AS count FROM pages p
+        ${tagJoin}
+        WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${slugAfterCondition} ${sourceCondition} ${deletedCondition} ${privateCondition} ${effectiveAfterCondition} ${effectiveBeforeCondition} ${folderCondition}
+        GROUP BY 1 ORDER BY 1 LIMIT ${limit} OFFSET ${offset}
+      `);
+      return rows.map(r => ({ name: r.name, count: Number(r.count) }));
+    }
+
     // v0.29: ORDER BY threading via PAGE_SORT_SQL whitelist (no SQL injection).
     const sortKey = filters?.sort && PAGE_SORT_SQL[filters.sort] ? filters.sort : 'updated_desc';
     const orderBy = trustedSql(PAGE_SORT_SQL[sortKey]);
@@ -459,7 +482,7 @@ export async function listPages(exec: ScopedRead, filters?: PageFilters): Promis
       const { rows } = await exec.run(sqlFragment`
         SELECT ${columns}, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso FROM pages p
         ${tagJoin}
-        WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${slugAfterCondition} ${sourceCondition} ${deletedCondition} ${privateCondition} ${effectiveAfterCondition} ${effectiveBeforeCondition}
+        WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${slugAfterCondition} ${sourceCondition} ${deletedCondition} ${privateCondition} ${effectiveAfterCondition} ${effectiveBeforeCondition} ${folderCondition}
         ORDER BY ${orderBy} LIMIT ${limit} OFFSET ${offset}
       `);
       return rows.map(rowToPage);

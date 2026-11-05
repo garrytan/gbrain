@@ -92,7 +92,7 @@ import { attemptWalRepairAndRetry, closeRepairEpisodeIfOpen, readRepairFailedMar
 import { getFtsLanguage } from './fts-language.ts';
 import { splitEmbeddingSignature, currentSpaceChunkPredicate, lockEmbeddingSources } from './embedding-invalidation.ts';
 import type {
-  Page, PageInput, PageFilters, PageType,
+  Page, PageInput, PageFilters, PageFolder, PageType,
   Chunk, ChunkInput, StaleChunkRow, StalePageRow, ChunklessPageRow,
   SearchResult, SearchOpts, ResolvedColumn,
   Link, GraphNode, GraphPath,
@@ -1342,6 +1342,10 @@ export class PGLiteEngine implements BrainEngine {
 
   async listPages(filters?: PageFilters): Promise<Page[]> {
     return plannerRead(this, this._pageTransaction, () => pagesImpl.listPages(scopedRead(this.engineSql), filters));
+  }
+
+  async listPageFolders(filters?: PageFilters): Promise<PageFolder[]> {
+    return plannerRead(this, this._pageTransaction, () => pagesImpl.listPageFolders(scopedRead(this.engineSql), filters));
   }
 
   async getAllSlugs(opts?: { sourceId?: string }): Promise<Set<string>> {
