@@ -441,7 +441,7 @@ function secretScanOrThrow(workspaceDir: string, relFiles: string[]): void {
  * scan (NEVER bypassed), commits. No-op when a commit already exists and the
  * tree is clean.
  */
-async function ensureWorkspaceCommit(runner: ExecRunner, workspaceDir: string): Promise<void> {
+export async function ensureWorkspaceCommit(runner: ExecRunner, workspaceDir: string): Promise<void> {
   const head = await runner(['git', '-C', workspaceDir, 'rev-parse', '--verify', 'HEAD']);
   const hasCommit = head.code === 0;
   const statusRes = await runner(['git', '-C', workspaceDir, 'status', '--porcelain']);
