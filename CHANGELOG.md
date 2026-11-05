@@ -10,6 +10,14 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.579.0] - 2026-11-05
+
+**The nightly E2E upgrade check passes on keyed runs again.** The upgrade-from-previous-release harness checks that a brain and keyless config file written by the previous release resolve the same `gbrain config show` output under this build. The keyed nightly E2E lane keeps `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` set, the harness's CLI inherited them, and `config show` printed two redacted key lines the golden doesn't list. The harness now runs its CLI keyless, as the install it models does. Nothing changes for users. A keyless install resolves exactly the golden, and a keyed one shows its keys as before.
+
+### Itemized changes
+
+- `test/helpers/upgrade-from-previous-release.ts`: the harness's CLI child runs with every provider key and base URL in `PROVIDER_ENV_KEYS` removed. The golden is unchanged. On real Postgres, master failed 3 of 12 with fake keys set (the same two lines as the nightly run) and passed keyless; with this change it passes 12 of 12 both ways (#6040).
+
 ## [0.60.578.0] - 2026-11-05
 
 **Memory train (GBRA-286): `forget` edits the page files first, `recall` can weigh how far a fact deserves belief, page versions carry a human reason and can be read by date, and agents can read and switch the saving rule. Every new mode is off by default, and every feature works on a brain with no Git repository.**

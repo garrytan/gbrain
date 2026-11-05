@@ -7,7 +7,9 @@
  * page, plus a config file in the previous release's keyless format, opens
  * under this build through the production path (the CLI, which migrates on
  * connect), keeps its page, and resolves the same settings as the frozen
- * goldens below. The config file is never rewritten. It runs for the three
+ * goldens below. The CLI runs keyless, as that install does: a keyed E2E
+ * lane's provider keys would otherwise resolve through the env plane into
+ * config show. The config file is never rewritten. It runs for the three
  * brain shapes: a repo brain (the default source is a git checkout), the
  * default keyless content-directory brain, and a no-root (init --db-only)
  * brain.
@@ -24,6 +26,7 @@ import { join } from 'node:path';
 import { LATEST_VERSION } from '../../src/core/migrate.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { runCli, type CliResult } from './cli-spawn.ts';
+import { PROVIDER_ENV_KEYS } from './provider-env.ts';
 import { schemaHistorySql, schemaHistoryVersions } from './schema-history.ts';
 
 export type UpgradeEngine = 'pglite' | 'postgres';
@@ -145,7 +148,7 @@ export async function previousReleaseBrain(engine: UpgradeEngine, shape: BrainSh
     brain,
     config,
     configText,
-    cli: (args) => runCli(args, { home, timeoutMs: 120_000 }),
+    cli: (args) => runCli(args, { home, timeoutMs: 120_000, env: Object.fromEntries(PROVIDER_ENV_KEYS.map((key) => [key, undefined])) }),
     normalize,
   };
 }
