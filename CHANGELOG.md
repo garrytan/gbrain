@@ -21,13 +21,13 @@ A refresh interrupted after a member source synced the upstream commit, then mov
 - `src/core/persistence/worktree-refresh.ts`: one member check (`membersPastStart`) feeds `--abandon`, the `--resume` refusal at the start commit, the stored `recovery_required` fix and writer status.
 - Tests: `test/persistence-worktree-refresh.test.ts` 7r (the three-step chain: crash while syncing, member synced, HEAD reset; pages survive, then reset-to-target and `--resume` completes) 7s (no member moved: `--abandon` still works) and 7t (a member behind the start commit still abandons; an unknown commit refuses), on PGLite and on Postgres through `test/e2e/worktree-refresh-postgres.test.ts`.
 
-## [Unreleased]
+## [0.60.583.0] - 2026-11-05
 
 **Sync and source-refresh follow-ups from wave #8123: an interrupted refresh names what holds it and how to finish it, managed-sync preparations stop waiting on table locks, code sources converge on their first full sync, and `sync.write_through=false`, impossible timeline dates, image names, dry runs and missing source directories behave as documented.**
 
 **`gbrain sources refresh` says what is actually holding an interrupted refresh, and its owner recovery stops holding locks it doesn't need (#8123).**
 
-Writer status for a `recovery_required` refresh now reads the checkout HEAD: at the upstream commit it names `--resume`, at the start commit `--abandon` (only when no member source has synced past it), and only another HEAD asks the user to reset. An orphan whose HEAD git cannot read names `git -C <checkout> status` instead of promising that the next refresh finishes it, and the owner scan logs it once every 15 minutes instead of swallowing it. A refresh lock file this host cannot open reads `liveness: unknown` with the lock path, and a plain refresh refuses `refresh_in_progress` instead of failing with a raw lock error. A refresh held on another host names that host in `next`. A plain refresh that rolled back an orphan and then refused keeps that recovery in its refusal message. A delegated refresh (a resident PGLite owner) prints the same structured `fix` as a direct one.
+Writer status for a `recovery_required` refresh now reads the checkout HEAD. At the upstream commit it names `--resume`, at the start commit `--abandon` (only when no member source has synced past it), and only another HEAD asks the user to reset. An orphan whose HEAD git cannot read names `git -C <checkout> status` instead of promising that the next refresh finishes it, and the owner scan logs it once every 15 minutes instead of swallowing it. A refresh lock file this host cannot open reads `liveness: unknown` with the lock path, and a plain refresh refuses `refresh_in_progress` instead of failing with a raw lock error. A refresh held on another host names that host in `next`. A plain refresh that rolled back an orphan and then refused keeps that recovery in its refusal message. A delegated refresh (a resident PGLite owner) prints the same structured `fix` as a direct one.
 
 ### Itemized changes
 
@@ -67,6 +67,7 @@ A code or image import recorded its provenance without the open `--full` episode
 - A managed `gbrain sync --dry-run` reports and prints how many files the run would add, modify, soft-delete and rename. It used to report zero, or repeat the previous run's counts (#7087).
 - `gbrain sources list` marks archived sources with `⚠ archived` and `--json` carries `archived` per source (#7701).
 - A registered source whose directory is missing is reported `missing` by the frontmatter audit and both frontmatter doctor checks, with the path and the restore or `sources set-path` step, instead of clean; a connector source's leftover path is not reported (#7889).
+
 ## [0.60.582.0] - 2026-11-05
 
 **A frontmatter-only disagreement between a page's file and its database copy no longer blocks an unrelated `remember`, a contact row whose `last_used` moved forward reconciles automatically, and duplicated contact rows can be collapsed with one previewed repair (#8109).**
