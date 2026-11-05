@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.583.0] - 2026-11-05
 
 **Sync and source-refresh follow-ups from wave #8123: an interrupted refresh names what holds it and how to finish it, managed-sync preparations stop waiting on table locks, code sources converge on their first full sync, and `sync.write_through=false`, impossible timeline dates, image names, dry runs and missing source directories behave as documented.**
 
@@ -56,6 +56,7 @@ A code or image import recorded its provenance without the open `--full` episode
 - A managed `gbrain sync --dry-run` reports and prints how many files the run would add, modify, soft-delete and rename. It used to report zero, or repeat the previous run's counts (#7087).
 - `gbrain sources list` marks archived sources with `⚠ archived` and `--json` carries `archived` per source (#7701).
 - A registered source whose directory is missing is reported `missing` by the frontmatter audit and both frontmatter doctor checks, with the path and the restore or `sources set-path` step, instead of clean; a connector source's leftover path is not reported (#7889).
+
 ## [0.60.582.0] - 2026-11-05
 
 **A frontmatter-only disagreement between a page's file and its database copy no longer blocks an unrelated `remember`, a contact row whose `last_used` moved forward reconciles automatically, and duplicated contact rows can be collapsed with one previewed repair (#8109).**
