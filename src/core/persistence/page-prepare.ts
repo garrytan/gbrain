@@ -243,6 +243,7 @@ export async function fileMatchesSnapshot(engine: BrainEngine, slug: string, byt
  */
 async function frontmatterDriftWrite(engine: BrainEngine, slug: string, fileText: string, snapshot: PageSnapshot, content: string,
   activePack?: ParseOpts['activePack']): Promise<string | null> {
+  snapshot = (await materializedSnapshot(engine, snapshot))!;
   const file = parseMarkdown(fileText, slug, { activePack });
   const type = importedFileType(file, snapshot.page, false);
   const bodies = await overlayCanonicalBodies(engine.executeRaw.bind(engine), file.compiled_truth, file.timeline ?? '', snapshot.withdrawals,
