@@ -26,8 +26,9 @@ const keyOf = (row: unknown): string | null => {
   const type = row.type.trim().toLowerCase(), value = String(row.value).trim();
   return type && value ? JSON.stringify([type, value]) : null;
 };
+const DATE_TEXT = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2}))?$/;
 const instant = (value: unknown): number => {
-  const text = value instanceof Date ? value.toISOString() : typeof value === 'string' ? value : null;
+  const text = value instanceof Date ? value.toISOString() : typeof value === 'string' && DATE_TEXT.test(value) ? value : null;
   return text === null ? NaN : Date.parse(text);
 };
 

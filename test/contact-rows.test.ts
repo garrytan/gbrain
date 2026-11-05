@@ -33,6 +33,8 @@ describe('#8109 dedupeContactRows', () => {
     expect(dedupeContactRows(list)).toEqual({ rows: list.slice(0, 2), removed: 1, kept_conflicting: 1 });
     // An activity date that is not a date cannot be ordered: the rows are kept apart, exact copies still go.
     expect(dedupeContactRows([phone('+15550100', 'yesterday'), phone('+15550100', '2026-10-01'), phone('+15550100', 'yesterday')])!.rows).toHaveLength(2);
+    // A last_* field holding a number is not a date, even though Date.parse reads '0100' and '2' as years.
+    expect(dedupeContactRows([phone('+15550100', '2026-10-01', { last_digits: '0100' }), phone('+15550100', '2026-10-01', { last_digits: '2' })])).toBeNull();
   });
 
   test('non-row entries, rows without a type or value, and lists with nothing to merge are left alone', () => {
