@@ -344,14 +344,14 @@ export class PersistenceIpcTransportError extends Error {
 
 /**
  * GST-1387: a wire error body's recovery contract (canonical code, detail, retryable, fix) restored onto a rebuilt
- * OperationError, so a refresh fence stays worktree_refreshing with fix.next wait across the owner hop. A receipt
- * error's fix is not carried: this side renders it from the receipt for its own principal.
+ * OperationError, so a refresh fence stays worktree_refreshing with fix.next wait across the owner hop. Only the fence's
+ * fix (read-only, no consent) is carried: a rendered fix drops `ask_user`, and a receipt's fix is rendered on this side.
  */
 export function restoreRecoveryContract(error: OperationError, body: Record<string, unknown>): void {
   if (typeof body.code === 'string' && body.code !== error.code) error.canonical = body.code as OperationError['canonical'];
   if (typeof body.detail === 'string') error.detail = body.detail;
   if (typeof body.retryable === 'boolean') error.retryable = body.retryable;
-  if (record(body.fix) && !body.write_request) { const { next: _next, command: _command, ...fix } = body.fix; error.fix = fix as unknown as Action; }
+  if (record(body.fix) && body.code === 'worktree_refreshing') { const { next: _next, command: _command, ...fix } = body.fix; error.fix = fix as unknown as Action; }
 }
 
 function remoteOperationError(value: unknown): OperationError {
