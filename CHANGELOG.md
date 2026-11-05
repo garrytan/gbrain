@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.581.0] - 2026-11-05
 
 **CI shard weights are re-mined from the 2026-11-04 nightlies, so the unit, serial and full E2E lanes pack their shards on current timings.** Nothing changes for users.
 
