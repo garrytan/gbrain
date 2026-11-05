@@ -90,6 +90,8 @@ export interface HybridRequest {
   decide?: DecideSearchContext;
   /** Set by the rerank stage when the System One reranker answered. */
   rerankMeta?: { model_resolved: string };
+  /** #7492: set when an image-reading vector arm ran; emitted as `image_arm` (coverage counts pending images only then). */
+  imageArmRan?: boolean;
   /** Set by the relational arm when the multi-hop planner ran (meta.relational_plan). */
   relationalPlan?: import('../relational-recall.ts').RelationalPlanMeta;
   /** Set by the collapse stage when it folded or read in a row (meta.collapse). */
@@ -249,6 +251,7 @@ export async function resolveHybridRequest(
     // Per-brain `search.source_boosts` (read in the mode snapshot) over the
     // defaults; the env override still wins inside resolveBoostMap.
     source_boosts: resolveBoostMap(undefined, modeInput.sourceBoosts),
+    keywordPhrase: resolvedMode.keyword_phrase,
     // v0.29.1: since/until take precedence over deprecated afterDate/beforeDate.
     // The engine still consumes the legacy field names; this aliasing keeps
     // PR #618 callers compiling while the new names are the public surface.
@@ -370,7 +373,9 @@ export async function applyIdentityBoosts(req: HybridRequest, list: SearchResult
   // never waits.
 export function emitHybridMeta(req: HybridRequest, armMeta: HybridSearchMeta): void {
   const { engine, opts } = req;
-  const rawMeta = req.keywordCandidates ? { ...armMeta, keyword_candidates: req.keywordCandidates } : armMeta;
+  const rawMeta = req.keywordCandidates || req.imageArmRan
+    ? { ...armMeta, ...(req.keywordCandidates ? { keyword_candidates: req.keywordCandidates } : {}), ...(req.imageArmRan ? { image_arm: true as const } : {}) }
+    : armMeta;
   const decide = decideMetaFor(req.decide);
   const answerability = req.decide?.answerability;
   const meta: HybridSearchMeta = decide || req.rerankMeta || answerability || req.relationalPlan || req.collapse
