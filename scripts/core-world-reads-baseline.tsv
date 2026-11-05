@@ -396,6 +396,7 @@ src/core/facts/purge-verify.ts	spawn_import	1	W7: process-wide effects move to s
 src/core/facts/stub-guard-audit.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/facts/unfenced-facts.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/facts/writeback-config.ts	module_collection	1	W6: per-engine state, or mark as a constant table
+src/core/facts/writeback-settings.ts	module_collection	1	W6: per-engine state (a WeakMap keyed by engine, last-known-good memory.agent_writeback override; #7795 in the memory train #8481)
 src/core/feedback/record.ts	module_collection	3	W6: per-engine state, or mark as a constant table
 src/core/fence-repair/census.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/fence-repair/census.ts	spawn_import	1	W7: process-wide effects move to src/cli
@@ -640,6 +641,7 @@ src/core/persistence/file-claims.ts	fs_import	1	W5: repo-less persistence for ho
 src/core/persistence/file-repair.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/filesystem-guard.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/persistence/filesystem-guard.ts	module_collection	2	W6: per-engine state, or mark as a constant table
+src/core/persistence/forget-prepare.ts	fs_import	1	W7: filesystem boundary moves to the local app (forget checks that a page's recorded file exists before striking it; #7616 in the memory train #8481)
 src/core/persistence/git-conversion.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/git-conversion.ts	load_config	1	W6: settings plane out of the core
 src/core/persistence/git-declared.ts	spawn_import	1	W7: process-wide effects move to src/cli
@@ -842,6 +844,8 @@ src/core/questions/receipt.ts	fs_import	1	W7: filesystem boundary moves to the l
 src/core/read-heartbeat.ts	process_global	2	W7: process-wide effects move to src/cli
 src/core/readiness.ts	module_collection	4	W6: per-engine state, or mark as a constant table
 src/core/readiness.ts	process_env	1	W6: settings plane out of the core
+src/core/reason-trailers.ts	fs_import	1	W7: filesystem boundary moves to the local app (realpath of the source and Git roots for the gbrain-reason trailer scan; #7798 in the memory train #8481)
+src/core/reason-trailers.ts	module_collection	1	W6: per-engine state (short-lived trailer-scan cache keyed by source root; #7798 in the memory train #8481)
 src/core/recall-cursor-state.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/remediation-checkpoint.ts	fs_import	2	W7: filesystem boundary moves to the local app
 src/core/remediation/context.ts	process_env	1	W6: settings plane out of the core
