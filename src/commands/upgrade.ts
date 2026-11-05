@@ -28,6 +28,15 @@ import {
 } from '../core/bun-floor.ts';
 
 const GBRAIN_GITHUB_REPO = 'garrytan/gbrain';
+const BUN_COPYFILE_BACKEND = '--backend=copyfile';
+
+function globalInstallUsesCopyfile(globalRoot: string): boolean {
+  return existsSync(join(globalRoot, 'node_modules', 'gbrain', 'openclaw.plugin.json'));
+}
+
+function bunAddArgs(spec: string, useCopyfile: boolean): string[] {
+  return ['add', '-g', ...(useCopyfile ? [BUN_COPYFILE_BACKEND] : []), spec];
+}
 
 /**
  * Compare the post-swap resolved version against the caller's target (#4366).
@@ -118,7 +127,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
       if (pinned) { if (pinned === 'refused') return; upgraded = pinned === 'installed'; break; }
       if (checkBunFloor && refuseForBunFloor(await readPackageTarget(globalGbrainSpec(bunGlobalRoot)), opts.targetVersion)) return;
       try {
-        execFileSync('bun', ['update', 'gbrain'], { cwd: bunGlobalRoot, env: upgradeEnv, stdio: 'inherit', timeout: 120_000 });
+        execFileSync('bun', ['update', ...(globalInstallUsesCopyfile(bunGlobalRoot) ? [BUN_COPYFILE_BACKEND] : []), 'gbrain'], { cwd: bunGlobalRoot, env: upgradeEnv, stdio: 'inherit', timeout: 120_000 });
         upgraded = true;
       } catch {
         if (installedDespiteFailure(oldVersion)) upgraded = true;
@@ -235,13 +244,13 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   if (target && assessUpgradeOutcome(target, newVersion) === 'mismatch') {
     console.error(`Upgrade did not take effect: still running ${newVersion}, expected ${target}.`);
     const plan = planPinnedReinstall(target, oldVersion);
-    printPinnedReinstall(plan, oldVersion, 'Exact-tag Git installs stay pinned through `bun update`. Reinstall with:');
+    printPinnedReinstall(plan, oldVersion, 'Exact-tag Git installs stay pinned through `bun update`. Reinstall with:', method === 'bun' && globalInstallUsesCopyfile(resolveBunGlobalRoot()));
     recordUpgradeError({
       phase: 'verify-target',
       fromVersion: oldVersion,
       toVersion: target,
       error: `still running ${newVersion} after upgrade`,
-      recover: pinnedReinstallHint(plan),
+      recover: pinnedReinstallHint(plan, method === 'bun' && globalInstallUsesCopyfile(resolveBunGlobalRoot())),
     });
     setCliExitVerdict(1);
     return;
@@ -257,13 +266,13 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
     if (pin) {
       const plan = planPinnedReinstall(null, oldVersion);
       console.error(`Upgrade did not take effect: still running ${newVersion}, because the global install is pinned to ${pin} and \`bun update\` keeps a pinned tag.`);
-      printPinnedReinstall(plan, oldVersion, 'Reinstall to move off the pin:');
+      printPinnedReinstall(plan, oldVersion, 'Reinstall to move off the pin:', method === 'bun' && globalInstallUsesCopyfile(resolveBunGlobalRoot()));
       recordUpgradeError({
         phase: 'verify-pin',
         fromVersion: oldVersion,
         toVersion: plan.version ?? 'latest',
         error: `pinned to ${pin}; still running ${newVersion} after upgrade`,
-        recover: pinnedReinstallHint(plan),
+        recover: pinnedReinstallHint(plan, method === 'bun' && globalInstallUsesCopyfile(resolveBunGlobalRoot())),
       });
       setCliExitVerdict(1);
       return;
@@ -449,17 +458,18 @@ async function installStableRelease(method: string, target: { version: string; c
     setCliExitVerdict(1);
     return 'refused';
   }
+  const useCopyfile = method === 'bun' && globalInstallUsesCopyfile(resolveBunGlobalRoot());
   const bun = (bunArgs: string[]) => execFileSync('bun', bunArgs, { env: ctx.upgradeEnv, stdio: cliChildStdio(), timeout: 300_000 });
   try {
     bun(['remove', '-g', 'gbrain']);
-    bun(['add', '-g', spec]);
+    bun(bunAddArgs(spec, useCopyfile));
     return 'installed';
   } catch {
     if (installedDespiteFailure(ctx.oldVersion)) return 'installed';
     console.error(`Installing ${spec} failed. Restoring gbrain ${ctx.oldVersion}...`);
-    try { bun(['add', '-g', `github:${GBRAIN_GITHUB_REPO}#v${ctx.oldVersion}`]); console.error(`Restored gbrain ${ctx.oldVersion}.`); }
-    catch { console.error(`Restore failed. Reinstall by hand: ${bunReinstallCommand(`#v${target.version}`)}`); }
-    recordUpgradeError({ phase: ctx.phase ?? 'stable-reinstall', fromVersion: ctx.oldVersion, toVersion: target.version, error: `bun add -g ${spec} failed`, recover: bunReinstallCommand(`#v${target.version}`) });
+    try { bun(bunAddArgs(`github:${GBRAIN_GITHUB_REPO}#v${ctx.oldVersion}`, useCopyfile)); console.error(`Restored gbrain ${ctx.oldVersion}.`); }
+    catch { console.error(`Restore failed. Reinstall by hand: ${bunReinstallCommandFor(`#v${target.version}`, useCopyfile)}`); }
+    recordUpgradeError({ phase: ctx.phase ?? 'stable-reinstall', fromVersion: ctx.oldVersion, toVersion: target.version, error: `bun add -g ${spec} failed`, recover: bunReinstallCommandFor(`#v${target.version}`, useCopyfile) });
     setCliExitVerdict(1);
     return 'failed';
   }
@@ -518,7 +528,7 @@ function postSwapSmoke(newVersion: string, r: SmokeRecovery): boolean {
   const detail = (run.stderr ?? '').trim().split('\n')[0];
   const back = r.method === 'bun-link' && r.repoRoot && r.previousSha
     ? `git -C ${r.repoRoot} checkout ${r.previousSha} && bun install`
-    : r.method === 'bun' ? bunReinstallCommand(`#v${r.oldVersion}`) : null;
+    : r.method === 'bun' ? bunReinstallCommandFor(`#v${r.oldVersion}`, globalInstallUsesCopyfile(resolveBunGlobalRoot())) : null;
   console.error(`gbrain ${newVersion || '(new version)'} was installed but does not start: \`gbrain --help\` failed (${why}).${detail ? `\n  ${detail}` : ''}`);
   console.error('Recovery:');
   console.error('  If it names an old Bun: bun upgrade, then gbrain post-upgrade');
@@ -589,10 +599,14 @@ export function resolveBunGlobalRoot(): string {
  * 1.4, exits 0 without swapping while it corrupts the global package.json
  * and bun.lock.
  */
-export function bunReinstallCommand(ref: string): string {
+function bunReinstallCommandFor(ref: string, useCopyfile: boolean): string {
   const tag = /^#(v\d[\w.]*)$/.exec(ref)?.[1];
-  const remove = `bun remove -g gbrain && bun add -g github:${GBRAIN_GITHUB_REPO}${ref}`;
+  const remove = `bun remove -g gbrain && bun ${bunAddArgs(`github:${GBRAIN_GITHUB_REPO}${ref}`, useCopyfile).join(' ')}`;
   return tag ? `${releaseTagProbeCommand(tag)} && ${remove}` : remove;
+}
+
+export function bunReinstallCommand(ref: string): string {
+  return bunReinstallCommandFor(ref, false);
 }
 
 const GBRAIN_GIT_URL = `https://github.com/${GBRAIN_GITHUB_REPO}`;
@@ -655,36 +669,36 @@ export function planPinnedReinstall(requested: string | null, oldVersion: string
  * shells and PowerShell 7; Windows PowerShell 5.1 has no `&&`, so on Windows
  * each step is its own line. Always ends with the restore line for oldVersion.
  */
-export function reinstallHintLines(version: string, oldVersion: string, platform: NodeJS.Platform = process.platform): string[] {
+export function reinstallHintLines(version: string, oldVersion: string, platform: NodeJS.Platform = process.platform, useCopyfile = false): string[] {
   const tag = `v${version}`;
-  const restore = `If the add fails, restore ${oldVersion} with: bun add -g github:${GBRAIN_GITHUB_REPO}#v${oldVersion}`;
-  if (platform !== 'win32') return [bunReinstallCommand(`#${tag}`), restore];
+  const restore = `If the add fails, restore ${oldVersion} with: bun ${bunAddArgs(`github:${GBRAIN_GITHUB_REPO}#v${oldVersion}`, useCopyfile).join(' ')}`;
+  if (platform !== 'win32') return [bunReinstallCommandFor(`#${tag}`, useCopyfile), restore];
   return [
     'Run these one at a time, and stop if the first one fails (the tag is not published yet):',
     releaseTagProbeCommand(tag),
     'bun remove -g gbrain',
-    `bun add -g github:${GBRAIN_GITHUB_REPO}#${tag}`,
+    `bun ${bunAddArgs(`github:${GBRAIN_GITHUB_REPO}#${tag}`, useCopyfile).join(' ')}`,
     restore,
   ];
 }
 
-function printPinnedReinstall(plan: PinnedReinstallPlan, oldVersion: string, lead: string): void {
+function printPinnedReinstall(plan: PinnedReinstallPlan, oldVersion: string, lead: string, useCopyfile = false): void {
   if (plan.unpublished) {
     console.error(`v${plan.unpublished} is not published yet: its release tag is not on GitHub (tags are created after the release checks pass). Nothing was removed.`);
   }
   if (!plan.version) {
     if (plan.unpublished) return console.error('Retry `gbrain upgrade` later.');
     console.error(lead);
-    console.error(`  ${bunReinstallCommand('')}`);
+    console.error(`  ${bunReinstallCommandFor('', useCopyfile)}`);
     return;
   }
   console.error(plan.unpublished ? `The newest published release is ${plan.version}. ${lead}` : lead);
-  for (const line of reinstallHintLines(plan.version, oldVersion)) console.error(`  ${line}`);
+  for (const line of reinstallHintLines(plan.version, oldVersion, process.platform, useCopyfile)) console.error(`  ${line}`);
 }
 
-function pinnedReinstallHint(plan: PinnedReinstallPlan): string {
-  if (plan.version) return bunReinstallCommand(`#v${plan.version}`);
-  return plan.unpublished ? `v${plan.unpublished} is not published yet; retry gbrain upgrade later` : bunReinstallCommand('');
+function pinnedReinstallHint(plan: PinnedReinstallPlan, useCopyfile = false): string {
+  if (plan.version) return bunReinstallCommandFor(`#v${plan.version}`, useCopyfile);
+  return plan.unpublished ? `v${plan.unpublished} is not published yet; retry gbrain upgrade later` : bunReinstallCommandFor('', useCopyfile);
 }
 
 /**
