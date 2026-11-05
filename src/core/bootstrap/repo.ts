@@ -52,6 +52,7 @@ import {
   type ManifestState,
 } from './format.ts';
 import { BootstrapError } from './lock.ts';
+import { recordCommitAsync, recordIntentAsync } from '../git/commit-ledger.ts';
 
 // ---------------------------------------------------------------------------
 // Exec seam (shared by uninstall.ts; the dispatcher passes the real runner)
@@ -478,12 +479,17 @@ async function ensureWorkspaceCommit(runner: ExecRunner, workspaceDir: string): 
     );
   }
 
+  await recordIntentAsync(workspaceDir, { writer: 'bootstrap', head_before: hasCommit ? head.stdout.trim() || null : null, message: 'gbrain: bootstrap workspace' });
   const commit = await runner(['git', '-C', workspaceDir, 'commit', '-m', 'gbrain: bootstrap workspace']);
   if (commit.code !== 0 && !hasCommit) {
     throw new BootstrapError(
       'REPO_CREATE_FAILED',
       `git commit failed before the first push: ${commit.stderr.trim() || `exit ${commit.code}`}`,
     );
+  }
+  if (commit.code === 0) {
+    const sha = await runner(['git', '-C', workspaceDir, 'rev-parse', 'HEAD']);
+    if (sha.code === 0) await recordCommitAsync(workspaceDir, { sha: sha.stdout.trim(), writer: 'bootstrap' });
   }
 }
 
