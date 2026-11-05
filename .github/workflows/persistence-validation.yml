@@ -187,7 +187,7 @@ jobs:
   # file; the PGLite arm also runs in the unit lane). The list is test/postgres-unit-arms.txt;
   # scripts/check-postgres-lane-coverage.ts fails a new DATABASE_URL-gated arm
   # until it is listed there or wrapped in a test/e2e registerPostgresTests
-  # file. The twelve shards (ARM_SHARDS in scripts/postgres-unit-arms.ts) are
+  # file. The nineteen shards (ARM_SHARDS in scripts/postgres-unit-arms.ts) are
   # balanced by measured runtime (scripts/postgres-arm-weights.json, mined
   # from this job's ARM_FILE lines). Each job runs two files at a time, each
   # worker against its own PostgreSQL service; a shard's two-worker makespan,
@@ -199,14 +199,14 @@ jobs:
   # pull request (cheap tier) runs only the crash robot and convergence here. The
   # full-ci dispatch on its head, every push and the nightly run this lane.
   unit-postgres-arms:
-    name: Unit-lane PostgreSQL arms ${{ matrix.shard }}/12 / Bun ${{ matrix.bun }}
+    name: Unit-lane PostgreSQL arms ${{ matrix.shard }}/19 / Bun ${{ matrix.bun }}
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
         bun: ['1.4.4']
         # Event parity: every event, pull requests and merge-queue runs
         # included, runs every supported Bun version (docs/TESTING.md#event-parity).
@@ -254,7 +254,7 @@ jobs:
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
           GBRAIN_TEST_RECEIPT_LANE: pg-arms-bun-${{ matrix.bun }}
-        run: bun scripts/postgres-unit-arms.ts run ${{ matrix.shard }} 12
+        run: bun scripts/postgres-unit-arms.ts run ${{ matrix.shard }} 19
       - name: Upload receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -453,12 +453,24 @@ jobs:
           DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
           GBRAIN_TEST_RECONCILE_CRASH_MANIFEST_DIR: .context/reconcile-crashes
+          # Receipts put these files in the Test run's ci-manifest, so the run's
+          # tree.json lists them as executed (docs/ci-event-parity.md#remote-gate-reuse).
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
         run: |
           if [ '${{ matrix.engine }}' = 'postgres' ]; then
-            bun --no-env-file test --timeout=180000 test/e2e/reconcile-crash.test.ts test/e2e/reconcile-crash-unactivated.test.ts
+            bash scripts/run-with-receipt.sh reconciliation postgres-bun-${{ matrix.bun }} -- bun --no-env-file test --timeout=180000 test/e2e/reconcile-crash.test.ts test/e2e/reconcile-crash-unactivated.test.ts
           else
-            env -u DATABASE_URL -u GBRAIN_DATABASE_URL bun --no-env-file test --timeout=180000 test/reconcile-crash-*.slow.test.ts
+            env -u DATABASE_URL -u GBRAIN_DATABASE_URL bash scripts/run-with-receipt.sh reconciliation pglite-bun-${{ matrix.bun }} -- bun --no-env-file test --timeout=180000 test/reconcile-crash-*.slow.test.ts
           fi
+      - name: Upload receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: receipts-reconciliation-${{ matrix.engine }}-bun-${{ matrix.bun }}
+          path: ${{ runner.temp }}/receipts
+          retention-days: 14
+          if-no-files-found: warn
+          overwrite: true
       - name: Upload reconciliation crash manifests
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -36,10 +36,18 @@ import { operations, type OperationContext } from '../../src/core/operations.ts'
 import { AUTO_PACKINGS, assembleEvidenceForHits, countEvidenceTokens, evidenceFingerprint, pageEvidenceText } from '../../src/core/search/evidence-delivery.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { captureOffPath, seedOffPath, withCostWave } from '../helpers/evidence-delivery-fixture.ts';
+import { fenceTranscriptText } from '../../src/core/search/transcript-quote.ts';
 import { configureGateway } from '../../src/core/ai/gateway.ts';
 import { LEGACY_EMBEDDING_CONFIG } from '../helpers/legacy-embedding-config.ts';
 import { PROVIDER_ENV_KEYS } from '../helpers/provider-env.ts';
 import { emptyHome, withEnv } from '../helpers/with-env.ts';
+
+/** GST-687: the fixture pages carry no owner tier, so a remote reader gets each one's evidence fenced as a quote of its slug. */
+function asRead(remote: boolean, row: SearchResult, text: string): string {
+  if (!remote) return text;
+  expect((row as SearchResult & { quoted?: string }).quoted).toBe('transcript');
+  return fenceTranscriptText(text, row.slug);
+}
 
 const FIXTURE = join(import.meta.dir, '../fixtures/goldens/evidence-delivery/off-path.json');
 const backends = process.env.DATABASE_URL ? ['pglite', 'postgres'] as const : ['pglite'] as const;
@@ -136,7 +144,7 @@ describe('evidence delivery parity', () => {
           for (const r of chat) {
             const [page] = await engine.executeRaw<{ compiled_truth: string; timeline: string }>('SELECT compiled_truth, timeline FROM pages WHERE id = $1', [r.page_id]);
             expect(r.delivered).toMatchObject({ unit: 'page', reason: 'conversation_slug' });
-            expect(r.chunk_text).toBe(pageEvidenceText(page, true).text.trimEnd());
+            expect(r.chunk_text).toBe(asRead(remote, r, pageEvidenceText(page, true).text.trimEnd()));
             expanded++;
           }
         }
@@ -188,7 +196,7 @@ describe('evidence delivery parity', () => {
         expect(rows.length).toBeGreaterThan(0);
         for (const r of rows) {
           const [page] = await engine.executeRaw<{ compiled_truth: string; timeline: string }>('SELECT compiled_truth, timeline FROM pages WHERE id = $1', [r.page_id]);
-          expect(r.chunk_text).toBe(pageEvidenceText(page, true).text.trimEnd());
+          expect(r.chunk_text).toBe(asRead(remote, r, pageEvidenceText(page, true).text.trimEnd()));
         }
       }
     }, 120_000);

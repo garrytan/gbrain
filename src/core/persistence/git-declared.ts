@@ -29,7 +29,7 @@ import { gitChildEnv } from '../git-env.ts';
 import type { Action } from '../agent-output.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { execFile } from '../spawn.ts';
-import { isDerivationPrivate, isPrivatePage, privatePagesFilterFragment, readHonorAliases } from '../search/private-visibility.ts';
+import { isPrivacyDerivationPrivate, isPrivacyPrivatePage, privacyPartSql, readHonorAliases } from '../search/private-visibility.ts';
 import { DERIVE_PHASE_DB_ONLY_DEFAULTS } from '../storage-config.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import type { PageMutationFile } from './coordinator.ts';
@@ -79,16 +79,17 @@ export function declaredPathClass(root: string, slug: string, page: RecordedFile
 
 /**
  * Why a page is private, or null: its own fields (`visibility`, a pinned question, the derived-type default), a privacy
- * alias (with `visibility.honor_aliases` read first), or its declared lineage and derived origin, read with the same SQL
- * remote reads use (`privatePagesFilterFragment`) over the page's own values, so an unwritten page is judged too.
+ * alias (with `visibility.honor_aliases` read first), or its declared lineage and derived origin, read with the privacy
+ * part of the SQL remote reads use (`privacyPartSql`) over the page's own values, so an unwritten page is judged too.
+ * Member and folder access do not decide where a page lives, so they are not read here.
  */
 export async function privacyClass(engine: BrainEngine, sourceId: string, page: { id?: number | null; slug: string; type?: string | null; frontmatter?: unknown }): Promise<PrivacyClass | null> {
   await readHonorAliases(engine);
-  if (isPrivatePage(page)) return 'private';
-  if (isDerivationPrivate(page)) return 'alias_private';
+  if (isPrivacyPrivatePage(page)) return 'private';
+  if (isPrivacyDerivationPrivate(page)) return 'alias_private';
   const frontmatter = typeof page.frontmatter === 'object' && page.frontmatter !== null ? page.frontmatter as Record<string, unknown> : {};
   if (frontmatter.derived_from == null && !['atom', 'concept', 'event'].includes(page.type ?? '')) return null;
-  const [row] = await engine.executeRaw<{ lineage: boolean }>(`SELECT NOT ${privatePagesFilterFragment('p')} AS lineage
+  const [row] = await engine.executeRaw<{ lineage: boolean }>(`SELECT NOT ${privacyPartSql('p')} AS lineage
     FROM (SELECT $1::text AS source_id, $2::text AS slug, $3::text AS type, $4::text::jsonb AS frontmatter, $5::bigint AS id) p`,
   [sourceId, page.slug, page.type ?? null, JSON.stringify(frontmatter), page.id ?? null]);
   return row?.lineage === true ? 'lineage_private' : null;
@@ -218,6 +219,8 @@ export async function declareStrictPublication(tx: BrainEngine, row: WriteReques
   before: PageSnapshot | null, final: PageSnapshot | null, binding: Pick<WorktreeBinding, 'canonical_git' | 'local_path' | 'relative_path'> | null | undefined): Promise<void> {
   if (binding?.canonical_git !== true || !binding.local_path || !row.worktree_id || prepared.noop || !final || final.page.deleted_at) return;
   if (syncRow(row)) return;
+  // GBRA-190 G4: a withdrawal writes no page content of its own; the files it strikes are its Git home (forget-prepare.ts).
+  if ((row.operation === 'forget' || row.operation === 'forget_fact') && !prepared.file) return;
   const [stored] = await tx.executeRaw<{ reason: string | null }>('SELECT database_only_reason AS reason FROM pages WHERE id=$1', [final.page.id]);
   const reason = stored?.reason ?? null;
   const root = join(binding.local_path, binding.relative_path ?? '');

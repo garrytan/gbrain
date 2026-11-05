@@ -23,6 +23,7 @@ import { isSourceFederated, parseSourceConfig } from './sources-load.ts';
 import { SOURCE_ID_RE, isValidSourceId, ALL_SOURCES } from './source-id.ts';
 import { isTrustedDotfile, realpathOrResolve, realpathOrResolveAsync } from './path-confine.ts';
 import { noteResolvedSource } from './fix-routing.ts';
+import { hookSessionCwd } from './session-cwd.ts';
 
 // Re-export so scope-resolution call sites can import the sentinel from
 // either module (#1712).
@@ -165,7 +166,7 @@ export async function resolveRegisteredLocalPathSource(engine: BrainEngine, cwd:
 export async function resolveSourceId(
   engine: BrainEngine,
   explicit: string | null | undefined,
-  cwd: string = process.cwd(),
+  cwd: string = hookSessionCwd(),
   // Local IPC already evaluated the client's flag/env/dotfile tiers. The
   // owner's environment must never redirect that client's unscoped request.
   // `env` stands in for GBRAIN_SOURCE when a resident serve resolves for a
@@ -272,7 +273,7 @@ async function resolveSourceIdChain(
  */
 export function resolveSourceIdEngineFree(
   explicit: string | null | undefined,
-  cwd: string = process.cwd(),
+  cwd: string = hookSessionCwd(),
   opts: { env?: string } = {},
 ): string | null {
   if (explicit) {
@@ -802,7 +803,7 @@ export async function resolveSourceForRepoPath(
  */
 export async function getDefaultSourcePath(
   engine: BrainEngine,
-  cwd: string = process.cwd(),
+  cwd: string = hookSessionCwd(),
 ): Promise<string | null> {
   const seen: { registered?: RegisteredSource[] } = {};
   const sourceId = await resolveSourceIdChain(engine, null, cwd, {}, seen);
@@ -854,7 +855,7 @@ export type SourceTier = typeof SOURCE_TIER_NAMES[number];
 export async function resolveSourceWithTier(
   engine: BrainEngine,
   explicit: string | null | undefined,
-  cwd: string = process.cwd(),
+  cwd: string = hookSessionCwd(),
   opts: { env?: string } = {},
 ): Promise<{ source_id: string; tier: SourceTier; detail?: string }> {
   const resolved = await resolveSourceWithTierChain(engine, explicit, cwd, opts);

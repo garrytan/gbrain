@@ -233,8 +233,39 @@ For one bot acting for several members of a shared brain, give each member a
 separate client or token restricted to that member's sources. The grant is the
 security boundary; a request's `source_ids` can only narrow inside it. See
 [a bot acting for many members](../guides/multi-source-brains.md#a-bot-acting-for-many-members).
-Access is per source, never per page, so lay sources out by who may read them
+Grants are per source, so lay sources out by who may read them
 ([guide](../guides/multi-source-brains.md#lay-out-sources-by-who-may-read-them)).
+Inside one source, bind each member's credential with `gbrain auth rescope
+--token <name> --member <id>` (or `--client`) and put `readable_by` on the pages
+only some members may read, or keep a whole folder to them with `gbrain access
+rule add --prefix <folder>/ --readers <members> --source <id>`.
+One agent serving several people in a shared channel holds `--may-act-for
+<members>` instead, and its harness names each request's audience
+(`X-Gbrain-On-Behalf-Of` or request-level `_meta.on_behalf_of`); it reads only
+what every named person may read.
+A trusted system that already knows who each person is (QM) instead holds the
+attest right: register a client-credentials client, grant it with `gbrain auth
+rescope --client <id> --attest-actor qm [--attest-ops <op,...>]` (default
+`get_write_request,memory_recall,memory_write`), and link each person's canonical id with `gbrain
+access member link <member> --qm <id>` (`unlink`, `links`). Its `x-qm-actor`
+header then runs each attested operation as that member, never reading private
+pages; see [attested-actor refusals](../guides/write-refusals.md#attested-actor-refusals).
+`remember` saves to the person's own page `memory/members/<member>` (private,
+read back only by that member, written remotely by no one else), and `delta` cursors, write receipts
+(`get_write_request`, `list_write_requests`, `cancel_write_request`) and agent
+jobs (`submit_agent`, `get_agent_job`) belong to the person they were made for.
+QM's memory pair, `memory_recall` and `memory_write`, reads and saves that
+person's facts ([QM guide](../guides/qm.md)); `forget` and `forget_fact` withdraw
+only a fact on the person's own page (also for a credential bound to a member).
+A request carrying `x-qm-audience` is refused (`audience_not_supported`). Not attestable yet, because what they
+read or write is not yet kept to the person: `list_write_conflicts`, `capture`,
+`extract_facts` and `takes_add|update|resolve|supersede`.
+An attested read sees what that person sees, private facts included, and gbrain
+cannot tell who else reads the answer. Use the attest client only for QM's
+personal-scope memory route: never register it as a model-callable MCP connector
+or route it to shared scopes ([QM guide](../guides/qm.md#set-up-on-the-brain-host)).
+`gbrain access check --token <name>` shows the
+result ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
 
 New `memory-reader`, `memory-writer` and `coding-agent` grants are callable on
 the full surface and list the seven memory verbs plus `request_tools`, which
@@ -575,10 +606,12 @@ that inserted it. Everything else stays `unrecorded`; nothing is inferred.
 ## Read-only stdio serve
 
 **Say to your agent:** *"Connect this agent to my brain read-only."* The agent
-registers `gbrain serve --access read-only` as its stdio MCP command.
+registers `gbrain serve --access read-only` as its stdio MCP command, through
+gbrain's launcher (any `gbrain setup` run writes it), so the session
+directory's `bunfig.toml` and `.env` never load.
 
 ```bash
-claude mcp add gbrain -- "$(command -v gbrain)" serve --access read-only
+claude mcp add gbrain-ro -- "${GBRAIN_HOME:-$HOME}/.gbrain/hook-launcher/gbrain-hook" "$(command -v gbrain)" serve --access read-only
 gbrain serve --access read-only   # bare serve: the full surface, read-only
 ```
 

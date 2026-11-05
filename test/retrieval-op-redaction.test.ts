@@ -22,6 +22,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 import { operations, operationsByName, type Operation, type OperationContext } from '../src/core/operations.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { estimateTokens } from '../src/core/search/token-budget.ts';
@@ -134,6 +135,7 @@ const SWEEP: Record<string, Row> = {
   entity: { args: { name: 'people/alice-example' } },
   synthesize: { skip: 'LLM-backed; keyless test env returns no composition. Wrapper coverage is the registration test below.' },
   list_pages: { args: { limit: 100 } },
+  find_pages: { args: { pattern: '*', limit: 100 } },
   search: { args: { query: 'PLANTMARK note body', limit: 20 } },
   query: { args: { query: 'PLANTMARK note body', limit: 20 } },
   search_exact: { args: { phrase: 'PLANTMARK' } },
@@ -214,6 +216,7 @@ const SWEEP: Record<string, Row> = {
   schema_explain_type: { args: { type: 'note' } },
   schema_review_orphans: { args: { limit: 50 } },
   list_write_conflicts: { args: {} },
+  get_memory_settings: { args: {} },
   // no_stored_text — write receipts (the planted content is the caller's own
   // input here; the receipt must not echo it)
   remember: { args: { fact: planted('remembered'), provenance: 'test:sweep', request_id: randomUUID() } },
@@ -280,13 +283,13 @@ describe('memory verbs redact query-arm text for everyone and facts for remote c
     }, { sourceId: SRC });
     const p = await engine.getPage('notes/verb-page', { sourceId: SRC });
     await installFixtureChunks(engine, 'notes/verb-page', [{ chunk_index: 0, chunk_text: p!.compiled_truth, chunk_source: 'compiled_truth', token_count: 12 }], { sourceId: SRC });
-    await engine.insertFact({ fact: `verbfact key ${factKey}`, entity_slug: 'companies/acme-example', source: `test:${factKey}`, visibility: 'world', embedding: null } as never, { source_id: SRC });
+    await asOwner(engine, tx => tx.insertFact({ fact: `verbfact key ${factKey}`, entity_slug: 'companies/acme-example', source: `test:${factKey}`, visibility: 'world', embedding: null } as never, { source_id: SRC }));
   });
 
   test('recall over MCP: no page token, assignment value or fact key; identities byte-identical', async () => {
     const { text } = await call('recall', { query: 'verbmark rollout', entity: 'companies/acme-example' });
     for (const secret of [pageToken, assigned, factKey]) expect(text.includes(secret)).toBe(false);
-    const body = JSON.parse(text);
+    const body = JSON.parse(text.split('\n')[0]!);
     const hit = body.results.find((r: { slug: string }) => r.slug === 'notes/verb-page');
     expect(hit.provenance).toBe('notes/verb-page');
     expect(hit.chunk).toContain('<REDACTED:github_token>');

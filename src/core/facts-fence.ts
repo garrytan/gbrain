@@ -157,7 +157,7 @@ function parseConfidenceCell(raw: string): number | undefined {
 const NUMERIC_CELL_RE = /^([+-]?)[$€£]?((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)((?:[eE][+-]?\d+)?)\s*([kmb]?)$/i;
 const MAGNITUDE: Record<string, number> = { '': 1, k: 1e3, m: 1e6, b: 1e9 };
 
-function parseNumericCell(raw: string): number | undefined | null {
+export function parseNumericCell(raw: string): number | undefined | null {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
   const m = NUMERIC_CELL_RE.exec(trimmed);

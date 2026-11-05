@@ -7,6 +7,8 @@ import { realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
+import { admitChangeReason, CHANGE_REASON_OPERATIONS } from './change-reason.ts';
+import { grantedWriteSource, writeGrantRefusal } from './write-grant.ts';
 import { VERSION } from '../../version.ts';
 import { ownerBuildMismatch } from './publication-failure.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, isLegacyStoredPageSlug, normalizeSlugPrefix, parseSourceIdParam, requireWritablePage, validatePageSlug } from '../ops/context.ts';
@@ -19,14 +21,16 @@ import { sha256 } from './digest.ts';
 import { receiptReservation } from './receipt-bytes.ts';
 import { assertPersistenceAccepting, estimatedRetryAfterMs, waiterOnlyOwner, onPersistenceLane, waitForWrite, writeResponse } from './service.ts';
 import { parseWireWriteWaitMs } from './write-wait.ts';
+import { withRefreshFenceBudget } from './admission-retry.ts';
 import { assertTimelineNotOmitted, isTimelineSection, timelineSectionOf, type TimelineSection } from './timeline-omission.ts';
 import { contentOriginTier } from '../trust/tier.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
-import { contentSizeHold, parseMarkdownHead } from '../markdown.ts';
+import { contentSizeHold, frontmatterBodyOffset, parseMarkdownHead } from '../markdown.ts';
+import { dataFrontmatter, dumpFrontmatterYaml } from '../data-frontmatter.ts';
 import { throwIfHeld } from '../trust/gate-outcomes.ts';
 import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequest, intentDigest, type WriteAdmission } from './journal.ts';
 import { submissionAuthority, authorizeStoredRequest } from './authority.ts';
-import { currentVerifiedLocalWriter, localHostId, readLocalWriter, registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
+import { currentVerifiedLocalWriter, hostIdFor, readLocalWriter, registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
 import type { BrainEngine } from '../engine.ts';
 import { claimWorktree, getWorktreeBinding } from './ownership.ts';
 import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
@@ -43,7 +47,8 @@ import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { liveSearchable } from './searchable.ts';
 import { cachedPreadmitBrain, dropPreadmitCache, preadmitReads, preadmitRecheckFailed } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
-import { isQuotedPageType, unquoteTranscriptText } from '../search/transcript-quote.ts';
+import { holdsSummarizedToolCalls, isQuotedPageType, quotesTier, unquoteTranscriptText } from '../search/transcript-quote.ts';
+import { readStoredBody } from '../facts/file-body-guard.ts';
 import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
@@ -138,9 +143,9 @@ export function pageMutationSource(ctx: OperationContext, params: Record<string,
     throw new OperationError('invalid_params', 'A mutation must target exactly one source.',
       `Pass source_id as one source (for example ${ctx.sourceId && ctx.sourceId !== '__all__' ? ctx.sourceId : 'default'}); writes never fan out across sources.`);
   }
-  const granted = ctx.auth?.sourceId ?? ctx.sourceId ?? 'default';
+  const granted = grantedWriteSource(ctx);
   if (ctx.remote !== false && sourceId !== granted) {
-    throw new OperationError('permission_denied', 'This source is outside the current write grant.',
+    throw writeGrantRefusal(ctx,
       `This connection writes only to source ${granted}. Pass source_id ${granted} (or omit it), or ask the brain host's operator to grant write access to ${sourceId}.`);
   }
   return sourceId;
@@ -163,7 +168,7 @@ async function resolveCaptureFile(ctx: OperationContext, sourceId: string, p: Re
   delete p.local_file;
   const [source] = await ctx.engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [sourceId]);
   const binding = await getWorktreeBinding(ctx.engine, sourceId);
-  let root = binding ? binding.owner_host_id === localHostId() && binding.local_path ? join(binding.local_path, binding.relative_path) : null
+  let root = binding ? binding.owner_host_id === hostIdFor(ctx.engine) && binding.local_path ? join(binding.local_path, binding.relative_path) : null
     : source?.local_path || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
   if (root && !isAbsolute(root)) root = null;
   let origin: string | null = null;
@@ -236,8 +241,9 @@ export async function submitPageMutation(ctx: OperationContext,
   if (prepared.prior) return withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), false));
   const brainId = cached ? cachedPreadmitBrain(ctx.engine) : undefined;
   // Phase 4.4: the admission transaction runs on the warm single-write lane when it is free.
-  const admit = (admission: WriteAdmission) => onPersistenceLane(ctx.engine, transaction => admitWrite(ctx.engine, admission, undefined, transaction),
-    () => admitWrite(ctx.engine, admission));
+  // GST-1387: an explicit wait_ms also bounds the refresh-fence wait, so wait_ms 0 is refused at once, never held.
+  const admit = (admission: WriteAdmission) => withRefreshFenceBudget(() => onPersistenceLane(ctx.engine, transaction => admitWrite(ctx.engine, admission, undefined, transaction),
+    () => admitWrite(ctx.engine, admission)), wireWaitMs !== undefined ? waitMs() : undefined);
   let row: WriteRequest;
   try { row = await admit(brainId ? { ...prepared.admission, brainId } : prepared.admission); }
   catch (error) {
@@ -255,13 +261,87 @@ export async function submitPageMutation(ctx: OperationContext,
 /**
  * #8042: a remote put_page (put_pages too) of a quoted page's get_page content writes the page body, not the fences
  * get_page added (search/transcript-quote.ts). A fence naming the page is removed when its stored type or the type the
- * new content declares is one get_page quotes (either, so a retype keeps the body); a note's own fence-like text is kept.
+ * new content declares is one get_page quotes (either, so a retype keeps the body), or (GST-687) when the stored page is
+ * below the owner's tier, which get_page quotes too; an owner-tier note keeps a fence naming it only when its stored body
+ * already holds one, so a fence read before a claim raised the page's tier is never stored.
+ * GST-687: content carrying a tool-call summary that only the neutralized read of the stored chat page holds (get_page's
+ * reading shape, fetch) is refused, so a read-then-write never replaces a stored tool call with its summary.
  */
+/** Every string in `value` with the fences naming `slug` removed (get_page's quotedPageMeta, reversed). */
+function unquotedStrings(value: unknown, slug: string): unknown {
+  return typeof value === 'string' ? unquoteTranscriptText(value, slug)
+    : Array.isArray(value) ? value.map(v => unquotedStrings(v, slug))
+    : value && typeof value === 'object' && !(value instanceof Date) ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, unquotedStrings(v, slug)])) : value;
+}
+
+/**
+ * #8377: a quoted read's reading shape fences the title and each frontmatter string as `slug`'s (a whole-markdown read is
+ * fenced once instead, and its metadata is the page's own). YAML indents those fences, so the body's unquote misses them.
+ * #8384: only the top-level keys that held a fence are rewritten; every other line keeps the bytes the caller sent, so a
+ * naive datetime keeps its brain-timezone reading. A fenced key not found on its own line, or a line rewrite that does not
+ * parse back to the unquoted values (a flow mapping continued on an unindented line, an anchor another key aliases),
+ * rewrites the whole block.
+ */
+function unquotedFrontmatter(sent: string, content: string, slug: string): string {
+  const offset = frontmatterBodyOffset(content);
+  if (!offset || !frontmatterBodyOffset(sent) || !content.slice(0, offset).includes('```text')) return content;
+  const { frontmatter } = parseMarkdownHead(content);
+  const data = unquotedStrings(frontmatter, slug) as Record<string, unknown>;
+  const fenced = new Set(Object.keys(data).filter(k => JSON.stringify(data[k]) !== JSON.stringify(frontmatter[k])));
+  if (!fenced.size) return content;
+  const lines = content.slice(0, offset).split('\n');
+  const open = lines.findIndex(l => l.trim() === '---');
+  const close = lines.findIndex((l, i) => i > open && l.trim() === '---');
+  const out = lines.slice(0, open + 1);
+  for (let i = open + 1; i < close;) {
+    let end = i + 1;
+    while (end < close && /^(?:[ \t]|-(?:[ \t]|\r?$)|\r?$)/.test(lines[end]!)) end++;
+    const m = /^(?:"([^"]*)"|'([^']*)'|([^\s#'"-][^:]*?))[ \t]*:(?:[ \t]|\r?$)/.exec(lines[i]!);
+    const key = m?.[1] ?? m?.[2] ?? m?.[3];
+    if (key !== undefined && fenced.delete(key)) {
+      const eol = lines[i]!.endsWith('\r') ? '\r' : '';
+      out.push(...dumpFrontmatterYaml({ [key]: data[key] }).trimEnd().split('\n').map(l => l + eol));
+    } else out.push(...lines.slice(i, end));
+    i = end;
+  }
+  const whole = dataFrontmatter.stringify('', data) + content.slice(offset);
+  if (fenced.size) return whole;
+  const partial = [...out, ...lines.slice(close)].join('\n') + content.slice(offset);
+  try {
+    return JSON.stringify(parseMarkdownHead(partial).frontmatter) === JSON.stringify(data) ? partial : whole;
+  } catch {
+    return whole;
+  }
+}
+
 async function unquotedPutContent(engine: BrainEngine, sourceId: string, slug: string, content: string): Promise<string> {
-  const unquoted = unquoteTranscriptText(content, slug);
-  if (unquoted === content || isQuotedPageType(String(parseMarkdownHead(content).frontmatter.type ?? ''))) return unquoted;
-  const [stored] = await engine.executeRaw<{ type: string | null }>('SELECT type FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
-  return isQuotedPageType(stored?.type) ? unquoted : content;
+  const bodyUnquoted = unquoteTranscriptText(content, slug, true);
+  const unquoted = unquotedFrontmatter(content, bodyUnquoted, slug);
+  const summarized = /, arguments omitted\]/.test(unquoted);
+  const quotedType = isQuotedPageType(String(parseMarkdownHead(unquoted).frontmatter.type ?? ''));
+  if (!summarized && (unquoted === content || quotedType)) return unquoted;
+  const [stored] = await engine.executeRaw<{ type: string | null; trust_tier: string | null; title: string | null; frontmatter: unknown }>(
+    'SELECT type, trust_tier, title, frontmatter FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
+  // Compared with the stored body's tool calls; a segmented page reads NULL inline columns, so its summarized round trip is refused.
+  const losesCalls = async () => {
+    const body = await readStoredBody(engine, sourceId, slug);
+    return body?.compiled_truth == null || holdsSummarizedToolCalls(`${body.compiled_truth}\n${body.timeline ?? ''}`, unquoted);
+  };
+  if (summarized && stored && isQuotedPageType(stored.type) && await losesCalls()) {
+    throw new OperationError('invalid_params', `put_page: this content has tool calls that a read of ${slug} summarized; writing it would replace the stored calls with their summaries.`,
+      'Nothing was written. Change the page with edit_page, or read it with get_page include_content: true (its content keeps the stored text) and write that back.');
+  }
+  if (unquoted === content || quotedType) return unquoted;
+  if (!stored) return content;
+  if (isQuotedPageType(stored.type) || quotesTier(stored.trust_tier)) return unquoted;
+  // An owner-tier page keeps a fence naming it only when its stored body already holds one: a fence read while the page sat
+  // below the owner's tier (before a claim or backfill raised it, or from a quoted version) is a read's, not the page's.
+  // Its title and frontmatter are judged the same way, by the stored title and frontmatter.
+  const body = await readStoredBody(engine, sourceId, slug);
+  const storedText = `${body?.compiled_truth ?? ''}\n${body?.timeline ?? ''}`;
+  const kept = body?.compiled_truth != null && unquoteTranscriptText(storedText, slug) === storedText ? bodyUnquoted : content;
+  const storedMeta = [stored.title, typeof stored.frontmatter === 'string' ? JSON.parse(stored.frontmatter) : stored.frontmatter];
+  return JSON.stringify(unquotedStrings(storedMeta, slug)) === JSON.stringify(storedMeta) ? unquotedFrontmatter(content, kept, slug) : kept;
 }
 
 /**
@@ -322,6 +402,12 @@ export async function preparePageAdmission(ctx: OperationContext,
     () => assertPageRequestIdentity(ctx.engine, principal, requestId),
     () => getWriteRequest(ctx.engine, principal, requestId),
   ]) as [unknown, WriteRequest | null];
+  // GBRA-217: a reason is refused before anything is journaled; its canonical form joins the replay identity. An
+  // operation that records no reason never journals one a caller passed anyway.
+  if (CHANGE_REASON_OPERATIONS.includes(input.operation) && Object.hasOwn(p, 'reason')) {
+    const reason = admitChangeReason(p.reason);
+    if (reason === null) delete p.reason; else p.reason = reason;
+  } else delete p.reason;
   const callerIntent = { ...p };
   delete callerIntent.request_id;
   if (prior) {
@@ -422,7 +508,7 @@ export async function preparePageAdmission(ctx: OperationContext,
   const root = configuredRoot && isAbsolute(configuredRoot) ? configuredRoot : null;
   // Checkout paths belong to a host binding; sources.local_path may name
   // another host's original checkout after a verified ownership transfer.
-  const localRoot = binding ? binding.owner_host_id === localHostId() && binding.local_path
+  const localRoot = binding ? binding.owner_host_id === hostIdFor(ctx.engine) && binding.local_path
     ? join(binding.local_path, binding.relative_path) : null : root;
   // #7324: a declared db_only page is canonical in the database, so its detach restore publishes database-only even
   // where write-through would re-create its file (a managed checkout); assertRestoreOrigin still requires the file gone.
@@ -456,7 +542,7 @@ export async function preparePageAdmission(ctx: OperationContext,
   // #5032: this host publishes the canonical file, and on Windows a ':' in its
   // name cannot be stored; refuse before admission. Database-only writes pass,
   // including read-only mirror sources and pages created while one (#5409).
-  if (writeThrough && binding?.owner_host_id === localHostId() && binding.local_path && isWindowsColonTarget(snapshot?.page.source_path ?? `${slug}.md`)
+  if (writeThrough && binding?.owner_host_id === hostIdFor(ctx.engine) && binding.local_path && isWindowsColonTarget(snapshot?.page.source_path ?? `${slug}.md`)
     && !(snapshot && !snapshot.page.source_path && await isUnboundSourcePage(ctx.engine, sourceId, slug))
     && !await sourceMirrorReadOnly(ctx.engine, sourceId)
     && !(snapshot && !snapshot.page.source_path && await isMirrorOnlyPage(ctx.engine, sourceId, slug))

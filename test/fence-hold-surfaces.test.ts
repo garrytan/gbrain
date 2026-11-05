@@ -30,6 +30,7 @@ import { holdLine } from '../src/commands/sync-diagnostics.ts';
 import { deriveNext, renderAction, type Action } from '../src/core/agent-output.ts';
 import { fenceMessage } from '../src/core/fence-repair/reasons.ts';
 import { FENCE_VERSION } from '../src/core/fence-repair/refusal.ts';
+import { QUOTE_SCREEN_VERSION } from '../src/core/fence-repair/quote-markers.ts';
 import { fenceFileLine, fenceHoldStatus, type FenceAutoRepair } from '../src/core/fence-repair/hold-fix.ts';
 import { parseMarkdown, RECOVERY_VERSION } from '../src/core/markdown.ts';
 
@@ -38,7 +39,7 @@ const fenceHold = (extra: Partial<GitHoldRecord> = {}): GitHoldRecord => ({
   version: 1, source_id: 'notes-example', incarnation: 'inc', path: 'people/alice-example.md', source_path: 'people/alice-example.md', slug: 'people/alice-example', page_id: 12,
   code: 'invalid_fence', message: fenceMessage({ ...location, rows: [...location.rows], columns: [...location.columns] }), upstream_version: 'sha', observed_at: '2026-10-01T00:00:00.000Z',
   held_at: '2026-10-01T00:00:00.000Z', updated_at: '2026-10-01T00:00:00.000Z', run_id: 'run', mode: 'managed',
-  meta: { reason: 'holder_unresolved', line: 12, recovery_version: RECOVERY_VERSION, fence: { ...location, rows: [...location.rows], columns: [...location.columns] }, fence_version: FENCE_VERSION },
+  meta: { reason: 'holder_unresolved', line: 12, recovery_version: RECOVERY_VERSION, fence: { ...location, rows: [...location.rows], columns: [...location.columns] }, fence_version: FENCE_VERSION, quote_version: QUOTE_SCREEN_VERSION },
   ...extra,
 });
 const withMeta = (meta: Partial<GitHoldRecord['meta']>) => fenceHold({ meta: { ...fenceHold().meta, ...meta } });
@@ -163,6 +164,7 @@ describe('structured location (D16)', () => {
     expect(holdRescreenDue(fenceHold(), true)).toBe(true);
     expect(holdRescreenDue(withMeta({ fence_version: FENCE_VERSION - 1 }), false)).toBe(true);
     expect(holdRescreenDue(withMeta({ fence_version: undefined }), false)).toBe(true);
+    expect(holdRescreenDue(withMeta({ quote_version: undefined }), false)).toBe(true);
     expect(holdRescreenDue({ ...frontmatterHold(), code: 'frontmatter_slug_conflict' }, false)).toBe(true);
   });
 });

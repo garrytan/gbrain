@@ -20,12 +20,14 @@ import { withRefreshingLock, LockUnavailableError, LockStolenError, syncLockId }
 import { readSyncAnchor } from '../../core/sync-anchor.ts';
 import { recordUpstreamObservation } from '../../core/sync-upstream.ts';
 import { assertSyncApplicable } from '../../core/sync-applicability.ts';
+import { performPlainDirectorySync, plainDirectorySyncRoot } from './plain-directory.ts';
 import { noteIdentityDowngrades } from '../../core/sync-identity-downgrades.ts';
 import { SyncLockBusyError, formatLockBusyMessage, buildPartialResult } from '../../core/sync-lock.ts';
 import type { SyncOpts, SyncResult } from '../sync.ts';
 import type { IdleSkip } from '../../core/persistence/sync-idle-skips.ts';
 import { runConnectorSync } from './connector.ts';
 import { performSyncInner } from './incremental.ts';
+import { isConnectorSourceKind } from '../../core/persistence/connector-kinds.ts';
 
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
   assertSyncDispatchActive();
@@ -64,6 +66,8 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     if (connector) return connector;
   }
   if (opts.signal?.aborted) return finish(await interruptedBeforeWork());
+  const plainRoot = await plainDirectorySyncRoot(engine, opts, managed);
+  if (plainRoot) return finish(await performPlainDirectorySync(engine, opts, plainRoot, managed), true);
   if (managed) return performManagedBranch(engine, opts);
   const filesystemRoot = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
   if (filesystemRoot && !hasSourceFilesystemLock(filesystemRoot)) {
@@ -114,7 +118,7 @@ async function mayBeConnectorSource(engine: BrainEngine, opts: SyncOpts): Promis
   if (routing.id === null) return false;
   try {
     const config = typeof routing.config === 'string' ? JSON.parse(routing.config) : routing.config ?? {};
-    return config.kind === 'google' || config.kind === 'github';
+    return isConnectorSourceKind(config.kind);
   } catch { return true; }
 }
 

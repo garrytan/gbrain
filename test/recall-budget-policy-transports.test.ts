@@ -10,6 +10,7 @@ import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import { keylessBrainEnv } from './helpers/provider-env.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 import { ERROR_SCHEMA } from '../src/core/verbs.ts';
 import { validateAgainstSchema } from '../src/core/verbs/conformance.ts';
 
@@ -35,20 +36,24 @@ beforeAll(async () => {
   await engine.initSchema();
   await engine.setConfig('search.track_retrieval', 'false');
   const text = 'The zebra telescope calibration code is QX-17. Store it in the blue case.';
-  await engine.putPage('notes/telescope', { type: 'note', title: 'Zebra telescope', compiled_truth: text });
-  await installFixtureChunks(engine, 'notes/telescope', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: text }]);
-  for (let i = 0; i < 4; i++) {
-    await engine.insertFact({
-      fact: `Garden observation ${i}: `.padEnd(144, 'x'), source: 'synthetic', visibility: 'world',
-      entity_slug: 'topics/garden', source_session: `garden-session-${i}`, valid_from: new Date(`2026-09-01T00:00:0${i}Z`),
-    }, { source_id: 'default' });
-  }
+  await asOwner(engine, async tx => {
+    await tx.putPage('notes/telescope', { type: 'note', title: 'Zebra telescope', compiled_truth: text });
+    await installFixtureChunks(tx, 'notes/telescope', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: text }]);
+    for (let i = 0; i < 4; i++) {
+      await tx.insertFact({
+        fact: `Garden observation ${i}: `.padEnd(144, 'x'), source: 'synthetic', visibility: 'world',
+        entity_slug: 'topics/garden', source_session: `garden-session-${i}`, valid_from: new Date(`2026-09-01T00:00:0${i}Z`),
+      }, { source_id: 'default' });
+    }
+  });
   await engine.executeRaw("INSERT INTO sources(id,name) VALUES('peer','peer'),('archived-example','archived-example')");
   await engine.executeRaw("UPDATE sources SET config=jsonb_build_object('federated',false) WHERE id='peer'");
   await engine.executeRaw("UPDATE sources SET archived=true, archived_at=now() WHERE id='archived-example'");
-  await engine.putPage('notes/telescope', { type: 'note', title: 'Zebra telescope', compiled_truth: 'Peer telescope evidence.' }, { sourceId: 'peer' });
-  await installFixtureChunks(engine, 'notes/telescope', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: 'Peer telescope evidence.' }], { sourceId: 'peer' });
-  await engine.insertFact({ fact: 'Peer source fact.', source: 'synthetic', visibility: 'world' }, { source_id: 'peer' });
+  await asOwner(engine, async tx => {
+    await tx.putPage('notes/telescope', { type: 'note', title: 'Zebra telescope', compiled_truth: 'Peer telescope evidence.' }, { sourceId: 'peer' });
+    await installFixtureChunks(tx, 'notes/telescope', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: 'Peer telescope evidence.' }], { sourceId: 'peer' });
+    await tx.insertFact({ fact: 'Peer source fact.', source: 'synthetic', visibility: 'world' }, { source_id: 'peer' });
+  });
   await engine.disconnect();
 });
 

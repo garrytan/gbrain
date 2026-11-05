@@ -4,6 +4,13 @@
       "readOnlyTimeoutMs !== null"
     ],
     "commands": {
+      "access": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "advisor": {
         "hasSwitchCase": true,
         "phase": "post-connect",
@@ -216,6 +223,25 @@
         "hasSwitchCase": true,
         "phase": "post-connect",
         "preConnectRules": [],
+        "thinClient": "none",
+        "thinClientRoutedSubcommands": []
+      },
+      "bundled-skill": {
+        "hasSwitchCase": false,
+        "phase": "pre-connect",
+        "preConnectRules": [
+          {
+            "condition": "command === 'bundled-skill'",
+            "connectsEngine": false,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": false,
+            "unconditionalFor": [
+              "bundled-skill"
+            ]
+          }
+        ],
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
@@ -2068,6 +2094,20 @@
     "mainRules": [
       {
         "commands": [
+          "serve"
+        ],
+        "condition": "command === 'serve'",
+        "connectsEngine": false,
+        "refusesThinClient": false,
+        "routesThinClient": false,
+        "terminates": false,
+        "thinClientCheck": false,
+        "unconditionalFor": [
+          "serve"
+        ]
+      },
+      {
+        "commands": [
           "--help",
           "-h"
         ],
@@ -2210,7 +2250,7 @@
       },
       {
         "commands": [],
-        "condition": "['search', 'query', 'get', 'recall'].includes(command) && await (await import('./cli-socket-client.ts')).maybeServeFromCliSocket(command, subArgs)",
+        "condition": "cliOpts.as === undefined && ['search', 'query', 'get', 'recall'].includes(command) && await (await import('./cli-socket-client.ts')).maybeServeFromCliSocket(command, subArgs)",
         "connectsEngine": false,
         "refusesThinClient": false,
         "routesThinClient": false,

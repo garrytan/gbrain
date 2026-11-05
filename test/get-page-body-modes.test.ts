@@ -16,6 +16,7 @@ import { pageDocument } from '../src/core/page-window/document.ts';
 import { decodeCursor } from '../src/core/page-window/window.ts';
 import { encodedFrameBytes } from '../src/core/egress-budget.ts';
 import { normalizeLoweredClaim } from '../src/core/facts/withdrawal-schema.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 let engine: PGLiteEngine;
 const get_page = operations.find(o => o.name === 'get_page')!;
@@ -27,8 +28,8 @@ function ctx(overrides: Partial<OperationContext> = {}): OperationContext {
 const local = () => ctx({ remote: false, transport: undefined });
 
 async function put(slug: string, body: string, timeline = '', frontmatter: Record<string, unknown> = {}) {
-  const r = await importFromContent(engine, slug, serializeMarkdown(frontmatter, body, timeline, { type: 'note', title: slug, tags: [] }),
-    { sourceId: 'default', noEmbed: true, forceRechunk: true });
+  const r = await asOwner(engine, tx => importFromContent(tx, slug, serializeMarkdown(frontmatter, body, timeline, { type: 'note', title: slug, tags: [] }),
+    { sourceId: 'default', noEmbed: true, forceRechunk: true }));
   expect(r.status).toBe('imported');
 }
 
@@ -121,12 +122,107 @@ describe('mode resolution', () => {
   });
 
   test('conflicting selectors and modes are invalid_params', async () => {
-    await expectCode(get(ctx(), { slug: 'logs/big', lines: { from: 1, count: 5 }, bytes: { offset: 0, length: 10 } }), 'invalid_params');
+    await expectCode(get(ctx(), { slug: 'logs/big', lines: { from: 1, count: 5 }, bytes: { offset: -1, length: 10 } }), 'invalid_params');
     await expectCode(get(ctx(), { slug: 'logs/big', body: 'outline', lines: { from: 1, count: 5 } }), 'invalid_params');
     await expectCode(get(ctx(), { slug: 'logs/big', body: 'window', include_content: true }), 'invalid_params');
     await expectCode(get(ctx(), { slug: 'logs/big', lines: { from: 0, count: 5 } }), 'invalid_params');
     await expectCode(get(ctx(), { slug: 'logs/big', body: 'everything' }), 'invalid_params');
   });
+});
+
+describe('several window selectors (GBRA-280)', () => {
+  const chunk = async (slug: string) => Number((await engine.executeRaw<{ id: number }>(
+    'SELECT c.id FROM content_chunks c JOIN pages p ON p.id = c.page_id WHERE p.slug = $1 ORDER BY c.id OFFSET 3 LIMIT 1', [slug]))[0]!.id);
+  const strip = (r: Record<string, any>) => { const { window_selector: _w, ...rest } = r; return rest; };
+
+  test('precedence is cursor, then around_chunk_id, then lines, then bytes, and the read equals the applied selector alone', async () => {
+    const first = await get(ctx(), { slug: 'logs/big', body: 'window', max_bytes: 30_000 });
+    const chunkId = await chunk('logs/big');
+    const lines = { from: 100, count: 3 };
+    const bytes = { offset: 5003, length: 2000 };
+    const cases: Array<[Record<string, unknown>, Record<string, unknown>, string, string[]]> = [
+      [{ cursor: first.next_cursor, around_chunk_id: chunkId, lines, bytes }, { cursor: first.next_cursor }, 'cursor', ['around_chunk_id', 'lines', 'bytes']],
+      [{ around_chunk_id: chunkId, lines, bytes }, { around_chunk_id: chunkId }, 'around_chunk_id', ['lines', 'bytes']],
+      [{ lines, bytes }, { lines }, 'lines', ['bytes']],
+    ];
+    for (const [several, alone, applied, ignored] of cases) {
+      const r = await get(ctx(), { slug: 'logs/big', ...several });
+      expect([applied, r.window_selector.applied, r.window_selector.ignored]).toEqual([applied, applied, ignored]);
+      expect(strip(r)).toEqual(await get(ctx(), { slug: 'logs/big', ...alone }));
+    }
+  });
+
+  test('a whole-page ask beside a selector reads the window, never the page, and its edit_target is the window returned', async () => {
+    const r = await get(ctx(), { slug: 'logs/big', body: 'full', include_content: true, content_only: true, lines: { from: 100, count: 3 } });
+    expect([r.body, r.compiled_truth, r.content, r.timeline]).toEqual(['window', undefined, undefined, undefined]);
+    expect(r.window_selector.ignored).toEqual(['body', 'include_content', 'content_only']);
+    const alone = await get(ctx(), { slug: 'logs/big', lines: { from: 100, count: 3 } });
+    expect(r.edit_target).toEqual(alone.edit_target);
+    expect(r.window).toEqual(alone.window);
+  });
+
+  test('body none or outline beside a selector still refuses, and a trusted local read applies the same precedence', async () => {
+    await expectCode(get(ctx(), { slug: 'logs/big', body: 'none', lines: { from: 1, count: 5 }, bytes: { offset: 0, length: 10 } }), 'invalid_params');
+    await expectCode(get(ctx(), { slug: 'logs/big', body: 'outline', lines: { from: 1, count: 5 }, bytes: { offset: 0, length: 10 } }), 'invalid_params');
+    const r = await get(local(), { slug: 'logs/big', lines: { from: 100, count: 3 }, bytes: { offset: 0, length: 10 } });
+    expect([r.window.line_start, r.window_selector.applied]).toEqual([100, 'lines']);
+  });
+  test('a cursor that cannot read this page gives way to the next selector: another page, another view, an older revision', async () => {
+    await put('logs/sel-other', conversation(6000));
+    const foreign = (await get(ctx(), { slug: 'logs/big', body: 'window', max_bytes: 30_000 })).next_cursor;
+    const lines = { from: 7, count: 3 };
+    const a = await get(ctx(), { slug: 'logs/sel-other', cursor: foreign, lines, max_bytes: 30_000 });
+    expect([a.window.line_start, a.window_selector.applied, a.window_selector.ignored]).toEqual([7, 'lines', ['cursor']]);
+    expect(a.window_selector.note).toBe('the cursor is not a window cursor for this page, so this is the lines window. get_page reads one window: cursor, then around_chunk_id, then lines, then bytes.');
+    const readCursor = (await get(ctx(), { slug: 'logs/sel-other', body: 'window', max_bytes: 30_000 })).next_cursor;
+    const b = await get(ctx(), { slug: 'logs/sel-other', view: 'markdown', cursor: readCursor, lines, max_bytes: 30_000 });
+    expect([b.view, b.window.line_start, b.window_selector.applied]).toEqual(['markdown', 7, 'lines']);
+    expect(b.window_selector.note).toStartWith("the cursor pages view 'read', so this is the lines window.");
+    await put('logs/sel-other', conversation(6001));
+    const c = await get(ctx(), { slug: 'logs/sel-other', cursor: readCursor, bytes: { offset: 0, length: 2000 }, max_bytes: 30_000 });
+    expect([c.window.byte_start, c.window_selector.applied, c.window_selector.ignored]).toEqual([0, 'bytes', ['cursor']]);
+    expect(c.window_selector.note).toStartWith('the page changed since the cursor was issued, so this is the bytes window.');
+    await expectCode(get(ctx(), { slug: 'logs/sel-other', cursor: readCursor }), 'revision_changed');
+  });
+
+  test('a failed cursor and a stale around_chunk_id fall through to lines, and a stale around_chunk_id falls back to bytes', async () => {
+    const foreign = (await get(ctx(), { slug: 'logs/big', body: 'window', max_bytes: 30_000 })).next_cursor;
+    await put('logs/sel-chain', conversation(6000));
+    const r = await get(ctx(), { slug: 'logs/sel-chain', cursor: foreign, around_chunk_id: 999_999, lines: { from: 4, count: 2 }, body: 'full', max_bytes: 30_000 });
+    expect([r.window.line_start, r.window_selector.applied, r.window_selector.ignored]).toEqual([4, 'lines', ['cursor', 'around_chunk_id', 'body']]);
+    expect(r.window_selector.note).toBe('the cursor is not a window cursor for this page; around_chunk_id 999999 is not on this page at its current revision, so this is the lines window; ignored body. get_page reads one window: cursor, then around_chunk_id, then lines, then bytes.');
+    const b = await get(ctx(), { slug: 'logs/sel-chain', around_chunk_id: 999_999, bytes: { offset: 0, length: 2000 } });
+    expect([b.window.byte_start, b.window_selector.applied, b.window_selector.ignored]).toEqual([0, 'bytes', ['around_chunk_id']]);
+  });
+
+  test("view 'markdown' sets around_chunk_id aside when another selector came with it, and refuses it alone", async () => {
+    const chunkId = await chunk('logs/big');
+    const r = await get(ctx(), { slug: 'logs/big', view: 'markdown', around_chunk_id: chunkId, lines: { from: 100, count: 3 }, bytes: { offset: 0, length: 10 } });
+    expect([r.view, r.window.line_start, r.window_selector.applied, r.window_selector.ignored]).toEqual(['markdown', 100, 'lines', ['around_chunk_id', 'bytes']]);
+    await expectCode(get(ctx(), { slug: 'logs/big', view: 'markdown', around_chunk_id: chunkId }), 'invalid_params');
+  });
+
+  test("body 'auto' beside several selectors reads the first one's window", async () => {
+    const r = await get(ctx(), { slug: 'logs/big', body: 'auto', lines: { from: 100, count: 3 }, bytes: { offset: 0, length: 10 } });
+    expect([r.body, r.window.line_start, r.window_selector.applied]).toEqual(['window', 100, 'lines']);
+  });
+
+  test('a cursor set aside does not size the window the next selector reads', async () => {
+    await put('logs/sel-size', conversation(6000));
+    const tiny = (await get(ctx(), { slug: 'logs/big', body: 'window', max_bytes: 50 })).next_cursor;
+    const r = await get(ctx(), { slug: 'logs/sel-size', cursor: tiny, lines: { from: 7, count: 20 } });
+    const alone = await get(ctx(), { slug: 'logs/sel-size', lines: { from: 7, count: 20 } });
+    expect([r.window_selector.applied, r.window]).toEqual(['lines', alone.window]);
+    expect(r.next_cursor ? decodeCursor(r.next_cursor)!.max_bytes : null).toBe(alone.next_cursor ? decodeCursor(alone.next_cursor)!.max_bytes : null);
+  });
+
+  test('a set-aside include_content or content_only says the window is not the page and how to edit it', async () => {
+    const r = await get(ctx(), { slug: 'logs/big', include_content: true, lines: { from: 100, count: 3 } });
+    expect(r.window_selector.note).toBe("Read the lines window; ignored include_content. This window is not the page's content: put_page with it would replace the whole page with this window, so edit through edit_page with edit_target, or read with include_content alone. get_page reads one window: cursor, then around_chunk_id, then lines, then bytes.");
+    const lines = await get(ctx(), { slug: 'logs/big', lines: { from: 100, count: 3 }, bytes: { offset: 0, length: 10 } });
+    expect(lines.window_selector.note).not.toContain('put_page');
+  });
+
 });
 
 describe('windows', () => {

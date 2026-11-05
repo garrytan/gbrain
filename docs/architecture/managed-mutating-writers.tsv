@@ -5,6 +5,7 @@
 #        early_refusal (refuses on a managed brain before any write), engine_guard (the managed writer trigger refuses its canonical write).
 op	remember	coordinator	submitRememberMutation admits a journaled page mutation.
 op	forget	coordinator	submitForgetMutation records a coordinated withdrawal.
+op	memory_write	coordinator	Each fact is a remember write (submitRememberMutation) under a per-member child request id.
 op	put_page	coordinator	submitPageMutation; unbound Postgres sources refuse unless persistence.unbound_write=database_only.
 op	put_pages	coordinator	Every page is admitted as its own coordinated put_page write request, together in one journal transaction (#6007)
 op	delete_page	coordinator	submitPageMutation soft delete or trusted-local purge.
@@ -37,6 +38,7 @@ op	sync_brain	coordinator	Managed sync admits each changed file through the coor
 op	put_raw_data	no_canonical_write	raw_data side table; not guarded canonical content.
 op	log_ingest	no_canonical_write	ingest_log audit rows only.
 op	file_upload	no_canonical_write	File storage objects and their index rows, confined to the upload root.
+op	file_register	no_canonical_write	A files index row for an object an embedded host already stored at the upload layout path.
 op	submit_job	no_canonical_write	Queues a minion job; its handler owns any write and its own boundary.
 op	cancel_job	no_canonical_write	Minion queue state only.
 op	retry_job	no_canonical_write	Minion queue state only.
@@ -59,7 +61,7 @@ op	connector_sync	coordinator	Managed connector sync admits pages and checkpoint
 op	ontology_propose	engine_guard	mergeOntologyFact inserts into facts; the managed writer trigger refuses it on a managed brain.
 op	chronicle_backfill	no_canonical_write	Queues chronicle jobs; the chronicle extractor publishes through publishMaintenancePage.
 op	extract_entities	coordinator	#6262: the stub is a create-only put_page through submitPageMutation; its tier lowering, timeline row and backlink are coordinatedDatabaseWrite transactions. A refusal or pending write returns its envelope and stops the batch.
-op	extraction_review	no_canonical_write	Review queue state only.
+op	extraction_review	coordinator	Promote, reject and distinct publish through the page-mutation door (edit_page / delete_page).
 op	entity_identity_link	no_canonical_write	entity_identity side table.
 op	entity_identity_unlink	no_canonical_write	entity_identity side table.
 op	extract_facts	coordinator	The facts backstop publishes through the managed facts session on managed brains.
@@ -71,6 +73,8 @@ op	run_onboard	no_canonical_write	Runs remediation steps; each step keeps its ow
 op	run_skillopt	no_canonical_write	Skill files and proposals outside the brain database.
 op	loops_close	coordinator	open_loops state rows; the commitment fact is retired (expired, fence row struck) through the loop-fact-retirement coordinator mutation (#5869).
 op	loops_mute	no_canonical_write	Loop suppression rows.
+op	memory_conversation_mode	no_canonical_write	Returns the rule for the rest of the calling conversation; stores nothing.
+op	set_memory_writeback	no_canonical_write	memory.agent_writeback config row plus an mcp_request_log audit row; no page content.
 op	mute_notice	no_canonical_write	Notice mute list in <GBRAIN_HOME>/notices/muted.json; no brain table or canonical file.
 op	questions_pin	coordinator	pinned_questions side-table rows; the question page publishes through coordinated put_page (trusted local callers only).
 op	questions_refresh	coordinator	Answer and evidence pointers in the pinned_questions side tables; question page sync through coordinated put_page (trusted local callers only).

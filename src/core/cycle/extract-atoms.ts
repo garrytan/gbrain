@@ -90,7 +90,7 @@ import { normalizeForGrounding } from './synthesize-verify.ts';
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 import { atomOriginPin, atomWriteFailure, type AtomWriteFailure, managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedAtoms, publishManagedAtomGeneration, resumeManagedGenerationMembers,
   MANAGED_ATOM_DISCOVERY_SQL, managedAtomDiscoverySql, type AtomOrigin } from '../persistence/atom-maintenance.ts';
-import { effectiveVisibility } from '../search/private-visibility.ts';
+import { effectiveVisibility, folderRestricted } from '../search/private-visibility.ts';
 import { OperationError } from '../ops/contract.ts';
 import { isOpPageSlug } from '../ops/context.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
@@ -1110,7 +1110,7 @@ export async function runPhaseExtractAtoms(
       const sourcePage = item.kind === 'page' ? await engine.getPage(item.slug, { sourceId }) : null;
       const contentDate = await atomSourceDate(engine, sourcePage); // #6720: captured with the input, before inference
       const visibility = origin?.visibility ?? effectiveVisibility(item.kind === 'transcript' ? { kind: 'transcript' } // #5525
-        : { kind: 'page', page: sourcePage });
+        : { kind: 'page', page: sourcePage && { ...sourcePage, folder_restricted: await folderRestricted(engine, sourceId, item.slug) } });
       throwIfAborted(opts.signal, 'extract_atoms');
       const resumed = !opts.dryRun && managed && origin ? await resumeManagedAtoms(engine, managed, origin) : 'run';
       if (resumed === 'done') { duplicatesSkipped++; continue; }

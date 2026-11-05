@@ -32,7 +32,7 @@ import { execFileBounded } from '../bounded-child-exec.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { readGitBehind, type BehindReader } from './sync-freshness.ts';
 import { countGitHolds } from './sync-holds.ts';
-import { holderStalled, publicDrainHolder, readLiveDrainHolder } from './sync-lease.ts';
+import { holderStalled, publicDrainHolder, readLiveDrainLease } from './sync-lease.ts';
 
 export interface WriteWatermark {
   source_id: string;
@@ -107,7 +107,7 @@ export async function readAppliedWatermark(engine: BrainEngine, sourceId: string
   const [source] = await engine.executeRaw<{ incarnation: string | null; root: string | null }>(`SELECT s.incarnation::text AS incarnation,
       COALESCE((SELECT h.local_path FROM persistence_host_bindings h JOIN persistence_source_bindings b ON b.worktree_id=h.worktree_id
         WHERE b.source_id=s.id AND h.host_id::text=$2 LIMIT 1), s.local_path) AS root FROM sources s WHERE s.id=$1`,
-    [sourceId, (await import('./identity.ts')).existingLocalHostId()]);
+    [sourceId, (await import('./identity.ts')).existingHostIdFor(engine)]);
   const commit = write.indexed_through.commit;
   const root = !opts.remote && source?.root && commit ? source.root : null;
   const lag = root ? await (opts.behind ?? readGitBehind)(root, commit!).catch(() => null) : null;
@@ -133,7 +133,8 @@ export async function readAppliedWatermark(engine: BrainEngine, sourceId: string
       : { state: 'complete', commit, before: null, unembedded_pages: 0, held_pages: 0 };
   }
 
-  const holder = await readLiveDrainHolder(engine, sourceId).catch(() => null);
+  const lease = await readLiveDrainLease(engine, sourceId).catch(() => null);
+  const holder = lease?.holder ?? null;
   const shown = opts.remote ? publicDrainHolder(holder) : holder;
   const lastProgress = holder?.progress?.last_progress_at ?? null;
   return {
@@ -156,7 +157,7 @@ export async function readAppliedWatermark(engine: BrainEngine, sourceId: string
       heartbeat_age_seconds: ageSeconds(holder?.last_heartbeat_at, now),
       last_progress_at: lastProgress,
       progress_age_seconds: ageSeconds(lastProgress, now),
-      stalled: holderStalled(holder, now),
+      stalled: holderStalled(holder, opts.now ?? lease?.db_now),
     },
   };
 }

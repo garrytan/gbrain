@@ -63,7 +63,7 @@ function referenceAfterHold(s: SyncPathState): SyncClass {
     case 'FdP': case 'Fdp': return adoptable ? 'adopt' : 'db_ahead';
     case 'fDP': case 'fdP': return adoptable ? 'adopt' : 'import';
     case 'fdp':
-      if (s.record?.revision == null && s.level === s.baseline) return 'legacy_unverified';
+      if (s.record?.revision == null && s.level === s.baseline && !s.hold?.unscreened && !s.hold?.retried) return 'legacy_unverified';
       if (s.keepDb && s.mode === 'committed' && s.dirty === 'clean') return 'keep_db';
       return 'drift';
     default: throw new Error(`unreachable region ${region}`);
@@ -110,6 +110,9 @@ describe('rows (v3.2 §2.3)', () => {
     ['16 import with proof', { tree: 'B', level: 'B' }, 'import', false],
     ['16 a new file', { tree: 'B', level: 'B', page: null, record: null }, 'import', false],
     ['17 legacy_unverified', { tree: 'B', level: 'B', baseline: 'B', record: null, page: { live: true, revision: 'R2', originMatches: true } }, 'legacy_unverified', true],
+    ['17 a hold someone asked to re-screen at a legacy_unverified level re-runs as drift (#7931)', { tree: 'B', level: 'B', baseline: 'B', record: null, page: { live: true, revision: 'R2', originMatches: true }, hold: { atLevel: true, rescreenDue: false, retried: true } }, 'drift', false],
+    ['17 an older unscreened unknown-side hold at a legacy_unverified level re-runs as drift (#7199)', { tree: 'B', level: 'B', baseline: 'B', record: null, page: { live: true, revision: 'R2', originMatches: true }, hold: { atLevel: true, rescreenDue: true, retried: false, unscreened: true } }, 'drift', false],
+    ['17 any other hold at a legacy_unverified level stands', { tree: 'B', level: 'B', baseline: 'B', record: null, page: { live: true, revision: 'R2', originMatches: true }, hold: { atLevel: true, rescreenDue: true, retried: false } }, 'held', true],
     ['18 keep_db', { tree: 'B', level: 'B', keepDb: true, page: { live: true, revision: 'R2', originMatches: true } }, 'keep_db', false],
     ['19 drift (both)', { tree: 'B', level: 'B', page: { live: true, revision: 'R2', originMatches: true } }, 'drift', false],
   ];

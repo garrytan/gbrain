@@ -18,8 +18,10 @@
  * concurrency + dropping under load.
  */
 
+import { withoutCallerAccess } from '../search/private-visibility.ts';
 import { currentAIAttribution, withAIAttribution, type AIAttribution } from '../ai/invocation-guard.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
+import { currentEngineScope, runInEngineScope } from '../engine-scope.ts';
 
 export interface FactsQueueCounters {
   enqueued: number;
@@ -49,6 +51,8 @@ interface QueueEntry {
   enqueuedAt: number;
   /** Model calls the job makes are attributed to whoever enqueued it. */
   attribution: AIAttribution;
+  /** The pump runs in whichever caller's async context started it, so each job resumes its own enqueuer's engine scope. */
+  engine: object | undefined;
 }
 
 export class FactsQueue {
@@ -103,10 +107,10 @@ export class FactsQueue {
       this.pending.shift();
       this.counters.dropped_overflow += 1;
     }
-    this.pending.push({ job, sessionId, enqueuedAt: Date.now(), attribution: { ...currentAIAttribution(), effect: 'facts-queue' } });
+    this.pending.push({ job, sessionId, enqueuedAt: Date.now(), attribution: { ...currentAIAttribution(), effect: 'facts-queue' }, engine: currentEngineScope() });
     this.counters.enqueued += 1;
-    // Non-blocking pump: schedule on microtask so callers stay sync.
-    queueMicrotask(() => { void this.pump(); });
+    // Non-blocking pump: schedule on microtask so callers stay sync. GBRA-218: outside the enqueuing caller's access record.
+    withoutCallerAccess(() => queueMicrotask(() => { void this.pump(); }));
     return this.pending.length;
   }
 
@@ -217,7 +221,7 @@ export class FactsQueue {
 
   private async runEntry(entry: QueueEntry): Promise<void> {
     try {
-      await withAIAttribution(entry.attribution, () => entry.job(this.internalAbort.signal));
+      await runInEngineScope(entry.engine, () => withAIAttribution(entry.attribution, () => entry.job(this.internalAbort.signal)));
       this.counters.completed += 1;
     } catch (err) {
       // Don't propagate; caller sees nothing — the queue surface is fire-and-

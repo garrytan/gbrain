@@ -1,3 +1,5 @@
+import { requireMaintainerPoliciesSql } from '../derived-state-maintainers.ts';
+
 /**
  * The page search-vector trigger fires on the columns its function reads:
  * title, timeline and, once migration v248 added it, the segmented page's
@@ -8,6 +10,36 @@ export const PAGE_SEARCH_VECTOR_TRIGGER_SQL = `DO $trg$ BEGIN
       CASE WHEN EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'pages'::regclass AND attname = 'timeline_lead' AND NOT attisdropped)
         THEN 'title,timeline,timeline_lead' ELSE 'title,timeline' END);
   END $trg$`;
+
+const dropsJobs = requireMaintainerPoliciesSql('page_projection_jobs', ['SELECT', 'DELETE'], '        ');
+/** Queues a page's text rebuild by source incarnation; under RLS the writer needs sources and the queue (#7637). */
+export const PAGE_PROJECTION_QUEUE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION gbrain_queue_page_projection() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
+    DECLARE incarnation UUID;
+    BEGIN
+      ${requireMaintainerPoliciesSql('sources', ['SELECT'], '      ')}
+      IF TG_OP='DELETE' THEN
+        ${dropsJobs}
+        DELETE FROM page_projection_jobs j USING sources s
+          WHERE s.id=OLD.source_id AND j.source_incarnation=s.incarnation AND j.slug=OLD.slug;
+        RETURN NULL;
+      END IF;
+      IF TG_OP='UPDATE' AND (OLD.source_id,OLD.slug) IS DISTINCT FROM (NEW.source_id,NEW.slug) THEN
+        ${dropsJobs}
+        DELETE FROM page_projection_jobs j USING sources s
+          WHERE s.id=OLD.source_id AND j.source_incarnation=s.incarnation AND j.slug=OLD.slug;
+      END IF;
+      SELECT s.incarnation INTO incarnation FROM sources s WHERE s.id=NEW.source_id;
+      IF NEW.deleted_at IS NOT NULL OR NEW.text_projection_revision=NEW.knowledge_revision THEN
+        ${dropsJobs}
+        DELETE FROM page_projection_jobs j WHERE j.source_incarnation=incarnation AND j.slug=NEW.slug;
+      ELSIF TG_OP='INSERT' OR NEW.knowledge_revision IS DISTINCT FROM OLD.knowledge_revision THEN
+        ${requireMaintainerPoliciesSql('page_projection_jobs', ['SELECT', 'INSERT', 'UPDATE'], '        ')}
+        INSERT INTO page_projection_jobs(source_incarnation,slug,revision,reason)
+          VALUES (incarnation,NEW.slug,NEW.knowledge_revision,'canonical_change')
+          ON CONFLICT(source_incarnation,slug) DO UPDATE SET revision=EXCLUDED.revision,reason=EXCLUDED.reason,updated_at=now();
+      END IF;
+      RETURN NULL;
+    END $fn$`;
 
 /** Durable DB-only text rebuild work; source deletion cancels its old incarnation. */
 export const PAGE_PROJECTION_SCHEMA_STATEMENTS = [
@@ -23,28 +55,7 @@ export const PAGE_PROJECTION_SCHEMA_STATEMENTS = [
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY(source_incarnation,slug)
   )`,
-  `CREATE OR REPLACE FUNCTION gbrain_queue_page_projection() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
-    DECLARE incarnation UUID;
-    BEGIN
-      IF TG_OP='DELETE' THEN
-        DELETE FROM page_projection_jobs j USING sources s
-          WHERE s.id=OLD.source_id AND j.source_incarnation=s.incarnation AND j.slug=OLD.slug;
-        RETURN NULL;
-      END IF;
-      IF TG_OP='UPDATE' AND (OLD.source_id,OLD.slug) IS DISTINCT FROM (NEW.source_id,NEW.slug) THEN
-        DELETE FROM page_projection_jobs j USING sources s
-          WHERE s.id=OLD.source_id AND j.source_incarnation=s.incarnation AND j.slug=OLD.slug;
-      END IF;
-      SELECT s.incarnation INTO incarnation FROM sources s WHERE s.id=NEW.source_id;
-      IF NEW.deleted_at IS NOT NULL OR NEW.text_projection_revision=NEW.knowledge_revision THEN
-        DELETE FROM page_projection_jobs j WHERE j.source_incarnation=incarnation AND j.slug=NEW.slug;
-      ELSIF TG_OP='INSERT' OR NEW.knowledge_revision IS DISTINCT FROM OLD.knowledge_revision THEN
-        INSERT INTO page_projection_jobs(source_incarnation,slug,revision,reason)
-          VALUES (incarnation,NEW.slug,NEW.knowledge_revision,'canonical_change')
-          ON CONFLICT(source_incarnation,slug) DO UPDATE SET revision=EXCLUDED.revision,reason=EXCLUDED.reason,updated_at=now();
-      END IF;
-      RETURN NULL;
-    END $fn$`,
+  PAGE_PROJECTION_QUEUE_FUNCTION_SQL,
   `DROP TRIGGER IF EXISTS pages_projection_queue ON pages`,
   `CREATE TRIGGER pages_projection_queue AFTER INSERT OR UPDATE OR DELETE ON pages
     FOR EACH ROW EXECUTE FUNCTION gbrain_queue_page_projection()`,

@@ -30,6 +30,7 @@ import { packShape } from './pack.ts';
 import { resolveSlotPolicy, type SlotPolicy } from './policy.ts';
 import { writeReceipts } from './receipts.ts';
 import { reviewWithdrawOn } from '../../facts/withdrawal.ts';
+import { withdrawalCoversFactSql } from '../../access/member-facts.ts';
 import { flushDecideWrites, hmacRef, listCalibrations, receiptSalt, recentResolvedModels } from './store.ts';
 import { DecideError, partialOf, type ChoiceAnswer, type DecideQuestion, type EvidenceItem } from './types.ts';
 
@@ -215,7 +216,7 @@ async function withdrawAnchor(engine: BrainEngine, row: QueueRow, cfg: DecideCon
     `SELECT f.id, f.fact, f.entity_slug, f.visibility, f.embedding IS NOT NULL AS has_embedding,
             EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
               AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))
-              AND (w.subject = '*' OR w.subject = COALESCE(f.entity_slug, '*'))) AS withdrawn
+              AND ${withdrawalCoversFactSql('w', 'f')}) AS withdrawn
        FROM facts f WHERE f.id = $1 AND f.source_id = $2`, [anchorId, row.source_id]);
   if (!anchor || !anchor.withdrawn) return { skip: 'no_candidates' };
   if (!anchor.has_embedding) return { skip: 'no_embedding' };

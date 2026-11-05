@@ -33,8 +33,9 @@ function sweepLine(r: ConflictSweepResult): string {
 }
 
 export async function runSweepCommand(engine: BrainEngine, args: string[]): Promise<number> {
+  if (args.includes('--claims')) return (await import('./claims-sweep.ts')).runClaimsSweepCommand(engine, args);
   const json = args.includes('--json');
-  if (flagValue(args, '--slot') !== 'conflict') { console.error('Usage: gbrain decide sweep --slot conflict [--since <fact id>] [--source <id>] [--json]'); return 1; }
+  if (flagValue(args, '--slot') !== 'conflict') { console.error('Usage: gbrain decide sweep --slot conflict [--since <fact id>] [--source <id>] [--json] | --claims [--source <id>] [--dry-run] [--json]'); return 1; }
   const sinceRaw = flagValue(args, '--since');
   if (sinceRaw !== undefined && !/^\d+$/.test(sinceRaw)) { console.error('--since takes a fact id (a non-negative integer)'); return 1; }
   const source = flagValue(args, '--source');

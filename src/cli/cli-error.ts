@@ -10,7 +10,7 @@
  */
 import { cliRenderContext, renderCliError, renderNotice, type Action, type AgentEnvelope, type Notice } from '../core/agent-output.ts';
 import { renderCliNotices } from '../core/agent-markers.ts';
-import { jsonGuardActive, jsonRequested, noteRenderedErrorCode, writeStdoutFinal } from '../core/cli-force-exit.ts';
+import { jsonGuardActive, jsonRequested, noteRenderedErrorCode, setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { opError, type OpErrorOpts, type OperationError } from '../core/ops/contract.ts';
 import type { RegistryCode } from '../core/error-registry.ts';
 import {
@@ -194,4 +194,19 @@ export function writeFatalCliError(e: unknown, opts: { argv?: readonly string[];
     } catch { /* classifier failure: the generic renderer below still reports it */ }
   }
   return writeCliError(e, command, { argv });
+}
+
+/**
+ * #4488 / GST-1387: an op that reports failure in-band (`{status: 'error'}`, e.g. put_page over unparseable frontmatter
+ * or a remember batch with a failed item) is echoed to stderr and exits 1 on every CLI path, never read as success.
+ * No-op statuses ('skipped', 'unchanged', …) stay exit 0: a no-op is not a failure. An extraction-review batch with a
+ * failed decision reports 'partial' and exits 1 too.
+ */
+export function reportInBandFailure(result: unknown, command: string): void {
+  if (typeof result !== 'object' || result === null || Array.isArray(result)) return;
+  const status = (result as { status?: unknown }).status;
+  if (status !== 'error' && !(status === 'partial' && command === 'extraction-review')) return;
+  const detail = (result as { error?: unknown }).error;
+  console.error(`gbrain ${command}: operation reported status '${status}'` + (typeof detail === 'string' && detail ? ` — ${detail}` : '') + '.');
+  setCliExitVerdict(1);
 }

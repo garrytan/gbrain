@@ -19,7 +19,7 @@
  *     updates and releases it once the file and database agree again;
  *   - doctor `maintenance_write_drift` and `gbrain repair file-drift`.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -33,7 +33,7 @@ import { isValidSourceId } from '../source-id.ts';
 import { validateSlug } from '../utils.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { sha256 } from './digest.ts';
-import { existingLocalHostId } from './identity.ts';
+import { existingHostIdFor } from './identity.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { staleMirrorPage } from './mirror-read-only.ts';
 import { prepareFileTarget } from './page-prepare.ts';
@@ -77,17 +77,25 @@ export interface LiveDrift {
  * page cannot drift).
  */
 export async function liveFileDrift(engine: BrainEngine, sourceId: string, slug: string, snapshot?: PageSnapshot | null): Promise<LiveDrift> {
-  const hostId = existingLocalHostId();
+  const hostId = existingHostIdFor(engine);
   const binding = hostId ? await getWorktreeBinding(engine, sourceId, hostId) : null;
   if (!binding?.local_path || binding.owner_host_id !== hostId || binding.state !== 'active') return { still_present: null, reason: 'not_owner_host' };
   const page = snapshot === undefined ? await engine.readPageSnapshot(slug, { sourceId }) : snapshot;
   if (!page || page.page.deleted_at) return { still_present: null, reason: 'page_missing' };
   const root = join(binding.local_path, binding.relative_path);
   // GBRA-133 (#7931): a stale mirror page publishes database-only but reconciles against the file at its slug path.
+  // #7974: it is compared as reconcile reads it; a slug path that reading cannot settle (several spellings) is unknown.
   if (await staleMirrorPage(engine, sourceId, page.page)) {
-    const path = slugPathFile(root, slug);
-    if (!existsSync(path)) return { still_present: false, reason: 'database_only', db_revision: page.revision };
-    return { still_present: true, reason: 'file_database_drift', db_revision: page.revision, path: relative(root, path).split(sep).join('/'), file_hash: sha256(readFileSync(path)) };
+    try {
+      const state = await readReconcileState(engine, sourceId, slug);
+      const agrees = classifyDrift(state.file, reconcileCanonical(state.snapshot.page, state.snapshot.tags)).verdict === 'no_drift';
+      return { still_present: !agrees, reason: agrees ? 'agrees' : 'file_database_drift', db_revision: state.snapshot.revision,
+        path: relative(state.root, state.path).split(sep).join('/'), file_hash: sha256(state.raw) };
+    } catch (error) {
+      if (!(error instanceof OperationError)) return { still_present: null, reason: 'error' };
+      if (error.detail === 'canonical_file_missing') return { still_present: false, reason: 'database_only', db_revision: page.revision };
+      return { still_present: null, reason: typeof error.detail === 'string' ? error.detail : error.code };
+    }
   }
   try {
     const file = await prepareFileTarget(engine, { source_id: sourceId, worktree_id: binding.worktree_id, slug }, page, null, hostId!);
@@ -111,9 +119,9 @@ export async function liveFileDrift(engine: BrainEngine, sourceId: string, slug:
 
 /** The path `prepareFileTarget` compares, resolved the same way (recorded source path, captured file URI, then the slug path). */
 async function canonicalFilePath(engine: BrainEngine, sourceId: string, root: string, snapshot: PageSnapshot, slug: string): Promise<string> {
-  const mode = snapshot.page.source_path ? await scannerSlugRootMode(engine, sourceId, root) : undefined;
+  const mode = await scannerSlugRootMode(engine, sourceId, root);
   const captured = recordedPathFromFileUri(snapshot.page.source_uri, root);
-  return resolveSourceLocalFilePath(root, snapshot.page.source_path, slug, mode) ?? (captured ? join(root, captured) : slugPathFile(root, slug));
+  return resolveSourceLocalFilePath(root, snapshot.page.source_path, slug, mode) ?? (captured ? join(root, captured) : slugPathFile(root, slug, mode));
 }
 
 /** Whether Git tracks the canonical file and whether its bytes equal the last commit (null: Git cannot say). */
@@ -264,7 +272,7 @@ export async function auditDriftConflicts(engine: BrainEngine, sourceId: string,
       ORDER BY r.slug, r.sequence DESC`, [sourceId, slugs]) : [];
   const recorded = access.trusted && slugs.length ? await engine.executeRaw<{ slug: string; source_path: string | null; source_uri: string | null }>(
     'SELECT slug, source_path, source_uri FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL', [sourceId, slugs]) : [];
-  const hostId = access.trusted ? existingLocalHostId() : null;
+  const hostId = access.trusted ? existingHostIdFor(engine) : null;
   const binding = hostId ? await getWorktreeBinding(engine, sourceId, hostId) : null;
   const owner = !!binding?.local_path && binding.owner_host_id === hostId && binding.state === 'active';
   const root = owner ? join(binding!.local_path!, binding!.relative_path) : null;

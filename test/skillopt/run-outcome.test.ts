@@ -25,6 +25,7 @@ import {
 import {
   advanceCursor,
   assertResumeCompatible,
+  checkpointOptimizerMode,
   rewindCursor,
   emptyTally,
   resumeCursor,
@@ -280,6 +281,16 @@ describe('resume spec refusal', () => {
     expect(() => assertResumeCompatible(stored, { ...SPEC, optimizer_model: 'openai:gpt-5', reflect_max_tokens: 64000, epochs: 4 })).not.toThrow();
   });
 
+  test('optimizer mode: a legacy or reflect checkpoint resumes as the loop and refuses one-shot', () => {
+    expect(checkpointOptimizerMode(stored)).toBe('reflect');
+    expect(checkpointOptimizerMode(checkpoint())).toBe('reflect');
+    expect(() => assertResumeCompatible(stored, { ...SPEC, optimizer_mode: 'reflect' })).not.toThrow();
+    expect(() => assertResumeCompatible(stored, { ...SPEC, optimizer_mode: 'one-shot-rewrite' })).toThrow(/optimizer_mode changed/);
+    const oneShot = checkpoint({ run_spec: { ...SPEC, optimizer_mode: 'one-shot-rewrite' } });
+    expect(checkpointOptimizerMode(oneShot)).toBe('one-shot-rewrite');
+    expect(() => assertResumeCompatible(oneShot, { ...SPEC, optimizer_mode: 'reflect' })).toThrow(/optimizer_mode changed/);
+  });
+
   test('legacy checkpoint without a spec still refuses a changed benchmark', () => {
     expect(() => assertResumeCompatible(checkpoint(), { ...SPEC, benchmark_sha8: 'bbbb2222' })).toThrow(/benchmark_sha8 changed/);
     expect(() => assertResumeCompatible(checkpoint(), SPEC)).not.toThrow();
@@ -323,6 +334,12 @@ describe('resume command', () => {
     // body-too-large refusal certain again.
     expect(buildResumeCommand('demo', 'run-1', SPEC, 'one_shot_rewrite_body_truncated')).toContain('--reflect-max-tokens 32000');
     expect(buildResumeCommand('demo', 'run-1', SPEC, 'reflect_context_too_small')).toContain('--reflect-max-tokens 32000');
+  });
+
+  test('a legacy or reflect spec resumes with --loop; a one-shot spec without it', () => {
+    expect(buildResumeCommand('demo', 'run-1', SPEC)).toContain(' --loop');
+    expect(buildResumeCommand('demo', 'run-1', { ...SPEC, optimizer_mode: 'reflect' })).toContain(' --loop');
+    expect(buildResumeCommand('demo', 'run-1', { ...SPEC, optimizer_mode: 'one-shot-rewrite' })).not.toContain('--loop');
   });
 
   test('carries the run mode, cost cap and runtime cap', () => {

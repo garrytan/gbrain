@@ -14,7 +14,7 @@
 import type { Action } from '../agent-output.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { SqlEngine } from './model.ts';
-import { existingLocalHostId } from './identity.ts';
+import { existingHostIdFor } from './identity.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { assertPhysicalRoot } from './physical-root.ts';
 import { backgroundOwnerCheck, backgroundOwnerUnverified } from './admission-origin.ts';
@@ -41,7 +41,7 @@ export function verifyOwnerRoot(binding: Pick<WorktreeBinding, 'worktree_id' | '
 /** Refuses a background admission for a source whose owner on this host fails the verification (cached per background run). */
 export async function assertBackgroundOwner(engine: SqlEngine, sourceId: string, ownerStatusFix: (sourceId: string) => Action): Promise<void> {
   const refusal = await backgroundOwnerCheck(sourceId, async () => {
-    const host = existingLocalHostId();
+    const host = existingHostIdFor(engine);
     const binding = await getWorktreeBinding(engine, sourceId, host);
     if (!binding || binding.owner_host_id !== host) return null;
     const failure = verifyOwnerRoot(binding);

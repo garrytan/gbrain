@@ -20,7 +20,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import { isDerivationPrivate } from '../search/private-visibility.ts';
+import { folderRestricted, isDerivationPrivate } from '../search/private-visibility.ts';
 
 export type FactVisibility = 'private' | 'world';
 
@@ -64,12 +64,19 @@ export async function resolveVisibilityParam(
 
 /**
  * Facts derived from a page never take a broader visibility than that page: a
- * `visibility: private` page, a derived page that reads as private, or a page
- * carrying a privacy marker (`access: private`, a private `confidentiality`)
- * yields private facts whatever the caller or the brain default asked for.
+ * `visibility: private` page, a derived page that reads as private, a page
+ * carrying a privacy marker (`access: private`, a private `confidentiality`) or
+ * a page under a folder rule (`folder_restricted`, see tightenToStoredPage) yields private facts whatever the caller
+ * or the brain default asked for.
  */
-export function tightenToPage(visibility: FactVisibility, page: { type?: string | null; frontmatter?: unknown } | null | undefined): FactVisibility {
+export function tightenToPage(visibility: FactVisibility, page: { type?: string | null; frontmatter?: unknown; folder_restricted?: boolean | null } | null | undefined): FactVisibility {
   return page && isDerivationPrivate(page) ? 'private' : visibility;
+}
+
+/** tightenToPage for a page of `sourceId` known by its slug, its folder restriction looked up (folderRestricted). */
+export async function tightenToStoredPage(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, visibility: FactVisibility,
+  page: { slug: string; type?: string | null; frontmatter?: unknown }): Promise<FactVisibility> {
+  return tightenToPage(visibility, { type: page.type, frontmatter: page.frontmatter, folder_restricted: await folderRestricted(engine, sourceId, page.slug) });
 }
 
 /**
@@ -79,7 +86,7 @@ export function tightenToPage(visibility: FactVisibility, page: { type?: string 
  * other than `world`, as the writeback posture reads it) or an unreadable
  * config resolve `private`.
  */
-export async function resolveRememberVisibility(engine: BrainEngine, page: { type?: string | null; frontmatter?: unknown } | null | undefined): Promise<FactVisibility> {
+export async function resolveRememberVisibility(engine: BrainEngine, page: { type?: string | null; frontmatter?: unknown; folder_restricted?: boolean | null } | null | undefined): Promise<FactVisibility> {
   if (page && isDerivationPrivate(page)) return 'private';
   try {
     const raw = (await engine.getConfig(FACTS_DEFAULT_VISIBILITY_KEY))?.trim().toLowerCase() ?? '';

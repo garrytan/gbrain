@@ -59,6 +59,9 @@ for (const kind of testBackends()) {
       'SELECT acquisition_token FROM gbrain_cycle_locks WHERE id=$1', [pageEmbeddingLeaseId(pageId)]);
     const steal = (pageId: number) => brain.engine.executeRaw('UPDATE gbrain_cycle_locks SET acquisition_token=$2::uuid WHERE id=$1', [pageEmbeddingLeaseId(pageId), randomUUID()]);
     const runEffect = async (effectId: string) => {
+      // An earlier test's requeued effect (700-1300 ms jittered backoff) can be due again on a slow runner, and the
+      // drain claims the oldest due effect first; only the effect under test may be due.
+      await brain.engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now()+interval '1 hour' WHERE state='queued' AND id<>$1", [effectId]);
       await brain.engine.executeRaw('UPDATE persistence_effects SET next_attempt_at=now() WHERE id=$1', [effectId]);
       await runPersistenceEffects(brain.engine, { engine: brain.engine.kind }, { hostId: localHostId(), limit: 1 });
       return (await brain.engine.executeRaw<{ state: string; error_code: string | null }>('SELECT state,error_code FROM persistence_effects WHERE id=$1', [effectId]))[0]!;
@@ -135,6 +138,19 @@ for (const kind of testBackends()) {
       expect(sent.length).toBe(CHUNKS.length);
       expect(effect).toMatchObject({ state: 'queued', error_code: 'lock_busy' });
       expect(await vectorless(sourceId)).toEqual(CHUNKS);
+    }, 30_000);
+
+    test('#7998: an earlier effect due first does not run in place of the effect under test', async () => {
+      // An earlier test's lock_busy retry is due again after its 0.7-1.3 s backoff, and the drain claims the oldest due effect first.
+      const earlier = await pending();
+      await brain.engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now()-interval '1 minute' WHERE id=$1", [earlier.effectId]);
+      const { sourceId, effectId, pageId } = await pending();
+      transport(async () => { await steal(pageId); });
+      const effect = await withEnv({ GBRAIN_HOME: home }, () => runEffect(effectId));
+      expect(sent.length).toBe(CHUNKS.length);
+      expect(effect).toMatchObject({ state: 'queued', error_code: 'lock_busy' });
+      expect(await vectorless(sourceId)).toEqual(CHUNKS);
+      expect(await vectorless(earlier.sourceId)).toEqual(CHUNKS);
     }, 30_000);
 
     test('embedStalePages reads the page under its lease: a rewrite while it waits is what it sends', async () => {

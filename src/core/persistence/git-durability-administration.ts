@@ -27,7 +27,7 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import type { BrainEngine } from '../engine.ts';
-import { existingLocalHostId } from './identity.ts';
+import { existingHostIdFor } from './identity.ts';
 import { getWorktreeBinding, type GitDurabilitySetting, type WorktreeBinding } from './ownership.ts';
 import { requireWriterAdminIntent, assertWriterAdminState, writerAdminState } from './admin-intent.ts';
 import { gitDurabilityPolicy, planGitDurabilityCatchUp, requeueGitDurabilityCatchUp } from './git-durability-policy.ts';
@@ -182,15 +182,16 @@ const HELD_ON_CODES = `e.error_code=ANY($2::text[]) OR e.error_code='targets_par
  * resolution: they are named with the settle preview that can account for them.
  */
 async function formerWorktreeHolds(engine: BrainEngine, sourceId: string, worktreeId: string, codes: readonly string[]) {
-  const [row] = await engine.executeRaw<{ effects: number; code: string | null }>(`SELECT count(*)::int AS effects,
+  const [row] = await engine.executeRaw<{ effects: number; code: string | null; worktree_ids: string[]; requests: string[] }>(`SELECT count(*)::int AS effects,
       min(CASE WHEN e.error_code=ANY($2::text[]) THEN e.error_code ELSE (SELECT min(p->>'error_code') FROM jsonb_array_elements(e.data->'parked') p
-        WHERE p->>'error_code'=ANY($2::text[])) END) AS code
-    FROM persistence_effects e WHERE e.source_id=$1 AND e.worktree_id IS DISTINCT FROM $3::uuid AND e.kind='git' AND e.state='failed'
+        WHERE p->>'error_code'=ANY($2::text[])) END) AS code,
+      array_agg(DISTINCT e.worktree_id::text) AS worktree_ids, (array_agg(DISTINCT r.request_id::text))[1:5] AS requests
+    FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE e.source_id=$1 AND e.worktree_id IS DISTINCT FROM $3::uuid AND e.kind='git' AND e.state='failed'
       AND NOT (e.data ? 'settled') AND (${HELD_ON_CODES})`, [sourceId, [...codes], worktreeId]);
   if (!row?.effects || !row.code) return {};
   const command = ['gbrain', 'sources', 'writer', 'settle-effects', sourceId, '--parked-code', row.code, '--dry-run'];
-  return { former_worktree: { effects: Number(row.effects), command,
-    why: `${row.effects} held Git effect(s) of source ${sourceId} belong to a former canonical worktree: retry cannot run them (their binding changed) and this preview does not resolve them. Preview settling them on proof: ${command.join(' ')}` } };
+  return { former_worktree: { effects: Number(row.effects), command, worktree_ids: row.worktree_ids, requests: row.requests,
+    why: `${row.effects} held Git effect(s) of source ${sourceId} (requests ${row.requests.join(', ')}) belong to former canonical worktree ${row.worktree_ids.join(', ')}, not the current ${worktreeId}: retry cannot run them (their binding changed) and this preview does not resolve them, so its counts do not include them. Preview settling them on proof: ${command.join(' ')}` } };
 }
 
 export type ParkedPushRefusal = { source_id: string; request_id: string; code: string; message: string; suggestion?: string; fix?: Action };
@@ -257,7 +258,7 @@ export async function retrySourceParkedCode(engine: BrainEngine, sourceId: strin
 }
 
 async function ownedBinding(engine: BrainEngine, sourceId: string): Promise<WorktreeBinding & { local_path: string }> {
-  const hostId = existingLocalHostId();
+  const hostId = existingHostIdFor(engine);
   const binding = await getWorktreeBinding(engine, sourceId, hostId);
   if (!binding) {
     throw opError('writer_registration_required', `Source ${sourceId} has no canonical owner on this brain.`,

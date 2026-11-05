@@ -48,17 +48,21 @@ export async function checkParkedEffects(engine: BrainEngine, sourceIds?: string
   try {
     const scoped = `${sourceIds ? ' AND e.source_id=ANY($1::text[])' : ''} AND NOT (e.data ? 'settled')`;
     const params = sourceIds ? [sourceIds] : [];
+    const { readParkedGroups, CURRENT_BINDING_SQL } = await import('../../../core/persistence/parked-groups.ts');
     const [{ count }] = await engine.executeRaw<{ count: number }>(`SELECT COUNT(*)::int AS count FROM persistence_effects e WHERE e.data ? 'parked'${scoped}`, params);
-    const rows = await engine.executeRaw<{ request: WriteRequest; source_id: string; kind: string; state: string; parked: ParkedTarget[] }>(
-      `SELECT to_jsonb(r) AS request,e.source_id,e.kind,e.state,e.data->'parked' AS parked FROM persistence_effects e
+    const rows = await engine.executeRaw<{ request: WriteRequest; source_id: string; kind: string; state: string; parked: ParkedTarget[]; former_binding: boolean }>(
+      `SELECT to_jsonb(r) AS request,e.source_id,e.kind,e.state,e.data->'parked' AS parked,NOT ${CURRENT_BINDING_SQL} AS former_binding FROM persistence_effects e
        JOIN persistence_requests r ON r.id=e.request_id WHERE e.data ? 'parked'${scoped} ORDER BY e.id LIMIT ${SAMPLE}`, params);
     const effects = [];
-    for (const { request, ...row } of rows) {
-      const preview = `gbrain sources writer retry-effects ${row.source_id} --request-id ${request.request_id} --dry-run`;
+    for (const { request, former_binding: former, ...row } of rows) {
+      // #7985: an effect of a former binding is never retried (the binding guard refuses it); its exit is the settle preview.
+      const preview = former && row.kind === 'git'
+        ? `gbrain sources writer settle-effects ${row.source_id} --request-id ${request.request_id} --dry-run`
+        : `gbrain sources writer retry-effects ${row.source_id} --request-id ${request.request_id} --dry-run`;
       const revoked = await revokedAuthority(engine, request);
       // GBRA-133: a target a .gitignore rule excludes parks again on any retry while the rule stands; its group says what to change first.
       const ignored = row.parked.every(target => target.error_code === 'git_target_ignored');
-      effects.push({ request_id: request.request_id, ...row, ...(ignored ? {} : { command: preview }), ...(revoked === null ? {} : {
+      effects.push({ request_id: request.request_id, ...row, ...(former ? { former_binding: true } : {}), ...(ignored ? {} : { command: preview }), ...(revoked === null ? {} : {
         owner_revoked: revoked,
         exit: row.kind === 'git'
           ? `the original writer is revoked; ask the user, then retry once under the brain owner's authority: gbrain sources writer retry-effects ${row.source_id} --request-id ${request.request_id} --admin-intent writer_retry_effects --expected-state <admin_state from gbrain sources writer status>`
@@ -70,7 +74,7 @@ export async function checkParkedEffects(engine: BrainEngine, sourceIds?: string
     // GBRA-133: per source, effects that have waited on a busy worktree for over 10 minutes (a catch-up that does not move).
     const stalled = await (await import('../../../core/persistence/effect-catchup.ts')).readStalledCatchups(engine, sourceIds);
     // GBRA-133: parked Git targets grouped per source and code, each with one bulk command instead of one per request.
-    const groups = await (await import('../../../core/persistence/parked-groups.ts')).readParkedGroups(engine, sourceIds);
+    const groups = await readParkedGroups(engine, sourceIds);
     const details = { parked_effects: count, exact: true, inspected: rows.length, truncated: count > rows.length, effects, parked_groups: groups, git_push_holds: pushHolds,
       ...(stalled.length ? { stalled_catchups: stalled } : {}), ...(reclaims ? { index_lock_reclaims: reclaims } : {}) };
     const conflicts = pushHolds.filter(hold => hold.conflict);

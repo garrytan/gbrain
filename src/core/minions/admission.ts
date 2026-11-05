@@ -39,6 +39,7 @@
 
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import { engineKey } from '../engine-key.ts';
 
 /** Names whose parentless submits coalesce on identical params by default. */
 export const PARAM_COALESCE_DEFAULT: Readonly<Record<string, boolean>> = {
@@ -197,16 +198,17 @@ function parsePositiveNumber(v: string | null): number | null {
   return n;
 }
 
-// ~60s in-process cache: add() runs per submission; a config read per submit
-// would add a query to the hot path for a value that changes at human speed.
+// ~60s in-process cache per engine and job name: add() runs per submission; a
+// config read per submit would add a query to the hot path for a value that
+// changes at human speed.
 type CacheEntry = { at: number; policy: AdmissionPolicy };
-const policyCache = new Map<string, CacheEntry>();
+let policyCache = new WeakMap<object, Map<string, CacheEntry>>();
 const POLICY_CACHE_MS = 60_000;
 let warnedFailOpen = false;
 
 /** Test seam: drop the cache so config changes are visible immediately. */
 export function _resetAdmissionCacheForTest(): void {
-  policyCache.clear();
+  policyCache = new WeakMap();
   warnedFailOpen = false;
 }
 
@@ -219,7 +221,10 @@ export async function resolveAdmissionPolicy(engine: BrainEngine, jobName: strin
   if (admissionKilled()) {
     return { coalesceParams: false, ttlWaitingHours: null, quotaMaxWaiting: null };
   }
-  const cached = policyCache.get(jobName);
+  const key = engineKey(engine);
+  let byName = policyCache.get(key);
+  if (!byName) policyCache.set(key, byName = new Map());
+  const cached = byName.get(jobName);
   if (cached && Date.now() - cached.at < POLICY_CACHE_MS) return cached.policy;
 
   const policy: AdmissionPolicy = {
@@ -252,7 +257,7 @@ export async function resolveAdmissionPolicy(engine: BrainEngine, jobName: strin
       );
     }
   }
-  policyCache.set(jobName, { at: Date.now(), policy });
+  byName.set(jobName, { at: Date.now(), policy });
   return policy;
 }
 
