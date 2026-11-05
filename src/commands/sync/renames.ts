@@ -34,12 +34,13 @@ import type { TrackedSlugIndex } from './rename-reconcile.ts';
 import { clearLegacyHold, holdRefusedImport, holdRenameDestination, noteScreenedImport, recordLegacyHold, type LegacyHolds } from './holds.ts';
 import { classifyItemFailure } from '../../core/item-failure.ts';
 import { partial, noteTypeWarning, markCompleted } from './sync-run.ts';
+import { fileHistory } from './reasons.ts';
 import type { SyncPlan, SyncRun, SyncProgress } from './sync-run.ts';
 import { noteCommittedProgress } from '../../core/forward-progress.ts';
 import { recordFallbackRename } from '../../core/belief/identity.ts';
 import { markBeliefCommits } from '../../core/belief/append.ts';
 
-type RenamePlan = Pick<SyncPlan, 'opts' | 'filtered' | 'manifest' | 'lastCommit' | 'pin' | 'gitContextRoot' | 'modePath' | 'syncImportRoot' | 'syncActivePack' | 'holds'>;
+type RenamePlan = Pick<SyncPlan, 'opts' | 'filtered' | 'manifest' | 'lastCommit' | 'pin' | 'gitContextRoot' | 'modePath' | 'syncImportRoot' | 'syncActivePack' | 'holds' | 'reasons'>;
 
 type RenameContext = {
   renameOpts: { sourceId: string } | undefined;
@@ -212,7 +213,7 @@ async function applyRename(
   identityHead?: string,
 ): Promise<SyncResult | undefined> {
   const { engine, failedFiles, succeededPaths, pagesAffected, deletedSlugs } = run;
-  const { opts, gitContextRoot, syncImportRoot, syncActivePack, holds } = plan;
+  const { opts, gitContextRoot, syncImportRoot, syncActivePack, holds, reasons } = plan;
   const { renameOpts, fromSlugByPath, noEmbed } = ctx;
   // v0.41.13.0 (T2 / D-V4-2): per-iteration abort check. Renames call
   // importFile() at line 1173-style sites which can be slow on big files;
@@ -304,7 +305,7 @@ async function applyRename(
       // through importFile threw UTF-8 errors). Same gate as import.ts.
       const result = isImageImportPath(to) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
         ? await importImageFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId })
-        : await importFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId, activePack: syncActivePack });
+        : await importFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId, activePack: syncActivePack, history: fileHistory(reasons, filePath) });
       importResult = result;
       noteTypeWarning(run, result.type_warning);
       noteScreenedImport(holds, to, result);

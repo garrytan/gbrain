@@ -11,7 +11,7 @@ import { assertOriginUnclaimed, assertRevivalUnclaimed, classifyOriginUniqueViol
 import { lockUnheldPageKeys, withHeldPageKeys, type HeldPageKeys } from './page-state/guards.ts';
 import { readPageSnapshot as readCanonicalPageSnapshot } from './page-state/snapshot.ts';
 import { readPageSnapshotsBatch } from './page-snapshot-batch.ts';
-import { createPageVersion } from './page-state/versions.ts';
+import { createPageVersion, type VersionHistory } from './page-state/versions.ts';
 import { moveSlugBindings, recordRenameAlias } from './page-state/rename-alias.ts';
 import { dropPhantomMigrationDuplicates } from './facts/ontology-rekey.ts';
 import { composablePgliteTransaction, transactionMemo } from './page-state/transactions.ts';
@@ -123,8 +123,9 @@ import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from
 import { PAGE_SORT_SQL } from './types.ts';
 import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns, keywordPhraseFactorSql } from './search/sql-ranking.ts';
 import { RARE_TERM_CHUNK_CAP, rankOrFallbackByRarity, rareTermPagesSql, type RareTermPages } from './search/keyword-or-rarity.ts';
+import { keywordArmRows } from './search/keyword-identifier-probe.ts';
 import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment, privatePagesFilterForCaller } from './search/private-visibility.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
 import {
@@ -145,6 +146,9 @@ import { scopedRead, unscopedExecutor } from './engine-sql/brands.ts';
 import * as codeEdgesImpl from './engine-sql/code-edges.ts';
 import { getEdgesByChunk as getEdgesByChunkPglite, type PgliteCodeEdgesDeps } from './pglite-engine/code-edges.ts';
 import * as salienceImpl from './engine-sql/salience.ts';
+import * as pageLookupImpl from './engine-sql/page-lookup.ts';
+import type { FindPagesQuery, FoundPages } from './page-find.ts';
+import type { PageCountQuery, PageCounts, TypeGrouper } from './page-counts.ts';
 import * as healthImpl from './engine-sql/health.ts';
 import { resolveEntityTypes } from './schema-pack/entity-types.ts';
 import * as pagesImpl from './engine-sql/pages.ts';
@@ -1361,6 +1365,12 @@ export class PGLiteEngine implements BrainEngine {
   async listPages(filters?: PageFilters): Promise<Page[]> {
     return plannerRead(this, this._pageTransaction, () => pagesImpl.listPages(scopedRead(this.engineSql), filters));
   }
+  async findPages(query: FindPagesQuery): Promise<FoundPages> {
+    return plannerRead(this, this._pageTransaction, () => pageLookupImpl.findPages(scopedRead(this.engineSql), query));
+  }
+  async countPagesBy(query: PageCountQuery, groupTypes?: TypeGrouper): Promise<PageCounts> {
+    return plannerRead(this, this._pageTransaction, () => pageLookupImpl.countPagesBy(scopedRead(this.engineSql), query, groupTypes));
+  }
 
   async getAllSlugs(opts?: { sourceId?: string }): Promise<Set<string>> {
     return pagesImpl.getAllSlugs(scopedRead(this.engineSql), opts);
@@ -1505,7 +1515,7 @@ export class PGLiteEngine implements BrainEngine {
            CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
              THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-           ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', ${rankParam})) * ${sourceFactorCase} AS score,
+           ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', ${rankParam})) * ${keywordPhraseFactorSql(ftsLang, rankParam, opts?.keywordPhrase === true)} * ${sourceFactorCase} AS score,
            CASE WHEN p.updated_at < (
              SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
            ) THEN true ELSE false END AS stale
@@ -1525,30 +1535,17 @@ export class PGLiteEngine implements BrainEngine {
        ORDER BY score DESC, page_id ASC, chunk_id ASC
        LIMIT $3 OFFSET $4`;
 
-    let { rows } = await this.db.query(keywordSql, params);
-    // D2 fix (fix/title-retrieval-arm): websearch AND semantics at chunk
-    // grain mean one non-co-occurring token zeroes keyword recall. When the
-    // strict query returns nothing, retry ONCE with OR-of-terms. Strict-AND
-    // results always win when non-empty (no change for working queries).
-    // Opt-in via SearchOpts.orFallback (Reviewer F1): only hybridSearch's
-    // recall arm relaxes; precision consumers (countMentions,
-    // link-extraction, eval) keep the strict-AND contract.
-    if (rows.length === 0 && opts?.orFallback) {
-      const orQuery = buildOrFallbackWebsearchQuery(query);
-      if (orQuery) {
-        const run = async (matchQuery: string) => (await this.db.query(keywordSql, params.map((v, i) => i === 0 ? matchQuery : i === rankIdx && !opts?.rankQuery ? orQuery : v))).rows as Record<string, unknown>[];
-        rows = await rankOrFallbackByRarity({ query, rows: await run(orQuery), limit, offset, runRare: run,
-          readTermPages: async terms => (await this.db.query(rareTermPagesSql(ftsLang), [terms, RARE_TERM_CHUNK_CAP])).rows as RareTermPages[] });
-        settle();
-        // 2026-09 (#3617 follow-up): relaxed rows are TAGGED so hybrid's
-        // fusion can demote them — an OR-of-common-terms match must not
-        // outvote a healthy vector arm (SearchResult.keyword_relaxed doc).
-        return (rows as Record<string, unknown>[]).map((r) => ({ ...rowToSearchResult(r), keyword_relaxed: true as const }));
-      }
-    }
-
-    settle();
-    return (rows as Record<string, unknown>[]).map(rowToSearchResult);
+    const { rows: strict } = await this.db.query(keywordSql, params);
+    // D2 fix (fix/title-retrieval-arm): when the strict AND finds nothing,
+    // retry ONCE with OR-of-terms. Opt-in via SearchOpts.orFallback (Reviewer
+    // F1): only hybridSearch's recall arm relaxes; precision consumers keep
+    // the strict-AND contract. #7491: the identifier probe and the
+    // relaxed-row tag (#3617 follow-up) live in search/keyword-identifier-probe.ts.
+    const run = async (matchQuery: string, rankQuery: string) => (await this.db.query(keywordSql, params.map((v, i) => i === 0 ? matchQuery : i === rankIdx && !opts?.rankQuery ? rankQuery : v))).rows as Record<string, unknown>[];
+    return keywordArmRows({ query, strict: strict as Record<string, unknown>[], orFallback: opts?.orFallback, limit, offset, toResult: rowToSearchResult, runProbe: run, onIncomplete: opts?.onKeywordIncomplete,
+      runHandles: handles => keywordPagesImpl.searchHandlePages(async (read) => read(scopedRead(this.engineSql)), query, handles, opts, limit, {}),
+      runRelaxed: async orQuery => rankOrFallbackByRarity({ query, rows: await run(orQuery, orQuery), limit, offset, runRare: q => run(q, orQuery),
+        readTermPages: async terms => (await this.db.query(rareTermPagesSql(ftsLang), [terms, RARE_TERM_CHUNK_CAP])).rows as RareTermPages[] }) }).finally(settle);
   }
 
   /**
@@ -2696,8 +2693,8 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   // Versions
-  async createVersion(slug: string, opts?: { sourceId?: string; preimage?: PageSnapshot }): Promise<PageVersion> {
-    return createPageVersion(this, slug, opts?.sourceId ?? 'default', opts?.preimage);
+  async createVersion(slug: string, opts?: { sourceId?: string; preimage?: PageSnapshot } & VersionHistory): Promise<PageVersion> {
+    return createPageVersion(this, slug, opts?.sourceId ?? 'default', opts?.preimage, opts);
   }
 
   async getVersions<B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>): Promise<PageVersionRows<B>> {

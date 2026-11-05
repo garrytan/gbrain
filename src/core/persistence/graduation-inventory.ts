@@ -169,6 +169,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     }),
     carry('question_evidence', 'user_data', 'Per-sentence evidence pointers of pinned answers; without them every answer reads stale.'),
     carry('raw_data', 'user_data', 'Raw source payloads per page.'),
+    carry('reason_purge_tombstones', 'user_data', 'Text-free (commit, path) pairs a purge found a change reason in; dropping them would let a later sync bring the purged reason back.'),
     carry('retrieval_event_links', 'operational', 'Typed edges each recorded answer used; keeps recent answers rateable.'),
     carry('retrieval_event_pages', 'operational', 'Pages and revisions each recorded answer used; keeps recent answers rateable.'),
     carry('retrieval_events', 'operational', 'Recorded answers (answer_id, client, op) within the retention window.'),

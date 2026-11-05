@@ -342,14 +342,26 @@ export class PersistenceIpcTransportError extends Error {
   }
 }
 
+/**
+ * GST-1387: a wire error body's recovery contract (canonical code, detail, retryable, fix) restored onto a rebuilt
+ * OperationError, so a refresh fence stays worktree_refreshing with fix.next wait across the owner hop. Only the fence's
+ * fix (read-only, no consent) is carried: a rendered fix drops `ask_user`, and a receipt's fix is rendered on this side.
+ */
+export function restoreRecoveryContract(error: OperationError, body: Record<string, unknown>): void {
+  if (typeof body.code === 'string' && body.code !== error.code) error.canonical = body.code as OperationError['canonical'];
+  if (typeof body.detail === 'string') error.detail = body.detail;
+  if (typeof body.retryable === 'boolean') error.retryable = body.retryable;
+  if (record(body.fix) && body.code === 'worktree_refreshing') { const { next: _next, command: _command, ...fix } = body.fix; error.fix = fix as unknown as Action; }
+}
+
 function remoteOperationError(value: unknown): OperationError {
   if (!record(value) || typeof value.error !== 'string' || typeof value.message !== 'string') {
     throw new Error('Malformed persistence error response.');
   }
   const error = new OperationError(value.error, value.message, typeof value.suggestion === 'string' ? value.suggestion : undefined,
     typeof value.docs === 'string' ? value.docs : undefined);
-  if (typeof value.detail === 'string') error.detail = value.detail;
   if (typeof value.protocol_version === 'number') error.protocolVersion = value.protocol_version;
+  restoreRecoveryContract(error, value);
   if (isWriteReceipt(value.write_request)) error.writeRequest = publicWriteReceipt(value.write_request);
   if (isWriteRequestId(value.request_id)) error.requestId = value.request_id;
   if (isWriteErrorCode(value.write_error)) error.writeError = value.write_error;

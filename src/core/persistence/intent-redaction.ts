@@ -197,17 +197,18 @@ export async function recheckRequestsCarrying(tx: Pick<BrainEngine, 'executeRaw'
 }
 
 /**
- * Requests in `sourceId` whose stored intent, outcome or error text carries `claim`, bounded, compacted
- * ones included (compaction keeps the outcome). Owner-only; never returns the text.
+ * Requests in `sourceId` whose stored intent, outcome or error text carries `claim`, or `reason` (the claim folded
+ * as a stored change reason is), bounded, compacted ones included (compaction keeps the outcome). Owner-only; never
+ * returns the text.
  */
-export async function findRequestsCarrying(engine: BrainEngine, sourceId: string, claim: string, limit = 10_000): Promise<IntentRedactionTarget[]> {
+export async function findRequestsCarrying(engine: BrainEngine, sourceId: string, claim: string, reason = claim, limit = 10_000): Promise<IntentRedactionTarget[]> {
   const needle = claim.toLowerCase();
   // The claim as it appears inside a JSON string (quotes and backslashes escaped), lowercased.
   const jsonNeedle = JSON.stringify(claim).slice(1, -1).toLowerCase();
-  const carries = (column: string) => `(${column} IS NOT NULL AND (strpos(lower(${column}::text),$2)>0 OR strpos(lower(${column}::text),$3)>0))`;
+  const carries = (column: string) => `(${column} IS NOT NULL AND (strpos(lower(${column}::text),$2)>0 OR strpos(lower(${column}::text),$3)>0 OR strpos(lower(${column}::text),$4)>0))`;
   return engine.executeRaw<IntentRedactionTarget>(`SELECT id::text AS id,principal_kind,principal_id FROM persistence_requests
     WHERE source_id=$1 AND (${carries('intent')} OR ${carries('outcome')} OR ${carries('error_detail')} OR ${carries('error_message')})
-    ORDER BY sequence LIMIT $4`, [sourceId, needle, jsonNeedle, limit]);
+    ORDER BY sequence LIMIT $5`, [sourceId, needle, jsonNeedle, JSON.stringify(reason).slice(1, -1).toLowerCase(), limit]);
 }
 
 /** Replace every JSON string that carries one of `needles` (case-insensitive) with "[purged]"; structure and other values stay. */

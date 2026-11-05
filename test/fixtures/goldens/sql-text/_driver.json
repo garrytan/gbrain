@@ -2900,6 +2900,48 @@
       }
     },
     "pages": {
+      "countPagesBy": {
+        "grouped+since+remote": [
+          {
+            "paramCount": 2,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          },
+          {
+            "paramCount": 4,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "totals": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          },
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "countStaleFrontmatterKeyPages": {
         "default": [
           {
@@ -3002,7 +3044,7 @@
             "via": "unsafe"
           },
           {
-            "paramCount": 10,
+            "paramCount": 11,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -3090,6 +3132,30 @@
         "default": [
           {
             "paramCount": 2,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "findPages": {
+        "glob+types+sourceIds+remote": [
+          {
+            "paramCount": 5,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "name": [
+          {
+            "paramCount": 4,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -4235,7 +4301,7 @@
             "via": "unsafe"
           },
           {
-            "paramCount": 10,
+            "paramCount": 11,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -4398,7 +4464,7 @@
             "via": "unsafe"
           },
           {
-            "paramCount": 10,
+            "paramCount": 11,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

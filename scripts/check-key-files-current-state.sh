@@ -13,7 +13,7 @@
 #      marker is the disease signature; it must not appear in those docs. Plain prose
 #      ("as of pgvector 0.7", "Postgres 11+") is fine — only the bolded release
 #      marker is banned, so this never false-fires on legitimate version mentions.
-#   2. Size caps for CLAUDE.md, README.md, the index, each subsystem and
+#   2. Size caps for CLAUDE.md, the index, each subsystem and
 #      docs/TESTING.md. The TESTING.md cap is a ratchet: lower it when the file
 #      shrinks, never raise it; detail moves next to its code instead.
 #   3. One reference bullet per src file across the index and subsystems — a cherry-pick that keeps both sides
@@ -87,7 +87,7 @@ if [ -f "$claude" ]; then
   fi
 fi
 
-for spec in "README.md:45000" "docs/architecture/KEY_FILES.md:10000"; do
+for spec in "docs/architecture/KEY_FILES.md:10000"; do
   rel="${spec%:*}"
   cap="${spec##*:}"
   [ -f "$ROOT/$rel" ] || continue

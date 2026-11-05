@@ -41,6 +41,7 @@ export const ARTIFACTS: Artifact[] = [
   { name: 'schema migrations bundle', regen: ['bun', 'run', 'scripts/build-schema-migrations.ts'], check: ['bash', 'scripts/check-schema-migrations-fresh.sh'] },
   { name: 'error-code registry docs', regen: ['bun', 'scripts/build-error-codes.ts'], check: ['bun', 'scripts/build-error-codes.ts', '--check'] },
   { name: 'agent operator protocol blocks', regen: ['bun', 'scripts/build-agent-protocol.ts'], check: ['bun', 'scripts/build-agent-protocol.ts', '--check'] },
+  { name: 'lookup table copies', regen: ['bun', 'scripts/build-lookup-table.ts'], check: ['bun', 'scripts/build-lookup-table.ts', '--check'] },
   { name: 'harness adapter reference', regen: ['bun', 'run', 'scripts/build-harness-docs.ts'], check: ['bun', '-e', HARNESS_DOCS_CHECK] },
   { name: 'operation manifest', regen: ['bun', 'run', 'scripts/build-operation-manifest.ts'], check: [...BUN_TEST, 'test/operation-manifest.test.ts'] },
   { name: 'MCP tool catalog', regen: ['bun', 'run', 'scripts/generate-tool-catalog.ts'], check: ['bash', 'scripts/check-tool-catalog-fresh.sh'] },

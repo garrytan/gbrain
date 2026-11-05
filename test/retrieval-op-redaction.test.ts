@@ -135,6 +135,7 @@ const SWEEP: Record<string, Row> = {
   entity: { args: { name: 'people/alice-example' } },
   synthesize: { skip: 'LLM-backed; keyless test env returns no composition. Wrapper coverage is the registration test below.' },
   list_pages: { args: { limit: 100 } },
+  find_pages: { args: { pattern: '*', limit: 100 } },
   search: { args: { query: 'PLANTMARK note body', limit: 20 } },
   query: { args: { query: 'PLANTMARK note body', limit: 20 } },
   search_exact: { args: { phrase: 'PLANTMARK' } },
@@ -215,6 +216,7 @@ const SWEEP: Record<string, Row> = {
   schema_explain_type: { args: { type: 'note' } },
   schema_review_orphans: { args: { limit: 50 } },
   list_write_conflicts: { args: {} },
+  get_memory_settings: { args: {} },
   // no_stored_text — write receipts (the planted content is the caller's own
   // input here; the receipt must not echo it)
   remember: { args: { fact: planted('remembered'), provenance: 'test:sweep', request_id: randomUUID() } },

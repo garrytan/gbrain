@@ -295,8 +295,11 @@ test/runtime-version.test.ts	stated Bun floor	2	readFileSync
 test/schema-bootstrap-coverage.test.ts	(file-level)	15	source-surface-helper
 test/schema-pack-unify-types-handler.test.ts	#1575 unify-types worker dry-run default	1	source-surface-helper
 test/schema-pack/suggest.test.ts	runSuggest — source-text contract (structural)	1	readFileSync
+test/scripts/build-lookup-table.test.ts	build-lookup-table	2	readFileSync
 test/scripts/build-schema-migrations.test.ts	generator diagnostics (FAIL/Why/Fix/See)	9	exec-scan
 test/scripts/build-schema-migrations.test.ts	out-of-order landing check	2	exec-scan
+test/scripts/check-core-world-reads.test.ts	check-core-world-reads.ts: the ratchet	5	readFileSync
+test/scripts/check-dynamic-ci.test.ts	check-dynamic-ci.ts	1	exec-scan,readFileSync
 test/scripts/check-function-size.test.ts	check-function-size.ts rules	11	readFileSync
 test/scripts/check-item-allowlist-catches.test.ts	CLI	2	readFileSync
 test/scripts/chunk-visibility-ratchet.test.ts	check-chunk-visibility.ts	6	readFileSync
@@ -326,7 +329,7 @@ test/scripts/e2e-runner.test.ts	sequential E2E runner (GITHUB_ACTIONS=${githubAc
 test/scripts/e2e-shard-budget.test.ts	E2E shard-time budget	3	readFileSync
 test/scripts/e2e-wiring.test.ts	(file-level)	14	readFileSync
 test/scripts/fix-wave-gate.test.ts	fix-wave gate workflow	3	readFileSync
-test/scripts/full-ci-workflow.test.ts	full CI on pull requests	5	readFileSync
+test/scripts/full-ci-workflow.test.ts	full CI on pull requests	6	readFileSync
 test/scripts/full-ci-workflow.test.ts	master-push reuse of a passed full-suite run	2	readFileSync
 test/scripts/heavy-door-workflow.test.ts	heavy door supply chain and coverage gates	8	readFileSync
 test/scripts/native-lock-prebuilds.test.ts	native lock distribution integrity	2	readFileSync
@@ -442,6 +445,7 @@ test/v0_37_gap_fill.serial.test.ts	Lane D.2 — embed pre-flight catches dim mis
 test/v0_37_gap_fill.serial.test.ts	Lane D.3 — sync surfaces dim-mismatch recipe at incremental AND first-sync catches	2	source-surface-helper
 test/v0_37_gap_fill.serial.test.ts	Lane E.4 — loadRecommendationContext is provider-aware	1	readFileSync,source-surface-helper
 test/v0_37_gap_fill.serial.test.ts	reinit-pglite — backup + reinit	8	source-surface-helper
+test/valid-time-gbra217.test.ts	valid-time normaliser and verdict (pure)	24	readFileSync
 test/w13-small-hardening.test.ts	P1.14 paid-consent lint wording	1	exec-scan
 test/worker-supervised-db-probe.test.ts	issue #1801 fix #2 — supervised DB self-defense	5	readFileSync
 test/write-attribution-legacy.test.ts	write attribution inventory	1	readFileSync
