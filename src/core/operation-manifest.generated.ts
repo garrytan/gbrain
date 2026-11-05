@@ -14,7 +14,8 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "remember",
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Save facts with provenance; set `entity` (the subject) or recall misses it. Branch on `status`; write_pending: poll get_write_request.",
+    "description": "Save {fact, provenance (required: source), `entity` (subject; recall needs it)} or items[]. Branch on `status`; write_pending: poll get_write_request.",
+    "callShape": "A valid call: {\"fact\": \"Alice Example prefers email\", \"entity\": \"alice-example\", \"provenance\": \"user told me, 2026-06-12\"}; several: items: [{fact, entity, provenance}, ...]. provenance (where the fact came from) is required.",
     "params": {
       "source_id": {
         "type": "string",

@@ -59,6 +59,7 @@ const FACT_KINDS = ['event', 'preference', 'commitment', 'belief', 'fact'] as co
  */
 const FACT_KINDS_RESPONSE = [...FACT_KINDS, 'idea'] as const;
 const PROVENANCE_MAX = 500;
+const REMEMBER_CALL_SHAPE = 'A valid call: {"fact": "Alice Example prefers email", "entity": "alice-example", "provenance": "user told me, 2026-06-12"}; several: items: [{fact, entity, provenance}, ...]. provenance (where the fact came from) is required.';
 
 // ─── remember ────────────────────────────────────────────────────────────────
 
@@ -66,7 +67,8 @@ const remember: Operation = {
   name: 'remember',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Save facts with provenance; set `entity` (the subject) or recall misses it. Branch on `status`; write_pending: poll get_write_request.',
+  description: 'Save {fact, provenance (required: source), `entity` (subject; recall needs it)} or items[]. Branch on `status`; write_pending: poll get_write_request.',
+  callShape: REMEMBER_CALL_SHAPE,
   params: {
     ...AGENT_CONTENT_PARAMS,
     fact: { type: 'string', description: 'One claim.' },
@@ -133,7 +135,7 @@ const remember: Operation = {
         'fact must be a non-empty string.',
         p.fact === undefined && Object.keys(p).length === 0
           ? 'The call arrived with no arguments; a tool call cut off at your output-token limit looks like this. Pass fact, or items with fewer entries per call.'
-          : 'Pass the claim to remember, e.g. fact: "picked Stripe over Adyen — onboarding speed", or several as items: [{fact, provenance}].',
+          : `Pass the claim to remember in fact. ${REMEMBER_CALL_SHAPE}`,
       );
     }
     // v1 contract: an absent provenance is a missing required parameter (invalid_params), an empty one is provenance_required.
