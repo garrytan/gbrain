@@ -1,0 +1,104 @@
+import type { Migration } from './types.ts';
+
+// Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
+// ("Canonical schema sources") for when schema.sql or a TS fragment also changes.
+//
+// Convergence PR B (docs/designs/REFRESH_WRITE_BARRIER.md): the refresh write barrier.
+// - persistence_requests.state gains 'deferred': a page write admitted while a
+//   `gbrain sources refresh` holds its worktree waits there, invisible to every
+//   claim, drain and head selector (old binaries included), until its refresh
+//   is released; deferred_refresh_id names that refresh.
+// - persistence_worktree_refreshes.released_at is set by trigger when the refresh
+//   reaches completed or aborted, whoever moves it (a mixed-version window
+//   included); barrier_sequence is diagnostic.
+// - gbrain_request_deferred: a deferred row leaves the state only to running (a
+//   barrier-aware claim of a released refresh), failed or cancelled.
+// - persistence_consumers.capabilities: what a live consumer can drain; admission
+//   defers only when every live consumer of the owner host can.
+// Postgres swaps the state CHECK with ADD ... NOT VALID then VALIDATE (no long
+// ACCESS EXCLUSIVE scan), outside a transaction like v114; PGLite does it in one
+// shot. The number is a placeholder restamped at the merge slot.
+export const v290: Migration = {
+  version: 290,
+  name: 'refresh_write_barrier',
+  idempotent: true,
+  transaction: false,
+  sql: '',
+  sqlFor: {
+    postgres: `
+    ALTER TABLE persistence_worktree_refreshes ADD COLUMN IF NOT EXISTS barrier_sequence bigint;
+    ALTER TABLE persistence_worktree_refreshes ADD COLUMN IF NOT EXISTS released_at timestamptz;
+    UPDATE persistence_worktree_refreshes SET released_at=COALESCE(completed_at,updated_at) WHERE state IN ('completed','aborted') AND released_at IS NULL;
+    ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS deferred_refresh_id uuid REFERENCES persistence_worktree_refreshes(id);
+    ALTER TABLE persistence_consumers ADD COLUMN IF NOT EXISTS capabilities text[] NOT NULL DEFAULT '{}';
+    CREATE INDEX IF NOT EXISTS persistence_requests_deferred ON persistence_requests(deferred_refresh_id, sequence) WHERE state='deferred';
+    CREATE OR REPLACE FUNCTION gbrain_release_refresh_barrier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+    BEGIN
+      NEW.released_at := COALESCE(NEW.released_at, now());
+      RETURN NEW;
+    END $$;
+    DROP TRIGGER IF EXISTS gbrain_refresh_release ON persistence_worktree_refreshes;
+    CREATE TRIGGER gbrain_refresh_release BEFORE UPDATE OF state ON persistence_worktree_refreshes FOR EACH ROW
+      WHEN (NEW.state IN ('completed','aborted') AND OLD.state NOT IN ('completed','aborted'))
+      EXECUTE FUNCTION gbrain_release_refresh_barrier();
+    CREATE OR REPLACE FUNCTION gbrain_guard_deferred_request() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+    BEGIN
+      IF NEW.state='deferred' THEN
+        IF OLD.state<>'deferred' THEN RAISE EXCEPTION 'unsupported_mutation_protocol: only admission defers a request' USING ERRCODE='42501'; END IF;
+        RETURN NEW;
+      END IF;
+      IF NEW.state IN ('failed','cancelled') THEN RETURN NEW; END IF;
+      IF NEW.state='running' AND COALESCE(current_setting('gbrain.refresh_barrier',true),'')='1'
+        AND EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.id=OLD.deferred_refresh_id AND f.released_at IS NOT NULL) THEN
+        RETURN NEW;
+      END IF;
+      RAISE EXCEPTION 'writer_upgrade_required: a deferred request is claimed only by a refresh-barrier consumer after its refresh is released' USING ERRCODE='42501';
+    END $$;
+    DROP TRIGGER IF EXISTS gbrain_request_deferred ON persistence_requests;
+    CREATE TRIGGER gbrain_request_deferred BEFORE UPDATE OF state ON persistence_requests FOR EACH ROW
+      WHEN (OLD.state='deferred' OR NEW.state='deferred')
+      EXECUTE FUNCTION gbrain_guard_deferred_request();
+    ALTER TABLE persistence_requests DROP CONSTRAINT IF EXISTS persistence_requests_state_check;
+    ALTER TABLE persistence_requests ADD CONSTRAINT persistence_requests_state_check
+      CHECK (state IN ('queued','deferred','running','recovering','committed','conflict','failed','cancelled')) NOT VALID;
+    ALTER TABLE persistence_requests VALIDATE CONSTRAINT persistence_requests_state_check;
+  `,
+    pglite: `
+    ALTER TABLE persistence_worktree_refreshes ADD COLUMN IF NOT EXISTS barrier_sequence bigint;
+    ALTER TABLE persistence_worktree_refreshes ADD COLUMN IF NOT EXISTS released_at timestamptz;
+    UPDATE persistence_worktree_refreshes SET released_at=COALESCE(completed_at,updated_at) WHERE state IN ('completed','aborted') AND released_at IS NULL;
+    ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS deferred_refresh_id uuid REFERENCES persistence_worktree_refreshes(id);
+    ALTER TABLE persistence_consumers ADD COLUMN IF NOT EXISTS capabilities text[] NOT NULL DEFAULT '{}';
+    CREATE INDEX IF NOT EXISTS persistence_requests_deferred ON persistence_requests(deferred_refresh_id, sequence) WHERE state='deferred';
+    CREATE OR REPLACE FUNCTION gbrain_release_refresh_barrier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+    BEGIN
+      NEW.released_at := COALESCE(NEW.released_at, now());
+      RETURN NEW;
+    END $$;
+    DROP TRIGGER IF EXISTS gbrain_refresh_release ON persistence_worktree_refreshes;
+    CREATE TRIGGER gbrain_refresh_release BEFORE UPDATE OF state ON persistence_worktree_refreshes FOR EACH ROW
+      WHEN (NEW.state IN ('completed','aborted') AND OLD.state NOT IN ('completed','aborted'))
+      EXECUTE FUNCTION gbrain_release_refresh_barrier();
+    CREATE OR REPLACE FUNCTION gbrain_guard_deferred_request() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+    BEGIN
+      IF NEW.state='deferred' THEN
+        IF OLD.state<>'deferred' THEN RAISE EXCEPTION 'unsupported_mutation_protocol: only admission defers a request' USING ERRCODE='42501'; END IF;
+        RETURN NEW;
+      END IF;
+      IF NEW.state IN ('failed','cancelled') THEN RETURN NEW; END IF;
+      IF NEW.state='running' AND COALESCE(current_setting('gbrain.refresh_barrier',true),'')='1'
+        AND EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.id=OLD.deferred_refresh_id AND f.released_at IS NOT NULL) THEN
+        RETURN NEW;
+      END IF;
+      RAISE EXCEPTION 'writer_upgrade_required: a deferred request is claimed only by a refresh-barrier consumer after its refresh is released' USING ERRCODE='42501';
+    END $$;
+    DROP TRIGGER IF EXISTS gbrain_request_deferred ON persistence_requests;
+    CREATE TRIGGER gbrain_request_deferred BEFORE UPDATE OF state ON persistence_requests FOR EACH ROW
+      WHEN (OLD.state='deferred' OR NEW.state='deferred')
+      EXECUTE FUNCTION gbrain_guard_deferred_request();
+    ALTER TABLE persistence_requests DROP CONSTRAINT IF EXISTS persistence_requests_state_check;
+    ALTER TABLE persistence_requests ADD CONSTRAINT persistence_requests_state_check
+      CHECK (state IN ('queued','deferred','running','recovering','committed','conflict','failed','cancelled'));
+  `,
+  },
+};
