@@ -38,6 +38,7 @@ import type { CompanionPage, PreparedMutation } from '../persistence/coordinator
 import type { WriteRequest } from '../persistence/model.ts';
 import { normalizeTargetFences } from '../fence-repair/import-step.ts';
 import { refuseUnparsedRewrite } from '../fence-repair/refusal.ts';
+import { assertFenceRewritable } from '../fence-shared.ts';
 import { pageFencesNormalized } from '../fence-repair/report.ts';
 import { withPendingFenceRows } from '../eligibility/fence-overlay.ts';
 import { withPageTierKept } from '../trust/fence-append.ts';
@@ -197,11 +198,15 @@ export async function prepareFenceRowRetirement(engine: BrainEngine, row: WriteR
   if (!snapshot || snapshot.page.deleted_at) return null;
   if (segmentedOverCeiling(snapshot.page)) throw pageBodyOverCeilingError(snapshot.page, `${row.operation} facts fence write`);
   const base = await materializedPage(engine, snapshot.page);
-  const fenced = { compiled_truth: base.compiled_truth, timeline: base.timeline ?? '' };
+  // #6188 / #6385 R12, as the append: the stored fence is normalized first and a residual refuses typed instead of losing the rows it skipped.
+  const target = await normalizeTargetFences(engine, { sourceId: row.source_id, slug, kind: 'facts', page: base });
+  const fenced = { compiled_truth: target.page.compiled_truth, timeline: target.page.timeline ?? '' };
   const section = (['compiled_truth', 'timeline'] as const).find(key => parseFactsFence(fenced[key]).facts.some(f => f.rowNum === retire.rowNum && f.active));
   if (!section) return null;
   const until = retire.validUntil ? formatFenceDate(retire.validUntil) : undefined;
-  const rows = parseFactsFence(fenced[section]).facts.map(f => f.rowNum === retire.rowNum
+  const parsed = parseFactsFence(fenced[section]);
+  refuseUnparsedRewrite(target.page, slug, row.source_id, () => assertFenceRewritable('facts', parsed));
+  const rows = parsed.facts.map(f => f.rowNum === retire.rowNum
     ? { ...f, active: false, context: [retire.note, f.context?.trim()].filter(Boolean).join(' | '), ...(until ? { validUntil: until } : {}) } : f);
   const content = serializePageToMarkdown({ ...base, ...fenced, [section]: replaceOrInsertFactsFence(fenced[section], renderFactsTable(rows)) }, snapshot.tags);
   const prepared = await preparePageMutation(engine, { ...row, slug, page_id: snapshot.page.id,
