@@ -22,6 +22,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { refreshWorktree } from '../src/core/persistence/worktree-refresh.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { admitWrite, type WriteAdmission } from '../src/core/persistence/journal.ts';
 import { _setRefreshFenceWaitForTests } from '../src/core/persistence/admission-retry.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -112,6 +113,26 @@ test('put_page past the wait cap is refused retryable with fix.next wait and ret
     expect(out.body).toMatchObject({ error: 'worktree_refreshing', code: 'worktree_refreshing', class: 'retryable', retryable: true, detail: 'retry_after_ms=1000' });
     expect(out.body.fix.next).toBe('wait');
     expect(out.body.message).toContain('waited');
+    expect(await f.requestCount()).toBe(before);
+  }));
+}), 120_000);
+
+test('an admission retried after its accepted commit lost its ack reconciles to the receipt under a fence, never "not recorded"', () => each(async f => {
+  _setRefreshFenceWaitForTests(0);
+  const requestId = crypto.randomUUID();
+  const content = page('Accepted', 'accepted before the fence');
+  await f.put(f.alpha, 'notes/accepted', content, requestId);
+  const [row] = await f.engine.executeRaw<Record<string, any>>('SELECT * FROM persistence_requests WHERE request_id=$1::uuid', [requestId]);
+  const [src] = await f.engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [f.alpha]);
+  const [bind] = await f.engine.executeRaw<{ g: string }>('SELECT topology_generation::text AS g FROM persistence_source_bindings WHERE source_id=$1', [f.alpha]);
+  // The same admission the accepted write made, re-run as retryWriteAdmission does after a lost COMMIT acknowledgement.
+  const again: WriteAdmission = { principal: { kind: row!.principal_kind, id: row!.principal_id }, operation: 'put_page', sourceId: f.alpha,
+    sourceIncarnation: src!.incarnation, slug: row!.slug, worktreeId: f.worktreeId, topologyGeneration: bind!.g, requestId,
+    callerIntent: { slug: 'notes/accepted', content }, intent: row!.intent, authority: row!.authority, origin: 'interactive' };
+  await (await duringRefresh(f, async () => {
+    const before = await f.requestCount();
+    const replay = await admitWrite(f.engine, again);
+    expect(replay.id).toBe(row!.id);
     expect(await f.requestCount()).toBe(before);
   }));
 }), 120_000);

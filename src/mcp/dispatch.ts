@@ -1300,7 +1300,9 @@ async function dispatchResolvedCall(
     if (opts.transport === 'stdio' && opts.remote !== false) { const drain = takeFactsDrainNotice(); if (drain) notices.push(drain); } // Lane D facts drain
     notices.push(...await sessionSafetyNotices(engine, opts, ctx.config));
     notices.push(...await grantBlockedNotices(engine, opts, false));
-    const out: ToolResult = toolResultWithNotices(result, admitNotices(notices, opts), dispatchRenderContext(opts));
+    // GST-1387: a remember batch with a failed item is an MCP error; its body keeps every item's receipt.
+    const batchError = name === 'remember' && typeof result === 'object' && result !== null && (result as { status?: unknown }).status === 'error' && Array.isArray((result as { items?: unknown }).items);
+    const out: ToolResult = batchError ? toolErrorResult(result as never) : toolResultWithNotices(result, admitNotices(notices, opts), dispatchRenderContext(opts));
     if (evidenceBlocks.length > 0) out.content.splice(1, 0, ...evidenceBlocks.map(text => ({ type: 'text' as const, text })));
     if (opts.transport === 'stdio') {
       maybeRefreshBackupStatusInProcess(engine);

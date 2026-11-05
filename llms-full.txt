@@ -8880,9 +8880,9 @@ hints?, next? }`. Each `items[]` entry is a compact receipt `{ index,
 request_id, status, id?, entity_slug?, superseded_fact_id?, warnings?, valid_until?, state? }`
 (`state` and `retry_after_ms` only when the write is not yet committed), or
 `{ index, request_id, status: "failed", error: { code, message, suggestion? } }`. Per-item hints
-appear once in `hints`. `partial: true`: some items saved; resend
-only the failed ones under a new `request_id`. Any failed item adds `status: "error"` (CLI exit 1,
-MCP `isError`); if none saved, the call fails with the first item's error.
+appear once in `hints`. `partial: true`: some saved; resend
+only the failed ones with a new `request_id`. Any failed item adds `status: "error"` (CLI exit 1,
+MCP `isError`); if all were refused unaccepted, it fails with the first item's error.
 
 ### entity(name) — read, zero LLM, p99 < 100ms
 

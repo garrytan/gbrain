@@ -103,7 +103,21 @@ describe('remember items[] batch', () => {
     expect(out.items[1].status).toBe('failed');
     expect(out.next).toContain('new request_id');
     // #8621: a partial failure is an in-band error (the CLI exits 1), not a clean success.
-    expect(out).toMatchObject({ status: 'error', saved: 1, failed: 1 });
+    expect(out).toMatchObject({ status: 'error', code: 'internal_error', saved: 1, failed: 1 });
+  });
+
+  test('#8621: an item whose outcome is unknown keeps the per-item envelope and its child request_id, never "none saved"', async () => {
+    const { handler: base } = fakeSingle({ failWrite: p => p.fact === 'fenced' });
+    const handler = async (c: OperationContext, p: Record<string, unknown>) => {
+      if (p.fact !== 'lost' || c.dryRun) return base(c, p);
+      const e = ve('unavailable', 'The write outcome is unknown.', 'Poll get_write_request.');
+      Object.assign(e, { writeError: 'write_outcome_unknown', writeRequest: { request_id: p.request_id, state: 'unknown' } });
+      throw e;
+    };
+    const root = '22222222-2222-4222-8222-222222222222';
+    const out = await runRememberBatch(ctx, { provenance: 'p', request_id: root, items: [{ fact: 'fenced' }, { fact: 'lost' }] }, handler, ve) as Record<string, any>;
+    expect(out).toMatchObject({ status: 'error', code: 'internal_error', saved: 0, failed: 2 });
+    expect(out.items[1]).toMatchObject({ request_id: childRequestId(root, 1), status: 'failed', error: { write_error: 'write_outcome_unknown' } });
   });
 
   test('#8621: a batch whose every item failed throws the first item error instead of returning a success envelope', async () => {

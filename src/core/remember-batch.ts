@@ -115,20 +115,22 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
         continue;
       }
       failures.push({ index, error: e });
-      results.push({ index, request_id: child, status: 'failed', error: { code: e.code, message: e.message, ...(e.detail ? { detail: e.detail } : {}), ...(e.suggestion ? { suggestion: e.suggestion } : {}), ...(e.withdrawn ? { withdrawn: e.withdrawn } : {}) } });
+      results.push({ index, request_id: child, status: 'failed', error: { code: e.code, message: e.message, ...(e.writeError ? { write_error: e.writeError } : {}), ...(e.detail ? { detail: e.detail } : {}), ...(e.suggestion ? { suggestion: e.suggestion } : {}), ...(e.withdrawn ? { withdrawn: e.withdrawn } : {}) } });
     }
   } });
   const failed = results.filter(r => r.status === 'failed').length;
   const pending = results.filter(r => r.status === 'pending').length;
   // GST-1387: a batch that saved nothing is a refusal on every surface (CLI exit non-zero, MCP isError), never a success
-  // envelope; its first item's error keeps that item's code and fix.
-  if (failures.length && failed === results.length) {
+  // envelope; its first item's error keeps that item's code and fix. An item with a receipt (accepted, or its outcome
+  // unknown) keeps the per-item envelope so its child request_id is never lost.
+  if (failures.length && failed === results.length && failures.every(f => !f.error.writeRequest)) {
     const [{ index, error }] = failures as [{ index: number; error: OperationError }];
     error.message = `items[${index}]: ${error.message} None of the ${results.length} item(s) was saved.`;
     throw error;
   }
   return {
-    ...(failed > 0 ? { status: 'error', error: `${failed} of ${results.length} item(s) failed; see items[].error.` } : {}),
+    ...(failures.length ? { status: 'error', error: failures[0]!.error.code, code: failures[0]!.error.code,
+      message: `${failed} of ${results.length} item(s) failed (first: items[${failures[0]!.index}] ${failures[0]!.error.code}); see items[].error. Items not marked failed are stored.` } : {}),
     protocol_version: 1,
     request_id: requestId,
     ...(clientRequestId ? { client_request_id: clientRequestId } : {}),

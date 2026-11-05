@@ -624,6 +624,8 @@ async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmissio
   const error = catalogueError('worktree_refreshing',
     `Source ${input.sourceId}'s checkout is being fast-forwarded by refresh ${refresh.id} (${refresh.state}); this write was not journaled.`,
     `Retry the same request_id after retry_after_ms: 1000. Check progress with gbrain sources writer status ${input.sourceId}.`);
+  // A replay of a request already accepted (its acknowledgement lost before the fence) reconciles to its receipt instead.
+  if (input.requestId && await getWriteRequest(tx, input.principal, input.requestId)) return;
   error.detail = 'retry_after_ms=1000';
   error.retryable = true;
   // GST-1387: nothing was recorded, so the same call is retried after the delay (actor provider renders next: wait).
