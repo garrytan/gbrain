@@ -471,6 +471,7 @@ describe('serverInfo.description (GST-359 item 6)', () => {
     expect(MCP_SERVER_DESCRIPTION.length).toBeLessThanOrEqual(120);
     expect(MCP_SERVER_DESCRIPTION).toContain('gbrain');
     expect(MCP_SERVER_DESCRIPTION).toContain('remember');
-    expect(createHash('sha256').update(GBRAIN_MCP_INSTRUCTIONS).digest('hex')).toBe('4b6a1ea876614592681a2e63daf8e68046cbb238bf4b7399425f781311f27cb8');
+    // GBRA-219 (#7795): the memory_conversation_mode switch clause is the only change to the instructions since this pin.
+    expect(createHash('sha256').update(GBRAIN_MCP_INSTRUCTIONS).digest('hex')).toBe('5164ac196ce534a6fd981895b8566fa85c7c1567025096f47ba19678f934bf65');
   });
 });

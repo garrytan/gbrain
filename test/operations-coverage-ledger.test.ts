@@ -219,6 +219,10 @@ const LEDGER: Record<string, string> = {
   entity_identity_link: 'test/entity-identity.test.ts',
   entity_identity_unlink: 'test/entity-identity.test.ts',
   entity_identity_list: 'test/entity-identity.test.ts',
+  // GBRA-286 memory train: memory settings (GBRA-219).
+  get_memory_settings: 'test/memory-settings.test.ts',
+  set_memory_writeback: 'test/memory-settings.test.ts',
+  memory_conversation_mode: 'test/memory-settings.test.ts',
 };
 
 /**

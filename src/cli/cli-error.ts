@@ -199,11 +199,14 @@ export function writeFatalCliError(e: unknown, opts: { argv?: readonly string[];
 /**
  * #4488 / GST-1387: an op that reports failure in-band (`{status: 'error'}`, e.g. put_page over unparseable frontmatter
  * or a remember batch with a failed item) is echoed to stderr and exits 1 on every CLI path, never read as success.
- * No-op statuses ('skipped', 'unchanged', …) stay exit 0: a no-op is not a failure.
+ * No-op statuses ('skipped', 'unchanged', …) stay exit 0: a no-op is not a failure. An extraction-review batch with a
+ * failed decision reports 'partial' and exits 1 too.
  */
 export function reportInBandFailure(result: unknown, command: string): void {
-  if (typeof result !== 'object' || result === null || Array.isArray(result) || (result as { status?: unknown }).status !== 'error') return;
+  if (typeof result !== 'object' || result === null || Array.isArray(result)) return;
+  const status = (result as { status?: unknown }).status;
+  if (status !== 'error' && !(status === 'partial' && command === 'extraction-review')) return;
   const detail = (result as { error?: unknown }).error;
-  console.error(`gbrain ${command}: operation reported status 'error'` + (typeof detail === 'string' && detail ? ` — ${detail}` : '') + '.');
+  console.error(`gbrain ${command}: operation reported status '${status}'` + (typeof detail === 'string' && detail ? ` — ${detail}` : '') + '.');
   setCliExitVerdict(1);
 }

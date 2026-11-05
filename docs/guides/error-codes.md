@@ -15,6 +15,7 @@ Under contract v1 an `error` value never changes. Where a surface sends a legacy
 
 | `error` (frozen) | `code` (canonical) | Meaning |
 |---|---|---|
+| `invalid_params` | `change_reason_rejected` | The write's reason was refused before anything was admitted: it is longer than 500 characters, or it looks like it holds a secret. |
 | `invalid_params` | `fact_withdrawn` | `remember`, or an owner `gbrain trust release` that writes a held fact into its entity page's `## Facts` table (a managed brain), refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved, and a refused release leaves the fact held. |
 | `permission_denied` | `insufficient_scope` | The connection lacks the OAuth scope the operation requires. |
 | `invalid_params` | `invalid_fence` | A facts or takes fence in the page cannot be imported without dropping or guessing rows, so the page (or the file) was not written. |
@@ -611,6 +612,18 @@ More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../
 |---|---|---|---|---|---|---|
 | Shared skill storage is not ready on this brain. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
+### change_reason_rejected
+
+<a id="change_reason_rejected"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The write's reason was refused before anything was admitted: it is longer than 500 characters, or it looks like it holds a secret. | A reason is kept in page history and, on a page that reaches Git, in the commit message, which a push makes permanent; it is checked before the write is journaled so no copy of a refused reason is stored anywhere. | Shorten the reason, or remove the secret from it, and send the write again. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `reason_too_long`, `reason_contains_secret`.
+
+More: [docs/guides/page-history.md#reasons](../../docs/guides/page-history.md#reasons)
+
 ### changed_since_preview
 
 <a id="changed_since_preview"></a>
@@ -711,9 +724,9 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A time parameter got a value on the wrong clock: `known_as_of` (recorded time) needs an instant with a zone, not a calendar date. | Recorded time (`known_as_of`) is when the brain had recorded something; valid time (`as_of`) is when a fact held in the world, as a date. A bare date is ambiguous as a recorded-time instant, so it is refused instead of guessed. | Pass a full instant such as 2026-10-01T12:00:00Z to known_as_of, or use as_of where the tool takes a valid-time date. | agent | `repeat the read that failed` | 1 | no |
+| A time parameter got a value on the wrong clock: `known_as_of` (recorded time) needs an instant with a zone, not a calendar date (`date_for_instant`); get_page `as_of` (valid time) needs a calendar date, not an instant (`instant_for_date`). | Recorded time (`known_as_of`) is when the brain had recorded something; valid time (`as_of`) is when a fact held in the world, as a date. A bare date is ambiguous as a recorded-time instant, and an instant is not an edition date, so each is refused instead of guessed. | Pass a full instant such as 2026-10-01T12:00:00Z to known_as_of, or use as_of where the tool takes a valid-time date. | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `date_for_instant`.
+Reasons: `date_for_instant`, `instant_for_date`.
 
 More: [docs/guides/repair.md#clock-mismatch](../../docs/guides/repair.md#clock-mismatch)
 
@@ -1595,7 +1608,7 @@ More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The fact had already expired before this write. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+| The fact had already expired before this write. | For `forget_fact` the withdrawal is still recorded first (the ledger row and the struck page row), so a later import cannot bring the fact back; any other write changed nothing. | Do not retry with the same fact id. List the active facts (recall) to find the current one. | agent | `repeat the read that failed` | 1 | no |
 
 ### fact_not_found
 
@@ -2391,6 +2404,16 @@ More: [docs/guides/repair.md#hook-session-cwd](../../docs/guides/repair.md#hook-
 
 More: [docs/guides/troubleshooting.md#host-identity-mismatch](../../docs/guides/troubleshooting.md#host-identity-mismatch)
 
+### host_upgrade_required
+
+<a id="host_upgrade_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The brain host is older than this client and did not answer the question asked: a get_page reply to an `as_of` read came back without `valid_time.as_of`, so it is the current page, not the edition in force on that date. Nothing historical was printed. | An older host ignores a read parameter it does not know and answers the plain read. Printing that answer as the edition in force on a date would quote the wrong text, so the client fails closed. The error carries the client version, the host version when known, and the minimum host version. | Upgrade gbrain on the brain host (`gbrain upgrade`), or ask its operator to; then run the same read again. | host_admin | `gbrain doctor --json` | 16 | no |
+
+More: [docs/guides/page-history.md#host_upgrade_required](../../docs/guides/page-history.md#host_upgrade_required)
+
 ### hosted_repo_refused
 
 <a id="hosted_repo_refused"></a>
@@ -2872,6 +2895,16 @@ More: [docs/guides/shared-brain-skills.md#membership-inactive-after-a-re-enrollm
 | This principal has no shared-skills membership with that installation id. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover)
+
+### memory_setting_write_outcome_unknown
+
+<a id="memory_setting_write_outcome_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A memory writeback setting change did not confirm, so it may or may not have been saved. | A database write that throws can be a rollback or a lost acknowledgement, and the two look the same to the caller. The setting and its audit row commit together, so a re-read shows which happened. | Call get_memory_settings to read the mode in effect, and change it again only if the change did not land. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/ambient-writeback.md#reading-and-changing-it-remotely](../../docs/guides/ambient-writeback.md#reading-and-changing-it-remotely)
 
 ### merge_recommended
 
@@ -3684,6 +3717,56 @@ More: [docs/guides/dream-patterns.md#child-read-budget](../../docs/guides/dream-
 | A remote write's readable_by is malformed, removes the field from a page that names readers, or would leave the page unreadable by the writer; nothing was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#readable_by_invalid](../../docs/guides/write-refusals.md#readable_by_invalid)
+
+### reason_purge_scan_capped
+
+<a id="reason_purge_scan_capped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A fact purge stopped before deleting anything: the source's Git history has more commits than the purge reads (200,000) when it looks for change reasons quoting the claim. | Purge tombstones every commit whose gbrain-reason trailer quotes the claim, so no later sync or re-import stores that reason again. Past the limit it cannot say which older commits do, so the user decides. | Ask the user: purge now and check only the newest commits (--reason-scan-limit <n>, their choice; older commits are not tombstoned), or stop. | user | `repeat the read that failed` | 3 | no |
+
+More: [docs/guides/page-history.md#purge-and-reasons](../../docs/guides/page-history.md#purge-and-reasons)
+
+### reason_purge_scan_failed
+
+<a id="reason_purge_scan_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A fact purge stopped before deleting anything: reading the change reasons in the source's Git history failed (a Git error or a timeout). | Purge reads the reason trailers that quote the claim before it changes anything, so it can tombstone them; nothing was removed, so retrying is safe. | Wait, then run the same purge again. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/page-history.md#purge-and-reasons](../../docs/guides/page-history.md#purge-and-reasons)
+
+### reason_scan_capped
+
+<a id="reason_scan_capped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A sync imported its files but did not read their change reasons from Git: the range held more than 10,000 commits. Each reason in the pass is stored as empty and each page it changed is marked with a history gap. | Reasons are metadata, so content import never waits on them. The pass still advances last_commit and this release does not backfill reasons for that range; they stay in Git. | Nothing to repair. The reasons for the range are in Git: git log --first-parent <range> shows them. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/page-history.md#reasons-from-git](../../docs/guides/page-history.md#reasons-from-git)
+
+### reason_scan_failed
+
+<a id="reason_scan_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A sync imported its files but could not read their change reasons from Git (a Git error or a timeout). Each reason in the pass is stored as empty and each page it changed is marked with a history gap. | Reasons are metadata, so content import never waits on them. The pass still advances last_commit and this release does not backfill reasons for that range; they stay in Git. | Nothing to repair. The reasons for the range are in Git: git log --first-parent <range> shows them. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/page-history.md#reasons-from-git](../../docs/guides/page-history.md#reasons-from-git)
+
+### reason_trailer_secret
+
+<a id="reason_trailer_secret"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A gbrain-reason trailer already pushed to Git looks like it holds a secret; sync stored no reason for that commit and path. | A secret in a reason is refused at write time; a commit made outside gbrain can still carry one. Git history keeps commit messages, so the credential stays exposed until it is rotated. | Rotate the credential the notice names (by commit and path); the brain stores nothing of it. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/page-history.md#reasons-from-git](../../docs/guides/page-history.md#reasons-from-git)
 
 ### receipt_conflict
 
@@ -4992,6 +5075,16 @@ More: [docs/guides/troubleshooting.md#upstream-rewritten](../../docs/guides/trou
 | A classic source's checkout and upstream diverged and gbrain has no record of the upstream before the fetch (first pull after an upgrade, or the recorded commit is gone), so it cannot tell a force-push from local commits; local HEAD keeps syncing. | Merging could bring back commits a force-push removed; the reset preview names any local commit that was never on the upstream before anything moves. | Ask the user, then preview the gbrain sources reset-upstream command doctor sync_failures prints with --dry-run. | user | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#upstream-rewritten](../../docs/guides/troubleshooting.md#upstream-rewritten)
+
+### valid_time_undeclared
+
+<a id="valid_time_undeclared"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An `as_of` read found no version of the page that declares a readable `valid_from`, so no edition can be placed on the date. | Valid time comes only from the `valid_from` / `valid_until` frontmatter the page carries; gbrain never infers when text took effect. Only the user knows the date, so the fix asks them before a templated edit_page records it. | Ask the user when the text took effect and record it as a quoted valid_from (the fix carries the edit). For what the brain had recorded at a time, read with known_as_of instead. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/page-history.md#valid_time_undeclared](../../docs/guides/page-history.md#valid_time_undeclared)
 
 ### vector_prewarm_extension_missing
 

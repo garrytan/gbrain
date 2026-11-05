@@ -233,6 +233,23 @@ describe('coordinated writers refuse typed and keep the stored page', () => {
     expect(await stored(slug)).toBe(body);
   }));
 
+  test('remember linking a fact saved without an entity refuses typed and keeps a malformed memory/unattributed row', () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const entity = 'people/linker-example';
+    const claim = 'Keeps a rooftop beehive retirezq7';
+    await op('put_page').handler(ctx(), { slug: entity, content: page('Linker', 'No facts yet.') });
+    const unlinked = await op('remember').handler(ctx(), { fact: claim, provenance: 'chat', visibility: 'world', infer_entity: false }) as Record<string, any>;
+    expect(unlinked.entity_slug).toBeNull();
+    const body = (await stored('memory/unattributed')).replace(FE, `${BAD}\n${FE}`);
+    await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(
+      'UPDATE pages SET compiled_truth=$3 WHERE source_id=$1 AND slug=$2', ['default', 'memory/unattributed', body]), TEST_WRITE_ATTRIBUTION));
+    const error = await refusal(() => op('remember').handler(ctx(), { fact: claim, provenance: 'chat', visibility: 'world', entity, replaces: unlinked.id })).catch(e => e);
+    expect(await stored('memory/unattributed')).toContain('Sentinelrowzq9');
+    expect({ detail: error.detail, reason: error.reason }).toEqual({ detail: 'invalid_fence', reason: 'target_fence_malformed' });
+    expect(await stored('memory/unattributed')).toBe(body);
+    expect(await stored(entity)).not.toContain(claim);
+    expect(await engine.executeRaw('SELECT expired_at FROM facts WHERE id=$1', [Number(unlinked.id)])).toEqual([{ expired_at: null }]);
+  }));
+
   test('managed phantom redirect: a fence that does not parse on either side is drift and both pages stay as they were', () => withEnv({ GBRAIN_HOME: home, GBRAIN_AUDIT_DIR: join(home, 'audit') }, async () => {
     const cleanCanonical = `# Seed\n\nSynthetic prose.\n\n${facts(GOOD)}\n`;
     const brokenCanonical = `# Seed\n\nSynthetic prose.\n\n${facts(GOOD, BAD)}\n`;

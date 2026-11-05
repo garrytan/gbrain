@@ -99,6 +99,26 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "description": "fact_id this fact replaces (same entity, or none).",
         "fullSurfaceOnly": true
+      },
+      "claim_metric": {
+        "type": "string",
+        "description": "Typed claim metric, e.g. mrr (with claim_value).",
+        "fullSurfaceOnly": true
+      },
+      "claim_value": {
+        "type": "number",
+        "description": "Typed claim value (finite number).",
+        "fullSurfaceOnly": true
+      },
+      "claim_unit": {
+        "type": "string",
+        "description": "Typed claim unit, e.g. USD.",
+        "fullSurfaceOnly": true
+      },
+      "claim_period": {
+        "type": "string",
+        "description": "Typed claim period, e.g. monthly.",
+        "fullSurfaceOnly": true
       }
     },
     "mutating": true,
@@ -404,6 +424,10 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "fullSurfaceOnly": true,
         "description": "Recorded time: the page as this brain had recorded it at this ISO 8601 instant (2026-10-01T12:00:00Z), from the belief ledger. Not as_of, which is valid time (a date)."
+      },
+      "as_of": {
+        "type": "string",
+        "description": "YYYY-MM-DD: edition in force then. No valid_time in reply: current page."
       }
     },
     "scope": "read",
@@ -479,6 +503,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "wait_ms": {
         "type": "number",
         "description": "Commit wait ms (0-30000, default 5000)."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Why this change, one line (max 500 chars); kept in page history.",
+        "fullSurfaceOnly": true
       },
       "source_kind": {
         "type": "string",
@@ -955,6 +984,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "request_id": {
         "type": "string",
         "description": "Reuse only to retry."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Why this change, one line (max 500 chars); kept in page history.",
+        "fullSurfaceOnly": true
       }
     },
     "mutating": true,
@@ -1057,6 +1091,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
             "drop_timeline": {
               "type": "boolean",
               "description": "Content without a Timeline section deletes its dated entries."
+            },
+            "reason": {
+              "type": "string",
+              "description": "Why this change, one line (max 500 chars); kept in page history.",
+              "fullSurfaceOnly": true
             }
           }
         }
@@ -2604,7 +2643,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "full page version snapshots by slug; a page read governed by visibility like get_page (CEO-17)"
     },
-    "description": "Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest 20 versions by default. Pass include_body: true for each version's compiled_truth and timeline, and a larger limit (at most 100 over MCP) for older versions. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). revert_version takes the id field.",
+    "description": "Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest 20 versions by default. Pass include_body: true for each version's compiled_truth and timeline, and a larger limit (at most 100 over MCP) for older versions. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). replaced_because is the reason given for the write that replaced the snapshot (null when none was given). revert_version takes the id field.",
     "params": {
       "slug": {
         "type": "string",
@@ -2677,6 +2716,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "number",
         "required": true,
         "description": "Numeric version id to revert to, as returned by get_versions. Not a version NUMBER offset — pass the id field."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Why this change, one line (max 500 chars); kept in page history.",
+        "fullSurfaceOnly": true
       }
     },
     "mutating": true,
@@ -5617,17 +5661,40 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "List unverified auto-extracted entity stubs awaiting owner review (the quarantine lane from extract_entities). Promote or reject them with extraction_review.",
+    "description": "List what waits for review: unverified auto-extracted entity stubs (pending; promote or reject them with extraction_review), facts saved without an entity (unattributed; relink each with remember entity + replaces, never forget first), and, when include names it, recently created entity pages whose name is one edit or one acronym letter from another entity (possible_duplicates; flag only, never merged).",
     "params": {
       "limit": {
         "type": "number",
         "required": false,
-        "description": "Max rows (default 100, cap 500)."
+        "description": "Max rows per list (default 100 for pending, 50 for the others; cap 500)."
       },
       "offset": {
         "type": "number",
         "required": false,
-        "description": "Pagination offset."
+        "description": "Pagination offset for pending."
+      },
+      "include": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "required": false,
+        "description": "Lists to return: pending, unattributed, possible_duplicates. Default pending and unattributed."
+      },
+      "unattributed_offset": {
+        "type": "number",
+        "required": false,
+        "description": "Pagination offset for unattributed (its next_offset)."
+      },
+      "possible_duplicates_cursor": {
+        "type": "string",
+        "required": false,
+        "description": "Continuation for possible_duplicates (its next_cursor)."
+      },
+      "since_days": {
+        "type": "number",
+        "required": false,
+        "description": "possible_duplicates: entity pages created in the last N days (default 30)."
       }
     },
     "scope": "read",
@@ -5640,12 +5707,12 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "extraction_review",
     "idempotent": false,
     "outputRedaction": "no_stored_text",
-    "description": "Promote or reject unverified auto-extracted entity stubs (batch). Promote flips `status` to verified (provenance kept for audit); reject soft-deletes the stub. Owner-only: this op is refused for any non-local caller. (The markers are ordinary frontmatter — the boundary against rewriting them wholesale is put_page write authz, same as for any page.)",
+    "description": "Decide on review rows (batch). promote flips an unverified auto-extracted stub's `status` to verified (provenance kept for audit); reject soft-deletes the stub; distinct records that each of slugs is a different entity from of (`distinct_from` frontmatter), so possible_duplicates stops pairing them. Every decision writes through the page door: Git first on a source with a repository, the database on a repo-less source. Owner-only: this op is refused for any non-local caller. (The markers are ordinary frontmatter — the boundary against rewriting them wholesale is put_page write authz, same as for any page.)",
     "params": {
       "action": {
         "type": "string",
         "required": true,
-        "description": "'promote' or 'reject'."
+        "description": "'promote', 'reject' or 'distinct'."
       },
       "slugs": {
         "type": "array",
@@ -5653,7 +5720,12 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "items": {
           "type": "string"
         },
-        "description": "Stub slugs to act on (batch)."
+        "description": "Slugs to act on (batch)."
+      },
+      "of": {
+        "type": "string",
+        "required": false,
+        "description": "distinct only: the existing entity page each of slugs is not the same as."
       }
     },
     "mutating": true,
@@ -6199,6 +6271,10 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "source_id": {
         "type": "string",
         "description": "Source holding the fact (default: the routed source)."
+      },
+      "reason_scan_limit": {
+        "type": "number",
+        "description": "Check only the newest N commits for change reasons quoting the claim (after a reason_purge_scan_capped refusal, with the user's choice); older commits are not tombstoned."
       }
     },
     "mutating": true,
@@ -6370,6 +6446,68 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "idempotentHint": true
     },
     "area": "memory"
+  },
+  {
+    "name": "get_memory_settings",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Memory writeback settings: the mode agents follow, the exact rule text, every mode's rule, background capture state, and whether you may change it.",
+    "params": {},
+    "scope": "read",
+    "area": "memory-settings",
+    "cliHints": {
+      "name": "memory-settings"
+    }
+  },
+  {
+    "name": "set_memory_writeback",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Change the brain-wide writeback mode agents are told to follow (inherit uses the operator's setting). Admin scope and the operator's grant required; background capture is not changed.",
+    "params": {
+      "mode": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "inherit",
+          "off",
+          "salient",
+          "all"
+        ],
+        "description": "inherit | off | salient | all."
+      },
+      "dry_run": {
+        "type": "boolean",
+        "description": "Preview the change; writes nothing."
+      }
+    },
+    "scope": "admin",
+    "area": "memory-settings",
+    "publishGateKey": "mcp.publish_memory_settings"
+  },
+  {
+    "name": "memory_conversation_mode",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Use when the user says \"save everything from here\" (all) or \"stop saving\" (off): returns this conversation's memory rule. Stores nothing.",
+    "params": {
+      "mode": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "brain",
+          "off",
+          "salient",
+          "all"
+        ],
+        "description": "all | salient | off (explicit saves only) | brain (this brain's mode)."
+      }
+    },
+    "scope": "write",
+    "area": "memory-settings"
   },
   {
     "name": "find_contradictions",
