@@ -692,6 +692,75 @@ test('7q. writer status for a recovery_required refresh whose members already sy
   expect(status.fix.why).toContain('ask the user first');
 }), 180_000);
 
+/** The live (not soft-deleted) slugs of a member source. */
+const livePages = async (f: RefreshFixture, sourceId: string) => (await f.engine.executeRaw<{ slug: string }>(
+  'SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL ORDER BY slug', [sourceId])).map(row => row.slug);
+const settle = (promise: Promise<unknown>) => promise.then(value => ({ value, error: null }), error => ({ value: null, error: error as { code?: string; suggestion?: string; message?: string; fix?: Record<string, any> } }));
+
+test('7r. GST-1457: a recovery_required refresh whose member synced to the target, with HEAD back at the start commit, never lets --abandon and the next sync soft-delete those pages', () => each(async f => {
+  // Value: protects=the pages a member already synced to target_head survive the manual path out of recovery_required: --resume no longer
+  // names --abandon, --abandon refuses (ask_user: reset to the target, then --resume), and the next sync stays fenced; fails_when=--abandon
+  // aborts a recovery_required row whatever its members' last_commit, so the next sync diffs target_head back to old_head and soft-deletes
+  // the synced pages (the chain the #8344 fix-check reproduced); why_new=7q covers writer status only; seam=a crash at the syncing boundary,
+  // the member synced by the real managed sync, HEAD reset by hand; no_claim=other HEADs (test 7) and the owner scan (7i).
+  const target = f.push('alpha/two.md', page('Alpha two', 'Synced to the target before recovery.'));
+  const old = f.head();
+  const orphan = await orphanAt(f, 'syncing', 'syncing');
+  expect(f.head()).toBe(target);
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  expect(await f.lastCommit(f.alpha)).toBe(target);
+  const synced = await livePages(f, f.alpha);
+  expect(synced.some(slug => slug.endsWith('two'))).toBe(true);
+  git(f.root, 'reset', '-q', '--hard', old);
+  const resume = await settle(refreshWorktree(f.engine, f.alpha, { resume: true }));
+  const abandon = await settle(refreshWorktree(f.engine, f.alpha, { abandon: true }));
+  const sync = await settle(performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true }));
+  expect(await livePages(f, f.alpha)).toEqual(synced);
+  expect(await f.lastCommit(f.alpha)).toBe(target);
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['recovery_required']);
+  expect(resume.error?.code).toBe('refresh_recovery_required');
+  expect(resume.error!.suggestion).not.toContain('--abandon');
+  expect(resume.error!.suggestion).toContain(`reset --hard ${target}`);
+  expect(abandon.error?.code).toBe('refresh_recovery_required');
+  expect(abandon.error!.message).toContain(f.alpha);
+  expect(abandon.error!.suggestion).toContain(`reset --hard ${target}`);
+  expect(abandon.error!.suggestion).not.toContain(`reset --hard ${old}`);
+  for (const refusal of [resume.error!, abandon.error!]) {
+    expect(refusal.fix).toMatchObject({ ask_user: true, consent: ['destructive'], argv: ['git', '-C', f.root, 'reset', '--hard', target],
+      preview_argv: ['git', '-C', f.root, 'status', '--short'], then: { argv: ['gbrain', 'sources', 'refresh', f.alpha, '--resume'] } });
+    expect(refusal.fix!.user_message).toContain(f.alpha);
+  }
+  expect(sync.error?.code).toBe('refresh_recovery_required');
+  // The stored fix the plain refresh and writes repeat names only the safe way out too.
+  const plain = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_recovery_required');
+  expect(plain.suggestion).not.toContain('--abandon');
+  // The safe way out: reset to the target, --resume finishes the refresh, and the synced pages stay.
+  git(f.root, 'reset', '-q', '--hard', target);
+  expect(await refreshWorktree(f.engine, f.alpha, { resume: true })).toMatchObject({ refresh_id: orphan.id, status: 'completed' });
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  expect(await livePages(f, f.alpha)).toEqual(synced);
+}), 180_000);
+
+test('7s. GST-1457: with no member synced past the start commit, --resume still names --abandon and --abandon still lifts the fence', () => each(async f => {
+  // Value: protects=the 7r refusal is scoped to rows whose members moved: a recovery_required row whose members all still sit at old_head is
+  // abandoned as before, and the next sync loses nothing; fails_when=--abandon refuses every recovery_required row, or the member check reads
+  // the wrong commit; why_new=7p abandons a row that was never syncing; seam=a crash at the syncing boundary before any member synced;
+  // no_claim=members with no last_commit (the same branch of the check).
+  f.push('alpha/two.md', page('Alpha two', 'Never synced.'));
+  const old = f.head();
+  await orphanAt(f, 'syncing', 'syncing');
+  expect(await f.lastCommit(f.alpha)).toBe(old);
+  expect(await f.lastCommit(f.beta)).toBe(old);
+  const before = await livePages(f, f.alpha);
+  git(f.root, 'reset', '-q', '--hard', old);
+  const resume = await refusedWith(refreshWorktree(f.engine, f.alpha, { resume: true }), 'refresh_recovery_required');
+  expect(resume.suggestion).toBe(`gbrain sources refresh ${f.alpha} --abandon`);
+  expect((await refreshWorktree(f.engine, f.alpha, { abandon: true })).status).toBe('abandoned');
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['aborted']);
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  expect(await livePages(f, f.alpha)).toEqual(before);
+}), 180_000);
+
 test('8. a queued git effect drains before fenced, and nothing on the worktree is claimed while fenced', () => each(async f => {
   f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
   await f.put(f.beta, 'notes/effect', page('Effect', 'Has a git effect.'));

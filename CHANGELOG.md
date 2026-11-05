@@ -12,6 +12,17 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
+**`gbrain sources refresh --abandon` no longer lets the next sync delete pages a member source already synced.**
+
+A refresh interrupted after a member source synced the upstream commit, then moved to `recovery_required` with the checkout back at the commit it started from, could be abandoned: `--resume` refused and named `--abandon`, `--abandon` lifted the fence, and the next sync diffed that member back to the start commit and soft-deleted every page it had synced. `--abandon` now refuses such a row (`refresh_recovery_required`, nothing changed) once any member's `last_commit` is neither the start commit nor empty, and `--resume` no longer names `--abandon` there. Both name the one way out that keeps the pages, as an ask-the-user fix: preview with `git -C <checkout> status --short`, reset the checkout to the upstream commit, then `--resume`. A row whose members never moved is abandoned exactly as before, and sync's deletion behaviour is unchanged.
+
+### Itemized changes
+
+- `src/core/persistence/worktree-refresh.ts`: one member check (`membersPastStart`) feeds `--abandon`, the `--resume` refusal at the start commit, the stored `recovery_required` fix and writer status.
+- Tests: `test/persistence-worktree-refresh.test.ts` 7r (the three-step chain: crash while syncing, member synced, HEAD reset; pages survive, then reset-to-target and `--resume` completes) and 7s (no member moved: `--abandon` still works), on PGLite and on Postgres through `test/e2e/worktree-refresh-postgres.test.ts`.
+
+## [Unreleased]
+
 **Sync and source-refresh follow-ups from wave #8123: an interrupted refresh names what holds it and how to finish it, managed-sync preparations stop waiting on table locks, code sources converge on their first full sync, and `sync.write_through=false`, impossible timeline dates, image names, dry runs and missing source directories behave as documented.**
 
 **`gbrain sources refresh` says what is actually holding an interrupted refresh, and its owner recovery stops holding locks it doesn't need (#8123).**
