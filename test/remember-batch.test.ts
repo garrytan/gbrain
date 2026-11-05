@@ -120,6 +120,16 @@ describe('remember items[] batch', () => {
     expect(out.items[1]).toMatchObject({ request_id: childRequestId(root, 1), status: 'failed', error: { write_error: 'write_outcome_unknown' } });
   });
 
+  test('#8621: a fenced item in a partial batch keeps its canonical code and retryable flag', async () => {
+    const { handler: base } = fakeSingle();
+    const handler = async (c: OperationContext, p: Record<string, unknown>) => {
+      if (p.fact !== 'fenced' || c.dryRun) return base(c, p);
+      throw Object.assign(ve('unavailable', 'The checkout is refreshing.', 'Retry the same request_id.'), { canonical: 'worktree_refreshing', retryable: true, detail: 'retry_after_ms=1000' });
+    };
+    const out = await runRememberBatch(ctx, { provenance: 'p', items: [{ fact: 'ok' }, { fact: 'fenced' }] }, handler, ve) as Record<string, any>;
+    expect(out.items[1].error).toMatchObject({ code: 'unavailable', canonical: 'worktree_refreshing', retryable: true, detail: 'retry_after_ms=1000' });
+  });
+
   test('#8621: a batch whose every item failed throws the first item error instead of returning a success envelope', async () => {
     const { handler, writes } = fakeSingle({ failWrite: () => true });
     let err: unknown;

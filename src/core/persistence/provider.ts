@@ -8,7 +8,7 @@ import { dispatchToolCall } from '../../mcp/dispatch.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
 import { startPersistenceConsumer, assertPersistenceAccepting } from './service.ts';
 import { isWriteErrorCode, isWriteReceipt } from './types.ts';
-import { LOCAL_CLI_OWNER_OPERATIONS, type PersistenceIpcProvider } from './ipc.ts';
+import { LOCAL_CLI_OWNER_OPERATIONS, restoreRecoveryContract, type PersistenceIpcProvider } from './ipc.ts';
 import { runPersistenceAdministration } from './administration.ts';
 import { boundedWriteWaitMs } from './write-wait.ts';
 export { residentPersistenceConfig } from './local-client.ts';
@@ -95,6 +95,7 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
     const error = new OperationError(typeof body.error === 'string' ? body.error : 'unavailable',
       typeof body.message === 'string' ? body.message : 'The local operation could not complete.',
       typeof body.suggestion === 'string' ? body.suggestion : undefined);
+    restoreRecoveryContract(error, body);
     if (isWriteReceipt(body.write_request)) error.writeRequest = body.write_request;
     if (isWriteErrorCode(body.write_error)) error.writeError = body.write_error;
     if (body.protocol_version === 1) error.protocolVersion = 1;

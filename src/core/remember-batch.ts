@@ -115,7 +115,7 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
         continue;
       }
       failures.push({ index, error: e });
-      results.push({ index, request_id: child, status: 'failed', error: { code: e.code, message: e.message, ...(e.writeError ? { write_error: e.writeError } : {}), ...(e.detail ? { detail: e.detail } : {}), ...(e.suggestion ? { suggestion: e.suggestion } : {}), ...(e.withdrawn ? { withdrawn: e.withdrawn } : {}) } });
+      results.push({ index, request_id: child, status: 'failed', error: { code: e.code, message: e.message, ...(e.canonical ? { canonical: e.canonical } : {}), ...(e.retryable !== undefined ? { retryable: e.retryable } : {}), ...(e.writeError ? { write_error: e.writeError } : {}), ...(e.detail ? { detail: e.detail } : {}), ...(e.suggestion ? { suggestion: e.suggestion } : {}), ...(e.withdrawn ? { withdrawn: e.withdrawn } : {}) } });
     }
   } });
   const failed = results.filter(r => r.status === 'failed').length;

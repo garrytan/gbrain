@@ -16,7 +16,7 @@ import type { OperationContext } from '../ops/contract.ts';
 import { fenceNormalizedNotice, mergeFencesNormalized, type FencesNormalized } from '../fence-repair/report.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { admitWriteGroupInTransaction, type WriteAdmission } from './journal.ts';
-import { retryWriteAdmission, waitOutRefreshFence } from './admission-retry.ts';
+import { retryWriteAdmission, waitOutRefreshFence, withRefreshFenceBudget } from './admission-retry.ts';
 import { resolveAdmissionOrigin } from './admission-origin.ts';
 import { declareDurablePersistence } from './protocol.ts';
 import { digest } from './digest.ts';
@@ -289,7 +289,7 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
   if (admissions.length) {
     let admitted: WriteRequest[];
     try {
-      admitted = await admitBatch(ctx, batchId, admissions.map(entry => entry.admission));
+      admitted = await withRefreshFenceBudget(() => admitBatch(ctx, batchId, admissions.map(entry => entry.admission)), params.wait_ms !== undefined ? remaining() : undefined);
     } catch (error) {
       if (error instanceof OperationError && error.code === 'queue_capacity') {
         throw new OperationError('queue_capacity', `${error.message} No page of batch ${batchId} was admitted (it needs ${admissions.length} new write slots).`,

@@ -24,7 +24,8 @@ import { refreshWorktree } from '../src/core/persistence/worktree-refresh.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { admitWrite, type WriteAdmission } from '../src/core/persistence/journal.ts';
 import { admitBatch } from '../src/core/persistence/page-batch.ts';
-import { _setRefreshFenceWaitForTests } from '../src/core/persistence/admission-retry.ts';
+import { _setRefreshFenceWaitForTests, waitOutRefreshFence, withRefreshFenceBudget } from '../src/core/persistence/admission-retry.ts';
+import { OperationError } from '../src/core/ops/contract.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -117,6 +118,37 @@ test('put_page past the wait cap is refused retryable with fix.next wait and ret
     expect(await f.requestCount()).toBe(before);
   }));
 }), 120_000);
+
+test('an explicit wait_ms bounds the fence wait: put_page and put_pages with wait_ms 0 are refused without waiting', () => each(async f => {
+  _setRefreshFenceWaitForTests(5000);
+  await (await duringRefresh(f, async () => {
+    const before = await f.requestCount();
+    const started = performance.now();
+    const one = await call(f, 'put_page', { slug: 'notes/zero-wait', content: page('Zero wait', 'no fence wait'), wait_ms: 0 });
+    const many = await call(f, 'put_pages', { request_id: crypto.randomUUID(), wait_ms: 0, pages: [{ slug: 'notes/zero-wait-batch', content: page('Zero wait batch', 'no fence wait') }] });
+    expect(performance.now() - started).toBeLessThan(5000);
+    for (const out of [one, many]) {
+      expect(out.isError).toBe(true);
+      expect(out.body.code).toBe('worktree_refreshing');
+      expect(out.body.message).not.toContain('waited');
+    }
+    expect(await f.requestCount()).toBe(before);
+  }));
+}), 120_000);
+
+test('a shared fence budget starts at the first refusal, and the waited note needs a real pause', async () => {
+  const fenced = () => Object.assign(new OperationError('worktree_refreshing' as never, 'The checkout is refreshing.'), { detail: 'retry_after_ms=250' });
+  _setRefreshFenceWaitForTests(300);
+  const admitted = await withRefreshFenceBudget(async () => {
+    await new Promise(resolve => setTimeout(resolve, 400));
+    let tries = 0;
+    return waitOutRefreshFence(true, async () => { if (tries++ === 0) throw fenced(); return 'admitted'; });
+  });
+  expect(admitted).toBe('admitted');
+  _setRefreshFenceWaitForTests(0);
+  const refused = await waitOutRefreshFence(true, async () => { await new Promise(resolve => setTimeout(resolve, 30)); throw fenced(); }).catch(e => e as Error);
+  expect(refused.message).toBe('The checkout is refreshing.');
+});
 
 test('an admission retried after its accepted commit lost its ack reconciles to the receipt under a fence, never "not recorded"', () => each(async f => {
   _setRefreshFenceWaitForTests(0);

@@ -98,10 +98,14 @@ let refreshFenceWaitMs = REFRESH_FENCE_WAIT_MS;
 /** Test seam: the wait cap, or null for the default. */
 export function _setRefreshFenceWaitForTests(ms: number | null): void { refreshFenceWaitMs = ms ?? REFRESH_FENCE_WAIT_MS; }
 
-/** One deadline shared by every admission inside it (a remember batch waits once, not once per item). */
-const refreshFenceDeadline = new AsyncLocalStorage<{ until: number }>();
-export function withRefreshFenceBudget<T>(fn: () => Promise<T>): Promise<T> {
-  return refreshFenceDeadline.getStore() ? fn() : refreshFenceDeadline.run({ until: performance.now() + refreshFenceWaitMs }, fn);
+/**
+ * One wait budget shared by every admission inside it (a remember batch waits once, not once per item). Its clock starts
+ * at the first fence refusal, so time spent publishing earlier items never uses it. `capMs` lowers it to a caller's
+ * explicit reply deadline (`wait_ms`).
+ */
+const refreshFenceDeadline = new AsyncLocalStorage<{ capMs: number; until?: number }>();
+export function withRefreshFenceBudget<T>(fn: () => Promise<T>, capMs?: number): Promise<T> {
+  return refreshFenceDeadline.getStore() ? fn() : refreshFenceDeadline.run({ capMs: Math.min(refreshFenceWaitMs, capMs ?? Infinity) }, fn);
 }
 
 export function isRefreshFenceRefusal(error: unknown): error is OperationError {
@@ -115,21 +119,22 @@ export function isRefreshFenceRefusal(error: unknown): error is OperationError {
 export async function waitOutRefreshFence<T>(interactive: boolean, admit: () => Promise<T>): Promise<T> {
   if (!interactive) return admit();
   return withRefreshFenceBudget(async () => {
-    const until = refreshFenceDeadline.getStore()!.until;
-    const started = performance.now();
+    const budget = refreshFenceDeadline.getStore()!;
+    let waited = 0;
     for (let attempt = 0; ; attempt++) {
       try { return await admit(); } catch (error) {
         if (!isRefreshFenceRefusal(error)) throw error;
         const hinted = Number(/retry_after_ms=(\d+)/.exec(error.detail ?? '')?.[1]);
         const pause = Math.min(REFRESH_FENCE_BACKOFF_MS[Math.min(attempt, REFRESH_FENCE_BACKOFF_MS.length - 1)]!,
           Number.isFinite(hinted) && hinted > 0 ? Math.max(hinted, REFRESH_FENCE_BACKOFF_MS[0]) : Infinity);
-        const remaining = until - performance.now();
-        if (remaining < pause) {
-          const waited = Math.round(performance.now() - started);
-          if (waited > 0) error.message = `${error.message} This call waited ${waited} ms for the refresh to finish.`;
+        budget.until ??= performance.now() + budget.capMs;
+        if (budget.until - performance.now() < pause) {
+          if (waited > 0) error.message = `${error.message} This call waited ${Math.round(waited)} ms for the refresh to finish.`;
           throw error;
         }
+        const slept = performance.now();
         await delay(pause);
+        waited += performance.now() - slept;
       }
     }
   });
