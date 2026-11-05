@@ -1,4 +1,4 @@
-import { verbError, opError, OperationError } from '../ops/contract.ts';
+import { markNotAdmitted, verbError, opError, OperationError } from '../ops/contract.ts';
 import type { Action } from '../agent-output.ts';
 import { isTerminalWriteState, isWriteErrorCode, type WriteErrorCode, type WriteReceipt } from './types.ts';
 import { pendingWriteHint } from './health.ts';
@@ -284,6 +284,13 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
       const segmented = verbError('invalid_params', error.message, error.suggestion ?? SEGMENTED_WRITE_SUGGESTION);
       Object.assign(segmented, { canonical: 'page_body_segmented', writeError: 'page_body_segmented', fix: error.fix ?? segmentedRememberFix() });
       throw segmented;
+    }
+    // GST-1387: a refresh fence is a retryable wait, not an outage: the frozen code stays unavailable, and the canonical code,
+    // its retry_after_ms detail and its wait fix ride along so the caller retries the same request_id.
+    if (error.code === 'worktree_refreshing') {
+      const fenced = verbError('unavailable', error.message, error.suggestion ?? 'Retry the same request_id after retry_after_ms.', error.detail);
+      Object.assign(fenced, { canonical: 'worktree_refreshing', docs: error.docs, fix: error.fix, retryable: true });
+      throw markNotAdmitted(fenced);
     }
     const code = ['permission_denied','scope_denied','source_changed','writer_registration_required'].includes(error.code)
       ? 'scope_denied' : ['revision_required','revision_conflict','idempotency_conflict','invalid_params','page_identity_changed'].includes(error.code)

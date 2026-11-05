@@ -46,7 +46,7 @@ import { printCuratedHelp } from './help/render.ts';
 import { OWN_EQUALS_PARSERS, READER_ALIASES, findUnknownFlag, splitFlagEquals } from './flag-equals.ts';
 import { printHelp } from './top-help.ts';
 import { curatedFlagError } from './help/validate.ts';
-import { cliCommandOf, exitCliError, exitOnRepairFailed, unknownFlagError, usageError, writeCliError, writeCliNotice, writeFatalCliError } from './cli-error.ts';
+import { cliCommandOf, exitCliError, exitOnRepairFailed, reportInBandFailure, unknownFlagError, usageError, writeCliError, writeCliNotice, writeFatalCliError } from './cli-error.ts';
 import type { Notice } from '../core/agent-output.ts';
 import { opError, opOwnsSource } from '../core/ops/contract.ts';
 import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
@@ -734,22 +734,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     // writeStdoutFinal.
     if (output) await writeStdoutFinal(output);
     if (noticeText) process.stderr.write(noticeText);
-    // #4488: an op that reports failure IN-BAND (`{status: 'error'}` — e.g.
-    // put_page over unparseable frontmatter) used to print the envelope and
-    // exit 0, so scripts read a never-written page as success. Echo the error
-    // to stderr and set the failure verdict. No-op statuses ('skipped',
-    // 'unchanged', …) stay exit 0 — a no-op is not a failure.
-    if (
-      typeof result === 'object' && result !== null && !Array.isArray(result) &&
-      (result as { status?: unknown }).status === 'error'
-    ) {
-      const detail = (result as { error?: unknown }).error;
-      console.error(
-        `gbrain ${command}: operation reported status 'error'` +
-        (typeof detail === 'string' && detail ? ` — ${detail}` : '') + '.',
-      );
-      setCliExitVerdict(1);
-    }
+    reportInBandFailure(result, command);
     markEntityMiss(op.name, result);
     maybePrintConceptNudge(op.name, params);
   } catch (e: unknown) {
@@ -850,6 +835,7 @@ async function runThinClientRouted(
     // Awaited delivery (#3423) — same contract as the local-engine path.
     if (output) await writeStdoutFinal(output);
     if (stampText) process.stderr.write(stampText);
+    reportInBandFailure(result, op.cliHints?.name ?? op.name);
     markEntityMiss(op.name, result);
     maybePrintConceptNudge(op.name, params);
   } catch (e: unknown) {

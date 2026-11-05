@@ -28,7 +28,8 @@ import { grantedWriteSource, writeGrantRefusal } from './write-grant.ts';
 import { requestAttribution } from './attribution.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { prepareMemoryMutation } from './memory-prepare.ts';
-import { retryWriteAdmission } from './admission-retry.ts';
+import { retryWriteAdmission, waitOutRefreshFence } from './admission-retry.ts';
+import { resolveAdmissionOrigin } from './admission-origin.ts';
 import { privateProvenanceFilterFragment, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { callerMember, memberFactAdmitSql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug } from '../access/member-facts.ts';
@@ -350,7 +351,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   // are released before backoff. Admission must not retry a nested savepoint.
   let withdrawn: WithdrawalCommit['pages'] = [];
   const beliefReport = { appended: 0 };
-  const done = await retryWriteAdmission(requestId, remaining => ctx.engine.transaction(async tx => {
+  const done = await waitOutRefreshFence(resolveAdmissionOrigin(ctx.admissionOrigin) === 'interactive', () => retryWriteAdmission(requestId, remaining => ctx.engine.transaction(async tx => {
     withdrawn = [];
     beliefReport.appended = 0;
     await declareDurablePersistence(tx, `${Math.min(1000, remaining)}ms`, `${remaining}ms`);
@@ -396,7 +397,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
         : { id, expired: true, path: 'legacy_db', reason: reason ?? 'forgotten' };
       return completeWrite(tx, row, 'committed', { ...outcome, persistence: { mode: 'database' } });
     }, requestAttribution(row));
-  }), undefined, error => ctx.engine.reconnect({ error }));
+  }), undefined, error => ctx.engine.reconnect({ error })));
   if (beliefReport.appended && done.state === 'committed') await markBeliefCommits(ctx.engine, [done.id]).catch(() => undefined);
   // The commit removed the withdrawn pages' chunks. Rebuild them before
   // acknowledging: a CLI process exits without a resident projection worker.
