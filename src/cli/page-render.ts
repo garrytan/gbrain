@@ -157,9 +157,9 @@ export function remoteErrorCode(e: unknown): string | undefined {
   return err?.canonical ?? (typeof err?.code === 'string' ? err.code : undefined);
 }
 
-/** True when a get_page call named no body mode, selector or round-trip flag: the caller wants the page as it is. */
+/** True when a get_page call named no body mode, selector, round-trip flag or as_of date: the caller wants the page as it is now. */
 export function wantsWholePage(params: Record<string, unknown>): boolean {
-  return ['body', 'lines', 'bytes', 'around_chunk_id', 'cursor', 'include_content', 'content_only', 'section', 'grep'].every(k => params[k] === undefined);
+  return ['body', 'lines', 'bytes', 'around_chunk_id', 'cursor', 'include_content', 'content_only', 'section', 'grep', 'as_of'].every(k => params[k] === undefined);
 }
 
 /**

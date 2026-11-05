@@ -25,7 +25,7 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { createPageVersion } from '../src/core/page-state/versions.ts';
 import { assertValidTimeEcho, currentValidTime, validDate, validDateSql, validTimeVerdict, validTimeWriteAdvisory, VALID_TIME_MIN_HOST_VERSION } from '../src/core/valid-time.ts';
 import { exitCodeForCode } from '../src/core/error-catalogue.ts';
-import { asOfExitCode, formatGetPage, validTimeLine } from '../src/cli/page-render.ts';
+import { asOfExitCode, formatGetPage, validTimeLine, wantsWholePage } from '../src/cli/page-render.ts';
 import { utcToday } from '../src/core/link-validity.ts';
 import { unquoteTranscriptText } from '../src/core/search/transcript-quote.ts';
 import { testBackends, requirePostgresTestDatabase } from './helpers/test-backends.ts';
@@ -83,6 +83,11 @@ describe('valid-time normaliser and verdict (pure)', () => {
     expect(exitCodeForCode('host_upgrade_required')).toBe(16);
     expect(() => assertValidTimeEcho({ as_of: '2026-07-01' }, { valid_time: { as_of: '2026-07-01' } }, { client: 'x', host: null })).not.toThrow();
     expect(() => assertValidTimeEcho({}, plain, { client: 'x', host: null })).not.toThrow();
+  });
+
+  test('an as_of read never takes the thin client whole-page fallback: an older host that ignored as_of pages the current text', () => {
+    expect(wantsWholePage({ slug: 'policies/policy-4a-example' })).toBe(true);
+    expect(wantsWholePage({ slug: 'policies/policy-4a-example', as_of: '2026-07-01' })).toBe(false);
   });
 
   test('B4: the minimum host version is the release whose CHANGELOG entry adds get_page as_of', () => {
