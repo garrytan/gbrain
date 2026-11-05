@@ -589,6 +589,10 @@ export interface CycleOpts {
    * Validated via `assertValidSourceId` in `cycleLockIdFor` (defense-in-depth).
    */
   sourceId?: string;
+  /** Internal: a routed global synthesis turn does not perform source freshness work. */
+  stampSourceCycle?: boolean;
+  /** Internal: approved incarnation of a global synthesis source turn. */
+  synthesisSourceIncarnation?: string;
   /** #6803, #8573: a source cycle with no sync works on a bounded window of its pages changed after this (null: from its oldest page); see cycle/source-window.ts. */
   sourceChangedSince?: string | null;
   /**
@@ -2355,6 +2359,7 @@ async function runCycleUnscoped(
           // #1586: scope synthesized writes to the cycle's resolved source
           // (explicit --source wins, else derived from the checkout dir).
           sourceId: cycleSourceId,
+          sourceIncarnation: opts.synthesisSourceIncarnation,
           once: opts.onceForPhase === 'synthesize',
           // #4077: combined external-abort + lock-steal signal, so a
           // cancelled cycle stops judge calls, inline children, and
@@ -3172,7 +3177,7 @@ async function runCycleUnscoped(
   // timestamp post-failure is still higher than missing a successful write, so
   // the stamp itself is unchanged — only the reporting is.
   let stampWriteFailed: { source_id: string; error: string } | undefined;
-  if (opts.sourceId && phases.length > 0 && engine && !dryRun && !aborted && (status === 'ok' || status === 'clean' || status === 'partial')) {
+  if (opts.sourceId && opts.stampSourceCycle !== false && phases.length > 0 && engine && !dryRun && !aborted && (status === 'ok' || status === 'clean' || status === 'partial')) {
     try {
       const nowIso = new Date().toISOString();
       // #2194 fix #3 (the cycle split): `last_source_cycle_at` is the NEW gate

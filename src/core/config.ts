@@ -1632,6 +1632,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'cycle.propose_takes.enabled',
   'cycle.propose_takes.types', // #5213: JSON array of page types propose_takes scans (unset = every type); read in cycle/propose-takes.ts
   'cycle.lint.enabled', // #6369: default on; an explicit falsy value skips the cycle's lint phase (cycle/lint-fix-setting.ts; `dream --phase lint --once` bypasses)
+  'autopilot.global_maintenance.synthesis_sources', // #8669: explicit source/incarnation pins; one synthesis turn per global job
   'autopilot.git_pull', // #6451: default on; an explicit falsy value stops automatic sync from pulling remote sources (persistence/automatic-sync-policy.ts)
   // Content sanity (v0.41)
   'content_sanity.bytes_warn',

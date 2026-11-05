@@ -33,6 +33,7 @@ import type { PhaseResult } from '../cycle.ts';
 import { corpusSpoolDir } from '../context/corpus-segments.ts';
 import { resolveCorpusFileSource, type CorpusFileLocation, type CorpusFileSource } from '../context/corpus-source.ts';
 import { CONVERSATION_PAGE_URI_PREFIX, type DiscoveredTranscript } from './transcript-discovery.ts';
+import { parseSourceConfig } from '../sources-load.ts';
 import { UnrecoverableError } from '../minions/types.ts';
 
 export interface SessionSourceRouting {
@@ -124,9 +125,16 @@ export async function corpusSourceChanged(engine: BrainEngine, pin: { raw_source
  * child queued before the pin has neither and runs unchecked.
  */
 export async function refuseChangedSessionSource(engine: BrainEngine,
-  data: { corpus_source?: CorpusSourcePin; dream_output?: { raw_source: string }; source_id?: string }): Promise<void> {
-  if (!data.corpus_source && !data.dream_output) return;
+  data: { corpus_source?: CorpusSourcePin; dream_output?: { raw_source: string }; source_id?: string; source_incarnation?: string }): Promise<void> {
   const sourceId = data.source_id ?? 'default';
+  if (data.source_incarnation) {
+    const [source] = await engine.executeRaw<{ incarnation: string; archived: boolean; config: unknown }>(
+      'SELECT incarnation::text AS incarnation, archived, config FROM sources WHERE id=$1', [sourceId]);
+    if (!source || source.archived || source.incarnation !== data.source_incarnation || parseSourceConfig(source.config).federated !== true) {
+      throw new UnrecoverableError('session_source_changed: approved_source_changed: the approved shared source was replaced, archived or isolated; nothing was synthesized');
+    }
+  }
+  if (!data.corpus_source && !data.dream_output) return;
   const pin = data.corpus_source ?? { raw_source: data.dream_output!.raw_source,
     corpus_dir: await engine.getConfig('dream.synthesize.session_corpus_dir').catch(() => null) };
   const changed = await corpusSourceChanged(engine, pin, sourceId);

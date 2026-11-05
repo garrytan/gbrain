@@ -590,6 +590,8 @@ export interface SubagentHandlerData {
    * tool-registry build time.
    */
   source_id?: string;
+  /** Approved synthesis source incarnation, rechecked before model work, including non-corpus inputs. */
+  source_incarnation?: string;
   /**
    * When true, a job must complete at least one put_page write or FAIL
    * (UnrecoverableError → dead, idempotency key released) instead of

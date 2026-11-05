@@ -10,6 +10,7 @@ import { ItemRun, classifyItemFailure } from '../../item-failure.ts';
 import { OperationError } from '../../ops/contract.ts';
 import { VERSION } from '../../../version.ts';
 import { reportJobProgress } from './job-progress.ts';
+import { nextSynthesisTurn } from './synthesis-source-turn.ts';
 
 /**
  * #4578: one pass over the maintenance phases may span several jobs. The
@@ -82,6 +83,8 @@ export interface PhaseStreak {
 export interface GlobalMaintenanceProgress {
   /** Phase the next job starts at; absent at the start of a pass. */
   next_phase?: string;
+  /** Last approved synthesis source turn, persisted before invocation across jobs/crashes. */
+  last_synthesis_source?: string;
   /** Phase running right now, and the job running it. Left set when a job dies mid-phase. */
   running_phase?: string;
   running_job?: string;
@@ -188,7 +191,7 @@ export function makeAutopilotGlobalMaintenanceHandler(engine: BrainEngine, deps:
     // per-source normalization in the autopilot-cycle handler.
     const maintenanceSet = new Set<string>(MAINTENANCE_PHASES);
     const requested = Array.isArray(job.data.phases)
-      ? (job.data.phases as string[]).filter((p) => maintenanceSet.has(p))
+      ? [...new Set((job.data.phases as string[]).filter((p) => maintenanceSet.has(p)))]
       : MAINTENANCE_PHASES;
     const phases = (requested.length > 0 ? requested : MAINTENANCE_PHASES) as typeof MAINTENANCE_PHASES;
 
@@ -305,7 +308,22 @@ export function makeAutopilotGlobalMaintenanceHandler(engine: BrainEngine, deps:
       await reportJobProgress(job, { phase, phase_index: i, phase_count: phases.length, started_at: new Date().toISOString() });
       let report: CycleReport;
       try {
+        const previousCursor = progress.last_synthesis_source;
+        const turn = phase === 'synthesize' ? await nextSynthesisTurn(engine, progress.last_synthesis_source) : {};
+        if (turn.disabled) {
+          progress.running_phase = undefined;
+          progress.running_job = undefined;
+          ran.push({ phase, status: 'skipped', duration_ms: 0, summary: 'synthesis source approval list is empty', details: { reason: 'no_approved_synthesis_sources' } });
+          continue;
+        }
+        if (turn.cursor) {
+          progress.last_synthesis_source = turn.cursor;
+          // Unlike advisory progress, the routed turn MUST survive a crash.
+          // Fail before invocation if it cannot be recorded.
+          await engine.setConfig(GLOBAL_MAINTENANCE_PROGRESS_KEY, JSON.stringify(progress));
+        }
         report = await runCycle(engine, {
+        ...(turn.sourceId ? { sourceId: turn.sourceId, synthesisSourceIncarnation: turn.incarnation, stampSourceCycle: false } : {}),
         brainDir: repoPath,
         pull: false, // brain-wide DB/maintenance work never git-pulls
         signal: job.signal,
@@ -319,6 +337,12 @@ export function makeAutopilotGlobalMaintenanceHandler(engine: BrainEngine, deps:
         forceGlobalOrphans: true,
         yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
         });
+        // Shared cooldown/lock/deadline skips have not taken this source's
+        // turn. Keep it pending so periodic jobs cannot phase-lock one source.
+        if (turn.cursor && (report.status === 'skipped' || report.phases.some(p => p.phase === 'synthesize' && p.status === 'skipped'))) {
+          progress.last_synthesis_source = previousCursor;
+          await engine.setConfig(GLOBAL_MAINTENANCE_PROGRESS_KEY, JSON.stringify(progress));
+        }
       } catch (e) {
         const classified = classifyItemFailure(e);
         const runScoped = classified.scope === 'run';
