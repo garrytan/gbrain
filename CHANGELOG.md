@@ -18,6 +18,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 - `scripts/test-weights.json` and `scripts/serial-weights.json`: each test file's weight is its median over the five newest green Test nightlies (41792242983, 41596314589, 41406386795, 41284734181 and 41180589845). The heaviest of the 28 unit shards is predicted at 536 s against the 600 s budget (523 s before). Test files with no weight drop from 65 to 50 of 4536 in the unit lane and from 7 to 4 of 457 in the serial lane.
 - `scripts/e2e-weights.json`: re-mined from the full-corpus E2E nightly 41784138099. Test files with no weight drop from 19 to 17 of 864.
+- `test/pathological/s-classic-file-holds.test.ts`: the unknown-error case picks the import's page read by its arguments instead of by a stack frame, so it still injects its failure when an earlier file in the same process opened an embedded engine. The new packing runs `test/engine-open.test.ts` before it in one unit shard, where it failed every time.
 
 ## [0.60.580.0] - 2026-11-05
 
