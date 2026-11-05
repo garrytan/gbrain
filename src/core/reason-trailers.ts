@@ -237,17 +237,20 @@ export function reasonScanNotices(scan: SyncReasonScan | null | undefined, sourc
 }
 
 export const SOURCE_PURGE_EPOCH_SQL = 'SELECT purge_epoch FROM sources WHERE id = $1';
-const cache = new Map<string, { at: number; scan: Promise<SyncReasonScan | null> }>();
+let caches = new WeakMap<BrainEngine, Map<string, { at: number; scan: Promise<SyncReasonScan | null> }>>();
 const CACHE_TTL_MS = 10 * 60_000;
 
 /**
  * Managed sync prepares one request at a time, each naming its pass's range: the pass's scan runs once per process and
  * its later requests reuse it. The key carries the source's purge epoch, which every fact purge bumps in the transaction
- * that writes its tombstones, so a purge from any process makes the next request scan again and read them.
+ * that writes its tombstones, so a purge from any process makes the next request scan again and read them. The cache is
+ * per engine: the scan holds that brain's tombstones, so another brain on the same checkout never reuses it.
  */
 export async function cachedSyncReasonScan(engine: BrainEngine, input: Parameters<typeof scanSyncReasons>[1]): Promise<SyncReasonScan | null> {
   const [source] = await engine.executeRaw<{ purge_epoch: string | number }>(SOURCE_PURGE_EPOCH_SQL, [input.sourceId]);
   const key = [input.sourceId, String(source?.purge_epoch ?? 0), input.sourceRoot, input.from ?? '', input.to].join('\0');
+  const cache = caches.get(engine) ?? new Map();
+  caches.set(engine, cache);
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.scan;
   const scan = scanSyncReasons(engine, input);
@@ -256,7 +259,7 @@ export async function cachedSyncReasonScan(engine: BrainEngine, input: Parameter
   while (cache.size > 16) cache.delete(cache.keys().next().value!);
   return scan;
 }
-export function clearReasonScanCache(): void { cache.clear(); }
+export function clearReasonScanCache(): void { caches = new WeakMap(); }
 
 /** A7: what a purge's trailer scan found: the (commit, path) pairs whose reason quotes the claim, read up to HEAD. */
 export type PurgeTrailerScan =

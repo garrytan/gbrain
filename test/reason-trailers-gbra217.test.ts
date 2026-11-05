@@ -35,13 +35,14 @@ import { runImport } from '../src/commands/import.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { __setReasonGitStreamForTests, __setReasonScanCapsForTests, clearReasonScanCache, gitTopLevel, importHistoryFor, scanSyncReasons,
-  scanTrailersCarrying } from '../src/core/reason-trailers.ts';
+import { __setReasonGitStreamForTests, __setReasonScanCapsForTests, cachedSyncReasonScan, clearReasonScanCache, gitTopLevel, importHistoryFor,
+  scanSyncReasons, scanTrailersCarrying } from '../src/core/reason-trailers.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-reason-trailers-'));
 const engines: BrainEngine[] = [];
+let otherBrain: PGLiteEngine;
 let closePostgres: (() => Promise<void>) | undefined;
 let serial = 0;
 
@@ -142,6 +143,7 @@ const inHome = <T>(fn: () => Promise<T>) => withEnv({ GBRAIN_HOME: home }, fn);
 
 beforeAll(async () => inHome(async () => {
   const lite = new PGLiteEngine(); await lite.connect({}); await lite.initSchema(); engines.push(lite);
+  otherBrain = new PGLiteEngine(); await otherBrain.connect({}); await otherBrain.initSchema();
   if (process.env.DATABASE_URL) {
     const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL);
     engines.push(pg.engine); closePostgres = pg.close;
@@ -152,6 +154,7 @@ afterEach(() => { __setReasonScanCapsForTests(); __setReasonGitStreamForTests();
 afterAll(async () => {
   await inHome(async () => { for (const engine of engines) await disposePersistenceConsumer(engine).catch(() => undefined); });
   await engines[0]?.disconnect();
+  await otherBrain?.disconnect();
   await closePostgres?.();
   rmSync(home, { recursive: true, force: true });
 });
@@ -269,6 +272,23 @@ describe('A6: sync mirrors gbrain-reason trailers', () => {
     expect(scan!.byPath.size).toBe(5000);
     expect(importHistoryFor(scan, join(root, 'bulk/f4321.md'))).toEqual({ reason: 'Only this file has a reason.', historyGap: false });
     expect(importHistoryFor(scan, join(root, 'bulk/f0001.md'))).toEqual({ reason: null, historyGap: false });
+  }), 120_000);
+
+  test('two brains in one process sharing a checkout, source id, range and purge epoch each read their own tombstones', async () => inHome(async () => {
+    const id = `rt-shared-${++serial}`;
+    const root = newRepo({ 'notes/a.md': page('A one.') });
+    const from = git(root, 'rev-parse', 'HEAD');
+    write(root, { 'notes/a.md': page('A two.') });
+    const to = commit(root, 'edit', ['notes/a.md: Canary reason for source-a.']);
+    for (const brain of [engines[0]!, otherBrain]) {
+      await brain.executeRaw(`INSERT INTO sources(id, name, local_path, config) VALUES ($1, $1, $2, '{}')`, [id, root]);
+      await brain.executeRaw('UPDATE sources SET purge_epoch = 1 WHERE id = $1', [id]);
+    }
+    await otherBrain.executeRaw('INSERT INTO reason_purge_tombstones(source_id, commit_sha, path) VALUES ($1, $2, $3)', [id, to, 'notes/a.md']);
+    const range = { sourceId: id, sourceRoot: root, from, to };
+    const file = join(root, 'notes/a.md');
+    expect(importHistoryFor(await cachedSyncReasonScan(engines[0]!, range), file)).toEqual({ reason: 'Canary reason for source-a.', historyGap: false });
+    expect(importHistoryFor(await cachedSyncReasonScan(otherBrain, range), file)).toEqual({ reason: null, historyGap: false });
   }), 120_000);
 });
 
