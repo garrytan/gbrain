@@ -27,9 +27,9 @@ import { isUserSaid, trustFields, trustLabelWords } from '../eligibility/labels.
 import { ACTIVATION_REASON_FAMILIES, ACTIVATION_TIER_CEILING } from '../eligibility/sql.ts';
 import { claimPendingSql, TRUST_CLAIM_RESUME_COMMAND } from './claim-state.ts';
 import { listTrustAllowRules, type TrustAllowRule } from './allow-rules.ts';
-import { isQuarantined } from '../quarantine.ts';
+import { isQuarantined, QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
 
-export const TRUST_REVIEW_KINDS = ['proposal', 'lowered_page', 'preference', 'hold'] as const;
+export const TRUST_REVIEW_KINDS = ['proposal', 'lowered_page', 'preference', 'hold', 'flagged_page'] as const;
 export type TrustReviewKind = typeof TRUST_REVIEW_KINDS[number];
 
 export interface TrustReviewItem {
@@ -184,6 +184,29 @@ async function holds(engine: BrainEngine, filter: TrustReviewFilter): Promise<Tr
   }));
 }
 
+/** Current instruction flags without a pending page decision. Historical gate receipts alone are not review work. */
+async function flaggedPages(engine: BrainEngine, filter: TrustReviewFilter): Promise<TrustReviewItem[]> {
+  const rows = await engine.executeRaw<{ source_id: string; slug: string; title: string; trust_tier: string; updated_at: string }>(
+    `SELECT p.source_id, p.slug, p.title, p.trust_tier, p.updated_at FROM pages p
+      WHERE p.deleted_at IS NULL AND ${QUARANTINE_FILTER_FRAGMENT}
+        AND p.frontmatter->'content_flag'->>'reason' = 'instruction_like'
+        AND p.trust_tier IN ('agent_written', 'unknown', 'external_untrusted')
+        AND NOT (p.trust_tier = 'unknown' AND EXISTS (SELECT 1 FROM sources cs WHERE cs.id = p.source_id AND ${claimPendingSql('cs')}))
+        AND ($1::text IS NULL OR p.source_id = $1) AND ($2::timestamptz IS NULL OR p.updated_at >= $2)
+        AND NOT EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.target_table = 'pages' AND tp.target_id = p.id
+                          AND tp.source_id = p.source_id AND tp.status = 'pending')
+      ORDER BY p.updated_at, p.id LIMIT 1000`, [filter.sourceId ?? null, filter.since?.toISOString() ?? null]);
+  return rows.map(row => {
+    const ref = pageRef(row.source_id, row.slug);
+    const tier = storedTrustTier(row.trust_tier);
+    const created = new Date(row.updated_at).toISOString();
+    return { ref, kind: 'flagged_page' as const, detail: 'instruction_like', source_id: row.source_id, page: ref,
+      day: day(created), created_at: created, tier, label: trustLabel(tier),
+      summary: `Unconfirmed instruction-flagged page: "${snippet(row.title || row.slug)}"`,
+      commands: { confirm: trust('confirm', ref), explain: trust('explain', ref) } };
+  });
+}
+
 /** The review queue, filtered. Read-only. */
 export async function buildTrustReview(engine: BrainEngine, filter: TrustReviewFilter = {}): Promise<TrustReview> {
   const items: TrustReviewItem[] = [];
@@ -197,6 +220,7 @@ export async function buildTrustReview(engine: BrainEngine, filter: TrustReviewF
   }
   if (wants(filter, 'preference')) items.push(...await standingPreferences(engine, filter));
   if (wants(filter, 'hold')) items.push(...await holds(engine, filter));
+  if (wants(filter, 'flagged_page')) items.push(...await flaggedPages(engine, filter));
   items.sort((a, b) => a.day.localeCompare(b.day) || (a.page ?? '').localeCompare(b.page ?? '') || a.created_at.localeCompare(b.created_at) || a.ref.localeCompare(b.ref));
   const groups: TrustReview['groups'] = [];
   for (const item of items) {
@@ -242,7 +266,8 @@ export function renderTrustReview(review: TrustReview): string {
   }
   const c = review.counts;
   if (review.items.length) {
-    lines.push('', `${review.items.length} item(s): ${c.proposal} proposal(s), ${c.lowered_page} lowered page(s), ${c.preference} unconfirmed preference(s), ${c.hold} held write(s).`,
+    lines.push('', `${review.items.length} item(s): ${c.proposal} proposal(s), ${c.lowered_page} lowered page(s), ${c.preference} unconfirmed preference(s), ${c.hold} held write(s)` +
+      (c.flagged_page ? `, ${c.flagged_page} flagged page(s).` : '.'),
       'Confirming or releasing raises trust: run the command yourself in a terminal and type the token it asks for. Explain any item: gbrain trust explain <ref>.');
   }
   return lines.join('\n');
