@@ -45,6 +45,7 @@ import {
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { ON_BEHALF_OF_HEADER } from '../core/access/audience.ts';
 import { ACTOR_HEADER, EXTERNAL_ID_RE, QM_AUDIENCE_HEADER } from '../core/access/actor-model.ts';
+import { parseWriterSignature, WRITER_SIGNATURE_HEADER } from '../core/persistence/attribution.ts';
 import { qmMemoryToolResult } from '../core/ops/qm-memory.ts';
 import { attestableOp } from '../core/access/actor.ts';
 
@@ -77,6 +78,8 @@ interface McpRequestState {
   actorHeader: string | undefined;
   /** GST-359 D: the x-qm-audience header (QM's channel audience, wave 2); any request carrying it is refused before any work. */
   audienceHeader: string | undefined;
+  /** The AI this request signed itself as (x-gbrain-writer); recorded on the write's attribution, never authority. */
+  writerSignature: string | undefined;
 }
 
 export function mountMcp(app: Express, ctx: ServeHttpContext): void {
@@ -188,7 +191,8 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
       surface === 'full' && authInfo.allowedOperations == null ? undefined : new Set(mcpOperations.map(o => o.name));
     const thinClient = isGbrainThinClient(req.get(GBRAIN_CLIENT_HEADER));
     const state: McpRequestState = { authInfo, agentName, startTime, mcpOperations, surface, surfaceCeiling, surfaceAllowedOps, resultRows, thinClient,
-      onBehalfOfHeader: req.get(ON_BEHALF_OF_HEADER), actorHeader: req.get(ACTOR_HEADER), audienceHeader: req.get(QM_AUDIENCE_HEADER) };
+      onBehalfOfHeader: req.get(ON_BEHALF_OF_HEADER), actorHeader: req.get(ACTOR_HEADER), audienceHeader: req.get(QM_AUDIENCE_HEADER),
+      writerSignature: parseWriterSignature(req.get(WRITER_SIGNATURE_HEADER)) };
     const server = createMcpRequestServer(ctx, state, writeback);
     await serveMcpRequest(server, req, res);
   }
@@ -439,6 +443,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
       ...(hotMemoryOffIn(request.params) ? { hotMemoryOff: true } : {}),
       onBehalfOf: { header: state.onBehalfOfHeader, requestMeta: (request.params as { _meta?: unknown })._meta },
       actor: { header: state.actorHeader, audience: state.audienceHeader },
+      ...(state.writerSignature ? { writerSignature: state.writerSignature } : {}),
       takesHoldersAllowList: tokenAllowList,
       sourceId: tokenSourceId,
       ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),

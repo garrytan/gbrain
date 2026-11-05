@@ -497,6 +497,8 @@ export interface OperationContext {
    * transports). Unset is `background`; it is never derived from `remote` (persistence/admission-origin.ts).
    */
   admissionOrigin?: import('../persistence/admission-origin.ts').AdmissionOrigin;
+  /** The AI the trusted transport read from the write's signature header (persistence/attribution.ts). Descriptive, never authority. */
+  writerSignature?: string;
   /**
    * Transport marker for auth-less remote surfaces (#1061). The stdio MCP
    * dispatch sets 'stdio' — it is deliberately `remote: true` (agent-facing,

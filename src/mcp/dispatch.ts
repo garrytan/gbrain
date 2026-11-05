@@ -184,6 +184,8 @@ export interface DispatchOpts {
   onBehalfOf?: AudienceChannels;
   /** #6696 (A5): set by the trusted transport for the user's own agent calls; never from wire params. */
   admissionOrigin?: OperationContext['admissionOrigin'];
+  /** The AI this request signed itself as (x-gbrain-writer), already parsed by the transport; recorder only, never authority. */
+  writerSignature?: string;
   /** Configuration selected by the resident transport, never populated from wire params. */
   config?: OperationContext['config'];
   /** Defaults to true (remote/untrusted). Local CLI callers (`gbrain call`) pass false. */
@@ -914,6 +916,7 @@ export function buildOperationContext(
     ...(opts.revealTools ? { revealTools: opts.revealTools } : {}),
     ...(opts.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
     ...(opts.admissionOrigin ? { admissionOrigin: opts.admissionOrigin } : {}),
+    ...(opts.writerSignature ? { writerSignature: opts.writerSignature } : {}),
     ...(opts.resultRows ? { resultRows: opts.resultRows } : {}),
     ...(opts.thinClient ? { thinClient: true } : {}),
     isCallable: (opName: string) => (render ??= dispatchRenderContext(opts)).isCallable(opName),

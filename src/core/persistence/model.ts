@@ -4,6 +4,8 @@ import { assertRecoveryVersion } from './recovery-version.ts';
 export type Principal = { kind: 'oauth_client' | 'legacy_token' | 'local_cli' | 'local_stdio' | 'application'; id: string };
 export type RequestState = 'queued' | 'running' | 'recovering' | 'committed' | 'conflict' | 'failed' | 'cancelled';
 export interface WriteAuthority {
+  /** The AI the caller signed this write with (x-gbrain-writer). Descriptive, never authority. */
+  writerSignature?: string;
   version: 1;
   principal: Principal;
   remote: boolean;

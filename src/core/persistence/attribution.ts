@@ -20,6 +20,20 @@ export interface WriteAttribution {
 
 export { withWriteAttribution };
 
+/**
+ * The request header a caller uses to sign a write with the AI it is. The hosting
+ * layer knows which model is calling (Claude, Codex, an OpenClaw job); gbrain does
+ * not, and every write from one brain otherwise looks alike. Descriptive only: it
+ * never authorizes, never widens a grant, and a caller that omits it is recorded
+ * exactly as before.
+ */
+export const WRITER_SIGNATURE_HEADER = 'x-gbrain-writer';
+/** A usable signature, or undefined: 1-120 printable characters and no control characters. */
+export function parseWriterSignature(value: string | null | undefined): string | undefined {
+  const text = value?.trim();
+  return text && text.length <= 120 && !/\p{Cc}/u.test(text) ? text : undefined;
+}
+
 /** A journaled request publishes as itself. */
 export function requestAttribution(row: Pick<WriteRequest, 'id' | 'principal_kind' | 'principal_id'>): WriteAttribution {
   return { requestId: row.id, principal: { kind: row.principal_kind, id: row.principal_id } };
