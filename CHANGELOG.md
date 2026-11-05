@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.579.0] - 2026-11-05
 
 **The nightly E2E upgrade check passes on keyed runs again.** The upgrade-from-previous-release harness checks that a brain and keyless config file written by the previous release resolve the same `gbrain config show` output under this build. The keyed nightly E2E lane keeps `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` set, the harness's CLI inherited them, and `config show` printed two redacted key lines the golden doesn't list. The harness now runs its CLI keyless, as the install it models does. Nothing changes for users. A keyless install resolves exactly the golden, and a keyed one shows its keys as before.
 
