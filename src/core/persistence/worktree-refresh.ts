@@ -130,10 +130,13 @@ async function keepPagesHead(engine: BrainEngine, row: Pick<WorktreeRefreshRow, 
     return head;
   }).catch(() => row.target_head);
 }
-/** GST-1457: a member whose last_commit strictly descends from HEAD; finishing the refresh there would let that member's next sync roll it back to HEAD. */
-async function memberAheadOf(engine: BrainEngine, git: Git, root: string, row: Pick<WorktreeRefreshRow, 'source_ids'>, head: string): Promise<boolean> {
+/**
+ * GST-1457: a member whose last_commit HEAD does not contain (ahead of HEAD, on a sibling line, or a commit git cannot place); finishing
+ * the refresh there would let that member's next sync diff its commit to HEAD and soft-delete what HEAD lacks.
+ */
+async function memberOutsideHead(engine: BrainEngine, git: Git, root: string, row: Pick<WorktreeRefreshRow, 'source_ids'>, head: string): Promise<boolean> {
   for (const member of await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id = ANY($1::text[])', [row.source_ids])) {
-    if (member.last_commit && member.last_commit !== head && await isAncestor(git, root, head, member.last_commit)) return true;
+    if (member.last_commit && member.last_commit !== head && !await isAncestor(git, root, member.last_commit, head)) return true;
   }
   return false;
 }
@@ -906,7 +909,7 @@ async function recoverOne(engine: BrainEngine, git: Git, row: WorktreeRefreshRow
   } else if (row.state === 'fenced' && head === row.old_head) {
     await engine.transaction(tx => transition(tx, row, ['fenced'], 'aborted', { refusal: { code: 'refresh_interrupted', cause: 'The refreshing process stopped before merging; HEAD is unchanged.' } }));
   } else if (['fenced', 'merged', 'recovery_required'].includes(row.state) && (head === row.target_head || (row.state === 'recovery_required' && head !== null && await isAncestor(git, root, row.target_head, head)))
-    && await isAncestor(git, root, row.old_head, row.target_head) && !await memberAheadOf(engine, git, root, row, head!)) {
+    && await isAncestor(git, root, row.old_head, row.target_head) && !await memberOutsideHead(engine, git, root, row, head!)) {
     await bookkeeping(engine, row);
   } else if (row.state === 'syncing' && head !== null && (head === row.target_head || await isAncestor(git, root, row.target_head, head))) {
     // stays syncing; the member syncs run from --resume or any later cycle sync.

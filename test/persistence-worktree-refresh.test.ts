@@ -862,6 +862,29 @@ test('7w. GST-1457 fix-check: --resume never finishes a refresh at a HEAD a memb
   expect((await f.refreshRows()).map(r => r.state)).toEqual(['recovery_required']);
 }), 180_000);
 
+test('7x. GST-1457 outside voice: --resume never finishes at a sibling of the commit a member synced, even when it descends from the target', () => each(async f => {
+  // Value: protects=recoverOne records the merge only when HEAD contains every member's last_commit, so a HEAD on a sibling line of the
+  // target leaves the fence up instead of completing and letting the member's next sync soft-delete what HEAD lacks; fails_when=the member
+  // check only refuses members strictly ahead of HEAD; why_new=7w's member is ahead of HEAD on the same line; seam=two local commits on top
+  // of the target, one synced by the real managed sync; no_claim=none.
+  const target = f.push('alpha/two.md', page('Alpha two', 'Synced to the target.'));
+  const old = f.head();
+  await orphanAt(f, 'syncing', 'syncing');
+  const synced = commitFile(f.root, 'alpha/three.md', page('Alpha three', 'Synced on one line past the target.'));
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  expect(await f.lastCommit(f.alpha)).toBe(synced);
+  const pages = await livePages(f, f.alpha);
+  git(f.root, 'reset', '-q', '--hard', old);
+  await refusedWith(refreshWorktree(f.engine, f.alpha, { resume: true }), 'refresh_recovery_required');
+  git(f.root, 'reset', '-q', '--hard', target);
+  commitFile(f.root, 'alpha/sibling.md', page('Alpha sibling', 'A sibling line past the target.'));
+  const sibling = await settle(refreshWorktree(f.engine, f.alpha, { resume: true }));
+  await settle(performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true }));
+  expect(await livePages(f, f.alpha)).toEqual(pages);
+  expect(sibling.error?.code).toBe('refresh_recovery_required');
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['recovery_required']);
+}), 180_000);
+
 test('8. a queued git effect drains before fenced, and nothing on the worktree is claimed while fenced', () => each(async f => {
   f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
   await f.put(f.beta, 'notes/effect', page('Effect', 'Has a git effect.'));
