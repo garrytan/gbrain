@@ -15,6 +15,7 @@ import { hardenedGitStream, hardenedGitSync, REASON_LOG_OPTIONS } from './harden
 import { canonicalChangeReason, CHANGE_REASON_MAX } from './persistence/change-reason.ts';
 import { scanTextSpans } from './secret-scan.ts';
 import type { BrainEngine } from './engine.ts';
+import { engineKey } from './engine-key.ts';
 import type { Notice } from './agent-output.ts';
 import type { VersionHistory } from './page-state/versions.ts';
 
@@ -246,7 +247,7 @@ export function reasonScanNotices(scan: SyncReasonScan | null | undefined, sourc
 }
 
 export const SOURCE_PURGE_EPOCH_SQL = 'SELECT purge_epoch FROM sources WHERE id = $1';
-let caches = new WeakMap<BrainEngine, Map<string, { at: number; scan: Promise<SyncReasonScan | null> }>>();
+let caches = new WeakMap<object, Map<string, { at: number; scan: Promise<SyncReasonScan | null> }>>();
 const CACHE_TTL_MS = 10 * 60_000;
 
 /**
@@ -258,8 +259,9 @@ const CACHE_TTL_MS = 10 * 60_000;
 export async function cachedSyncReasonScan(engine: BrainEngine, input: Parameters<typeof scanSyncReasons>[1]): Promise<SyncReasonScan | null> {
   const [source] = await engine.executeRaw<{ purge_epoch: string | number }>(SOURCE_PURGE_EPOCH_SQL, [input.sourceId]);
   const key = [input.sourceId, String(source?.purge_epoch ?? 0), input.sourceRoot, input.from ?? '', input.to].join('\0');
-  const cache = caches.get(engine) ?? new Map();
-  caches.set(engine, cache);
+  const brain = engineKey(engine);
+  const cache = caches.get(brain) ?? new Map();
+  caches.set(brain, cache);
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.scan;
   const scan = scanSyncReasons(engine, input);
