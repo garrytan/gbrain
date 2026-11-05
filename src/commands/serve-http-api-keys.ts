@@ -14,7 +14,7 @@ import express, { type Express, type Request, type RequestHandler, type Response
 import type { BrainEngine } from '../core/engine.ts';
 import { cliRenderContext, toAgentError, type Action } from '../core/agent-output.ts';
 import { grantFromTokenRow } from '../core/grants/model.ts';
-import { opError } from '../core/ops/contract.ts';
+import { opError, OperationError } from '../core/ops/contract.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { ALLOWED_SCOPES_LIST, isScope, localCliOnlyScopeViolation } from '../core/scope.ts';
 import { isValidSourceId } from '../core/source-id.ts';
@@ -32,6 +32,7 @@ export interface ApiKeyMintRequest {
   /** undefined = no source grant (the `gbrain auth create` default). */
   sources?: string[];
   takesHolders: string[];
+  metadata?: Record<string, unknown>;
   defaultsApplied: Array<'scopes' | 'sources' | 'takes_holders'>;
 }
 
@@ -107,7 +108,12 @@ export async function parseApiKeyMintRequest(engine: BrainEngine, body: unknown)
       createFix(['--takes-holders', 'world'], 'Mints the same key with the default world takes holder.'));
   }
   const takesHolders = holdersParam ?? (defaultsApplied.push('takes_holders'), [...API_KEY_DEFAULT_TAKES_HOLDERS]);
-  return { name, scopes, ...(sourcesParam ? { sources: sourcesParam } : {}), takesHolders, defaultsApplied };
+  if (raw.metadata !== undefined && (raw.metadata === null || typeof raw.metadata !== 'object' || Array.isArray(raw.metadata))) {
+    throw invalid('metadata must be a JSON object.', 'Resubmit with metadata as an object, for example { "ai": "...", "harness": "..." }, or omit it.',
+      'Metadata is echoed on the principal of every write this key makes.', listAction('Lists existing keys.'));
+  }
+  const metadata = raw.metadata as Record<string, unknown> | undefined;
+  return { name, scopes, ...(sourcesParam ? { sources: sourcesParam } : {}), takesHolders, ...(metadata ? { metadata } : {}), defaultsApplied };
 }
 
 function grantView(row: Record<string, unknown>) {
@@ -147,7 +153,7 @@ export function mountAdminApiKeys(app: Express, requireAdmin: RequestHandler, en
       return;
     }
     try {
-      const minted = await mintLegacyToken(engine, { name: request.name, scopes: request.scopes, takesHolders: request.takesHolders, ...(request.sources ? { sourceGrant: request.sources } : {}) });
+      const minted = await mintLegacyToken(engine, { name: request.name, scopes: request.scopes, takesHolders: request.takesHolders, ...(request.sources ? { sourceGrant: request.sources } : {}), metadata: request.metadata });
       res.json({
         id: minted.id, name: minted.name, token: minted.token,
         scopes_applied: request.scopes,
@@ -155,7 +161,8 @@ export function mountAdminApiKeys(app: Express, requireAdmin: RequestHandler, en
         takes_holders_applied: request.takesHolders,
         defaults_applied: request.defaultsApplied,
       });
-    } catch {
+    } catch (e) {
+      if (e instanceof OperationError && e.code === 'invalid_params') return sendError(res, 400, e);
       res.status(500).json({ error: 'api_key_mint_failed', message: 'API key creation failed. Inspect the key list before retrying.' });
     }
   });

@@ -56,8 +56,8 @@ export async function resolveWriteAttributions(engine: BrainEngine, stored: Stor
       'SELECT id::text AS id, operation, completed_at FROM persistence_requests WHERE id = ANY($1::uuid[])', [requestIds]) : [],
     ids('oauth_client').length ? engine.executeRaw<{ id: string; name: string }>(
       'SELECT client_id AS id, client_name AS name FROM oauth_clients WHERE client_id = ANY($1::text[])', [ids('oauth_client')]) : [],
-    ids('legacy_token').length ? engine.executeRaw<{ id: string; name: string }>(
-      'SELECT id::text AS id, name FROM access_tokens WHERE id::text = ANY($1::text[])', [ids('legacy_token')]) : [],
+    ids('legacy_token').length ? engine.executeRaw<{ id: string; name: string; metadata: Record<string, unknown> | string | null }>(
+      'SELECT id::text AS id, name, metadata FROM access_tokens WHERE id::text = ANY($1::text[])', [ids('legacy_token')]) : [],
     localIds.length ? engine.executeRaw<{ id: string; lane: string }>(
       'SELECT id::text AS id, lane FROM persistence_local_writers WHERE id::text = ANY($1::text[])', [localIds]) : [],
   ]);
@@ -67,6 +67,8 @@ export async function resolveWriteAttributions(engine: BrainEngine, stored: Stor
     ...tokens.map(t => [`legacy_token:${t.id}`, t.name] as const),
     ...writers.map(w => [`local_${w.lane}:${w.id}`, `local ${w.lane} writer`] as const),
   ]);
+  const tokenMetadata = new Map(tokens.filter(t => t.metadata != null)
+    .map(t => [t.id, (typeof t.metadata === 'string' ? JSON.parse(t.metadata) : t.metadata) as Record<string, unknown>] as const));
   return stored.map(s => {
     if (!s.request_id && !s.principal_kind) return { request_id: null, operation: null, principal: null, at: null, origin: 'unrecorded' };
     const request = s.request_id ? requestById.get(s.request_id) : undefined;
@@ -74,7 +76,8 @@ export async function resolveWriteAttributions(engine: BrainEngine, stored: Stor
       request_id: s.request_id,
       operation: request?.operation ?? null,
       principal: s.principal_kind && s.principal_id
-        ? { kind: s.principal_kind, id: s.principal_id, name: names.get(`${s.principal_kind}:${s.principal_id}`) ?? null } : null,
+        ? { kind: s.principal_kind, id: s.principal_id, name: names.get(`${s.principal_kind}:${s.principal_id}`) ?? null,
+            ...(s.principal_kind === 'legacy_token' && tokenMetadata.has(s.principal_id) ? { metadata: tokenMetadata.get(s.principal_id) } : {}) } : null,
       at: iso(request?.completed_at ?? s.at),
       origin: s.request_id ? 'request' : 'maintenance',
     };

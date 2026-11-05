@@ -580,6 +580,13 @@ origin }`. Branch on `origin`:
 | `maintenance` | Written by a maintenance pass (cycle extraction, repair) as the named principal, with no request. |
 | `unrecorded` | Written before attribution existed, or by a legacy writer that records none. Not an error. |
 
+A hosting app can attach its own JSON `metadata` to a token when it mints one
+through `POST /admin/api/api-keys` (for example
+`{ "ai": "claude", "harness": "claude-code", "connection_id": "conn-1" }`, at
+most 4 KB). gbrain stores it as given and echoes it as `principal.metadata` on
+every attribution that names that token; a token without metadata has no
+`metadata` key. The host owns what it means and revokes the token to end it.
+
 Who can read it:
 
 - `get_write_attribution` needs `admin` scope (the local CLI always has it).

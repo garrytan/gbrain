@@ -1826,7 +1826,8 @@
           "17 member_id text/text NULL",
           "18 may_act_for ARRAY/_text NULL",
           "19 attest_actor text/text NULL",
-          "20 attest_ops ARRAY/_text NULL"
+          "20 attest_ops ARRAY/_text NULL",
+          "21 metadata jsonb/jsonb NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
