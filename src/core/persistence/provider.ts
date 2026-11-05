@@ -90,6 +90,8 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
     });
     const body = JSON.parse(result.content[0].text) as Record<string, unknown>;
     if (!result.isError) return body;
+    // GST-1387: a remember batch with a failed item keeps every item's receipt; the CLI exits 1 on its status.
+    if (Array.isArray(body.items) && body.status === 'error') return body;
     const error = new OperationError(typeof body.error === 'string' ? body.error : 'unavailable',
       typeof body.message === 'string' ? body.message : 'The local operation could not complete.',
       typeof body.suggestion === 'string' ? body.suggestion : undefined);

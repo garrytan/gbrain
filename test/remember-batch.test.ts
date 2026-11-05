@@ -111,7 +111,7 @@ describe('remember items[] batch', () => {
     const handler = async (c: OperationContext, p: Record<string, unknown>) => {
       if (p.fact !== 'lost' || c.dryRun) return base(c, p);
       const e = ve('unavailable', 'The write outcome is unknown.', 'Poll get_write_request.');
-      Object.assign(e, { writeError: 'write_outcome_unknown', writeRequest: { request_id: p.request_id, state: 'unknown' } });
+      Object.assign(e, { writeError: 'write_outcome_unknown' });
       throw e;
     };
     const root = '22222222-2222-4222-8222-222222222222';

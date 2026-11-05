@@ -123,7 +123,7 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
   // GST-1387: a batch that saved nothing is a refusal on every surface (CLI exit non-zero, MCP isError), never a success
   // envelope; its first item's error keeps that item's code and fix. An item with a receipt (accepted, or its outcome
   // unknown) keeps the per-item envelope so its child request_id is never lost.
-  if (failures.length && failed === results.length && failures.every(f => !f.error.writeRequest)) {
+  if (failures.length && failed === results.length && failures.every(f => !f.error.writeRequest && f.error.writeError !== 'write_outcome_unknown')) {
     const [{ index, error }] = failures as [{ index: number; error: OperationError }];
     error.message = `items[${index}]: ${error.message} None of the ${results.length} item(s) was saved.`;
     throw error;

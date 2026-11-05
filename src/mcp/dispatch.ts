@@ -1295,13 +1295,13 @@ async function dispatchResolvedCall(
       } catch { /* a pointer, never a failure */ }
     }
     maybeBackupNotice(notices, opts);
-    if (opts.transport === 'stdio' && opts.remote !== false) { const up = takePostUpgradeMcpNotice(); if (up) notices.push(up); } // F7
-    if (opts.transport === 'stdio' && opts.remote !== false) notices.push(...await mcpOnboardingNotices({ engine, op: name, result, meta: responseMeta, config: ctx.config, render: dispatchRenderContext(opts) }));
-    if (opts.transport === 'stdio' && opts.remote !== false) { const drain = takeFactsDrainNotice(); if (drain) notices.push(drain); } // Lane D facts drain
-    notices.push(...await sessionSafetyNotices(engine, opts, ctx.config));
-    notices.push(...await grantBlockedNotices(engine, opts, false));
     // GST-1387: a remember batch with a failed item is an MCP error; its body keeps every item's receipt.
     const batchError = name === 'remember' && typeof result === 'object' && result !== null && (result as { status?: unknown }).status === 'error' && Array.isArray((result as { items?: unknown }).items);
+    if (opts.transport === 'stdio' && opts.remote !== false && !batchError) { const up = takePostUpgradeMcpNotice(); if (up) notices.push(up); } // F7
+    if (opts.transport === 'stdio' && opts.remote !== false) notices.push(...await mcpOnboardingNotices({ engine, op: name, result, meta: responseMeta, config: ctx.config, render: dispatchRenderContext(opts) }));
+    if (opts.transport === 'stdio' && opts.remote !== false && !batchError) { const drain = takeFactsDrainNotice(); if (drain) notices.push(drain); } // Lane D facts drain
+    notices.push(...await sessionSafetyNotices(engine, opts, ctx.config));
+    notices.push(...await grantBlockedNotices(engine, opts, false));
     const out: ToolResult = batchError ? toolErrorResult(result as never) : toolResultWithNotices(result, admitNotices(notices, opts), dispatchRenderContext(opts));
     if (evidenceBlocks.length > 0) out.content.splice(1, 0, ...evidenceBlocks.map(text => ({ type: 'text' as const, text })));
     if (opts.transport === 'stdio') {

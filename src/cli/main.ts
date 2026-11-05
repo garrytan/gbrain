@@ -850,6 +850,12 @@ async function runThinClientRouted(
     // Awaited delivery (#3423) — same contract as the local-engine path.
     if (output) await writeStdoutFinal(output);
     if (stampText) process.stderr.write(stampText);
+    // GST-1387: an in-band failure (a remember batch with a failed item) exits 1 here too, as on the local path.
+    if (typeof result === 'object' && result !== null && !Array.isArray(result) && (result as { status?: unknown }).status === 'error') {
+      const detail = (result as { message?: unknown; error?: unknown }).message ?? (result as { error?: unknown }).error;
+      console.error(`gbrain ${command}: operation reported status 'error'` + (typeof detail === 'string' && detail ? ` — ${detail}` : '') + '.');
+      setCliExitVerdict(1);
+    }
     markEntityMiss(op.name, result);
     maybePrintConceptNudge(op.name, params);
   } catch (e: unknown) {

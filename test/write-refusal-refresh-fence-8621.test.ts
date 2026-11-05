@@ -23,6 +23,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { refreshWorktree } from '../src/core/persistence/worktree-refresh.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { admitWrite, type WriteAdmission } from '../src/core/persistence/journal.ts';
+import { admitBatch } from '../src/core/persistence/page-batch.ts';
 import { _setRefreshFenceWaitForTests } from '../src/core/persistence/admission-retry.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -133,6 +134,29 @@ test('an admission retried after its accepted commit lost its ack reconciles to 
     const before = await f.requestCount();
     const replay = await admitWrite(f.engine, again);
     expect(replay.id).toBe(row!.id);
+    expect(await f.requestCount()).toBe(before);
+  }));
+}), 120_000);
+
+test('a page group whose first item replays an accepted request but whose next item is new stays fenced', () => each(async f => {
+  _setRefreshFenceWaitForTests(0);
+  const requestId = crypto.randomUUID();
+  const content = page('Accepted', 'accepted before the fence');
+  await f.put(f.alpha, 'notes/accepted', content, requestId);
+  const [row] = await f.engine.executeRaw<Record<string, any>>('SELECT * FROM persistence_requests WHERE request_id=$1::uuid', [requestId]);
+  const [src] = await f.engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [f.alpha]);
+  const [bind] = await f.engine.executeRaw<{ g: string }>('SELECT topology_generation::text AS g FROM persistence_source_bindings WHERE source_id=$1', [f.alpha]);
+  const base = { principal: { kind: row!.principal_kind, id: row!.principal_id }, operation: 'put_page', sourceId: f.alpha, sourceIncarnation: src!.incarnation,
+    worktreeId: f.worktreeId, topologyGeneration: bind!.g, authority: row!.authority, origin: 'interactive' as const };
+  const fresh = page('Fresh', 'new during the fence');
+  const group: WriteAdmission[] = [
+    { ...base, slug: row!.slug, requestId, callerIntent: { slug: 'notes/accepted', content }, intent: row!.intent },
+    { ...base, slug: 'notes/fresh', requestId: crypto.randomUUID(), callerIntent: { slug: 'notes/fresh', content: fresh }, intent: { ...row!.intent, content: fresh } },
+  ];
+  await (await duringRefresh(f, async () => {
+    const before = await f.requestCount();
+    const error = await admitBatch({ ...f.ctx(f.alpha), admissionOrigin: 'interactive' }, crypto.randomUUID(), group).then(() => null, e => e as { code?: string });
+    expect(error?.code).toBe('worktree_refreshing');
     expect(await f.requestCount()).toBe(before);
   }));
 }), 120_000);

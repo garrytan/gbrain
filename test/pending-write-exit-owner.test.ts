@@ -96,6 +96,30 @@ describe('paused writers and the CLI exit contract', () => {
     });
   }, 180_000);
 
+  test('#8621 resident owner: a partly failed remember batch exits 1 and keeps every item receipt', async () => {
+    await withEnv({ GBRAIN_HOME: dir, GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+      const provider = await createPersistenceIpcProvider(engine, config);
+      const binding = await startPersistenceIpcServer(persistenceSocketPathForConfig(config)!, provider);
+      try {
+        const claim = { fact: 'acme-example signed the pilot', provenance: 'call notes' };
+        const saved = await cli(['remember', '--items', JSON.stringify([claim]), '--json']);
+        expect({ code: saved.code, stderr: saved.stderr }).toMatchObject({ code: 0 });
+        const id = JSON.parse(saved.stdout).items[0].id;
+        const forgot = await cli(['call', 'forget', JSON.stringify({ id, reason: 'withdrawn for the test' })]);
+        expect({ code: forgot.code, stderr: forgot.stderr }).toMatchObject({ code: 0 });
+        const batch = await cli(['remember', '--items', JSON.stringify([claim, { fact: 'acme-example opened a second office', provenance: 'call notes' }]), '--json']);
+        expect({ code: batch.code }).toMatchObject({ code: 1 });
+        const body = JSON.parse(batch.stdout);
+        expect(body).toMatchObject({ status: 'error', saved: 1, failed: 1, partial: true });
+        expect(body.items[0].status).toBe('failed');
+        expect(body.items[1].id).toBeDefined();
+      } finally {
+        if (binding) { const closed = once(binding.server, 'close'); binding.close(); await closed; }
+        await disposePersistenceConsumer(engine);
+      }
+    });
+  }, 180_000);
+
   test('direct path: the CLI that opens the brain itself waits its --wait, then exits 10 or 0', async () => {
     await withEnv({ GBRAIN_HOME: dir, GBRAIN_BRAIN_ID: 'host' }, async () => {
       const lock = await holdWorktree();
