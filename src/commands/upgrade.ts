@@ -31,6 +31,7 @@ const GBRAIN_GITHUB_REPO = 'garrytan/gbrain';
 const BUN_COPYFILE_BACKEND = '--backend=copyfile';
 
 function globalInstallUsesCopyfile(globalRoot: string): boolean {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- globalRoot is bun's own global root and the remaining segments are constants; read-only existence probe
   return existsSync(join(globalRoot, 'node_modules', 'gbrain', 'openclaw.plugin.json'));
 }
 
