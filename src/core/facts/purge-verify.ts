@@ -34,6 +34,7 @@ import { derivationClaimCandidateSql, derivationHoldsClaimSql, derivationSweepSc
 import { claimForms, quotes, type LedgerPurgeReport } from '../belief/purge.ts';
 import { CARRYING_FIELDS } from '../belief/keys.ts';
 import { relationExists } from '../persistence/rebuildable-cache.ts';
+import { canonicalChangeReason } from '../persistence/change-reason.ts';
 
 export type StoreCount = Record<string, number>;
 export type StoreStatus = 'deleted' | 'would_remove' | 'retained_inactive' | 'unverified' | 'out_of_reach' | 'out_of_scope' | 'not_present' | 'incomplete';
@@ -63,6 +64,8 @@ export interface PurgeReceipt {
 export const carriesClaimSql = (a: string, n: number) => `(strpos(lower(${a}.compiled_truth),$${n})>0 OR strpos(lower(COALESCE(${a}.timeline,'')),$${n})>0
   OR strpos(lower(COALESCE(${a}.title,'')),$${n})>0 OR strpos(lower(COALESCE(${a}.frontmatter::text,'')),$${n + 1})>0)`;
 export const claimNeedles = (claim: string): [string, string] => [claim.toLowerCase(), JSON.stringify(claim.toLowerCase()).slice(1, -1)];
+/** GBRA-217: the claim folded as a stored change reason is (canonicalChangeReason), lowercased: how a reason quoting it reads. */
+export const reasonNeedle = (claim: string): string => (canonicalChangeReason(claim) ?? claim).toLowerCase();
 
 export const PURGE_PROBE_LIMITS = { rows: 1000, statementMs: 2_000, totalMs: 20_000, gitBytes: 64 * 1024 * 1024, gitMs: 10_000 } as const;
 let probeLimits: { rows: number; statementMs: number; totalMs: number } = { ...PURGE_PROBE_LIMITS };
@@ -506,8 +509,9 @@ export async function verifyFactPurge(engine: BrainEngine, input: { target: Purg
   stores[stores.length - 1] = await withSegmentedProse(engine, stores[stores.length - 1]!, src, [claim], deadline);
   await swept('content_chunks', `SELECT 1 FROM content_chunks c JOIN pages p ON p.id=c.page_id WHERE p.source_id=$1 AND strpos(lower(c.chunk_text),$2)>0`,
     [src, needle], plan.pages.length, removed.chunks, prose);
-  await swept('page_versions', `SELECT 1 FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.source_id=$1 AND (${carriesClaimSql('v', 2)} OR strpos(lower(v.change_reason),$2)>0)`,
-    [src, ...claimNeedles(claim)], plan.versions, removed.page_versions, { ...prose, items: (input.prose ?? []).slice(0, 20) });
+  await swept('page_versions', `SELECT 1 FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.source_id=$1
+    AND (${carriesClaimSql('v', 2)} OR strpos(lower(v.change_reason),$2)>0 OR strpos(lower(v.change_reason),$4)>0)`,
+    [src, ...claimNeedles(claim), reasonNeedle(claim)], plan.versions, removed.page_versions, { ...prose, items: (input.prose ?? []).slice(0, 20) });
   stores[stores.length - 1] = await withSegmentedProse(engine, stores[stores.length - 1]!, src, [claim], deadline);
   await swept('persistence_requests', `SELECT 1 FROM persistence_requests WHERE source_id=$1 AND (${['intent', 'outcome', 'error_detail', 'error_message']
       .map(c => `strpos(lower(COALESCE(${c}::text,'')),$2)>0 OR strpos(lower(COALESCE(${c}::text,'')),$3)>0`).join(' OR ')})`,
@@ -535,7 +539,7 @@ export async function verifyFactPurge(engine: BrainEngine, input: { target: Purg
     stores.push(await derivationTextReport(engine, src, plan.pages.map(page => page.page_id), [claim, escapeFenceCell(claim)], removed.page_segment_derivations ?? 0, deadline,
       input.sweepVerified === true));
     stores.push(...await ledgerReports(engine, src, [claim], input.ledger, deadline));
-    stores.push(await effectPayloadReport(engine, src, [claim], deadline, removed.persistence_effects ?? 0));
+    stores.push(await effectPayloadReport(engine, src, [...new Set([claim, canonicalChangeReason(claim) ?? claim])], deadline, removed.persistence_effects ?? 0));
   }
   stores.push(...await sweptInventoryReports(engine, new Set(stores.map(s => s.store)), src, [claim], removed, deadline, dryRun));
   for (const entry of DELETION_INVENTORY) {

@@ -37,6 +37,8 @@ import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { __setReasonGitStreamForTests, __setReasonScanCapsForTests, cachedSyncReasonScan, clearReasonScanCache, gitTopLevel, importHistoryFor,
   readReasonTrailers, scanSyncReasons, scanTrailersCarrying, type TrailerCommit } from '../src/core/reason-trailers.ts';
+import { planFactPurge, type PurgeTarget } from '../src/core/facts/purge.ts';
+import { verifyFactPurge } from '../src/core/facts/purge-verify.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -524,6 +526,43 @@ describe('A7: purge reaches change reasons', () => {
       expect(await bodyOf(engine, s.id, 'notes/a')).toContain('A two.');
       expect((await reasonsOf(engine, s.id, 'notes/a')).reasons.at(-1)).toBeNull();
       expect(await engine.executeRaw('SELECT 1 FROM page_versions v JOIN pages p ON p.id = v.page_id WHERE p.source_id = $1 AND strpos(lower(v.change_reason), $2) > 0', [s.id, claim])).toHaveLength(0);
+    }
+  }), 120_000);
+});
+
+describe('A7: a claim whose spacing a stored reason folded', () => {
+  test('a claim holding a double space and a tab: the folded reason is counted, swept and redacted on snapshots and Git effects', async () => inHome(async () => {
+    for (const engine of engines) {
+      const n = engines.indexOf(engine);
+      const claim = `Door  code\tis ${4600 + n}`;
+      const folded = `Door code is ${4600 + n}`;
+      const s = await classicSource(engine, { 'notes/a.md': page('A one.') });
+      await sync(engine, s);
+      write(s.root, { 'notes/a.md': page('A two.') });
+      const pushed = commit(s.root, 'edit', [`notes/a.md: Changed after ${folded} leaked.`]);
+      await sync(engine, s);
+      expect((await reasonsOf(engine, s.id, 'notes/a')).reasons).toEqual([`Changed after ${folded} leaked.`]);
+      const [row] = await engine.executeRaw<PurgeTarget>(`INSERT INTO facts(source_id,fact,entity_slug,visibility,source,source_markdown_slug,row_num)
+        VALUES ($1,$2,NULL,'world','test',NULL,1) RETURNING id,source_id,visibility,fact,entity_slug,source_markdown_slug,
+        gbrain_fact_fingerprint(fact) AS fact_hash,embedding::text AS embedding,embedding_model`, [s.id, claim]);
+      const target = { ...row!, id: Number(row!.id) };
+      expect(target.fact).toBe(claim);
+      const effect = await gitEffect(engine, s.id, 'queued', { version: 2, commit_line: `notes/a.md: Changed after ${folded} leaked.`,
+        commit_trailers: [`gbrain-reason: notes/a.md: Changed after ${folded} leaked.`] });
+
+      const plan = await planFactPurge(engine, target, false);
+      expect(plan.versions).toBe(1);
+      const before = await verifyFactPurge(engine, { target, plan, dryRun: false, removed: {} });
+      expect(before.stores.find(store => store.store === 'page_versions')).toMatchObject({ remaining: 1 });
+
+      const done = await purge(engine, s.id, target.id);
+      expect(done.state).toBe('committed');
+      expect(await engine.executeRaw('SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1', [s.id])).toEqual([{ commit_sha: pushed, path: 'notes/a.md' }]);
+      expect((await reasonsOf(engine, s.id, 'notes/a')).reasons).toEqual(['[purged]']);
+      const [after] = await engine.executeRaw<{ data: Record<string, unknown> }>('SELECT data FROM persistence_effects WHERE id = $1::bigint', [effect]);
+      expect(after!.data).toEqual({ version: 2, commit_line: '[purged]' });
+      const swept = await verifyFactPurge(engine, { target, plan, dryRun: false, removed: {} });
+      expect(swept.stores.find(store => store.store === 'page_versions')).toMatchObject({ status: 'not_present' });
     }
   }), 120_000);
 });

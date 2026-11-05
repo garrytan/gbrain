@@ -48,7 +48,7 @@ import { rebuildPendingPageProjections } from '../page-state/projections.ts';
 import { buildSegmentedProjection } from '../page-body/projection.ts';
 import { liveStagingSql } from '../page-body/schema.ts';
 import { escapeFenceCell } from '../fence-shared.ts';
-import { carriesClaimSql, claimNeedles, purgeCompletion, verifyFactPurge, type PurgeReceipt, type StoreCount } from './purge-verify.ts';
+import { carriesClaimSql, claimNeedles, purgeCompletion, reasonNeedle, verifyFactPurge, type PurgeReceipt, type StoreCount } from './purge-verify.ts';
 import { noteBelief, withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { appendPurgeCommitted, appendPurgeIntent } from '../belief/purge-mirror.ts';
@@ -182,8 +182,8 @@ export async function planFactPurge(engine: BrainEngine, target: PurgeTarget, al
     'SELECT slug,id AS page_id,knowledge_revision::text AS revision FROM pages WHERE source_id=$1 AND id=ANY($2::int[])', [target.source_id, extra]) : [];
   const pages = [...discovered, ...takePages.map(p => ({ ...p, page_id: Number(p.page_id) }))].sort((a, b) => a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
   const [versions] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM page_versions v JOIN pages p ON p.id=v.page_id
-    WHERE p.source_id=$1 AND (${carriesClaimSql('v', 2)} OR strpos(lower(v.change_reason),$2)>0
-      OR (v.body_storage='segmented' AND ${SEGMENTED_VERSION_CARRIES}))`, [target.source_id, ...claimNeedles(target.fact)]);
+    WHERE p.source_id=$1 AND (${carriesClaimSql('v', 2)} OR strpos(lower(v.change_reason),$2)>0 OR strpos(lower(v.change_reason),$4)>0
+      OR (v.body_storage='segmented' AND ${SEGMENTED_VERSION_CARRIES}))`, [target.source_id, ...claimNeedles(target.fact), reasonNeedle(target.fact)]);
   const { stagings, held } = await stagingsHoldingClaim(engine, target.source_id, target.fact);
   // #6511 [R5]: a statement timeout of this unindexable substring search is deterministic on a large journal, not contention: the typed code, not a retry.
   const requests = await faultPoint('purge:carrying_lookup', { sourceId: target.source_id, operation: PURGE_OPERATION })
@@ -311,7 +311,8 @@ export async function redactPageVersions(tx: BrainEngine, sourceId: string, clai
   const [needle, escaped] = claimNeedles(claim);
   // GBRA-217 (A7): a change reason quoting the claim, on inline and segmented snapshots alike, wherever its page is.
   const reasons = new Set((await tx.executeRaw<{ id: number }>(`UPDATE page_versions v SET change_reason = '[purged]' FROM pages p
-    WHERE p.id = v.page_id AND p.source_id = $1 AND strpos(lower(v.change_reason), $2) > 0 RETURNING v.id`, [sourceId, needle])).map(row => Number(row.id)));
+    WHERE p.id = v.page_id AND p.source_id = $1 AND (strpos(lower(v.change_reason), $2) > 0 OR strpos(lower(v.change_reason), $3) > 0) RETURNING v.id`,
+  [sourceId, needle, reasonNeedle(claim)])).map(row => Number(row.id)));
   let redacted = reasons.size;
   const prose: Array<{ slug: string; version_id: number }> = [];
   for (let after = 0; ;) {

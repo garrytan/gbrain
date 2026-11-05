@@ -11,7 +11,7 @@ import { opError } from '../ops/contract.ts';
 import { REASON_TRAILER_KEY } from '../persistence/change-reason.ts';
 import type { IntentRedactionTarget } from '../persistence/intent-redaction.ts';
 import { reasonScanCap, scanTrailersCarrying } from '../reason-trailers.ts';
-import { claimNeedles } from './purge-verify.ts';
+import { claimNeedles, reasonNeedle } from './purge-verify.ts';
 
 const PURGE_REASON_DOCS = 'docs/guides/page-history.md#purge-and-reasons';
 
@@ -78,10 +78,12 @@ const gitCommitRunning = (requestId: string) => opError('purge_blocked_pending_r
  */
 export async function redactGitEffectReasons(tx: BrainEngine, sourceId: string, claim: string): Promise<number> {
   const [needle, escaped] = claimNeedles(claim);
+  const folded = reasonNeedle(claim);
   const rows = await tx.executeRaw<{ id: string; state: string; request_id: string; data: Record<string, unknown> }>(`SELECT e.id::text AS id, e.state, r.request_id::text AS request_id, e.data
     FROM persistence_effects e JOIN persistence_requests r ON r.id = e.request_id
-    WHERE e.source_id = $1 AND e.kind = 'git' AND (strpos(lower(e.data::text), $2) > 0 OR strpos(lower(e.data::text), $3) > 0) ORDER BY e.id FOR UPDATE OF e`, [sourceId, needle, escaped]);
-  const carries = (value: unknown) => typeof value === 'string' && value.toLowerCase().includes(needle);
+    WHERE e.source_id = $1 AND e.kind = 'git' AND (strpos(lower(e.data::text), $2) > 0 OR strpos(lower(e.data::text), $3) > 0 OR strpos(lower(e.data::text), $4) > 0)
+    ORDER BY e.id FOR UPDATE OF e`, [sourceId, needle, escaped, JSON.stringify(folded).slice(1, -1)]);
+  const carries = (value: unknown) => typeof value === 'string' && (value.toLowerCase().includes(needle) || value.toLowerCase().includes(folded));
   let redacted = 0;
   for (const row of rows) {
     const data = { ...row.data };
