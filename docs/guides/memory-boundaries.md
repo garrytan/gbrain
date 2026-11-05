@@ -251,10 +251,12 @@ dies).
 `purge_fact` on a page stored in segments, on a source backed by files,
 rewrite its canonical file as they rewrite an inline page's: the file shows the
 row forgotten, or loses the purged row, and holds the bytes `gbrain export`
-writes for the page; the withdrawal's Git effect commits it. The file is
-streamed from the segments into its staging file, one segment at a time, and
-never held whole. Its recovery record names that staging file by path and
-SHA-256 instead of holding the file, so the mirror reserves the file once in
+writes for the page. The file is streamed from the segments into its staging
+file, one segment at a time, and never held whole. `forget` and `forget_fact`
+publish the struck file in their own write, before the withdrawal commits;
+`purge_fact`'s mirror writes it afterwards and its Git effect commits it. The
+mirror's recovery record names that staging file by path and SHA-256 instead
+of holding the file, so the mirror reserves the file once in
 the recovery budget. A mirror interrupted before, during or after writing the
 staging file finishes on the writer's next pass: a staging file a crash cut
 short is discarded and written again.
@@ -428,9 +430,27 @@ and [isolated local backup guide](in-agent-setup.md#6-back-up-the-complete-local
 <a id="purge"></a>
 ## Expire versus purge
 
+A write's [reason](page-history.md#reasons) is stored with the page's history
+and, when the page's file reaches Git, in the commit message. A purge removes
+the database copies it covers, but a commit already pushed keeps its message
+text, just as it keeps the file's earlier contents. Purge records those commits
+so no later sync stores the reason again ([purge and
+reasons](page-history.md#purge-and-reasons)).
+
 `forget` **expires**: the fact stops being recalled, cannot be saved again in
 the same source and visibility, and its row is struck in the page's Markdown.
 The text stays in the row, the file, page history and backups.
+
+The struck rows are written first: every page file that carries the claim is
+published in one write (one Git commit on a source that commits through
+gbrain), and the withdrawal commits with it. A forget waits for the source's
+writer like any other write, so while that writer is unavailable the forget is
+accepted and pending, and the fact is still recalled. The withdrawal itself is
+a database row, and only `forget` records one: a page write or sync of a struck
+row imports an expired fact and withdraws nothing, so a brain rebuilt from Git
+can save that claim again until it is forgotten there. A fact saved without an
+entity is a row of the `memory/unattributed` page, so its withdrawal has a file
+too.
 
 Automatic extraction (sync import, `put_page`, `extract_facts`, the sweep)
 skips a candidate whose exact claim was forgotten in that source and visibility

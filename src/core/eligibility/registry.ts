@@ -51,6 +51,9 @@ export const OP_READ_TRUST: Readonly<Record<string, ReadTrustHandling>> = {
   get_active_schema_pack: 'text_free', list_schema_packs: 'text_free', schema_stats: 'text_free', schema_lint: 'text_free',
   schema_graph: 'text_free', schema_explain_type: 'text_free',
   list_write_conflicts: 'text_free', get_brain_health: 'text_free',
+  // Held at the unlisted default (refused under a token floor) pending a trust-posture call: it returns config-derived
+  // settings and rule text, no stored memory text, so text_free would describe it but would admit floored connections.
+  get_memory_settings: 'labeled',
 };
 
 /** The class an op resolves to; an unlisted read op is held to the strictest (`labeled`) rule. */

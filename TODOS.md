@@ -1,5 +1,12 @@
 # TODOS
 
+## Memory train follow-ups (filed 2026-11-04, GBRA-286, #8481)
+
+- [ ] **P3 — `extraction_pending`'s local relink argv can carry fenced fact text (#8597).** **What:** running the owner's relink action stores the quote fence as fact text. **Fix:** unquote before building the argv. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — The `sync_write_through_off` forget refusal has no typed fix and reads as transient (#8599).** **What:** an agent may retry instead of asking the user. **Fix:** an `ask_user` fix naming the config change. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — `forget_fact`'s description still says a withdrawal stays in the database when write-through is off (#8600).** **Fix:** reword to the refusal. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — `checkFactAgainstSaved` is exported with no caller after the #7809 removal (#8601).** **Fix:** delete it. **Effort:** S. **Priority:** P3.
+
 ## SkillOpt E1/B1 follow-ups (filed 2026-11-01, GBRA-274, #8408)
 
 - [ ] **P2 — SkillOpt review follow-ups (#8415).** **What:** held-out deferral on abort and the receipt's pending-champion score; final test eval on an unchanged skill; preflight prices the test eval at 2 runs per task instead of 6; resume does not pin the hook, criteria or cost scope; `--resume` with an unloadable checkpoint starts fresh; the one-shot output-cap check runs after baseline spend; one accepted one-shot step can replace the whole body; cat31 config C changed meaning; stale docs and comments. **Fix:** per item in #8415. **Effort:** S-M each. **Priority:** P2.

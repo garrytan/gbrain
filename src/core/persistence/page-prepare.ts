@@ -678,9 +678,8 @@ async function prepareUnreadRestore(engine: BrainEngine, row: WriteRequest, snap
  * `between` (its claim renewal) run after each piece each time the file is produced. The body is read at the snapshot's
  * revision; a page that moved since refuses `revision_conflict`, as a changed staging hash does, so the request prepares again.
  */
-export async function unreadPageFile(engine: BrainEngine, snapshot: PageSnapshot, between?: () => Promise<void>): Promise<StreamedFileContent> {
+export async function unreadPageFile(engine: BrainEngine, snapshot: PageSnapshot, between?: () => Promise<void>, ledger: BodyLedger = snapshotLedger(snapshot)): Promise<StreamedFileContent> {
   const head = serializePageToMarkdown({ ...withoutBody(snapshot.page), compiled_truth: '', timeline: '' }, snapshot.tags).slice(0, -1);
-  const ledger = snapshotLedger(snapshot);
   const produce = async function* (exec: BrainEngine) {
     try { yield* segmentedExportMarkdown(exec, snapshot.page, ledger, head, snapshot.revision); } catch (error) {
       if (!(error instanceof OperationError) || error.canonical !== 'revision_changed') throw error;

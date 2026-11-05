@@ -1,5 +1,5 @@
 /** The fence functions alone: replacing one takes no table lock (#7636). */
-export const REQUEST_PROTOCOL_GUARD_SQL = `CREATE OR REPLACE FUNCTION gbrain_guard_request_protocol() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+const requestProtocolGuardSql = (pageRecoveryMismatch: string): string => `CREATE OR REPLACE FUNCTION gbrain_guard_request_protocol() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
   DECLARE target text; version integer; floor integer; active boolean; record jsonb;
   BEGIN
     IF TG_OP='DELETE' THEN target:=OLD.target_kind; version:=OLD.protocol_version;
@@ -30,13 +30,22 @@ export const REQUEST_PROTOCOL_GUARD_SQL = `CREATE OR REPLACE FUNCTION gbrain_gua
       RAISE EXCEPTION 'unsupported_mutation_protocol: invalid page target' USING ERRCODE='42501';
     END IF;
     record:=NEW.recovery;
-    IF record IS NOT NULL AND ((target='page' AND record->>'version' IS DISTINCT FROM '1')
+    IF record IS NOT NULL AND ((target='page' AND ${pageRecoveryMismatch})
       OR (target='skill_bundle' AND (record->>'version' IS DISTINCT FROM '2' OR record->>'target' IS DISTINCT FROM 'skill_bundle'
         OR jsonb_typeof(record->'files') IS DISTINCT FROM 'array'))) THEN
       RAISE EXCEPTION 'unsupported_mutation_protocol: recovery target mismatch' USING ERRCODE='42501';
     END IF;
     RETURN NEW;
   END $$`;
+/**
+ * The request protocol guard. GBRA-190 G4 (D2): a page target's recovery record is version 1 (one file) or version 3
+ * (the page files one publication writes together, model.ts PagesRecoveryRecord), which binaries that predate it
+ * refuse unread (recovery-version.ts). v287 installs it.
+ */
+export const REQUEST_PROTOCOL_GUARD_V287_SQL = requestProtocolGuardSql(`record->>'version' IS DISTINCT FROM '1'
+        AND NOT (record->>'version'='3' AND record->>'target'='pages' AND jsonb_typeof(record->'files')='array')`);
+/** The request guard as v278 shipped it (page recovery version 1 only), so that published migration stays byte for byte as released; the current guard is REQUEST_PROTOCOL_GUARD_V287_SQL. */
+export const REQUEST_PROTOCOL_GUARD_SQL = requestProtocolGuardSql(`record->>'version' IS DISTINCT FROM '1'`);
 export const EFFECT_PROTOCOL_GUARD_SQL = `CREATE OR REPLACE FUNCTION gbrain_guard_effect_protocol() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
   DECLARE floor integer;
   BEGIN
@@ -89,7 +98,7 @@ export const SHARED_SKILLS_PERSISTENCE_SCHEMA_STATEMENTS: readonly string[] = [
       RAISE EXCEPTION 'writer_upgrade_required: this mutation requires persistence protocol 2' USING ERRCODE='42501';
     END IF;
   END $$`,
-  REQUEST_PROTOCOL_GUARD_SQL,
+  REQUEST_PROTOCOL_GUARD_V287_SQL,
   `DROP TRIGGER IF EXISTS gbrain_request_protocol ON persistence_requests`,
   `CREATE TRIGGER gbrain_request_protocol BEFORE INSERT OR UPDATE OR DELETE ON persistence_requests
     FOR EACH ROW EXECUTE FUNCTION gbrain_guard_request_protocol()`,

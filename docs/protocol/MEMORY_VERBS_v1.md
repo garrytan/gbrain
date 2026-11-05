@@ -314,7 +314,9 @@ A claim that was forgotten is refused with `invalid_params` and the message
 prefix `fact_withdrawn`: remembering the same text again does not restore it,
 and a claim forgotten without an entity is withdrawn for every entity. To link
 a fact saved without an entity, do not forget it; remember it with `entity`
-and `replaces` set to its id.
+and `replaces` set to its id. In gbrain, a fact saved without an entity is a
+row of the `memory/unattributed` page's `## Facts` table, created on first
+use; linking it strikes that row in the same write.
 
 #### remember withdrawn refusal detail (additive)
 
@@ -411,18 +413,18 @@ fact, so it goes on its item; passing both `fact` and `items`, or a top-level
 
 Every item is validated before any is written: one invalid item refuses the
 whole call with `items[<i>]` in the message. Each item is then saved as its own
-write with a child `request_id` derived from the call's `request_id` (the
-string the caller sent, so a batch accepted by an older server replays to the
-same receipts) and the item index, so replaying the same `request_id` replays each child's outcome and
+write with a child `request_id` derived from the call's `request_id` (as sent, so an
+older server's batch replays to the same receipts) and the item index, so a replay repeats each child's outcome and
 writes nothing twice.
 
 Response: `{ protocol_version, request_id, client_request_id?, items[], saved, failed, partial,
 hints?, next? }`. Each `items[]` entry is a compact receipt `{ index,
 request_id, status, id?, entity_slug?, superseded_fact_id?, warnings?, valid_until?, state? }`
 (`state` and `retry_after_ms` only when the write is not yet committed), or
-`{ index, request_id, status: "failed", error: { code, message, suggestion? } }`. Hints the
-single-fact response would repeat per item appear once in `hints`. `partial: true` means some items saved and some failed; resend
-only the failed items, in a new call with a new `request_id`.
+`{ index, request_id, status: "failed", error: { code, message, suggestion? } }`. Per-item hints
+appear once in `hints`. `partial: true`: some saved; resend
+only the failed ones with a new `request_id`. Any failed item adds `status: "error"` (CLI exit 1,
+MCP `isError`); if all were refused unaccepted, it fails with the first item's error.
 
 ### entity(name) — read, zero LLM, p99 < 100ms
 
@@ -733,6 +735,16 @@ forgetting the unlinked fact is refused with `invalid_params`, message prefix
 says to keep them, or to forget them first to withdraw the claim everywhere.
 A forget never withdraws an active fact the caller cannot read; when one
 would be reached, the refusal keeps the `claim_linked:` prefix and names no fact.
+
+#### forget publishes like a page write (additive note)
+
+In gbrain, a forget is a write of the pages that carry the claim: each row is
+struck (`~~claim~~`, a `valid_until` date and `forgotten: <reason>`) and every
+such file is published, in one commit, before the withdrawal commits. It is
+admitted and published like `remember`, so when the source's writer cannot
+publish yet the call returns the pending-write error with a receipt, and the
+fact stays recallable until the withdrawal publishes. The response shape is
+unchanged.
 
 #### forget and purge (additive note)
 
@@ -1135,6 +1147,16 @@ explicit `since` (or `gbrain beliefs changes`). `min_trust` does not filter
 it; each change carries its `trust_tier`. The
 CLI twin is `gbrain beliefs changes [<entity>...] [--since 7d]`. Design:
 [BELIEF_LEDGER.md section 15](../designs/BELIEF_LEDGER.md#15-w4-as-built-the-weekly-change-diff).
+
+### Adjacent memory-settings ops (not verbs)
+
+Three ops sit next to `remember` without joining the frozen verb set, so
+`--surface verbs` does not serve them: `get_memory_settings` (read the
+writeback mode and rule text), `set_memory_writeback` (admin scope plus the
+operator's `mcp.publish_memory_settings` grant) and `memory_conversation_mode`
+(the per-conversation "save everything from here" / "stop saving" switch, on
+the starter surface). See
+[Reading and changing it remotely](../guides/ambient-writeback.md#reading-and-changing-it-remotely).
 
 ## Latency classes (per verb)
 

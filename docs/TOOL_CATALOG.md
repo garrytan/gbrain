@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 165 tools across 25 areas. **Starter** marks membership in the ~40-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 168 tools across 26 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -61,7 +61,7 @@ Every non-localOnly operation on the MCP surface: 165 tools across 25 areas. **S
 |---|---|---|---|---|
 | `entity_identity_list` | List cross-source entity identity groups and their member pages. | read |  |  |
 | `extract_entities` | Extract entity names (people, companies) from text and create/update their brain stub pages. | write |  |  |
-| `extraction_pending` | List unverified auto-extracted entity stubs awaiting owner review (the quarantine lane from extract_entities). | read |  |  |
+| `extraction_pending` | List what waits for review: unverified auto-extracted entity stubs (pending; promote or reject them with extraction_review), facts saved without an entity (unattributed; relink each with remember entity + replaces, never forget first), and, when include names it, recently created entity pages whose name is one edit or one acronym letter from another entity (possible_duplicates; flag only, never merged). | read |  |  |
 
 ## facts
 
@@ -146,6 +146,14 @@ Every non-localOnly operation on the MCP surface: 165 tools across 25 areas. **S
 | `forget_fact` | Forget a fact by recording a durable withdrawal in its source and visibility. | write |  |  |
 | `memory_recall` | Facts for the person this call serves, one per line: their own recent facts first, then facts matching query. | read |  |  |
 | `memory_write` | Save facts for the person this call serves, readable by them alone. | write |  |  |
+
+## memory-settings
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `get_memory_settings` | Memory writeback settings: the mode agents follow, the exact rule text, every mode's rule, background capture state, and whether you may change it. | read |  |  |
+| `memory_conversation_mode` | Use when the user says "save everything from here" (all) or "stop saving" (off): returns this conversation's memory rule. | write | yes |  |
+| `set_memory_writeback` | Change the brain-wide writeback mode agents are told to follow (inherit uses the operator's setting). | admin |  | `mcp.publish_memory_settings` |
 
 ## memory-verbs
 
