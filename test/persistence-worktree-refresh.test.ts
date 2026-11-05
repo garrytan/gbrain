@@ -837,6 +837,31 @@ test('7v. GST-1457 review: at an unrelated HEAD with a member synced, writer sta
   expect((await livePages(f, f.alpha)).filter(slug => /two|four/.test(slug)).length).toBe(2);
 }), 180_000);
 
+test('7w. GST-1457 fix-check: --resume never finishes a refresh at a HEAD a member already synced past, and writer status names that member\'s commit', () => each(async f => {
+  // Value: protects=recoverOne refuses to record the merge while a member's last_commit strictly descends from HEAD, so fast-forwarding only to
+  // the target (not the commit 7u's fix names) leaves the fence up instead of completing and letting the next sync roll the member back;
+  // writer status names the same commit as the refusal; fails_when=recoverOne accepts HEAD == target_head without the member check, or writer
+  // status names target_head; why_new=7u follows the named fix exactly; seam=7u's setup with the operator stopping at the target;
+  // no_claim=a member that diverged from HEAD (not a descendant).
+  const target = f.push('alpha/two.md', page('Alpha two', 'Synced to the target.'));
+  const old = f.head();
+  await orphanAt(f, 'syncing', 'syncing');
+  const past = commitFile(f.root, 'alpha/three.md', page('Alpha three', 'Landed on top of the target while syncing.'));
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  const synced = await livePages(f, f.alpha);
+  git(f.root, 'reset', '-q', '--hard', old);
+  await refusedWith(refreshWorktree(f.engine, f.alpha, { resume: true }), 'refresh_recovery_required');
+  const status = await writerStatusRow(f);
+  expect(status.fix.why).toContain(past);
+  git(f.root, 'merge', '-q', '--ff-only', target);
+  const atTarget = await settle(refreshWorktree(f.engine, f.alpha, { resume: true }));
+  await settle(performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true }));
+  expect(await livePages(f, f.alpha)).toEqual(synced);
+  expect(atTarget.error?.code).toBe('refresh_recovery_required');
+  expect((await writerStatusRow(f)).fix.why).not.toContain('records the merge and finishes the refresh');
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['recovery_required']);
+}), 180_000);
+
 test('8. a queued git effect drains before fenced, and nothing on the worktree is claimed while fenced', () => each(async f => {
   f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
   await f.put(f.beta, 'notes/effect', page('Effect', 'Has a git effect.'));

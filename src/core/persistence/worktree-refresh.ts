@@ -130,6 +130,13 @@ async function keepPagesHead(engine: BrainEngine, row: Pick<WorktreeRefreshRow, 
     return head;
   }).catch(() => row.target_head);
 }
+/** GST-1457: a member whose last_commit strictly descends from HEAD; finishing the refresh there would let that member's next sync roll it back to HEAD. */
+async function memberAheadOf(engine: BrainEngine, git: Git, root: string, row: Pick<WorktreeRefreshRow, 'source_ids'>, head: string): Promise<boolean> {
+  for (const member of await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id = ANY($1::text[])', [row.source_ids])) {
+    if (member.last_commit && member.last_commit !== head && await isAncestor(git, root, head, member.last_commit)) return true;
+  }
+  return false;
+}
 const keepSyncedWayOut = (row: Pick<WorktreeRefreshRow, 'source_ids'>, root: string, head: string) =>
   `Ask the user first: git -C ${q(root)} merge --ff-only ${head} moves the checkout to the commit its members already synced (it keeps uncommitted edits git can carry; git -C ${q(root)} status --short lists them), then gbrain sources refresh ${row.source_ids[0]} --resume finishes the refresh and keeps the pages its members synced. If git refuses (an uncommitted edit overlaps an incoming file, or HEAD is not an ancestor of ${head}), ask the user before git -C ${q(root)} reset --hard ${head}, which discards local commits and uncommitted edits not in it, then --resume.`;
 /** GST-1457: the refusal when a member synced past old_head; its fix fast-forwards to the commit the members synced (ask_user, preview first), then --resume. */
@@ -899,7 +906,7 @@ async function recoverOne(engine: BrainEngine, git: Git, row: WorktreeRefreshRow
   } else if (row.state === 'fenced' && head === row.old_head) {
     await engine.transaction(tx => transition(tx, row, ['fenced'], 'aborted', { refusal: { code: 'refresh_interrupted', cause: 'The refreshing process stopped before merging; HEAD is unchanged.' } }));
   } else if (['fenced', 'merged', 'recovery_required'].includes(row.state) && (head === row.target_head || (row.state === 'recovery_required' && head !== null && await isAncestor(git, root, row.target_head, head)))
-    && await isAncestor(git, root, row.old_head, row.target_head)) {
+    && await isAncestor(git, root, row.old_head, row.target_head) && !await memberAheadOf(engine, git, root, row, head!)) {
     await bookkeeping(engine, row);
   } else if (row.state === 'syncing' && head !== null && (head === row.target_head || await isAncestor(git, root, row.target_head, head))) {
     // stays syncing; the member syncs run from --resume or any later cycle sync.
@@ -1154,17 +1161,18 @@ export async function refreshHolderReport(engine: BrainEngine, row: Pick<Worktre
   // #7712, #7731: what the next step does depends on the checkout HEAD, read on the host that holds the checkout.
   const head = binding?.local_path ? await withGit(git => headOf(git, binding.local_path!)).catch(() => null) : undefined;
   if (row.state === 'recovery_required') {
-    if (head === row.target_head) return { ...base, auto_recovery: 'none', fix: { argv: resume, consent: [], actor: 'agent', requires_exclusive: false, verify,
+    const keep = binding?.local_path ? await keepPagesHead(engine, row, binding.local_path) : row.target_head;
+    if (head === row.target_head && keep === row.target_head) return { ...base, auto_recovery: 'none', fix: { argv: resume, consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `Refresh ${row.id} stopped without verifying the checkout HEAD, which is now the refresh target ${row.target_head}, so --resume records the merge and finishes the refresh; nothing needs resetting.` } };
     const moved = await membersPastStart(engine, row, binding?.local_path);
     if (head === row.old_head && !moved.length) return { ...base, auto_recovery: 'none', fix: { argv: ['gbrain', 'sources', 'refresh', source, '--abandon'], consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `Refresh ${row.id} stopped without verifying the checkout HEAD, which is back at the pre-refresh commit ${row.old_head}, so --abandon lifts the fence and nothing moved; then gbrain sources refresh ${source} starts again.` } };
     if (head === row.old_head) return { ...base, auto_recovery: 'none', fix: { argv: resume, consent: [], actor: 'agent', requires_exclusive: false, verify,
-      why: `Refresh ${row.id} stopped with the checkout back at the pre-refresh commit ${row.old_head}, but ${moved.join(', ')} already synced past it, so --abandon refuses (the next sync would roll those pages back). --resume refuses too and names the one way out that keeps them: fast-forward the checkout to the refresh target ${row.target_head} (ask the user first), then --resume.` } };
+      why: `Refresh ${row.id} stopped with the checkout back at the pre-refresh commit ${row.old_head}, but ${moved.join(', ')} already synced past it, so --abandon refuses (the next sync would roll those pages back). --resume refuses too and names the one way out that keeps them: fast-forward the checkout to ${keep}, the commit those members synced toward (ask the user first), then --resume.` } };
     if (moved.length) return { ...base, auto_recovery: 'none', fix: { argv: resume, consent: [], actor: 'agent', requires_exclusive: false, verify,
-      why: `Refresh ${row.id} could not verify the checkout HEAD, and ${moved.join(', ')} already synced past the start commit ${row.old_head}, so nothing recovers it on its own and --abandon refuses. --resume changes nothing here: it prints the one way out that keeps those pages (move the checkout to the refresh target ${row.target_head}, then --resume); ask the user first.` } };
+      why: `Refresh ${row.id} could not verify the checkout HEAD, and ${moved.join(', ')} already synced past the start commit ${row.old_head}, so nothing recovers it on its own and --abandon refuses. --resume finishes it once HEAD is ${keep} or descends from it, and until then prints the one way out that keeps those pages (move the checkout to ${keep}, then --resume); ask the user first.` } };
     return { ...base, auto_recovery: 'none', fix: { argv: resume, consent: [], actor: 'agent', requires_exclusive: false, verify,
-      why: `Refresh ${row.id} could not verify the checkout HEAD, so nothing recovers it on its own. --resume changes nothing here: it prints the two ways out (reset to the start commit and --abandon, or to the upstream commit and --resume); resetting is destructive, so ask the user first.` } };
+      why: `Refresh ${row.id} could not verify the checkout HEAD, so nothing recovers it on its own. --resume finishes it once HEAD is the refresh target or descends from it, and otherwise prints the two ways out (reset to the start commit and --abandon, or to the upstream commit and --resume); resetting is destructive, so ask the user first.` } };
   }
   if (liveness === 'live') return { ...base, auto_recovery: 'none', fix: null };
   if (binding && (binding.state !== 'active' || await worktreeRecoveryPending(engine, binding))) return { ...base, auto_recovery: 'none', fix: { argv: verify.argv, consent: [], actor: 'agent', requires_exclusive: false, verify,
