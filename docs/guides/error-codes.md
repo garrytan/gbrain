@@ -1608,7 +1608,7 @@ More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The fact had already expired before this write. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+| The fact had already expired before this write. | For `forget_fact` the withdrawal is still recorded first (the ledger row and the struck page row), so a later import cannot bring the fact back; any other write changed nothing. | Do not retry with the same fact id. List the active facts (recall) to find the current one. | agent | `repeat the read that failed` | 1 | no |
 
 ### fact_not_found
 
