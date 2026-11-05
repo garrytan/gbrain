@@ -14,7 +14,7 @@ import { loadConfigFileOnly, saveConfig, type GBrainConfig } from '../core/confi
 import { opError } from '../core/ops/contract.ts';
 import { requireConsent } from '../core/consent.ts';
 import { WakeshiftError, WakeshiftKeyError, normalizeWakeshiftUrl, parseWakeshiftKey, wakeshiftClient, type WakeshiftKey } from '../core/wakeshift/client.ts';
-import { readWakeshiftKey, wakeshiftFileConfig, wakeshiftKeyFile, wakeshiftSecret } from '../core/wakeshift/config.ts';
+import { readWakeshiftKey, wakeshiftFileConfig, wakeshiftKeyFile, wakeshiftPublished, wakeshiftSecret } from '../core/wakeshift/config.ts';
 import { wakeshiftManifest } from '../core/wakeshift/events.ts';
 import { endAtWakeshift } from '../core/wakeshift/drain.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
@@ -186,6 +186,12 @@ async function test(json: boolean): Promise<void> {
     say(json, { ok: false, url, key: { source, kid: key.kid }, error: describeWakeshiftError(e) }, [`fail: ${describeWakeshiftError(e)}`]);
     setCliExitVerdict(1);
   }
+}
+
+/** `gbrain config get mcp.publish_wakeshift`: the runtime gate, which never reads the DB plane. */
+export function printWakeshiftGate(): void {
+  console.log(String(wakeshiftPublished()));
+  console.error('[config] source: wakeshift.enabled in the host file plane plus a usable Wakeshift key; the DB plane is never read for this gate (gbrain wakeshift status)');
 }
 
 export async function runWakeshift(engine: BrainEngine, args: string[]): Promise<void> {
