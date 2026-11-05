@@ -130,13 +130,21 @@ async function keepPagesHead(engine: BrainEngine, row: Pick<WorktreeRefreshRow, 
     return head;
   }).catch(() => row.target_head);
 }
+/** `git merge-base --is-ancestor`: true or false, or null when git cannot tell (a missing object, an unreadable checkout). */
+async function ancestry(git: Git, root: string, ancestor: string, descendant: string): Promise<boolean | null> {
+  const out = await git(['-C', root, 'merge-base', '--is-ancestor', ancestor, descendant]);
+  return out.code === 0 ? true : out.code === 1 ? false : null;
+}
 /**
- * GST-1457: a member whose last_commit HEAD does not contain (ahead of HEAD, on a sibling line, or a commit git cannot place); finishing
- * the refresh there would let that member's next sync diff its commit to HEAD and soft-delete what HEAD lacks.
+ * GST-1457: a member that synced on this refresh's line (its last_commit descends from old_head) to a commit HEAD does not contain (ahead
+ * of HEAD or on a sibling line), or whose commit git cannot place; finishing the refresh there would let that member's next sync diff its
+ * commit to HEAD and soft-delete what HEAD lacks. A member already off old_head's line before the refresh (rewritten history) is the state
+ * an uninterrupted refresh completes on, so it does not hold the row.
  */
-async function memberOutsideHead(engine: BrainEngine, git: Git, root: string, row: Pick<WorktreeRefreshRow, 'source_ids'>, head: string): Promise<boolean> {
+async function memberOutsideHead(engine: BrainEngine, git: Git, root: string, row: Pick<WorktreeRefreshRow, 'source_ids' | 'old_head'>, head: string): Promise<boolean> {
   for (const member of await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id = ANY($1::text[])', [row.source_ids])) {
-    if (member.last_commit && member.last_commit !== head && !await isAncestor(git, root, member.last_commit, head)) return true;
+    if (!member.last_commit || member.last_commit === head || await ancestry(git, root, member.last_commit, head) === true) continue;
+    if (await ancestry(git, root, row.old_head, member.last_commit) !== false) return true;
   }
   return false;
 }
@@ -909,7 +917,7 @@ async function recoverOne(engine: BrainEngine, git: Git, row: WorktreeRefreshRow
   } else if (row.state === 'fenced' && head === row.old_head) {
     await engine.transaction(tx => transition(tx, row, ['fenced'], 'aborted', { refusal: { code: 'refresh_interrupted', cause: 'The refreshing process stopped before merging; HEAD is unchanged.' } }));
   } else if (['fenced', 'merged', 'recovery_required'].includes(row.state) && (head === row.target_head || (row.state === 'recovery_required' && head !== null && await isAncestor(git, root, row.target_head, head)))
-    && await isAncestor(git, root, row.old_head, row.target_head) && !await memberOutsideHead(engine, git, root, row, head!)) {
+    && await isAncestor(git, root, row.old_head, row.target_head) && (row.state !== 'recovery_required' || !await memberOutsideHead(engine, git, root, row, head!))) {
     await bookkeeping(engine, row);
   } else if (row.state === 'syncing' && head !== null && (head === row.target_head || await isAncestor(git, root, row.target_head, head))) {
     // stays syncing; the member syncs run from --resume or any later cycle sync.

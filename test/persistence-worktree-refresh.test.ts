@@ -885,6 +885,29 @@ test('7x. GST-1457 outside voice: --resume never finishes at a sibling of the co
   expect((await f.refreshRows()).map(r => r.state)).toEqual(['recovery_required']);
 }), 180_000);
 
+test('7y. GST-1457 fix-check: a member already off the start commit\'s line before the refresh never wedges crash recovery at the target', () => each(async f => {
+  // Value: protects=the HEAD-contains-every-member guard holds only recovery_required rows whose members synced on this refresh's line, so a
+  // member left on rewritten history (force-push, squash, reset) before the refresh converges after a crash exactly as an uninterrupted refresh
+  // completes on it; fails_when=the guard also gates fenced/merged rows, or treats any member HEAD lacks as synced past; why_new=7w/7x members
+  // descend from the start commit; seam=last_commit set to a side-branch commit with the coordinated write; no_claim=a member commit git cannot find.
+  f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  const old = f.head();
+  git(f.root, 'checkout', '-q', '-b', 'side', `${old}~1`);
+  const side = commitFile(f.root, 'alpha/side.md', page('Alpha side', 'Rewritten history.'));
+  git(f.root, 'checkout', '-q', '-');
+  await setLastCommit(f, f.alpha, side);
+  const merged = await orphanAt(f, 'merged', 'merged');
+  expect(await refreshWorktree(f.engine, f.alpha, { resume: true })).toMatchObject({ refresh_id: merged.id, status: 'completed' });
+  f.push('alpha/three.md', page('Alpha three', 'Upstream again.'));
+  await setLastCommit(f, f.alpha, side);
+  await expect(refreshWorktree(f.engine, f.alpha, { hooks: { boundary: at => { if (at === 'merged') throw new Error('simulated crash at merged'); } } }))
+    .rejects.toThrow('simulated crash');
+  await disposePersistenceConsumer(f.engine);
+  const held = (await f.refreshRows()).at(-1)!;
+  await f.engine.executeRaw(`UPDATE persistence_worktree_refreshes SET state='recovery_required',completed_at=NULL WHERE id=$1::uuid`, [held.id]);
+  expect(await refreshWorktree(f.engine, f.alpha, { resume: true })).toMatchObject({ refresh_id: held.id, status: 'completed' });
+}), 180_000);
+
 test('8. a queued git effect drains before fenced, and nothing on the worktree is claimed while fenced', () => each(async f => {
   f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
   await f.put(f.beta, 'notes/effect', page('Effect', 'Has a git effect.'));
