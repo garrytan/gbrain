@@ -22,6 +22,7 @@ import { loadBoundedYaml as yamlLoad } from './data-frontmatter.ts';
 import { existsSync, readFileSync, readdirSync, copyFileSync, writeFileSync, mkdirSync, lstatSync } from 'fs';
 import { join, relative, resolve, dirname, basename, isAbsolute } from 'path';
 import type { BrainEngine } from './engine.ts';
+import { isConnectorSourceKind } from './persistence/connector-kinds.ts';
 import type { ProgressReporter } from './progress.ts';
 import { gbrainPath } from './config.ts';
 import { collectGitVisibleFiles } from './git-visible-files.ts';
@@ -578,6 +579,7 @@ export function writeBrainPage(
 interface SourceRow {
   id: string;
   local_path: string | null;
+  kind: string | null;
 }
 
 export interface ScanOpts {
@@ -700,6 +702,8 @@ export async function scanBrainSources(
     }
     if (!src.local_path) continue;
     if (!existsSync(src.local_path)) {
+      // #5673: a connector syncs from its provider, so a gone local_path is a leftover pointer with nothing on disk to scan.
+      if (isConnectorSourceKind(src.kind)) continue;
       perSource.push({
         source_id: src.id,
         source_path: src.local_path,
@@ -1004,7 +1008,7 @@ export function walkDir(
 async function listSources(engine: BrainEngine, sourceId?: string): Promise<SourceRow[]> {
   if (sourceId) {
     const rows = await engine.executeRaw<SourceRow>(
-      `SELECT id, local_path FROM sources WHERE id = $1`,
+      `SELECT id, local_path, config->>'kind' AS kind FROM sources WHERE id = $1`,
       [sourceId],
     );
     return rows;
@@ -1014,11 +1018,11 @@ async function listSources(engine: BrainEngine, sourceId?: string): Promise<Sour
   // pickSoleNonDefaultSource).
   try {
     return await engine.executeRaw<SourceRow>(
-      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE ORDER BY id`,
+      `SELECT id, local_path, config->>'kind' AS kind FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE ORDER BY id`,
     );
   } catch {
     return engine.executeRaw<SourceRow>(
-      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL ORDER BY id`,
+      `SELECT id, local_path, config->>'kind' AS kind FROM sources WHERE local_path IS NOT NULL ORDER BY id`,
     );
   }
 }

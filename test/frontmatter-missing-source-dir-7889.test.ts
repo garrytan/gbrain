@@ -57,3 +57,17 @@ test('a registered source whose directory is missing is unverified in the audit 
   }
   expect(checks.find(c => c.name === 'frontmatter_integrity')!.details).toMatchObject({ missing_sources: ['source-ghost'], partial: false, exact: false });
 });
+
+// Value: protects=a connector source (google, github, meetings, slack) whose leftover local_path is gone is not reported missing (#7889, #5673);
+// fails_when=scanBrainSources marks a connector's stale checkout pointer 'missing', so doctor warns on every run with set-path advice that
+// does not apply to a source that syncs from its provider; why_new=the #7889 cases only register filesystem sources;
+// seam=scanBrainSources on PGLite; no_claim=a connector whose local_path exists, which is scanned as before.
+test('a connector source whose leftover local_path is gone is not reported missing', async () => {
+  const stale = join(root, 'connector-checkout-gone');
+  await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES('source-connector','source-connector',$1,'{\"kind\":\"github\"}'::jsonb)", [stale]);
+  const report = await scanBrainSources(engine);
+  expect(report.missing_sources).toEqual(['source-ghost']);
+  expect(report.per_source.find(s => s.source_id === 'source-connector')).toBeUndefined();
+  expect((await scanBrainSources(engine, { sourceId: 'source-connector' })).ok).toBe(true);
+});
+
