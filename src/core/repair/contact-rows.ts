@@ -73,7 +73,7 @@ async function scan(engine: BrainEngine, scope: RepairScope, selection: Selectio
     const batch = await engine.executeRaw<{ id: number; source_id: string; slug: string }>(
       `SELECT id, source_id, slug FROM pages
         WHERE source_id=ANY($1::text[]) AND deleted_at IS NULL AND body_storage='inline' AND id>$2
-          AND jsonb_typeof(frontmatter->'contacts')='array' AND jsonb_array_length(frontmatter->'contacts')>1
+          AND CASE WHEN jsonb_typeof(frontmatter->'contacts')='array' THEN jsonb_array_length(frontmatter->'contacts') ELSE 0 END>1
           AND (cardinality($3::text[])=0 OR slug=ANY($3::text[]))
         ORDER BY id LIMIT ${BATCH}`, [scope.source_ids, cursor, selection.slugs]);
     for (const row of batch) {

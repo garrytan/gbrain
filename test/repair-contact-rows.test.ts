@@ -111,7 +111,9 @@ for (const backend of testBackends()) {
       await expect(repairRunner(engine, { apply: true, logger }).then(runner => runner.run('contact-rows', scope, { explicit: true, expect: first.preview_hash! })))
         .rejects.toMatchObject({ code: 'preview_changed' });
       expect(await contacts(engine, 'source-a', 'people/alice-example')).toHaveLength(5);
-    }, { databaseUrl, setup: seeded([['source-a', 'people/alice-example', doc('Alice Example', TRIPLED)], ['source-a', 'people/carol-example', doc('Carol Example', TRIPLED)]]) }), 180_000);
+    }, { databaseUrl, setup: seeded([['source-a', 'people/alice-example', doc('Alice Example', TRIPLED)], ['source-a', 'people/carol-example', doc('Carol Example', TRIPLED)],
+      // A scalar contacts value is skipped, never a failed preview.
+      ['source-a', 'people/erin-example', '---\ntype: person\ntitle: Erin Example\ncontacts: alice-example\n---\n\nErin Example is a synthetic person.\n']]) }), 180_000);
 
   });
 }
