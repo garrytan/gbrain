@@ -10,6 +10,14 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**The nightly E2E upgrade check passes on keyed runs again.** The upgrade-from-previous-release harness checks that a brain and keyless config file written by the previous release resolve the same `gbrain config show` output under this build. The keyed nightly E2E lane keeps `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` set, the harness's CLI inherited them, and `config show` printed two redacted key lines the golden doesn't list. The harness now runs its CLI keyless, as the install it models does. Nothing changes for users: a keyless install resolves exactly the golden, and a keyed one shows its keys as before.
+
+### Itemized changes
+
+- `test/helpers/upgrade-from-previous-release.ts`: the harness's CLI child runs with every provider key and base URL in `PROVIDER_ENV_KEYS` removed. The golden is unchanged. On real Postgres, master failed 3 of 12 with fake keys set (the same two lines as the nightly run) and passed keyless; with this change it passes 12 of 12 both ways (#6040).
+
 ## [0.60.577.0] - 2026-11-05
 
 **A write a refresh fence refused is never reported as success, and an interactive write waits the fence out.** While `gbrain sources refresh` drains, fast-forwards and syncs a checkout, writes to it are refused `worktree_refreshing`. That refusal was unregistered (class server, `fix: gbrain doctor`), `remember` with `items` whose every item it refused printed `undefined (fact #undefined)` and exited 0, and the same batch over MCP returned `isError: false`. The refusal is now retryable with `fix.next: wait` and `retry_after_ms`, an interactive write retries it with backoff for up to 10 s before refusing, and a batch that saved nothing is an error on every surface (#8621).
