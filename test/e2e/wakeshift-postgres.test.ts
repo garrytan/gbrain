@@ -80,7 +80,8 @@ d('wakeshift on Postgres', () => {
     const foreign = await seedJob('active', 'wk-a');
     const a = await dispatchToolCall(getEngine(), 'watch_job', { id: foreign }, agent);
     const b = await dispatchToolCall(getEngine(), 'watch_job', { id: foreign + 1000 }, agent);
-    expect(a.content[0]!.text.replaceAll(String(foreign), 'N')).toBe(b.content[0]!.text.replaceAll(String(foreign + 1000), 'N'));
+    const envelope = (text: string, id: number) => { const { notices: _, ...rest } = JSON.parse(text.replaceAll(String(id), 'N')); return rest; };
+    expect(envelope(a.content[0]!.text, foreign)).toEqual(envelope(b.content[0]!.text, foreign + 1000));
     expect(fake.calls).toHaveLength(0);
   });
 

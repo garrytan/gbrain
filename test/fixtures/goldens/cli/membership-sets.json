@@ -75,6 +75,7 @@
         "feedback",
         "questions",
         "trust",
+        "wakeshift",
         "watch"
       ],
       "selfHelpNotInCliOnly": [],
@@ -217,6 +218,7 @@
         "trust",
         "upgrade",
         "waiting",
+        "wakeshift",
         "watch",
         "whoknows"
       ],
@@ -320,6 +322,7 @@
         "trust",
         "upgrade",
         "waiting",
+        "wakeshift",
         "watch",
         "whoknows"
       ],
@@ -365,6 +368,7 @@
         "transcripts",
         "trust",
         "waiting",
+        "wakeshift",
         "watch",
         "whoknows"
       ],
@@ -422,6 +426,7 @@
         "takes",
         "transcripts",
         "trust",
+        "wakeshift",
         "watch"
       ],
       "THIN_CLIENT_REFUSE_HINTS": [

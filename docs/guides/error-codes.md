@@ -5166,7 +5166,7 @@ More: [docs/guides/wakeshift.md#the-key](../../docs/guides/wakeshift.md#the-key)
 |---|---|---|---|---|---|---|
 | watch_job wakes an MCP conversation, and a local CLI run has none to wake. | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain jobs wait <id> to block until the job finishes. | agent | `repeat the read that failed` | 1 | no |
 
-More: [docs/guides/wakeshift.md](../../docs/guides/wakeshift.md)
+More: [docs/guides/wakeshift.md#delivery-and-latency](../../docs/guides/wakeshift.md#delivery-and-latency)
 
 ### wakeshift_not_enabled
 
@@ -5176,7 +5176,7 @@ More: [docs/guides/wakeshift.md](../../docs/guides/wakeshift.md)
 |---|---|---|---|---|---|---|
 | Reporting back through Wakeshift is off on this brain (the owner has not run gbrain wakeshift enable, or the key is missing). | Wakeshift is off by default; only the brain owner turns it on, on the brain host, because it sends wake metadata to a third-party service. | Use wait_job (or gbrain jobs wait <id>) instead, or ask the brain owner to run gbrain wakeshift enable. | agent | `repeat the read that failed` | 1 | no |
 
-More: [docs/guides/wakeshift.md](../../docs/guides/wakeshift.md)
+More: [docs/guides/wakeshift.md#turn-it-on](../../docs/guides/wakeshift.md#turn-it-on)
 
 ### wakeshift_refused
 

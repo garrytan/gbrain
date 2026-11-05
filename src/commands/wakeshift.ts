@@ -17,6 +17,7 @@ import { WakeshiftError, WakeshiftKeyError, normalizeWakeshiftUrl, parseWakeshif
 import { readWakeshiftKey, wakeshiftFileConfig, wakeshiftKeyFile, wakeshiftSecret } from '../core/wakeshift/config.ts';
 import { wakeshiftManifest } from '../core/wakeshift/events.ts';
 import { endAtWakeshift } from '../core/wakeshift/drain.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
 const HELP = `gbrain wakeshift <command> — report back to agent conversations when jobs finish (off by default)
 
@@ -183,18 +184,18 @@ async function test(json: boolean): Promise<void> {
     ]);
   } catch (e) {
     say(json, { ok: false, url, key: { source, kid: key.kid }, error: describeWakeshiftError(e) }, [`fail: ${describeWakeshiftError(e)}`]);
-    process.exitCode = 1;
+    setCliExitVerdict(1);
   }
 }
 
 export async function runWakeshift(engine: BrainEngine, args: string[]): Promise<void> {
   const sub = args[0];
   const json = args.includes('--json');
-  if (!sub || sub === '--help' || sub === '-h' || args.includes('--help')) { console.log(HELP); return; }
+  if (!sub || args.includes('--help') || args.includes('-h')) { console.log(HELP); return; }
   if (sub === 'status') return status(engine, json);
   if (sub === 'enable') return enable(engine, args.slice(1));
   if (sub === 'disable') return disable(engine, json);
   if (sub === 'test') return test(json);
   console.error(`Unknown wakeshift command: ${sub}\n\n${HELP}`);
-  process.exitCode = 2;
+  setCliExitVerdict(2);
 }
