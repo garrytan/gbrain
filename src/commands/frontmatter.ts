@@ -677,7 +677,8 @@ async function runAudit(engine: BrainEngine, rest: string[]): Promise<void> {
   printAuditHumanReport(report);
 }
 
-function printAuditHumanReport(report: AuditReport): void {
+/** Exported for tests (#7889). */
+export function printAuditHumanReport(report: AuditReport): void {
   if (report.per_source.length === 0) {
     console.log('No registered sources to audit. Run `gbrain sources list` to inspect.');
     return;
@@ -688,6 +689,10 @@ function printAuditHumanReport(report: AuditReport): void {
   }
   for (const src of report.per_source) {
     console.log(`\n[${src.source_id}] ${src.source_path}`);
+    if (src.status === 'missing') {
+      console.log('  NOT SCANNED — the registered directory is missing; restore it or correct the source path (gbrain sources set-path <id> <directory>)');
+      continue;
+    }
     if (src.total === 0) {
       console.log('  clean');
       continue;

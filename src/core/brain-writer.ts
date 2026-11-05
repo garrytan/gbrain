@@ -94,8 +94,9 @@ export interface PerSourceReport {
   /** Did this source finish the walk, get interrupted, or never start?
    * 'scanned' = full walk completed.
    * 'partial' = deadline/abort fired mid-walk; counts reflect prefix only.
-   * 'skipped' = source was never visited (outer loop broke before reaching it). */
-  status: 'scanned' | 'partial' | 'skipped';
+   * 'skipped' = source was never visited (outer loop broke before reaching it).
+   * 'missing' = registered path does not exist, so coverage is unverified. */
+  status: 'scanned' | 'partial' | 'skipped' | 'missing';
   /** Count of .md files actually parsed (numerator for "scanned ~N of M" doctor message).
    * Distinct from `total` (which counts ERRORS) and `ignoredMissingOpen`. */
   files_scanned: number;
@@ -113,7 +114,7 @@ export interface AuditReport {
   per_source: PerSourceReport[];
   scanned_at: string;
   ignored_missing_open?: number;
-  /** True when any source got `status: 'partial'` or `'skipped'`. Doctor uses
+  /** True when any source got a non-scanned status. Doctor uses
    * this to render the warn message and to ensure `ok` is false even when the
    * scanned prefix happened to be clean (codex C2 fix). */
   partial: boolean;
@@ -697,8 +698,7 @@ export async function scanBrainSources(
     }
     if (!src.local_path) continue;
     if (!existsSync(src.local_path)) {
-      // Source registered but path is missing on disk; surface as a zero-row
-      // entry with a synthetic SCAN_PATH_MISSING note via warn-and-skip.
+      // A missing registered root is unverified coverage, never a clean scan.
       perSource.push({
         source_id: src.id,
         source_path: src.local_path,
@@ -706,7 +706,7 @@ export async function scanBrainSources(
         errors_by_code: {},
         sample: [],
         ignoredMissingOpen: 0,
-        status: 'scanned',
+        status: 'missing',
         files_scanned: 0,
       });
       continue;
@@ -794,7 +794,7 @@ export async function scanBrainSources(
     }
   }
 
-  const hasPartialOrSkipped = perSource.some(r => r.status === 'partial' || r.status === 'skipped');
+  const hasPartialOrSkipped = perSource.some(r => r.status !== 'scanned');
 
   return {
     // Partial scans can never be 'ok' even when the scanned prefix is clean
