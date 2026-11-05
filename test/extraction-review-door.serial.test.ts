@@ -16,6 +16,8 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { tryAcquireDbLock } from '../src/core/db-lock.ts';
 import { publicationGuardId, withPublicationGuard } from '../src/core/persistence/publication-guard.ts';
 import { operationsByName, OperationError } from '../src/core/operations.ts';
+import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import {
   distinctScenario, promoteScenario, racedDecisionsScenario, rejectScenario, reviewCtx, reviewDoorFixture, seedStub,
   type ReviewDoorFixture, type ReviewStorage,
@@ -101,6 +103,29 @@ describe('publication guard', () => {
       expect(await withPublicationGuard(engine, 'default', async () => 'ran', 250)).toBe('ran');
     } finally { await held.release(); }
   });
+});
+
+describe('extraction_review batches', () => {
+  test('a decision that fails mid-batch is reported for its slug and the rest of the batch still lands', async () => {
+    fx = await reviewDoorFixture(engine, 'database');
+    const [first, broken, last] = ['people/batch-first-example', 'people/batch-broken-example', 'people/batch-last-example'];
+    for (const slug of [first, broken, last]) await seedStub(engine, slug, 'Batch Example');
+    const malformed = 'Batch Example came up in a call.\n\n<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n'
+      + '|---|---|---|---|---|---|---|---|---|---|\n| 1 | Batchrowzq4 likes tea | fact | 1.0 | world | medium | 2026-01-02 |\n<!--- gbrain:facts:end -->\n';
+    await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(
+      'UPDATE pages SET compiled_truth=$2 WHERE source_id=\'default\' AND slug=$1', [broken, malformed]), TEST_WRITE_ATTRIBUTION));
+    const out = await operationsByName.extraction_review!.handler(reviewCtx(engine), { action: 'promote', slugs: [first, broken, last] })
+      .catch((e: unknown) => e) as { status?: string; results?: Array<Record<string, unknown>>; write_requests?: Array<{ slug: string; state: string }> };
+    expect(out.results?.map(r => [r.slug, r.status])).toEqual([[first, 'promoted'], [broken, 'failed'], [last, 'promoted']]);
+    expect(out.results![1]!.error).toMatchObject({ code: 'invalid_fence', reason: 'target_fence_malformed' });
+    expect(out.status).toBe('partial');
+    expect(out.write_requests?.map(w => [w.slug, w.state])).toEqual([[first, 'committed'], [last, 'committed']]);
+    expect((await engine.getPage(first))!.frontmatter.status).toBe('verified');
+    expect((await engine.getPage(broken))!.frontmatter.status).toBe('unverified');
+    expect((await engine.getPage(last))!.frontmatter.status).toBe('verified');
+    const alone = await operationsByName.extraction_review!.handler(reviewCtx(engine), { action: 'promote', slugs: [broken] }).then(() => null, (e: unknown) => e);
+    expect((alone as OperationError).canonicalCode).toBe('invalid_fence');
+  }, 30_000);
 });
 
 describe('extraction_review distinct refusals', () => {

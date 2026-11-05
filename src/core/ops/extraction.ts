@@ -262,8 +262,9 @@ const extraction_review: Operation = {
           { argv: ['gbrain', 'extraction-pending', '--include', 'possible_duplicates'], mcp: { tool: 'extraction_pending', arguments: { include: ['possible_duplicates'] } } }) });
     }
     if (ctx.dryRun) return { dry_run: true, action: `extraction_review:${action}`, slugs, ...(action === 'distinct' ? { of } : {}) };
-    const results: Array<{ slug: string; status: string }> = [];
+    const results: Array<{ slug: string; status: string; error?: ReturnType<OperationError['toJSON']> }> = [];
     const writeRequests: Array<{ slug: string; request_id: unknown; state: unknown }> = [];
+    const failures: OperationError[] = [];
     for (const slug of slugs) {
       // First-match read is safe here: every write below keys on the RETURNED
       // row's page.source_id, so read and write can never target different
@@ -273,11 +274,21 @@ const extraction_review: Operation = {
         results.push({ slug, status: 'not_found' });
         continue;
       }
-      const decided = await reviewDecision(ctx, action, slug, page.source_id, of);
+      // A decision that fails is reported for its slug and the batch goes on: the decisions before it already landed.
+      const decided = await reviewDecision(ctx, action, slug, page.source_id, of).catch((error: unknown) => {
+        if (!(error instanceof OperationError)) throw error;
+        failures.push(error);
+        return null;
+      });
+      if (!decided) {
+        results.push({ slug, status: 'failed', error: failures.at(-1)!.toJSON() });
+        continue;
+      }
       results.push({ slug, status: decided.status });
       if (decided.response) writeRequests.push({ slug, request_id: decided.response.request_id, state: decided.response.state });
     }
-    return { status: 'ok', action, results, ...(writeRequests.length ? { write_requests: writeRequests } : {}) };
+    if (failures.length === slugs.length) throw failures[0];
+    return { status: failures.length ? 'partial' : 'ok', action, results, ...(writeRequests.length ? { write_requests: writeRequests } : {}) };
   },
   cliHints: { name: 'extraction-review', positional: ['action'] },
 };
