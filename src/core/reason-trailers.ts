@@ -21,6 +21,8 @@ import type { VersionHistory } from './page-state/versions.ts';
 export const SYNC_REASON_SCAN_CAP = 10_000;
 export const PURGE_REASON_SCAN_CAP = 200_000;
 const SCAN_TIMEOUT_MS = 120_000;
+/** The most bytes one `-z` token (a commit's trailer block, a path) is buffered for; a longer one is dropped unread. */
+export const REASON_TOKEN_MAX_BYTES = 1024 * 1024;
 const OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 export interface TrailerCommit { sha: string; values: string[]; paths: string[] }
@@ -40,7 +42,9 @@ class CapReached extends Error {}
 /**
  * Streams `git log` over `revisions` (a range `a..b`, or one commit for its whole history), newest first along the
  * first parent, calling `visit` for each commit up to `cap`. Output is `-z`: each commit is an empty token, its OID,
- * its trailer values (one per line, folded lines joined), then its paths (the first prefixed by Git's blank line).
+ * its trailer values (one per line, folded lines joined), then its paths (the first prefixed by Git's blank line). A token
+ * over REASON_TOKEN_MAX_BYTES is not buffered: a trailer block that long gives its commit no values, a path that long is
+ * skipped, and the records after it still parse.
  */
 export async function readReasonTrailers(gitRoot: string, revisions: string, cap: number, visit: (commit: TrailerCommit) => void): Promise<TrailerRead> {
   scans++;
@@ -48,34 +52,39 @@ export async function readReasonTrailers(gitRoot: string, revisions: string, cap
   let current: TrailerCommit | null = null;
   let commits = 0;
   let pending: Buffer[] = [];
+  let pendingBytes = 0;
   const flush = () => { if (current) visit(current); current = null; };
-  const token = (text: string) => {
+  const token = (text: string | null) => {
     if (state === 'paths' && text === '') { flush(); state = 'sha'; return; }
     if (state === 'sha') {
       if (text === '') return;
-      if (!OID.test(text)) throw new Error(`unexpected git log record ${JSON.stringify(text.slice(0, 60))}`);
+      if (text === null || !OID.test(text)) throw new Error(`unexpected git log record ${text === null ? 'over the token bound' : JSON.stringify(text.slice(0, 60))}`);
       if (++commits > cap) throw new CapReached();
       current = { sha: text, values: [], paths: [] };
       state = 'trailers';
       return;
     }
-    if (state === 'trailers') { current!.values = text.split('\n').map(line => line.trim()).filter(Boolean); state = 'paths'; return; }
-    current!.paths.push(current!.paths.length === 0 && text.startsWith('\n') ? text.slice(1) : text);
+    if (state === 'trailers') { current!.values = text === null ? [] : text.split('\n').map(line => line.trim()).filter(Boolean); state = 'paths'; return; }
+    if (text !== null) current!.paths.push(current!.paths.length === 0 && text.startsWith('\n') ? text.slice(1) : text);
   };
+  const take = (piece: Buffer) => token(pendingBytes + piece.length > REASON_TOKEN_MAX_BYTES ? null
+    : (pending.length ? Buffer.concat([...pending, piece]) : piece).toString('utf8'));
   const onChunk = (chunk: Buffer) => {
     let start = 0;
     for (let end = chunk.indexOf(0); end >= 0; end = chunk.indexOf(0, start)) {
-      const piece = chunk.subarray(start, end);
-      token((pending.length ? Buffer.concat([...pending, piece]) : piece).toString('utf8'));
+      take(chunk.subarray(start, end));
       pending = [];
+      pendingBytes = 0;
       start = end + 1;
     }
-    if (start < chunk.length) pending.push(chunk.subarray(start));
+    if (start === chunk.length) return;
+    pendingBytes += chunk.length - start;
+    if (pendingBytes > REASON_TOKEN_MAX_BYTES) pending = []; else pending.push(chunk.subarray(start));
   };
   try {
     const result = await gitStream(gitRoot, ['log', ...REASON_LOG_OPTIONS, '--end-of-options', revisions, '--'], { timeoutMs: SCAN_TIMEOUT_MS, onChunk });
     if (!result.ok) return { status: 'failed', commits, detail: `git log ${result.reason}${result.status === undefined ? '' : ` ${result.status}`}` };
-    if (pending.length) token(Buffer.concat(pending).toString('utf8'));
+    if (pendingBytes) take(Buffer.alloc(0));
     flush();
     return { status: 'complete', commits };
   } catch (error) {

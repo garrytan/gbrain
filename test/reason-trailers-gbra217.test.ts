@@ -36,7 +36,7 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { __setReasonGitStreamForTests, __setReasonScanCapsForTests, cachedSyncReasonScan, clearReasonScanCache, gitTopLevel, importHistoryFor,
-  scanSyncReasons, scanTrailersCarrying } from '../src/core/reason-trailers.ts';
+  readReasonTrailers, scanSyncReasons, scanTrailersCarrying, type TrailerCommit } from '../src/core/reason-trailers.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -273,6 +273,27 @@ describe('A6: sync mirrors gbrain-reason trailers', () => {
     expect(importHistoryFor(scan, join(root, 'bulk/f4321.md'))).toEqual({ reason: 'Only this file has a reason.', historyGap: false });
     expect(importHistoryFor(scan, join(root, 'bulk/f0001.md'))).toEqual({ reason: null, historyGap: false });
   }), 120_000);
+
+  test('a trailer block over the token bound is dropped unbuffered; the commits around it still parse', async () => {
+    const root = newRepo({ 'notes/a.md': page('A one.') });
+    write(root, { 'notes/a.md': page('A two.') });
+    const older = commit(root, 'older', ['notes/a.md: Older reason.']);
+    write(root, { 'notes/big.md': page('Big.') });
+    const message = join(home, `message-${++serial}.txt`);
+    writeFileSync(message, `huge\n\ngbrain-reason: notes/big.md: ${'x'.repeat(4 * 1024 * 1024)}\n`);
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-F', message);
+    const huge = git(root, 'rev-parse', 'HEAD');
+    write(root, { 'notes/a.md': page('A three.') });
+    const newer = commit(root, 'newer', ['notes/a.md: Newer reason.']);
+    const seen: TrailerCommit[] = [];
+    expect(await readReasonTrailers(root, `${older}~1..${newer}`, 10, commit => seen.push(commit))).toEqual({ status: 'complete', commits: 3 });
+    expect(seen).toEqual([
+      { sha: newer, values: ['notes/a.md: Newer reason.'], paths: ['notes/a.md'] },
+      { sha: huge, values: [], paths: ['notes/big.md'] },
+      { sha: older, values: ['notes/a.md: Older reason.'], paths: ['notes/a.md'] },
+    ]);
+  }, 120_000);
 
   test('two brains in one process sharing a checkout, source id, range and purge epoch each read their own tombstones', async () => inHome(async () => {
     const id = `rt-shared-${++serial}`;
