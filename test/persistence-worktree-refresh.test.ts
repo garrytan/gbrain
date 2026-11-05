@@ -692,6 +692,222 @@ test('7q. writer status for a recovery_required refresh whose members already sy
   expect(status.fix.why).toContain('ask the user first');
 }), 180_000);
 
+/** The live (not soft-deleted) slugs of a member source. */
+const livePages = async (f: RefreshFixture, sourceId: string) => (await f.engine.executeRaw<{ slug: string }>(
+  'SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL ORDER BY slug', [sourceId])).map(row => row.slug);
+const settle = (promise: Promise<unknown>) => promise.then(value => ({ value, error: null }), error => ({ value: null, error: error as { code?: string; suggestion?: string; message?: string; fix?: Record<string, any> } }));
+
+test('7r. GST-1457: a recovery_required refresh whose member synced to the target, with HEAD back at the start commit, never lets --abandon and the next sync soft-delete those pages', () => each(async f => {
+  // Value: protects=the pages a member already synced to target_head survive the manual path out of recovery_required: --resume no longer
+  // names --abandon, --abandon refuses (ask_user: reset to the target, then --resume), and the next sync stays fenced; fails_when=--abandon
+  // aborts a recovery_required row whatever its members' last_commit, so the next sync diffs target_head back to old_head and soft-deletes
+  // the synced pages (the chain the #8344 fix-check reproduced); why_new=7q covers writer status only; seam=a crash at the syncing boundary,
+  // the member synced by the real managed sync, HEAD reset by hand; no_claim=other HEADs (test 7) and the owner scan (7i).
+  const target = f.push('alpha/two.md', page('Alpha two', 'Synced to the target before recovery.'));
+  const old = f.head();
+  const orphan = await orphanAt(f, 'syncing', 'syncing');
+  expect(f.head()).toBe(target);
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  expect(await f.lastCommit(f.alpha)).toBe(target);
+  const synced = await livePages(f, f.alpha);
+  expect(synced.some(slug => slug.endsWith('two'))).toBe(true);
+  git(f.root, 'reset', '-q', '--hard', old);
+  const resume = await settle(refreshWorktree(f.engine, f.alpha, { resume: true }));
+  const abandon = await settle(refreshWorktree(f.engine, f.alpha, { abandon: true }));
+  const sync = await settle(performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true }));
+  expect(await livePages(f, f.alpha)).toEqual(synced);
+  expect(await f.lastCommit(f.alpha)).toBe(target);
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['recovery_required']);
+  expect(resume.error?.code).toBe('refresh_recovery_required');
+  expect(resume.error!.suggestion).not.toContain('--abandon');
+  expect(resume.error!.suggestion).toContain(`merge --ff-only ${target}`);
+  expect(abandon.error?.code).toBe('refresh_recovery_required');
+  expect(abandon.error!.message).toContain(f.alpha);
+  expect(abandon.error!.suggestion).toContain(`merge --ff-only ${target}`);
+  expect(abandon.error!.suggestion).not.toContain(old);
+  for (const refusal of [resume.error!, abandon.error!]) {
+    expect(refusal.fix).toMatchObject({ ask_user: true, argv: ['git', '-C', f.root, 'merge', '--ff-only', target],
+      preview_argv: ['git', '-C', f.root, 'status', '--short'], then: { argv: ['gbrain', 'sources', 'refresh', f.alpha, '--resume'] } });
+    expect(refusal.fix!.user_message).toContain(f.alpha);
+  }
+  expect(sync.error?.code).toBe('refresh_recovery_required');
+  // The stored fix the plain refresh and writes repeat names only the safe way out too.
+  const plain = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_recovery_required');
+  expect(plain.suggestion).not.toContain('--abandon');
+  // The safe way out the fix names: fast-forward to the target, --resume finishes the refresh, and the synced pages stay.
+  git(f.root, 'merge', '-q', '--ff-only', target);
+  expect(await refreshWorktree(f.engine, f.alpha, { resume: true })).toMatchObject({ refresh_id: orphan.id, status: 'completed' });
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  expect(await livePages(f, f.alpha)).toEqual(synced);
+}), 180_000);
+
+test('7s. GST-1457: with no member synced past the start commit, --resume still names --abandon and --abandon still lifts the fence', () => each(async f => {
+  // Value: protects=the 7r refusal is scoped to rows whose members moved: a recovery_required row whose members all still sit at old_head is
+  // abandoned as before, and the next sync loses nothing; fails_when=--abandon refuses every recovery_required row, or the member check reads
+  // the wrong commit; why_new=7p abandons a row that was never syncing; seam=a crash at the syncing boundary before any member synced;
+  // no_claim=members with no last_commit (the same branch of the check).
+  f.push('alpha/two.md', page('Alpha two', 'Never synced.'));
+  const old = f.head();
+  await orphanAt(f, 'syncing', 'syncing');
+  expect(await f.lastCommit(f.alpha)).toBe(old);
+  expect(await f.lastCommit(f.beta)).toBe(old);
+  const before = await livePages(f, f.alpha);
+  git(f.root, 'reset', '-q', '--hard', old);
+  const resume = await refusedWith(refreshWorktree(f.engine, f.alpha, { resume: true }), 'refresh_recovery_required');
+  expect(resume.suggestion).toBe(`gbrain sources refresh ${f.alpha} --abandon`);
+  expect((await refreshWorktree(f.engine, f.alpha, { abandon: true })).status).toBe('abandoned');
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['aborted']);
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  expect(await livePages(f, f.alpha)).toEqual(before);
+}), 180_000);
+
+test('7t. GST-1457: a member behind the start commit is not past it, and one whose commit git cannot place is', () => each(async f => {
+  // Value: protects=membersPastStart counts a member at an ancestor of old_head as safe (its next sync rolls forward), so the row is not
+  // wedged on the fast-forward, and fails closed on a commit git cannot find; fails_when=the check compares last_commit with old_head by
+  // equality only, or treats an unknown commit as safe; why_new=7r/7s set members to the target or old_head only; seam=last_commit set
+  // with the coordinated write; no_claim=a member on a diverged branch (same ancestry test).
+  f.push('alpha/two.md', page('Alpha two', 'Never synced.'));
+  const old = f.head();
+  const behind = git(f.root, 'rev-parse', `${old}~1`);
+  await orphanAt(f, 'syncing', 'syncing');
+  git(f.root, 'reset', '-q', '--hard', old);
+  await setLastCommit(f, f.beta, 'f'.repeat(40));
+  expect((await refusedWith(refreshWorktree(f.engine, f.alpha, { resume: true }), 'refresh_recovery_required')).suggestion).toContain('merge --ff-only');
+  const unknown = await refusedWith(refreshWorktree(f.engine, f.alpha, { abandon: true }), 'refresh_recovery_required');
+  expect(unknown.message).toContain(f.beta);
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['recovery_required']);
+  await setLastCommit(f, f.beta, old);
+  await setLastCommit(f, f.alpha, behind);
+  expect(await writerStatusRow(f)).toMatchObject({ state: 'recovery_required', fix: { argv: ['gbrain', 'sources', 'refresh', f.alpha, '--abandon'] } });
+  expect((await refreshWorktree(f.engine, f.alpha, { abandon: true })).status).toBe('abandoned');
+  const before = await livePages(f, f.alpha);
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  expect(await f.lastCommit(f.alpha)).toBe(old);
+  expect(await livePages(f, f.alpha)).toEqual(before);
+}), 180_000);
+
+test('7u. GST-1457 review: a member a cycle sync carried past the target keeps its pages too: the way out fast-forwards to its commit', () => each(async f => {
+  // Value: protects=the fix names the newest member commit on the target's line, so --resume completes at a HEAD no member is ahead of and
+  // the next sync rolls nothing back; fails_when=the fix always names target_head, so completion leaves the member at a descendant of HEAD and
+  // its next sync soft-deletes what that commit added; why_new=7r's member stops at the target; seam=a commit made in the managed checkout on
+  // top of the target and synced by the real managed sync while the row was syncing (#6712's case); no_claim=members on diverged lines.
+  const target = f.push('alpha/two.md', page('Alpha two', 'Synced to the target.'));
+  const old = f.head();
+  const orphan = await orphanAt(f, 'syncing', 'syncing');
+  const past = commitFile(f.root, 'alpha/three.md', page('Alpha three', 'Landed on top of the target while syncing.'));
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  expect(await f.lastCommit(f.alpha)).toBe(past);
+  const synced = await livePages(f, f.alpha);
+  expect(synced.some(slug => slug.endsWith('three'))).toBe(true);
+  git(f.root, 'reset', '-q', '--hard', old);
+  const resume = await refusedWith(refreshWorktree(f.engine, f.alpha, { resume: true }), 'refresh_recovery_required') as { suggestion?: string; fix?: Record<string, any> };
+  expect(resume.fix).toMatchObject({ argv: ['git', '-C', f.root, 'merge', '--ff-only', past] });
+  expect(resume.suggestion).not.toContain(`merge --ff-only ${target}`);
+  await refusedWith(refreshWorktree(f.engine, f.alpha, { abandon: true }), 'refresh_recovery_required');
+  git(f.root, 'merge', '-q', '--ff-only', past);
+  expect(await refreshWorktree(f.engine, f.alpha, { resume: true })).toMatchObject({ refresh_id: orphan.id, status: 'completed' });
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  expect(await livePages(f, f.alpha)).toEqual(synced);
+}), 180_000);
+
+test('7v. GST-1457 review: at an unrelated HEAD with a member synced, writer status and --resume name only the target, and --resume accepts a HEAD that descends from it', () => each(async f => {
+  // Value: protects=the unverified-HEAD branch of writer status and the stored fix never name --abandon once a member moved, the stored fix names
+  // a reset fallback when the fast-forward cannot apply, and --resume finishes a recovery_required row whose HEAD descends from the target
+  // instead of refusing it forever; fails_when=recoverOne accepts only HEAD == target_head for recovery_required, or the moved branches are
+  // dropped; why_new=7r and 7u start at old_head; seam=an empty commit makes HEAD unrelated, a local commit makes it a descendant; no_claim=none.
+  const target = f.push('alpha/two.md', page('Alpha two', 'Synced to the target.'));
+  const old = f.head();
+  const orphan = await orphanAt(f, 'syncing', 'syncing');
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  const ahead = commitFile(f.root, 'alpha/four.md', page('Alpha four', 'Committed on top of the target, not synced yet.'));
+  git(f.root, 'reset', '-q', '--hard', old);
+  git(f.root, 'commit', '-q', '--allow-empty', '-m', 'unrelated');
+  const resume = await refusedWith(refreshWorktree(f.engine, f.alpha, { resume: true }), 'refresh_recovery_required');
+  expect(resume.message).toContain(f.alpha);
+  expect(resume.suggestion).toContain(`merge --ff-only ${target}`);
+  expect(resume.suggestion).toContain(`reset --hard ${target}`);
+  expect(resume.suggestion).not.toContain('--abandon');
+  const status = await writerStatusRow(f);
+  expect(status).toMatchObject({ state: 'recovery_required', fix: { argv: ['gbrain', 'sources', 'refresh', f.alpha, '--resume'] } });
+  expect(status.fix.why).toContain('--abandon refuses');
+  git(f.root, 'reset', '-q', '--hard', ahead);
+  expect(await refreshWorktree(f.engine, f.alpha, { resume: true })).toMatchObject({ refresh_id: orphan.id, status: 'completed' });
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  expect(await f.lastCommit(f.alpha)).toBe(ahead);
+  expect((await livePages(f, f.alpha)).filter(slug => /two|four/.test(slug)).length).toBe(2);
+}), 180_000);
+
+test('7w. GST-1457 fix-check: --resume never finishes a refresh at a HEAD a member already synced past, and writer status names that member\'s commit', () => each(async f => {
+  // Value: protects=recoverOne refuses to record the merge while a member's last_commit strictly descends from HEAD, so fast-forwarding only to
+  // the target (not the commit 7u's fix names) leaves the fence up instead of completing and letting the next sync roll the member back;
+  // writer status names the same commit as the refusal; fails_when=recoverOne accepts HEAD == target_head without the member check, or writer
+  // status names target_head; why_new=7u follows the named fix exactly; seam=7u's setup with the operator stopping at the target;
+  // no_claim=a member that diverged from HEAD (not a descendant).
+  const target = f.push('alpha/two.md', page('Alpha two', 'Synced to the target.'));
+  const old = f.head();
+  await orphanAt(f, 'syncing', 'syncing');
+  const past = commitFile(f.root, 'alpha/three.md', page('Alpha three', 'Landed on top of the target while syncing.'));
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  const synced = await livePages(f, f.alpha);
+  git(f.root, 'reset', '-q', '--hard', old);
+  await refusedWith(refreshWorktree(f.engine, f.alpha, { resume: true }), 'refresh_recovery_required');
+  const status = await writerStatusRow(f);
+  expect(status.fix.why).toContain(past);
+  git(f.root, 'merge', '-q', '--ff-only', target);
+  const atTarget = await settle(refreshWorktree(f.engine, f.alpha, { resume: true }));
+  await settle(performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true }));
+  expect(await livePages(f, f.alpha)).toEqual(synced);
+  expect(atTarget.error?.code).toBe('refresh_recovery_required');
+  expect((await writerStatusRow(f)).fix.why).not.toContain('records the merge and finishes the refresh');
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['recovery_required']);
+}), 180_000);
+
+test('7x. GST-1457 outside voice: --resume never finishes at a sibling of the commit a member synced, even when it descends from the target', () => each(async f => {
+  // Value: protects=recoverOne records the merge only when HEAD contains every member's last_commit, so a HEAD on a sibling line of the
+  // target leaves the fence up instead of completing and letting the member's next sync soft-delete what HEAD lacks; fails_when=the member
+  // check only refuses members strictly ahead of HEAD; why_new=7w's member is ahead of HEAD on the same line; seam=two local commits on top
+  // of the target, one synced by the real managed sync; no_claim=none.
+  const target = f.push('alpha/two.md', page('Alpha two', 'Synced to the target.'));
+  const old = f.head();
+  await orphanAt(f, 'syncing', 'syncing');
+  const synced = commitFile(f.root, 'alpha/three.md', page('Alpha three', 'Synced on one line past the target.'));
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  expect(await f.lastCommit(f.alpha)).toBe(synced);
+  const pages = await livePages(f, f.alpha);
+  git(f.root, 'reset', '-q', '--hard', old);
+  await refusedWith(refreshWorktree(f.engine, f.alpha, { resume: true }), 'refresh_recovery_required');
+  git(f.root, 'reset', '-q', '--hard', target);
+  commitFile(f.root, 'alpha/sibling.md', page('Alpha sibling', 'A sibling line past the target.'));
+  const sibling = await settle(refreshWorktree(f.engine, f.alpha, { resume: true }));
+  await settle(performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true }));
+  expect(await livePages(f, f.alpha)).toEqual(pages);
+  expect(sibling.error?.code).toBe('refresh_recovery_required');
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['recovery_required']);
+}), 180_000);
+
+test('7y. GST-1457 fix-check: a member already off the start commit\'s line before the refresh never wedges crash recovery at the target', () => each(async f => {
+  // Value: protects=the HEAD-contains-every-member guard holds only recovery_required rows whose members synced on this refresh's line, so a
+  // member left on rewritten history (force-push, squash, reset) before the refresh converges after a crash exactly as an uninterrupted refresh
+  // completes on it; fails_when=the guard also gates fenced/merged rows, or treats any member HEAD lacks as synced past; why_new=7w/7x members
+  // descend from the start commit; seam=last_commit set to a side-branch commit with the coordinated write; no_claim=a member commit git cannot find.
+  f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  const old = f.head();
+  git(f.root, 'checkout', '-q', '-b', 'side', `${old}~1`);
+  const side = commitFile(f.root, 'alpha/side.md', page('Alpha side', 'Rewritten history.'));
+  git(f.root, 'checkout', '-q', '-');
+  await setLastCommit(f, f.alpha, side);
+  const merged = await orphanAt(f, 'merged', 'merged');
+  expect(await refreshWorktree(f.engine, f.alpha, { resume: true })).toMatchObject({ refresh_id: merged.id, status: 'completed' });
+  f.push('alpha/three.md', page('Alpha three', 'Upstream again.'));
+  await setLastCommit(f, f.alpha, side);
+  await expect(refreshWorktree(f.engine, f.alpha, { hooks: { boundary: at => { if (at === 'merged') throw new Error('simulated crash at merged'); } } }))
+    .rejects.toThrow('simulated crash');
+  await disposePersistenceConsumer(f.engine);
+  const held = (await f.refreshRows()).at(-1)!;
+  await f.engine.executeRaw(`UPDATE persistence_worktree_refreshes SET state='recovery_required',completed_at=NULL WHERE id=$1::uuid`, [held.id]);
+  expect(await refreshWorktree(f.engine, f.alpha, { resume: true })).toMatchObject({ refresh_id: held.id, status: 'completed' });
+}), 180_000);
+
 test('8. a queued git effect drains before fenced, and nothing on the worktree is claimed while fenced', () => each(async f => {
   f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
   await f.put(f.beta, 'notes/effect', page('Effect', 'Has a git effect.'));
