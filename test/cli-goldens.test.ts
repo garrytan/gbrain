@@ -38,6 +38,7 @@ const ROWS: string[][] = [
   ['lint', '--help'],
   ['lint', '--definitely-not-a-flag'],
   ['get'],
+  ['sources', 'refresh-hold', '--help'],
 ];
 const TOOLS_JSON = ['--tools-json'];
 

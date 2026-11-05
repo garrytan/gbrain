@@ -365,6 +365,11 @@ function remoteOperationError(value: unknown): OperationError {
   if (isWriteReceipt(value.write_request)) error.writeRequest = publicWriteReceipt(value.write_request);
   if (isWriteRequestId(value.request_id)) error.requestId = value.request_id;
   if (isWriteErrorCode(value.write_error)) error.writeError = value.write_error;
+  // This refusal has one known read-only action. Rebuild it locally instead of
+  // trusting rendered command/next fields supplied over the owner socket.
+  if (error.code === 'refresh_held') error.fix = readFix(
+    'Reads DB-only hold presence and exact value; the maintenance owner restores the saved value with sources refresh-hold set --file, or clear only for saved absence.',
+    { argv: ['gbrain', 'sources', 'refresh-hold', 'get', '--json'] });
   return error;
 }
 

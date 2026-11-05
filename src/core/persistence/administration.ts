@@ -153,6 +153,14 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
   }
   if (operation === 'trust_read' || operation === 'trust_preview' || operation === 'trust_apply') return (await import('../trust/owner-ipc.ts')).runTrustAdministration(engine, operation, params, config);
   if (currentVerifiedLocalWriter()?.remote) throw trustedCliRequired('Writer administration requires a trusted local CLI caller.');
+  if (operation === 'writer_refresh_hold_get') {
+    keys(params, []);
+    const writer = currentVerifiedLocalWriter();
+    if (!writer || writer.remote || writer.principal.kind !== 'local_cli') throw trustedCliRequired('Refresh hold inspection requires a trusted CLI registration.');
+    const { REFRESH_HOLD_KEY, readRefreshHoldValue } = await import('./worktree-refresh.ts');
+    const value = await readRefreshHoldValue(engine);
+    return { key: REFRESH_HOLD_KEY, present: value !== null, value };
+  }
   if (operation === 'writer_lock' || operation === 'writer_unlock') {
     keys(params, []);
     return { ...await setWriterAdminLock(engine, operation === 'writer_lock') };

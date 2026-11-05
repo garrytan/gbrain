@@ -414,6 +414,8 @@ export const SECTIONS: DocSection[] = [
         description:
           "Symptom table with who acts, consent and a read-only verify step per row, then the long-form fixes.",
         path: "docs/guides/troubleshooting.md",
+        // Keep the largest symptom reference link-only; core error handling stays inline.
+        includeInFull: false,
       },
       {
         title: "docs/guides/error-codes.md",

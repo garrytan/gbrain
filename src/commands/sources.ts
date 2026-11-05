@@ -34,7 +34,7 @@
 
 import { writeFileSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
-import { createHash } from 'crypto';
+import { deriveBrainId } from './sources-brain-id.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import {
   assessDestructiveImpact,
@@ -581,17 +581,6 @@ async function maybeAnnounceBrainPack(engine: BrainEngine, created: OpsSourceRow
   } catch {
     // fail-open: discovery is cosmetic, never blocks `sources add`
   }
-}
-
-/**
- * Derive a stable brain-id for nag keying from the source's canonical git
- * remote (the repo carrying the pack) when available; else a deterministic
- * hash of the canonical local path. NOT the brain DB identity.
- */
-function deriveBrainId(created: OpsSourceRow, localPath: string): string {
-  const remote = (created.config as Record<string, unknown>).remote_url as string | undefined;
-  if (remote && remote.length > 0) return `git:${remote}`;
-  return `path:${createHash('sha256').update(localPath).digest('hex').slice(0, 16)}`;
 }
 
 // ── Subcommand: push (agent-bootstrap D6/G6/G8/G14) ─────────
@@ -1920,6 +1909,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'set-pull-strategy': return (await import('./sources-pull-strategy.ts')).runSetPullStrategy(engine, rest);
     case 'set-sync':   return (await import('./sources-sync-enabled.ts')).runSetSync(engine, rest);
     case 'refresh':    return (await import('./sources-refresh.ts')).runSourcesRefresh(engine, rest);
+    case 'refresh-hold': return (await import('./sources-refresh.ts')).runSourcesRefreshHold(engine, rest);
     case 'git-gap':    return (await import('./sources-git-gap.ts')).runSourcesGitGap(engine, rest);
     case 'host-repo':  return (await import('./sources-host-repo.ts')).runHostRepo(engine, rest);
     case 'reindex':    return (await import('./sources-reindex.ts')).runSourcesReindex(engine, rest);
@@ -2027,9 +2017,14 @@ Subcommands:
   host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>]
                                     Managed brains: host an empty source in a new bare repository with a gbrain-owned worktree; it becomes git-canonical.
   refresh <id> [--dry-run] [--wait-drain <s>] [--fetch-timeout-ms <ms>] [--resume|--abandon] [--json]
+                                    sources.refresh_hold=true holds new refresh calls in this brain (default off).
+                                    In-flight calls finish; restore the saved config value to resume starts.
                                     Managed brains: drain writes to the source's worktree, fast-forward
                                     it to its upstream (git merge --ff-only) and sync every source bound
                                     to it. --dry-run fetches and previews only.
+  refresh-hold get|clear [--json]    DB-only hold presence/value readback; clear restores absence only.
+  refresh-hold set --file <UTF-8-file> [--json]
+                                    Lossless hold value write (empty, dash-prefixed and special strings allowed).
   git-gap <id> [--sample <n>] [--json]
                                     Read-only: how far the database is from the commit at HEAD, page by page.
   reindex <id> --from-git [--dry-run | --apply --expect <hash>] [--json]

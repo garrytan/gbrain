@@ -3906,6 +3906,16 @@ More: [docs/guides/write-refusals.md#refresh_diverged](../../docs/guides/write-r
 
 More: [docs/guides/write-refusals.md#refresh_drain_timeout](../../docs/guides/write-refusals.md#refresh_drain_timeout)
 
+### refresh_held
+
+<a id="refresh_held"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The maintenance owner holds new sources refresh calls in this brain. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/live-sync.md#holding-refresh-starts](../../docs/guides/live-sync.md#holding-refresh-starts)
+
 ### refresh_lock_timeout
 
 <a id="refresh_lock_timeout"></a>

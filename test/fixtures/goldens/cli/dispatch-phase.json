@@ -1826,6 +1826,15 @@
             ]
           },
           {
+            "condition": "command === 'sources' && args[0] === 'refresh-hold' && !hasHelpFlag(args) && await (await import('../commands/sources-refresh-delegate.ts')).maybeDelegateSourcesRefreshHoldGet(loadConfig(), args.slice(1))",
+            "connectsEngine": false,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": false,
+            "unconditionalFor": []
+          },
+          {
             "condition": "command === 'sources' && args[0] === 'refresh' && !hasHelpFlag(args) && await (await import('../commands/sources-refresh-delegate.ts')).maybeDelegateSourcesRefresh(loadConfig(), args.slice(1))",
             "connectsEngine": false,
             "refusesThinClient": false,

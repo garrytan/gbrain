@@ -20,14 +20,19 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operations } from '../src/core/operations.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { parseRefreshArgs, runSourcesRefresh } from '../src/commands/sources-refresh.ts';
+import { parseRefreshArgs, printRefreshOutcome, runSourcesRefresh } from '../src/commands/sources-refresh.ts';
+import { runSources } from '../src/commands/sources.ts';
+import { configPath } from '../src/core/config.ts';
+import { withRequestConfigSnapshot } from '../src/core/config-snapshot.ts';
+import { OperationError } from '../src/core/ops/contract.ts';
+import { requestPersistenceAdministration, startPersistenceIpcServer } from '../src/core/persistence/ipc.ts';
 import { claimCoalescedGitEffects, claimPersistenceEffect } from '../src/core/persistence/effect-journal.ts';
-import { localHostId } from '../src/core/persistence/identity.ts';
+import { localHostId, registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
 import { tryAcquireNativeLock } from '../src/core/persistence/native-lock.ts';
 import { getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -46,6 +51,7 @@ import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-f
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { checkWorktreeRefreshStuck } from '../src/commands/doctor/checks/worktree-refresh.ts';
 import { commitFile, git, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
 
 const backends = testBackends();
@@ -74,6 +80,264 @@ const refusedWith = async (promise: Promise<unknown>, code: string) => {
   expect(error!.code).toBe(code);
   return error!;
 };
+
+async function holdCommand(f: RefreshFixture, ...args: string[]) {
+  const lines: string[] = [], log = console.log, exit = process.exit;
+  console.log = (...values) => { lines.push(values.join(' ')); };
+  // A missing dispatcher must fail the test, never terminate the test process.
+  process.exit = ((code) => { throw new Error(`unexpected CLI exit ${code}`); }) as typeof process.exit;
+  try {
+    await runSources(f.engine, ['refresh-hold', ...args]);
+    return JSON.parse(lines.at(-1)!);
+  } finally { console.log = log; process.exit = exit; }
+}
+
+/** Real DB/CLI-handler controller: file precedence, empty/dash values and in-flight completion are independently observed. */
+test('refresh hold controller saves DB-only state, drains, and restores byte-identical originals', () => each(async f => {
+  const key = 'sources.refresh_hold', valueFile = join(f.dir, 'hold-value');
+  mkdirSync(dirname(configPath()), { recursive: true });
+  const originals = [null, '', '-x', '\ufeff -quoted "value" $ & \\ 中文\n\n'];
+  try {
+    for (const [i, original] of originals.entries()) {
+      await f.engine.unsetConfig(key);
+      // This round passes admission before the controller captures an existing hold.
+      const target = f.push(`alpha/controller-${i}.md`, page('Controller', `round ${i}`));
+      let release!: () => void, entered!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const ready = new Promise<void>(resolve => { entered = resolve; });
+      const flight = refreshWorktree(f.engine, f.alpha, { hooks: { boundary: async point => {
+        if (point !== 'drained') return;
+        entered(); await gate;
+      } } });
+      // Surface an early rejection instead of hanging on a boundary that was never reached.
+      await Promise.race([ready, flight.then(() => { throw new Error('missing drained boundary'); })]);
+      let saved: { key: string; present: boolean; value: string | null };
+      try {
+        if (original !== null) await f.engine.setConfig(key, original);
+        writeFileSync(configPath(), JSON.stringify({ engine: 'pglite', sources: { refresh_hold: original === null ? 'true' : 'false' } }));
+        saved = await holdCommand(f, 'get', '--json');
+        expect(saved).toEqual({ key, present: original !== null, value: original });
+        writeFileSync(valueFile, 'true');
+        await holdCommand(f, 'set', '--file', valueFile);
+        expect(await holdCommand(f, 'get')).toEqual({ key, present: true, value: 'true' });
+        await refusedWith(refreshWorktree(f.engine, f.beta), 'refresh_held');
+      } finally { release(); }
+      expect((await flight).status).toBe('completed');
+      expect(f.head()).toBe(target); // drain in-flight before restoration
+      expect(await holdCommand(f, 'get')).toEqual({ key, present: true, value: 'true' }); // DB-only drift check
+      if (saved!.present) {
+        writeFileSync(valueFile, Buffer.from(saved!.value!, 'utf8'));
+        await holdCommand(f, 'set', '--file', valueFile);
+      } else await holdCommand(f, 'clear');
+      expect(await holdCommand(f, 'get')).toEqual(saved!);
+      const hex = await f.engine.executeRaw<{ hex: string }>("SELECT encode(convert_to(value,'UTF8'),'hex') AS hex FROM config WHERE key=$1", [key]);
+      if (original === null) expect(hex).toEqual([]);
+      else expect(hex[0].hex).toBe(Buffer.from(original).toString('hex'));
+    }
+  } finally { await f.engine.unsetConfig(key); }
+}), 180_000);
+
+test('refresh hold lossless writes reject malformed input without changing the DB', () => each(async f => {
+  const file = join(f.dir, 'value');
+  try {
+    await f.engine.setConfig('sources.refresh_hold', '-x');
+    for (const bytes of [Buffer.from([0xff]), Buffer.from('a\0b')]) {
+      writeFileSync(file, bytes);
+      await refusedWith(holdCommand(f, 'set', '--file', file), 'invalid_params');
+      expect(await f.engine.getConfig('sources.refresh_hold')).toBe('-x');
+    }
+    for (const args of [['set'], ['set', '--file'], ['set', '--file', file, '--unknown'], ['clear', '--unknown'], ['get', '--unknown']]) {
+      await refusedWith(holdCommand(f, ...args), 'invalid_params');
+      expect(await f.engine.getConfig('sources.refresh_hold')).toBe('-x');
+    }
+  } finally { await f.engine.unsetConfig('sources.refresh_hold'); }
+}));
+
+test('refresh hold readback and admission bypass a stale request configuration snapshot', () => each(async f => {
+  try {
+    await f.engine.setConfig('sources.refresh_hold', 'false');
+    await withRequestConfigSnapshot(f.engine, async () => {
+      expect(await f.engine.getConfig('sources.refresh_hold')).toBe('false');
+      await f.engine.executeRaw("UPDATE config SET value=$2 WHERE key=$1", ['sources.refresh_hold', 'true']);
+      expect(await f.engine.getConfig('sources.refresh_hold')).toBe('false');
+      expect(await holdCommand(f, 'get')).toEqual({ key: 'sources.refresh_hold', present: true, value: 'true' });
+      await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_held');
+      expect(await f.refreshRows()).toEqual([]);
+    });
+  } finally { await f.engine.unsetConfig('sources.refresh_hold'); }
+}));
+
+test('refresh hold leaves an existing orphan row and holder unchanged for adoption, resume and abandon', () => each(async f => {
+  f.push('alpha/orphan.md', page('Orphan', 'Pending upstream.'));
+  await expect(refreshWorktree(f.engine, f.alpha, { hooks: { boundary: point => {
+    if (point === 'fenced') throw new Error('fixture crash');
+  } } })).rejects.toThrow('fixture crash');
+  await disposePersistenceConsumer(f.engine);
+  const [orphan] = await f.refreshRows();
+  await f.engine.executeRaw("UPDATE persistence_worktree_refreshes SET state='fenced',completed_at=NULL WHERE id=$1::uuid", [orphan.id]);
+  const rows = () => f.engine.executeRaw('SELECT * FROM persistence_worktree_refreshes WHERE id=$1::uuid', [orphan.id]);
+  const before = await rows(), head = f.head(), tracking = git(f.root, 'rev-parse', '@{upstream}');
+  try {
+    await f.engine.setConfig('sources.refresh_hold', 'true');
+    for (const options of [{}, { resume: true }, { abandon: true }]) {
+      await refusedWith(refreshWorktree(f.engine, f.alpha, options), 'refresh_held');
+      expect(await rows()).toEqual(before);
+    }
+    expect(f.head()).toBe(head);
+    expect(git(f.root, 'rev-parse', '@{upstream}')).toBe(tracking);
+  } finally { await f.engine.unsetConfig('sources.refresh_hold'); }
+}));
+
+test('refresh hold permits ordinary sync and page writes', () => each(async f => {
+  try {
+    await f.engine.setConfig('sources.refresh_hold', 'true');
+    expect((await f.put(f.alpha, 'notes/held-write', page('Held write', 'Still publishes.'))).state).toBe('committed');
+    commitFile(f.root, 'alpha/held-sync.md', page('Held sync', 'Still indexes.'));
+    await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+    expect(await f.lastCommit(f.alpha)).toBe(f.head());
+    expect((await f.engine.getPage('held-sync', { sourceId: f.alpha }))?.compiled_truth).toContain('Still indexes');
+  } finally { await f.engine.unsetConfig('sources.refresh_hold'); }
+}), 180_000);
+
+test('refresh hold permits the consumer recovery scan of an existing syncing orphan', () => each(async f => {
+  try {
+    f.push('alpha/recover-held.md', page('Recover', 'Consumer recovery is not refresh admission.'));
+    await expect(refreshWorktree(f.engine, f.alpha, { hooks: { boundary: point => {
+      if (point === 'syncing') throw new Error('fixture syncing crash');
+    } } })).rejects.toThrow('fixture syncing crash');
+    await disposePersistenceConsumer(f.engine);
+    const [orphan] = await f.refreshRows();
+    await f.engine.executeRaw("UPDATE persistence_worktree_refreshes SET state='syncing',completed_at=NULL WHERE id=$1::uuid", [orphan.id]);
+    for (const id of [f.alpha, f.beta]) await performManagedSync(f.engine, { sourceId: id, noPull: true, noEmbed: true });
+    await disposePersistenceConsumer(f.engine);
+    await f.engine.executeRaw("UPDATE persistence_worktree_refreshes SET state='syncing',completed_at=NULL WHERE id=$1::uuid", [orphan.id]);
+    await f.engine.setConfig('sources.refresh_hold', 'true');
+    expect(await resumeWorktreeRefreshes(f.engine)).toBe(1);
+    expect(await f.refreshRows()).toMatchObject([{ state: 'completed', outcome: { completed_by: 'owner_recovery' } }]);
+  } finally { await f.engine.unsetConfig('sources.refresh_hold'); }
+}), 180_000);
+
+test('refresh hold structured inspection and restore guidance survive a real owner IPC roundtrip', () => each(async f => {
+  const brainId = randomUUID(), registration = await registerLocalWriter(f.engine, 'cli');
+  const socket = join(f.dir, 'owner.sock');
+  const binding = await startPersistenceIpcServer(socket, { brainId, dispatch: async () => ({}),
+    administer: async request => withVerifiedLocalRegistration(f.engine, registration,
+      () => runPersistenceAdministration(f.engine, request.operation, request.params)) });
+  expect(binding).not.toBeNull();
+  const log = console.log, lines: string[] = [];
+  _resetCliExitVerdictForTests();
+  try {
+    await f.engine.setConfig('sources.refresh_hold', 'true');
+    const error = await requestPersistenceAdministration(socket, { version: 1, kind: 'administration', brain_id: brainId,
+      operation: 'writer_refresh', params: { source_id: f.alpha }, registration }).then(() => null, e => e);
+    expect(error).toBeInstanceOf(OperationError);
+    expect(error.code).toBe('refresh_held');
+    console.log = (...values) => { lines.push(values.join(' ')); };
+    printRefreshOutcome({ error }, true);
+    const result = JSON.parse(lines.at(-1)!);
+    expect(result.fix).toMatchObject({ argv: ['gbrain', 'sources', 'refresh-hold', 'get', '--json'],
+      actor: 'agent', consent: [], requires_exclusive: false, next: 'run' });
+    expect(result.fix.why).toContain('set --file');
+    expect(result.fix.why).toContain('clear only for saved absence');
+    expect(currentExitCode()).toBe(1);
+    expect(await f.refreshRows()).toEqual([]);
+  } finally {
+    console.log = log; _resetCliExitVerdictForTests(); binding?.close();
+    await f.engine.unsetConfig('sources.refresh_hold');
+  }
+}));
+
+/**
+ * Protects the operator's refresh-only hold: every entry refuses before fetch,
+ * recovery, sync or a new fence; restoring an absent key permits the same work.
+ * Regresses if the admission read is removed/moved after precheck or bypassed by
+ * writer_refresh. Existing fence tests have no operator hold. Uses real engines,
+ * local Git and the existing boundary hook; no new production test seam.
+ */
+test('refresh hold refuses every entry before fetch and restores an absent config exactly', () => each(async f => {
+  const before = f.head(), requests = await f.requestCount();
+  const target = f.push('alpha/held.md', page('Held', 'A refresh must not fetch this while held.'));
+  const tracking = git(f.root, 'rev-parse', '@{upstream}');
+  try {
+    await f.engine.setConfig('sources.refresh_hold', 'true');
+    for (const options of [{}, { dryRun: true }, { resume: true }, { abandon: true }]) {
+      await refusedWith(refreshWorktree(f.engine, f.alpha, options), 'refresh_held');
+    }
+    const registration = await registerLocalWriter(f.engine, 'cli');
+    await refusedWith(withVerifiedLocalRegistration(f.engine, registration,
+      () => runPersistenceAdministration(f.engine, 'writer_refresh', { source_id: f.beta })), 'refresh_held');
+    expect(f.head()).toBe(before);
+    expect(git(f.root, 'rev-parse', '@{upstream}')).toBe(tracking);
+    expect(await f.refreshRows()).toEqual([]);
+    expect(await f.requestCount()).toBe(requests);
+    const doctor = await checkWorktreeRefreshStuck(f.engine);
+    expect(doctor.status).toBe('warn');
+    expect(doctor.message).toContain('sources.refresh_hold');
+    await f.engine.unsetConfig('sources.refresh_hold');
+    expect(await f.engine.getConfig('sources.refresh_hold')).toBeNull();
+    expect((await refreshWorktree(f.engine, f.alpha)).status).toBe('completed');
+    expect(f.head()).toBe(target);
+  } finally { await f.engine.unsetConfig('sources.refresh_hold'); }
+}));
+
+test('refresh hold preserves a pre-existing false value and fails closed on malformed config', () => each(async f => {
+  try {
+    await f.engine.setConfig('sources.refresh_hold', 'false');
+    expect((await refreshWorktree(f.engine, f.alpha, { dryRun: true })).status).toBe('dry_run');
+    await f.engine.setConfig('sources.refresh_hold', 'typo');
+    await refusedWith(refreshWorktree(f.engine, f.beta), 'refresh_held');
+    await f.engine.setConfig('sources.refresh_hold', 'false');
+    expect(await f.engine.getConfig('sources.refresh_hold')).toBe('false');
+    expect((await refreshWorktree(f.engine, f.beta, { dryRun: true })).status).toBe('dry_run');
+    expect((await checkWorktreeRefreshStuck(f.engine)).status).toBe('ok');
+  } finally { await f.engine.unsetConfig('sources.refresh_hold'); }
+}));
+
+test('refresh hold lets an admitted round finish while eight later calls are refused', () => each(async f => {
+  const target = f.push('alpha/inflight.md', page('In flight', 'The admitted refresh may finish normally.'));
+  try {
+    const result = await refreshWorktree(f.engine, f.alpha, { hooks: { boundary: async point => {
+      if (point !== 'drained') return;
+      await f.engine.setConfig('sources.refresh_hold', 'true');
+      const later = await Promise.allSettled(Array.from({ length: 8 }, () => refreshWorktree(f.engine, f.beta)));
+      expect(later.every(r => r.status === 'rejected' && r.reason.code === 'refresh_held')).toBe(true);
+    } } });
+    expect(result.status).toBe('completed');
+    expect(f.head()).toBe(target);
+    expect((await f.refreshRows()).every(r => r.state === 'completed')).toBe(true);
+    expect(await f.engine.getConfig('sources.refresh_hold')).toBe('true');
+  } finally { await f.engine.unsetConfig('sources.refresh_hold'); }
+}));
+
+test('refresh hold prints a typed JSON refusal and nonzero CLI verdict without a fence', () => each(async f => {
+  const out: string[] = [], log = console.log;
+  _resetCliExitVerdictForTests();
+  try {
+    await f.engine.setConfig('sources.refresh_hold', 'true');
+    console.log = (line: string) => { out.push(line); };
+    await runSourcesRefresh(f.engine, [f.alpha, '--json']);
+    expect(JSON.parse(out[0]).code).toBe('refresh_held');
+    expect(currentExitCode()).toBe(1);
+    expect(await f.refreshRows()).toEqual([]);
+  } finally { console.log = log; _resetCliExitVerdictForTests(); await f.engine.unsetConfig('sources.refresh_hold'); }
+}));
+
+test('refresh hold read failure propagates before Git or refresh state can change', () => each(async f => {
+  const before = f.head(), tracking = git(f.root, 'rev-parse', '@{upstream}');
+  f.push('alpha/unread.md', page('Unread', 'An unavailable hold must not admit a refresh.'));
+  const failure = new Error('synthetic config read unavailable');
+  const reader = new Proxy(f.engine, { get(target, key) {
+    if (key === 'getConfig') return (name: string) => name === 'sources.refresh_hold' ? Promise.reject(failure) : target.getConfig(name);
+    if (key === 'executeRaw') return (sql: string, params?: unknown[]) => params?.[0] === 'sources.refresh_hold' && sql.includes('config')
+      ? Promise.reject(failure) : target.executeRaw(sql, params);
+    const value = Reflect.get(target, key, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  await expect(refreshWorktree(reader, f.alpha)).rejects.toBe(failure);
+  expect(f.head()).toBe(before);
+  expect(git(f.root, 'rev-parse', '@{upstream}')).toBe(tracking);
+  expect(await f.refreshRows()).toEqual([]);
+}));
 test('refresh timer bounds reject overflow and accept the maximum delay', () => each(async f => {
   await refusedWith(refreshWorktree(f.engine, f.alpha, { fetchTimeoutMs: 2 ** 31 }), 'invalid_params');
   const drain = parseRefreshArgs([f.alpha, '--wait-drain', String((2 ** 31) / 1000), '--dry-run']).options;

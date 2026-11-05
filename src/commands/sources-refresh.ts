@@ -9,12 +9,37 @@
  * --json) with the next command filled in; exit 1 means it did not finish.
  */
 import type { BrainEngine } from '../core/engine.ts';
+import { readFileSync } from 'node:fs';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { cliRenderContext, toAgentError } from '../core/agent-output.ts';
-import { refreshWorktree, type RefreshOptions, type WorktreeRefreshResult } from '../core/persistence/worktree-refresh.ts';
+import { REFRESH_HOLD_KEY, readRefreshHoldValue, refreshWorktree, type RefreshOptions, type WorktreeRefreshResult } from '../core/persistence/worktree-refresh.ts';
 
 const USAGE = 'Usage: gbrain sources refresh <source-id> [--dry-run] [--wait-drain <seconds>] [--fetch-timeout-ms <ms>] [--resume | --abandon] [--json]';
+
+/** This one DB key needs presence-aware reads and lossless writes; config's global precedence stays unchanged. */
+export async function runSourcesRefreshHold(engine: BrainEngine, args: string[]): Promise<void> {
+  const usage = 'Usage: gbrain sources refresh-hold get|clear [--json] | set --file <UTF-8-file> [--json]';
+  const [command, ...rest] = args;
+  if ((command === 'get' || command === 'clear') && (rest.length === 0 || rest.length === 1 && rest[0] === '--json')) {
+    if (command === 'clear') await engine.unsetConfig(REFRESH_HOLD_KEY);
+  } else if (command === 'set' && rest[0] === '--file' && rest[1] !== undefined
+    && (rest.length === 2 || rest.length === 3 && rest[2] === '--json')) {
+    let value: string;
+    try {
+      // Preserve BOM, whitespace and trailing newlines; reject invalid UTF-8 rather than replacing bytes.
+      value = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(rest[1]));
+      if (value.includes('\0')) throw new Error('NUL is not a database text value.');
+    } catch {
+      throw new OperationError('invalid_params', 'The hold value file must be readable UTF-8 without NUL bytes. Nothing was written.', usage);
+    }
+    await engine.setConfig(REFRESH_HOLD_KEY, value);
+  } else {
+    throw new OperationError('invalid_params', 'Invalid sources refresh-hold arguments. Nothing was written.', usage);
+  }
+  const value = await readRefreshHoldValue(engine);
+  console.log(JSON.stringify({ key: REFRESH_HOLD_KEY, present: value !== null, value }));
+}
 
 function numberFlag(args: string[], flag: string): number | undefined {
   const index = args.indexOf(flag);
