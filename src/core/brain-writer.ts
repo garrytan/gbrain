@@ -22,6 +22,7 @@ import { loadBoundedYaml as yamlLoad } from './data-frontmatter.ts';
 import { existsSync, readFileSync, readdirSync, copyFileSync, writeFileSync, mkdirSync, lstatSync } from 'fs';
 import { join, relative, resolve, dirname, basename, isAbsolute } from 'path';
 import type { BrainEngine } from './engine.ts';
+import { isConnectorSourceKind } from './persistence/connector-kinds.ts';
 import type { ProgressReporter } from './progress.ts';
 import { gbrainPath } from './config.ts';
 import { collectGitVisibleFiles } from './git-visible-files.ts';
@@ -94,8 +95,9 @@ export interface PerSourceReport {
   /** Did this source finish the walk, get interrupted, or never start?
    * 'scanned' = full walk completed.
    * 'partial' = deadline/abort fired mid-walk; counts reflect prefix only.
-   * 'skipped' = source was never visited (outer loop broke before reaching it). */
-  status: 'scanned' | 'partial' | 'skipped';
+   * 'skipped' = source was never visited (outer loop broke before reaching it).
+   * 'missing' = the registered local_path does not exist, so nothing was checked (#7889). */
+  status: 'scanned' | 'partial' | 'skipped' | 'missing';
   /** Count of .md files actually parsed (numerator for "scanned ~N of M" doctor message).
    * Distinct from `total` (which counts ERRORS) and `ignoredMissingOpen`. */
   files_scanned: number;
@@ -117,6 +119,8 @@ export interface AuditReport {
    * this to render the warn message and to ensure `ok` is false even when the
    * scanned prefix happened to be clean (codex C2 fix). */
   partial: boolean;
+  /** Ids of sources whose registered directory is missing (`status: 'missing'`); `ok` is false when any is. */
+  missing_sources?: string[];
   /** Source id where deadline/abort fired mid-walk, or null when no partial. */
   aborted_at_source: string | null;
 }
@@ -575,6 +579,7 @@ export function writeBrainPage(
 interface SourceRow {
   id: string;
   local_path: string | null;
+  kind: string | null;
 }
 
 export interface ScanOpts {
@@ -697,8 +702,8 @@ export async function scanBrainSources(
     }
     if (!src.local_path) continue;
     if (!existsSync(src.local_path)) {
-      // Source registered but path is missing on disk; surface as a zero-row
-      // entry with a synthetic SCAN_PATH_MISSING note via warn-and-skip.
+      // #5673: a connector syncs from its provider, so a gone local_path is a leftover pointer with nothing on disk to scan.
+      if (isConnectorSourceKind(src.kind)) continue;
       perSource.push({
         source_id: src.id,
         source_path: src.local_path,
@@ -706,7 +711,7 @@ export async function scanBrainSources(
         errors_by_code: {},
         sample: [],
         ignoredMissingOpen: 0,
-        status: 'scanned',
+        status: 'missing',
         files_scanned: 0,
       });
       continue;
@@ -795,12 +800,13 @@ export async function scanBrainSources(
   }
 
   const hasPartialOrSkipped = perSource.some(r => r.status === 'partial' || r.status === 'skipped');
+  const missingSources = perSource.filter(r => r.status === 'missing').map(r => r.source_id);
 
   return {
     // Partial scans can never be 'ok' even when the scanned prefix is clean
     // (codex outside-voice C2 — a clean prefix doesn't speak for the
     // unscanned suffix).
-    ok: grandTotal === 0 && !hasPartialOrSkipped,
+    ok: grandTotal === 0 && !hasPartialOrSkipped && missingSources.length === 0,
     total: grandTotal,
     errors_by_code: totals,
     recoverability_by_code: recoverabilityTotals,
@@ -808,6 +814,7 @@ export async function scanBrainSources(
     scanned_at: new Date().toISOString(),
     ignored_missing_open: ignoredMissingOpen || undefined,
     partial: hasPartialOrSkipped,
+    ...(missingSources.length ? { missing_sources: missingSources } : {}),
     aborted_at_source: abortedAtSource,
   };
 }
@@ -1001,7 +1008,7 @@ export function walkDir(
 async function listSources(engine: BrainEngine, sourceId?: string): Promise<SourceRow[]> {
   if (sourceId) {
     const rows = await engine.executeRaw<SourceRow>(
-      `SELECT id, local_path FROM sources WHERE id = $1`,
+      `SELECT id, local_path, config->>'kind' AS kind FROM sources WHERE id = $1`,
       [sourceId],
     );
     return rows;
@@ -1011,11 +1018,11 @@ async function listSources(engine: BrainEngine, sourceId?: string): Promise<Sour
   // pickSoleNonDefaultSource).
   try {
     return await engine.executeRaw<SourceRow>(
-      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE ORDER BY id`,
+      `SELECT id, local_path, config->>'kind' AS kind FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE ORDER BY id`,
     );
   } catch {
     return engine.executeRaw<SourceRow>(
-      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL ORDER BY id`,
+      `SELECT id, local_path, config->>'kind' AS kind FROM sources WHERE local_path IS NOT NULL ORDER BY id`,
     );
   }
 }

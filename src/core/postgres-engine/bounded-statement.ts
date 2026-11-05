@@ -22,6 +22,7 @@
 import type postgres from '#postgres';
 import { reserveWithCancellation } from './cancellation.ts';
 import { READ_WRITE_BEGIN } from './read-write-transactions.ts';
+import type { CheckoutGauge } from '../pool-gauge.ts';
 
 type Sql = ReturnType<typeof postgres>;
 export type RunStatement = <T>(conn: Sql, sql: string, params: unknown[] | undefined, opts: { signal?: AbortSignal; prepare?: boolean }) => Promise<T[]>;
@@ -54,3 +55,28 @@ export async function runBoundedStatement<T>(conn: Sql, sql: string, params: unk
     reserved.release();
   }
 }
+
+/**
+ * #6318: an engine read issued for a bounded preparation (read-deadline.ts) that would otherwise run on the shared pool
+ * in autocommit. It runs on one reserved connection as `BEGIN READ ONLY; SET LOCAL statement_timeout = <time left>`
+ * (one simple statement), the read's own statements and `COMMIT`, pipelined: the server ends a read still waiting on
+ * a lock at the deadline (57014), through a transaction-mode pooler, and the answer returns without waiting for
+ * COMMIT's round trip. A failed read leaves the transaction aborted, and COMMIT then rolls it back.
+ */
+// engine-sql-ok: transaction control around a caller's read (BEGIN READ ONLY / SET LOCAL statement_timeout / COMMIT), no storage-domain SQL
+export async function runDeadlineRead<T>(conn: Sql, deadlineAt: number, run: (tx: Sql) => Promise<T>, gauge: CheckoutGauge): Promise<T> {
+  gauge.acquire('reserved');
+  const reserved = await conn.reserve().catch(error => { gauge.release('reserved'); throw error; });
+  gauge.checkedOut();
+  const ms = Math.max(1, Math.ceil(deadlineAt - Date.now()));
+  const opened = reserved.unsafe(`BEGIN READ ONLY; SET LOCAL statement_timeout = ${ms}`).simple().execute().then(() => undefined, (error: unknown) => error);
+  try {
+    const result = await run(reserved as unknown as Sql);
+    const failed = await opened;
+    if (failed) throw failed;
+    return result;
+  } finally {
+    void reserved.unsafe('COMMIT').execute().then(() => undefined, () => undefined).finally(() => { reserved.release(); gauge.release('reserved'); });
+  }
+}
+

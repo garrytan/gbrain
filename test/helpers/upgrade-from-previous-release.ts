@@ -72,6 +72,7 @@ export function expectedDefaultSource(shape: BrainShape): Record<string, unknown
     pull_strategy: 'rebase',
     page_count: 1,
     last_sync_at: null,
+    archived: false,
   };
 }
 
