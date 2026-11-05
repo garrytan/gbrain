@@ -69,19 +69,15 @@ export async function performPlainDirectorySync(engine: BrainEngine, opts: SyncO
   const empty = { fromCommit: null, toCommit: '', modified: 0, deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [] };
   serr(`[sync] ${root} is a plain directory, not a Git checkout, so sync imports its files into source ${sourceId}; a file removed from it keeps its page.`);
   const { runImport, collectSyncableFiles } = await import('../import.ts');
-  const files = opts.dryRun || managed
-    ? collectSyncableFiles(root, { strategy: opts.strategy ?? 'markdown', includeHidden: opts.includeHidden, metafilePages: await readMetafilePagesMode(engine) })
-      .map(abs => relative(root, abs)).filter(path => !matchesAnyGlob(path, exclude))
-    : [];
-  const reserved = new Set(managed ? files.filter(isReservedSkillBundlePath) : []);
   if (opts.dryRun) {
-    slog(`Plain-directory dry run: ${files.length - reserved.size} file(s) would be imported from ${root}.`);
-    return { ...empty, status: 'dry_run', added: files.length - reserved.size };
+    const files = collectSyncableFiles(root, { strategy: opts.strategy ?? 'markdown', includeHidden: opts.includeHidden, metafilePages: await readMetafilePagesMode(engine) })
+      .map(abs => relative(root, abs)).filter(path => !matchesAnyGlob(path, exclude) && !(managed && isReservedSkillBundlePath(path)));
+    slog(`Plain-directory dry run: ${files.length} file(s) would be imported from ${root}.`);
+    return { ...empty, status: 'dry_run', added: files.length };
   }
-  if (reserved.size) serr(`[sync] Left ${reserved.size} reserved skill file(s) (skills/, skillpack.json) to the shared skill publisher; import never publishes skills.`);
   const keyless = loadConfig()?.embedding_disabled === true || (await engine.getConfig('embedding_disabled')) === 'true';
   const result = await runImport(engine, [root, ...(opts.noEmbed || keyless ? ['--no-embed'] : [])],
-    { signal: opts.signal, sourceId, strategy: opts.strategy, exclude, includeHidden: opts.includeHidden, heldPaths: reserved });
+    { signal: opts.signal, sourceId, strategy: opts.strategy, exclude, includeHidden: opts.includeHidden, ...(managed ? { heldPaths: { has: isReservedSkillBundlePath } } : {}) });
   if (result.errors > 0) return { ...empty, status: 'blocked_by_failures', added: result.imported, chunksCreated: result.chunksCreated, failedFiles: result.errors };
   // A managed brain fences source checkpoints to coordinated writers; the classic import stamps last_sync_at itself.
   if (managed) {

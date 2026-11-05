@@ -3,11 +3,13 @@
  * plus skills/<name>/SKILL.md). Plain-directory sync must leave those reserved paths to the shared skill publisher, the
  * way managed Git sync discovery does, instead of handing them to the importer, which refuses each one with
  * skill_bundle_required and blocks the source for good.
- * Fails when: the sync after the export ends blocked_by_failures, the dry run counts the pack's files, or the sync
- * writes the pack into pages or the shared skill catalog.
+ * Fails when: the sync after the export ends blocked_by_failures, the dry run counts the pack's files, the sync
+ * writes the pack into pages or the shared skill catalog, or a skill the publisher writes while the sync walks the
+ * directory reaches the importer and blocks the run.
  */
-import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { afterAll, beforeAll, expect, spyOn, test } from 'bun:test';
+import * as fs from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -53,6 +55,24 @@ test('a plain directory holding the exported memory pack syncs, and the dry run 
       expect(source?.last_sync_at).not.toBeNull();
       expect(await engine.executeRaw("SELECT slug FROM pages WHERE source_id='default' AND (slug ILIKE 'skills/%' OR slug ILIKE 'skillpack%')")).toEqual([]);
       expect(await catalog()).toEqual(before);
+
+      const realReaddir = fs.readdirSync;
+      let published = false;
+      const readdir = spyOn(fs, 'readdirSync').mockImplementation(((path: fs.PathLike, ...rest: unknown[]) => {
+        const entries = (realReaddir as (...args: unknown[]) => unknown)(path, ...rest);
+        if (!published && String(path) === fs.realpathSync(root) && new Error().stack?.includes('collectSyncableFiles')) {
+          published = true;
+          mkdirSync(join(root, 'team-example', 'skills', 'late-example'), { recursive: true });
+          writeFileSync(join(root, 'team-example', 'skills', 'late-example', 'SKILL.md'), '---\nname: late-example\n---\n\nPublished while the sync runs.\n');
+        }
+        return entries;
+      }) as typeof fs.readdirSync);
+      try {
+        expect(await performSync(engine, { sourceId: 'default', noPull: true, noEmbed: true })).toMatchObject({ status: 'synced' });
+      } finally { readdir.mockRestore(); }
+      expect(published).toBe(true);
+      expect(await performSync(engine, { sourceId: 'default', noPull: true, noEmbed: true })).toMatchObject({ status: 'synced' });
+      expect(await engine.executeRaw("SELECT slug FROM pages WHERE source_id='default' AND (slug ILIKE 'skills/%' OR slug ILIKE '%/skills/%')")).toEqual([]);
     });
   } finally { rmSync(home, { recursive: true, force: true }); }
 }, 180_000);
