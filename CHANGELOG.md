@@ -27,13 +27,14 @@ Git stays the parent. A withdrawal is now a page write, published to Git before 
 | Remembering that claim again with an entity | two copies | the entity row is written and the unattributed row struck in the same publication |
 | A member forgets a fact on their own member page | withdrawn for that page | unchanged: the withdrawal stays on that page, and other members' copies stay active |
 
-A forget now waits for the source's writer the way `remember` does. With the writer unavailable it returns the pending-write receipt, and the fact is still recalled until it publishes. With `sync.write_through` off, from a sandboxed subagent, or on a source with no canonical owner, a forget of a claim a page file carries is refused (`sync_write_through_off`, `subagent_sandbox`, `unbound_source`) instead of withdrawing it in the database only; a claim only database-only pages carry is still withdrawn. Migration v287 adds the multi-page recovery record (one record restores every file of an interrupted publication); it rewrites no data.
+`forget_fact` on a fact that already expired (superseded, consolidated or dropped from its page) still records the withdrawal and strikes the page row, so a later import can't bring it back, then answers `fact_already_expired`. A forget now waits for the source's writer the way `remember` does. With the writer unavailable it returns the pending-write receipt, and the fact is still recalled until it publishes. With `sync.write_through` off, from a sandboxed subagent, or on a source with no canonical owner, a forget of a claim a page file carries is refused (`sync_write_through_off`, `subagent_sandbox`, `unbound_source`) instead of withdrawing it in the database only; a claim only database-only pages carry is still withdrawn. Migration v287 adds the multi-page recovery record (one record restores every file of an interrupted publication); it rewrites no data.
 
 ### Review lists and review decisions through the page door (#7791, #7797)
 
 - `extraction_pending` gains two lists. `unattributed` (on by default) lists active facts saved without an entity, each with the relink action. `possible_duplicates` (opt-in through `include`) flags new entity pages whose name is a typo or acronym of another's. It only flags: nothing is merged and no identity is written.
 - `extraction_review` promote and reject are now page-door writes (`edit_page` of the frontmatter, `delete_page`), so on a source with a repository each decision is a Git commit. A new `distinct` action records that two flagged pages are different entities.
 - Remote reads of the unattributed list hide facts the caller can't read, and quote fact text below the owner's tier as source material, as `recall` does.
+- A promote or reject batch keeps going when one slug fails, returns `partial` with each slug's outcome, and `gbrain extraction-review` exits 1 for a partial batch.
 
 ### Recall weighting, entity grouping and the keyless claim lane (#7803, #7810)
 
