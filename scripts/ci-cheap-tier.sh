@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test.yml cheap-tier aggregator (docs/ci-event-parity.md#full-ci-on-pull-requests).
-# Inputs: job results in GITLEAKS SECURITY AUDIT VERIFY TYPECHECK STRESS NATIVE
+# Inputs: job results in CHANGES GITLEAKS SECURITY AUDIT VERIFY TYPECHECK STRESS NATIVE
 # PERSISTENCE, and the selectors NATIVE_SCOPE and CONVERGENCE.
 # Every cheap lane must succeed. The native and persistence lanes may be
 # skipped only when their selector left them out (native scope smoke,
@@ -16,7 +16,7 @@ trunk_skipped() {
   [ "$1" = skipped ] && [ "$2" = false ] || return 1
   echo "  skipped by Trunk Dynamic CI (verdict false)"
 }
-for row in "gitleaks|${GITLEAKS:-}|" "security-regressions|${SECURITY:-}|${DCI_SECURITY:-}" "dependency-audit|${AUDIT:-}|" \
+for row in "changes|${CHANGES:-}|" "gitleaks|${GITLEAKS:-}|" "security-regressions|${SECURITY:-}|${DCI_SECURITY:-}" "dependency-audit|${AUDIT:-}|" \
   "verify|${VERIFY:-}|" "typecheck|${TYPECHECK:-}|" "stress-changed-tests|${STRESS:-}|${DCI_STRESS:-}"; do
   IFS='|' read -r name result verdict <<< "$row"
   echo "$name=$result"

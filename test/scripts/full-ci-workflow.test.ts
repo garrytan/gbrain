@@ -220,7 +220,7 @@ describe('full CI on pull requests', () => {
   });
 
   describe('cheap-tier aggregator', () => {
-    const green = { GITLEAKS: 'success', SECURITY: 'success', AUDIT: 'success', VERIFY: 'success', TYPECHECK: 'success', STRESS: 'success',
+    const green = { CHANGES: 'success', GITLEAKS: 'success', SECURITY: 'success', AUDIT: 'success', VERIFY: 'success', TYPECHECK: 'success', STRESS: 'success',
       NATIVE: 'skipped', NATIVE_SCOPE: 'smoke', PERSISTENCE: 'skipped', CONVERGENCE: 'skip' };
     const aggregate = (env: Record<string, string>) => {
       const dir = mkdtempSync(join(tmpdir(), 'gbrain-cheap-tier-'));
@@ -241,7 +241,7 @@ describe('full CI on pull requests', () => {
       expect(aggregate({ ...green, NATIVE: 'success', NATIVE_SCOPE: 'primary', PERSISTENCE: 'success', CONVERGENCE: 'run' }).status).toBe(0);
     });
 
-    test.each(['GITLEAKS', 'SECURITY', 'AUDIT', 'VERIFY', 'TYPECHECK', 'STRESS'])('%s not succeeding fails the tier', lane => {
+    test.each(['CHANGES', 'GITLEAKS', 'SECURITY', 'AUDIT', 'VERIFY', 'TYPECHECK', 'STRESS'])('%s not succeeding fails the tier', lane => {
       for (const result of ['failure', 'cancelled', 'skipped', '']) {
         expect(aggregate({ ...green, [lane]: result }).status, `${lane}=${result}`).toBe(1);
       }
@@ -261,6 +261,11 @@ describe('full CI on pull requests', () => {
       expect(aggregate({ ...green, ...selected, [lane]: 'skipped', [verdict]: 'false' }).status).toBe(0);
       for (const other of ['', 'true']) expect(aggregate({ ...green, ...selected, [lane]: 'skipped', [verdict]: other }).status, other).toBe(1);
       expect(aggregate({ ...green, ...selected, [lane]: 'failure', [verdict]: 'false' }).status).toBe(1);
+    });
+
+    test('a failed changes job fails the tier even when Trunk said false for every gated lane', () => {
+      expect(aggregate({ ...green, CHANGES: 'failure', NATIVE: 'skipped', NATIVE_SCOPE: '', PERSISTENCE: 'skipped', CONVERGENCE: '',
+        DCI_NATIVE: 'false', DCI_PERSISTENCE: 'false', SECURITY: 'skipped', DCI_SECURITY: 'false', STRESS: 'skipped', DCI_STRESS: 'false' }).status).toBe(1);
     });
   });
 });

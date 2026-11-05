@@ -39,6 +39,10 @@ describe('check-dynamic-ci.ts', () => {
     ['a gated job adds always()', doc => { doc.jobs['security-regressions']!.if = doc.jobs['security-regressions']!.if.replace("!= 'false' && ", "!= 'false' && always() && "); }, /no other status function/],
     ['a gated job forgets to need the filter', doc => { doc.jobs['security-regressions']!.needs = []; }, /security-regressions: a gated job must list dynamic-ci in needs/],
     ['an aggregate is gated', doc => { doc.jobs['dynamic-ci']!.outputs['full-suite'] = '${{ steps.dynamic-ci.outputs.full-suite }}'; filterStep(doc).with['job-keys'] += ',full-suite'; }, /full-suite: merge and release aggregates are never gated/],
+    ['the dynamic-ci step can fail the job', doc => { delete filterStep(doc)['continue-on-error']; }, /needs continue-on-error: true/],
+    ['the dynamic-ci step has no id', doc => { delete filterStep(doc).id; }, /the dynamic-ci step needs an id/],
+    ['an output names no job', doc => { doc.jobs['dynamic-ci']!.outputs.ghost = '${{ steps.dynamic-ci.outputs.ghost }}'; filterStep(doc).with['job-keys'] += ',ghost'; }, /output ghost names no job/],
+    ['a gated job ORs past the gate', doc => { doc.jobs['native-locks']!.if = doc.jobs['native-locks']!.if.replace(/ \}\}$/, " || github.event_name == 'push' }}"); }, /native-locks: wrap the condition after the gate prefix in parentheses/],
     ['a non-aggregate job reads the verdicts', doc => { doc.jobs.verify!.needs = ['dynamic-ci']; }, /verify: needs dynamic-ci but is not one of its outputs/],
   ])('fails when %s', (_, mutate, message) => {
     const problems = broken(mutate);

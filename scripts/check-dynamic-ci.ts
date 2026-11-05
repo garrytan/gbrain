@@ -13,12 +13,13 @@
  *     `if: github.event_name == 'pull_request'`, in a workflow that has a
  *     pull_request trigger, with the action pinned to a commit SHA, the token
  *     from secrets.TRUNK_API_TOKEN, and `job-keys` naming exactly the jobs
- *     its `outputs` re-export as `steps.<id>.outputs.<key>`;
+ *     its `outputs` re-export as `steps.<id>.outputs.<key>`, and
+ *     `continue-on-error: true` on that step so a failed step reads as "run";
  *   - a gated job (one whose key is a filter output and that needs the filter)
  *     has an `if` that starts `!cancelled() && needs.<filter>.outputs.<key>
  *     != 'false' &&`, requires `needs.<other>.result == 'success'` for each
- *     other job it needs (what the implicit success() checked before), and
- *     uses no other status function;
+ *     other job it needs (what the implicit success() checked before), uses
+ *     no other status function, and has no top-level || after the prefix;
  *   - every other job that needs a filter only reads its outputs: its `if`
  *     starts with always(), and it is not a filter output;
  *   - every filter output is a job that needs that filter, and no merge or
@@ -32,7 +33,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { load } from 'js-yaml';
 
-type Step = { id?: string; uses?: string; with?: Record<string, unknown> };
+type Step = { id?: string; uses?: string; with?: Record<string, unknown>; 'continue-on-error'?: unknown };
 type Job = { if?: unknown; needs?: string | string[]; outputs?: Record<string, unknown>; steps?: Step[] };
 type Workflow = { on?: unknown; jobs?: Record<string, Job> };
 
@@ -44,6 +45,20 @@ const expr = (value: unknown) => String(value ?? '').trim().replace(/^\$\{\{\s*(
 const needsOf = (job: Job) => (job.needs === undefined ? [] : Array.isArray(job.needs) ? job.needs : [job.needs]);
 const hasPullRequest = (on: unknown) =>
   on === 'pull_request' || (Array.isArray(on) && on.includes('pull_request')) || (typeof on === 'object' && on !== null && 'pull_request' in on);
+
+function topLevelOr(expression: string): boolean {
+  let depth = 0;
+  let quoted = false;
+  for (let i = 0; i < expression.length; i++) {
+    const c = expression[i];
+    if (c === "'") quoted = !quoted;
+    else if (quoted) continue;
+    else if (c === '(') depth++;
+    else if (c === ')') depth--;
+    else if (depth === 0 && c === '|' && expression[i + 1] === '|') return true;
+  }
+  return false;
+}
 
 export function checkWorkflow(file: string, doc: Workflow): string[] {
   const problems: string[] = [];
@@ -57,6 +72,7 @@ export function checkWorkflow(file: string, doc: Workflow): string[] {
     if (!hasPullRequest(doc.on)) problems.push(`${at}: the workflow has no pull_request trigger, so it carries merge or release evidence and must not filter jobs`);
     if (!/^trunk-io\/dynamic-ci@[0-9a-f]{40}$/.test(step.uses!)) problems.push(`${at}: pin ${step.uses} to a full commit SHA`);
     if (String(step.with?.token ?? '').trim() !== '${{ secrets.TRUNK_API_TOKEN }}') problems.push(`${at}: the token must be \${{ secrets.TRUNK_API_TOKEN }}`);
+    if (step['continue-on-error'] !== true) problems.push(`${at}: the dynamic-ci step needs continue-on-error: true, so a Trunk or runner failure leaves the outputs empty (run) instead of a red check on the head`);
     if (!step.id) { problems.push(`${at}: the dynamic-ci step needs an id`); continue; }
     const outputs = Object.keys(job.outputs ?? {}).sort();
     const keys = String(step.with?.['job-keys'] ?? '').split(',').map(k => k.trim()).filter(Boolean).sort();
@@ -90,6 +106,7 @@ export function checkWorkflow(file: string, doc: Workflow): string[] {
       }
       const rest = condition.slice(prefix.length);
       if (/\b(?:always|success|failure|cancelled)\(\)/.test(rest)) problems.push(`${at}: no other status function may follow the gate prefix`);
+      if (topLevelOr(rest)) problems.push(`${at}: wrap the condition after the gate prefix in parentheses; a top-level || would run the job past a 'false' verdict or a failed need`);
       for (const other of needs.filter(n => n !== filter)) {
         if (!rest.includes(`needs.${other}.result == 'success'`)) problems.push(`${at}: add needs.${other}.result == 'success' after the gate prefix; !cancelled() drops the implicit success() that kept the job from running when ${other} failed`);
       }
