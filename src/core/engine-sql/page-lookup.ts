@@ -64,8 +64,9 @@ export async function findPages(exec: ScopedRead, query: FindPagesQuery): Promis
   };
 }
 
-const normalizeTypeCount = compileRowNormalizer<{ source_id: string; type: string; pages: number }>({ pages: 'bigint' });
-const normalizeDistinct = compileRowNormalizer<{ grp: string | null; is_total: boolean; pages: number; distinct_slugs: number }>({
+const normalizeCount = compileRowNormalizer<{
+  kind: string; source_id: string | null; type: string | null; types: string[] | null; pages: number; distinct_slugs: number;
+}>({
   pages: 'bigint', distinct_slugs: 'bigint',
 });
 
@@ -74,36 +75,64 @@ export async function countPagesBy(exec: ScopedRead, query: PageCountQuery, grou
     ? sqlFragment`AND COALESCE(p.effective_date, p.updated_at, p.created_at) >= ${query.since}::text::timestamptz`
     : sqlFragment``;
   const where = sqlFragment`${visiblePages(query)} ${since}`;
-  const bySourceType = (await exec.run(sqlFragment`
-    SELECT p.source_id, p.type, count(*) AS pages
-      FROM pages p
-      JOIN sources s ON s.id = p.source_id
+  // One statement, including the type inventory passed to the JS grouper.
+  // A second read can see inserts/deletes/type changes even inside a READ
+  // COMMITTED transaction. Do not change the caller's transaction isolation.
+  const statement = !groupTypes ? sqlFragment`
+    SELECT CASE WHEN GROUPING(p.source_id) = 1 THEN 'total' ELSE 'source_type' END AS kind,
+           p.source_id, p.type, NULL::text[] AS types, count(*) AS pages,
+           count(DISTINCT p.slug COLLATE "C") AS distinct_slugs
+      FROM pages p JOIN sources s ON s.id = p.source_id
      WHERE ${where}
-     GROUP BY p.source_id, p.type
-  `)).rows.map(normalizeTypeCount);
-  if (!groupTypes) {
-    const [total] = (await exec.run(sqlFragment`
-      SELECT NULL::text AS grp, true AS is_total, count(*) AS pages, count(DISTINCT p.slug COLLATE "C") AS distinct_slugs
-        FROM pages p
-        JOIN sources s ON s.id = p.source_id
+     GROUP BY GROUPING SETS ((p.source_id, p.type), ())
+  ` : sqlFragment`
+    WITH visible AS MATERIALIZED (
+      SELECT p.source_id, p.type, p.slug COLLATE "C" AS slug
+        FROM pages p JOIN sources s ON s.id = p.source_id
        WHERE ${where}
-    `)).rows.map(normalizeDistinct);
+    ), slug_types AS (
+      SELECT array_agg(DISTINCT type COLLATE "C" ORDER BY type COLLATE "C") AS types
+        FROM visible GROUP BY slug
+    )
+    SELECT 'source_type' AS kind, source_id, type, NULL::text[] AS types,
+           count(*) AS pages, 0::bigint AS distinct_slugs
+      FROM visible GROUP BY source_id, type
+    UNION ALL
+    SELECT 'slug_types', NULL::text, NULL::text, types, 0::bigint, count(*)
+      FROM slug_types GROUP BY types
+  `;
+  const rows = (await exec.run(statement)).rows.map(normalizeCount);
+  const bySourceType = rows.filter(row => row.kind === 'source_type')
+    .map(row => ({ source_id: row.source_id!, type: row.type!, pages: row.pages }));
+  if (!groupTypes) {
+    const total = rows.find(row => row.kind === 'total');
     return { bySourceType, byTypeGroup: [], total: { pages: total?.pages ?? 0, distinct_slugs: total?.distinct_slugs ?? 0 } };
   }
-  const types = [...new Set(bySourceType.map((row) => row.type))];
+  const types = [...new Set(bySourceType.map(row => row.type))];
   const groups = groupTypes(types);
-  const rows = (await exec.run(sqlFragment`
-    SELECT m.grp, GROUPING(m.grp) = 1 AS is_total, count(*) AS pages, count(DISTINCT p.slug COLLATE "C") AS distinct_slugs
-      FROM pages p
-      JOIN sources s ON s.id = p.source_id
-      JOIN unnest(${types}::text[], ${groups}::text[]) AS m(type, grp) ON m.type = p.type
-     WHERE ${where}
-     GROUP BY GROUPING SETS ((m.grp), ())
-  `)).rows.map(normalizeDistinct);
-  const total = rows.find((row) => row.is_total);
+  const groupOf = new Map(types.map((type, i) => [type, groups[i]]));
+  const byGroup = new Map<string, { group: string; pages: number; distinct_slugs: number }>();
+  let pages = 0, distinctSlugs = 0;
+  for (const row of bySourceType) {
+    const group = groupOf.get(row.type) ?? '';
+    const count = byGroup.get(group) ?? { group, pages: 0, distinct_slugs: 0 };
+    count.pages += row.pages;
+    pages += row.pages;
+    byGroup.set(group, count);
+  }
+  // A histogram of type sets, not page slugs: all slugs with the same set
+  // contribute once to each collapsed group, even when twins have different
+  // stored types. Neither page identities nor bodies cross the SQL boundary.
+  for (const row of rows) {
+    if (row.kind !== 'slug_types') continue;
+    distinctSlugs += row.distinct_slugs;
+    for (const group of new Set(row.types!.map(type => groupOf.get(type) ?? ''))) {
+      byGroup.get(group)!.distinct_slugs += row.distinct_slugs;
+    }
+  }
   return {
     bySourceType,
-    byTypeGroup: rows.filter((row) => !row.is_total).map((row) => ({ group: row.grp ?? '', pages: row.pages, distinct_slugs: row.distinct_slugs })),
-    total: { pages: total?.pages ?? 0, distinct_slugs: total?.distinct_slugs ?? 0 },
+    byTypeGroup: [...byGroup.values()],
+    total: { pages, distinct_slugs: distinctSlugs },
   };
 }
