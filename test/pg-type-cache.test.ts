@@ -56,6 +56,18 @@ test('a second process with the same scope starts with the first one\'s describe
   expect(statSync(file!).mode & 0o777).toBe(0o600);
 }));
 
+test('setting identical described types does not rewrite the cache', () => withHome(home => {
+  const store = sharedParameterTypes(URL_A) as Map<string, number[]> & { save(): void };
+  loadSharedParameterTypes(URL_A, '160004', '112');
+  store.set(KEY, [25, 25]);
+  store.save();
+  const [file] = cacheFiles(home);
+  const inode = statSync(file!).ino;
+  store.set(KEY, [25, 25]);
+  store.save();
+  expect(statSync(file!).ino).toBe(inode);
+}));
+
 test('the file holds digests and type ids only: no SQL text, credentials or host', () => withHome(home => {
   processRun(['160004', '112'], [25, 25]);
   const text = readFileSync(cacheFiles(home)[0]!, 'utf8');
