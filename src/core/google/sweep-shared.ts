@@ -13,10 +13,9 @@ import type { ManagedConnectorSync } from '../persistence/connector-sync.ts';
 import { connectorRender } from '../connectors/connector-text.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { mkdirPrivate } from '../atomic-write.ts';
-import { replaceableFile } from '../facts/file-body-guard.ts';
+import { replaceableFile, type StoredBody } from '../facts/file-body-guard.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, replaceOrInsertFactsFence } from '../facts-fence.ts';
 import { carryStoredFences, hasFence } from '../connectors/fence-carry.ts';
-import type { Page } from '../types.ts';
 import { assertInlineBody } from '../page-body/page-shape.ts';
 import { OperationError } from '../ops/contract.ts';
 import { slugifyPath } from '../sync.ts';
@@ -123,14 +122,13 @@ function writePrivateTemp(tmpPath: string, markdown: string): void {
 }
 
 
-/** GBRA-133 (#7292): the checkout file with the live page's `## Facts` fence put back, for `replaceableFile`; null when it has a fence of its own. */
-function withStoredFactsFence(existing: Page): (fileBytes: string) => string | null {
-  assertInlineBody(existing, 'Google connector file comparison');
-  const body = existing.compiled_truth ?? '';
+/** GBRA-133 (#7292): the checkout file with the raw stored `## Facts` fence put back, for `replaceableFile`. */
+function withStoredFactsFence(fileBytes: string, stored: StoredBody): string | null {
+  const body = stored.compiled_truth ?? '';
   const start = body.indexOf(FACTS_FENCE_BEGIN);
   const stop = start === -1 ? -1 : body.indexOf(FACTS_FENCE_END, start + FACTS_FENCE_BEGIN.length);
   const block = stop === -1 ? null : body.slice(start, stop + FACTS_FENCE_END.length);
-  return fileBytes => block === null || hasFence(fileBytes) ? null : replaceOrInsertFactsFence(fileBytes, block);
+  return block === null || hasFence(fileBytes) ? null : replaceOrInsertFactsFence(fileBytes, block);
 }
 
 export async function importRendered(
@@ -165,7 +163,7 @@ export async function importRendered(
   if (existing) assertInlineBody(existing, 'Google connector materialization');
   markdown = await carryStoredFences(deps.sourceId, slug, relPath, existing, markdown, 'Google connector fence carry');
   const databaseOnly = await isWriteThroughDisabled(deps.engine) || isSourceDbOnlySlug(deps.cfg.dir, slug, 'refuse');
-  const guard = databaseOnly ? null : await replaceableFile(deps.engine, deps.sourceId, slug, filePath, existing ? withStoredFactsFence(existing) : undefined);
+  const guard = databaseOnly ? null : await replaceableFile(deps.engine, deps.sourceId, slug, filePath, existing ? withStoredFactsFence : undefined);
   const drift = () => new OperationError('file_database_drift',
     `${slug}: the checkout file has an edit not retained in the database, or changed during import. The file was not replaced. If the file is newer, run gbrain sync --source ${deps.sourceId}; if the database is newer, re-save its page with write-through on; if both changed, ask the user which version to keep before retrying.`,
     'Import the newer file with gbrain sync, or ask the user which version to keep; the item is held until then.');
