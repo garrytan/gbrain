@@ -924,7 +924,7 @@ async function runPipelineBodyInner(
         ctx.sourceId,
         resolvedSlug,
         f.fact,
-        { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null },
+        { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null, excludeMemberPages: true },
       );
       let top: { row: typeof candidates[number]; score: number } | null = null;
       for (const c of candidates) {
