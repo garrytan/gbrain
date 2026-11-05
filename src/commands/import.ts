@@ -269,8 +269,8 @@ export async function runImport(
     strategy?: SyncStrategy;
     sourceId?: string;
     managedBookmark?: boolean;
-    /** #5988: paths the caller already held this run; they are skipped without importing (not failures). */
-    heldPaths?: ReadonlySet<string>;
+    /** Paths the caller keeps out of this run (#5988 holds, #8620 reserved skill paths); skipped without importing, not failures. */
+    heldPaths?: Pick<ReadonlySet<string>, 'has'>;
     /** #5988: each file's outcome (a throw arrives as `{ status: 'error', error }`); `'held'` = the caller held it, not a failure. */
     onFileResult?: ImportFileResultCallback;
     /**

@@ -179,6 +179,10 @@ export function extractToolErrorCode(message: string): string | undefined {
 }
 
 /** Keep only validated public receipt fields from a tool's JSON error body. */
+function isBatchErrorBody(text: string): boolean {
+  try { const body = JSON.parse(text) as { items?: unknown; status?: unknown }; return Array.isArray(body?.items) && body.status === 'error'; } catch { return false; }
+}
+
 export function extractToolErrorDetail(message: string): RemoteMcpErrorDetail {
   const code = extractToolErrorCode(message);
   const detail: RemoteMcpErrorDetail = code ? { code } : {};
@@ -430,6 +434,8 @@ export async function callRemoteTool(
           // block from a newer server never joins the body.
           const first = Array.isArray(res.content) ? (res.content[0] as { text?: unknown } | undefined) : undefined;
           const message = typeof first?.text === 'string' ? first.text : 'unknown tool error';
+          // GST-1387: a remember batch with a failed item is an error whose body keeps every item's receipt; the caller renders it.
+          if (isBatchErrorBody(message)) return res;
           // v0.31.1: extract structured error code (e.g. 'missing_scope') so
           // the dispatcher can produce a pinpoint hint instead of a generic
           // "tool error" message.

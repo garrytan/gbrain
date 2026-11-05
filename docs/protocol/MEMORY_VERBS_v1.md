@@ -413,18 +413,18 @@ fact, so it goes on its item; passing both `fact` and `items`, or a top-level
 
 Every item is validated before any is written: one invalid item refuses the
 whole call with `items[<i>]` in the message. Each item is then saved as its own
-write with a child `request_id` derived from the call's `request_id` (the
-string the caller sent, so a batch accepted by an older server replays to the
-same receipts) and the item index, so replaying the same `request_id` replays each child's outcome and
+write with a child `request_id` derived from the call's `request_id` (as sent, so an
+older server's batch replays to the same receipts) and the item index, so a replay repeats each child's outcome and
 writes nothing twice.
 
 Response: `{ protocol_version, request_id, client_request_id?, items[], saved, failed, partial,
 hints?, next? }`. Each `items[]` entry is a compact receipt `{ index,
 request_id, status, id?, entity_slug?, superseded_fact_id?, warnings?, valid_until?, state? }`
 (`state` and `retry_after_ms` only when the write is not yet committed), or
-`{ index, request_id, status: "failed", error: { code, message, suggestion? } }`. Hints the
-single-fact response would repeat per item appear once in `hints`. `partial: true` means some items saved and some failed; resend
-only the failed items, in a new call with a new `request_id`.
+`{ index, request_id, status: "failed", error: { code, message, suggestion? } }`. Per-item hints
+appear once in `hints`. `partial: true`: some saved; resend
+only the failed ones with a new `request_id`. Any failed item adds `status: "error"` (CLI exit 1,
+MCP `isError`); if all were refused unaccepted, it fails with the first item's error.
 
 ### entity(name) — read, zero LLM, p99 < 100ms
 

@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.576.0] - 2026-11-04
+## [0.60.578.0] - 2026-11-05
 
 **Memory train (GBRA-286): `forget` edits the page files first, `recall` can weigh how far a fact deserves belief, page versions carry a human reason and can be read by date, and agents can read and switch the saving rule. Every new mode is off by default, and every feature works on a brain with no Git repository.**
 
@@ -117,6 +117,31 @@ Before, the rule for what an agent saves lived in the MCP instructions, and only
 | `memory_conversation_mode` | any connection that can call `remember` | returns the rule for the rest of this conversation: all, salient, off (only what the user asks to keep) or brain; stores nothing |
 
 The new `memory.agent_writeback` key changes only what agents are told. The host capture lanes (Stop hook, compaction harvest, SessionEnd transcripts) keep following the operator's `memory.auto_writeback`, so a remote "off" can't discard banked session text and a remote "all" can't start capture the operator never enabled. An unreadable or unrecognized override makes agents act as if saving is off and `get_memory_settings` reports `degraded`. The MCP instructions gain one line telling the agent to use the switch, after the governing rule, wherever the tool is served (starter and full surfaces). `gbrain config set|get memory.agent_writeback` works from the CLI.
+
+## [0.60.577.0] - 2026-11-05
+
+**A write a refresh fence refused is never reported as success, and an interactive write waits the fence out.** While `gbrain sources refresh` drains, fast-forwards and syncs a checkout, writes to it are refused `worktree_refreshing`. That refusal was unregistered (class server, `fix: gbrain doctor`), `remember` with `items` whose every item it refused printed `undefined (fact #undefined)` and exited 0, and the same batch over MCP returned `isError: false`. The refusal is now retryable with `fix.next: wait` and `retry_after_ms`, an interactive write retries it with backoff for up to 10 s before refusing, and a batch that saved nothing is an error on every surface (#8621).
+
+### Itemized changes
+
+- `src/core/error-registry.ts`: registers `worktree_refreshing` (class retryable, actor provider). `src/core/persistence/journal.ts`: the fence refusal carries `retryable: true` and a read-only `gbrain sources writer status --source <id> --json` fix, so the envelope renders `next: wait`. A retried admission whose request was already accepted (its acknowledgement lost before the fence) reconciles to that receipt instead of being refused as not recorded.
+- `src/core/persistence/admission-retry.ts`: `waitOutRefreshFence` re-runs an interactive write's whole admission (250 ms to 2 s backoff, 10 s cap shared by every item of a `remember` batch, its clock starting at the first refusal; an explicit `wait_ms` on `put_page` or `put_pages` lowers the cap, so `wait_ms: 0` is refused at once); nothing is held across a pause and a refused attempt journals nothing. Past the cap the refusal is returned with how long the call waited. Background writes and the managed sync keep their own retries; database-only sources are never fenced. Wired into `admitWrite`, `admitBatch` (`put-pages`) and `forget`.
+- `src/core/persistence/verb-errors.ts`: `remember` and the other memory verbs keep their frozen `unavailable` code for the fence and add `canonical: worktree_refreshing`, its `detail`, `fix` and `retryable`.
+- `src/core/remember-batch.ts`: a batch whose every item failed throws the first item's error (`items[<i>]: ... None of the <n> item(s) was saved.`); a batch with any failed item (or an item whose outcome is unknown, which keeps its child `request_id`) adds `status: "error"` and the first failed `code`, so the CLI exits 1 and MCP returns `isError` with every item's receipt (`src/mcp/dispatch.ts`). `src/cli/remember-format.ts` prints a batch as `saved X of N fact(s)` with one line per item; a failed item keeps its `canonical` code and `retryable` flag. The batch body survives the resident owner (`src/core/persistence/provider.ts`) and the thin client (`src/core/mcp-client.ts`), and a thin-client CLI exits 1 on it too. A batch error leaves the one-shot MCP notices for the next call.
+- `src/core/persistence/ipc.ts`: an error from the resident owner keeps its canonical code, `detail`, `retryable` and (without a receipt) its fix, so a fenced write through a running `gbrain serve` still reads `worktree_refreshing` with `next: wait`.
+- `test/write-refusal-refresh-fence-8621.test.ts` (new) pauses a real refresh at its drained boundary on PGLite and Postgres and covers MCP, the wait, the cap, background writes, a database-only source and the CLI exit codes.
+
+## [0.60.576.0] - 2026-11-05
+
+**A database-only source exported by the 0.53.0 migration now syncs. The export installs the shared memory pack (`skillpack.json` and `skills/*/SKILL.md`) into the new plain directory, and `gbrain sync` used to refuse each pack file with `skill_bundle_required`, so the source stayed `blocked_by_failures` and doctor's `sync_freshness` failed for good (#8620).**
+
+| Situation | Before | Now |
+|---|---|---|
+| `gbrain sync --source <id>` on a plain-directory source of a managed brain that holds the pack | three `skill_bundle_required` refusals, `blocked_by_failures`, no successful sync ever recorded | reserved skill paths stay with the shared skill publisher, as in managed Git sync; the source syncs and records `last_sync_at` |
+| `--dry-run` on that source | counted the pack's files as "would be imported" | leaves them out of the count |
+| Shared skills activated before the DB-only export | the v0.53.0.0 checklist didn't say the new root needs the activation again | the checklist says to rerun the `--shared-skills` activation after the export binds the root, then resume the export |
+
+The importer still refuses skill paths handed to it directly; classic (unmanaged) brains import a plain directory exactly as before.
 
 ## [0.60.575.0] - 2026-11-04
 

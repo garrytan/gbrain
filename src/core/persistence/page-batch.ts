@@ -17,7 +17,8 @@ import { fenceNormalizedNotice, mergeFencesNormalized, type FencesNormalized } f
 import { OperationError, opError } from '../ops/contract.ts';
 import { admitChangeReason } from './change-reason.ts';
 import { admitWriteGroupInTransaction, type WriteAdmission } from './journal.ts';
-import { retryWriteAdmission } from './admission-retry.ts';
+import { retryWriteAdmission, waitOutRefreshFence, withRefreshFenceBudget } from './admission-retry.ts';
+import { resolveAdmissionOrigin } from './admission-origin.ts';
 import { declareDurablePersistence } from './protocol.ts';
 import { digest } from './digest.ts';
 import { queueLinksReconcile } from './effect-journal.ts';
@@ -195,7 +196,7 @@ export async function admitBatch(ctx: OperationContext, batchId: string, admissi
     const key = digest([admission.operation, admission.authority]);
     groups.set(key, [...(groups.get(key) ?? []), index]);
   });
-  return retryWriteAdmission(`batch ${batchId}`, remaining => ctx.engine.transaction(async tx => {
+  return waitOutRefreshFence(resolveAdmissionOrigin(admissions[0]?.origin) === 'interactive', () => retryWriteAdmission(`batch ${batchId}`, remaining => ctx.engine.transaction(async tx => {
     await declareDurablePersistence(tx, `${Math.min(1000, remaining)}ms`, `${remaining}ms`);
     const rows: WriteRequest[] = new Array(admissions.length);
     for (const indexes of groups.values()) {
@@ -203,7 +204,7 @@ export async function admitBatch(ctx: OperationContext, batchId: string, admissi
       indexes.forEach((index, position) => { rows[index] = admitted[position]!; });
     }
     return rows;
-  }), BATCH_ADMISSION_BUDGET_MS, error => ctx.engine.reconnect({ error }));
+  }), BATCH_ADMISSION_BUDGET_MS, error => ctx.engine.reconnect({ error })));
 }
 
 async function prepareAll(caller: OperationContext, batchId: string, sourceId: string, pages: BatchPage[], repeats: Repeats) {
@@ -298,7 +299,7 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
   if (admissions.length) {
     let admitted: WriteRequest[];
     try {
-      admitted = await admitBatch(ctx, batchId, admissions.map(entry => entry.admission));
+      admitted = await withRefreshFenceBudget(() => admitBatch(ctx, batchId, admissions.map(entry => entry.admission)), params.wait_ms !== undefined ? remaining() : undefined);
     } catch (error) {
       if (error instanceof OperationError && error.code === 'queue_capacity') {
         throw new OperationError('queue_capacity', `${error.message} No page of batch ${batchId} was admitted (it needs ${admissions.length} new write slots).`,

@@ -21,6 +21,7 @@ import { sha256 } from './digest.ts';
 import { receiptReservation } from './receipt-bytes.ts';
 import { assertPersistenceAccepting, estimatedRetryAfterMs, waiterOnlyOwner, onPersistenceLane, waitForWrite, writeResponse } from './service.ts';
 import { parseWireWriteWaitMs } from './write-wait.ts';
+import { withRefreshFenceBudget } from './admission-retry.ts';
 import { assertTimelineNotOmitted, isTimelineSection, timelineSectionOf, type TimelineSection } from './timeline-omission.ts';
 import { contentOriginTier } from '../trust/tier.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
@@ -240,8 +241,9 @@ export async function submitPageMutation(ctx: OperationContext,
   if (prepared.prior) return withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), false));
   const brainId = cached ? cachedPreadmitBrain(ctx.engine) : undefined;
   // Phase 4.4: the admission transaction runs on the warm single-write lane when it is free.
-  const admit = (admission: WriteAdmission) => onPersistenceLane(ctx.engine, transaction => admitWrite(ctx.engine, admission, undefined, transaction),
-    () => admitWrite(ctx.engine, admission));
+  // GST-1387: an explicit wait_ms also bounds the refresh-fence wait, so wait_ms 0 is refused at once, never held.
+  const admit = (admission: WriteAdmission) => withRefreshFenceBudget(() => onPersistenceLane(ctx.engine, transaction => admitWrite(ctx.engine, admission, undefined, transaction),
+    () => admitWrite(ctx.engine, admission)), wireWaitMs !== undefined ? waitMs() : undefined);
   let row: WriteRequest;
   try { row = await admit(brainId ? { ...prepared.admission, brainId } : prepared.admission); }
   catch (error) {
