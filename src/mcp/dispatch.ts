@@ -175,6 +175,8 @@ export interface ToolResult {
 }
 
 export interface DispatchOpts {
+  /** Wakeshift: the MCP caller as the transport saw it (OperationContext.mcpCaller); never from tool arguments. */
+  mcpCaller?: OperationContext['mcpCaller'];
   /** GST-359 C1: the x-qm-actor header the HTTP transport read (a trusted system names the person); stdio never sets it. */
   actor?: ActorChannels;
   /**
@@ -808,6 +810,14 @@ function attachResponseMeta(out: ToolResult, responseMeta: Record<string, unknow
   out._meta = { ...(out._meta ?? {}), degraded: stamp };
 }
 
+type ToolTail = Parameters<NonNullable<OperationContext['emitToolTail']>>[0];
+
+/** Wakeshift's addition: its text as the LAST text block, its meta merged into `_meta` (a conversation credential: never logged). */
+function appendToolTail(out: ToolResult, tail: ToolTail): void {
+  if (tail.text) out.content.push({ type: 'text', text: tail.text });
+  if (tail.meta && typeof tail.meta === 'object') out._meta = { ...(out._meta ?? {}), ...tail.meta };
+}
+
 /** The one error result path: toAgentError → exactly one content block. */
 export function errorResult(e: unknown, opts: DispatchOpts, extra: { op?: string; mutating?: boolean; idempotent?: boolean; notices?: Notice[] } = {}): ToolResult {
   const carried = !!extra.notices?.length && e instanceof OperationError;
@@ -916,6 +926,7 @@ export function buildOperationContext(
     ...(opts.admissionOrigin ? { admissionOrigin: opts.admissionOrigin } : {}),
     ...(opts.resultRows ? { resultRows: opts.resultRows } : {}),
     ...(opts.thinClient ? { thinClient: true } : {}),
+    ...(opts.mcpCaller ? { mcpCaller: opts.mcpCaller } : {}),
     isCallable: (opName: string) => (render ??= dispatchRenderContext(opts)).isCallable(opName),
     auth: opts.auth,
   };
@@ -1203,6 +1214,8 @@ async function dispatchResolvedCall(
   // failure renders the envelope's `notices` key (one block).
   const notices: Notice[] = [];
   ctx.emitNotice = (n) => { if (n) notices.push(n); };
+  let tail: ToolTail | undefined;
+  ctx.emitToolTail = (t) => { tail = t; };
 
   try {
     if (ctx.remote !== false && op.requiredScopes?.length) {
@@ -1321,6 +1334,7 @@ async function dispatchResolvedCall(
       if (meta && Object.keys(meta).length > 0) out._meta = { ...(out._meta ?? {}), ...meta };
       if (failure !== undefined) ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${failure}; degrading to no hook keys`);
     }
+    if (tail) appendToolTail(out, tail);
     // Large pages: the egress backstop measures the final frame; a read over the connection's cap is refused whole, never cut.
     const over = op.mutating ? null : await frameOverCap(out, { remote: ctx.remote, transport: ctx.transport, engine, config: ctx.config });
     if (over) return errorResult(resultTooLargeError(name, safeParams, over), opts, { op: name, mutating: false, idempotent: op.idempotent === true });

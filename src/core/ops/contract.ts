@@ -532,6 +532,14 @@ export interface OperationContext {
    */
   emitNotice?: (n: Notice) => void;
   /**
+   * Wakeshift (docs/guides/wakeshift.md): the MCP caller as the transport saw it, which Wakeshift uses to tell agent
+   * programs apart: `clientInfo.name` (stdio) or the OAuth `client_name` (HTTP), the HTTP User-Agent and the request's
+   * `_meta`. Set by the MCP transports only, never from tool arguments; shape only, never authority.
+   */
+  mcpCaller?: { client?: string; userAgent?: string; meta?: Record<string, unknown> };
+  /** Wakeshift: a handler's addition, rendered as the result's last text block plus `_meta` keys. A credential: never log it. */
+  emitToolTail?: (tail: { text?: string; meta?: Record<string, unknown> }) => void;
+  /**
    * WP4 (D2): the SERVER surface ceiling for this transport (force-clamped),
    * threaded by the MCP dispatch layer. Consumed by `request_tools`: the
    * catalog never names ops above the ceiling, and the persist branch
@@ -838,7 +846,7 @@ export interface Operation {
    * fail-closed call-time backstop; stdio (local pipe) bypasses publish
    * gates entirely. Resolution lives in src/mcp/publish-gates.ts.
    */
-  publishGateKey?: 'mcp.publish_skills' | 'mcp.publish_advisor' | 'mcp.publish_memory_settings';
+  publishGateKey?: 'mcp.publish_skills' | 'mcp.publish_advisor' | 'mcp.publish_memory_settings' | 'mcp.publish_wakeshift';
   /**
    * MEMORY_VERBS v1: marks the seven frozen protocol verbs (recall, remember,
    * entity, synthesize, forget, context_pack, delta). `gbrain serve --surface
