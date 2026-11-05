@@ -207,7 +207,7 @@ export async function scanRowsBehind(engine: BrainEngine, sourceId: string,
           const content = bytes.get(row.blob.oid) ?? null;
           const keep = content !== null && kept + content.length <= batchBytes;
           if (keep) kept += content.length;
-          candidates.push({ ...row, record: recordState, content: keep ? content : null, compared });
+          candidates.push({ ...row, record: recordState, content: keep ? Buffer.from(content) : null, compared });
         }
       }
       return batch.length < ROWS_BEHIND_BATCH;

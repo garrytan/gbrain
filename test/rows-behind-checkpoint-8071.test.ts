@@ -25,7 +25,7 @@
  *
  * PGLite always; Postgres too when DATABASE_URL is set (test/e2e wrapper).
  */
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -40,6 +40,7 @@ import { readGitHold, SYNC_IMPORT_PROVENANCE_OP, writeGitHold } from '../src/cor
 import { resolveRepairScope, type RepairKind } from '../src/core/repair/core.ts';
 import { EXPLICIT_REPAIR_REGISTRY, repairRunner } from '../src/core/repair/registry.ts';
 import { scanRowsBehind } from '../src/core/persistence/rows-behind.ts';
+import * as gitGap from '../src/core/persistence/git-gap.ts';
 import { rowsBehindEntry } from '../src/commands/doctor/checks/rows-behind.ts';
 import { categorizeCheck } from '../src/core/doctor-categories.ts';
 import { RECOVERY_VERSION } from '../src/core/markdown.ts';
@@ -293,6 +294,33 @@ for (const backend of testBackends()) describe(`[${backend}] #8071: rows behind 
 
     await unguarded(engine, () => engine.executeRaw("UPDATE sources SET last_commit=$1 WHERE id='default'", ['f'.repeat(40)]).then(() => {}));
     expect(await scanRowsBehind(engine, 'default', { deadlineAt: 1, now: () => 1 })).toMatchObject({ status: 'known', complete: false, pages: 0, head: null, stopped_at: null });
+  }, { databaseUrl, setup }), 240_000);
+
+  // Value: protects=#8093 item 1's keep cap bounds what a batch holds: a differing row keeps a copy of its bytes, so a kept blob never pins the
+  // cat-file chunk it was read in (readBlobs returns slices of one buffer per chunk); fails_when=the kept content is the chunk's own slice;
+  // why_new=the chunk test above checks reads, not what stays referenced; seam=readBlobs spied to zero every buffer it returned before its next
+  // call, standing in for the chunk being dropped, with batchBytes making each blob its own chunk and keeping only the first; no_claim=peak memory.
+  test('a kept row\'s bytes are its own copy: zeroing the chunk buffers they were read from leaves the confirmation unchanged', () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await seedBehind(engine, root, Object.fromEntries(SLUGS.map(slug => [slug, { content: note(slug, `The redacted body of ${slug}.`), record: 'checkpoint' as const }])));
+    const full = await scanRowsBehind(engine, 'default');
+    const size = Buffer.byteLength(note(SLUGS[0]!, `The redacted body of ${SLUGS[0]}.`));
+    const readBlobs = gitGap.readBlobs;
+    let returned: Buffer[] = [];
+    let calls = 0;
+    const spy = spyOn(gitGap, 'readBlobs').mockImplementation(async (...args: Parameters<typeof readBlobs>) => {
+      for (const buffer of returned) buffer.fill(0);
+      calls++;
+      const blobs = await readBlobs(...args);
+      returned = blobs ? [...blobs.values()] : [];
+      return blobs;
+    });
+    try {
+      const chunked = await scanRowsBehind(engine, 'default', { batchBytes: size + 1 });
+      expect(calls).toBeGreaterThan(SLUGS.length);
+      expect(chunked).toMatchObject({ complete: true, behind_count: full.behind_count, unproven_count: full.unproven_count });
+      expect(chunked.behind.map(row => [row.slug, row.digest])).toEqual(full.behind.map(row => [row.slug, row.digest]));
+    } finally { spy.mockRestore(); }
   }, { databaseUrl, setup }), 240_000);
 
   test('a hold row applies the refusal the apply computes, not the one saved with the preview', () => managedBrain(async ({ engine, root }) => {
