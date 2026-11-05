@@ -311,6 +311,26 @@ for (const backend of testBackends()) {
       expect(u.fix).toMatchObject({ next: 'ask_user' });
     }, 120_000);
 
+    test('a pruned middle edition: the next retained edition gives no introduced_because, since the reason before it introduced the pruned one', async () => {
+      const slug = fresh('pruned-middle');
+      await put(slug, 'Small edition.', ["valid_from: '2026-01-01'"]);
+      await createPageVersion(engine, slug, 'default', undefined, { reason: 'reason-small-replaced' });
+      const big = 'x'.repeat(1024 * 1024 + 10);
+      for (let i = 0; i < 6; i++) {
+        await engine.executeRaw("UPDATE pages SET compiled_truth = $2, frontmatter = jsonb_set(frontmatter, '{valid_from}', to_jsonb($3::text)) WHERE slug = $1", [slug, big + i, '2026-0' + (i + 2) + '-01']);
+        await createPageVersion(engine, slug, 'default', undefined, { reason: 'reason-large-' + i });
+      }
+      const kept = await engine.executeRaw<{ change_reason: string | null; successor_pruned: boolean | null }>(
+        'SELECT pv.change_reason, pv.successor_pruned FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE p.slug = $1 ORDER BY pv.id', [slug]);
+      expect(kept.map(k => k.change_reason)).toEqual(['reason-small-replaced', 'reason-large-1', 'reason-large-2', 'reason-large-3', 'reason-large-4', 'reason-large-5']);
+      expect(kept[0]!.successor_pruned).toBe(true);
+      expect((await read(slug, '2026-01-15')).valid_time.replaced_because).toBe('reason-small-replaced');
+      expect((await read(slug, '2026-04-15')).valid_time.introduced_because).toBe('reason-large-1');
+      const after = await read(slug, '2026-03-15');
+      expect(after.valid_time).toMatchObject({ status: 'in_force', valid_from: '2026-03-01' });
+      expect(after.valid_time.introduced_because).toBeNull();
+    }, 120_000);
+
     test('B-T3: refusals', async () => {
       const slug = fresh('refuse');
       await put(slug, 'Text.', ["valid_from: '2026-01-01'"]);

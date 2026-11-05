@@ -127,7 +127,7 @@ async function pick(tx: BrainEngine, pageId: number, asOf: string, excludePrivat
              false, COALESCE(p.body_storage = 'segmented', false), false, p.source_path IS NOT NULL
         FROM pages p WHERE p.id = $1),
     seq AS (
-      SELECT r.*, lag(r.replaced_at) OVER w AS recorded_since, lag(${excludePrivate ? 'CASE WHEN r.visible THEN r.reason END' : 'r.reason'}) OVER w AS introduced_because, lead(r.tier) OVER w AS successor_tier,
+      SELECT r.*, lag(r.replaced_at) OVER w AS recorded_since, lag(CASE WHEN NOT r.successor_pruned${excludePrivate ? ' AND r.visible' : ''} THEN r.reason END) OVER w AS introduced_because, lead(r.tier) OVER w AS successor_tier,
              lag(r.ord) OVER w AS prev_ord, lead(r.ord) OVER w AS next_ord
         FROM rows r WINDOW w AS (ORDER BY r.ord)),
     pick AS (
