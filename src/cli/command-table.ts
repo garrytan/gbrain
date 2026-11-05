@@ -153,6 +153,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // conformance targets, the cost-gated --synthesize flag).
   { name: 'protocol', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/protocol.ts') },
   { name: 'errors', phase: 'pre-connect', thinClient: 'none', selfHelp: true, json: 'document', read_only: true, load: () => import('./commands/errors.ts') },
+  { name: 'bundled-skill', phase: 'pre-connect', thinClient: 'none', selfHelp: true, json: 'document', read_only: true, skipStartupHooks: true, load: () => import('./commands/bundled-skill.ts') },
   { name: 'notices', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/notices.ts') },
   // selfHelp: `gbrain init --help` prints its own usage from runInit; route around the generic
   // one-line short-circuit (matches `connect`). Without this, `init` is in CLI_ONLY but not
@@ -280,6 +281,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // Post-connect: dispatched by dispatchConnectedCommand after connectEngine(), in master switch order.
   { name: 'mcp', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/mcp.ts') },
   { name: 'import', phase: 'post-connect', thinClient: 'none', json: 'document', help: () => import('./help/import.ts'), routes_source: true, load: () => import('./commands/import.ts') },
+  // GBRA-218: per-member read access (members, groups, who-can-read, access check). Local trusted CLI; the database holds it, so thin clients refuse.
+  { name: 'access', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/access.ts') },
   { name: 'export', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/export.ts') },
   { name: 'files', phase: 'post-connect', thinClient: 'refuse', routes_source: true, load: () => import('./commands/files.ts') },
   { name: 'embed', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, json: 'document', routes_source: true, startup: 'observational', load: () => import('./commands/embed.ts') },

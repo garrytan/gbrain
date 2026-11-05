@@ -16,7 +16,7 @@ import type { BrainEngine } from '../engine.ts';
 import { gbrainPath } from '../config.ts';
 import { registerCleanup } from '../process-cleanup.ts';
 import { SYNC_ON_COMMIT_KEY } from '../sync-config-keys.ts';
-import { localHostId } from '../persistence/identity.ts';
+import { hostIdFor } from '../persistence/identity.ts';
 import {
   notifierDisabledByEnv, parseExcludedSources, parseOnCommit, startCommitNotifier,
   type CommitNotifier, type CommitNotifierOptions, type NotifierSource, type NotifierStore, type ResidentKind, type SkippedSource,
@@ -150,9 +150,9 @@ export function runnerStart(engine: BrainEngine): Pick<CommitNotifierOptions, 's
     syncRunning: async () => (await load()).isDelegatedSyncRunning(),
     drainHeld: async (sourceId) => {
       // #7614: a killed holder's lock row defers nothing; the sync this starts takes its expired lease over.
-      const { holderStalled, readLiveDrainHolder } = await import('../persistence/sync-lease.ts');
-      const holder = await readLiveDrainHolder(engine, sourceId);
-      return holder === null ? false : holderStalled(holder) ? 'stalled' : true;
+      const { holderStalled, readLiveDrainLease } = await import('../persistence/sync-lease.ts');
+      const lease = await readLiveDrainLease(engine, sourceId);
+      return lease === null ? false : holderStalled(lease.holder, lease.db_now) ? 'stalled' : true;
     },
   };
 }
@@ -163,7 +163,7 @@ export type ResidentNotifierOptions = Partial<Omit<CommitNotifierOptions, 'resid
 export function residentNotifierOptions(engine: BrainEngine, opts: ResidentNotifierOptions): CommitNotifierOptions {
   const env = opts.env ?? process.env;
   // Host identity: the persistence host id (minted on first use, as a managed claim or a recorded classic sync does).
-  const hostId = opts.hostId ?? localHostId();
+  const hostId = opts.hostId ?? hostIdFor(engine);
   const defaults: Omit<CommitNotifierOptions, 'resident' | 'log' | 'hostId'> = {
     store: sqlNotifierStore(engine),
     maxConcurrent: 1,

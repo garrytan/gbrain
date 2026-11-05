@@ -27,7 +27,7 @@ import { recordedStop, replaysUnchangedRefusal, resumableRowStop } from './sync-
 import { adoptLegacyPage, incomingId, syncExcludePatterns, syncGit, type LegacyIdentity, type ManagedSyncContext, type SyncDiscovery, type SyncEntry, type SyncFileRefusal, type SyncSlugCollision } from './sync-discovery.ts';
 import { assertSyncDispatchActive, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
 import { recordPassFenceTrend, type PassStamp, type SyncCursorOptions, type SyncIntent } from './sync-prepare.ts';
-import { OPEN_AT_STAMP_CAP, passFingerprint, readPassRow, SYNC_ORIGIN_DELETED_OP, writePassRow, type ManagedSyncPassValue, type PassEpisode,
+import { OPEN_AT_STAMP_CAP, passFingerprint, readPassRow, SYNC_ORIGIN_DELETED_OP, transientEnding, writePassRow, type ManagedSyncPassValue, type PassEpisode,
   type PassKind, type PassOutcome, type SyncSelection } from './sync-pass-row.ts';
 import { readSyncAdmission, type SyncAdmission } from './sync-admission.ts';
 import { faultPoint } from './fault-points.ts';
@@ -35,7 +35,7 @@ import { passFoldBase, passIdleProbe, readShadowLevel, workingIdleChange, type P
 import { ownWritebackCommit, type PassFold } from './sync-pass-fold.ts';
 import { openPassRequests, settleCarried } from './sync-pass-carried.ts';
 import { loopYield } from './sync-yield.ts';
-import { recallWorkingStatCache, rememberWorkingStatCache, SyncTreeReadIncomplete } from './sync-git-stream.ts';
+import { pathBlobHistory, recallWorkingStatCache, rememberWorkingStatCache, SyncTreeReadIncomplete } from './sync-git-stream.ts';
 import { syncPassKind } from './sync-classify.ts';
 import { PASS_BATCH_KEY_PREFIX, readConvergedWatermark, SyncAdmissionPaused, type PassEntry } from './sync-pass-batch.ts';
 import { assertDrainLease, currentDrainLease } from './sync-lease.ts';
@@ -75,6 +75,8 @@ export const PASS_BATCH_MAX = 10_000;
 const IN_FLIGHT_WAITS = 4;
 /** #7355: how often a long level read writes the open pass row, so a follower and `sync status` see it working. */
 const PASS_HEARTBEAT_MS = 30_000;
+/** #7199: how far back (first-parent commits) an older side-`unknown` hold's re-screen looks, and how many earlier versions it compares. */
+const DRIFT_HISTORY_DEPTH = 50, DRIFT_HISTORY_VERSIONS = 3;
 
 export interface SyncPassInput {
   opts: SyncOpts; slice?: { maxPages: number; maxMs: number }; context: ManagedSyncContext; authority: SyncAuthority;
@@ -202,12 +204,19 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
   // #7338: a page with no import record (imported by an older gbrain) has its file at the incarnation's baseline commit as its baseline.
   const driftBaseline = (entry: ShadowPath) => entry.pageId === null ? undefined : entry.result.side === 'both' ? baselineRecords.get(entry.pageId)?.disk_blob_oid ?? undefined
     : entry.result.side === 'unknown' ? entry.state.baseline ?? undefined : undefined;
+  // #7199: a side-`unknown` hold an older gbrain wrote after the pass that held it moved the source's last commit past the one
+  // the classic sync read; its re-screen also compares the page with the file's last few committed versions before the held one.
+  const history = new Map<string, string[]>();
+  for (const entry of imports) if (entry.result.side === 'unknown' && entry.pageId !== null && entry.state.hold?.unscreened) {
+    const earlier = await pathBlobHistory(level.gitRoot, level.baselineCommit ?? level.head, entry.path, DRIFT_HISTORY_DEPTH).catch(() => []);
+    history.set(entry.path, [...new Set(earlier)].filter(oid => oid !== entry.state.level && oid !== entry.state.baseline).slice(0, DRIFT_HISTORY_VERSIONS));
+  }
   const entries: PassEntry[] = [], collisions: SyncSlugCollision[] = [], skipped: ShadowPath[] = [], identity: Array<{ entry: ShadowPath; origin: ShadowPath | null; slug: string; ids: { page: string; file: string } }> = [];
   const claims = new Map<string, ShadowPath[]>();
   for (const entry of imports) {
     if (step.due()) await step.pause();
     const paths = entryPaths(level, entry.path);
-    const base = { ...paths, ...committedOnly, action: 'import' as const, working: working(entry), level: entry.state.level, ...(entry.result.cls === 'drift' && entry.result.side && entry.result.side !== 'deleted' ? { drift: entry.result.side, ...(driftBaseline(entry) ? { driftBaseline: driftBaseline(entry) } : {}) } : {}) };
+    const base = { ...paths, ...committedOnly, action: 'import' as const, working: working(entry), level: entry.state.level, ...(entry.result.cls === 'drift' && entry.result.side && entry.result.side !== 'deleted' ? { drift: entry.result.side, ...(driftBaseline(entry) ? { driftBaseline: driftBaseline(entry) } : {}), ...(history.get(entry.path)?.length ? { driftHistory: history.get(entry.path) } : {}) } : {}) };
     if (entry.state.page) { entries.push({ ...base, slug: entry.slug!, pageId: entry.pageId, revision: entry.revision }); continue; }
     const slug = slugOf.get(entry.path);
     if (!slug) { skipped.push(entry); continue; }
@@ -404,7 +413,7 @@ async function pinPass(engine: BrainEngine, input: SyncPassInput, lease: NonNull
   const obligations: ManagedSyncPassValue['obligations'] = prior ? structuredClone(prior.value.obligations)
     : { baseline_commit: context.source.last_commit, mismatch: {}, not_converged_streak: 0, faults: {} };
   obligations.mismatch ??= {}; obligations.faults ??= {}; obligations.not_converged_streak ??= 0;
-  const abandoned = prior?.value.telemetry.outcome === 'open' ? (obligations.abandoned_streak ?? 0) + 1 : 0;
+  const abandoned = prior && (prior.value.telemetry.outcome === 'open' || transientEnding(prior.value.telemetry)) ? (obligations.abandoned_streak ?? 0) + 1 : 0;
   if (abandoned) obligations.abandoned_streak = abandoned; else delete obligations.abandoned_streak;
   if (handover.episode && !obligations.episode) obligations.episode = handover.episode;
   const passId = randomUUID();

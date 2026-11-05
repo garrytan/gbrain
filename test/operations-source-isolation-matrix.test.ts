@@ -129,6 +129,7 @@ const MATRIX: Row[] = [
   { name: 'get_brain_identity', mode: 'brainwide', args: {}, rationale: 'brain-level identity document by design' },
   { name: 'get_brain_health', mode: 'skip', reason: 'returns count bands with no slug or source identity, so the beta-marker scan here would pass vacuously; test/doctor-ops-remote-6696.test.ts seeds per-source write failures and pins the handler to the scalar and federated grant' },
   { name: 'whoami', mode: 'brainwide', args: {}, rationale: 'caller identity/transport echo, no page data' },
+  { name: 'get_memory_settings', mode: 'brainwide', args: {}, rationale: 'brain-wide memory writeback config and its rule text; no page data' },
   { name: 'sources_list', mode: 'brainwide', args: {}, rationale: 'listing sources is its purpose; exposes ids/names only' },
   { name: 'request_tools', mode: 'brainwide', args: { tools: ['get_page'] }, rationale: 'tool registry surface, no page data' },
   { name: 'list_link_sources', mode: 'brainwide', args: {}, rationale: 'distinct link-origin kinds; enumerates kinds not content' },
@@ -153,6 +154,7 @@ const MATRIX: Row[] = [
     expectScoped: r => { expect(r === null || leakToken(r) === null).toBe(true); } },
   { name: 'entity_identity_list', mode: 'isolated', args: {} },
   { name: 'list_pages', mode: 'isolated', args: { limit: 100 } },
+  { name: 'find_pages', mode: 'isolated', args: { pattern: '*', limit: 100 } },
   { name: 'search', mode: 'isolated', args: { query: 'BETAMARKER', limit: 20 } },
   { name: 'query', mode: 'isolated', args: { query: 'BETAMARKER', limit: 20 } },
   // search_exact echoes its phrase, so the probe reads the matches and the unreadable-page sample.
@@ -182,6 +184,7 @@ const MATRIX: Row[] = [
   { name: 'get_recent_salience', mode: 'isolated', args: { limit: 50 } },
   { name: 'find_anomalies', mode: 'isolated', args: {} },
   { name: 'recall', mode: 'isolated', args: { query: 'BETAMARKER', limit: 20 } },
+  { name: 'memory_recall', mode: 'isolated', args: { query: 'BETAMARKER works' } },
   { name: 'find_contradictions', mode: 'isolated', args: {} },
   { name: 'find_experts', mode: 'isolated', args: { topic: 'BETAMARKER', limit: 10 } },
   { name: 'chronicle_day', mode: 'isolated', args: { date: TODAY } },

@@ -6,6 +6,8 @@
  * recovers the distinction from the stored message alone (no schema change).
  */
 import { opError, type OperationError } from '../ops/contract.ts';
+import { UNATTRIBUTED_MEMORY_SLUG } from '../facts/extract-from-fence.ts';
+import type { WriteRequest } from './model.ts';
 
 export const PAGE_MISSING_MESSAGE = 'The accepted page no longer exists.';
 
@@ -35,4 +37,16 @@ export function pageIdentityError(present: boolean, replacedMessage: string): Op
 export function yamlLocator(text: string | null | undefined): string {
   const m = /\bline (\d+)(?:,? column (\d+))?/i.exec(text ?? '') ?? /\((\d+):(\d+)\)/.exec(text ?? '');
   return m ? ` at line ${m[1]}${m[2] ? `, column ${m[2]}` : ''}` : '';
+}
+
+/**
+ * GST-359 C2: a member page another write created after this remember was accepted is the same page, not a recreation;
+ * so is memory/unattributed, which the first subjectless remember creates (concurrent first saves all land on it).
+ * Preparation and the coordinator's publication check share it.
+ */
+export function rememberAcceptsPageCreatedSince(row: Pick<WriteRequest, 'operation' | 'slug' | 'page_id' | 'intent'>,
+  snapshot: { page: { deleted_at?: Date | string | null } } | null): boolean {
+  const p = row.intent;
+  return row.operation === 'remember' && row.page_id === null && snapshot !== null && !snapshot.page.deleted_at && !!p
+    && (p.member_page === true || (row.slug === UNATTRIBUTED_MEMORY_SLUG && p.entity_slug == null));
 }

@@ -178,13 +178,17 @@ const find_experts: Operation = {
     const pack = await loadActivePackBestEffort(ctx);
     const types = pack ? expertTypesFromPack(pack.manifest) : [];
     const scope = await readPolicyOpts(ctx);
+    let degraded: unknown[] = [];
     const experts = await findExperts(ctx.engine, {
       topic,
       limit: typeof p.limit === 'number' ? p.limit : undefined,
       explain: p.explain === true,
       types: types as never,
       ...scope,
+      onMeta: m => { degraded = m.degraded ?? []; },
     });
+    // GBRA-200: a keyword-only or cut ranking is stamped like search, never read as "nobody knows".
+    if (degraded.length) ctx.emitResponseMeta?.('retrieval', { degraded });
     return experts;
   },
   // hidden: 'whoknows' is in CLI_ONLY (src/cli.ts) — runWhoknows owns the CLI

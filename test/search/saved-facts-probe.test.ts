@@ -14,6 +14,7 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { operations, type OperationContext } from '../../src/core/operations.ts';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { newSource, page, putPage } from '../helpers/pinned-questions-fixture.ts';
+import { asOwner } from '../helpers/owner-tier.ts';
 
 let engine: PGLiteEngine;
 let sourceId: string;
@@ -50,7 +51,7 @@ beforeAll(async () => {
   await putPage(engine, sourceId, 'notes/harbor-held', page('note', 'Harbor held', 'Held notes on the harbor ferry.'));
   await engine.executeRaw(`UPDATE pages SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || '{"quarantine": {"reason": "test"}}'::jsonb WHERE source_id = $1 AND slug = 'notes/harbor-held'`, [sourceId]);
   const add = (fact: string, day: string) =>
-    engine.insertFact({ fact, kind: 'fact', entity_slug: 'harbor', source: 'notes', visibility: 'world', valid_from: new Date(`2025-07-${day}T00:00:00Z`) }, { source_id: sourceId });
+    asOwner(engine, tx => tx.insertFact({ fact, kind: 'fact', entity_slug: 'harbor', source: 'notes', visibility: 'world', valid_from: new Date(`2025-07-${day}T00:00:00Z`) }, { source_id: sourceId }));
   await add('The harbor ferry timetable changes in May.', '12');
   await add('The harbor ferry timetable moves to the private schedule.', '13');
   await add('The harbor ferry timetable is under review.', '14');

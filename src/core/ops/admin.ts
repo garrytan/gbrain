@@ -1,9 +1,9 @@
-import { PAGE_MUTATION_PARAMS } from '../persistence/params.ts';
+import { PAGE_MUTATION_PARAMS, REASON_PARAM } from '../persistence/params.ts';
 import { readPolicyOpts } from './context.ts';
 import { attributeVersions, canReadWriteAttribution } from './attribution.ts';
 import { GET_VERSIONS_DEFAULT_LIMIT, GET_VERSIONS_REMOTE_MAX_LIMIT, pagingLimit, reportVersionPage } from './read-paging.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
-import { fenceTranscriptText, isQuotedPageType } from '../search/transcript-quote.ts';
+import { fenceTranscriptText, quotesStored } from '../search/transcript-quote.ts';
 /**
  * Admin operation cluster — pure move from operations.ts (v0.46.x tranche 2).
  * Op consts stay module-private; `adminOperations` below lists them in
@@ -25,6 +25,7 @@ import { isSegmentedPage, pageBodyBytes } from '../page-body/page-shape.ts';
 import { openSegmentedBody } from '../page-body/read-range.ts';
 import { segmentedReadDocument } from '../page-window/segmented.ts';
 import { getVersionsKnownAsOf, KNOWN_AS_OF_PARAM, VERSIONS_DIFF_PARAM } from './known-as-of.ts';
+import { STATS_BY_PARAMS, statsBy, wantsStatsBy } from './stats-by.ts';
 
 // --- Admin ---
 
@@ -45,9 +46,11 @@ const get_stats: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Brain statistics (page count, chunk count, etc.) — remote callers see counters confined to their source grant.',
-  params: {},
-  handler: async (ctx) => {
+  description: 'Brain statistics (page count, chunk count, etc.) — remote callers see counters confined to their source grant. ' +
+    'Pass by (source, type or source,type), since or collapse_aliases for live page counts per group instead, with distinct-slug totals so cross-source twins are not double counted.',
+  params: STATS_BY_PARAMS,
+  handler: async (ctx, p) => {
+    if (wantsStatsBy(p)) return statsBy(ctx, p, diagnosticScope(ctx));
     return ctx.engine.getStats(diagnosticScope(ctx));
   },
   scope: 'admin',
@@ -177,7 +180,7 @@ const run_doctor: Operation = {
   description: 'Run brain health checks and return a structured DoctorReport (thin-client doctor surface). tier "ops": only the operational sections under a 4 s deadline; only: just the named checks.',
   params: {
     tier: { type: 'string', enum: ['ops'], description: 'ops: capacity, write failures, embedding state, sync movement, compaction, serve build and schema pack, under one 4 s deadline. Omit for the focused remote report.' },
-    only: { type: 'array', items: { type: 'string' }, description: 'Run just these checks (doctor check names, for example persistence_capacity).' },
+    only: { type: 'array', minItems: 1, items: { type: 'string' }, description: 'Run just these checks (doctor check names, for example persistence_capacity).' },
   },
   handler: async (ctx, p) => {
     if (p.tier !== undefined || p.only !== undefined) return (await import('../../commands/doctor/remote-tier.ts')).runRemoteDoctorTier(ctx, p);
@@ -203,10 +206,10 @@ const get_versions: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: { exempt: 'full page version snapshots by slug; a page read governed by visibility like get_page (CEO-17)' },
-  description: `Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest ${GET_VERSIONS_DEFAULT_LIMIT} versions by default. Pass include_body: true for each version's compiled_truth and timeline, and a larger limit (at most ${GET_VERSIONS_REMOTE_MAX_LIMIT} over MCP) for older versions. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). revert_version takes the id field.`,
+  description: `Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest ${GET_VERSIONS_DEFAULT_LIMIT} versions by default. Pass include_body: true for each version's compiled_truth and timeline, and a larger limit (at most ${GET_VERSIONS_REMOTE_MAX_LIMIT} over MCP) for older versions. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). replaced_because is the reason given for the write that replaced the snapshot (null when none was given). revert_version takes the id field.`,
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose version history to list.' },
-    limit: { type: 'number', description: `Return only the newest N versions (a positive integer). Default ${GET_VERSIONS_DEFAULT_LIMIT}; MCP callers are capped at ${GET_VERSIONS_REMOTE_MAX_LIMIT}.` },
+    limit: { type: 'number', minimum: 1, description: `Return only the newest N versions (a positive integer). Default ${GET_VERSIONS_DEFAULT_LIMIT}; MCP callers are capped at ${GET_VERSIONS_REMOTE_MAX_LIMIT}.` },
     include_body: { type: 'boolean', description: 'true adds compiled_truth and timeline to every version. Default false (metadata only).' },
     known_as_of: { ...KNOWN_AS_OF_PARAM, description: 'Recorded time: the validity intervals this brain had recorded by this ISO 8601 instant, from the belief ledger. Not as_of, which is valid time (a date).' },
     diff: VERSIONS_DIFF_PARAM,
@@ -231,26 +234,30 @@ const get_versions: Operation = {
       const metadata = page(await ctx.engine.getVersions(p.slug as string, { ...opts, includeBody: false }))
         .map(v => { const { compiled_truth: _b, timeline: _t, ...rest } = v as typeof v & { compiled_truth?: unknown; timeline?: unknown }; return rest; });
       const sized = [];
-      for (const v of metadata) sized.push(await remoteVersionSize(ctx, v));
+      const reason = await remoteReasons(ctx, String(p.slug), metadata);
+      for (const v of metadata) sized.push({ ...await remoteVersionSize(ctx, v), ...reason(v) });
       return canReadWriteAttribution(ctx) ? attributeVersions(ctx.engine, sized) : sized;
     }
     const plain = page(await ctx.engine.getVersions(p.slug as string, opts));
     const versions = canReadWriteAttribution(ctx) ? await attributeVersions(ctx.engine, plain) : plain;
-    // Wave B: a segmented version's body is never returned whole; body_ref names its size and the windowed read.
+    // Wave B: a segmented version's body is never returned whole; body_ref names its size (no read serves an older segmented body yet, #7800).
     const out = [];
+    const snapshotTiers = ctx.remote === false || versions.length === 0 ? new Map<number, unknown>() : new Map((await ctx.engine.executeRaw<{ id: number | string; trust_tier: string | null }>(
+      'SELECT id, trust_tier FROM page_versions WHERE id = ANY($1::bigint[])', [versions.map(v => Number(v.id))])).map(r => [Number(r.id), r.trust_tier] as const));
+    const reason = await remoteReasons(ctx, String(p.slug), versions);
     for (const v of versions) {
       if (isSegmentedPage(v)) {
         const sized = await remoteVersionSize(ctx, v);
         const { compiled_truth: _b, timeline: _t, ...rest } = sized;
-        out.push({ ...rest, body_ref: { version_id: v.id, total_bytes: 'total_bytes' in sized ? sized.total_bytes : pageBodyBytes(v),
-          read: { tool: 'get_page', arguments: { slug: p.slug, version_id: v.id, body: 'window' } } } });
+        out.push({ ...rest, ...reason(v), body_ref: { version_id: v.id, total_bytes: 'total_bytes' in sized ? sized.total_bytes : pageBodyBytes(v) } });
         continue;
       }
       if (ctx.remote === false) { out.push(v); continue; }
-      // #8042: a third-party page's version reaches an untrusted reader quoted, as get_page's current body does.
-      const quote = isQuotedPageType(v.type);
+      // #8042: a third-party page's version reaches an untrusted reader quoted, as get_page's current body does;
+      // GST-687: so does one whose snapshot tier is below the owner's (a version with no snapshot reads as unknown).
+      const quote = quotesStored(v.type, snapshotTiers.get(Number(v.id)));
       const body = (text: string) => { const clean = sanitizeRemoteBody(text); return quote && clean ? fenceTranscriptText(clean, String(p.slug)) : clean; };
-      out.push({ ...v, compiled_truth: body(v.compiled_truth),
+      out.push({ ...v, compiled_truth: body(v.compiled_truth), ...reason(v),
         ...(typeof v.timeline === 'string' ? { timeline: body(v.timeline) } : {}), ...(quote ? { quoted: 'transcript' } : {}) });
     }
     return out;
@@ -258,6 +265,28 @@ const get_versions: Operation = {
   scope: 'read',
   cliHints: { name: 'history', positional: ['slug'] },
 };
+
+/**
+ * GBRA-217: a remote reader's `replaced_because` goes through the same sanitizer as the version bodies. GBRA-286
+ * (#8042, GST-687): it is quoted when the write that gave it (the next snapshot, or the live page when none) is of a
+ * third-party type or below the owner's tier, as that write's text is. A trusted local reader gets it as stored.
+ */
+async function remoteReasons(ctx: OperationContext, slug: string, versions: ReadonlyArray<{ id: number; replaced_because?: string | null }>):
+  Promise<(v: { id: number; replaced_because?: string | null }) => { replaced_because?: string }> {
+  const ids = versions.filter(v => typeof v.replaced_because === 'string').map(v => Number(v.id));
+  if (ctx.remote === false || ids.length === 0) return () => ({});
+  const writers = new Map((await ctx.engine.executeRaw<{ id: number | string; type: string | null; tier: string | null }>(
+    `SELECT pv.id, COALESCE(nx.type, p.type) AS type, CASE WHEN nx.id IS NULL THEN p.trust_tier ELSE nx.trust_tier END AS tier
+       FROM page_versions pv JOIN pages p ON p.id = pv.page_id
+       LEFT JOIN LATERAL (SELECT n.id, n.type, n.trust_tier FROM page_versions n WHERE n.page_id = pv.page_id AND n.id > pv.id ORDER BY n.id LIMIT 1) nx ON true
+      WHERE pv.id = ANY($1::bigint[])`, [ids])).map(r => [Number(r.id), r] as const));
+  return v => {
+    if (typeof v.replaced_because !== 'string') return {};
+    const clean = sanitizeRemoteBody(v.replaced_because);
+    const writer = writers.get(Number(v.id));
+    return { replaced_because: clean && quotesStored(writer?.type, writer?.tier) ? fenceTranscriptText(clean, slug) : clean };
+  };
+}
 
 /**
  * A segmented version as a remote caller sees it: the size of its read projection (`total_bytes`, what get_page reports
@@ -280,6 +309,7 @@ const revert_version: Operation = {
     ...PAGE_MUTATION_PARAMS,
     slug: { type: 'string', required: true, description: 'Slug of the page to revert.' },
     version_id: { type: 'number', required: true, description: 'Numeric version id to revert to, as returned by get_versions. Not a version NUMBER offset — pass the id field.' },
+    reason: REASON_PARAM,
   },
   mutating: true,
   scope: 'write',

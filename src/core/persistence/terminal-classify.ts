@@ -25,6 +25,7 @@ import { classifySyncFault, SYNC_FAULT_TABLE, type SyncFaultClass, type SyncSafe
 import { isSyncKnockOn, knockOnRoot, SYNC_CURSOR_FENCE_ORIGIN, SYNC_KNOCK_ON_ORIGIN, cursorFenceCause, syncKnockOnSql } from './sync-knock-on.ts';
 import { writeFailureDiagnostic } from './verb-errors.ts';
 import { publicCategory, type PublicCategory } from './public-category.ts';
+import { ownerMarkerRestoreFix } from './owner-marker.ts';
 
 export type TerminalCategory =
   | 'recovery_pending' | 'recovery_blocked'
@@ -296,6 +297,7 @@ function route(input: TerminalInput): Partial_ {
         why: 'The page changed after the caller read it. Read the current revision and resubmit against it with a new request id.',
         verify: { argv: failuresArgv(source) } } };
   }
+  if (code === 'owner_marker_missing') return fromTable('sync_fault', code, origin, ownerMarkerRestoreFix(source));
   if (FAULT_CODES.has(code)) return fromTable('sync_fault', code, origin, faultAction(code, input), null, input.error_message);
   const entry = (CODES as Record<string, { class: string } | undefined>)[code];
   if (!entry) return diagnosis(input, code, origin, `The write ended with code ${code}, which this build does not know.`);

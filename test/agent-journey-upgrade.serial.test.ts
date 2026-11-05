@@ -286,7 +286,8 @@ describe('(3) harness configs registered before the upgrade', () => {
     const fixed = await run(h, ['setup', harness, '--instructions-only', '--json']);
     expect(fixed.exitCode, fixed.stderr).toBe(0);
     const after = harnessCheck(await run(h, ['doctor', '--only', 'harness_wiring', '--json']));
-    expect(after, JSON.stringify(after)).toMatchObject({ status: 'ok', details: { harness, reason: 'wired_running', smoke: 'smoke_passed', instructions: expect.arrayContaining([expect.objectContaining({ harness, state: 'current' })]) } });
+    // The block is fixed; a registration written before the launcher (#8426) still starts serve in the session's directory, so doctor hands it to the user.
+    expect(after, JSON.stringify(after)).toMatchObject({ status: 'warn', details: { harness, reason: 'wired_running', smoke: 'smoke_passed', code: 'hook_session_cwd', hook_launcher: { harness, lane: 'mcp', reason: 'session_cwd', owner: 'none' }, instructions: expect.arrayContaining([expect.objectContaining({ harness, state: 'current' })]) }, fix: { actor: 'user' } });
   }
 
   test('a pre-surface Claude Code registration (`serve`, no --surface) keeps the full catalog and recalls', async () => {

@@ -26,6 +26,7 @@ import { resetGateway } from '../src/core/ai/gateway.ts';
 import { withTrustPromotion, withWriteAttribution } from '../src/core/persistence/context.ts';
 import type { WriteAttribution } from '../src/core/persistence/attribution.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { writeGitHold } from '../src/core/persistence/sync-holds.ts';
 import { resolveRepairScope } from '../src/core/repair/core.ts';
 import { AUTO_REPAIR_REGISTRY, repairRunner } from '../src/core/repair/registry.ts';
 import { analyzePageDrift } from '../src/core/trust/provenance-drift.ts';
@@ -35,7 +36,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
-import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
+import { managedBrain, settleManagedGitEffects, type ManagedBrain } from './helpers/managed-brain.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { withManagedFixtureWrite } from './helpers/managed-e2e-fixture-write.ts';
 
@@ -260,8 +261,8 @@ for (const kind of testBackends()) {
 for (const kind of testBackends()) {
   const databaseUrl = kind === 'postgres' ? requirePostgresTestDatabase() : undefined;
   describe(`#7891 provenance drift (${kind}, managed repository brain)`, () => {
-    test('apply publishes the restore through the coordinator: the file and the row carry the restored stamps and marker', () => managedBrain(async ({ engine, ctx, root }) => {
-      const slug = 'inbox/managed-restore';
+    /** A managed page a pre-#7892 remote write left without its stamps; its file matches the row. */
+    const remoteDrop = async ({ engine, ctx, root }: ManagedBrain, slug: string) => {
       await operationsByName.put_page.handler(ctx, { slug, content: '---\ntitle: Seeded\ntype: note\n---\nCaptured body\n' });
       await settleManagedGitEffects(engine);
       const seeded = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
@@ -277,13 +278,20 @@ for (const kind of testBackends()) {
       });
       const live = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
       fs.writeFileSync(path.join(root, `${slug}.md`), serializePageToMarkdown(live.page, live.tags));
-      const repair = (apply: boolean, expect?: string) => (async () => (await repairRunner(engine, { apply, logger }))
-        .run('provenance', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default', ...(expect ? { expect } : {}) }))() as Promise<Record<string, any>>;
-      const dry = await repair(false);
+      return live;
+    };
+    const repair = (engine: BrainEngine, apply: boolean, expect?: string) => (async () => (await repairRunner(engine, { apply, logger }))
+      .run('provenance', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default', ...(expect ? { expect } : {}) }))() as Promise<Record<string, any>>;
+
+    test('apply publishes the restore through the coordinator: the file and the row carry the restored stamps and marker', () => managedBrain(async brain => {
+      const { engine, root } = brain;
+      const slug = 'inbox/managed-restore';
+      await remoteDrop(brain, slug);
+      const dry = await repair(engine, false);
       expect(dry.listing.map((entry: Record<string, string>) => entry.class)).toEqual(['remote']);
       const fileBefore = fs.readFileSync(path.join(root, `${slug}.md`), 'utf8');
       expect(fs.readFileSync(path.join(root, `${slug}.md`), 'utf8')).toBe(fileBefore);
-      await repair(true, dry.preview_hash);
+      await repair(engine, true, dry.preview_hash);
       await settleManagedGitEffects(engine);
       const row = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!.page.frontmatter;
       const file = parseMarkdown(fs.readFileSync(path.join(root, `${slug}.md`), 'utf8'), slug).frontmatter;
@@ -292,7 +300,44 @@ for (const kind of testBackends()) {
       expect(row.trust_tier).toBe('external_untrusted');
       expect(file.trust_tier).toBe('external_untrusted');
       expect((await engine.executeRaw<{ trust_tier: string }>('SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', ['default', slug]))[0]!.trust_tier).toBe('external_untrusted');
-      expect((await repair(false)).affected).toBe(0);
+      expect((await repair(engine, false)).affected).toBe(0);
+    }, { databaseUrl }), 120_000);
+
+    test('#8009: a page sync holds as file_drift is listed held with its code, never planned; the apply writes exactly the previewed count', () => managedBrain(async brain => {
+      const { engine, root } = brain;
+      const [clear, held] = ['inbox/managed-clear', 'inbox/managed-held'];
+      await remoteDrop(brain, clear);
+      const heldPage = await remoteDrop(brain, held);
+      // Sync found the file and the row both changed and held the file (file_drift): an owner page write refuses the page.
+      fs.appendFileSync(path.join(root, `${held}.md`), '\nAn edit made in the checkout.\n');
+      const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id = 'default'");
+      await engine.transaction(tx => writeGitHold(tx, { source_id: 'default', incarnation: incarnation!, path: `${held}.md`, source_path: `${held}.md`, slug: held,
+        page_id: heldPage.page.id, code: 'file_drift', message: 'The file and the database copy both changed.', upstream_version: null, observed_at: new Date().toISOString(),
+        run_id: 'run-a', mode: 'managed', meta: { side: 'both' } } as Parameters<typeof writeGitHold>[1]));
+      const dry = await repair(engine, false);
+      expect(dry.listing.map((entry: Record<string, string>) => [entry.class, entry.item.split(' ')[0]])).toEqual([['remote', `default:${clear}`], ['held', `default:${held}`]]);
+      expect(dry.listing[1].detail).toContain('file_drift');
+      expect(dry.affected).toBe(1);
+      const applied = await repair(engine, true, dry.preview_hash);
+      await settleManagedGitEffects(engine);
+      expect(applied.failed).toEqual([]);
+      expect(applied.applied).toBe(dry.affected);
+      expect(stampsOf((await engine.readPageSnapshot(clear, { sourceId: 'default' }))!.page.frontmatter)).toEqual(STORED);
+      expect((await engine.readPageSnapshot(held, { sourceId: 'default' }))!.revision).toBe(heldPage.revision);
+
+      // The apply reads the same holds: a page held after its preview is skipped as held, not a failed write.
+      const late = 'inbox/managed-late';
+      const latePage = await remoteDrop(brain, late);
+      const before = await repair(engine, false);
+      expect(before.listing.map((entry: Record<string, string>) => [entry.class, entry.item.split(' ')[0]])).toEqual([['held', `default:${held}`], ['remote', `default:${late}`]]);
+      fs.appendFileSync(path.join(root, `${late}.md`), '\nAn edit made in the checkout.\n');
+      await engine.transaction(tx => writeGitHold(tx, { source_id: 'default', incarnation: incarnation!, path: `${late}.md`, source_path: `${late}.md`, slug: late,
+        page_id: latePage.page.id, code: 'file_drift', message: 'The file and the database copy both changed.', upstream_version: null, observed_at: new Date().toISOString(),
+        run_id: 'run-b', mode: 'managed', meta: { side: 'both' } } as Parameters<typeof writeGitHold>[1]));
+      const skipped = await repair(engine, true, before.preview_hash);
+      expect(skipped.failed).toEqual([]);
+      expect([skipped.applied, skipped.outcomes]).toEqual([0, { held: 1 }]);
+      expect((await engine.readPageSnapshot(late, { sourceId: 'default' }))!.revision).toBe(latePage.revision);
     }, { databaseUrl }), 120_000);
   });
 }

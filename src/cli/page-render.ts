@@ -28,10 +28,13 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import { serializeMarkdown } from '../core/markdown.ts';
 import { opError } from '../core/ops/contract.ts';
-import { unquoteTranscriptText } from '../core/search/transcript-quote.ts';
+import { transcriptFence, unquoteTranscriptText } from '../core/search/transcript-quote.ts';
 import { readFix } from '../core/ops/op-fix.ts';
 import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
 import { isSegmentedPage } from '../core/page-body/page-shape.ts';
+import { VALID_TIME_NOT_IN_FORCE_EXIT_CODE } from '../core/exit-codes.ts';
+import { assertValidTimeEcho } from '../core/valid-time.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
 /** Window size the thin client asks for while paging a whole page. */
 export const REMOTE_PAGE_WINDOW_BYTES = 512 * 1024;
@@ -75,8 +78,64 @@ function renderSlice(r: GetPageResult): string {
   return g.blocks.map((b: GetPageResult) => `-- lines ${b.line_start}-${b.line_end} (match at ${b.match_starts.join(', ')})\n${b.text}\n`).join('');
 }
 
+/** The stderr line for a result's valid_time: an as_of answer's status, edition, history and doubt, or a plain read's status today. */
+export function validTimeLine(vt: GetPageResult): string {
+  if (vt.history === undefined) {
+    return `[gbrain] valid_time: ${vt.status} as of ${vt.as_of} (valid_from ${vt.valid_from ?? '-'}, valid_until ${vt.valid_until ?? '-'}).`;
+  }
+  const edition = vt.chosen_is_current ? 'current page' : vt.chosen_version_id != null ? `version ${vt.chosen_version_id}` : 'none in force';
+  const date = vt.valid_from ?? vt.earliest_known_valid_from ?? '-';
+  return `[gbrain] valid_time as_of ${vt.as_of}: ${vt.status}; edition ${edition} (valid_from ${date}${vt.valid_until ? `, valid_until ${vt.valid_until}` : ''}); history ${vt.history}${vt.uncertain ? `; uncertain: ${vt.why}` : ''}.`;
+}
+
+/** True for an as_of answer with no edition in force: stdout gets the status and why, never a document. */
+export function asOfNotInForce(r: GetPageResult | null | undefined): boolean {
+  return !!r?.valid_time && r.valid_time.history !== undefined && r.valid_time.status !== 'in_force';
+}
+
+/**
+ * `gbrain get --as-of` (GBRA-217): an edition read in windows prints whole, each window fetched with the previous
+ * window's `next` (slug, source, date and the pinned edition); stderr carries the valid_time header once. False when the
+ * result is not a windowed as_of answer (formatGetPage renders it).
+ */
+export async function printAsOfWindows(call: PagedCall, first: GetPageResult, params: Record<string, unknown>, write: (text: string) => Promise<void>): Promise<boolean> {
+  if (params.as_of === undefined || params.cursor !== undefined || params.json === true || first.valid_time?.status !== 'in_force' || !first.window || !first.next) return false;
+  process.stderr.write(validTimeLine(first.valid_time) + '\n');
+  for (let r = first; ;) {
+    if (!r.window) throw new Error(`The edition of ${String(first.slug)} in force on ${String(params.as_of)} is no longer retained (${r.valid_time?.why ?? 'edition_pruned'}); the rest of it was not printed.`);
+    await write(r.window.text);
+    if (!r.next) return true;
+    r = await call(r.next.arguments as Record<string, unknown>);
+  }
+}
+
+/**
+ * After a `gbrain get --as-of` call, locally or over the thin client (`versions` set): a host reply that does not echo
+ * `valid_time.as_of` fails closed (`host_upgrade_required`, on every window too), the exit status is set, and a windowed
+ * edition is paged. True when the edition was printed here.
+ */
+export async function finishAsOfRead(call: PagedCall, result: GetPageResult, params: Record<string, unknown>, write: (text: string) => Promise<void>,
+  versions?: { client: string; host: string | null }): Promise<boolean> {
+  if (params.as_of === undefined) return false;
+  if (versions) assertValidTimeEcho(params, result, versions);
+  const checked: PagedCall = versions ? async p => { const r = await call(p); assertValidTimeEcho(params, r, versions); return r; } : call;
+  const exit = asOfExitCode(result);
+  if (exit) setCliExitVerdict(exit);
+  return printAsOfWindows(checked, result, params, write);
+}
+
+/** The exit status of an as_of answer: 15 when no edition is in force, 1 when the edition's text has gone, 0 otherwise. */
+export function asOfExitCode(r: GetPageResult | null | undefined): number {
+  if (!r?.valid_time || r.valid_time.history === undefined) return 0;
+  if (r.valid_time.status !== 'in_force') return VALID_TIME_NOT_IN_FORCE_EXIT_CODE;
+  return r.compiled_truth === undefined && !r.window ? 1 : 0;
+}
+
 /** stdout text for one get_page result; partial responses add a stderr note. */
 export function formatGetPage(r: GetPageResult): string {
+  if (r.valid_time) process.stderr.write(validTimeLine(r.valid_time) + '\n');
+  if (asOfNotInForce(r)) return `status: ${r.valid_time.status}\nwhy: ${r.valid_time.why ?? 'none'}\n`;
+  if (r.valid_time?.history !== undefined && r.compiled_truth === undefined && !r.window) return '';
   if (r.error === 'ambiguous_slug') {
     return `Ambiguous slug. Did you mean:\n${r.candidates.map((c: string) => `  ${c}`).join('\n')}\n`;
   }
@@ -98,9 +157,9 @@ export function remoteErrorCode(e: unknown): string | undefined {
   return err?.canonical ?? (typeof err?.code === 'string' ? err.code : undefined);
 }
 
-/** True when a get_page call named no body mode, selector or round-trip flag: the caller wants the page as it is. */
+/** True when a get_page call named no body mode, selector, round-trip flag or as_of date: the caller wants the page as it is now. */
 export function wantsWholePage(params: Record<string, unknown>): boolean {
-  return ['body', 'lines', 'bytes', 'around_chunk_id', 'cursor', 'include_content', 'content_only', 'section', 'grep'].every(k => params[k] === undefined);
+  return ['body', 'lines', 'bytes', 'around_chunk_id', 'cursor', 'include_content', 'content_only', 'section', 'grep', 'as_of'].every(k => params[k] === undefined);
 }
 
 /**
@@ -110,7 +169,8 @@ export function wantsWholePage(params: Record<string, unknown>): boolean {
 export const pagedReadWork = { spooled: 0, replayed: 0 };
 
 type PagedCall = (params: Record<string, unknown>) => Promise<GetPageResult>;
-interface SpooledPage { revision: string; windows: number; bytes: number; parts(): AsyncIterable<Buffer> }
+/** `fence`: the host quoted the windows (#8042, GST-687), so the page prints inside one quote fence (#8377). */
+interface SpooledPage { revision: string; windows: number; bytes: number; fence: { open: string; close: string } | null; parts(): AsyncIterable<Buffer> }
 
 /**
  * Page a whole page's round-trip markdown through windows into a 0600 temp file, then hand `use` the verified copy;
@@ -121,9 +181,9 @@ async function withSpooledPage<T>(call: PagedCall, params: Record<string, unknow
   const path = join(tmpdir(), `gbrain-page-${process.pid}-${randomBytes(8).toString('hex')}.md`);
   const spool = await open(path, 'wx+', 0o600);
   try {
-    const { lengths, revision } = await spoolWholePage(call, params, spool);
+    const { lengths, revision, fence } = await spoolWholePage(call, params, spool);
     const bytes = lengths.reduce((n, length) => n + length, 0);
-    return await use({ revision, windows: lengths.length, bytes, async *parts() {
+    return await use({ revision, windows: lengths.length, bytes, fence, async *parts() {
       for (let i = 0, at = 0; i < lengths.length; at += lengths[i]!, i++) {
         const part = Buffer.allocUnsafe(lengths[i]!);
         for (let filled = 0; filled < part.length;) {
@@ -142,13 +202,16 @@ async function withSpooledPage<T>(call: PagedCall, params: Record<string, unknow
 }
 
 /** The paging loop of withSpooledPage: the byte length of each window written to `spool`, once size and sha256 verify. */
-async function spoolWholePage(call: PagedCall, params: Record<string, unknown>, spool: FileHandle): Promise<{ lengths: number[]; revision: string }> {
+async function spoolWholePage(call: PagedCall, params: Record<string, unknown>, spool: FileHandle): Promise<{ lengths: number[]; revision: string; fence: SpooledPage['fence'] }> {
   const base = { slug: params.slug, ...(params.source_id !== undefined ? { source_id: params.source_id } : {}), body: 'window', view: 'markdown' };
   for (let attempt = 0; attempt <= MAX_RESTARTS; attempt++) {
     await spool.truncate(0);
     const lengths: number[] = [];
     const hash = createHash('sha256');
     let bytes = 0;
+    let quoted = false;
+    let longest = 0;
+    let run = 0;
     let r = await call({ ...base, max_bytes: REMOTE_PAGE_WINDOW_BYTES });
     const { revision, size } = r;
     let changed = false;
@@ -157,7 +220,10 @@ async function spoolWholePage(call: PagedCall, params: Record<string, unknown>, 
         throw new Error(`get_page did not return a markdown window for ${String(params.slug)}; the page was not printed.`);
       }
       // #8042: a host quotes each window of a chat page; size and sha256 cover the page's own bytes.
-      const part = Buffer.from(r.quoted === 'transcript' ? unquoteTranscriptText(r.window.text, String(r.slug)) : r.window.text, 'utf8');
+      const text = r.quoted === 'transcript' ? unquoteTranscriptText(r.window.text, String(r.slug)) : r.window.text;
+      quoted ||= r.quoted === 'transcript';
+      for (const ch of text) longest = Math.max(longest, run = ch === '`' ? run + 1 : 0);
+      const part = Buffer.from(text, 'utf8');
       hash.update(part);
       for (let written = 0; written < part.length;) written += (await spool.write(part, written, part.length - written, bytes + written)).bytesWritten;
       lengths.push(part.length);
@@ -177,7 +243,7 @@ async function spoolWholePage(call: PagedCall, params: Record<string, unknown>, 
     if (bytes !== size.total_bytes || hash.digest('hex') !== size.sha256) {
       throw new Error(`The paged copy of ${String(params.slug)} does not match the size and sha256 the host reported; the page was not printed.`);
     }
-    return { lengths, revision };
+    return { lengths, revision, fence: quoted ? transcriptFence(String(r.slug), longest) : null };
   }
   throw new Error(`${String(params.slug)} kept changing while it was being read (${MAX_RESTARTS + 1} attempts); the page was not printed. Try again.`);
 }
@@ -193,11 +259,11 @@ function jsonTooLargeError(slug: string, sourceId: string | undefined, bytes: nu
  * A whole page's round-trip markdown as one string, paged and verified as `printPagedPage` does it: for `--json`,
  * which refuses a page over PAGE_MAX_BYTES before this holds it.
  */
-export async function readWholePageMarkdown(call: PagedCall, params: Record<string, unknown>): Promise<{ markdown: string; revision: string; windows: number }> {
+export async function readWholePageMarkdown(call: PagedCall, params: Record<string, unknown>): Promise<{ markdown: string; revision: string; windows: number; fence: SpooledPage['fence'] }> {
   return withSpooledPage(call, params, async page => {
     const parts: Buffer[] = [];
     for await (const part of page.parts()) parts.push(part);
-    return { markdown: Buffer.concat(parts, page.bytes).toString('utf8'), revision: page.revision, windows: page.windows };
+    return { markdown: Buffer.concat(parts, page.bytes).toString('utf8'), revision: page.revision, windows: page.windows, fence: page.fence };
   });
 }
 
@@ -209,10 +275,15 @@ export async function printPagedPage(call: PagedCall, params: Record<string, unk
       if (r.size?.total_bytes > PAGE_MAX_BYTES) throw jsonTooLargeError(String(params.slug), params.source_id as string | undefined, r.size.total_bytes);
       return r;
     }, params);
-    await write(JSON.stringify({ slug: params.slug, revision: paged.revision, content: paged.markdown, windows: paged.windows }) + '\n');
+    const content = paged.fence ? `${paged.fence.open}${paged.markdown}${paged.fence.close}` : paged.markdown;
+    await write(JSON.stringify({ slug: params.slug, revision: paged.revision, content, windows: paged.windows }) + '\n');
     return;
   }
-  await withSpooledPage(call, params, async page => { for await (const part of page.parts()) await write(part.toString('utf8')); });
+  await withSpooledPage(call, params, async page => {
+    if (page.fence) await write(page.fence.open);
+    for await (const part of page.parts()) await write(part.toString('utf8'));
+    if (page.fence) await write(page.fence.close);
+  });
 }
 
 /** What the local get_page call returns when `streamSegmentedGet` printed the page itself. */

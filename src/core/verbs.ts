@@ -29,6 +29,7 @@ import { recordFunnelEvent, recordRememberOutcome } from './funnel.ts';
 import type { Operation } from './operations.ts';
 import { WRITE_RECEIPT_SCHEMA, WRITE_REQUEST_PARAM, AGENT_CONTENT_PARAMS, CONTENT_ORIGIN_PARAM } from './persistence/params.ts';
 import { WRITE_ERROR_CODES } from './persistence/types.ts';
+import { isStrictIsoDateTime } from './utils.ts';
 
 /** Frozen protocol version for the MEMORY_VERBS v1 verb set. Single source of truth. */
 export const MEMORY_VERBS_VERSION = 1;
@@ -108,6 +109,10 @@ const remember: Operation = {
       fullSurfaceOnly: true,
     },
     replaces: { type: 'string', description: 'fact_id this fact replaces (same entity, or none).', fullSurfaceOnly: true },
+    claim_metric: { type: 'string', description: 'Typed claim metric, e.g. mrr (with claim_value).', fullSurfaceOnly: true },
+    claim_value: { type: 'number', description: 'Typed claim value (finite number).', fullSurfaceOnly: true },
+    claim_unit: { type: 'string', description: 'Typed claim unit, e.g. USD.', fullSurfaceOnly: true },
+    claim_period: { type: 'string', description: 'Typed claim period, e.g. monthly.', fullSurfaceOnly: true },
   },
   mutating: true,
   scope: 'write',
@@ -119,7 +124,9 @@ const remember: Operation = {
       const { runRememberBatch } = await import('./remember-batch.ts');
       return runRememberBatch(ctx, p, remember.handler, (code, message, suggestion) => verbError(code as never, message, suggestion));
     }
-    const fact = typeof p.fact === 'string' ? p.fact.trim() : '';
+    const { unquoteFactText } = await import('./search/transcript-quote.ts');
+    // #8377: a fact an agent copied out of a quoted read (recall, context_pack, hot memory) is stored without the fence.
+    const fact = typeof p.fact === 'string' ? (ctx.remote === false ? p.fact : unquoteFactText(p.fact)).trim() : '';
     if (!fact) {
       throw verbError(
         'invalid_params',
@@ -168,13 +175,15 @@ const remember: Operation = {
         'Use "world" (default — agents can recall it) or "private" (local CLI reads only).',
       );
     }
-    if (p.valid_from !== undefined && (typeof p.valid_from !== 'string' || !Number.isFinite(Date.parse(p.valid_from)))) {
+    if (p.valid_from !== undefined && !isStrictIsoDateTime(p.valid_from)) {
       throw verbError(
         'invalid_params',
-        'valid_from must be an ISO 8601 date or time.',
-        'Pass when the fact was said or became true, e.g. valid_from: "2026-03-01", or omit it.',
+        'valid_from must be an ISO 8601 date or time in years 0001-9999.',
+        'Pass when the fact was said or became true as YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS][Z|±HH:MM], e.g. valid_from: "2026-03-01", or omit it.',
       );
     }
+    const claim = (await import('./facts/typed-claim.ts')).parseClaimParams(ctx.remote === false ? p : { ...p,
+      ...Object.fromEntries((['claim_metric', 'claim_unit', 'claim_period'] as const).flatMap(k => typeof p[k] === 'string' ? [[k, unquoteFactText(p[k] as string)]] : [])) });
     if (p.content_origin !== undefined && !CONTENT_ORIGIN_PARAM.enum!.includes(p.content_origin as string)) {
       throw verbError('invalid_params', `content_origin must be one of ${CONTENT_ORIGIN_PARAM.enum!.join(', ')}; got ${JSON.stringify(p.content_origin)}.`,
         'Pass content_origin as user_said, tool_output (text from a web page, email, file or other tool) or inferred, or omit it.');
@@ -199,7 +208,7 @@ const remember: Operation = {
 
     const { submitRememberMutation } = await import('./persistence/memory-mutations.ts');
     const { runMemoryWrite } = await import('./persistence/verb-errors.ts');
-    const result = await runMemoryWrite(() => submitRememberMutation(ctx, { ...p, fact, provenance, kind, visibility, ...(replaces !== undefined ? { replaces } : {}) },
+    const result = await runMemoryWrite(() => submitRememberMutation(ctx, { ...p, fact, provenance, kind, visibility, ...claim, ...(replaces !== undefined ? { replaces } : {}) },
       undefined, { visibilityDefaulted: typeof p.visibility !== 'string' }));
     // F8: the explanation the CLI formatter prints, as a model-visible notice.
     if ((result as { degraded_dedup?: boolean } | null)?.degraded_dedup) {

@@ -27,6 +27,7 @@ import { assertExportProjectionRoundtrip } from '../src/core/shared-skills/migra
 import { parseMarkdown } from '../src/core/markdown.ts';
 import { verifyAndRepairDreamPages } from '../src/core/cycle/synthesize-verify.ts';
 import { FENCE_TREND_OP } from '../src/core/fence-repair/census-store.ts';
+import { unquoteTranscriptText } from '../src/core/search/transcript-quote.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 
@@ -124,8 +125,11 @@ describe('put_page', () => {
     await put(slug, page('E7', factsFence(fact(1, 'Public claim'), fact(2, 'PRIVATE_E7_FACT', { vis: 'private' }))));
     const view = await op('get_page').handler(ctx({ remote: true }), { slug, include_content: true }) as { content: string };
     expect(view.content).not.toContain('PRIVATE_E7_FACT');
+    // GST-687: the agent-written page reaches the remote caller quoted; it edits the content inside the quote fence.
+    const content = unquoteTranscriptText(view.content, slug);
+    expect(content).not.toBe(view.content);
     // The remote caller appends a row with an invented kind and leaves the end marker off: both are fixable.
-    const edited = view.content.replace(fact(1, 'Public claim'), `${fact(1, 'Public claim')}\n${fact(3, 'Remote claim', { kind: 'partnership' })}`).replace(`\n${FE}`, '\n');
+    const edited = content.replace(fact(1, 'Public claim'), `${fact(1, 'Public claim')}\n${fact(3, 'Remote claim', { kind: 'partnership' })}`).replace(`\n${FE}`, '\n');
     expect(parseFactsFence(edited).warnings.length).toBeGreaterThan(0);
     const notices: Notice[] = [];
     const result = await put(slug, edited, { remote: true, notices });

@@ -165,8 +165,7 @@ describe('gbrain search stats', () => {
   });
 
   test('after telemetry writes → hit rate + intent mix surfaced', async () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(engine, makeMeta({ cache: { status: 'hit' } }), { results_count: 5 });
     recordSearchTelemetry(engine, makeMeta({ cache: { status: 'hit' } }), { results_count: 7 });
     recordSearchTelemetry(engine, makeMeta({ cache: { status: 'miss' } }), { results_count: 9 });
@@ -206,8 +205,7 @@ describe('gbrain search stats', () => {
   });
 
   test('--json includes a coverage disclosure (non-empty table)', async () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(engine, makeMeta({ cache: { status: 'hit' } }), { results_count: 5 });
     await w.flush();
 
@@ -260,8 +258,7 @@ describe('gbrain search stats', () => {
   });
 
   test('human output surfaces the exact coverage caveat (non-empty table)', async () => {
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     recordSearchTelemetry(engine, makeMeta({ cache: { status: 'hit' } }), { results_count: 5 });
     await w.flush();
 
@@ -300,8 +297,7 @@ describe('gbrain search tune (recommendations)', () => {
 
   test('conservative + high budget drop rate → recommends balanced', async () => {
     await engine.setConfig('search.mode', 'conservative');
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     // 30 calls, each dropping 5 results — strong signal.
     for (let i = 0; i < 30; i++) {
       recordSearchTelemetry(engine, makeMeta({
@@ -324,8 +320,7 @@ describe('gbrain search tune (recommendations)', () => {
 
   test('has_recommendations → human output notes the exact coverage caveat', async () => {
     await engine.setConfig('search.mode', 'conservative');
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     for (let i = 0; i < 30; i++) {
       recordSearchTelemetry(engine, makeMeta({
         mode: 'conservative',
@@ -341,8 +336,7 @@ describe('gbrain search tune (recommendations)', () => {
   test('tokenmax + Haiku subagent → recommends balanced', async () => {
     await engine.setConfig('search.mode', 'tokenmax');
     await engine.setConfig('models.tier.subagent', 'anthropic:claude-haiku-4-5');
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     for (let i = 0; i < 25; i++) {
       recordSearchTelemetry(engine, makeMeta({ mode: 'tokenmax' }), { results_count: 30 });
     }
@@ -359,8 +353,7 @@ describe('gbrain search tune (recommendations)', () => {
 
   test('--apply mutates config', async () => {
     await engine.setConfig('search.mode', 'conservative');
-    const w = getTelemetryWriter();
-    w.setEngine(engine);
+    const w = getTelemetryWriter(engine);
     for (let i = 0; i < 30; i++) {
       recordSearchTelemetry(engine, makeMeta({
         mode: 'conservative',

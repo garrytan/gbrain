@@ -186,6 +186,7 @@ export const CWD_DOTENV_PROTECTED_KEYS: readonly string[] = [
   'GBRAIN_REMOTE_MCP_URL',           // `init --remote` default: where the thin client sends its MCP traffic and bearer token
   'GBRAIN_REMOTE_ISSUER_URL',        // `init --remote` default: the OAuth issuer the client trusts and hands its credential to
   'GBRAIN_OAUTH_RELAY_URL',          // the OAuth relay that hands back Google tokens (creds/relay-client.ts): a planted relay is token theft
+  'GBRAIN_HOOK_CWD',                 // #8424: the session directory the hook launcher records; a planted value moves the yield checks and the turn-rule project match
   // --- re-run marker ------------------------------------------------------
   'GBRAIN_CWD_ENV_QUARANTINED',      // cli-preflight.ts's sanitized re-run marker; only honoured when the startup cwd IS the .env-free dir it names, so a planted one is inert — listed so it is also dropped and named in the warning
   // --- posture-widening ----------------------------------------------------

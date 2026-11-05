@@ -18,13 +18,20 @@
  * Seams: GBRAIN_PREGATE_GATE_CMD replaces `bun run ci:ubicloud:diff`,
  * GBRAIN_PREGATE_REUSE_CMD replaces `bun scripts/ci-reuse.ts --gate`,
  * GBRAIN_PREGATE_REPO names the repository.
+ * --list: prints the gate command's --list output (the inventory gstack's
+ * clear --run checks runs against) without UBI_OWNER or a gate; a failing or
+ * empty inventory exits non-zero.
  * VM cleanup: the gate's UBICLOUD: left= line (UBI_LEFT_FILE) must say 0, or
  * the run is PREGATE_REMOTE_INFRA (exit 4, no receipt), never a test result;
  * a missing line counts as not confirmed.
+ * Policy floor: .gstack/pregate.json's run_profiles and remote_gate_runs are read
+ * only by gstack 1.91.377.0 and newer, so .gstack/ship-policy.json must declare
+ * at least that min_gstack_version while they exist; an older gstack would
+ * otherwise refuse the policy as invalid instead of naming the upgrade.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -183,7 +190,7 @@ describe('pregate-remote-gate.sh', () => {
     });
 
     it('a tree that changes the full-ci workflows or the scripts that attest its runs relative to origin/master never reuses its own runs', () => {
-      for (const path of ['.github/workflows/test.yml', '.github/workflows/e2e.yml', 'scripts/ci-reuse.ts', 'scripts/ci-full-suite-tree.sh', 'scripts/ci-executed-counts.ts', 'scripts/lib/gh-issue.ts']) {
+      for (const path of ['.github/workflows/test.yml', '.github/workflows/e2e.yml', 'scripts/ci-reuse.ts', 'scripts/ci-full-suite-tree.sh', 'scripts/ci-executed-counts.ts', 'scripts/lib/gh-issue.ts', 'scripts/ci-manifest.ts']) {
         rmSync(join(repo, '.git', 'reuse-args'), { force: true });
         rmSync(join(repo, '.git', 'gate-ran'), { force: true });
         mkdirSync(join(repo, path, '..'), { recursive: true });
@@ -261,5 +268,122 @@ describe('pregate-remote-gate.sh', () => {
       run(gateMarking, { GBRAIN_PREGATE_REUSE_CMD: reuser('exit 4') });
       expect(spawnSync('cat', [join(repo, '.git', 'reuse-args')], { encoding: 'utf8' }).stdout).toContain('--repo owner-example/repo-example');
     });
+  });
+});
+
+describe('pregate-remote-gate.sh --list', () => {
+  beforeEach(() => git('update-ref', 'refs/remotes/origin/master', 'HEAD'));
+  /** Runs --list with `gate` as the gate command and no UBI_OWNER. */
+  const list = (gate: string | undefined, args: string[] = [], env: Record<string, string> = {}) => {
+    const r = spawnSync('bash', [SCRIPT, '--list', ...args], {
+      cwd: repo, encoding: 'utf8',
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', UBI_OWNER: undefined, UBI_LEFT_FILE: undefined, GBRAIN_PREGATE_GATE_CMD: gate, ...env },
+    });
+    return { code: r.status, out: r.stdout, err: r.stderr };
+  };
+
+  it("prints the gate command's --list output at the checkout top, with the extra arguments, needing no UBI_OWNER", () => {
+    mkdirSync(join(repo, 'sub'));
+    const gate = join(repo, '.git', 'gate.sh');
+    writeFileSync(gate, 'echo "args: $*" >&2; echo "cwd: $PWD" >&2; printf "%s\\n" test/a.test.ts test/e2e/b.test.ts\n');
+    const r = spawnSync('bash', [SCRIPT, '--list', '--lanes', 'unit'], {
+      cwd: join(repo, 'sub'), encoding: 'utf8',
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', UBI_OWNER: undefined, GBRAIN_PREGATE_GATE_CMD: `bash ${gate}` },
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toBe('test/a.test.ts\ntest/e2e/b.test.ts\n');
+    expect(r.stderr).toContain('args: --list --lanes unit');
+    expect(r.stderr).toContain(`cwd: ${repo}`);
+    expect(r.stderr).not.toContain('UBI_OWNER');
+  });
+
+  it('lists through the development gate, bun run ci:ubicloud:diff --list, by default', () => {
+    const bin = join(repo, '.git', 'fake-bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'bun'), '#!/usr/bin/env bash\necho "fake-bun: $*" >&2\necho test/a.test.ts\n');
+    chmodSync(join(bin, 'bun'), 0o755);
+    const r = list(undefined, [], { PATH: `${bin}:${process.env.PATH}` });
+    expect(r.code, r.err).toBe(0);
+    expect(r.err).toContain('fake-bun: run ci:ubicloud:diff --list');
+    expect(r.out).toBe('test/a.test.ts\n');
+  });
+
+  it('an empty or failing inventory exits non-zero with no list, and never starts the gate', () => {
+    const empty = list('true');
+    expect(empty.code).toBe(1);
+    expect(empty.out).toBe('');
+    expect(empty.err).toContain("the gate's inventory is empty");
+    const failing = list('echo test/a.test.ts; exit 3; echo');
+    expect(failing.code).toBe(1);
+    expect(failing.out).toBe('');
+    expect(failing.err).toContain("the gate's inventory failed (exit 3)");
+    for (const r of [empty, failing]) expect(r.out + r.err).not.toContain('PREGATE_REMOTE');
+  });
+
+  it('a tree whose full-ci runs would attest to themselves gets no inventory, so gstack clear --run refuses it and the gate runs', () => {
+    const gate = 'touch .git/list-ran; echo test/a.test.ts';
+    const refused = (r: { code: number | null; out: string }) => { expect(r.code).toBe(1); expect(r.out).toBe(''); };
+    // pregate-remote-gate.sh and ci-ubicloud.ts build the inventory itself, and gstack runs the branch's own copy.
+    for (const path of ['.github/workflows/test.yml', '.github/workflows/e2e.yml', 'scripts/ci-reuse.ts', 'scripts/ci-full-suite-tree.sh', 'scripts/ci-executed-counts.ts', 'scripts/lib/gh-issue.ts', 'scripts/ci-manifest.ts', 'scripts/pregate-remote-gate.sh', 'scripts/ci-ubicloud.ts']) {
+      mkdirSync(join(repo, path, '..'), { recursive: true });
+      writeFileSync(join(repo, path), `changed ${path}\n`);
+      git('add', '.');
+      git('commit', '-q', '-m', `change ${path}`);
+      const r = list(gate);
+      refused(r);
+      expect(r.err).toContain(`pregate-remote-gate: the tree changes ${path} relative to origin/master`);
+      expect(r.err).toContain('no inventory');
+      git('update-ref', 'refs/remotes/origin/master', 'HEAD');
+    }
+    refused(list(gate, [], { GBRAIN_PREGATE_REUSE: '0' }));
+    git('update-ref', '-d', 'refs/remotes/origin/master');
+    refused(list(gate));
+    expect(spawnSync('test', ['-e', join(repo, '.git', 'list-ran')]).status).not.toBe(0);
+  });
+});
+
+describe('.gstack policy floor', () => {
+  it('ship-policy.json declares min_gstack_version 1.91.377.0 or newer while pregate.json declares run_profiles or remote_gate_runs', () => {
+    const root = join(import.meta.dir, '..', '..');
+    const pregate = JSON.parse(readFileSync(join(root, '.gstack/pregate.json'), 'utf8'));
+    const ship = JSON.parse(readFileSync(join(root, '.gstack/ship-policy.json'), 'utf8'));
+    if (!('run_profiles' in pregate) && !('remote_gate_runs' in pregate)) return;
+    const floor = String(ship.min_gstack_version ?? '');
+    expect(floor).toMatch(/^\d+\.\d+\.\d+(\.\d+)?$/);
+    const [a, b, c] = floor.split('.').map(Number);
+    expect(a * 1e8 + b * 1e4 + c).toBeGreaterThanOrEqual(1 * 1e8 + 91 * 1e4 + 377);
+  });
+});
+
+describe('ship_lanes_from (/ship lanes carried from CI, docs/ci-event-parity.md#ship-lanes)', () => {
+  const root = join(import.meta.dir, '..', '..');
+  const pregate = JSON.parse(readFileSync(join(root, '.gstack/pregate.json'), 'utf8'));
+  const ship = JSON.parse(readFileSync(join(root, '.gstack/ship-policy.json'), 'utf8'));
+  const lanes: Record<string, { profiles: string[]; inventory: string }> = pregate.ship_lanes_from ?? {};
+  const doc = readFileSync(join(root, 'docs/ci-event-parity.md'), 'utf8');
+  const start = doc.indexOf('<a id="ship-lanes"></a>');
+  const body = start < 0 ? '' : doc.slice(doc.indexOf('\n', doc.indexOf('### ', start)));
+  const section = body.slice(0, body.search(/\n#{1,6} /) >>> 0);
+  const rows = [...section.matchAll(/^\| `([a-z0-9-]+)` \| `([^`]+)` \| ([^|]+) \| `([a-z0-9,-]+)` \|$/gm)]
+    .map(([, label, command, profiles, gateLanes]) => ({ label, command, profiles: [...profiles.matchAll(/`([a-z0-9-]+)`/g)].map(m => m[1]), gateLanes }));
+
+  it('maps exactly the documented lane commands, byte for byte, to the documented run profiles', () => {
+    expect(rows.length).toBeGreaterThan(0);
+    expect(Object.keys(lanes).sort()).toEqual(rows.map(r => r.command).sort());
+    for (const r of rows) expect(lanes[r.command]!.profiles).toEqual(r.profiles);
+    for (const m of Object.values(lanes)) for (const name of m.profiles) expect(Object.keys(pregate.run_profiles)).toContain(name);
+  });
+
+  it("lists each lane's files through the full gate's --list, so a tree that changes the CI reuse files never carries its own runs", () => {
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      expect(lanes[r.command]!.inventory).toBe(`GBRAIN_PREGATE_GATE_CMD='bun run ci:ubicloud' bash scripts/pregate-remote-gate.sh --list --lanes ${r.gateLanes}`);
+    }
+  });
+
+  it('ship-policy.json declares min_gstack_version 1.94.0.0 or newer, the first gstack that reads ship_lanes_from', () => {
+    expect(Object.keys(lanes).length).toBeGreaterThan(0);
+    const [a, b, c] = String(ship.min_gstack_version ?? '').split('.').map(Number);
+    expect(a * 1e8 + b * 1e4 + c).toBeGreaterThanOrEqual(1 * 1e8 + 94 * 1e4 + 0);
   });
 });

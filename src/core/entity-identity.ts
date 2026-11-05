@@ -14,6 +14,8 @@
  *   - MANUAL-ONLY. Rows come exclusively from the entity_identity_link op.
  *     No auto-matching, no name-similarity heuristics — a wrong identity
  *     merge silently corrupts retrieval, so v1 keeps a human in the loop.
+ *     Near names are only flagged for review (entities/near-name.ts,
+ *     extraction_pending possible_duplicates); nothing here is written from them.
  *   - A page belongs to at most one identity (UNIQUE (source_id, page_id));
  *     re-linking MOVES it.
  *   - Retrieval union is OFF by default, gated by the

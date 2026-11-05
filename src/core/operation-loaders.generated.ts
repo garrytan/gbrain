@@ -21,6 +21,7 @@ const load_extraction = () => import('./ops/extraction.ts') as Promise<Record<st
 const load_facts = () => import('./ops/facts.ts') as Promise<Record<string, unknown>>;
 const load_feedback = () => import('./ops/feedback.ts') as Promise<Record<string, unknown>>;
 const load_files = () => import('./ops/files.ts') as Promise<Record<string, unknown>>;
+const load_find_pages = () => import('./ops/find-pages.ts') as Promise<Record<string, unknown>>;
 const load_graph_rank = () => import('./ops/graph-rank.ts') as Promise<Record<string, unknown>>;
 const load_image = () => import('./ops/image.ts') as Promise<Record<string, unknown>>;
 const load_ingest_log = () => import('./ops/ingest-log.ts') as Promise<Record<string, unknown>>;
@@ -28,6 +29,7 @@ const load_insights = () => import('./ops/insights.ts') as Promise<Record<string
 const load_jobs = () => import('./ops/jobs.ts') as Promise<Record<string, unknown>>;
 const load_links = () => import('./ops/links.ts') as Promise<Record<string, unknown>>;
 const load_loops = () => import('./ops/loops.ts') as Promise<Record<string, unknown>>;
+const load_memory_settings = () => import('./ops/memory-settings.ts') as Promise<Record<string, unknown>>;
 const load_notices = () => import('./ops/notices.ts') as Promise<Record<string, unknown>>;
 const load_orphans = () => import('./ops/orphans.ts') as Promise<Record<string, unknown>>;
 const load_page_append = () => import('./ops/page-append.ts') as Promise<Record<string, unknown>>;
@@ -37,6 +39,7 @@ const load_page_upload = () => import('./ops/page-upload.ts') as Promise<Record<
 const load_pages = () => import('./ops/pages.ts') as Promise<Record<string, unknown>>;
 const load_persistence = () => import('./ops/persistence.ts') as Promise<Record<string, unknown>>;
 const load_purge = () => import('./ops/purge.ts') as Promise<Record<string, unknown>>;
+const load_qm_memory = () => import('./ops/qm-memory.ts') as Promise<Record<string, unknown>>;
 const load_questions = () => import('./ops/questions.ts') as Promise<Record<string, unknown>>;
 const load_raw_data = () => import('./ops/raw-data.ts') as Promise<Record<string, unknown>>;
 const load_request_tools = () => import('./ops/request-tools.ts') as Promise<Record<string, unknown>>;
@@ -70,6 +73,7 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "purge_deleted_pages": [load_pages, "pagesOperations"],
   "capture": [load_pages, "pagesOperations"],
   "fetch": [load_pages, "pagesOperations"],
+  "find_pages": [load_find_pages, "findPagesOperations"],
   "edit_page": [load_page_edit, "pageEditOperations"],
   "append_page": [load_page_append, "pageAppendOperations"],
   "put_pages": [load_page_batch, "pageBatchOperations"],
@@ -143,6 +147,8 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "file_list": [load_files, "filesOperations"],
   "file_upload": [load_files, "filesOperations"],
   "file_url": [load_files, "filesOperations"],
+  "file_register": [load_files, "filesOperations"],
+  "file_verify": [load_files, "filesOperations"],
   "submit_job": [load_jobs, "jobsOperations"],
   "get_job": [load_jobs, "jobsOperations"],
   "wait_job": [load_jobs, "jobsOperations"],
@@ -209,6 +215,11 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "purge_fact": [load_purge, "purgeOperations"],
   "list_page_purges": [load_purge, "purgeOperations"],
   "unpurge_page": [load_purge, "purgeOperations"],
+  "memory_recall": [load_qm_memory, "qmMemoryOperations"],
+  "memory_write": [load_qm_memory, "qmMemoryOperations"],
+  "get_memory_settings": [load_memory_settings, "memorySettingsOperations"],
+  "set_memory_writeback": [load_memory_settings, "memorySettingsOperations"],
+  "memory_conversation_mode": [load_memory_settings, "memorySettingsOperations"],
   "find_contradictions": [load_insights, "find_contradictions"],
   "find_experts": [load_insights, "find_experts"],
   "find_trajectory": [load_insights, "find_trajectory"],

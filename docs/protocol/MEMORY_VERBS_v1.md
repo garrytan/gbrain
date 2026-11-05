@@ -49,7 +49,7 @@ the same registry.
 
 ```bash
 gbrain init --pglite                                      # 2-second local brain
-claude mcp add gbrain -- "$(command -v gbrain)" serve --surface starter --advertise verbs   # lists the verbs; the daily-driver tools stay callable
+gbrain setup claude-code                                  # registers serve behind gbrain's launcher; lists the verbs, the daily-driver tools stay callable
 gbrain remember "gbrain install check" --provenance install-check
 gbrain recall --query "gbrain install check"              # …now ask your agent in a NEW session
 ```
@@ -64,7 +64,7 @@ If `claude` is not found: install Claude Code first, or use a block below.
 
 **Codex**
 ```bash
-codex mcp add gbrain -- "$(command -v gbrain)" serve --surface starter --advertise verbs
+gbrain setup codex
 ```
 
 **Grok Build** (verify with `grok mcp doctor gbrain` — the add is lazy)
@@ -314,7 +314,9 @@ A claim that was forgotten is refused with `invalid_params` and the message
 prefix `fact_withdrawn`: remembering the same text again does not restore it,
 and a claim forgotten without an entity is withdrawn for every entity. To link
 a fact saved without an entity, do not forget it; remember it with `entity`
-and `replaces` set to its id.
+and `replaces` set to its id. In gbrain, a fact saved without an entity is a
+row of the `memory/unattributed` page's `## Facts` table, created on first
+use; linking it strikes that row in the same write.
 
 #### remember withdrawn refusal detail (additive)
 
@@ -327,6 +329,21 @@ rides the immediate refusal, the `items[]` error, the failed write receipt and
 `get_write_request`. It covers the exact normalized claim only, never a
 paraphrase, and its absence carries no meaning: the message prefix, code and
 suggestion are unchanged.
+
+#### write-grant refusal detail (additive)
+
+A `remember` naming a `source_id` outside the connection's write grant is
+refused `scope_denied` with `write_error: permission_denied` (a page write:
+`permission_denied`), and the envelope carries `writable_source_ids`: the sources this connection's own grant
+lets it write (one id, or `[]` when the grant holds no single writable source).
+It never names a source outside the grant, a federated read source included,
+and the refusal is identical whether the named source exists or not. On
+`remember` with one writable source, `fix` is the same call with `source_id` set
+to it (no `request_id`; a `visibility` the caller left out stays out, so the
+brain's default still applies) with `next: ask_user`: its `user_message` names both
+sources, because the writable source's readers may differ from the one the user
+named. `forget`, `forget_fact` and page writes carry no fix, so a withdrawal is
+never retargeted and page content is never echoed back.
 
 #### remember replaces (additive)
 
@@ -396,18 +413,18 @@ fact, so it goes on its item; passing both `fact` and `items`, or a top-level
 
 Every item is validated before any is written: one invalid item refuses the
 whole call with `items[<i>]` in the message. Each item is then saved as its own
-write with a child `request_id` derived from the call's `request_id` (the
-string the caller sent, so a batch accepted by an older server replays to the
-same receipts) and the item index, so replaying the same `request_id` replays each child's outcome and
+write with a child `request_id` derived from the call's `request_id` (as sent, so an
+older server's batch replays to the same receipts) and the item index, so a replay repeats each child's outcome and
 writes nothing twice.
 
 Response: `{ protocol_version, request_id, client_request_id?, items[], saved, failed, partial,
 hints?, next? }`. Each `items[]` entry is a compact receipt `{ index,
 request_id, status, id?, entity_slug?, superseded_fact_id?, warnings?, valid_until?, state? }`
 (`state` and `retry_after_ms` only when the write is not yet committed), or
-`{ index, request_id, status: "failed", error: { code, message, suggestion? } }`. Hints the
-single-fact response would repeat per item appear once in `hints`. `partial: true` means some items saved and some failed; resend
-only the failed items, in a new call with a new `request_id`.
+`{ index, request_id, status: "failed", error: { code, message, suggestion? } }`. Per-item hints
+appear once in `hints`. `partial: true`: some saved; resend
+only the failed ones with a new `request_id`. Any failed item adds `status: "error"` (CLI exit 1,
+MCP `isError`); if all were refused unaccepted, it fails with the first item's error.
 
 ### entity(name) — read, zero LLM, p99 < 100ms
 
@@ -718,6 +735,16 @@ forgetting the unlinked fact is refused with `invalid_params`, message prefix
 says to keep them, or to forget them first to withdraw the claim everywhere.
 A forget never withdraws an active fact the caller cannot read; when one
 would be reached, the refusal keeps the `claim_linked:` prefix and names no fact.
+
+#### forget publishes like a page write (additive note)
+
+In gbrain, a forget is a write of the pages that carry the claim: each row is
+struck (`~~claim~~`, a `valid_until` date and `forgotten: <reason>`) and every
+such file is published, in one commit, before the withdrawal commits. It is
+admitted and published like `remember`, so when the source's writer cannot
+publish yet the call returns the pending-write error with a receipt, and the
+fact stays recallable until the withdrawal publishes. The response shape is
+unchanged.
 
 #### forget and purge (additive note)
 
@@ -1120,6 +1147,16 @@ explicit `since` (or `gbrain beliefs changes`). `min_trust` does not filter
 it; each change carries its `trust_tier`. The
 CLI twin is `gbrain beliefs changes [<entity>...] [--since 7d]`. Design:
 [BELIEF_LEDGER.md section 15](../designs/BELIEF_LEDGER.md#15-w4-as-built-the-weekly-change-diff).
+
+### Adjacent memory-settings ops (not verbs)
+
+Three ops sit next to `remember` without joining the frozen verb set, so
+`--surface verbs` does not serve them: `get_memory_settings` (read the
+writeback mode and rule text), `set_memory_writeback` (admin scope plus the
+operator's `mcp.publish_memory_settings` grant) and `memory_conversation_mode`
+(the per-conversation "save everything from here" / "stop saving" switch, on
+the starter surface). See
+[Reading and changing it remotely](../guides/ambient-writeback.md#reading-and-changing-it-remotely).
 
 ## Latency classes (per verb)
 

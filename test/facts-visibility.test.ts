@@ -20,6 +20,7 @@ import {
   __resetShortLivedCliForTests,
 } from '../src/core/facts/cli-process-mode.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 let engine: PGLiteEngine;
 
@@ -27,14 +28,14 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  await engine.insertFact(
+  await asOwner(engine, tx => tx.insertFact(
     { fact: 'world-visible', kind: 'fact', entity_slug: 'vis-test', source: 'test', visibility: 'world' },
     { source_id: 'default' },
-  );
-  await engine.insertFact(
+  ));
+  await asOwner(engine, tx => tx.insertFact(
     { fact: 'private-only', kind: 'fact', entity_slug: 'vis-test', source: 'test', visibility: 'private' },
     { source_id: 'default' },
-  );
+  ));
 });
 
 afterAll(async () => {

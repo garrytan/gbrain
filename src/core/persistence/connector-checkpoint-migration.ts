@@ -20,7 +20,7 @@
  * older binary may still be using an old key during a mixed-version window.
  */
 import type { BrainEngine } from '../engine.ts';
-import { connectorCheckpointKeys, connectorIdentity, type ConnectorKind } from './connector-identity.ts';
+import { CONNECTOR_KINDS_SQL, connectorCheckpointKeys, connectorIdentity, type ConnectorKind } from './connector-identity.ts';
 import { CONNECTOR_STATE_OP, connectorStateKey, emptyConnectorState, type ConnectorState } from './connector-state.ts';
 
 type Sql = Pick<BrainEngine, 'executeRaw' | 'transaction' | 'kind'>;
@@ -41,7 +41,7 @@ export interface LoadableConnectorKey { id: string; incarnation: string; archive
  * under them are never orphans while the source exists.
  */
 export async function loadableConnectorKeys(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Map<string, LoadableConnectorKey>> {
-  const rows = await engine.executeRaw<SourceRow>("SELECT id,incarnation::text,local_path,config,archived FROM sources WHERE config->>'kind' IN ('google','github')");
+  const rows = await engine.executeRaw<SourceRow>(`SELECT id,incarnation::text,local_path,config,archived FROM sources WHERE config->>'kind' IN (${CONNECTOR_KINDS_SQL})`);
   const keys = new Map<string, LoadableConnectorKey>();
   for (const row of rows) {
     const config = typeof row.config === 'string' ? JSON.parse(row.config) as Record<string, unknown> : row.config ?? {};
@@ -106,7 +106,7 @@ export async function deleteOrphanConnectorCheckpoints(engine: Pick<BrainEngine,
   if (!rows.length) return removed;
   // Connector source rows stay share-locked while loadability is recomputed and rows are deleted, so a config change cannot make a deleted key current.
   await engine.transaction(async tx => {
-    await tx.executeRaw("SELECT id FROM sources WHERE config->>'kind' IN ('google','github') ORDER BY id FOR SHARE");
+    await tx.executeRaw(`SELECT id FROM sources WHERE config->>'kind' IN (${CONNECTOR_KINDS_SQL}) ORDER BY id FOR SHARE`);
     const loadable = [...(await loadableConnectorKeys(tx)).keys()];
     for (const row of rows) {
       const deleted = await tx.executeRaw<{ op: string }>(`DELETE FROM op_checkpoints c WHERE c.op=$1 AND c.fingerprint=$2 AND c.updated_at=$3::text::timestamptz

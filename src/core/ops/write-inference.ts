@@ -39,7 +39,7 @@ export const ZERO_GENERATIVE_BEFORE_COMMIT: ReadonlySet<WriteInference> = new Se
 
 export const OP_WRITE_INFERENCE: Readonly<Record<string, WriteInference>> = {
   // memory verbs and facts
-  remember: 'embedding', forget: 'none', forget_fact: 'none', extract_facts: 'explicit_llm',
+  remember: 'embedding', memory_write: 'embedding', forget: 'none', forget_fact: 'none', extract_facts: 'explicit_llm',
   // pages
   put_page: 'async_derived', put_pages: 'async_derived', capture: 'async_derived', edit_page: 'async_derived',
   revert_version: 'async_derived', delete_page: 'none', restore_page: 'none',

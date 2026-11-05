@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { markNotAdmitted, OperationError, opError } from '../ops/contract.ts';
 import { getCode, isConnectionLoss } from '../retry-matcher.ts';
@@ -83,4 +84,58 @@ export function outstandingCapacityOf(error: OperationError): { outstanding: num
   const match = OUTSTANDING_DETAIL.exec(error.detail ?? '');
   const scope = /\bbrain outstanding\b/.test(error.message) ? 'brain' : /\bprincipal outstanding\b/.test(error.message) ? 'principal' : null;
   return { outstanding: match ? Number(match[1]) : null, limit: match ? Number(match[2]) : null, scope };
+}
+
+/**
+ * GST-1387: how long an interactive write waits out a refresh fence (`worktree_refreshing`) before it is refused. A
+ * `gbrain sources refresh` tick fences its checkout while it drains, fast-forwards and syncs; a write refused there was
+ * never journaled, so re-running its admission is safe. The cap stays well under a caller's own deadline (the CLI's 30 s
+ * remote timeout); past it the refusal is returned with `fix.next: wait` and its `retry_after_ms`, never a success.
+ */
+export const REFRESH_FENCE_WAIT_MS = 10_000;
+const REFRESH_FENCE_BACKOFF_MS = [250, 500, 1000, 2000] as const;
+let refreshFenceWaitMs = REFRESH_FENCE_WAIT_MS;
+/** Test seam: the wait cap, or null for the default. */
+export function _setRefreshFenceWaitForTests(ms: number | null): void { refreshFenceWaitMs = ms ?? REFRESH_FENCE_WAIT_MS; }
+
+/**
+ * One wait budget shared by every admission inside it (a remember batch waits once, not once per item). Its clock starts
+ * at the first fence refusal, so time spent publishing earlier items never uses it. `capMs` lowers it to a caller's
+ * explicit reply deadline (`wait_ms`).
+ */
+const refreshFenceDeadline = new AsyncLocalStorage<{ capMs: number; until?: number }>();
+export function withRefreshFenceBudget<T>(fn: () => Promise<T>, capMs?: number): Promise<T> {
+  return refreshFenceDeadline.getStore() ? fn() : refreshFenceDeadline.run({ capMs: Math.min(refreshFenceWaitMs, capMs ?? Infinity) }, fn);
+}
+
+export function isRefreshFenceRefusal(error: unknown): error is OperationError {
+  return error instanceof OperationError && error.code === 'worktree_refreshing';
+}
+
+/**
+ * Runs one whole admission (its own transactions), re-running it while a refresh fence refuses it. Only interactive
+ * writes wait: background producers and the managed sync keep their own retry loops. Nothing is held across a pause.
+ */
+export async function waitOutRefreshFence<T>(interactive: boolean, admit: () => Promise<T>): Promise<T> {
+  if (!interactive) return admit();
+  return withRefreshFenceBudget(async () => {
+    const budget = refreshFenceDeadline.getStore()!;
+    let waited = 0;
+    for (let attempt = 0; ; attempt++) {
+      try { return await admit(); } catch (error) {
+        if (!isRefreshFenceRefusal(error)) throw error;
+        const hinted = Number(/retry_after_ms=(\d+)/.exec(error.detail ?? '')?.[1]);
+        const pause = Math.min(REFRESH_FENCE_BACKOFF_MS[Math.min(attempt, REFRESH_FENCE_BACKOFF_MS.length - 1)]!,
+          Number.isFinite(hinted) && hinted > 0 ? Math.max(hinted, REFRESH_FENCE_BACKOFF_MS[0]) : Infinity);
+        budget.until ??= performance.now() + budget.capMs;
+        if (budget.until - performance.now() < pause) {
+          if (waited > 0) error.message = `${error.message} This call waited ${Math.round(waited)} ms for the refresh to finish.`;
+          throw error;
+        }
+        const slept = performance.now();
+        await delay(pause);
+        waited += performance.now() - slept;
+      }
+    }
+  });
 }

@@ -23,6 +23,8 @@
 import type { ChatToolDef, ToolHandler } from '../ai/gateway.ts';
 import { operations, type OperationContext, type ParamDef } from '../operations.ts';
 import { paramDefToSchema } from '../../mcp/tool-defs.ts';
+import { findInvalidParam, normalizeOptionalParams, schemaInvalidParams } from '../../mcp/validate-params.ts';
+import { asAgentToolError } from '../../mcp/dispatch.ts';
 import { loadConfig } from '../config.ts';
 import { BRAIN_TOOL_ALLOWLIST } from '../minions/tools/brain-allowlist.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -72,11 +74,10 @@ export function buildWriteCaptureRegistry(engine: BrainEngine): WriteCaptureRegi
   const baseDefs: ChatToolDef[] = [];
   const baseHandlers = new Map<string, ToolHandler>();
 
-  // Build the read-only base (same shape as rollout.ts uses).
-  for (const op of operations) {
-    if (!BRAIN_TOOL_ALLOWLIST.has(op.name)) continue;
-    if (op.mutating || op.localOnly) continue;
-    if (WRITE_OPS.has(op.name)) continue; // skip write ops; virtual versions land below
+  // Build the read-only base (same shape as rollout.ts uses); write ops get virtual versions below.
+  const readOps = operations.filter(op => BRAIN_TOOL_ALLOWLIST.has(op.name) && !op.mutating && !op.localOnly && !WRITE_OPS.has(op.name));
+  const readOpNames = new Set(readOps.map(op => op.name));
+  for (const op of readOps) {
     const toolName = `brain_${op.name}`;
     baseDefs.push({
       name: toolName,
@@ -85,7 +86,16 @@ export function buildWriteCaptureRegistry(engine: BrainEngine): WriteCaptureRegi
     });
     baseHandlers.set(toolName, {
       idempotent: true,
-      execute: async (input: unknown) => op.handler(ctx, (input as Record<string, unknown>) ?? {}),
+      execute: async (input: unknown) => {
+        try {
+          const params = normalizeOptionalParams(op, (input as Record<string, unknown>) ?? {});
+          const failure = findInvalidParam(op, params);
+          if (failure) throw schemaInvalidParams(op, failure, { remote: true }, params);
+          return await op.handler(ctx, params);
+        } catch (e) {
+          throw asAgentToolError(e, op.name, ctx, readOpNames);
+        }
+      },
     });
   }
 

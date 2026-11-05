@@ -9,6 +9,7 @@ import type { SearchResult } from '../../src/core/types.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
 import { readPolicyOpts } from '../../src/core/ops/context.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
+import { asOwner } from '../helpers/owner-tier.ts';
 import { serializeMarkdown } from '../../src/core/markdown.ts';
 import { runReindex } from '../../src/commands/reindex.ts';
 import { buildEmptyRetrievalBlock } from '../../src/mcp/dispatch.ts';
@@ -105,9 +106,9 @@ for (const kind of ['pglite', 'postgres'] as const) {
     }
 
     async function safe(slug: string, sourceId: string, body: string): Promise<number> {
-      const result = await importFromContent(engine, slug,
+      const result = await asOwner(engine, tx => importFromContent(tx, slug,
         serializeMarkdown({ visibility: 'world' }, body, '', { type: TYPE, title: 'Synthetic safely imported document', tags: [] }),
-        { sourceId, noEmbed: true, forceRechunk: true });
+        { sourceId, noEmbed: true, forceRechunk: true }));
       expect(result.status).toBe('imported');
       return (await engine.getPage(slug, { sourceId }))!.id;
     }
@@ -228,7 +229,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
           expect(degradedStages()).toContain('safe_index_pending');
           const block = buildEmptyRetrievalBlock(meta.retrieval) ?? '';
           expect(block).toContain('safe_index_pending');
-          expect(block).not.toContain('clean miss');
+          expect(block).not.toContain('retrieval healthy');
           // Trusted local reads also withhold unsealed projections; the rebuild
           // diagnostic is emitted only for remote callers.
           meta = {};

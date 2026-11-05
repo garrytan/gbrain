@@ -4,11 +4,14 @@
  * Serial: per-file runner PASS records, seconds (not buffered log timestamps).
  * E2E: per-file Bun summaries, milliseconds. Partial selections merge old weights;
  * explicit full-profile runs replace them after source-corpus validation.
- * Several --run values give each file its median over those runs: one run's
+ * Several --run values, in any order, give each file its median over those runs: one run's
  * timings carry that run's runner speeds (whole runs differ by 0.75-1.3x and
  * two-shard jobs within one run by 0.7-1.7x), so a lone fast run under-predicts
  * every shard.
+ * Every mode drops entries for files git no longer tracks, so a deleted or
+ * renamed test leaves the map whatever the runs measured.
  * Refresh after large test additions or sustained shard imbalance.
+ * Seam: GBRAIN_MINE_ROOT (the checkout whose tracked files bound the map).
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync, renameSync, rmSync, existsSync, mkdtempSync, mkdirSync } from "node:fs";
@@ -18,7 +21,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { loadWeights } from "./sharding.ts";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = process.env.GBRAIN_MINE_ROOT ?? resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export type Lane = "unit" | "serial" | "e2e";
 type E2EProfile = "selected" | "full";
 const OUTPUTS = { unit: "test-weights", serial: "serial-weights", e2e: "e2e-weights" };
@@ -256,7 +259,7 @@ async function main(): Promise<void> {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === "--help" || arg === "-h") {
-      console.log("usage: bun run weights:mine [--lane unit|serial|e2e] [--e2e-profile selected|full] [--run ID [--run ID ...] | --from-file PATH | <stdin>] [--out PATH]\nseveral --run values (newest first) give each file its median over those runs\nfull E2E requires --lane e2e, exactly one --run and a matching source checkout");
+      console.log("usage: bun run weights:mine [--lane unit|serial|e2e] [--e2e-profile selected|full] [--run ID [--run ID ...] | --from-file PATH | <stdin>] [--out PATH]\nseveral --run values (any order) give each file its median over those runs; files git no longer tracks are dropped\nfull E2E requires --lane e2e, exactly one --run and a matching source checkout");
       return;
     }
     if (!["--lane", "--e2e-profile", "--run", "--run-id", "--from-file", "--out"].includes(arg) || !argv[i + 1] || argv[i + 1]!.startsWith("--")) throw new Error(`unknown/incomplete option: ${arg}`);
@@ -313,11 +316,11 @@ async function main(): Promise<void> {
   // complete GitHub unit/serial/full-E2E run replaces the full map; selected E2E always
   // merges because its executed corpus depends on the diff.
   const mergeExisting = !full && (!run || lane === "e2e");
-  // A complete newest run (the first --run) names the current files, so one only older runs measured was deleted or
-  // renamed since. A merging run's corpus is partial, so every run's median stands.
-  const median = medianWeights(mined.map(m => m.measured));
-  const measured = mergeExisting ? median : new Map([...median].filter(([file]) => mined[0]!.measured.has(file)));
-  const weights = mergeExisting && existsSync(out) ? loadWeights(out) : new Map<string, number>();
+  // An older run, or the existing map a partial source merges into, can name a file deleted or renamed since;
+  // the checkout's tracked files decide what stays, whatever the --run order.
+  const tracked = new Set(git(["ls-files"]).split("\n"));
+  const measured = new Map([...medianWeights(mined.map(m => m.measured))].filter(([file]) => tracked.has(file)));
+  const weights = new Map([...(mergeExisting && existsSync(out) ? loadWeights(out) : [])].filter(([file]) => tracked.has(file)));
   for (const [file, duration] of measured) weights.set(file, duration);
   const metadata = { lane, unit: lane === "serial" ? "seconds" : "milliseconds", run: run ?? null, commit, source: run ? "github" : input ? "file" : "stdin",
     ...(mined.length > 1 ? { runs, commits: mined.map(m => m.commit) } : {}), measuredFiles: measured.size, totalFiles: weights.size, mergeExisting,

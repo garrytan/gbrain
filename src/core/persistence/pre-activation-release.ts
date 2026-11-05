@@ -18,7 +18,7 @@ import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { acquireWorktree, getWorktreeBinding, readPersistenceBrain } from './ownership.ts';
-import { currentVerifiedLocalWriter, existingLocalHostId, registerLocalWriter } from './identity.ts';
+import { currentVerifiedLocalWriter, registerLocalWriter, existingHostIdFor } from './identity.ts';
 import type { NativeLockHandle } from './native-lock.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
@@ -53,7 +53,7 @@ export async function releasePreActivationClaims(engine: BrainEngine, opts: { ex
   if (!currentVerifiedLocalWriter()) await registerLocalWriter(engine, 'cli');
   const principal = await topologyPrincipal(engine);
   const requestId = opts.requestId ?? randomUUID();
-  const hostId = existingLocalHostId();
+  const hostId = existingHostIdFor(engine);
   const locks: NativeLockHandle[] = [];
   try {
     // Native worktree locks precede the transaction, as in activation and deactivation.

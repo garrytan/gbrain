@@ -11,6 +11,7 @@
  */
 import type { Operation } from './ops/contract.ts';
 import { withOutputRedaction } from './search/output-redaction.ts';
+import { withEngineScope } from './engine-scope.ts';
 import { OPERATION_LOADERS } from './operation-loaders.generated.ts';
 
 // ---------------------------------------------------------------------------
@@ -31,7 +32,7 @@ const OP_AREAS: Record<string, string> = {
   synthesize: 'memory-verbs', forget: 'memory-verbs',
   context_pack: 'memory-verbs', delta: 'memory-verbs',
   // pages (CRUD, versions, raw payloads, resolution)
-  get_page: 'pages', put_page: 'pages', delete_page: 'pages', list_pages: 'pages',
+  get_page: 'pages', put_page: 'pages', delete_page: 'pages', list_pages: 'pages', find_pages: 'pages',
   restore_page: 'pages', purge_deleted_pages: 'pages',
   get_versions: 'pages', revert_version: 'pages',
   resolve_slugs: 'pages', whois: 'pages', get_chunks: 'pages',
@@ -78,7 +79,7 @@ const OP_AREAS: Record<string, string> = {
   log_ingest: 'ingest', get_ingest_log: 'ingest',
   get_usage: 'admin',
   // files (localOnly)
-  file_list: 'files', file_upload: 'files', file_url: 'files',
+  file_list: 'files', file_upload: 'files', file_url: 'files', file_register: 'files', file_verify: 'files',
   // jobs (Minions + agent lane)
   submit_job: 'jobs', get_job: 'jobs', wait_job: 'jobs', list_jobs: 'jobs', cancel_job: 'jobs',
   retry_job: 'jobs', get_job_progress: 'jobs', pause_job: 'jobs',
@@ -89,6 +90,7 @@ const OP_AREAS: Record<string, string> = {
   takes_scorecard: 'takes', takes_calibration: 'takes',
   // hot memory (facts)
   extract_facts: 'memory', forget_fact: 'memory', confirm_memory: 'memory',
+  memory_recall: 'memory', memory_write: 'memory', // GST-359: QM's memory provider pair
   // entity extraction lane
   extract_entities: 'entities', extraction_pending: 'entities',
   extraction_review: 'entities',
@@ -123,7 +125,9 @@ export function finalizeOperation(op: Operation): void {
   if (op.area === undefined && OP_AREAS[op.name] !== undefined) {
     op.area = OP_AREAS[op.name];
   }
-  op.handler = withOutputRedaction(op);
+  // The handler runs in its engine's scope, so an embedded engine's AI calls use that engine's gateway (engine-scope.ts).
+  const handler = withOutputRedaction(op);
+  op.handler = (ctx, params) => withEngineScope(ctx.engine, () => handler(ctx, params));
 }
 
 /** The finalized operation named `name`, loading only the module that defines it. */

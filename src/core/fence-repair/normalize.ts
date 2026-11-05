@@ -83,7 +83,7 @@ function failedIssues(page: FencePage): FenceIssue[] {
   return issues.length ? issues : [{ fence: 'facts', section: 'body', row: null, column: null, line: null, reason: 'normalizer_failed' }];
 }
 
-function withSections<T extends FencePage>(page: T, texts: Record<FenceSection, string>): T {
+export function withSections<T extends FencePage>(page: T, texts: Record<FenceSection, string>): T {
   const sameBody = texts.body === (page.compiled_truth ?? '');
   const sameTimeline = texts.timeline === (page.timeline ?? '');
   if (sameBody && sameTimeline) return page;

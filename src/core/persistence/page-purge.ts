@@ -36,6 +36,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
+import { isEmbeddedEngine } from '../embedded-engine.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import type { WriteRequest } from './model.ts';
 import { enterClaimStep, type ClaimPhaseClock } from './claim-phase.ts';
@@ -55,6 +56,7 @@ import { rewrittenContentHash } from '../page-body/segment-rewrite.ts';
 import { stagingNeedsTextSql } from '../page-body/schema.ts';
 import { CLAIM_FORMS_BATCH, claimTextForms } from '../fence-shared.ts';
 import type { PagePurgeContext } from '../facts/purge-verify.ts';
+import { pageChangeReasons, requestsRecordingReasons, stripPageGitNotes } from '../facts/purge-reasons.ts';
 import { assertHeldPageKeys } from '../page-state/guards.ts';
 import { noteBelief } from '../belief/ledger.ts';
 import { appendPurgeIntent } from '../belief/purge-mirror.ts';
@@ -284,6 +286,7 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
   const hashes = new Set<string>();
   if (!retention) await tombstonePage(tx, sourceId, slug, page.id, snapshot, row.id, actor, { hash: storedHash, generation: Number(stored?.body_generation) }, hashes);
   const { factRows, takeRows, needles } = await readPurgeClaims(tx, sourceId, slug, page.id);
+  const reasons = await pageChangeReasons(tx, sourceId, slug, page.id);
   const segmentClaims = await readSegmentClaims(tx, sourceId, slug, page.id);
   const factIds = factRows.map(f => Number(f.id)), takeIds = takeRows.map(t => Number(t.id));
   const derivedFrom = await derivedRowsFrom(tx, [{ table: 'pages', id: page.id }, ...factIds.map(id => ({ table: 'facts', id })), ...takeIds.map(id => ({ table: 'takes', id }))]);
@@ -320,15 +323,20 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
   // #6619: the page's free-text aliases and the redirects that resolve to it; a redirect from this slug to another page stays.
   removed.page_aliases = await count('DELETE FROM page_aliases WHERE source_id=$1 AND slug=$2 RETURNING 1', [sourceId, slug]);
   removed.slug_aliases = await count('DELETE FROM slug_aliases WHERE source_id=$1 AND canonical_slug=$2 RETURNING 1', [sourceId, slug]);
+  removed.slug_rename_history = await count('DELETE FROM slug_rename_history WHERE source_id=$1 AND new_slug=$2 RETURNING 1', [sourceId, slug]);
   // #6511 [R2]: the preparation sweep's targets, plus the tail past its ceiling and the rows pending at scan time, re-tested here.
   const recheck = await lookup('tail_recheck', () => recheckRequestsCarrying(tx, sourceId, needles, prepared.sweep,
     { exclude: row.id, beforePending: () => faultPoint('purge:pending_recheck', { requestId: row.request_id, sourceId, operation: row.operation }) }));
-  const forSlug = await lookup('slug_lookup', () => findRequestsForSlugs(tx, sourceId, [slug]));
+  const forSlug = await lookup('slug_lookup', async () => [...await findRequestsForSlugs(tx, sourceId, [slug]), ...reasons.length ? await requestsRecordingReasons(tx, sourceId, slug) : []]);
+  const own = new Set(forSlug.map(r => r.id));
   const requests = [...new Map([...forSlug, ...prepared.sweep.targets, ...recheck.targets].map(r => [r.id, r])).values()];
-  removed.persistence_requests = await lookup('redaction_read', () => redactRequestIntents(tx, requests, row.id, { skipPending: true, needles }));
+  // GBRA-217: the page's reasons are needles in its own requests only, so a short reason never redacts another page's receipt.
+  removed.persistence_requests = await lookup('redaction_read', async () => await redactRequestIntents(tx, requests.filter(r => own.has(r.id)), row.id,
+    { skipPending: true, needles: [...needles, ...reasons] }) + await redactRequestIntents(tx, requests.filter(r => !own.has(r.id)), row.id, { skipPending: true, needles }));
+  removed.persistence_effects = await stripPageGitNotes(tx, sourceId, slug);
   const journalSweep = { scanned: prepared.sweep.scanned, ceiling: prepared.sweep.ceiling, watermark: prepared.sweep.watermark ?? null, batch: prepared.sweep.batch ?? 1,
     tail: recheck.tail, pending_rechecked: recheck.pendingRechecked, complete: prepared.sweep.complete && recheck.complete };
-  const files = await tx.executeRaw<{ storage_path: string }>(`DELETE FROM files WHERE (page_id=$1 OR (page_slug=$2 AND (source_id=$3 OR source_id IS NULL)))
+  const files = await tx.executeRaw<{ storage_path: string }>(`DELETE FROM files WHERE (page_id=$1 OR (page_id IS NULL AND page_slug=$2 AND (source_id=$3 OR source_id IS NULL)))
     RETURNING storage_path`, [page.id, slug, sourceId]);
   removed.files = files.length;
   Object.assign(removed, await (await import('../generations/ledger-scrub.ts')).scrubGenerationLedger(tx, sourceId, { slug }));
@@ -352,7 +360,7 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
     scope: 'page', slug, purge_epoch: epoch, content_hashes: [...hashes], facts: mirrorFacts, takes: mirrorTakes, lifetimes });
   const key = `${sourceId}:${row.request_id}`;
   purgeContext.delete(key);
-  purgeContext.set(key, { needles, factIds, pageId: page.id, paths, segmentShas: shas.slice(0, 4096), segmentClaims, ledgerClaims: inventory.claims, ledger });
+  purgeContext.set(key, { needles, reasons, factIds, pageId: page.id, paths, segmentShas: shas.slice(0, 4096), segmentClaims, ledgerClaims: inventory.claims, ledger });
   while (purgeContext.size > PURGE_CONTEXT_LIMIT) purgeContext.delete(purgeContext.keys().next().value!);
   return { status: 'purged', slug, source_id: sourceId, residuals: PURGE_RESIDUALS, journal_sweep: journalSweep, ...(retention ? { retention: true } : {}),
     purge: { content_hash8: storedHash?.slice(0, 8) ?? null, tombstoned: hashes.size > 0, content_hashes_tombstoned: hashes.size, removed,
@@ -376,9 +384,17 @@ export async function finishPagePurge(ctx: Pick<OperationContext, 'engine' | 'co
   const remaining: string[] = [];
   if (purge.blobs?.length) {
     try {
-      const { createStorage } = await import('../storage.ts');
-      const storage = await createStorage((ctx.config as { storage?: unknown } | undefined)?.storage as never);
-      for (const path of purge.blobs) { try { await storage.delete(path); } catch { remaining.push(path); } }
+      const { createStorage, settingsStorage } = await import('../storage.ts');
+      const embedded = isEmbeddedEngine(ctx.engine);
+      const storage = embedded ? await settingsStorage(ctx.engine)
+        : await createStorage((ctx.config as { storage?: unknown } | undefined)?.storage as never);
+      if (!storage) throw new Error('This engine was opened with no settings.storage.');
+      for (const path of purge.blobs) {
+        try {
+          if (embedded && !(await storage.exists(path))) { remaining.push(path); continue; }
+          await storage.delete(path);
+        } catch { remaining.push(path); }
+      }
     } catch { remaining.push(...purge.blobs); }
   }
   const { verifyPagePurge } = await import('../facts/purge-verify.ts');

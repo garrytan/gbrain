@@ -21,6 +21,7 @@ import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { dispatchToolCall, hotMemoryOffIn } from '../src/mcp/dispatch.ts';
 import { getBrainHotMemoryMeta, __resetHotMemoryCacheForTests } from '../src/core/facts/meta-hook.ts';
 import { callTool, rpc, startServeHttp, type LiveServeHttp, type ToolResultWire } from './helpers/live-mcp-servers.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 
 const MEMBER_SOURCE = 'hm-private-alice-example';
 const CHANNEL_SOURCE = 'hm-channel-a';
@@ -35,7 +36,7 @@ beforeAll(async () => {
   await engine.connect({ engine: 'pglite' } as never);
   await engine.initSchema();
   for (const id of [MEMBER_SOURCE, CHANNEL_SOURCE]) await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [id]);
-  await engine.insertFact({ fact: FACT, kind: 'preference', entity_slug: 'people/alice-example', visibility: 'world', source: 'test' }, { source_id: MEMBER_SOURCE });
+  await asOwner(engine, tx => tx.insertFact({ fact: FACT, kind: 'preference', entity_slug: 'people/alice-example', visibility: 'world', source: 'test' }, { source_id: MEMBER_SOURCE }));
   token = (await mintLegacyToken(engine, { name: 'hm-member-alice', scopes: ['read'], takesHolders: ['world'], sourceGrant: [MEMBER_SOURCE, CHANNEL_SOURCE] })).token;
   app = await startServeHttp(engine);
 }, 60_000);

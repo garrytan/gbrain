@@ -29,7 +29,7 @@ contract in `get_brain_identity` as `capabilities: ["large_pages_v1"]`.
 | `body: "full"` | Whole page, up to the connection's egress cap; `include_content: true` means the same. |
 | `body: "none"` | Revision, size, total lines and chunk counts. Use it for `edit_page`'s `expected_revision`. |
 | `body: "outline"` | Headings (or blocks for pages with fewer than two headings) with line and byte ranges and date ranges; page it with `outline_from`. |
-| `body: "window"` | One window. Choose it with exactly one selector below; with none, the window starts at the top. |
+| `body: "window"` | One window, chosen by a selector below; with none, the window starts at the top. |
 | `lines: {from, count}` | 1-based lines. |
 | `bytes: {offset, length}` | UTF-8 bytes of the requested view (`size.total_bytes`), snapped back to a line start. |
 | `around_chunk_id: N` | The text around a search hit's chunk, `context_lines` either side (default 20). |
@@ -37,8 +37,18 @@ contract in `get_brain_identity` as `capabilities: ["large_pages_v1"]`.
 | `max_bytes` | Window size (default 40,000, at most 1 MiB, and always inside the connection's cap). |
 | `view: "markdown"` | Page the round-trip markdown (`include_content`'s `content`) instead of the read text; `size.sha256` verifies the joined pages. |
 
-Passing two selectors, a selector with `body: "outline"`, or `include_content`
-with a partial mode is `invalid_params` with an example. A window response
+Passing a selector with `body: "none"` or `body: "outline"`, or `include_content`
+with a partial mode and no selector, is `invalid_params` with an example. With
+several selectors, one window is read: `cursor`, then `around_chunk_id`, then
+`lines`, then `bytes`. `body: "full"`, `include_content` and `content_only` beside a
+selector are set aside too, so the read is still a window, never the whole page.
+A cursor that can't read this page (another page's, another view's, or issued
+before the page changed) or an `around_chunk_id` whose chunk is no longer on the
+page gives way to the next selector; with `view: "markdown"`, `around_chunk_id`
+beside another selector is set aside. When `include_content` or `content_only` is
+set aside, the note says the window is not the page's content, so edit it with
+`edit_page` and `edit_target` rather than putting it back with `put_page`. The response's `window_selector {applied, ignored, note}` says what was
+read and what was set aside; a call with one selector has no `window_selector`. A window response
 carries `window {text, byte_start, byte_end, line_start, line_end}`,
 `size {total_bytes, total_lines}`, `truncated`, and when more follows
 `next_cursor` plus `next`, the exact `get_page` call that reads on. The starter
@@ -167,7 +177,10 @@ backup and restore file writes, body digests, fence rewrites and purges, and
 timeline extraction. An export with such a page fails instead of writing a
 short file. The brain host's operator gives the reading role the same
 access to `page_body_manifest` and `page_segment_texts` it has to `pages`;
-`gbrain doctor --json` checks the segment tables.
+`gbrain doctor --json` checks the segment tables. A page whose rows are
+missing (an older write could publish a body without them) is listed by
+doctor `segmented_tiling`; [`gbrain repair segmented-tiling`](repair.md#segmented-tiling)
+republishes it from its file in Git.
 
 ## page_projection_stale
 

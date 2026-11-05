@@ -33,11 +33,14 @@ const LEDGER: Record<string, string> = {
   entity: 'test/memory-verbs-conformance.test.ts',
   synthesize: 'test/memory-verbs-conformance.test.ts',
   forget: 'test/memory-verbs-conformance.test.ts',
+  memory_recall: 'test/qm-memory-tools.test.ts',
+  memory_write: 'test/qm-memory-tools.test.ts',
   get_page: 'test/get-page-federated-scope.test.ts',
   put_page: 'test/put-page-provenance.test.ts',
   put_pages: 'test/put-pages-batch.test.ts',
   delete_page: 'test/pages-source-scoping-4329.test.ts',
   list_pages: 'test/list-pages-truncation.test.ts',
+  find_pages: 'test/page-lookup-7191.test.ts',
   restore_page: 'test/pages-source-scoping-4329.test.ts',
   purge_deleted_pages: 'test/operations-trust-boundary.test.ts',
   purge_fact: 'test/purge-fact.test.ts',
@@ -114,6 +117,8 @@ const LEDGER: Record<string, string> = {
   file_list: 'test/file-upload-engine-context.test.ts',
   file_upload: 'test/file-upload-engine-context.test.ts',
   file_url: 'test/file-upload-engine-context.test.ts',
+  file_register: 'test/file-register.test.ts',
+  file_verify: 'test/embedded-file-store.test.ts',
   submit_job: 'test/submit-queue-state.test.ts',
   get_job: 'test/jobs-ops-token-redaction.test.ts',
   list_jobs: 'test/jobs-ops-token-redaction.test.ts',
@@ -214,6 +219,10 @@ const LEDGER: Record<string, string> = {
   entity_identity_link: 'test/entity-identity.test.ts',
   entity_identity_unlink: 'test/entity-identity.test.ts',
   entity_identity_list: 'test/entity-identity.test.ts',
+  // GBRA-286 memory train: memory settings (GBRA-219).
+  get_memory_settings: 'test/memory-settings.test.ts',
+  set_memory_writeback: 'test/memory-settings.test.ts',
+  memory_conversation_mode: 'test/memory-settings.test.ts',
 };
 
 /**

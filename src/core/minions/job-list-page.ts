@@ -4,7 +4,7 @@
  * resumes after the last row returned. The per-call cap for remote callers lives in ops/read-paging.ts.
  */
 import type { BrainEngine } from '../engine.ts';
-import { rowToMinionJob, type MinionJob } from './types.ts';
+import { jobActorSql, NO_JOB_ACTOR, rowToMinionJob, type JobActor, type MinionJob } from './types.ts';
 
 export class JobListCursorError extends Error {
   constructor(message: string) { super(message); this.name = 'JobListCursorError'; }
@@ -20,7 +20,7 @@ export function parseJobListCursor(raw: string): { micros: string; id: number } 
 }
 
 export async function listJobPage(engine: BrainEngine, opts: {
-  status?: string; queue?: string; name?: string; ownerClientId?: string; limit: number; cursor?: string;
+  status?: string; queue?: string; name?: string; ownerClientId?: string; ownerActor?: JobActor; limit: number; cursor?: string;
 }): Promise<{ jobs: MinionJob[]; next_cursor?: string }> {
   const params: unknown[] = [];
   const where: string[] = [];
@@ -32,7 +32,10 @@ export async function listJobPage(engine: BrainEngine, opts: {
   if (opts.status) { params.push(opts.status); where.push(`status = $${params.length}`); }
   if (opts.queue) { params.push(opts.queue); where.push(`queue = $${params.length}`); }
   if (opts.name) { params.push(opts.name); where.push(`name = $${params.length}`); }
-  if (opts.ownerClientId) { params.push(opts.ownerClientId); where.push(`data->>'__owner_client_id' = $${params.length}`); }
+  if (opts.ownerClientId) {
+    params.push(opts.ownerClientId); where.push(`data->>'__owner_client_id' = $${params.length}`);
+    where.push(jobActorSql(params.length + 1)); params.push(...(opts.ownerActor ?? NO_JOB_ACTOR));
+  }
   params.push(opts.limit + 1);
   const rows = await engine.executeRaw<Record<string, unknown> & { created_us: string | number }>(
     `SELECT *, ${CREATED_US}::text AS created_us FROM minion_jobs ${where.length ? `WHERE ${where.join(' AND ')}` : ''}

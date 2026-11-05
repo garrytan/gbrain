@@ -140,9 +140,9 @@ const get_write_attribution: Operation = {
     + 'Remote callers stay inside their source grant and see only world facts.',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page to attribute (or the page that holds the fact, take or timeline entry).' },
-    fact: { type: 'number', description: 'Attribute this fact id (a fact about or fenced on the page) instead of the page.' },
-    take: { type: 'number', description: 'Attribute the take at this row number of the page\'s takes table.' },
-    timeline: { type: 'number', description: 'Attribute this timeline entry id of the page.' },
+    fact: { type: 'number', minimum: 1, description: 'Attribute this fact id (a fact about or fenced on the page) instead of the page.' },
+    take: { type: 'number', minimum: 1, description: 'Attribute the take at this row number of the page\'s takes table.' },
+    timeline: { type: 'number', minimum: 1, description: 'Attribute this timeline entry id of the page.' },
     versions: { type: 'boolean', description: 'Also list every version snapshot with who wrote and who archived it.' },
   },
   scope: 'admin',

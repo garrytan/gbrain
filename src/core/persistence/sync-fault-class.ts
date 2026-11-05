@@ -51,6 +51,14 @@ export const HOLD_ESCALATE_MS = 24 * 60 * 60 * 1000;
 export const STORAGE_ERROR_REPEATS = 2;
 const ESCALATE_AFTER = `${HOLD_ATTEMPTS_NEEDS_HUMAN} failed attempts over ${HOLD_ESCALATE_MS / 3_600_000} h`;
 
+/**
+ * GBRA-287: a stored page body a freeze could not read (`page_body_segmented`: a whole-body read of a page stored in
+ * segments; `page_body_rows_unreadable`: segment rows that do not tile the body) is that page's fault, never the run's.
+ * It is held `page_write_failed` (origin `freeze`) with this code in `meta.write_failure.code`; the hold is classified by the
+ * `freeze_<code>` row (holdVerdict).
+ */
+export const PAGE_BODY_FAULT_CODES: ReadonlySet<string> = new Set(['page_body_segmented', 'page_body_rows_unreadable']);
+
 export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   // Page class: one entry, held; the run finished.
   { code: 'worktree_dirty', class: 'page', safe_actions: ['retry_when_clean'], needs_human: false,
@@ -89,6 +97,14 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   { code: 'settle_mismatch', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: the pass cannot tell why the path does not settle',
     human_reason: 'Sync settled this file three passes in a row but it never read settled afterwards; read gbrain doctor --json and gbrain sources writer status <source> (read-only), fix what they name, then run gbrain sources retry-held <source> to re-test it.' },
   // GBRA-130 A-6: one path's write failed the same unclassifiable way on repeated attempts; held so the rest of the source moves.
+  // GBRA-287: a freeze hold whose stored page body a sync path could not read: whole (a page stored in segments), or at all
+  // (rows that do not tile it). Keyed by detail codes no receipt carries, so a write receipt with the bare code keeps its class.
+  { code: 'freeze_page_body_segmented', class: 'page', safe_actions: ['upgrade'], needs_human: true, escalate: 'always: a sync path read a page stored in segments whole',
+    human_reason: 'A sync path read this page stored in segments as one string, so its file is held and the rest of the source synced; upgrade gbrain, then run gbrain sources retry-held <source>, and report it with the gbrain version if it stays held.' },
+  { code: 'freeze_page_body_rows_unreadable', class: 'page', safe_actions: ['repair'], needs_human: true, escalate: 'always: the page\'s segment rows do not cover its stored body, so no sync can read it',
+    human_reason: 'The segment rows of this page stored in segments do not cover its body, so every read of it refuses and no retry clears the hold; preview gbrain repair segmented-tiling --source <source> --slug <slug> '
+      + '(read-only; doctor segmented_tiling lists the page) and apply it with the user\'s agreement. If doctor does not list the page, the rows exist but the role that reads the brain cannot see them: '
+      + 'give it the same access to page_body_manifest and page_segment_texts it has to pages, then run gbrain sources retry-held <source>.' },
   { code: 'page_write_failed', class: 'page', safe_actions: ['upgrade'], needs_human: true, escalate: 'always: the writer cannot place the failure',
     human_reason: 'The write of this file keeps failing with an error gbrain cannot classify (an owner exception or an unplaced refusal); read its receipt (gbrain write-request <request_id>), report it with the gbrain version or fix the file when the error names its content, then run gbrain sources retry-held <source>.' },
   // GBRA-130 A-7: the file is not a readable regular file inside the source root (a symlink, a non-regular file, a permission error).
@@ -115,6 +131,9 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
     human_reason: 'The database refused to compare this renamed file title or frontmatter id; a person removes the NUL byte or broken Unicode character from the file and commits, then syncs.' },
   { code: 'rename_reconcile_failed', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: the old page may be a duplicate',
     human_reason: 'A rename imported but the old page could not be removed; a person runs a full sync of the source (it removes pages whose file is gone) or removes the old page with gbrain delete.' },
+  // #7199: a `file_drift` hold with side `unknown` (no import record): neither side is known to have moved.
+  { code: 'file_drift_unknown', class: 'page', safe_actions: ['reconcile'], needs_human: true, escalate: 'always: the file and the page differ and no import record says which changed',
+    human_reason: 'The file and the database page differ, and sync has no import record to tell which one changed since the last import, so it held the file instead of overwriting the page; a person chooses which version wins (gbrain repair file-drift --source <source> --slug <slug> --prefer database|file previews it and writes nothing until applied).' },
   { code: 'origin_conflict_decision', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: the pages differ, their ids conflict or none is the page the path names',
     human_reason: 'Several live pages record this file as their origin and sync cannot prove they are one document; a person keeps the page that is the file\'s and soft-deletes the others (gbrain repair origin-twins --source <source> lists them with the commands), then syncs.' },
   // GBRA-130 A-17/B-3/B-4: a held `page_identity_changed` path (sync-status.ts holdVerdict): several tombstones, a spelling twin or a takeover whose ids differ.
@@ -171,6 +190,9 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   { code: 'preparation_systemic', class: 'systemic', safe_actions: ['upgrade', 'retry'], needs_human: true, escalate: 'always', human_reason: 'Several writes could not finish preparing: the write owner is the likely cause. Writer status names it; fix, restart or upgrade it.' },
   { code: 'drain_stalled', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'The write at the head of the source is wedged in its owner; restart the owner process writer status names.' },
   { code: 'recovery_required', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'A write needs recovery on the brain host (gbrain sources writer status --json names it).' },
+  // #8368: the checkout lost its ownership marker; only the verified self-transfer re-creates it.
+  { code: 'owner_marker_missing', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always',
+    human_reason: 'The checkout lost its ownership marker (.gbrain-owner.json). On the brain host, run the verified self-transfer (gbrain sources writer transfer prepare <source> --self-transfer, then transfer accept) to re-create it; never create it by hand. The sync stopped blocked_by_failures on the refused file: run the same sync again.' },
   { code: 'owner_unavailable', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'The write owner is gone; start or restart it on the brain host.' },
   { code: 'writer_coordinator_required', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'Managed persistence is not active for this source; activate it or sync unmanaged.' },
   { code: 'permission_denied', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always', human_reason: 'This principal may not sync the source; the owner grants it.' },

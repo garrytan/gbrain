@@ -18,7 +18,7 @@
  * test/e2e/fence-census-postgres.test.ts (a second session holds a real open
  * transaction). Synthetic content only.
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -90,6 +90,7 @@ for (const backend of backends) {
     }, 120_000);
 
     afterAll(async () => { await close(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+    afterEach(() => { setSystemTime(); });
 
     async function source(files: Record<string, string> | null, opts: { git?: boolean } = {}) {
       const id = `cen-${randomUUID().replace(/-/g, '').slice(0, 12)}`;
@@ -183,23 +184,36 @@ for (const backend of backends) {
 
     if (backend === 'pglite') {
       // GBRA-75 wave 10: the pass orders by the timestamp its keyset compares, not the text it returns, so small
-      // batches never skip a page, even in a session time zone whose text offsets change (a DST fallback hour).
-      test('the incremental pass in batches of one reads every page across a DST fallback in the session time zone', async () => {
-        const s = await source(null);
-        const slugs = ['notes/dst-a', 'notes/dst-b', 'notes/dst-c', 'notes/dst-d'];
-        for (const slug of slugs) await s.stored(slug, CLEAN);
-        await s.census();
-        const [{ zone }] = await engine.executeRaw<{ zone: string }>(`SELECT current_setting('TimeZone') AS zone`);
+      // batches never skip a page, even in a session time zone whose text offsets change (a DST fallback hour). It also
+      // runs with the clock pinned inside the 2026 and 2027 fallback hours, where fixed instants fell behind the watermark.
+      for (const clock of [null, '2026-11-01T05:30:00Z', '2027-11-07T05:30:00Z']) test(`the incremental pass in batches of one reads every page across a DST fallback in the session time zone${clock ? ` (clock pinned at ${clock})` : ''}`, async () => {
+        if (clock) setSystemTime(new Date(clock));
         try {
-          await engine.executeRaw(`SELECT set_config('TimeZone', 'America/New_York', false)`);
-          // 01:20-04, 01:40-04, then 01:10-05 and 01:30-05: their text sorts differently from their instants.
-          for (const [i, at] of ['2026-11-01T05:20:00Z', '2026-11-01T05:40:00Z', '2026-11-01T06:10:00Z', '2026-11-01T06:30:00Z'].entries()) {
-            await engine.executeRaw('UPDATE pages SET compiled_truth=$1, updated_at=$2::timestamptz WHERE source_id=$3 AND slug=$4', [DETERMINISTIC, at, s.id, slugs[i]]);
+          const s = await source(null);
+          const slugs = ['notes/dst-a', 'notes/dst-b', 'notes/dst-c', 'notes/dst-d'];
+          for (const slug of slugs) await s.stored(slug, CLEAN);
+          await s.census();
+          const [{ zone }] = await engine.executeRaw<{ zone: string }>(`SELECT current_setting('TimeZone') AS zone`);
+          try {
+            await engine.executeRaw(`SELECT set_config('TimeZone', 'America/New_York', false)`);
+            // The next fallback (first Sunday of November) still ahead of the database clock, so every instant is past the
+            // pass watermark: 01:20-04, 01:40-04, then 01:10-05 and 01:30-05, whose text sorts differently from their instants.
+            const [{ ms }] = await engine.executeRaw<{ ms: number }>(`SELECT (extract(epoch FROM now()) * 1000)::float8 AS ms`);
+            let first = 0;
+            for (let year = new Date(Number(ms)).getUTCFullYear(); first <= Number(ms); year++) first = Date.UTC(year, 10, 1 + (7 - new Date(Date.UTC(year, 10, 1)).getUTCDay()) % 7, 5, 20);
+            const instants = [0, 20, 50, 70].map(m => new Date(first + m * 60_000).toISOString());
+            const local = await engine.executeRaw<{ at: string }>(`SELECT unnest($1::timestamptz[])::text AS at`, [instants]);
+            expect(local.map(r => r.at.slice(11))).toEqual(['01:20:00-04', '01:40:00-04', '01:10:00-05', '01:30:00-05']);
+            for (const [i, at] of instants.entries()) {
+              await engine.executeRaw('UPDATE pages SET compiled_truth=$1, updated_at=$2::timestamptz WHERE source_id=$3 AND slug=$4', [DETERMINISTIC, at, s.id, slugs[i]]);
+            }
+            await s.census({ batchSize: 1 });
+            expect(await s.keys()).toEqual(slugs);
+          } finally {
+            await engine.executeRaw(`SELECT set_config('TimeZone', $1, false)`, [zone]);
           }
-          await s.census({ batchSize: 1 });
-          expect(await s.keys()).toEqual(slugs);
         } finally {
-          await engine.executeRaw(`SELECT set_config('TimeZone', $1, false)`, [zone]);
+          if (clock) setSystemTime();
         }
       }, 60_000);
     }

@@ -47,7 +47,9 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `osv-scanner.yml` | Pull requests scan only on a manifest change | Named exception | Weekly OSV schedule; `dependency-audit` on every PR |
 | `nightly-watch.yml` | `workflow_run` event guard | Not a test scope: it files issues from qualifying scheduled and push-to-master runs | — |
 | `fix-wave-gate.yml`, `fix-wave-closeout.yml` | Pull-request action and merge state | Not a test scope: merge-process automation | — |
+| `harness-check.yml` | `pull_request` only; a missing `HARNESS_EVALS_READ_TOKEN` skips the job (succeeds with a notice); a fork head is refused | Named exception: advisory, non-required check ([below](#harness-check)) | None: pushes to master and schedules do not run it; the pin bump runs its steps by hand on master |
 | `full-ci.yml` | `full-ci` label, later pushes to a labeled pull request, same-repository head | Not a test scope: dispatches the full profile on the head | — |
+| `test.yml`, `scale-tier.yml` | `dynamic-ci` filter (Trunk Dynamic CI) on pull requests; its gated jobs run unless the verdict is exactly `'false'` | Named exception ([below](#trunk-dynamic-ci)): pull requests only, Learning mode skips nothing | The full-ci dispatch, every push to master, the merge queue and the nightly schedules, which never run the filter |
 
 ## Full CI on pull requests
 
@@ -111,17 +113,26 @@ both did, the receipt comes from them: the same `PREGATE_REMOTE: tree= tests=
 failed=` line, with the runs' executed test identities as the counts, and no VM
 starts. The counts take each job at its newest attempt, so a run whose failed
 jobs were re-run counts its whole suite; a ledger that cannot show that is
-labelled `attempt N, partial count` on the `[ci-reuse] gate:` line. A full run
+labelled `attempt N, partial count` on the `[ci-reuse] gate:` line. A ledger an
+earlier attempt wrote counts only while its `executed-receipts` job was not re-run
+since. A full run
 on the tree still in progress is waited for (90 minutes at most, a progress
-line every minute), but while the other workflow has no full run on the tree
-the wait lasts five minutes, long enough for full-ci's second dispatch to
-appear. The newest full run on the tree decides,
+line every minute), also while the other workflow has no full run on the tree:
+full-ci's second dispatch can still appear, and a failure of the run in
+progress refuses instead of starting VMs. A passed run on the head whose
+executed-test receipt is refused (an unreadable, stale or empty ledger) ends the
+wait at once, since no later dispatch of the head is coming; the same refusal on
+another head with the same tree keeps waiting for the head's own dispatch, and a
+receipt download that failed transiently (no response, a 5xx, a 429, a rate-limit
+403, or a refusal from the artifact storage the download redirects to) is read
+again on the next poll. Any other 4xx, such as a 403 or an expired artifact's
+410, refuses at once. The newest full run on the tree decides,
 across the head and every recent head with the same tree, so neither an empty
 commit nor an older pass elsewhere skips a newer failure; a failed one refuses
 with no receipt. A run that did not run the full job (a diagnostic dispatch, a
 push that reused) is skipped. A tree that changes `.github/workflows/test.yml`,
 `.github/workflows/e2e.yml`, `scripts/ci-reuse.ts`, `scripts/lib/gh-issue.ts`,
-`scripts/ci-full-suite-tree.sh` or `scripts/ci-executed-counts.ts` relative to `origin/master` never reuses, since its runs would attest to themselves, and the
+`scripts/ci-full-suite-tree.sh`, `scripts/ci-executed-counts.ts` or `scripts/ci-manifest.ts` (which writes the run's `ci-manifest.json`) relative to `origin/master` never reuses, since its runs would attest to themselves, and the
 check runs without the model and database keys, like the gate. Every other case runs the gate: a dirty tree, a commit GitHub
 doesn't have, a missing workflow, an API error, or `GBRAIN_PREGATE_REUSE=0`.
 
@@ -130,6 +141,90 @@ new tree, so it needs its own passed full run or gate. A stamp-only difference
 reaches the head through gstack's stamp rule (`gstack-pregate clear --receipt`
 with the stamp files in `.gstack/ship-policy.json`), never through this check.
 Merge still requires `full-suite` and `e2e-full-suite` on the exact head.
+
+### Run evidence for gstack (`gstack-pregate clear --run`)
+
+gstack can take the same GitHub runs as evidence itself, so a slot runs one full
+suite per tree instead of a full-ci pass and a gate
+([gstack docs/pregate.md#run-evidence](https://github.com/garrytan/gstack/blob/main/docs/pregate.md#run-evidence)).
+`gstack-pregate clear --remote pregate.json/remote_gate --run <Test run> --run <E2E run> --allow-repo-commands`
+reads each run's `full-suite-tree` / `e2e-full-suite-tree` artifact and accepts the pair
+when both passed on pregate.json's tree and their executed files cover the gate's
+inventory:
+
+- `tree.json` carries `files` (every test file the run executed, repo-relative)
+  and `tests` (its executed tests). `scripts/ci-full-suite-tree.sh` takes them from
+  the run's `ci-manifest.json`, and only when that manifest is complete and names
+  the same run, attempt and commit. Otherwise both are left out with a warning:
+  the run still counts for merge, but gstack refuses it (`inventory_uncovered`).
+  A push that reused a run has no `full-suite` job, so it is never evidence.
+- `bash scripts/pregate-remote-gate.sh --list` prints the inventory: the gate
+  command with `--list` (`scripts/ci-ubicloud.ts --list`), the same lanes and
+  discovery the gate runs, one file per line. It exits non-zero when the
+  inventory fails or is empty (a doc-only tree under `:diff` runs no test file,
+  so it clears through the gate as before). It also prints no inventory for a
+  tree that changes one of the seven files above, or the inventory's own
+  builders `scripts/pregate-remote-gate.sh` and `scripts/ci-ubicloud.ts`,
+  relative to `origin/master` (or when there is no `origin/master`, or
+  `GBRAIN_PREGATE_REUSE=0`), so
+  gstack refuses that tree's own runs (`inventory_failed`) and the gate runs,
+  as remote-gate reuse already does. The gate leaves out the keyed-only
+  Tier 2 file (`test/e2e/skills.test.ts`): a VM has neither the keys nor
+  openclaw, so every test in it would skip.
+- gstack accepts only `push` and `workflow_dispatch` runs whose newest attempt
+  succeeded. **A flaky job means re-running the whole workflow.** "Re-run failed
+  jobs" carries every job that passed, the ledger job that writes the manifest
+  included, over from the older attempt, so the new attempt has no manifest of
+  its own and its `tree.json` has no `files` (`inventory_uncovered`); a
+  `tree.json` left from an older attempt is refused too (`artifact_mismatch`).
+- The profiles live in `.gstack/pregate.json`: `run_profiles` `test`
+  (`test.yml`, job `full-suite`, artifact `full-suite-tree`) and `e2e`
+  (`e2e.yml`, job `e2e-full-suite`, artifact `e2e-full-suite-tree`), each
+  accepting `workflow_dispatch` and `push` runs from the last 24 hours, and
+  `remote_gate_runs` naming both with this inventory command. gstack reads them
+  only from `origin/<base>`, so a branch cannot loosen them. gstack accepts
+  these keys from 1.91.377.0 on.
+
+<a id="ship-lanes"></a>
+### /ship lanes and CI carry
+
+CI's full run is the one full test run. gstack 1.94.0.0 and newer carry a /ship
+test lane from a passed full-ci run at the exact, clean tree instead of running
+it again (`LANE: <label> carried run=<id>/<attempt> tests_ran=<n>`), through
+`ship_lanes_from` in `.gstack/pregate.json`. gstack matches the lane's command
+byte for byte, so pass these commands to /ship as `--lane <label>=<command>`
+exactly as written:
+
+| Lane | Exact command | Run profiles | Inventory lanes |
+|---|---|---|---|
+| `unit` | `bun run test` | `test` | `unit,serial` |
+| `serial` | `bun run test:serial` | `test` | `serial` |
+| `slow` | `bun run test:slow` | `test` | `slow` |
+| `e2e` | `bun run test:e2e` | `test`, `e2e` | `e2e` |
+
+A lane carries only when every one of these holds:
+
+- The newest Test (`full-suite`) run at HEAD passed, and for `e2e` the newest
+  E2E (`e2e-full-suite`) run too (Test is named because the reconciliation
+  job runs two `test/e2e/` files). gstack refuses a newer red or running run on
+  HEAD, a run older than 24 hours, and a working tree that is not HEAD's
+  committed tree.
+- Every file the lane runs is in the runs' `tree.json`. The inventory is
+  `GBRAIN_PREGATE_GATE_CMD='bun run ci:ubicloud' bash scripts/pregate-remote-gate.sh --list --lanes <lanes>`,
+  the same lists the full Ubicloud gate runs. Like the remote gate's own
+  inventory, it refuses (exit 1, no list) on a tree that changes the CI reuse
+  files or the inventory builders, so such a tree's runs never carry its lanes
+  ([remote-gate reuse](#remote-gate-reuse)).
+- The `e2e` inventory leaves out `test/e2e/skills.test.ts`, which needs
+  provider keys and openclaw. full-ci runs neither, so the file never runs
+  there. Run it by name when your change touches it.
+
+`bun run verify` and `bun run typecheck` don't carry: `tree.json` records test
+files only, so no inventory can show that CI ran them. They take about a minute
+locally. pregate's guards, secrets and sealed checks always run.
+
+To check a lane before /ship does, at the pushed head:
+`~/.claude/skills/gstack/bin/gstack-ci-carry find --base master --command 'bun run test' --allow-repo-commands`.
 
 ## Dependency-audit rule
 
@@ -236,3 +331,21 @@ stays the unit `test` shards (median 13.9 minutes). A `merge_group` run uses
 the same profile and costs the same per run; the merge queue is inert, so it
 adds nothing today. If the added median PR wall time exceeds 15 minutes over
 a week, the agent on release duty records it on the CI health issue.
+
+## Harness check
+
+`.github/workflows/harness-check.yml` runs on every pull request to master from a branch of this repository, on a 4-vCPU Ubicloud runner with a 45-minute limit. It is not a required check. It clones [harness-evals](https://github.com/garrytan/harness-evals) at the commit `HARNESS_EVALS_PIN` names (`0a5246d167`, harness-evals v0.0.59, main on 2026-10-30), builds the gbrain sidecar image for the pull request's head commit with harness-evals' `scripts/build-gbrain-image.sh` (the keyword target: gbrain at that commit run from source, four keyword PGLite brains over the messy-company-v1 corpus, the install bundle from `gbrain skillpack scaffold`, `compile-context` and `gbrain setup`; no key anywhere), and runs the keyless rungs of `scripts/gbrain-check.ts` against that image with `--no-build`: the fake harness through harness-evals' real runner and its world's gbrain tap, one trial on the starter surface, one on the verbs surface, one with the gbrain-docs bundle mounted, one on the company brain under scope `sources` with two members, plus a direct probe of the company brain that searches and queries once per member and query under that member's `source_ids` (15 members, 344 calls, 1,062 rows in the sample run). It gates on one number: the count of pages or rows returned to a member whose grant does not hold their source (cross-scope). The job fails when that count is not zero, when the scoped probe did not run, or when no `check.json` was written (the image did not build or the check did not finish); every other failed assertion of gbrain-check (a tool count off harness-evals' pin, a missing search tool or verb, a retrieval that misses the known dev page, an install bundle or view digest, the Hermes context, the installer's brain-first block or per-turn hook files) is a `::warning::` in the job log and a line in the job summary, so a pull request that changes the tool list or the install output is told and not blocked. The only secret it reads is `HARNESS_EVALS_READ_TOKEN`, a fine-grained token with Contents: read on the private harness-evals repository; it reads no model key and runs no paid trial (the metering proxy runs with placeholder keys the fake harness never uses). When the secret is not set, the job's first step writes a `::notice::` and a "skipped" job summary naming the missing secret, every later step is skipped, and the job succeeds. A pull request from a fork is refused before that check: the image build fetches the commit from this repository, where a fork's commit does not exist. The artifact `harness-check-keyless` holds `summary.md`, `keyless/check.json` (every assertion and the evidence behind it, including `evidence.scoped` the gate reads) and `trials.jsonl`; never a trial's state or a token file.
+
+Measured by hand on 2026-10-26 against master at `b06ac32b` (0.60.465.0) on a 2-core, 7 GB Linux machine (Docker 29.9.2, bun 1.4.4): image build 359 s, check 59 s (30 assertions passed, 0 failed, 0 pin diffs, cross-scope pages 0), 457 s end to end. A CI runner is not measured yet. The pin moved to v0.0.59 on 2026-10-31: v0.0.9 failed to build its image against master once `gbrain setup hermes --instructions-only` began writing the shell-hooks allowlist lock; v0.0.59 against the train R head (`32f1748a`) built and passed (37 assertions, 0 failed, 0 pin diffs, cross-scope pages 0, check 62 s).
+
+**Bumping the harness-evals pin.** The pin is one line in the workflow, `HARNESS_EVALS_PIN`, and it must be a commit on harness-evals main. To move it, read the new head with `git ls-remote https://github.com/garrytan/harness-evals refs/heads/main`, run the workflow's steps once by hand against master with the new pin (clone at the pin, `bun install --frozen-lockfile`, `scripts/build-gbrain-image.sh`, `scripts/gbrain-check.ts --no-build`, then the gate step's shell), and read its last lines (`gate passed` and the warning count). Then change the line and open the bump as its own pull request, so the first run under the new pin is on a commit whose gbrain did not change. A pin diff reported as a warning after a deliberate gbrain change is fixed on the harness-evals side (its `gbrain/pin.json`), and the bump that follows picks it up.
+
+## Trunk Dynamic CI
+
+Trunk Dynamic CI (private beta; [docs](https://docs.trunk.io/ci/dynamic-ci)) decides per pull-request push which jobs still need to run, from this repository's own CI history. A `dynamic-ci` job in `test.yml` and in `scale-tier.yml` runs `trunk-io/dynamic-ci` (pinned to v1) with the `TRUNK_API_TOKEN` repository secret and writes one output per gated job. The step has `continue-on-error: true` and a 3-minute step timeout inside the job's 5, so a failed or hung Trunk call leaves the outputs empty and the check green instead of red on the head (a lost runner still fails the job).
+
+- **Gated jobs.** `test.yml`: `security-regressions` (including the Windows and macOS cells), `native-locks`, `persistence-validation` and `stress-changed-tests`. `scale-tier.yml`: `scale`. They were chosen from the seven days before 2026-11-04 as the pull-request jobs that take minutes and nearly always pass. `changes`, `gitleaks`, `dependency-audit`, `verify`, `typecheck`, `semgrep`, the scale `plan` and the aggregates are not gated.
+- **Form.** A gated job lists `dynamic-ci` in `needs` and its `if` starts `!cancelled() && needs.dynamic-ci.outputs.<job key> != 'false' &&`, followed by `needs.<other>.result == 'success'` for every other job it needs and then its original condition. `!cancelled()` keeps a skipped or failed filter from skipping the job, `!= 'false'` makes an empty output (no token, a Trunk outage, no verdict yet) run it, and the `result == 'success'` checks keep what the implicit `success()` did before.
+- **Events.** The filter's `if` is `github.event_name == 'pull_request'`. On a push, merge-queue entry, schedule or dispatch (the full-ci run) it is skipped, every output is empty, and every gated job runs exactly as before, so `full-suite`, `e2e-full-suite` and the ci-reuse evidence are unchanged. `e2e.yml` has no pull-request trigger and no filter.
+- **Modes.** A repository starts in Learning mode: Trunk records a verdict for every gated job and skips nothing. Enforcement is the Mode dropdown in the repository's row on the Dynamic CI settings page in the Trunk web app (app.trunk.io), not this file; Learning mode can also enforce only for listed engineers or labels (the Allow list column). Under enforcement `cheap-tier` accepts a gated lane that skipped only when its verdict was exactly `'false'` and `changes` succeeded (`scripts/ci-cheap-tier.sh`). Before enforcing, weigh three gaps. `stress-changed-tests` repeats changed tests only on pull requests (no full run repeats them), so a skip there removes that check for the push. A `'false'` verdict also skips `scale` on a pull request that carries the `scale-tier` label, since Trunk does not read labels. And Trunk learns false skips from its own merge queue; gbrain's backstop is the full-ci dispatch, which skips the filter, so a gated lane that a pull request skipped and full-ci then failed never reaches Trunk as a false skip. Pin a job to run on the Configuration tab when a gap matters.
+- **Guard.** `scripts/check-dynamic-ci.ts` (in `bun run verify`) fails when a filter job can run on another event, sits in a workflow without a pull-request trigger, is not SHA-pinned, lacks `continue-on-error: true` or a step timeout below the job's, or exports outputs that differ from its `job-keys`; when a gated job's `if` lacks the form above or has a top-level `||` after it; and when a merge or release aggregate is gated.
