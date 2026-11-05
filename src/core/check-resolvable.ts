@@ -414,7 +414,7 @@ export function checkResolvable(
     !triggerEntries.some(e => e.source === 'resolver_md');
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- skillsDir is the caller-resolved local skills/ dir, never remote input
   const manifestJsonAbsent = !existsSync(join(skillsDir, 'manifest.json'));
-  const isWorkspaceDiscovery = opts?.skillsDirSource?.includes('_workspace_') ?? false;
+  const isWorkspaceDiscovery = opts?.skillsDirSource?.startsWith('openclaw_workspace_') ?? false;
   const lowConfidenceForeignDir =
     (opts?.skillsDirSource === 'cwd_walk_up' || isWorkspaceDiscovery) &&
     (!resolverPathOrNull || foundOnlyEmptyAgentsMd) &&
@@ -430,7 +430,7 @@ export function checkResolvable(
       severity: lowConfidenceForeignDir ? 'warning' : 'error',
       skill: skill.name,
       message: lowConfidenceForeignDir
-        ? `Skill '${skill.name}' is in manifest but has no trigger row in ${RESOLVER_FILENAMES_LABEL} (this skills/ dir was found by walking up from cwd with no resolver rows -- if it belongs to a different tool, this can be ignored)`
+        ? `Skill '${skill.name}' is in manifest but has no trigger row in ${RESOLVER_FILENAMES_LABEL} (this skills/ dir was auto-discovered with no resolver rows -- if it belongs to a different tool, this can be ignored)`
         : `Skill '${skill.name}' is in manifest but has no trigger row in ${RESOLVER_FILENAMES_LABEL}`,
       action: `Add a trigger row for 'skills/${skill.path}' in RESOLVER.md under ${section}`,
       fix: {
