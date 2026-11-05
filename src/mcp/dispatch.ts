@@ -1214,8 +1214,7 @@ async function dispatchResolvedCall(
   // failure renders the envelope's `notices` key (one block).
   const notices: Notice[] = [];
   ctx.emitNotice = (n) => { if (n) notices.push(n); };
-  let tail: ToolTail | undefined;
-  ctx.emitToolTail = (t) => { tail = t; };
+  let tail: ToolTail | undefined; ctx.emitToolTail = (t) => { tail = t; }; // Wakeshift's addition, appended last on success
 
   try {
     if (ctx.remote !== false && op.requiredScopes?.length) {
@@ -1324,7 +1323,7 @@ async function dispatchResolvedCall(
     // BEFORE and independently of the metaHook, so a hot-memory hook
     // failure can never drop the retrieval channel. Per-key merge, never
     // wholesale assignment. See docs/protocol/MCP_META_CHANNELS.md.
-    attachResponseMeta(out, responseMeta, degradedStampFor(name, result, responseMeta, notices));
+    attachResponseMeta(out, responseMeta, degradedStampFor(name, result, responseMeta, notices)); if (tail) appendToolTail(out, tail);
     // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.
     // The hook is wrapped in its own try/catch — any DB blip / cache miss /
     // helper crash degrades to no hook keys rather than flipping the whole
@@ -1334,7 +1333,6 @@ async function dispatchResolvedCall(
       if (meta && Object.keys(meta).length > 0) out._meta = { ...(out._meta ?? {}), ...meta };
       if (failure !== undefined) ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${failure}; degrading to no hook keys`);
     }
-    if (tail) appendToolTail(out, tail);
     // Large pages: the egress backstop measures the final frame; a read over the connection's cap is refused whole, never cut.
     const over = op.mutating ? null : await frameOverCap(out, { remote: ctx.remote, transport: ctx.transport, engine, config: ctx.config });
     if (over) return errorResult(resultTooLargeError(name, safeParams, over), opts, { op: name, mutating: false, idempotent: op.idempotent === true });
