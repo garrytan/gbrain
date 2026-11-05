@@ -4,7 +4,6 @@ import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 
 import { VERSION } from '../src/version.ts';
-import { copyFix } from '../src/core/upgrade-restart.ts';
 
 const REPO = resolve(import.meta.dir, '..');
 const TARGET = '99.0.0.0';
@@ -69,16 +68,4 @@ describe('OpenClaw global upgrade backend', () => {
     expect(outcome.kind === 'return' ? outcome.bunCalls : []).toContain(`add -g --backend=copyfile github:garrytan/gbrain#v${TARGET}`);
   }, 60_000);
 
-  test('uses copyfile for a restart replacement of the same plugin install', () => {
-    const root = mkdtempSync(join(tmpdir(), 'gbrain-8659-restart-'));
-    const pkgDir = join(root, 'install', 'global', 'node_modules', 'gbrain');
-    try {
-      mkdirSync(pkgDir, { recursive: true });
-      writeFileSync(join(pkgDir, 'openclaw.plugin.json'), '{}\n');
-      const replacement = copyFix(pkgDir, VERSION, TARGET);
-      expect(replacement.argv[1]).toEqual(['bun', 'add', '-g', '--backend=copyfile', `github:garrytan/gbrain#v${TARGET}`]);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
 });

@@ -31,8 +31,7 @@
  *   holds it), each restarted role and supervised worker came back, and the
  *   warm CLI socket, when serve had one, accepts this build.
  */
-import { existsSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { parseGlobalFlags } from './cli-options.ts';
 
 export type ProcessRole = 'serve' | 'autopilot' | 'supervisor' | 'worker' | 'mcp' | 'sync';
@@ -172,16 +171,12 @@ export function bunGlobalCopyOf(pkgDir: string): { bun_install: string } | null 
   return { bun_install: parts.slice(0, -4).join('/') || '/' };
 }
 
-function bunGlobalAddArgv(root: string, version: string): string[] {
-  return ['bun', 'add', '-g', ...(existsSync(join(root, 'openclaw.plugin.json')) ? ['--backend=copyfile'] : []), `github:garrytan/gbrain#v${version}`];
-}
-
 /** The steps that move another gbrain install onto the target build, as argv, plus the sentence that names them. */
 export function copyFix(root: string, holds: string | null, expected: string): { argv: string[][]; env: Record<string, string>; instruction: string } {
   const release = expected === PENDING_BUILD ? 'the release being installed' : `v${expected}`;
   const copy = bunGlobalCopyOf(root);
   if (copy) {
-    const argv = [['bun', 'remove', '-g', 'gbrain'], bunGlobalAddArgv(root, expected)];
+    const argv = [['bun', 'remove', '-g', 'gbrain'], ['bun', 'add', '-g', `github:garrytan/gbrain#v${expected}`]];
     const shown = argv.map(a => `BUN_INSTALL=${copy.bun_install} ${a.join(' ')}`).join(' && ');
     return { argv, env: { BUN_INSTALL: copy.bun_install }, instruction: `replace the Bun global copy at ${root} (${holds ? `v${holds}` : 'version unknown'}; a pinned copy keeps its pin through bun add alone, so remove it first): \`${shown}\`` };
   }
@@ -312,13 +307,13 @@ export async function runRestartSteps(plan: RestartPlan, exec: RestartExecutor):
     if (step.kind === 'replace_copy') {
       const env = { BUN_INSTALL: step.bun_install };
       const probe = ['git', 'ls-remote', '--exit-code', '--tags', 'https://github.com/garrytan/gbrain', `refs/tags/v${step.to}`];
-      const add = bunGlobalAddArgv(step.root, step.to);
+      const add = ['bun', 'add', '-g', `github:garrytan/gbrain#v${step.to}`];
       const probed = exec.run(probe);
       if (probed.status !== 0) { results.push({ step, ok: false, detail: `v${step.to} has no release tag, so the copy at ${step.root} was left as it is (${failed(probe, probed)})` }); continue; }
       const removed = exec.run(['bun', 'remove', '-g', 'gbrain'], env);
       const added = removed.status === 0 ? exec.run(add, env) : removed;
       if (added.status === 0) { results.push({ step, ok: true, detail: `replaced the Bun global copy at ${step.root} with v${step.to}` }); continue; }
-      const restored = removed.status === 0 && step.from ? exec.run(bunGlobalAddArgv(step.root, step.from), env).status === 0 : false;
+      const restored = removed.status === 0 && step.from ? exec.run(['bun', 'add', '-g', `github:garrytan/gbrain#v${step.from}`], env).status === 0 : false;
       results.push({ step, ok: false, detail: `could not replace the copy at ${step.root} (${failed(removed.status === 0 ? add : ['bun', 'remove', '-g', 'gbrain'], added)})${restored ? `; restored v${step.from}` : ''}` });
     } else if (step.kind === 'service') {
       const r = exec.run(step.argv);
