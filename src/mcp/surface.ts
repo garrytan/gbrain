@@ -109,6 +109,8 @@ export const STARTER_OPS: ReadonlySet<string> = new Set([
   'join_brain', 'sync_brain_skills', 'leave_brain', 'put_skill', 'delete_skill',
   // The dismissal for the coaching notices starter sessions receive (onboarding, features).
   'mute_notice',
+  // GBRA-219: the per-conversation memory switch rides next to remember.
+  'memory_conversation_mode',
 ]);
 
 /**

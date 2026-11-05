@@ -12,8 +12,9 @@
  * with old and new writers on one day; doctor names the top reason; a brain
  * whose schema is behind keeps extracting and loses rollup rows with one
  * stderr line naming the migration fix, never a throw; extract_atoms records
- * a credentials abort as provider_auth and extract_facts' fence guard as
- * integrity_guard.
+ * a credentials abort as provider_auth, and an extract_facts run whose fence
+ * guard holds a page books a completed round, never a halt (GBRA-190 G4: the
+ * guard holds that page only and every other page reconciles).
  * Fails when: the migration backfills, a cap becomes a halt reason, reasons
  * are JSON-stringified into the jsonb, unknown is stored instead of
  * computed, or the doctor ignores the column.
@@ -174,7 +175,7 @@ test('a brain whose schema is behind v239 keeps extracting: the rollup write ret
   }
 }, 120_000);
 
-test('extract_atoms records a credentials abort as provider_auth; extract_facts records its fence guard as integrity_guard', async () => {
+test('extract_atoms records a credentials abort as provider_auth; an extract_facts run with a guard-held page is a completed round', async () => {
   const engine = engines.find(e => e.kind === 'pglite');
   if (!engine) return;
   for (const slug of ['note/auth-1', 'note/auth-2']) await engine.putPage(slug, { title: slug, type: 'note', compiled_truth: 'seed body prose' } as never, { sourceId: 'default' });
@@ -200,7 +201,8 @@ test('extract_atoms records a credentials abort as provider_auth; extract_facts 
   expect((await runExtractFacts(stub, { slugs: [], sourceId: 'default' })).guardTriggered).toBe(true);
   const rollups = calls.filter(c => c.sql.includes('INSERT INTO extract_rollup_7d'));
   expect(rollups).toHaveLength(1);
-  expect(rollups[0]!.params[4]).toBe(1);
-  expect(rollups[0]!.params[10]).toBe('integrity_guard');
+  expect(rollups[0]!.params[4]).toBe(0);
+  expect(rollups[0]!.params[7]).toBe(1);
+  expect(rollups[0]!.params[10]).toBeNull();
   expect(rollups[0]!.sql).not.toContain('JSON.stringify');
 }, 120_000);

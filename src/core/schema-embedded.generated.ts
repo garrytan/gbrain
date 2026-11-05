@@ -2942,7 +2942,8 @@ CREATE OR REPLACE FUNCTION gbrain_guard_request_protocol() RETURNS trigger LANGU
       RAISE EXCEPTION 'unsupported_mutation_protocol: invalid page target' USING ERRCODE='42501';
     END IF;
     record:=NEW.recovery;
-    IF record IS NOT NULL AND ((target='page' AND record->>'version' IS DISTINCT FROM '1')
+    IF record IS NOT NULL AND ((target='page' AND record->>'version' IS DISTINCT FROM '1'
+        AND NOT (record->>'version'='3' AND record->>'target'='pages' AND jsonb_typeof(record->'files')='array'))
       OR (target='skill_bundle' AND (record->>'version' IS DISTINCT FROM '2' OR record->>'target' IS DISTINCT FROM 'skill_bundle'
         OR jsonb_typeof(record->'files') IS DISTINCT FROM 'array'))) THEN
       RAISE EXCEPTION 'unsupported_mutation_protocol: recovery target mismatch' USING ERRCODE='42501';
@@ -3200,6 +3201,10 @@ DO \$rls\$ BEGIN
     ALTER TABLE decide_sweep_deferred ENABLE ROW LEVEL SECURITY;
   END IF;
 END \$rls\$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS decide_proposals_claim_pair_uidx ON decide_proposals (source_id, LEAST(new_fact_id, old_fact_id), GREATEST(new_fact_id, old_fact_id)) WHERE sweep_id LIKE 'claim_conflicts:%';
+CREATE INDEX IF NOT EXISTS decide_proposals_pending_new_idx ON decide_proposals (new_fact_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS decide_proposals_pending_old_idx ON decide_proposals (old_fact_id) WHERE status = 'pending';
 
 CREATE TABLE IF NOT EXISTS decide_review_queue (
   kind            TEXT NOT NULL,

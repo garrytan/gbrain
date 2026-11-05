@@ -183,7 +183,7 @@ for (const kind of testBackends()) {
       expect(work.largestPiece).toBeLessThanOrEqual(SEGMENT_MAX_BYTES);
     }, 600_000);
 
-    test('forget_fact rewrites the segmented file with the row withdrawn, as the inline twin\'s, and commits it', async () => {
+    test('forget_fact publishes the segmented file with the row withdrawn, as the inline twin\'s, and commits it', async () => {
       const before = { [INLINE]: readFileSync(fileOf(brain, INLINE), 'utf8'), [SEGMENTED]: readFileSync(fileOf(brain, SEGMENTED), 'utf8') };
       const receipts: Record<string, string> = {};
       const reads = watchWholeReads(fileOf(brain, SEGMENTED));
@@ -194,11 +194,14 @@ for (const kind of testBackends()) {
         if (slug === INLINE) resetWork();
         await settle(brain, kind);
       } } finally { reads.restore(); }
-      const wholeReads = reads.hits;
+      // The struck file is streamed from the segments; the one whole read is the prior file every page publication's
+      // recovery record embeds below PAGE_MAX_BYTES (coordinator.ts pageRecoveryRecord), as an append or edit of this page does.
+      const wholeReads = reads.hits.filter(hit => !hit.includes('at pageRecoveryRecord '));
       const work = { ...largeFileWork };
 
       expect(await effectsOf(brain, receipts[SEGMENTED]!)).toEqual(await effectsOf(brain, receipts[INLINE]!));
-      expect(await effectsOf(brain, receipts[SEGMENTED]!)).toEqual(SETTLED);
+      // GBRA-190 G4: forget_fact strikes the file in its own publication; only purge_fact still mirrors.
+      expect(await effectsOf(brain, receipts[SEGMENTED]!)).toEqual(SETTLED.filter(effect => effect.kind !== 'withdrawal-mirror'));
       const file = readFileSync(fileOf(brain, SEGMENTED));
       expect(file.toString('utf8')).not.toBe(before[SEGMENTED]);
       expect(readFileSync(fileOf(brain, INLINE), 'utf8')).not.toBe(before[INLINE]);

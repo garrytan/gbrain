@@ -52,6 +52,7 @@ import type { SyncOpts, SyncResult } from '../sync.ts';
 import { heldRenameOrigins, holdRefusedImport, moveHeldRenames, noteScreenedImport, settleFullSyncHolds, wouldHoldFields, type LegacyHolds } from './holds.ts';
 import { sweepOrphanedRenameSentinels } from './rename-reconcile.ts';
 import { classifyItemFailure } from '../../core/item-failure.ts';
+import { fileHistory, scanClassicReasons, withReasonNotices } from './reasons.ts';
 import { OperationError } from '../../core/ops/contract.ts';
 
 /** GBRA-287: one DB-only page a full sync kept but could not re-export: its source path, the failure and what to do. */
@@ -116,11 +117,17 @@ export async function performFullSync(
   serr(`[gbrain phase] sync.fullsync.import start strategy=${opts.strategy ?? 'markdown'}`);
   opts.onProgress?.({ phase: 'full_import' });
   await moveHeldRenames(engine, holds, holdRoot);
+  // GBRA-217: a re-import of a source that already has pages reads its reasons from the whole history (a first sync creates
+  // every page, so it archives no snapshot to annotate and runs no scan).
+  const [known] = await engine.executeRaw<{ any: boolean }>('SELECT EXISTS (SELECT 1 FROM pages WHERE source_id = $1) AS any', [opts.sourceId ?? 'default']);
+  const reasons = await scanClassicReasons(engine, { sourceId: opts.sourceId, company, anchorPath, gitRoot: gitContextRoot, from: null, to: headCommit,
+    imports: known?.any === true ? 1 : 0 });
   let result: import('../import.ts').RunImportResult;
   try {
     result = await runImport(engine, importArgs, {
       signal: opts.signal,
       commit: headCommit,
+      history: filePath => fileHistory(reasons, filePath),
       strategy: opts.strategy,
       sourceId: opts.sourceId,
       exclude: opts.exclude,
@@ -198,7 +205,7 @@ export async function performFullSync(
   // that throws never clears anything, and the sweep carries the full
   // clear-then-verify-restore semantics.
   await sweepOrphanedRenameSentinels(engine, fullSourceId, fullFailureSet);
-  if (!fullGate.advanced) return await reportBlockedFullSync(engine, opts, anchorPath, headCommit, result, fullGate);
+  if (!fullGate.advanced) return withReasonNotices(await reportBlockedFullSync(engine, opts, anchorPath, headCommit, result, fullGate), reasons, opts.sourceId);
   if (fullGate.acknowledged > 0) {
     serr(`  Acknowledged ${fullGate.acknowledged} failure(s) and advanced past them.`);
   }
@@ -243,7 +250,7 @@ export async function performFullSync(
   const { readPageSizeStates, addSizeState } = await import('../../core/page-embedding-budget.ts');
   const sizeStates = (await readPageSizeStates(engine, fullSourceId, null))
     .reduce<import('../../core/page-embedding-budget.ts').SyncSizeStates | undefined>((tally, state) => addSizeState(tally, state), undefined);
-  return {
+  return withReasonNotices({
     status: 'first_sync',
     fromCommit: null,
     toCommit: headCommit,
@@ -262,7 +269,7 @@ export async function performFullSync(
     ...(result.type_warnings ? { type_warnings: result.type_warnings } : {}),
     ...(result.resealed ? { resealed: result.resealed } : {}),
     ...(reexportFailures.length ? { reexport_failures: reexportFailures } : {}),
-  };
+  }, reasons, opts.sourceId);
 }
 
 async function fullSyncDryRun(engine: BrainEngine, syncScopeRoot: string, headCommit: string, opts: SyncOpts & { metafilePages: MetafilePagesMode },

@@ -18,6 +18,115 @@ identifiers and attribution are available in the pre-removal Git revision
 
 - `test/helpers/upgrade-from-previous-release.ts`: the harness's CLI child runs with every provider key and base URL in `PROVIDER_ENV_KEYS` removed. The golden is unchanged. On real Postgres, master failed 3 of 12 with fake keys set (the same two lines as the nightly run) and passed keyless; with this change it passes 12 of 12 both ways (#6040).
 
+## [0.60.578.0] - 2026-11-05
+
+**Memory train (GBRA-286): `forget` edits the page files first, `recall` can weigh how far a fact deserves belief, page versions carry a human reason and can be read by date, and agents can read and switch the saving rule. Every new mode is off by default, and every feature works on a brain with no Git repository.**
+
+This release folds seven approved memory PRs into one: #7616, #7791, #7797, #7803, #7810, #7798 + #7804 and #7795. Each was brought up to current master. Where a new path skipped a guard master added since (member-scoped access with `readable_by`, the trust-tier quote fence for remote readers, the private-request hold on content imports), the guard now applies there too, with a test that failed first.
+
+### Forget writes the page files first (#7616)
+
+Git stays the parent. A withdrawal is now a page write, published to Git before the database changes.
+
+| Situation | Before | Now |
+|---|---|---|
+| `forget` / `forget_fact` | the database expired the fact; the page files caught up later through a mirror | every page whose `## Facts` table carries the claim gets its row struck (`~~claim~~`, a `valid_until` date, `forgotten: <reason>`), all in one publication and one commit, then the ledger row and expiries in the same transaction |
+| `remember` without an entity | a database-only row | a row of the `memory/unattributed` page's `## Facts` table, created on first use (concurrent first saves all land on it), so Git, `recall` and search see it |
+| Remembering that claim again with an entity | two copies | the entity row is written and the unattributed row struck in the same publication |
+| A member forgets a fact on their own member page | withdrawn for that page | unchanged: the withdrawal stays on that page, and other members' copies stay active |
+
+`forget_fact` on a fact that already expired (superseded, consolidated or dropped from its page) still records the withdrawal and strikes the page row, so a later import can't bring it back, then answers `fact_already_expired`. A forget now waits for the source's writer the way `remember` does. With the writer unavailable it returns the pending-write receipt, and the fact is still recalled until it publishes. With `sync.write_through` off, from a sandboxed subagent, or on a source with no canonical owner, a forget of a claim a page file carries is refused (`sync_write_through_off`, `subagent_sandbox`, `unbound_source`) instead of withdrawing it in the database only; a claim only database-only pages carry is still withdrawn. Migration v287 adds the multi-page recovery record (one record restores every file of an interrupted publication); it rewrites no data.
+
+### Review lists and review decisions through the page door (#7791, #7797)
+
+- `extraction_pending` gains two lists. `unattributed` (on by default) lists active facts saved without an entity, each with the relink action. `possible_duplicates` (opt-in through `include`) flags new entity pages whose name is a typo or acronym of another's. It only flags: nothing is merged and no identity is written.
+- `extraction_review` promote and reject are now page-door writes (`edit_page` of the frontmatter, `delete_page`), so on a source with a repository each decision is a Git commit. A new `distinct` action records that two flagged pages are different entities.
+- Remote reads of the unattributed list hide facts the caller can't read, and quote fact text below the owner's tier as source material, as `recall` does.
+- A promote or reject batch keeps going when one slug fails, returns `partial` with each slug's outcome, and `gbrain extraction-review` exits 1 for a partial batch.
+
+### Recall weighting, entity grouping and the keyless claim lane (#7803, #7810)
+
+**`recall` can weigh how much a fact deserves to be believed, and can group a no-entity question's facts by entity. Both are opt-in.**
+
+#### What changed
+
+| Situation | Before | With the switch on |
+|---|---|---|
+| `recall {question}`: a year-old fact you confirmed and a fresh agent-written or external fact match equally | the newest fact ranked first | the confirmed fact ranks first (`recall.confidence_weighting on`) |
+| The same, between two agent-written facts | newest first | newest first (age still decays) |
+| A dated historical fact ("founded in 2015") | ranked by match | ranked by match; it does not decay |
+| `recall {question}` with no `entity` answered by two clients' facts | one flat list, the clients' figures interleaved | each entity's facts together, `facts_groups`, and an `entity_unspecified` notice offering the recall per entity (`recall.group_by_entity on`) |
+| `gbrain config set recall.question_admission <typo>` | stored and silently ignored | refused; the new switches take only `on` or `off` |
+
+Weighting is `relevance × (0.5 + 0.5 × weight)`: facts you confirmed and your own notes keep full weight at any age, other tiers decay from `valid_from` and carry a tier weight (tool 0.9, agent 0.8, external 0.6). It only reorders facts that already matched; `relevance` stays the plain score and `rank_score` and `confidence_factor` show the weighting. Grouping runs after the limit and budget cuts, so no entity is cut off by it. Both read database rows only, so they work the same on brains with no git repository.
+
+On a keyless 60-question fixture (old confirmed truth against fresh agent and external text, an agent knowledge update, dated history), weighting moved the confirmed truth to first in 20 of 20 questions, from 0 of 20, and left the update and history cases at 20 of 20. Grouping removed entity interleaving in 10 of 10 two-client questions with the same number of entities delivered.
+
+**Typed figures you save can now be checked for conflicts without an API key, and you decide each conflict from the trust review.**
+
+`remember` takes an optional typed claim (`claim_metric`, `claim_value`, `claim_unit`, `claim_period`). Two saved claims about the same entity with the same metric, unit and period in the same as-of bucket (the day, or the week, month, quarter or year the period names) are a conflict. Figures in different buckets are history, so a monthly series, a run of funding rounds or a forecast next to an actual are never flagged. Finding conflicts is off by default: `gbrain config set dream.claim_conflicts.mode propose` turns on the nightly phase, and `gbrain decide sweep --claims` runs it once (`--dry-run` writes nothing). Each conflict becomes one pending proposal that nothing applies until you decide it.
+
+#### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| `remember` a figure | text only | optional typed claim, stored on the fact and in the entity page's `## Facts` table; a bad value is refused with the corrected call |
+| Two saved figures disagree for the same month | found only by the paid conflict sweep | found by `gbrain decide sweep --claims` or the `claim_conflicts` dream phase (`propose`), with no key and no model call |
+| A typed figure saved for April next to March's | could supersede March's if the text was close | both kept: a typed write never supersedes a typed fact in another bucket |
+| `gbrain trust review` | proposals, lowered pages, preferences, holds | also `contradiction` items (`dp<id>`) with supersede, forget, confirm and drop; `--accept-all` skips them |
+| `recall` of a fact in a pending decide proposal | no label | `contested` with the other fact's id, only when the caller can read that fact |
+
+A run files at most `dream.claim_conflicts.max_pairs` (default 500) proposals per source and leaves the rest for the next run. A new unique index keeps concurrent runs to one proposal per pair (migration v288); it rewrites no data. Everything reads and writes database rows, so it works the same on a brain with no git repository. Guide: the "Old and conflicting facts" section of `docs/guides/memory-trust.md`.
+
+### Page versions carry a human reason, and pages read by date (#7798, #7804)
+
+**A page write can say why it was made, and page history shows it.**
+
+`put_page`, `edit_page`, `revert_version` and each `put_pages` item take an optional `reason` (one line, at most 500 characters; `--reason` on the CLI). It is stored on the version the write replaced, and `get_versions` returns it as `replaced_because`, so the newest version explains the text you read now; `gbrain history` prints it as `changed because: …`. When the page's file reaches Git, the commit carries it as a trailer naming the file, `gbrain-reason: <path>: <text>`, beside any `gbrain-repair:` trailer. A brain with no Git repository gets the same history from the database. Every write result reports where the reason went in `reason_recorded`.
+
+#### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A write passes `reason` | refused as an unknown parameter | stored with the replaced version and, for a world-visible file, in the commit |
+| A reason over 500 characters, or one that looks like a credential | n/a | refused before admission: `change_reason_rejected` (`reason_too_long`, `reason_contains_secret`), and no journal row keeps it |
+| A remote caller reads `get_versions` | no reasons | `replaced_because` when the version and the one that replaced it are both world-visible and the replacement was not pruned |
+| A private page's write has a reason | n/a | the reason stays out of every commit message |
+| A write without a reason | | the same commit message and history as before |
+| A newer write to the same file commits first (non-strict source) | n/a | the receipt says `git: superseded` with a `reason_not_committed` notice; the reason stays in history |
+
+Guide: [page history](docs/guides/page-history.md).
+
+#### Read a page as it stood on a date
+
+A page can now say when its text takes effect, with `valid_from` and `valid_until` in its frontmatter, and you can ask what was in force on any date: `get_page {slug, as_of: '2026-03-01'}`, or `gbrain get <slug> --as-of 2026-03-01`. Say to your agent: *"What did our refund policy say on March 1?"*
+
+- The answer is the edition with the latest `valid_from` on or before the date, picked across the current page and every version gbrain kept. Its `valid_time` block says whether that edition was `in_force`, `not_in_force`, `not_yet_in_force` or `before_recorded_history`, and whether gbrain held enough history to be sure. Only an `in_force` answer returns the text at the top level, so an agent that skips the status cannot quote expired text as current.
+- When history is missing (pruned versions, a sync that imported several commits at once, a page that came from a file) or the dates look ambiguous (a corrected date and a renewal leave the same trace), the answer says `uncertain: true`, why, and how to recover: the file's `git log`, or asking the user for a backup. It never guesses.
+- Works the same on a brain with no Git repository, the default keyless install.
+- Over MCP, an `as_of` read follows the plain read's rules. A quarantined page's body is omitted, and an edition's `introduced_because` is shown only when the edition it replaced is one the caller may read.
+- `gbrain get --as-of` exits 15 when no edition was in force, and 16 (`host_upgrade_required`) when the brain host is too old to answer by date, printing nothing historical.
+- Writes say when they keep or change an edition's date (`valid_time_correction`, `valid_time_date_only`, `valid_from_unparsed`), and `get_versions` rows carry each version's `valid_from` and `valid_until`.
+- Behavior change: a plain `get_page` of a page whose own `valid_from` is in the future, or whose `valid_until` has passed, now also carries a `valid_time` status. Pages without those dates read exactly as before.
+
+Guide: [page history](docs/guides/page-history.md#valid-time).
+
+### Memory writeback settings over MCP (#7795)
+
+**Agents and settings screens can now read the memory-saving rule, an admin can change it remotely, and a user can say "save everything from here" or "stop saving" for one conversation.**
+
+Before, the rule for what an agent saves lived in the MCP instructions, and only the brain operator could see or change `memory.auto_writeback`, from a shell on the host. Three MCP tools change that. Every one keeps its state in the database, so a brain with no git repository gets all of them.
+
+#### What changed
+
+| Tool | Who can call it | What it does |
+|---|---|---|
+| `get_memory_settings` | any connection | the mode agents follow, where it came from, the exact rule text, every mode's rule, background capture state, and why you can or can't change it |
+| `set_memory_writeback` | admin scope, after `gbrain config set mcp.publish_memory_settings true` (off by default) | changes `memory.agent_writeback` (inherit, off, salient, all) for the whole brain, with a dry run, an audit row in the same transaction, and a caution on team brains |
+| `memory_conversation_mode` | any connection that can call `remember` | returns the rule for the rest of this conversation: all, salient, off (only what the user asks to keep) or brain; stores nothing |
+
+The new `memory.agent_writeback` key changes only what agents are told. The host capture lanes (Stop hook, compaction harvest, SessionEnd transcripts) keep following the operator's `memory.auto_writeback`, so a remote "off" can't discard banked session text and a remote "all" can't start capture the operator never enabled. An unreadable or unrecognized override makes agents act as if saving is off and `get_memory_settings` reports `degraded`. The MCP instructions gain one line telling the agent to use the switch, after the governing rule, wherever the tool is served (starter and full surfaces). `gbrain config set|get memory.agent_writeback` works from the CLI.
+
 ## [0.60.577.0] - 2026-11-05
 
 **A write a refresh fence refused is never reported as success, and an interactive write waits the fence out.** While `gbrain sources refresh` drains, fast-forwards and syncs a checkout, writes to it are refused `worktree_refreshing`. That refusal was unregistered (class server, `fix: gbrain doctor`), `remember` with `items` whose every item it refused printed `undefined (fact #undefined)` and exited 0, and the same batch over MCP returned `isError: false`. The refusal is now retryable with `fix.next: wait` and `retry_after_ms`, an interactive write retries it with backoff for up to 10 s before refusing, and a batch that saved nothing is an error on every surface (#8621).

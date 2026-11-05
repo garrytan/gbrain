@@ -11,6 +11,8 @@ import { privateProvenanceFilterFragment } from '../search/private-visibility.ts
 import { pageNotVisibleError } from '../persistence/page-visibility.ts';
 import { slugUnderBoundPrefixes } from '../ops/context.ts';
 import { memberWithdrawalSubject, onMemberPageSql, withdrawalCoversFactSql } from '../access/member-facts.ts';
+import { UNATTRIBUTED_MEMORY_SLUG } from './extract-from-fence.ts';
+import { sameClaimSlot } from './typed-claim.ts';
 
 export type FactCandidate = FactRow & { source_markdown_slug: string | null; row_num: number | null };
 export interface FactDecision { status: 'inserted' | 'duplicate' | 'superseded'; candidate: FactCandidate | null; }
@@ -24,6 +26,8 @@ export interface SingleFactIntent {
    * with no page_slug never matches a fact on any member page.
    */
   page_slug?: string;
+  /** A typed new fact's claim slot (remember): it never supersedes a typed fact in another slot (typed-claim.ts sameClaimSlot). Unset (untyped): not checked. */
+  slot?: { claim_metric: string | null; claim_unit: string | null; claim_period: string | null; valid_from: Date | string };
 }
 /** Preparation time kept back after the embed (a quarter of what is left, at most this): the dedup reads still run. */
 const EMBED_RESERVE_MS = 5_000;
@@ -131,8 +135,9 @@ export async function decideSingleFact(engine: BrainEngine, sourceId: string, in
   if (embedding && input.entity_slug) {
     const candidates = await listSupersessionCandidates(engine, sourceId, input.entity_slug, input.fact, embedding, embeddingModel, undefined, input.attributed_to ?? null,
       input.page_slug ? { onlyPage: input.page_slug } : { excludeMemberPages: true });
-    const metadata = await engine.executeRaw<{ id: number; source_markdown_slug: string | null; row_num: number | null; trust_tier: FactRow['trust_tier'] }>(
-      `SELECT id,source_markdown_slug,row_num,trust_tier FROM facts WHERE source_id=$1 AND id=ANY($2::int[])${opts.excludePrivate && !input.page_slug ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`,
+    const metadata = await engine.executeRaw<{ id: number; source_markdown_slug: string | null; row_num: number | null; trust_tier: FactRow['trust_tier'];
+      claim_metric: string | null; claim_unit: string | null; claim_period: string | null }>(
+      `SELECT id,source_markdown_slug,row_num,trust_tier,claim_metric,claim_unit,claim_period FROM facts WHERE source_id=$1 AND id=ANY($2::int[])${opts.excludePrivate && !input.page_slug ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`,
       [sourceId, candidates.map(c => c.id)]);
     let candidate: FactCandidate | null = null;
     let score = -1;
@@ -144,7 +149,8 @@ export async function decideSingleFact(engine: BrainEngine, sourceId: string, in
       // side effect. Cross-page supersession requires a separate multi-page op.
       if (!c.embedding || c.visibility !== input.visibility || c.expired_at ||
         c.valid_until && new Date(c.valid_until).getTime() <= Date.now() ||
-        (input.page_slug ? c.source_markdown_slug !== input.page_slug : c.source_markdown_slug && c.source_markdown_slug !== input.entity_slug)) continue;
+        (input.page_slug ? c.source_markdown_slug !== input.page_slug : c.source_markdown_slug && c.source_markdown_slug !== input.entity_slug) ||
+        input.slot && c.claim_metric && !sameClaimSlot(input.slot, c)) continue;
       const next = cosineSimilarity(embedding, c.embedding);
       if (next > score) { score = next; candidate = c; }
     }
@@ -217,7 +223,9 @@ export async function decideReplacement(engine: BrainEngine, sourceId: string, i
     throw verbError('invalid_params', `replaces_entity_mismatch: fact #${targetId} is about ${target.entity_slug ?? 'no entity'}, not ${input.entity_slug ?? 'no entity'}.`,
       'Pass the same entity as the fact being replaced, or forget the old fact and remember the new one separately.');
   }
-  if (candidate.source_markdown_slug && candidate.source_markdown_slug !== opts.pageSlug) {
+  // GBRA-190 G4: a fact saved without an entity is a row of memory/unattributed; linking it strikes that row in the same write.
+  const linking = target.entity_slug == null && input.entity_slug != null && candidate.source_markdown_slug === UNATTRIBUTED_MEMORY_SLUG;
+  if (candidate.source_markdown_slug && candidate.source_markdown_slug !== opts.pageSlug && !linking) {
     const derived = String(candidate.source ?? '').startsWith('cli:extract-conversation-facts');
     throw verbError('invalid_params', `replaces_cross_page: fact #${targetId} lives on page ${candidate.source_markdown_slug}${derived ? ', extracted from that conversation page' : ''}.`,
       derived ? replacesDerivedSuggestion(sourceId, candidate.source_markdown_slug) : 'Forget the old fact, then remember the new one.');

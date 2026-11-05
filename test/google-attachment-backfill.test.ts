@@ -12,6 +12,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { submitForgetMutation } from '../src/core/persistence/memory-mutations.ts';
+import { legacyForget } from './helpers/legacy-forget.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
 import { sanitizeRemoteBody } from '../src/core/remote-body.ts';
@@ -193,7 +194,9 @@ test('withdrawal wins after receipt preparation but before real canonical public
     expect(claimed.id).toBe(admitted.id);
     const prepared = await prepareConnectorMutation(engine, claimed);
     const [fact] = await engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id=$1 ORDER BY id LIMIT 1', [f.id]);
-    await submitForgetMutation(ctx(engine, f.id), 'forget_fact', { id: Number(fact.id) });
+    // A current forget queues behind the claimed request on its root; a gbrain before G4 sharing the brain still commits
+    // its withdrawal database-first, at any moment (test/helpers/legacy-forget.ts).
+    await legacyForget(ctx(engine, f.id), Number(fact.id));
     const result = await publishMutation(engine, claimed, prepared);
     expect(result.state).toBe('conflict');
     const current = (await engine.readPageSnapshot(slug(1), { sourceId: f.id }))!;

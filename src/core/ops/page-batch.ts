@@ -1,6 +1,6 @@
 /** #6007: `put_pages` — the batch write path for remote agents (src/core/persistence/page-batch.ts). */
 import type { Operation } from './contract.ts';
-import { WRITE_REQUEST_PARAM, WRITE_WAIT_PARAM, PAGE_MUTATION_PARAMS } from '../persistence/params.ts';
+import { REASON_PARAM, WRITE_REQUEST_PARAM, WRITE_WAIT_PARAM, PAGE_MUTATION_PARAMS } from '../persistence/params.ts';
 import { PAGE_BATCH_MAX_BYTES, PAGE_BATCH_MAX_PAGES, submitPageBatch } from '../persistence/page-batch.ts';
 import { pageMutationSource } from '../persistence/page-mutations.ts';
 import { enforceSubagentSlugFence } from './context.ts';
@@ -22,6 +22,7 @@ const put_pages: Operation = {
           allow_empty: { type: 'boolean', description: 'Allow emptying a non-empty page.' },
           allow_shrink: { type: 'boolean', description: 'Allow content under half a >256 KB page.' },
           drop_timeline: { type: 'boolean', description: 'Content without a Timeline section deletes its dated entries.' },
+          reason: REASON_PARAM,
         },
       },
     },
