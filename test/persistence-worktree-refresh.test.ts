@@ -720,13 +720,13 @@ test('7r. GST-1457: a recovery_required refresh whose member synced to the targe
   expect((await f.refreshRows()).map(r => r.state)).toEqual(['recovery_required']);
   expect(resume.error?.code).toBe('refresh_recovery_required');
   expect(resume.error!.suggestion).not.toContain('--abandon');
-  expect(resume.error!.suggestion).toContain(`reset --hard ${target}`);
+  expect(resume.error!.suggestion).toContain(`merge --ff-only ${target}`);
   expect(abandon.error?.code).toBe('refresh_recovery_required');
   expect(abandon.error!.message).toContain(f.alpha);
-  expect(abandon.error!.suggestion).toContain(`reset --hard ${target}`);
-  expect(abandon.error!.suggestion).not.toContain(`reset --hard ${old}`);
+  expect(abandon.error!.suggestion).toContain(`merge --ff-only ${target}`);
+  expect(abandon.error!.suggestion).not.toContain(old);
   for (const refusal of [resume.error!, abandon.error!]) {
-    expect(refusal.fix).toMatchObject({ ask_user: true, consent: ['destructive'], argv: ['git', '-C', f.root, 'reset', '--hard', target],
+    expect(refusal.fix).toMatchObject({ ask_user: true, argv: ['git', '-C', f.root, 'merge', '--ff-only', target],
       preview_argv: ['git', '-C', f.root, 'status', '--short'], then: { argv: ['gbrain', 'sources', 'refresh', f.alpha, '--resume'] } });
     expect(refusal.fix!.user_message).toContain(f.alpha);
   }
@@ -734,8 +734,8 @@ test('7r. GST-1457: a recovery_required refresh whose member synced to the targe
   // The stored fix the plain refresh and writes repeat names only the safe way out too.
   const plain = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_recovery_required');
   expect(plain.suggestion).not.toContain('--abandon');
-  // The safe way out: reset to the target, --resume finishes the refresh, and the synced pages stay.
-  git(f.root, 'reset', '-q', '--hard', target);
+  // The safe way out the fix names: fast-forward to the target, --resume finishes the refresh, and the synced pages stay.
+  git(f.root, 'merge', '-q', '--ff-only', target);
   expect(await refreshWorktree(f.engine, f.alpha, { resume: true })).toMatchObject({ refresh_id: orphan.id, status: 'completed' });
   await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
   expect(await livePages(f, f.alpha)).toEqual(synced);
@@ -758,6 +758,31 @@ test('7s. GST-1457: with no member synced past the start commit, --resume still 
   expect((await refreshWorktree(f.engine, f.alpha, { abandon: true })).status).toBe('abandoned');
   expect((await f.refreshRows()).map(r => r.state)).toEqual(['aborted']);
   await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  expect(await livePages(f, f.alpha)).toEqual(before);
+}), 180_000);
+
+test('7t. GST-1457: a member behind the start commit is not past it, and one whose commit git cannot place is', () => each(async f => {
+  // Value: protects=membersPastStart counts a member at an ancestor of old_head as safe (its next sync rolls forward), so the row is not
+  // wedged on the fast-forward, and fails closed on a commit git cannot find; fails_when=the check compares last_commit with old_head by
+  // equality only, or treats an unknown commit as safe; why_new=7r/7s set members to the target or old_head only; seam=last_commit set
+  // with the coordinated write; no_claim=a member on a diverged branch (same ancestry test).
+  f.push('alpha/two.md', page('Alpha two', 'Never synced.'));
+  const old = f.head();
+  const behind = git(f.root, 'rev-parse', `${old}~1`);
+  await orphanAt(f, 'syncing', 'syncing');
+  git(f.root, 'reset', '-q', '--hard', old);
+  await setLastCommit(f, f.beta, 'f'.repeat(40));
+  expect((await refusedWith(refreshWorktree(f.engine, f.alpha, { resume: true }), 'refresh_recovery_required')).suggestion).toContain('merge --ff-only');
+  const unknown = await refusedWith(refreshWorktree(f.engine, f.alpha, { abandon: true }), 'refresh_recovery_required');
+  expect(unknown.message).toContain(f.beta);
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['recovery_required']);
+  await setLastCommit(f, f.beta, old);
+  await setLastCommit(f, f.alpha, behind);
+  expect(await writerStatusRow(f)).toMatchObject({ state: 'recovery_required', fix: { argv: ['gbrain', 'sources', 'refresh', f.alpha, '--abandon'] } });
+  expect((await refreshWorktree(f.engine, f.alpha, { abandon: true })).status).toBe('abandoned');
+  const before = await livePages(f, f.alpha);
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  expect(await f.lastCommit(f.alpha)).toBe(old);
   expect(await livePages(f, f.alpha)).toEqual(before);
 }), 180_000);
 
