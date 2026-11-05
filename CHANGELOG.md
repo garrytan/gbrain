@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.577.0] - 2026-11-05
 
 **A write a refresh fence refused is never reported as success, and an interactive write waits the fence out.** While `gbrain sources refresh` drains, fast-forwards and syncs a checkout, writes to it are refused `worktree_refreshing`. That refusal was unregistered (class server, `fix: gbrain doctor`), `remember` with `items` whose every item it refused printed `undefined (fact #undefined)` and exited 0, and the same batch over MCP returned `isError: false`. The refusal is now retryable with `fix.next: wait` and `retry_after_ms`, an interactive write retries it with backoff for up to 10 s before refusing, and a batch that saved nothing is an error on every surface (#8621).
 
@@ -21,6 +21,7 @@ identifiers and attribution are available in the pre-removal Git revision
 - `src/core/persistence/verb-errors.ts`: `remember` and the other memory verbs keep their frozen `unavailable` code for the fence and add `canonical: worktree_refreshing`, its `detail`, `fix` and `retryable`.
 - `src/core/remember-batch.ts`: a batch whose every item failed throws the first item's error (`items[<i>]: ... None of the <n> item(s) was saved.`); a batch with any failed item (or an item whose outcome is unknown, which keeps its child `request_id`) adds `status: "error"` and the first failed `code`, so the CLI exits 1 and MCP returns `isError` with every item's receipt (`src/mcp/dispatch.ts`). `src/cli/remember-format.ts` prints a batch as `saved X of N fact(s)` with one line per item.
 - `test/write-refusal-refresh-fence-8621.test.ts` (new) pauses a real refresh at its drained boundary on PGLite and Postgres and covers MCP, the wait, the cap, background writes, a database-only source and the CLI exit codes.
+
 ## [0.60.576.0] - 2026-11-05
 
 **A database-only source exported by the 0.53.0 migration now syncs. The export installs the shared memory pack (`skillpack.json` and `skills/*/SKILL.md`) into the new plain directory, and `gbrain sync` used to refuse each pack file with `skill_bundle_required`, so the source stayed `blocked_by_failures` and doctor's `sync_freshness` failed for good (#8620).**
