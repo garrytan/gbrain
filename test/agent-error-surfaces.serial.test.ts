@@ -488,5 +488,14 @@ describe('#8621: a partly failed remember batch over HTTP and the thin client', 
     expect(JSON.parse(http.content[0]!.text!)).toMatchObject({ status: 'error', saved: 1, items: [{ status: 'failed' }, { status: 'inserted', id: 7 }] });
     const remote = await withOpHandler('remember', handler, () => callRemoteTool(thinClientConfig(serve, oauth), 'remember', args, { timeoutMs: 30_000 }));
     expect(unpackToolResult(remote)).toMatchObject({ status: 'error', saved: 1, items: [{ status: 'failed' }, { status: 'inserted', id: 7 }] });
-  }, 60_000);
+    const homeT = mkdtempSync(join(tmpdir(), 'gbrain-8621-thin-'));
+    try {
+      mkdirSync(join(homeT, '.gbrain'), { recursive: true });
+      writeFileSync(join(homeT, '.gbrain', 'config.json'), JSON.stringify(thinClientConfig(serve, oauth)));
+      const cli = await withOpHandler('remember', handler, () => gbrain(homeT, ['remember', '--items', JSON.stringify(args.items), '--provenance', 'test']));
+      expect({ exitCode: cli.exitCode, stderr: cli.stderr }).toMatchObject({ exitCode: 1, stderr: expect.stringContaining("gbrain remember: operation reported status 'error'") });
+      expect(cli.stdout).toContain('saved 1 of 2 fact(s), 1 failed');
+      expect(cli.stdout).toContain('items[1]: inserted (fact #7)');
+    } finally { rmSync(homeT, { recursive: true, force: true }); }
+  }, 120_000);
 });
