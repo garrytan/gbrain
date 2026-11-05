@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A database-only source exported by the 0.53.0 migration now syncs. The export installs the shared memory pack (`skillpack.json` and `skills/*/SKILL.md`) into the new plain directory, and `gbrain sync` used to refuse each pack file with `skill_bundle_required`, so the source stayed `blocked_by_failures` and doctor's `sync_freshness` failed for good (#8620).**
+
+| Situation | Before | Now |
+|---|---|---|
+| `gbrain sync --source <id>` on a plain-directory source of a managed brain that holds the pack | three `skill_bundle_required` refusals, `blocked_by_failures`, no successful sync ever recorded | reserved skill paths stay with the shared skill publisher, as in managed Git sync; the source syncs and records `last_sync_at` |
+| `--dry-run` on that source | counted the pack's files as "would be imported" | leaves them out of the count |
+| Shared skills activated before the DB-only export | the v0.53.0.0 checklist didn't say the new root needs the activation again | the checklist says to rerun the `--shared-skills` activation after the export binds the root, then resume the export |
+
+The importer still refuses skill paths handed to it directly; classic (unmanaged) brains import a plain directory exactly as before.
+
 ## [0.60.575.0] - 2026-11-04
 
 **Train R, seven pull requests in one release. Searches that name a page by an identifier (`#412`, `INV-2026-00417`) or a handle (`dan-example`) now find it. New `gbrain find` / `find_pages` finds a page by name, path prefix or glob, and `gbrain stats --by source,type` counts pages by kind. `query --explain-target --json` carries its diagnosis. There's an opt-in keyword phrase factor (off by default), an advisory harness check on pull requests, new docs, and guardrails for the embedded core.**
