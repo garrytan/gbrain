@@ -40,6 +40,8 @@ describe('check-dynamic-ci.ts', () => {
     ['a gated job forgets to need the filter', doc => { doc.jobs['security-regressions']!.needs = []; }, /security-regressions: a gated job must list dynamic-ci in needs/],
     ['an aggregate is gated', doc => { doc.jobs['dynamic-ci']!.outputs['full-suite'] = '${{ steps.dynamic-ci.outputs.full-suite }}'; filterStep(doc).with['job-keys'] += ',full-suite'; }, /full-suite: merge and release aggregates are never gated/],
     ['the dynamic-ci step can fail the job', doc => { delete filterStep(doc)['continue-on-error']; }, /needs continue-on-error: true/],
+    ['the dynamic-ci step has no timeout of its own', doc => { delete filterStep(doc)['timeout-minutes']; }, /needs a timeout-minutes below the job's/],
+    ['the dynamic-ci step timeout is not below the job timeout', doc => { filterStep(doc)['timeout-minutes'] = 5; }, /needs a timeout-minutes below the job's/],
     ['the dynamic-ci step has no id', doc => { delete filterStep(doc).id; }, /the dynamic-ci step needs an id/],
     ['an output names no job', doc => { doc.jobs['dynamic-ci']!.outputs.ghost = '${{ steps.dynamic-ci.outputs.ghost }}'; filterStep(doc).with['job-keys'] += ',ghost'; }, /output ghost names no job/],
     ['a gated job ORs past the gate', doc => { doc.jobs['native-locks']!.if = doc.jobs['native-locks']!.if.replace(/ \}\}$/, " || github.event_name == 'push' }}"); }, /native-locks: wrap the condition after the gate prefix in parentheses/],
