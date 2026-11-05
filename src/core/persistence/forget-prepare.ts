@@ -15,7 +15,7 @@ import { existsSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { PageSnapshot, PageWithdrawal } from '../page-state/types.ts';
-import { opError, verbError } from '../ops/contract.ts';
+import { verbError } from '../ops/contract.ts';
 import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
@@ -99,9 +99,6 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
   if (!Number.isSafeInteger(id) || id <= 0) throw missing();
   const fact = await readForgetTarget(engine, id, sourceId, remote, excludePrivate, false, ownPage);
   if (!fact) throw missing();
-  if (row.operation === 'forget_fact' && fact.expired_at !== null) {
-    throw opError('fact_already_expired', `Fact id ${id} already expired.`, 'Recall the entity to read its current facts; nothing was changed.');
-  }
   const plan = await planFactWithdrawal(engine, id, sourceId, remote, ownPage ? undefined : excludePrivate, ownPage);
   if (!plan) throw missing();
   // The files are struck with this timestamp, and the ledger row records it, so the file and the read overlay agree.
@@ -142,6 +139,8 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
   }
   let pages: string[] = [];
   return { observedRevision: own?.revision ?? null, ...(file ? { file } : {}), ...(companions.length ? { companions } : {}),
+    // #8636: forget_fact on an already-expired fact still publishes its withdrawal, then answers fact_already_expired.
+    ...(row.operation === 'forget_fact' && fact.expired_at !== null ? { failure: { code: 'fact_already_expired', message: `Fact id ${id} already expired.` } } : {}),
     validate: async tx => {
       // Under the publication's locks: the fact is still visible, no more trusted than a remote caller, and reaches no other copy.
       const current = await readForgetTarget(tx, id, sourceId, remote, excludePrivate, true, ownPage);
@@ -150,7 +149,7 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
       if (!ownPage) await refuseForgetReachingOtherCopies(tx, sourceId, current, remote, excludePrivate);
     },
     apply: async tx => {
-      // Even an expired legacy fact acquires a ledger row, so a stale import cannot reactivate it.
+      // Even an expired legacy fact acquires a ledger row (forget_fact then finishes failed), so a stale import cannot reactivate it.
       const publication = { withdrawnAt, expectedSlugs: plan.slugs };
       pages = (await recordFactWithdrawal(tx, id, sourceId, remote, ownPage
         ? { requestId: row.id, semanticReview: false, memberPage: ownPage, publication }

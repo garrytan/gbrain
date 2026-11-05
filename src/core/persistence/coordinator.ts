@@ -85,6 +85,11 @@ interface PreparedMutationBase {
    * and effects from it instead of reading the page again.
    */
   postimage?: PageSnapshot | null;
+  /**
+   * #8636: the publication commits every write it made (files, rows, effects), then finishes the request failed with
+   * this error instead of committed (forget_fact on an already-expired fact: its withdrawal is recorded, the answer is a refusal).
+   */
+  failure?: { code: string; message: string };
   validate?(tx: BrainEngine): Promise<void>;
   /**
    * #6712 PR 4b: runs in the publication transaction right after its effects are queued, so it sees the request's own
@@ -696,19 +701,19 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       await timePublicationStep('effects', row.slug, () => queuePublicationEffects(tx, row, final, outcome, prepared, { pushOnly: !!door, ...(pageTargets ? { pageTargets } : {}) }));
       if (prepared.afterEffects) await withCoordinatedWrite(tx, [row.source_id], () => prepared.afterEffects!(tx, outcome), publicationAttribution(row, prepared.trust));
       await hooks.boundary?.('before_commit', row);
-      const committed = await completeWrite(tx, current, 'committed', outcome, undefined, current);
+      const committed = await completeWrite(tx, current, prepared.failure ? 'failed' : 'committed', outcome, prepared.failure, current);
       transactionBodyCompleted = true;
       return committed;
     }, { pipelineFirst: isPersistenceDeclaration });
     await hooks.boundary?.('after_commit', done);
-    if (beliefReport.appended && done.state === 'committed') await markBeliefCommits(engine, [row.id]).catch(() => undefined);
+    if (beliefReport.appended && (done.state === 'committed' || prepared.failure)) await markBeliefCommits(engine, [row.id]).catch(() => undefined);
     if (recovery) {
       // A large prior file's copy (staging.before) is removed once the outcome is durable, before its record is cleared.
       const staged = recovery;
       if (!isBundleRecovery(staged)) for (const file of recoveryFiles(staged)) if (file.staging?.before) await withFilesystemPublication([file.root], async () => cleanupRecoveryStaging(file));
       await clearResolvedRecovery(engine, row.id, done);
     }
-    if (done.state === 'committed') afterCommitDue = done;
+    if (done.state === 'committed' || prepared.failure) afterCommitDue = done;
     return done;
   } catch (error) {
     if (recovery) {
