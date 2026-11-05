@@ -21,7 +21,8 @@ import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../
 import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { testBackends } from '../helpers/test-backends.ts';
-import { callSearch } from '../helpers/keyword-paging-fixture.ts';
+import { callSearch, walkKeyword } from '../helpers/keyword-paging-fixture.ts';
+import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 
 const DIMS = 1536;
 const MODEL = 'openai:text-embedding-3-large';
@@ -87,6 +88,9 @@ for (const kind of testBackends()) {
       await page('people/gina-example', 'person', 'Gina Example', 'Private notes on a candidate.', FAR, { frontmatter: { visibility: 'private' } });
       await page('people/hank-example', 'person', 'Hank Example', 'A contact filed in another source.', FAR, { sourceId: 'other' });
       await page('people/ivy-example', 'person', 'Ivy Example', 'An unverified stub.', FAR, { frontmatter: { quarantine: 'unverified' } });
+      await page('companies/acme-example', 'company', 'Widget Manufacturer', 'Manufactures widgets for distributors.', FAR);
+      await engine.setPageAliases('companies/acme-example', 'default', ['acme-example', 'acme corp']);
+      await page('notes/acme-alias', 'note', 'Supplier notes', 'The acme corp delivery is scheduled.', CLOSE);
     }, 300_000);
 
     afterAll(async () => {
@@ -94,6 +98,71 @@ for (const kind of testBackends()) {
     });
 
     const slugs = (rows: Array<{ slug?: unknown }>) => rows.map((r) => String(r.slug));
+
+    test('OR phrase and word alternatives retain the handle in strict count, paging and hybrid admission (#8618)', async () => {
+      for (const query of ['"dan-example" OR "unmatched phrase"', 'dan-example OR quokka', '"unmatched phrase" OR dan-example']) {
+        const result = await callSearch(engine, { query, match: 'keyword', types: ['person'] }, false);
+        expect(slugs(result.rows), query).toEqual(['people/dan-example']);
+        expect(result.retrieval.total, query).toBe(1);
+        const rows = await engine.searchKeyword(query, { limit: 20, types: ['person'], orFallback: true });
+        expect(slugs(rows), query).toContain('people/dan-example');
+        expect(rows.find(r => r.slug === 'people/dan-example')!.keyword_relaxed).toBeUndefined();
+      }
+      const query = '"acme-example" OR "acme corp"';
+      const walked = await walkKeyword(engine, { query, limit: 1 }, false);
+      expect(walked.slugs.sort()).toEqual(['companies/acme-example', 'notes/acme-alias']);
+      expect(walked.pages).toHaveLength(2);
+      expect(walked.pages.every(p => p.retrieval.total === 2)).toBe(true);
+      const hybrid = await hybridSearch(engine, '"dan-example" OR "unmatched phrase"', { limit: 10, expansion: false, types: ['person'] });
+      expect(slugs(hybrid)[0]).toBe('people/dan-example');
+    });
+
+    test('an entity alias rewrite keeps the page named by the original handle (#8618)', async () => {
+      const result = await callSearch(engine, { query: 'Acme-Example', match: 'keyword' }, false);
+      expect(result.retrieval.match_names).toEqual(expect.arrayContaining(['Acme-Example', 'acme corp']));
+      expect(slugs(result.rows).sort()).toEqual(['companies/acme-example', 'notes/acme-alias']);
+      expect(result.retrieval.total).toBe(2);
+    });
+
+    test('MCP text includes the named page beside a quoted OR alternative (#8618)', async () => {
+      const result = await dispatchToolCall(engine, 'search', {
+        query: '"dan-example" OR "unmatched phrase"', match: 'keyword', types: ['person'],
+      }, { remote: true, sourceId: 'default', config: { engine: engine.kind }, logger: { info() {}, warn() {}, error() {} } });
+      expect(result.isError).toBeFalsy();
+      const text = result.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+      expect(text).toContain('people/dan-example');
+      for (const slug of LEAKS) expect(text).not.toContain(slug);
+    });
+
+    test('unclosed and adjacent quotes agree with the SQL phrase constraints (#8618)', async () => {
+      for (const query of ['"missing phrase OR dan-example', 'dan-example"missing phrase"', 'dan-example ＯＲ quokka']) {
+        const result = await callSearch(engine, { query, match: 'keyword', types: ['person'] }, false);
+        expect(result.rows, query).toEqual([]);
+        expect(result.retrieval.total).toBe(0);
+        // The hybrid path intentionally relaxes ordinary words, but not quoted constraints.
+        if (query.includes('"')) expect(slugs(await engine.searchKeyword(query, { limit: 20, orFallback: true }))).not.toContain('people/dan-example');
+      }
+      for (const query of ['dan-example OR"missing phrase"', '"dan-example"OR"missing phrase"']) {
+        const result = await callSearch(engine, { query, match: 'keyword', types: ['person'] }, false);
+        expect(slugs(result.rows), query).toEqual(['people/dan-example']);
+        expect(result.retrieval.total).toBe(1);
+      }
+    });
+
+    test('OR branches keep their own AND constraints and preserve remote visibility (#8618)', async () => {
+      for (const query of ['dan-example "missing phrase" OR erin-example', 'erin-example OR dan-example "missing phrase"', 'dan-example quokka OR erin-example']) {
+        const result = await callSearch(engine, { query, match: 'keyword', types: ['person'] }, false);
+        expect(slugs(result.rows), query).toEqual(['people/erin-example']);
+        expect(result.retrieval.total).toBe(1);
+      }
+      const query = LEAK_Q + ' OR "unmatched phrase"';
+      const remote = await callSearch(engine, { query, match: 'keyword', types: ['person'] }, true);
+      expect(slugs(remote.rows)).toEqual(['people/dan-example']);
+      expect(remote.retrieval.total).toBe(1);
+      const empty = await callSearch(engine, { query: 'dan-example "missing phrase" OR "unmatched phrase"', match: 'keyword' }, false);
+      expect(empty.rows).toEqual([]);
+      expect(empty.retrieval.total).toBe(0);
+    });
 
     test('match: "keyword" lists the pages the quoted handles name first, and counts them', async () => {
       const { rows, retrieval } = await callSearch(engine, { query: Q, match: 'keyword' }, false);
