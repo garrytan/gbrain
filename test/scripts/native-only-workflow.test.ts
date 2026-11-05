@@ -19,10 +19,12 @@ function context(event: string, flag?: boolean, diagnostic: Diagnostic = {}, cha
   // Dispatch inputs carry their declared defaults; other events have no inputs.
   const inputs = event === 'workflow_dispatch' ? { native_only: flag, race_hunt: false, stress_files: '', stress_base: '', stress_head: '', ...diagnostic } : {};
   return { format: (f: string, ...a: unknown[]) => f.replace(/\{(\d+)\}/g, (_, i) => String(a[Number(i)])), github: { workflow: 'Test', event_name: event, ref: 'refs/heads/example', run_id: '77', event: { pull_request: event === 'pull_request' ? { number: 123 } : {} } },
-    inputs, always: () => true, needs: { changes: { outputs: { 'native-scope': 'full', convergence: 'run', ...changes } } } };
+    inputs, always: () => true, cancelled: () => false,
+    needs: { changes: { result: 'success', outputs: { 'native-scope': 'full', convergence: 'run', ...changes } }, 'dynamic-ci': { outputs: {} } } };
 }
 function evaluate(expression: string, event: string, flag?: boolean, diagnostic?: Diagnostic, changes?: Changes): unknown {
-  const js = expression.replace(/^\$\{\{\s*|\s*\}\}$/g, '').replace(/outputs\.(\w+(?:-\w+)+)/g, (_, key) => `outputs['${key}']`);
+  const js = expression.replace(/^\$\{\{\s*|\s*\}\}$/g, '').replace(/needs\.dynamic-ci\./g, "needs['dynamic-ci'].")
+    .replace(/outputs\.(\w+(?:-\w+)+)/g, (_, key) => `outputs['${key}']`);
   return runInNewContext(js, context(event, flag, diagnostic, changes), { timeout: 100 });
 }
 function template(value: string, event: string, flag?: boolean, diagnostic?: Diagnostic): string {
@@ -37,7 +39,7 @@ describe('native-only CI remains separate from full validation', () => {
     expect(workflow.on.workflow_dispatch.inputs.native_only).toMatchObject({ type: 'boolean', default: false });
     expect(workflow.jobs['native-locks'].uses).toBe('./.github/workflows/native-locks.yml');
     expect(workflow.jobs.changes.if).toBeUndefined();
-    expect(workflow.jobs['native-locks'].needs).toEqual(['changes']);
+    expect(workflow.jobs['native-locks'].needs).toEqual(['changes', 'dynamic-ci']);
     const ownModes = new Set(['native-locks', 'changes', 'stress-changed-tests', 'race-hunt']);
     for (const [name, job] of Object.entries(workflow.jobs)) {
       if (ownModes.has(name)) continue;
@@ -46,7 +48,7 @@ describe('native-only CI remains separate from full validation', () => {
         for (const flag of [undefined, false, true]) {
           const nativeOnly = event === 'workflow_dispatch' && flag === true;
           const expected = name === 'native-only-status' ? nativeOnly
-            : name === 'cheap-tier' ? event === 'pull_request'
+            : name === 'cheap-tier' || name === 'dynamic-ci' ? event === 'pull_request'
             : name === 'reused-full-suite' ? false
             : !nativeOnly && !(event === 'pull_request' && FULL_ONLY.has(name));
           expect(Boolean(evaluate(job.if!, event, flag)), `${name}/${event}/${flag}`).toBe(expected);
