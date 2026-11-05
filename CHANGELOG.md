@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Trunk Dynamic CI on the pull-request tier, in Learning mode. A `dynamic-ci` job asks Trunk which of the slow, nearly always green pull-request jobs a push still needs; every job still runs until enforcement is switched on in Trunk.**
+
+### Pull-request CI
+
+- `test.yml` gates `security-regressions` (with its Windows and macOS cells), `native-locks`, `persistence-validation` and `stress-changed-tests`, and `scale-tier.yml` gates `scale`. Together they used about 39,000 runner-minutes on pull requests in the week to 2026-11-04.
+- The filter runs only on pull requests and fails open: no token, a Trunk outage or a job without a verdict runs the job. Pushes to master, the merge queue, schedules and the full-ci dispatch skip the filter and run every job as before, so `full-suite`, `e2e-full-suite` and ci-reuse are unchanged.
+- `cheap-tier` accepts a gated lane that skipped only when Trunk's verdict for it was exactly `false`.
+- New guard `check:dynamic-ci` (in `bun run verify`) fails when the filter can run on another event or a gated job loses the fail-open `!cancelled() && != 'false'` form. See [docs/ci-event-parity.md](docs/ci-event-parity.md#trunk-dynamic-ci).
+
 ## [0.60.575.0] - 2026-11-04
 
 **Train R, seven pull requests in one release. Searches that name a page by an identifier (`#412`, `INV-2026-00417`) or a handle (`dan-example`) now find it. New `gbrain find` / `find_pages` finds a page by name, path prefix or glob, and `gbrain stats --by source,type` counts pages by kind. `query --explain-target --json` carries its diagnosis. There's an opt-in keyword phrase factor (off by default), an advisory harness check on pull requests, new docs, and guardrails for the embedded core.**

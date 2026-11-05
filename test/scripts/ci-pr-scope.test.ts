@@ -11,8 +11,10 @@ type Matrix = Record<string, unknown> & { exclude?: string };
 type Job = { if?: string; 'runs-on'?: string; strategy?: { matrix: Matrix }; steps?: Array<{ id?: string; run?: string; env?: Record<string, string> }> };
 const root = join(import.meta.dir, '../..');
 const load = (name: string) => loadYaml(readFileSync(join(root, '.github/workflows', name), 'utf8')) as { jobs: Record<string, Job> };
+// A job gated by Trunk Dynamic CI reads needs['dynamic-ci']: no verdict (the filter skipped off pull requests) runs it.
 const evaluate = (expression: string, context: Record<string, unknown>) =>
-  runInNewContext(expression.replace(/^\$\{\{\s*|\s*\}\}$/g, ''), { fromJSON: JSON.parse, ...context }, { timeout: 100 });
+  runInNewContext(expression.replace(/^\$\{\{\s*|\s*\}\}$/g, '').replace(/needs\.dynamic-ci\.outputs\.([\w-]+)/g, "needs['dynamic-ci'].outputs['$1']"),
+    { fromJSON: JSON.parse, cancelled: () => false, needs: { 'dynamic-ci': { outputs: {} } }, ...context }, { timeout: 100 });
 
 function cells(job: Job, context: Record<string, unknown>): string[] {
   if (job.if && !evaluate(job.if, context)) return [];

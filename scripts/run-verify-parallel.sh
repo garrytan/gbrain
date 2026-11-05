@@ -186,6 +186,9 @@ CHECKS=(
   # Wave 18b: a missing column/table reads as "pre-migration" only when the
   # handler names it (isMissingSchemaObject); broad predicates are allowlisted.
   "check:schema-error-predicates"
+  # Trunk Dynamic CI: the filter runs only on pull_request and every gated job
+  # keeps the fail-open !cancelled() && != 'false' form.
+  "check:dynamic-ci"
   # #4992: subprocess launches go through src/core/spawn.ts (windowsHide
   # default); NOT_YET_MIGRATED is a ratchet that only shrinks.
   "check:windows-hide"
