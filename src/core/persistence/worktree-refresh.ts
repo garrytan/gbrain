@@ -1105,6 +1105,8 @@ export async function refreshHolderReport(engine: BrainEngine, row: Pick<Worktre
       .every(member => member.last_commit === null || member.last_commit === row.old_head);
     if (membersAtOld) return { ...base, auto_recovery: 'none', fix: { argv: ['gbrain', 'sources', 'refresh', source, '--abandon'], consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `Refresh ${row.id} stopped without verifying the checkout HEAD, which is back at the pre-refresh commit ${row.old_head}, so --abandon lifts the fence and nothing moved; then gbrain sources refresh ${source} starts again.` } };
+    if (head === row.old_head) return { ...base, auto_recovery: 'none', fix: { argv: resume, consent: [], actor: 'agent', requires_exclusive: false, verify,
+      why: `Refresh ${row.id} stopped with the checkout back at the pre-refresh commit ${row.old_head}, but a member source already synced past it. --resume refuses here and names --abandon, which would let the next sync roll that member's pages back, so ask the user first; resetting the checkout to the refresh target ${row.target_head} and running --resume finishes the refresh instead.` } };
     return { ...base, auto_recovery: 'none', fix: { argv: resume, consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `Refresh ${row.id} could not verify the checkout HEAD, so nothing recovers it on its own. --resume changes nothing here: it prints the two ways out (reset to the start commit and --abandon, or to the upstream commit and --resume); resetting is destructive, so ask the user first.` } };
   }
