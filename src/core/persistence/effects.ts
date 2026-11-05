@@ -654,7 +654,8 @@ function embeddingStorageFailure(error: unknown): unknown {
 
 async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, error: unknown, signal?: AbortSignal, target?: string, derived?: DerivedFailures): Promise<void> {
   const classified = classifyItemFailure(error);
-  const code = error instanceof OperationError ? error.code : isLockOpenFailure(error) ? error.code : classified.code;
+  const classifiedCode = classified.code === 'internal' ? 'effect_unavailable' : classified.code;
+  const code = error instanceof OperationError ? error.code : isLockOpenFailure(error) ? error.code : classifiedCode;
   // Source replacement is final only without recovery. Unknown physical bytes
   // retain their record and continue to block this root for explicit repair.
   if (code === 'source_changed' && !effect.recovery) {
