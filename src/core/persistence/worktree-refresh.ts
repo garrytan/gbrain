@@ -1101,7 +1101,9 @@ export async function refreshHolderReport(engine: BrainEngine, row: Pick<Worktre
   if (row.state === 'recovery_required') {
     if (head === row.target_head) return { ...base, auto_recovery: 'none', fix: { argv: resume, consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `Refresh ${row.id} stopped without verifying the checkout HEAD, which is now the refresh target ${row.target_head}, so --resume records the merge and finishes the refresh; nothing needs resetting.` } };
-    if (head === row.old_head) return { ...base, auto_recovery: 'none', fix: { argv: ['gbrain', 'sources', 'refresh', source, '--abandon'], consent: [], actor: 'agent', requires_exclusive: false, verify,
+    const membersAtOld = head === row.old_head && (await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id = ANY($1::text[])', [row.source_ids]))
+      .every(member => member.last_commit === null || member.last_commit === row.old_head);
+    if (membersAtOld) return { ...base, auto_recovery: 'none', fix: { argv: ['gbrain', 'sources', 'refresh', source, '--abandon'], consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `Refresh ${row.id} stopped without verifying the checkout HEAD, which is back at the pre-refresh commit ${row.old_head}, so --abandon lifts the fence and nothing moved; then gbrain sources refresh ${source} starts again.` } };
     return { ...base, auto_recovery: 'none', fix: { argv: resume, consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `Refresh ${row.id} could not verify the checkout HEAD, so nothing recovers it on its own. --resume changes nothing here: it prints the two ways out (reset to the start commit and --abandon, or to the upstream commit and --resume); resetting is destructive, so ask the user first.` } };

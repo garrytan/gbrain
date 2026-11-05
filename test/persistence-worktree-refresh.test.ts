@@ -676,6 +676,22 @@ test('7p. #7712: writer status for a recovery_required refresh names the step HE
   expect(await refreshWorktree(f.engine, f.alpha, { resume: true })).toMatchObject({ refresh_id: orphan.id, status: 'completed' });
 }), 180_000);
 
+test('7q. writer status for a recovery_required refresh whose members already synced to the target never offers --abandon at the start commit', () => each(async f => {
+  // Value: protects=the consent-free --abandon is offered only when every member still sits at old_head (or never synced): a syncing refresh
+  // moved to recovery_required after members synced to target_head would, abandoned, have the next sync roll those pages back (soft deletes);
+  // fails_when=refreshHolderReport offers --abandon whenever HEAD is back at old_head; why_new=7p's members never synced past the start commit;
+  // seam=a member's last_commit set to the target with the coordinated write, HEAD reset to the start commit; no_claim=other HEADs (7p, 7).
+  const target = f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  const old = f.head();
+  const orphan = await orphanAt(f, 'merged', 'recovery_required');
+  await setLastCommit(f, f.alpha, target);
+  git(f.root, 'reset', '-q', '--hard', old);
+  const status = await writerStatusRow(f);
+  expect(status).toMatchObject({ refresh_id: orphan.id, state: 'recovery_required', auto_recovery: 'none', fix: { argv: ['gbrain', 'sources', 'refresh', f.alpha, '--resume'] } });
+  expect(status.fix.argv).not.toContain('--abandon');
+  expect(status.fix.why).toContain('ask the user first');
+}), 180_000);
+
 test('8. a queued git effect drains before fenced, and nothing on the worktree is claimed while fenced', () => each(async f => {
   f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
   await f.put(f.beta, 'notes/effect', page('Effect', 'Has a git effect.'));
