@@ -31,6 +31,7 @@ import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { refreshWorktree, resumeWorktreeRefreshes } from '../src/core/persistence/worktree-refresh.ts';
 import { readLedger } from '../src/core/git/commit-ledger.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
+import { replayImportedRemembers } from '../src/core/repair/failed-writes.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -202,6 +203,66 @@ test('a held write whose import never lands ends pending_import_expired with not
   expect(await getWriteRequestById(f.engine, held.id)).toMatchObject({ state: 'failed', error_code: 'pending_import_expired' });
   await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
   expect(file(f, 'one.md')).toContain(IMPORTED);
+}), 180_000);
+
+const maxWait = (f: RefreshFixture, ms: number) => f.engine.executeRaw(`INSERT INTO config(key,value) VALUES('persistence.refresh_barrier_max_wait_ms',$1)
+  ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`, [String(ms)]);
+const ownerHost = async (f: RefreshFixture) => (await f.engine.executeRaw<{ owner: string }>('SELECT owner_host_id::text AS owner FROM persistence_worktrees WHERE id=$1::uuid', [f.worktreeId]))[0]!.owner;
+
+test('a held remember whose import has not landed in time is kept for the replay after the import, never dropped', () => each(async f => {
+  foreignCommit(f, 'people/alice-example.md', PERSON);
+  await importNow(f);
+  foreignCommit(f, 'people/alice-example.md', PERSON.replace('Alice is a person.', `Alice is a person. ${IMPORTED}`));
+  const out = await call(f, 'remember', { fact: 'alice-example likes tea', entity: 'people/alice-example', provenance: 'test' });
+  const held = await requestRow(f, out.body.request_id);
+  expect(held.state).toBe('deferred');
+  await maxWait(f, 1);
+  try {
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect((await expireDeferredWrites(f.engine, await ownerHost(f))).map(row => row.id)).toEqual([held.id]);
+  } finally {
+    await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
+  }
+  const expired = (await getWriteRequestById(f.engine, held.id))!;
+  expect(expired).toMatchObject({ state: 'conflict', error_code: 'source_changed' });
+  expect((expired.error_detail as { origin?: string }).origin).toBe('pending_import');
+  expect(expired.error_message).toContain('Do not save it again');
+  await importNow(f);
+  expect(await replayImportedRemembers(f.ctx(f.alpha), f.alpha)).toMatchObject({ replayed: 1 });
+  expect(file(f, 'people/alice-example.md')).toContain('alice-example likes tea');
+}), 180_000);
+
+test("a held write's wait limit counts from when it was held, not from its admission", () => each(async f => {
+  foreignCommit(f, 'one.md', page('Alpha one', IMPORTED));
+  const out = await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Held, admitted long ago.') });
+  const held = await requestRow(f, out.receipt.request_id);
+  expect(held.state).toBe('deferred');
+  await f.engine.executeRaw("UPDATE persistence_requests SET created_at=now()-interval '2 hours' WHERE id=$1::uuid", [held.id]);
+  await maxWait(f, 60_000);
+  try {
+    expect(await expireDeferredWrites(f.engine, await ownerHost(f))).toEqual([]);
+    expect((await getWriteRequestById(f.engine, held.id))!.state).toBe('deferred');
+    await f.engine.executeRaw("UPDATE persistence_requests SET updated_at=now()-interval '2 hours' WHERE id=$1::uuid", [held.id]);
+    expect((await expireDeferredWrites(f.engine, await ownerHost(f))).map(row => row.id)).toEqual([held.id]);
+  } finally {
+    await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
+  }
+}), 180_000);
+
+test('a live consumer that cannot claim a held write keeps the pending_import refusal', () => each(async f => {
+  const seen = (await f.engine.readPageSnapshot('one', { sourceId: f.alpha }))!.revision;
+  foreignCommit(f, 'one.md', page('Alpha one', IMPORTED));
+  await f.engine.executeRaw(`INSERT INTO persistence_consumers(host_id,pid,nonce,kind,mode,host_json_path,persistence_home,version,capabilities)
+    VALUES($1::uuid,1,'barrier-only-example','serve','full','/nonexistent/host.json','/nonexistent','0.0.1','{refresh_barrier_1}')`, [await ownerHost(f)]);
+  try {
+    const out = await call(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Refused.'), expected_revision: seen });
+    expect(out.isError).toBe(true);
+    const [row] = await f.engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE operation=$1 ORDER BY sequence DESC LIMIT 1', ['put_page']);
+    expect(row).toMatchObject({ state: 'conflict', error_code: 'source_changed', deferred_import_from: null });
+    expect((row!.error_detail as { origin?: string }).origin).toBe('pending_import');
+  } finally {
+    await f.engine.executeRaw("DELETE FROM persistence_consumers WHERE nonce='barrier-only-example'");
+  }
 }), 180_000);
 
 test('with the barrier off a write onto a file awaiting import keeps the pending_import refusal', () => each(async f => {

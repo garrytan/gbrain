@@ -620,6 +620,8 @@ async function assertWorktreeAdmission(tx: BrainEngine, input: WriteAdmission, r
 
 /** What a consumer advertises (consumer-heartbeat.ts CONSUMER_CAPABILITIES) and admission requires of every live one on the owner host. */
 export const REFRESH_BARRIER_CAPABILITY = 'refresh_barrier_1';
+/** GST-1582: a consumer that claims a write held for an import (`deferred_import_from`); an older one would stall on it. */
+export const IMPORT_HOLD_CAPABILITY = 'refresh_barrier_import_1';
 /** A single page write whose caller opted in may wait behind a refresh; jobs (managed sync included), grouped batches and skill bundles keep the refusal. */
 function deferrable(input: WriteAdmission): boolean {
   return input.deferrable === true && (input.targetKind ?? 'page') === 'page' && input.operation !== 'submit_job' && publicationGroupKey({ operation: input.operation, intent: input.intent }) === null;
@@ -632,11 +634,11 @@ async function readRefreshBarrier(engine: BrainEngine): Promise<boolean> {
  * Every live consumer of the worktree's owner host can drain a deferred write. GST-1582: there is no per-refresh cap; the
  * journal's outstanding and byte limits bound deferred writes like queued ones.
  */
-async function deferralRoom(tx: BrainEngine, worktreeId: string): Promise<boolean> {
+export async function deferralRoom(tx: SqlEngine, worktreeId: string, capability: string = REFRESH_BARRIER_CAPABILITY): Promise<boolean> {
   const [row] = await tx.executeRaw<{ incapable: boolean }>(`SELECT
     EXISTS (SELECT 1 FROM persistence_consumers c JOIN persistence_worktrees w ON w.owner_host_id=c.host_id WHERE w.id=$1::uuid
       AND c.renewed_at>now()-($2::integer*interval '1 millisecond') AND NOT ($3=ANY(c.capabilities))) AS incapable`,
-  [worktreeId, CONSUMER_LIVE_MS, REFRESH_BARRIER_CAPABILITY]);
+  [worktreeId, CONSUMER_LIVE_MS, capability]);
   return !!row && !row.incapable;
 }
 /** The refresh to defer this write behind, or null when it is admitted normally; otherwise refuses. */

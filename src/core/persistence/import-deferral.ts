@@ -12,7 +12,7 @@
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { PreparedMutation } from './coordinator.ts';
-import { publicationGroupKey, REFRESH_BARRIER_CLAIM_PREDICATE } from './journal.ts';
+import { deferralRoom, IMPORT_HOLD_CAPABILITY, publicationGroupKey, REFRESH_BARRIER_CLAIM_PREDICATE } from './journal.ts';
 import type { WriteRequest } from './model.ts';
 import { landedCommit } from './pending-import.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
@@ -23,12 +23,14 @@ export const SUPERSEDES_TRAILER_KEY = 'gbrain-supersedes';
 
 /**
  * A claimed write whose preparation was refused `pending_import` (`importFrom`: the last imported commit the check saw),
- * moved back to `deferred` behind that import; null when it keeps the refusal (barrier off, another operation, a batch).
+ * moved back to `deferred` behind that import; null when it keeps the refusal (barrier off, another operation, a batch, a
+ * live consumer on the owner host that cannot claim a held write).
  */
 export async function holdForImport(engine: BrainEngine, row: WriteRequest, error: unknown): Promise<WriteRequest | null> {
   const from = (error as { importFrom?: unknown } | null)?.importFrom;
   if (typeof from !== 'string' || !IMPORT_HELD_OPERATIONS.includes(row.operation) || (row.target_kind ?? 'page') !== 'page' || !row.worktree_id
-    || publicationGroupKey(row) !== null || !await writeSwitchOn(engine, 'refresh_barrier').catch(() => false)) return null;
+    || publicationGroupKey(row) !== null || !await writeSwitchOn(engine, 'refresh_barrier').catch(() => false)
+    || !await deferralRoom(engine, row.worktree_id, IMPORT_HOLD_CAPABILITY)) return null;
   const [held] = await engine.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state='deferred',deferred_import_from=$3,execution_token=NULL,
     claim_expires_at=NULL,blocked_reason=NULL,claim_phase=NULL,updated_at=now()
     WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND recovery IS NULL AND publication_started=false
