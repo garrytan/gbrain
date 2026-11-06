@@ -276,6 +276,12 @@ for (const backend of testBackends()) describe(`[${backend}] conversion by conte
       const twice = join(files.dir, 'twice.json');
       await writeConversionFile(engine, twice, '--approval-out', { ...approval, decisions: [...approval.decisions, approval.decisions[0]] });
       await expect(readConversionApproval(engine, twice, 'default')).rejects.toMatchObject({ code: 'invalid_params', message: expect.stringContaining('decided twice') });
+      const noItems = join(files.dir, 'no-items.json');
+      await writeConversionFile(engine, noItems, '--approval-out', { ...approval, items: null });
+      await expect(readConversionApproval(engine, noItems, 'default')).rejects.toMatchObject({ code: 'invalid_params' });
+      writeFileSync(`${join(files.dir, 'stale.json')}.${process.pid}.tmp`, '');
+      await expect(writeConversionFile(engine, join(files.dir, 'stale.json'), '--approval-out', approval)).rejects.toMatchObject({ code: 'invalid_params' });
+      expect(await cli(engine, ['constructor', '--to', 'git', '--dry-run'])).not.toMatchObject({ message: expect.stringContaining('needs a file path') });
 
       writeFileSync(join(root, 'notes/db.md'), note('notes/db', 'A commit that landed after the approval.'));
       git(root, 'commit', '-qam', 'a commit after the approval');
@@ -296,8 +302,13 @@ for (const backend of testBackends()) describe(`[${backend}] conversion by conte
     try {
       await evidenceSource(brain);
       const decisions = await decide(brain, files.dir, { 'notes/both': 'git_wins', 'notes/none': 'adopt' });
+      const incarnation = (await planGitConversion(engine, 'default')).incarnation;
+      await staleHold(engine, incarnation, 'notes/same');
       const approval = conversionApproval(await planGitConversion(engine, 'default', { decisions }));
-      expect(await applyApprovedConversion(engine, 'default', approval, PROCESSING)).toMatchObject({ status: 'converted', committed: { pages: 2 } });
+      // A sync re-screening a held path rewrites only its observed_at: the approval still applies whole.
+      await new Promise(resolve => setTimeout(resolve, 5));
+      await staleHold(engine, incarnation, 'notes/same');
+      expect(await applyApprovedConversion(engine, 'default', approval, PROCESSING)).toMatchObject({ status: 'converted', committed: { pages: 2 }, holds_cleared: 1 });
       expect(await strict(engine)).toBe(true);
     } finally { files.done(); }
   }, { databaseUrl, setup }), 240_000);

@@ -30,7 +30,7 @@ export function parseCanonicalArgs(args: string[]): { sourceId: string; to: 'git
     const arg = args[i]!;
     if (arg === '--to') { to = args[++i] ?? null; continue; }
     if (arg === '--expect') { expect = args[++i] ?? null; if (!expect) throw new OperationError('invalid_params', '--expect needs the preview hash.', USAGE); continue; }
-    if (arg in files) { const value = args[++i]; if (!value || value.startsWith('-')) throw new OperationError('invalid_params', `${arg} needs a file path.`, USAGE); files[arg as keyof typeof files] = value; continue; }
+    if (Object.hasOwn(files, arg)) { const value = args[++i]; if (!value || value.startsWith('-')) throw new OperationError('invalid_params', `${arg} needs a file path.`, USAGE); files[arg as keyof typeof files] = value; continue; }
     if (arg === '--apply') { apply = true; continue; }
     if (arg === '--dry-run' || arg === '--json' || arg === '--no-embed' || arg === '--no-extract') continue;
     if (arg.startsWith('-')) throw new OperationError('invalid_params', `Unknown sources canonical flag: ${arg}.`, USAGE);

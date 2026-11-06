@@ -226,6 +226,17 @@ for (const backend of testBackends()) describe(`git-gap direction evidence (d4):
     expect(pages.find(page => page.slug === 'notes/g')).toMatchObject({ evidence: { kind: 'both_moved', basis: 'conflicting_history' } });
   }, 120000);
 
+  test('a version with no comparable content (a deletion, a segmented snapshot) counts as unread: no one-sided Git verdict', async () => {
+    const root = await fixture();
+    const [page] = await engine.executeRaw<{ id: string }>("SELECT id::text FROM pages WHERE slug='notes/file-moved'");
+    await engine.createVersion('notes/file-moved');
+    await engine.executeRaw("INSERT INTO page_versions (page_id, compiled_truth, frontmatter, is_deleted) VALUES ($1, 'A deleted state.', '{}', true)", [page!.id]);
+    const pages: GitGapPage[] = [];
+    await censusGitGap(engine, 'default', { sample: 0, evidence: true, collect: entry => { pages.push(entry); } });
+    expect(pages.find(entry => entry.slug === 'notes/file-moved')).toMatchObject({ evidence: { kind: 'no_evidence', basis: 'history_truncated' } });
+    expect(root).not.toBe('');
+  }, 120000);
+
   test('a pruned version history counts as unread: an inline page with a history gap gets no one-sided Git verdict', async () => {
     await fixture();
     await engine.executeRaw("UPDATE pages SET version_history_gap_at = now() WHERE slug = 'notes/file-moved'");
