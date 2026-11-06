@@ -36,6 +36,7 @@ const EXEMPT = {
   'src/core/persistence/connector-google-receipts.ts': 'connector receipt rows, not page text',
   'src/core/persistence/projection-reindex.ts': 'rebuilds derived projections; page text is unchanged',
   'src/core/persistence/change-reason.ts': 'wraps the PreparedMutation preparePageMutation returned (service.ts) in place: the core guard, exclusiveSources and every other field are the guarded object\'s own',
+  'src/core/persistence/import-deferral.ts': 'withSupersedes wraps the PreparedMutation preparePageMutation returned (service.ts) in place: it only adds the supersedes trailer and the outcome field to a held blind put_page; the core guard, exclusiveSources and every other field are the guarded object\'s own',
   'src/core/persistence/valid-time-advisory.ts': 'wraps the PreparedMutation withChangeReason returned (service.ts) in place: its apply only adds the read-only valid_time advisory to the outcome after the guarded apply; the core guard, exclusiveSources and every other field are the guarded object\'s own',
   'src/core/persistence/noop-kernel.ts': 'decides that nothing would change; publishes nothing',
   'src/core/generations/repair.ts': 'the managed restore of a database-only generation (chronicle event pages, never core pages) revives and retires derived items through the adapter inside the coordinated request',
