@@ -8,6 +8,15 @@ that measurably improve the score.
 Based on [SkillOpt](https://arxiv.org/abs/2605.23904) (Microsoft Research,
 May 2026).
 
+> **Deprecated: the iterative loop.** `--loop`, `run_skillopt`'s
+> `optimizer_mode: "reflect"`, a `--resume` of a run the loop started and a
+> queued `skillopt` job in loop mode are deprecated and will be removed on or
+> after 2026-12-03. Each use prints the `skillopt_loop_deprecated` notice once
+> (MCP: at most once per session; a queued job: in the worker's log) and
+> otherwise runs exactly as before. Nothing
+> replaces the loop: edit the skill directly, or run the default
+> [one-shot rewrite](#one-shot-rewrite-the-default), which stays.
+
 > **New to this?** Start with the hands-on tutorial:
 > [Auto-improve a skill with `gbrain skillopt`](../tutorials/improving-skills-with-skillopt.md).
 > It walks you from "I have a skill" to "I accepted a measurably better version"
@@ -66,11 +75,12 @@ The audit trail lives at `~/.gbrain/audit/skillopt-YYYY-Www.jsonl`
 (2026-11-01), the iterative loop and a one-shot rewrite both scored 0.54 on
 held-out tasks (paired bootstrap p = 1.00) and the loop cost about 1.8x as
 much. Every edit the loop kept came at its first step. `--loop` (MCP and job
-`optimizer_mode: "reflect"`) still runs the iterative loop. This default is
-reversible: it flips back if gbrain-evals' SkillOpt method benchmark shows the
-loop winning. A resume continues in the mode its run started in.
+`optimizer_mode: "reflect"`) still runs the iterative loop until it is removed
+on or after 2026-12-03. A resume continues in the mode its run started in.
 
-## How the loop works (`--loop`)
+## How the loop works (`--loop`, deprecated)
+
+Deprecated: removed on or after 2026-12-03 (see the banner at the top).
 
 For each step:
 
@@ -108,7 +118,7 @@ the audit event only; the full meta-edit proposal is a tracked follow-up.
 | `--judge-model MODEL` | tier.reasoning | Scores rollouts |
 | `--reflect-max-tokens N` | `skillopt.reflect_max_tokens`, else 32000 (thinking optimizer) / 4096 | Output cap for every optimizer call. See [Optimizer output cap](#optimizer-output-cap) |
 | `--models-strict` | `skillopt.models_strict`, else off | Abort before any spend unless every active model was explicitly configured. See [Strict mode](#strict-mode) |
-| `--loop` | off | Run the iterative reflect loop instead of the default one gated rewrite. See [One-shot rewrite](#one-shot-rewrite-the-default) |
+| `--loop` | off | Deprecated (removed on or after 2026-12-03). Run the iterative reflect loop instead of the default one gated rewrite. See [One-shot rewrite](#one-shot-rewrite-the-default) |
 | `--dry-run` | off | Models banner, strict verdict and cost preview; zero model calls |
 | `--no-mutate` | off | Write proposed.md, don't replace SKILL.md (no held-out needed) |
 | `--allow-mutate-bundled` | off | Required to mutate gbrain-bundled skills in place — ALSO requires `--held-out` (>=5 rows) or the run hard-refuses |

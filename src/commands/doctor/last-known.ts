@@ -41,7 +41,11 @@ export const BACKGROUND_REFRESH_KEY = 'doctor.background_refresh';
 /** Bound of the cache read and write (they run outside every entry's deadline). */
 const IO_BOUND_MS = 3_000;
 
-export interface LastKnownEntry { checks: Check[]; measured_at: string; elapsed_ms: number }
+/**
+ * `emits`: the checks the entry emitted when it was recorded. A check the entry emits now and did not then (added by a later
+ * release, or a result recorded before `emits` was stored and not among its checks) has no last known result.
+ */
+export interface LastKnownEntry { checks: Check[]; measured_at: string; elapsed_ms: number; emits?: string[] }
 
 /** What a run asks of the last known results: `serve` reports them for entries it did not finish; `record` stores the ones it did. */
 export interface LastKnownMode { serve: boolean; record: boolean; refresh: boolean }
@@ -74,7 +78,8 @@ export async function readLastKnown(engine: BrainEngine): Promise<Map<string, La
 /** Store the entries this run finished (best-effort: a read-only role or an old schema just keeps the previous results). */
 export async function writeLastKnown(engine: BrainEngine, outcomes: readonly EntryOutcome[], now = Date.now()): Promise<void> {
   const rows = outcomes.filter(o => o.state === 'done').map(o => ({ entry: o.entry.name,
-    value: { checks: o.checks.filter(c => c.details?.last_known === undefined), measured_at: new Date(now).toISOString(), elapsed_ms: o.elapsed_ms } satisfies LastKnownEntry }));
+    value: { checks: o.checks.filter(c => c.details?.last_known === undefined), measured_at: new Date(now).toISOString(), elapsed_ms: o.elapsed_ms,
+      emits: [...o.entry.emits] } satisfies LastKnownEntry }));
   if (!rows.length) return;
   try {
     await bounded(engine.executeRaw(
@@ -116,8 +121,12 @@ export function applyLastKnown(checks: Check[], outcomes: readonly EntryOutcome[
     if (outcome.state === 'done') continue;
     if (!last || !(age <= REFRESH_AFTER_MS)) refresh.push(outcome.entry.name);
     if (last && age <= LAST_KNOWN_MAX_AGE_MS) {
-      if (outcome.state === 'expired') for (const name of outcome.entry.emits) replaced.add(name);
-      served.push(...last.checks.map(c => lastKnownCheck(c, last.measured_at, outcome.state === 'expired' ? 'budget' : 'not_in_tier', now)));
+      // GST-1209 follow-up: a check the recorded result never covered keeps this run's unknown (expired) or is named unmeasured (not run).
+      const covered = new Set(last.emits ?? last.checks.map(c => c.name));
+      const uncovered = outcome.entry.emits.filter(name => !covered.has(name));
+      if (outcome.state === 'expired') for (const name of outcome.entry.emits) if (covered.has(name)) replaced.add(name);
+      if (outcome.state === 'not_run' && uncovered.length) stale.push({ ...outcome, entry: { ...outcome.entry, emits: uncovered } });
+      served.push(...last.checks.filter(c => outcome.entry.emits.includes(c.name)).map(c => lastKnownCheck(c, last.measured_at, outcome.state === 'expired' ? 'budget' : 'not_in_tier', now)));
     } else if (outcome.state === 'not_run') {
       stale.push(outcome);
     }

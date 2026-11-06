@@ -108,14 +108,16 @@ function applicableWithdrawals(slug: string, withdrawals: ExportWithdrawal[]): P
 
 /**
  * The Markdown file of a segmented page, piece by piece: `head` (serializeMarkdown's frontmatter and blank line), the
- * truth, TIMELINE_SEPARATOR before the first timeline byte, the timeline and the final newline. Each segment is read
+ * truth, TIMELINE_SEPARATOR before the first timeline byte, the timeline and the final newline. With `revision` (the
+ * snapshot `head` was rendered from), a page that moved since refuses `revision_changed` (GBRA-287: the head and the body
+ * are one revision's). Each segment is read
  * once (readBodyRange, trusted stored body) under `ledger` (export: `exportBodyLedger`, the overlay readExportPage gives
  * an inline page; a restore: the page snapshot's), so the bytes are those serializeMarkdown gives the same page read inline. A full collection every EXPORT_COLLECT_BYTES read keeps the
  * reads' garbage (protocol buffers, decoded texts) from piling up as in the streamed import (ingest.ts): a 127 MiB page
  * peaked ~700 MiB above a 2 MiB one without it, 8-55 MiB with it.
  */
-export async function* segmentedExportMarkdown(tx: BrainEngine, page: Pick<Page, 'id'>, ledger: BodyLedger, head: string): AsyncIterable<Uint8Array | string> {
-  const body = await openSegmentedBody(tx, { pageId: page.id, ledger });
+export async function* segmentedExportMarkdown(tx: BrainEngine, page: Pick<Page, 'id'>, ledger: BodyLedger, head: string, revision?: string): AsyncIterable<Uint8Array | string> {
+  const body = await openSegmentedBody(tx, { pageId: page.id, ledger, ...(revision !== undefined ? { pin: { revision } } : {}) });
   let uncollected = 0;
   const collect = (bytes: number) => {
     uncollected += bytes;

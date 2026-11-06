@@ -259,6 +259,14 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async engine => (await import('./checks/segmented-storage.ts')).segmentedStorageCheck(engine),
   },
   {
+    id: 'segmented_tiling', resolution: 'operator', registration: 'doctor.ts',
+    hostOnly: 'It lists page slugs, and the repair it names runs only from the trusted local CLI on the brain host.',
+    impact: 'Some pages stored in segments have segment rows that do not cover their body, so every read of them refuses and sync holds their files',
+    instruction: 'Preview `gbrain repair segmented-tiling --source <id>` (read-only), show the user the listing, and apply it with the printed --expect hash only after they agree; it republishes each page from its file at HEAD and never runs automatically.',
+    count: d => (Array.isArray(d.pages) ? d.pages.length : 0),
+    run: async (engine, scope) => (await import('./checks/segmented-tiling.ts')).segmentedTilingCheck(engine, scope.sourceIds),
+  },
+  {
     id: 'self_capture', resolution: 'operator', registration: 'wave',
     count: d => Number(d.classified ?? 0),
     impact: 'The session corpus still holds files captured from gbrain\'s own model sessions',

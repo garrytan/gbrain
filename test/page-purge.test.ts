@@ -7,7 +7,7 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -88,6 +88,121 @@ describe('page purge', () => {
     expect(tombstone.slug).toBe(SLUG);
     expect(await engine.executeRaw(`SELECT 1 FROM fact_purges WHERE reason='page purge'`)).toHaveLength(1);
   }, 60_000);
+
+  test('a file_upload to a page in a non-default source records that page, so purging it removes the row and the stored object (#8513)', async () => {
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-a', 'source-a') ON CONFLICT DO NOTHING");
+    await importFromContent(engine, 'notes/plan', '---\ntitle: Plan\ntype: note\n---\n# Plan\n\nBody.\n', { noEmbed: true, sourceId: 'source-a' });
+    const [page] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug='notes/plan' AND source_id='source-a'");
+    const upload = join(storageDir, '..', 'attachment.txt');
+    writeFileSync(upload, 'attachment bytes');
+    const ctx = { ...context(), sourceId: 'source-a' };
+    await withEnv({ GBRAIN_HOME: home }, () => op('file_upload').handler(ctx, { path: upload, page_slug: 'notes/plan' }));
+    expect(await engine.executeRaw('SELECT source_id, page_id FROM files')).toEqual([{ source_id: 'source-a', page_id: page!.id }]);
+    expect(existsSync(join(storageDir, 'notes/plan/attachment.txt'))).toBe(true);
+    const snapshot = await engine.readPageSnapshot('notes/plan', { sourceId: 'source-a', includeDeleted: true });
+    const result = await withEnv({ GBRAIN_HOME: home }, () => op('delete_page').handler(ctx, { slug: 'notes/plan', purge: true, request_id: randomUUID(), expected_revision: snapshot!.revision })) as Record<string, any>;
+    expect([result.status, result.purge.removed.files, result.purge.blobs_remaining]).toEqual(['purged', 1, []]);
+    expect(await engine.executeRaw('SELECT 1 FROM files')).toEqual([]);
+    expect(existsSync(join(storageDir, 'notes/plan/attachment.txt'))).toBe(false);
+  });
+
+  test('a file_upload never takes another source\'s live attachment: different bytes are refused, identical bytes leave the row with its owner', async () => {
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-a', 'source-a') ON CONFLICT DO NOTHING");
+    const page = '---\ntitle: Plan\ntype: note\n---\n# Plan\n\nBody.\n';
+    await importFromContent(engine, 'notes/plan', page, { noEmbed: true, sourceId: 'default' });
+    await importFromContent(engine, 'notes/plan', page, { noEmbed: true, sourceId: 'source-a' });
+    const [owner] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug='notes/plan' AND source_id='default'");
+    const upload = join(storageDir, '..', 'attachment.txt');
+    writeFileSync(upload, 'default bytes');
+    await call('file_upload', { path: upload, page_slug: 'notes/plan' });
+    const ctx = { ...context(), sourceId: 'source-a' };
+    const uploadAsA = () => withEnv({ GBRAIN_HOME: home }, () => op('file_upload').handler(ctx, { path: upload, page_slug: 'notes/plan' })) as Promise<Record<string, any>>;
+    expect((await uploadAsA()).status).toBe('already_exists');
+    writeFileSync(upload, 'source-a bytes');
+    expect(await errorText(uploadAsA())).toStartWith('invalid_params: ');
+    expect(readFileSync(join(storageDir, 'notes/plan/attachment.txt'), 'utf8')).toBe('default bytes');
+    expect(await engine.executeRaw('SELECT source_id, page_id FROM files')).toEqual([{ source_id: 'default', page_id: owner!.id }]);
+    const snapshot = await engine.readPageSnapshot('notes/plan', { sourceId: 'source-a', includeDeleted: true });
+    const result = await withEnv({ GBRAIN_HOME: home }, () => op('delete_page').handler(ctx, { slug: 'notes/plan', purge: true, request_id: randomUUID(), expected_revision: snapshot!.revision })) as Record<string, any>;
+    expect([result.status, result.purge.removed.files]).toEqual(['purged', 0]);
+    expect(existsSync(join(storageDir, 'notes/plan/attachment.txt'))).toBe(true);
+  });
+
+  test('an upload over a row with no page id records the uploader\'s page, so purging that page in a non-default source removes the row and its bytes', async () => {
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-a', 'source-a') ON CONFLICT DO NOTHING");
+    const upload = join(storageDir, '..', 'attachment.txt');
+    writeFileSync(upload, 'early bytes');
+    await call('file_upload', { path: upload, page_slug: 'notes/plan' });
+    await importFromContent(engine, 'notes/plan', '---\ntitle: Plan\ntype: note\n---\n# Plan\n\nBody.\n', { noEmbed: true, sourceId: 'source-a' });
+    const [pageA] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug='notes/plan' AND source_id='source-a'");
+    writeFileSync(upload, 'source-a bytes');
+    const ctx = { ...context(), sourceId: 'source-a' };
+    await withEnv({ GBRAIN_HOME: home }, () => op('file_upload').handler(ctx, { path: upload, page_slug: 'notes/plan' }));
+    expect(await engine.executeRaw('SELECT source_id, page_id FROM files')).toEqual([{ source_id: 'source-a', page_id: pageA!.id }]);
+    const snapshot = await engine.readPageSnapshot('notes/plan', { sourceId: 'source-a', includeDeleted: true });
+    const result = await withEnv({ GBRAIN_HOME: home }, () => op('delete_page').handler(ctx, { slug: 'notes/plan', purge: true, request_id: randomUUID(), expected_revision: snapshot!.revision })) as Record<string, any>;
+    expect([result.status, result.purge.removed.files]).toEqual(['purged', 1]);
+    expect(existsSync(join(storageDir, 'notes/plan/attachment.txt'))).toBe(false);
+  });
+
+  test('an identical re-upload from a source with no such page leaves the row with its page, so purging that page still removes it', async () => {
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-b', 'source-b') ON CONFLICT DO NOTHING");
+    await importFromContent(engine, 'notes/plan', '---\ntitle: Plan\ntype: note\n---\n# Plan\n\nBody.\n', { noEmbed: true, sourceId: 'default' });
+    const [owner] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug='notes/plan' AND source_id='default'");
+    const upload = join(storageDir, '..', 'attachment.txt');
+    writeFileSync(upload, 'plan bytes');
+    await call('file_upload', { path: upload, page_slug: 'notes/plan' });
+    const ctx = { ...context(), sourceId: 'source-b' };
+    expect((await withEnv({ GBRAIN_HOME: home }, () => op('file_upload').handler(ctx, { path: upload, page_slug: 'notes/plan' })) as Record<string, any>).status).toBe('already_exists');
+    expect(await engine.executeRaw('SELECT source_id, page_id FROM files')).toEqual([{ source_id: 'default', page_id: owner!.id }]);
+    const result = await purgePage('notes/plan');
+    expect([result.status, result.purge.removed.files]).toEqual(['purged', 1]);
+    expect(existsSync(join(storageDir, 'notes/plan/attachment.txt'))).toBe(false);
+  });
+
+  test('re-uploading identical bytes to a page that took a renamed page\'s slug records the new page, so purging the renamed page keeps the attachment', async () => {
+    const page = '---\ntitle: Old\ntype: note\n---\n# Old\n\nBody.\n';
+    await importFromContent(engine, 'notes/old', page, { noEmbed: true, sourceId: 'default' });
+    const upload = join(storageDir, '..', 'attachment.txt');
+    writeFileSync(upload, 'same bytes');
+    await call('file_upload', { path: upload, page_slug: 'notes/old' });
+    await engine.executeRaw("UPDATE pages SET slug='notes/moved' WHERE slug='notes/old' AND source_id='default'");
+    await importFromContent(engine, 'notes/old', page, { noEmbed: true, sourceId: 'default' });
+    const [replacement] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug='notes/old' AND source_id='default'");
+    expect((await call('file_upload', { path: upload, page_slug: 'notes/old' })).status).toBe('already_exists');
+    expect(await engine.executeRaw('SELECT page_id FROM files')).toEqual([{ page_id: replacement!.id }]);
+    expect((await purgePage('notes/moved')).status).toBe('purged');
+    expect(await engine.executeRaw('SELECT page_id FROM files')).toEqual([{ page_id: replacement!.id }]);
+    expect(existsSync(join(storageDir, 'notes/old/attachment.txt'))).toBe(true);
+  });
+
+  test('purging a page that took a renamed page\'s slug keeps the attachment the renamed page still owns', async () => {
+    const page = '---\ntitle: Old\ntype: note\n---\n# Old\n\nBody.\n';
+    await importFromContent(engine, 'notes/old', page, { noEmbed: true, sourceId: 'default' });
+    const [owner] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug='notes/old' AND source_id='default'");
+    const upload = join(storageDir, '..', 'attachment.txt');
+    writeFileSync(upload, 'owned bytes');
+    await call('file_upload', { path: upload, page_slug: 'notes/old' });
+    await engine.executeRaw("UPDATE pages SET slug='notes/moved' WHERE id=$1", [owner!.id]);
+    await importFromContent(engine, 'notes/old', page, { noEmbed: true, sourceId: 'default' });
+    const result = await purgePage('notes/old');
+    expect([result.status, result.purge.removed.files]).toEqual(['purged', 0]);
+    expect(await engine.executeRaw('SELECT page_id FROM files')).toEqual([{ page_id: owner!.id }]);
+    expect(existsSync(join(storageDir, 'notes/old/attachment.txt'))).toBe(true);
+  });
+
+  test('a file_upload under a source that is not registered refuses before writing, leaving the stored object and its row as they were', async () => {
+    await importFromContent(engine, 'notes/plan', '---\ntitle: Plan\ntype: note\n---\n# Plan\n\nBody.\n', { noEmbed: true, sourceId: 'default' });
+    const upload = join(storageDir, '..', 'attachment.txt');
+    writeFileSync(upload, 'default bytes');
+    await call('file_upload', { path: upload, page_slug: 'notes/plan' });
+    const before = await engine.executeRaw('SELECT source_id, page_id, content_hash FROM files');
+    writeFileSync(upload, 'other bytes');
+    const ctx = { ...context(), sourceId: 'source-missing' };
+    expect(await errorText(withEnv({ GBRAIN_HOME: home }, () => op('file_upload').handler(ctx, { path: upload, page_slug: 'notes/plan' })))).toStartWith('unknown_source: ');
+    expect(readFileSync(join(storageDir, 'notes/plan/attachment.txt'), 'utf8')).toBe('default bytes');
+    expect(await engine.executeRaw('SELECT source_id, page_id, content_hash FROM files')).toEqual(before);
+  });
 
   test('the tombstone refuses the same content under any slug until unpurge; edited content imports', async () => {
     await importFromContent(engine, SLUG, CONTENT, { noEmbed: true, sourceId: 'default' });

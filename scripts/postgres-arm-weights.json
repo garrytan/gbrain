@@ -42,6 +42,7 @@
   "test/company-brain-runtime.test.ts": 34969,
   "test/consolidate-fenced-close-reimport.test.ts": 13421,
   "test/consolidate-same-instant-6023.test.ts": 17847,
+  "test/contact-rows-drift-8109.test.ts": 13000,
   "test/conversation-facts-outcome-marker-purge-7778.test.ts": 17532,
   "test/conversation-facts-oversized-sidecar.test.ts": 6072,
   "test/conversation-facts-purged-claim-7438.test.ts": 14149,

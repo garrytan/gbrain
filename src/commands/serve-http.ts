@@ -54,6 +54,7 @@ import { registerCleanup } from '../core/process-cleanup.ts';
 import { VERSION } from '../version.ts';
 import { NoticeLedger } from '../core/notice-ledger.ts';
 import { createReadinessCache, type ReadinessCache } from '../core/readiness.ts';
+import { withLocalScope } from '../core/engine-scope-store.ts';
 
 export { extractGitHubItemRef, githubKindCoversRepo, selectGitHubItemSources } from './serve-http-webhooks.ts';
 export { HEALTH_TIMEOUT_MS, probeHealth, probeLiveness, type ProbeHealthResult } from './serve-http-metrics.ts';
@@ -843,20 +844,22 @@ export async function buildServeHttpApp(app: express.Express, engine: BrainEngin
   return { bind, config, sql, issuerUrl, skillStatus, bootstrapToken, bootstrapFromEnv, suppressBootstrapPrint };
 }
 
-export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
-  const { port, tokenTtl, enableDcr, enableDcrInsecure } = options;
-  // Express 5 app
-  const app = express();
-  const { bind, config, sql, issuerUrl, skillStatus, bootstrapToken, bootstrapFromEnv, suppressBootstrapPrint } =
-    await buildServeHttpApp(app, engine, options);
+/** The HTTP server runs in a local scope; each POST /mcp enters its engine's scope (serve-http-mcp.ts). */
+export function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
+  return withLocalScope(async () => {
+    const { port, tokenTtl, enableDcr, enableDcrInsecure } = options;
+    // Express 5 app
+    const app = express();
+    const { bind, config, sql, issuerUrl, skillStatus, bootstrapToken, bootstrapFromEnv, suppressBootstrapPrint } =
+      await buildServeHttpApp(app, engine, options);
 
-  // ---------------------------------------------------------------------------
-  // Start server
-  // ---------------------------------------------------------------------------
-  const clientCount = await sql`SELECT count(*)::int as count FROM oauth_clients`;
+    // ---------------------------------------------------------------------------
+    // Start server
+    // ---------------------------------------------------------------------------
+    const clientCount = await sql`SELECT count(*)::int as count FROM oauth_clients`;
 
-  const httpServer = await listenOrRefuse(app, port, bind, options.adoptServer);
-  console.error(`
+    const httpServer = await listenOrRefuse(app, port, bind, options.adoptServer);
+    console.error(`
 ╔══════════════════════════════════════════════════════╗
 ║  GBrain MCP Server v${VERSION.padEnd(37)}║
 ╠══════════════════════════════════════════════════════╣
@@ -880,62 +883,63 @@ ${bootstrapFromEnv
     : `║  Admin Token (paste into /admin login):              ║\n║  ${bootstrapToken.substring(0, 50)}  ║\n║  ${bootstrapToken.substring(50).padEnd(50)}  ║\n╚══════════════════════════════════════════════════════╝`}
 `);
 
-  // #4474: bind the resolve-IPC unix socket under --http too. This is the
-  // exact posture `gbrain bootstrap harness` targets — without the listener
-  // every wired lifecycle hook (SessionStart / UserPromptSubmit / PreCompact)
-  // degrades to `no_serve` forever, and on a PGLite brain there is no local
-  // recovery (the http serve owns the single-writer lock, so a second stdio
-  // serve can't provide the socket). Shares the stdio path's wiring via
-  // bindResolveIpcForServe; best-effort — failure to bind never blocks the
-  // HTTP server.
-  const ipcBinding = await bindResolveIpcForServe(
-    engine,
-    (await resolveMcpStdioSourceScope(engine)).sourceId,
-    await createPersistenceIpcProvider(engine, residentPersistenceConfig(config) ?? config),
-  );
-  if (ipcBinding.socketPath) {
-    console.error(`  Resolve IPC: ${ipcBinding.socketPath}`);
-  }
+    // #4474: bind the resolve-IPC unix socket under --http too. This is the
+    // exact posture `gbrain bootstrap harness` targets — without the listener
+    // every wired lifecycle hook (SessionStart / UserPromptSubmit / PreCompact)
+    // degrades to `no_serve` forever, and on a PGLite brain there is no local
+    // recovery (the http serve owns the single-writer lock, so a second stdio
+    // serve can't provide the socket). Shares the stdio path's wiring via
+    // bindResolveIpcForServe; best-effort — failure to bind never blocks the
+    // HTTP server.
+    const ipcBinding = await bindResolveIpcForServe(
+      engine,
+      (await resolveMcpStdioSourceScope(engine)).sourceId,
+      await createPersistenceIpcProvider(engine, residentPersistenceConfig(config) ?? config),
+    );
+    if (ipcBinding.socketPath) {
+      console.error(`  Resolve IPC: ${ipcBinding.socketPath}`);
+    }
 
-  // SIGTERM/SIGHUP route through process-cleanup's pass and then
-  // `process.exit`, which skips cli.ts's finally-teardown — so on those
-  // signals the PGLite write handle was never closed. An unclosed PGLite
-  // can leave the control file pointing at a checkpoint record whose WAL
-  // page never reached disk; every later start then dies with
-  // `PANIC: could not locate a valid checkpoint record` (surfaced as the
-  // misleading WASM-init hint) and the daemon crash-loops until a human
-  // intervenes. Registering the engine here gives abnormal termination
-  // the same clean close the SIGINT path already gets via the cli
-  // teardown. Deregistered on normal return so the cli finally remains
-  // the single owner of orderly shutdown.
-  const deregisterIpcCleanup = registerCleanup('resolve-ipc-close', async () => {
-    ipcBinding.close();
+    // SIGTERM/SIGHUP route through process-cleanup's pass and then
+    // `process.exit`, which skips cli.ts's finally-teardown — so on those
+    // signals the PGLite write handle was never closed. An unclosed PGLite
+    // can leave the control file pointing at a checkpoint record whose WAL
+    // page never reached disk; every later start then dies with
+    // `PANIC: could not locate a valid checkpoint record` (surfaced as the
+    // misleading WASM-init hint) and the daemon crash-loops until a human
+    // intervenes. Registering the engine here gives abnormal termination
+    // the same clean close the SIGINT path already gets via the cli
+    // teardown. Deregistered on normal return so the cli finally remains
+    // the single owner of orderly shutdown.
+    const deregisterIpcCleanup = registerCleanup('resolve-ipc-close', async () => {
+      ipcBinding.close();
+    });
+    // Automatic facts drain (Lane D): the resident HTTP serve owns a PGLite brain the way stdio serve does.
+    const { startFactsDrainScheduler } = await import('../core/facts/drain-scheduler.ts');
+    const factsDrain = startFactsDrainScheduler(engine, { owner: 'serve_http', log: (line) => console.error(line) });
+    // #6317 (B4): one notice when a managed source's sync data stops moving (reader in persistence/sync-movement.ts).
+    const { startMovementWatch } = await import('../core/persistence/sync-movement.ts');
+    const movementWatch = startMovementWatch(engine, { log: (line) => console.error(line) });
+    // #6858 ask 6: on-commit sync of this host's managed checkouts while `sync.on_commit` is on (serve-head-watcher.ts).
+    const { startServeHeadWatcher } = await import('../core/serve-head-watcher.ts');
+    const headWatcher = startServeHeadWatcher(engine, { log: (line) => console.error(line), resident: 'serve-http' });
+    const deregisterEngineCleanup = registerCleanup('pglite-engine-disconnect', async () => {
+      await headWatcher.stop();
+      movementWatch.stop();
+      await factsDrain.stop();
+      await engine.disconnect();
+    });
+    try {
+      await waitForHttpServerLifecycle(httpServer);
+    } finally {
+      await headWatcher.stop();
+      movementWatch.stop();
+      await factsDrain.stop();
+      // Close the IPC listener + reap the socket file on orderly shutdown
+      // (abnormal termination goes through the registered cleanup above).
+      ipcBinding.close();
+      deregisterIpcCleanup();
+      deregisterEngineCleanup();
+    }
   });
-  // Automatic facts drain (Lane D): the resident HTTP serve owns a PGLite brain the way stdio serve does.
-  const { startFactsDrainScheduler } = await import('../core/facts/drain-scheduler.ts');
-  const factsDrain = startFactsDrainScheduler(engine, { owner: 'serve_http', log: (line) => console.error(line) });
-  // #6317 (B4): one notice when a managed source's sync data stops moving (reader in persistence/sync-movement.ts).
-  const { startMovementWatch } = await import('../core/persistence/sync-movement.ts');
-  const movementWatch = startMovementWatch(engine, { log: (line) => console.error(line) });
-  // #6858 ask 6: on-commit sync of this host's managed checkouts while `sync.on_commit` is on (serve-head-watcher.ts).
-  const { startServeHeadWatcher } = await import('../core/serve-head-watcher.ts');
-  const headWatcher = startServeHeadWatcher(engine, { log: (line) => console.error(line), resident: 'serve-http' });
-  const deregisterEngineCleanup = registerCleanup('pglite-engine-disconnect', async () => {
-    await headWatcher.stop();
-    movementWatch.stop();
-    await factsDrain.stop();
-    await engine.disconnect();
-  });
-  try {
-    await waitForHttpServerLifecycle(httpServer);
-  } finally {
-    await headWatcher.stop();
-    movementWatch.stop();
-    await factsDrain.stop();
-    // Close the IPC listener + reap the socket file on orderly shutdown
-    // (abnormal termination goes through the registered cleanup above).
-    ipcBinding.close();
-    deregisterIpcCleanup();
-    deregisterEngineCleanup();
-  }
 }

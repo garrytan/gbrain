@@ -24,7 +24,8 @@ import { STATUS_TOOL_DEF, STATUS_TOOL_NAME, attemptStatusRecovery, statusHeadlin
 import { installCapabilitiesResource, mcpAdministrationGuidance } from './capabilities.ts';
 import { createSkillResources, type SkillResources } from './skill-resources.ts';
 import { readLocalWriter, verifyLocalWriter } from '../core/persistence/identity.ts';
-import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
+import { ambientOptsFrom } from '../core/facts/writeback-config.ts';
+import { resolveAgentWriteback } from '../core/facts/writeback-settings.ts';
 import { isEngineDegraded, onEngineRecovered } from '../core/degraded-marker.ts';
 import { assertStdioSourceBindable } from './source-preflight.ts';
 import { readOnlyServeSkipsResidentDuties } from '../core/direct-pool-profile.ts';
@@ -363,7 +364,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // F4 status-only mode: never touch the lazy engine at boot (its gated
   // reconnect belongs to tool calls).
   const statusMode = statusModeOf(engine);
-  const writeback = statusMode ? null : await resolveWritebackConfig(engine, config);
+  const writeback = statusMode ? null : (await resolveAgentWriteback(engine, config)).bundle;
   const writebackOpts = writeback ? ambientOptsFrom(writeback, {
     remember: session.allowedOps ? session.allowedOps.has('remember') : true,
     extractFacts: session.allowedOps ? session.allowedOps.has('extract_facts') : true,

@@ -746,6 +746,50 @@ async function derivedFactWriter(ctx: FactsBackstopCtx, input: PipelineInput, de
   return { insertDerivedFact, gateGroup, write_gate };
 }
 
+/** GBRA-215: what the read-only check of one extracted claim against saved facts found. */
+export type SavedFactCheck =
+  | { verdict: 'withdrawn' }
+  | { verdict: 'duplicate'; id: number }
+  | { verdict: 'new'; samePageShadow?: { id: number; score: number } };
+
+/**
+ * The extract phase's per-claim check: a withdrawn claim is never re-written (B-10; the fence writer rechecks under its page lock); an
+ * exact or, with an embedding, cosine duplicate of a saved fact is that fact (correct per Codex Q7: fence rows have no
+ * embeddings; FS lock + sync invariant means DB == fence at write time). cosineVerdict: the model's calibrated threshold
+ * for explicit lanes; capture lanes never drop by cosine (#5888). excludePrivate keeps a private row a restricted
+ * caller cannot read from deciding the outcome.
+ */
+export async function checkFactAgainstSaved(engine: BrainEngine, sourceId: string,
+  f: { fact: string; kind: string; visibility: string; entity_slug: string | null; attributed_to?: NewFact['attributed_to'];
+    embedding?: Float32Array | null; embedding_model?: string | null; entity_inferred?: unknown },
+  opts: { source?: FactsBackstopCtx['source']; sessionId?: string | null; excludePrivate?: boolean } = {}): Promise<SavedFactCheck> {
+  const { isFactWithdrawn } = await import('./withdrawal.ts');
+  if (await isFactWithdrawn(engine, sourceId, f.visibility, f.fact, f.entity_slug)) return { verdict: 'withdrawn' };
+  const exact = await decideSingleFact(engine, sourceId, { entity_slug: f.entity_slug, fact: f.fact, kind: f.kind as never, visibility: f.visibility as never, attributed_to: f.attributed_to ?? null }, null,
+    undefined, undefined, opts.excludePrivate ? { excludePrivate: true } : {});
+  if (exact?.candidate?.id != null) return { verdict: 'duplicate', id: exact.candidate.id };
+  if (!f.entity_slug || !f.embedding || f.entity_inferred) return { verdict: 'new' };
+  const { cosineSimilarity } = await import('./classify.ts');
+  const candidates = await engine.findCandidateDuplicates(
+    sourceId,
+    f.entity_slug,
+    f.fact,
+    { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null, excludeMemberPages: true },
+  );
+  let top: { row: typeof candidates[number]; score: number } | null = null;
+  for (const c of candidates) {
+    if (!c.embedding) continue;
+    const s = cosineSimilarity(f.embedding, c.embedding);
+    if (!top || s > top.score) top = { row: c, score: s };
+  }
+  if (!top) return { verdict: 'new' };
+  if (cosineVerdict(opts.source as never, top.score, f.fact, top.row.fact, (await readSupersessionThreshold(engine, f.embedding_model, f.embedding.length)).threshold) === 'duplicate') {
+    return { verdict: 'duplicate', id: top.row.id };
+  }
+  return wouldDedupSamePage({ source: opts.source as never, sessionId: opts.sessionId ?? undefined, visibility: f.visibility as never }, top.row, top.score, f.fact)
+    ? { verdict: 'new', samePageShadow: { id: top.row.id, score: top.score } } : { verdict: 'new' };
+}
+
 /** The actual pipeline body — always runs inside a BudgetTracker scope (#4210). */
 async function runPipelineBodyInner(
   input: PipelineInput,
@@ -876,8 +920,12 @@ async function runPipelineBodyInner(
     const exact = await decideSingleFact(ctx.engine, ctx.sourceId, { entity_slug: resolvedSlug, fact: f.fact, kind: f.kind ?? 'fact', visibility, attributed_to: f.attributed_to ?? null }, null);
     let matchedExistingId: number | null = exact?.candidate?.id ?? null;
     if (matchedExistingId === null && resolvedSlug && f.embedding && !f.entity_inferred) {
-      const candidates = await ctx.engine.findCandidateDuplicates(ctx.sourceId, resolvedSlug, f.fact,
-        { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null, excludeMemberPages: true });
+      const candidates = await ctx.engine.findCandidateDuplicates(
+        ctx.sourceId,
+        resolvedSlug,
+        f.fact,
+        { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null, excludeMemberPages: true },
+      );
       let top: { row: typeof candidates[number]; score: number } | null = null;
       for (const c of candidates) {
         if (!c.embedding) continue;

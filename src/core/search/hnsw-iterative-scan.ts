@@ -16,6 +16,7 @@
  * re-reads config. An unreadable value falls back to the default.
  */
 import type { GBrainConfig } from '../config.ts';
+import { engineKey } from '../engine-key.ts';
 
 export const HNSW_ITERATIVE_SCAN_ENV = 'GBRAIN_HNSW_ITERATIVE_SCAN';
 export const HNSW_ITERATIVE_SCAN_KEY = 'search.hnsw_iterative_scan';
@@ -40,17 +41,21 @@ export function readHnswIterativeScan(
   return { mode: HNSW_ITERATIVE_SCAN_DEFAULT, via: null };
 }
 
-let resolved: HnswIterativeScanMode | undefined;
+let resolved = new WeakMap<object, HnswIterativeScanMode>();
+const logged = new Set<HnswIterativeScanMode>();
 
-/** First call decides for the process; logs once to stderr when an override is active. */
-export function resolveHnswIterativeScan(cfg: Pick<GBrainConfig, 'search'> | null | undefined): HnswIterativeScanMode {
-  if (resolved !== undefined) return resolved;
+/** The first call for an engine decides for that engine; logs once per process per override mode. */
+export function resolveHnswIterativeScan(engine: object, cfg: Pick<GBrainConfig, 'search'> | null | undefined): HnswIterativeScanMode {
+  const key = engineKey(engine);
+  const known = resolved.get(key);
+  if (known !== undefined) return known;
   const setting = readHnswIterativeScan(cfg);
-  resolved = setting.mode;
-  if (setting.via && setting.mode !== HNSW_ITERATIVE_SCAN_DEFAULT) {
+  resolved.set(key, setting.mode);
+  if (setting.via && setting.mode !== HNSW_ITERATIVE_SCAN_DEFAULT && !logged.has(setting.mode)) {
+    logged.add(setting.mode);
     console.error(`[gbrain] vector search uses hnsw.iterative_scan=${setting.mode} (${setting.via === 'env' ? HNSW_ITERATIVE_SCAN_ENV : HNSW_ITERATIVE_SCAN_KEY}); the default is ${HNSW_ITERATIVE_SCAN_DEFAULT}.`);
   }
-  return resolved;
+  return setting.mode;
 }
 
 /** `config set search.hnsw_iterative_scan <value>` refusal text, or null when the value is valid. */
@@ -60,5 +65,6 @@ export function hnswIterativeScanValueProblem(value: string): string | null {
 
 /** @internal test seam */
 export function _resetHnswIterativeScanForTests(): void {
-  resolved = undefined;
+  resolved = new WeakMap();
+  logged.clear();
 }

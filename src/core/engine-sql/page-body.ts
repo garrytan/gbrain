@@ -34,7 +34,7 @@ import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { joinFragments, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { compileRowNormalizer } from './normalize.ts';
-import { stagingNeedsTextSql } from '../page-body/schema.ts';
+import { liveTilingSql, stagingNeedsTextSql, untiledSql } from '../page-body/schema.ts';
 import { DerivationWriteRefused, type SegmentDerivationInput, type SegmentDerivationKind, type SegmentDerivationRow, type SegmentDerivationState } from '../page-body/derivations.ts';
 import { RELEASE_STAGED_CTE } from '../persistence/limits.ts';
 
@@ -342,6 +342,13 @@ export async function flipBodyGeneration(exec: SqlExecutor, input: BodyFlipInput
         source_uri = COALESCE(${m.sourceUri}::text, source_uri), ingested_via = COALESCE(${m.ingestedVia}::text, ingested_via),
         ingested_at = COALESCE(${m.ingestedAt}::timestamptz, ingested_at)
       WHERE id = ${input.pageId}`);
+    // GST-1209: the generation this flip made live must tile the body it recorded, as every reader checks it; rows the
+    // write staged that went missing would otherwise commit a body nothing can read.
+    const { rows: untiled } = await tx.run<{ n: unknown; covered: unknown; gapless: boolean }>(sqlFragment`SELECT t.n, t.covered, t.gapless
+      FROM pages p CROSS JOIN LATERAL (${trustedSql(liveTilingSql('p'))}) t WHERE p.id = ${input.pageId} AND ${trustedSql(untiledSql('p', 't'))}`);
+    if (untiled[0]) {
+      throw bodyGenerationIncompleteError(page.slug, input.stagingId, { rows: Number(untiled[0].n), covered: Number(untiled[0].covered), gapless: untiled[0].gapless }, b);
+    }
     return { retiredChunks: retired, retireDeferred };
   });
 }
@@ -355,6 +362,16 @@ export function bodyStagingGoneError(slug: string, stagingId: string, state: str
     { detail: JSON.stringify({ staging_id: stagingId, state }) });
 }
 
+/** GST-1209: the rows a flip would publish do not tile the body it records (rows it staged went missing), so the flip refuses. */
+export function bodyGenerationIncompleteError(slug: string, stagingId: string, tiled: { rows: number; covered: number; gapless: boolean },
+  body: { body_bytes: number; segment_count: number }) {
+  const covered = tiled.gapless ? `${tiled.covered} bytes` : 'with a gap';
+  return opError('body_staging_expired', `The staged body of this write to ${slug} does not cover its ${body.body_bytes}-byte body (${tiled.rows} of ${body.segment_count} segment rows, ${covered}), so nothing was published.`,
+    'Segment rows this write staged are missing, so publishing it would leave a body no reader can read. Send the write again: it stages a fresh copy.',
+    { detail: JSON.stringify({ staging_id: stagingId, reason: 'generation_incomplete', rows: tiled.rows, segment_count: body.segment_count,
+      covered_bytes: tiled.gapless ? tiled.covered : null, body_bytes: body.body_bytes }) });
+}
+
 export async function openBodyStaging(exec: SqlExecutor, input: BodyStagingInput): Promise<void> {
   await exec.run(sqlFragment`INSERT INTO page_body_stagings (id, kind, principal_kind, principal_id, client_request_id, source_id,
       source_incarnation, slug, page_id, mode, base_revision, base_generation, declared_bytes, declared_sha256, reserved_bytes,
@@ -365,13 +382,22 @@ export async function openBodyStaging(exec: SqlExecutor, input: BodyStagingInput
       ${input.idleExpiresAt}, ${input.hardExpiresAt})`);
 }
 
-/** Moving a staging to a live state restarts its idle deadline (never past its hard one). */
+/**
+ * Moves a live staging to `state`; a move to a live state restarts its idle deadline (never past its hard one). A staging
+ * that is no longer live stays as it is (GST-1209): a fact purge's abort or a sweep's expiry deleted its staged rows, so a
+ * write moving it on (to prepared or committed) refuses body_staging_expired instead of reviving it, and an abort or expiry
+ * of it changes nothing. A move to the state it already holds (a retried commit) is a no-op.
+ */
 export async function setBodyStagingState(exec: SqlExecutor, id: string, state: BodyStagingState, opts: { commitRequestId?: string | null } = {}): Promise<void> {
-  await exec.run(sqlFragment`UPDATE page_body_stagings SET state = ${state}, updated_at = now(),
+  const { rows } = await exec.run<{ id: string }>(sqlFragment`UPDATE page_body_stagings SET state = ${state}, updated_at = now(),
       idle_expires_at = CASE WHEN ${state} = ANY(${LIVE_STAGING_STATES}::text[])
         THEN LEAST(hard_expires_at, now() + (${BODY_STAGING_IDLE_MS}::bigint * interval '1 millisecond')) ELSE idle_expires_at END,
       commit_request_id = COALESCE(${opts.commitRequestId ?? null}::uuid, commit_request_id)
-    WHERE id = ${id}::uuid`);
+    WHERE id = ${id}::uuid AND state = ANY(${LIVE_STAGING_STATES}::text[]) RETURNING id`);
+  if (rows.length || state === 'aborted' || state === 'expired') return;
+  const { rows: gone } = await exec.run<{ slug: string; state: string }>(sqlFragment`SELECT slug, state FROM page_body_stagings WHERE id = ${id}::uuid`);
+  if (gone[0]?.state === state) return;
+  throw bodyStagingGoneError(gone[0]?.slug ?? id, id, gone[0]?.state ?? null);
 }
 
 /**

@@ -9,13 +9,13 @@
  * retry budget.
  */
 import { loadConfigWithEngine } from '../config.ts';
-import { existingLocalHostId } from '../persistence/identity.ts';
+import { existingHostIdFor } from '../persistence/identity.ts';
 import { EMBEDDING_RETRY_BUDGET_ATTEMPTS, listEmbeddingCandidates, settleEmbeddingEffect, type EmbeddingCandidate } from '../persistence/embedding-settlement.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { RepairHandler, RepairItem } from './core.ts';
 
-function localHost(): string {
-  const hostId = existingLocalHostId();
+function localHost(engine: object): string {
+  const hostId = existingHostIdFor(engine);
   if (!hostId) throw new OperationError('permission_denied', 'Settling embedding effects requires the registered local CLI host.',
     'Run it on the brain host that owns the source.');
   return hostId;
@@ -27,7 +27,7 @@ export const embeddingEffectsRepair: RepairHandler = {
   // Effect ids order the scan, so a --limit or interrupted run resumes after the last settled effect.
   async plan(engine, scope, after) {
     const candidates = await listEmbeddingCandidates(engine, scope.source_ids);
-    const hostId = existingLocalHostId();
+    const hostId = existingHostIdFor(engine);
     const config = await loadConfigWithEngine(engine);
     const items: RepairItem[] = [];
     const residuals: Record<string, number> = {};
@@ -49,7 +49,7 @@ export const embeddingEffectsRepair: RepairHandler = {
   },
   async apply(ctx, item, opts) {
     const settled = await settleEmbeddingEffect(ctx.engine, JSON.parse(item.change!.from!),
-      { dryRun: false, config: await loadConfigWithEngine(ctx.engine), hostId: localHost(), runId: opts?.runId });
+      { dryRun: false, config: await loadConfigWithEngine(ctx.engine), hostId: localHost(ctx.engine), runId: opts?.runId });
     return { applied: settled.outcome !== 'blocked' && settled.outcome !== 'changed_since_preview', outcome: settled.outcome, ...(settled.reason ? { reason: settled.reason } : {}) };
   },
 };

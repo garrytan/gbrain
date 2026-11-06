@@ -64,6 +64,16 @@ for (const kind of testBackends()) {
       }
     }, 120_000);
 
+    test('a question of more than four words ranks the page holding its rare word first (#7491)', async () => {
+      await seed();
+      const q = 'What did the Acme team say about the quokka?';
+      for (const opts of [{}, REMOTE]) {
+        const rows = await engine.searchKeyword(q, { ...opts, limit: 10, orFallback: true });
+        expect(rows[0]?.slug).toBe('notes/quokka');
+        expect(rows.every((r) => r.keyword_relaxed === true)).toBe(true);
+      }
+    }, 120_000);
+
     test('a rare page past the retry limit comes back', async () => {
       await seed();
       const rows = await engine.searchKeyword('Acme Quokka', { limit: 3, orFallback: true });

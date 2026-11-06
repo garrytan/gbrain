@@ -53,9 +53,12 @@ describe('hnsw.iterative_scan mode', () => {
     expect(readHnswIterativeScan(null, {})).toEqual({ mode: 'relaxed_order', via: null });
   });
 
-  test('resolved once per process', () => {
-    expect(resolveHnswIterativeScan({ search: { hnsw_iterative_scan: 'strict_order' } })).toBe('strict_order');
-    expect(resolveHnswIterativeScan({ search: { hnsw_iterative_scan: 'off' } })).toBe('strict_order');
+  test('resolved once per engine', () => {
+    const engineA = {};
+    const engineB = {};
+    expect(resolveHnswIterativeScan(engineA, { search: { hnsw_iterative_scan: 'strict_order' } })).toBe('strict_order');
+    expect(resolveHnswIterativeScan(engineA, { search: { hnsw_iterative_scan: 'off' } })).toBe('strict_order');
+    expect(resolveHnswIterativeScan(engineB, { search: { hnsw_iterative_scan: 'off' } })).toBe('off');
   });
 
   test('config set refuses an invalid value with the valid modes and an example', () => {
