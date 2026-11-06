@@ -32,6 +32,13 @@ import { uuidV5 } from '../persistence/preconditions.ts';
 import { isStrictIsoDateTime } from '../utils.ts';
 
 export const QM_MEMORY_OPS: ReadonlySet<string> = new Set(['memory_recall', 'memory_write']);
+/** GST-1158 F1: the personal tools contract v3 adds, read or written as the attested person (own DM only); opt-in per client. */
+export const QM_PERSONAL_OPS: ReadonlySet<string> = new Set([
+  'query', 'get_page', 'get_timeline', 'get_backlinks', 'find_experts', 'whois', 'entity', 'context_pack', 'volunteer_context',
+  'get_write_request', 'forget_fact',
+]);
+/** Results whose `text` is the model's text: it alone fills `content` and leaves `structuredContent`. */
+const TEXT_RESULT_OPS: ReadonlySet<string> = new Set(['memory_recall', 'memory_write', 'context_pack']);
 export const MEMORY_RECALL_MAX_CHARS = { min: 200, max: 12_000, default: 6_000 } as const;
 /** Own facts written within this window lead the answer. */
 export const OWN_RECENT_WINDOW_HOURS = 24;
@@ -52,7 +59,8 @@ export const QM_MEMORY_REQUEST_NAMESPACE = '6b3e9f2a-41c7-4d58-9a0e-2f7c5d1b8e63
 
 const actorParam: ParamDef = { type: 'string', description: `Set by the trusted system: equal to the ${ACTOR_HEADER} header, or omit.`, fullSurfaceOnly: true };
 
-export interface RecallFact { id: string; text: string; date: string; kind: string }
+/** GST-1158 F5: `arm` says which read found the fact: the person's own recent facts, or the query ranking. */
+export interface RecallFact { id: string; text: string; date: string; kind: string; arm: 'own' | 'ranked' }
 
 /** Fact text as one plain line: fence and heading markers and rules removed, every line break and control character a space. */
 export function plainFactText(text: string): string {
@@ -152,11 +160,11 @@ async function recallFacts(ctx: OperationContext, query: string, maxChars: numbe
     scope: { sourceIds: sources, remote, excludePrivate: read.excludePrivate, minTrust: read.eligibility.floor, suppressFlagged: read.eligibility.suppressFlagged },
   })).rows : [];
   const seen = new Set<number>();
-  const rows = [...own, ...ranked].filter(r => !seen.has(r.id) && !!seen.add(r.id));
+  const rows = [...own.map(r => ({ ...r, arm: 'own' as const })), ...ranked.map(r => ({ ...r, arm: 'ranked' as const }))].filter(r => !seen.has(r.id) && !!seen.add(r.id));
   // The date as the database writes it: a driver's timestamp parse reads years 1-99 as 19xx.
   const written = new Map(rows.length ? (await ctx.engine.executeRaw<{ id: number | string; d: string }>(
     `SELECT id, to_char(COALESCE(valid_from, created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS d FROM facts WHERE id = ANY($1::bigint[])`, [rows.map(r => r.id)])).map(r => [Number(r.id), r.d]) : []);
-  const plain = rows.map(r => ({ id: String(r.id), text: plainFactText(r.fact), date: isoDate(written.get(Number(r.id)) ?? r.valid_from ?? r.created_at), kind: String(r.kind) }));
+  const plain = rows.map(r => ({ id: String(r.id), text: plainFactText(r.fact), date: isoDate(written.get(Number(r.id)) ?? r.valid_from ?? r.created_at), kind: String(r.kind), arm: r.arm }));
   const { redactRetrievalOutput } = await import('../search/output-redaction.ts');
   const facts: RecallFact[] = (remote ? redactRetrievalOutput(plain, {}, { uncapped: true }).results : plain).filter(f => f.text);
   const { kept, text } = boundFactLines(facts.map(f => `- ${f.text} (${f.date}; ${f.kind})`), maxChars);
@@ -324,9 +332,12 @@ const memory_write: Operation = {
  * in `_meta.gbrain_notices`, so memory_recall's text stays within max_chars) and the result in `structuredContent`.
  * A refusal keeps its JSON text block and gains `structuredContent.error` (code, message, reason, detail, fix), as the actor
  * refusals carry it, so QM classifies every error from structuredContent. Dry runs and every other tool pass through.
+ * GST-1158 F2: a personal tool (QM_PERSONAL_OPS) is rewritten the same way only for an attested person (`personal`):
+ * `content` keeps its JSON and notice blocks, an array result arrives as `structuredContent.results`, and
+ * context_pack's text fills `content` as memory_recall's does.
  */
-export function qmMemoryToolResult<T extends { content: Array<{ type: 'text'; text: string }>; isError?: boolean; structuredContent?: Record<string, unknown> }>(name: string, out: T): T {
-  if (!QM_MEMORY_OPS.has(name)) return out;
+export function qmMemoryToolResult<T extends { content: Array<{ type: 'text'; text: string }>; isError?: boolean; structuredContent?: Record<string, unknown> }>(name: string, out: T, personal = false): T {
+  if (!QM_MEMORY_OPS.has(name) && !(personal && QM_PERSONAL_OPS.has(name))) return out;
   let result: unknown;
   try { result = JSON.parse(out.content[0]?.text ?? ''); } catch { return out; }
   if (out.isError) {
@@ -335,6 +346,8 @@ export function qmMemoryToolResult<T extends { content: Array<{ type: 'text'; te
     return { ...out, structuredContent: { error: { code: env.code, message: env.message, ...(env.reason ? { reason: env.reason } : {}), ...(env.detail ? { detail: env.detail } : {}), ...(env.write_error ? { write_error: env.write_error } : {}), ...(env.fix ? { fix: env.fix } : {}) } } };
   }
   if (!result || typeof result !== 'object' || 'dry_run' in result) return out;
+  if (Array.isArray(result)) return { ...out, structuredContent: { results: result } };
+  if (!TEXT_RESULT_OPS.has(name)) return { ...out, structuredContent: result as Record<string, unknown> };
   const { text, ...structured } = result as Record<string, unknown>;
   return { ...out, content: [{ type: 'text', text: typeof text === 'string' ? text : '' }], structuredContent: structured };
 }

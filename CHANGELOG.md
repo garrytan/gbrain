@@ -12,6 +12,16 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [0.60.595.0] - 2026-11-06
 
+**An attested call to the tools QM's agent uses in a person's own DM now answers in `structuredContent`, and those tools are in a new contract, `v3.json`, with frozen result shapes.** `query`, `get_page`, `get_timeline`, `get_backlinks`, `find_experts`, `whois`, `entity`, `context_pack`, `volunteer_context`, `get_write_request` and `forget_fact` called with `x-qm-actor` put their result in `structuredContent` and their refusals in `structuredContent.error`, so QM decodes every answer from one place. `docs/contracts/qm-memory-provider/v3.json` keeps all of v2 and adds each of those tools with its served input schema and the fields every success carries; other fields may appear and are ignored. `get_write_request` freezes the seven write-request states, and a state outside them means unknown, not published. Each `memory_recall` fact now says which read found it (`arm`: `own` or `ranked`). Nothing became attestable by default: the operator still lists each tool in `--attest-ops`. `v1.json` and `v2.json` are unchanged.
+
+| Situation | Before | Now |
+|---|---|---|
+| Attested call to a v3 personal tool | JSON text in `content` only; a refusal had no `structuredContent.error` | the same JSON in `content` plus the result in `structuredContent` (a list as `structuredContent.results`); refusals carry `structuredContent.error` |
+| Attested `context_pack` | JSON in `content` | `content` is the rendered pack text; the rest of the result is in `structuredContent` |
+| Attested personal read over the result cap once `structuredContent` is counted | sent | refused whole with `result_too_large` |
+| `memory_recall` fact rows | `{id, text, date, kind}` | add `arm`: `own` or `ranked`; no score |
+| The same tools without `x-qm-actor` | as above | unchanged |
+
 **An attested call can no longer write pages directly: `add_timeline_entry`, `add_link`, `put_page` and `edit_page` are not attestable.** They write to pages that everyone who reads the page sees, so a trusted system acting as one person could put that person's words in front of a whole audience with no one approving them. They now wait for owner-approved proposals, the way `capture` and take writes already do. An operator whose `--attest-ops` list names one of them sees `gbrain auth rescope` refuse the list, and each attested call to it is refused (`actor_not_attested`, reason `op_not_attested`); a queued attested write of one fails when it publishes. Unattested calls, and credentials bound to a member, are unchanged. `v2.json` lists the new deferred operations; `v1.json` is unchanged.
 
 **A `memory_recall` that names sources reads as that scope, never as the attested person, so a shared turn can no longer recall one member's private facts into a shared channel.** `memory_recall` gains `source_id` and `source_ids`. Named, the read drops the person's own recent facts and every member-page fact, keeps restricted pages hidden and never relaxes `visibility: private`. The contract for it is the new `docs/contracts/qm-memory-provider/v2.json`; `v1.json` stays byte-identical and a test holds it there. Three smaller provider fixes ride along.

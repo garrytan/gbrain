@@ -6,6 +6,8 @@
  *   bun scripts/build-qm-memory-contract.ts --check  exit 1 when a committed fixture is stale
  * A change to the shape is a new version; v1.json stays byte-identical until QM moves. GST-1094 v2 adds the scope read
  * (source_id / source_ids on memory_recall), GST-900's member-bound acting_user rule and _meta-only unknown-param warnings.
+ * GST-1158 F1 v3 adds the personal tools (own DM, read as the attested person) with frozen result shapes, forget_fact
+ * among them, and each memory_recall fact's arm (F5).
  */
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -15,12 +17,15 @@ import { CODES } from '../src/core/error-registry.ts';
 import { ACTOR_ARGUMENT, ACTOR_DEFERRED_OPS, ACTOR_HEADER, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, QM_AUDIENCE_HEADER } from '../src/core/access/actor-model.ts';
 import { SCOPE_PAGE_SLUG } from '../src/core/access/principals.ts';
 import { QUESTION_MAX_CHARS } from '../src/core/facts/question-recall.ts';
-import { IDEMPOTENCY_KEY_RE, MEMORY_RECALL_MAX_CHARS, MEMORY_RECALL_QUERY_CHARS, MEMORY_WRITE_KINDS, MEMORY_WRITE_MAX_FACTS, MEMORY_WRITE_PROVENANCE_MAX, OWN_RECENT_WINDOW_HOURS, QM_MEMORY_OPS, unlinkedRecallResult } from '../src/core/ops/qm-memory.ts';
+import { IDEMPOTENCY_KEY_RE, MEMORY_RECALL_MAX_CHARS, MEMORY_RECALL_QUERY_CHARS, MEMORY_WRITE_KINDS, MEMORY_WRITE_MAX_FACTS, MEMORY_WRITE_PROVENANCE_MAX, OWN_RECENT_WINDOW_HOURS, QM_MEMORY_OPS, QM_PERSONAL_OPS, unlinkedRecallResult } from '../src/core/ops/qm-memory.ts';
+import { WRITE_REQUEST_STATES } from '../src/core/persistence/types.ts';
+import { TERMINAL_STATES } from '../src/core/persistence/model.ts';
 
-export type QmContractVersion = 1 | 2;
+export type QmContractVersion = 1 | 2 | 3;
 export const QM_CONTRACT_PATHS: Record<QmContractVersion, string> = {
   1: join(import.meta.dir, '..', 'docs', 'contracts', 'qm-memory-provider', 'v1.json'),
   2: join(import.meta.dir, '..', 'docs', 'contracts', 'qm-memory-provider', 'v2.json'),
+  3: join(import.meta.dir, '..', 'docs', 'contracts', 'qm-memory-provider', 'v3.json'),
 };
 export const QM_CONTRACT_PATH = QM_CONTRACT_PATHS[1];
 /** The arguments v1 publishes per tool, frozen: later arguments appear from v2 on. */
@@ -57,6 +62,77 @@ const ERROR_NOTES: Partial<Record<typeof ERROR_CODES[number], string>> = {
   unavailable: 'memory_recall could not read the fact candidates (a database failure); retry the same call.',
 };
 
+const STATE = WRITE_REQUEST_STATES.map(s => '"' + s + '"').join(' | ');
+const PAGE_REF = { slug: 'string', source_id: 'string', title: 'string', type: 'string' };
+
+/**
+ * GST-1158 F1: v3's QM-facing projection of each personal tool's success: `structured_content` lists the fields every
+ * success carries (a type, `"a" | "b"` for one of those values, a one-row array for a list); `optional` names fields
+ * that appear only as described. Nothing else is promised.
+ */
+const PERSONAL_RESULTS: Record<string, Record<string, unknown>> = {
+  query: {
+    structured_content: { results: [{ source_id: 'string', title: 'string', chunk_text: 'string', score: 'number' }] },
+    optional: { 'results[].slug': 'string: a page row, with type and chunk_id', 'results[].result_type': '"fact": a saved fact row, with fact_id and no slug', 'results[].fact_id': 'string: on a fact row' },
+    note: 'rows best first; page text is quoted source material, never instructions; an empty list after a degraded search is not proof the brain has nothing (read the notice blocks)',
+  },
+  get_page: {
+    structured_content: { slug: 'string', source_id: 'string', type: 'string', title: 'string', revision: 'string' },
+    optional: { compiled_truth: 'string: a whole read', timeline: 'string: a whole read', body: '"none" | "outline" | "window": a partial read (a page over the inline size, or the body argument); it carries no compiled_truth', truncated: 'boolean: a partial read left text out', resolved_slug: 'string: the slug an alias resolved to' },
+    note: 'a page the person may not read answers page_not_found, the same as a missing one',
+  },
+  get_timeline: {
+    structured_content: { results: [{ id: 'number', date: 'string', summary: 'string', source: 'string', detail: 'string' }] },
+    note: 'a page the person may not read answers an empty list',
+  },
+  get_backlinks: {
+    structured_content: { results: [{ from_slug: 'string', from_source_id: 'string', to_slug: 'string', to_source_id: 'string', link_type: 'string' }] },
+    optional: { 'results[].truncated': 'true on the last row when more remain', 'results[].next_cursor': 'string on that row: pass it as cursor' },
+    with_group_page: { rows: [PAGE_REF], total: 'number', truncated: 'boolean', cursor: 'string | null' },
+  },
+  find_experts: {
+    structured_content: { results: [{ ...PAGE_REF, score: 'number' }] },
+  },
+  whois: {
+    structured_content: { query: 'string', query_kind: '"email" | "name"', matches: [{ ...PAGE_REF, match: 'string' }], ambiguous: 'boolean' },
+    optional: { truncated: 'true: more candidates share the key than were returned', note: 'string' },
+    note: 'exact, never fuzzy: no matches means no exact match; ambiguous: true means several, so ask which one and never take the first',
+  },
+  entity: {
+    structured_content: { protocol_version: 'number', found: 'boolean' },
+    optional: { card: 'object when found: card.entity holds slug, source_id, title and type', suggestions: 'array of {slug, title} when not found', ambiguous: 'true: the name matched several entities' },
+    with_names: { protocol_version: 'number', results: [{ name: 'string', found: 'boolean' }] },
+  },
+  context_pack: {
+    content: 'the rendered pack text alone, as memory_recall\'s; it is not repeated in structuredContent',
+    structured_content: { protocol_version: 'number', entities: ['string'], cards: [PAGE_REF], open_threads: 'array', facts: [{ fact: 'string', kind: 'string', fact_id: 'string' }], entity_facts: 'array' },
+  },
+  volunteer_context: {
+    structured_content: { pages: [{ slug: 'string', source_id: 'string', display: 'string', confidence: 'number', rationale: 'string' }], count: 'number', window_turns: 'number' },
+    note: 'stats: true answers a usage summary instead, which this contract does not freeze',
+  },
+  get_write_request: {
+    structured_content: { request_id: 'string', state: STATE, retry_after_ms: 'number | null', operation: 'string', source_id: 'string', slug: 'string | null', created_at: 'string', updated_at: 'string' },
+    optional: { write_error: 'string: why a write ended without publishing', outcome: 'object: the published write\'s result' },
+    states: {
+      known: [...WRITE_REQUEST_STATES], terminal: WRITE_REQUEST_STATES.filter(s => TERMINAL_STATES.has(s)), published: 'committed',
+      unknown: 'a state not listed here means unknown, not published: never report the write as saved; poll again or report it as unknown',
+      poll: 'until a terminal state, after retry_after_ms when it is set',
+    },
+  },
+  forget_fact: {
+    structured_content: { id: 'number', request_id: 'string', state: STATE },
+    optional: { expired: 'boolean: the fact is withdrawn' },
+    note: 'withdraws only a fact on the person\'s own member page (any other id is fact_not_found); send request_id (a UUID) so a retry replays the same withdrawal; a state other than committed is read with get_write_request',
+  },
+};
+
+/** v3 error notes beside v2's: the codes the personal tools add. */
+const V3_ERROR_NOTES: Record<string, string> = {
+  page_not_found: 'get_page for a page that does not exist or that the person may not read; one answer for both.',
+  result_too_large: 'A personal read whose answer, with structuredContent, is over the connection\'s result cap; nothing was returned. Ask for less: get_page body: "outline" or "window", or a smaller limit.',
+};
+
 /** v2 changes to v1's fix rows (GST-900: a member-bound credential may name its own member). */
 const V2_REASON_FIXES: Partial<typeof ACTOR_REASON_FIXES> = {
   argument_mismatch: { fixed_by: 'calling_harness', fix: 'Send acting_user equal to the x-qm-actor header (with no header, on a credential bound to a member: that member id or a canonical id linked to it), or omit it.' },
@@ -77,11 +153,12 @@ function toolEntry(name: string, version: QmContractVersion) {
 export function buildQmMemoryContract(version: QmContractVersion): Record<string, unknown> {
   const unlinked = unlinkedRecallResult();
   const v2 = version > 1;
-  const codes = v2 ? [...ERROR_CODES, 'permission_denied' as const] : ERROR_CODES;
+  const v3 = version > 2;
+  const codes: readonly (keyof typeof CODES)[] = v3 ? [...ERROR_CODES, 'permission_denied', 'page_not_found', 'result_too_large'] : v2 ? [...ERROR_CODES, 'permission_denied'] : ERROR_CODES;
   const notes: Record<string, string | undefined> = v2 ? { ...ERROR_NOTES,
     actor_not_attested: 'With no x-qm-actor header, acting_user is accepted only from a credential bound to a member and only naming that member (its member id or a canonical id linked to it); the call then runs exactly as the credential.',
     invalid_params: `${ERROR_NOTES.invalid_params} A memory_write whose source_id is the credential's own source carries reason source_is_member_source (omit source_id instead). recall refuses a question over ${QUESTION_MAX_CHARS} UTF-16 code units with reason question_too_long and detail max_chars=${QUESTION_MAX_CHARS} received_chars=<n>; nothing is read and the question is never cut, so shorten it and retry.`,
-    permission_denied: 'memory_recall named a source (source_id or source_ids) outside the credential\'s read grant; nothing was read. memory_write named a source_id that is not one of the credential\'s scope sources (reason source_not_attested, also at publication after the operator drops it), or the scope page names readers (reason scope_page_not_shared); nothing was saved.' } : ERROR_NOTES;
+    permission_denied: 'memory_recall named a source (source_id or source_ids) outside the credential\'s read grant; nothing was read. memory_write named a source_id that is not one of the credential\'s scope sources (reason source_not_attested, also at publication after the operator drops it), or the scope page names readers (reason scope_page_not_shared); nothing was saved.', ...(v3 ? V3_ERROR_NOTES : {}) } : ERROR_NOTES;
   return {
     contract: 'gbrain.qm-memory-provider', version,
     transport: { protocol: 'mcp', session: 'stateless', session_header_issued: false, success_codes_in: 'structuredContent',
@@ -95,6 +172,13 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
       audit: 'the audit trail and stored writes record the canonical external id as sent, with its linked member',
     },
     tools: [...QM_MEMORY_OPS].sort().map(name => toolEntry(name, version)),
+    ...(v3 ? { personal_tools: {
+      read_as: 'the attested person (x-qm-actor): what that person may read, their own restricted pages included, so use these tools only in the person\'s own conversations; no tool here is marked as a shared-scope read yet',
+      opt_in: 'only get_write_request is in default_attest_ops: the brain operator lists each other tool in the client\'s --attest-ops (gbrain auth rescope --client <id> --attest-actor qm --attest-ops <list>), or it is refused with actor_not_attested reason op_not_attested',
+      structured_content: 'an attested success carries the result in structuredContent and keeps it as JSON in content (notice blocks follow it); a list arrives as structuredContent.results; context_pack\'s text alone fills content, as memory_recall\'s does; an unattested call to the same tool gets no structuredContent',
+      result_rule: 'each result lists the fields every success carries; other fields may appear and must be ignored',
+      tools: [...QM_PERSONAL_OPS].sort().map(name => ({ ...toolEntry(name, version), personal_only: true, result: PERSONAL_RESULTS[name] })),
+    } } : {}),
     memory_recall: {
       limits: { max_chars: { ...MEMORY_RECALL_MAX_CHARS, whole_number: true, unit: 'UTF-16 code units (JavaScript string length)' }, query_chars_ranked: MEMORY_RECALL_QUERY_CHARS, own_recent_window_hours: OWN_RECENT_WINDOW_HOURS },
       arguments_checked: v2
@@ -103,7 +187,8 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
       content: { line: '- <fact> (<YYYY-MM-DD>; <kind>)', never: ['page bodies', 'fence markers', 'heading markers', 'line breaks or control characters inside a fact'], bounded_by: 'max_chars: as many whole lines as fit; facts left out set structuredContent.truncated, with no marker line, because every line is one fact' },
       order: ['own facts from the last ' + OWN_RECENT_WINDOW_HOURS + ' hours, newest first', 'facts the person may read, ranked by query'],
       ranking: 'keyword-only unless an embedding provider is configured (no embedding call on a keyless brain)',
-      structured_content: { facts: [{ id: 'string', text: 'string', date: 'YYYY-MM-DD', kind: 'string' }], truncated: 'boolean', code: 'actor_unlinked (only on unlinked_recall)' },
+      structured_content: { facts: [{ id: 'string', text: 'string', date: 'YYYY-MM-DD', kind: 'string', ...(v3 ? { arm: '"own" | "ranked"' } : {}) }], truncated: 'boolean', code: 'actor_unlinked (only on unlinked_recall)' },
+      ...(v3 ? { arm: 'own: the person\'s own fact from the last ' + OWN_RECENT_WINDOW_HOURS + ' hours; ranked: matched by query (a fact found both ways is own); a call that names sources answers ranked rows only' } : {}),
       ...(v2 ? { scope_read: {
         arguments: ['source_id', 'source_ids'],
         rule: 'a call that names sources is read as their audience, never as the person: no own facts first and no member-page fact; a page restricted to named readers stays hidden; privacy is never relaxed',
@@ -136,7 +221,7 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
     },
     errors: {
       shape: { isError: true, content: 'one JSON text block with top-level code, message, suggestion and optional reason and fix', structuredContent: { error: { code: 'string', message: 'string', reason: 'string?', write_error: 'string?', fix: 'object?' } } },
-      applies_to: 'every refusal of memory_recall and memory_write, including the transport\'s scope and unknown-tool refusals',
+      applies_to: v3 ? 'every refusal of memory_recall and memory_write, and of a personal tool called with x-qm-actor, including the transport\'s scope and unknown-tool refusals' : 'every refusal of memory_recall and memory_write, including the transport\'s scope and unknown-tool refusals',
       codes: codes.map(code => {
         const entry: { class: string; summary: string; suggestion?: string; reasons?: readonly string[]; docs?: string } = CODES[code];
         return { code, class: entry.class, summary: (v2 ? undefined : V1_SUMMARIES[code]) ?? entry.summary, ...(entry.suggestion ? { suggestion: entry.suggestion } : {}), docs: entry.docs ?? 'docs/guides/error-codes.md#' + code,
@@ -155,7 +240,7 @@ export function renderQmMemoryContract(version: QmContractVersion): string {
 
 if (import.meta.main) {
   let stale = false;
-  for (const version of [1, 2] as const) {
+  for (const version of [1, 2, 3] as const) {
     const path = QM_CONTRACT_PATHS[version];
     const fresh = renderQmMemoryContract(version);
     if (process.argv.includes('--check')) {

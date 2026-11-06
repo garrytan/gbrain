@@ -361,7 +361,7 @@ for (const kind of testBackends()) {
       expect(new Set(ids).size).toBe(ids.length);
       expect(Object.keys(out.structured!).sort()).toEqual(['facts', 'truncated']);
       expect(out.structured!.truncated).toBe(false);
-      expect(out.structured!.facts[at('canaryownrecent')]).toEqual({ id: expect.any(String), text: 'Alice moved standup to Tuesdays canaryownrecent', date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), kind: 'fact' });
+      expect(out.structured!.facts[at('canaryownrecent')]).toEqual({ id: expect.any(String), text: 'Alice moved standup to Tuesdays canaryownrecent', date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), kind: 'fact', arm: 'own' });
       expect(out.out._meta?.brain_hot_memory).toBeUndefined();
       for (const as of [bob, { token: 'bob' }, { token: 'qm' }, { token: 'plain' }]) {
         const other = await recall(as, 'budget ledger standup Tuesdays');
@@ -431,6 +431,25 @@ for (const kind of testBackends()) {
       expect({ isError: none.isError, text: none.text, facts: none.structured?.facts }).toEqual({ isError: false, text: '', facts: [] });
       const unlinked = await recall({ token: 'scoped', actor: 'U0NOBODY' }, 'budget ledger', { source_ids: [SCOPE] });
       expect(unlinked.structured).toEqual({ facts: [], truncated: false, code: 'actor_unlinked' });
+    }, 120_000);
+
+    test('each recalled fact names its arm: own for the person\'s recent facts, ranked for query matches, ranked only under a scope read (GST-1158 F5)', async () => {
+      for (const [fact, provenance] of [['Alice charts the harbor tide canaryarmown', 'turn 50'], ['Alice charted the harbor tide last year canaryarmold', 'turn 49']]) {
+        expect((await write(alice, [{ fact, provenance }])).structured?.status).toBe('committed');
+      }
+      await engine.executeRaw("UPDATE facts SET created_at = now() - interval '3 days', valid_from = now() - interval '3 days' WHERE source_id = $1 AND fact LIKE '%canaryarmold%'", [SRC]);
+      await engine.insertFact({ fact: 'Acme harbor tide tables canaryarmranked', kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'world' }, { source_id: SRC });
+      const out = await recall(alice, 'harbor tide', { max_chars: 12_000 });
+      expect(out.isError).toBe(false);
+      const arm = (needle: string) => out.structured!.facts.find((f: { text: string }) => f.text.includes(needle))?.arm;
+      expect({ own: arm('canaryarmown'), old: arm('canaryarmold'), world: arm('canaryarmranked') }).toEqual({ own: 'own', old: 'ranked', world: 'ranked' });
+      for (const f of out.structured!.facts) expect(Object.keys(f).sort()).toEqual(['arm', 'date', 'id', 'kind', 'text']);
+      const firstRanked = out.structured!.facts.findIndex((f: { arm: string }) => f.arm === 'ranked');
+      expect(out.structured!.facts.slice(firstRanked).every((f: { arm: string }) => f.arm === 'ranked')).toBe(true);
+      const asScope = await recall(alice, 'harbor tide', { max_chars: 12_000, source_id: SRC });
+      expect(asScope.structured!.facts.length).toBeGreaterThan(0);
+      expect(asScope.structured!.facts.every((f: { arm: string }) => f.arm === 'ranked')).toBe(true);
+      expect(asScope.all).not.toContain('canaryarmown');
     }, 120_000);
 
     test('a recall that names sources keeps folder fail-closed coverage: facts under a pending prefix stay hidden', async () => {

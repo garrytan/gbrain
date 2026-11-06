@@ -18,7 +18,7 @@ import { withCallerAccess } from '../core/search/private-visibility.ts';
 import { appliedAccessSummary, remoteCallerAccess } from '../core/access/caller.ts';
 import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, parseAudience, type AudienceAuditEvent, type AudienceChannels, type AudiencePrincipal } from '../core/access/audience.ts';
 import { ACTOR_ARGUMENT, actorNotAttested, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
-import { qmMemoryToolResult, recallArguments, unlinkedRecallResult } from '../core/ops/qm-memory.ts';
+import { QM_PERSONAL_OPS, qmMemoryToolResult, recallArguments, unlinkedRecallResult } from '../core/ops/qm-memory.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
@@ -1022,7 +1022,12 @@ export async function dispatchToolCall(
       const out = await withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, callParams, resolved));
       // _meta.access (MCP_META_CHANNELS.md): the view this call was answered under, for the harness; own producer, isolated.
       try { out._meta = { ...(out._meta ?? {}), access: await appliedAccessSummary(engine, opts.auth, [opts.sourceId, ...(opts.localFederatedSourceIds ?? [])]) }; } catch { /* the key is absent */ }
-      return qmMemoryToolResult(name, out);
+      const personal = !!attested?.actor;
+      const shaped = qmMemoryToolResult(name, out, personal);
+      // GST-1158 F2: a personal read's structuredContent repeats its JSON, so the final frame is measured again.
+      if (!personal || shaped === out || shaped.isError || !QM_PERSONAL_OPS.has(name) || op?.mutating !== false) return shaped;
+      const over = await frameOverCap(shaped, { remote: true, transport: opts.transport === 'stdio' ? 'stdio' : 'http', engine, config: opts.config ?? loadConfig() });
+      return over ? qmMemoryToolResult(name, errorResult(resultTooLargeError(name, callParams ?? {}, over), opts, { op: name, mutating: false, idempotent: op.idempotent === true }), true) : shaped;
     });
   };
   if (name === 'search' || name === 'query') return withSearchConnectionBudget(() => withRequestConfigSnapshot(engine, run));
