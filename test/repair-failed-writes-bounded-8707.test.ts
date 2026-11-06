@@ -173,4 +173,22 @@ for (const backend of testBackends()) describe(`[${backend}] #8707 the failed-wr
     }
     expect(await checkpoints()).toBe(before);
   }, 120_000);
+  if (backend === 'postgres') test('one page with many refused writes and a long later history stays inside the statement timeout', async () => {
+    const sourceId = `b8707-${randomUUID().slice(0, 8)}`;
+    await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,NULL)', [sourceId]);
+    const insert = (state: string, n: number, tag: string) => engine.executeRaw(`INSERT INTO persistence_requests(principal_kind,principal_id,request_id,operation,source_id,
+        source_incarnation,slug,digest,intent,authority,state,intent_bytes,terminal_reservation,error_code,error_message)
+      SELECT 'local_cli','cli',gen_random_uuid(),'put_page',s.id,s.incarnation,'people/alice-example',md5($2||i),jsonb_build_object('slug','people/alice-example','content',$2||i),
+        '{}'::jsonb,$3,100,100,CASE WHEN $3='conflict' THEN 'source_changed' END,CASE WHEN $3='conflict' THEN 'refused' END
+      FROM sources s, generate_series(1,$4::int) i WHERE s.id=$1`, [sourceId, tag, state, n]);
+    await insert('conflict', 500, 'refused-');
+    await insert('committed', 20_000, 'later-');
+    await engine.executeRaw('ANALYZE persistence_requests');
+    const timed = await withEnv({ GBRAIN_STATEMENT_TIMEOUT: '1s' }, async () => { const e = new PostgresEngine(); await e.connect({ database_url: databaseUrl!, poolSize: 1 }); return e; });
+    try {
+      const result = await preview(timed, sourceId);
+      expect(result.residuals).toMatchObject({ superseded: 500 });
+      expect((result.listing ?? []).filter(entry => entry.class === 'superseded')).toHaveLength(500);
+    } finally { await timed.disconnect(); }
+  }, 120_000);
 });
