@@ -574,6 +574,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
   // for both the SDK's public-client route and our confidential-client route.
   readonly skipLocalPkceValidation = true;
   private sql: SqlQuery;
+  private transaction?: OAuthTransaction;
   private _clientsStore: GBrainClientsStore;
   private readonly dcrDisabled: boolean;
   private tokenTtl: number;
@@ -582,6 +583,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
   constructor(options: GBrainOAuthProviderOptions) {
     this.sql = options.sql;
+    this.transaction = options.transaction;
     this.dcrDisabled = options.dcrDisabled === true;
     this.tokenTtl = options.tokenTtl || 3600;
     this.refreshTtl = options.refreshTtl || 30 * 24 * 3600;
@@ -1127,7 +1129,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       const grant = { ...initial, ...changes, revision: 1 };
       grant.boundBrainId = normalizeGrantBrain(grant.boundBrainId);
       validateClientGrant(grant, await grantValidationContext(this.sql));
-      await insertClientGrant(this.sql, grant, { secretHash, redirectUris, grantTypes, authMethod, issuedAt: now });
+      // GST-1113: with a transaction, the scope-source check and the insert commit together under the source row locks.
+      const metadata = { secretHash, redirectUris, grantTypes, authMethod, issuedAt: now };
+      await (this.transaction ? this.transaction(sql => insertClientGrant(sql, grant, metadata)) : insertClientGrant(this.sql, grant, metadata));
       return { clientId, clientSecret };
     }
     if (grantPatch || hasScope(parseScopeString(scopes), 'agent')) {

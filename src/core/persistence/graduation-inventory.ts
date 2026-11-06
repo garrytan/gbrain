@@ -207,6 +207,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('timeline_entries', 'user_data', 'Timeline entries with attribution.'),
     carry('trust_proposals', 'user_data', 'Pending and decided trust decisions (#5575); dropping them would lose owner review state.'),
     carry('trust_allow_rules', 'user_data', 'The owner\'s receipted write-gate allow rules (gbrain trust allow); dropping them would re-quarantine sources the owner allowed.'),
+    carry('wake_subscriptions', 'operational', 'Report-back watches (Wakeshift): open ones point at jobs minion_jobs carries and at Wakeshift subscriptions that outlive the move, so a wake still arrives after graduation.'),
     carry('wanted_links', 'user_data', 'Unresolved authored links (wanted pages); the edge appears when the target page is written, so they are not re-derived without a full re-extraction.'),
     carry('write_gate_holds', 'user_data', 'Facts and takes the write gate held for the owner\'s review (#5575); dropping them would lose content awaiting release or drop.'),
     carry('write_gate_receipts', 'user_data', 'Write-gate verdicts (flag/quarantine) per persisted row (#5575); dropping them would forget which agent-written instructions are unconfirmed.'),

@@ -38,7 +38,8 @@ import { canonicalPath, sourceContext } from '../ghost-pages.ts';
 import { privatePagesFilterFragment, readHonorAliases } from '../search/private-visibility.ts';
 import { scannerSourcePath } from '../write-through.ts';
 import { managedPersistenceEnabled } from './ownership.ts';
-import { compareInlineExportFile, compareSegmentedExportBlob, declaredDatabaseOnly, readBlobs, readHeadTree, type ExportFileComparison, type TreeBlob } from './git-gap.ts';
+import { compareInlineExportFile, compareSegmentedExportBlob, declaredDatabaseOnly, DIRECTION_EVIDENCE, readBlobs, readDirectionEvidence, readHeadTree,
+  type DirectionEvidence, type Evidence, type EvidenceSubject, type ExportFileComparison, type TreeBlob } from './git-gap.ts';
 import { prepareRepairPublication, repairScreenConfig } from './file-repair.ts';
 import { SYNC_READ_BOUND } from './sync-blobs.ts';
 import { heldGitPaths, readSyncImportProvenances } from './sync-holds.ts';
@@ -77,6 +78,8 @@ export interface RowBehind {
   overlay?: true;
   /** The digest of the page the import of the checkpoint bytes publishes (`prepareRepairPublication`). */
   digest?: string;
+  /** A row with no import record, scanned with `evidence`: which side moved since the row and its file last agreed (d4, git-gap.ts readDirectionEvidence). */
+  evidence?: Evidence;
 }
 
 export interface RowsBehindScan {
@@ -89,14 +92,18 @@ export interface RowsBehindScan {
   complete: boolean;
   /** The page id the deadline stopped the scan at (not compared), or null. */
   stopped_at: number | null;
-  /** Live file-backed pages decided. */
+  /** Live file-backed pages decided; equals `live_pages` only when `complete`. */
   pages: number;
+  /** The source's live file-backed pages, counted in SQL before the scan, so a partial scan's `pages` reads against the whole source. */
+  live_pages: number;
   behind: RowBehind[];
   unproven: RowBehind[];
   /** More rows than ROWS_BEHIND_LIST_LIMIT in a class; `behind_count` / `unproven_count` keep counting. */
   truncated: boolean;
   behind_count: number;
   unproven_count: number;
+  /** d4: `unproven_count` split by content evidence (they sum to it); null when the scan read no evidence. */
+  unproven_by: Record<DirectionEvidence, number> | null;
   counts: Partial<Record<RowsBehindSkip, number>>;
 }
 
@@ -104,12 +111,14 @@ type Key = { id: string; slug: string; source_id: string; source_path: string; s
   frontmatter: unknown; database_only_reason: string | null; segmented: boolean; lineage_private: boolean; revision: string };
 
 const empty = (sourceId: string, status: RowsBehindScan['status'], reason?: string): RowsBehindScan => ({ source_id: sourceId, status, ...(reason ? { reason } : {}),
-  checkpoint: null, head: null, complete: status !== 'unknown', stopped_at: null, pages: 0, behind: [], unproven: [], truncated: false, behind_count: 0, unproven_count: 0, counts: {} });
+  checkpoint: null, head: null, complete: status !== 'unknown', stopped_at: null, pages: 0, live_pages: 0, behind: [], unproven: [], truncated: false, behind_count: 0, unproven_count: 0,
+  unproven_by: null, counts: {} });
 
 const isMarkdown = (path: string) => /\.mdx?$/i.test(path);
 
+/** `evidence` (d4): read which side moved for every unproven row once the scan completes (`unproven_by`, each row's `evidence`). */
 export async function scanRowsBehind(engine: BrainEngine, sourceId: string,
-  opts: { deadlineAt?: number; confirmUnproven?: boolean; now?: () => number; batchBytes?: number } = {}): Promise<RowsBehindScan> {
+  opts: { deadlineAt?: number; confirmUnproven?: boolean; now?: () => number; batchBytes?: number; evidence?: boolean } = {}): Promise<RowsBehindScan> {
   if (!(await managedPersistenceEnabled(engine))) return empty(sourceId, 'not_applicable', 'not_managed');
   const context = await sourceContext(engine, sourceId);
   if (!context.ok) return empty(sourceId, context.status, context.reason);
@@ -131,6 +140,9 @@ export async function scanRowsBehind(engine: BrainEngine, sourceId: string,
   const { eligible, metafileHeads } = await loadSyncEligibility(engine, { root, gitRoot: checkpoint.gitRoot, sourceId, source: { last_commit: source.last_commit, config: source.config ?? {} } });
   const policy = { mirror: false, databaseOnlySource: false, dbOnly: (slug: string) => isSourceDbOnlySlug(root, slug, 'refuse'), ignored: new Set<string>() };
   const scan: RowsBehindScan = { ...empty(sourceId, 'known'), checkpoint: checkpoint.commit, head: head.commit };
+  const [live] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL', [sourceId]);
+  scan.live_pages = Number(live?.n ?? 0);
+  const subjects: EvidenceSubject[] = [];
   const count = (why: RowsBehindSkip) => { scan.counts[why] = (scan.counts[why] ?? 0) + 1; };
   const batchBytes = opts.batchBytes ?? ROWS_BEHIND_BATCH_BYTES;
   let screen: Awaited<ReturnType<typeof repairScreenConfig>> | undefined;
@@ -220,12 +232,20 @@ export async function scanRowsBehind(engine: BrainEngine, sourceId: string,
       if (typeof row === 'string') { count(row); continue; }
       const list = row.record === 'recorded' ? scan.behind : scan.unproven;
       if (row.record === 'recorded') scan.behind_count++; else scan.unproven_count++;
+      if (row.record !== 'recorded' && opts.evidence) subjects.push({ id: candidate.key.id, slug: candidate.key.slug, revision: candidate.key.revision, rel: candidate.rel,
+        importPath: scannerSourcePath(root, `${root}/${candidate.rel}`, context.mode), segmented: candidate.key.segmented === true, blob: candidate.blob });
       if (list.length < ROWS_BEHIND_LIST_LIMIT) list.push(row); else scan.truncated = true;
     }
     for (const [id, why] of skipped) if (stop === null || id < stop) count(why);
     scan.pages += stop === null ? ids.length : ids.filter(id => id < stop!).length;
     if (stop !== null) { scan.complete = false; scan.stopped_at = stop; break; }
     if (done) break;
+  }
+  if (opts.evidence && scan.complete) {
+    const evidence = await readDirectionEvidence(engine, { sourceId, root, gitRoot: checkpoint.gitRoot, scope, tip: checkpoint.commit, format: checkpoint.format, mode: context.mode, subjects });
+    scan.unproven_by = Object.fromEntries(DIRECTION_EVIDENCE.map(kind => [kind, 0])) as Record<DirectionEvidence, number>;
+    for (const subject of subjects) scan.unproven_by[evidence.get(subject.id)!.kind]++;
+    for (const row of scan.unproven) { const found = evidence.get(String(row.page_id)); if (found) row.evidence = found; }
   }
   return scan;
 }

@@ -1,5 +1,5 @@
 /**
- * GBRA-284 (GST-359 G1 wave 2): personal sources. `access_member_sources` (v291) binds a source (a person's DM or
+ * GBRA-284 (GST-359 G1 wave 2): personal sources. `access_member_sources` (v295) binds a source (a person's DM or
  * member source) to the member it belongs to; a source with at least one binding is personal. Sources are not keyed to
  * members otherwise, so without this an attest client granted every person's DM source would let every attested person
  * read every other person's DM source.
@@ -79,7 +79,7 @@ async function sourceOwners(engine: BrainEngine, source: string): Promise<string
 
 /**
  * The personal sources among `sources` an attested call for `member` must not read: every personal source not bound to
- * that member, or every personal source under a scope read. A schema before v291 has no personal source.
+ * that member, or every personal source under a scope read. A schema before v295 has no personal source.
  */
 export async function hiddenPersonalSources(engine: Pick<BrainEngine, 'executeRaw'>, sources: readonly string[], member: string, scopeRead: boolean): Promise<Set<string>> {
   const ids = [...new Set(sources)];

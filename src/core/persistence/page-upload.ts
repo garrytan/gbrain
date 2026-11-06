@@ -109,7 +109,7 @@ export interface UploadRow {
 
 const LIVE = `'{${LIVE_STAGING_STATES.join(',')}}'::text[]`;
 /** The session `s` is named by an unfinished write (its staged body is a GC root until that write ends). */
-const REQUEST_HELD_SQL = `EXISTS (SELECT 1 FROM persistence_requests r WHERE r.state IN ('queued','running','recovering')
+const REQUEST_HELD_SQL = `EXISTS (SELECT 1 FROM persistence_requests r WHERE r.state IN ('queued','deferred','running','recovering')
       AND r.intent->'body_ref'->>'staging_id' = s.id::text)`;
 /**
  * The session `s` expires: an open session past either deadline, a sealed (committing) one only past its hard deadline,

@@ -1155,7 +1155,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 173 table(s) the applied migrations create exist.",
+          "message": "All 174 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -1485,6 +1485,14 @@
               },
               {
                 "name": "persistence_requests_foreground_committed",
+                "state": "valid"
+              },
+              {
+                "name": "persistence_requests_replay_id",
+                "state": "valid"
+              },
+              {
+                "name": "persistence_requests_slug_sequence",
                 "state": "valid"
               }
             ],
@@ -2759,6 +2767,40 @@
           "status": "ok"
         },
         {
+          "category": "brain",
+          "details": {
+            "dirty": [
+              {
+                "age_ms": "<volatile>",
+                "checkout": "<home>/notes-src",
+                "path": "notes/broken-frontmatter.md",
+                "state": "untracked"
+              }
+            ],
+            "dirty_count": 1,
+            "dirty_warn_after_minutes": 30,
+            "foreign": [],
+            "partial": false,
+            "unconfirmed": [],
+            "unknown": [],
+            "window": [
+              {
+                "common": "<home>/notes-src/.git",
+                "from": null,
+                "ledger": false,
+                "ledger_start": null,
+                "oldest_reflog": "<ts>",
+                "to": "<ts>",
+                "uncovered": 2
+              }
+            ]
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Every locally created commit in the covered window of 1 repository is in gbrain's commit ledger, and no page file waits uncommitted for more than 30 minutes. A repository gbrain has not committed in yet has no ledger, so its window is empty.",
+          "name": "foreign_writers",
+          "status": "ok"
+        },
+        {
           "category": "ops",
           "elapsed_ms": "<volatile>",
           "message": "System One is off (every decide slot is off; nothing is sent).",
@@ -3029,6 +3071,20 @@
           "elapsed_ms": "<volatile>",
           "message": "No facts-absorb jobs are queued (no run recorded yet).",
           "name": "facts_drain",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "docs": "docs/guides/wakeshift.md#troubleshooting",
+            "enabled": false,
+            "key_source": "none"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Reporting back through Wakeshift is off (gbrain wakeshift enable turns it on).",
+          "name": "wakeshift",
+          "readiness_state": "disabled_by_choice",
+          "severity": "info",
           "status": "ok"
         },
         {
@@ -3728,6 +3784,7 @@
                   "mirror_source": 0,
                   "private": 0
                 },
+                "live_pages": 5,
                 "pages": 5,
                 "source_id": "notes",
                 "states": {
@@ -3753,7 +3810,7 @@
             "timeout_ms": "<volatile>"
           },
           "elapsed_ms": "<volatile>",
-          "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 5 equal. Page detail: gbrain sources git-gap <source-id>.",
+          "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 5 live page(s), 5 equal. Page detail: gbrain sources git-gap <source-id>.",
           "name": "db_ahead_of_git",
           "status": "ok"
         },

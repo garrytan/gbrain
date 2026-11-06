@@ -1559,6 +1559,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
         if (cursor.passId && ((fileChangedAfterAdmission(done) && !passedOverBefore(cursor.passId, pending.requestId)) || (done.error_code === 'page_identity_changed'
           && await liveRevision(engine, context.sourceId, pending) !== (pending.intent.expected_revision == null ? null : String(pending.intent.expected_revision))))) {
           cursor = await saveCursor(engine, key, cursor, committedPast({ ...cursor, counts: { ...cursor.counts } }, pending));
+          await faultPoint('sync:passed_over', { sourceId: cursor.sourceId, path: pending.intent.path ?? undefined });
           assertActive();
           continue;
         }

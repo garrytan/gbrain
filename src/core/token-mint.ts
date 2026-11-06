@@ -103,13 +103,21 @@ export async function insertUnifiedToken(engine: BrainEngine, opts: {
   grant: Pick<PrincipalGrant, 'sources' | 'allowedOperations' | 'takesHolders'>;
 }): Promise<Array<{ id: string }>> {
   const scopes = opts.scopes === undefined ? null : `{${opts.scopes.join(',')}}`;
+  const { assertScopeSourceGrant, sourcesOf } = await import('./access/attest-sources.ts');
+  const reads = sourcesOf(opts.grant.sources).reads;
+  const insert = (db: BrainEngine) => db.executeRaw<{ id: string }>(
+    `INSERT INTO access_tokens (name, token_hash, scopes, permissions, ${TOKEN_GRANT_COLUMNS.join(', ')}, grant_revision)
+     VALUES ($1, $2, $3::text[], $4::jsonb, $5, $6, $7::text[], $8::text[], $9::text[], 1)
+     RETURNING id`,
+    [opts.name, opts.tokenHash, scopes, permissionsMirror(opts.grant, {}), ...tokenGrantColumnValues(opts.grant)],
+  );
   try {
-    return await engine.executeRaw<{ id: string }>(
-      `INSERT INTO access_tokens (name, token_hash, scopes, permissions, ${TOKEN_GRANT_COLUMNS.join(', ')}, grant_revision)
-       VALUES ($1, $2, $3::text[], $4::jsonb, $5, $6, $7::text[], $8::text[], $9::text[], 1)
-       RETURNING id`,
-      [opts.name, opts.tokenHash, scopes, permissionsMirror(opts.grant, {}), ...tokenGrantColumnValues(opts.grant)],
-    );
+    // GST-1113: a grant reading a named source checks it and inserts in one transaction, under the source row locks.
+    if (!reads.some(s => s !== 'default')) return await insert(engine);
+    return await engine.transaction(async tx => {
+      await assertScopeSourceGrant(tx, null, reads);
+      return insert(tx);
+    });
   } catch (e) {
     // isUndefinedColumnError also matches message-shaped variants: some
     // driver-wrapped errors drop the SQLSTATE code.

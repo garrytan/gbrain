@@ -4,9 +4,10 @@ import { memberIdentity, parseMayActFor, parseMemberFlag, type BindingPatch, typ
 import { ATTEST_SYSTEMS, DEFAULT_ATTEST_OPS, parseAttestOps } from '../core/access/actor.ts';
 import { operationsByName } from '../core/operations.ts';
 import { opError } from '../core/ops/contract.ts';
+import { assertValidSourceId } from '../core/source-id.ts';
 import { usageError } from '../cli/cli-error.ts';
 
-const FLAGS = ['--member', '--may-act-for', '--attest-actor', '--attest-ops', '--attest-read'] as const;
+const FLAGS = ['--member', '--may-act-for', '--attest-actor', '--attest-ops', '--attest-read', '--attest-sources'] as const;
 type Flag = typeof FLAGS[number];
 const NEEDS: Record<Flag, string> = {
   '--member': 'Pass a member id, or none to unbind (gbrain access member list).',
@@ -14,6 +15,7 @@ const NEEDS: Record<Flag, string> = {
   '--attest-actor': 'Pass qm (the system whose x-qm-actor header this credential may send), or none.',
   '--attest-ops': 'Pass a comma-separated list of operations an attested call may run (default get_write_request,memory_recall,memory_write).',
   '--attest-read': 'Pass person (a call that names sources reads them as the person), scope (as the scope, and every call must name a person) or none (the default: named sources read as the scope).',
+  '--attest-sources': 'Pass a comma-separated list of scope sources an attested memory_write may name (source_id), or none.',
 };
 
 function parseAttestRead(value: string): 'person' | 'scope' | null {
@@ -21,6 +23,15 @@ function parseAttestRead(value: string): 'person' | 'scope' | null {
   if (v === 'none') return null;
   if (v === 'person' || v === 'scope') return v;
   throw opError('invalid_params', `--attest-read ${value} is not a read mode.`, NEEDS['--attest-read']);
+}
+
+/** GST-1113: `--attest-sources a,b|none`: distinct source ids (each checked against the brain when applied), or null. */
+function parseAttestSources(value: string): string[] | null {
+  if (value.trim() === 'none') return null;
+  const sources = [...new Set(value.split(',').map(s => s.trim()).filter(Boolean))];
+  if (!sources.length) throw opError('invalid_params', '--attest-sources needs at least one source.', 'Pass a comma-separated list of scope source ids, or none to clear it.');
+  for (const s of sources) assertValidSourceId(s);
+  return sources.sort();
 }
 
 function parseAttestActor(value: string): string | null {
@@ -50,7 +61,8 @@ export function takeBindingFlags(args: string[]): { args: string[]; patch: Bindi
     else if (flag === '--may-act-for') patch.mayActFor = parseMayActFor(value);
     else if (flag === '--attest-actor') patch.attestActor = parseAttestActor(value);
     else if (flag === '--attest-read') patch.attestRead = parseAttestRead(value);
-    else patch.attestOps = parseAttestOps(value, name => operationsByName[name]);
+    else if (flag === '--attest-ops') patch.attestOps = parseAttestOps(value, name => operationsByName[name]);
+    else patch.attestSources = parseAttestSources(value);
     seen = true;
   }
   return { args: out, patch: seen ? patch : null };
@@ -62,6 +74,6 @@ export async function checkBindingTarget(engine: BrainEngine, patch: BindingPatc
 }
 
 export function bindingLine(b: BindingResult, dryRun = false): string {
-  const attest = b.attest_actor ? `; attests actor: ${b.attest_actor} for ${(b.attest_ops ?? DEFAULT_ATTEST_OPS).join(', ')}; named sources read as: ${b.attest_read ?? 'scope (default)'}` : '';
+  const attest = b.attest_actor ? `; attests actor: ${b.attest_actor} for ${(b.attest_ops ?? DEFAULT_ATTEST_OPS).join(', ')}; named sources read as: ${b.attest_read ?? 'scope (default)'}${b.attest_sources?.length ? `; scope sources: ${b.attest_sources.join(', ')}` : ''}` : '';
   return `  Member: ${b.member ?? 'none'}; may act for: ${b.may_act_for?.join(', ') ?? 'none'}${attest}${b.changed ? (dryRun ? ' (preview, not written)' : ' (updated)') : ''}`;
 }

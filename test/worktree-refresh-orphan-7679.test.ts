@@ -7,7 +7,8 @@
  * `--resume` path, then refreshes; owner recovery completes an orphaned
  * `syncing` row once its members synced to the target or a descendant of it;
  * writer status and sync status name the recorded holder, whether it is
- * orphaned, and a fix naming `--resume`.
+ * orphaned, and a fix naming `--resume`; with the PR B barrier on, a write deferred behind the orphan commits once
+ * the next refresh finishes it.
  * Regression it catches: every scheduled refresh refusing `refresh_in_progress`
  * forever after a crash (and every page write to the worktree refusing
  * `worktree_refreshing`), owner recovery skipping `syncing` rows, status that
@@ -29,7 +30,11 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { printRefreshOutcome, runSourcesRefresh } from '../src/commands/sources-refresh.ts';
 import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
-import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { disposePersistenceConsumer, waitForWrite } from '../src/core/persistence/service.ts';
+import { getWriteRequestById } from '../src/core/persistence/journal.ts';
+import { resetWriteSwitches } from '../src/core/persistence/switches.ts';
+import type { WriteRequest } from '../src/core/persistence/model.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { refreshWorktree, resumeWorktreeRefreshes } from '../src/core/persistence/worktree-refresh.ts';
@@ -128,6 +133,28 @@ test('#7679: a refresh killed mid-syncing is reported orphaned with its holder, 
     expect(await writerRefreshes(f, f.beta)).toEqual([]);
     expect((await readSyncStatus(f.engine, f.beta, { detail: false })).worktree_refresh).toBeNull();
     expect((await f.put(f.beta, 'notes/after-recovery', page('After', 'admitted'))).state ?? 'committed').toBe('committed');
+  });
+}, 300_000);
+
+test('PR B: a write deferred behind a refresh whose process was killed commits once the next refresh finishes the orphan', async () => {
+  for (const item of cases) await withKilledRefresh(item, async ({ f, orphan }) => {
+    await withEnv({ GBRAIN_REFRESH_BARRIER: '1' }, async () => {
+      resetWriteSwitches();
+      try {
+        const result = await dispatchToolCall(f.engine, 'put_page', { slug: 'notes/deferred-past-kill', content: page('Deferred past a kill', 'admitted while the refresh was orphaned') },
+          { remote: true, transport: 'stdio', sourceId: f.beta, admissionOrigin: 'interactive' });
+        const body = JSON.parse(result.content[0]!.text) as Record<string, any>;
+        expect(result.isError === true).toBe(false);
+        expect(body).toMatchObject({ status: 'pending', deferred: { refresh_id: orphan.id } });
+        const [row] = await f.engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id=$1::uuid', [body.request_id]);
+        expect(row!.state).toBe('deferred');
+        expect(await refreshWorktree(f.engine, f.alpha)).toMatchObject({ recovered: { refresh_id: orphan.id, state: 'completed' } });
+        const done = await waitForWrite(f.engine, (await getWriteRequestById(f.engine, row!.id))!, { engine: f.engine.kind } as never, 30_000);
+        expect(done.state).toBe('committed');
+        const [{ n }] = await f.engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [f.beta, 'notes/deferred-past-kill']);
+        expect(Number(n)).toBe(1);
+      } finally { resetWriteSwitches(); }
+    });
   });
 }, 300_000);
 

@@ -55,7 +55,7 @@ export async function loadRepairBusySet(engine: BrainEngine, sourceId: string, i
   try {
     const pending = await engine.executeRaw<PendingRow>(`SELECT slug, intent->>'path' AS path, intent->>'sourcePath' AS source_path,
         intent->'renameFrom'->>'slug' AS rename_slug, intent->'renameFrom'->>'sourcePath' AS rename_source_path
-      FROM persistence_requests WHERE source_id=$1 AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL)`, [sourceId]);
+      FROM persistence_requests WHERE source_id=$1 AND (state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL)`, [sourceId]);
     for (const row of pending) { add(row.path, row.slug); add(row.source_path); add(row.rename_source_path, row.rename_slug); }
     const cursors = await engine.executeRaw<CursorRow>(`SELECT completed_keys->0->>'runId' AS run_id, completed_keys->0->>'index' AS index
       FROM op_checkpoints WHERE op='managed-sync' AND COALESCE(completed_keys->0->>'done','false')<>'true'

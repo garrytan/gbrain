@@ -30,6 +30,7 @@ import { generateToken, isMissingSchemaObject } from '../core/utils.ts';
 import { TOKEN_ID_RE, insertUnifiedToken } from '../core/token-mint.ts';
 import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../core/sql-query.ts';
+import type { OAuthTransaction } from '../core/oauth-grants.ts';
 import { readClientGrant, rescopeClientGrant, resolveGrantProfile, type GrantPatch } from '../core/grants/service.ts';
 import { parseClientRescopeArgs, parseRescopeGrantArgs, splitRescopeTarget, type RescopeGrantArgs } from '../core/grants/cli.ts';
 import { GRANT_PROFILES, GrantError, TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, grantFromClient, privatePagesFromColumn, type ClientGrant, type PrivatePagesGrant } from '../core/grants/model.ts';
@@ -601,6 +602,8 @@ export async function preflightOauthClientColumns(sql: SqlQuery): Promise<Set<st
 export interface RegisterScopedClientOpts {
   /** Explicit normalized profile snapshot; old callers keep legacy operation grants. */
   grant?: GrantPatch;
+  /** GST-1113: runs the grant insert in one transaction (callers not already inside one). */
+  transaction?: OAuthTransaction;
   /** Per-client access-token TTL to persist (oauth_clients.token_ttl). */
   tokenTtlSeconds?: number;
   /** Per-client tool-surface tier, written via provider.rescopeClient — the
@@ -669,7 +672,7 @@ export async function registerScopedClient(
     }
     : undefined;
   const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
-  const provider = new GBrainOAuthProvider({ sql });
+  const provider = new GBrainOAuthProvider({ sql, transaction: opts.transaction });
   const { clientId, clientSecret } = await provider.registerClientManual(
     name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, agentBindings, opts.grant,
   );
@@ -793,7 +796,7 @@ async function registerClient(name: string, args: string[]) {
       const columns = parsed.tokenTtlSeconds !== undefined
         ? await preflightOauthClientColumns(sql)
         : undefined;
-      const registered = await registerScopedClient(sql, name, parsed, { columns });
+      const registered = await registerScopedClient(sql, name, parsed, { columns, transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
       const bound = binding.patch ? await bindCredential(engine, { kind: 'client', id: registered.clientId }, binding.patch) : null;
       if (registered.skipped?.tokenTtl) {
         console.error('Note: this brain predates the token_ttl column; run `gbrain apply-migrations --yes`, then rescope. The server default TTL applies.');

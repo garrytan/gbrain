@@ -455,6 +455,21 @@ file's working copy (`Dp`) only when the path would otherwise be admitted, so
 `dirty` counts only those, and a file whose page already matches its commit
 reads `matched` even when its working copy is edited.
 
+## Writes deferred behind a refresh
+
+With `persistence.refresh_barrier` on (off by default), a page write that
+arrives while `gbrain sources refresh` holds its worktree is not refused
+`worktree_refreshing`: it waits in state `deferred` and the caller gets a
+pending receipt. `gbrain sources writer status <id> --json` lists those rows
+with `state: "deferred"` in `requests`, and the `queue` entry for
+`deferred` carries their count and `oldest_age_ms`. They are not stuck while
+the refresh runs: once it completes or aborts they publish in order, and one
+whose file the refresh changed ends `revision_conflict`. A write still waiting
+after `persistence.refresh_barrier_max_wait_ms` ends
+[`refresh_barrier_expired`](write-refusals.md#refresh_barrier_expired) with
+nothing applied: check the refresh, then submit it again with a new request id.
+Before downgrading gbrain, `gbrain upgrade --check-downgrade` must exit 0.
+
 ## See also
 
 - [`write-refusals.md`](write-refusals.md#held-files-and-content-refusals): every hold code with its recovery.

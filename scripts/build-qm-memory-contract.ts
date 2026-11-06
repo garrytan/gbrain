@@ -13,6 +13,8 @@ import { operations } from '../src/core/operations.ts';
 import { paramDefToSchema } from '../src/mcp/tool-defs.ts';
 import { CODES } from '../src/core/error-registry.ts';
 import { ACTOR_ARGUMENT, ACTOR_DEFERRED_OPS, ACTOR_HEADER, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, QM_AUDIENCE_HEADER } from '../src/core/access/actor-model.ts';
+import { SCOPE_PAGE_SLUG } from '../src/core/access/principals.ts';
+import { QUESTION_MAX_CHARS } from '../src/core/facts/question-recall.ts';
 import { IDEMPOTENCY_KEY_RE, MEMORY_RECALL_MAX_CHARS, MEMORY_RECALL_QUERY_CHARS, MEMORY_WRITE_KINDS, MEMORY_WRITE_MAX_FACTS, MEMORY_WRITE_PROVENANCE_MAX, OWN_RECENT_WINDOW_HOURS, QM_MEMORY_OPS, unlinkedRecallResult } from '../src/core/ops/qm-memory.ts';
 
 export type QmContractVersion = 1 | 2;
@@ -58,7 +60,7 @@ const ERROR_NOTES: Partial<Record<typeof ERROR_CODES[number], string>> = {
 /** v2 changes to v1's fix rows (GST-900: a member-bound credential may name its own member). */
 const V2_REASON_FIXES: Partial<typeof ACTOR_REASON_FIXES> = {
   argument_mismatch: { fixed_by: 'calling_harness', fix: 'Send acting_user equal to the x-qm-actor header (with no header, on a credential bound to a member: that member id or a canonical id linked to it), or omit it.' },
-  argument_without_attestation: { fixed_by: 'calling_harness', fix: 'Remove acting_user, or send the x-qm-actor header from a credential holding the attest right; a credential bound to no member never sends acting_user alone.' },
+  argument_without_attestation: { fixed_by: 'calling_harness', fix: 'Remove acting_user, or send the x-qm-actor header from a credential holding the attest right; a credential bound to no member never sends acting_user alone. detail missing=<attest_right|x-qm-actor, comma-separated> names what this call lacked.' },
 };
 
 function toolEntry(name: string, version: QmContractVersion) {
@@ -78,7 +80,8 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
   const codes = v2 ? [...ERROR_CODES, 'permission_denied' as const] : ERROR_CODES;
   const notes: Record<string, string | undefined> = v2 ? { ...ERROR_NOTES,
     actor_not_attested: 'With no x-qm-actor header, acting_user is accepted only from a credential bound to a member and only naming that member (its member id or a canonical id linked to it); the call then runs exactly as the credential.',
-    permission_denied: 'memory_recall named a source (source_id or source_ids) outside the credential\'s read grant; nothing was read.' } : ERROR_NOTES;
+    invalid_params: `${ERROR_NOTES.invalid_params} A memory_write whose source_id is the credential's own source carries reason source_is_member_source (omit source_id instead). recall refuses a question over ${QUESTION_MAX_CHARS} UTF-16 code units with reason question_too_long and detail max_chars=${QUESTION_MAX_CHARS} received_chars=<n>; nothing is read and the question is never cut, so shorten it and retry.`,
+    permission_denied: 'memory_recall named a source (source_id or source_ids) outside the credential\'s read grant; nothing was read. memory_write named a source_id that is not one of the credential\'s scope sources (reason source_not_attested, also at publication after the operator drops it), or the scope page names readers (reason scope_page_not_shared); nothing was saved.' } : ERROR_NOTES;
   return {
     contract: 'gbrain.qm-memory-provider', version,
     transport: { protocol: 'mcp', session: 'stateless', session_header_issued: false, success_codes_in: 'structuredContent',
@@ -94,7 +97,9 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
     tools: [...QM_MEMORY_OPS].sort().map(name => toolEntry(name, version)),
     memory_recall: {
       limits: { max_chars: { ...MEMORY_RECALL_MAX_CHARS, whole_number: true, unit: 'UTF-16 code units (JavaScript string length)' }, query_chars_ranked: MEMORY_RECALL_QUERY_CHARS, own_recent_window_hours: OWN_RECENT_WINDOW_HOURS },
-      arguments_checked: 'query and max_chars are checked before any read, also for an unlinked person (invalid_params)',
+      arguments_checked: v2
+        ? `query and max_chars are checked before any read, also for an unlinked person (invalid_params); a longer query is ranked on its first ${MEMORY_RECALL_QUERY_CHARS} characters and never refused (recall's question is refused over ${QUESTION_MAX_CHARS}: invalid_params reason question_too_long)`
+        : 'query and max_chars are checked before any read, also for an unlinked person (invalid_params)',
       content: { line: '- <fact> (<YYYY-MM-DD>; <kind>)', never: ['page bodies', 'fence markers', 'heading markers', 'line breaks or control characters inside a fact'], bounded_by: 'max_chars: as many whole lines as fit; facts left out set structuredContent.truncated, with no marker line, because every line is one fact' },
       order: ['own facts from the last ' + OWN_RECENT_WINDOW_HOURS + ' hours, newest first', 'facts the person may read, ranked by query'],
       ranking: 'keyword-only unless an embedding provider is configured (no embedding call on a keyless brain)',
@@ -118,6 +123,16 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
       retries: 'never retried server-side; a write still publishing answers pending',
       committed: { content: 'Saved <N> fact(s).', structuredContent: { status: 'committed', request_id: 'uuid', fact_ids: ['string'] }, fact_ids: 'distinct; facts repeating one claim in a call share one id, and <N> counts distinct facts' },
       pending: { content: 'Accepted <N> fact(s); <M> still publishing.', structuredContent: { status: 'pending', request_id: 'uuid', fact_ids: ['string'], pending_request_ids: ['uuid'] }, poll: 'get_write_request {request_id}' },
+      ...(v2 ? { scope_write: {
+        argument: 'source_id',
+        rule: 'names one of the credential\'s scope sources (attest_sources, which the brain operator sets on the host); checked on the call and again when the write publishes, so a source the operator drops refuses queued writes; omit it to save for the person alone, exactly as without it',
+        saved_as: { page: SCOPE_PAGE_SLUG, readers: 'none: whoever holds read on the scope source, which only scope credentials may', visibility: 'world', provenance: 'qm:<actor id>; <caller provenance>' },
+        request_id: 'uuidv5(uuidv5(namespace, "member:<member>#source:<source_id>"), idempotency_key) for the first fact; later facts derive from it; without source_id the member derivation above is unchanged',
+        replay: 'per person and source: the same idempotency_key in another source is a separate write',
+        pending: 'a scope source with a repository publishes git-first through its writer and answers pending until it commits; a source without one commits to the database',
+        recall: 'read it with memory_recall source_id (read as the scope); a memory_recall without sources never reads a scope source',
+        withdrawal: 'forget and forget_fact reach only the person\'s own member page, so a scope fact is not_found remotely',
+      } } : {}),
     },
     errors: {
       shape: { isError: true, content: 'one JSON text block with top-level code, message, suggestion and optional reason and fix', structuredContent: { error: { code: 'string', message: 'string', reason: 'string?', write_error: 'string?', fix: 'object?' } } },

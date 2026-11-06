@@ -151,7 +151,7 @@ export async function topologyCanonicalStamp(tx:BrainEngine,worktreeId:string):P
 export async function settleTopologyRequests(tx: BrainEngine, sources: string[], worktrees: string[], principal: string): Promise<number> {
   const requests = await tx.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests
     WHERE (source_id=ANY($1::text[]) OR worktree_id=ANY($2::uuid[]))
-      AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL) ORDER BY sequence`, [sources,worktrees]);
+      AND (state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL) ORDER BY sequence`, [sources,worktrees]);
   const busy = requests.find(row => row.state === 'running' || row.state === 'recovering' || row.recovery != null);
   if (busy) {
     throw opError('write_pending', 'Publication must finish or recover before source lifecycle can proceed.',
@@ -167,7 +167,7 @@ export async function settleTopologyRequests(tx: BrainEngine, sources: string[],
       `Effect ${blocked.id} on source ${source} (a queued withdrawal mirror, a running effect or one holding a recovery record) has not finished, so the lifecycle change rolled back and nothing changed. The owner's effect worker settles it; check it with the command in fix, which lists it with its page and request. Then run the same lifecycle command again with the same request_id.`,
       {fix:ownerStatusFix(source)});
   }
-  const pending = requests.filter(row => row.state === 'queued');
+  const pending = requests.filter(row => row.state === 'queued' || row.state === 'deferred');
   // Revocation and publication use the same principal rows. Administrative
   // invalidation may terminate revoked work but still respects guard ordering.
   const principals = new Map(pending.map(row => [`${row.principal_kind}:${row.principal_id}`,requestPrincipal(row)]));

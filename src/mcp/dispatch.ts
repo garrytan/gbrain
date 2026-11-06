@@ -15,7 +15,7 @@ import type { OperationMeta } from '../core/ops/contract.ts';
 import { loadConfig } from '../core/config.ts';
 import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { withCallerAccess } from '../core/search/private-visibility.ts';
-import { appliedAccessSummary, remoteCallerAccess } from '../core/access/caller.ts';
+import { appliedAccessSummary, folderAccessFor, remoteCallerAccess } from '../core/access/caller.ts';
 import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, parseAudience, type AudienceAuditEvent, type AudienceChannels, type AudiencePrincipal } from '../core/access/audience.ts';
 import { ACTOR_ARGUMENT, actorNotAttested, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
 import { attestedReadMode, SCOPE_READ_ACCESS, withReadMode, type ReadMode } from '../core/access/scope-read.ts';
@@ -59,7 +59,7 @@ import { enforceReadTrustFloor } from '../core/eligibility/registry.ts';
 import { invalidateHotMemoryForEngine } from '../core/facts/meta-hook.ts';
 import { withSearchConnectionBudget } from '../core/search/connection-budget.ts';
 import { isEngineDegraded } from '../core/degraded-marker.ts';
-import { admittedPendingReceipt, type WriteReceipt } from '../core/persistence/types.ts';
+import { admittedPendingReceipt, isWriteReceipt, publicWriteReceipt, type WriteReceipt } from '../core/persistence/types.ts';
 import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, withRequestIdentityMemo, withVerifiedLocalRegistration } from '../core/persistence/identity.ts';
 import { frameOverCap, resultTooLargeError } from '../core/egress-budget.ts';
 import { isAIInvocationPolicyError } from '../core/ai/invocation-guard.ts';
@@ -176,6 +176,8 @@ export interface ToolResult {
 }
 
 export interface DispatchOpts {
+  /** Wakeshift: the MCP caller as the transport saw it (OperationContext.mcpCaller); never from tool arguments. */
+  mcpCaller?: OperationContext['mcpCaller'];
   /** GST-359 C1: the x-qm-actor header the HTTP transport read (a trusted system names the person); stdio never sets it. */
   actor?: ActorChannels;
   /**
@@ -185,6 +187,8 @@ export interface DispatchOpts {
   onBehalfOf?: AudienceChannels;
   /** #6696 (A5): set by the trusted transport for the user's own agent calls; never from wire params. */
   admissionOrigin?: OperationContext['admissionOrigin'];
+  /** The caller's self-declared agent label (X-Gbrain-Agent-Label), parsed by the transport; recorded only, never authority. */
+  agentLabel?: string;
   /** Configuration selected by the resident transport, never populated from wire params. */
   config?: OperationContext['config'];
   /** Defaults to true (remote/untrusted). Local CLI callers (`gbrain call`) pass false. */
@@ -315,6 +319,8 @@ export interface DispatchOpts {
   isListed?: (op: OperationMeta) => Promise<boolean>;
   /** #5232: commit wait for coordinated writes (OperationContext.writeWaitMs); unset = agent default. */
   writeWaitMs?: number;
+  /** PR B: the owner socket answers a write deferred behind a refresh as the write_pending error, so its CLI exits 10 and polls. */
+  pendingAsError?: boolean;
   /** Large pages: the caller sent X-Gbrain-Client (OperationContext.thinClient). Shape only, never authority. */
   thinClient?: boolean;
   /** C1: search/query row shape chosen by the transport (OperationContext.resultRows); unset = lean for remote callers. */
@@ -544,9 +550,30 @@ export type RequestLogStatus = 'success' | 'success_with_warnings' | 'accepted_p
 
 /** #5249: the receipt of a write the dispatcher returned as accepted but not yet committed. */
 export function acceptedPendingReceipt(result: ToolResult): WriteReceipt | null {
-  if (!result.isError) return null;
-  try { return admittedPendingReceipt(JSON.parse(result.content[0]?.text ?? '{}')); }
-  catch { return null; }
+  const text = result.content[0]?.text ?? '{}';
+  if (!result.isError && !/^\s*\{\s*"status"\s*:\s*"pending"/.test(text.slice(0, 64))) return null;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return result.isError ? admittedPendingReceipt(parsed) : deferredPendingReceipt(parsed);
+  } catch { return null; }
+}
+
+/** PR B: the receipt of a successful `status: "pending"` result, a write deferred behind a refresh. */
+function deferredPendingReceipt(parsed: unknown): WriteReceipt | null {
+  const body = parsed as { status?: unknown; receipt?: unknown } | null;
+  return body?.status === 'pending' && isWriteReceipt(body.receipt) ? body.receipt : null;
+}
+
+/**
+ * PR B (docs/designs/REFRESH_WRITE_BARRIER.md): a write deferred behind a worktree refresh was accepted and publishes after
+ * it, so MCP answers it as a pending success instead of an error. Any other `write_pending` stays an error.
+ */
+export function deferredWriteResult(e: unknown, notices: Notice[], opts: DispatchOpts): ToolResult | null {
+  if (opts.pendingAsError || !(e instanceof OperationError) || (e.code !== 'write_pending' && e.writeError !== 'write_pending') || !e.writeRequest?.deferred) return null;
+  const receipt = publicWriteReceipt(e.writeRequest);
+  return toolResultWithNotices({ status: 'pending', request_id: receipt.request_id, receipt, deferred: e.writeRequest.deferred,
+    next: { tool: 'get_write_request', arguments: { request_id: receipt.request_id }, cli: `gbrain write-request ${receipt.request_id}`, retry_after_ms: receipt.retry_after_ms } },
+  admitNotices(notices, opts), dispatchRenderContext(opts));
 }
 
 /**
@@ -572,6 +599,7 @@ export function requestLogStatusForResult(result: ToolResult): RequestLogStatus 
     } catch { /* unparseable error content stays plain 'error' */ }
     return 'error';
   }
+  if (acceptedPendingReceipt(result)) return 'accepted_pending';
   const warnings = result._meta?.warnings;
   return Array.isArray(warnings) && warnings.length > 0 ? 'success_with_warnings' : 'success';
 }
@@ -809,6 +837,17 @@ function attachResponseMeta(out: ToolResult, responseMeta: Record<string, unknow
   out._meta = { ...(out._meta ?? {}), degraded: stamp };
 }
 
+type ToolTail = Parameters<NonNullable<OperationContext['emitToolTail']>>[0];
+
+/**
+ * Wakeshift's addition: its text (at most 2,000 characters) as the LAST text block, its meta merged into `_meta`
+ * under gbrain's own keys, which it never replaces (a conversation credential: never logged).
+ */
+function appendToolTail(out: ToolResult, tail: ToolTail): void {
+  if (tail.text) out.content.push({ type: 'text', text: tail.text.slice(0, 2000) });
+  if (tail.meta && typeof tail.meta === 'object') out._meta = { ...tail.meta, ...(out._meta ?? {}) };
+}
+
 /** The one error result path: toAgentError → exactly one content block. */
 export function errorResult(e: unknown, opts: DispatchOpts, extra: { op?: string; mutating?: boolean; idempotent?: boolean; notices?: Notice[] } = {}): ToolResult {
   const carried = !!extra.notices?.length && e instanceof OperationError;
@@ -915,8 +954,10 @@ export function buildOperationContext(
     ...(opts.revealTools ? { revealTools: opts.revealTools } : {}),
     ...(opts.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
     ...(opts.admissionOrigin ? { admissionOrigin: opts.admissionOrigin } : {}),
+    ...(opts.agentLabel ? { agentLabel: opts.agentLabel } : {}),
     ...(opts.resultRows ? { resultRows: opts.resultRows } : {}),
     ...(opts.thinClient ? { thinClient: true } : {}),
+    ...(opts.mcpCaller ? { mcpCaller: opts.mcpCaller } : {}),
     isCallable: (opName: string) => (render ??= dispatchRenderContext(opts)).isCallable(opName),
     auth: opts.auth,
   };
@@ -970,7 +1011,7 @@ export async function dispatchToolCall(
         auth: opts.auth, transport: opts.transport, audienceAsserted: audience !== null });
       // GST-1158 E1: an attested read that names sources reads as the scope (access/scope-read.ts), or as the person on an attest_read person credential.
       readMode = attested?.actor ? attestedReadMode(name, attested.params, attested.read) : null;
-      access = readMode === 'scope' ? SCOPE_READ_ACCESS : attested?.access ?? await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience);
+      access = readMode === 'scope' ? { ...SCOPE_READ_ACCESS, folderCoverage: (await folderAccessFor(engine, [])).folderCoverage } : attested?.access ?? await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience);
       // GBRA-284: an attested call reads its grant minus other members' personal sources, a scope read minus every personal source (access/member-sources.ts).
       if (attested?.actor) scoped = await attestedReadScope(engine, resolved, attested.actor.member, readMode === 'scope');
     } catch (e) {
@@ -1012,11 +1053,11 @@ function actorRefusal(e: OperationError, opts: DispatchOpts, op: string, header:
   return withStructuredError(errorResult(e, opts, { op }));
 }
 
-/** An error result with its JSON envelope's code, message, reason and fix also in `structuredContent.error`, which QM reads. */
+/** An error result with its JSON envelope's code, message, reason, detail and fix also in `structuredContent.error`, which QM reads. */
 function withStructuredError(out: ToolResult): ToolResult {
   try {
     const env = JSON.parse(out.content[0]!.text) as Record<string, unknown>;
-    out.structuredContent = { error: { code: env.code, message: env.message, ...(env.reason ? { reason: env.reason } : {}), ...(env.fix ? { fix: env.fix } : {}) } };
+    out.structuredContent = { error: { code: env.code, message: env.message, ...(env.reason ? { reason: env.reason } : {}), ...(env.detail ? { detail: env.detail } : {}), ...(env.fix ? { fix: env.fix } : {}) } };
   } catch { /* the text block still carries the code */ }
   return out;
 }
@@ -1210,6 +1251,7 @@ async function dispatchResolvedCall(
   // failure renders the envelope's `notices` key (one block).
   const notices: Notice[] = [];
   ctx.emitNotice = (n) => { if (n) notices.push(n); };
+  let tail: ToolTail | undefined; ctx.emitToolTail = (t) => { tail = t; }; // Wakeshift's addition, appended last on success
 
   try {
     if (ctx.remote !== false && op.requiredScopes?.length) {
@@ -1312,7 +1354,7 @@ async function dispatchResolvedCall(
     // BEFORE and independently of the metaHook, so a hot-memory hook
     // failure can never drop the retrieval channel. Per-key merge, never
     // wholesale assignment. See docs/protocol/MCP_META_CHANNELS.md.
-    attachResponseMeta(out, responseMeta, degradedStampFor(name, result, responseMeta, notices));
+    attachResponseMeta(out, responseMeta, degradedStampFor(name, result, responseMeta, notices)); if (tail) appendToolTail(out, tail);
     // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.
     // The hook is wrapped in its own try/catch — any DB blip / cache miss /
     // helper crash degrades to no hook keys rather than flipping the whole
@@ -1335,6 +1377,6 @@ async function dispatchResolvedCall(
     // never tells a mutating op with an unknown outcome to retry.
     notices.push(...await sessionSafetyNotices(engine, opts, ctx.config));
     notices.push(...await grantBlockedNotices(engine, opts, refusedByGrant(e)));
-    return errorResult(e, opts, { op: name, mutating: op.mutating === true, idempotent: op.idempotent === true, notices: admitNotices(notices, opts) });
+    return deferredWriteResult(e, notices, opts) ?? errorResult(e, opts, { op: name, mutating: op.mutating === true, idempotent: op.idempotent === true, notices: admitNotices(notices, opts) });
   }
 }
