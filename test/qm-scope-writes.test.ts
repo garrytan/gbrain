@@ -418,36 +418,38 @@ describe('attest right of a scope credential (pure)', () => {
 });
 
 describe('backup restore quarantine keeps the scope mark', () => {
-  test('an external scope source detached by a restore stays a QM scope source', async () => {
-    const engine = new PGLiteEngine();
+  let engine: PGLiteEngine;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
     await engine.connect({ engine: 'pglite' } as never);
     await engine.initSchema();
-    try {
-      await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('scope-q', 'scope-q', '{"qm_scope": true, "federated": false, "remote_url": "https://git.example.com/scope.git"}'::jsonb)`);
-      const rows = await engine.executeRaw<{ id: string; local_path: string | null }>('SELECT id, local_path FROM sources ORDER BY id');
-      const out = await quarantineRestoredExecution(engine, { sources: rows.map(r => ({ id: r.id, local_path: r.local_path, managed_relative_path: null })), originalRoot: '/old', root: '/new', managedPaths: [], restoreId: 'r1' });
-      expect(out.sources.map(s => s.id)).toContain('scope-q');
-      expect((await markedScopeSources(engine, ['scope-q'])).has('scope-q')).toBe(true);
-    } finally {
-      await engine.disconnect();
-    }
+  }, 120_000);
+  afterAll(async () => { await engine.disconnect(); });
+
+  test('an external scope source detached by a restore stays a QM scope source', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('scope-q', 'scope-q', '{"qm_scope": true, "federated": false, "remote_url": "https://git.example.com/scope.git"}'::jsonb)`);
+    const rows = await engine.executeRaw<{ id: string; local_path: string | null }>('SELECT id, local_path FROM sources ORDER BY id');
+    const out = await quarantineRestoredExecution(engine, { sources: rows.map(r => ({ id: r.id, local_path: r.local_path, managed_relative_path: null })), originalRoot: '/old', root: '/new', managedPaths: [], restoreId: 'r1' });
+    expect(out.sources.map(s => s.id)).toContain('scope-q');
+    expect((await markedScopeSources(engine, ['scope-q'])).has('scope-q')).toBe(true);
   }, 120_000);
 });
 
 describe('CLI client registration keeps the pre-migration fallback', () => {
-  test('register-client on an oauth_clients table without source_id still registers when given a transaction', async () => {
-    const engine = new PGLiteEngine();
+  let engine: PGLiteEngine;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
     await engine.connect({ engine: 'pglite' } as never);
-    try {
-      await engine.executeRaw(`CREATE TABLE oauth_clients (client_id TEXT PRIMARY KEY, client_secret_hash TEXT, client_name TEXT NOT NULL,
-        redirect_uris TEXT[], grant_types TEXT[], scope TEXT, token_endpoint_auth_method TEXT, client_id_issued_at BIGINT, deleted_at TIMESTAMPTZ)`);
-      const sql = sqlQueryForEngine(engine);
-      const registered = await registerScopedClient(sql, 'old-schema-client', { grantTypes: ['client_credentials'], scopes: 'read', sourceId: 'default', federatedRead: [], redirectUris: [], tokenEndpointAuthMethod: 'client_secret_post' } as never,
-        { transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
-      const rows = await engine.executeRaw<{ client_name: string }>('SELECT client_name FROM oauth_clients WHERE client_id = $1', [registered.clientId]);
-      expect(rows.map(r => r.client_name)).toEqual(['old-schema-client']);
-    } finally {
-      await engine.disconnect();
-    }
+  }, 60_000);
+  afterAll(async () => { await engine.disconnect(); });
+
+  test('register-client on an oauth_clients table without source_id still registers when given a transaction', async () => {
+    await engine.executeRaw(`CREATE TABLE oauth_clients (client_id TEXT PRIMARY KEY, client_secret_hash TEXT, client_name TEXT NOT NULL,
+      redirect_uris TEXT[], grant_types TEXT[], scope TEXT, token_endpoint_auth_method TEXT, client_id_issued_at BIGINT, deleted_at TIMESTAMPTZ)`);
+    const sql = sqlQueryForEngine(engine);
+    const registered = await registerScopedClient(sql, 'old-schema-client', { grantTypes: ['client_credentials'], scopes: 'read', sourceId: 'default', federatedRead: [], redirectUris: [], tokenEndpointAuthMethod: 'client_secret_post' } as never,
+      { transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+    const rows = await engine.executeRaw<{ client_name: string }>('SELECT client_name FROM oauth_clients WHERE client_id = $1', [registered.clientId]);
+    expect(rows.map(r => r.client_name)).toEqual(['old-schema-client']);
   }, 60_000);
 });
