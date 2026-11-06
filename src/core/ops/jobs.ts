@@ -82,7 +82,7 @@ import {
  *     `data->>'__owner_client_id'`. Missing identity → permission_denied
  *     (fail closed, mirroring get_agent_job).
  */
-function agentOwnerFence(ctx: OperationContext, opName: string): string | null {
+export function agentOwnerFence(ctx: OperationContext, opName: string): string | null {
   if (ctx.remote === false) return null;
   const scopes = ctx.auth?.scopes;
   if (scopes && hasScope(scopes, 'admin')) return null;
@@ -108,7 +108,7 @@ function getJobFix(id: unknown, why: string): Action {
 }
 
 /** A1 frozen pair: a missing job keeps `error: invalid_params` and reports `code: not_found`. */
-function jobNotFound(message: string): OperationError {
+export function jobNotFound(message: string): OperationError {
   return opError('not_found', message,
     'No job with that id is visible to this caller (jobs owned by another client read as missing). List jobs to find the right id.',
     { legacy_error: 'invalid_params', fix: listJobsFix('Lists the jobs this caller can see, with their ids and status.') });
@@ -126,7 +126,7 @@ function jobStateError(id: unknown, message: string, need: string): OperationErr
  * design (anti-enumeration): both throw the SAME error the unfenced path
  * throws for a missing id.
  */
-async function assertJobOwned(ctx: OperationContext, id: number, owner: string): Promise<void> {
+export async function assertJobOwned(ctx: OperationContext, id: number, owner: string): Promise<void> {
   const rows = await ctx.engine.executeRaw<{ id: number }>(
     `SELECT id FROM minion_jobs WHERE id = $1 AND data->>'__owner_client_id' = $2 AND ${jobActorSql(3)}`,
     [id, owner, ...callerJobActor()],

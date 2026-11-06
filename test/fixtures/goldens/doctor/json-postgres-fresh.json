@@ -1083,7 +1083,7 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
-          "message": "RLS enabled on 172/172 public tables",
+          "message": "RLS enabled on 173/173 public tables",
           "name": "rls",
           "status": "ok"
         },
@@ -1111,7 +1111,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 172 table(s) the applied migrations create exist.",
+          "message": "All 173 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -2794,6 +2794,20 @@
           "message": "Postgres brains run facts-absorb jobs on the job worker (gbrain jobs supervisor), not the automatic drain.",
           "name": "facts_drain",
           "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "docs": "docs/guides/wakeshift.md#troubleshooting",
+            "enabled": false,
+            "key_source": "none"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Reporting back through Wakeshift is off (gbrain wakeshift enable turns it on).",
+          "name": "wakeshift",
+          "readiness_state": "disabled_by_choice",
           "severity": "info",
           "status": "ok"
         },

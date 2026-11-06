@@ -198,6 +198,9 @@ const LEDGER: Record<string, string> = {
   // Covered by the C1 lifecycle behavioral suite (moved out of UNCOVERED).
   get_job_progress: 'test/jobs-lifecycle-ops.test.ts',
   wait_job: 'test/minions/job-insight.test.ts',
+  watch_job: 'test/wakeshift.serial.test.ts',
+  list_watches: 'test/wakeshift.serial.test.ts',
+  unwatch: 'test/wakeshift.serial.test.ts',
   pause_job: 'test/jobs-lifecycle-ops.test.ts',
   resume_job: 'test/jobs-lifecycle-ops.test.ts',
   replay_job: 'test/jobs-lifecycle-ops.test.ts',
