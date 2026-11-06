@@ -730,7 +730,7 @@ export const fileDriftRepair: RepairHandler = {
   kind: 'file-drift',
   outcomeItemsLimit: 1000,
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
-    if (opts?.remote === false && !opts.apply && !opts.prefer && !opts.slugs?.length && !opts.requests?.length && !opts.allDrifted && !opts.driftClass) return survey(engine, scope, opts);
+    if (opts?.remote === false && !opts.apply && !opts.prefer && !opts.slugs?.length && !opts.requests?.length && !opts.allDrifted && !opts.driftClass && !opts.held && !opts.side && !opts.state && !opts.cursor && !opts.provenance) return survey(engine, scope, opts);
     validateOptions(scope, opts);
     const sourceId = scope.source_ids[0]!;
     const command = previewCommand(sourceId, opts);

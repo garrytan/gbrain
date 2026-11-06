@@ -29,6 +29,7 @@ import { withFilesystemPublication } from './filesystem-guard.ts';
 import { mayReprepare } from './semantic.ts';
 import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
 import { queuePublicationEffects } from './effect-journal.ts';
+import { deferredReplayRefusal } from './refresh-barrier.ts';
 import { timePublicationStep } from './publication-timing.ts';
 import type { AppendedRange, GitCommitNote } from './effect-model.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
@@ -530,6 +531,9 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         return (await getWriteRequestById(engine, row.id))!;
       }
     }
+    // PR B: a write deferred behind a refresh publishes only when its credential still holds and the refresh changed none of its files.
+    const deferredRefusal = await deferredReplayRefusal(engine, row, files);
+    if (deferredRefusal) return await engine.transaction(tx => completeWrite(tx, row, deferredRefusal.state, {}, deferredRefusal.failure));
     releaseCapacity = tryAcquirePublicationCapacity(engine);
     if (!releaseCapacity) {
       await releaseUnpublishedClaim(engine, row, 'writer_pool_capacity');

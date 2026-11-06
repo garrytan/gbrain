@@ -6081,6 +6081,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         ],
         "description": "Lowest trust tier to return (the connection floor still applies).",
         "fullSurfaceOnly": true
+      },
+      "max_chars": {
+        "type": "integer",
+        "description": "Cap on fact (then results) text, 200-12000; whole items only, truncated says if cut.",
+        "fullSurfaceOnly": true
       }
     },
     "scope": "read",
@@ -6456,6 +6461,19 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",
         "fullSurfaceOnly": true
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Read this one source as its audience (a shared scope): never the person's own facts.",
+        "fullSurfaceOnly": true
+      },
+      "source_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Read only these sources as their audience (a shared scope): never the person's own facts.",
+        "fullSurfaceOnly": true
       }
     },
     "scope": "read",
@@ -6515,6 +6533,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "acting_user": {
         "type": "string",
         "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",
+        "fullSurfaceOnly": true
+      },
+      "source_id": {
+        "type": "string",
+        "description": "One of this credential's scope sources: save on its shared memory/scope page.",
         "fullSurfaceOnly": true
       }
     },

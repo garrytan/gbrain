@@ -556,7 +556,7 @@ export class ManagedConnectorSync {
   }
   private async retryBlocker(engine: BrainEngine): Promise<WriteRequest | undefined> {
     const [row] = await engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
-      WHERE ((r.source_id=$1 OR r.worktree_id=$2::uuid) AND (r.state IN ('queued','running','recovering') OR r.recovery IS NOT NULL))
+      WHERE ((r.source_id=$1 OR r.worktree_id=$2::uuid) AND (r.state IN ('queued','deferred','running','recovering') OR r.recovery IS NOT NULL))
         OR EXISTS (SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.recovery IS NOT NULL
           AND (e.source_id=$1 OR e.worktree_id=$2::uuid)) ORDER BY r.sequence LIMIT 1`, [this.sourceId, this.binding?.worktree_id ?? null]);
     return row;

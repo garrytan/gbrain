@@ -42,7 +42,7 @@ export async function checkPersistenceCapacity(engine: BrainEngine): Promise<Che
       const principal = /^principal:([^:]+):(.+)$/.exec(row.scope);
       const stalled = `count(*) FILTER (WHERE created_at <= now()-interval '${OUTSTANDING_STALL_S} seconds')`;
       const holders = await engine.executeRaw<{ source_id: string; n: number | string; stalled: number | string }>(`SELECT source_id,count(*) AS n,${stalled} AS stalled
-        FROM persistence_requests WHERE state IN ('queued','running','recovering')${principal ? ' AND principal_kind=$1 AND principal_id=$2' : ''}
+        FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering')${principal ? ' AND principal_kind=$1 AND principal_id=$2' : ''}
         GROUP BY source_id ORDER BY ${stalled} DESC,count(*) DESC,source_id LIMIT 3`,
         principal ? [principal[1], principal[2]] : []);
       if (!holders.length || Number(holders[0].stalled) === 0) continue;

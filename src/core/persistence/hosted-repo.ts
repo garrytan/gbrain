@@ -29,6 +29,7 @@ import { parseSourceConfig } from '../sources-load.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { containsPath, managedPersistenceEnabled } from './ownership.ts';
 import { assertLinkedWorktreeIntact, linkedWorktreeProblem } from './worktree-link.ts';
+import { recordCommit } from '../git/commit-ledger.ts';
 
 export const HOSTED_BRANCH = 'main';
 const HOOK_BANNER = '# gbrain hosted-repo pre-receive hook (G7b-2)';
@@ -197,6 +198,7 @@ export async function hostRepo(engine: BrainEngine, opts: HostRepoOptions): Prom
     const blob = git(plan.repository, ['hash-object', '-w', '--stdin'], '');
     const tree = git(plan.repository, ['mktree'], `100644 blob ${blob}\t.gitignore\n`);
     const commit = git(plan.repository, ['commit-tree', tree, '-m', `gbrain: host source ${opts.sourceId}`]);
+    recordCommit(plan.repository, { sha: commit, writer: 'hosted_repo', ref: `refs/heads/${plan.branch}` });
     git(plan.repository, ['update-ref', `refs/heads/${plan.branch}`, commit, '']);
     if (opts.pushRemote) {
       git(plan.repository, ['remote', 'add', 'origin', opts.pushRemote]);

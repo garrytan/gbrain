@@ -16,7 +16,7 @@ import type { GraduationBlocker } from './engine-graduation.types.ts';
 const PENDING_REQUESTS_SQL = `SELECT r.request_id::text AS request_id, r.source_id, r.operation, r.state,
     r.recovery IS NOT NULL AS recovering, r.blocked_reason, w.owner_host_id::text AS owner_host_id
   FROM persistence_requests r LEFT JOIN persistence_worktrees w ON w.id = r.worktree_id
-  WHERE r.state IN ('queued', 'running', 'recovering') OR r.recovery IS NOT NULL
+  WHERE r.state IN ('queued', 'deferred', 'running', 'recovering') OR r.recovery IS NOT NULL
   ORDER BY r.sequence`;
 
 const TERMINAL = new Set(['committed', 'conflict', 'failed', 'cancelled']);
@@ -127,7 +127,7 @@ export async function drainForGraduation(source: BrainEngine, opts: { timeoutMs:
   try {
     while (Date.now() < deadline) {
       const [row] = await source.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM persistence_requests
-        WHERE request_id::text = ANY($1::text[]) AND (state IN ('queued', 'running', 'recovering') OR recovery IS NOT NULL)`, [pending]);
+        WHERE request_id::text = ANY($1::text[]) AND (state IN ('queued', 'deferred', 'running', 'recovering') OR recovery IS NOT NULL)`, [pending]);
       if (Number(row?.n ?? 0) === 0) break;
       consumer.wake();
       await new Promise(resolve => setTimeout(resolve, pollMs));
@@ -136,7 +136,7 @@ export async function drainForGraduation(source: BrainEngine, opts: { timeoutMs:
     await consumer.stop();
   }
   const terminal = await source.executeRaw<{ request_id: string }>(`SELECT request_id::text AS request_id FROM persistence_requests
-    WHERE request_id::text = ANY($1::text[]) AND state NOT IN ('queued', 'running', 'recovering') AND recovery IS NULL ORDER BY sequence`, [pending]);
+    WHERE request_id::text = ANY($1::text[]) AND state NOT IN ('queued', 'deferred', 'running', 'recovering') AND recovery IS NULL ORDER BY sequence`, [pending]);
   const blockers = (await graduationBlockers(source, opts.hostId))
     .map(b => lastError && b.kind === 'request' ? { ...b, detail: `${b.detail}; last drain error ${lastError}` } : b);
   return { drained: terminal.map(r => r.request_id), blockers };

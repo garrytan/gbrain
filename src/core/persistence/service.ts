@@ -1,4 +1,5 @@
 import { PENDING_IMPORT, pendingImportRefusal } from './pending-import.ts';
+import { refreshReleased } from './refresh-barrier.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { OperationError } from '../ops/contract.ts';
@@ -237,6 +238,8 @@ export type WriteWait =
 export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config: GBrainConfig,
   opts: { waitMs?: number; signal?: AbortSignal; whileHeldMs?: number } = {}): Promise<WriteWait> {
   if (isTerminal(row)) return { kind: 'terminal', row };
+  // PR B: a write deferred behind a refresh still running cannot publish before it ends, so its pending receipt is returned at once.
+  if (row.state === 'deferred' && !await refreshReleased(engine, row.deferred_refresh_id)) return { kind: 'pending', row };
   const consumer = startPersistenceConsumer(engine, config);
   const service = services.get(engine)!;
   const id = row.id;
