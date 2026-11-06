@@ -384,6 +384,9 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
   // #6317: `extended` marks the one extra window a lapsed head gets while a consumer here can reclaim it; `ownerAt`/`owner` throttle the owner-row read to one per progress interval.
   let stall: { key: string; since: number; passes: number; claim: DrainClaim | null; stallInfo: Omit<DrainStall, 'stalled_seconds'>; extended?: boolean; ownerAt?: number; owner?: DrainOwnerRow | null } | null = null;
   let lastCommitAt = startedAt, lastSweptAt = startedAt, inPass = false, readingHead = false;
+  // The in-pass line's view of the head: a head that moved since the last read is the writer making progress (it commits
+  // requests queued ahead of this pass, a dead owner's in-flight writes among them), so its age counts from that read.
+  let headSeen: { id: string | null | undefined; at: number; since: number } | null = null;
   // #6278 (B7): a pass refused for write capacity keeps the last pass's result for the report; `capacity` spans the refusals since the last pass that ran.
   let last: SyncResult | undefined, capacity: { since: number; attempts: number } | null = null;
   // #6278 (B7): a pass may finish one run and yield for the next (re-screens scheduled while it ran); the counts of finished runs carry into the report.
@@ -409,7 +412,9 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
     Promise.resolve().then(() => probe.head!()).then(head => {
       if (!head || !inPass || stall || clock() - lastCommitAt < every || tickAt - lastLine < every) return;
       lastLine = tickAt;
-      serr(stallText(index, total, head.claim?.step_age_ms ?? clock() - lastCommitAt, head.claim, head.head_state, head));
+      const at = clock();
+      headSeen = { id: head.request_id, at, since: headSeen && headSeen.id !== head.request_id ? headSeen.at : headSeen?.since ?? lastCommitAt };
+      serr(stallText(index, total, head.claim?.step_age_ms ?? at - Math.max(lastCommitAt, headSeen.since), head.claim, head.head_state, head));
     }).catch(() => undefined).finally(() => { readingHead = false; });
   }, every) : null;
   stallLine?.unref?.();
