@@ -4,7 +4,7 @@
  *
  *   - `wakeshift.enabled` / `wakeshift.url` in the file plane (~/.gbrain/config.json), written only by the
  *     trusted local `gbrain wakeshift enable|disable`, so a remote caller can never turn reporting back on;
- *   - the key: WAKESHIFT_API_KEY (moved out of this process's environment whenever config loads, env-key.ts, so
+ *   - the key: WAKESHIFT_API_KEY (moved out of this process's environment whenever config loads, wakeshift-env-key.ts, so
  *     child processes do not inherit it), else ~/.gbrain/wakeshift.key, which must be 0600 (a looser file is ignored and doctor says so);
  *   - the HMAC secret ~/.gbrain/wakeshift.secret (0600, random): the Wakeshift `user` is the first 32 hex of
  *     HMAC-SHA256 over (brain, principal), never an email, name or token.
@@ -15,9 +15,9 @@ import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { gbrainPath, loadConfig, type GBrainConfig } from '../config.ts';
 import { normalizeWakeshiftUrl, parseWakeshiftKey, wakeshiftClient, type WakeshiftApi, type WakeshiftKey } from './client.ts';
-import { WAKESHIFT_KEY_ENV, takeWakeshiftEnvKey } from './env-key.ts';
+import { WAKESHIFT_KEY_ENV, takeWakeshiftEnvKey } from '../wakeshift-env-key.ts';
 
-export { WAKESHIFT_KEY_ENV, resetWakeshiftEnvKeyForTests } from './env-key.ts';
+export { WAKESHIFT_KEY_ENV, resetWakeshiftEnvKeyForTests } from '../wakeshift-env-key.ts';
 
 export const wakeshiftKeyFile = () => gbrainPath('wakeshift.key');
 export const wakeshiftSecretFile = () => gbrainPath('wakeshift.secret');
@@ -27,7 +27,7 @@ export type KeyRead =
   | { source: 'none' }
   | { source: 'file_too_open'; mode: string };
 
-/** Where the key comes from, without parsing it. The process's env value moves out of process.env when first seen (env-key.ts). */
+/** Where the key comes from, without parsing it. The process's env value moves out of process.env when first seen (wakeshift-env-key.ts). */
 export function readWakeshiftKey(env: NodeJS.ProcessEnv = process.env): KeyRead {
   if (env === process.env) {
     const taken = takeWakeshiftEnvKey();
