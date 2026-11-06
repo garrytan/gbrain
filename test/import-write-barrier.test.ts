@@ -1,0 +1,219 @@
+/**
+ * GST-1582: a page write never bounces because a sync is running (docs/designs/REFRESH_WRITE_BARRIER.md, "Writes that
+ * wait for an import").
+ *
+ * Protects: with persistence.refresh_barrier on, a put_page, capture or remember whose page file holds a committed change
+ * managed sync has not imported yet (`pending_import`) is held `deferred` and answered pending, then published by itself
+ * once the import lands, prepared again as if it had queued behind the import: remember applies on top, a put_page with
+ * expected_revision (what a remote caller must send for an existing page) ends revision_conflict, a blind (force) put_page or capture lands, and a put_page's receipt,
+ * its commit trailer and the commit ledger name the imported revision and commit it replaced (both stay in page history and git). A write admitted while a
+ * refresh is in recovery_required waits behind it and lands once the refresh is released. A held write whose import never
+ * lands ends `pending_import_expired`. With the barrier off the refusal is unchanged.
+ * Seams: the real managed sync and refresh state machine; GBRAIN_REFRESH_BARRIER; the effect worker run in-process.
+ */
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test';
+import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { disposePersistenceConsumer, waitForWrite } from '../src/core/persistence/service.ts';
+import { getWriteRequestById } from '../src/core/persistence/journal.ts';
+import { resetWriteSwitches } from '../src/core/persistence/switches.ts';
+import { _setRefreshFenceWaitForTests } from '../src/core/persistence/admission-retry.ts';
+import { _resetRefreshBarrierCacheForTests, deferredBacklog, expireDeferredWrites } from '../src/core/persistence/refresh-barrier.ts';
+import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
+import { localHostId } from '../src/core/persistence/identity.ts';
+import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { refreshWorktree, resumeWorktreeRefreshes } from '../src/core/persistence/worktree-refresh.ts';
+import { readLedger } from '../src/core/git/commit-ledger.ts';
+import type { WriteRequest } from '../src/core/persistence/model.ts';
+import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { testBackends } from './helpers/test-backends.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { commitFile, git, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
+
+const backends = testBackends();
+const engines: BrainEngine[] = [];
+let closePostgres: (() => Promise<void>) | undefined;
+
+beforeAll(async () => {
+  if (backends.includes('pglite')) {
+    const engine = new PGLiteEngine();
+    await engine.connect({}); await engine.initSchema(); engines.push(engine);
+  }
+  if (backends.includes('postgres')) {
+    const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
+    engines.push(pg.engine); closePostgres = pg.close;
+  }
+}, 120_000);
+afterAll(async () => {
+  for (const engine of engines) { await disposePersistenceConsumer(engine); if (engine.kind === 'pglite') await engine.disconnect(); }
+  await closePostgres?.();
+});
+beforeEach(() => { _setRefreshFenceWaitForTests(0); _resetRefreshBarrierCacheForTests(); });
+afterEach(() => { resetWriteSwitches(); _setRefreshFenceWaitForTests(null); });
+
+const each = (fn: (f: RefreshFixture) => Promise<void>, barrier = '1') => withEnv({ GBRAIN_REFRESH_BARRIER: barrier }, async () => {
+  resetWriteSwitches();
+  for (const engine of engines) await withRefreshFixture(engine, async f => {
+    git(f.root, 'config', 'user.name', 'Example'); git(f.root, 'config', 'user.email', 'example@example.invalid'); git(f.root, 'config', 'commit.gpgsign', 'false');
+    await fn(f);
+  });
+});
+
+async function call(f: RefreshFixture, name: string, params: Record<string, unknown>) {
+  const result = await dispatchToolCall(f.engine, name, params, { remote: true, transport: 'stdio', sourceId: f.alpha, admissionOrigin: 'interactive' });
+  return { isError: result.isError === true, body: JSON.parse(result.content[0]!.text) as Record<string, any> };
+}
+async function requestRow(f: RefreshFixture, requestId: string): Promise<WriteRequest> {
+  const [row] = await f.engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id=$1::uuid', [requestId]);
+  return row!;
+}
+/** A blind local CLI write (force, no expected_revision): its receipt whether it settled or was left pending (write_pending). */
+async function local(f: RefreshFixture, operation: 'put_page' | 'capture', params: Record<string, unknown>): Promise<{ pending: boolean; receipt: Record<string, any> }> {
+  try {
+    const receipt = await submitPageMutation(f.ctx(f.alpha), { operation, params: { request_id: randomUUID(), force: true, ...params } }) as Record<string, any>;
+    return { pending: false, receipt };
+  } catch (error) {
+    const e = error as { code?: string; writeError?: string; writeRequest?: Record<string, any> };
+    if ((e.code === 'write_pending' || e.writeError === 'write_pending') && e.writeRequest) return { pending: true, receipt: e.writeRequest };
+    throw error;
+  }
+}
+const settle = async (f: RefreshFixture, row: WriteRequest) => waitForWrite(f.engine, (await getWriteRequestById(f.engine, row.id))!, { engine: f.engine.kind } as never, 30_000);
+const importNow = (f: RefreshFixture) => performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+const file = (f: RefreshFixture, rel: string) => readFileSync(join(f.root, 'alpha', rel), 'utf8');
+const IMPORTED = 'Another writer committed this line.';
+/** Runs the effect worker until request `id`'s Git effect has committed (the resident consumer may hold it meanwhile). */
+async function gitEffectDone(f: RefreshFixture, id: string): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    await runPersistenceEffects(f.engine, { engine: f.engine.kind } as never, { hostId: localHostId() });
+    const [effect] = await f.engine.executeRaw<{ state: string; outcome: { git?: string } | null }>("SELECT state,outcome FROM persistence_effects WHERE request_id=$1::uuid AND kind='git'", [id]);
+    if (effect?.state === 'committed') { expect(effect.outcome?.git).toBe('committed'); return; }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error(`the Git effect of request ${id} did not commit`);
+}
+/** Records Git durability on for the owner, so its Git effects commit instead of completing as skipped. */
+const durable = (f: RefreshFixture) => f.engine.executeRaw("UPDATE persistence_host_bindings SET git_durability='enabled'");
+
+/** Another writer's commit to alpha/<rel> that managed sync has not imported yet. */
+const foreignCommit = (f: RefreshFixture, rel: string, content: string) => commitFile(f.root, `alpha/${rel}`, content, 'another writer');
+
+test('a blind put_page onto a file awaiting import is held pending, lands after the import, and names the imported revision it replaced', () => each(async f => {
+  await durable(f);
+  const before = await f.lastCommit(f.alpha);
+  const imported = foreignCommit(f, 'one.md', page('Alpha one', IMPORTED));
+  const out = await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Mine, written while the import waited.') });
+  expect(out).toMatchObject({ pending: true, receipt: { state: 'queued', deferred: { pending_import: true } } });
+  const held = await requestRow(f, out.receipt.request_id);
+  expect(held).toMatchObject({ state: 'deferred', deferred_refresh_id: null, deferred_import_from: before });
+  expect((await deferredBacklog(f.engine)).count).toBe(1);
+  await importNow(f);
+  const done = await settle(f, held);
+  expect(done.state).toBe('committed');
+  expect(file(f, 'one.md')).toContain('Mine, written while the import waited.');
+  const supersedes = (done.outcome as { supersedes?: { slug: string; revision: unknown; commit: string } }).supersedes;
+  expect(supersedes).toMatchObject({ slug: 'one', commit: imported });
+  expect(supersedes!.revision).toBeTruthy();
+  // The replaced content stays in page history and in git.
+  const history = await f.engine.executeRaw<{ compiled_truth: string | null }>(
+    'SELECT v.compiled_truth FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.source_id=$1 AND p.slug=$2', [f.alpha, 'one']);
+  expect(history.some(v => (v.compiled_truth ?? '').includes(IMPORTED))).toBe(true);
+  expect(git(f.root, 'show', `${imported}:alpha/one.md`)).toContain(IMPORTED);
+  git(f.root, 'merge-base', '--is-ancestor', imported, 'HEAD');
+  await gitEffectDone(f, done.id);
+  const commit = git(f.root, 'log', '-1', '--format=%H', '--', 'alpha/one.md');
+  expect(git(f.root, 'log', '-1', '--format=%B', commit)).toContain(`gbrain-supersedes: one.md: revision ${supersedes!.revision} from ${imported}`);
+  const line = readLedger(join(f.root, '.git')).find(r => r.e === 'commit' && r.sha === commit) as { supersedes?: string[] } | undefined;
+  expect(line?.supersedes).toEqual([`one.md: revision ${supersedes!.revision} from ${imported}`]);
+  expect((await deferredBacklog(f.engine)).count).toBe(0);
+}), 180_000);
+
+test('a capture onto a file awaiting import lands after the import', () => each(async f => {
+  foreignCommit(f, 'one.md', page('Alpha one', IMPORTED));
+  const out = await local(f, 'capture', { slug: 'one', content: 'Captured while the import waited.' });
+  expect(out.pending).toBe(true);
+  const held = await requestRow(f, out.receipt.request_id);
+  expect(held.state).toBe('deferred');
+  await importNow(f);
+  expect((await settle(f, held)).state).toBe('committed');
+  expect(file(f, 'one.md')).toContain('Captured while the import waited.');
+}), 180_000);
+
+const PERSON = '---\ntitle: Alice Example\ntype: person\n---\nAlice is a person.\n';
+
+test('a remember onto a file awaiting import lands on top of the imported page', () => each(async f => {
+  foreignCommit(f, 'people/alice-example.md', PERSON);
+  await importNow(f);
+  foreignCommit(f, 'people/alice-example.md', PERSON.replace('Alice is a person.', `Alice is a person. ${IMPORTED}`));
+  const out = await call(f, 'remember', { fact: 'alice-example likes tea', entity: 'people/alice-example', provenance: 'test' });
+  expect(out.isError).toBe(false);
+  expect(out.body.status).toBe('pending');
+  const held = await requestRow(f, out.body.request_id);
+  expect(held.state).toBe('deferred');
+  await importNow(f);
+  expect((await settle(f, held)).state).toBe('committed');
+  const content = file(f, 'people/alice-example.md');
+  expect(content).toContain(IMPORTED);
+  expect(content).toContain('alice-example likes tea');
+}), 180_000);
+
+test('a put_page with expected_revision onto a file awaiting import ends revision_conflict once the import moved the page', () => each(async f => {
+  const seen = (await f.engine.readPageSnapshot('one', { sourceId: f.alpha }))!.revision;
+  foreignCommit(f, 'one.md', page('Alpha one', IMPORTED));
+  const out = await call(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Based on the old revision.'), expected_revision: seen });
+  expect(out.isError).toBe(false);
+  const held = await requestRow(f, out.body.request_id);
+  expect(held.state).toBe('deferred');
+  await importNow(f);
+  expect(await settle(f, held)).toMatchObject({ state: 'conflict', error_code: 'revision_conflict' });
+  expect(file(f, 'one.md')).toContain(IMPORTED);
+}), 180_000);
+
+test('a held write whose import never lands ends pending_import_expired with nothing applied', () => each(async f => {
+  foreignCommit(f, 'one.md', page('Alpha one', IMPORTED));
+  const out = await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Never applied.') });
+  const held = await requestRow(f, out.receipt.request_id);
+  expect(held.state).toBe('deferred');
+  await f.engine.executeRaw("INSERT INTO config(key,value) VALUES('persistence.refresh_barrier_max_wait_ms','1') ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value");
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const [{ owner }] = await f.engine.executeRaw<{ owner: string }>('SELECT owner_host_id::text AS owner FROM persistence_worktrees WHERE id=$1::uuid', [f.worktreeId]);
+  expect((await expireDeferredWrites(f.engine, owner)).map(row => row.id)).toEqual([held.id]);
+  expect(await getWriteRequestById(f.engine, held.id)).toMatchObject({ state: 'failed', error_code: 'pending_import_expired' });
+  await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
+  expect(file(f, 'one.md')).toContain(IMPORTED);
+}), 180_000);
+
+test('with the barrier off a write onto a file awaiting import keeps the pending_import refusal', () => each(async f => {
+  const seen = (await f.engine.readPageSnapshot('one', { sourceId: f.alpha }))!.revision;
+  foreignCommit(f, 'one.md', page('Alpha one', IMPORTED));
+  const out = await call(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Refused.'), expected_revision: seen });
+  expect(out.isError).toBe(true);
+  const [row] = await f.engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE operation=$1 ORDER BY sequence DESC LIMIT 1', ['put_page']);
+  expect(row).toMatchObject({ state: 'conflict', error_code: 'source_changed' });
+  expect((row!.error_detail as { origin?: string }).origin).toBe('pending_import');
+}, '0'), 180_000);
+
+test('a write while a refresh is in recovery_required waits behind it and lands once the refresh is released', () => each(async f => {
+  f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  const old = f.head();
+  await expect(refreshWorktree(f.engine, f.alpha, { hooks: { boundary: point => { if (point === 'merged') throw new Error('simulated crash after merge'); } } }))
+    .rejects.toThrow('simulated crash');
+  git(f.root, 'reset', '-q', '--hard', old);
+  git(f.root, 'commit', '-q', '--allow-empty', '-m', 'unrelated');
+  await resumeWorktreeRefreshes(f.engine);
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['recovery_required']);
+  const out = await call(f, 'put_page', { slug: 'notes/during-recovery', content: page('During recovery', 'Accepted while the refresh awaited recovery.') });
+  expect(out.isError).toBe(false);
+  expect(out.body.status).toBe('pending');
+  const held = await requestRow(f, out.body.request_id);
+  expect(held.state).toBe('deferred');
+  git(f.root, 'reset', '-q', '--hard', old);
+  expect((await refreshWorktree(f.engine, f.alpha, { abandon: true })).status).toBe('abandoned');
+  expect((await settle(f, held)).state).toBe('committed');
+  expect(file(f, 'notes/during-recovery.md')).toContain('Accepted while the refresh awaited recovery.');
+}), 180_000);

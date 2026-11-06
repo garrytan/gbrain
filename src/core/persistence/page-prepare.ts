@@ -458,7 +458,11 @@ async function compareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 's
       // #6394: a page that never recorded its file reconciles against the file at its slug path only when adopted explicitly.
       const adopt = !snapshot.page.source_path && !snapshot.page.source_uri ? ['--adopt-slug-path'] : [];
       // #6693: a committed Git change sync has not imported yet (another agent's commit), on a page that records its file.
-      if (!adopt.length && await waitingOnWhile(options.clock, 'git', () => committedPendingImport(engine, row.source_id, root, path, options.clock?.signal))) throw pendingImportRefusal(row, options.remote === true);
+      if (!adopt.length) {
+        // GST-1582: read before the check, so a write held for the import never waits on a commit the check already saw imported.
+        const [source] = await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [row.source_id]);
+        if (await waitingOnWhile(options.clock, 'git', () => committedPendingImport(engine, row.source_id, root, path, options.clock?.signal))) throw pendingImportRefusal(row, options.remote === true, source?.last_commit ?? '');
+      }
       // #8109: drift confined to ordinary frontmatter keys never blocks a write that leaves the frontmatter alone.
       const spliced = !adopt.length && options.deleting !== true && typeof content === 'string' && before instanceof Buffer && !bodyUnread(snapshot.page) && before.length <= PUSH_SCAN_MAX_FILE_BYTES
         ? await frontmatterDriftWrite(engine, row.slug, before.toString('utf8'), snapshot, content, options.activePack) : null;

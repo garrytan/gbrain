@@ -48,6 +48,7 @@ import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import { redactUrlsInText } from '../url-redact.ts';
 import { classifyPgAccessError } from '../pg-access-classify.ts';
 import { classifyOriginUniqueViolation } from './origin-guard.ts';
+import { refreshProgress, refreshRetryHint, seconds } from './refresh-retry-hint.ts';
 
 export interface WorktreeRefreshRow {
   id: string; worktree_id: string; source_ids: string[]; principal_id: string; owner_epoch: string | number;
@@ -1148,9 +1149,10 @@ export async function assertManagedSyncAllowed(engine: BrainEngine, worktreeId: 
   if (refresh.state === 'recovery_required') throw refusal('refresh_recovery_required',
     `Refresh ${refresh.id} could not verify the checkout HEAD of source ${sourceId}; sync stays fenced.`,
     `gbrain sources writer status ${sourceId}, then gbrain sources refresh ${sourceId} --resume`, refresh.id);
-  const error = refusal('worktree_refreshing', `Source ${sourceId}'s checkout is being fast-forwarded by refresh ${refresh.id} (${refresh.state}); this sync did not start.`,
-    `Retry after retry_after_ms: 1000; the refresh runs this sync itself. Check progress with gbrain sources writer status ${sourceId}.`);
-  error.detail = 'retry_after_ms=1000';
+  const hint = await refreshRetryHint(engine, refresh);
+  const error = refusal('worktree_refreshing', `Source ${sourceId}'s checkout is being fast-forwarded by refresh ${refresh.id} (${refreshProgress(hint)}); this sync did not start. Retry in about ${seconds(hint.retryAfterMs)} s.`,
+    `Retry after retry_after_ms: ${hint.retryAfterMs}; the refresh runs this sync itself. Check progress with gbrain sources writer status ${sourceId}.`);
+  error.detail = `retry_after_ms=${hint.retryAfterMs}`;
   throw error;
 }
 

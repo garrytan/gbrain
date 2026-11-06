@@ -1,0 +1,65 @@
+/**
+ * GST-1582 (docs/designs/REFRESH_WRITE_BARRIER.md, "Writes that wait for an import"): with the refresh write barrier on, a
+ * put_page, capture or remember whose page file holds a committed change managed sync has not imported yet is not refused
+ * `pending_import`. The consumer moves its own claim back to `deferred`, naming the source's last imported commit, and the
+ * row waits (invisible to claims, journal.ts RELEASED_DEFERRED) until `sources.last_commit` moves past it. It is then
+ * prepared again from scratch, as if it had queued behind the import: a remember or capture applies on top, a put_page
+ * with expected_revision ends revision_conflict when the import moved the page, and a blind put_page lands. A blind
+ * put_page that replaces content the import brought in names what it replaced (`supersedes`) on its receipt, in a
+ * `gbrain-supersedes:` commit trailer and on the commit ledger line; the replaced revision stays in page history and
+ * the imported commit in git. A held write whose import never lands ends `pending_import_expired` (refresh-barrier.ts).
+ */
+import { relative, sep } from 'node:path';
+import type { BrainEngine } from '../engine.ts';
+import type { PreparedMutation } from './coordinator.ts';
+import { publicationGroupKey, REFRESH_BARRIER_CLAIM_PREDICATE } from './journal.ts';
+import type { WriteRequest } from './model.ts';
+import { landedCommit } from './pending-import.ts';
+import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
+import { writeSwitchOn } from './switches.ts';
+
+const IMPORT_HELD_OPERATIONS = ['put_page', 'capture', 'remember'];
+export const SUPERSEDES_TRAILER_KEY = 'gbrain-supersedes';
+
+/**
+ * A claimed write whose preparation was refused `pending_import` (`importFrom`: the last imported commit the check saw),
+ * moved back to `deferred` behind that import; null when it keeps the refusal (barrier off, another operation, a batch).
+ */
+export async function holdForImport(engine: BrainEngine, row: WriteRequest, error: unknown): Promise<WriteRequest | null> {
+  const from = (error as { importFrom?: unknown } | null)?.importFrom;
+  if (typeof from !== 'string' || !IMPORT_HELD_OPERATIONS.includes(row.operation) || (row.target_kind ?? 'page') !== 'page' || !row.worktree_id
+    || publicationGroupKey(row) !== null || !await writeSwitchOn(engine, 'refresh_barrier').catch(() => false)) return null;
+  const [held] = await engine.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state='deferred',deferred_import_from=$3,execution_token=NULL,
+    claim_expires_at=NULL,blocked_reason=NULL,claim_phase=NULL,updated_at=now()
+    WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND recovery IS NULL AND publication_started=false
+      AND ${PERSISTENCE_PROTOCOL_PREDICATE} AND ${REFRESH_BARRIER_CLAIM_PREDICATE} RETURNING *`, [row.id, row.execution_token, from]);
+  return held ?? null;
+}
+
+/** The trailer value a superseding write commits with: `<path>: revision <revision> from <commit>`. */
+const supersedesNote = (path: string, revision: string, commit: string) => `${path}: revision ${revision} from ${commit}`;
+
+/** The `gbrain-supersedes:` values among a commit's notes, for its ledger line. */
+export function supersededBy(trailers: Iterable<string>): string[] {
+  const key = `${SUPERSEDES_TRAILER_KEY}: `;
+  return [...trailers].filter(trailer => trailer.startsWith(key)).map(trailer => trailer.slice(key.length));
+}
+
+/**
+ * A put_page that was held for an import and replaces the page the import wrote: its outcome carries `supersedes`
+ * (slug, path, the replaced revision, the imported commit) and its commit the matching trailer.
+ */
+export async function withSupersedes(row: WriteRequest, prepared: PreparedMutation): Promise<PreparedMutation> {
+  if (row.deferred_import_from == null || row.operation !== 'put_page' || !prepared.file || prepared.noop || !prepared.observedRevision) return prepared;
+  const { root, path } = prepared.file;
+  const commit = await landedCommit(root, row.deferred_import_from || null, path);
+  if (!commit) return prepared;
+  const rel = relative(root, path).split(sep).join('/');
+  const supersedes = { slug: row.slug, path: rel, revision: prepared.observedRevision, commit };
+  const trailer = `${SUPERSEDES_TRAILER_KEY}: ${supersedesNote(rel, prepared.observedRevision, commit)}`;
+  const note = prepared.file.commit;
+  prepared.file.commit = note ? { ...note, trailers: [...(note.trailers ?? []), trailer] } : { subject: '', line: '', trailers: [trailer] };
+  const apply = prepared.apply.bind(prepared);
+  prepared.apply = async (tx, preimage) => ({ ...await apply(tx, preimage), supersedes });
+  return prepared;
+}

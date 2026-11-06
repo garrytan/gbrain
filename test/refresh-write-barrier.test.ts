@@ -6,7 +6,7 @@
  * refresh ends it commits, unless the refresh changed its file, which ends it `revision_conflict` with nothing applied;
  * a consumer claim without the barrier's session declaration (an older binary) cannot move a deferred row; a replay of the
  * request id returns the same receipt; a write past the wait limit ends `refresh_barrier_expired` with its counters
- * released; a token revoked while its write waits ends it `permission_denied`; past the per-refresh cap a further write keeps the refusal; a live consumer without the capability keeps the
+ * released; a token revoked while its write waits ends it `permission_denied`; every write during a refresh is deferred, with no per-refresh cap; a live consumer without the capability keeps the
  * refusal; a repo-less source is never deferred; `gbrain upgrade --check-downgrade` exits 3 while a deferred write waits.
  * Seams: the real refresh state machine paused at its drained boundary (`hooks.boundary`); GBRAIN_REFRESH_BARRIER.
  */
@@ -206,23 +206,21 @@ test('a live consumer without the capability keeps the refusal; a repo-less sour
   expect((await refresh).status).toBe('completed');
 }), 180_000);
 
-test('past persistence.refresh_barrier_max_deferred a further write during the refresh keeps the refusal', () => each(async f => {
+test('GST-1582: writes during one refresh are all deferred, none refused, and each commits after it (a configured cap no longer refuses)', () => each(async f => {
   await f.engine.executeRaw("INSERT INTO config(key,value) VALUES('persistence.refresh_barrier_max_deferred','1') ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value");
-  let first!: WriteRequest;
+  const held: WriteRequest[] = [];
   try {
     const refresh = await duringRefresh(f, async () => {
-      const out = await call(f, 'put_page', { slug: 'notes/cap-one', content: page('Cap one', 'deferred') });
-      expect(out.body.status).toBe('pending');
-      first = await requestRow(f, out.body.request_id);
-      expect(first.state).toBe('deferred');
-      const before = await f.requestCount();
-      const refused = await call(f, 'put_page', { slug: 'notes/cap-two', content: page('Cap two', 'refused') });
-      expect(refused.isError).toBe(true);
-      expect(refused.body.code).toBe('worktree_refreshing');
-      expect(await f.requestCount()).toBe(before);
+      for (const name of ['cap-one', 'cap-two', 'cap-three']) {
+        const out = await call(f, 'put_page', { slug: `notes/${name}`, content: page(name, 'deferred') });
+        expect(out.isError).toBe(false);
+        expect(out.body.status).toBe('pending');
+        held.push(await requestRow(f, out.body.request_id));
+      }
+      expect(held.map(row => row.state)).toEqual(['deferred', 'deferred', 'deferred']);
     });
     expect((await refresh).status).toBe('completed');
-    expect((await settle(f, first)).state).toBe('committed');
+    for (const row of held) expect((await settle(f, row)).state).toBe('committed');
   } finally {
     await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_deferred'");
   }

@@ -169,9 +169,10 @@ it are deferred to it, so a steady stream cannot keep a drain from reaching zero
 released rows are claimed normally during the next refresh's `draining` and counted by its drain
 (the claim moves them to `running`), within the existing `--wait-drain` budget.
 
-**Capacity.** Deferred rows reserve the existing outstanding and intent-byte counters. A per-worktree
-cap `persistence.refresh_barrier_max_deferred` (default 1000) bounds one refresh; past it, admission
-refuses `worktree_refreshing` as today (retryable, `fix.next: wait`).
+**Capacity.** Deferred rows reserve the existing outstanding and intent-byte counters, which bound
+them like queued rows. GST-1582 removed the per-refresh cap (`persistence.refresh_barrier_max_deferred`):
+a write past it queued as deferred instead of being refused, because a refusal there bounced exactly
+the writes the barrier exists to keep. The setting is no longer read.
 
 **Age bound.** A deferred row whose refresh is still unreleased after
 `persistence.refresh_barrier_max_wait_ms` (default 15 minutes; a tick runs a few minutes) is finished
@@ -179,6 +180,46 @@ refuses `worktree_refreshing` as today (retryable, `fix.next: wait`).
 that rechecks `released_at IS NULL` and releases its counters. Nothing is applied; the producer
 resubmits with a new request id. If the owner host is down, nothing claims or expires rows; receipts
 stay pending and readable, as for any queued row on that host.
+
+### Writes that wait for an import
+
+GST-1582: a write must never bounce because a sync is running. Three refusals bounced writes the
+barrier exists to keep, and with the flag on each now waits instead (with it off, each is unchanged):
+
+- **A refresh in `recovery_required`.** Admission defers behind it like behind any active refresh.
+  The row is released when the refresh is resumed or abandoned (both end it `completed` or
+  `aborted`), takes the refresh-change check, and is bound by the same age limit.
+- **The per-refresh cap.** Removed (see Capacity).
+- **`pending_import`.** A `put_page`, `capture` or `remember` whose page file holds a change
+  committed through Git that managed sync has not imported yet was refused at preparation
+  (`source_changed`, reason `pending_import`), after admission. The refusal now carries the last
+  imported commit the check compared against (read before the check, so a commit the check saw
+  imported is never awaited), and the consumer moves its own claim back to `deferred` with
+  `deferred_import_from` set to that commit (`''` when the source had never imported). The row is
+  released when `sources.last_commit` differs from it (and any refresh it also names is released),
+  then claimed and prepared from scratch, as if it had queued behind the import: a `remember` or
+  `capture` applies on top; a `put_page` with `expected_revision` meets the moved page and ends
+  `revision_conflict`; a blind (`force`) `put_page` lands. An import that lands without covering
+  the file only re-arms the hold at the new commit. The receipt reads `queued` with
+  `deferred: { pending_import: true }`, and the caller's wait returns pending at once.
+
+**What a blind write replaced.** A held `put_page` that replaces content an import brought in names
+it in three places, so the replacement is auditable and recoverable without digging: the receipt's
+`supersedes` (`slug`, `path`, the replaced `revision`, the imported `commit`: the newest commit
+after the held-at commit that touched the file), a `gbrain-supersedes: <path>: revision <id> from
+<commit>` trailer on its commit, and a `supersedes` list on that commit's ledger line (effect and
+door commits). The replaced revision stays in `page_versions` and the imported commit stays in
+Git, an ancestor of the write's commit.
+
+**Age bound and schema.** A row held for an import that has not landed past
+`persistence.refresh_barrier_max_wait_ms` ends `failed` with `pending_import_expired` in the owner's
+housekeeping turn, which rechecks under the request lock that the row is still unclaimed and its
+import still pending. Migration v291 adds the nullable `persistence_requests.deferred_import_from` and
+widens `gbrain_guard_deferred_request`: a running row may move to `deferred` only under the barrier's
+session declaration and only naming the import it waits for, and a deferred row moves to `running`
+only once every hold it names is released. Only the write owner's consumer, already a barrier
+consumer, holds a row for an import; a mixed-version window on one owner host is the
+consumer-capability gap #8688 tracks.
 
 ### Idempotency
 

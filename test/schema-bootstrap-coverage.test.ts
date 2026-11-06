@@ -1261,6 +1261,8 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'persistence_worktree_refreshes.released_at',
   'persistence_requests.deferred_refresh_id',
   'persistence_consumers.capabilities',
+  // GST-1582 (v291): migration-only like the PR B columns above, for the same reason.
+  'persistence_requests.deferred_import_from',
 ]);
 
 test('every ALTER TABLE ADD COLUMN in MIGRATIONS is covered by applyForwardReferenceBootstrap (column-only class)', async () => {

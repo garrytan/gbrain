@@ -26,6 +26,7 @@ import { classifyHolderLiveness, syncLockId } from '../db-lock.ts';
 import { publicFailureDetail } from './publication-failure.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { ACTIVE_REFRESH_STATES_SQL, refreshFenceClear, RELEASED_DEFERRED } from './worktree-refresh-schema.ts';
+import { refreshProgress, refreshRetryHint, seconds } from './refresh-retry-hint.ts';
 import { assertMutationProtocol, assertSharedSkillPersistence, declareDurablePersistence, declarePersistenceProtocol, isPersistenceDeclaration, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { assertGraduationAdmission } from './graduation-custody.ts';
 import { schemaAdmissionRefusal } from './schema-admission.ts';
@@ -248,8 +249,8 @@ export async function getWriteRequestById(engine: SqlEngine, id: string, signal?
   return row ?? null;
 }
 /** #5984: the columns a waiter needs while a request is unfinished; the full row is read once it is terminal. */
-export type WriteRequestProgress = Pick<WriteRequest, 'state' | 'error_code' | 'error_message' | 'completed_at' | 'updated_at' | 'blocked_reason' | 'outcome'>;
-export const WRITE_PROGRESS_SQL = 'SELECT state,error_code,error_message,completed_at,updated_at,blocked_reason,outcome FROM persistence_requests WHERE id=$1::uuid';
+export type WriteRequestProgress = Pick<WriteRequest, 'state' | 'error_code' | 'error_message' | 'completed_at' | 'updated_at' | 'blocked_reason' | 'outcome' | 'deferred_refresh_id' | 'deferred_import_from'>;
+export const WRITE_PROGRESS_SQL = 'SELECT state,error_code,error_message,completed_at,updated_at,blocked_reason,outcome,deferred_refresh_id,deferred_import_from FROM persistence_requests WHERE id=$1::uuid';
 export async function getWriteRequestProgress(engine: SqlEngine, id: string, signal?: AbortSignal): Promise<WriteRequestProgress | null> {
   const [row] = await engine.executeRaw<WriteRequestProgress>(WRITE_PROGRESS_SQL, [id], { signal });
   return row ?? null;
@@ -294,7 +295,7 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
   const origin = resolveAdmissionOrigin(input.origin);
   // #6741 C: a declared background producer is refused before any receipt when the source's owner fails its verification.
   if (input.worktreeId && declaredBackground(input.origin)) await assertBackgroundOwner(engine, input.sourceId, ownerStatusFix);
-  const barrier = input.worktreeId && deferrable(input) ? await readRefreshBarrier(engine) : null;
+  const barrier = !!input.worktreeId && deferrable(input) && await readRefreshBarrier(engine);
   return { requestId, apply: async (tx: BrainEngine): Promise<WriteRequest> => {
     await declarePersistenceProtocol(tx);
     // The guards are sent together in lock order (worktree, source, writer, counters) and judged in
@@ -594,7 +595,7 @@ export async function chargePreparationAttempt(engine: SqlEngine, row: WriteRequ
  * binding (#6007: both read in one statement after the lock; the fence is
  * judged first, as before).
  */
-async function assertWorktreeAdmission(tx: BrainEngine, input: WriteAdmission, replayable = false, barrier: RefreshBarrier | null = null): Promise<string | null> {
+async function assertWorktreeAdmission(tx: BrainEngine, input: WriteAdmission, replayable = false, barrier = false): Promise<string | null> {
   // Sent together: the server takes the share lock before it reads the fence and the binding. PR B: with the barrier on, the
   // active refresh row is locked right after the worktree (protocol.ts lock order), so a deferral and the refresh's terminal
   // transition serialize on it, and the syncing completion below upgrades no lock.
@@ -617,34 +618,30 @@ async function assertWorktreeAdmission(tx: BrainEngine, input: WriteAdmission, r
   return deferTo;
 }
 
-/** PR B: the refresh barrier's bound when it is on (docs/designs/REFRESH_WRITE_BARRIER.md). */
-export interface RefreshBarrier { maxDeferred: number }
-export const REFRESH_BARRIER_MAX_DEFERRED_KEY = 'persistence.refresh_barrier_max_deferred';
-export const REFRESH_BARRIER_MAX_DEFERRED = 1000;
 /** What a consumer advertises (consumer-heartbeat.ts CONSUMER_CAPABILITIES) and admission requires of every live one on the owner host. */
 export const REFRESH_BARRIER_CAPABILITY = 'refresh_barrier_1';
 /** A single page write whose caller opted in may wait behind a refresh; jobs (managed sync included), grouped batches and skill bundles keep the refusal. */
 function deferrable(input: WriteAdmission): boolean {
   return input.deferrable === true && (input.targetKind ?? 'page') === 'page' && input.operation !== 'submit_job' && publicationGroupKey({ operation: input.operation, intent: input.intent }) === null;
 }
-async function readRefreshBarrier(engine: BrainEngine): Promise<RefreshBarrier | null> {
-  if (!await writeSwitchOn(engine, 'refresh_barrier').catch(() => false)) return null;
-  const [row] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [REFRESH_BARRIER_MAX_DEFERRED_KEY]);
-  const configured = Number(row?.value);
-  return { maxDeferred: Number.isSafeInteger(configured) && configured > 0 ? configured : REFRESH_BARRIER_MAX_DEFERRED };
+/** PR B: whether the refresh barrier is on (docs/designs/REFRESH_WRITE_BARRIER.md). */
+async function readRefreshBarrier(engine: BrainEngine): Promise<boolean> {
+  return writeSwitchOn(engine, 'refresh_barrier').catch(() => false);
 }
-/** Room under the per-refresh cap, and every live consumer of the worktree's owner host can drain a deferred write. */
-async function deferralRoom(tx: BrainEngine, worktreeId: string, refreshId: string, barrier: RefreshBarrier): Promise<boolean> {
-  const [row] = await tx.executeRaw<{ deferred: number; incapable: boolean }>(`SELECT
-    (SELECT count(*) FROM persistence_requests WHERE worktree_id=$2::uuid AND state='deferred' AND deferred_refresh_id=$1::uuid)::int AS deferred,
-    EXISTS (SELECT 1 FROM persistence_consumers c JOIN persistence_worktrees w ON w.owner_host_id=c.host_id WHERE w.id=$2::uuid
-      AND c.renewed_at>now()-($3::integer*interval '1 millisecond') AND NOT ($4=ANY(c.capabilities))) AS incapable`,
-  [refreshId, worktreeId, CONSUMER_LIVE_MS, REFRESH_BARRIER_CAPABILITY]);
-  return !!row && !row.incapable && Number(row.deferred) < barrier.maxDeferred;
+/**
+ * Every live consumer of the worktree's owner host can drain a deferred write. GST-1582: there is no per-refresh cap; the
+ * journal's outstanding and byte limits bound deferred writes like queued ones.
+ */
+async function deferralRoom(tx: BrainEngine, worktreeId: string): Promise<boolean> {
+  const [row] = await tx.executeRaw<{ incapable: boolean }>(`SELECT
+    EXISTS (SELECT 1 FROM persistence_consumers c JOIN persistence_worktrees w ON w.owner_host_id=c.host_id WHERE w.id=$1::uuid
+      AND c.renewed_at>now()-($2::integer*interval '1 millisecond') AND NOT ($3=ANY(c.capabilities))) AS incapable`,
+  [worktreeId, CONSUMER_LIVE_MS, REFRESH_BARRIER_CAPABILITY]);
+  return !!row && !row.incapable;
 }
 /** The refresh to defer this write behind, or null when it is admitted normally; otherwise refuses. */
 async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmission, refresh: { id: string; state: string; source_ids: string[] }, replayable: boolean,
-  barrier: RefreshBarrier | null): Promise<string | null> {
+  barrier: boolean): Promise<string | null> {
   const managedSync = input.operation === 'submit_job' && String(input.intent.kind ?? '').startsWith('managed_sync_');
   if (refresh.state === 'syncing' && managedSync) return null;
   if (refresh.state === 'syncing') {
@@ -653,22 +650,27 @@ async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmissio
         AND s.last_commit IS DISTINCT FROM f.target_head) RETURNING f.id`, [refresh.id]);
     if (completed.length) return null;
   }
+  // GST-1582: with the barrier on, a write waits behind a refresh awaiting recovery too, and lands once it is released.
+  if (refresh.state === 'recovery_required' && barrier && input.worktreeId && await deferralRoom(tx, input.worktreeId)) return refresh.id;
   if (refresh.state === 'recovery_required') throw catalogueError('refresh_recovery_required',
     `Refresh ${refresh.id} could not verify the checkout HEAD of source ${input.sourceId}; writes to its worktree stay fenced.`,
     `gbrain sources writer status ${input.sourceId}, then gbrain sources refresh ${input.sourceId} --resume. Retry the same request_id afterwards.`);
-  const error = catalogueError('worktree_refreshing',
-    `Source ${input.sourceId}'s checkout is being fast-forwarded by refresh ${refresh.id} (${refresh.state}); this write was not journaled.`,
-    `Retry the same request_id after retry_after_ms: 1000. Check progress with gbrain sources writer status ${input.sourceId}.`);
   // A single write's replay of a request already accepted (its acknowledgement lost before the fence) reconciles to its
   // receipt instead; a group admission never bypasses, since its other items may be new.
   if (replayable && input.requestId && await getWriteRequest(tx, input.principal, input.requestId)) return null;
   // PR B: with the barrier on, the write waits behind the refresh as a deferred request instead of being refused.
-  if (barrier && input.worktreeId && await deferralRoom(tx, input.worktreeId, refresh.id, barrier)) return refresh.id;
-  error.detail = 'retry_after_ms=1000';
+  if (barrier && input.worktreeId && await deferralRoom(tx, input.worktreeId)) return refresh.id;
+  // GST-1582: the retry hint comes from the refresh's own state (its phase, how long it has run, how long this worktree's
+  // refreshes typically take), never a fixed second that sends the caller back into the same refresh.
+  const hint = await refreshRetryHint(tx, refresh);
+  const error = catalogueError('worktree_refreshing',
+    `This write was not saved: refresh ${refresh.id} is fast-forwarding source ${input.sourceId}'s checkout (${refreshProgress(hint)}). Retry the same request_id in about ${seconds(hint.retryAfterMs)} s.`,
+    `Retry the same request_id after retry_after_ms: ${hint.retryAfterMs}. Check progress with gbrain sources writer status ${input.sourceId}.`);
+  error.detail = `retry_after_ms=${hint.retryAfterMs}`;
   error.retryable = true;
   // GST-1387: nothing was recorded, so the same call is retried after the delay (actor provider renders next: wait).
   error.fix = { argv: ['gbrain', 'sources', 'writer', 'status', '--source', input.sourceId, '--json'], consent: [], actor: 'provider', requires_exclusive: false,
-    why: `A refresh of source ${input.sourceId}'s checkout holds its writes until it finishes syncing; this write was not recorded. Repeat the same call with the same request_id after about 1 s (retry_after_ms=1000); this read-only command shows the refresh's progress.` };
+    why: `A refresh of source ${input.sourceId}'s checkout holds its writes until it finishes syncing; this write was not recorded. Repeat the same call with the same request_id after about ${seconds(hint.retryAfterMs)} s (retry_after_ms=${hint.retryAfterMs}); this read-only command shows the refresh's progress.` };
   throw markNotAdmitted(error);
 }
 
@@ -1278,7 +1280,8 @@ export function receiptFor(stored: WriteRequest, facts?: WriteHealthFacts, now =
     ...(row.outcome ?? {}),
     ...(row.outcome ? { outcome: row.outcome } : {}),
     request_id: row.request_id, ...(row.client_request_id ? { client_request_id: row.client_request_id } : {}), state,
-    ...(stored.state === 'deferred' && stored.deferred_refresh_id ? { deferred: { refresh_id: stored.deferred_refresh_id } } : {}),
+    ...(stored.state === 'deferred' ? { deferred: { ...(stored.deferred_refresh_id ? { refresh_id: stored.deferred_refresh_id } : {}),
+      ...(stored.deferred_import_from != null ? { pending_import: true } : {}) } } : {}),
     ...writeHealth(row, facts, now),
     ...(row.error_code ? { write_error: row.error_code } : {}),
     ...(row.error_detail ? { write_error_detail: publicFailureDetail(row.error_detail) } : {}),
