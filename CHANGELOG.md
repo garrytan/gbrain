@@ -28,6 +28,8 @@ identifiers and attribution are available in the pre-removal Git revision
 
 QM clients that read v1 keep working unchanged. A shared-scope turn should name its sources and read the v2 contract.
 
+**QM can propose a timeline entry or link on a shared page, and nothing is written until you approve it.** The new attested operation `memory_propose` holds the proposal in its own `memory_proposals` table, never in git, an export, search or recall. You review it with `gbrain memory-proposals list`, `show`, `approve <request_id>` and `deny <request_id> --reason "<why>"`; QM reads the outcome with `get_write_request` and can withdraw it with `cancel_write_request`. An approved proposal re-checks the person, the grant and the page, then becomes an ordinary write under the same request id with the person's member id (never QM's id) in its provenance. A page or link target that changed while the proposal waited closes it as `conflict`. Proposals expire after 7 days, at most 10 wait per person and 50 per credential, text is capped at 1,000 characters and deny reasons at 500, and closed proposals are deleted after 30 days; each limit is a `proposals.*` config key. `gbrain doctor` (`memory_proposals_pending`) and `gbrain status` show what is waiting. Add `memory_propose` (and `cancel_write_request`) to the client's `--attest-ops` to use it. Repo-less brains work the same. The wire contract does not list it yet.
+
 **QM can now save a shared scope's memory (a project, channel or team) as well as each person's, and nothing else can read that scope.** `memory_write` gains `source_id`: named, the facts go to that scope source's `memory/scope` page, world-readable inside the source, still attested to the person who said them. The operator lists the scope sources on the QM credential with `gbrain auth rescope --attest-sources`, which marks each one a scope source for good. A scope source is never federated and never joins another credential's read grant, so its memory is read only by naming it from the scope credential, and a person read never sees it.
 
 | Situation | Before | Now |
@@ -131,7 +133,7 @@ An agent that submits a long job no longer has to poll. With reporting back on, 
 - New `gbrain wakeshift enable | disable | status | test`. `enable` asks consent (it sends data off the machine and stores a credential), refuses a brain with live access members, checks the key with Wakeshift and publishes gbrain's `gbrain.job.finished` event. The key comes from `WAKESHIFT_API_KEY` or a 0600 `~/.gbrain/wakeshift.key`, and is never stored in the database or printed (status shows its fingerprint).
 - Delivery runs inside `gbrain serve` (stdio and HTTP) and the job worker every 5 seconds, and once more at the end of `gbrain jobs work`. A watch on a job that already finished wakes at once. A failed delivery is retried at most 5 times over about 40 minutes, then the watch ends and the conversation is told. Jobs are never slowed by Wakeshift.
 - New doctor check `wakeshift`: a key file other users can read, reporting back enabled without a usable key, and watches that died or were refused as `id_reused` in the last 7 days.
-- Schema migration v290 adds `wake_subscriptions` (empty unless reporting back is on). Repo-less brains get it unchanged.
+- Schema migration v294 adds `wake_subscriptions` (empty unless reporting back is on). Repo-less brains get it unchanged.
 - `--log-full-params` on `gbrain serve --http` now redacts a tool call's `session_key` argument.
 
 ## [0.60.588.0] - 2026-11-06

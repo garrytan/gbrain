@@ -261,8 +261,8 @@ only a fact on the person's own page (also for a credential bound to a member).
 A request carrying `x-qm-audience` is refused (`audience_not_supported`). Not attestable yet, because what they
 read or write is not yet kept to the person: `list_write_conflicts`, `capture`,
 `extract_facts`, `takes_add|update|resolve|supersede`, and the direct page writes
-`add_timeline_entry`, `add_link`, `put_page` and `edit_page`, which wait for owner-approved
-proposals. An `--attest-ops` list that already names one of these is refused for it
+`add_timeline_entry`, `add_link`, `put_page` and `edit_page`; an attested timeline entry or link goes
+through `memory_propose` and waits for your `gbrain memory-proposals approve` ([QM guide](../guides/qm.md#proposed-writes)). An `--attest-ops` list that already names one of these is refused for it
 (`actor_not_attested`, reason `op_not_attested`), and a queued attested write of one fails when it publishes.
 An attested read sees what that person sees, private facts included, and gbrain
 cannot tell who else reads the answer. Use the attest client only for QM's

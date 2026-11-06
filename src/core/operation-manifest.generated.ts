@@ -6550,6 +6550,84 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "area": "memory"
   },
   {
+    "name": "memory_propose",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Propose one timeline entry or link on a shared page for the person this call serves; the brain owner approves it before it is written. Needs an attested person. Poll get_write_request with the request_id; the same idempotency_key replays.",
+    "params": {
+      "kind": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "timeline",
+          "link"
+        ],
+        "description": "timeline (date, summary) or link (to)."
+      },
+      "target": {
+        "type": "string",
+        "required": true,
+        "description": "Slug the write lands on (a link's from page)."
+      },
+      "idempotency_key": {
+        "type": "string",
+        "required": true,
+        "description": "1-128 visible ASCII characters; the same key replays this proposal."
+      },
+      "expected_revision": {
+        "type": "string",
+        "description": "The revision shown to the person; refused when the page moved."
+      },
+      "date": {
+        "type": "string",
+        "description": "timeline: YYYY-MM-DD."
+      },
+      "summary": {
+        "type": "string",
+        "description": "timeline: one line."
+      },
+      "detail": {
+        "type": "string",
+        "description": "timeline: details."
+      },
+      "source": {
+        "type": "string",
+        "description": "timeline: where it came from."
+      },
+      "to": {
+        "type": "string",
+        "description": "link: the page it points to."
+      },
+      "link_type": {
+        "type": "string",
+        "description": "link: a type the schema pack declares."
+      },
+      "context": {
+        "type": "string",
+        "description": "link: context."
+      },
+      "valid_from": {
+        "type": "string",
+        "description": "link: YYYY-MM-DD."
+      },
+      "valid_until": {
+        "type": "string",
+        "description": "link: YYYY-MM-DD."
+      },
+      "acting_user": {
+        "type": "string",
+        "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",
+        "fullSurfaceOnly": true
+      }
+    },
+    "scope": "write",
+    "annotations": {
+      "title": "memory_propose (QM proposed write)",
+      "idempotentHint": true
+    }
+  },
+  {
     "name": "get_memory_settings",
     "mutating": false,
     "idempotent": true,

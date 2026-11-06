@@ -39,6 +39,13 @@ export async function prepareManualLinkMutation(engine: BrainEngine, row: WriteR
   const snapshot = (await wholeBodySnapshot(engine, stored, row.operation))!;
   const section = linksFenceSection(snapshot.page);
   const to = String(p.to).toLowerCase();
+  // GST-1158 OV3: a proposed link publishes only while its target exists and the person it was proposed for may read it,
+  // so a page deleted or turned private after the owner's yes never lands in a shared Links fence.
+  if (row.operation === 'add_link' && row.authority?.attestedOp === 'memory_propose'
+    && !await (await import('./memory-proposals.ts')).linkTargetReadable(engine, row.authority, row.source_id, to)) {
+    throw opError('page_not_found', `The link target ${to} was removed or is no longer readable by the person this link was proposed for.`,
+      `Request ${row.request_id} for ${row.slug} in source ${row.source_id} changed nothing; a new proposal is needed if the link is still wanted.`);
+  }
   const linkType = optional(p.link_type), linkSource = optional(p.link_source);
   const validFrom = optional(p.valid_from), validUntil = optional(p.valid_until);
   let body: string;
