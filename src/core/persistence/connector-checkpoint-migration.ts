@@ -62,7 +62,7 @@ const orphanPredicate = (first: number) => {
       ((c.op='managed-connector' AND NOT (c.fingerprint = ANY(${k}::text[])))
         OR (c.op='managed-connector-retry' AND NOT (COALESCE(c.completed_keys->0->>'checkpointKey','') = ANY(${k}::text[]))))
       AND NOT EXISTS (SELECT 1 FROM persistence_requests r
-        WHERE (r.state IN ('queued','running','recovering') OR r.recovery IS NOT NULL)
+        WHERE (r.state IN ('queued','deferred','running','recovering') OR r.recovery IS NOT NULL)
           AND (r.intent->>'kind' LIKE 'connector\\_v2\\_%' OR r.intent->>'kind' LIKE 'managed\\_connector\\_%')
           AND (r.intent->>'checkpointKey' = c.fingerprint OR r.intent->>'checkpointKey' = c.completed_keys->0->>'checkpointKey'
             OR r.request_id::text = c.completed_keys->0->>'requestId'))

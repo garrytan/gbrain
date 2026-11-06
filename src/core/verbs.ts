@@ -612,6 +612,7 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
           unembedded: { type: 'integer', description: 'Facts in scope without a comparable embedding (ranked by word overlap only).' },
         },
       },
+      facts_below_floor: { type: 'integer', description: 'Present when question ranking found candidate facts and none cleared the admission floor: how many. Absent when nothing matched.' },
       facts_calibration: {
         type: 'object',
         description: 'Informational, present when question ranking used semantic matching on an embedding model whose fact admission floors were never measured: a short facts list is weaker evidence of "nothing matched". Never replaces facts_degraded.',

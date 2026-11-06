@@ -33,7 +33,7 @@ export function blockingEffectHint(effect: BlockingEffect): string {
 export async function notQuiescedError(tx: SqlEngine, message: string, opts: { queuedEffects: boolean }): Promise<OperationError> {
   const [request] = await tx.executeRaw<{ request_id: string; source_id: string; slug: string; operation: string; state: string }>(
     `SELECT request_id::text AS request_id,source_id,slug,operation,state FROM persistence_requests
-     WHERE state IN ('queued','running','recovering') OR recovery IS NOT NULL ORDER BY sequence LIMIT 1`);
+     WHERE state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL ORDER BY sequence LIMIT 1`);
   if (request) return new OperationError('writer_not_quiesced', message, `${WRITER_INSPECTION_HINT} Blocking request ${request.request_id} `
     + `(${request.operation}, ${request.state}) for source ${request.source_id}, page ${request.slug}. Inspect it with: ${inspect(request.source_id)}. `
     + 'Let the resident owner publish or recover it, then retry.');

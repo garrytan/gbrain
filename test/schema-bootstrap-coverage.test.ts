@@ -1223,7 +1223,11 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'oauth_clients.attest_actor',
   'oauth_clients.attest_ops',
   'oauth_tokens.grant_type',
-  // GST-1158 F3 (migration v290) - how an attested call that names sources reads them. Same posture as v286: absent
+  // GST-1113 (migration v293) - attest_sources, the scope sources an attested memory_write may name. Same posture as
+  // v286: absent from both schema blobs; readers go through to_jsonb(row), so a schema without it reads as none.
+  'access_tokens.attest_sources',
+  'oauth_clients.attest_sources',
+  // GST-1158 F3 (migration v294) - how an attested call that names sources reads them. Same posture as v286: absent
   // from both schema blobs; readers read it through to_jsonb(row), so a schema before it reads as NULL (the scope).
   'access_tokens.attest_read',
   'oauth_clients.attest_read',
@@ -1258,6 +1262,13 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'page_versions.body_generation',
   'page_versions.body_bytes',
   'page_versions.content_hash',
+  // PR B refresh write barrier (v292): migration-only columns. The schema blob creates these tables without them
+  // and no blob index, view or trigger reads them, so there is no forward reference; fresh installs and upgrades
+  // both get them (and the deferred index and triggers) from the migration chain, keeping one column order.
+  'persistence_worktree_refreshes.barrier_sequence',
+  'persistence_worktree_refreshes.released_at',
+  'persistence_requests.deferred_refresh_id',
+  'persistence_consumers.capabilities',
 ]);
 
 test('every ALTER TABLE ADD COLUMN in MIGRATIONS is covered by applyForwardReferenceBootstrap (column-only class)', async () => {

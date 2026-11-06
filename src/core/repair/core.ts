@@ -92,7 +92,7 @@ export interface RepairPlan {
   scan?: { fresh_at: string | null; partial: boolean };
 }
 
-export interface RepairListing { item: string; class: string; detail?: string }
+export interface RepairListing { item: string; class: string; detail?: string; fix?: Action }
 
 /**
  * What the run was asked to do; preview-bound kinds read `expect`, `includeAmbiguous` and the `only`/`skip` path

@@ -25,7 +25,7 @@ import { stampEvidence } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
 import type { SearchResult, HybridSearchMeta, PageReadScope, PageReadPolicy } from '../types.ts';
 import { resolveExcludePrivatePages, isPrivatePage } from '../search/private-visibility.ts';
-import { assertMemberPageWriter } from '../access/member-facts.ts';
+import { assertMemberPageWriter, assertScopePageWriter } from '../access/member-facts.ts';
 import { pageNotVisibleError, remoteTargetHidden } from '../persistence/page-visibility.ts';
 
 // --- Agent-contract fixes shared by the op error sites ---
@@ -376,6 +376,7 @@ export function slugOutsideCallerFence(ctx: OperationContext, slug: string): boo
  */
 export function enforceClientSlugFence(ctx: OperationContext, slug: string, opName: string): void {
   assertMemberPageWriter(ctx, slug, opName);
+  assertScopePageWriter(ctx, slug, opName);
   if (ctx.auth?.fenceProjectionDegraded) {
     throw opError(
       'permission_denied',

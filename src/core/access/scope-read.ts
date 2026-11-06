@@ -11,9 +11,9 @@ import { opError, type OperationError } from '../ops/contract.ts';
 import { ALL_SOURCES } from '../source-id.ts';
 import type { CallerAccess } from '../search/private-visibility.ts';
 
-/** GST-1094: the caller record of a scope read. It is read as the scope, never as the person. */
+/** GST-1094: the caller record of a scope read. It is read as the scope, never as the person. Folder coverage (pending prefixes, an unreadable rulebook) is read per call, so it stays fail-closed. */
 export const SCOPE_READ_ACCESS: Partial<CallerAccess> = {
-  identity: [], audienceIdentities: [], audience: null, actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [],
+  identity: [], audienceIdentities: [], audience: null, actor: null, satisfiedRuleIds: [], privateReadableSources: [],
   hidePrivate: true, applyRemoteReadPolicy: false, restricted: true, remotePolicy: { privacyRelaxed: false, restricted: true },
 };
 
