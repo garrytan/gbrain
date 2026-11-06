@@ -146,7 +146,7 @@ export async function memberByEmail(engine: BrainEngine, raw: unknown): Promise<
   if (rows.length === 1) return toRecord(rows[0]!);
   if (!rows.length) {
     throw opError('not_found', 'No member declares that email.',
-      'List members and their emails with gbrain access member list, or declare it: gbrain access member set <id> --email <addr>.',
+      `List members and their emails with gbrain access member list, then declare it on the right member: gbrain access member set followed by that member's id and --email ${email}.`,
       { why: 'An email only finds a member an operator declared it on; it never creates a member or a link.', fix: MEMBER_LIST_FIX });
   }
   throw memberInvalid(`${rows.length} members declare that email.`, 'email_ambiguous',
