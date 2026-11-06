@@ -25,6 +25,8 @@ export const QM_CONTRACT_PATHS: Record<QmContractVersion, string> = {
 export const QM_CONTRACT_PATH = QM_CONTRACT_PATHS[1];
 /** The arguments v1 publishes per tool, frozen: later arguments appear from v2 on. */
 const V1_PARAMS: Record<string, readonly string[]> = { memory_recall: ['query', 'max_chars', 'acting_user'], memory_write: ['facts', 'idempotency_key', 'acting_user'] };
+/** The deferred operations v1 published, frozen: GST-1158 F9 deferred more from v2 on. */
+const V1_DEFERRED_OPS: readonly string[] = ['capture', 'extract_facts', 'list_write_conflicts', 'takes_add', 'takes_resolve', 'takes_supersede', 'takes_update'];
 /** Catalogue summaries v1 published before they changed, frozen. */
 const V1_SUMMARIES: Record<string, string> = {
   actor_not_attested: "A call named the person it serves (the x-qm-actor header or the acting_user argument) in a way gbrain does not honour: the credential holds no attest right, the operation is not in its attested operations, the argument differs from the header or comes without an attested header, or the id is not 1-256 visible ASCII characters; or a write that saves only as an attested person (memory_write) named none; or the request carries x-qm-audience, a channel audience gbrain does not serve yet. Nothing was read or written.",
@@ -89,7 +91,7 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
         ? 'optional; on an attested call it must equal the header; with no header it is accepted only from a credential bound to a member and only naming that member (its member id or a canonical id linked to it), and the call then runs exactly as the credential; never chooses the person on its own'
         : 'optional; must equal the header; never chooses the person on its own',
       actor_id: { pattern: EXTERNAL_ID_RE.source, case_folding: false },
-      system: 'qm', default_attest_ops: [...DEFAULT_ATTEST_OPS], deferred_ops: [...ACTOR_DEFERRED_OPS].sort(),
+      system: 'qm', default_attest_ops: [...DEFAULT_ATTEST_OPS], deferred_ops: v2 ? [...ACTOR_DEFERRED_OPS].sort() : [...V1_DEFERRED_OPS],
       audit: 'the audit trail and stored writes record the canonical external id as sent, with its linked member',
     },
     tools: [...QM_MEMORY_OPS].sort().map(name => toolEntry(name, version)),

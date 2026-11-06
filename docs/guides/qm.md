@@ -18,6 +18,10 @@ gbrain access member link alice-example --qm U0ALICE            # the canonical 
 Add `forget` with `--attest-ops forget,get_write_request,memory_recall,memory_write` if QM
 should withdraw facts; an attested `forget` reaches only facts on the person's own
 page, and any other id is `not_found`.
+Direct page writes (`add_timeline_entry`, `add_link`, `put_page`, `edit_page`) are not
+attestable: a person's words reach a shared page only through an owner-approved proposal,
+which is not served yet. `--attest-ops` refuses them, and a list that already names one
+is refused for it on every call (`actor_not_attested`, reason `op_not_attested`).
 A client whose `bound_slug_prefixes` do not cover `memory/members/<member>` is refused
 (`permission_denied`) when it saves for that member.
 Links and the right are database state, so a repo-less brain works the same; where

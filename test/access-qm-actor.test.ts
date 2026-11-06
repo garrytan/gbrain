@@ -445,7 +445,7 @@ for (const kind of testBackends()) {
       }
       // GST-359 C2 keyed remember, delta, the write receipts and agent jobs to the person (test/access-member-facts.test.ts);
       // D keyed forget and forget_fact to the person's own member page (test/qm-memory-tools.test.ts).
-      for (const op of ['capture', 'extract_facts', 'takes_add', 'list_write_conflicts']) {
+      for (const op of ['capture', 'extract_facts', 'takes_add', 'list_write_conflicts', 'add_timeline_entry', 'add_link', 'put_page', 'edit_page']) {
         expect(ACTOR_DEFERRED_OPS.has(op)).toBe(true);
       }
       for (const op of ['get_agent_job', 'submit_agent', 'get_write_request', 'list_write_requests', 'cancel_write_request', 'delta', 'remember', 'forget', 'forget_fact']) {
@@ -459,6 +459,9 @@ for (const kind of testBackends()) {
       const deferredCalls: Array<[string, Record<string, unknown>]> = [
         ['list_write_conflicts', {}], ['capture', { content: 'note' }], ['extract_facts', { text: 'x' }],
         ['takes_add', { page_slug: PAGES.alice.slug, claim: 'x' }],
+        // GST-1158 F9: direct page writes wait for owner-approved proposals.
+        ['add_timeline_entry', { slug: PAGES.alice.slug, date: '2026-11-03', summary: 'x' }], ['add_link', { from: PAGES.alice.slug, to: PAGES.bob.slug }],
+        ['put_page', { slug: PAGES.alice.slug, content: '# x\n' }], ['edit_page', { slug: PAGES.alice.slug, expected_revision: '00000000-0000-0000-0000-000000000000', edits: [{ old_text: 'a', new_text: 'b' }] }],
       ];
       for (const [op, params] of deferredCalls) {
         const out = await refused(call(bearer, op, params, { actor: ALICE_ID }), 'actor_not_attested', 'op_not_attested');
