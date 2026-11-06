@@ -129,7 +129,7 @@ function failingImports(engine: BrainEngine, error: unknown, only: (slug: unknow
   return new Proxy(engine, { get(target, prop) {
     const value = Reflect.get(target, prop);
     if (prop === 'getPage' && typeof value === 'function') {
-      return (...args: unknown[]) => new Error().stack?.includes('importOnePath') && only(args[0]) ? Promise.reject(error) : (value as Function).apply(target, args);
+      return (...args: unknown[]) => only(args[0]) && (args[1] as { includeDeleted?: boolean } | undefined)?.includeDeleted === true ? Promise.reject(error) : (value as Function).apply(target, args);
     }
     return typeof value === 'function' ? value.bind(target) : value;
   } }) as BrainEngine;

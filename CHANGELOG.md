@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.585.0] - 2026-11-05
+
+**CI shard weights are re-mined from the 2026-11-05 nightlies, so the unit and serial lanes pack their shards on current timings.** Nothing changes for users.
+
+### Itemized changes
+
+- `scripts/test-weights.json` and `scripts/serial-weights.json`: each test file's weight is its median over the five newest green Test nightlies, 2026-11-01 through 2026-11-05; `scripts/*-weights.metadata.json` names the runs. The heaviest of the 28 unit shards is predicted at 538 s against the 600 s budget (537 s before). Test files with no weight drop from 61 to 36 of 4547 in the unit lane and from 4 to 1 of 457 in the serial lane.
+- `scripts/e2e-weights.json` is unchanged: the 2026-11-05 full-corpus E2E nightly failed, and the newest green one already sourced the map.
+- `test/pathological/a18-ledger-path-text.test.ts` and `test/pathological/s-70-classifier-origin.test.ts`: the injected import failure picks the import's page read by its arguments instead of by an `importOnePath` stack frame, so it still fires when an earlier file in the same process opened an embedded engine. The new packing runs `test/engine-gateway.test.ts` before a18 in one unit shard, where five of its cases failed every time.
+
 ## [0.60.584.0] - 2026-11-05
 
 **`gbrain sources refresh --abandon` no longer lets the next sync delete pages a member source already synced.**
