@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from '../spawn.ts';
-import { appendFileSync, closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { type BigIntStats, appendFileSync, closeSync, constants, existsSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { OperationError } from '../ops/contract.ts';
 import { gitChildEnv } from '../git-env.ts';
@@ -79,10 +79,11 @@ export function physicalRootReservationPath(root: string): string {
 function readPrivate(path: string): unknown | null {
   let fd: number | undefined;
   try {
-    if (lstatSync(path).isSymbolicLink()) throw physicalRootError();
-    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const before = lstatSync(path);
+    if (!before.isFile()) throw physicalRootError();
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
     const info = fstatSync(fd);
-    if (!info.isFile() || info.size > 16_384) throw physicalRootError();
+    if (!info.isFile() || before.dev !== info.dev || before.ino !== info.ino || info.size > 16_384) throw physicalRootError();
     if (process.platform !== 'win32' && (info.mode & 0o077) !== 0) throw ownershipRecordNotPrivateError();
     const value = JSON.parse(readFileSync(fd, 'utf8'));
     if (!value || typeof value !== 'object') throw physicalRootError();
@@ -404,4 +405,254 @@ export function assertPhysicalRoot(path: string, identity: { worktreeId: string;
     if (!reservation || reservation.worktreeId !== identity.worktreeId || identity.coordinationPath && reservation.coordinationPath !== identity.coordinationPath) throw physicalRootError();
     assertPhysicalRootStamp(root, reservation);
   } catch (error) { if (error instanceof OperationError) throw error; throw physicalRootError(); }
+}
+
+/** Keep strict canonical filesystem reads at the physical-root boundary. */
+export function isCanonicalWorktreeRoot(root: string, discoverRoot: (path: string) => string): boolean {
+  return realpathSync(root) === root && realpathSync(discoverRoot(root)) === root;
+}
+
+export interface BindPhysicalIdentity { device: string; inode: string; birth: string; mode: string; uid: string; }
+interface BindFileIdentity extends BindPhysicalIdentity { size: string; }
+interface BindPrivateImage { hash: string; identity: BindFileIdentity; tokenTemplate: [string, string]; }
+export interface MovedReservationProof {
+  root: string; historicalRoot: string; reservationFile: string; coordinationPath: string;
+  brainId: string; worktreeId: string; hostId: string;
+  directory: BindPhysicalIdentity; parent: BindPhysicalIdentity; coordinationParent: BindPhysicalIdentity;
+  reservation: BindPrivateImage; stamp: BindPrivateImage; nextReservationHash: string; nextStampHash: string;
+  published?: { reservation: BindFileIdentity; stamp: BindFileIdentity };
+  staged?: { reservation: string; stamp: string };
+  abortStamp?: { path: string; identity: BindFileIdentity };
+}
+function bindIdentity(info: BigIntStats): BindPhysicalIdentity {
+  return { device: String(info.dev), inode: String(info.ino), birth: String(info.birthtimeNs), mode: String(info.mode), uid: String(info.uid) };
+}
+function bindDirectory(path: string): BindPhysicalIdentity {
+  const info = lstatSync(path, { bigint: true });
+  if (!info.isDirectory() || info.isSymbolicLink() || realpathSync(path) !== path || process.getuid && info.uid !== BigInt(process.getuid())) throw physicalRootError('A reviewed directory or parent is no longer a canonical directory owned by this user.');
+  return bindIdentity(info);
+}
+function bindPrivate(path: string, links = 1n): { bytes: string; value: Record<string, unknown>; identity: BindFileIdentity } | null {
+  let fd: number | undefined;
+  try {
+    const before = lstatSync(path, { bigint: true });
+    if (!before.isFile() || before.isSymbolicLink()) throw physicalRootError();
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    const info = fstatSync(fd, { bigint: true });
+    if (!before.isFile() || before.isSymbolicLink() || !info.isFile() || info.nlink !== links || info.size > 16384n || info.size === 0n
+      || (info.mode & 0o777n) !== 0o600n || process.getuid && info.uid !== BigInt(process.getuid()) || before.dev !== info.dev || before.ino !== info.ino) throw physicalRootError();
+    const bytes = readFileSync(fd, 'utf8'), value = JSON.parse(bytes);
+    const after = fstatSync(fd, { bigint: true }), published = lstatSync(path, { bigint: true });
+    if (after.dev !== info.dev || after.ino !== info.ino || after.size !== info.size || after.mtimeNs !== info.mtimeNs || after.ctimeNs !== info.ctimeNs
+      || published.dev !== info.dev || published.ino !== info.ino || published.nlink !== links || published.mode !== info.mode || published.uid !== info.uid) throw physicalRootError();
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw physicalRootError();
+    return { bytes, value, identity: { ...bindIdentity(info), size: String(info.size) } };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw physicalRootError('The moved ownership metadata is not an unchanged private regular file.');
+  } finally { if (fd !== undefined) closeSync(fd); }
+}
+function tokenTemplate(bytes: string, token: string): [string, string] {
+  // Official ownership writers emit this exact encoding. Reject alternate encodings
+  // and duplicate keys before storing any raw bytes in a token-free SQL preimage.
+  if (JSON.stringify(JSON.parse(bytes)) !== bytes) throw physicalRootError('The ownership record is not canonically encoded.');
+  const encoded = JSON.stringify(token), at = bytes.indexOf(encoded);
+  if (at < 0 || bytes.indexOf(encoded, at + encoded.length) >= 0) throw physicalRootError('The ownership record has an ambiguous token encoding.');
+  const template: [string, string] = [bytes.slice(0, at), bytes.slice(at + encoded.length)];
+  if (template.some(part => part.includes(token))) throw physicalRootError('The ownership record retains a token outside its token field.');
+  return template;
+}
+function image(record: NonNullable<ReturnType<typeof bindPrivate>>, token: string): BindPrivateImage {
+  return { hash: sha256(record.bytes), identity: record.identity, tokenTemplate: tokenTemplate(record.bytes, token) };
+}
+function unimage(record: BindPrivateImage, token: string): string {
+  const bytes = record.tokenTemplate[0] + JSON.stringify(token) + record.tokenTemplate[1];
+  if (sha256(bytes) !== record.hash) throw physicalRootError('The recorded ownership preimage is invalid.');
+  return bytes;
+}
+function absent(path: string): boolean {
+  try { lstatSync(path); return false; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true; throw error; }
+}
+function bindReservationValid(value: PhysicalRootReservation): boolean {
+  return value.version === 1 && [value.token, value.brainId, value.worktreeId, value.hostId].every(uuid)
+    && typeof value.root === 'string' && isAbsolute(value.root) && resolve(value.root) === value.root && !value.root.includes('\0')
+    && typeof value.coordinationPath === 'string' && isAbsolute(value.coordinationPath)
+    && [value.initialDevice, value.initialInode, value.initialBirth].every(part => typeof part === 'string' && /^\d+$/.test(part));
+}
+/** A read-only proof for an existing directory whose historical reservation moved with its parent. */
+export function inspectMovedReservation(root: string, reservationFile: string, identity: { brainId: string; worktreeId: string; hostId: string; coordinationPath: string }): MovedReservationProof {
+  try {
+    if (!isAbsolute(root) || resolve(root) !== root || !isAbsolute(reservationFile) || resolve(reservationFile) !== reservationFile) throw physicalRootError();
+    const directory = bindDirectory(root), parent = bindDirectory(dirname(root));
+    const privateReservation = bindPrivate(reservationFile), privateStamp = bindPrivate(join(root, PHYSICAL_ROOT_MARKER));
+    if (!privateReservation || !privateStamp) throw physicalRootError('The explicit moved reservation and root stamp are both required.');
+    const reservation = privateReservation.value as unknown as PhysicalRootReservation, stamp = privateStamp.value as unknown as PhysicalRootStamp;
+    if (!bindReservationValid(reservation) || stamp.version !== 1 || ![stamp.token, stamp.brainId, stamp.worktreeId].every(uuid)
+      || reservation.brainId !== identity.brainId || reservation.worktreeId !== identity.worktreeId || reservation.hostId !== identity.hostId
+      || reservation.coordinationPath !== identity.coordinationPath || stamp.token !== reservation.token || stamp.brainId !== reservation.brainId || stamp.worktreeId !== reservation.worktreeId
+      || stamp.root !== reservation.root || reservation.root === root || !absent(reservation.root)
+      || dirname(reservationFile) !== dirname(root) || reservationFile !== join(dirname(root), physicalRootReservationPath(reservation.root).split(sep).pop()!)) throw physicalRootError();
+    if (!absent(physicalRootReservationPath(root))) throw physicalRootError('A current-path ownership reservation already exists.');
+    if (canonicalFilesystemPath(identity.coordinationPath) !== identity.coordinationPath
+      || coordinationPathInsideRoot(root, identity.coordinationPath) || coordinationPathInsideRoot(reservation.root, identity.coordinationPath)) throw physicalRootError('The recorded stable coordination lock is not outside both roots.');
+    const coordinationParent = bindDirectory(dirname(identity.coordinationPath));
+    if (!absent(identity.coordinationPath)) {
+      const lock = lstatSync(identity.coordinationPath, { bigint: true });
+      if (!lock.isFile() || lock.isSymbolicLink() || lock.nlink !== 1n || process.getuid && lock.uid !== BigInt(process.getuid()) || (lock.mode & 0o077n) !== 0n) throw physicalRootError();
+    }
+    if (reservation.initialDevice !== directory.device || reservation.initialInode !== directory.inode || stamp.device !== directory.device || stamp.inode !== directory.inode
+      || !samePhysicalBirth(reservation.initialBirth, BigInt(directory.birth)) || !samePhysicalBirth(stamp.birth, BigInt(directory.birth))) throw physicalRootError('The moved metadata does not prove this same physical directory.');
+    assertNoPhysicalRootOverlap(root);
+    for (const name of readdirSync(dirname(root))) {
+      const candidate = join(dirname(root), name);
+      if (candidate === reservationFile || !name.startsWith(RESERVATION_PREFIX) || !name.endsWith('.json')) continue;
+      const other = readPrivate(candidate) as PhysicalRootReservation | null;
+      if (other && (other.worktreeId === reservation.worktreeId || other.token === reservation.token || other.coordinationPath === reservation.coordinationPath)) throw physicalRootError('Another historical reservation conflicts with this identity.');
+    }
+    const nextReservation = JSON.stringify({ ...reservation, root }), nextStamp = JSON.stringify({ ...stamp, root });
+    return { root, historicalRoot: reservation.root, reservationFile, ...identity, directory, parent, coordinationParent,
+      reservation: image(privateReservation, reservation.token), stamp: image(privateStamp, reservation.token), nextReservationHash: sha256(nextReservation), nextStampHash: sha256(nextStamp) };
+  } catch (error) { if (error instanceof OperationError) throw error; throw physicalRootError(); }
+}
+function assertBindDirectories(proof: MovedReservationProof): void {
+  if (digest(bindDirectory(proof.root)) !== digest(proof.directory) || digest(bindDirectory(dirname(proof.root))) !== digest(proof.parent)
+    || digest(bindDirectory(dirname(proof.coordinationPath))) !== digest(proof.coordinationParent) || !absent(proof.historicalRoot)) throw physicalRootError('A reviewed physical directory changed.');
+}
+function bindRecords(proof: MovedReservationProof): { token: string; old: ReturnType<typeof bindPrivate>; current: ReturnType<typeof bindPrivate>; stamp: NonNullable<ReturnType<typeof bindPrivate>> } {
+  assertBindDirectories(proof);
+  const old = bindPrivate(proof.reservationFile), current = bindPrivate(physicalRootReservationPath(proof.root)), stamp = bindPrivate(join(proof.root, PHYSICAL_ROOT_MARKER));
+  if (old && (sha256(old.bytes) !== proof.reservation.hash || digest(old.identity) !== digest(proof.reservation.identity)) || current && sha256(current.bytes) !== proof.nextReservationHash || !stamp) throw physicalRootError('Ownership metadata changed outside the recorded before/after images.');
+  const reservation = (old ?? current)?.value as unknown as PhysicalRootReservation | undefined;
+  if (!reservation || !bindReservationValid(reservation) || reservation.brainId !== proof.brainId || reservation.worktreeId !== proof.worktreeId || reservation.hostId !== proof.hostId || reservation.coordinationPath !== proof.coordinationPath) throw physicalRootError();
+  const hash = sha256(stamp.bytes);
+  if (!proof.published && (current || hash !== proof.stamp.hash || digest(stamp.identity) !== digest(proof.stamp.identity))) throw physicalRootError('Ownership metadata has no checkpointed publication identity.');
+  if (hash !== proof.stamp.hash && hash !== proof.nextStampHash || hash === proof.stamp.hash
+    && digest(stamp.identity) !== digest(proof.stamp.identity) && (!proof.abortStamp || digest(stamp.identity) !== digest(proof.abortStamp.identity))) throw physicalRootError('The root stamp is neither the exact before nor after image.');
+  if (proof.published && (current && digest(current.identity) !== digest(proof.published.reservation)
+    || hash === proof.nextStampHash && digest(stamp.identity) !== digest(proof.published.stamp))) throw physicalRootError('A published ownership metadata inode was substituted.');
+  return { token: reservation.token, old, current, stamp };
+}
+function assertBindStage(path: string, parent: string): void {
+  const prefix = `${join(parent, PHYSICAL_ROOT_MARKER)}.`;
+  if (typeof path !== 'string' || !path.startsWith(prefix) || !/^[a-f0-9-]{36}\.tmp$/.test(path.slice(prefix.length))) throw physicalRootError('The staged ownership path is invalid.');
+}
+function stageBindBytes(parent: string, bytes: string): { path: string; identity: BindFileIdentity } {
+  const path = `${join(parent, PHYSICAL_ROOT_MARKER)}.${randomUUID()}.tmp`, fd = openSync(path, 'wx', 0o600);
+  try { writeFileSync(fd, bytes); fsyncSync(fd); } finally { closeSync(fd); }
+  flushDirectory(parent);
+  const staged = bindPrivate(path);
+  if (!staged || sha256(staged.bytes) !== sha256(bytes)) throw physicalRootError();
+  return { path, identity: staged.identity };
+}
+function discardBindStage(path: string, parent: string, identity: BindFileIdentity, hash: string): void {
+  assertBindStage(path, parent);
+  const staged = bindPrivate(path);
+  if (!staged) return;
+  if (digest(staged.identity) !== digest(identity) || sha256(staged.bytes) !== hash) throw physicalRootError('A retained staged inode changed; nothing was removed.');
+  unlinkSync(path); flushDirectory(parent);
+}
+/** The caller proves these exact staged inodes are unpublished or no longer needed. */
+export function discardMovedReservationPreparation(proof: MovedReservationProof, kind: 'publication' | 'abort'): void {
+  if (kind === 'abort' && proof.abortStamp) discardBindStage(proof.abortStamp.path, proof.root, proof.abortStamp.identity, proof.stamp.hash);
+  if (kind === 'publication' && proof.staged && proof.published) {
+    discardBindStage(proof.staged.reservation, dirname(proof.root), proof.published.reservation, proof.nextReservationHash);
+    discardBindStage(proof.staged.stamp, proof.root, proof.published.stamp, proof.nextStampHash);
+  }
+}
+function settleReservationLink(proof: MovedReservationProof): void {
+  if (!proof.staged || !proof.published) return;
+  const path = proof.staged.reservation, target = physicalRootReservationPath(proof.root);
+  assertBindStage(path, dirname(proof.root)); assertBindDirectories(proof);
+  if (absent(path) || absent(target)) return;
+  // Two links are accepted only as this request's exact recorded stage and target pair, before unlinking the stage.
+  const stage = bindPrivate(path, 2n), current = bindPrivate(target, 2n);
+  if (!stage || !current || digest(stage.identity) !== digest(proof.published.reservation) || digest(current.identity) !== digest(stage.identity)
+    || sha256(stage.bytes) !== proof.nextReservationHash || sha256(current.bytes) !== proof.nextReservationHash) throw physicalRootError('The staged reservation link changed.');
+  unlinkSync(path); flushDirectory(dirname(target));
+}
+/** The caller checkpoints both staged inodes before either ownership record is published. */
+export function prepareMovedReservationPublication(proof: MovedReservationProof): MovedReservationProof {
+  settleReservationLink(proof);
+  const records = bindRecords(proof);
+  if (proof.staged && proof.published) return proof;
+  if (!records.old || records.current || sha256(records.stamp.bytes) !== proof.stamp.hash) throw physicalRootError('Publication has no recorded inode for its current metadata.');
+  const reservation = stageBindBytes(dirname(proof.root), JSON.stringify({ ...records.old.value, root: proof.root }));
+  try {
+    const stamp = stageBindBytes(proof.root, JSON.stringify({ ...JSON.parse(unimage(proof.stamp, records.token)), root: proof.root }));
+    return { ...proof, published: { reservation: reservation.identity, stamp: stamp.identity }, staged: { reservation: reservation.path, stamp: stamp.path } };
+  } catch (error) { discardBindStage(reservation.path, dirname(proof.root), reservation.identity, proof.nextReservationHash); throw error; }
+}
+/** Caller holds the brain, UUID coordination and reservation repair locks. No token enters a durable SQL record. */
+export async function publishMovedReservation(proof: MovedReservationProof, boundary?: (name: string) => void | Promise<void>): Promise<void> {
+  settleReservationLink(proof);
+  let records = bindRecords(proof);
+  if (!records.old || !proof.staged || !proof.published) throw physicalRootError('Publication requires its historical preimage and checkpointed staged inodes.');
+  if (!records.current) {
+    assertBindStage(proof.staged.reservation, dirname(proof.root));
+    const staged = bindPrivate(proof.staged.reservation);
+    if (!staged || sha256(staged.bytes) !== proof.nextReservationHash || digest(staged.identity) !== digest(proof.published.reservation)) throw physicalRootError();
+    try { linkSync(proof.staged.reservation, physicalRootReservationPath(proof.root)); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw physicalRootError(); throw error; }
+    flushDirectory(dirname(proof.root)); await boundary?.('reservation_linked');
+    settleReservationLink(proof);
+    await boundary?.('reservation_created');
+  }
+  records = bindRecords(proof);
+  if (sha256(records.stamp.bytes) === proof.stamp.hash) {
+    assertBindStage(proof.staged.stamp, proof.root);
+    const staged = bindPrivate(proof.staged.stamp), current = bindPrivate(join(proof.root, PHYSICAL_ROOT_MARKER));
+    if (!staged || sha256(staged.bytes) !== proof.nextStampHash || digest(staged.identity) !== digest(proof.published.stamp)
+      || !current || digest(current.identity) !== digest(records.stamp.identity) || sha256(current.bytes) !== proof.stamp.hash) throw physicalRootError();
+    renameSync(proof.staged.stamp, join(proof.root, PHYSICAL_ROOT_MARKER)); flushDirectory(proof.root);
+    await boundary?.('stamp_published');
+  }
+  bindRecords(proof); assertPhysicalRoot(proof.root, { worktreeId: proof.worktreeId, coordinationPath: proof.coordinationPath });
+}
+export function verifyMovedReservation(proof: MovedReservationProof, committed = false): void {
+  const records = bindRecords(proof);
+  if (!committed && !records.old || !records.current || sha256(records.stamp.bytes) !== proof.nextStampHash) throw physicalRootError();
+  assertPhysicalRoot(proof.root, { worktreeId: proof.worktreeId, coordinationPath: proof.coordinationPath });
+}
+export function publishedMovedReservationProof(proof: MovedReservationProof): MovedReservationProof {
+  verifyMovedReservation(proof);
+  if (!proof.published) throw physicalRootError('The published inode proof was not checkpointed.');
+  return proof;
+}
+export function cleanMovedReservation(proof: MovedReservationProof): void {
+  verifyMovedReservation(proof, true);
+  const { old } = bindRecords(proof);
+  if (old) { const current = bindPrivate(proof.reservationFile); if (!current || digest(current.identity) !== digest(old.identity) || sha256(current.bytes) !== proof.reservation.hash) throw physicalRootError(); unlinkSync(proof.reservationFile); flushDirectory(dirname(proof.reservationFile)); }
+  if (!absent(proof.reservationFile)) throw physicalRootError();
+  verifyMovedReservation(proof, true);
+}
+/** Persist the staged inode in the request before renaming it over the published stamp. */
+export function prepareMovedReservationAbort(proof: MovedReservationProof): MovedReservationProof {
+  settleReservationLink(proof);
+  const records = bindRecords(proof);
+  if (!records.old) throw physicalRootError('The exact historical ownership preimage is unavailable.');
+  if (proof.abortStamp || sha256(records.stamp.bytes) === proof.stamp.hash) return proof;
+  return { ...proof, abortStamp: stageBindBytes(proof.root, unimage(proof.stamp, records.token)) };
+}
+export function verifyAbortedMovedReservation(proof: MovedReservationProof): void {
+  const records = bindRecords(proof);
+  if (!records.old || records.current || sha256(records.stamp.bytes) !== proof.stamp.hash) throw physicalRootError('The abort physical afterimage changed.');
+}
+export async function abortMovedReservation(proof: MovedReservationProof, boundary?: (name: string) => void | Promise<void>): Promise<void> {
+  const records = bindRecords(proof), marker = join(proof.root, PHYSICAL_ROOT_MARKER);
+  if (!records.old) throw physicalRootError('The exact historical ownership preimage is unavailable.');
+  if (sha256(records.stamp.bytes) === proof.nextStampHash) {
+    const abortStamp = proof.abortStamp;
+    if (!abortStamp) throw physicalRootError('The abort stamp has no durable staged identity.');
+    assertBindStage(abortStamp.path, proof.root);
+    const staged = bindPrivate(abortStamp.path), current = bindPrivate(marker);
+    if (!staged || sha256(staged.bytes) !== proof.stamp.hash || digest(staged.identity) !== digest(abortStamp.identity)
+      || !current || sha256(current.bytes) !== proof.nextStampHash || digest(current.identity) !== digest(records.stamp.identity)) throw physicalRootError('The recorded abort stamp inode or publication changed.');
+    renameSync(abortStamp.path, marker); flushDirectory(proof.root);
+    await boundary?.('abort_stamp_restored');
+  }
+  const current = bindRecords(proof).current;
+  if (current) { unlinkSync(physicalRootReservationPath(proof.root)); flushDirectory(dirname(proof.root)); }
+  await boundary?.('abort_reservation_removed');
+  discardMovedReservationPreparation(proof, 'publication'); discardMovedReservationPreparation(proof, 'abort');
+  verifyAbortedMovedReservation(proof);
 }

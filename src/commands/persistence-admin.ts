@@ -1,6 +1,7 @@
 /** Engine-free parsing and delegation for explicitly local writer administration. */
 import { resolve } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
+import { assertTopologyCommitted } from '../core/persistence/managed-sources.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { finishCliTeardown, setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { isThinClient, loadConfig, toEngineConfig, type GBrainConfig } from '../core/config.ts';
@@ -15,6 +16,7 @@ import { reportPersistenceCliError } from './persistence-delegate.ts';
 import { bigintToStringReplacer } from '../core/utils.ts';
 
 export const WRITER_HELP = `Usage:
+  gbrain sources writer bind-existing <source> --path <root> --worktree-id <uuid> --reservation-file <file> --expected-epoch <n> --expected-generation <n> --request-id <uuid> [--dry-run] [--admin-intent writer_bind_existing --expected-state <admin_state> --expect <plan_hash>] [--json]
   gbrain sources writer status [<source>] [--probe] [--json]
   gbrain sources writer failures <source> [--state all] [--group-by category] [--since 7d] [--limit 20] [--before <cursor>]
     [--category <c>] [--code <c>] [--origin <o>|none] [--operation <op>] [--json]
@@ -170,6 +172,7 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
   let brain: string | undefined, json = false;
   const values: Record<string, string> = {
     '--path': 'path', '--source': 'source_id', '--expected-epoch': 'expected_epoch', '--manifest': 'manifest',
+    '--worktree-id': 'worktree_id', '--reservation-file': 'reservation_file', '--expected-generation': 'expected_generation',
     '--source-ids': 'source_ids', '--scopes': 'scopes', '--allowed-operations': 'allowed_operations',
     '--slug-prefixes': 'slug_prefixes', '--limit': 'limit', '--before': 'before',
     '--admin-intent': 'admin_intent', '--expected-state': 'expected_state', '--request-id': 'request_id', '--pat-file': 'pat_file', '--parked-code': 'parked_code',
@@ -209,6 +212,7 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
     else if (verb === 'settle-effects') operation = 'writer_settle_effects';
     else if (verb === 'git-durability') operation = 'writer_git_durability';
     else if (verb === 'claim') operation = 'writer_claim';
+    else if (verb === 'bind-existing') operation = 'writer_bind_existing';
     else if (verb === 'activate') operation = 'writer_activate';
     else if (verb === 'deactivate') operation = 'writer_deactivate';
     else if (verb === 'lock') operation = 'writer_lock';
@@ -260,6 +264,8 @@ export async function runPersistenceAdminCli(group: Group, args: string[], conne
     let result: unknown;
     if (delegated.handled) result = delegated.result;
     else {
+      if (parsed.operation === 'writer_bind_existing') throw opError('owner_unavailable', 'Binding an existing worktree requires its authenticated resident owner.',
+        'Run this command through the resident owner advertising writer_bind_existing. No engine was opened and nothing was changed.');
       if (!connected) {
         const { createEngine } = await import('../core/engine-factory.ts');
         owned = await createEngine(toEngineConfig(config));
@@ -280,6 +286,10 @@ export async function runPersistenceAdminCli(group: Group, args: string[], conne
       for (const warning of (result as { warnings?: Array<{ message: string }> }).warnings ?? []) process.stderr.write(`warning: ${warning.message}\n`);
     }
     await writeStdoutFinal(JSON.stringify(result, bigintToStringReplacer, 2) + '\n');
+    if (parsed.operation === 'writer_bind_existing' && parsed.params.dry_run !== true) {
+      try { assertTopologyCommitted(result as Record<string, unknown>); }
+      catch { setCliExitVerdict(1); }
+    }
     // #6678: a credential repair that refused some parked pushes on their own is partial and exits 1.
     if ((parsed.operation === 'writer_git_durability' || parsed.operation === 'writer_retry_effects') && (result as { status?: unknown }).status === 'partial') setCliExitVerdict(1);
   } catch (error) {

@@ -231,8 +231,14 @@ export async function recoverSourceTopologies(engine:BrainEngine,opts:{hostId?:s
   let recovered=0;
   for(const row of rows){
     let finished=false;
-    try{await withTopologyLocks(engine,row.source_id,async()=>{const done=await finishTopologyClone(engine,row.id);if(!done.recovery){recovered++;finished=true;}},undefined,0);}
-    catch(error){if(!(error instanceof OperationError&&['write_pending','recovery_required','owner_marker_missing'].includes(error.code)))throw error;}
+    try{
+      if(row.recovery?.kind==='bind_existing'){
+        const {finishBindExisting}=await import('./bind-existing.ts');
+        const done=await finishBindExisting(engine,row.id,{},0);if(!done.recovery){recovered++;finished=true;}
+      }else await withTopologyLocks(engine,row.source_id,async()=>{const done=await finishTopologyClone(engine,row.id);if(!done.recovery){recovered++;finished=true;}},undefined,0);
+    }
+    catch(error){if(!(error instanceof OperationError&&(['write_pending','recovery_required','owner_marker_missing'].includes(error.code)
+      || row.recovery?.kind==='bind_existing'&&error.code==='source_changed')))throw error;}
     finally{opts.onAttempt?.(row.id,finished);}
   }
   return recovered;

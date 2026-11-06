@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { existsSync, realpathSync } from 'node:fs';
 import { assertPhysicalRoot } from './physical-root.ts';
 import { inspectRelocatedPhysicalRoot } from './physical-root-record.ts';
@@ -12,6 +12,7 @@ import { containsPath, getWorktreeBinding, type WorktreeBinding } from './owners
 import { completeWrite, lockCounters } from './journal.ts';
 import { principalKey, requestPrincipal, type WriteRequest } from './model.ts';
 import { catalogueError } from '../error-catalogue.ts';
+import { topologyTransaction } from './topology-transaction.ts';
 import { ACTIVE_REFRESH_STATES_SQL } from './worktree-refresh-schema.ts';
 
 export type TopologyBinding=WorktreeBinding & { unbound?:boolean };
@@ -54,6 +55,7 @@ export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string
     // Serializes discovery of new/unbound paths on this host. Worktree locks
     // remain the actual publication authority and never live in the checkout.
     await take(join(persistenceHome(), 'locks', `topology-${brain.brain_id}.lock`));
+    await assertSourceKeyUnreserved(engine, sourceId);
     const binding = await getWorktreeBinding(engine, sourceId);
     const bindings:TopologyBinding[] = binding ? [binding] : [];
     if (additionalRoot) {
@@ -100,6 +102,7 @@ export async function inspectTopologyPhysicalRoot(engine: BrainEngine, sourceId:
  */
 export async function lockTopologyRows(tx: BrainEngine, sourceId: string, bindings: TopologyBinding[], refreshId?: string): Promise<string[]> {
   await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+  await assertSourceKeyUnreserved(tx, sourceId);
   const ids = bindings.map(b => b.worktree_id).sort();
   const owners = await tx.executeRaw<{ id: string; owner_host_id: string; state: string; owner_epoch:string;topology_generation:string }>(
     'SELECT id,owner_host_id,state,owner_epoch,topology_generation FROM persistence_worktrees WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
@@ -187,4 +190,44 @@ export async function advanceTopology(tx: BrainEngine, worktrees: string[]): Pro
   await tx.executeRaw('UPDATE persistence_worktrees SET topology_generation=topology_generation+1 WHERE id=ANY($1::uuid[])',[worktrees]);
   await tx.executeRaw(`UPDATE persistence_source_bindings b SET topology_generation=w.topology_generation
     FROM persistence_worktrees w WHERE b.worktree_id=w.id AND w.id=ANY($1::uuid[])`,[worktrees]);
+}
+
+/** A recovering topology intent reserves an absent source ID as well as its physical root. */
+export async function assertSourceKeyUnreserved(engine: BrainEngine, sourceId: string, ownId?: string): Promise<void> {
+  const [row] = await engine.executeRaw<{ id: string }>(`SELECT id FROM persistence_topology_changes
+    WHERE source_id=$1 AND recovery->>'kind'='bind_existing' AND (state='recovering' OR recovery IS NOT NULL)
+      AND ($2::uuid IS NULL OR id<>$2::uuid) LIMIT 1`, [sourceId, ownId ?? null]);
+  if (row) throw opError('recovery_required', 'The source ID is reserved by an unfinished existing-worktree binding.',
+    'Let that exact request finish or recover; do not reuse its source ID under another request or directory.');
+}
+
+export async function withExistingWorktreeLocks<T>(engine: BrainEngine, worktreeId: string, run: (host: Record<string, unknown>) => Promise<T>, opts: { waitMs?: number; reservationGuard?: string } = {}): Promise<T> {
+  const waitMs = opts.waitMs ?? 5000;
+  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+  if (!brain) throw opError('recovery_required', 'The selected brain has no ownership singleton.', 'Inspect the selected brain without creating a replacement.');
+  const handles: NativeLockHandle[] = [];
+  const take = async (path: string) => {
+    const handle = waitMs === 0 ? await tryAcquireNativeLock(path) : await acquireNativeLock(path, { timeoutMs: waitMs });
+    if (!handle) throw opError('write_pending', 'The existing worktree is busy.', 'Retry the same request once its recorded owner lock is idle.');
+    handles.push(handle);
+  };
+  try {
+    await take(join(persistenceHome(), 'locks', `topology-${brain.brain_id}.lock`));
+    const hosts = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM persistence_host_bindings WHERE worktree_id=$1::uuid ORDER BY host_id', [worktreeId]);
+    if (hosts.length !== 1 || hosts[0].host_id !== hostIdFor(engine) || typeof hosts[0].coordination_path !== 'string') throw opError('recovery_required', 'The existing worktree has no unique local host binding.', 'Inspect its full host bindings; nothing was changed.');
+    const path = hosts[0].coordination_path;
+    if (!existsSync(dirname(path)) || realpathSync(dirname(path)) !== dirname(path)) throw opError('recovery_required', 'The recorded coordination parent is not canonical.', 'Restore the existing recorded parent; do not select another lock.');
+    await take(path);
+    if (opts.reservationGuard) await take(opts.reservationGuard);
+    return await run(hosts[0]);
+  } finally { for (const handle of handles.reverse()) await handle.release(); }
+}
+
+/** Serialize classic source insertion with admission of an absent-key binding. */
+export async function withSourceKeyReservationGuard<T>(engine: BrainEngine, sourceId: string, run: (tx: BrainEngine) => Promise<T>): Promise<T> {
+  return topologyTransaction(engine, async tx => {
+    await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+    await assertSourceKeyUnreserved(tx, sourceId);
+    return run(tx);
+  });
 }

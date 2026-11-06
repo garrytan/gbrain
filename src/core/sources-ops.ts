@@ -1,4 +1,5 @@
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
+import { withSourceKeyReservationGuard } from './persistence/topology-locks.ts';
 import { managedPersistenceEnabled } from './persistence/ownership.ts';
 /**
  * gbrain sources-ops — pure async functions for source-management operations
@@ -455,6 +456,19 @@ async function insertApiSource(engine: BrainEngine, opts: AddSourceOpts, kind: '
   );
 }
 
+/** Validate a clone URL before addSource performs any filesystem work. */
+function parseSourceRemoteUrl(remoteUrl: AddSourceOpts['remoteUrl']): { url: string; hostname: string } | null {
+  if (!remoteUrl) return null;
+  try {
+    return parseRemoteUrl(remoteUrl);
+  } catch (e) {
+    if (e instanceof RemoteUrlError) {
+      throw new SourceOpError('invalid_remote_url', e.message, e);
+    }
+    throw e;
+  }
+}
+
 export async function addSource(
   engine: BrainEngine,
   opts: AddSourceOpts,
@@ -534,17 +548,7 @@ export async function addSource(
   }
 
   // Validate URL before doing any filesystem work.
-  let parsedUrl: { url: string; hostname: string } | null = null;
-  if (opts.remoteUrl) {
-    try {
-      parsedUrl = parseRemoteUrl(opts.remoteUrl);
-    } catch (e) {
-      if (e instanceof RemoteUrlError) {
-        throw new SourceOpError('invalid_remote_url', e.message, e);
-      }
-      throw e;
-    }
-  }
+  const parsedUrl = parseSourceRemoteUrl(opts.remoteUrl);
 
   // Overlap check for any local path (existing behavior).
   let finalPath = opts.localPath ?? null;
@@ -584,11 +588,11 @@ export async function addSource(
     const displayName = opts.name ?? opts.id;
 
     try {
-      await engine.executeRaw(
+      await withSourceKeyReservationGuard(engine, opts.id, tx => tx.executeRaw(
         `INSERT INTO sources (id, name, local_path, config)
              VALUES ($1, $2, $3, $4::text::jsonb)`,
         [opts.id, displayName, finalPath, JSON.stringify(config)],
-      );
+      ));
     } catch (e) {
       rmSync(tempDir, { recursive: true, force: true });
       throw new SourceOpError(
@@ -656,11 +660,11 @@ export async function addSource(
       }
     }
     const displayName = opts.name ?? opts.id;
-    await engine.executeRaw(
+    await withSourceKeyReservationGuard(engine, opts.id, tx => tx.executeRaw(
       `INSERT INTO sources (id, name, local_path, config)
            VALUES ($1, $2, $3, $4::text::jsonb)`,
       [opts.id, displayName, finalPath, JSON.stringify(config)],
-    );
+    ));
   } else if (opts.google) {
     // ── Path D: --kind google (v0.47) ─────────────────────────────────────
     // API-backed source: no git repo, no clone. Credentials live in the
@@ -692,13 +696,15 @@ export async function addSource(
       federated: opts.federated ?? true,
     };
     const displayName = opts.name ?? opts.id;
-    await engine.executeRaw(
+    await withSourceKeyReservationGuard(engine, opts.id, tx => tx.executeRaw(
       `INSERT INTO sources (id, name, local_path, config)
            VALUES ($1, $2, $3, $4::text::jsonb)`,
       [opts.id, displayName, finalPath, JSON.stringify(config)],
-    );
+    ));
   } else if (opts.meetings || opts.slack) {
-    await insertApiSource(engine, opts, opts.slack ? 'slack' : 'meetings');
+    await withSourceKeyReservationGuard(engine, opts.id, tx =>
+      insertApiSource(tx, opts, opts.slack ? 'slack' : 'meetings'),
+    );
   } else {
     // ── Path B: --path or no path (existing behavior, pre-v0.28) ─────────
     // #2707: only validate when the path actually exists — a not-yet-created
@@ -755,11 +761,11 @@ export async function addSource(
         config.federated = opts.federated;
       }
       const displayName = opts.name ?? opts.id;
-      await engine.executeRaw(
+      await withSourceKeyReservationGuard(engine, opts.id, tx => tx.executeRaw(
         `INSERT INTO sources (id, name, local_path, config)
              VALUES ($1, $2, $3, $4::text::jsonb)`,
         [opts.id, displayName, finalPath, JSON.stringify(config)],
-      );
+      ));
     }
   }
 
