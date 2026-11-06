@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.593.0] - 2026-11-06
 
 **`gbrain repair failed-writes` now previews a brain with a large write journal in about a second instead of timing out.** On Postgres, the preview of refused writes read the request table once per refused write, and one of those reads walked the table from that write to its end. With hundreds of refused writes and a journal of over a million requests, the preview ran for minutes and the server's statement timeout ended it with a bare `internal_error`, so the operator had no way to see or recover the lost writes. The preview now classes every refused write in a few set reads: on a synthetic journal of 1.5 million requests with over 800 refused writes it took 1.2 seconds (it took 265 seconds before), with the same classes and the same preview hash. When a preview read does still run past the timeout, it refuses `repair_preview_timeout` with a fix instead of `internal_error`, and nothing is saved.
 
