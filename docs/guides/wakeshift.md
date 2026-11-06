@@ -12,6 +12,8 @@ Without Wakeshift, `wait_job` (MCP) and `gbrain jobs wait <id>` (CLI) wait for a
 2. Give gbrain the key, either way:
    - `gbrain wakeshift enable --key-stdin < key.txt` saves it to `~/.gbrain/wakeshift.key` (mode 0600); or
    - put `WAKESHIFT_API_KEY=wst_…` in `~/.gbrain/.env`.
+
+   When both are present, `WAKESHIFT_API_KEY` wins (a shell export over a `~/.gbrain/.env` value), and `--key-stdin` refuses while it is set, so it never saves a key gbrain would not use.
 3. Run `gbrain wakeshift enable`. It shows what leaves the machine and asks for consent (`--yes` answers for a non-interactive run), checks the key with Wakeshift, and publishes gbrain's event.
 
 The watch tools (`watch_job`, `list_watches`, `unwatch`) appear on the next `tools/list`. `gbrain wakeshift status` shows the state, and `gbrain wakeshift test` checks the key and app without sending a wake. `gbrain wakeshift disable` hides the tools at once and ends every open watch.
@@ -42,11 +44,11 @@ Never sent: page text, titles or slugs, job data or results, emails, names, toke
 
 ## Delivery and latency
 
-Delivery is a pull, not a hook. `gbrain serve` (stdio and HTTP) and the job worker check open watches every 5 seconds, and `gbrain jobs work` checks once more before it exits. On Postgres, a wake arrives within about 5 seconds of the job finishing. A watch on a job that has already finished wakes at once.
+Delivery is a pull, not a hook. `gbrain serve` (stdio and HTTP) and the job worker check open watches every 5 seconds, and on PGLite `gbrain jobs work` checks once more before it exits. On Postgres, a wake arrives within about 5 seconds of the job finishing. A watch on a job that has already finished wakes at once.
 
 On PGLite there is no background worker. A job submitted from a stdio session runs when `gbrain jobs work` drains the queue, after `gbrain serve` stops, and that run delivers its wakes before it exits. A wake it can't deliver arrives from the next `gbrain serve`.
 
-Each watch lasts 7 days and delivers once. A failed delivery is retried at most 5 times, after 30 s, 2 min, 8 min and 30 min (a rate limit waits its `Retry-After`). Any other refusal is final. A watch that dies is ended at Wakeshift, so the conversation is told. A wake Wakeshift matched to no open conversation (the user ended it, or it expired there) ends the watch with `last_error: unmatched` rather than counting as delivered. Jobs are never blocked or slowed by Wakeshift: it is down only means the wake comes late or not at all.
+Each watch lasts 7 days and delivers once. A failed delivery is tried at most 5 times in all, retrying after 30 s, 2 min, 8 min and 30 min (a rate limit waits its `Retry-After`). Any other refusal is final. A watch that dies is ended at Wakeshift, so the conversation is told. A wake Wakeshift matched to no open conversation (the user ended it, or it expired there) ends the watch with `last_error: unmatched` rather than counting as delivered. Jobs are never blocked or slowed by Wakeshift: Wakeshift being down only means the wake comes late or not at all.
 
 Repo-less brains work the same way. Watches are operational database rows, not brain content.
 
