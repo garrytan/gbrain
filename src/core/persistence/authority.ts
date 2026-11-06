@@ -64,6 +64,7 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
   // GST-359 C1: an attested call stores its actor (never the bare one-member audience), so publication re-resolves the link.
   const actingFor: WriteAuthority['actingFor'] = access?.actor ? { ...access.actor } : access?.audience?.length ? [...access.audience] : undefined;
   const a: WriteAuthority = {
+    ...(ctx.agentLabel ? { agentLabel: ctx.agentLabel } : {}),
     version: 1, principal, remote: ctx.remote !== false, sourceId, sourceIncarnation,
     // GBRA-231: a channel audience (anything but one member) never relaxes privacy, so its ceiling hides private pages.
     excludePrivate: (actingFor !== undefined && currentCallerAccess().hidePrivate) || await excludesPrivateWritesAtAdmission(ctx.engine, ctx.remote !== false),
