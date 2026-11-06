@@ -497,6 +497,8 @@ export interface OperationContext {
    * transports). Unset is `background`; it is never derived from `remote` (persistence/admission-origin.ts).
    */
   admissionOrigin?: import('../persistence/admission-origin.ts').AdmissionOrigin;
+  /** The caller's self-declared agent label, read by an HTTP transport from X-Gbrain-Agent-Label (persistence/attribution.ts). Unverified text, never authority. */
+  agentLabel?: string;
   /**
    * Transport marker for auth-less remote surfaces (#1061). The stdio MCP
    * dispatch sets 'stdio' — it is deliberately `remote: true` (agent-facing,

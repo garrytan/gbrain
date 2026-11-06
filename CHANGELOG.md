@@ -26,6 +26,18 @@ identifiers and attribution are available in the pre-removal Git revision
 
 These routes accept only the owner session. Each applied change writes an `access_admin` row to the request log. A member-bound or public client still can't hold the attest right, deferred operations still can't be attested, and a link still needs an enabled member and an unlinked id. Removing a member stays a brain-host command.
 
+## [0.60.587.0] - 2026-11-06
+
+**An HTTP MCP caller can now say which AI made a write, and attribution reads show it.** Send `X-Gbrain-Agent-Label: Claude Code` (or `Codex`, or a job name) on a request, and the writes that request makes itself show `agent_label` in `gbrain attribution` / `get_write_attribution` and in `get_versions` for admin and local readers. This answers "which of my AIs wrote this?" when several share one OAuth client or token. The label is text the caller declares and gbrain does not verify. The principal is still who was authorized, and no grant, access rule or trust tier reads it. A request without the header is recorded exactly as before, so nothing changes until a caller sends it. Contributed by @JamisonMercurio (#8664).
+
+### Itemized changes
+
+- Both HTTP transports (the OAuth `serve --http` mount and the legacy bearer transport) read the header. Admission stores it on the request's existing `authority` record as `agentLabel`, so there's no new column or migration, and repo-less brains record it too. Stdio MCP and the local CLI have no request headers and record no label.
+- A label is 1 to 120 printable ASCII characters after trimming. Anything else (control, bidi, zero-width or non-ASCII characters, or a longer value) is dropped, never refused.
+- Jobs a labelled request queues (`submit_job` remote jobs and agent jobs) run under their own authority and record no label.
+- Both transports' CORS preflight now allows the header, so a browser client on an origin in `GBRAIN_HTTP_CORS_ORIGIN` can send it without its whole MCP call being blocked.
+- `test/write-agent-label.test.ts` covers both transports, a repo-less brain, the parser bounds, a stored authority that is otherwise identical with and without a label, and a read-only token that is still refused. The export-surface golden gains the optional `agentLabel` and `agent_label` fields.
+
 ## [0.60.586.0] - 2026-11-06
 
 **A `remember` refused for its arguments now names the whole valid call, so an agent that never read the schema saves on its next try.**
