@@ -31,8 +31,8 @@ export const v290: Migration = {
     UPDATE persistence_worktree_refreshes SET released_at=COALESCE(completed_at,updated_at) WHERE state IN ('completed','aborted') AND released_at IS NULL;
     ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS deferred_refresh_id uuid REFERENCES persistence_worktree_refreshes(id);
     ALTER TABLE persistence_consumers ADD COLUMN IF NOT EXISTS capabilities text[] NOT NULL DEFAULT '{}';
-    CREATE INDEX IF NOT EXISTS persistence_requests_deferred ON persistence_requests(deferred_refresh_id, sequence) WHERE state='deferred';
-    CREATE OR REPLACE FUNCTION gbrain_release_refresh_barrier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+    CREATE INDEX IF NOT EXISTS persistence_requests_deferred ON persistence_requests(worktree_id, sequence) WHERE state='deferred';
+    CREATE OR REPLACE FUNCTION gbrain_release_refresh_barrier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
     BEGIN
       NEW.released_at := COALESCE(NEW.released_at, now());
       RETURN NEW;
@@ -41,7 +41,7 @@ export const v290: Migration = {
     CREATE TRIGGER gbrain_refresh_release BEFORE UPDATE OF state ON persistence_worktree_refreshes FOR EACH ROW
       WHEN (NEW.state IN ('completed','aborted') AND OLD.state NOT IN ('completed','aborted'))
       EXECUTE FUNCTION gbrain_release_refresh_barrier();
-    CREATE OR REPLACE FUNCTION gbrain_guard_deferred_request() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+    CREATE OR REPLACE FUNCTION gbrain_guard_deferred_request() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
     BEGIN
       IF NEW.state='deferred' THEN
         IF OLD.state<>'deferred' THEN RAISE EXCEPTION 'unsupported_mutation_protocol: only admission defers a request' USING ERRCODE='42501'; END IF;
@@ -69,8 +69,8 @@ export const v290: Migration = {
     UPDATE persistence_worktree_refreshes SET released_at=COALESCE(completed_at,updated_at) WHERE state IN ('completed','aborted') AND released_at IS NULL;
     ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS deferred_refresh_id uuid REFERENCES persistence_worktree_refreshes(id);
     ALTER TABLE persistence_consumers ADD COLUMN IF NOT EXISTS capabilities text[] NOT NULL DEFAULT '{}';
-    CREATE INDEX IF NOT EXISTS persistence_requests_deferred ON persistence_requests(deferred_refresh_id, sequence) WHERE state='deferred';
-    CREATE OR REPLACE FUNCTION gbrain_release_refresh_barrier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+    CREATE INDEX IF NOT EXISTS persistence_requests_deferred ON persistence_requests(worktree_id, sequence) WHERE state='deferred';
+    CREATE OR REPLACE FUNCTION gbrain_release_refresh_barrier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
     BEGIN
       NEW.released_at := COALESCE(NEW.released_at, now());
       RETURN NEW;
@@ -79,7 +79,7 @@ export const v290: Migration = {
     CREATE TRIGGER gbrain_refresh_release BEFORE UPDATE OF state ON persistence_worktree_refreshes FOR EACH ROW
       WHEN (NEW.state IN ('completed','aborted') AND OLD.state NOT IN ('completed','aborted'))
       EXECUTE FUNCTION gbrain_release_refresh_barrier();
-    CREATE OR REPLACE FUNCTION gbrain_guard_deferred_request() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+    CREATE OR REPLACE FUNCTION gbrain_guard_deferred_request() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
     BEGIN
       IF NEW.state='deferred' THEN
         IF OLD.state<>'deferred' THEN RAISE EXCEPTION 'unsupported_mutation_protocol: only admission defers a request' USING ERRCODE='42501'; END IF;

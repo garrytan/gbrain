@@ -136,6 +136,7 @@ test('seven commit kinds: only plain, amend, the guard bypass and plumbing are f
   const before = head(work);
   expect(() => git(work, ['commit', '-q', '--no-verify', '-m', 'refused'])).toThrow(/gbrain commit guard/);
   expect(head(work)).toBe(before);
+  await new Promise(r => setTimeout(r, 1100));
   git(work, ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'hooks off']);
   const bypass = head(work);
 

@@ -27,7 +27,7 @@ const DECIDED: Record<string, { count: number; why: string }> = {
   'src/core/persistence/atom-maintenance.ts': { count: 3, why: 'maintenance producer, never deferred' },
   'src/core/persistence/atom-retry.ts': { count: 2, why: 'receipt state' },
   'src/core/persistence/checkpoint-validation.ts': { count: 2, why: 'managed sync' },
-  'src/core/persistence/journal.ts': { count: 7, why: 'claim and head selectors use RELEASED_DEFERRED; the rest are sync or recovery rules' },
+  'src/core/persistence/journal.ts': { count: 8, why: 'claim and head selectors pair the list with RELEASED_DEFERRED (EARLIER_HEAD with its own EARLIER_DEFERRED probe); the two named-sync lists match sync rows, never deferred; the rest are recovery rules' },
   'src/core/persistence/managed-sync-orphans.ts': { count: 4, why: 'managed sync' },
   'src/core/persistence/page-batch.ts': { count: 1, why: 'batches are never deferred' },
   'src/core/persistence/schema.ts': { count: 3, why: 'the original state CHECK and partial indexes; deferred rows have their own index' },

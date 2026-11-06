@@ -636,7 +636,7 @@ async function readRefreshBarrier(engine: BrainEngine): Promise<RefreshBarrier |
 /** Room under the per-refresh cap, and every live consumer of the worktree's owner host can drain a deferred write. */
 async function deferralRoom(tx: BrainEngine, worktreeId: string, refreshId: string, barrier: RefreshBarrier): Promise<boolean> {
   const [row] = await tx.executeRaw<{ deferred: number; incapable: boolean }>(`SELECT
-    (SELECT count(*) FROM persistence_requests WHERE deferred_refresh_id=$1::uuid AND state='deferred')::int AS deferred,
+    (SELECT count(*) FROM persistence_requests WHERE worktree_id=$2::uuid AND state='deferred' AND deferred_refresh_id=$1::uuid)::int AS deferred,
     EXISTS (SELECT 1 FROM persistence_consumers c JOIN persistence_worktrees w ON w.owner_host_id=c.host_id WHERE w.id=$2::uuid
       AND c.renewed_at>now()-($3::integer*interval '1 millisecond') AND NOT ($4=ANY(c.capabilities))) AS incapable`,
   [refreshId, worktreeId, CONSUMER_LIVE_MS, REFRESH_BARRIER_CAPABILITY]);
@@ -678,7 +678,12 @@ async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmissio
  * so each probe is an index range scan rather than a walk of every pending row.
  */
 export const EARLIER_HEAD = (earlier: string, r: string, priority: string, laneRoots: string) => `${earlier}.sequence<${r}.sequence
-        AND (${earlier}.state IN ('queued','running','recovering') OR ${RELEASED_DEFERRED(earlier)}) AND NOT ${PASSES_QUEUED_SYNC(earlier, r, priority, laneRoots)}`;
+        AND ${earlier}.state IN ('queued','running','recovering') AND NOT ${PASSES_QUEUED_SYNC(earlier, r, priority, laneRoots)}`;
+/**
+ * PR B: a released deferred write ahead of `r` on its worktree, a page write that is never a sync row, so nothing passes it.
+ * A probe of its own (the deferred partial index), so `EARLIER_HEAD` stays a range scan of the pending index.
+ */
+export const EARLIER_DEFERRED = (earlier: string, r: string) => `${earlier}.sequence<${r}.sequence AND ${RELEASED_DEFERRED(earlier)}`;
 /** Sets the session flag the v290 deferred-row guard requires of a claim that moves a deferred row to running. */
 export const REFRESH_BARRIER_CLAIM_PREDICATE = "set_config('gbrain.refresh_barrier','1',true)='1'";
 /**
@@ -724,6 +729,8 @@ export const claimableWriteSql = (priority: string, laneRoots = "'{}'::text[]") 
       AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier
         WHERE r.worktree_id IS NULL AND earlier.worktree_id IS NULL AND earlier.source_incarnation=r.source_incarnation
         AND ${EARLIER_HEAD('earlier', 'r', priority, laneRoots)})
+      AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier
+        WHERE r.worktree_id IS NOT NULL AND earlier.worktree_id=r.worktree_id AND ${EARLIER_DEFERRED('earlier', 'r')})
       AND NOT ((${priority}) AND ${SYNC_KIND('r')} AND EXISTS (SELECT 1 FROM persistence_requests ahead
         WHERE ahead.worktree_id=r.worktree_id AND ahead.sequence>r.sequence AND ahead.state IN ('running','recovering') AND NOT ${SYNC_KIND('ahead')}))`;
 /** With the switch on, a claimable foreground request is claimed before the sync rows it passes. */

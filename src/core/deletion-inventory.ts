@@ -140,7 +140,7 @@ const ROWS: readonly Row[] = [
   ['page_versions', 'swept', 'page_versions', 'compiled_truth frontmatter timeline title type tags source_path write_principal_kind write_principal_id archived_principal_kind archived_principal_id trust_tier write_origin body_storage content_hash change_reason'],
   ['page_write_guards', 'out_of_scope', 'no_memory_text', 'slug'],
   ['pages', 'swept', 'page_body', 'source_id slug type page_kind title compiled_truth timeline frontmatter content_hash effective_date_source import_filename database_only_reason withheld_source_path contextual_retrieval_mode corpus_generation search_vector source_path ingested_via source_uri source_kind embedding_signature revision_principal_kind revision_principal_id trust_tier write_origin body_storage body_flags truth_lead timeline_lead links_extract_failure page_readers folder_rule_ids'],
-  ['persistence_consumers', 'out_of_scope', 'no_memory_text', 'kind mode pool version nonce minted_under persistence_home host_json_path pid_ns boot_id process_start'],
+  ['persistence_consumers', 'out_of_scope', 'no_memory_text', 'kind mode pool version nonce minted_under persistence_home host_json_path pid_ns boot_id process_start capabilities'],
   ['persistence_counters', 'out_of_scope', 'no_memory_text', 'key'],
   ['persistence_effects', 'swept', 'effect_recovery', 'kind data state source_id error_code outcome recovery claim_owner'],
   ['persistence_graduation', 'out_of_scope', 'probed_reported', 'role state source_data_dir trigger_bypass table_receipts replay_probe timings doctor rollback', 'table_receipts'],

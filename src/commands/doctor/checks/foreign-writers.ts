@@ -308,8 +308,8 @@ async function runForeignWriters(ctx: DoctorContext): Promise<Check[]> {
       if (found === null) partial = true; else dirty.push(...found);
     }
   }
-  dirty.sort((a, b) => b.age_ms - a.age_ms);
-  const foreign = reports.flatMap(r => r.foreign).sort((a, b) => b.time.localeCompare(a.time));
+  dirty.sort((a, b) => b.age_ms - a.age_ms || a.checkout.localeCompare(b.checkout) || a.path.localeCompare(b.path));
+  const foreign = reports.flatMap(r => r.foreign).sort((a, b) => b.time.localeCompare(a.time) || a.sha.localeCompare(b.sha));
   const unconfirmed = reports.flatMap(r => r.unconfirmed);
   const unknown = reports.flatMap(r => r.unknown);
   const old = dirty.filter(d => d.age_ms > FOREIGN_DIRTY_WARN_MS);

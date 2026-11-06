@@ -206,6 +206,7 @@
       "  [OK] managed_sync_latency: No commit→searchable samples in the last 24 h (no managed sync imported a new commit).",
       "  [INFO] commit_notifier: sync.on_commit is off; residents still run explicit sync requests. notifier for default: none running; idle; notifier for notes: none running; idle.",
       "  [OK] tracked_ownership_marker: 1 Git checkout(s) track no ownership marker (markers on disk stay untracked and are denied on push).",
+      "  [OK] foreign_writers: Every locally created commit in the covered window of 1 repository is in gbrain's commit ledger, and no page file waits uncommitted for more than 30 minutes. A repository gbrain has not committed in yet has no ledger, so its window is empty.",
       "  [OK] decide_health: System One is off (every decide slot is off; nothing is sent).",
       "  [OK] unlinked_facts: No active facts yet; nothing to link.",
       "  [OK] edge_validity: relationships: none yet; read policy on; contradiction mode propose (default)",

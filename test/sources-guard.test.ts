@@ -51,6 +51,8 @@ test('arguments: one source, one action, --mode only with --install', () => {
 });
 
 test('owner host only; enforce refuses a plain commit; refresh, effect and door commits pass; doctor names the bypass', () => withRefreshFixture(engine, async f => {
+  git(f.root, 'config', 'user.name', 'Example');
+  git(f.root, 'config', 'user.email', 'example@example.invalid');
   const other = mkdtempSync(join(tmpdir(), 'gbrain-guard-other-home-'));
   try {
     await withEnv({ GBRAIN_HOME: other, HOME: other }, async () => {

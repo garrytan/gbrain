@@ -468,6 +468,7 @@ describe('repo source', () => {
 const FILE_IDENTITY_ALLOWLIST: Record<string, string> = {
   'persistence/coordination-lock.ts': 'fallback only when a caller passes no host id; every claim and reservation passes hostIdFor(engine)',
   'persistence/engine-graduation.ts': 'PGLite to Postgres graduation, run only by gbrain migrate on the brain host',
+  'git/commit-ledger.ts': 'PR B commit ledger: written by the git commit sites, which hold no engine; stamps the host that made the commit, null when it has none',
 };
 
 describe('static guards', () => {
