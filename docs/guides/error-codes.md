@@ -632,6 +632,16 @@ More: [docs/guides/page-history.md#reasons](../../docs/guides/page-history.md#re
 |---|---|---|---|---|---|---|
 | The file changed after its repair was previewed, so nothing was written. | A repair writes exactly the bytes the operator approved; it binds approval to the previewed file hash and refuses when the file moved on. | Preview the repair again, review the new proposal, and approve its new hash. | agent | `repeat the read that failed` | 1 | no |
 
+### checkout_not_a_source
+
+<a id="checkout_not_a_source"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain git commit-push resolved a checkout that is not one of this brain's source checkouts on this host (for example a wrapper that changed into another repository), so nothing was staged. | Committing there would write into an unrelated repository, or fail later with a confusing path refusal. | Correct the request using the message above, then retry. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-checkout-git.md#checkout_not_a_source](../../docs/guides/shared-checkout-git.md#checkout_not_a_source)
+
 ### checkpoint_missing
 
 <a id="checkpoint_missing"></a>
