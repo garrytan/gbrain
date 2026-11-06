@@ -9,7 +9,10 @@
  * release.yml minted) to the stable channel, only after the production-shaped
  * soak passed on its exact git tree:
  *
- * 1. the dispatching actor has the admin or maintain role;
+ * 1. the dispatching actor has the admin or maintain role, or the run is the
+ *    scheduled stable-daily.yml check on the default branch (scheduleAuthorized:
+ *    only code already merged to master runs on a schedule, and it promotes by
+ *    rule, docs/RELEASING.md#daily-stable-check);
  * 2. `refs/tags/v<VERSION>` exists, its VERSION file says <VERSION>, and its
  *    GitHub release is published (not a draft); its commit and tree are the
  *    release;
@@ -58,6 +61,8 @@ export interface GitResult { code: number; stdout: string; stderr: string }
 export interface PromoteDeps {
   repo: string;
   actor: string;
+  /** True only for the scheduled stable-daily.yml run (scheduleAuthorized); it replaces the role check. */
+  scheduled?: boolean;
   soakWorkflow: string;
   ghApi(path: string): Promise<unknown>;
   git(args: string[]): Promise<GitResult>;
@@ -87,6 +92,17 @@ export interface TagFields {
 }
 
 export interface Promotion extends TagFields { recordCreated: boolean }
+
+export const DAILY_WORKFLOW = '.github/workflows/stable-daily.yml';
+
+/**
+ * The scheduled daily check promotes without a maintainer: a schedule event only ever runs the workflow file as
+ * merged on the default branch, so the rule it applies is reviewed code. Any other event (a dispatch of either
+ * workflow) keeps the role check.
+ */
+export function scheduleAuthorized(env: NodeJS.ProcessEnv, repo: string): boolean {
+  return env.GITHUB_EVENT_NAME === 'schedule' && (env.GITHUB_WORKFLOW_REF ?? '').startsWith(`${repo}/${DAILY_WORKFLOW}@refs/heads/`);
+}
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number);
@@ -189,11 +205,15 @@ export async function currentStable(deps: PromoteDeps): Promise<{ version: strin
 export async function promote(deps: PromoteDeps, inputs: PromoteInputs): Promise<Promotion> {
   const { version, rollback, reason } = inputs;
 
-  // `permission` is the legacy base role (maintain reads as write); `role_name` names maintain.
-  const perm = await deps.ghApi(`repos/${deps.repo}/collaborators/${encodeURIComponent(deps.actor)}/permission`) as { permission?: string; role_name?: string };
-  const role = perm.role_name || perm.permission || 'none';
-  if (perm.permission !== 'admin' && !PROMOTER_ROLES.has(role)) throw new Refusal(`${deps.actor} has the ${role} role on ${deps.repo}; only admins and maintainers promote to stable, so ask one to dispatch this workflow.`);
-  deps.log(`[promote-stable] ${deps.actor} has the ${role} role: allowed to promote.`);
+  if (deps.scheduled) {
+    deps.log(`[promote-stable] scheduled daily check (${DAILY_WORKFLOW} on the default branch): promoting by rule.`);
+  } else {
+    // `permission` is the legacy base role (maintain reads as write); `role_name` names maintain.
+    const perm = await deps.ghApi(`repos/${deps.repo}/collaborators/${encodeURIComponent(deps.actor)}/permission`) as { permission?: string; role_name?: string };
+    const role = perm.role_name || perm.permission || 'none';
+    if (perm.permission !== 'admin' && !PROMOTER_ROLES.has(role)) throw new Refusal(`${deps.actor} has the ${role} role on ${deps.repo}; only admins and maintainers promote to stable, so ask one to dispatch this workflow.`);
+    deps.log(`[promote-stable] ${deps.actor} has the ${role} role: allowed to promote.`);
+  }
 
   if (!VERSION_RE.test(version)) throw new Refusal(`version "${version}" is not a release version; pass the VERSION of a published release, like 0.60.361.0.`);
   if (rollback && !reason.trim()) throw new Refusal(ROLLBACK_NEEDS_REASON);
@@ -242,7 +262,7 @@ export async function promote(deps: PromoteDeps, inputs: PromoteInputs): Promise
     version, commit, tree,
     soakRun: inputs.soakRunUrl.trim(),
     scoreboard: inputs.scoreboardUrl.trim() || inputs.soakRunUrl.trim(),
-    promotedBy: deps.actor,
+    promotedBy: deps.scheduled ? `schedule (${DAILY_WORKFLOW})` : deps.actor,
     promotedAt: deps.now().toISOString().replace(/\.\d{3}Z$/, 'Z'),
     previous: current?.version ?? null,
     rollback, reason,
