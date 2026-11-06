@@ -55,7 +55,7 @@ gbrain auth rescope --client <dm_client_id> --attest-read person     # named sou
 
 `scope` also refuses any call that names no person (`actor_not_attested`, reason
 `actor_required`), so the client never reads as itself. `person` is for a client that
-serves only one person's own conversations; a `person` client that reads a source a
+serves only one person's own conversations, so a client with `--attest-sources` refuses it; a `person` client that reads a source a
 room client reads is flagged by `gbrain doctor` (`attest_read_shared_scope`). Unset
 (`none`) reads named sources as the scope and still serves calls that name no person.
 
