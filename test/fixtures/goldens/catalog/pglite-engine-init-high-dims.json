@@ -382,13 +382,14 @@
       "persistence_local_writers.persistence_local_writers_credential_hash_key": "u UNIQUE (credential_hash)",
       "persistence_local_writers.persistence_local_writers_lane_check": "c CHECK ((lane = ANY (ARRAY['cli'::text, 'stdio'::text])))",
       "persistence_local_writers.persistence_local_writers_pkey": "p PRIMARY KEY (id)",
+      "persistence_requests.persistence_requests_deferred_refresh_id_fkey": "f FOREIGN KEY (deferred_refresh_id) REFERENCES persistence_worktree_refreshes(id)",
       "persistence_requests.persistence_requests_pkey": "p PRIMARY KEY (id)",
       "persistence_requests.persistence_requests_preparation_attempts_check": "c CHECK ((preparation_attempts >= 0))",
       "persistence_requests.persistence_requests_principal_kind_check": "c CHECK ((principal_kind = ANY (ARRAY['oauth_client'::text, 'legacy_token'::text, 'local_cli'::text, 'local_stdio'::text, 'application'::text])))",
       "persistence_requests.persistence_requests_principal_kind_principal_id_request_id_key": "u UNIQUE (principal_kind, principal_id, request_id)",
       "persistence_requests.persistence_requests_protocol_version_check": "c CHECK ((protocol_version = ANY (ARRAY[1, 2])))",
       "persistence_requests.persistence_requests_sequence_key": "u UNIQUE (sequence)",
-      "persistence_requests.persistence_requests_state_check": "c CHECK ((state = ANY (ARRAY['queued'::text, 'running'::text, 'recovering'::text, 'committed'::text, 'conflict'::text, 'failed'::text, 'cancelled'::text])))",
+      "persistence_requests.persistence_requests_state_check": "c CHECK ((state = ANY (ARRAY['queued'::text, 'deferred'::text, 'running'::text, 'recovering'::text, 'committed'::text, 'conflict'::text, 'failed'::text, 'cancelled'::text])))",
       "persistence_requests.persistence_requests_target_kind_check": "c CHECK ((target_kind = ANY (ARRAY['page'::text, 'skill_bundle'::text])))",
       "persistence_requests.persistence_requests_worktree_id_fkey": "f FOREIGN KEY (worktree_id) REFERENCES persistence_worktrees(id)",
       "persistence_source_bindings.persistence_source_bindings_pkey": "p PRIMARY KEY (source_id)",
@@ -602,9 +603,10 @@
       "gbrain_forget_page_retrievals()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=b35125db2179fb90ea092804d0acd61b60e58434d7fbf937413324b681ab416c",
       "gbrain_fts_input(t text)": "RETURNS text kind=f lang=sql volatility=i secdef=false config=[search_path=pg_catalog, pg_temp] body_sha256=c73d0dbc333c6dccc9714a6b8d1b7785f48170556b9024002ddca1c80b25d87d",
       "gbrain_graduation_fence()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=cd4642fe8deee2a3c14ef41f53862f0a449b2d8a10e47177bd4f5d2e05ce8803",
+      "gbrain_guard_deferred_request()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=d27724f55c14a48ed24a02219e2ad6ce37c8a91cda7ae15982bec9414f1ed528",
       "gbrain_guard_effect_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=aa01528006dd7029eac6808e0233991524c9de9dc14aaf41f44160d67a747042",
       "gbrain_guard_inserted_facts()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=027c16bf0f61101510f54966dfa7d3c5f90112cef52a51861adc36103a0bc02b",
-      "gbrain_guard_protocol_activation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=66b6cd26959d68687e6bec2314d10594bd2e20c5013638cad41c2d872a999eda",
+      "gbrain_guard_protocol_activation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=bb477ec66ecac06e6edba773a94a2834ef4286a0b9e5cfa8b9b8646e003b0b9e",
       "gbrain_guard_request_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=2709686143e064b577e2b3c8e3e2b1009d52a836a2bc709f5f003a251eb004d2",
       "gbrain_guard_skill_publication()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=e854c0d058e75a65c3a90127c5c417380975100e83fc34288f6085e786df10a9",
       "gbrain_lease_shared_skill_delivery()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=5e493c1ac8dce8cb025a736629e563437c4b214744137c302c532c20bf7e7acf",
@@ -615,6 +617,7 @@
       "gbrain_refuse_purged_page()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=8aaaf7c22fc9acb4b1e84fe75f11ae6c889949b78de1ef6bdba1db54ef43844e",
       "gbrain_refuse_purged_take()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=4a291b0448ab7a31926aa482b5222e0595d31a6bfad81b851b13e4bf581a0d83",
       "gbrain_refuse_purging_derivation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=0d0afb3e61857f1668f2e7996da1c6aaf269aecaa1bf3763ce90df90e2d66fd3",
+      "gbrain_release_refresh_barrier()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=0474782d352e51a92be5486f0d1eb0245cd6dc70ab6d7320acc685330690db4b",
       "gbrain_require_managed_writer()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=15a834d125e04a6508f114e93e2595800bccf0a8ccfe7e2e23323830580c98a1",
       "gbrain_require_persistence_protocol(required integer)": "RETURNS void kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=af07b7fac60dec0a4fe568217931ac449d32f73b3a53a047b3b02a5f59cb5058",
       "gbrain_snapshot_version_trust()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=a0aa697992ad1777eaba4a1f4d2325dc4f2a98f3ebf9e81325d1b068406ce1cb",
@@ -1525,6 +1528,7 @@
       "persistence_local_writers_pkey": "CREATE UNIQUE INDEX persistence_local_writers_pkey ON public.persistence_local_writers USING btree (id)",
       "persistence_requests_compactable": "CREATE INDEX persistence_requests_compactable ON public.persistence_requests USING btree (completed_at) WHERE ((recovery IS NULL) AND (NOT compacted) AND (state = ANY (ARRAY['committed'::text, 'conflict'::text, 'failed'::text, 'cancelled'::text])))",
       "persistence_requests_database_pending": "CREATE INDEX persistence_requests_database_pending ON public.persistence_requests USING btree (source_incarnation, sequence) WHERE ((worktree_id IS NULL) AND (state = ANY (ARRAY['queued'::text, 'running'::text, 'recovering'::text])))",
+      "persistence_requests_deferred": "CREATE INDEX persistence_requests_deferred ON public.persistence_requests USING btree (worktree_id, sequence) WHERE (state = 'deferred'::text)",
       "persistence_requests_foreground_committed": "CREATE INDEX persistence_requests_foreground_committed ON public.persistence_requests USING btree (worktree_id, sequence) WHERE ((state = 'committed'::text) AND (NOT (COALESCE((intent ->> 'kind'::text), ''::text) ~~ 'managed_sync_%'::text)))",
       "persistence_requests_pending": "CREATE INDEX persistence_requests_pending ON public.persistence_requests USING btree (worktree_id, sequence) WHERE (state = ANY (ARRAY['queued'::text, 'running'::text, 'recovering'::text]))",
       "persistence_requests_pkey": "CREATE UNIQUE INDEX persistence_requests_pkey ON public.persistence_requests USING btree (id)",
@@ -3549,7 +3553,8 @@
           "15 version text/text NOT NULL",
           "16 boot_id text/text NULL",
           "17 process_start text/text NULL",
-          "18 segment_reader boolean/bool NULL"
+          "18 segment_reader boolean/bool NULL",
+          "19 capabilities ARRAY/_text NOT NULL DEFAULT '{}'::text[]"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -3677,7 +3682,8 @@
           "43 admitter_segment_reader boolean/bool NULL",
           "44 consumer_segment_reader boolean/bool NULL",
           "45 transient_interruptions integer/int4 NOT NULL DEFAULT 0",
-          "46 next_attempt_at timestamp with time zone/timestamptz NULL"
+          "46 next_attempt_at timestamp with time zone/timestamptz NULL",
+          "47 deferred_refresh_id uuid/uuid NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -3728,7 +3734,9 @@
           "12 outcome jsonb/jsonb NOT NULL DEFAULT '{}'::jsonb",
           "13 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "14 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "15 completed_at timestamp with time zone/timestamptz NULL"
+          "15 completed_at timestamp with time zone/timestamptz NULL",
+          "16 barrier_sequence bigint/int8 NULL",
+          "17 released_at timestamp with time zone/timestamptz NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -4620,7 +4628,9 @@
       "pages.trust_tier_stamp": "CREATE TRIGGER trust_tier_stamp BEFORE INSERT OR UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_stamp_trust_tier()",
       "persistence_brain.gbrain_protocol_activation": "CREATE TRIGGER gbrain_protocol_activation BEFORE UPDATE ON public.persistence_brain FOR EACH ROW EXECUTE FUNCTION gbrain_guard_protocol_activation()",
       "persistence_effects.gbrain_effect_protocol": "CREATE TRIGGER gbrain_effect_protocol BEFORE INSERT OR DELETE OR UPDATE ON public.persistence_effects FOR EACH ROW EXECUTE FUNCTION gbrain_guard_effect_protocol()",
+      "persistence_requests.gbrain_request_deferred": "CREATE TRIGGER gbrain_request_deferred BEFORE UPDATE OF state ON public.persistence_requests FOR EACH ROW WHEN (((old.state = 'deferred'::text) OR (new.state = 'deferred'::text))) EXECUTE FUNCTION gbrain_guard_deferred_request()",
       "persistence_requests.gbrain_request_protocol": "CREATE TRIGGER gbrain_request_protocol BEFORE INSERT OR DELETE OR UPDATE ON public.persistence_requests FOR EACH ROW EXECUTE FUNCTION gbrain_guard_request_protocol()",
+      "persistence_worktree_refreshes.gbrain_refresh_release": "CREATE TRIGGER gbrain_refresh_release BEFORE UPDATE OF state ON public.persistence_worktree_refreshes FOR EACH ROW WHEN (((new.state = ANY (ARRAY['completed'::text, 'aborted'::text])) AND (old.state <> ALL (ARRAY['completed'::text, 'aborted'::text])))) EXECUTE FUNCTION gbrain_release_refresh_barrier()",
       "shared_skill_delivery_batches.shared_skill_delivery_lease": "CREATE TRIGGER shared_skill_delivery_lease AFTER INSERT OR UPDATE OF revisions ON public.shared_skill_delivery_batches FOR EACH ROW EXECUTE FUNCTION gbrain_lease_shared_skill_delivery()",
       "shared_skill_heads.gbrain_skill_publication": "CREATE TRIGGER gbrain_skill_publication BEFORE INSERT OR DELETE OR UPDATE ON public.shared_skill_heads FOR EACH ROW EXECUTE FUNCTION gbrain_guard_skill_publication()",
       "shared_skill_packs.gbrain_skill_publication": "CREATE TRIGGER gbrain_skill_publication BEFORE INSERT OR DELETE OR UPDATE ON public.shared_skill_packs FOR EACH ROW EXECUTE FUNCTION gbrain_guard_skill_publication()",

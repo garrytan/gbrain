@@ -2759,6 +2759,40 @@
           "status": "ok"
         },
         {
+          "category": "brain",
+          "details": {
+            "dirty": [
+              {
+                "age_ms": "<volatile>",
+                "checkout": "<home>/notes-src",
+                "path": "notes/broken-frontmatter.md",
+                "state": "untracked"
+              }
+            ],
+            "dirty_count": 1,
+            "dirty_warn_after_minutes": 30,
+            "foreign": [],
+            "partial": false,
+            "unconfirmed": [],
+            "unknown": [],
+            "window": [
+              {
+                "common": "<home>/notes-src/.git",
+                "from": null,
+                "ledger": false,
+                "ledger_start": null,
+                "oldest_reflog": "<ts>",
+                "to": "<ts>",
+                "uncovered": 2
+              }
+            ]
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Every locally created commit in the covered window of 1 repository is in gbrain's commit ledger, and no page file waits uncommitted for more than 30 minutes. A repository gbrain has not committed in yet has no ledger, so its window is empty.",
+          "name": "foreign_writers",
+          "status": "ok"
+        },
+        {
           "category": "ops",
           "elapsed_ms": "<volatile>",
           "message": "System One is off (every decide slot is off; nothing is sent).",

@@ -86,7 +86,7 @@ export async function queryHealthIndicators(engine: BrainEngine): Promise<{
   // reported as pending in the last 24 hours later ended without committing.
   const [pending] = await sql`SELECT count(*)::int AS count,
     COALESCE(floor(extract(epoch FROM now() - min(created_at))), 0)::int AS oldest_age_seconds
-    FROM persistence_requests WHERE state IN ('queued', 'running', 'recovering')`;
+    FROM persistence_requests WHERE state IN ('queued', 'deferred', 'running', 'recovering')`;
   const [laterFailed] = await sql`SELECT count(DISTINCT r.id)::int AS count FROM mcp_request_log l
     JOIN persistence_requests r ON r.request_id::text = l.params->>'write_request_id'
     WHERE l.status = 'accepted_pending' AND l.created_at > now() - interval '24 hours'

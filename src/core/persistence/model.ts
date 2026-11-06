@@ -2,7 +2,8 @@ import type { BrainEngine } from '../engine.ts';
 import { assertRecoveryVersion } from './recovery-version.ts';
 
 export type Principal = { kind: 'oauth_client' | 'legacy_token' | 'local_cli' | 'local_stdio' | 'application'; id: string };
-export type RequestState = 'queued' | 'running' | 'recovering' | 'committed' | 'conflict' | 'failed' | 'cancelled';
+/** `deferred` (PR B, docs/designs/REFRESH_WRITE_BARRIER.md): admitted during a worktree refresh, unclaimable until it is released. */
+export type RequestState = 'queued' | 'deferred' | 'running' | 'recovering' | 'committed' | 'conflict' | 'failed' | 'cancelled';
 export interface WriteAuthority {
   /** The caller's self-declared agent label (X-Gbrain-Agent-Label). Unverified text: nothing authorizes on it. */
   agentLabel?: string;
@@ -125,6 +126,8 @@ export interface WriteRequest {
   authority: WriteAuthority;
   sequence: string | number;
   state: RequestState;
+  /** The refresh a deferred write was admitted behind; kept after it drains, so its claim runs the refresh-change check. */
+  deferred_refresh_id?: string | null;
   execution_token: string | null;
   claim_expires_at: Date | string | null;
   recovery: RecoveryRecord | null;

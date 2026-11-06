@@ -2876,7 +2876,9 @@ One preview resolves one Decision, so a selection that spans several sides or
 deleted states refuses [`file_drift_mixed_selection`](error-codes.md#file_drift_mixed_selection),
 and a deleted side refuses without `--state`
 ([`file_drift_state_required`](error-codes.md#file_drift_state_required)):
-the two `--prefer` values do opposite things in each state.
+the two `--prefer` values do opposite things in each state. `--held`, `--side`,
+`--state`, `--cursor` and `--provenance` always need `--prefer`: without it
+the command refuses with the usage line instead of running the bare survey.
 
 | State | `--prefer database` | `--prefer file` |
 |---|---|---|

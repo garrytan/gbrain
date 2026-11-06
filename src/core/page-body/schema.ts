@@ -91,7 +91,7 @@ export function untiledSql(p: string, t: string): string {
 /** The staging `s` (an alias of page_body_stagings) is live in stagingNeedsTextSql's sense: a write that may still publish it. */
 export function liveStagingSql(s: string): string {
   return `(${s}.state IN ('open','sealed','prepared')
-          OR EXISTS (SELECT 1 FROM persistence_requests rq WHERE rq.state IN ('queued','running','recovering')
+          OR EXISTS (SELECT 1 FROM persistence_requests rq WHERE rq.state IN ('queued','deferred','running','recovering')
                       AND rq.intent->'body_ref'->>'staging_id' = ${s}.id::text))`;
 }
 

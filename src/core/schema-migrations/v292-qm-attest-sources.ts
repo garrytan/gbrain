@@ -12,8 +12,8 @@ import type { Migration } from './types.ts';
 // Database only, so a repo-less brain gets it unchanged. Nothing is rewritten
 // on upgrade. No schema.sql mirror: like v286, these exist only through
 // migrations.
-export const v291: Migration = {
-  version: 291,
+export const v292: Migration = {
+  version: 292,
   name: 'qm_attest_sources',
   idempotent: true,
   sql: `

@@ -632,6 +632,16 @@ More: [docs/guides/page-history.md#reasons](../../docs/guides/page-history.md#re
 |---|---|---|---|---|---|---|
 | The file changed after its repair was previewed, so nothing was written. | A repair writes exactly the bytes the operator approved; it binds approval to the previewed file hash and refuses when the file moved on. | Preview the repair again, review the new proposal, and approve its new hash. | agent | `repeat the read that failed` | 1 | no |
 
+### checkout_not_a_source
+
+<a id="checkout_not_a_source"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain git commit-push resolved a checkout from the working directory that is not one of this brain's source checkouts on this host (for example a wrapper that changed into another repository), so nothing was staged. | Committing there would write into an unrelated repository, or fail later with a confusing path refusal. | Correct the request using the message above, then retry. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-checkout-git.md#checkout_not_a_source](../../docs/guides/shared-checkout-git.md#checkout_not_a_source)
+
 ### checkpoint_missing
 
 <a id="checkpoint_missing"></a>
@@ -789,6 +799,16 @@ More: [docs/guides/write-refusals.md#colon_slug_windows_write_through](../../doc
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The command failed before it wrote its JSON result. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### commit_base_moved
+
+<a id="commit_base_moved"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A file named with --base changed at HEAD since the writer read it, so nothing was staged or committed. | --base <path>=<blob> binds a commit to the bytes the writer read; another writer committed that file since, and committing now would overwrite its change. | Read the file at HEAD again, redo the change on it, and rerun with the new --base the message names. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-checkout-git.md#base-check](../../docs/guides/shared-checkout-git.md#base-check)
 
 ### commit_lock_busy
 
@@ -1295,6 +1315,16 @@ More: [docs/guides/ambient-recall.md#replay-after-a-degraded-wake](../../docs/gu
 | The remote serve cannot answer this doctor tier or check for this client, so the thin client ran nothing. | A serve older than the doctor ops tier does not advertise run_doctor's tier and only parameters or get_brain_health, and a token without admin scope cannot call run_doctor; the thin client never falls back to the full report. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. Run: gbrain doctor --tier ops --json | host_admin | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#doctor-ops-tier](../../docs/guides/troubleshooting.md#doctor-ops-tier)
+
+### downgrade_blocked_deferred_writes
+
+<a id="downgrade_blocked_deferred_writes"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Writes deferred behind a worktree refresh are still waiting, and an older gbrain cannot drain them. | A release before the refresh write barrier never claims a deferred write, so after a downgrade those writes wait until the next upgrade. Safety does not depend on this check; liveness does. | Turn the barrier off (gbrain config set persistence.refresh_barrier false); wait until gbrain upgrade --check-downgrade exits 0, then downgrade. | host_admin | `repeat the read that failed` | 3 | no |
+
+More: [docs/guides/write-refusals.md#deferred-writes](../../docs/guides/write-refusals.md#deferred-writes)
 
 ### drain_holder_stalled
 
@@ -3875,6 +3905,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | The rated page is not one of the pages the answer used. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/retrieval-feedback.md#ref_not_in_answer](../../docs/guides/retrieval-feedback.md#ref_not_in_answer)
+
+### refresh_barrier_expired
+
+<a id="refresh_barrier_expired"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write that waited behind a worktree refresh was not applied, because the refresh was still unfinished after the barrier's wait limit. | With persistence.refresh_barrier on, a page write that reaches a refreshing checkout is accepted and waits for the refresh to end. A refresh that never ends (a stuck member sync, a host that stopped) would hold those writes forever, so the owner finishes each one failed after persistence.refresh_barrier_max_wait_ms (15 minutes by default). Nothing was applied. | Check the refresh with gbrain sources writer status --source <id> --json, then submit the write again with a new request_id. | provider | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#deferred-writes](../../docs/guides/write-refusals.md#deferred-writes)
 
 ### refresh_dirty
 
