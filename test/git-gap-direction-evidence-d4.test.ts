@@ -6,7 +6,8 @@ import { dirname, join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { inlineExportMarkdown, readExportPage, readExportWithdrawals } from '../src/core/export-snapshot.ts';
+import { exportBodyLedger, inlineExportMarkdown, readExportPage, readExportWithdrawals, segmentedExportHead, segmentedExportMarkdown } from '../src/core/export-snapshot.ts';
+import { createSegmentedPage } from './helpers/segmented-page.ts';
 import { decideDirection } from '../src/core/persistence/git-gap.ts';
 import { readConversionDecisions, writeConversionFile } from '../src/core/persistence/git-conversion.ts';
 import { censusGitGap, describeGitGap, type GitGapPage } from '../src/commands/sources-git-gap.ts';
@@ -169,6 +170,43 @@ for (const backend of testBackends()) describe(`git-gap direction evidence (d4):
     symlinkSync(join(root, 'decisions.json'), join(outside, 'decisions.json'));
     await expect(readConversionDecisions(engine, join(outside, 'decisions.json'), 'default')).rejects.toMatchObject({ code: 'conversion_file_in_source_root' });
     expect(await writeConversionFile(engine, join(outside, 'review.json'), '--list-out', {})).toBe(join(outside, 'review.json'));
+  }, 120000);
+
+  test('a segmented page: an older blob equal to its export lets Git win only while no version was archived after that blob', async () => {
+    const root = tempDir('git-gap-segmented-');
+    git(root, 'init', '-q');
+    await engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'", [root]);
+    const { id } = await createSegmentedPage(engine, { slug: 'seg/page', truth: 'Segmented filler line.\n'.repeat(50) });
+    const exported = await engine.transaction(async tx => {
+      const withdrawals = await readExportWithdrawals(tx, 'default');
+      const snapshot = await readExportPage(tx, { id: String(id), source_id: 'default', slug: 'seg/page' }, withdrawals);
+      const chunks: Buffer[] = [];
+      for await (const piece of segmentedExportMarkdown(tx, snapshot.page, exportBodyLedger(snapshot.page.slug, withdrawals), segmentedExportHead(snapshot))) chunks.push(Buffer.from(piece));
+      return Buffer.concat(chunks);
+    });
+    mkdirSync(join(root, 'seg'), { recursive: true });
+    writeFileSync(join(root, 'seg/page.md'), exported);
+    commitAll(root, 'first');
+    writeFileSync(join(root, 'seg/page.md'), Buffer.concat([exported, Buffer.from('A line Git added.\n')]));
+    commitAll(root, 'git edit');
+    const evidence = async () => {
+      const pages: GitGapPage[] = [];
+      await censusGitGap(engine, 'default', { sample: 0, evidence: true, collect: page => { pages.push(page); } });
+      return pages.find(page => page.slug === 'seg/page')?.evidence;
+    };
+    expect(await evidence()).toMatchObject({ kind: 'git_wins_file_moved', basis: 'row_matches_older_file' });
+    // A version archived after that blob means the database left that state and came back (a revert): not a one-sided move.
+    await engine.executeRaw("INSERT INTO page_versions (page_id, compiled_truth, frontmatter, snapshot_at) VALUES ($1, 'An archived state.', '{}', now() + interval '1 minute')", [id]);
+    expect(await evidence()).toMatchObject({ kind: 'no_evidence', basis: 'segmented' });
+  }, 120000);
+
+  test('a pruned version history counts as unread: an inline page with a history gap gets no one-sided Git verdict', async () => {
+    await fixture();
+    await engine.executeRaw("UPDATE pages SET version_history_gap_at = now() WHERE slug = 'notes/file-moved'");
+    const pages: GitGapPage[] = [];
+    await censusGitGap(engine, 'default', { sample: 0, evidence: true, collect: page => { pages.push(page); } });
+    expect(pages.find(page => page.slug === 'notes/file-moved')).toMatchObject({ evidence: { kind: 'no_evidence', basis: 'history_truncated' } });
+    expect(pages.find(page => page.slug === 'notes/db-moved')).toMatchObject({ evidence: { kind: 'adopt_db_moved' } });
   }, 120000);
 
   test('repo-less: a source without a checkout reads no evidence (not_applicable) and counts its live pages', async () => {

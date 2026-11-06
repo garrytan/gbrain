@@ -108,7 +108,7 @@ recorded):
 | `adopt_db_moved` | An older version of the page equals the committed file, and no newer state was shared: only the database moved. | adopt |
 | `git_wins_file_moved` | The page equals an older committed blob of its path, and no newer state was shared: only the file moved (a plain `git commit`, for example). | git wins (`file_moved`) |
 | `both_moved` | Both sides moved since the last state they shared. A revert counts as a move: a page reverted to an older state while Git edited the file is `both_moved`, not `git_wins_file_moved`. | discard until decided |
-| `no_evidence` | Nothing shared within the depth (no archived version, a path with one blob, a segmented page whose export matches no blob), or the other side's history reached the depth (basis `history_truncated`). | discard until decided |
+| `no_evidence` | Nothing shared within the depth (no archived version, a path with one blob, a segmented page whose export matches no blob or that has a version archived after the matching blob), or the other side's history reached the depth or lost versions to pruning (basis `history_truncated`). | discard until decided |
 
 A later `updated_at` on the database row changes nothing here. The evidence
 kind of each page is part of the preview hash, and `gbrain sources git-gap

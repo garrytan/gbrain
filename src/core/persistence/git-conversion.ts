@@ -225,7 +225,7 @@ export async function assertOutsideSourceRoots(engine: BrainEngine, file: string
       const inside = relative(fence, path);
       if (inside !== '' && (inside.startsWith('..') || inside.startsWith(sep) || /^[A-Za-z]:/.test(inside))) continue;
       throw opError('conversion_file_in_source_root', `${flag} ${file} is inside source ${root.id}'s checkout (${fence}), so it was refused: a review or decisions file names pages and must never be synced or committed.`,
-        `Pass a path outside every source's checkout, e.g. under ~/.gbrain.`, { docs: DOCS });
+        `Pass a path outside ${fence} and every other source checkout, e.g. under ~/.gbrain when your home directory is not inside it.`, { docs: DOCS });
     }
   }
   return real;
@@ -831,7 +831,8 @@ async function runConversion(engine: BrainEngine, plan: GitConversionPlan, expec
     let holdsCleared = 0;
     for (const hold of plan.holds) {
       if (!await engine.transaction(tx => clearGitHold(tx, { sourceId, incarnation: plan.incarnation, path: hold.path, observedAt: hold.observed_at }))) {
-        throw changedSincePlan(sourceId, new Set([hold.path]), 'mixed');
+        throw opError('git_conversion_incomplete', `The hold on ${hold.path} of source ${sourceId} changed or was cleared by another run after the conversion was planned, so the apply stopped before any strict pass, with the source still mixed.`,
+          `Preview again with gbrain sources canonical ${sourceId} --to git --dry-run and apply the new hash.`, { docs: DOCS, reason: 'changed_since_preview', detail: 'changed_since_preview', fix: conversionIncompleteFix(sourceId) });
       }
       holdsCleared++;
       recovery.accepted.holds_cleared = holdsCleared;

@@ -387,7 +387,7 @@ export function decideDirection(row: string, head: string | null, versions: Read
 }
 
 type VersionRow = { id: number; page_id: string; compiled_truth: string | null; frontmatter: unknown; timeline: string | null; title: string | null; type: string | null; tags: unknown;
-  segmented: boolean; is_deleted: boolean | null };
+  segmented: boolean; is_deleted: boolean | null; snapshot_at: number | string };
 const json = <T>(value: unknown, fallback: T): T => value == null ? fallback : typeof value === 'string' ? JSON.parse(value) as T : value as T;
 
 /**
@@ -428,12 +428,13 @@ export async function readDirectionEvidence(engine: BrainEngine, input: { source
     const batch = subjects.slice(start, start + EVIDENCE_BATCH);
     const read = await engine.transaction(async tx => {
       await tx.executeRaw('SET TRANSACTION READ ONLY');
-      const live = new Map((await tx.executeRaw<{ id: string; revision: string | null }>(`SELECT id::text, knowledge_revision::text AS revision FROM pages
-        WHERE id = ANY(string_to_array($1::text, ',')::bigint[]) AND deleted_at IS NULL`, [batch.map(subject => subject.id).join(',')])).map(row => [row.id, row.revision]));
+      const rows = await tx.executeRaw<{ id: string; revision: string | null; gap: boolean }>(`SELECT id::text, knowledge_revision::text AS revision, version_history_gap_at IS NOT NULL AS gap
+        FROM pages WHERE id = ANY(string_to_array($1::text, ',')::bigint[]) AND deleted_at IS NULL`, [batch.map(subject => subject.id).join(',')]);
+      const live = new Map(rows.map(row => [row.id, row.revision])), gaps = new Set(rows.filter(row => row.gap).map(row => row.id));
       const current = batch.filter(subject => live.has(subject.id) && live.get(subject.id) === subject.revision);
       const snapshots = await readExportPages(tx, current.map(subject => ({ id: subject.id, source_id: sourceId, slug: subject.slug })), withdrawals);
       const versions = current.length ? await tx.executeRaw<VersionRow>(`SELECT id, page_id::text AS page_id, compiled_truth, frontmatter, timeline, title, type, tags,
-          COALESCE(body_storage,'inline')='segmented' AS segmented, is_deleted FROM (SELECT v.*, row_number() OVER (PARTITION BY v.page_id ORDER BY v.id DESC) AS rank FROM page_versions v
+          COALESCE(body_storage,'inline')='segmented' AS segmented, is_deleted, EXTRACT(EPOCH FROM snapshot_at)::float8 AS snapshot_at FROM (SELECT v.*, row_number() OVER (PARTITION BY v.page_id ORDER BY v.id DESC) AS rank FROM page_versions v
           WHERE v.page_id = ANY(string_to_array($1::text, ',')::int[])) ranked WHERE rank <= $2 ORDER BY page_id, id DESC`, [current.map(subject => subject.id).join(','), EVIDENCE_DEPTH]) : [];
       const segmentedOids = new Map<string, Set<string>>();
       for (const [i, subject] of current.entries()) {
@@ -441,7 +442,7 @@ export async function readDirectionEvidence(engine: BrainEngine, input: { source
         const sizes = await readBlobSizes(root, older(subject).list.map(entry => entry.oid));
         segmentedOids.set(subject.id, sizes ? await segmentedExportBlobIds(tx, snapshots[i]!, withdrawals, new Set(sizes.values()), format) : new Set());
       }
-      return { current, snapshots, versions, segmentedOids };
+      return { current, snapshots, versions, segmentedOids, gaps };
     });
     for (const subject of batch) if (!read.current.includes(subject)) out.set(subject.id, none('changed_during_read', older(subject).committed_at));
     const byPage = new Map<string, VersionRow[]>();
@@ -472,8 +473,10 @@ export async function readDirectionEvidence(engine: BrainEngine, input: { source
       const { list, committed_at, capped } = older(subject);
       if (subject.segmented) {
         const match = list.find(entry => read.segmentedOids.get(subject.id)?.has(entry.oid));
-        out.set(subject.id, match ? { kind: 'git_wins_file_moved', basis: 'row_matches_older_file', blob: match.oid, version: null, versions: 0, blobs: list.length, committed_at }
-          : { ...none('segmented', committed_at), blobs: list.length });
+        const rows = byPage.get(subject.id) ?? [];
+        const movedSince = !!match && (read.gaps.has(subject.id) || rows.some(row => Number(row.snapshot_at) > match.at));
+        out.set(subject.id, match && !movedSince ? { kind: 'git_wins_file_moved', basis: 'row_matches_older_file', blob: match.oid, version: null, versions: rows.length, blobs: list.length, committed_at }
+          : { ...none('segmented', committed_at), blob: match?.oid ?? null, versions: rows.length, blobs: list.length });
         continue;
       }
       const snapshot = read.snapshots[i]!;
@@ -481,7 +484,7 @@ export async function readDirectionEvidence(engine: BrainEngine, input: { source
         digest: digest(reconcileCanonical({ type: (row.type ?? snapshot.page.type) as Page['type'], title: row.title ?? snapshot.page.title, compiled_truth: row.compiled_truth!,
           timeline: row.timeline ?? '', frontmatter: json(row.frontmatter, {}) }, json<string[]>(row.tags, []))) }));
       const decided = decideDirection(digest(reconcileCanonical(snapshot.page, snapshot.tags)), fileDigests.get(`${subject.id}:${subject.blob.oid}`) ?? null, versions,
-        list.map(entry => ({ oid: entry.oid, digest: fileDigests.get(`${subject.id}:${entry.oid}`) ?? null })), { versions: (byPage.get(subject.id)?.length ?? 0) >= EVIDENCE_DEPTH, blobs: capped });
+        list.map(entry => ({ oid: entry.oid, digest: fileDigests.get(`${subject.id}:${entry.oid}`) ?? null })), { versions: read.gaps.has(subject.id) || (byPage.get(subject.id)?.length ?? 0) >= EVIDENCE_DEPTH, blobs: capped });
       out.set(subject.id, { ...decided, versions: versions.length, blobs: list.length, committed_at });
     }
   }
