@@ -9,7 +9,7 @@ import { parseDataFrontmatter } from '../data-frontmatter.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { REVISION_BACKFILL_PENDING, type PageSnapshot } from '../page-state/types.ts';
-import { REVISION_BACKFILL_RESUME_COMMAND } from '../page-state/revision-backfill-schema.ts';
+import { readRevisionBackfillStatus, REVISION_BACKFILL_MAX_ATTEMPTS, REVISION_BACKFILL_RESUME_COMMAND } from '../page-state/revision-backfill-schema.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
 import { absentCanonicalPath, findLiveFileClaimants, recordedReconcilePath, type FileClaimTarget } from './file-claims.ts';
@@ -230,10 +230,6 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
   if (!snapshot || snapshot.page.deleted_at) throw opError('page_not_found', 'Reconciliation requires an existing live page; use the separate restore workflow for deleted pages.',
     `Page ${slug} in '${sourceId}' is deleted or missing; nothing changed. If it was deleted by mistake, restore it (gbrain restore, within the 72-hour window) and then preview it again.`,
     { fix: readFix('Shows whether the page exists or is soft-deleted in this source.', { argv: ['gbrain', 'get', '--source', sourceId, '--include-deleted', '--', slug] }) });
-  if (snapshot.revision === REVISION_BACKFILL_PENDING) throw opError('revision_backfill_pending', 'Reconciliation requires the page revision, and this page has none yet.',
-    `Nothing changed. Page ${slug} in '${sourceId}' was written before page revisions and the revision backfill has not reached it, so no reconcile preview can bind to it. Resume the backfill on the brain host with ${REVISION_BACKFILL_RESUME_COMMAND} (the command in fix), then preview the page again.`,
-    { fix: { argv: REVISION_BACKFILL_RESUME_COMMAND.split(' '), consent: [], actor: 'agent', requires_exclusive: true, docs: 'docs/guides/write-refusals.md#revision-backfill',
-      why: 'Re-runs the schema migration pass on the brain host, which resumes the page revision backfill and prints its progress; it changes no page content.' } });
   if (binding.source_incarnation !== snapshot.sourceIncarnation) staleReconcile('source binding incarnation');
   const [storedPage] = await engine.executeRaw<Record<string, unknown>>(`SELECT id,source_id,slug,type,title,compiled_truth,timeline,frontmatter,
     content_hash,source_path,source_kind,source_uri,ingested_via,ingested_at,knowledge_revision,deleted_at FROM pages WHERE id=$1 AND source_id=$2`, [snapshot.page.id, sourceId]);
@@ -318,6 +314,24 @@ async function reconcilePins(engine: BrainEngine, input: { brain_id: string; sou
 export function reconcilePreviewAdopts(artifact: Pick<ReconcileArtifact, 'preimages'>): boolean {
   const stored = (artifact.preimages as { stored_page?: { source_path?: unknown; source_uri?: unknown } | null } | null)?.stored_page;
   return stored != null && stored.source_path == null && recordsNoFileOrigin({ source_uri: typeof stored.source_uri === 'string' ? stored.source_uri : null });
+}
+/**
+ * GST-1555: a reconcile preview binds the page's revision, so a page the revision backfill has not reached refuses before
+ * anything is prepared. Its fix resumes the backfill, or, for a row that used every attempt, previews the torn-body repair.
+ * Read-only classification (drift class, audit) reads such a page normally; only previews call this.
+ */
+export async function assertReconcileRevision(engine: BrainEngine, snapshot: PageSnapshot, sourceId: string, slug: string): Promise<void> {
+  if (snapshot.revision !== REVISION_BACKFILL_PENDING) return;
+  const exhausted = (await readRevisionBackfillStatus(engine)).failed.some(f => f.id === Number(snapshot.page.id) && f.attempts >= REVISION_BACKFILL_MAX_ATTEMPTS);
+  const verify = { argv: ['gbrain', 'doctor', '--only', 'revision_backfill', '--json'] };
+  throw opError('revision_backfill_pending', 'Reconciliation requires the page revision, and this page has none yet.',
+    `Nothing changed. Page ${slug} in '${sourceId}' was written before page revisions and the revision backfill has not reached it, so no reconcile preview can bind to it. `
+      + (exhausted ? 'The backfill used every attempt on this row (usually a torn page body): preview gbrain repair orphan-children (the command in fix) and recover the page from a backup or a re-sync, then preview it again.'
+        : `Resume the backfill on the brain host with ${REVISION_BACKFILL_RESUME_COMMAND} (the command in fix), then preview the page again.`),
+    { fix: exhausted
+      ? { ...readFix('Previews orphaned child rows and lists torn page bodies (torn_pages) without changing anything.', { argv: ['gbrain', 'repair', 'orphan-children'] }), verify, docs: 'docs/guides/repair.md#orphan-children' }
+      : { argv: REVISION_BACKFILL_RESUME_COMMAND.split(' '), consent: [], actor: 'agent', requires_exclusive: true, verify, docs: 'docs/guides/write-refusals.md#revision-backfill',
+        why: 'Re-runs the schema migration pass on the brain host, which resumes the page revision backfill and prints its progress; it changes no page content.' } });
 }
 export function assertReconcilePins(expected: ReconcilePins, actual: ReconcilePins): void {
   for (const key of Object.keys(expected) as Array<keyof ReconcilePins>) if (expected[key] !== actual[key]) staleReconcile(key);

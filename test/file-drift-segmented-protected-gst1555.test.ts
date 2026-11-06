@@ -29,6 +29,7 @@ import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { strictReconcileKeys } from '../src/core/persistence/reconcile-merge.ts';
 import { materializedSnapshot } from '../src/core/persistence/segmented-apply.ts';
+import { REVISION_BACKFILL_MAX_ATTEMPTS, REVISION_BACKFILL_STATE_KEY } from '../src/core/page-state/revision-backfill-schema.ts';
 import { resolveRepairScope } from '../src/core/repair/core.ts';
 import { repairRunner } from '../src/core/repair/registry.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
@@ -126,6 +127,12 @@ for (const backend of testBackends()) describe(`GST-1555 file wins on a segmente
     expect(row!.detail).toStartWith('revision_backfill_pending: ');
     expect(row!.fix?.argv).toEqual(['gbrain', 'apply-migrations', '--force-schema']);
     expect(preview.details!.pages).toEqual([]);
+    // A row the backfill gave up on (every attempt used) is not resumed by that command: the fix previews the torn-body repair.
+    const [{ id }] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE source_id='default' AND slug=$1", [SLUG]);
+    await engine.setConfig(REVISION_BACKFILL_STATE_KEY, JSON.stringify({ cursor: Number(id), backfilled: 0, failed: [{ id: Number(id), attempts: REVISION_BACKFILL_MAX_ATTEMPTS, error: 'example' }] }));
+    const exhausted = ((await fileDrift(engine, { slugs: [SLUG] })).listing as Listing)[0]!;
+    expect(exhausted.detail).toStartWith('revision_backfill_pending: ');
+    expect(exhausted.fix?.argv).toEqual(['gbrain', 'repair', 'orphan-children']);
     expect(readFileSync(join(root, `${SLUG}.md`), 'utf8')).toBe(before);
   }, { databaseUrl, setup: repo }), 240_000);
 
@@ -150,6 +157,24 @@ for (const backend of testBackends()) describe(`GST-1555 file wins on a segmente
     const again = await fileDrift(engine, { slugs: [SLUG] });
     expect((await fileDrift(engine, { slugs: [SLUG], expect: again.preview_hash })).outcomes).toEqual({ repaired: 1 });
     await assertImported(engine, root, before);
+  }, { databaseUrl }), 240_000);
+
+  test('a preview whose artifact its own apply would refuse is listed refused in the preview, with a fix, and approves nothing', () => managedBrain(async ({ engine, ctx, root }) => {
+    // 40,000 frontmatter values pass the page's own reconcile check once, but the artifact carries them three times
+    // (the stored row, the snapshot and the result), past the 100,000-value bound the apply's validation enforces.
+    const refs = Array.from({ length: 40_000 }, (_, i) => i);
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug: 'notes/wide', request_id: randomUUID(),
+      content: `---\ntype: note\ntitle: Wide\nrefs: [${refs.join(', ')}]\n---\n\nStored body.\n` } });
+    await settleManagedGitEffects(engine);
+    const file = join(root, 'notes/wide.md');
+    writeFileSync(file, readFileSync(file, 'utf8').replace('Stored body.', 'File body.'));
+    const preview = await fileDrift(engine, { slugs: ['notes/wide'] });
+    const [row] = preview.listing as Listing;
+    expect(row).toMatchObject({ item: 'default:notes/wide', class: 'refused' });
+    expect(row!.detail).toStartWith('request_too_large: ');
+    expect(row!.fix).toBeDefined();
+    expect(preview.details!.pages).toEqual([]);
+    expect(preview.affected).toBe(0);
   }, { databaseUrl }), 240_000);
 });
 

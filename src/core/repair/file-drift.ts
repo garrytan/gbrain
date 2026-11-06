@@ -72,7 +72,7 @@ import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 import { auditDriftConflicts, DRIFT_CLASSES, driftClass, liveFileDrift, type DriftClass } from '../persistence/drift-conflicts.ts';
 import { protectedReconcileKey, reconcileCanonical, RECONCILE_SCAN_KEYS, type ReconcileDecision } from '../persistence/reconcile-merge.ts';
 import { fileWinsContent } from '../persistence/file-wins-content.ts';
-import { ABSENT_FILE_HASH, canonicalDeletionState, missingFileRoute, readCanonicalFileText, readDeletedDriftTarget, readReconcileState, validateReconcileArtifact, type DeletedDriftChange, type DeletedDriftTarget, type ReconcileArtifact } from '../persistence/reconcile-state.ts';
+import { ABSENT_FILE_HASH, canonicalDeletionState, missingFileRoute, readCanonicalFileText, readDeletedDriftTarget, readReconcileState, assertReconcileRevision, validateReconcileArtifact, type DeletedDriftChange, type DeletedDriftTarget, type ReconcileArtifact } from '../persistence/reconcile-state.ts';
 import { sourceDbOnlyVerdict } from '../persistence/source-storage.ts';
 import { clearGitHold, readGitHold, fileDriftActionVerb, fileDriftSide, FILE_DRIFT_DELETED_STATES, FILE_DRIFT_SIDES, GIT_HOLD_OP, heldDriftPreviewArgv, requestGitHoldRetry, type FileDriftDeletedState, type FileDriftSide, type GitHoldRecord } from '../persistence/sync-holds.ts';
 import { prepareRepairPublication, repairScreenConfig, submitManagedFileRepair } from '../persistence/file-repair.ts';
@@ -506,6 +506,7 @@ export async function prepareDriftPage(engine: BrainEngine, sourceId: string, sl
   const database = reconcileCanonical(state.snapshot.page, state.snapshot.tags);
   const file = reconcileCanonical(state.file, state.file.tags);
   const decisions = preferSideDecisions(state.file, database, prefer);
+  await assertReconcileRevision(engine, state.snapshot, sourceId, slug);
   const prepared = await prepareReconcileResult(engine, state, decisions);
   if (prepared.conflicts.length || !prepared.ready) throw opError('invalid_params', 'Some paths still need a decision.',
     `Preview ${slug} with gbrain sources reconcile ${sourceId} ${slug} --brain host --preview --out <file> and resolve it there.`);
@@ -686,7 +687,10 @@ async function applyDeletedSide(ctx: OperationContext, page: ApprovedPage, artif
     if (acceptedPendingReceipt(error) || !(error instanceof OperationError) || ['owner_unavailable', 'writer_lock_unavailable', 'writer_busy', 'write_pending'].includes(error.code)) throw error;
     const changed = ['changed_since_preview', 'revision_conflict', 'page_identity_changed', 'page_not_found', 'source_changed'].includes(error.code);
     return { applied: false, outcome: changed ? 'changed_since_preview' : 'refused', reason: error.code,
-      detail: { request_id: requestId, action, message: error.message, fix: error.fix ?? repreviewFix(page, artifact.prefer) } };
+      detail: { request_id: requestId, action, message: error.message, fix: error.fix ?? repreviewFix(page, 'detach_page' in artifact
+        ? ['gbrain', 'repair', 'file-drift', '--source', page.source_id, '--held', '--side', 'deleted', '--state', 'file_gone', '--provenance', 'never_committed', '--prefer', 'database']
+        : heldDriftPreviewArgv(page.source_id, 'deleted', ('remove_file' in artifact ? artifact.remove_file : artifact.import_file).state, artifact.prefer,
+          ('remove_file' in artifact ? artifact.remove_file : artifact.import_file).path)) } };
   }
 }
 
@@ -713,10 +717,9 @@ function provenanceText(found: DeletionProvenance): string {
     : 'provenance unknown: Git could not name the deleting commit';
 }
 
-/** The next step after a page's apply refused or found it changed: preview that page alone again (read-only), which names its current refusal or a fresh apply command. */
-function repreviewFix(page: ApprovedPage, prefer: DriftSide) {
-  return readFix(`Previews ${page.slug} in '${page.source_id}' alone again: it re-reads the page and its file and prints the current refusal with its fix, or a new apply command.`,
-    { argv: ['gbrain', 'repair', 'file-drift', '--source', page.source_id, '--slug', page.slug, '--prefer', prefer] });
+/** The next step after a page's apply refused or found it changed: the preview that selects it again (read-only), which names its current refusal or a fresh apply command. */
+function repreviewFix(page: ApprovedPage, argv: string[]) {
+  return readFix(`Previews ${page.slug} in '${page.source_id}' again: it re-reads the page and its file and prints the current refusal with its fix, or a new apply command.`, { argv });
 }
 
 function item(page: ApprovedPage, index: number, hash: string, last: boolean, prefer: DriftSide): DriftItem {
@@ -930,7 +933,7 @@ export const fileDriftRepair: RepairHandler = {
       const changed = error.code === 'revision_conflict' || error.code === 'page_identity_changed' || error.code === 'page_not_found'
         || error.code === 'source_changed' && error.message.startsWith('Reconciliation preview is stale');
       outcome = { applied: false, outcome: changed ? 'changed_since_preview' : 'refused', reason: error.code,
-        detail: { request_id: requestId, message: error.message, fix: error.fix ?? repreviewFix(page, artifact.prefer) } };
+        detail: { request_id: requestId, message: error.message, fix: error.fix ?? repreviewFix(page, ['gbrain', 'repair', 'file-drift', '--source', page.source_id, '--slug', page.slug, '--prefer', artifact.prefer]) } };
     }
     if (last) {
       await clearApprovedSet(ctx.engine, { command: 'file-drift', hash });
