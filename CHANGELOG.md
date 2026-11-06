@@ -17,10 +17,24 @@ identifiers and attribution are available in the pre-removal Git revision
 ### Itemized changes
 
 - `src/core/repair/failed-writes.ts`: recovered fact requests are read once for all refused writes instead of inside the candidate read; replay attempts are read for every refused write together (`request_id = ANY`); later requests of the same page and the file check are read per page, not per write. The listing, classes, residuals and preview hash are unchanged.
-- New refusal `repair_preview_timeout`. When the request indexes the preview reads are missing or INVALID, its fix is `gbrain repair request-indexes --apply`; when they are valid, it tells the brain host to run the same preview once with a longer statement timeout.
+- New refusal `repair_preview_timeout`. When the request indexes the preview reads are missing or INVALID, it names them and its fix is the read-only `gbrain repair request-indexes --json` preview, whose apply command builds them; when they are valid, it tells the brain host to run the same preview once with a longer statement timeout.
 - Schema migration v291 builds two request-table indexes online (`persistence_requests_replay_id` on the request id, `persistence_requests_slug_sequence` on source, slug and sequence). They join the indexes `gbrain repair request-indexes` and doctor's `persistence_request_indexes` check report. Without them the preview is still bounded, only slower. PGLite and repo-less brains get them unchanged.
 - The request-index states doctor and `gbrain repair request-indexes` print now come back in the order the indexes are declared on Postgres as well as PGLite.
 - `test/repair-failed-writes-bounded-8707.test.ts` (PGLite and Postgres) seeds a journal with refused writes of every class and checks that the preview's request-table reads stay flat as refused writes grow, that each write gets its class, and that a read ended at the statement timeout refuses `repair_preview_timeout` and saves nothing.
+
+## [0.60.590.0] - 2026-11-06
+
+**A managed sync no longer stops for good when a write queues behind another write that waits on the sync, and the convergence nightly's kill loop tests only points a sync actually reaches.**
+
+A write queued behind an earlier write that waited on a sync row naming its page used to count as a write that could go first. That held back the very sync row the earlier write waited on, so the three rows waited on each other and nothing committed until the drain gave up, about an hour into the nightly run. The claim now skips such a write, so the sync row commits and both writes follow in order. The live `stalled Ns on queued` line also stops reporting a stall while the head keeps moving, for example while this process commits the in-flight writes of a serve that was killed.
+
+### Itemized changes
+
+- `src/core/persistence/journal.ts`: the FIFO claim no longer counts a write that sits behind an earlier queued write waiting on a sync row naming its page. That write can't go first anyway, because a write never passes an earlier one.
+- `src/core/persistence/sync-drain.ts`: the in-pass stall line counts an unclaimed head's age from when that head became the head, and never from before the drain's own last commit.
+- `src/core/persistence/sync-run.ts` and `fault-points.ts`: a new `sync:passed_over` fault point after the cursor step that passes over an entry whose file changed after admission. It does nothing without a test hook.
+- `test/sync-convergence.serial.test.ts`: the kill loop drops `sync:prescreened` and `sync:retry_deferred`, which only company sources reach since #6712 PR 4b, and kills at `sync:passed_over` and `sync:batch_entries` instead. A primed edit that the round's sync never froze is now reported by the "every planned fault fired" check, where it used to crash the harness on an empty commit.
+- `test/claim-fifo-foreground-waiting.test.ts` covers the chained write on PGLite and Postgres, and `test/sync-drain-claims.test.ts` covers a head that keeps moving.
 
 ## [0.60.589.0] - 2026-11-06
 
