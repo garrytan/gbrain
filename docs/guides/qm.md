@@ -27,6 +27,14 @@ A client whose `bound_slug_prefixes` do not cover `memory/members/<member>` is r
 Links and the right are database state, so a repo-less brain works the same; where
 a repo exists, saved facts go through the same git-first writer door as `remember`.
 
+Use the attest client only for QM's personal-scope memory route. An attested call
+reads as the named person, including their own private facts and pages only they
+may read, and gbrain cannot tell which conversation the answer goes to. Don't
+register the client as a model-callable MCP connector in QM, and don't route it to
+shared scopes (channels, groups, projects, teams, the org): either can show one
+person's private facts to a whole room. Shared conversations wait for
+`x-qm-audience` (wave 2).
+
 ## What the tools do
 
 - `memory_recall {query, max_chars?, source_id?, source_ids?}` answers plain text, one fact per line

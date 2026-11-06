@@ -331,3 +331,15 @@ export function unlinkedRecallResult(): { content: Array<{ type: 'text'; text: s
 }
 
 export const qmMemoryOperations: Operation[] = [memory_recall, memory_write];
+
+/**
+ * GST-900: recall's max_chars, memory_recall's bound on recall's text: the fact texts, then the results' chunk texts,
+ * one per line, keep the whole items that fit; the first item that would cross the cap ends both lists, with no
+ * marker. `truncated` says whether anything was cut and `total` counts the facts kept.
+ */
+export function boundRecallChars<T extends { facts: Array<{ fact: string }>; total: number; results?: Array<{ chunk?: unknown }> }>(out: T, maxChars: number): T & { truncated: boolean } {
+  const lines = [...out.facts.map(f => f.fact), ...(out.results ?? []).map(r => String(r.chunk ?? ''))];
+  const { kept } = boundFactLines(lines, maxChars);
+  const facts = out.facts.slice(0, kept);
+  return { ...out, facts, total: facts.length, ...(out.results ? { results: out.results.slice(0, Math.max(0, kept - out.facts.length)) } : {}), truncated: kept < lines.length };
+}

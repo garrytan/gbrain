@@ -55,7 +55,7 @@ describe('stdioVisibleTools (B1)', () => {
   });
 
   test('both gates on: full surfaced set returned unchanged', async () => {
-    const engine = engineWithGates({ 'mcp.publish_skills': 'true', 'mcp.publish_advisor': 'true' });
+    const engine = engineWithGates({ 'mcp.publish_skills': 'true', 'mcp.publish_advisor': 'true', 'mcp.publish_memory_settings': 'true' });
     const visible = await stdioVisibleTools(engine, operations);
     expect(visible.map(op => op.name)).toEqual(operations.filter(op => !op.requiredScopes?.length && !op.cliOnly).map(op => op.name));
     for (const op of operations.filter(op => op.requiredScopes?.length)) expect(visible).not.toContain(op);

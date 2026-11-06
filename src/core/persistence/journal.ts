@@ -3,13 +3,13 @@ import { WRITE_SWITCHES, writeSwitchOn } from './switches.ts';
 import type { BrainEngine } from '../engine.ts';
 import { getCode } from '../retry-matcher.ts';
 import { assertRecoveryStagingAbsent } from './staging.ts';
-import { OperationError, opError } from '../ops/contract.ts';
+import { markNotAdmitted, OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { digest, jsonBytes, requireUuid } from './digest.ts';
 import { authorizeWrite } from './authority.ts';
 import { journalLimitKey, oneYearCapacity, readJournalLimits, readReceiptRetentionDays } from './limits.ts';
-import { outstandingCapacityDetail, retryWriteAdmission } from './admission-retry.ts';
+import { outstandingCapacityDetail, retryWriteAdmission, waitOutRefreshFence } from './admission-retry.ts';
 import { PreadmitBrainChanged } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { backgroundPaused, backgroundWorktreeInactive, declaredBackground, readBackgroundPauseShare, resolveAdmissionOrigin, type AdmissionOrigin } from './admission-origin.ts';
@@ -31,7 +31,7 @@ import { assertGraduationAdmission } from './graduation-custody.ts';
 import { schemaAdmissionRefusal } from './schema-admission.ts';
 import { CAPACITY_VERIFY } from './capacity-verify.ts';
 import { readManagedMode } from './managed-mode.ts';
-import { localHostId } from './identity.ts';
+import { hostIdFor } from './identity.ts';
 import { MANAGED_SYNC_PASS_OP } from './sync-pass-row.ts';
 import { BACKOFF_ELAPSED } from './transient-retry.ts';
 import { segmentWriteScope } from '../page-body/ingest.ts';
@@ -270,11 +270,12 @@ export async function admitWrite(engine: BrainEngine, input: WriteAdmission, ove
   // #6355: a lent connection (the consumer's warm lane) whose session dropped is dead for every later attempt, so the
   // re-run takes a transaction from the engine's pool after the pool itself is rebuilt.
   let run = transaction;
-  return retryWriteAdmission(requestId, remaining => run(async tx => {
+  // GST-1387: an interactive write waits out a refresh fence (bounded), re-running its whole admission.
+  return waitOutRefreshFence(resolveAdmissionOrigin(input.origin) === 'interactive', () => retryWriteAdmission(requestId, remaining => run(async tx => {
     const brain = await declareDurablePersistence(tx, `${Math.min(100, remaining)}ms`, `${remaining}ms`);
     if (input.brainId !== undefined && brain !== input.brainId) throw new PreadmitBrainChanged();
     return apply(tx);
-  }), undefined, async error => { run = fn => engine.transaction(fn, { pipelineFirst: isPersistenceDeclaration }); await engine.reconnect({ error }); });
+  }), undefined, async error => { run = fn => engine.transaction(fn, { pipelineFirst: isPersistenceDeclaration }); await engine.reconnect({ error }); }));
 }
 /** Caller owns the transaction and retries its entire unit of work after rollback. */
 export async function admitWriteInTransaction(tx: BrainEngine, input: WriteAdmission, overrides?: Partial<JournalLimits>): Promise<WriteRequest> {
@@ -287,7 +288,7 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
   const bytes = jsonBytes(input.intent) + jsonBytes(input.authority);
   const terminalBytes = Math.max(input.terminalReservation ?? 0, receiptReservation(input));
   if (!Number.isSafeInteger(terminalBytes) || terminalBytes < 1024) throw new TypeError('Invalid terminal receipt reservation.');
-  const stamp = writerStamp();
+  const stamp = writerStamp({ engine });
   const origin = resolveAdmissionOrigin(input.origin);
   // #6741 C: a declared background producer is refused before any receipt when the source's owner fails its verification.
   if (input.worktreeId && declaredBackground(input.origin)) await assertBackgroundOwner(engine, input.sourceId, ownerStatusFix);
@@ -298,7 +299,7 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
     const [, , , , , counters, topology, prior] = await pipelined(tx, [
       () => assertGraduationAdmission(tx),
       async () => assertMutationProtocol({ target_kind: input.targetKind, protocol_version: input.protocolVersion }),
-      async () => { if (input.worktreeId) await assertWorktreeAdmission(tx, input); },
+      async () => { if (input.worktreeId) await assertWorktreeAdmission(tx, input, true); },
       // Source membership is locked before principal/counter/request guards. A
       // deleted/recreated source never receives work accepted for its old identity.
       async () => {
@@ -370,7 +371,7 @@ export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: Writ
     || input.operation !== first.operation || (input.targetKind ?? 'page') !== 'page' || (input.protocolVersion ?? 1) !== 1 || digest(input.authority) !== digest(first.authority))) {
     throw new TypeError('A group admission requires one source, worktree, principal, operation and authority.');
   }
-  const stamp = writerStamp();
+  const stamp = writerStamp({ engine: tx });
   const items = inputs.map(input => ({ input, requestId: requireUuid(input.requestId ?? randomUUID()), fingerprint: intentDigest(input),
     bytes: jsonBytes(input.intent) + jsonBytes(input.authority), terminalBytes: Math.max(input.terminalReservation ?? 0, receiptReservation(input)) }));
   assertMutationProtocol({ target_kind: 'page', protocol_version: 1 });
@@ -589,7 +590,7 @@ export async function chargePreparationAttempt(engine: SqlEngine, row: WriteRequ
  * binding (#6007: both read in one statement after the lock; the fence is
  * judged first, as before).
  */
-async function assertWorktreeAdmission(tx: BrainEngine, input: WriteAdmission): Promise<void> {
+async function assertWorktreeAdmission(tx: BrainEngine, input: WriteAdmission, replayable = false): Promise<void> {
   // Sent together: the server takes the share lock before it reads the fence and the binding.
   const [[worktree], [state]] = await pipelined(tx, [
     () => tx.executeRaw<{ state: string; owner_epoch: string }>('SELECT state,owner_epoch::text AS owner_epoch FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [input.worktreeId]),
@@ -601,14 +602,14 @@ async function assertWorktreeAdmission(tx: BrainEngine, input: WriteAdmission): 
     [input.sourceId, input.sourceIncarnation, input.worktreeId, input.topologyGeneration]),
   ]) as [Array<{ state: string; owner_epoch: string }>, Array<{ refresh: { id: string; state: string; source_ids: string[] } | string | null; bound: boolean }>];
   const refresh = typeof state?.refresh === 'string' ? JSON.parse(state.refresh) as { id: string; state: string; source_ids: string[] } : state?.refresh ?? null;
-  if (refresh) await assertWorktreeNotRefreshing(tx, input, refresh);
+  if (refresh) await assertWorktreeNotRefreshing(tx, input, refresh, replayable);
   // #6741 C: a background producer never takes a permanent request id against a worktree in recovery (a draining owner still replays).
   if (worktree?.state === 'recovering' && resolveAdmissionOrigin(input.origin) === 'background') throw backgroundWorktreeInactive(input.sourceId, worktree.state, ownerStatusFix(input.sourceId));
   if (!state?.bound || input.ownerEpoch != null && worktree && worktree.owner_epoch !== String(input.ownerEpoch)) throw opError('source_changed', 'The source binding changed during admission.',
     `Source ${input.sourceId}'s worktree binding changed (a claim, transfer or lifecycle change) while this write was being admitted, so nothing was accepted. Check the owner with the command in fix, then submit the write again; reusing the same request_id is safe because nothing was recorded.`,
     { fix: ownerStatusFix(input.sourceId) });
 }
-async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmission, refresh: { id: string; state: string; source_ids: string[] }): Promise<void> {
+async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmission, refresh: { id: string; state: string; source_ids: string[] }, replayable: boolean): Promise<void> {
   const managedSync = input.operation === 'submit_job' && String(input.intent.kind ?? '').startsWith('managed_sync_');
   if (refresh.state === 'syncing' && managedSync) return;
   if (refresh.state === 'syncing') {
@@ -623,8 +624,15 @@ async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmissio
   const error = catalogueError('worktree_refreshing',
     `Source ${input.sourceId}'s checkout is being fast-forwarded by refresh ${refresh.id} (${refresh.state}); this write was not journaled.`,
     `Retry the same request_id after retry_after_ms: 1000. Check progress with gbrain sources writer status ${input.sourceId}.`);
+  // A single write's replay of a request already accepted (its acknowledgement lost before the fence) reconciles to its
+  // receipt instead; a group admission never bypasses, since its other items may be new.
+  if (replayable && input.requestId && await getWriteRequest(tx, input.principal, input.requestId)) return;
   error.detail = 'retry_after_ms=1000';
-  throw error;
+  error.retryable = true;
+  // GST-1387: nothing was recorded, so the same call is retried after the delay (actor provider renders next: wait).
+  error.fix = { argv: ['gbrain', 'sources', 'writer', 'status', '--source', input.sourceId, '--json'], consent: [], actor: 'provider', requires_exclusive: false,
+    why: `A refresh of source ${input.sourceId}'s checkout holds its writes until it finishes syncing; this write was not recorded. Repeat the same call with the same request_id after about 1 s (retry_after_ms=1000); this read-only command shows the refresh's progress.` };
+  throw markNotAdmitted(error);
 }
 
 /**
@@ -969,7 +977,7 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
     `Another owner pass claimed request ${row.request_id} in source ${row.source_id} before this pass recorded its outcome, so this pass's completion was discarded; the current claim records the final outcome. Inspect the request with the command in fix instead of resubmitting it.`,
     { fix: requestInspectFix(row) });
   // Only publication stamps the consumer; failures, cancellations and conflicts leave it unset.
-  const stamp = writerStamp();
+  const stamp = writerStamp({ engine: tx });
   // #6007: one statement sizes the queued effects, checks the terminal reservation, completes the row and
   // releases its outstanding counters; no row means the encoding exceeds the reservation and nothing changed.
   const resultBytes = jsonBytes(outcome) + jsonBytes(current.authority) + 1024 + Buffer.byteLength(error?.message ?? '') + (error?.detail ? jsonBytes(error.detail) : 0);
@@ -1106,7 +1114,7 @@ export async function sweepSegmentStorage(engine: BrainEngine): Promise<void> {
   if (!row?.present) return;
   if (!await readManagedMode(engine)) { await engine.sweepSegments({ expireStagings: true }); return; }
   const owned = await engine.executeRaw<{ source_id: string }>(`SELECT s.source_id FROM persistence_source_bindings s
-    JOIN persistence_worktrees w ON w.id=s.worktree_id WHERE w.owner_host_id=$1::uuid AND w.state='active'`, [localHostId()]);
+    JOIN persistence_worktrees w ON w.id=s.worktree_id WHERE w.owner_host_id=$1::uuid AND w.state='active'`, [hostIdFor(engine)]);
   for (const { source_id: sourceId } of owned) {
     const writes = await segmentWriteScope(engine, sourceId);
     await writes(exec => exec.sweepSegments({ sourceId, expireStagings: true }));

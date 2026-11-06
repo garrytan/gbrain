@@ -1,16 +1,17 @@
 /**
- * A forget queues its file mirror and rebuild work after it commits; the CLI
- * process that committed it exits without running any of it. These pin what
+ * GBRA-190 G4: a forget is a coordinated publication that strikes the page's
+ * file before it commits (no withdrawal mirror runs after it); the CLI process
+ * that committed it exits without running its queued effects. These pin what
  * the next caller sees:
- * - a write to the withdrawn page is not prepared while its mirror is queued,
- *   so the mirror cannot change the file under an accepted request (N5-3);
- * - a withdrawal that commits while a write is preparing makes that write
- *   reprepare instead of failing as an uncoordinated file edit;
+ * - the file already holds the struck row, so a write to the withdrawn page
+ *   commits first time and nothing rewrites the file under it (N5-3);
+ * - a forget submitted while a write to the page is in flight queues behind it,
+ *   and both commit first time, neither failing as an uncoordinated file edit;
  * - the acknowledged forget leaves the page's retained text searchable (N5-2).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -24,7 +25,6 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
 import { admitWrite, claimNextWrite, getWriteRequestById } from '../src/core/persistence/journal.ts';
 import { publishMutation } from '../src/core/persistence/coordinator.ts';
-import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { prepareMemoryMutation, submitForgetMutation, submitRememberMutation } from '../src/core/persistence/memory-mutations.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -73,7 +73,7 @@ async function entity(engine: BrainEngine) {
   expect([forgotten.state, retained.state]).toEqual(['committed', 'committed']);
   // The committing process exits: nothing drains queued effects in-process.
   await disposePersistenceConsumer(engine);
-  return { ctx, sourceId, slug, binding, forgottenId: String(forgotten.id) };
+  return { ctx, sourceId, slug, binding, forgottenId: String(forgotten.id), file };
 }
 
 async function admitCorrection(engine: BrainEngine, f: Awaited<ReturnType<typeof entity>>) {
@@ -93,29 +93,38 @@ async function claimAndPublish(engine: BrainEngine, f: Awaited<ReturnType<typeof
 }
 
 describe('writes after a forget whose effects stay queued, both engines', () => {
-  test('a write to the withdrawn page waits for its queued mirror, then commits first time', async () => {
+  test('a forget strikes the file before it commits, so a write to the withdrawn page commits first time', async () => {
     for (const engine of engines) {
       const f = await entity(engine);
       expect(await submitForgetMutation(f.ctx, 'forget', { id: f.forgottenId, reason: 'test' })).toMatchObject({ state: 'committed' });
+      await disposePersistenceConsumer(engine);
+      const struck = readFileSync(f.file, 'utf8');
+      expect(struck).toContain('~~Keeps bees followupaaaa~~');
+      expect(struck).toContain('forgotten:');
+      expect(await engine.executeRaw(`SELECT 1 FROM persistence_effects WHERE source_id=$1 AND kind='withdrawal-mirror'`, [f.sourceId])).toHaveLength(0);
       const admitted = await admitCorrection(engine, f);
-      expect(await claimNextWrite(engine, hostId)).toBeNull();
-      await runPersistenceEffects(engine, f.ctx.config, { hostId, limit: 20 });
       expect((await claimAndPublish(engine, f, admitted.id)).state).toBe('committed');
+      expect(readFileSync(f.file, 'utf8')).toContain('~~Keeps bees followupaaaa~~');
     }
   });
 
-  test('a withdrawal committed during preparation makes the write reprepare, not fail as a file edit', async () => {
+  test('a forget submitted while a write to the page is in flight queues behind it, and both commit first time', async () => {
     for (const engine of engines) {
       const f = await entity(engine);
       const admitted = await admitCorrection(engine, f);
       const row = (await claimNextWrite(engine, hostId))!;
       expect(row.id).toBe(admitted.id);
       const prepared = await prepareMemoryMutation(engine, row, f.ctx.config);
-      expect(await submitForgetMutation(f.ctx, 'forget', { id: f.forgottenId, reason: 'test' })).toMatchObject({ state: 'committed' });
-      await runPersistenceEffects(engine, f.ctx.config, { hostId, limit: 20 });
+      const forget = { id: f.forgottenId, reason: 'test', request_id: randomUUID() };
+      const pending = await submitForgetMutation(f.ctx, 'forget', forget, 200).catch((error: { writeRequest?: { state?: string } }) => error);
+      expect((pending as { writeRequest?: { state?: string } }).writeRequest?.state).toBe('queued');
       const first = await publishMutation(engine, row, prepared, hostId);
-      expect({ state: first.state, error: first.error_code }).toEqual({ state: 'queued', error: null });
-      expect((await claimAndPublish(engine, f, admitted.id)).state).toBe('committed');
+      expect({ state: first.state, error: first.error_code }).toEqual({ state: 'committed', error: null });
+      expect(await submitForgetMutation(f.ctx, 'forget', forget, 30_000)).toMatchObject({ state: 'committed' });
+      await disposePersistenceConsumer(engine);
+      const text = readFileSync(f.file, 'utf8');
+      expect(text).toContain('Gave up beekeeping followupcccc');
+      expect(text).toContain('~~Keeps bees followupaaaa~~');
       expect((await getWriteRequestById(engine, admitted.id))!.state).toBe('committed');
     }
   });

@@ -78,7 +78,7 @@ import { CredentialError } from '../src/core/creds/errors.ts';
 import { BudgetTracker } from '../src/core/budget/budget-tracker.ts';
 import { catalogueError } from '../src/core/error-catalogue.ts';
 import { SourceTargetError } from '../src/core/source-resolver.ts';
-import { callRemoteTool, RemoteMcpError } from '../src/core/mcp-client.ts';
+import { callRemoteTool, RemoteMcpError, unpackToolResult } from '../src/core/mcp-client.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { keylessBrainEnv } from './helpers/provider-env.ts';
 import {
@@ -473,4 +473,29 @@ describe('a real OperationError built with opError round-trips the thin client u
     expect(remote.toJSON()).toMatchObject({ error: 'invalid_params', code: 'not_found' });
     expect(JSON.parse(renderCliError(remote, { json: true, command: 'h3', tty: false }).stdout!)).toMatchObject({ error: 'invalid_params', code: 'not_found' });
   }, 60_000);
+});
+
+describe('#8621: a partly failed remember batch over HTTP and the thin client', () => {
+  test('is an MCP error whose body keeps every item receipt; the thin client returns it for the CLI to render', async () => {
+    const batch = { status: 'error', error: 'invalid_params', code: 'invalid_params', protocol_version: 1,
+      message: '1 of 2 item(s) failed (first: items[0] invalid_params); see items[].error. Items not marked failed are stored.',
+      items: [{ index: 0, request_id: 'r0', status: 'failed', error: { code: 'invalid_params', message: 'refused' } }, { index: 1, request_id: 'r1', status: 'inserted', id: 7 }],
+      saved: 1, failed: 1, partial: true };
+    const handler: Operation['handler'] = async () => batch;
+    const args = { items: ['alice-example likes tea', 'alice-example likes jazz'], provenance: 'test' };
+    const http = await withOpHandler('remember', handler, () => callTool(serve.base, adminToken, 'remember', args));
+    expect(http.isError).toBe(true);
+    expect(JSON.parse(http.content[0]!.text!)).toMatchObject({ status: 'error', saved: 1, items: [{ status: 'failed' }, { status: 'inserted', id: 7 }] });
+    const remote = await withOpHandler('remember', handler, () => callRemoteTool(thinClientConfig(serve, oauth), 'remember', args, { timeoutMs: 30_000 }));
+    expect(unpackToolResult(remote)).toMatchObject({ status: 'error', saved: 1, items: [{ status: 'failed' }, { status: 'inserted', id: 7 }] });
+    const homeT = mkdtempSync(join(tmpdir(), 'gbrain-8621-thin-'));
+    try {
+      mkdirSync(join(homeT, '.gbrain'), { recursive: true });
+      writeFileSync(join(homeT, '.gbrain', 'config.json'), JSON.stringify(thinClientConfig(serve, oauth)));
+      const cli = await withOpHandler('remember', handler, () => gbrain(homeT, ['remember', '--items', JSON.stringify(args.items), '--provenance', 'test']));
+      expect({ exitCode: cli.exitCode, stderr: cli.stderr }).toMatchObject({ exitCode: 1, stderr: expect.stringContaining("gbrain remember: operation reported status 'error'") });
+      expect(cli.stdout).toContain('saved 1 of 2 fact(s), 1 failed');
+      expect(cli.stdout).toContain('items[1]: inserted (fact #7)');
+    } finally { rmSync(homeT, { recursive: true, force: true }); }
+  }, 120_000);
 });

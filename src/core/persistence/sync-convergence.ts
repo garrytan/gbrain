@@ -33,6 +33,7 @@ import { importGroupReads, sliceReads } from './import-reads.ts';
 import { PAGE_PURGE_TOMBSTONES_SQL } from './page-purge.ts';
 import { WORKTREE_BINDING_SQL } from './ownership.ts';
 import { SOURCE_TRUST_CONFIG_SQL } from '../trust/channel.ts';
+import { SOURCE_PURGE_EPOCH_SQL } from '../reason-trailers.ts';
 
 /** keep_db DB-wins writes one pass admits (design v3.2 §4, [estimated]); the rest are `keep_db_pending`. */
 export const KEEP_DB_PASS_CAP = 200;
@@ -185,8 +186,11 @@ export async function buildConvergenceReceipt(engine: BrainEngine, level: Shadow
   };
 }
 
-/** Plain reads every screened preparation repeats beside group-publish.ts's `preparationReads` set: the binding, the owner trust config and the purge tombstones. */
-const SCREEN_STABLE_READS = [WORKTREE_BINDING_SQL, SOURCE_TRUST_CONFIG_SQL, PAGE_PURGE_TOMBSTONES_SQL];
+/**
+ * Plain reads every screened preparation repeats beside group-publish.ts's `preparationReads` set: the binding, the owner
+ * trust config, the purge tombstones and the source's purge epoch (the key of the pass's reason-trailer scan, GBRA-217).
+ */
+const SCREEN_STABLE_READS = [WORKTREE_BINDING_SQL, SOURCE_TRUST_CONFIG_SQL, PAGE_PURGE_TOMBSTONES_SQL, SOURCE_PURGE_EPOCH_SQL];
 
 /**
  * The dry run's read-only `sameContentAtOrigin` (sync-run.ts): prepares each drift path's import as a screening request

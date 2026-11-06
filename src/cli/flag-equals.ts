@@ -76,6 +76,8 @@ export const EQUALS_READERS: Readonly<Record<string, readonly string[]>> = {
   'beliefs replay-purges': ['--archived-at', '--purge-mirror', '--from-url-env'],
   // core/consent.ts:126 via consentGateOrExit (book-mirror.ts:431, args :440, effects paid); book-mirror reads no --max-* itself.
   'book-mirror': ['--max-usd', '--max-cost'],
+  // cli/commands/bundled-skill.ts:51 reads --asset <p> and --asset=<p>, and refuses an empty value itself.
+  'bundled-skill': ['--asset'],
   // capture.ts:96 regex; every other = form is refused by capture's own parser (capture.ts:132).
   capture: ['--request-id', '--expected-revision'],
   // check-resolvable.ts:120 parseFlags.
@@ -109,7 +111,7 @@ export const EQUALS_READERS: Readonly<Record<string, readonly string[]>> = {
   // recall.ts:1183-1188 runForget (plain) and forget-purge.ts:44 flagValue (:114-123, purge); --match is purge-only, ignored by plain forget in any form.
   forget: ['--request-id', '--source', '--match'],
   // forget-purge.ts:131 flagValue --reason (runForgetPurge, routed on --purge at recall.ts:1170); plain forget reads only the separate token (recall.ts:1181).
-  'forget --purge': ['--reason'],
+  'forget --purge': ['--reason', '--reason-scan-limit'],
   // frontmatter.ts:356 runValidate.
   'frontmatter validate': ['--path'],
   // frontmatter.ts:667 runAudit.

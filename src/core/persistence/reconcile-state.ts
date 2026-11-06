@@ -16,7 +16,7 @@ import { wholeBodySnapshot } from './segmented-apply.ts';
 import { sharedOriginExit } from './sync-origin.ts';
 import { originTwinsPreviewArgv } from './origin-twins.ts';
 export { fileClaimCandidatesQuery } from './file-claims.ts';
-import { localHostId } from './identity.ts';
+import { hostIdFor } from './identity.ts';
 import { isDatabaseOnlyPage, recordsNoFileOrigin, slugDerivedOrigin } from './unbound-pages.ts';
 import { isUnboundSourcePage } from './unbound-source.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
@@ -136,7 +136,7 @@ export type DeletedDriftChange = 'file_gone' | 'live_page' | 'no_deletion' | 'de
 export async function readDeletedDriftTarget(engine: BrainEngine, sourceId: string, input: { path: string; sourcePath: string; pageId?: number | null }):
   Promise<DeletedDriftTarget | { changed: DeletedDriftChange }> {
   const binding = await getWorktreeBinding(engine, sourceId);
-  if (!binding?.local_path || binding.owner_host_id !== localHostId() || binding.state !== 'active') {
+  if (!binding?.local_path || binding.owner_host_id !== hostIdFor(engine) || binding.state !== 'active') {
     throw new OperationError('owner_unavailable', 'Reconciliation requires the existing active owner on this host.', 'Run repair on the current owner; repair never claims or activates a source.');
   }
   const root = realpathSync(join(binding.local_path, binding.relative_path));
@@ -220,7 +220,7 @@ async function assertSoleFileClaim(engine: BrainEngine, target: FileClaimTarget)
 export async function readReconcileState(engine: BrainEngine, sourceId: string, slug: string, assessmentAt = new Date().toISOString(),
   opts: { adoptSlugPath?: boolean; fileGone?: boolean } = {}): Promise<ReconcileState> {
   const binding = await getWorktreeBinding(engine, sourceId);
-  if (!binding?.local_path || binding.owner_host_id !== localHostId() || binding.state !== 'active') {
+  if (!binding?.local_path || binding.owner_host_id !== hostIdFor(engine) || binding.state !== 'active') {
     throw new OperationError('owner_unavailable', 'Reconciliation requires the existing active owner on this host.', 'Run repair on the current owner; repair never claims or activates a source.');
   }
   const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');

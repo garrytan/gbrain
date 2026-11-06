@@ -33,7 +33,7 @@ import { ledgerApplies, type BodyLedger } from '../page-body/segment-ledger.ts';
 import { fenceTooLargeError } from '../page-body/read-range.ts';
 import { FileBytes } from '../persistence/large-file.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
-import { localHostId } from '../persistence/identity.ts';
+import { hostIdFor } from '../persistence/identity.ts';
 import { prepareFileTarget, unreadPageFile } from '../persistence/page-prepare.ts';
 import { loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { admitWriteInTransaction, completeWrite, getWriteRequest } from '../persistence/journal.ts';
@@ -96,7 +96,7 @@ const heldFrom = (sourceId: string, slug: string, error: OperationError): HeldMi
 
 /** Every listed and held page of the sources, in (source, slug) order, read on this host one page at a time. */
 export async function scanSegmentedMirrors(engine: BrainEngine, sourceIds: readonly string[]): Promise<{ items: StaleMirror[]; held: HeldMirror[]; residuals: Record<string, number> }> {
-  const hostId = localHostId();
+  const hostId = hostIdFor(engine);
   const items: StaleMirror[] = [], held: HeldMirror[] = [];
   const residuals: Record<string, number> = {};
   const hold = (entry: HeldMirror) => { held.push(entry); residuals[entry.reason] = (residuals[entry.reason] ?? 0) + 1; };
@@ -139,7 +139,7 @@ export async function scanSegmentedMirrors(engine: BrainEngine, sourceIds: reado
 /** The listed page as it is now: its live revision and id, and its file's streamed SHA-256, read on this host. */
 async function currentState(engine: BrainEngine, stale: StaleMirror): Promise<{ revision: string | null; page_id: number | null; file_sha256: string | null }> {
   const snapshot = await engine.readPageSnapshot(stale.slug, { sourceId: stale.source_id });
-  const binding = await getWorktreeBinding(engine, stale.source_id, localHostId());
+  const binding = await getWorktreeBinding(engine, stale.source_id, hostIdFor(engine));
   const path = binding?.local_path ? join(binding.local_path, ...stale.path.split('/')) : null;
   let file_sha256: string | null = null;
   if (path && existsSync(path)) {

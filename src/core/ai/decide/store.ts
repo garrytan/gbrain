@@ -12,6 +12,7 @@
  */
 import { createHmac, randomBytes } from 'node:crypto';
 import type { BrainEngine } from '../../engine.ts';
+import { engineKey } from '../../engine-key.ts';
 import { registerBackgroundWorkDrainer, type BackgroundWorkDrainMode } from '../../background-work.ts';
 import { isValidOutcome } from './outcomes.ts';
 import type { DecideLane, DecideSlot, QuestionKind } from './types.ts';
@@ -104,12 +105,18 @@ class BufferedWriter<T extends object> {
   private engine: BrainEngine | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private inFlight: Promise<void> | null = null;
+  /** Rows written to the engine they were buffered for when the next push names another brain. */
+  private readonly handoffs = new Set<Promise<void>>();
   constructor(private readonly write: (engine: BrainEngine, rows: T[]) => Promise<void>) {}
 
   push(engine: BrainEngine, rows: readonly T[]): void {
     if (rows.length === 0) return;
     if (this.engine !== engine) {
-      if (this.engine && this.rows.length > 0) void this.flush().catch(() => {});
+      if (this.engine && this.rows.length > 0 && engineKey(this.engine) !== engineKey(engine)) {
+        const handoff: Promise<void> = this.write(this.engine, this.rows).catch(() => {}).finally(() => { this.handoffs.delete(handoff); });
+        this.handoffs.add(handoff);
+        this.rows = [];
+      }
       this.engine = engine;
     }
     this.rows.push(...rows);
@@ -132,7 +139,10 @@ class BufferedWriter<T extends object> {
     return this.inFlight;
   }
 
-  pending(): Promise<void> | null { return this.inFlight; }
+  pending(): Promise<void> | null {
+    const work = [...this.handoffs, ...(this.inFlight ? [this.inFlight] : [])];
+    return work.length > 0 ? Promise.all(work).then(() => {}) : null;
+  }
   hasBuffered(): boolean { return this.rows.length > 0; }
   reset(): void {
     if (this.timer) clearInterval(this.timer);
@@ -140,6 +150,7 @@ class BufferedWriter<T extends object> {
     this.rows = [];
     this.engine = null;
     this.inFlight = null;
+    this.handoffs.clear();
   }
 }
 
@@ -161,7 +172,7 @@ export function recordSpend(engine: BrainEngine, row: SpendRow): void {
 
 /** Flush both buffers now (CLI commands that read what they just wrote, tests). */
 export async function flushDecideWrites(): Promise<void> {
-  await Promise.all([receipts.flush(), spend.flush()]);
+  await Promise.all([receipts.flush(), spend.flush(), receipts.pending(), spend.pending()]);
 }
 
 export async function drainDecideWrites(timeoutMs: number, mode: BackgroundWorkDrainMode): Promise<{ unfinished: number }> {
@@ -184,7 +195,7 @@ registerBackgroundWorkDrainer({ name: 'decide-receipts', order: 6, drain: drainD
 export function __resetDecideStoreForTests(): void {
   receipts.reset();
   spend.reset();
-  spendCache.clear();
+  spendCache = new WeakMap();
   saltCache = new WeakMap();
 }
 
@@ -245,11 +256,12 @@ export function pageSubject(sourceId: string | undefined, slug: string): string 
 
 interface SpendCacheEntry { day: string; at: number; total: number; remote: number }
 const SPEND_CACHE_MS = 60_000;
-const spendCache = new Map<BrainEngine, SpendCacheEntry>();
+/** Keyed by engineKey: a transaction or view shares its engine's entry, and an engine dropped by its host takes its entry with it. */
+let spendCache = new WeakMap<object, SpendCacheEntry>();
 const utcDay = (t = Date.now()) => new Date(t).toISOString().slice(0, 10);
 
 function bumpSpendCache(engine: BrainEngine, row: SpendRow): void {
-  const entry = spendCache.get(engine);
+  const entry = spendCache.get(engineKey(engine));
   if (!entry || entry.day !== utcDay()) return;
   entry.total += row.cost_usd;
   if (row.remote) entry.remote += row.cost_usd;
@@ -257,7 +269,7 @@ function bumpSpendCache(engine: BrainEngine, row: SpendRow): void {
 
 export async function dailySpend(engine: BrainEngine, now = Date.now()): Promise<{ total: number; remote: number }> {
   const day = utcDay(now);
-  const cached = spendCache.get(engine);
+  const cached = spendCache.get(engineKey(engine));
   if (cached && cached.day === day && now - cached.at < SPEND_CACHE_MS) return { total: cached.total, remote: cached.remote };
   const rows = await engine.executeRaw<{ total: number | string | null; remote: number | string | null }>(
     `SELECT COALESCE(SUM(cost_usd), 0) AS total, COALESCE(SUM(CASE WHEN remote THEN cost_usd ELSE 0 END), 0) AS remote
@@ -265,7 +277,7 @@ export async function dailySpend(engine: BrainEngine, now = Date.now()): Promise
     [`${day}T00:00:00Z`],
   );
   const entry = { day, at: now, total: Number(rows[0]?.total ?? 0), remote: Number(rows[0]?.remote ?? 0) };
-  spendCache.set(engine, entry);
+  spendCache.set(engineKey(engine), entry);
   return { total: entry.total, remote: entry.remote };
 }
 

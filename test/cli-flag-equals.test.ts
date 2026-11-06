@@ -284,6 +284,7 @@ describe('#7619 split rules', () => {
   test('EQUALS_READERS keys and the = readers in src match in both directions', () => {
     const MODULE_OWNERS: Record<string, readonly string[] | string> = {
       // owners
+      'src/cli/commands/bundled-skill.ts': ['bundled-skill'],
       'src/cli/commands/doctor.ts': ['doctor'],
       'src/commands/beliefs-replay-purges.ts': ['beliefs replay-purges'],
       'src/commands/beliefs.ts': ['beliefs', 'beliefs changes'],
@@ -405,6 +406,7 @@ describe('#7619 split rules', () => {
       'src/core/git-head.ts': 'git child argv',
       'src/core/git-remote.ts': 'git child argv',
       'src/core/git/commit-push.ts': 'git child argv',
+      'src/core/hardened-git.ts': 'git child argv (the reason-trailer log options)',
       'src/core/persistence/checkout-state.ts': 'git child argv',
       'src/core/persistence/effect-git.ts': 'git child argv',
       'src/core/persistence/git-door.ts': 'git child argv',
@@ -413,6 +415,7 @@ describe('#7619 split rules', () => {
       'src/core/persistence/sync-origin-evidence.ts': 'git child argv',
       'src/core/persistence/topology-filesystem.ts': 'git child argv',
       'src/core/persistence/worktree-refresh.ts': 'git child argv',
+      'src/core/reason-trailers.ts': 'git child argv (the reason scan and its notice fix)',
       'src/core/skillpack/bundle.ts': 'git child argv',
       'src/core/skillpack/tarball.ts': 'tar child argv',
       'src/core/source-health.ts': 'git child argv',

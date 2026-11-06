@@ -9,7 +9,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
-import { localHostId } from '../persistence/identity.ts';
+import { hostIdFor } from '../persistence/identity.ts';
 import { missingTable, type DetectionMode, type NotifierState } from './store.ts';
 import { residentNotifier } from './resident.ts';
 import { parseOnCommit } from '../commit-notifier.ts';
@@ -86,7 +86,7 @@ function ownerLive(engine: Exec, row: Pick<Row, 'owner_host_id' | 'owner_pid' | 
   if (!row.owner_host_id) return false;
   if (engine.kind !== 'pglite') return truthy(row.lease_live);
   const pid = row.owner_pid === null || row.owner_pid === undefined ? null : Number(row.owner_pid);
-  if (pid === null || row.owner_host_id !== localHostId()) return false;
+  if (pid === null || row.owner_host_id !== hostIdFor(engine)) return false;
   if (pid === process.pid) return residentNotifier() !== null;
   try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
 }
