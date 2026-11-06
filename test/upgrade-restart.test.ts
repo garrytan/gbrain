@@ -9,7 +9,7 @@ import { describe, expect, test } from 'bun:test';
 import { EQUALS_READERS } from '../src/cli/flag-equals.ts';
 import { parseGlobalFlags } from '../src/core/cli-options.ts';
 import {
-  bunGlobalCopyOf, classifyGbrainCommand, collectHostProcesses, mismatchedBuilds, planRestart, restartProblems, runRestartSteps, supervisorRestartArgv, unverifiedBuilds, verifyRestart,
+  bunGlobalCopyOf, classifyGbrainCommand, collectHostProcesses, gbrainEntry, mismatchedBuilds, planRestart, restartProblems, runRestartSteps, supervisorRestartArgv, unverifiedBuilds, verifyRestart,
   type HostProcess, type ProcessSources, type RestartContext, type RestartExecutor, type WarmSocketState,
 } from '../src/core/upgrade-restart.ts';
 import { handleRestartOnly, mismatchFix, restartRefusal } from '../src/commands/upgrade-restart.ts';
@@ -54,6 +54,61 @@ describe('classifyGbrainCommand', () => {
     expect(classifyGbrainCommand('gbrain serve status')).toBeNull();
     expect(classifyGbrainCommand('vim notes/gbrain-serve.md')).toBeNull();
     expect(classifyGbrainCommand('/usr/bin/tini -s -- /home/alice-example/.bun/bin/gbrain jobs work --queue default')).toBeNull();
+  });
+});
+
+describe('gbrainEntry (#8723)', () => {
+  const CHECKOUT = '/srv/checkout-example';
+  const packageName = (root: string) => root === CHECKOUT ? 'gbrain' : root === '/srv/gbrain-notes' ? 'notes-example' : undefined;
+
+  test('bun run with a relative entry resolves against the process working directory and checks the package there', () => {
+    expect(gbrainEntry('bun run src/cli.ts jobs supervisor', { cwd: CHECKOUT, packageName })).toEqual({ entry: `${CHECKOUT}/src/cli.ts`, args: ['jobs', 'supervisor'] });
+    expect(classifyGbrainCommand('/usr/local/bin/bun run src/cli.ts jobs supervisor --queue ingest', { cwd: CHECKOUT, packageName })).toBe('supervisor');
+    expect(classifyGbrainCommand('bun --smol run ./src/cli.ts serve --http', { cwd: CHECKOUT, packageName })).toBe('serve');
+    expect(classifyGbrainCommand('bun run src/cli.ts jobs supervisor', { cwd: null, packageName })).toBeNull();
+    expect(classifyGbrainCommand('bun run src/cli.ts jobs supervisor', { cwd: '/srv/other-tool', packageName: () => 'other-tool' })).toBeNull();
+  });
+
+  test('an absolute entry is gbrain by its package root, not by a path substring', () => {
+    expect(classifyGbrainCommand(`/usr/local/bin/bun ${CHECKOUT}/src/cli.ts jobs work --queue default`, { packageName })).toBe('worker');
+    expect(classifyGbrainCommand('bun /srv/gbrain-notes/src/cli.ts serve', { packageName })).toBeNull();
+    expect(classifyGbrainCommand('bun /srv/gbrain/src/cli.ts serve', { packageName })).toBe('mcp');
+  });
+
+  test('bunx and bun run <bin> are wrappers; the child they start is the gbrain process', () => {
+    expect(gbrainEntry('/usr/local/bin/bun x gbrain jobs supervisor --queue q')).toBeNull();
+    expect(gbrainEntry('bunx gbrain jobs supervisor')).toBeNull();
+    expect(gbrainEntry('/usr/local/bin/bun run gbrain jobs work')).toBeNull();
+    expect(classifyGbrainCommand('/usr/local/bin/bun /home/alice-example/proj/node_modules/.bin/gbrain jobs supervisor --queue q')).toBe('supervisor');
+    expect(classifyGbrainCommand('/home/alice-example/.bun/bin/gbrain jobs supervisor start --detach')).toBe('supervisor');
+  });
+
+  test('a supervisor started as bun run src/cli.ts restarts with its worker instead of refusing the upgrade', async () => {
+    const processes = await collectHostProcesses({
+      heartbeats: async () => [], workers: () => [{ pid: 21, version: OLD }], supervisor: () => ({ pid: 20, version: OLD }), home: HOME, exclude: [], packageName,
+      processTable: () => [
+        { pid: 20, ppid: 1, command: '/usr/local/bin/bun run src/cli.ts jobs supervisor --queue default', started_ms: 600, gbrain_home: HOME, cwd: CHECKOUT },
+        { pid: 21, ppid: 20, command: `/usr/local/bin/bun ${CHECKOUT}/src/cli.ts jobs work --concurrency 1 --queue default`, started_ms: 700, gbrain_home: HOME, cwd: CHECKOUT },
+      ],
+      install: (command, cwd) => gbrainEntry(command, { cwd, packageName })?.entry === `${CHECKOUT}/src/cli.ts` ? { root: CHECKOUT, version: OLD } : { root: null, version: null },
+    });
+    expect(processes.map(p => [p.pid, p.role, p.ppid, p.install_root])).toEqual([[20, 'supervisor', null, CHECKOUT], [21, 'worker', 20, CHECKOUT]]);
+    const plan = planRestart(processes, ctx({ ownInstallRoot: CHECKOUT }));
+    expect(plan.manual).toEqual([]);
+    expect(plan.steps).toEqual([{ kind: 'supervisor', pid: 20, workers: [21], ...supervisorRestartArgv(['jobs', 'supervisor', '--queue', 'default']) }]);
+  });
+
+  test('a worker whose parent cannot be classified is refused with that parent\'s pid and command line', async () => {
+    const processes = await collectHostProcesses({
+      heartbeats: async () => [], workers: () => [], supervisor: () => null, home: HOME, exclude: [], packageName,
+      processTable: () => [
+        { pid: 20, ppid: 1, command: 'bun run src/cli.ts jobs supervisor', started_ms: 600, gbrain_home: HOME, cwd: null },
+        { pid: 21, ppid: 20, command: `bun ${CHECKOUT}/src/cli.ts jobs work`, started_ms: 700, gbrain_home: HOME, cwd: null },
+      ],
+    });
+    expect(processes.map(p => [p.pid, p.role])).toEqual([[21, 'worker']]);
+    const [manual] = planRestart(processes, ctx()).manual;
+    expect(manual!.instruction).toContain('its parent, pid 20 (`bun run src/cli.ts jobs supervisor`), is not a process this restart recognises as gbrain');
   });
 });
 

@@ -31,7 +31,7 @@
  *   holds it), each restarted role and supervised worker came back, and the
  *   warm CLI socket, when serve had one, accepts this build.
  */
-import { basename, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { parseGlobalFlags } from './cli-options.ts';
 
 export type ProcessRole = 'serve' | 'autopilot' | 'supervisor' | 'worker' | 'mcp' | 'sync';
@@ -53,9 +53,11 @@ export interface HostProcess {
   install_version?: string | null;
   /** The package directory of the gbrain install it was started from (realpath); null when unknown (a compiled binary). */
   install_root?: string | null;
+  /** A worker with no gbrain process above it: the process that started it, which was not recognised as gbrain. */
+  unclassified_parent?: { pid: number; command: string };
 }
 
-export interface ProcessTableRow { pid: number; ppid: number; command: string; started_ms: number | null; gbrain_home: string | null | undefined }
+export interface ProcessTableRow { pid: number; ppid: number; command: string; started_ms: number | null; gbrain_home: string | null | undefined; cwd?: string | null }
 
 export interface ProcessSources {
   /** Live consumer heartbeat rows on this host (Postgres only; PGLite keeps none). */
@@ -64,8 +66,10 @@ export interface ProcessSources {
   workers: () => Array<{ pid: number; version: string | null }>;
   /** This user's processes, null when ps cannot run; `gbrain_home` is the GBRAIN_HOME (else HOME) from the process's environment, undefined when unreadable. */
   processTable: () => ProcessTableRow[] | null;
-  /** The gbrain install a command line starts from: its package directory and the version it holds now (null when unknown). */
-  install?: (command: string) => { root: string | null; version: string | null };
+  /** The gbrain install a command line started in `cwd` runs from: its package directory and the version it holds now (null when unknown). */
+  install?: (command: string, cwd?: string | null) => { root: string | null; version: string | null };
+  /** The package name at a directory, undefined when unreadable: which `src/cli.ts` entry points are gbrain. */
+  packageName?: (root: string) => string | null | undefined;
   /** This brain's GBRAIN_HOME (else HOME), resolved. */
   home: string;
   /** Pids never listed: this process and its parents (the upgrade that spawned it). */
@@ -78,19 +82,48 @@ const AUTOPILOT_TRANSIENT = new Set(['status', 'install', 'uninstall', 'pause', 
 const INTERPRETERS = new Set(['bun', 'node']);
 
 /**
- * The gbrain entry point of a command line and the arguments after it, or null when the command is not gbrain
- * itself: a wrapper that starts gbrain as its child (tini, a shell, `timeout`) is not the gbrain process.
+ * What decides whether a script entry point is gbrain: the process's working directory, which a relative entry
+ * resolves against (null when unreadable), and the package name at a directory (undefined when unreadable).
  */
-export function gbrainEntry(command: string): { entry: string; args: string[] } | null {
+export interface EntryLookup { cwd?: string | null; packageName?: (root: string) => string | null | undefined }
+
+/** A `src/cli.ts` entry is gbrain when the package two levels up is named gbrain; an unreadable package falls back to a gbrain path. */
+function isGbrainCli(path: string, packageName: EntryLookup['packageName']): boolean {
+  if (!/(^|\/)src\/cli\.ts$/.test(path)) return false;
+  const name = packageName?.(dirname(dirname(path)));
+  return name === undefined ? /gbrain[^\s]*\/src\/cli\.ts$/.test(path) : name === 'gbrain';
+}
+
+/**
+ * The gbrain entry point of a command line and the arguments after it, or null when the command is not gbrain
+ * itself: a wrapper that starts gbrain as its child (tini, a shell, `timeout`, `bunx`, `bun x`, `bun run <bin>`)
+ * is not the gbrain process, while `bun run <file>` runs the file in its own process. A relative entry is
+ * returned resolved against the process's working directory, and is null when that directory is unknown.
+ */
+export function gbrainEntry(command: string, lookup: EntryLookup = {}): { entry: string; args: string[] } | null {
   const tokens = command.trim().split(/\s+/);
-  const at = tokens.findIndex(token => /(^|\/)gbrain$/.test(token) || /gbrain[^\s]*\/src\/cli\.ts$/.test(token));
-  if (at === -1 || (at > 0 && !INTERPRETERS.has(basename(tokens[0]!)))) return null;
-  return { entry: tokens[at]!, args: tokens.slice(at + 1) };
+  const isPath = (token: string) => token.includes('/') || /\.[cm]?[jt]s$/.test(token);
+  let at = 0;
+  if (INTERPRETERS.has(basename(tokens[0]!))) {
+    for (at = 1; tokens[at]?.startsWith('-'); at++);
+    if (basename(tokens[0]!) === 'bun') {
+      if (tokens[at] === 'x') return null;
+      if (tokens[at] === 'run') for (at++; tokens[at]?.startsWith('-'); at++);
+      if (tokens[at] !== undefined && !isPath(tokens[at]!)) return null;
+    }
+  }
+  const token = tokens[at];
+  if (token === undefined) return null;
+  const relative = isPath(token) && !isAbsolute(token);
+  if (relative && !lookup.cwd) return null;
+  const entry = relative ? resolve(lookup.cwd!, token) : token;
+  if (basename(entry) !== 'gbrain' && !isGbrainCli(entry, lookup.packageName)) return null;
+  return { entry, args: tokens.slice(at + 1) };
 }
 
 /** The role of a gbrain command line, or null when it is not a long-running gbrain process. */
-export function classifyGbrainCommand(command: string): ProcessRole | null {
-  const args = gbrainEntry(command)?.args;
+export function classifyGbrainCommand(command: string, lookup: EntryLookup = {}): ProcessRole | null {
+  const args = gbrainEntry(command, lookup)?.args;
   if (!args) return null;
   const [sub, second] = args.filter(arg => !arg.startsWith('-'));
   if (sub === 'serve') {
@@ -122,10 +155,11 @@ export async function collectHostProcesses(sources: ProcessSources): Promise<Hos
   for (const row of table ?? []) {
     if (excluded.has(row.pid)) continue;
     if (row.gbrain_home !== undefined && row.gbrain_home !== null && resolve(row.gbrain_home) !== resolve(sources.home)) continue;
-    const role = classifyGbrainCommand(row.command);
+    const lookup = { cwd: row.cwd, packageName: sources.packageName };
+    const role = classifyGbrainCommand(row.command, lookup);
     if (!role) continue;
     byPid.set(row.pid, { pid: row.pid, ppid: null, role, version: null, started_ms: row.started_ms, ancestors: ancestry(row.ppid),
-      args: gbrainEntry(row.command)!.args, ...installFields(sources.install?.(row.command)) });
+      args: gbrainEntry(row.command, lookup)!.args, ...installFields(sources.install?.(row.command, row.cwd)) });
   }
   const merge = (pid: number, role: ProcessRole | null, version: string | null) => {
     if (excluded.has(pid)) return;
@@ -141,7 +175,11 @@ export async function collectHostProcesses(sources: ProcessSources): Promise<Hos
   for (const worker of sources.workers()) merge(worker.pid, 'worker', worker.version);
   const supervisor = sources.supervisor();
   if (supervisor) merge(supervisor.pid, 'supervisor', supervisor.version);
-  for (const p of byPid.values()) p.ppid = p.ancestors?.find(pid => byPid.has(pid)) ?? null;
+  for (const p of byPid.values()) {
+    p.ppid = p.ancestors?.find(pid => byPid.has(pid)) ?? null;
+    const launcher = p.role === 'worker' && p.ppid === null && p.ancestors?.[0] !== undefined ? rows.get(p.ancestors[0]) : undefined;
+    if (launcher) p.unclassified_parent = { pid: launcher.pid, command: launcher.command };
+  }
   return [...byPid.values()].sort((a, b) => a.pid - b.pid);
 }
 
@@ -264,7 +302,7 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
       case 'worker':
         if (parent?.role === 'supervisor' && parent.args) supervisors.set(parent.pid, [...(supervisors.get(parent.pid) ?? []), p.pid]);
         else if (parent?.role === 'autopilot' && runsUnder(parent, ctx.autopilotService)) addService('autopilot', parent.pid);
-        else kill(p, `${label(p)} is not run by a jobs supervisor this restart can relaunch${parent?.role === 'autopilot' ? ' (its autopilot runs under no installed service)' : ''}: stop it (\`kill ${p.pid}\`, SIGTERM drains its jobs) and start \`gbrain jobs work\` again the way it was launched, or run workers under \`gbrain jobs supervisor start --detach\`.`);
+        else kill(p, `${label(p)} is not run by a jobs supervisor this restart can relaunch${parent?.role === 'autopilot' ? ' (its autopilot runs under no installed service)' : ''}${p.unclassified_parent ? ` (its parent, pid ${p.unclassified_parent.pid} (\`${p.unclassified_parent.command}\`), is not a process this restart recognises as gbrain)` : ''}: stop it (\`kill ${p.pid}\`, SIGTERM drains its jobs) and start \`gbrain jobs work\` again the way it was launched, or run workers under \`gbrain jobs supervisor start --detach\`.`);
         break;
       case 'mcp':
         if (ctx.stopMcp && p.args) stops.push({ kind: 'stop', role: 'mcp', pid: p.pid, started_ms: p.started_ms });
