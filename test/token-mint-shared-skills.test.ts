@@ -4,7 +4,8 @@ import type { BrainEngine } from '../src/core/engine.ts';
 
 test('legacy self-member issuance stores the explicit operation snapshot without granting editing', async () => {
   let params: unknown[] = [];
-  const engine = { executeRaw: async (_sql: string, values: unknown[]) => { params = values; return [{ id: '11111111-1111-4111-8111-111111111111' }]; } } as unknown as BrainEngine;
+  const engine = { executeRaw: async (_sql: string, values: unknown[]) => { params = values; return [{ id: '11111111-1111-4111-8111-111111111111' }]; },
+    transaction: (fn: (tx: BrainEngine) => Promise<unknown>) => fn(engine) } as unknown as BrainEngine;
   const minted = await mintLegacyToken(engine, { name: 'fixture-member', takesHolders: ['world'], scopes: ['read', 'skills_member_self'],
     sourceGrant: ['workspace'], allowedOperations: ['join_brain', 'sync_brain_skills', 'leave_brain', 'get_skill', 'get_skill'] });
   expect(minted.scopes).toEqual(['read', 'skills_member_self']);

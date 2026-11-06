@@ -154,6 +154,9 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
   if (a.actingFor && !Array.isArray(a.actingFor)) {
     const actor = parseStoredActor(a.actingFor);
     if (!actor) deny('The accepted attested actor is malformed.');
+    // GST-1113: lock the credential row before reading its attest right, so a concurrent removal commits before or after this publication.
+    if (lock && a.principal.kind === 'oauth_client') await engine.executeRaw('SELECT 1 FROM oauth_clients WHERE client_id=$1 FOR SHARE', [a.principal.id]);
+    if (lock && a.principal.kind === 'legacy_token') await engine.executeRaw('SELECT 1 FROM access_tokens WHERE id=$1 FOR SHARE', [a.principal.id]);
     await storedActorIdentity(engine, a.principal, actor, a.attestedOp ?? operation, storedPerCallWriteSource(a, slug) ?? undefined);
   }
   // GST-1113: the one exception to the owner's single write source (the scope page), re-checked against the live attest_sources above.

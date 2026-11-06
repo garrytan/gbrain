@@ -237,6 +237,70 @@ for (const kind of testBackends()) {
       expect((await markedScopeSources(engine, [SCOPE_A, SCOPE_B])).size).toBe(2);
     }, 60_000);
 
+    test('a token minted while --attest-sources marks its source never ends up reading the scope (the check and insert commit together)', async () => {
+      const RACE = 'qm-scope-race';
+      await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [RACE]);
+      const racer = await register('racer', HOME);
+      await bindCredential(engine, { kind: 'client', id: racer.id }, { attestActor: 'qm', attestOps: MEMORY_OPS });
+      const original = engine.executeRaw;
+      let bind: Promise<Error | null> | null = null;
+      engine.executeRaw = (async function (this: BrainEngine, ...args: Parameters<typeof engine.executeRaw>) {
+        if (!bind && String(args[0]).includes('INSERT INTO access_tokens')) {
+          let settled = false;
+          bind = refusal(bindCredential(engine, { kind: 'client', id: racer.id }, { attestSources: [RACE] })).finally(() => { settled = true; });
+          for (let i = 0; i < 30 && !settled; i++) await new Promise(r => setTimeout(r, 50));
+        }
+        return original.apply(this, args);
+      }) as typeof engine.executeRaw;
+      let minted: Error | null;
+      try {
+        minted = await refusal(mintLegacyToken(engine, { name: 'race-' + randomUUID().slice(0, 8), scopes: ['read'], takesHolders: ['world'], sourceGrant: [RACE] }));
+      } finally {
+        engine.executeRaw = original;
+      }
+      const bound = await bind;
+      expect(bind).not.toBeNull();
+      expect(minted === null && bound === null).toBe(false);
+      if (minted === null) expect((await markedScopeSources(engine, [RACE])).has(RACE)).toBe(false);
+    }, 60_000);
+
+    test('publication rechecks attest_sources under the credential lock: a removal that lands first refuses the scope write', async () => {
+      const out = await write(alice, [{ fact: 'Lock order canarylockorder', provenance: 'turn 9' }], { source_id: SCOPE_A });
+      expect(out.structured!.status).toBe('committed');
+      const [row] = await engine.executeRaw<{ authority: any }>('SELECT authority FROM persistence_requests WHERE request_id = $1::uuid', [out.structured!.request_id]);
+      const authority = typeof row!.authority === 'string' ? JSON.parse(row!.authority) : row!.authority;
+      const original = engine.executeRaw;
+      let removed = false;
+      engine.executeRaw = (async function (this: BrainEngine, ...args: Parameters<typeof engine.executeRaw>) {
+        if (!removed && /FROM oauth_clients WHERE client_id\s*=\s*\$1.*FOR SHARE/s.test(String(args[0]))) {
+          removed = true;
+          await original.call(this, 'UPDATE oauth_clients SET attest_sources = NULL WHERE client_id = $1', [clients.scopes!.id]);
+        }
+        return original.apply(this, args);
+      }) as typeof engine.executeRaw;
+      const ROLLBACK = new Error('rollback');
+      let outcome: Error | null = null;
+      try {
+        await engine.transaction(async tx => {
+          outcome = await refusal(authorizeWrite(tx as never, authority, 'remember', 'memory/scope', true));
+          throw ROLLBACK;
+        }).catch(e => { if (e !== ROLLBACK) throw e; });
+      } finally {
+        engine.executeRaw = original;
+      }
+      expect(removed).toBe(true);
+      expect((outcome as (Error & { reason?: string }) | null)?.reason).toBe('source_not_attested');
+      const [still] = await engine.executeRaw<{ attest_sources: string[] | null }>('SELECT attest_sources FROM oauth_clients WHERE client_id = $1', [clients.scopes!.id]);
+      expect(still!.attest_sources).toEqual([SCOPE_A, SCOPE_B]);
+    }, 60_000);
+
+    test('a credential cannot take one of its own scope sources as its write source', async () => {
+      const refused = await refusal(rescopeClientGrant(engine, clients.scopes!.id, { sourceId: SCOPE_A }, { actor: 'test' }));
+      expect(refused?.message).toContain('cannot be its write source');
+      const [row] = await engine.executeRaw<{ source_id: string }>('SELECT source_id FROM oauth_clients WHERE client_id = $1', [clients.scopes!.id]);
+      expect(row!.source_id).toBe(HOME);
+    }, 60_000);
+
     test('a squatted scope page takes no scope write; no other remote writer may write memory/scope', async () => {
       await importFromContent(engine, 'memory/scope', '---\ntype: note\ntitle: Scope memory\nreadable_by:\n  - member:alice-example\n  - member:bob-example\n---\n# Scope memory\n', { sourceId: SCOPE_B });
       const squat = await write(alice, [{ fact: 'Squatted scope canarysquatscope', provenance: 'x' }], { source_id: SCOPE_B });

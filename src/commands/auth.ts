@@ -793,7 +793,7 @@ async function registerClient(name: string, args: string[]) {
       const columns = parsed.tokenTtlSeconds !== undefined
         ? await preflightOauthClientColumns(sql)
         : undefined;
-      const registered = await registerScopedClient(sql, name, parsed, { columns });
+      const registered = await engine.transaction(tx => registerScopedClient(sqlQueryForEngine(tx), name, parsed, { columns }));
       const bound = binding.patch ? await bindCredential(engine, { kind: 'client', id: registered.clientId }, binding.patch) : null;
       if (registered.skipped?.tokenTtl) {
         console.error('Note: this brain predates the token_ttl column; run `gbrain apply-migrations --yes`, then rescope. The server default TTL applies.');

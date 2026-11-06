@@ -106,11 +106,16 @@ async function credentialSources(sql: SqlQuery): Promise<CredentialSources[]> {
  * being written (null for one not inserted yet), whose stored attest_sources are honoured. `default` is never a scope
  * source (applyAttestSources refuses it), so a default-only grant reads nothing.
  */
-export async function assertScopeSourceGrant(db: Db, self: CredentialRef | null, reads: readonly string[], opts: { privatePages?: boolean } = {}): Promise<void> {
+export async function assertScopeSourceGrant(db: Db, self: CredentialRef | null, reads: readonly string[], opts: { privatePages?: boolean; writeSource?: string | null } = {}): Promise<void> {
   const sql = sqlOf(db);
-  if (opts.privatePages && self && (await credentialSources(sql)).find(c => same(c.ref, self))?.attest.length) {
+  const attest = self && (opts.privatePages || opts.writeSource) ? (await credentialSources(sql)).find(c => same(c.ref, self))?.attest ?? [] : [];
+  if (opts.privatePages && attest.length) {
     throw new GrantError('invalid_grant', 'This credential lists scope sources (--attest-sources), so it cannot hold the private-pages grant; nothing changed. '
       + 'A scope credential reads only shared memory: use a separate credential for private pages.');
+  }
+  if (opts.writeSource && attest.includes(opts.writeSource)) {
+    throw new GrantError('invalid_grant', `Source ${opts.writeSource} is in this credential's --attest-sources, so it cannot be its write source (where member pages live); nothing changed. `
+      + 'Keep member pages and each scope in separate sources: pick another write source.');
   }
   const candidates = reads.filter(s => s !== 'default');
   if (!candidates.length) return;

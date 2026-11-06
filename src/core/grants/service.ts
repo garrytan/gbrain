@@ -194,7 +194,9 @@ export async function recordFirstConsentInTransaction(db: GrantDatabase, clientI
 export async function persistGrant(sql: SqlQuery, before: ClientGrant, after: ClientGrant, actor: string, action: string): Promise<void> {
   const { assertScopeSourceGrant, clientGrantReads } = await import('../access/attest-sources.ts');
   const widened = clientGrantReads(after).filter(s => !clientGrantReads(before).includes(s));
-  await assertScopeSourceGrant(sql, { kind: 'client', id: before.clientId }, widened, { privatePages: after.privatePages === 'granted_sources' && before.privatePages !== 'granted_sources' });
+  await assertScopeSourceGrant(sql, { kind: 'client', id: before.clientId }, widened, {
+    privatePages: after.privatePages === 'granted_sources' && before.privatePages !== 'granted_sources', writeSource: after.sourcesNone === true ? null : after.sourceId ?? 'default',
+  });
   const result = await sql`
     WITH updated AS (
       UPDATE oauth_clients SET
