@@ -91,8 +91,10 @@ ALTER TABLE persistence_requests
   ADD COLUMN IF NOT EXISTS deferred_refresh_id uuid REFERENCES persistence_worktree_refreshes(id);
 -- the state CHECK gains 'deferred': drop the old constraint, ADD the new one NOT VALID, then VALIDATE
 -- in a separate statement (no long ACCESS EXCLUSIVE scan; #7636's no-table-lock rule)
-CREATE INDEX IF NOT EXISTS persistence_requests_deferred
-  ON persistence_requests(deferred_refresh_id, sequence) WHERE state='deferred';
+-- every open-state predicate gains 'deferred', so one index covers all four open states: a receipt poll
+-- (state IN ('queued','deferred','running','recovering')) stays index-served on a permanent receipt history
+CREATE INDEX IF NOT EXISTS persistence_requests_open
+  ON persistence_requests(worktree_id, sequence) WHERE state IN ('queued','deferred','running','recovering');
 ALTER TABLE persistence_consumers ADD COLUMN IF NOT EXISTS capabilities text[] NOT NULL DEFAULT '{}';
 ```
 

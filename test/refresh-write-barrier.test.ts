@@ -28,6 +28,7 @@ import { PENDING_WRITE_EXIT_CODE } from '../src/core/exit-codes.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { refreshWorktree } from '../src/core/persistence/worktree-refresh.ts';
 import { getWriteRequestById } from '../src/core/persistence/journal.ts';
+import { readWriteWatermark } from '../src/core/persistence/applied-watermark.ts';
 import { resetWriteSwitches } from '../src/core/persistence/switches.ts';
 import { _setRefreshFenceWaitForTests } from '../src/core/persistence/admission-retry.ts';
 import { _resetRefreshBarrierCacheForTests, deferredBacklog, expireDeferredWrites } from '../src/core/persistence/refresh-barrier.ts';
@@ -181,15 +182,19 @@ test('a deferred write past the wait limit ends refresh_barrier_expired and rele
     const out = await call(f, 'put_page', { slug: 'notes/expired', content: page('Expired', 'body') });
     const deferred = await requestRow(f, out.body.request_id);
     expect(await outstanding(f)).toBe(before + 1);
+    await disposePersistenceConsumer(f.engine);
     await f.engine.executeRaw("INSERT INTO config(key,value) VALUES('persistence.refresh_barrier_max_wait_ms','1') ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value");
-    await new Promise(resolve => setTimeout(resolve, 20));
-    const [{ owner }] = await f.engine.executeRaw<{ owner: string }>('SELECT owner_host_id::text AS owner FROM persistence_worktrees WHERE id=$1::uuid', [f.worktreeId]);
-    const expired = await expireDeferredWrites(f.engine, owner);
-    expect(expired.map(row => row.id)).toEqual([deferred.id]);
-    const after = (await getWriteRequestById(f.engine, deferred.id))!;
-    expect(after).toMatchObject({ state: 'failed', error_code: 'refresh_barrier_expired' });
-    expect(await outstanding(f)).toBe(before);
-    await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
+    try {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const [{ owner }] = await f.engine.executeRaw<{ owner: string }>('SELECT owner_host_id::text AS owner FROM persistence_worktrees WHERE id=$1::uuid', [f.worktreeId]);
+      const expired = await expireDeferredWrites(f.engine, owner);
+      expect(expired.map(row => row.id)).toEqual([deferred.id]);
+      const after = (await getWriteRequestById(f.engine, deferred.id))!;
+      expect(after).toMatchObject({ state: 'failed', error_code: 'refresh_barrier_expired' });
+      expect(await outstanding(f)).toBe(before);
+    } finally {
+      await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
+    }
   });
   expect((await refresh).status).toBe('completed');
 }), 180_000);
@@ -223,31 +228,35 @@ test('an expiry that overlaps a fence waits on the brain row instead of deadlock
     const out = await call(f, 'put_page', { slug: 'notes/expiry-order', content: page('Expiry order', 'body') });
     const deferred = await requestRow(f, out.body.request_id);
     expect(deferred.state).toBe('deferred');
+    await disposePersistenceConsumer(f.engine);
     await f.engine.executeRaw("INSERT INTO config(key,value) VALUES('persistence.refresh_barrier_max_wait_ms','1') ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value");
-    await new Promise(resolve => setTimeout(resolve, 20));
-    const [{ owner }] = await f.engine.executeRaw<{ owner: string }>('SELECT owner_host_id::text AS owner FROM persistence_worktrees WHERE id=$1::uuid', [f.worktreeId]);
-    let holding!: () => void; const held = new Promise<void>(resolve => { holding = resolve; });
-    let waiting!: () => void; const expiryWaits = new Promise<void>(resolve => { waiting = resolve; });
-    // fenceAndMerge's order: the brain row FOR UPDATE, then the refresh row.
-    const fence = f.engine.transaction(async tx => {
-      await tx.executeRaw("SELECT set_config('lock_timeout','10s',true)");
-      await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
-      holding();
-      await expiryWaits;
-      await tx.executeRaw('SELECT 1 FROM persistence_worktree_refreshes WHERE id=$1::uuid FOR NO KEY UPDATE', [deferred.deferred_refresh_id]);
-    });
-    await held;
-    const expiry = expireDeferredWrites(f.engine, owner);
-    for (let i = 0; i < 400; i++) {
-      const [w] = await f.engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'");
-      if (Number(w!.n) > 0) break;
-      await new Promise(resolve => setTimeout(resolve, 25));
+    try {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const [{ owner }] = await f.engine.executeRaw<{ owner: string }>('SELECT owner_host_id::text AS owner FROM persistence_worktrees WHERE id=$1::uuid', [f.worktreeId]);
+      let holding!: () => void; const held = new Promise<void>(resolve => { holding = resolve; });
+      let waiting!: () => void; const expiryWaits = new Promise<void>(resolve => { waiting = resolve; });
+      // fenceAndMerge's order: the brain row FOR UPDATE, then the refresh row.
+      const fence = f.engine.transaction(async tx => {
+        await tx.executeRaw("SELECT set_config('lock_timeout','10s',true)");
+        await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+        holding();
+        await expiryWaits;
+        await tx.executeRaw('SELECT 1 FROM persistence_worktree_refreshes WHERE id=$1::uuid FOR NO KEY UPDATE', [deferred.deferred_refresh_id]);
+      });
+      await held;
+      const expiry = expireDeferredWrites(f.engine, owner);
+      for (let i = 0; i < 400; i++) {
+        const [w] = await f.engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'");
+        if (Number(w!.n) > 0) break;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      waiting();
+      const [fenced, expired] = await Promise.allSettled([fence, expiry]);
+      expect(fenced.status === 'rejected' ? String(fenced.reason) : 'fence committed').toBe('fence committed');
+      expect(expired.status === 'fulfilled' ? expired.value.map(row => row.id) : String(expired.reason)).toEqual([deferred.id]);
+    } finally {
+      await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
     }
-    waiting();
-    const [fenced, expired] = await Promise.allSettled([fence, expiry]);
-    await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
-    expect(fenced.status === 'rejected' ? String(fenced.reason) : 'fence committed').toBe('fence committed');
-    expect(expired.status === 'fulfilled' ? expired.value.map(row => row.id) : String(expired.reason)).toEqual([deferred.id]);
   });
   expect((await refresh).status).toBe('completed');
 }), 180_000);
@@ -423,6 +432,7 @@ test('an overdue deferred write expires on an idle owner tick when nothing else 
   const refresh = await duringRefresh(f, async () => {
     const out = await call(f, 'put_page', { slug: 'notes/idle-expiry', content: page('Idle', 'body') });
     const deferred = await requestRow(f, out.body.request_id);
+    await disposePersistenceConsumer(f.engine);
     const consumer = new PersistenceConsumer(f.engine, { engine: f.engine.kind } as never, preparePersistedMutation);
     await consumer.tick();
     expect((await getWriteRequestById(f.engine, deferred.id))!.state).toBe('deferred');
@@ -494,4 +504,28 @@ test('a source lifecycle change while a deferred write waits ends it source_chan
     expect(await outstanding(f)).toBe(before);
   });
   expect((await refresh).status).toBe('completed');
+}), 180_000);
+
+test('a receipt poll reads the open-request index, never the permanent receipt history', () => each(async f => {
+  const [source] = await f.engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [f.alpha]);
+  await f.engine.executeRaw(`INSERT INTO persistence_requests(principal_kind,principal_id,request_id,operation,source_id,source_incarnation,slug,worktree_id,
+      digest,intent,authority,intent_bytes,terminal_reservation,state)
+    SELECT 'local_cli','history',gen_random_uuid(),'put_page',$1,$2::uuid,'history-'||g,$3::uuid,'d','{}'::jsonb,'{}'::jsonb,1,16384,'committed'
+    FROM generate_series(1,20000) g`, [f.alpha, source!.incarnation, f.worktreeId]);
+  try {
+    await f.engine.executeRaw('ANALYZE persistence_requests');
+    const scans: string[] = [];
+    const nodes = (plan: Record<string, any>): Array<Record<string, any>> => [plan, ...(plan.Plans ?? []).flatMap(nodes)];
+    const explaining = { executeRaw: async (sql: string, params?: unknown[]) => {
+      const [row] = await f.engine.executeRaw<Record<string, unknown>>(`EXPLAIN (FORMAT JSON) ${sql}`, params);
+      const raw = row!['QUERY PLAN'];
+      const [explained] = (typeof raw === 'string' ? JSON.parse(raw) : raw) as Array<{ Plan: Record<string, any> }>;
+      for (const node of nodes(explained!.Plan)) if (node['Node Type'] === 'Seq Scan' && node['Relation Name'] === 'persistence_requests') scans.push(sql);
+      return f.engine.executeRaw(sql, params);
+    } } as Pick<BrainEngine, 'executeRaw'>;
+    expect((await readWriteWatermark(explaining, f.alpha)).requests_pending.count).toBe(0);
+    expect(scans).toEqual([]);
+  } finally {
+    await f.engine.executeRaw("DELETE FROM persistence_requests WHERE principal_id='history'");
+  }
 }), 180_000);
