@@ -236,8 +236,8 @@ next write and sync pass.
 | Where | What it tells you |
 |---|---|
 | `gbrain doctor` → `git_index_lag` | Per strict source, how many commits and seconds the index trails HEAD. It warns once the oldest unindexed commit is older than 900 s (`GBRAIN_DOCTOR_GIT_INDEX_LAG_WARN_SECONDS`), and its fix is `gbrain sync --source <id> --no-pull`. Until then, search and reads show the older version. |
-| `gbrain doctor` → `db_ahead_of_git` | The git-gap totals for every source with a checkout, strict or not. Informational: always ok. Bounded by `GBRAIN_DOCTOR_GIT_GAP_TIMEOUT_MS` (10 s by default). |
-| `gbrain sources git-gap <id> [--sample n] [--json]` | Each page's state against HEAD: `equal`, `database_ahead`, `git_ahead`, declared or undeclared database-only, `worktree_only`, `unparseable`, `unsafe_path`, with a sample of paths. Read-only. |
+| `gbrain doctor` → `db_ahead_of_git` | The git-gap totals for every source with a checkout, strict or not, with each source's live pages (a scan the budget stopped reads `PARTIAL, <read> of <live> live page(s) read`). Informational: always ok. Bounded by `GBRAIN_DOCTOR_GIT_GAP_TIMEOUT_MS` (10 s by default). |
+| `gbrain sources git-gap <id> [--sample n] [--json]` | Each page's state against HEAD: `equal`, `database_ahead`, `git_ahead`, declared or undeclared database-only, `worktree_only`, `unparseable`, `unsafe_path`, with a sample of paths, the source's `live_pages`, and `direction_evidence` for differing pages with no import record. Read-only. |
 | `gbrain sources reindex <id> --from-git` | A preview of every database version Git would replace, bound to HEAD by a hash; `--apply --expect <hash>` runs that pass. Use it to re-derive a strict source's index on purpose. |
 | `gbrain sync status --source <id> --json` | The sync pass that indexes commits: state, reason and the last error. |
 | A write receipt | `persistence.git_commit` and `git_state: committed`. A door commit that landed before its row, on a write that then ended without committing, keeps `landed_before_row: true`: Git holds those bytes and the indexer imports them. |
