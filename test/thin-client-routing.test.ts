@@ -308,3 +308,63 @@ describe('routeThinClientCommand — (c) malformed routable forms print usage + 
     await expectUsageExit('takes', ['supersede', 'people/alice-example', '--row', '1']);
   });
 });
+
+describe('routeThinClientCommand — wakeshift watch (Wakeshift report-back over MCP)', () => {
+  const TAIL = 'Wakeshift: run \`wakeshift wait --session sk-example\` in the background to be woken.';
+  function respond(result: unknown, extra: Array<{ type: string; text: string }>): void {
+    callSpy.mockImplementationOnce(async (_cfg: GBrainConfig, tool: string, args: Record<string, unknown> = {}) => {
+      calls.push({ tool, args });
+      return { content: [{ type: 'text', text: JSON.stringify(result) }, ...extra] };
+    });
+  }
+  const watching = { watching: true, watch: 3, job: 812, event: 'gbrain.job.finished', status: 'active', already_finished: false, expires_in: '7d', fallback: 'If no wake arrives, call wait_job 812 (or run gbrain jobs wait 812).' };
+
+  test('watch job routes to watch_job with the caller params as given, and the tail is the last stdout line', async () => {
+    respond(watching, [{ type: 'text', text: TAIL }]);
+    expect(await routeThinClientCommand(cfg, 'wakeshift', ['watch', 'job', '812', '--session-key', 'sk-example', '--harness', 'grok-bot', '--conversation-id', 'conv-1'])).toBe(true);
+    expect(soleCall()).toEqual({ tool: 'watch_job', args: { id: 812, session_key: 'sk-example', harness: 'grok-bot', conversation_id: 'conv-1' } });
+    expect(logs.at(-1)).toBe(TAIL);
+    expect(logs.join('\n')).toContain('wait_job 812');
+    expect(errs.join('\n')).not.toContain('sk-example');
+  });
+
+  test('no --harness sends no harness; write and cron route to their own ops', async () => {
+    respond(watching, []);
+    expect(await routeThinClientCommand(cfg, 'wakeshift', ['watch', 'job', '9'])).toBe(true);
+    expect(calls.at(-1)).toEqual({ tool: 'watch_job', args: { id: 9 } });
+    respond({ watching: true, request_id: 'req-example' }, []);
+    expect(await routeThinClientCommand(cfg, 'wakeshift', ['watch', 'write', 'req-example', '--harness', 'muse'])).toBe(true);
+    expect(calls.at(-1)).toEqual({ tool: 'watch_write_request', args: { request_id: 'req-example', harness: 'muse' } });
+    respond({ watching: true, name: 'nightly-digest' }, []);
+    expect(await routeThinClientCommand(cfg, 'wakeshift', ['watch', 'cron', 'nightly-digest'])).toBe(true);
+    expect(calls.at(-1)).toEqual({ tool: 'watch_cron', args: { name: 'nightly-digest' } });
+  });
+
+  test('--json prints the result as one JSON line, then the tail last; a gbrain notice block is never taken for the tail', async () => {
+    respond(watching, [{ type: 'text', text: TAIL }]);
+    expect(await routeThinClientCommand(cfg, 'wakeshift', ['watch', 'job', '812', '--json'])).toBe(true);
+    expect(JSON.parse(logs[0]!)).toEqual(watching);
+    expect(logs.at(-1)).toBe(TAIL);
+    logs.length = 0;
+    respond(watching, [{ type: 'text', text: '[gbrain notice no_worker kind=info]\nwhy: no worker' }]);
+    expect(await routeThinClientCommand(cfg, 'wakeshift', ['watch', 'job', '812', '--json'])).toBe(true);
+    expect(logs).toHaveLength(1);
+    expect(JSON.parse(logs[0]!)).toEqual(watching);
+  });
+
+  test('only watch routes: every other wakeshift subcommand is host-bound', async () => {
+    for (const sub of ['status', 'enable', 'disable', 'test']) {
+      expect(await routeThinClientCommand(cfg, 'wakeshift', [sub])).toBe(false);
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  test('a malformed watch is a usage error with nothing sent', async () => {
+    for (const args of [['watch'], ['watch', 'job'], ['watch', 'job', 'abc'], ['watch', 'page', 'x'], ['watch', 'job', '1', '--harness']]) {
+      expect(await routeThinClientCommand(cfg, 'wakeshift', args)).toBe(true);
+      expect(currentExitCode()).toBe(2);
+      _resetCliExitVerdictForTests();
+    }
+    expect(calls).toHaveLength(0);
+  });
+});

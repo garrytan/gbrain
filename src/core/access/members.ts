@@ -12,7 +12,8 @@
  * member is refused at verification (`verifiedMember`, access_member_disabled).
  */
 import type { BrainEngine } from '../engine.ts';
-import type { SqlQuery } from '../sql-query.ts';
+import { sqlQueryForEngine, type SqlQuery } from '../sql-query.ts';
+import { forgetWakePrincipal } from '../wakeshift/forget.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import type { Action } from '../agent-output.ts';
 import { ACCESS_ID_RE, identityFor, normalizePrincipal } from './principals.ts';
@@ -209,6 +210,7 @@ export async function removeMember(engine: BrainEngine, rawId: unknown): Promise
     await tx.executeRaw('UPDATE access_members SET tombstoned_at = now(), disabled_at = COALESCE(disabled_at, now()), updated_at = now() WHERE id = $1', [preview.member.id]);
     await tx.executeRaw('DELETE FROM access_group_members WHERE member_id = $1', [preview.member.id]);
   });
+  await forgetWakePrincipal(sqlQueryForEngine(engine), { member: preview.member.id });
   return { ...preview, member: (await getMember(engine, preview.member.id))! };
 }
 

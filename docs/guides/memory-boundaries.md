@@ -388,7 +388,8 @@ receive the relevant retrieved content or source text. Self-hosted providers hav
 their own deployment boundary. The connected agent's own model also receives
 whatever memory its harness includes in context, even on a keyless GBrain setup.
 Reporting back through Wakeshift (off by default, owner opt-in) sends a watched
-job's id, kind, status and times, never page text, titles or slugs; see
+job's, write request's or cron's id, status and times (and a removed member's
+hashed id to forget), never page text, titles or slugs; see
 [what leaves the machine](wakeshift.md#what-leaves-the-machine).
 
 Enable paid capabilities and automatic capture only with consent, using the

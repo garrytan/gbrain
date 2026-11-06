@@ -1,5 +1,5 @@
 /**
- * Wakeshift HTTP API client (plan D1): the five endpoints gbrain uses, with no
+ * Wakeshift HTTP API client (plan D1): the endpoints gbrain uses, with no
  * SDK. A key is an Ed25519 seed (`wst_` + 50 base58 characters whose last 4
  * bytes are the seed's CRC32); each request carries a fresh compact JWS signed
  * with it (EdDSA, typ app+jwt, 2 minutes, unique jti), so the key itself never
@@ -119,6 +119,8 @@ export interface WakeshiftApi {
   unsubscribe(body: { call: WakeshiftCall; name: string; arguments: Record<string, unknown>; reason?: string }): Promise<{ ended: boolean }>;
   end(body: { user: string; id: string }): Promise<{ ended: boolean }>;
   emit(body: { name: string; arguments: Record<string, unknown>; payload: Record<string, unknown>; text: string; id: string; to: unknown[] }): Promise<EmitResult>;
+  /** Forget User (POST /users/forget): deletes everything Wakeshift holds for the user; `forgotten` is false when there was nothing. */
+  forget(body: { user: string }): Promise<{ forgotten: boolean }>;
 }
 
 export function wakeshiftClient(key: WakeshiftKey, opts: { url?: string; fetch?: typeof fetch; timeoutMs?: number } = {}): WakeshiftApi {
@@ -157,5 +159,6 @@ export function wakeshiftClient(key: WakeshiftKey, opts: { url?: string; fetch?:
     unsubscribe: body => request('POST', '/event-subscriptions/unsubscribe', body),
     end: body => request('POST', '/event-subscriptions/end', body),
     emit: body => request('POST', '/events/emit', body),
+    forget: body => request('POST', '/users/forget', body),
   };
 }

@@ -265,6 +265,27 @@
         "Cannot reach http://127.0.0.1:1/mcp. Run `gbrain remote doctor` for details."
       ],
       "stdout": []
+    },
+    {
+      "argv": "wakeshift watch job 1",
+      "exitCode": 1,
+      "stderr": [
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
+        "Fix: gbrain remote doctor",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "wakeshift status",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `gbrain wakeshift` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain wakeshift status",
+        "Why: `wakeshift watch job|write|cron` routes to the brain host automatically (watch_job / watch_write_request / watch_cron MCP tools). enable, disable, status and test read or change the brain host's Wakeshift key and settings: run those on the brain host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
     }
   ],
   "normalizer": "cli-thin-client-v1"

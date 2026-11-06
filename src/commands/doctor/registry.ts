@@ -107,6 +107,7 @@ import { transcriptSecretExposureEntry } from './checks/transcript-secrets.ts';
 import { autoChronicleEntry } from './checks/auto-chronicle.ts';
 import { factsDrainEntry } from './checks/facts-drain.ts';
 import { wakeshiftEntry } from './checks/wakeshift.ts';
+import { wakeshiftOpenclawEntry } from './checks/wakeshift-openclaw.ts';
 import { factTakeVectorsEntry } from './checks/vector-coverage.ts';
 import { decideHealthEntry } from './checks/decide.ts';
 import { supersessionCalibrationEntry } from './checks/supersession-calibration.ts';
@@ -278,6 +279,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   autoChronicleEntry,
   factsDrainEntry,
   wakeshiftEntry,
+  wakeshiftOpenclawEntry,
   factTakeVectorsEntry,
   plannerStatsEntry,
   retrievalFeedbackEntry,

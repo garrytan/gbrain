@@ -49,14 +49,18 @@ export function readWakeshiftKey(env: NodeJS.ProcessEnv = process.env): KeyRead 
 }
 
 
-export interface WakeshiftFileConfig { enabled?: boolean; url?: string }
+/**
+ * The file-plane keys: on/off, the console URL, the operator's terms and privacy links (required on a brain with
+ * access members, D5), and the hash of the manifest `enable` last published.
+ */
+export interface WakeshiftFileConfig { enabled?: boolean; url?: string; terms_url?: string; privacy_url?: string; manifest_hash?: string }
 
 export function wakeshiftFileConfig(config: GBrainConfig | null | undefined): WakeshiftFileConfig {
   const raw = (config as { wakeshift?: unknown } | null | undefined)?.wakeshift;
   return raw && typeof raw === 'object' ? raw as WakeshiftFileConfig : {};
 }
 
-export interface WakeshiftRuntime { key: WakeshiftKey; url: string; api: WakeshiftApi }
+export interface WakeshiftRuntime { key: WakeshiftKey; url: string; api: WakeshiftApi; file: WakeshiftFileConfig }
 
 /**
  * The live runtime when reporting back is on and the key parses, else null. Reads the file plane fresh (never a
@@ -70,7 +74,7 @@ export function wakeshiftRuntime(opts: { config?: GBrainConfig | null; fetch?: t
   try {
     const key = parseWakeshiftKey(read.raw);
     const url = normalizeWakeshiftUrl(file.url);
-    return { key, url, api: wakeshiftClient(key, { url, ...(opts.fetch ? { fetch: opts.fetch } : {}) }) };
+    return { key, url, file, api: wakeshiftClient(key, { url, ...(opts.fetch ? { fetch: opts.fetch } : {}) }) };
   } catch {
     return null;
   }

@@ -2,7 +2,8 @@
  * CLI→MCP gap-closure wave [OV6] — per-subcommand thin-client routing for the
  * commands whose reads/writes gained MCP ops: takes (list/search/scorecard/
  * calibration + the write verbs), search (modes/stats/tune, read-only forms),
- * jobs stats, cache stats, and quarantine list. The salience/anomalies/
+ * jobs stats, cache stats, quarantine list, and wakeshift watch (watch_job /
+ * watch_write_request / watch_cron). The salience/anomalies/
  * graph-query precedent, engine-free: each routable subcommand maps onto its
  * op over callRemoteTool; everything else returns false so the caller falls
  * through to refuseThinClient's pinpoint hint.
@@ -154,6 +155,12 @@ export async function routeThinClientCommand(
       return true;
     }
     return false; // modes --reset / modes --mode|--source (the reset dry-run) / tune --apply / diagnose — host-side config or live probe
+  }
+
+  if (command === 'wakeshift' && sub === 'watch') {
+    const { runWakeshiftWatchRemote } = await import('./wakeshift-watch.ts');
+    await runWakeshiftWatchRemote(cfg, rest);
+    return true;
   }
 
   if (command === 'jobs' && sub === 'stats') {

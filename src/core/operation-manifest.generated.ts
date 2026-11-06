@@ -4220,7 +4220,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "idempotent": true,
     "writeInference": "non_content",
     "outputRedaction": {
-      "exempt": "watch bookkeeping: job ids, states and times, never retrieved brain text"
+      "exempt": "watch bookkeeping: job, request and cron ids, states and times, never retrieved brain text"
     },
     "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn or keep working. The wake names the job and says to call get_job for the result; it carries no page text. Agent-scoped tokens watch only jobs they own. If no wake arrives, call wait_job.",
     "params": {
@@ -4251,15 +4251,110 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "area": "jobs"
   },
   {
+    "name": "watch_write_request",
+    "mutating": true,
+    "idempotent": true,
+    "writeInference": "non_content",
+    "outputRedaction": {
+      "exempt": "watch bookkeeping: job, request and cron ids, states and times, never retrieved brain text"
+    },
+    "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift when your write request settles (committed, failed, conflict or cancelled), so you can stop polling get_write_request after write_pending. The wake names the request and says to call get_write_request; it carries no slug or page text. You can watch only your own receipts. If no wake arrives, call get_write_request.",
+    "params": {
+      "request_id": {
+        "type": "string",
+        "required": true,
+        "description": "The request_id you sent with the write, or the one its receipt shows."
+      },
+      "session_key": {
+        "type": "string",
+        "description": "This conversation's session_key, from an earlier result (a secret token, or a handle such as claude-code#2). Keep it to this conversation; don't share or log it."
+      },
+      "harness": {
+        "type": "string",
+        "description": "The program you're running in: codex, claude-code, cursor (local CLI or IDE), cursor-cloud (Cursor cloud agent), grok-bot, copilot-cli, opencode, antigravity, openclaw (even when it runs your turns in Codex), hermes, chatgpt, or your program's name if it isn't listed"
+      },
+      "conversation_id": {
+        "type": "string",
+        "description": "Your own ID for this conversation, if your program gives you one. Cursor and Grok Bot: the output of `printenv CURSOR_CONVERSATION_ID`. Codex and Antigravity send it automatically; others leave it empty"
+      }
+    },
+    "scope": "write",
+    "agentCallable": true,
+    "publishGateKey": "mcp.publish_wakeshift",
+    "cliHints": {
+      "hidden": true
+    },
+    "area": "jobs"
+  },
+  {
+    "name": "watch_cron",
+    "mutating": true,
+    "idempotent": true,
+    "writeInference": "non_content",
+    "outputRedaction": {
+      "exempt": "watch bookkeeping: job, request and cron ids, states and times, never retrieved brain text"
+    },
+    "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift the next time the named cron reports its run (ok or failed) with gbrain wakeshift emit. One wake per watch; call it again for the run after. The wake names the cron and the status; read the output where the cron writes it. Only crons the brain owner registered with gbrain wakeshift cron add can be watched.",
+    "params": {
+      "name": {
+        "type": "string",
+        "required": true,
+        "description": "The cron name the owner registered (letters, digits, dot, underscore and dash)."
+      },
+      "session_key": {
+        "type": "string",
+        "description": "This conversation's session_key, from an earlier result (a secret token, or a handle such as claude-code#2). Keep it to this conversation; don't share or log it."
+      },
+      "harness": {
+        "type": "string",
+        "description": "The program you're running in: codex, claude-code, cursor (local CLI or IDE), cursor-cloud (Cursor cloud agent), grok-bot, copilot-cli, opencode, antigravity, openclaw (even when it runs your turns in Codex), hermes, chatgpt, or your program's name if it isn't listed"
+      },
+      "conversation_id": {
+        "type": "string",
+        "description": "Your own ID for this conversation, if your program gives you one. Cursor and Grok Bot: the output of `printenv CURSOR_CONVERSATION_ID`. Codex and Antigravity send it automatically; others leave it empty"
+      }
+    },
+    "scope": "admin",
+    "publishGateKey": "mcp.publish_wakeshift",
+    "cliHints": {
+      "hidden": true
+    },
+    "area": "jobs"
+  },
+  {
+    "name": "accept_wakeshift_terms",
+    "mutating": true,
+    "idempotent": true,
+    "writeInference": "non_content",
+    "outputRedaction": {
+      "exempt": "watch bookkeeping: job, request and cron ids, states and times, never retrieved brain text"
+    },
+    "description": "Record that the user agreed to the agreement step a watch tool returned (agreement_required): this brain operator's terms and privacy policy and Wakeshift's Connector Terms and Privacy Policy. Call it only after showing the user that step and getting their agreement, then call the watch tool again.",
+    "params": {
+      "terms_version": {
+        "type": "string",
+        "required": true,
+        "description": "The terms_version from the agreement step."
+      }
+    },
+    "scope": "write",
+    "agentCallable": true,
+    "publishGateKey": "mcp.publish_wakeshift",
+    "cliHints": {
+      "hidden": true
+    },
+    "area": "jobs"
+  },
+  {
     "name": "list_watches",
     "mutating": false,
     "idempotent": true,
     "outputRedaction": {
-      "exempt": "watch bookkeeping: job ids, states and times, never retrieved brain text"
+      "exempt": "watch bookkeeping: job, request and cron ids, states and times, never retrieved brain text"
     },
-    "description": "List the jobs this connection is watching through Wakeshift (open watches, plus ones that ended in the last day) with their state: open, delivered, dead or ended.",
+    "description": "List what this connection is watching through Wakeshift (jobs, write requests and crons: open watches, plus ones that ended in the last day) with their state: open, delivered, dead or ended.",
     "params": {},
-    "scope": "admin",
+    "scope": "write",
     "agentCallable": true,
     "publishGateKey": "mcp.publish_wakeshift",
     "cliHints": {
@@ -4273,17 +4368,28 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "idempotent": true,
     "writeInference": "non_content",
     "outputRedaction": {
-      "exempt": "watch bookkeeping: job ids, states and times, never retrieved brain text"
+      "exempt": "watch bookkeeping: job, request and cron ids, states and times, never retrieved brain text"
     },
-    "description": "Stop watching a job: ends this connection's open Wakeshift watches on it, so no wake comes for it. Returns how many ended (0 when none was open).",
+    "description": "Stop watching: ends this connection's open Wakeshift watches on one job, write request or cron (or one watch by its id), so no wake comes for it. Returns how many ended (0 when none was open).",
     "params": {
       "job": {
         "type": "number",
-        "required": true,
         "description": "Job ID you passed to watch_job."
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Request id you passed to watch_write_request."
+      },
+      "cron": {
+        "type": "string",
+        "description": "Cron name you passed to watch_cron."
+      },
+      "watch": {
+        "type": "number",
+        "description": "A watch id from list_watches."
       }
     },
-    "scope": "admin",
+    "scope": "write",
     "agentCallable": true,
     "publishGateKey": "mcp.publish_wakeshift",
     "cliHints": {
