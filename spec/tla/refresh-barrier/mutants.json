@@ -368,6 +368,17 @@
         "before": "Need(EXP, IF ImportExpiryLocksSource THEN ImportExpiryLocks ELSE <<>>)",
         "after": "Need(EXP, <<>>)"
       }
+    },
+    {
+      "id": "resume-marks-unmerged-recovery",
+      "kind": "guard",
+      "title": "recoverOne marks an orphaned fenced refresh recovery_required when HEAD moved past old_head before any merge (#8682 as coded)",
+      "expect": "RecoveryOnlyByPolicy",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "FencedAbortable(i) == rtgt[i] = 0 /\\ OwnSince(i)",
+        "after": "FencedAbortable(i) == head = rhead[i]"
+      }
     }
   ]
 }

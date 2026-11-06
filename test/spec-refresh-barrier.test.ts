@@ -36,6 +36,9 @@ describe('spec/tla/refresh-barrier configs', () => {
       if (text.includes('SPECIFICATION FairSpec')) expect(checked).toEqual(['DeferredLeaves', 'EveryWriteEnds']);
       else expect(checked).toEqual(SAFETY);
     });
+    test(cfg + ': kills the refreshing process at least once', () => {
+      expect(Number(constants(cfg).MaxCrashes)).toBeGreaterThanOrEqual(1);
+    });
   }
 });
 

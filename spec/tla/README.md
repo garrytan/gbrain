@@ -151,7 +151,7 @@ With `persistence.refresh_barrier` on, a page write admitted while a managed ref
 behind that refresh and published by itself once the refresh is released (docs/designs/REFRESH_WRITE_BARRIER.md). The
 model holds one managed worktree with one page P whose canonical file is F, single-page writes to P (one blind
 put_page, one with expected_revision), one refresh at a time, another agent's plain-git commit to F, managed sync, the
-owner's expiry, and Postgres's four row-lock modes per transaction (`KS`, `S`, `NKU`, `U`) over the brain row,
+owner's expiry, the refreshing process killed at any step and recovered by `recoverOne`, and Postgres's four row-lock modes per transaction (`KS`, `S`, `NKU`, `U`) over the brain row,
 the worktree, the source row, the counters, each refresh row and each request row. A transaction holds its locks until
 it commits; a waits-for cycle among them is a deadlock (Postgres aborts one side with 40P01), so `NoDeadlock` is an
 invariant. Behind constants it also models the stacked follow-ups: writes held for an import and deferral behind
@@ -159,14 +159,18 @@ invariant. Behind constants it also models the stacked follow-ups: writes held f
 
 | Config | What it checks |
 | --- | --- |
-| `RefreshBarrier.cfg` | #8682 as coded: two writes (one blind), one refresh, one foreign commit: every safety property. |
+| `RefreshBarrier.cfg` | #8682, with the fix for the fenced-orphan finding below modelled: two writes (one blind), one refresh, one foreign commit: every safety property. |
 | `RefreshBarrierEnv.cfg` | The same with a shared-skill restore and a credential revocation that may each run once, no foreign commit. |
 | `RefreshBarrierLiveness.cfg` | `FairSpec`, one write: every deferred write leaves deferral and every admitted write ends. `RefreshBarrierLivenessNightly.cfg` checks two writes (nightly). |
 | `RefreshBarrierAdopt.cfg` | #8708 on #8705 with its fixes: an uncommitted local edit adopted by a drift refusal, no foreign commit. `RefreshBarrierAdoptNightly.cfg` adds the foreign commit (nightly). |
 | `RefreshBarrierImport.cfg` | #8705 with its fixes (03b89121): writes held for an import, a later write held beside them, the import expiry, deferral behind `recovery_required`: every property. |
 
+Every config kills the refreshing process once (`MaxCrashes = 1`), at any step, after which `recoverOne` resumes the
+refresh row it left. A refresh that finds HEAD moved at the merge aborts and the tick retries, as `fenceAndMerge` does,
+so `recovery_required` is reached only through recovery.
+
 `test/spec-refresh-barrier.test.ts` keeps the default config on #8682 alone, every safety config on every invariant,
-and the workflow's path filter covering every file a mutant names.
+every config killing the refresh at least once, and the workflow's path filter covering every file a mutant names.
 
 ### Properties
 
@@ -179,6 +183,7 @@ and the workflow's path filter covering every file a mutant names.
 | `FenceNeverMidPrepare` | the fence never comes up, and the checkout never moves, while a write is claimed |
 | `DeferredWaitsForRelease`, `RefreshChangeNeverOverwritten` | a deferred write commits only after its refresh is released, and never over a file that refresh changed |
 | `NoDeferToReleased`, `ReleasedWhenEnded` | admission never defers to a released refresh; a completed or aborted refresh is released |
+| `RecoveryOnlyByPolicy` | `recoverOne` leaves a refresh `recovery_required` (a person must act while every write deferred to it waits) only in one of two policy cases, recorded in `rwhy`: a commit gbrain did not make landed before the merge (`foreign_in_window`), or HEAD moved past the target between the merge and `bookkeeping` (`after_merge`); never over gbrain's own commits alone |
 | `ExpiryOnlyWhileWaiting` | an expiry ends only a write that still waits (its refresh unreleased, or its import not landed) |
 | `RestoreLeavesNoOpenWrite` | a restore leaves no write admitted before it open (finding C) |
 | `NoApplyAfterRevoke` | no write commits after its credential was revoked |
@@ -197,6 +202,7 @@ and the workflow's path filter covering every file a mutant names.
 | `ConsAdopt`, `ConsRelease` | #8708 `adoptLocalEdit`, then the claim's release |
 | `ConsDone` | `completeWrite` of a refusal |
 | `RefBegin` … `CompleteCommit` | worktree-refresh.ts: `fenceDraining`, the drain poll, `fenceAndMerge` (re-counts under `lockTopologyRows`), the ff-only merge under the commit lock, `bookkeeping`, `syncMembers`, `resumeOrAbandon`, and the v292 release trigger on completed or aborted |
+| `Crash`, `RecoverBegin`, `RecoverCommit` | the refreshing process killed (its open transaction rolls back), then `recoverOne` from the owner's topology scan or `--resume`: draining aborts; fenced with HEAD at old_head aborts, and so does a fenced row whose HEAD moved only through gbrain's own commits with nothing merged (`movedBeforeMerge`, the ledger naming each commit: `ownAt`); fenced with HEAD at the target runs `bookkeeping`; syncing with HEAD at or past the target stays syncing; anything else is `markRecoveryRequired` |
 | `ExpRefBegin`, `ExpRefCommit` | `expireDeferredWrites`: the protocol, the refresh row re-read `released_at IS NULL FOR NO KEY UPDATE`, `completeWrite` |
 | `ExpImpBegin`, `ExpImpRecheck`, `ExpImpCommit` | #8705's import expiry in `expireDeferredWrites` |
 | `SyncBegin` … `SyncStamp` | a managed sync pass, whose rows go through the claim like writes: no write passes the queued row importing its page or a running sync row, and a sync row waits behind earlier writes and is never claimed while a write runs; the page row, then its checkpoint row's `UPDATE sources SET last_commit` (sync-prepare.ts) |
@@ -225,8 +231,22 @@ and the workflow's path filter covering every file a mutant names.
 | `hold-beside-held-off` | guard | `CommitsInAdmissionOrder` (Import) | #8705's compareFileTarget held-first read; model only until #8705 is on master |
 | `import-expiry-locks-source-first` | guard | `NoDeadlock` (Import) | #8705's import expiry; model only until #8705 is on master |
 | `import-expiry-skips-source-lock` | guard | `ExpiryOnlyWhileWaiting` (Import) | the same |
+| `resume-marks-unmerged-recovery` | guard | `RecoveryOnlyByPolicy` | `recoverOne` as #8682 coded it (the finding below); model only until the fix is on master |
 
 #8705's and #8708's guards get code edits and tests (#8705's repro tests in test/import-write-barrier.test.ts) once their code is on master; until then they are checked in the model only.
+
+### Found in #8682: a refresh killed at fenced after HEAD moved
+
+A flag-on eval found it first, and the model reproduces it (`resume-marks-unmerged-recovery`, `RecoveryOnlyByPolicy`).
+The precheck records `old_head` before the drain. A write already queued drains and commits, and its ledger commit moves
+HEAD past `old_head`; the fence comes up, and the process is killed before the merge. `recoverOne` then finds a fenced
+row whose HEAD is neither `old_head` nor the target and marks it `recovery_required`. The owner's scan never resumes that
+state, `--resume` refuses, and the documented way out resets the checkout to `old_head`, which drops the drained write's
+commit; until a person acts, every write deferred to the refresh waits. Another agent's commit in the same window is a policy case
+instead: the live tick aborts and retries on either, but recovery cannot tell that commit from a person's, so it
+stays `recovery_required` (`foreign_in_window`), as test 7 in test/persistence-worktree-refresh.test.ts pins. The fix
+(#8705) aborts an orphaned fenced row whose HEAD moved past `old_head` only through commits the commit ledger names, with
+nothing of the target merged (`FencedAbortable`); every config passes with it, and both policy cases stay reachable.
 
 ### Races found in #8705
 
