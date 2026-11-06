@@ -193,6 +193,6 @@ export function cronWake(name: string, run: CronRun): { payload: Record<string, 
   const next = `watch_cron ${name} to hear about its next run`;
   return {
     payload: { name, status: run.status, finished_at: iso(run.finished_at), next },
-    text: `gbrain: cron ${name} finished ${run.status === 'ok' ? 'ok' : 'with a failure'}. Read its output where it writes it; call watch_cron ${name} to hear about the next run.`,
+    text: `gbrain: cron ${name} finished ${run.status === 'ok' ? 'ok' : 'with a failure'}${iso(run.finished_at) ? ` at ${iso(run.finished_at)!.slice(0, 16).replace('T', ' ')} UTC` : ''}. Read its output where it writes it; call watch_cron ${name} to hear about the next run.`,
   };
 }

@@ -79,6 +79,20 @@ const emits = () => fake.calls.filter(c => c.path === '/events/emit');
 const body = (r: { content: Array<{ text: string }> }) => JSON.parse(r.content[0]!.text);
 
 describe('watch_job → completion → one pointer emit', () => {
+  test('a real-sized addition (the notify question plus the listener command) reaches the agent whole; a runaway one is capped', async () => {
+    const id = await seedJob('active');
+    const real = 'Ask them one question. '.repeat(150) + 'Then start the Monitor with: ~/.wakeshift/bin/wakeshift wait --session claude-code#1';
+    const subscribed = (text: string) => (b: { call: { user: string }; name: string; arguments: unknown }) => ({ status: 200, body: {
+      event_subscription: { id: 'sub_big', user: b.call.user, event: b.name, arguments: b.arguments, created: true, expires_at: new Date(Date.now() + 86_400_000).toISOString() },
+      addition: { text }, agent: { harness: 'claude-code', via: 'client', claimed: 'claude-code' } } });
+    fake.respond.set('/event-subscriptions', subscribed(real));
+    const r = await dispatchToolCall(engine, 'watch_job', { id, harness: 'claude-code' }, stdio);
+    expect(real.length).toBeGreaterThan(3000);
+    expect(r.content.at(-1)!.text).toBe(real);
+    fake.respond.set('/event-subscriptions', subscribed('x'.repeat(100_000)));
+    const capped = await dispatchToolCall(engine, 'watch_job', { id, harness: 'claude-code' }, stdio);
+    expect(capped.content.at(-1)!.text.length).toBe(16_000);
+  });
   test('subscribes the conversation, renders the addition last, and emits once with metadata only', async () => {
     const id = await seedJob('active');
     const r = await dispatchToolCall(engine, 'watch_job', { id, harness: 'claude-code' }, stdio);
