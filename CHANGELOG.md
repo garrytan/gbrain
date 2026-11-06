@@ -26,6 +26,8 @@ A page whose database copy differs from its committed file and that has no impor
 - The hardened git runner accepts a second `log` shape for the history walk and bare `cat-file --batch-check`; every other form still refuses.
 - Tests: `test/git-gap-direction-evidence-d4.test.ts`, `test/git-canonical-conversion-evidence-d4.test.ts` and `test/rows-behind-checkpoint-8071.test.ts` run on PGLite and Postgres. Guides: docs/guides/git-canonical.md and docs/guides/repair.md.
 
+## [0.60.591.0] - 2026-11-06
+
 **`gbrain repair file-drift --prefer file` now imports a page stored in segments that keeps protected parts, instead of refusing every apply with no next step.**
 
 A held page whose body is stored in segments (`pages.segmented_storage`, a page over 1 MiB) and whose database copy keeps a protected frontmatter key and a timeline row the file lacks previewed cleanly, listing both exceptions and an apply command. That apply refused every time with `invalid_params` "Unsupported or missing reconciliation fields." and no `fix`, so the page stayed held and blocked writes to it. The apply now imports the file with the same protections (the file keeps its bytes plus the appended key and row, the page keeps both), the page stays segmented and searchable, and the next sync releases the hold. A preview now refuses a page its own apply would refuse, and every refusal on this path names its next step.
