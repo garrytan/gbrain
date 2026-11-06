@@ -598,7 +598,7 @@ Properties:
   `test/snapshot-inputs-closure.test.ts` checks that list against an
   independent TS-AST closure, requires every literal dynamic import in the
   closure to be classified, and discovers all 15 `pglite-snapshot-*` CI cache
-  keys (`test.yml`, `e2e.yml`, `stress.yml`): identical `hashFiles` inputs covering every hash input, each profile
+  keys: identical `hashFiles` inputs covering every hash input, each profile
   restoring its own tar. A failure names the missing file and the workflow
   files to edit.
 - **Concurrency-safe.** Each profile has its own lock with a PID/token owner
