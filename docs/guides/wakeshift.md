@@ -109,3 +109,11 @@ Repo-less brains work the same way. Watches are operational database rows, not b
 - **`agreement_required` instead of a watch.** The brain has members: show the user the step and call `accept_wakeshift_terms` after they agree. `wakeshift_shared_brain` means the owner hasn't set the terms links yet.
 - **`watch_cron` says not_found.** The name isn't registered: the brain owner runs `gbrain wakeshift cron add <name>`.
 - **No wake arrived.** The result of `watch_job` says `wakeable: false` when Wakeshift didn't recognize the agent program: pass `harness`. `list_watches` shows each watch's state and last error. `gbrain doctor --only wakeshift` counts dead watches and any `id_reused` refusal (a gbrain bug: please report it).
+
+## From a thin client
+
+On a thin client (`gbrain init --mcp-only`), `gbrain wakeshift watch job <id>` (also `watch write <request_id>` and `watch cron <name>`) calls the brain host's watch tool over MCP and prints Wakeshift's instructions as the last line; `--session-key`, `--harness` and `--conversation-id` pass through per call and are never saved.
+
+## OpenClaw
+
+`gbrain setup openclaw --wakeshift` installs Wakeshift's OpenClaw plugin (pinned `@wakeshift/openclaw@1.4.31`) after consent and prints Wakeshift's `allowNetworkHooks` question without answering it ([OpenClaw guide](../mcp/OPENCLAW.md#have-gbrain-report-back-to-this-chat)).

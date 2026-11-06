@@ -148,6 +148,18 @@ with provenance, and verify active recall. For deletion, use the returned fact
 ID with `forget`; retained history and older backups need separate consideration.
 See the [worked round trip](in-agent-setup.md#3-prove-the-first-memory-round-trip).
 
+## Have gbrain report back to this chat
+
+When the brain owner has turned on [reporting back](wakeshift.md)
+(`gbrain wakeshift enable` on the brain host), the Bot can ask to be woken when
+a long job finishes instead of polling. Through the thin CLI:
+`<launcher> wakeshift watch job <id> --harness grok-bot` (also `watch write
+<request_id>` and `watch cron <name>`). It calls the brain's `watch_job` over
+MCP; Wakeshift's instructions, when it sends any, are the last line of output.
+Wakeshift wakes Grok Bot only while it waits for events in the foreground;
+otherwise the wake arrives with its next gbrain call. Without Wakeshift, wait
+with `<launcher> jobs wait <id>`.
+
 ## Local installation maintenance and recovery
 
 These steps apply when GBrain runs inside the Bot. For a hosted connection,

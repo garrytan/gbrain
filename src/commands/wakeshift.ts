@@ -42,6 +42,9 @@ Commands:
   emit cron.finished --name <name> --status ok|failed
                              record a cron run at the end of the cron's script; the drainer wakes its
                              watchers. Never calls Wakeshift itself, and exits 0 when reporting back is off
+  watch job <id> | write <request_id> | cron <name>
+                             from a thin client or agent shell: wake this conversation when it finishes
+                             (gbrain wakeshift watch --help)
 
 The key is read from WAKESHIFT_API_KEY (e.g. in ~/.gbrain/.env) or ~/.gbrain/wakeshift.key.
 gbrain never creates a Wakeshift account or key. Guide: docs/guides/wakeshift.md`;
@@ -300,6 +303,7 @@ export function printWakeshiftGate(): void {
 export async function runWakeshift(engine: BrainEngine, args: string[]): Promise<void> {
   const sub = args[0];
   const json = args.includes('--json');
+  if (sub === 'watch') return (await import('./wakeshift-watch.ts')).runWakeshiftWatch(engine, args.slice(1));
   if (!sub || args.includes('--help') || args.includes('-h')) { console.log(HELP); return; }
   if (sub === 'status') return status(engine, json);
   if (sub === 'enable') return enable(engine, args.slice(1));
@@ -307,7 +311,6 @@ export async function runWakeshift(engine: BrainEngine, args: string[]): Promise
   if (sub === 'test') return test(json);
   if (sub === 'cron') return cron(engine, args.slice(1), json);
   if (sub === 'emit') return emit(engine, args.slice(1));
-  if (sub === 'watch') return (await import('./wakeshift-watch.ts')).runWakeshiftWatch(engine, args.slice(1));
   console.error(`Unknown wakeshift command: ${sub}\n\n${HELP}`);
   setCliExitVerdict(2);
 }

@@ -408,6 +408,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'queue_health',
   // Wakeshift PR 1: report-back key, enabled state and dead/id_reused watches (doctor/checks/wakeshift.ts).
   'wakeshift',
+  // Wakeshift PR 2: installed @wakeshift/openclaw vs the pinned version (doctor/checks/wakeshift-openclaw.ts).
+  'wakeshift_openclaw',
   // #4578: brain-wide maintenance jobs dying at their deadline.
   'global_maintenance_timeouts',
   // GBRA-130 C-6: no completed brain-wide pass while jobs fail or a phase keeps blocking it.

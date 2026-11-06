@@ -918,6 +918,10 @@
         "name": "wakeshift"
       },
       {
+        "category": "ops",
+        "name": "wakeshift_openclaw"
+      },
+      {
         "category": "brain",
         "name": "fact_take_vectors"
       },
