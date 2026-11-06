@@ -3434,6 +3434,16 @@ More: [docs/guides/dream-patterns.md#cadence](../../docs/guides/dream-patterns.m
 |---|---|---|---|---|---|---|
 | The payload exceeds the configured size cap. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### pending_import_expired
+
+<a id="pending_import_expired"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write that waited for managed sync to import a committed change to its page's file was not applied, because the import had not landed after the barrier's wait limit. | With persistence.refresh_barrier on, a put_page, capture, remember or add_timeline_entry whose page file holds a change committed through Git that managed sync has not imported yet is accepted and waits for that import instead of being refused pending_import. An import that never lands (no sync owner running, a sync stopped on the file) would hold the write forever, so the owner finishes it failed after persistence.refresh_barrier_max_wait_ms (15 minutes by default). Nothing was applied. | Check the source with gbrain sync status --source <id> --json, then read the page again and submit the write with a new request_id. | provider | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#pending_import_expired](../../docs/guides/write-refusals.md#pending_import_expired)
+
 ### pending_verify
 
 <a id="pending_verify"></a>

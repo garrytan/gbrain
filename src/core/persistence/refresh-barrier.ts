@@ -87,6 +87,10 @@ export const overdueDeferredWorkSql = (host: string) => `EXISTS (SELECT 1 FROM p
  * brain row FOR SHARE) before it locks the refresh row, the order fenceAndMerge takes them in (brain FOR UPDATE, then the
  * refresh), so an expiry overlapping a fence waits instead of deadlocking; with the refresh row locked, an expiry and
  * the release that would make the row claimable never both win.
+ * GST-1582: one held for an import that has not landed past the limit ends `pending_import_expired` the same way; its
+ * claim and its expiry both move the row, so the expiry checks the row is still unclaimed and its import still pending
+ * with the sources row locked FOR SHARE (after the protocol's brain lock, the order a fence takes them in), so an import
+ * that is landing makes the check wait and then see it landed.
  */
 export async function expireDeferredWrites(engine: BrainEngine, hostId: string, signal?: AbortSignal): Promise<WriteRequest[]> {
   const [config] = await engine.executeRaw<{ ms: number }>(`SELECT ${MAX_WAIT_SQL} AS ms`, undefined, { signal });
@@ -104,21 +108,42 @@ export async function expireDeferredWrites(engine: BrainEngine, hostId: string, 
     });
     if (done) finished.push(done);
   }
+  const imports = await engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
+    JOIN persistence_worktrees w ON w.id=r.worktree_id JOIN sources s ON s.id=r.source_id
+    WHERE w.owner_host_id=$1::uuid AND r.state='deferred' AND r.deferred_import_from IS NOT NULL AND COALESCE(s.last_commit,'')=r.deferred_import_from
+      AND (r.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.id=r.deferred_refresh_id AND f.released_at IS NOT NULL))
+      AND r.created_at<now()-($2::double precision*interval '1 millisecond') ORDER BY r.sequence LIMIT 100`, [hostId, maxWaitMs], { signal });
+  for (const row of imports) {
+    const done = await engine.transaction(async tx => {
+      await declarePersistenceProtocol(tx);
+      const [held] = await tx.executeRaw(`SELECT 1 FROM persistence_requests r JOIN sources s ON s.id=r.source_id
+        WHERE r.id=$1::uuid AND r.state='deferred' AND COALESCE(s.last_commit,'')=r.deferred_import_from FOR SHARE OF s`, [row.id]);
+      if (!held) return null;
+      return completeWrite(tx, row, 'failed', {}, { code: 'pending_import_expired',
+        message: `Request ${row.request_id} waited more than ${Math.round(maxWaitMs / 1000)} s for managed sync to import a committed change to the file of ${row.slug}, and the import has not landed, so nothing was applied. Check the source with gbrain sync status --source ${row.source_id} --json, then submit the write again with a new request_id.` });
+    }).catch(error => { if ((error as { code?: string })?.code === 'write_claim_lost') return null; throw error; });
+    if (done) finished.push(done);
+  }
   return finished;
 }
 
-/** Whether the refresh a deferred write waits behind has ended (a read that fails counts as not ended). */
-export async function refreshReleased(engine: SqlEngine, refreshId: string | null | undefined): Promise<boolean> {
-  if (!refreshId) return true;
-  const [row] = await engine.executeRaw<{ released: boolean }>('SELECT released_at IS NOT NULL AS released FROM persistence_worktree_refreshes WHERE id=$1::uuid', [refreshId]).catch(() => []);
-  return row?.released === true;
+/**
+ * Whether a deferred write still waits: behind a refresh not yet released, or (GST-1582) for an import that has not landed
+ * (`sources.last_commit` still the commit it was held at). A read that fails counts as waiting.
+ */
+export async function deferredWaiting(engine: SqlEngine, row: Pick<WriteRequest, 'source_id' | 'deferred_refresh_id' | 'deferred_import_from'>): Promise<boolean> {
+  const [held] = await engine.executeRaw<{ waiting: boolean }>(`SELECT
+    ($1::uuid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM persistence_worktree_refreshes WHERE id=$1::uuid AND released_at IS NOT NULL))
+    OR ($2::text IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sources WHERE id=$3 AND COALESCE(last_commit,'')<>$2::text)) AS waiting`,
+  [row.deferred_refresh_id ?? null, row.deferred_import_from ?? null, row.source_id]).catch(() => [{ waiting: true }]);
+  return held?.waiting !== false;
 }
 
 /** Writes admitted deferred that have not finished (waiting, or claimed and still publishing), for `gbrain upgrade --check-downgrade`. */
 export async function deferredBacklog(engine: SqlEngine): Promise<{ count: number; oldest_age_ms: number }> {
   const [row] = await engine.executeRaw<{ count: number; oldest_age_ms: number | null }>(`SELECT count(*)::int AS count,
     (EXTRACT(EPOCH FROM now()-min(created_at))*1000)::bigint AS oldest_age_ms FROM persistence_requests
-    WHERE deferred_refresh_id IS NOT NULL AND state IN ('deferred','queued','running','recovering')`);
+    WHERE (deferred_refresh_id IS NOT NULL OR deferred_import_from IS NOT NULL) AND state IN ('deferred','queued','running','recovering')`);
   return { count: Number(row?.count ?? 0), oldest_age_ms: Number(row?.oldest_age_ms ?? 0) };
 }
 
