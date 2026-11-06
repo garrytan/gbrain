@@ -371,9 +371,22 @@ function stallText(index: number, total: number | null, stalledMs: number, claim
 }
 
 /** Re-enter `pass` until the managed cursor is done, the caller stops it, or it is blocked. */
+/**
+ * The in-pass line's age of an unclaimed head. A head that moved since the last read is the writer making progress (it
+ * commits requests queued ahead of this pass, a dead owner's in-flight writes among them), so the age counts from that
+ * read, never from before `floor` (the drain's own last commit).
+ */
+function inPassHeadAge(): (requestId: string | null | undefined, at: number, floor: number) => number {
+  let seen: { id: string | null | undefined; at: number; since: number } | null = null;
+  return (id, at, floor) => {
+    seen = { id, at, since: seen && seen.id !== id ? seen.at : seen?.since ?? floor };
+    return at - Math.max(floor, seen.since);
+  };
+}
+
 export async function runDrain(input: DrainInput): Promise<SyncResult> {
   const clock = input.clock ?? Date.now;
-  const startedAt = clock();
+  const startedAt = clock(), headAge = inPassHeadAge();
   const coop = cooperativeDeadline(input.deadlineAtMs);
   const signal = coop.signal && input.signal ? AbortSignal.any([input.signal, coop.signal]) : coop.signal ?? input.signal;
   /** #6706: the drain's own deadline (not the caller's cancellation) stopped it, so the stop is a resumable report. */
@@ -384,9 +397,6 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
   // #6317: `extended` marks the one extra window a lapsed head gets while a consumer here can reclaim it; `ownerAt`/`owner` throttle the owner-row read to one per progress interval.
   let stall: { key: string; since: number; passes: number; claim: DrainClaim | null; stallInfo: Omit<DrainStall, 'stalled_seconds'>; extended?: boolean; ownerAt?: number; owner?: DrainOwnerRow | null } | null = null;
   let lastCommitAt = startedAt, lastSweptAt = startedAt, inPass = false, readingHead = false;
-  // The in-pass line's view of the head: a head that moved since the last read is the writer making progress (it commits
-  // requests queued ahead of this pass, a dead owner's in-flight writes among them), so its age counts from that read.
-  let headSeen: { id: string | null | undefined; at: number; since: number } | null = null;
   // #6278 (B7): a pass refused for write capacity keeps the last pass's result for the report; `capacity` spans the refusals since the last pass that ran.
   let last: SyncResult | undefined, capacity: { since: number; attempts: number } | null = null;
   // #6278 (B7): a pass may finish one run and yield for the next (re-screens scheduled while it ran); the counts of finished runs carry into the report.
@@ -412,9 +422,7 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
     Promise.resolve().then(() => probe.head!()).then(head => {
       if (!head || !inPass || stall || clock() - lastCommitAt < every || tickAt - lastLine < every) return;
       lastLine = tickAt;
-      const at = clock();
-      headSeen = { id: head.request_id, at, since: headSeen && headSeen.id !== head.request_id ? headSeen.at : headSeen?.since ?? lastCommitAt };
-      serr(stallText(index, total, head.claim?.step_age_ms ?? at - Math.max(lastCommitAt, headSeen.since), head.claim, head.head_state, head));
+      serr(stallText(index, total, head.claim?.step_age_ms ?? headAge(head.request_id, clock(), lastCommitAt), head.claim, head.head_state, head));
     }).catch(() => undefined).finally(() => { readingHead = false; });
   }, every) : null;
   stallLine?.unref?.();
