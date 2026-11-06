@@ -444,6 +444,7 @@ describe('CLI client registration keeps the pre-migration fallback', () => {
   afterAll(async () => { await engine.disconnect(); });
 
   test('register-client on an oauth_clients table without source_id still registers when given a transaction', async () => {
+    await engine.executeRaw('DROP TABLE IF EXISTS oauth_clients CASCADE');
     await engine.executeRaw(`CREATE TABLE oauth_clients (client_id TEXT PRIMARY KEY, client_secret_hash TEXT, client_name TEXT NOT NULL,
       redirect_uris TEXT[], grant_types TEXT[], scope TEXT, token_endpoint_auth_method TEXT, client_id_issued_at BIGINT, deleted_at TIMESTAMPTZ)`);
     const sql = sqlQueryForEngine(engine);
