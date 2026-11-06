@@ -8,7 +8,8 @@ import { alignWithStored } from './align-stored.ts';
 import { parseDataFrontmatter } from '../data-frontmatter.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import type { PageSnapshot } from '../page-state/types.ts';
+import { REVISION_BACKFILL_PENDING, type PageSnapshot } from '../page-state/types.ts';
+import { REVISION_BACKFILL_RESUME_COMMAND } from '../page-state/revision-backfill-schema.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
 import { absentCanonicalPath, findLiveFileClaimants, recordedReconcilePath, type FileClaimTarget } from './file-claims.ts';
@@ -229,6 +230,10 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
   if (!snapshot || snapshot.page.deleted_at) throw opError('page_not_found', 'Reconciliation requires an existing live page; use the separate restore workflow for deleted pages.',
     `Page ${slug} in '${sourceId}' is deleted or missing; nothing changed. If it was deleted by mistake, restore it (gbrain restore, within the 72-hour window) and then preview it again.`,
     { fix: readFix('Shows whether the page exists or is soft-deleted in this source.', { argv: ['gbrain', 'get', '--source', sourceId, '--include-deleted', '--', slug] }) });
+  if (snapshot.revision === REVISION_BACKFILL_PENDING) throw opError('revision_backfill_pending', 'Reconciliation requires the page revision, and this page has none yet.',
+    `Nothing changed. Page ${slug} in '${sourceId}' was written before page revisions and the revision backfill has not reached it, so no reconcile preview can bind to it. Resume the backfill on the brain host with ${REVISION_BACKFILL_RESUME_COMMAND} (the command in fix), then preview the page again.`,
+    { fix: { argv: REVISION_BACKFILL_RESUME_COMMAND.split(' '), consent: [], actor: 'agent', requires_exclusive: true, docs: 'docs/guides/write-refusals.md#revision-backfill',
+      why: 'Re-runs the schema migration pass on the brain host, which resumes the page revision backfill and prints its progress; it changes no page content.' } });
   if (binding.source_incarnation !== snapshot.sourceIncarnation) staleReconcile('source binding incarnation');
   const [storedPage] = await engine.executeRaw<Record<string, unknown>>(`SELECT id,source_id,slug,type,title,compiled_truth,timeline,frontmatter,
     content_hash,source_path,source_kind,source_uri,ingested_via,ingested_at,knowledge_revision,deleted_at FROM pages WHERE id=$1 AND source_id=$2`, [snapshot.page.id, sourceId]);
@@ -339,20 +344,22 @@ export function validateReconcileArtifact(value: unknown): ReconcileArtifact {
     'owner_epoch', 'revision', 'raw_file_hash', 'relative_path', 'policy_digest', 'withdrawals_digest', 'assessment_at']);
   strictReconcileKeys(value.preimages, ['file_base64', 'database', 'stored_page']);
   // globalPurges is optional here so an artifact written before the '*' purge marker validates and then reads stale (assertPreimages).
-  strictReconcileKeys(value.preimages.database, ['page', 'tags', 'revision', 'sourceIncarnation', 'withdrawals', 'globalPurges'],
+  // A page stored in segments (`body_storage`) is reconciled from its materialized body; its snapshot pins the body generation.
+  strictReconcileKeys(value.preimages.database, ['page', 'tags', 'revision', 'sourceIncarnation', 'withdrawals', 'globalPurges', 'bodyGeneration'],
     ['page', 'tags', 'revision', 'sourceIncarnation', 'withdrawals']);
   if (value.preimages.database.globalPurges !== undefined) strictReconcileKeys(value.preimages.database.globalPurges, ['count', 'latest', 'world_only']);
   strictReconcileKeys(value.preimages.database.page, ['id', 'slug', 'source_id', 'type', 'title', 'compiled_truth', 'timeline', 'frontmatter',
     'content_hash', 'source_path', 'knowledge_revision', 'text_projection_revision', 'emotional_weight', 'created_at', 'updated_at', 'updated_at_iso',
     'deleted_at', 'effective_date', 'effective_date_source', 'import_filename', 'salience_touched_at', 'source_kind', 'source_uri', 'ingested_via',
-    'ingested_at', 'contextual_retrieval_mode', 'corpus_generation', 'withheld_source_path'], ['id', 'slug', 'source_id', 'type', 'title', 'compiled_truth', 'timeline', 'frontmatter']);
+    'ingested_at', 'contextual_retrieval_mode', 'corpus_generation', 'withheld_source_path', 'body_storage', 'body_bytes'], ['id', 'slug', 'source_id', 'type', 'title', 'compiled_truth', 'timeline', 'frontmatter']);
   strictReconcileKeys(value.preimages.stored_page, ['id', 'source_id', 'slug', 'type', 'title', 'compiled_truth', 'timeline', 'frontmatter',
     'content_hash', 'source_path', 'source_kind', 'source_uri', 'ingested_via', 'ingested_at', 'knowledge_revision', 'deleted_at']);
   strictReconcileKeys(value.result, ['type', 'title', 'compiled_truth', 'timeline', 'frontmatter', 'tags']);
   const result = value.result;
   if (value.format_version !== 1 && !v2 || typeof value.preview_id !== 'string' || !['ready', 'needs_resolution'].includes(String(value.status)) ||
     !Array.isArray(value.conflicts) || !Array.isArray(value.decisions) || !Array.isArray(value.preimages.database.tags) ||
-    !Array.isArray(value.preimages.database.withdrawals) || !Array.isArray(value.result.tags) || value.result.tags.some(v => typeof v !== 'string') ||
+    !Array.isArray(value.preimages.database.withdrawals) || value.preimages.database.bodyGeneration !== undefined && !Number.isSafeInteger(value.preimages.database.bodyGeneration) ||
+    !Array.isArray(value.result.tags) || value.result.tags.some(v => typeof v !== 'string') ||
     ['type', 'title', 'compiled_truth', 'timeline'].some(key => typeof result[key] !== 'string') ||
     value.result.frontmatter === null || typeof value.result.frontmatter !== 'object' || Array.isArray(value.result.frontmatter) ||
     typeof value.preimages.file_base64 !== 'string' ||
