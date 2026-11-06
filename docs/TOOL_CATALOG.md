@@ -164,7 +164,7 @@ Every non-localOnly operation on the MCP surface: 168 tools across 26 areas. **S
 | `entity` | Person/company/account card, zero LLM. | read | yes |  |
 | `forget` | Expire a remembered fact by its fact_id (never a page slug). | write | yes |  |
 | `recall` | Read facts by entity, since or session_id; `query` also searches pages. | read | yes |  |
-| `remember` | Save facts with provenance; set `entity` (the subject) or recall misses it. | write | yes |  |
+| `remember` | Save {fact, provenance (required: source), `entity` (subject; recall needs it)} or items[]. | write | yes |  |
 | `synthesize` | [EXPENSIVE / SLOW: LLM calls] Cited answer to a broad question across pages. | read | yes |  |
 
 ## ontology
