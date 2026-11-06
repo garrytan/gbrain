@@ -1670,6 +1670,7 @@
       {
         "kind": "interface",
         "members": [
+          "agent_label?: string | undefined",
           "at: string | null",
           "operation: string | null",
           "origin: \"request\" | \"maintenance\" | \"unrecorded\"",
@@ -6770,6 +6771,7 @@
           "agentCallable?: true | undefined",
           "annotations?: { title?: string; readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; } | undefined",
           "area?: string | undefined",
+          "callShape?: string | undefined",
           "cliHints?: { name?: string; aliases?: string[]; positional?: string[]; stdin?: string; hidden?: boolean; } | undefined",
           "cliOnly?: { argv: readonly string[]; } | undefined",
           "description: string",
@@ -6793,6 +6795,7 @@
         "members": [
           "accessIdentity?: readonly string[] | undefined",
           "admissionOrigin?: AdmissionOrigin | undefined",
+          "agentLabel?: string | undefined",
           "allowedSlugPrefixes?: string[] | undefined",
           "applyRemoteReadPolicy?: boolean | undefined",
           "attestedOp?: string | undefined",
@@ -10116,6 +10119,7 @@
       {
         "kind": "interface",
         "members": [
+          "agent_label?: string | undefined",
           "at: string | null",
           "operation: string | null",
           "origin: \"request\" | \"maintenance\" | \"unrecorded\"",

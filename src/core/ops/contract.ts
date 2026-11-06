@@ -497,6 +497,8 @@ export interface OperationContext {
    * transports). Unset is `background`; it is never derived from `remote` (persistence/admission-origin.ts).
    */
   admissionOrigin?: import('../persistence/admission-origin.ts').AdmissionOrigin;
+  /** The caller's self-declared agent label, read by an HTTP transport from X-Gbrain-Agent-Label (persistence/attribution.ts). Unverified text, never authority. */
+  agentLabel?: string;
   /**
    * Transport marker for auth-less remote surfaces (#1061). The stdio MCP
    * dispatch sets 'stdio' — it is deliberately `remote: true` (agent-facing,
@@ -792,6 +794,11 @@ export interface Operation {
   name: string;
   description: string;
   params: Record<string, ParamDef>;
+  /**
+   * GST-1493: one sentence with a valid call as JSON, appended to the suggestion when dispatch refuses an unknown
+   * parameter, so a client that never read the schema gets the whole required shape, not only the nearest name.
+   */
+  callShape?: string;
   handler: (ctx: OperationContext, params: Record<string, unknown>) => Promise<unknown>;
   outputRedaction: OutputRedactionPolicy;
   mutating?: boolean;

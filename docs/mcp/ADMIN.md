@@ -572,7 +572,7 @@ gbrain attribution people/alice-example --timeline 17
 ```
 
 Each attribution is `{ request_id, operation, principal: { kind, id, name }, at,
-origin }`. Branch on `origin`:
+agent_label?, origin }`. Branch on `origin`:
 
 | `origin` | Meaning |
 | --- | --- |
@@ -586,6 +586,20 @@ through `POST /admin/api/api-keys` (for example
 most 4 KB). gbrain stores it as given and echoes it as `principal.metadata` on
 every attribution that names that token; a token without metadata has no
 `metadata` key. The host owns what it means and revokes the token to end it.
+
+**Which AI made the write.** One credential often serves several AIs (a hosted
+app calling for Claude Code and Codex, say). An HTTP MCP caller can name the AI
+on each request with the `X-Gbrain-Agent-Label` header, for example
+`X-Gbrain-Agent-Label: Claude Code`. Writes from that request show it as
+`agent_label`; jobs the request queues run under their own authority and record
+no label. Browser callers on an origin in `GBRAIN_HTTP_CORS_ORIGIN` may send it,
+since both transports' CORS preflight allows it. It is a label the caller declares and gbrain does not verify:
+the principal is still who was authorized, and no grant, access rule or trust
+tier reads the label. Any token may send it, and it lands only on that token's
+own write requests. A value that is not 1 to 120 printable ASCII characters is
+dropped, not refused. Stdio MCP and the local CLI have no request headers and
+record no label; their principal already names the lane. Without the header a
+write is recorded exactly as before.
 
 Who can read it:
 
