@@ -17,7 +17,10 @@ export const unverifiedArchiveReason = (id: string) =>
  * binding (#5732). `persistence_source_bindings` has no FK to `sources`, so a
  * delete that leaves the binding would make a same-id replacement read as
  * claimed. A binding of another incarnation is never touched here; `gbrain
- * repair orphan-bindings` removes those. Returns whether a row was deleted.
+ * repair orphan-bindings` removes those. The source's managed-sync cursor
+ * (`op_checkpoints`, also no FK) goes with it, or doctor keeps reporting a
+ * backlog whose resume command fails `unknown_source`. Returns whether a row
+ * was deleted.
  */
 export async function deleteSourceRow(
   engine: Pick<BrainEngine, 'executeRaw'>,
@@ -30,7 +33,9 @@ export async function deleteSourceRow(
   const rows = await engine.executeRaw<{ id: string }>(
     `WITH gone AS (DELETE FROM sources WHERE id = $1 ${expired} RETURNING id, incarnation),
        unbound AS (DELETE FROM persistence_source_bindings b USING gone
-                    WHERE b.source_id = gone.id AND b.source_incarnation = gone.incarnation)
+                    WHERE b.source_id = gone.id AND b.source_incarnation = gone.incarnation),
+       cursors AS (DELETE FROM op_checkpoints c USING gone
+                    WHERE c.op = 'managed-sync' AND c.completed_keys->0->>'sourceId' = gone.id)
      SELECT id FROM gone`,
     [id],
   );

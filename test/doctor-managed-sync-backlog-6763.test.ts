@@ -7,6 +7,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { checkManagedSyncBacklog } from '../src/commands/doctor/checks/managed-sync-backlog.ts';
+import { deleteSourceRow } from '../src/core/source-delete.ts';
 
 const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 const progress = (minutes: number) => { const at = Date.now() - minutes * 60_000; return { startedAt: at - 60_000, startIndex: 0, lastAt: at, lastIndex: 1 }; };
@@ -32,16 +33,31 @@ test('#6763 the last advance, when there is one, is the age origin; a missing or
 });
 
 let engine: PGLiteEngine;
+const putCursor = (fingerprint: string, header: Record<string, unknown>) => engine.executeRaw(
+  "INSERT INTO op_checkpoints(op, fingerprint, completed_keys, updated_at) VALUES('managed-sync', $1, jsonb_build_array($2::jsonb), now())", [fingerprint, JSON.stringify(header)]);
 beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 120_000);
 afterAll(async () => { await engine.disconnect(); });
 
 test('#6763 a stored cursor: a fresh row write never hides an old discovery, and a done cursor is not a backlog', async () => {
-  const put = (fingerprint: string, header: Record<string, unknown>) => engine.executeRaw(
-    "INSERT INTO op_checkpoints(op, fingerprint, completed_keys, updated_at) VALUES('managed-sync', $1, jsonb_build_array($2::jsonb), now())", [fingerprint, JSON.stringify(header)]);
+  const put = async (fingerprint: string, header: Record<string, unknown>) => {
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [header.sourceId]);
+    await putCursor(fingerprint, header);
+  };
   await put('fresh', { sourceId: 'fresh-example', index: 0, total: 0, done: false, discoveredAt: minutesAgo(0) });
   expect(await checkManagedSyncBacklog(engine, ['fresh-example'])).toMatchObject({ status: 'ok' });
   await put('old', { sourceId: 'old-example', index: 0, total: 4, done: false, discoveredAt: minutesAgo(120) });
   expect(await checkManagedSyncBacklog(engine, ['old-example'])).toMatchObject({ status: 'warn' });
   await put('done', { sourceId: 'done-example', index: 4, total: 4, done: true, discoveredAt: minutesAgo(120) });
   expect(await checkManagedSyncBacklog(engine, ['done-example'])).toBeNull();
+}, 60_000);
+
+test('a cursor whose source is gone is not a backlog, and removing a source drops its cursor', async () => {
+  await putCursor('orphan', { sourceId: 'gone-example', index: 20, total: 108, done: false, discoveredAt: minutesAgo(120) });
+  expect(await checkManagedSyncBacklog(engine, ['gone-example'])).toBeNull();
+  await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1)', ['removed-example']);
+  await putCursor('removed', { sourceId: 'removed-example', index: 1, total: 4, done: false, discoveredAt: minutesAgo(120) });
+  expect(await checkManagedSyncBacklog(engine, ['removed-example'])).toMatchObject({ status: 'warn' });
+  expect(await deleteSourceRow(engine, 'removed-example')).toBe(true);
+  expect(await engine.executeRaw("SELECT 1 FROM op_checkpoints WHERE op='managed-sync' AND fingerprint='removed'")).toHaveLength(0);
+  expect(await engine.executeRaw("SELECT 1 FROM op_checkpoints WHERE op='managed-sync' AND fingerprint='old'")).toHaveLength(1);
 }, 60_000);
