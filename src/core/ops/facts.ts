@@ -29,7 +29,7 @@ import { OperationError, opError, verbError } from './contract.ts';
 import { invalidParam, paramUse } from './op-fix.ts';
 import { parseSourceIdParam, sourceScopeOpts, stampEvidenceSafe } from './context.ts';
 import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
-import { boundFactLines, MEMORY_RECALL_MAX_CHARS, parseMaxChars } from './qm-memory.ts';
+import { boundRecallChars, MEMORY_RECALL_MAX_CHARS, parseMaxChars } from './qm-memory.ts';
 import { markKeywordHits } from '../search/evidence.ts';
 import { hybridSearchCached, stampContentFlags, type HybridSearchOpts } from '../search/hybrid.ts';
 import { dedupResults } from '../search/dedup.ts';
@@ -667,18 +667,6 @@ const recall: Operation = {
     return maxChars === null ? out : boundRecallChars(out, maxChars);
   },
 };
-
-/**
- * GST-900: recall's max_chars, memory_recall's bound on recall's text: the fact texts, then the results' chunk texts,
- * one per line, keep the whole items that fit; the first item that would cross the cap ends both lists, with no
- * marker. `truncated` says whether anything was cut and `total` counts the facts kept.
- */
-function boundRecallChars<T extends { facts: Array<{ fact: string }>; total: number; results?: Array<{ chunk?: unknown }> }>(out: T, maxChars: number): T & { truncated: boolean } {
-  const lines = [...out.facts.map(f => f.fact), ...(out.results ?? []).map(r => String(r.chunk ?? ''))];
-  const { kept } = boundFactLines(lines, maxChars);
-  const facts = out.facts.slice(0, kept);
-  return { ...out, facts, total: facts.length, ...(out.results ? { results: out.results.slice(0, Math.max(0, kept - out.facts.length)) } : {}), truncated: kept < lines.length };
-}
 
 /**
  * One source's facts about an entity, read under every slug they may be saved
