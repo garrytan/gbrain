@@ -34,6 +34,7 @@ import { estimateSynopsisCallUsd, SYNOPSIS_MAX_TOKENS } from '../src/core/page-s
 import { reservationCostUsd } from '../src/core/budget/reservation-cost.ts';
 import { lookupEmbeddingPrice } from '../src/core/embedding-pricing.ts';
 import { buildModesReport, redactReadinessForRemote } from '../src/core/search/modes-report.ts';
+import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 
@@ -67,7 +68,7 @@ afterAll(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-beforeEach(() => { chatCalls = 0; });
+beforeEach(() => { chatCalls = 0; _resetCliExitVerdictForTests(); });
 
 const body = (title: string, paragraphs: number) => `---\ntype: note\ntitle: ${title}\n---\n\n${Array.from({ length: paragraphs }, (_, i) => `Paragraph ${i} about ${title}. `.repeat(30)).join('\n\n')}\n`;
 const quiet = async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -167,6 +168,10 @@ for (const kind of testBackends()) describe(`#8744 synopsis sweep (${kind})`, ()
     expect(chatCalls).toBe(0);
     const stamped = await engine.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM pages WHERE contextual_retrieval_mode = 'per_chunk_synopsis'`);
     expect(Number(stamped[0]!.n)).toBe(0);
+    // The CLI exits 1 on failed jobs; clear the verdict so this file's process exits on its tests' result.
+    expect(currentExitCode()).toBe(1);
+    _resetCliExitVerdictForTests();
+    process.exitCode = 0;
   });
 
   test('--yes queues and completes one job per page; pages land on the synopsis tier and a rerun has nothing to sweep', async () => {
