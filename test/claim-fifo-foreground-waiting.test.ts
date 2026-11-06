@@ -136,3 +136,22 @@ test('a write another process claimed and has not begun to publish holds back th
     expect(await s.claim()).toBe(head);
   }
 }, 60_000);
+
+// The convergence nightly's hour-long wedge: a remember queued behind a put that waits on the drain's sync row naming its
+// page counted as a write that may go first, so that sync row (and every sync row below the remember) was held back, the
+// put stayed behind the sync row and the remember behind the put. No row of the three could move and no foreground commit
+// came to earn the sync side a head.
+test('a write queued behind an earlier write that waits on a sync row naming its page holds back no sync head', async () => {
+  for (const engine of engines) {
+    const s = await scene(engine);
+    const head = await s.sync('notes/synced-d');
+    const named = await s.add('notes/synced-d');
+    const behind = await s.add('notes/foreground-d');
+    s.seen[s.worktree] = await s.maxSequence();
+    expect(await s.claim()).toBe(head);
+    await s.commit(head);
+    expect(await s.claim()).toBe(named);
+    await s.commit(named);
+    expect(await s.claim()).toBe(behind);
+  }
+}, 60_000);

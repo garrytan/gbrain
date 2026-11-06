@@ -773,7 +773,10 @@ const LEASE_HELD = `EXISTS (SELECT 1 FROM gbrain_cycle_locks l WHERE ${SYNC_KIND
  * the worktree after sequence `seen` (the newest sequence when this process last claimed a sync head there) earns the sync
  * side one head, so a stream of writes cannot starve it. Uncorrelated with the candidate row, so a claim reads it once.
  * The FIFO claim holds back only sync rows the write would pass (sequence below it): an earlier unfinished write is the
- * head-of-root rules' business, and one stalled in another process must not stop the sync behind it.
+ * head-of-root rules' business, and one stalled in another process must not stop the sync behind it. A write queued
+ * behind an earlier queued write that waits on a sync row naming its page cannot go first either (a write never passes
+ * an earlier one), so it holds back nothing: counting it held back the very sync row the earlier write waited on, and
+ * the three rows waited on each other with no foreground commit left to earn the sync side a head.
  */
 const FOREGROUND_WAITING_ON = (nonce: string, seen: string, worktree = 'TRUE') => `SELECT f.worktree_id, f.sequence FROM persistence_requests f
     WHERE ${worktree} AND (f.state IN ('queued','running','recovering') OR ${RELEASED_DEFERRED('f')}) AND (f.state<>'running' OR (NOT f.publication_started
@@ -781,6 +784,10 @@ const FOREGROUND_WAITING_ON = (nonce: string, seen: string, worktree = 'TRUE') =
     AND f.recovery IS NULL AND NOT ${SYNC_KIND('f')}
     AND NOT EXISTS (SELECT 1 FROM persistence_requests named WHERE named.worktree_id=f.worktree_id AND named.sequence<f.sequence
       AND named.state IN ('queued','running','recovering') AND ${SYNC_KIND('named')} AND ${NAMES_PAGE('named', 'f')})
+    AND NOT EXISTS (SELECT 1 FROM persistence_requests ahead WHERE ahead.worktree_id=f.worktree_id AND ahead.sequence<f.sequence
+      AND ahead.state='queued' AND NOT ${SYNC_KIND('ahead')}
+      AND EXISTS (SELECT 1 FROM persistence_requests named WHERE named.worktree_id=ahead.worktree_id AND named.sequence<ahead.sequence
+        AND named.state IN ('queued','running','recovering') AND ${SYNC_KIND('named')} AND ${NAMES_PAGE('named', 'ahead')}))
     AND NOT EXISTS (SELECT 1 FROM persistence_requests c WHERE c.sequence>COALESCE(${seen},0) AND c.worktree_id=f.worktree_id
       AND c.state='committed' AND NOT ${SYNC_KIND('c')})`;
 
