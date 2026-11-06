@@ -15,6 +15,7 @@ import { OperationError } from '../ops/contract.ts';
 import { authorizeWrite } from './authority.ts';
 import type { BrainEngine } from '../engine.ts';
 import { completeWrite } from './journal.ts';
+import { declarePersistenceProtocol } from './protocol.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 
 const GIT_ENV = { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never', LC_ALL: 'C', GIT_OPTIONAL_LOCKS: '0' };
@@ -72,23 +73,30 @@ export async function deferredReplayRefusal(engine: SqlEngine, row: WriteRequest
 
 export const REFRESH_BARRIER_MAX_WAIT_KEY = 'persistence.refresh_barrier_max_wait_ms';
 export const REFRESH_BARRIER_MAX_WAIT_MS = 15 * 60_000;
+/** The wait limit in ms: the configured value when it is a positive integer, else the default. */
+const MAX_WAIT_SQL = `COALESCE((SELECT CASE WHEN value ~ '^[1-9][0-9]{0,14}$' THEN value::double precision END FROM config WHERE key='${REFRESH_BARRIER_MAX_WAIT_KEY}'), ${REFRESH_BARRIER_MAX_WAIT_MS})`;
+const overdueDeferredFrom = (host: string, maxWait: string) => `JOIN persistence_worktrees w ON w.id=r.worktree_id
+    JOIN persistence_worktree_refreshes f ON f.id=r.deferred_refresh_id
+    WHERE w.owner_host_id=${host}::uuid AND r.state='deferred' AND f.released_at IS NULL AND r.created_at<now()-(${maxWait}*interval '1 millisecond')`;
+/** The owner's idle probe counts an overdue deferred write as work, so its expiry runs even when nothing else is queued. */
+export const overdueDeferredWorkSql = (host: string) => `EXISTS (SELECT 1 FROM persistence_requests r ${overdueDeferredFrom(host, MAX_WAIT_SQL)})`;
 
 /**
  * The owner's housekeeping: a deferred write whose refresh is still unreleased past the wait limit ends failed with
- * `refresh_barrier_expired` (nothing applied, counters released). The refresh row is locked first (lock order: worktree,
- * refresh, counters, request), so an expiry and the release that would make the row claimable never both win.
+ * `refresh_barrier_expired` (nothing applied, counters released). The transaction declares the persistence protocol (the
+ * brain row FOR SHARE) before it locks the refresh row, the order fenceAndMerge takes them in (brain FOR UPDATE, then the
+ * refresh), so an expiry overlapping a fence waits instead of deadlocking; with the refresh row locked, an expiry and
+ * the release that would make the row claimable never both win.
  */
 export async function expireDeferredWrites(engine: BrainEngine, hostId: string, signal?: AbortSignal): Promise<WriteRequest[]> {
-  const [config] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [REFRESH_BARRIER_MAX_WAIT_KEY], { signal });
-  const configured = Number(config?.value);
-  const maxWaitMs = Number.isSafeInteger(configured) && configured > 0 ? configured : REFRESH_BARRIER_MAX_WAIT_MS;
-  const expired = await engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
-    JOIN persistence_worktrees w ON w.id=r.worktree_id JOIN persistence_worktree_refreshes f ON f.id=r.deferred_refresh_id
-    WHERE w.owner_host_id=$1::uuid AND r.state='deferred' AND f.released_at IS NULL
-      AND r.created_at<now()-($2::double precision*interval '1 millisecond') ORDER BY r.sequence LIMIT 100`, [hostId, maxWaitMs], { signal });
+  const [config] = await engine.executeRaw<{ ms: number }>(`SELECT ${MAX_WAIT_SQL} AS ms`, undefined, { signal });
+  const maxWaitMs = Number(config?.ms ?? REFRESH_BARRIER_MAX_WAIT_MS);
+  const expired = await engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r ${overdueDeferredFrom('$1', '$2::double precision')}
+    ORDER BY r.sequence LIMIT 100`, [hostId, maxWaitMs], { signal });
   const finished: WriteRequest[] = [];
   for (const row of expired) {
     const done = await engine.transaction(async tx => {
+      await declarePersistenceProtocol(tx);
       const [held] = await tx.executeRaw('SELECT 1 FROM persistence_worktree_refreshes WHERE id=$1::uuid AND released_at IS NULL FOR NO KEY UPDATE', [row.deferred_refresh_id]);
       if (!held) return null;
       return completeWrite(tx, row, 'failed', {}, { code: 'refresh_barrier_expired',

@@ -12,7 +12,7 @@
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { run as runUpgradeCommand } from '../src/cli/commands/upgrade.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
@@ -20,17 +20,23 @@ import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-f
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { disposePersistenceConsumer, waitForWrite } from '../src/core/persistence/service.ts';
+import { disposePersistenceConsumer, preparePersistedMutation, waitForWrite } from '../src/core/persistence/service.ts';
+import { PersistenceConsumer } from '../src/core/persistence/consumer.ts';
+import { settleTopologyRequests, topologyPrincipal } from '../src/core/persistence/topology-locks.ts';
+import { pendingReceiptOf, writeErrorExitCode } from '../src/core/persistence/write-wait.ts';
+import { PENDING_WRITE_EXIT_CODE } from '../src/core/exit-codes.ts';
+import { OperationError } from '../src/core/ops/contract.ts';
 import { refreshWorktree } from '../src/core/persistence/worktree-refresh.ts';
 import { getWriteRequestById } from '../src/core/persistence/journal.ts';
 import { resetWriteSwitches } from '../src/core/persistence/switches.ts';
 import { _setRefreshFenceWaitForTests } from '../src/core/persistence/admission-retry.ts';
 import { _resetRefreshBarrierCacheForTests, deferredBacklog, expireDeferredWrites } from '../src/core/persistence/refresh-barrier.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
+import { quarantineSharedSkillRestore } from '../src/core/shared-skills/restore.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
+import { git, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
@@ -188,6 +194,64 @@ test('a deferred write past the wait limit ends refresh_barrier_expired and rele
   expect((await refresh).status).toBe('completed');
 }), 180_000);
 
+test('a shared-skill restore cancels a deferred write too and releases its counters (restore is PGLite-only)', () => each(async f => {
+  if (f.engine.kind !== 'pglite') return;
+  let deferred!: WriteRequest;
+  const refresh = await duringRefresh(f, async () => {
+    const before = await outstanding(f);
+    const out = await call(f, 'put_page', { slug: 'notes/restored', content: page('Restored', 'deferred before the restore') });
+    deferred = await requestRow(f, out.body.request_id);
+    expect(deferred.state).toBe('deferred');
+    expect(await outstanding(f)).toBe(before + 1);
+    const rolledBack = new Error('roll the restore back');
+    await f.engine.transaction(async tx => {
+      await quarantineSharedSkillRestore(tx, randomUUID());
+      const [row] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [deferred.id]);
+      expect(row).toMatchObject({ state: 'cancelled', error_code: 'restore_new_brain' });
+      const [counter] = await tx.executeRaw<{ n: number }>("SELECT outstanding_count::int AS n FROM persistence_counters WHERE key='brain'");
+      expect(Number(counter!.n)).toBe(before);
+      throw rolledBack;
+    }).catch(error => { if (error !== rolledBack) throw error; });
+  });
+  expect((await refresh).status).toBe('completed');
+  expect((await settle(f, deferred)).state).toBe('committed');
+}), 180_000);
+
+test('an expiry that overlaps a fence waits on the brain row instead of deadlocking with it (Postgres)', () => each(async f => {
+  if (f.engine.kind !== 'postgres') return;
+  const refresh = await duringRefresh(f, async () => {
+    const out = await call(f, 'put_page', { slug: 'notes/expiry-order', content: page('Expiry order', 'body') });
+    const deferred = await requestRow(f, out.body.request_id);
+    expect(deferred.state).toBe('deferred');
+    await f.engine.executeRaw("INSERT INTO config(key,value) VALUES('persistence.refresh_barrier_max_wait_ms','1') ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value");
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const [{ owner }] = await f.engine.executeRaw<{ owner: string }>('SELECT owner_host_id::text AS owner FROM persistence_worktrees WHERE id=$1::uuid', [f.worktreeId]);
+    let holding!: () => void; const held = new Promise<void>(resolve => { holding = resolve; });
+    let waiting!: () => void; const expiryWaits = new Promise<void>(resolve => { waiting = resolve; });
+    // fenceAndMerge's order: the brain row FOR UPDATE, then the refresh row.
+    const fence = f.engine.transaction(async tx => {
+      await tx.executeRaw("SELECT set_config('lock_timeout','10s',true)");
+      await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+      holding();
+      await expiryWaits;
+      await tx.executeRaw('SELECT 1 FROM persistence_worktree_refreshes WHERE id=$1::uuid FOR NO KEY UPDATE', [deferred.deferred_refresh_id]);
+    });
+    await held;
+    const expiry = expireDeferredWrites(f.engine, owner);
+    for (let i = 0; i < 400; i++) {
+      const [w] = await f.engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'");
+      if (Number(w!.n) > 0) break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    waiting();
+    const [fenced, expired] = await Promise.allSettled([fence, expiry]);
+    await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
+    expect(fenced.status === 'rejected' ? String(fenced.reason) : 'fence committed').toBe('fence committed');
+    expect(expired.status === 'fulfilled' ? expired.value.map(row => row.id) : String(expired.reason)).toEqual([deferred.id]);
+  });
+  expect((await refresh).status).toBe('completed');
+}), 180_000);
+
 test('a live consumer without the capability keeps the refusal; a repo-less source is never deferred', () => each(async f => {
   const refresh = await duringRefresh(f, async () => {
     const repoLess = await call(f, 'put_page', { slug: 'notes/repo-less', content: page('Repo-less', 'database only') }, 'default');
@@ -339,4 +403,95 @@ test('with the barrier off a write during a refresh is still refused worktree_re
     });
     expect((await refresh).status).toBe('completed');
   });
+}), 180_000);
+
+test('the owner socket answers a deferred write as write_pending, so its CLI exits 10 and polls', () => each(async f => {
+  const refresh = await duringRefresh(f, async () => {
+    const result = await dispatchToolCall(f.engine, 'put_page', { slug: 'notes/socket', content: page('Socket', 'deferred over the owner socket') },
+      { remote: false, sourceId: f.alpha, admissionOrigin: 'interactive', pendingAsError: true });
+    expect(result.isError).toBe(true);
+    const body = JSON.parse(result.content[0]!.text) as Record<string, any>;
+    const error = Object.assign(new OperationError(body.error, body.message), { writeRequest: body.write_request, writeError: body.write_error });
+    expect(pendingReceiptOf(error)?.request_id).toBe(body.write_request.request_id);
+    expect(writeErrorExitCode(error, false)).toBe(PENDING_WRITE_EXIT_CODE);
+    expect((await requestRow(f, body.write_request.request_id)).state).toBe('deferred');
+  });
+  expect((await refresh).status).toBe('completed');
+}), 180_000);
+
+test('an overdue deferred write expires on an idle owner tick when nothing else is queued', () => each(async f => {
+  const refresh = await duringRefresh(f, async () => {
+    const out = await call(f, 'put_page', { slug: 'notes/idle-expiry', content: page('Idle', 'body') });
+    const deferred = await requestRow(f, out.body.request_id);
+    const consumer = new PersistenceConsumer(f.engine, { engine: f.engine.kind } as never, preparePersistedMutation);
+    await consumer.tick();
+    expect((await getWriteRequestById(f.engine, deferred.id))!.state).toBe('deferred');
+    await f.engine.executeRaw("INSERT INTO config(key,value) VALUES('persistence.refresh_barrier_max_wait_ms','1') ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value");
+    try {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      await consumer.tick();
+      expect(await getWriteRequestById(f.engine, deferred.id)).toMatchObject({ state: 'failed', error_code: 'refresh_barrier_expired' });
+    } finally {
+      await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
+      await consumer.stop();
+    }
+  });
+  expect((await refresh).status).toBe('completed');
+}), 180_000);
+
+test('a deferred edit_page of a page the refresh changed ends revision_conflict and leaves the refreshed file', () => each(async f => {
+  f.push('alpha/people/alice-example.md', PERSON);
+  expect((await refreshWorktree(f.engine, f.alpha)).status).toBe('completed');
+  const upstream = PERSON.replace('Alice is a person.', 'Alice is a person who moved.');
+  const read = await call(f, 'get_page', { slug: 'people/alice-example', include_content: true });
+  expect(typeof read.body.revision).toBe('string');
+  let deferred!: WriteRequest;
+  const refresh = await duringRefresh(f, async () => {
+    const out = await call(f, 'edit_page', { slug: 'people/alice-example', expected_revision: read.body.revision,
+      edits: [{ old_text: 'Alice is a person.', new_text: 'Alice is a person who stayed.' }] });
+    expect(out.isError).toBe(false);
+    expect(out.body.status).toBe('pending');
+    deferred = await requestRow(f, out.body.request_id);
+    expect(deferred.state).toBe('deferred');
+  }, ['alpha/people/alice-example.md', upstream]);
+  expect((await refresh).status).toBe('completed');
+  expect(await settle(f, deferred)).toMatchObject({ state: 'conflict', error_code: 'revision_conflict' });
+  expect(readFileSync(join(f.root, 'alpha/people/alice-example.md'), 'utf8')).toBe(upstream);
+}), 180_000);
+
+test('a deferred forget on a page the refresh changed ends revision_conflict and the fact stays active', () => each(async f => {
+  f.push('alpha/people/alice-example.md', PERSON);
+  expect((await refreshWorktree(f.engine, f.alpha)).status).toBe('completed');
+  const remembered = await call(f, 'remember', { fact: 'alice-example likes coffee', entity: 'people/alice-example', provenance: 'test' });
+  expect(remembered.isError).toBe(false);
+  const [fact] = await f.engine.executeRaw<{ id: number }>("SELECT id FROM facts WHERE fact LIKE '%likes coffee%' AND expired_at IS NULL");
+  expect(fact).toBeDefined();
+  git(f.root, 'add', '-A'); git(f.root, 'commit', '-q', '-m', 'the remembered fact'); git(f.root, 'push', '-q', 'origin', 'main');
+  git(f.upstream, 'pull', '-q', '--ff-only', 'origin', 'main');
+  let deferred!: WriteRequest;
+  const refresh = await duringRefresh(f, async () => {
+    const out = await call(f, 'forget', { id: String(fact!.id) });
+    expect(out.isError).toBe(false);
+    expect(out.body.status).toBe('pending');
+    deferred = await requestRow(f, out.body.request_id);
+    expect(deferred.state).toBe('deferred');
+  }, ['alpha/people/alice-example.md', readFileSync(join(f.root, 'alpha/people/alice-example.md'), 'utf8').replace('Alice is a person.', 'Alice is a person who moved.')]);
+  expect((await refresh).status).toBe('completed');
+  expect(await settle(f, deferred)).toMatchObject({ state: 'conflict', error_code: 'revision_conflict' });
+  const [{ n }] = await f.engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM facts WHERE id=$1 AND expired_at IS NULL', [fact!.id]);
+  expect(Number(n)).toBe(1);
+}), 180_000);
+
+test('a source lifecycle change while a deferred write waits ends it source_changed and releases its counters', () => each(async f => {
+  const refresh = await duringRefresh(f, async () => {
+    const before = await outstanding(f);
+    const out = await call(f, 'put_page', { slug: 'notes/topology', content: page('Topology', 'body') });
+    const deferred = await requestRow(f, out.body.request_id);
+    expect(await outstanding(f)).toBe(before + 1);
+    const principal = await topologyPrincipal(f.engine);
+    expect(await f.engine.transaction(tx => settleTopologyRequests(tx, [f.alpha], [f.worktreeId], principal))).toBe(1);
+    expect(await getWriteRequestById(f.engine, deferred.id)).toMatchObject({ state: 'conflict', error_code: 'source_changed' });
+    expect(await outstanding(f)).toBe(before);
+  });
+  expect((await refresh).status).toBe('completed');
 }), 180_000);

@@ -29,18 +29,21 @@ export const GUARD_BYPASS_ENV = 'GBRAIN_COMMIT_GUARD';
 export const GUARD_ENFORCE_MARKER = '# mode: enforce (managed worktree: only its owner commits; cherry-pick, revert, rebase and sequencer commits are refused too)';
 export type GuardMode = 'default' | 'enforce';
 
-export function renderGuardHook(mode: GuardMode = 'default'): string {
-  const enforce = mode === 'enforce';
+/** No mode: the shared-checkout guard of `gbrain git guard`. A mode: the owner-path guard of `gbrain sources guard`. */
+export function renderGuardHook(owner?: GuardMode): string {
+  const enforce = owner === 'enforce';
   return `#!/usr/bin/env bash
 ${GUARD_BANNER}
 ${enforce ? `${GUARD_ENFORCE_MARKER}
-# LOCAL + untracked: installed by gbrain sources guard <source> --install --mode enforce, removed by --uninstall.` : '# LOCAL + untracked: installed by gbrain git guard --install, removed by --uninstall.'}
+# LOCAL + untracked: installed by gbrain sources guard <source> --install --mode enforce, removed by --uninstall.`
+    : owner ? '# LOCAL + untracked: installed by gbrain sources guard <source> --install, removed by --uninstall.'
+    : '# LOCAL + untracked: installed by gbrain git guard --install, removed by --uninstall.'}
 # Refuses commits in this shared brain checkout (--no-verify included) that did not come
 # through gbrain git commit-push or gbrain's own page writes, which hold the commit lock.
 # A person can bypass it for one command: ${GUARD_BYPASS_ENV}=off git <command>
 [ "\${${GUARD_BYPASS_ENV}:-}" = off ] && exit 0
 [ "\${2:-}" = merge ] && exit 0
-${enforce ? `# git worktree add copies config.worktree, so a worktree added after the install inherits this hooks path: only the owner worktree is guarded.
+${owner ? `# git worktree add copies config.worktree, so a worktree added after the install inherits this hooks path: only the owner worktree is guarded.
 [ "$(cd "$(git rev-parse --absolute-git-dir)" && pwd -P)" = "$(cd "$(dirname "$0")/.." && pwd -P)" ] || exit 0
 ` : ''}for _op in ${enforce ? 'MERGE_HEAD' : 'MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply sequencer'}; do
   [ -e "$(git rev-parse --git-path "$_op")" ] && exit 0
@@ -169,7 +172,9 @@ export function ownerGuardStatus(worktree: string): OwnerGuardStatus {
  * Point only this worktree's core.hooksPath at a hooks directory inside its own git dir and write the guard there. With
  * linked worktrees present, extensions.worktreeConfig is enabled first (moving core.bare / core.worktree into the main
  * worktree's config.worktree, as git requires), so a sibling worktree keeps its own hooks. Refuses, changing nothing, on
- * git older than 2.31 or another tool's hook at the effective hooks path. The caller holds the worktree's writer lock.
+ * git older than 2.31 or another tool's hook at the effective hooks path. gbrain's own hooks there (the brain-durability
+ * post-commit hook decides whether Git effects commit and push) are copied along, so the switch silences none of them.
+ * The caller holds the worktree's writer lock.
  */
 export function installOwnerGuard(worktree: string, mode: GuardMode): OwnerGuardStatus & { changed: boolean } {
   const p = ownerPaths(worktree);
@@ -192,6 +197,14 @@ export function installOwnerGuard(worktree: string, mode: GuardMode): OwnerGuard
     changed = true;
   }
   if (p.effective !== p.own) {
+    for (const name of existsSync(p.effective) ? readdirSync(p.effective) : []) {
+      const from = join(p.effective, name), to = join(p.own, name);
+      if (name === GUARD_HOOK || name.endsWith('.sample') || !statSync(from).isFile()) continue;
+      const body = readFileSync(from, 'utf8');
+      if (!GBRAIN_HOOK.test(body) || (existsSync(to) && readFileSync(to, 'utf8') === body)) continue;
+      writeFileSync(to, body);
+      chmodSync(to, 0o755);
+    }
     if (!before.worktree_config) enableWorktreeConfig(p.root, p.common);
     gitMust(p.root, ['config', '--worktree', 'core.hooksPath', p.own]);
     changed = true;
