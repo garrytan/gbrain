@@ -2066,6 +2066,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "wakeshift": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "watch": {
         "hasSwitchCase": true,
         "phase": "post-connect",

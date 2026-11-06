@@ -5166,6 +5166,68 @@ Reasons: `noncanonical_value`, `not_kept`.
 
 More: [docs/guides/write-refusals.md#visibility_not_applied](../../docs/guides/write-refusals.md#visibility_not_applied)
 
+### wakeshift_key_invalid
+
+<a id="wakeshift_key_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Wakeshift key is missing, mistyped, in an older format, or in a key file other users can read, so reporting back was not turned on. | A Wakeshift key is an Ed25519 private key (wst_ followed by 50 base58 characters whose last four bytes are a checksum). gbrain reads it from WAKESHIFT_API_KEY or ~/.gbrain/wakeshift.key, which must be readable by its owner only; it never stores the key in the database or prints it. | Ask the user to create a key in their Wakeshift console and put it in ~/.gbrain/wakeshift.key (chmod 600) or WAKESHIFT_API_KEY in ~/.gbrain/.env, then run gbrain wakeshift enable again. | user | `repeat the read that failed` | 1 | no |
+
+Reasons: `format`, `checksum`, `legacy`, `file_too_open`, `missing`.
+
+More: [docs/guides/wakeshift.md#the-key](../../docs/guides/wakeshift.md#the-key)
+
+### wakeshift_needs_conversation
+
+<a id="wakeshift_needs_conversation"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| watch_job wakes an MCP conversation, and a local CLI run has none to wake. | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain jobs wait <id> to block until the job finishes. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/wakeshift.md#delivery-and-latency](../../docs/guides/wakeshift.md#delivery-and-latency)
+
+### wakeshift_not_enabled
+
+<a id="wakeshift_not_enabled"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Reporting back through Wakeshift is off on this brain (the owner has not run gbrain wakeshift enable, or the key is missing). | Wakeshift is off by default; only the brain owner turns it on, on the brain host, because it sends wake metadata to a third-party service. | Use wait_job (or gbrain jobs wait <id>) instead, or ask the brain owner to run gbrain wakeshift enable. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/wakeshift.md#turn-it-on](../../docs/guides/wakeshift.md#turn-it-on)
+
+### wakeshift_refused
+
+<a id="wakeshift_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Wakeshift refused the request; the reason carries its error code. Nothing was watched or sent. | Wakeshift checks each request (the signed key, the event and its arguments, the conversation's session key). A refusal other than a rate limit does not go away on retry. | Call wait_job to wait without Wakeshift; the brain owner can run gbrain wakeshift test to check the key and the app. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/wakeshift.md#troubleshooting](../../docs/guides/wakeshift.md#troubleshooting)
+
+### wakeshift_shared_brain
+
+<a id="wakeshift_shared_brain"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Reporting back refused (gbrain wakeshift enable, or watch_job after a member was added): this brain has live access members, and this release reports back only on brains that serve their owner alone. | Every member of the brain owner's Wakeshift organization can read the wakes it sends, and Wakeshift's terms make the operator pass its Connector Terms to each member. Shared brains get a terms step in a later release; until then reporting back stays off there. | Leave reporting back off on this brain; agents can use wait_job or gbrain jobs wait <id>. | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/wakeshift.md#who-it-is-for](../../docs/guides/wakeshift.md#who-it-is-for)
+
+### wakeshift_unavailable
+
+<a id="wakeshift_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Wakeshift could not be reached or answered with a server error or rate limit; nothing was watched. | gbrain makes one request with a 10 s timeout and never retries inside a tool call, so a slow or down Wakeshift never holds the call. | Retry in a minute, or call wait_job to wait without Wakeshift. | agent | `gbrain doctor --json` | 1 | yes |
+
+More: [docs/guides/wakeshift.md#troubleshooting](../../docs/guides/wakeshift.md#troubleshooting)
+
 ### withdrawal_capacity
 
 <a id="withdrawal_capacity"></a>

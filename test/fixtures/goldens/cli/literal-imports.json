@@ -225,6 +225,9 @@
       "waiting": [
         "./commands/loops.ts"
       ],
+      "wakeshift": [
+        "./commands/wakeshift.ts"
+      ],
       "watch": [
         "./commands/watch.ts"
       ],

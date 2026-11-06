@@ -10,6 +10,45 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.590.0] - 2026-11-06
+
+**A managed sync no longer stops for good when a write queues behind another write that waits on the sync, and the convergence nightly's kill loop tests only points a sync actually reaches.**
+
+A write queued behind an earlier write that waited on a sync row naming its page used to count as a write that could go first. That held back the very sync row the earlier write waited on, so the three rows waited on each other and nothing committed until the drain gave up, about an hour into the nightly run. The claim now skips such a write, so the sync row commits and both writes follow in order. The live `stalled Ns on queued` line also stops reporting a stall while the head keeps moving, for example while this process commits the in-flight writes of a serve that was killed.
+
+### Itemized changes
+
+- `src/core/persistence/journal.ts`: the FIFO claim no longer counts a write that sits behind an earlier queued write waiting on a sync row naming its page. That write can't go first anyway, because a write never passes an earlier one.
+- `src/core/persistence/sync-drain.ts`: the in-pass stall line counts an unclaimed head's age from when that head became the head, and never from before the drain's own last commit.
+- `src/core/persistence/sync-run.ts` and `fault-points.ts`: a new `sync:passed_over` fault point after the cursor step that passes over an entry whose file changed after admission. It does nothing without a test hook.
+- `test/sync-convergence.serial.test.ts`: the kill loop drops `sync:prescreened` and `sync:retry_deferred`, which only company sources reach since #6712 PR 4b, and kills at `sync:passed_over` and `sync:batch_entries` instead. A primed edit that the round's sync never froze is now reported by the "every planned fault fired" check, where it used to crash the harness on an empty commit.
+- `test/claim-fifo-foreground-waiting.test.ts` covers the chained write on PGLite and Postgres, and `test/sync-drain-claims.test.ts` covers a head that keeps moving.
+
+## [0.60.589.0] - 2026-11-06
+
+**gbrain can now wake an agent's conversation when a job it started finishes, through Wakeshift. It's off until the brain owner turns it on.**
+
+An agent that submits a long job no longer has to poll. With reporting back on, it calls `watch_job` with the job id and ends its turn. When the job completes, fails, dies or is cancelled, Wakeshift wakes that conversation with one line naming the job and the `get_job` call that reads the result. The wake is a pointer (the job id, kind, status and times), never page text, titles or slugs, so it can't widen what anyone reads. The owner turns it on with `gbrain wakeshift enable` on the brain host, using a key from their own Wakeshift app, and `gbrain wakeshift disable` turns it off at once. Until then nothing changes: the tools aren't listed, no rows are written and nothing is sent. This release reports back only on brains that serve their owner alone. `wait_job` and `gbrain jobs wait <id>` remain the way to wait with nothing leaving the machine. Guide: docs/guides/wakeshift.md.
+
+### Itemized changes
+
+- New MCP tools `watch_job`, `list_watches` and `unwatch`, listed only while reporting back is on and a usable key is on the host. `watch_job` runs the same owner check as `get_job`: a job the caller doesn't own reads like a missing one and nothing is sent. A watch belongs to the credential that made it, and a revoked credential's watch ends without a wake.
+- New `gbrain wakeshift enable | disable | status | test`. `enable` asks consent (it sends data off the machine and stores a credential), refuses a brain with live access members, checks the key with Wakeshift and publishes gbrain's `gbrain.job.finished` event. The key comes from `WAKESHIFT_API_KEY` or a 0600 `~/.gbrain/wakeshift.key`, and is never stored in the database or printed (status shows its fingerprint).
+- Delivery runs inside `gbrain serve` (stdio and HTTP) and the job worker every 5 seconds, and once more at the end of `gbrain jobs work`. A watch on a job that already finished wakes at once. A failed delivery is retried at most 5 times over about 40 minutes, then the watch ends and the conversation is told. Jobs are never slowed by Wakeshift.
+- New doctor check `wakeshift`: a key file other users can read, reporting back enabled without a usable key, and watches that died or were refused as `id_reused` in the last 7 days.
+- Schema migration v290 adds `wake_subscriptions` (empty unless reporting back is on). Repo-less brains get it unchanged.
+- `--log-full-params` on `gbrain serve --http` now redacts a tool call's `session_key` argument.
+
+## [0.60.588.0] - 2026-11-06
+
+**Engines that make their first write at the same moment no longer fail one of the writes registering the same writer.** Two or more engines opened from the same settings on one Postgres database (the same writer id, credential and lane), or two processes that share one credential file, could both find no registration and both insert it. The loser hit the credential's unique index and failed with `duplicate key value violates unique constraint "persistence_local_writers_credential_hash_key"`; four engines on a fresh database lost three of their four first writes. Registration is now idempotent under that race, and every refusal still holds. PGLite was never affected, because its single connection runs the read and the insert one after the other. Contributed by @bradgessler.
+
+### Itemized changes
+
+- `src/core/persistence/identity.ts`: the registration insert names no conflict target, so a conflict on either unique index (the id or the credential hash) does nothing. When nothing was inserted, the row under the id is read again and checked exactly as an existing row is. The same credential and lane pass, while a revoked row or another credential or lane under the id refuses `permission_denied`. No row under the id means the credential belongs to another registration, which now refuses `permission_denied` with a fix where it used to raise a raw 23505.
+- `test/e2e/engine-open-postgres.test.ts`: four engines opened from one writer value make their first writes at once, twelve rounds on a scratch database (master: `['23505','resolved','resolved','resolved']`). A second case forces the lost-insert branch and checks each refusal on Postgres.
+- `test/engine-open.test.ts`: the same lost-insert cases on PGLite, plus four concurrent first writes on one engine landing under one registration.
+
 ## [0.60.587.0] - 2026-11-06
 
 **An HTTP MCP caller can now say which AI made a write, and attribution reads show it.** Send `X-Gbrain-Agent-Label: Claude Code` (or `Codex`, or a job name) on a request, and the writes that request makes itself show `agent_label` in `gbrain attribution` / `get_write_attribution` and in `get_versions` for admin and local readers. This answers "which of my AIs wrote this?" when several share one OAuth client or token. The label is text the caller declares and gbrain does not verify. The principal is still who was authorized, and no grant, access rule or trust tier reads it. A request without the header is recorded exactly as before, so nothing changes until a caller sends it. Contributed by @JamisonMercurio (#8664).
