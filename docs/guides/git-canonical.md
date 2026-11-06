@@ -245,5 +245,6 @@ next write and sync pass.
 Explain any code offline with `gbrain errors <code>`. The ones specific to
 strict sources are `strict_requires_managed`, `git_home_required`,
 `git_private_commit_refused`, `git_lfs_not_enabled`, `git_protocol_required`,
-`git_detached_head`, `git_branch_unborn`, `git_conversion_blocked` and
+`git_detached_head`, `git_branch_unborn`, `git_conversion_blocked`,
+`git_conversion_delta`, `conversion_file_in_source_root` and
 `git_conversion_incomplete`.
