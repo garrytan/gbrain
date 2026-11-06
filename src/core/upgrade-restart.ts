@@ -33,7 +33,6 @@
  */
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { parseGlobalFlags } from './cli-options.ts';
-import { redactConnectionInfo } from './audit/redact-connection-info.ts';
 
 export type ProcessRole = 'serve' | 'autopilot' | 'supervisor' | 'worker' | 'mcp' | 'sync';
 
@@ -55,7 +54,7 @@ export interface HostProcess {
   /** The package directory of the gbrain install it was started from (realpath); null when unknown (a compiled binary). */
   install_root?: string | null;
   /** A worker with no gbrain process above it: the process that started it, which was not recognised as gbrain. */
-  unclassified_parent?: { pid: number; command: string };
+  unclassified_parent?: { pid: number; executable: string };
 }
 
 export interface ProcessTableRow { pid: number; ppid: number; command: string; started_ms: number | null; gbrain_home: string | null | undefined; cwd?: string | null }
@@ -181,7 +180,7 @@ export async function collectHostProcesses(sources: ProcessSources): Promise<Hos
   for (const p of byPid.values()) {
     p.ppid = p.ancestors?.find(pid => byPid.has(pid)) ?? null;
     const launcher = p.role === 'worker' && p.ppid === null && p.ancestors?.[0] !== undefined ? rows.get(p.ancestors[0]) : undefined;
-    if (launcher) p.unclassified_parent = { pid: launcher.pid, command: launcher.command };
+    if (launcher) p.unclassified_parent = { pid: launcher.pid, executable: basename(launcher.command.trim().split(/\s+/)[0]!) };
   }
   return [...byPid.values()].sort((a, b) => a.pid - b.pid);
 }
@@ -305,7 +304,7 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
       case 'worker':
         if (parent?.role === 'supervisor' && parent.args) supervisors.set(parent.pid, [...(supervisors.get(parent.pid) ?? []), p.pid]);
         else if (parent?.role === 'autopilot' && runsUnder(parent, ctx.autopilotService)) addService('autopilot', parent.pid);
-        else kill(p, `${label(p)} is not run by a jobs supervisor this restart can relaunch${parent?.role === 'autopilot' ? ' (its autopilot runs under no installed service)' : ''}${p.unclassified_parent ? ` (its parent, pid ${p.unclassified_parent.pid} (\`${redactConnectionInfo(p.unclassified_parent.command)}\`), is not a process this restart recognises as gbrain)` : ''}: stop it (\`kill ${p.pid}\`, SIGTERM drains its jobs) and start \`gbrain jobs work\` again the way it was launched, or run workers under \`gbrain jobs supervisor start --detach\`.`);
+        else kill(p, `${label(p)} is not run by a jobs supervisor this restart can relaunch${parent?.role === 'autopilot' ? ' (its autopilot runs under no installed service)' : ''}${p.unclassified_parent ? ` (its parent, pid ${p.unclassified_parent.pid} (\`${p.unclassified_parent.executable}\`), is not a process this restart recognises as gbrain)` : ''}: stop it (\`kill ${p.pid}\`, SIGTERM drains its jobs) and start \`gbrain jobs work\` again the way it was launched, or run workers under \`gbrain jobs supervisor start --detach\`.`);
         break;
       case 'mcp':
         if (ctx.stopMcp && p.args) stops.push({ kind: 'stop', role: 'mcp', pid: p.pid, started_ms: p.started_ms });

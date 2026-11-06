@@ -110,8 +110,9 @@ describe('gbrainEntry (#8723)', () => {
     expect(plan.steps).toEqual([{ kind: 'supervisor', pid: 20, workers: [21], ...supervisorRestartArgv(['jobs', 'supervisor', '--queue', 'default']) }]);
   });
 
-  test('a worker whose parent cannot be classified is refused with that parent\'s pid and command line', async () => {
+  test('a worker whose parent cannot be classified is refused with that parent\'s pid and executable, never its command line', async () => {
     const databaseUrl = ['postgres://alice-example', 'hunter2'].join(':') + '@db.example:5432/brain';
+    const apiKey = ['sk-ant-api03', 'EXAMPLEONLY0123456789'].join('-');
     const processes = await collectHostProcesses({
       heartbeats: async () => [], workers: () => [], supervisor: () => null, home: HOME, exclude: [], packageName,
       processTable: () => [
@@ -119,13 +120,19 @@ describe('gbrainEntry (#8723)', () => {
         { pid: 30, ppid: 1, command: `sh -c DATABASE_URL=${databaseUrl} bun run src/cli.ts jobs supervisor`, started_ms: 600, gbrain_home: HOME, cwd: null },
         { pid: 31, ppid: 30, command: `bun ${CHECKOUT}/src/cli.ts jobs work`, started_ms: 700, gbrain_home: HOME, cwd: null },
         { pid: 21, ppid: 20, command: `bun ${CHECKOUT}/src/cli.ts jobs work`, started_ms: 700, gbrain_home: HOME, cwd: null },
+        { pid: 40, ppid: 1, command: `timeout 3600 env ANTHROPIC_API_KEY=${apiKey} gbrain jobs work`, started_ms: 600, gbrain_home: HOME, cwd: null },
+        { pid: 41, ppid: 40, command: 'gbrain jobs work', started_ms: 700, gbrain_home: HOME, cwd: null },
       ],
     });
-    expect(processes.map(p => [p.pid, p.role])).toEqual([[21, 'worker'], [31, 'worker']]);
-    const [manual, redacted] = planRestart(processes, ctx()).manual;
-    expect(manual!.instruction).toContain('its parent, pid 20 (`bun run src/cli.ts jobs supervisor`), is not a process this restart recognises as gbrain');
-    expect(redacted!.instruction).toContain('its parent, pid 30 (');
-    expect(redacted!.instruction).not.toContain('hunter2');
+    expect(processes.map(p => [p.pid, p.role])).toEqual([[21, 'worker'], [31, 'worker'], [41, 'worker']]);
+    const plan = planRestart(processes, ctx());
+    const [manual, shell, wrapper] = plan.manual;
+    expect(manual!.instruction).toContain('its parent, pid 20 (`bun`), is not a process this restart recognises as gbrain');
+    expect(shell!.instruction).toContain('its parent, pid 30 (`sh`), is not a process');
+    expect(wrapper!.instruction).toContain('its parent, pid 40 (`timeout`), is not a process');
+    const printed = JSON.stringify({ processes, plan });
+    expect(printed).not.toContain('hunter2');
+    expect(printed).not.toContain(apiKey);
   });
 });
 
