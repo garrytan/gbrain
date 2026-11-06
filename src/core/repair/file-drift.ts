@@ -519,7 +519,7 @@ export async function prepareDriftPage(engine: BrainEngine, sourceId: string, sl
   await assertReconcileSize(engine, preview);
   // The apply reads this preview back from the artifact file and refuses one its validation rejects; refuse it here instead.
   try { validateReconcileArtifact(JSON.parse(stableJson(preview))); } catch (error) {
-    if (error instanceof OperationError && !error.fix) error.fix = readFix(`gbrain wrote a reconcile preview of ${slug} that its own apply refuses, so nothing was approved or written; report it with the output of gbrain doctor --json.`, {});
+    if (error instanceof OperationError && !error.fix) error.fix = readFix(`gbrain wrote a reconcile preview of ${slug} that its own apply refuses, so nothing was approved or written; report it with the output of gbrain doctor --json (the command in fix).`, { argv: ['gbrain', 'doctor', '--json'] });
     throw error;
   }
   return { slug, prefer, adopt_slug_path: adopt, exceptions: driftExceptions(prepared.result, prefer === 'file' ? file : database), result: prepared.result, preview,
@@ -688,7 +688,7 @@ async function applyDeletedSide(ctx: OperationContext, page: ApprovedPage, artif
     const changed = ['changed_since_preview', 'revision_conflict', 'page_identity_changed', 'page_not_found', 'source_changed'].includes(error.code);
     return { applied: false, outcome: changed ? 'changed_since_preview' : 'refused', reason: error.code,
       detail: { request_id: requestId, action, message: error.message, fix: error.fix ?? repreviewFix(page, 'detach_page' in artifact
-        ? ['gbrain', 'repair', 'file-drift', '--source', page.source_id, '--held', '--side', 'deleted', '--state', 'file_gone', '--provenance', 'never_committed', '--prefer', 'database']
+        ? ['gbrain', 'repair', 'file-drift', '--source', page.source_id, '--held', '--side', 'deleted', '--state', 'file_gone', '--provenance', 'never_committed', '--only', artifact.detach_page.path, '--prefer', 'database']
         : heldDriftPreviewArgv(page.source_id, 'deleted', ('remove_file' in artifact ? artifact.remove_file : artifact.import_file).state, artifact.prefer,
           ('remove_file' in artifact ? artifact.remove_file : artifact.import_file).path)) } };
   }

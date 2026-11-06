@@ -173,6 +173,7 @@ for (const backend of testBackends()) describe(`GST-1555 file wins on a segmente
     expect(row).toMatchObject({ item: 'default:notes/wide', class: 'refused' });
     expect(row!.detail).toStartWith('request_too_large: ');
     expect(row!.fix).toBeDefined();
+    expect(row!.fix!.argv).toEqual(['gbrain', 'doctor', '--json']);
     expect(preview.details!.pages).toEqual([]);
     expect(preview.affected).toBe(0);
   }, { databaseUrl }), 240_000);
