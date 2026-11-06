@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { failureSignature, parseArgs, readReport, skipReason } from '../../scripts/stress/run.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 const RUNNER = join(import.meta.dir, '..', '..', 'scripts', 'stress', 'run.ts');
 const dirs: string[] = [];
@@ -113,14 +114,9 @@ describe('test:stress runner', () => {
     expect(r.manifest.files[0]).toMatchObject({ status: 'not-stressed', reason: expect.stringContaining('owning pooled job in scripts/run-e2e.sh') });
   });
 
-  test('test/e2e/pgbouncer-teardown.test.ts is pooler-owned in this repository', () => {
-    const saved = process.env.GBRAIN_PGBOUNCER_URL;
-    delete process.env.GBRAIN_PGBOUNCER_URL;
-    try {
-      expect(skipReason('test/e2e/pgbouncer-teardown.test.ts')).toContain('PgBouncer fixture');
-    } finally {
-      if (saved !== undefined) process.env.GBRAIN_PGBOUNCER_URL = saved;
-    }
+  test('test/e2e/pgbouncer-teardown.test.ts is pooler-owned in this repository', async () => {
+    const reason = await withEnv({ GBRAIN_PGBOUNCER_URL: undefined }, () => skipReason('test/e2e/pgbouncer-teardown.test.ts'));
+    expect(reason).toContain('PgBouncer fixture');
   });
 
   test('a file that skips without an external Supavisor URL no CI job holds is not stressed', () => {
