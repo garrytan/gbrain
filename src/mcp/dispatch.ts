@@ -318,6 +318,8 @@ export interface DispatchOpts {
   isListed?: (op: OperationMeta) => Promise<boolean>;
   /** #5232: commit wait for coordinated writes (OperationContext.writeWaitMs); unset = agent default. */
   writeWaitMs?: number;
+  /** PR B: the owner socket answers a write deferred behind a refresh as the write_pending error, so its CLI exits 10 and polls. */
+  pendingAsError?: boolean;
   /** Large pages: the caller sent X-Gbrain-Client (OperationContext.thinClient). Shape only, never authority. */
   thinClient?: boolean;
   /** C1: search/query row shape chosen by the transport (OperationContext.resultRows); unset = lean for remote callers. */
@@ -565,11 +567,12 @@ function deferredPendingReceipt(parsed: unknown): WriteReceipt | null {
  * PR B (docs/designs/REFRESH_WRITE_BARRIER.md): a write deferred behind a worktree refresh was accepted and publishes after
  * it, so MCP answers it as a pending success instead of an error. Any other `write_pending` stays an error.
  */
-export function deferredWriteResult(e: unknown): Record<string, unknown> | null {
-  if (!(e instanceof OperationError) || (e.code !== 'write_pending' && e.writeError !== 'write_pending') || !e.writeRequest?.deferred) return null;
+export function deferredWriteResult(e: unknown, notices: Notice[], opts: DispatchOpts): ToolResult | null {
+  if (opts.pendingAsError || !(e instanceof OperationError) || (e.code !== 'write_pending' && e.writeError !== 'write_pending') || !e.writeRequest?.deferred) return null;
   const receipt = publicWriteReceipt(e.writeRequest);
-  return { status: 'pending', request_id: receipt.request_id, receipt, deferred: e.writeRequest.deferred,
-    next: { tool: 'get_write_request', arguments: { request_id: receipt.request_id }, cli: `gbrain write-request ${receipt.request_id}`, retry_after_ms: receipt.retry_after_ms } };
+  return toolResultWithNotices({ status: 'pending', request_id: receipt.request_id, receipt, deferred: e.writeRequest.deferred,
+    next: { tool: 'get_write_request', arguments: { request_id: receipt.request_id }, cli: `gbrain write-request ${receipt.request_id}`, retry_after_ms: receipt.retry_after_ms } },
+  admitNotices(notices, opts), dispatchRenderContext(opts));
 }
 
 /**
@@ -1373,7 +1376,6 @@ async function dispatchResolvedCall(
     // never tells a mutating op with an unknown outcome to retry.
     notices.push(...await sessionSafetyNotices(engine, opts, ctx.config));
     notices.push(...await grantBlockedNotices(engine, opts, refusedByGrant(e)));
-    const deferred = deferredWriteResult(e); if (deferred) return toolResultWithNotices(deferred, admitNotices(notices, opts), dispatchRenderContext(opts));
-    return errorResult(e, opts, { op: name, mutating: op.mutating === true, idempotent: op.idempotent === true, notices: admitNotices(notices, opts) });
+    return deferredWriteResult(e, notices, opts) ?? errorResult(e, opts, { op: name, mutating: op.mutating === true, idempotent: op.idempotent === true, notices: admitNotices(notices, opts) });
   }
 }

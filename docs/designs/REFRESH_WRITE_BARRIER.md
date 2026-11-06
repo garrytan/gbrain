@@ -175,7 +175,8 @@ refuses `worktree_refreshing` as today (retryable, `fix.next: wait`).
 
 **Age bound.** A deferred row whose refresh is still unreleased after
 `persistence.refresh_barrier_max_wait_ms` (default 15 minutes; a tick runs a few minutes) is finished
-`failed` with `refresh_barrier_expired` by the owner consumer's housekeeping turn, in one statement
+`failed` with `refresh_barrier_expired` by the owner consumer's housekeeping turn (its idle probe
+counts an overdue deferred row as work, so an otherwise idle owner still runs it), in one statement
 that rechecks `released_at IS NULL` and releases its counters. Nothing is applied; the producer
 resubmits with a new request id. If the owner host is down, nothing claims or expires rows; receipts
 stay pending and readable, as for any queued row on that host.
@@ -241,7 +242,9 @@ Deferred rows are durable rows; nothing about them lives in process memory.
 ### Surfaces
 
 - CLI write verbs: deferred → exit 10 with the receipt (`state: deferred`, `deferred`), `--json`
-  carries `outcome: pending`. `gbrain write-request <id>` shows the deferral until it drains.
+  carries `outcome: pending`. This holds on every CLI route: the owner socket asks dispatch for the
+  `write_pending` error (`pendingAsError`), and a thin client turns a `status: "pending"` success
+  into the same pending error. `gbrain write-request <id>` shows the deferral until it drains.
 - MCP: deferred → `isError: false`, `status: "pending"`; `requestLogStatusForResult` classifies a
   pending non-error result as `accepted_pending` (today it only reads pending from error results).
   Other `write_pending` results (an acknowledgement lost to the owner) are unchanged.
