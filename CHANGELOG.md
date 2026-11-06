@@ -10,6 +10,28 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**With the refresh write barrier on, a page write no longer bounces because a sync is running, and a `gbrain sources refresh` killed at any point recovers on its own or stops for an operator, never losing work.** The barrier is still off by default (`persistence.refresh_barrier`), and with it off writes behave as before. With it on, a `put_page`, `capture`, `remember` or `add_timeline_entry` whose page file holds a committed change managed sync has not imported yet is answered pending instead of refused `pending_import`, then prepared again once the import lands. A write during a refresh stuck in `recovery_required` waits too, and the per-refresh deferral cap is gone. Wherever `worktree_refreshing` still refuses, `retry_after_ms` is estimated from the refresh instead of a fixed second.
+
+### What changed
+
+| Situation (barrier on) | Before | Now |
+|---|---|---|
+| A page write onto a file with a committed change sync has not imported | refused `pending_import` | pending; lands after the import (a `put_page` with `expected_revision` ends `revision_conflict` when the import moved the page) |
+| A blind `put_page` that replaces imported content | n/a | lands and names the revision and commit it replaced in `supersedes`, a `gbrain-supersedes:` commit trailer and the commit ledger |
+| The import never lands within the wait limit of the hold | n/a | `pending_import_expired`, nothing applied; a `remember` ends as its `pending_import` refusal did and is replayed after the import |
+| A write during a refresh in `recovery_required` | refused `refresh_recovery_required` | waits behind the refresh and lands once it is resumed or abandoned |
+| Writes past `persistence.refresh_barrier_max_deferred` | refused | deferred; the setting is no longer read |
+| `retry_after_ms` on `worktree_refreshing` | always 1000 | the refresh's typical remaining time, at least 15 s while syncing and 2 s otherwise |
+
+### Itemized changes
+
+- Import holds (`src/core/persistence/import-deferral.ts`, journal claim, `refresh-barrier.ts`): the consumer moves its own claim back to `deferred` naming the last imported commit, and the row is claimable again once `sources.last_commit` moves. A later write to the same page never passes a held one, and expiry rechecks under the source lock that the import still has not landed. An idle owner counts an overdue hold as work, so expiry runs with nothing else queued. A hold happens only when every live consumer on the owner host advertises `refresh_barrier_import_1`; otherwise the write keeps the refusal. Schema migration v294 adds `persistence_requests.deferred_import_from` and widens the deferred-row guard.
+- Refresh crash recovery (`src/core/persistence/worktree-refresh.ts`): a refresh records `merge_started` in a committed transaction before `git merge --ff-only`. A refresh killed at `fenced` before its merge, whose HEAD then moved on its own line (gbrain commits from its drain, or anyone else's), aborts as `refresh_interrupted` instead of being recorded as merged. One whose HEAD reached the target records the merge. A started merge followed by a reset and an unrelated commit still stops at `recovery_required` for an operator.
+- Retry hint (`src/core/persistence/refresh-retry-hint.ts`): the median duration of the worktree's last completed refreshes minus how long this one has run, leaving out refreshes that waited in `recovery_required`. The message says the write was not saved and when to retry, and the CLI's human output ends with one line saying the same.
+- Tests on PGLite and Postgres: `test/import-write-barrier.test.ts` (every held operation, supersedes, expiry, the remember replay, the hold clock, the capability gate, the idle-owner expiry, recovery_required and same-page ordering), `test/refresh-retry-hint-gst1582.test.ts`, and the crash-recovery cases in `test/refresh-write-barrier.test.ts`. Design note: docs/designs/REFRESH_WRITE_BARRIER.md, "Writes that wait for an import" and "Crash recovery".
+
 ## [0.60.595.0] - 2026-11-06
 
 **A `memory_recall` that names sources reads as that scope, never as the attested person, so a shared turn can no longer recall one member's private facts into a shared channel.** `memory_recall` gains `source_id` and `source_ids`. Named, the read drops the person's own recent facts and every member-page fact, keeps restricted pages hidden and never relaxes `visibility: private`. The contract for it is the new `docs/contracts/qm-memory-provider/v2.json`; `v1.json` stays byte-identical and a test holds it there. Three smaller provider fixes ride along.
