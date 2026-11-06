@@ -90,6 +90,7 @@ describe('manifest and flip', () => {
     const replacement = segmentText('## Three, edited\nthree!\n');
     const staged = await stageGeneration(engine, { pageId: page.pageId, slug: 'notes/manifest-reads', genFrom: 2, texts: [replacement] });
     await engine.executeRaw('UPDATE page_body_manifest SET seq = 2 WHERE staging_id = $1::uuid', [staged.stagingId]);
+    await engine.executeRaw('UPDATE page_body_manifest SET byte_start = $2 WHERE staging_id = $1::uuid', [staged.stagingId, t[0]!.body.byteLength + t[1]!.body.byteLength]);
     expect((await engine.readManifest(page.pageId)).length).toBe(3);
     const stagedRows = await engine.readManifest(page.pageId, { stagingId: staged.stagingId });
     expect(stagedRows.map(r => r.occurrenceId)).toEqual(staged.occurrences);

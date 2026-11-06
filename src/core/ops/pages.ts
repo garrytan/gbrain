@@ -1,6 +1,6 @@
 import { funnelPassThrough } from '../funnel.ts';
 import { suffixedSlugDryRun } from '../persistence/suffixed-slug.ts';
-import { AGENT_CONTENT_PARAMS, PAGE_MUTATION_PARAMS, CAPTURE_EVENT_PARAMS, CAPTURE_CLI_PROVENANCE_PARAMS, WRITE_WAIT_PARAM } from '../persistence/params.ts';
+import { AGENT_CONTENT_PARAMS, PAGE_MUTATION_PARAMS, CAPTURE_EVENT_PARAMS, CAPTURE_CLI_PROVENANCE_PARAMS, REASON_PARAM, WRITE_WAIT_PARAM } from '../persistence/params.ts';
 import { assertPurgeParams } from '../persistence/purge-params.ts';
 /**
  * Page CRUD operation cluster — pure move from operations.ts (v0.46.x
@@ -22,6 +22,8 @@ import { assertFullReadFits, bodyBytes, fetchWindowResult, GET_PAGE_BODY_PARAMS,
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { MIN_TRUST_PARAM } from '../eligibility/policy.ts';
 import { getPageKnownAsOf, KNOWN_AS_OF_PARAM } from './known-as-of.ts';
+import { AS_OF_PARAM, getPageAsOf } from './valid-time-read.ts';
+import { currentValidTime } from '../valid-time.ts';
 import { stampRowTrust } from '../eligibility/stamp.ts';
 import { quoteTimelineRows } from './timeline-quote.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
@@ -95,7 +97,7 @@ const get_page: Operation = {
   name: 'get_page',
   idempotent: true,
   outputRedaction: { exempt: 'explicit page read by slug/id; governed by page visibility, not output redaction (CEO-17 raw-read exception)' },
-  description: 'Read a page; `section`/`grep` reads one part. Pass at most one window selector: lines, bytes, around_chunk_id or cursor (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.',
+  description: 'Read a page; `section`/`grep` reads one part. Window selector order: cursor, around_chunk_id, lines, bytes (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.',
   params: {
     slug: { type: 'string', description: 'Page slug.', required: true },
     fuzzy: { type: 'boolean', description: 'Fuzzy match.', fullSurfaceOnly: true },
@@ -109,8 +111,10 @@ const get_page: Operation = {
     include_quarantined: { type: 'boolean', description: 'Admin: quarantined body.', fullSurfaceOnly: true },
     min_trust: MIN_TRUST_PARAM,
     known_as_of: KNOWN_AS_OF_PARAM,
+    as_of: AS_OF_PARAM,
   },
   handler: async (ctx, p) => {
+    if (p.as_of !== undefined) return getPageAsOf(ctx, p);
     if (p.known_as_of !== undefined) return getPageKnownAsOf(ctx, p);
     const slug = p.slug as string;
     const fuzzy = (p.fuzzy as boolean) || false;
@@ -232,13 +236,15 @@ const get_page: Operation = {
     unverifiedOriginNotice(ctx, page, readable.trust);
     const fenceHeld = (await (await import('../generations/fence.ts')).fenceHoldEntries(ctx.engine, [page.source_id], { slug: page.slug }).catch(() => [])).map(({ source_id: _s, slug: _g, ...hold }) => hold); const fileHeld = { ...(held ? { file_held: fileHeldField(held, isUntrustedReader) } : {}), ...(fenceHeld.length ? { fence_held: fenceHeld } : {}) };
     const segmented = isSegmentedPage(page);
+    // GBRA-217 (B7): a current page not in force today says so; a page with no valid_from / valid_until reads as before.
+    const validTime = currentValidTime(page.frontmatter as Record<string, unknown> | null);
     const pin = authorizedReadPin(ctx, page, snapshot!.bodyGeneration, p.min_trust, () => pageNotFoundError(ctx, slug, { includeDeleted, sourceIdParam }));
     const whole = bodyRequest.mode === 'full'
       || (bodyRequest.mode === 'auto' && !segmented && bodyBytes(visibleBody) <= await inlineBodyBytes(ctx));
     if (!whole) {
       const partial = await readPartialBody(ctx, { page, visibleBody, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, pin, quote: quotesBody(ctx, page, readable.trust), neutralize: neutralizesBody(ctx, page),
         extras: { ...(quarantined ? { quarantined } : {}), ...(timelineEntries ? { timeline_entries: timelineEntries } : {}), ...fileHeld,
-          ...(resolved_slug ? { resolved_slug } : {}), ...(content_flag ? { content_flag } : {}) } }, bodyRequest);
+          ...(resolved_slug ? { resolved_slug } : {}), ...(content_flag ? { content_flag } : {}), ...(validTime ? { valid_time: validTime } : {}) } }, bodyRequest);
       return lineGrammar ? { ...partial, line_grammar: lineGrammar } : partial;
     }
     if (segmented) throw await segmentedFullReadError(ctx, page, bodyRequest, { ...pin, revision: snapshot!.revision });
@@ -248,7 +254,8 @@ const get_page: Operation = {
       ...fileHeld,
     });
     if (ctx.remote !== false) await assertFullReadFits(ctx, visibleBody, projected, bodyRequest);
-    return lineGrammar ? { ...projected, line_grammar: lineGrammar } : projected;
+    const withValidTime = validTime ? { ...projected, valid_time: validTime } : projected;
+    return lineGrammar ? { ...withValidTime, line_grammar: lineGrammar } : withValidTime;
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'get', positional: ['slug'] },
@@ -345,7 +352,7 @@ const put_page: Operation = {
     allow_empty: { type: 'boolean', required: false, description: 'Allow an empty page.', fullSurfaceOnly: true },
     allow_shrink: { type: 'boolean', required: false, description: 'Allow content under half a >256 KB page. To add text use append_page, not a re-put; a page over one request goes by begin_page_upload.', fullSurfaceOnly: true },
     drop_timeline: { type: 'boolean', required: false, description: 'No Timeline in content: delete its entries.', fullSurfaceOnly: true },
-    wait_ms: WRITE_WAIT_PARAM,
+    wait_ms: WRITE_WAIT_PARAM, reason: REASON_PARAM,
     // v0.39.3.0 provenance write-through (WARN-8 + A1 + CV6). Optional fields
     // for trusted local callers (capture CLI, autopilot, dream cycle). Remote
     // MCP callers (ctx.remote !== false) have their values OVERRIDDEN with

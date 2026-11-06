@@ -25,12 +25,13 @@
  *
  * PGLite always; Postgres too when DATABASE_URL is set (test/e2e wrapper).
  */
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { deflateSync } from 'node:zlib';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
@@ -39,6 +40,7 @@ import { readGitHold, SYNC_IMPORT_PROVENANCE_OP, writeGitHold } from '../src/cor
 import { resolveRepairScope, type RepairKind } from '../src/core/repair/core.ts';
 import { EXPLICIT_REPAIR_REGISTRY, repairRunner } from '../src/core/repair/registry.ts';
 import { scanRowsBehind } from '../src/core/persistence/rows-behind.ts';
+import * as gitGap from '../src/core/persistence/git-gap.ts';
 import { rowsBehindEntry } from '../src/commands/doctor/checks/rows-behind.ts';
 import { categorizeCheck } from '../src/core/doctor-categories.ts';
 import { RECOVERY_VERSION } from '../src/core/markdown.ts';
@@ -245,10 +247,10 @@ for (const backend of testBackends()) describe(`[${backend}] #8071: rows behind 
     expect(full).toMatchObject({ complete: true, pages: 5, behind_count: 4, unproven_count: 1 });
     expect(full.unproven[0]!.digest).toBeDefined();
 
-    // A clock that passes the deadline on its eighth read (one before the batch, five before the comparisons, one before
-    // the first confirmation): the one batch of five rows must stop part way through, after one confirmed row.
+    // A clock that passes the deadline on its ninth read (one before the tree reads, one before the batch, five before the
+    // comparisons, one before the first confirmation): the one batch of five rows must stop part way through, after one confirmed row.
     let reads = 0;
-    const stopped = await scanRowsBehind(engine, 'default', { deadlineAt: 1, now: () => (reads++ < 7 ? 0 : 1) });
+    const stopped = await scanRowsBehind(engine, 'default', { deadlineAt: 1, now: () => (reads++ < 8 ? 0 : 1) });
     expect(stopped.complete).toBe(false);
     expect(stopped.pages).toBeGreaterThan(0);
     expect(stopped.pages).toBeLessThan(5);
@@ -267,6 +269,58 @@ for (const backend of testBackends()) describe(`[${backend}] #8071: rows behind 
     const partial = await withEnv({ GBRAIN_DOCTOR_ROWS_BEHIND_TIMEOUT_MS: '1' }, async () => { await new Promise(resolve => setTimeout(resolve, 5)); return doctor(engine); });
     expect(partial).toMatchObject({ status: 'ok', details: { sources: [{ complete: false }] } });
     expect(partial.message).toMatch(/stopped after \d+ page\(s\)/);
+  }, { databaseUrl, setup }), 240_000);
+
+  // Value: protects=#8093 item 1 (doctor's budget bounds a batch's reads: blobs are read and compared in byte-capped chunks, and none is read
+  // after the deadline; the per-source tree reads wait on the deadline too); fails_when=a batch reads every comparable blob in one call before
+  // its first deadline check, or a scan whose deadline passed still lists the trees; why_new=the deadline test above only stops between rows;
+  // seam=the last row's committed object is rewritten as a non-blob of the same size (the tree listing still sizes it; `cat-file --batch`
+  // cannot serve it as a blob), standing in for a read that must not happen, and batchBytes=1 makes each blob its own chunk; no_claim=peak memory,
+  // which this does not measure.
+  test('the deadline bounds a batch\'s blob reads: no chunk is read after it passes, and no tree is listed once it has passed', () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await seedBehind(engine, root, Object.fromEntries(SLUGS.map(slug => [slug, { content: note(slug, `The redacted body of ${slug}.`), record: 'checkpoint' as const }])));
+    const last = git(root, 'rev-parse', `HEAD:${SLUGS.at(-1)}.md`);
+    const object = join(root, '.git', 'objects', last.slice(0, 2), last.slice(2));
+    const payload = Buffer.from(git(root, 'cat-file', 'blob', last) + '\n');
+    rmSync(object);
+    writeFileSync(object, deflateSync(Buffer.concat([Buffer.from(`tree ${payload.length}\0`), payload])));
+    await expect(scanRowsBehind(engine, 'default')).rejects.toThrow('Git could not read committed files');
+    // Reads: before the tree reads, before the batch, before the first row's comparison; the second row's check passes the
+    // deadline (the first row, a differing one, then stops before its confirmation). The last row's chunk is never read.
+    let reads = 0;
+    const stopped = await scanRowsBehind(engine, 'default', { deadlineAt: 1, batchBytes: 1, now: () => (reads++ < 3 ? 0 : 1) });
+    expect(stopped).toMatchObject({ status: 'known', complete: false, pages: 0, stopped_at: (await pageOf(engine, SLUGS[0]!)).id });
+
+    await unguarded(engine, () => engine.executeRaw("UPDATE sources SET last_commit=$1 WHERE id='default'", ['f'.repeat(40)]).then(() => {}));
+    expect(await scanRowsBehind(engine, 'default', { deadlineAt: 1, now: () => 1 })).toMatchObject({ status: 'known', complete: false, pages: 0, head: null, stopped_at: null });
+  }, { databaseUrl, setup }), 240_000);
+
+  // Value: protects=#8093 item 1's keep cap bounds what a batch holds: a differing row keeps a copy of its bytes, so a kept blob never pins the
+  // cat-file chunk it was read in (readBlobs returns slices of one buffer per chunk); fails_when=the kept content is the chunk's own slice;
+  // why_new=the chunk test above checks reads, not what stays referenced; seam=readBlobs spied to zero every buffer it returned before its next
+  // call, standing in for the chunk being dropped, with batchBytes making each blob its own chunk and keeping only the first; no_claim=peak memory.
+  test('a kept row\'s bytes are its own copy: zeroing the chunk buffers they were read from leaves the confirmation unchanged', () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await seedBehind(engine, root, Object.fromEntries(SLUGS.map(slug => [slug, { content: note(slug, `The redacted body of ${slug}.`), record: 'checkpoint' as const }])));
+    const full = await scanRowsBehind(engine, 'default');
+    const size = Buffer.byteLength(note(SLUGS[0]!, `The redacted body of ${SLUGS[0]}.`));
+    const readBlobs = gitGap.readBlobs;
+    let returned: Buffer[] = [];
+    let calls = 0;
+    const spy = spyOn(gitGap, 'readBlobs').mockImplementation(async (...args: Parameters<typeof readBlobs>) => {
+      for (const buffer of returned) buffer.fill(0);
+      calls++;
+      const blobs = await readBlobs(...args);
+      returned = blobs ? [...blobs.values()] : [];
+      return blobs;
+    });
+    try {
+      const chunked = await scanRowsBehind(engine, 'default', { batchBytes: size + 1 });
+      expect(calls).toBeGreaterThan(SLUGS.length);
+      expect(chunked).toMatchObject({ complete: true, behind_count: full.behind_count, unproven_count: full.unproven_count });
+      expect(chunked.behind.map(row => [row.slug, row.digest])).toEqual(full.behind.map(row => [row.slug, row.digest]));
+    } finally { spy.mockRestore(); }
   }, { databaseUrl, setup }), 240_000);
 
   test('a hold row applies the refusal the apply computes, not the one saved with the preview', () => managedBrain(async ({ engine, root }) => {

@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 281,
+    "count": 284,
     "gaps": [
       17,
       18,
@@ -94,7 +94,7 @@
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 286,
+    "latest": 289,
     "records": [
       {
         "handler": {
@@ -2475,8 +2475,8 @@
         "idempotent": true,
         "name": "shared_brain_skills_and_membership",
         "sql": {
-          "length": 16604,
-          "sha256": "12f33fc2b93cd862226d9e1e9cfb3eaebc7c475aa18113645a6f9c175888b49b"
+          "length": 16717,
+          "sha256": "4f9db414ac3ee67d13a1d4d1e43325eedfc5c859b1f864552c0de76dc6dd686c"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -4648,6 +4648,45 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 286
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "multi_page_recovery_record",
+        "sql": {
+          "length": 2883,
+          "sha256": "6f30345b6cba2bdf0f1441c1f53509479d4726f96fdf2f24836efadee17008b6"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 287
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "decide_proposals_claim_pair_index",
+        "sql": {
+          "length": 450,
+          "sha256": "bf5ffae249862b1e7c1e5ea12f9238425d32b7394891c2540dddf0939437ee13"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 288
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "page_change_reasons",
+        "sql": {
+          "length": 798,
+          "sha256": "de2c9cb2f617e8d250b9e2b7cc786ed74f1fece1232b56e8073ded60e24bd5a3"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 289
       }
     ],
     "versions": [
@@ -4931,7 +4970,10 @@
       283,
       284,
       285,
-      286
+      286,
+      287,
+      288,
+      289
     ]
   },
   "normalizer": "migrations-record-v1"

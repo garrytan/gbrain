@@ -70,18 +70,40 @@ export function narrowOrFallbackTokens(tokens: OrTokenShare[], rows: number, cap
   return kept;
 }
 
+export interface OrTokenShareRow { token: string; lexemes: number; share: number | null; rows: number; analyzed: boolean }
+
+/** The statistics of an OR retry's tokens (orTokenSharesSql, one statement); [] when the read fails or the column was never analyzed. */
+export async function readOrTokenShares(
+  read: (sql: string, params: unknown[]) => Promise<OrTokenShareRow[]>,
+  query: string,
+  ftsLang: string,
+): Promise<OrTokenShareRow[]> {
+  const shares = await read(orTokenSharesSql(ftsLang), [orFallbackTokens(query)]).catch(() => [] as OrTokenShareRow[]);
+  return shares[0]?.analyzed ? shares : [];
+}
+
+/** The websearch text an OR retry should match, or null to match the full OR query (no statistics: every term). */
+export function narrowedOrFallbackText(shares: OrTokenShareRow[]): string | null {
+  if (!shares.length) return null;
+  const kept = narrowOrFallbackTokens(shares.map(r => ({ token: r.token, lexemes: Number(r.lexemes), share: r.share === null ? null : Number(r.share) })), Number(shares[0]!.rows));
+  return kept ? kept.join(' OR ') : null;
+}
+
 /**
- * The websearch text an OR retry of `query` should match, or null to match
- * the full OR query. `read` runs one statement; a failed statistics read
- * keeps every term.
+ * #7491: the tokens the statistics estimate to match more than `cap` chunks. The keyword
+ * arm's rare-word read skips them (it would read up to cap + 1 chunks only to find them
+ * common), so its cost on a large brain follows the rare words, not the question's length.
  */
+export function commonOrTokens(shares: OrTokenShareRow[], cap: number): Set<string> {
+  const rows = Number(shares[0]?.rows);
+  return new Set(shares.filter(s => s.share !== null && Number(s.share) * rows > cap).map(s => s.token));
+}
+
+/** The websearch text an OR retry of `query` should match, or null to match the full OR query. */
 export async function narrowedOrFallbackQuery(
-  read: (sql: string, params: unknown[]) => Promise<Array<{ token: string; lexemes: number; share: number | null; rows: number; analyzed: boolean }>>,
+  read: (sql: string, params: unknown[]) => Promise<OrTokenShareRow[]>,
   query: string,
   ftsLang: string,
 ): Promise<string | null> {
-  const shares = await read(orTokenSharesSql(ftsLang), [orFallbackTokens(query)]).catch(() => []);
-  if (!shares[0]?.analyzed) return null;
-  const kept = narrowOrFallbackTokens(shares.map(r => ({ token: r.token, lexemes: Number(r.lexemes), share: r.share === null ? null : Number(r.share) })), Number(shares[0].rows));
-  return kept ? kept.join(' OR ') : null;
+  return narrowedOrFallbackText(await readOrTokenShares(read, query, ftsLang));
 }

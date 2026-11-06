@@ -8,7 +8,7 @@ import type { Action } from '../agent-output.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots, withFilesystemPublication } from './filesystem-guard.ts';
-import { localHostId } from './identity.ts';
+import { hostIdFor } from './identity.ts';
 import { compactStoredManifest, worktreeManifest } from './ownership.ts';
 import { advanceTopology, lockTopologyPrincipal, settleTopologyRequests, topologyCanonicalStamp, withTopologyLocks } from './topology-locks.ts';
 import { withCoordinatedWrite } from './context.ts';
@@ -41,14 +41,14 @@ function matchesCloneStage(target:string,stage:string):boolean{
   const name=basename(stage),prefix=`.gbrain-clone-${basename(target)}-`;
   return name.startsWith(prefix)&&/^[a-f0-9-]{36}$/.test(name.slice(prefix.length));
 }
-function validateRecord(record:TopologyCloneRecovery):void{
-  if(record.version!==1||record.kind!=='clone'||record.ownerHostId!==localHostId()
+function validateRecord(engine:object,record:TopologyCloneRecovery):void{
+  if(record.version!==1||record.kind!=='clone'||record.ownerHostId!==hostIdFor(engine)
     ||dirname(record.stage)!==dirname(record.target)||dirname(record.aside)!==dirname(record.target)
     ||!matchesCloneStage(record.target,record.stage)
     ||!record.aside.startsWith(`${record.target}.gbrain-old-`)||!/[a-f0-9-]{36}$/.test(record.aside)
     ||canonicalFilesystemPath(record.target)!==record.target||canonicalFilesystemPath(record.stage)!==record.stage||canonicalFilesystemPath(record.aside)!==record.aside)
     throw retainedClone('The recorded clone paths no longer belong to this owner.',record,
-      `The recovery record names paths or an owner host that this host (${localHostId()}) cannot vouch for.`);
+      `The recovery record names paths or an owner host that this host (${hostIdFor(engine)}) cannot vouch for.`);
 }
 function treeHash(path:string,scope:'git'|'tree'):string|null{
   if(!existsSync(path))return null;
@@ -81,7 +81,7 @@ function removeOwnedStage(record:TopologyCloneRecovery):void{
 async function guard(tx:BrainEngine,row:TopologyChange,record:TopologyCloneRecovery):Promise<string[]>{
   await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
   const [owner]=await tx.executeRaw<{owner_host_id:string;owner_epoch:string;state:string}>('SELECT owner_host_id,owner_epoch,state FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE',[record.worktreeId]);
-  const [host]=await tx.executeRaw<{local_path:string}>('SELECT local_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid',[record.worktreeId,localHostId()]);
+  const [host]=await tx.executeRaw<{local_path:string}>('SELECT local_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid',[record.worktreeId,hostIdFor(tx)]);
   if(!owner||owner.owner_host_id!==record.ownerHostId||String(owner.owner_epoch)!==record.ownerEpoch||owner.state!=='recovering'||host?.local_path!==record.target)
     throw retainedClone('Ownership changed while the clone needed recovery.',record,
       `Worktree ${record.worktreeId} no longer has owner epoch ${record.ownerEpoch} on this host in the recovering state.`);
@@ -136,7 +136,7 @@ async function abortClone(engine:BrainEngine,row:TopologyChange,record:TopologyC
 /** Caller owns the recorded native lock; commit uncertainty always reads this row first. */
 export async function finishTopologyClone(engine:BrainEngine,id:string,hooks:CloneLifecycleHooks={},failure?:unknown):Promise<TopologyChange>{
   let row=await readChange(engine,id);if(!row.recovery)return row;
-  const record=row.recovery as unknown as TopologyCloneRecovery;validateRecord(record);
+  const record=row.recovery as unknown as TopologyCloneRecovery;validateRecord(engine,record);
   return withFilesystemPublication([record.target,record.stage,record.aside],async()=>{
     if(row.state!=='committed'&&(record.phase==='reserved'||record.phase==='aborting'))
       return abortClone(engine,row,record,(failure as {code?:string}|undefined)?.code??record.failureCode??'clone_interrupted');
@@ -219,7 +219,7 @@ const recoveryCursors=new WeakMap<BrainEngine,string>();
  * refreshing process has exited; a live refresh holds its lock and is skipped.
  */
 export async function recoverSourceTopologies(engine:BrainEngine,opts:{hostId?:string;limit?:number;onAttempt?:(id:string,recovered:boolean)=>void}={}):Promise<number>{
-  const host=opts.hostId??localHostId(),limit=Math.max(1,Math.min(16,opts.limit??2));
+  const host=opts.hostId??hostIdFor(engine),limit=Math.max(1,Math.min(16,opts.limit??2));
   await resumeWorktreeRefreshes(engine,{hostId:host});
   const scan=async(after:string|null)=>engine.executeRaw<TopologyChange>(`SELECT c.* FROM persistence_topology_changes c
     JOIN persistence_worktrees w ON w.id=(c.recovery->>'worktreeId')::uuid

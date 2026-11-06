@@ -34,7 +34,7 @@ import { configDir } from '../config.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { acquireWorktree, getWorktreeBinding, readPersistenceBrain, type PersistenceBrainRow } from './ownership.ts';
-import { existingLocalHostId } from './identity.ts';
+import { existingHostIdFor } from './identity.ts';
 import type { NativeLockHandle } from './native-lock.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
 import { assertWriterAdminUnlocked, readWriterAdminLock, WRITER_ADMIN_LOCKED_DOCS } from './admin-lock.ts';
@@ -130,7 +130,7 @@ export async function deactivationBlockers(engine: BrainEngine): Promise<Deactiv
   }
   // Managed connector holds live in the managed checkpoint, which classic mode does not read. Deactivation copies
   // them into each source's classic state file; only a source whose holds have nowhere to go blocks it.
-  for (const carry of await planHoldCarry(engine, existingLocalHostId())) {
+  for (const carry of await planHoldCarry(engine, existingHostIdFor(engine))) {
     if (!holdCarryBlocked(carry)) continue;
     const resolve = `gbrain sources status ${carry.source_id} names each item's error; fix its cause, then gbrain sources retry-held ${carry.source_id} and gbrain sync --source ${carry.source_id} (a successful re-attempt clears the hold)`;
     blockers.push({ kind: 'connector_holds', id: carry.source_id, source_id: carry.source_id,
@@ -183,7 +183,7 @@ export async function failedEffectHistory(engine: BrainEngine): Promise<FailedEf
  * Each preview therefore lists what its own real run would refuse on.
  */
 export async function physicalRootBlockers(engine: BrainEngine, mode: 'managed' | 'classic'): Promise<DeactivationBlocker[]> {
-  const hostId = existingLocalHostId();
+  const hostId = existingHostIdFor(engine);
   const sources = mode === 'managed'
     ? await engine.executeRaw<{ id: string }>('SELECT source_id AS id FROM persistence_source_bindings ORDER BY source_id')
     : (await preActivationClaims(engine)).map(claim => ({ id: claim.source_id }));
@@ -257,13 +257,13 @@ export async function deactivatePersistence(engine: BrainEngine, opts: { dryRun?
   }
   const blockers = [...await deactivationBlockers(engine), ...await physicalRootBlockers(engine, 'managed')];
   if (opts.dryRun) {
-    const carried_holds = (await planHoldCarry(engine, existingLocalHostId())).filter(c => c.items > 0 && !holdCarryBlocked(c));
+    const carried_holds = (await planHoldCarry(engine, existingHostIdFor(engine))).filter(c => c.items > 0 && !holdCarryBlocked(c));
     return { ...base, mode: 'managed', deactivated: false, mode_epoch: Number(brain.mode_epoch), blockers, carried_holds, failed_effects: await failedEffectHistory(engine) };
   }
   if (blockers.length) throw blockedError(blockers);
   const principal = await topologyPrincipal(engine);
   const requestId = opts.requestId ?? randomUUID();
-  const hostId = existingLocalHostId();
+  const hostId = existingHostIdFor(engine);
   const locks: NativeLockHandle[] = [];
   let report: DeactivationReport;
   try {

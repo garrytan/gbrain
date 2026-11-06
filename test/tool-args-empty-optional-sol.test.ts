@@ -35,6 +35,7 @@ type Outcome = { ok: true; text: string } | { ok: false; code: string; text: str
 type Caller = (op: string, args: Record<string, unknown>) => Promise<Outcome>;
 
 let engine: PGLiteEngine;
+let chunkId: number;
 const paths: Record<string, Caller> = {};
 
 function thrown(e: unknown): Outcome {
@@ -105,6 +106,7 @@ beforeAll(async () => {
   await engine.initSchema();
   const put = await dispatchToolCall(engine, 'put_page', { slug: SLUG, content: `---\ntitle: Alpha Example\n---\n# Alpha Example\n\n${BODY_MARKER}.\n` }, { remote: false, sourceId: 'default' });
   expect(put.isError).toBeFalsy();
+  chunkId = Number((await engine.executeRaw<{ id: number }>('SELECT c.id FROM content_chunks c JOIN pages p ON p.id = c.page_id WHERE p.slug = $1 ORDER BY c.id LIMIT 1', [SLUG]))[0]!.id);
 
   paths['mcp remote (http)'] = async (op, args) => fromDispatch(await dispatchToolCall(engine, op, args, { remote: true, transport: 'http', sourceId: 'default' }));
   paths['mcp local (stdio)'] = async (op, args) => fromDispatch(await dispatchToolCall(engine, op, args, { remote: false, transport: 'stdio', sourceId: 'default' }));
@@ -231,7 +233,7 @@ describe('GST-927: schema-ruled-out empty values (0, [], {}, false) read as omit
         refusal(await call('get_page', { slug: SLUG, around_chunk_id: -1 })),
         refusal(await call('get_page', { slug: SLUG, max_bytes: -5 })),
         refusal(await call('list_write_conflicts', { limit: 101 })),
-        refusal(await call('get_page', { slug: SLUG, lines: { from: 1, count: 2 }, bytes: { offset: 0, length: 10 } })),
+        refusal(await call('get_page', { slug: SLUG, lines: { from: 0, count: 2 } })),
         refusal(await call('traverse_graph', { slug: SLUG, depth: 1, hops: [{ link_type: 'founded', toward: 'object' }] })),
         refusal(await call('get_versions', { slug: SLUG, diff: true })),
       ];
@@ -279,26 +281,45 @@ describe("GST-927: GBEV-3's replayed Sol shapes", () => {
     expect(results).toEqual(Object.fromEntries(Object.keys(paths).map(k => [k, 'walked'])));
   });
 
-  test("Sol's recorded window arguments still refuse: two window selectors are real values that change the answer", async () => {
-    const args = { slug: SLUG, ...SOL_GET_PAGE, lines: { from: 1, count: 200 }, bytes: { offset: 0, length: 40000 }, around_chunk_id: 7, max_bytes: 40000, view: 'read' };
-    const out = await paths['mcp remote (http)']!('get_page', args);
-    expect(out.ok).toBe(false);
-    expect(out.text).toContain('pass one window selector, not 3 (got lines and bytes and around_chunk_id)');
-    expect(out.text).toContain('Drop `bytes` and `around_chunk_id` to read the lines window');
-    const local = await handleToolCall(engine, 'get_page', args).then(() => null, (e: { fix?: { mcp?: { tool: string; arguments: Record<string, unknown> } } }) => e);
-    const fixed = local?.fix?.mcp?.arguments ?? {};
-    expect(Object.keys(fixed).filter(k => ['lines', 'bytes', 'around_chunk_id', 'cursor'].includes(k))).toEqual(['lines']);
-    expect(fixed).toMatchObject({ slug: SLUG, lines: { from: 1, count: 200 }, body: 'window', max_bytes: 40000, view: 'read', source_id: 'default' });
-    expect(fixed.include_content).toBeUndefined();
-    expect((local as { fix?: { argv?: string[] } } | null)?.fix?.argv).toEqual(['gbrain', 'get', '--source-id', 'default', '--body', 'window', '--lines', '1-200', '--context-lines', '20', '--max-bytes', '40000', '--view', 'read', '--outline-from', '0', '--', SLUG]);
-    const retried = await paths['mcp remote (http)']!('get_page', fixed);
-    expect([retried.ok, retried.text.includes(BODY_MARKER)]).toEqual([true, true]);
+  test("Sol's recorded window arguments read the around_chunk_id window on every entry point, and the response names what applied", async () => {
+    const args = { slug: SLUG, ...SOL_GET_PAGE, lines: { from: 1, count: 200 }, bytes: { offset: 0, length: 40000 }, around_chunk_id: chunkId, max_bytes: 40000, view: 'read' };
+    const results: Record<string, string> = {};
+    for (const [name, call] of Object.entries(paths)) {
+      const out = await call('get_page', args);
+      results[name] = out.ok && out.text.includes(BODY_MARKER) && out.text.includes('"applied":"around_chunk_id"') ? 'read' : `${summary(out)}: ${out.text.slice(0, 200)}`;
+    }
+    expect(results).toEqual(Object.fromEntries(Object.keys(paths).map(k => [k, 'read'])));
+    const r = JSON.parse((await paths['mcp remote (http)']!('get_page', args)).text) as { body: string; window_selector: Record<string, unknown>; compiled_truth?: unknown; content?: unknown };
+    expect(r.body).toBe('window');
+    expect(r.compiled_truth).toBeUndefined();
+    expect(r.content).toBeUndefined();
+    expect(r.window_selector).toEqual({ applied: 'around_chunk_id', ignored: ['lines', 'bytes', 'body', 'include_content'],
+      note: "Read the around_chunk_id window; ignored lines, bytes, body and include_content. This window is not the page's content: put_page with it would replace the whole page with this window, so edit through edit_page with edit_target, or read with include_content alone. get_page reads one window: cursor, then around_chunk_id, then lines, then bytes." });
   });
 
-  test('get_page tells callers up front: at most one window selector, context only with grep', () => {
+  test('lines beside bytes reads the lines window; an around_chunk_id not on the page falls back to the next selector', async () => {
+    const both = JSON.parse((await paths['mcp remote (http)']!('get_page', { slug: SLUG, ...SOL_GET_PAGE, lines: { from: 1, count: 200 }, bytes: { offset: 0, length: 40000 } })).text) as { window: { line_start: number; text: string }; window_selector: { applied: string; ignored: string[] } };
+    expect([both.window.line_start, both.window.text.includes(BODY_MARKER), both.window_selector.applied, both.window_selector.ignored]).toEqual([1, true, 'lines', ['bytes', 'body', 'include_content']]);
+    const stale = JSON.parse((await paths['mcp remote (http)']!('get_page', { slug: SLUG, around_chunk_id: 999_999, lines: { from: 1, count: 200 } })).text) as { window: { line_start: number }; window_selector: { applied: string; ignored: string[]; note: string } };
+    expect([stale.window.line_start, stale.window_selector.applied, stale.window_selector.ignored]).toEqual([1, 'lines', ['around_chunk_id']]);
+    expect(stale.window_selector.note).toBe('around_chunk_id 999999 is not on this page at its current revision, so this is the lines window. get_page reads one window: cursor, then around_chunk_id, then lines, then bytes.');
+    const alone = await paths['mcp remote (http)']!('get_page', { slug: SLUG, around_chunk_id: 999_999 });
+    expect(summary(alone)).toBe('revision_changed');
+  });
+
+  test('one selector reports nothing, and a malformed selector beside a valid one still refuses', async () => {
+    const one = JSON.parse((await paths['mcp remote (http)']!('get_page', { slug: SLUG, lines: { from: 1, count: 2 } })).text) as Record<string, unknown>;
+    expect(one.window_selector).toBeUndefined();
+    for (const [name, call] of Object.entries(paths)) {
+      expect([name, refusal(await call('get_page', { slug: SLUG, lines: { from: 0, count: 2 }, bytes: { offset: 0, length: 10 } }))]).toEqual([name, 'invalid_params']);
+      expect([name, refusal(await call('get_page', { slug: SLUG, body: 'none', lines: { from: 1, count: 2 }, bytes: { offset: 0, length: 10 } }))]).toEqual([name, 'invalid_params']);
+    }
+  });
+
+  test('get_page tells callers up front which window selector applies, and context only with grep', () => {
     const op = operationsByName.get_page!;
-    expect(op.description).toContain('Pass at most one window selector: lines, bytes, around_chunk_id or cursor (context only with grep)');
-    for (const k of ['lines', 'bytes', 'around_chunk_id', 'cursor']) expect(op.params[k]!.description).toContain('One window selector only');
+    expect(op.description).toContain('Window selector order: cursor, around_chunk_id, lines, bytes (context only with grep)');
+    for (const k of ['lines', 'bytes', 'around_chunk_id', 'cursor']) expect(op.params[k]!.description).not.toContain('One window selector only');
     expect(op.params.context!.description).toContain('Applies only with grep');
   });
 
@@ -333,13 +354,6 @@ test('GST-927: the absence annotations sit only on optional params of read ops, 
 describe('GST-927: refusal fixes keep only arguments the target read takes', () => {
   const fixOf = (args: Record<string, unknown>) => handleToolCall(engine, 'get_page', args).then(() => null,
     (e: { message?: string; suggestion?: string; fix?: { argv?: string[]; mcp?: { arguments: Record<string, unknown> } } }) => e);
-
-  test('two selectors: the fix drops undeclared keys, and around_chunk_id kept first drops view: markdown', async () => {
-    const e = await fixOf({ slug: SLUG, around_chunk_id: 3, cursor: 'gpw1.x', view: 'markdown', json: true, stray: 'x' });
-    expect(e?.message).toContain('pass one window selector, not 2 (got around_chunk_id and cursor)');
-    expect(e?.fix?.mcp?.arguments).toEqual({ slug: SLUG, around_chunk_id: 3, body: 'window' });
-    expect(e?.fix?.argv).toEqual(['gbrain', 'get', '--around-chunk-id', '3', '--body', 'window', '--', SLUG]);
-  });
 
   test('known_as_of with body: window names body to drop, and the fix leaves body out', async () => {
     const e = await fixOf({ slug: SLUG, known_as_of: '2026-10-01T12:00:00Z', body: 'window' });
