@@ -432,6 +432,30 @@ for (const kind of testBackends()) {
       expect(unlinked.structured).toEqual({ facts: [], truncated: false, code: 'actor_unlinked' });
     }, 120_000);
 
+    test('a recall that names sources keeps folder fail-closed coverage: facts under a pending prefix stay hidden', async () => {
+      expect(tokens.scoped).toBeDefined();
+      const aliceScoped: Who = { token: 'scoped', actor: ALICE_ID };
+      const held = 'pending-hr/scope-note';
+      await importFromContent(engine, held, '---\ntype: note\ntitle: Held note\n---\n# Held note\n', { sourceId: SRC });
+      await engine.insertFact({ fact: 'Payroll budget ledger draft canaryscopepending', kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'world' }, { source_id: SRC });
+      await engine.executeRaw('UPDATE facts SET source_markdown_slug = $1 WHERE fact LIKE $2', [held, '%canaryscopepending%']);
+      __resetPrivateVisibilityCacheForTests();
+      expect((await recall(aliceScoped, 'payroll budget ledger', { max_chars: 12_000, source_id: SRC })).text).toContain('canaryscopepending');
+      await engine.executeRaw('INSERT INTO access_policy_state (source_id) VALUES ($1) ON CONFLICT (source_id) DO NOTHING', [SRC]);
+      await engine.executeRaw("INSERT INTO access_pending_coverage (source_id, prefix, reason) VALUES ($1, 'pending-hr/', 'invalid')", [SRC]);
+      try {
+        __resetPrivateVisibilityCacheForTests();
+        for (const args of [{ source_id: SRC }, { source_ids: [SRC] }]) {
+          const asScope = await recall(aliceScoped, 'payroll budget ledger', { max_chars: 12_000, ...args });
+          expect(asScope.isError).toBe(false);
+          expect(asScope.all).not.toContain('canaryscopepending');
+        }
+      } finally {
+        await engine.executeRaw("DELETE FROM access_pending_coverage WHERE source_id = $1 AND prefix = 'pending-hr/'", [SRC]);
+        __resetPrivateVisibilityCacheForTests();
+      }
+    }, 120_000);
+
     test('generic recall takes max_chars: whole facts in order, no marker, structured truncated, invalid values refused; without it recall is unchanged (HARN-15)', async () => {
       const ENTITY = 'companies/harn-recall-example';
       for (let i = 0; i < 12; i++) {

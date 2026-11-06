@@ -23,8 +23,7 @@ import { GrantError, grantFromRow, grantFromTokenRow, type ClientGrant, type Gra
 import { isScopeSourceConfig, normalizeSourceConfig, parseSourceConfig } from '../sources-load.ts';
 import { SCOPE_PAGE_SLUG } from './principals.ts';
 
-/** The attested operations a credential with attest_sources may run: the memory pair, receipts and own-page withdrawal. */
-export const SCOPE_ATTEST_OPS: ReadonlySet<string> = new Set(['forget', 'forget_fact', 'get_write_request', 'memory_recall', 'memory_write']);
+export { SCOPE_ATTEST_OPS } from './actor-model.ts';
 
 /**
  * Whether this live write may target `sourceId` instead of the credential's own source: an attested memory_write that
@@ -131,14 +130,15 @@ function attestInvalid(message: string, suggestion: string): OperationError {
 
 /**
  * Checks an attest_sources change for one credential (gbrain auth rescope --attest-sources) and marks each newly listed
- * source, inside the caller's transaction. The mark is never cleared here.
+ * source, and each listed source that lost its mark (a restore), inside the caller's transaction. The mark is never
+ * cleared here. Returns whether anything was checked.
  */
-export async function applyAttestSources(db: Db, self: CredentialRef, next: readonly string[] | null, before: readonly string[] | null, opts: { dryRun?: boolean } = {}): Promise<void> {
-  const added = (next ?? []).filter(s => !(before ?? []).includes(s));
-  const dropped = (before ?? []).filter(s => !(next ?? []).includes(s));
-  if (!added.length && !dropped.length) return;
+export async function applyAttestSources(db: Db, self: CredentialRef, next: readonly string[] | null, before: readonly string[] | null, opts: { dryRun?: boolean } = {}): Promise<boolean> {
   const sql = sqlOf(db);
-  await markedScopeSources(sql, added, true);
+  const marked = await markedScopeSources(sql, next ?? [], true);
+  const added = (next ?? []).filter(s => !(before ?? []).includes(s) || !marked.has(s));
+  const dropped = (before ?? []).filter(s => !(next ?? []).includes(s));
+  if (!added.length && !dropped.length) return false;
   const all = await credentialSources(sql);
   const mine = all.find(c => same(c.ref, self));
   const stillRead = dropped.filter(s => mine?.reads.includes(s));
@@ -160,11 +160,12 @@ export async function applyAttestSources(db: Db, self: CredentialRef, next: read
         `Remove ${s} from those credentials' read grants first, or use a new source for the scope.`);
     }
   }
-  if (opts.dryRun) return;
+  if (opts.dryRun) return true;
   for (const s of added) {
     const [row] = await sql`SELECT config FROM sources WHERE id = ${s}`;
     await sql`UPDATE sources SET config = ${JSON.stringify({ ...normalizeSourceConfig(row!.config), qm_scope: true, federated: false })}::text::jsonb WHERE id = ${s}`;
   }
+  return true;
 }
 
 /** A remote memory_recall that names no source reads no scope source: a scope is read only by naming it. */

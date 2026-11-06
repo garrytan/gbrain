@@ -334,13 +334,14 @@ export async function bindCredential(engine: BrainEngine, target: { kind: 'token
         'Register one for the trusted system: gbrain auth register-client <name> --grant-types client_credentials, then grant it --attest-actor qm.');
     }
   }
-  const changed = member !== before.member_id || JSON.stringify(mayActFor ?? null) !== JSON.stringify(before.may_act_for ?? null)
+  let changed = member !== before.member_id || JSON.stringify(mayActFor ?? null) !== JSON.stringify(before.may_act_for ?? null)
     || attestActor !== before.attest_actor || JSON.stringify(attestOps ?? null) !== JSON.stringify(before.attest_ops ?? null)
     || JSON.stringify(attestSources ?? null) !== JSON.stringify(before.attest_sources ?? null);
-  if (changed) {
+  if (changed || patch.attestSources != null) {
     // GST-1113: the scope-source checks, the marks and the binding commit together, under the scope sources' row locks.
+    // A restated list also re-marks a listed source that lost its mark.
     await engine.transaction(async tx => {
-      await applyAttestSources(tx, target, attestSources ?? null, before.attest_sources ?? null, opts);
+      if (await applyAttestSources(tx, target, attestSources ?? null, before.attest_sources ?? null, opts)) changed = true;
       if (opts.dryRun) return;
       await tx.executeRaw(`UPDATE ${table} SET member_id = $2, may_act_for = $3::text[], attest_actor = $4, attest_ops = $5::text[], attest_sources = $6::text[] WHERE ${key} = $1`,
         [target.id, member, mayActFor, attestActor, attestOps, attestSources]);

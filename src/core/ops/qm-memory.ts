@@ -27,6 +27,7 @@ import { currentCallerAccess, resolveExcludePrivatePages, withCallerAccess, type
 import { callerMember, memberPageSlug, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
 import { markedScopeSources, sourceNotAttested, withoutScopeSources } from '../access/attest-sources.ts';
 import { ACTOR_ARGUMENT, ACTOR_HEADER } from '../access/actor-model.ts';
+import { folderAccessFor } from '../access/caller.ts';
 import { uuidV5 } from '../persistence/preconditions.ts';
 import { isStrictIsoDateTime } from '../utils.ts';
 
@@ -122,10 +123,10 @@ async function ownRecentFacts(ctx: OperationContext, sources: string[], read: Re
 /**
  * GST-1094: the caller record of a recall that names sources. It is read as the scope, never as the person: no member
  * identity, actor or audience, so no member-page fact is admitted and every restricted page is hidden, and privacy is
- * never relaxed.
+ * never relaxed. Folder coverage (pending prefixes, an unreadable rulebook) is read for the call, so it stays fail-closed.
  */
 const SCOPE_READ_ACCESS: Partial<CallerAccess> = {
-  identity: [], audienceIdentities: [], audience: null, actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [],
+  identity: [], audienceIdentities: [], audience: null, actor: null, satisfiedRuleIds: [], privateReadableSources: [],
   hidePrivate: true, applyRemoteReadPolicy: false, restricted: true, remotePolicy: { privacyRelaxed: false, restricted: true },
 };
 
@@ -181,7 +182,8 @@ const memory_recall: Operation = {
     const { query, maxChars } = recallArguments(p);
     const { sources, named } = await recallSources(ctx, p);
     if (!named || ctx.remote === false) return recallFacts(ctx, query, maxChars, sources, named);
-    return withCallerAccess(SCOPE_READ_ACCESS, () => recallFacts(ctx, query, maxChars, sources, true));
+    const { folderCoverage } = await folderAccessFor(ctx.engine, []);
+    return withCallerAccess({ ...SCOPE_READ_ACCESS, folderCoverage }, () => recallFacts(ctx, query, maxChars, sources, true));
   },
 };
 

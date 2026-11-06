@@ -37,7 +37,9 @@ import { rescopeLegacyToken } from '../src/core/grants/legacy-token.ts';
 import { isSourceFederated, loadAllSources, parseSourceConfig } from '../src/core/sources-load.ts';
 import { restoreSource, softDeleteSource } from '../src/core/destructive-guard.ts';
 import { proposeRevision } from '../src/core/access/policy.ts';
+import { quarantineRestoredExecution } from '../src/core/backup/quarantine.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
+import { attestRightFrom } from '../src/core/access/actor-model.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { durableGitRepo, git } from './helpers/git-publication.ts';
@@ -228,6 +230,13 @@ for (const kind of testBackends()) {
       expect(await factRows('canaryrecheckafter')).toHaveLength(0);
     }, 60_000);
 
+    test('restating --attest-sources re-marks a listed scope source that lost its mark', async () => {
+      await engine.executeRaw(`UPDATE sources SET config = config - 'qm_scope' WHERE id = $1`, [SCOPE_B]);
+      expect((await markedScopeSources(engine, [SCOPE_B])).has(SCOPE_B)).toBe(false);
+      await bindCredential(engine, { kind: 'client', id: clients.scopes!.id }, { attestSources: [SCOPE_A, SCOPE_B] });
+      expect((await markedScopeSources(engine, [SCOPE_A, SCOPE_B])).size).toBe(2);
+    }, 60_000);
+
     test('a squatted scope page takes no scope write; no other remote writer may write memory/scope', async () => {
       await importFromContent(engine, 'memory/scope', '---\ntype: note\ntitle: Scope memory\nreadable_by:\n  - member:alice-example\n  - member:bob-example\n---\n# Scope memory\n', { sourceId: SCOPE_B });
       const squat = await write(alice, [{ fact: 'Squatted scope canarysquatscope', provenance: 'x' }], { source_id: SCOPE_B });
@@ -330,4 +339,32 @@ describe('scope writes (pglite, repo-backed)', () => {
     await engine.executeRaw('INSERT INTO sources (id, name, local_path) VALUES ($1, $1, $2)', ['scope-repo', scopeRoot]);
     await claimWorktree(engine, 'scope-repo', scopeRoot);
   } }), 120_000);
+});
+
+describe('attest right of a scope credential (pure)', () => {
+  test('a credential listing scope sources runs only the scope operations, whatever its stored or default attest_ops say', () => {
+    const scoped = attestRightFrom({ attest_actor: 'qm', attest_ops: ['memory_recall', 'recall', 'search', 'memory_write'], attest_sources: ['scope-a'] }, 'client_credentials', null);
+    expect(scoped).toEqual({ system: 'qm', ops: ['memory_recall', 'memory_write'], sources: ['scope-a'] });
+    const defaults = attestRightFrom({ attest_actor: 'qm', attest_ops: null, attest_sources: ['scope-a'] }, 'legacy', null);
+    expect(defaults?.ops.every(op => ['forget', 'forget_fact', 'get_write_request', 'memory_recall', 'memory_write'].includes(op))).toBe(true);
+    const plain = attestRightFrom({ attest_actor: 'qm', attest_ops: ['memory_recall', 'recall'], attest_sources: null }, 'legacy', null);
+    expect(plain?.ops).toEqual(['memory_recall', 'recall']);
+  });
+});
+
+describe('backup restore quarantine keeps the scope mark', () => {
+  test('an external scope source detached by a restore stays a QM scope source', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite' } as never);
+    await engine.initSchema();
+    try {
+      await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('scope-q', 'scope-q', '{"qm_scope": true, "federated": false, "remote_url": "https://git.example.com/scope.git"}'::jsonb)`);
+      const rows = await engine.executeRaw<{ id: string; local_path: string | null }>('SELECT id, local_path FROM sources ORDER BY id');
+      const out = await quarantineRestoredExecution(engine, { sources: rows.map(r => ({ id: r.id, local_path: r.local_path, managed_relative_path: null })), originalRoot: '/old', root: '/new', managedPaths: [], restoreId: 'r1' });
+      expect(out.sources.map(s => s.id)).toContain('scope-q');
+      expect((await markedScopeSources(engine, ['scope-q'])).has('scope-q')).toBe(true);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 120_000);
 });
