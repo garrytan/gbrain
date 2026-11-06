@@ -380,6 +380,16 @@ them.
 The notice never names a source outside the grant, so it reads the same
 whether or not one exists.
 
+If source freshness cannot be read, source absence is unknown rather than
+proven: both views return `no_google_sources: null`, `stale: true` and
+`completeness: "partial"`. A `loops_source_read_failed` degraded notice asks
+the caller to retry; it does not expose database error text or suggest that
+the grant needs changing. Already-readable loops remain scoped and redacted
+normally. `gbrain waiting` refuses with `status: "source_read_failed"` in JSON
+and a read-retry instruction, not a claim that every source needs a sync.
+`--stale-ok` permits inspection but preserves the partial/unknown markers and
+warning; an empty result is not an inbox-clean assessment.
+
 Memory verbs: entity cards' `open_threads[]` entries backed by loop rows
 carry additive optional fields (`direction`, `due`, `counterparty`,
 `status`, `loop_id`) — visible through `entity`, and through `context_pack`

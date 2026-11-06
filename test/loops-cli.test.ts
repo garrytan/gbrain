@@ -134,6 +134,31 @@ async function captured(fn: () => Promise<void>): Promise<Captured> {
 // ── gbrain waiting ───────────────────────────────────────────────────────────
 
 describe('runWaiting', () => {
+  test('#8452 unavailable source freshness refuses with a read retry, not a sync diagnosis', async () => {
+    const original = engine.executeRaw;
+    engine.executeRaw = function<T>(sql: string, params?: unknown[], opts?: { signal?: AbortSignal }): Promise<T[]> {
+      if (sql.includes('FROM sources WHERE archived')) throw new Error('synthetic source read failure');
+      return original.call(this, sql, params, opts) as Promise<T[]>;
+    };
+    try {
+      const human = await captured(() => runWaiting(engine, []));
+      expect(human.verdict).toBe(1);
+      expect(human.out).toBe('');
+      expect(human.err).toContain('source freshness could not be read');
+      expect(human.err).not.toContain('gbrain sync');
+      const json = await captured(() => runWaiting(engine, ['--json']));
+      expect(json.verdict).toBe(1);
+      expect(JSON.parse(json.out)).toMatchObject({ ok: false, status: 'source_read_failed', completeness: 'partial', no_google_sources: null,
+        fix: { argv: ['gbrain', 'waiting', '--json'], actor: 'agent' } });
+      const accepted = await captured(() => runWaiting(engine, ['--json', '--stale-ok']));
+      expect(accepted.verdict).toBe(0);
+      expect(JSON.parse(accepted.out)).toMatchObject({ ok: true, stale: true, completeness: 'partial', no_google_sources: null });
+      const digest = await captured(() => runWaiting(engine, ['--stale-ok']));
+      expect(digest.out).toContain('coverage is partial');
+      expect(digest.out).not.toContain('You are clean');
+    } finally { engine.executeRaw = original; }
+  });
+
   test('stale google source → refusal on stderr with the exact sync fix, verdict 1', async () => {
     await upsertOpenLoop(engine, loop());
     await makeStale();
