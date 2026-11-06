@@ -681,9 +681,9 @@ const blockedError = (preview: GitConversionPreview): OperationError => {
  */
 export interface ConversionRecovery { mode: 'mixed' | 'git'; phase: ConversionPhase; commits: string[]; push: ConversionPush | null;
   accepted: { adopted: number; withheld: number; holds_cleared: number; pass_writes: number }; reclassified: string[]; rollback: string[][] }
-const recoveries = new WeakMap<object, ConversionRecovery>();
+const RECOVERY = Symbol('gbrain.conversion_recovery');
 /** The recovery report a failed apply attached to its error, if any. */
-export const conversionRecovery = (error: unknown): ConversionRecovery | undefined => error && typeof error === 'object' ? recoveries.get(error) : undefined;
+export const conversionRecovery = (error: unknown): ConversionRecovery | undefined => error && typeof error === 'object' ? (error as { [RECOVERY]?: ConversionRecovery })[RECOVERY] : undefined;
 
 /** The non-destructive rollback of a source in `mode`: re-derive a strict source from Git, then return it to mixed. */
 export function conversionRollback(sourceId: string, mode: 'mixed' | 'git'): string[][] {
@@ -850,7 +850,7 @@ async function runConversion(engine: BrainEngine, plan: GitConversionPlan, expec
       recovery.mode = (await engine.executeRaw<{ strict: boolean }>("SELECT COALESCE(config->>'canonical','')='git' AS strict FROM sources WHERE id=$1", [sourceId]).catch(() => []))[0]?.strict ? 'git' : recovery.mode;
       recovery.push ??= progress.push ?? null;
       recovery.rollback = conversionRollback(sourceId, recovery.mode);
-      recoveries.set(error, recovery);
+      Object.defineProperty(error, RECOVERY, { value: recovery, configurable: true });
     }
     throw error;
   }

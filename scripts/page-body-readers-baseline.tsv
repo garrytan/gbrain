@@ -452,6 +452,8 @@ src/core/persistence/file-wins-content.ts	appendedParts	field	INLINE	compares th
 src/core/persistence/file-wins-content.ts	fileWinsContent	field	INLINE	compares the parsed canonical file with the reconcile result (ParsedPage strings readReconcileState builds through wholeBodySnapshot: a segmented page up to 24 MiB is read whole, a larger one refuses first); no page row is read
 src/core/persistence/forget-prepare.ts	prepareForgetMutation	call:serializePageToMarkdown	INLINE	a segmented page's struck file streams through unreadPageFile (its segments under the ledger plus the withdrawal) and returns before this render
 src/core/persistence/forget-prepare.ts	prepareForgetMutation	field	INLINE	the inline body materializedPage returns; a segmented page streams through unreadPageFile and returns before this read
+src/core/persistence/git-gap.ts	readDirectionEvidence	field	INLINE	direction evidence (d4) compares inline page_versions bodies only: segmented versions are skipped, and a segmented page is compared by its streamed export blob id (no_evidence otherwise)
+src/core/persistence/git-gap.ts	readDirectionEvidence	sql	INLINE	direction evidence (d4) compares inline page_versions bodies only: segmented versions are skipped, and a segmented page is compared by its streamed export blob id (no_evidence otherwise)
 src/core/persistence/import-prepare.ts	prepareManagedImportMutation	call:serializePageToMarkdown	SEGW	
 src/core/persistence/large-page-guard.ts	assertLargePageAdmission	sql	META	stored size = body_bytes for a segmented page, octet_length of the columns for an inline page
 src/core/persistence/links-maintenance.ts	extractManagedStaleLinks	field	NONE	not the page body: result.timeline counter

@@ -919,7 +919,6 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
     timings.level_bytes = t();
   }
   if (strict && input.pass?.conversion) bindConversion(paths, scope, input.pass.conversion);
-
   const kind = syncPassKind({ converged: null, head, parserFp: '', pack: pack?.identity ?? null, selectionFp: '', now: Date.now(), openEpisode: input.full === true, owedTail: false,
     retryRow: retry.size > 0, notConvergedStreak: 0, mismatchStreak: 0, requestNewer: false, openAtStampFinished: false, workingChange: false,
     rescreenDueHold: holds.some(hold => holdRescreenDue(hold, retry.has(hold.path))), full: input.full === true });
