@@ -11,9 +11,19 @@ names in the `x-qm-actor` header. The wire contract QM vendors is
 ```bash
 gbrain auth register-client qm --grant-types client_credentials --scopes "read write"
 gbrain auth rescope --client <client_id> --attest-actor qm      # attested ops default to get_write_request,memory_recall,memory_write
-gbrain access member add alice-example
+gbrain access member add alice-example --email alice@example.com   # --email is optional
 gbrain access member link alice-example --qm U0ALICE            # the canonical id QM sends, compared exactly
+gbrain access member link --email alice@example.com --qm U0ALICE # the same link, finding the member by email
 ```
+
+A declared email (`--email` on `member add`, or `gbrain access member set <id> --email <addr>|none`) is
+stored lower-case and is unique per brain. It only helps the operator find the member: the operator
+still makes every link, an unknown email is `not_found` and creates nothing, and QM can't set an email
+or make a link.
+
+From another machine, the owner runs the same steps over the running server with
+`gbrain mcp admin attest`, `member-add`, `member-set` and `link` (owner session only; see
+[ADMIN](../mcp/ADMIN.md#inspect-clients-and-edit-access)).
 
 Add `forget` with `--attest-ops forget,get_write_request,memory_recall,memory_write` if QM
 should withdraw facts; an attested `forget` reaches only facts on the person's own

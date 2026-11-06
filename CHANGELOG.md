@@ -10,6 +10,22 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.598.0] - 2026-11-06
+
+**The brain owner can declare an email on a member and link a trusted system's canonical id to the member by that email, instead of looking up the member id first.** `gbrain access member add <id> --email <addr>` and `gbrain access member set <id> --email <addr>|none` declare or clear it, `member list` shows it, and `gbrain access member link --email <addr> --qm <id>` makes the same link `link <id> --qm <id>` makes. Over the running server, `gbrain mcp admin member-add --email`, `member-set` and `link --email` do the same through the owner-session routes. An email is stored lower-case, is unique per brain, and is cleared when a member is removed. An email no member declares is `not_found` and creates nothing. This changes no trust. The operator still makes every link, and no OAuth token, attested call or MCP tool can set an email or make a link. Members and emails are database state (migration v294), so a repo-less brain works the same.
+
+**The brain owner can now set a trusted system's attest right and manage members and their canonical-id links from another machine, over the running server, instead of needing a shell on the brain host.** Three owner-session routes back new `gbrain mcp admin` commands. Every refusal the local commands make still applies, and no OAuth token or MCP tool reaches them.
+
+### What changed
+
+| Task | Before | Now |
+|---|---|---|
+| Grant or clear a client's attest right | `gbrain auth rescope --client <id> --attest-actor qm` on the brain host | also `gbrain mcp admin attest <id> --attest-actor qm\|none [--attest-ops <list>] [--dry-run]` (`/admin/api/access/attest`) |
+| Add, disable, enable or list members | `gbrain access member add\|disable\|enable\|list` on the host | also `gbrain mcp admin member-add\|member-disable\|member-enable\|members` (`/admin/api/access/members`) |
+| Link or unlink a canonical id | `gbrain access member link\|unlink\|links` on the host | also `gbrain mcp admin link\|unlink\|links` (`/admin/api/access/member-links`) |
+
+These routes accept only the owner session. Each applied change writes an `access_admin` row to the request log. A member-bound or public client still can't hold the attest right, deferred operations still can't be attested, and a link still needs an enabled member and an unlinked id. Removing a member stays a brain-host command.
+
 ## [0.60.595.0] - 2026-11-06
 
 **A `memory_recall` that names sources reads as that scope, never as the attested person, so a shared turn can no longer recall one member's private facts into a shared channel.** `memory_recall` gains `source_id` and `source_ids`. Named, the read drops the person's own recent facts and every member-page fact, keeps restricted pages hidden and never relaxes `visibility: private`. The contract for it is the new `docs/contracts/qm-memory-provider/v2.json`; `v1.json` stays byte-identical and a test holds it there. Three smaller provider fixes ride along.

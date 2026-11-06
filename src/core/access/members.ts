@@ -10,6 +10,10 @@
  * refuses a tombstoned id (access_member_id_retired). `disableMember` is the
  * reversible option. A credential bound to a disabled, tombstoned or missing
  * member is refused at verification (`verifiedMember`, access_member_disabled).
+ *
+ * GST-1158: a member may carry one operator-declared email (case-folded,
+ * unique per brain), only so the operator can find the member when linking a
+ * trusted system's id (`memberByEmail`). It never creates a member or a link.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { SqlQuery } from '../sql-query.ts';
@@ -22,6 +26,7 @@ import { applyAttestSources, SCOPE_ATTEST_OPS } from './attest-sources.ts';
 export interface MemberRecord {
   id: string;
   display_name: string | null;
+  email: string | null;
   status: 'enabled' | 'disabled' | 'removed';
   groups: string[];
   created_at: string | null;
@@ -63,6 +68,17 @@ export function assertAccessId(raw: unknown, what: 'member' | 'group' = 'member'
     'Ids are matched exactly against page readers, so only one canonical spelling is accepted.');
 }
 
+const EMAIL_RE = /^[^@\s]+@[^@\s]+$/;
+
+/** GST-1158: a declared email, trimmed and case-folded (ASCII only); throws access_member_invalid (invalid_email) otherwise. */
+export function assertMemberEmail(raw: unknown): string {
+  const email = typeof raw === 'string' ? raw.trim().replace(/[A-Z]/g, c => c.toLowerCase()) : '';
+  if (email.length <= 254 && EMAIL_RE.test(email) && !/[\x00-\x1f\x7f]/.test(email)) return email;
+  throw memberInvalid('That is not a valid email address.', 'invalid_email',
+    'Use one address with a single @ and no spaces, at most 254 characters (for example alice@example.com).',
+    'An email only finds the member an operator links, so one canonical spelling keeps that lookup exact.');
+}
+
 /** A comma-separated list of ids, each validated; empty entries dropped. */
 export function parseIdList(raw: string | undefined, what: 'member' | 'group'): string[] {
   return [...new Set((raw ?? '').split(',').map(s => s.trim()).filter(Boolean).map(s => assertAccessId(s, what)))];
@@ -77,13 +93,14 @@ function toRecord(row: Record<string, unknown>): MemberRecord {
   return {
     id: String(row.id),
     display_name: (row.display_name as string | null) ?? null,
+    email: (row.email as string | null) ?? null,
     status: row.tombstoned_at != null ? 'removed' : row.disabled_at != null ? 'disabled' : 'enabled',
     groups: Array.isArray(row.groups) ? (row.groups as string[]) : [],
     created_at: iso(row.created_at),
   };
 }
 
-const MEMBER_SELECT = `SELECT m.id, m.display_name, m.disabled_at, m.tombstoned_at, m.created_at,
+const MEMBER_SELECT = `SELECT m.id, m.display_name, m.email, m.disabled_at, m.tombstoned_at, m.created_at,
   COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id`;
 
@@ -105,6 +122,36 @@ async function existingMember(engine: BrainEngine, raw: unknown, action: string)
   throw memberInvalid(`No member "${id}" exists on this brain.`, 'unknown',
     `Check the id with gbrain access member list, or add it: gbrain access member add ${id}.`,
     `Only an existing member can be ${action}; an unknown id is refused rather than read as unbound.`);
+}
+
+async function assertEmailFree(engine: BrainEngine, email: string, memberId: string): Promise<void> {
+  const [row] = await engine.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE email = $1', [email]);
+  if (!row || row.id === memberId) return;
+  throw memberInvalid(`Member "${row.id}" already declares that email.`, 'email_taken',
+    `Check the address, or clear it there first: gbrain access member set ${row.id} --email none.`,
+    'An email finds exactly one member, so it is unique per brain.');
+}
+
+/** A write that lost a race for one email (23505 on access_members_email_key, both engines' error shapes) refuses as assertEmailFree does. */
+async function refuseEmailRace(engine: BrainEngine, error: unknown, email: string | null, memberId: string): Promise<never> {
+  const e = (error ?? {}) as Record<string, unknown>;
+  if (email !== null && String(e.code) === '23505' && (e.constraint_name ?? e.constraint) === 'access_members_email_key') await assertEmailFree(engine, email, memberId);
+  throw error;
+}
+
+/** GST-1158: the one member whose declared email is `raw`; not_found when none, refused when several. Never creates one. */
+export async function memberByEmail(engine: BrainEngine, raw: unknown): Promise<MemberRecord> {
+  const email = assertMemberEmail(raw);
+  const rows = await engine.executeRaw<Record<string, unknown>>(`${MEMBER_SELECT} WHERE m.email = $1 GROUP BY m.id ORDER BY m.id`, [email]);
+  if (rows.length === 1) return toRecord(rows[0]!);
+  if (!rows.length) {
+    throw opError('not_found', 'No member declares that email.',
+      `List members and their emails with gbrain access member list, then declare it on the right member: gbrain access member set followed by that member's id and --email ${email}.`,
+      { why: 'An email only finds a member an operator declared it on; it never creates a member or a link.', fix: MEMBER_LIST_FIX });
+  }
+  throw memberInvalid(`${rows.length} members declare that email.`, 'email_ambiguous',
+    'Link by member id instead (gbrain access member link <id> --qm <canonical id>), and clear the duplicate with gbrain access member set <id> --email none.',
+    'A link by email is made only when exactly one member declares it.');
 }
 
 /** The enabled member `raw` names, or a refusal saying why it cannot be used. */
@@ -143,9 +190,10 @@ export async function legacyTokenByName(engine: BrainEngine, name: string): Prom
 
 export interface AddMemberResult { member: MemberRecord; groups_created: string[]; bound: CredentialRef | null }
 
-export async function addMember(engine: BrainEngine, rawId: unknown, opts: { name?: string; groups?: readonly string[]; bindToken?: string } = {}): Promise<AddMemberResult> {
+export async function addMember(engine: BrainEngine, rawId: unknown, opts: { name?: string; email?: unknown; groups?: readonly string[]; bindToken?: string } = {}): Promise<AddMemberResult> {
   const id = assertAccessId(rawId);
   const groups = (opts.groups ?? []).map(g => assertAccessId(g, 'group'));
+  const email = opts.email === undefined ? null : assertMemberEmail(opts.email);
   const existing = await getMember(engine, id);
   if (existing?.status === 'removed') {
     throw retired(id, 'Choose a new member id (for example with a numeric suffix).',
@@ -156,14 +204,15 @@ export async function addMember(engine: BrainEngine, rawId: unknown, opts: { nam
       existing.status === 'disabled' ? `Enable it with gbrain access member enable ${id}.` : `Change its groups with gbrain access group add <group> --members ${id}.`,
       'add creates a member once; it never edits an existing one.');
   }
+  if (email !== null) await assertEmailFree(engine, email, id);
   const bindTarget = opts.bindToken ? await legacyTokenByName(engine, opts.bindToken) : null;
   let created: string[] = [];
   await engine.transaction(async tx => {
-    await tx.executeRaw('INSERT INTO access_members (id, display_name) VALUES ($1, $2)', [id, opts.name ?? null]);
+    await tx.executeRaw('INSERT INTO access_members (id, display_name, email) VALUES ($1, $2, $3)', [id, opts.name ?? null, email]);
     created = await ensureGroups(tx, groups);
     for (const g of groups) await tx.executeRaw('INSERT INTO access_group_members (group_id, member_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [g, id]);
     if (bindTarget) await tx.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id::text = $1', [bindTarget.id, id]);
-  });
+  }).catch(error => refuseEmailRace(engine, error, email, id));
   return { member: (await getMember(engine, id))!, groups_created: created, bound: bindTarget };
 }
 
@@ -176,6 +225,18 @@ async function setDisabled(engine: BrainEngine, rawId: unknown, disabled: boolea
 
 export const disableMember = (engine: BrainEngine, id: unknown) => setDisabled(engine, id, true);
 export const enableMember = (engine: BrainEngine, id: unknown) => setDisabled(engine, id, false);
+
+/** GST-1158: declares (or, with null, clears) a member's email; refuses an invalid address or one another member declares. */
+export async function setMemberEmail(engine: BrainEngine, rawId: unknown, rawEmail: unknown): Promise<{ member: MemberRecord; changed: boolean }> {
+  const member = await existingMember(engine, rawId, 'changed');
+  if (member.status === 'removed') throw retired(member.id, 'Add a new member id instead.', 'A removed member stays removed; its email was cleared when it was removed.');
+  const email = rawEmail === null ? null : assertMemberEmail(rawEmail);
+  if (email === member.email) return { member, changed: false };
+  if (email !== null) await assertEmailFree(engine, email, member.id);
+  const updated = await engine.executeRaw<{ id: string }>('UPDATE access_members SET email = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL RETURNING id', [member.id, email]).catch(error => refuseEmailRace(engine, error, email, member.id));
+  if (!updated.length) throw retired(member.id, 'Add a new member id instead.', 'A removed member stays removed; its email was cleared when it was removed.');
+  return { member: (await getMember(engine, member.id))!, changed: true };
+}
 
 /** Credentials whose stored binding names `id` (active tokens, clients not deleted). */
 export async function boundCredentials(engine: BrainEngine, id: string): Promise<CredentialRef[]> {
@@ -207,7 +268,7 @@ export async function removeMember(engine: BrainEngine, rawId: unknown): Promise
   const preview = await previewRemoveMember(engine, rawId);
   if (preview.member.status === 'removed') return preview;
   await engine.transaction(async tx => {
-    await tx.executeRaw('UPDATE access_members SET tombstoned_at = now(), disabled_at = COALESCE(disabled_at, now()), updated_at = now() WHERE id = $1', [preview.member.id]);
+    await tx.executeRaw('UPDATE access_members SET tombstoned_at = now(), disabled_at = COALESCE(disabled_at, now()), email = NULL, updated_at = now() WHERE id = $1', [preview.member.id]);
     await tx.executeRaw('DELETE FROM access_group_members WHERE member_id = $1', [preview.member.id]);
   });
   return { ...preview, member: (await getMember(engine, preview.member.id))! };
