@@ -29,18 +29,21 @@ export const GUARD_BYPASS_ENV = 'GBRAIN_COMMIT_GUARD';
 export const GUARD_ENFORCE_MARKER = '# mode: enforce (managed worktree: only its owner commits; cherry-pick, revert, rebase and sequencer commits are refused too)';
 export type GuardMode = 'default' | 'enforce';
 
-export function renderGuardHook(mode: GuardMode = 'default'): string {
-  const enforce = mode === 'enforce';
+/** No mode: the shared-checkout guard of `gbrain git guard`. A mode: the owner-path guard of `gbrain sources guard`. */
+export function renderGuardHook(owner?: GuardMode): string {
+  const enforce = owner === 'enforce';
   return `#!/usr/bin/env bash
 ${GUARD_BANNER}
 ${enforce ? `${GUARD_ENFORCE_MARKER}
-# LOCAL + untracked: installed by gbrain sources guard <source> --install --mode enforce, removed by --uninstall.` : '# LOCAL + untracked: installed by gbrain git guard --install, removed by --uninstall.'}
+# LOCAL + untracked: installed by gbrain sources guard <source> --install --mode enforce, removed by --uninstall.`
+    : owner ? '# LOCAL + untracked: installed by gbrain sources guard <source> --install, removed by --uninstall.'
+    : '# LOCAL + untracked: installed by gbrain git guard --install, removed by --uninstall.'}
 # Refuses commits in this shared brain checkout (--no-verify included) that did not come
 # through gbrain git commit-push or gbrain's own page writes, which hold the commit lock.
 # A person can bypass it for one command: ${GUARD_BYPASS_ENV}=off git <command>
 [ "\${${GUARD_BYPASS_ENV}:-}" = off ] && exit 0
 [ "\${2:-}" = merge ] && exit 0
-${enforce ? `# git worktree add copies config.worktree, so a worktree added after the install inherits this hooks path: only the owner worktree is guarded.
+${owner ? `# git worktree add copies config.worktree, so a worktree added after the install inherits this hooks path: only the owner worktree is guarded.
 [ "$(cd "$(git rev-parse --absolute-git-dir)" && pwd -P)" = "$(cd "$(dirname "$0")/.." && pwd -P)" ] || exit 0
 ` : ''}for _op in ${enforce ? 'MERGE_HEAD' : 'MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply sequencer'}; do
   [ -e "$(git rev-parse --git-path "$_op")" ] && exit 0

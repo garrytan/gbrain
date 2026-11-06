@@ -62,7 +62,7 @@ export async function quarantineSharedSkillRestore(tx: BrainEngine, restoreId: s
   const protocols = await tx.executeRaw('SELECT * FROM persistence_writer_protocols');
   await tx.executeRaw('INSERT INTO config(key,value) VALUES($1,$2)', [`restore.${restoreId}.shared_skills`, JSON.stringify({ ...restored, policies, source_bindings: sourceBindings, host_bindings: hostBindings, worktrees, writer_protocols: protocols })]);
   await declarePersistenceProtocol(tx);
-  const pending = await tx.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE state IN ('queued','running') ORDER BY sequence FOR UPDATE");
+  const pending = await tx.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE state IN ('queued','deferred','running') ORDER BY sequence FOR UPDATE");
   for (const request of pending) await completeWrite(tx, request, 'cancelled', {}, { code: mode === 'recovery' ? 'restore_recovery' : 'restore_new_brain', message: 'Restored with archived authority revoked; submit with new authority.' });
   await tx.executeRaw('UPDATE persistence_requests SET execution_token=NULL,claim_expires_at=NULL WHERE execution_token IS NOT NULL OR claim_expires_at IS NOT NULL');
   await tx.executeRaw("UPDATE persistence_effects SET state='failed',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code=$1,updated_at=now() WHERE state IN ('queued','running')", [mode === 'recovery' ? 'restore_recovery' : 'restore_new_brain']);
