@@ -64,7 +64,7 @@ import { dispositionOf, PAGE_REMOVAL_OPERATIONS, supersessionOrderSql, supersess
 import { isStatementTimeout } from '../persistence/bounded-reads.ts';
 import { readRequestIndexStates } from '../persistence/checkpoint-validation.ts';
 import { PERSISTENCE_REQUEST_REPLAY_ID_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX } from '../persistence/schema.ts';
-import { StatementDeadlineError } from '../statement-deadline.ts';
+import { StatementDeadlineError, withStatementDeadline } from '../statement-deadline.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
 
 const REPLAYABLE = ['put_page', 'add_timeline_entry', 'remember'];
@@ -426,7 +426,7 @@ async function previewTimeoutRefusal(engine: BrainEngine, error: unknown, scope:
   if (!isStatementTimeout(error) && !(error instanceof StatementDeadlineError)) return error;
   const command = previewCommand(scope);
   const argv = ['gbrain', 'repair', 'failed-writes', ...(scope.source_ids.length === 1 ? ['--source', scope.source_ids[0]!] : []), '--json'];
-  const unbuilt = (await readRequestIndexStates(engine, [PERSISTENCE_REQUEST_REPLAY_ID_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX]).catch(() => []))
+  const unbuilt = (await withStatementDeadline(null, () => readRequestIndexStates(engine, [PERSISTENCE_REQUEST_REPLAY_ID_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX])).catch(() => []))
     .filter(index => index.state !== 'valid').map(index => `${index.name} (${index.state})`);
   const refusal = new OperationError('repair_preview_timeout',
     'The failed-writes preview stopped: a read of the write journal ran past the database statement timeout. Nothing was saved and no page changed.',
@@ -438,8 +438,8 @@ async function previewTimeoutRefusal(engine: BrainEngine, error: unknown, scope:
     ? `Without ${unbuilt.join(' and ')} a lookup of the preview reads the whole request table.`
     : 'Every preview read is a set read over the request table; on this brain one of them took longer than the statement timeout allows.';
   refusal.fix = unbuilt.length
-    ? { argv: ['gbrain', 'repair', 'request-indexes', '--apply'], consent: [], actor: 'agent', requires_exclusive: false,
-      why: 'Builds the missing or INVALID request-table indexes online; it changes no user data.',
+    ? { argv: ['gbrain', 'repair', 'request-indexes', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
+      why: 'Previews the request-table indexes a rebuild would build, without changing anything; its apply command builds them online.',
       verify: { argv: ['gbrain', 'doctor', '--only', 'persistence_request_indexes', '--json'] }, docs: 'docs/guides/repair.md#request-indexes' }
     : { argv, consent: [], actor: 'host_admin', requires_exclusive: false, why: 'Re-runs the read-only preview.',
       user_message: `The preview of refused writes did not finish within the database statement timeout. On the brain host, run ${command} with a longer timeout for that one command (GBRAIN_STATEMENT_TIMEOUT=15min; behind a transaction-mode pooler that setting is dropped, so raise the role's default instead).`,

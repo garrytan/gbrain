@@ -18,6 +18,7 @@ import { digest } from '../src/core/persistence/digest.ts';
 import { FACTS_ENTITY_MOVED_MESSAGES } from '../src/core/persistence/verb-errors.ts';
 import { PERSISTENCE_REQUEST_REPLAY_ID_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX } from '../src/core/persistence/schema.ts';
 import { repairRunner } from '../src/core/repair/registry.ts';
+import { deadlineBoundEngine, StatementDeadlineError, withStatementDeadline, type StatementDeadline } from '../src/core/statement-deadline.ts';
 import { resolveRepairScope } from '../src/core/repair/core.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -151,9 +152,23 @@ for (const backend of testBackends()) describe(`[${backend}] #8707 the failed-wr
       await engine.executeRaw(`DROP INDEX ${PERSISTENCE_REQUEST_REPLAY_ID_INDEX.name}`);
       try {
         const refusal = await refused(timeout);
-        expect(refusal.fix).toMatchObject({ actor: 'agent', argv: ['gbrain', 'repair', 'request-indexes', '--apply'] });
+        expect(refusal.fix).toMatchObject({ actor: 'agent', argv: ['gbrain', 'repair', 'request-indexes', '--json'] });
         expect(refusal.suggestion).toContain(`${PERSISTENCE_REQUEST_REPLAY_ID_INDEX.name} (missing)`);
         expect(refusal.suggestion).not.toContain(PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX.name);
+        // The caller's own deadline ends the read: the index states are still read, outside that expired deadline.
+        const scope: StatementDeadline = { startedAt: Date.now(), deadlineAt: Date.now() + 60_000, expired: false };
+        const bound = deadlineBoundEngine(engine);
+        const expiring = new Proxy(bound, { get(target, key) {
+          const value = Reflect.get(target, key, target);
+          if (key !== 'executeRaw') return typeof value === 'function' ? value.bind(target) : value;
+          return (sql: string, ...rest: unknown[]) => {
+            if (sql.includes('request_id = ANY')) { scope.deadlineAt = Date.now() - 1; scope.expired = true; return Promise.reject(new StatementDeadlineError(1)); }
+            return (value as Function).call(target, sql, ...rest);
+          };
+        } }) as BrainEngine;
+        const deadlined = await withStatementDeadline(scope, () => refused(expiring));
+        expect(deadlined.fix).toMatchObject({ actor: 'agent', argv: ['gbrain', 'repair', 'request-indexes', '--json'] });
+        expect(deadlined.suggestion).toContain(`${PERSISTENCE_REQUEST_REPLAY_ID_INDEX.name} (missing)`);
       } finally { await engine.executeRaw(PERSISTENCE_REQUEST_REPLAY_ID_INDEX.sql); }
     }
     expect(await checkpoints()).toBe(before);
