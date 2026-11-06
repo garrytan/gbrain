@@ -58,7 +58,7 @@ import { compareInlineExportFile, ignoredPaths, readBlobs, type DeclaredClass, t
 import { commitThroughDoor } from './git-door.ts';
 import { gitRootAhead, pushGitRoot } from './effect-git.ts';
 import { DURABILITY_NOT_ENABLED_REASON, gitDurabilityPolicy } from './git-durability-policy.ts';
-import { currentVerifiedLocalWriter, localHostId } from './identity.ts';
+import { currentVerifiedLocalWriter, hostIdFor } from './identity.ts';
 import { acquireWorktree, getWorktreeBinding, readManagedMode } from './ownership.ts';
 import { inspectDurabilityCheckout } from './git-durability-administration.ts';
 import { classifyGitCheckout } from '../git-checkout.ts';
@@ -228,7 +228,7 @@ const strictContext = (context: ManagedSyncContext): ManagedSyncContext => ({ ..
 /** The read-only plan of `--to git`; its preview is what the CLI prints and the apply binds to. */
 export async function planGitConversion(engine: BrainEngine, sourceId: string): Promise<GitConversionPlan> {
   const binding = await getWorktreeBinding(engine, sourceId);
-  if (binding?.local_path && binding.owner_host_id === localHostId() && binding.state === 'active') await assertConversionCheckout(sourceId, resolve(binding.local_path, binding.relative_path));
+  if (binding?.local_path && binding.owner_host_id === hostIdFor(engine) && binding.state === 'active') await assertConversionCheckout(sourceId, resolve(binding.local_path, binding.relative_path));
   const context = await resolveManagedSyncContext(engine, { sourceId, noPull: true, dryRun: true });
   const pages: GitGapPage[] = [];
   const equal = new Map<string, PageRevision>();
@@ -795,7 +795,7 @@ async function settleParked(engine: BrainEngine, sourceId: string, parked: Parke
     const result = await retryParkedEffects(engine, sourceId, item.request, false, { parkedOnly: true });
     if ((result?.effects as Array<{ action?: string }> | undefined)?.some(effect => effect.action === 'retry_queued')) retried++;
   }
-  if (retried) await runPersistenceEffects(engine, loadConfig() ?? { engine: engine.kind }, { hostId: localHostId(), limit: 50 });
+  if (retried) await runPersistenceEffects(engine, loadConfig() ?? { engine: engine.kind }, { hostId: hostIdFor(engine), limit: 50 });
   return { retried, reclassified };
 }
 

@@ -178,12 +178,12 @@ export function defineSegmentGcCases(opts: { getEngine: () => BrainEngine; concu
       VALUES ($1, NULL, NULL, '{}'::jsonb, 'segmented', 1, 10, 'h1')`, [page.pageId]);
     const v2 = [segmentText('# Two\nsecond, edited\n')];
     const s2 = await stageGeneration(engine, { pageId: page.pageId, slug: `notes/gc-versions-${sourceId}`, genFrom: 2, texts: v2, sourceId, chunkTexts: true });
-    await engine.executeRaw('UPDATE page_body_manifest SET seq = 1 WHERE staging_id = $1::uuid', [s2.stagingId]);
-    await engine.flipBodyGeneration(flipInput(page.pageId, 1, s2.stagingId, v2, { closeOccurrences: [page.occurrences[1]!], retireChunkOccurrences: [page.occurrences[1]!] }));
+    await engine.executeRaw('UPDATE page_body_manifest SET seq = 1, byte_start = $2 WHERE staging_id = $1::uuid', [s2.stagingId, v1[0]!.body.byteLength]);
+    await engine.flipBodyGeneration(flipInput(page.pageId, 1, s2.stagingId, [v1[0]!, ...v2], { closeOccurrences: [page.occurrences[1]!], retireChunkOccurrences: [page.occurrences[1]!] }));
     const v3 = [segmentText('# Two\nsecond, edited again\n')];
     const s3 = await stageGeneration(engine, { pageId: page.pageId, slug: `notes/gc-versions-${sourceId}`, genFrom: 3, texts: v3, sourceId, chunkTexts: true });
-    await engine.executeRaw('UPDATE page_body_manifest SET seq = 1 WHERE staging_id = $1::uuid', [s3.stagingId]);
-    await engine.flipBodyGeneration(flipInput(page.pageId, 2, s3.stagingId, v3, { closeOccurrences: s2.occurrences, retireChunkOccurrences: s2.occurrences }));
+    await engine.executeRaw('UPDATE page_body_manifest SET seq = 1, byte_start = $2 WHERE staging_id = $1::uuid', [s3.stagingId, v1[0]!.body.byteLength]);
+    await engine.flipBodyGeneration(flipInput(page.pageId, 2, s3.stagingId, [v1[0]!, ...v3], { closeOccurrences: s2.occurrences, retireChunkOccurrences: s2.occurrences }));
     await ageTexts(engine, sourceId);
     const chunkOccurrences = async () => (await engine.executeRaw<{ occurrence_id: number }>(
       'SELECT DISTINCT occurrence_id::int AS occurrence_id FROM content_chunks WHERE page_id = $1 ORDER BY 1', [page.pageId])).map(r => r.occurrence_id);

@@ -18,6 +18,9 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { acquireWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { PENDING_WRITE_EXIT_CODE } from '../src/core/exit-codes.ts';
+import { operations } from '../src/core/operations.ts';
+import { catalogueError } from '../src/core/error-catalogue.ts';
+import { OperationError } from '../src/core/ops/contract.ts';
 
 const CLI = join(import.meta.dir, '../src/cli.ts');
 let dir: string;
@@ -90,6 +93,65 @@ describe('paused writers and the CLI exit contract', () => {
         const stale = await cli(['put', 'notes/seed', '--expected-revision', randomUUID(), '--json'], page('Stale body.'));
         expect({ code: stale.code }).toMatchObject({ code: 1 });
       } finally {
+        if (binding) { const closed = once(binding.server, 'close'); binding.close(); await closed; }
+        await disposePersistenceConsumer(engine);
+      }
+    });
+  }, 180_000);
+
+  test('#8621 resident owner: a partly failed remember batch exits 1 and keeps every item receipt', async () => {
+    await withEnv({ GBRAIN_HOME: dir, GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+      const provider = await createPersistenceIpcProvider(engine, config);
+      const binding = await startPersistenceIpcServer(persistenceSocketPathForConfig(config)!, provider);
+      try {
+        const claim = { fact: 'acme-example signed the pilot', provenance: 'call notes' };
+        const saved = await cli(['remember', '--items', JSON.stringify([claim]), '--json']);
+        expect({ code: saved.code, stderr: saved.stderr }).toMatchObject({ code: 0 });
+        const id = JSON.parse(saved.stdout).items[0].id;
+        const forgot = await cli(['call', 'forget', JSON.stringify({ id, reason: 'withdrawn for the test' })]);
+        expect({ code: forgot.code, stderr: forgot.stderr }).toMatchObject({ code: 0 });
+        const batch = await cli(['remember', '--items', JSON.stringify([claim, { fact: 'acme-example opened a second office', provenance: 'call notes' }]), '--json']);
+        expect({ code: batch.code }).toMatchObject({ code: 1 });
+        const body = JSON.parse(batch.stdout);
+        expect(body).toMatchObject({ status: 'error', saved: 1, failed: 1, partial: true });
+        expect(body.items[0].status).toBe('failed');
+        expect(body.items[1].id).toBeDefined();
+      } finally {
+        if (binding) { const closed = once(binding.server, 'close'); binding.close(); await closed; }
+        await disposePersistenceConsumer(engine);
+      }
+    });
+  }, 180_000);
+
+  test('#8621 resident owner: a refresh-fence refusal keeps its code, retryable flag and wait fix across the owner hop', async () => {
+    await withEnv({ GBRAIN_HOME: dir, GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+      const provider = await createPersistenceIpcProvider(engine, config);
+      const binding = await startPersistenceIpcServer(persistenceSocketPathForConfig(config)!, provider);
+      const op = operations.find(o => o.name === 'put_page')! as { handler: unknown };
+      const original = op.handler;
+      const remember = operations.find(o => o.name === 'remember')! as { handler: unknown };
+      const rememberOriginal = remember.handler;
+      op.handler = async () => {
+        const error = catalogueError('worktree_refreshing', 'Source default\'s checkout is being fast-forwarded by a refresh (syncing); this write was not journaled.',
+          'Retry the same request_id after retry_after_ms: 1000.');
+        throw Object.assign(error, { detail: 'retry_after_ms=1000', retryable: true, fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', 'default', '--json'],
+          consent: [], actor: 'provider', requires_exclusive: false, why: 'A refresh holds this checkout\'s writes; repeat the same call after about 1 s.' } });
+      };
+      try {
+        const put = await cli(['put', 'notes/fenced', '--json'], '---\ntitle: Fenced\n---\nbody\n');
+        expect(put.code).toBe(1);
+        const env = JSON.parse(put.stdout);
+        expect(env).toMatchObject({ code: 'worktree_refreshing', retryable: true, detail: 'retry_after_ms=1000' });
+        expect(env.fix).toMatchObject({ next: 'wait', argv: ['gbrain', 'sources', 'writer', 'status', '--source', 'default', '--json', '--brain', 'host'] });
+        // remember keeps its frozen `error: unavailable`; the canonical code rides beside it.
+        remember.handler = async () => { throw Object.assign(new OperationError('unavailable', 'The checkout is refreshing; this fact was not recorded.'),
+          { canonical: 'worktree_refreshing', detail: 'retry_after_ms=1000', retryable: true, protocolVersion: 1 }); };
+        const fact = await cli(['remember', 'acme-example renewed', '--provenance', 'call notes', '--json']);
+        expect(fact.code).toBe(1);
+        expect(JSON.parse(fact.stdout)).toMatchObject({ error: 'unavailable', code: 'worktree_refreshing', retryable: true, detail: 'retry_after_ms=1000' });
+      } finally {
+        op.handler = original;
+        remember.handler = rememberOriginal;
         if (binding) { const closed = once(binding.server, 'close'); binding.close(); await closed; }
         await disposePersistenceConsumer(engine);
       }

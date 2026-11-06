@@ -1,4 +1,4 @@
-import { localHostId } from './identity.ts';
+import { hostIdFor } from './identity.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { OperationError } from '../ops/contract.ts';
@@ -29,7 +29,7 @@ export async function refreshManagedFilesystemRoots(engine: SqlEngine, databaseP
   // Rows are deduplicated by filesystem identity in recordManagedRoots, never by the stored spelling (#7203).
   const rows = await engine.executeRaw<ManagedRootRecord>(`SELECT h.local_path,s.source_id,s.source_incarnation,s.worktree_id,s.topology_generation
       FROM persistence_host_bindings h JOIN persistence_source_bindings s ON s.worktree_id=h.worktree_id WHERE h.host_id=$1::uuid
-      UNION SELECT local_path,id,incarnation,NULL,NULL FROM sources WHERE local_path IS NOT NULL`, [localHostId()], { signal });
+      UNION SELECT local_path,id,incarnation,NULL,NULL FROM sources WHERE local_path IS NOT NULL`, [hostIdFor(engine)], { signal });
   signal?.throwIfAborted();
   // #7630: a relative local_path (a legacy ".") names whatever directory gbrain runs from; it is never a managed root.
   const owned = rows.filter(row => isAbsolute(row.local_path));

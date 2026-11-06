@@ -1,0 +1,29 @@
+name: CI
+on:
+  pull_request: {}
+  push:
+    branches: [master]
+jobs:
+  dynamic-ci:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      unit: ${{ steps.dynamic-ci.outputs.unit }}
+    steps:
+      - id: dynamic-ci
+        uses: trunk-io/dynamic-ci@5bcddbf3615c2b032c21eed1b514c91164bda4a8
+        continue-on-error: true
+        timeout-minutes: 3
+        with:
+          token: ${{ secrets.TRUNK_API_TOKEN }}
+          job-keys: unit
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo plan
+  unit:
+    needs: [plan, dynamic-ci]
+    if: ${{ !cancelled() && needs.dynamic-ci.outputs.unit != 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo unit

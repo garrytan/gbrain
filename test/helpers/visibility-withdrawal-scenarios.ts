@@ -96,7 +96,11 @@ export async function hiddenWithdrawalRefusesGenerically(engine: BrainEngine): P
   const unset = await call(engine, 'remember', { fact: CLAIM, entity: 'crm/acme-example', provenance: 'call notes' }, 'unset');
   expect(unset.body.message).toBe(hiddenPage.body.message);
   const batch = await call(engine, 'remember', { items: [{ fact: CLAIM, entity: 'crm/acme-example', provenance: 'call notes' }] });
-  expect(batch.body.items[0].error.message).toBe(hiddenPage.body.message);
+  // #8621: a batch whose only item is refused is the item's refusal, prefixed with its index.
+  expect(batch.isError).toBe(true);
+  expect(batch.body.code).toBe(hiddenPage.body.code);
+  expect(batch.body.message).toBe(`items[0]: ${hiddenPage.body.message} None of the 1 item(s) was saved.`);
+  expect(JSON.stringify(batch.body)).not.toContain('withdrawn');
   // The local caller keeps fact_withdrawn.
   const local = await call(engine, 'remember', { fact: CLAIM, entity: 'crm/acme-example', provenance: 'call notes' }, 'local');
   expect(local.body.message).toBe(FACT_WITHDRAWN_MESSAGE);

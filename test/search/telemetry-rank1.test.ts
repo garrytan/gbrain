@@ -29,7 +29,7 @@ describe('rank-1 score telemetry', () => {
     recordSearchTelemetry(engine, meta, { results_count: 5, rank1_score: 0.95 }); // high
     recordSearchTelemetry(engine, meta, { results_count: 3, rank1_score: 0.70 }); // solid
     recordSearchTelemetry(engine, meta, { results_count: 1, rank1_score: 0.40 }); // lt_solid
-    await getTelemetryWriter().flush();
+    await getTelemetryWriter(engine).flush();
 
     const stats = await readSearchStats(engine, { days: 1 });
     expect(stats.rank1_count).toBe(3);
@@ -40,7 +40,7 @@ describe('rank-1 score telemetry', () => {
   test('queries with no result (no rank1_score) do not pollute the average', async () => {
     recordSearchTelemetry(engine, meta, { results_count: 0 }); // no rank1
     recordSearchTelemetry(engine, meta, { results_count: 2, rank1_score: 0.88 });
-    await getTelemetryWriter().flush();
+    await getTelemetryWriter(engine).flush();
 
     const stats = await readSearchStats(engine, { days: 1 });
     expect(stats.total_calls).toBe(2);

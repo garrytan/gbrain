@@ -33,7 +33,7 @@ import { isValidSourceId } from '../source-id.ts';
 import { validateSlug } from '../utils.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { sha256 } from './digest.ts';
-import { existingLocalHostId } from './identity.ts';
+import { existingHostIdFor } from './identity.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { staleMirrorPage } from './mirror-read-only.ts';
 import { prepareFileTarget } from './page-prepare.ts';
@@ -77,7 +77,7 @@ export interface LiveDrift {
  * page cannot drift).
  */
 export async function liveFileDrift(engine: BrainEngine, sourceId: string, slug: string, snapshot?: PageSnapshot | null): Promise<LiveDrift> {
-  const hostId = existingLocalHostId();
+  const hostId = existingHostIdFor(engine);
   const binding = hostId ? await getWorktreeBinding(engine, sourceId, hostId) : null;
   if (!binding?.local_path || binding.owner_host_id !== hostId || binding.state !== 'active') return { still_present: null, reason: 'not_owner_host' };
   const page = snapshot === undefined ? await engine.readPageSnapshot(slug, { sourceId }) : snapshot;
@@ -272,7 +272,7 @@ export async function auditDriftConflicts(engine: BrainEngine, sourceId: string,
       ORDER BY r.slug, r.sequence DESC`, [sourceId, slugs]) : [];
   const recorded = access.trusted && slugs.length ? await engine.executeRaw<{ slug: string; source_path: string | null; source_uri: string | null }>(
     'SELECT slug, source_path, source_uri FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL', [sourceId, slugs]) : [];
-  const hostId = access.trusted ? existingLocalHostId() : null;
+  const hostId = access.trusted ? existingHostIdFor(engine) : null;
   const binding = hostId ? await getWorktreeBinding(engine, sourceId, hostId) : null;
   const owner = !!binding?.local_path && binding.owner_host_id === hostId && binding.state === 'active';
   const root = owner ? join(binding!.local_path!, binding!.relative_path) : null;

@@ -491,6 +491,10 @@
       },
       {
         "category": "brain",
+        "name": "segmented_tiling"
+      },
+      {
+        "category": "brain",
         "name": "timeline_history"
       },
       {

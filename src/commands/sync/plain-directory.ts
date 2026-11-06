@@ -11,6 +11,7 @@ import { loadConfig } from '../../core/config.ts';
 import { serr, slog } from '../../core/console-prefix.ts';
 import { matchesAnyGlob, readMetafilePagesMode } from '../../core/sync.ts';
 import { isAnchorOwnedSyncPath } from '../../core/sync-anchor.ts';
+import { isReservedSkillBundlePath } from '../../core/skill-reserved-paths.ts';
 import { syncExcludePatterns } from '../../core/persistence/sync-discovery.ts';
 import { maintenanceAttribution } from '../../core/persistence/attribution.ts';
 import { withCoordinatedWrite } from '../../core/persistence/context.ts';
@@ -57,7 +58,11 @@ export async function plainDirectorySyncRoot(engine: BrainEngine, opts: SyncOpts
   return root;
 }
 
-/** Sync a plain-directory source by importing its files; a dry run counts them and writes nothing. */
+/**
+ * Sync a plain-directory source by importing its files; a dry run counts them and writes nothing. #8620: on a managed
+ * brain, reserved skill-bundle paths (the pack the 0.53.0 export installs) stay with the shared skill publisher, as in
+ * managed Git sync discovery, so the importer never refuses them and blocks the source.
+ */
 export async function performPlainDirectorySync(engine: BrainEngine, opts: SyncOpts, root: string, managed: boolean): Promise<SyncResult> {
   const sourceId = opts.sourceId ?? 'default';
   const exclude = await syncExcludePatterns(engine, opts.exclude);
@@ -66,13 +71,13 @@ export async function performPlainDirectorySync(engine: BrainEngine, opts: SyncO
   const { runImport, collectSyncableFiles } = await import('../import.ts');
   if (opts.dryRun) {
     const files = collectSyncableFiles(root, { strategy: opts.strategy ?? 'markdown', includeHidden: opts.includeHidden, metafilePages: await readMetafilePagesMode(engine) })
-      .filter(abs => !matchesAnyGlob(relative(root, abs), exclude));
+      .map(abs => relative(root, abs)).filter(path => !matchesAnyGlob(path, exclude) && !(managed && isReservedSkillBundlePath(path)));
     slog(`Plain-directory dry run: ${files.length} file(s) would be imported from ${root}.`);
     return { ...empty, status: 'dry_run', added: files.length };
   }
   const keyless = loadConfig()?.embedding_disabled === true || (await engine.getConfig('embedding_disabled')) === 'true';
   const result = await runImport(engine, [root, ...(opts.noEmbed || keyless ? ['--no-embed'] : [])],
-    { signal: opts.signal, sourceId, strategy: opts.strategy, exclude, includeHidden: opts.includeHidden });
+    { signal: opts.signal, sourceId, strategy: opts.strategy, exclude, includeHidden: opts.includeHidden, ...(managed ? { heldPaths: { has: isReservedSkillBundlePath } } : {}) });
   if (result.errors > 0) return { ...empty, status: 'blocked_by_failures', added: result.imported, chunksCreated: result.chunksCreated, failedFiles: result.errors };
   // A managed brain fences source checkpoints to coordinated writers; the classic import stamps last_sync_at itself.
   if (managed) {

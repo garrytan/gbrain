@@ -67,7 +67,7 @@ import { flushDirectory } from '../fs-durable.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { unifiedDiff } from '../skillpack/diff-text.ts';
 import { digest, sha256 } from './digest.ts';
-import { localHostId } from './identity.ts';
+import { hostIdFor } from './identity.ts';
 import { acquireWorktree, containsPath, getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 import { completeWrite, getWriteRequestById } from './journal.ts';
@@ -452,7 +452,7 @@ function ownerBinding(binding: WorktreeBinding | null, sourceId: string, hostId:
  * each file's private diff (a remote caller's preview never does).
  */
 export async function scanStuckRecoveries(engine: BrainEngine, sourceIds: string[], opts: { requestId?: string; artifacts?: boolean; hostId?: string } = {}): Promise<StuckRecoveryScan> {
-  const hostId = opts.hostId ?? localHostId();
+  const hostId = opts.hostId ?? hostIdFor(engine);
   const scan: StuckRecoveryScan = { items: [], residuals: {}, refused: [], heads: [] };
   const residual = (key: string) => { scan.residuals[key] = (scan.residuals[key] ?? 0) + 1; };
   for (const sourceId of sourceIds) {
@@ -694,7 +694,7 @@ const changedAgain = (item: StuckRecovery, backupDir: string, command: string) =
 export async function resolveStuckRecovery(engine: BrainEngine, item: StuckRecovery, opts: { keep: KeepChoice; previewHash: string; hostId?: string; lockWaitMs?: number }):
 Promise<ResolutionResult & { replayed: boolean }> {
   if (item.target === 'withdrawal_mirror') return resolveEffectRecovery(engine, item, opts);
-  const hostId = opts.hostId ?? localHostId();
+  const hostId = opts.hostId ?? hostIdFor(engine);
   const key = `${item.id}:${opts.previewHash}`;
   const command = stuckRecoveryPreviewCommand([item.source_id], item.request_id);
   let journal = await startedJournal(engine, key, item, opts, command);
@@ -779,7 +779,7 @@ Promise<ResolutionResult & { replayed: boolean }> {
  */
 async function resolveEffectRecovery(engine: BrainEngine, item: StuckRecovery, opts: { keep: KeepChoice; previewHash: string; hostId?: string; lockWaitMs?: number }):
 Promise<ResolutionResult & { replayed: boolean }> {
-  const hostId = opts.hostId ?? localHostId();
+  const hostId = opts.hostId ?? hostIdFor(engine);
   const key = `${item.id}:${opts.previewHash}`;
   const command = stuckRecoveryPreviewCommand([item.source_id], item.request_id || undefined);
   let journal = await startedJournal(engine, key, item, opts, command);

@@ -145,6 +145,8 @@ async function runQueue(q: QueueState): Promise<void> {
     }
   } finally {
     q.running = null;
+    // A drained queue holds nothing, so it does not keep its engine alive (a host may open an engine per request).
+    if (q.jobs.length === 0 && queues.get(q.engine) === q) queues.delete(q.engine);
   }
 }
 

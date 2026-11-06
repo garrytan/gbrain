@@ -382,6 +382,9 @@ gbrain sources set-sync <id> <on|off> [--dry-run] [--expect <on|off>]
                                (config.syncEnabled; an explicit gbrain sync --source
                                still runs). --dry-run prints the apply command, which
                                carries --expect; a moved state refuses preview_changed.
+                               Off: autopilot cycles work only on pages changed since
+                               the last cycle, so a file edited on disk is picked up
+                               by the next explicit sync, not by the cycle.
 gbrain sources host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>]
                                Managed brains: host a new, empty source in a bare
                                repository under <path> (see below). Previews without --expect.
@@ -434,6 +437,8 @@ maintenance write) is stored database-only too; its receipt says
 write on, except for pages created while the source was a mirror: those have
 no file in the checkout and stay database-only. Git effects of a mirror's
 writes (for example a `forget`) complete as skipped. The flag is off by default.
+With `sync.write_through` off, sync keeps that canonical metadata in the
+database for every source, mirror or not, and never rewrites a checkout file.
 
 A managed brain never pulls inside a cycle. Advance a managed checkout with
 one command on its owner host:
