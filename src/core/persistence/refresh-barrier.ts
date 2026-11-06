@@ -79,8 +79,14 @@ const MAX_WAIT_SQL = `COALESCE((SELECT CASE WHEN value ~ '^[1-9][0-9]{0,14}$' TH
 const overdueDeferredFrom = (host: string, maxWait: string) => `JOIN persistence_worktrees w ON w.id=r.worktree_id
     JOIN persistence_worktree_refreshes f ON f.id=r.deferred_refresh_id
     WHERE w.owner_host_id=${host}::uuid AND r.state='deferred' AND f.released_at IS NULL AND r.created_at<now()-(${maxWait}*interval '1 millisecond')`;
-/** The owner's idle probe counts an overdue deferred write as work, so its expiry runs even when nothing else is queued. */
-export const overdueDeferredWorkSql = (host: string) => `EXISTS (SELECT 1 FROM persistence_requests r ${overdueDeferredFrom(host, MAX_WAIT_SQL)})`;
+/** GST-1582: a write held for an import still pending (its refresh, if any, released) whose hold is older than the limit. */
+const overdueImportFrom = (host: string, maxWait: string) => `JOIN persistence_worktrees w ON w.id=r.worktree_id JOIN sources s ON s.id=r.source_id
+    WHERE w.owner_host_id=${host}::uuid AND r.state='deferred' AND r.deferred_import_from IS NOT NULL AND COALESCE(s.last_commit,'')=r.deferred_import_from
+      AND (r.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.id=r.deferred_refresh_id AND f.released_at IS NOT NULL))
+      AND r.updated_at<now()-(${maxWait}*interval '1 millisecond')`;
+/** The owner's idle probe counts an overdue deferred or import-held write as work, so its expiry runs even when nothing else is queued. */
+export const overdueDeferredWorkSql = (host: string) => `(EXISTS (SELECT 1 FROM persistence_requests r ${overdueDeferredFrom(host, MAX_WAIT_SQL)})
+  OR EXISTS (SELECT 1 FROM persistence_requests r ${overdueImportFrom(host, MAX_WAIT_SQL)}))`;
 
 /**
  * The owner's housekeeping: a deferred write whose refresh is still unreleased past the wait limit ends failed with
@@ -111,11 +117,8 @@ export async function expireDeferredWrites(engine: BrainEngine, hostId: string, 
     });
     if (done) finished.push(done);
   }
-  const imports = await engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
-    JOIN persistence_worktrees w ON w.id=r.worktree_id JOIN sources s ON s.id=r.source_id
-    WHERE w.owner_host_id=$1::uuid AND r.state='deferred' AND r.deferred_import_from IS NOT NULL AND COALESCE(s.last_commit,'')=r.deferred_import_from
-      AND (r.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.id=r.deferred_refresh_id AND f.released_at IS NOT NULL))
-      AND r.updated_at<now()-($2::double precision*interval '1 millisecond') ORDER BY r.sequence LIMIT 100`, [hostId, maxWaitMs], { signal });
+  const imports = await engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r ${overdueImportFrom('$1', '$2::double precision')}
+    ORDER BY r.sequence LIMIT 100`, [hostId, maxWaitMs], { signal });
   for (const row of imports) {
     const done = await engine.transaction(async tx => {
       await declarePersistenceProtocol(tx);

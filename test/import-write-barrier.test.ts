@@ -19,7 +19,8 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { disposePersistenceConsumer, waitForWrite } from '../src/core/persistence/service.ts';
+import { disposePersistenceConsumer, preparePersistedMutation, waitForWrite } from '../src/core/persistence/service.ts';
+import { PersistenceConsumer } from '../src/core/persistence/consumer.ts';
 import { getWriteRequestById } from '../src/core/persistence/journal.ts';
 import { resetWriteSwitches } from '../src/core/persistence/switches.ts';
 import { _setRefreshFenceWaitForTests } from '../src/core/persistence/admission-retry.ts';
@@ -230,6 +231,30 @@ test('a held remember whose import has not landed in time is kept for the replay
   await importNow(f);
   expect(await replayImportedRemembers(f.ctx(f.alpha), f.alpha)).toMatchObject({ replayed: 1 });
   expect(file(f, 'people/alice-example.md')).toContain('alice-example likes tea');
+}), 180_000);
+
+test('a held capture or add_timeline_entry whose import never lands ends pending_import_expired, on an idle owner tick, with nothing applied', () => each(async f => {
+  foreignCommit(f, 'one.md', page('Alpha one', IMPORTED));
+  const capture = await local(f, 'capture', { slug: 'one', content: 'Captured, never applied.' });
+  const timeline = await call(f, 'add_timeline_entry', { slug: 'one', date: '2026-11-06', summary: 'Entry, never applied.' });
+  const held = [await requestRow(f, capture.receipt.request_id), await requestRow(f, timeline.body.request_id)];
+  expect(held.map(row => row.state)).toEqual(['deferred', 'deferred']);
+  await disposePersistenceConsumer(f.engine);
+  const consumer = new PersistenceConsumer(f.engine, { engine: f.engine.kind } as never, preparePersistedMutation);
+  try {
+    await consumer.tick();
+    expect((await Promise.all(held.map(row => getWriteRequestById(f.engine, row.id)))).map(row => row!.state)).toEqual(['deferred', 'deferred']);
+    await maxWait(f, 1);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    await consumer.tick();
+    for (const row of held) expect(await getWriteRequestById(f.engine, row.id)).toMatchObject({ state: 'failed', error_code: 'pending_import_expired' });
+  } finally {
+    await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
+    await consumer.stop();
+  }
+  const content = file(f, 'one.md');
+  expect(content).toContain(IMPORTED);
+  expect(content).not.toContain('never applied');
 }), 180_000);
 
 test("a held write's wait limit counts from when it was held, not from its admission", () => each(async f => {
