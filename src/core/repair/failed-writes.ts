@@ -367,9 +367,34 @@ async function stillDrifted(engine: BrainEngine, write: FailedWrite): Promise<bo
 
 type Verdict = { class: Disposition; detail?: string };
 
+/** Later rows of the pages one supersession read may walk; a page's later rows bound each of its writes' walk. */
+const SUPERSESSION_ROWS_PER_READ = 100_000;
+
+/**
+ * The open writes in groups whose supersession reads stay small: each write's read walks the later rows of its page, so
+ * the groups are packed by that count (read once per page), and a write on a page longer than the bound is read alone.
+ */
+async function supersessionBatches(engine: BrainEngine, open: FailedWrite[]): Promise<string[][]> {
+  if (!open.length) return [];
+  const spans = new Map((await engine.executeRaw<{ source_id: string; slug: string; later: number }>(
+    `SELECT p.source_id, p.slug, count(*)::int AS later FROM (SELECT source_id, slug, min(sequence) AS sequence FROM persistence_requests
+      WHERE id = ANY($1::uuid[]) GROUP BY 1, 2) p JOIN persistence_requests c ON c.source_id=p.source_id AND c.slug=p.slug AND c.sequence>p.sequence GROUP BY 1, 2`,
+    [open.map(write => write.id)])).map(row => [`${row.source_id}\0${row.slug}`, row.later]));
+  const batches: string[][] = [];
+  let rows = Infinity;
+  for (const write of open) {
+    const walk = 1 + (spans.get(`${write.source_id}\0${write.slug}`) ?? 0);
+    if (rows + walk > SUPERSESSION_ROWS_PER_READ) { batches.push([]); rows = 0; }
+    batches.at(-1)!.push(write.id);
+    rows += walk;
+  }
+  return batches;
+}
+
 /**
  * Why each caller write must not be replayed now, or `replay`. #8707: the request-table reads (replay attempts, later
- * requests of the page) are made once for all the writes, never once per write, and the file check runs once per page.
+ * requests of the page) are made for all the writes together, never once per write (the later requests in groups bounded
+ * by their pages' history, `supersessionBatches`), and the file check runs once per page.
  */
 async function dispositions(engine: BrainEngine, writes: FailedWrite[]): Promise<Map<string, Verdict>> {
   const verdicts = new Map<string, Verdict>();
@@ -389,9 +414,12 @@ async function dispositions(engine: BrainEngine, writes: FailedWrite[]): Promise
     }
     open.push(write);
   }
-  const later = new Map(open.length ? (await engine.executeRaw<{ id: string; state: string; operation: string; same_intent: boolean }>(
-    `SELECT DISTINCT ON (r.id) r.id::text, c.state, c.operation, c.digest=r.digest AS same_intent FROM persistence_requests r JOIN persistence_requests c ON ${supersessionSql('r', 'c')}
-      WHERE r.id = ANY($1::uuid[]) ORDER BY r.id, ${supersessionOrderSql('r', 'c')}`, [open.map(write => write.id)])).map(row => [row.id, row]) : []);
+  const later = new Map<string, { state: string; operation: string; same_intent: boolean }>();
+  for (const ids of await supersessionBatches(engine, open)) {
+    for (const row of await engine.executeRaw<{ id: string; state: string; operation: string; same_intent: boolean }>(
+      `SELECT r.id::text, c.state, c.operation, c.same_intent FROM persistence_requests r CROSS JOIN LATERAL (SELECT c.state, c.operation, c.digest=r.digest AS same_intent
+        FROM persistence_requests c WHERE ${supersessionSql('r', 'c')} ORDER BY ${supersessionOrderSql('r', 'c')} LIMIT 1) c WHERE r.id = ANY($1::uuid[])`, [ids])) later.set(row.id, row);
+  }
   for (const write of open) {
     const row = later.get(write.id);
     const found = dispositionOf(row);
