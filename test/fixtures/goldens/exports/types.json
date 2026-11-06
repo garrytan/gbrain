@@ -6693,7 +6693,7 @@
         "members": [
           "allowedOperations?: string[] | null | undefined",
           "allowedSources?: string[] | undefined",
-          "attest?: { system: string; ops: string[]; sources: string[] | null; } | null | undefined",
+          "attest?: { system: string; ops: string[]; sources: string[] | null; read?: \"person\" | \"scope\"; } | null | undefined",
           "boundBrainId?: string | null | undefined",
           "boundMaxConcurrent?: number | undefined",
           "boundSlugPrefixes?: string[] | undefined",

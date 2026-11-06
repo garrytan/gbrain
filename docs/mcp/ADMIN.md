@@ -268,6 +268,10 @@ An attested read sees what that person sees, private facts included, and gbrain
 cannot tell who else reads the answer. Use the attest client only for QM's
 personal-scope memory route: never register it as a model-callable MCP connector
 or route it to shared scopes ([QM guide](../guides/qm.md#set-up-on-the-brain-host)).
+An attested read that names `source_id` or `source_ids` (`get_page`, `entity`, `whois`, `get_backlinks`,
+`get_timeline`, `find_experts`, `volunteer_context`, `query`, `memory_recall`) reads those sources as their
+audience, never as the person; `--attest-read person` makes such reads run as the person, and `--attest-read scope`
+also refuses every call that names no person (`actor_required`) ([QM guide](../guides/qm.md#reads-that-name-sources)).
 `gbrain access check --token <name>` shows the
 result ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
 

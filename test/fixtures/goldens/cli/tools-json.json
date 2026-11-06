@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 282967,
-    "stdoutSha256": "73f135de04ba7cceced4d9fd952b23aaefd7fb4cad5ebdf3dce1aca953c70f84",
+    "stdoutBytes": 283832,
+    "stdoutSha256": "0dc874e7174632c11a161c4c4f06f26512f4d13ba1da5c05f8478da75201c53c",
     "toolNames": [
       "remember",
       "entity",
@@ -2956,6 +2956,8 @@
           "min_trust": "string?",
           "since": "string?",
           "slug": "string",
+          "source_id": "string?",
+          "source_ids": "array?",
           "until": "string?"
         },
         "required_scopes": [],
@@ -2992,6 +2994,17 @@
             "slug": {
               "description": "Slug of the page whose timeline entries to return.",
               "type": "string"
+            },
+            "source_id": {
+              "description": "Read only this source.",
+              "type": "string"
+            },
+            "source_ids": {
+              "description": "Narrow to these sources (omit or [] for all you can read).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
             "until": {
               "description": "Alias for before; accepted for agent callers",
@@ -6594,6 +6607,7 @@
           "min_trust": "string?",
           "prior_context": "string?",
           "session_id": "string?",
+          "source_ids": "array?",
           "stats": "boolean?",
           "turn": "number?",
           "window": "string?"
@@ -6632,6 +6646,13 @@
             "session_id": {
               "description": "Optional caller session id, logged for attribution.",
               "type": "string"
+            },
+            "source_ids": {
+              "description": "Narrow to these sources (omit or [] for all you can read).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
             "stats": {
               "description": "Return the volunteered-vs-used precision summary instead of volunteering. APPROXIMATE: \"used\" = pages.last_retrieved_at > volunteered_at.",
@@ -7675,6 +7696,7 @@
         "parameters": {
           "explain": "boolean?",
           "limit": "number?",
+          "source_ids": "array?",
           "topic": "string?"
         },
         "required_scopes": [],
@@ -7687,6 +7709,13 @@
             "limit": {
               "description": "Max results (default 5).",
               "type": "number"
+            },
+            "source_ids": {
+              "description": "Narrow to these sources (omit or [] for all you can read).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
             "topic": {
               "description": "The topic to route. Free-form natural language.",

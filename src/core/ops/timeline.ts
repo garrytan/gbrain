@@ -10,7 +10,8 @@ import { MERGE_PRECONDITION_PARAMS, WRITE_REQUEST_PARAM } from '../persistence/p
 
 import { opError, type Operation } from './contract.ts';
 import { opTransport } from './op-fix.ts';
-import { readPolicyOpts } from './context.ts';
+import { parseSourceIdParam, readPolicyOpts } from './context.ts';
+import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
 import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
 import { stampRowTrust } from '../eligibility/stamp.ts';
 import { quoteTimelineRows } from './timeline-quote.ts';
@@ -86,11 +87,18 @@ const get_timeline: Operation = {
     until: { type: 'string', description: 'Alias for before; accepted for agent callers' },
     limit: { type: 'number', description: 'Maximum number of timeline entries to return' },
     min_trust: MIN_TRUST_PARAM,
+    source_id: { type: 'string', description: 'Read only this source.' },
+    source_ids: SOURCE_IDS_PARAM,
   },
   handler: async (ctx, p) => {
     // #2200: route through sourceScopeOpts so a federated grant reaches the
     // engine via TimelineOpts.sourceIds; scalar/unset unchanged.
-    const scope = await readPolicyOpts(ctx);
+    // GST-1158 E1: source_id / source_ids narrow inside the grant, as search does.
+    const sourceIdParam = parseSourceIdParam(p.source_id, 'get_timeline');
+    const sourceIds = parseSourceIdsParam(ctx, 'get_timeline', p.source_ids);
+    const named = sourceIdParam !== undefined || sourceIds !== undefined ? await requestSourceScope(ctx, sourceIdParam, sourceIds) : undefined;
+    if (named?.sourceIds?.length === 0) return [];
+    const scope = await readPolicyOpts(ctx, named);
     // #4352 remediation: a `visibility: private` page's timeline reads
     // exactly like a missing page's ([]) for untrusted callers — no
     // existence oracle.

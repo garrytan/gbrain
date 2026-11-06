@@ -31,8 +31,9 @@ export const ACTOR_DEFERRED_OPS: ReadonlySet<string> = new Set([
 /** Canonical person ids: 1-256 visible ASCII characters (QM's credential broker rule), no case folding. */
 export const EXTERNAL_ID_RE = /^[\x21-\x7e]{1,256}$/;
 
+/** GST-1158 F3: `read` is how an attested call that names sources reads them; absent (the column unset) reads as the scope. */
 /** GST-1113: `sources` are the scope sources an attested memory_write may name per call (attest_sources); null = none. */
-export interface AttestRight { system: string; ops: string[]; sources: string[] | null }
+export interface AttestRight { system: string; ops: string[]; sources: string[] | null; read?: 'person' | 'scope' }
 export interface AttestedActor { system: string; external_id: string; member: string }
 
 /**
@@ -47,8 +48,10 @@ export function attestRightFrom(row: Record<string, unknown> | undefined, grant:
   if (grant !== 'legacy' && grant !== 'client_credentials') return null;
   const ops = Array.isArray(row!.attest_ops) ? (row!.attest_ops as unknown[]).filter((v): v is string => typeof v === 'string') : [...DEFAULT_ATTEST_OPS];
   const sources = Array.isArray(row!.attest_sources) ? (row!.attest_sources as unknown[]).filter((v): v is string => typeof v === 'string') : null;
-  if (!sources?.length) return { system, ops, sources: null };
-  return { system, ops: ops.filter(op => SCOPE_ATTEST_OPS.has(op)), sources };
+  const read: 'person' | 'scope' | null = row!.attest_read === 'scope' ? 'scope' : row!.attest_read === 'person' && !sources?.length ? 'person' : null;
+  const readField = read ? { read } : {};
+  if (!sources?.length) return { system, ops, sources: null, ...readField };
+  return { system, ops: ops.filter(op => SCOPE_ATTEST_OPS.has(op)), sources, ...readField };
 }
 
 /** The verify join plus the live attest right, for AuthInfo (a verifier spreads the result). */

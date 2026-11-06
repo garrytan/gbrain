@@ -1848,7 +1848,8 @@
           "18 may_act_for ARRAY/_text NULL",
           "19 attest_actor text/text NULL",
           "20 attest_ops ARRAY/_text NULL",
-          "21 attest_sources ARRAY/_text NULL"
+          "21 attest_sources ARRAY/_text NULL",
+          "22 attest_read text/text NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -3079,7 +3080,8 @@
           "35 may_act_for ARRAY/_text NULL",
           "36 attest_actor text/text NULL",
           "37 attest_ops ARRAY/_text NULL",
-          "38 attest_sources ARRAY/_text NULL"
+          "38 attest_sources ARRAY/_text NULL",
+          "39 attest_read text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
