@@ -36,6 +36,9 @@ export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${Effect
   // #6712 PR 1 (L2): after the cursor step that holds a failed entry and settles its index commits (`holdUnderGate`), and after
   // the cursor step that defers an entry whose file changed after admission past the manifest end (`deferChangedEntry`).
   | 'sync:held_settled' | 'sync:retry_deferred'
+  // #6712 PR 4b: after the cursor step that passes over a pass's entry whose file changed after admission (the level moved; the
+  // next round classifies the new level) commits.
+  | 'sync:passed_over'
   // #6712 PR 1: after a pass took the source's drain lease (before it reads the cursor); after each cursor the fan-in
   // superseded is retired (before the next one), and after a pass stamped its authority on a cursor another writer started.
   | 'sync:lease_acquired' | 'sync:cursor_adopted'

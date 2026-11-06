@@ -58,7 +58,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import postgres from '#postgres';
@@ -128,18 +128,20 @@ const ENTITY = 'people/alice-example';
  * file-publication pair (`before_publication`/`after_publication`) never fires for it. Per-page seams are counted
  * per submit_job request (nth inside the first 60% of a round); `lane:applied` and `sync:before_group_admission`
  * fire once per bulk group, and a small round may form one group, so they kill at the first; `sync:mid_checkpoint`
- * fires on every cursor save (the first or second). #6712's `sync:retry_deferred` and `sync:held_settled` need a file
- * that changes after its freeze: their round primes one with an uncommitted edit at `sync:after_freeze`, which is
- * deferred once (the first) and, when its retry finds the same newer bytes, held `worktree_dirty` (the hold); the
- * harness commits the edit after the round.
+ * fires on every cursor save (the first or second); `sync:batch_entries` fires once per pass round, after the level
+ * read and before any admission. `sync:passed_over` and `sync:held_settled` need a file that changes after its freeze:
+ * their round primes one with an uncommitted edit at `sync:after_freeze`, which the pass passes over once (the level
+ * moved) and, when the next round reads the same uncommitted bytes, holds `worktree_dirty` (the hold); the harness
+ * commits the edit after the round. Every point here must be one a pass crosses: the cursor engine's
+ * `sync:retry_deferred` and `sync:prescreened` are company-source only since #6712 PR 4b, so a non-company kill loop
+ * never reaches them.
  */
 const KILL_POINTS = [
   { point: 'publication:before_commit', per: 'page' }, { point: 'publication:after_commit', per: 'page' },
   { point: 'consumer:preparing', per: 'page' }, { point: 'lane:applied', per: 'group' },
   { point: 'sync:before_group_admission', per: 'group' }, { point: 'sync:mid_checkpoint', per: 'save' },
-  { point: 'sync:held_settled', per: 'held' }, { point: 'sync:retry_deferred', per: 'deferred' },
-  // #6712 PR 1: inside the guarded kernel run of prescreened entries (its round also commits mode-only changes, so it has some).
-  { point: 'sync:prescreened', per: 'group' },
+  { point: 'sync:held_settled', per: 'held' }, { point: 'sync:passed_over', per: 'deferred' },
+  { point: 'sync:batch_entries', per: 'group' },
   // #6712 PR 2 (L5): after the checkpoint committed and the lease was released, before the owed tail runs (the next sync runs it).
   { point: 'sync:tail_started', per: 'group' },
 ] as const satisfies ReadonlyArray<{ point: FaultPoint; per: 'page' | 'group' | 'save' | 'held' | 'deferred' }>;
@@ -358,12 +360,6 @@ class Brain {
     this.git('add', '--', ...paths); this.git('commit', '-qm', message, '--', ...paths);
     const ack = performance.now();
     for (const f of files) this.ledger.record({ kind: 'commit', slug: f.slug, marker: f.marker, touches: ['db', 'file'], start, ack });
-  }
-  /** #6712 PR 1: a mode-only commit of these notes (same blobs), which the discovery prescreen passes without an import. */
-  chmodNotes(indexes: number[], message: string): void {
-    const paths = indexes.map(i => `${noteSlug(i)}.md`);
-    for (const path of paths) chmodSync(join(this.repo, path), 0o755);
-    this.git('add', '--', ...paths); this.git('commit', '-qm', message, '--', ...paths);
   }
   writeNotes(indexes: number[], version: string, message: string, extra: Array<{ slug: string; content: string; marker: string }> = []): void {
     this.commit(message, [...indexes.map(i => ({ slug: noteSlug(i), content: noteText(i, version), marker: noteMarker(i, version) })), ...extra]);
@@ -875,7 +871,6 @@ scenario(['a', 'b', 'c'], 'managed sync converges after a seeded kill loop of cl
       const tag = `round-${p.round}`;
       const first = (p.round * perRound) % NOTES;
       const indexes = Array.from({ length: perRound }, (_, i) => (first + i) % NOTES);
-      if (p.point === 'sync:prescreened') b.chmodNotes(Array.from({ length: 3 }, (_, i) => (first + perRound + 1 + 2 * i) % NOTES), `round ${p.round} modes`);
       const edited = p.primed ? indexes[Math.floor(perRound / 2)]! : null;
       const fault: Fault = { point: p.point, nth: p.nth, marker: b.marker(tag), operation: p.operation,
         ...(edited !== null ? { prime: { point: 'sync:after_freeze', nth: 1, path: `${noteSlug(edited)}.md`,
@@ -899,7 +894,10 @@ scenario(['a', 'b', 'c'], 'managed sync converges after a seeded kill loop of cl
         if (plan[p.round - 2]?.kind === 'client') afterClientKill.push(tag);
         await serve.stop();
       }
-      if (edited !== null) {
+      // A prime that never fired (the round's sync never froze the entry) left nothing to commit: that is a fault that did
+      // not fire, named by the oracle with the rest of the run's evidence, not a harness crash that discards it.
+      if (edited !== null && !b.git('status', '--porcelain', '--', `${noteSlug(edited)}.md`)) b.fired[`round ${p.round} prime sync:after_freeze ${noteSlug(edited)}.md`] = null;
+      else if (edited !== null) {
         const editStart = performance.now();
         b.git('add', '--', `${noteSlug(edited)}.md`); b.git('commit', '-qm', `round ${p.round}: the editor commits`, '--', `${noteSlug(edited)}.md`);
         b.ledger.record({ kind: 'commit', slug: noteSlug(edited), marker: noteMarker(edited, `Round ${p.round} edit`), touches: ['db', 'file'], start: editStart, ack: performance.now() });
