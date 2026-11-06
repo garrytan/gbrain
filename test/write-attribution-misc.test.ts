@@ -118,7 +118,7 @@ describe('remaining unmanaged writers', () => {
     }
   }, 120_000);
 
-  test('the legacy sync soft delete, a capture tombstone and an extraction review advance their pages under the maintenance principal', async () => {
+  test('the legacy sync soft delete and a capture tombstone advance their pages under the maintenance principal; an extraction review is a page-door write attributed to its request', async () => {
     for (const engine of engines) {
       const brain = await unmanagedBrain(engine);
       await creatorPage(brain, 'notes/sync-removed-example');
@@ -138,8 +138,9 @@ describe('remaining unmanaged writers', () => {
       const review = operationsByName['extraction_review']!;
       await review.handler(ctx(brain), { action: 'promote', slugs: ['people/promoted-example'] });
       await review.handler(ctx(brain), { action: 'reject', slugs: ['people/rejected-example'] });
-      expect(await revisionActor(engine, brain.sourceId, 'people/promoted-example')).toEqual(brain.maintenance);
-      expect(await deletedRevisionActor(brain, 'people/rejected-example')).toEqual(brain.maintenance);
+      const doorActor = { ...brain.maintenance, request: expect.stringMatching(/^[0-9a-f-]{36}$/) };
+      expect(await revisionActor(engine, brain.sourceId, 'people/promoted-example')).toEqual(doorActor);
+      expect(await deletedRevisionActor(brain, 'people/rejected-example')).toEqual(doorActor);
     }
   }, 120_000);
 

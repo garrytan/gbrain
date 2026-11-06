@@ -29,7 +29,7 @@ import { managedSyncResumeArgs } from '../sync-reconcile.ts';
 import { readManagedSyncFailures, type ManagedSyncFailure } from './sync-failures.ts';
 import { outOfAttemptsHold, fenceAutoRepairFor, fileDriftSide, gitHoldFix, holdEscalation, noteHoldEdit, readGitSourceHolds, recordHoldAttempt, requestGitHoldRetry, type GitHoldRecord } from './sync-holds.ts';
 import type { FenceAutoRepair } from '../fence-repair/hold-fix.ts';
-import { classifySyncFault, HOLD_ATTEMPTS_NEEDS_HUMAN, type SyncFaultVerdict } from './sync-fault-class.ts';
+import { classifySyncFault, HOLD_ATTEMPTS_NEEDS_HUMAN, PAGE_BODY_FAULT_CODES, type SyncFaultVerdict } from './sync-fault-class.ts';
 import { CONTENT_REPAIR_KINDS, contentHoldDisposition, runContentLane, type ContentHoldDisposition } from '../repair/content-lane.ts';
 import { resolveRepairScope, type RepairKind, type RepairResult } from '../repair/core.ts';
 import type { RepairKindSpec } from '../repair/registry.ts';
@@ -60,6 +60,8 @@ export interface SyncStatusHold extends SyncFaultVerdict {
   public_category: PublicCategory;
   slug: string | null;
   path: string;
+  /** GST-1209: the failure code a `page_write_failed` hold recorded (`meta.write_failure.code`), so a listing names why it is held. */
+  fault_code?: string;
   attempts: number;
   held_since: string;
   /** When the hold can be retried on its own: now (`null`), or never without the named step. */
@@ -79,7 +81,12 @@ export interface SyncStatusError extends SyncFaultVerdict {
   write_error_detail?: Record<string, unknown>;
   slug?: string;
   path?: string;
-  request_id?: string;
+  /**
+   * The write request the failure's receipt belongs to (`gbrain write-request <id>`). GBRA-287: null when the run stopped
+   * in its discovery, freeze or admission phase before any request was admitted, so there is no receipt, root request
+   * (`root_cause`) or `write_error_detail` to read; `phase`, `code` and `message` name the error.
+   */
+  request_id?: string | null;
   phase: ManagedSyncFailure['phase'];
   first_seen: string;
   attempts: number;
@@ -230,7 +237,7 @@ export interface SyncStatus {
   landing_read: SyncStatusRead;
 }
 export type SyncStatusState = 'synced' | 'resumable' | 'blocked';
-type RefreshProbeRow = { id: string; worktree_id: string; state: import('./worktree-refresh-schema.ts').WorktreeRefreshState; source_ids: string[]; outcome: Record<string, unknown>; updated_at: string; owner_host_id: string | null };
+type RefreshProbeRow = { id: string; worktree_id: string; state: import('./worktree-refresh-schema.ts').WorktreeRefreshState; source_ids: string[]; outcome: Record<string, unknown>; old_head: string; target_head: string; updated_at: string; owner_host_id: string | null };
 /** Why the source is in its state; one closed list. */
 export const SYNC_STATUS_REASONS = ['nothing_pending', 'held_by_design', 'held_needs_human', 'cursor_unfinished', 'live_job', 'last_error', 'holds_actionable', 'recovery_pending', 'request_pending',
   'status_unknown', 'needs_human', 'head_blocked', 'recovery_blocked',
@@ -304,6 +311,8 @@ export function holdVerdict(record: GitHoldRecord, auto: FenceAutoRepair | undef
   if (record.code === 'origin_conflict' && record.meta.reason) return classifySyncFault({ code: record.code, detail: 'origin_conflict_decision', ...escalation });
   if (record.code === 'page_identity_changed') return classifySyncFault({ code: record.code, detail: 'page_identity_decision', ...escalation });
   if (record.code === 'file_drift' && fileDriftSide(record.meta) === 'unknown') return classifySyncFault({ code: record.code, detail: 'file_drift_unknown', ...escalation });
+  const bodyFault = record.code === 'page_write_failed' ? record.meta.write_failure?.code : undefined;
+  if (bodyFault && PAGE_BODY_FAULT_CODES.has(bodyFault)) return classifySyncFault({ code: record.code, detail: `freeze_${bodyFault}`, ...escalation });
   const disposition = contentHoldDisposition(record, auto);
   if (disposition.action !== 'listed' || disposition.state === 'owner') return classifySyncFault({ code: record.code, ...escalation, ...content });
   const verdict = classifySyncFault({ code: record.code, ...escalation, detail: disposition.reason, ...content });
@@ -323,7 +332,9 @@ function holdStatus(record: GitHoldRecord, auto?: FenceAutoRepair): SyncStatusHo
   const terminal = classifyRecordedFault({ source_id: record.source_id, code: record.code, slug: record.slug });
   const fix = gitHoldFix(record, auto);
   // #6712 PR 2: an abandoned edit is the person's to commit or restore; unblock then finds the file clean and schedules it.
-  return { code: record.code, category: terminal.category, public_category: terminal.public_category, slug: record.slug, path: record.path, attempts, held_since: record.held_at, ...verdict,
+  const faultCode = record.code === 'page_write_failed' ? record.meta.write_failure?.code : undefined;
+  return { code: record.code, category: terminal.category, public_category: terminal.public_category, slug: record.slug, path: record.path, ...(faultCode ? { fault_code: faultCode } : {}),
+    attempts, held_since: record.held_at, ...verdict,
     retry_after: verdict.safe_actions[0] === 'retry' || verdict.safe_actions[0] === 'retry_when_clean' ? null : 'after the named step',
     fix: verdict.needs_human && record.code === 'worktree_dirty' ? { ...fix, ask_user: true, user_message: verdict.human_reason } : fix };
 }
@@ -345,7 +356,7 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
       (SELECT r.request_id::text FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE e.kind='git' AND e.state='failed' AND NOT (e.data ? 'settled')
         AND e.request_id IN (SELECT id::uuid FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(p.completed_keys->0->'obligations'->'converged'->'writeback')='array'
           THEN p.completed_keys->0->'obligations'->'converged'->'writeback' ELSE '[]'::jsonb END) AS w(id)) ORDER BY e.id LIMIT 1) AS writeback_failed,
-      (SELECT row_to_json(f) FROM (SELECT r.id,r.worktree_id,r.state,r.source_ids,r.outcome,r.updated_at,w.owner_host_id FROM persistence_worktree_refreshes r
+      (SELECT row_to_json(f) FROM (SELECT r.id,r.worktree_id,r.state,r.source_ids,r.outcome,r.old_head,r.target_head,r.updated_at,w.owner_host_id FROM persistence_worktree_refreshes r
         LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id WHERE s.id=ANY(r.source_ids) AND r.state IN ${ACTIVE_REFRESH_STATES_SQL} LIMIT 1) f) AS refresh FROM sources s
       LEFT JOIN op_checkpoints p ON p.op=$2 AND p.fingerprint=s.id||':'||s.incarnation::text
       LEFT JOIN op_checkpoints w ON w.op=$3 AND w.fingerprint=s.id||':'||s.incarnation::text
@@ -386,7 +397,7 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
   const lastError: SyncStatusError | null = failure ? { code: failure.code, category: recorded!.category, public_category: recorded!.public_category,
     ...(laneFault ? { detail: laneFault } : {}), message: failure.message, ...(failure.write_error_detail ? { write_error_detail: failure.write_error_detail } : {}),
     path: failure.path, phase: failure.phase, first_seen: failure.first_seen, attempts: failure.attempts,
-    ...(failure.request_id ? { request_id: failure.request_id } : {}), ...(rootCause ? { root_cause: rootCause } : {}),
+    request_id: failure.request_id ?? null, ...(rootCause ? { root_cause: rootCause } : {}),
     ...(failure.repeats ? { repeats: failure.repeats } : {}),
     ...classifySyncFault({ code: failure.code, detail: laneFault, message: failure.message, repeated: failure.repeats ? { path: failure.path, runs: failure.repeats } : null }) }
     : retired ? { code: 'cursor_incarnation_retired', category: 'sync_fault', public_category: 'superseded', message: `An unfinished sync cursor of ${sourceId} was recorded under an incarnation the source no longer has; no current sync selects it, and it says nothing about whether the current files are imported. `
@@ -667,8 +678,8 @@ function workingHashOf(root: string, path: string): { workingHash?: string } {
 /**
  * #6712 PR 2 (L4): before a `worktree_dirty` hold is called abandoned, its uncommitted bytes are read from the checkout
  * now; bytes that changed since the hold last looked are a live editor (`edited_at` refreshed, no attempt counted), so a
- * hold escalates only when nobody touched the edit for a day. Holds that would not escalate are not read. Status, unblock
- * and the soak sweep all look through this.
+ * hold escalates only when nobody touched the edit for a day. Holds that would not escalate are not read, and a hold whose
+ * bytes match the hash it already records costs no statement (#7339). Status, unblock and the soak sweep all look through this.
  */
 export async function observeDirtyEditors(engine: BrainEngine, sourceId: string, incarnation: string, holds: GitHoldRecord[], now = Date.now()): Promise<GitHoldRecord[]> {
   const due = holds.filter(hold => hold.code === 'worktree_dirty' && classifySyncFault({ code: hold.code, ...holdEscalation(hold, now) }).needs_human);
@@ -678,7 +689,7 @@ export async function observeDirtyEditors(engine: BrainEngine, sourceId: string,
   const fresh = new Map<string, GitHoldRecord>();
   for (const hold of due) {
     const { workingHash } = workingHashOf(context.root, hold.path);
-    const updated = workingHash === undefined ? null : await noteHoldEdit(engine, { sourceId, incarnation, path: hold.path, workingHash });
+    const updated = workingHash === undefined || workingHash === hold.meta.working_hash ? null : await noteHoldEdit(engine, { sourceId, incarnation, path: hold.path, workingHash });
     if (updated) fresh.set(hold.path, updated);
   }
   return holds.map(hold => fresh.get(hold.path) ?? hold);

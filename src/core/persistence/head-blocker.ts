@@ -261,8 +261,8 @@ export async function describeHostConsumer(engine: BrainEngine, opts: { signal?:
     const status = persistenceConsumerStatus(engine) as { state: string; consumer_election?: { mode: string } };
     const mode = status.consumer_election?.mode ?? (status.state === 'open' ? 'full' : null);
     if (mode === 'full' || mode === 'promoted') return `self(${mode})`;
-    const { existingLocalHostId } = await import('./identity.ts');
-    const host = existingLocalHostId();
+    const { existingHostIdFor } = await import('./identity.ts');
+    const host = existingHostIdFor(engine);
     const { listHostConsumers } = await import('./consumer-heartbeat.ts');
     const rows = host ? await listHostConsumers(engine, host, opts) : [];
     const owner = rows.find(row => !row.self && (row.mode === 'full' || row.mode === 'promoted') && row.liveness === 'live');

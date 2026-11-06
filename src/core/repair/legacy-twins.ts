@@ -52,7 +52,7 @@ import { resolveSourceLocalFilePath } from '../markdown.ts';
 import { slugifyPath } from '../sync.ts';
 import { authorizeWrite } from '../persistence/authority.ts';
 import { prepareCoreGuard } from '../persistence/core-guard.ts';
-import { existingLocalHostId } from '../persistence/identity.ts';
+import { existingHostIdFor } from '../persistence/identity.ts';
 import { getWorktreeBinding, managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { liveFileDrift } from '../persistence/drift-conflicts.ts';
@@ -109,7 +109,7 @@ const sameOwner = (a: GhostOwner | undefined, b: GhostOwner) => !!a && a.host_id
 const page = (row: PageRow): TwinPage => ({ page_id: Number(row.id), slug: row.slug, revision: String(row.revision) });
 
 async function ownerContext(engine: BrainEngine, sourceId: string): Promise<OwnerContext> {
-  const hostId = existingLocalHostId();
+  const hostId = existingHostIdFor(engine);
   const binding = await getWorktreeBinding(engine, sourceId, hostId);
   if (!binding) return { ok: false, status: 'not_applicable', reason: 'not_applicable' };
   if (!hostId || !binding.local_path || binding.owner_host_id !== hostId || binding.state !== 'active') return { ok: false, status: 'not_applicable', reason: 'not_owner_host' };

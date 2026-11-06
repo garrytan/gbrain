@@ -706,7 +706,7 @@ accepted contribution is credited in `CHANGELOG.md`.
 
 ### gstack repo config (`.gstack/`)
 
-Two committed files tell gstack (1.91.377.0 or later) about gbrain's own gates;
+Two committed files tell gstack (1.94.16.0 or later) about gbrain's own gates;
 gstack reads both from master, so a branch's edits take effect after it merges.
 
 - `.gstack/pregate.json`: `gstack-pregate run --allow-repo-commands` runs a
@@ -729,11 +729,23 @@ gstack reads both from master, so a branch's edits take effect after it merges.
   --run <E2E run>` clear that obligation from a slot's passed full-ci runs of
   the same tree, checked against the inventory `bash scripts/pregate-remote-gate.sh
   --list` prints ([run evidence](docs/ci-event-parity.md#run-evidence-for-gstack-gstack-pregate-clear---run)).
+  `ship_lanes_from` maps /ship's unit, serial, slow and E2E lane commands to
+  those runs, so /ship carries a lane from full-ci instead of running it again
+  ([/ship lanes](docs/ci-event-parity.md#ship-lanes)).
 - `.gstack/ship-policy.json`: the stamp rule (the release stamp files and
   version patterns) and the migration numbering `gstack-pregate regate` and
   `gstack-tree-receipt` use to decide whether a restamped head is the same tree
-  that passed the gate, plus `min_gstack_version` (1.91.377.0, the first gstack
-  that reads `run_profiles`; an older one refuses with an upgrade fix).
+  that passed the gate, plus `min_gstack_version` (1.94.16.0, the first gstack
+  that reads `stamp_placeholders`; 1.94.0.0 is the first that reads
+  `ship_lanes_from`; an older one refuses with an upgrade fix).
+  `stamp_placeholders: ["TBD"]` lets a branch's own `since: 'TBD'` row become
+  `since: '<version>'` at the slot and still count as a stamp, so /ship's
+  finish step does not read the restamp as a change made after review.
+  `review_exclude_paths: ["docs/**", "test/fixtures/goldens/**"]` (gstack
+  1.93.33.0 or newer, read from master only) keeps docs and generated goldens
+  out of /ship's reviewer diffs, so a large wave stays under the reviewers'
+  2 MB ceiling. Those files stay covered by the privacy, gitleaks and doc
+  checks, and every code, test and config line is still reviewed.
 
 ### How a contributor PR lands
 

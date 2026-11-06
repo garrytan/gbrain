@@ -29,6 +29,7 @@
         "consolidateFact",
         "countChunklessPagesWithContent",
         "countKeywordPages",
+        "countPagesBy",
         "countStaleChunks",
         "countStaleFrontmatterKeyPages",
         "countStalePagesForExtraction",
@@ -56,6 +57,7 @@
         "findDuplicatePages",
         "findOntologyConflicts",
         "findOrphanPages",
+        "findPages",
         "findTrajectory",
         "flipBodyGeneration",
         "getAdjacencyBoosts",
@@ -235,6 +237,7 @@
         "consolidateFact",
         "countChunklessPagesWithContent",
         "countKeywordPages",
+        "countPagesBy",
         "countStaleChunks",
         "countStaleFrontmatterKeyPages",
         "countStalePagesForExtraction",
@@ -264,6 +267,7 @@
         "findDuplicatePages",
         "findOntologyConflicts",
         "findOrphanPages",
+        "findPages",
         "findTrajectory",
         "flipBodyGeneration",
         "getAdjacencyBoosts",
@@ -639,6 +643,16 @@
       ],
       "./engine-factory": [
         "createEngine"
+      ],
+      "./engine-open": [
+        "DEFAULT_EMBEDDED_POOL_MAX",
+        "embeddedSettings",
+        "hostIdFor",
+        "isEmbeddedEngine",
+        "openEngine",
+        "processHasEmbeddedEngines",
+        "withEngineScope",
+        "withLocalScope"
       ],
       "./eval/longmemeval/reader": [
         "READER_MAX_SESSION_CHARS",

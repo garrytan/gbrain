@@ -8,7 +8,7 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { authorizeStoredRequest, authorizeWrite, submissionAuthority } from './authority.ts';
-import { currentVerifiedLocalWriter, localHostId, registerLocalWriter } from './identity.ts';
+import { currentVerifiedLocalWriter, hostIdFor, registerLocalWriter } from './identity.ts';
 import { admitWriteInTransaction, getWriteRequest, receiptFor } from './journal.ts';
 import { digest, requireUuid, sha256 } from './digest.ts';
 import { getWorktreeBinding, managedPersistenceEnabled, probeWorktreeWriter, type WorktreeBinding } from './ownership.ts';
@@ -106,7 +106,7 @@ async function atomOwnerTarget(engine: BrainEngine, sourceId: string, source: { 
   const writeThrough = !/^(false|0|off|no)$/i.test(await engine.getConfig('sync.write_through') ?? 'true');
   const connectorDatabase = writeThrough && !binding && isConnectorSourceKind(source.kind);
   const refusal = writeThrough && root && !binding && !connectorDatabase ? 'Atom maintenance requires the configured canonical owner.'
-    : writeThrough && binding && (binding.owner_host_id !== localHostId() || binding.state !== 'active' || !binding.local_path)
+    : writeThrough && binding && (binding.owner_host_id !== hostIdFor(engine) || binding.state !== 'active' || !binding.local_path)
       ? 'The canonical atom owner is unavailable; no extraction was started.' : null;
   return { binding, writeThrough, connectorDatabase, refusal };
 }

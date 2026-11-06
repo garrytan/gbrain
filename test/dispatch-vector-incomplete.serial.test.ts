@@ -36,7 +36,7 @@ describe('HTTP MCP dispatch preserves bounded-vector incompleteness', () => {
     if (!nonempty) {
       // content[1] is F2's keyword count line; the empty-retrieval diagnosis follows it.
       expect(response.content[2].text).toContain('vector_candidates_incomplete');
-      expect(response.content[2].text).not.toContain('clean miss');
+      expect(response.content[2].text).not.toContain('retrieval healthy');
     }
   });
 });

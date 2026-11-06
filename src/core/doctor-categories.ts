@@ -71,6 +71,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'connector_checkpoints',
   'connector_held_items',
   'git_held_files',
+  // GST-1209: live pages stored in segments whose live rows do not cover their body (doctor/checks/segmented-tiling.ts).
+  'segmented_tiling',
   'fence_integrity',
   // GBRA-221: live fence rows on imported pages whose body is outside-authored text (doctor/checks/outside-content-fences.ts).
   'outside_content_fences',

@@ -64,6 +64,7 @@ import {
   derivedVisibilityEntry,
   graphCoverageEntry,
   orphanRatioEntry,
+  segmentedTilingEntry,
   staleMentionsEntry,
   timelineHistoryEntry,
 } from './checks/graph-health.ts';
@@ -238,6 +239,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   graphCoverageEntry,
   orphanRatioEntry,
   staleMentionsEntry,
+  segmentedTilingEntry,
   timelineHistoryEntry,
   extractionDateGroundingEntry,
   integrityEntry,
