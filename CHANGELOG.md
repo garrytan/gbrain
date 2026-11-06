@@ -10,6 +10,40 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.588.0] - 2026-11-06
+
+**Engines that make their first write at the same moment no longer fail one of the writes registering the same writer.** Two or more engines opened from the same settings on one Postgres database (the same writer id, credential and lane), or two processes that share one credential file, could both find no registration and both insert it. The loser hit the credential's unique index and failed with `duplicate key value violates unique constraint "persistence_local_writers_credential_hash_key"`; four engines on a fresh database lost three of their four first writes. Registration is now idempotent under that race, and every refusal still holds. PGLite was never affected, because its single connection runs the read and the insert one after the other. Contributed by @bradgessler.
+
+### Itemized changes
+
+- `src/core/persistence/identity.ts`: the registration insert names no conflict target, so a conflict on either unique index (the id or the credential hash) does nothing. When nothing was inserted, the row under the id is read again and checked exactly as an existing row is. The same credential and lane pass, while a revoked row or another credential or lane under the id refuses `permission_denied`. No row under the id means the credential belongs to another registration, which now refuses `permission_denied` with a fix where it used to raise a raw 23505.
+- `test/e2e/engine-open-postgres.test.ts`: four engines opened from one writer value make their first writes at once, twelve rounds on a scratch database (master: `['23505','resolved','resolved','resolved']`). A second case forces the lost-insert branch and checks each refusal on Postgres.
+- `test/engine-open.test.ts`: the same lost-insert cases on PGLite, plus four concurrent first writes on one engine landing under one registration.
+
+## [0.60.587.0] - 2026-11-06
+
+**An HTTP MCP caller can now say which AI made a write, and attribution reads show it.** Send `X-Gbrain-Agent-Label: Claude Code` (or `Codex`, or a job name) on a request, and the writes that request makes itself show `agent_label` in `gbrain attribution` / `get_write_attribution` and in `get_versions` for admin and local readers. This answers "which of my AIs wrote this?" when several share one OAuth client or token. The label is text the caller declares and gbrain does not verify. The principal is still who was authorized, and no grant, access rule or trust tier reads it. A request without the header is recorded exactly as before, so nothing changes until a caller sends it. Contributed by @JamisonMercurio (#8664).
+
+### Itemized changes
+
+- Both HTTP transports (the OAuth `serve --http` mount and the legacy bearer transport) read the header. Admission stores it on the request's existing `authority` record as `agentLabel`, so there's no new column or migration, and repo-less brains record it too. Stdio MCP and the local CLI have no request headers and record no label.
+- A label is 1 to 120 printable ASCII characters after trimming. Anything else (control, bidi, zero-width or non-ASCII characters, or a longer value) is dropped, never refused.
+- Jobs a labelled request queues (`submit_job` remote jobs and agent jobs) run under their own authority and record no label.
+- Both transports' CORS preflight now allows the header, so a browser client on an origin in `GBRAIN_HTTP_CORS_ORIGIN` can send it without its whole MCP call being blocked.
+- `test/write-agent-label.test.ts` covers both transports, a repo-less brain, the parser bounds, a stored authority that is otherwise identical with and without a label, and a read-only token that is still refused. The export-surface golden gains the optional `agentLabel` and `agent_label` fields.
+
+## [0.60.586.0] - 2026-11-06
+
+**A `remember` refused for its arguments now names the whole valid call, so an agent that never read the schema saves on its next try.**
+
+An agent on a harness that lists MCP tools as one line and shows parameters only on request sent `remember` its host's own memory shape, `facts: [{text}]`. gbrain answered "did you mean `fact`?", the agent resent `{fact, entity}` without provenance, and only the third call saved, so every saved fact cost two refusals. The refusal now points `facts` at `items` and `text` at `fact`, and quotes a valid call with placeholder values, provenance included. provenance stays required.
+
+### Itemized changes
+
+- `src/mcp/validate-params.ts`, `src/mcp/dispatch.ts`: an unknown `facts` on `remember` suggests `items` and an unknown `text` suggests `fact`; the refusal then appends the operation's `callShape`, a valid call as JSON with placeholder values (`<one claim>`, `<subject-slug>`, `<where you learned it, with the date>`) that says provenance is required. `callShape` is a new optional `Operation` field; only `remember` sets it.
+- `src/core/verbs.ts`: `remember`'s description opens with the call itself, `{fact, provenance (required: source), \`entity\` (subject; recall needs it)} or items[]`, inside the 117 characters a one-line tool listing keeps. A missing `fact` quotes the same placeholder call instead of an example without provenance, and the missing- and empty-provenance refusals quote its provenance placeholder instead of a realistic source an agent could copy.
+- `src/core/remember-batch.ts`: an item that carries `text` is told to rename it to `fact`.
+
 ## [0.60.585.0] - 2026-11-05
 
 **CI shard weights are re-mined from the 2026-11-05 nightlies, so the unit and serial lanes pack their shards on current timings.** Nothing changes for users.
