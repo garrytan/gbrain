@@ -66,6 +66,11 @@ export async function readRevisionBackfillStatus(engine: BrainEngine): Promise<R
   return { column: 'nullable', pending: Number(n), failed };
 }
 
+/** Read-only: whether the backfill used every attempt on this row; one config read, for a caller that already knows the row is pending. */
+export async function revisionBackfillExhausted(engine: BrainEngine, id: number): Promise<boolean> {
+  return (await readState(engine)).failed.some(f => f.id === id && f.attempts >= REVISION_BACKFILL_MAX_ATTEMPTS);
+}
+
 /**
  * Assign revisions to the given rows in one statement. A managed brain's
  * writer guard refuses a revision change outside a source capability, so the

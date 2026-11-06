@@ -1226,7 +1226,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 173 table(s) the applied migrations create exist.",
+            "message": "All 174 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -1582,6 +1582,14 @@
                 },
                 {
                   "name": "persistence_requests_foreground_committed",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_replay_id",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_slug_sequence",
                   "state": "valid"
                 }
               ],
@@ -3300,6 +3308,20 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "details": {
+              "docs": "docs/guides/wakeshift.md#troubleshooting",
+              "enabled": false,
+              "key_source": "none"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Reporting back through Wakeshift is off (gbrain wakeshift enable turns it on).",
+            "name": "wakeshift",
+            "readiness_state": "disabled_by_choice",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "brain",
             "details": {
               "applicable": false
@@ -4026,6 +4048,7 @@
                     "mirror_source": 0,
                     "private": 0
                   },
+                  "live_pages": 19,
                   "pages": 19,
                   "source_id": "notes",
                   "states": {
@@ -4051,7 +4074,7 @@
               "timeout_ms": "<volatile>"
             },
             "elapsed_ms": "<volatile>",
-            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
+            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 19 live page(s), 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
             "name": "db_ahead_of_git",
             "status": "ok"
           },
@@ -6262,7 +6285,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 173 table(s) the applied migrations create exist.",
+            "message": "All 174 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -6618,6 +6641,14 @@
                 },
                 {
                   "name": "persistence_requests_foreground_committed",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_replay_id",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_slug_sequence",
                   "state": "valid"
                 }
               ],
@@ -8348,6 +8379,20 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "details": {
+              "docs": "docs/guides/wakeshift.md#troubleshooting",
+              "enabled": false,
+              "key_source": "none"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Reporting back through Wakeshift is off (gbrain wakeshift enable turns it on).",
+            "name": "wakeshift",
+            "readiness_state": "disabled_by_choice",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "brain",
             "details": {
               "applicable": false
@@ -9074,6 +9119,7 @@
                     "mirror_source": 0,
                     "private": 0
                   },
+                  "live_pages": 19,
                   "pages": 19,
                   "source_id": "notes",
                   "states": {
@@ -9099,7 +9145,7 @@
               "timeout_ms": "<volatile>"
             },
             "elapsed_ms": "<volatile>",
-            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
+            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 19 live page(s), 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
             "name": "db_ahead_of_git",
             "status": "ok"
           },

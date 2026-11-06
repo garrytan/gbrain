@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 168 tools across 26 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 171 tools across 26 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -105,6 +105,7 @@ Every non-localOnly operation on the MCP surface: 168 tools across 26 areas. **S
 | `get_job_progress` | Get structured progress for a running job. | admin |  |  |
 | `get_job_stats` | Job queue statistics. | admin |  |  |
 | `list_jobs` | List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. | admin |  |  |
+| `list_watches` | List the jobs this connection is watching through Wakeshift (open watches, plus ones that ended in the last day) with their state: open, delivered, dead or ended. | admin |  | `mcp.publish_wakeshift` |
 | `pause_job` | Pause a waiting, active or delayed background job. | admin |  |  |
 | `replay_job` | Replay a completed/failed/dead job, optionally with modified data | admin |  |  |
 | `resume_job` | Resume a paused background job (back to waiting). | admin |  |  |
@@ -112,7 +113,9 @@ Every non-localOnly operation on the MCP surface: 168 tools across 26 areas. **S
 | `send_job_message` | Send a sidechannel message to a running job's inbox (for jobs that read steering messages). | admin |  |  |
 | `submit_agent` | Submit an agent job (agent scope; tools and budget bound to your client). | agent | yes |  |
 | `submit_job` | Submit a background job. | admin |  |  |
+| `unwatch` | Stop watching a job: ends this connection's open Wakeshift watches on it, so no wake comes for it. | admin |  | `mcp.publish_wakeshift` |
 | `wait_job` | Wait until a job is completed, failed, dead or cancelled (at most 55 s per call), then return it like get_job plus terminal. | admin |  |  |
+| `watch_job` | This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. | admin |  | `mcp.publish_wakeshift` |
 
 ## links
 

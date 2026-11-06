@@ -763,7 +763,8 @@ working directory:
 - **Writer.** An unauthenticated write uses `settings.writer` for its lane (a remote call needs a `stdio` writer, a
   local one `cli`), registered in `persistence_local_writers` on first use with the default read/write ceiling. An
   existing registration keeps its own ceiling, another credential or lane under the id refuses `permission_denied`,
-  and a revoked one is never replaced. No `<brain>.<lane>.json` file is read or minted; with no writer for the lane
+  and a revoked one is never replaced. Engines that make their first write at the same moment register the writer once;
+  a credential already registered under another id refuses `permission_denied`. No `<brain>.<lane>.json` file is read or minted; with no writer for the lane
   the write refuses `writer_registration_required`.
 - **Embedding identity.** `initSchema()` seeds a fresh brain from `settings.embedding` (else the built-in default),
   never from the process gateway, and refuses `engine_embedding_mismatch` on a database that records another model
