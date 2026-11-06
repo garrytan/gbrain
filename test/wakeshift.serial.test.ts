@@ -14,6 +14,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { disabledOpsForPublishGates } from '../src/mcp/publish-gates.ts';
 import { encodeWakeshiftKey } from '../src/core/wakeshift/client.ts';
+import { wakeshiftManifestHash } from '../src/core/wakeshift/events.ts';
 import { drainWakes, WAKE_MAX_ATTEMPTS } from '../src/core/wakeshift/drain.ts';
 import { readWakeshiftKey, resetWakeshiftEnvKeyForTests } from '../src/core/wakeshift/config.ts';
 import { loadConfig } from '../src/core/config.ts';
@@ -286,7 +287,7 @@ describe('failure schedule', () => {
     expect(rows).toEqual([{ target: String(a), state: 'ended', last_error: 'unmatched' }, { target: String(b), state: 'delivered', last_error: null }]);
   });
 
-  test('a member added after enable pauses reporting back: watch_job refuses and the drainer sends nothing', async () => {
+  test('a member added after enable without terms links: watch_job refuses and the drainer ends the open watch unaccepted', async () => {
     const id = await seedJob('active');
     await dispatchToolCall(engine, 'watch_job', { id }, stdio);
     await finish(id);
@@ -298,8 +299,10 @@ describe('failure schedule', () => {
       const env = JSON.parse(r.content[0]!.text);
       expect(env.code ?? env.error).toBe('wakeshift_shared_brain');
       expect(JSON.stringify(env)).not.toMatch(/\d+ live access member/);
-      expect(await drainWakes(engine)).toMatchObject({ skipped: 'shared' });
+      expect(await drainWakes(engine)).toMatchObject({ delivered: 0, ended: 1 });
       expect(emits()).toHaveLength(0);
+      const [row] = await engine.executeRaw<{ state: string; last_error: string }>('SELECT state, last_error FROM wake_subscriptions');
+      expect(row).toMatchObject({ state: 'ended', last_error: 'terms_not_accepted' });
       expect(fake.calls.filter(c => c.path === '/event-subscriptions')).toHaveLength(1);
     } finally {
       await engine.executeRaw("DELETE FROM access_members WHERE id = 'alice-example'");
@@ -413,7 +416,7 @@ describe('gbrain wakeshift', () => {
     expect(fake.calls.map(c => c.path)).toEqual(['/app', '/manifest/merge']);
     expect(fake.calls[1]!.body.events[0].name).toBe('gbrain.job.finished');
     const cfg = JSON.parse(readFileSync(join(home, '.gbrain', 'config.json'), 'utf8'));
-    expect(cfg.wakeshift).toEqual({ enabled: true, url: fake.url });
+    expect(cfg.wakeshift).toEqual({ enabled: true, url: fake.url, manifest_hash: wakeshiftManifestHash() });
     expect(JSON.stringify(cfg)).not.toContain(KEY.slice(4));
     const st = await cli(['status', '--json']);
     const doc = JSON.parse(st.out);
@@ -500,7 +503,7 @@ describe('gbrain wakeshift', () => {
       globalThis.fetch = realFetch;
     }
     expect([...new Set(hosts)]).toEqual(['https://app.wakeshift.ai']);
-    expect(JSON.parse(readFileSync(join(home, '.gbrain', 'config.json'), 'utf8')).wakeshift).toEqual({ enabled: true });
+    expect(JSON.parse(readFileSync(join(home, '.gbrain', 'config.json'), 'utf8')).wakeshift).toEqual({ enabled: true, manifest_hash: wakeshiftManifestHash() });
   });
 
   test('enable without --yes off a terminal refuses through consent, sending nothing', async () => {

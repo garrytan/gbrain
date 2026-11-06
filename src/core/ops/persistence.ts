@@ -12,6 +12,8 @@ import type { LocalGrant } from '../persistence/identity.ts';
 import type { WriteHealthFacts } from '../persistence/health.ts';
 
 const RECEIPT_NAMES = ['get_write_request', 'list_write_requests', 'cancel_write_request'] as const;
+/** The receipt read path, shared with watch_write_request (ops/wakeshift.ts) so a watch sees exactly what get_write_request sees. */
+export { receiptAccess, visible as receiptVisible, missing as receiptNotFound, callerSource as receiptCallerSource };
 type ReceiptOperation = typeof RECEIPT_NAMES[number];
 const denied = () => opError('permission_denied', 'This writer grant does not include the requested receipt operation.',
   'Explicitly regrant the required receipt operation. Existing operation snapshots do not expand during upgrades.');

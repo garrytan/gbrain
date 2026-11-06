@@ -5164,7 +5164,7 @@ More: [docs/guides/wakeshift.md#the-key](../../docs/guides/wakeshift.md#the-key)
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| watch_job wakes an MCP conversation, and a local CLI run has none to wake. | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain jobs wait <id> to block until the job finishes. | agent | `repeat the read that failed` | 1 | no |
+| A watch tool (watch_job, watch_write_request, watch_cron) wakes an MCP conversation, and a local CLI run has none to wake. | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain jobs wait <id> for a job, or gbrain write-request -- <request_id> for a write. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/wakeshift.md#delivery-and-latency](../../docs/guides/wakeshift.md#delivery-and-latency)
 
@@ -5194,9 +5194,9 @@ More: [docs/guides/wakeshift.md#troubleshooting](../../docs/guides/wakeshift.md#
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Reporting back refused (gbrain wakeshift enable, or watch_job after a member was added): this brain has live access members, and this release reports back only on brains that serve their owner alone. | Every member of the brain owner's Wakeshift organization can read the wakes it sends, and Wakeshift's terms make the operator pass its Connector Terms to each member. Shared brains get a terms step in a later release; until then reporting back stays off there. | Leave reporting back off on this brain; agents can use wait_job or gbrain jobs wait <id>. | user | `gbrain doctor --json` | 1 | no |
+| Reporting back refused (gbrain wakeshift enable, or a watch tool): this brain has live access members and its operator has not set the terms and privacy links Wakeshift requires. | Wakeshift's terms (6.2, 6.6) make the operator show each person its own terms and privacy policy, which refer them to Wakeshift's Connector Terms and Privacy Policy, before the first wake. gbrain shows that step from the two links the owner sets on the brain host. | Ask the brain owner to run gbrain wakeshift enable --terms-url <https url> --privacy-url <https url>; meanwhile agents can use wait_job or get_write_request. | user | `gbrain doctor --json` | 1 | no |
 
-More: [docs/guides/wakeshift.md#who-it-is-for](../../docs/guides/wakeshift.md#who-it-is-for)
+More: [docs/guides/wakeshift.md#shared-brains](../../docs/guides/wakeshift.md#shared-brains)
 
 ### wakeshift_unavailable
 
