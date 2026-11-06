@@ -67,7 +67,7 @@ export const PROTOCOL_ACTIVATION_GUARD_SQL = `CREATE OR REPLACE FUNCTION gbrain_
         RAISE EXCEPTION 'writer_coordinator_required: writer state is unreadable to this database role' USING ERRCODE='42501';
       END IF;
       IF COALESCE(current_setting('gbrain.writer_quiesced',true),'')<>'true' OR NOT NEW.enabled OR NEW.writer_protocol_floor<>2
-        OR EXISTS (SELECT 1 FROM persistence_requests WHERE state IN ('queued','running','recovering') OR recovery IS NOT NULL)
+        OR EXISTS (SELECT 1 FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL)
         OR EXISTS (SELECT 1 FROM persistence_effects WHERE state='running' OR recovery IS NOT NULL)
         OR EXISTS (SELECT 1 FROM persistence_worktrees w WHERE EXISTS
           (SELECT 1 FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation

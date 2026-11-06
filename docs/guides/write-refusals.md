@@ -573,7 +573,7 @@ this anchor (`--json` puts them in one object on stdout); the command exits 1.
 | <a id="refresh_sync_timeout"></a>`refresh_sync_timeout` | `refresh_sync_timeout` | Reported per source in a refresh's `sync_blocked`, not as a refusal: the source's managed sync committed nothing within its share of the refresh sync budget (each member gets an equal share of what is left; `sources.refresh_sync_budget_ms`, `GBRAIN_REFRESH_SYNC_BUDGET_MS`, default 5 min), for example because no consumer claimed its write. The message names that write and its state. The checkout is at the upstream commit, the refresh completed and released its lock, and the source is behind until its next sync. A sync stopped by the drain's own rules is reported with that stop's code instead (`drain_stalled` and the others). | Run the `resume` command (`gbrain sync --source <source> --no-pull`). If it stalls the same way, check the write it names with `gbrain sources writer status <source> --json`. |
 | <a id="refresh_source_changed"></a>`refresh_source_changed` | `refresh_source_changed` | HEAD moved (an outside commit or checkout), or the checkout's ownership or set of sources changed, between the precheck and the merge. Nothing was merged and the fence was lifted. | Retry `gbrain sources refresh <source>`. |
 | <a id="refresh_recovery_required"></a>`refresh_recovery_required` | `refresh_recovery_required` | Publication or source recovery is pending on the checkout, or a refresh was interrupted and HEAD is neither the commit it started from nor the verified upstream commit. Writes to the checkout stay refused until it is resolved; gbrain never adopts a HEAD it cannot verify. | `gbrain sources writer status <source>`, then `gbrain sources refresh <source> --resume`. When HEAD is unverified the fix names both ways out: reset to the start commit and run `--abandon`, or reset to the upstream commit and run `--resume`. Resetting is destructive, so ask the user first. Writer status reads HEAD and names the one step left when HEAD already sits at one of those commits: `--resume` at the upstream commit, `--abandon` at the start commit when no member source has synced past it. When one has (its `last_commit` is set and is neither the start commit nor an ancestor of it; a commit git cannot find counts too), `--abandon` refuses with this code and changes nothing, because the next sync would roll that member's pages back; `--resume` refuses too, and both name the one way out that keeps those pages: the fix (`next: ask_user`) previews with `git -C <checkout> status --short`, fast-forwards the checkout with `git merge --ff-only` to the commit the members synced (the upstream commit, or a later one a member already synced; it keeps uncommitted edits and refuses if one overlaps an incoming file), then runs `--resume`. When git refuses, the fix names a hard reset to that commit instead (destructive: it discards local commits and uncommitted edits not in that commit). `--resume` finishes a `recovery_required` refresh whose HEAD is the upstream commit or descends from it, unless a member synced a commit on this refresh's line (or one git cannot place) that HEAD does not contain; then it refuses with the same fast-forward fix. |
-| <a id="worktree_refreshing"></a>`worktree_refreshing` | `worktree_refreshing` | A write, or a managed sync started by a cycle or another command, reached a checkout while a refresh is draining or merging it. It was not journaled. `detail` is `retry_after_ms=1000`. Writes to database-only memory are not affected. An interactive write (CLI, MCP) waits out the fence for up to 10 s, or its explicit `wait_ms` if lower, before this refusal; a background write is refused at once. The refusal is `retryable`, its `fix.next` is `wait`, and the CLI exits 1; the memory verbs keep their frozen `unavailable` code with `canonical: worktree_refreshing`. | Retry the same request ID after `retry_after_ms`; nothing was recorded, so the retry cannot write twice. `gbrain sources writer status --source <source> --json` shows the refresh. A cycle's sync is retried by the next cycle. |
+| <a id="worktree_refreshing"></a>`worktree_refreshing` | `worktree_refreshing` | A write, or a managed sync started by a cycle or another command, reached a checkout while a refresh is draining or merging it. It was not journaled. `detail` is `retry_after_ms=1000`. Writes to database-only memory are not affected. An interactive write (CLI, MCP) waits out the fence for up to 10 s, or its explicit `wait_ms` if lower, before this refusal; a background write is refused at once. The refusal is `retryable`, its `fix.next` is `wait`, and the CLI exits 1; the memory verbs keep their frozen `unavailable` code with `canonical: worktree_refreshing`. With `persistence.refresh_barrier` on, a single page or memory write waits behind the refresh instead ([deferred writes](#deferred-writes)). | Retry the same request ID after `retry_after_ms`; nothing was recorded, so the retry cannot write twice. `gbrain sources writer status --source <source> --json` shows the refresh. A cycle's sync is retried by the next cycle. |
 
 A refresh is recorded in `persistence_worktree_refreshes` and survives a crash.
 When the owner restarts it finishes the deterministic steps on its own: an
@@ -593,6 +593,37 @@ v1 `fix` object (`argv`, `next`, `actor`), with the prose in `suggestion`;
 any other refusal keeps the stored command string in `fix`. Doctor
 reports `worktree_refresh_stuck` for a refresh active longer than 15 minutes,
 with the resume command.
+
+### Deferred writes
+
+With `persistence.refresh_barrier` on (`gbrain config set persistence.refresh_barrier true`, or
+`GBRAIN_REFRESH_BARRIER=1`; off by default), a single page or memory write (put, edit, rename, delete,
+append, remember, forget) that reaches a checkout while a refresh is draining, fenced, merging or
+syncing it is accepted and waits for the refresh instead of being refused `worktree_refreshing`:
+
+- The caller gets a pending receipt at once: the CLI exits 10 (`write_pending`); MCP answers
+  `isError: false` with `status: "pending"`, `request_id`, `receipt` (state `queued`),
+  `deferred: { refresh_id }` and `next` (`get_write_request` / `gbrain write-request <id>`).
+  Replaying the same request ID returns the same receipt.
+- When the refresh ends, the owner publishes the write in arrival order. If the refresh changed a file
+  the write would publish, the write ends `conflict` with `revision_conflict` naming the refresh and
+  the files, and nothing is applied: a refreshed page is never overwritten. Read the page again and
+  submit the change with a new request ID. A credential that no longer grants the write ends it
+  `permission_denied`.
+- <a id="refresh_barrier_expired"></a>A write whose refresh is still unfinished after
+  `persistence.refresh_barrier_max_wait_ms` (default 15 minutes) ends `failed` with
+  `refresh_barrier_expired`, nothing applied. Check the refresh with
+  `gbrain sources writer status --source <source> --json`, then submit again with a new request ID.
+- Still refused as before: batches (`put_pages`, `remember` with `items`), jobs, skill bundles,
+  a refresh in `recovery_required`, more than `persistence.refresh_barrier_max_deferred` (default
+  1000) writes waiting on one refresh, and any brain where a live consumer on the owner host runs a
+  release without the barrier. Repo-less brains and database-only sources never wait.
+- `gbrain sources writer status --json` shows `deferred: { count, oldest_age_ms, refresh_id }` on
+  each active refresh.
+- <a id="downgrade_blocked_deferred_writes"></a>Before installing an older release, turn the barrier
+  off and wait for `gbrain upgrade --check-downgrade` to exit 0. It exits 3 with
+  `downgrade_blocked_deferred_writes` (count and oldest age) while deferred writes remain, because an
+  older release never drains them.
 
 ## Managed sync drain stops
 

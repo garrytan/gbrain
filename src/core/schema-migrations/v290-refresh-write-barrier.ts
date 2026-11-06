@@ -12,7 +12,7 @@ import type { Migration } from './types.ts';
 //   reaches completed or aborted, whoever moves it (a mixed-version window
 //   included); barrier_sequence is diagnostic.
 // - gbrain_request_deferred: a deferred row leaves the state only to running (a
-//   barrier-aware claim of a released refresh), failed or cancelled.
+//   barrier-aware claim of a released refresh), conflict, failed or cancelled.
 // - persistence_consumers.capabilities: what a live consumer can drain; admission
 //   defers only when every live consumer of the owner host can.
 // Postgres swaps the state CHECK with ADD ... NOT VALID then VALIDATE (no long
@@ -47,7 +47,7 @@ export const v290: Migration = {
         IF OLD.state<>'deferred' THEN RAISE EXCEPTION 'unsupported_mutation_protocol: only admission defers a request' USING ERRCODE='42501'; END IF;
         RETURN NEW;
       END IF;
-      IF NEW.state IN ('failed','cancelled') THEN RETURN NEW; END IF;
+      IF NEW.state IN ('conflict','failed','cancelled') THEN RETURN NEW; END IF;
       IF NEW.state='running' AND COALESCE(current_setting('gbrain.refresh_barrier',true),'')='1'
         AND EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.id=OLD.deferred_refresh_id AND f.released_at IS NOT NULL) THEN
         RETURN NEW;
@@ -85,7 +85,7 @@ export const v290: Migration = {
         IF OLD.state<>'deferred' THEN RAISE EXCEPTION 'unsupported_mutation_protocol: only admission defers a request' USING ERRCODE='42501'; END IF;
         RETURN NEW;
       END IF;
-      IF NEW.state IN ('failed','cancelled') THEN RETURN NEW; END IF;
+      IF NEW.state IN ('conflict','failed','cancelled') THEN RETURN NEW; END IF;
       IF NEW.state='running' AND COALESCE(current_setting('gbrain.refresh_barrier',true),'')='1'
         AND EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.id=OLD.deferred_refresh_id AND f.released_at IS NOT NULL) THEN
         RETURN NEW;

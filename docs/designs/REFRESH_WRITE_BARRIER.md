@@ -105,8 +105,8 @@ plus two triggers:
 - **Deferred-row guard** (BEFORE UPDATE on persistence_requests, a new function and trigger; the
   shipped request protocol guard bodies are untouched): a row may leave `deferred` only to
   `running` (and only when its refresh is released and the session declares
-  `gbrain.refresh_barrier = '1'`, which only a new claim statement sets), or to `failed` /
-  `cancelled` (expiry, cancel). Nothing moves a row into `deferred` except its insert. This is a
+  `gbrain.refresh_barrier = '1'`, which only a new claim statement sets), or to `conflict` /
+  `failed` / `cancelled` (a topology change, expiry, cancel). Nothing moves a row into `deferred` except its insert. This is a
   backstop; no older code path selects the state.
 
 No request protocol version changes. Deferred rows keep `protocol_version = 1`, so replay identity

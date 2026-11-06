@@ -1296,6 +1296,16 @@ More: [docs/guides/ambient-recall.md#replay-after-a-degraded-wake](../../docs/gu
 
 More: [docs/guides/troubleshooting.md#doctor-ops-tier](../../docs/guides/troubleshooting.md#doctor-ops-tier)
 
+### downgrade_blocked_deferred_writes
+
+<a id="downgrade_blocked_deferred_writes"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Writes deferred behind a worktree refresh are still waiting, and an older gbrain cannot drain them. | A release before the refresh write barrier never claims a deferred write, so after a downgrade those writes wait until the next upgrade. Safety does not depend on this check; liveness does. | Turn the barrier off (gbrain config set persistence.refresh_barrier false), wait until gbrain upgrade --check-downgrade exits 0, then downgrade. | host_admin | `repeat the read that failed` | 3 | no |
+
+More: [docs/guides/write-refusals.md#deferred-writes](../../docs/guides/write-refusals.md#deferred-writes)
+
 ### drain_holder_stalled
 
 <a id="drain_holder_stalled"></a>
@@ -3875,6 +3885,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | The rated page is not one of the pages the answer used. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/retrieval-feedback.md#ref_not_in_answer](../../docs/guides/retrieval-feedback.md#ref_not_in_answer)
+
+### refresh_barrier_expired
+
+<a id="refresh_barrier_expired"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write that waited behind a worktree refresh was not applied, because the refresh was still unfinished after the barrier's wait limit. | With persistence.refresh_barrier on, a page write that reaches a refreshing checkout is accepted and waits for the refresh to end. A refresh that never ends (a stuck member sync, a host that stopped) would hold those writes forever, so the owner finishes each one failed after persistence.refresh_barrier_max_wait_ms (15 minutes by default). Nothing was applied. | Check the refresh with gbrain sources writer status --source <id> --json, then submit the write again with a new request_id. | provider | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#deferred-writes](../../docs/guides/write-refusals.md#deferred-writes)
 
 ### refresh_dirty
 

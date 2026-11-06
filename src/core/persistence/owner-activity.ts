@@ -53,7 +53,7 @@ export async function ownerActivity(engine: BrainEngine, worktreeIds: readonly s
         (SELECT max(x.completed_at) FROM sources s CROSS JOIN LATERAL (SELECT r.completed_at FROM persistence_requests r
           WHERE r.worktree_id=w.id AND r.source_incarnation=s.incarnation AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
           ORDER BY r.completed_at DESC LIMIT 1) x)) AS last_active,
-      (SELECT min(r.created_at) FROM persistence_requests r WHERE r.worktree_id=w.id AND r.state IN ('queued','running','recovering')) AS oldest_open
+      (SELECT min(r.created_at) FROM persistence_requests r WHERE r.worktree_id=w.id AND r.state IN ('queued','deferred','running','recovering')) AS oldest_open
     FROM persistence_worktrees w
     WHERE w.id::text = ANY($1::text[]) AND w.owner_host_id IS NOT NULL`, [ids, CONSUMER_LAPSED_MS],
     { signal: engine.kind === 'postgres' ? opts.signal : undefined });
