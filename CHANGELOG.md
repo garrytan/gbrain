@@ -14,12 +14,12 @@ identifiers and attribution are available in the pre-removal Git revision
 
 **A `remember` refused for its arguments now names the whole valid call, so an agent that never read the schema saves on its next try.**
 
-An agent on a harness that lists MCP tools as one line and shows parameters only on request sent `remember` its host's own memory shape, `facts: [{text}]`. gbrain answered "did you mean `fact`?", the agent resent `{fact, entity}` without provenance, and only the third call saved: two refusals per saved fact. The refusal now points `facts` at `items` and `text` at `fact`, and quotes a call that validates, provenance included. provenance stays required.
+An agent on a harness that lists MCP tools as one line and shows parameters only on request sent `remember` its host's own memory shape, `facts: [{text}]`. gbrain answered "did you mean `fact`?", the agent resent `{fact, entity}` without provenance, and only the third call saved, so every saved fact cost two refusals. The refusal now points `facts` at `items` and `text` at `fact`, and quotes a valid call with placeholder values, provenance included. provenance stays required.
 
 ### Itemized changes
 
-- `src/mcp/validate-params.ts`, `src/mcp/dispatch.ts`: an unknown `facts` on `remember` suggests `items` and an unknown `text` suggests `fact`; the refusal then appends the operation's `callShape`, a valid call as JSON that says provenance is required. `callShape` is a new optional `Operation` field; only `remember` sets it.
-- `src/core/verbs.ts`: `remember`'s description opens with the call itself, `{fact, provenance (required: source), \`entity\` (subject; recall needs it)} or items[]`, inside the 117 characters a one-line tool listing keeps. A missing `fact` quotes the same valid call instead of an example without provenance.
+- `src/mcp/validate-params.ts`, `src/mcp/dispatch.ts`: an unknown `facts` on `remember` suggests `items` and an unknown `text` suggests `fact`; the refusal then appends the operation's `callShape`, a valid call as JSON with placeholder values (`<one claim>`, `<subject-slug>`, `<where you learned it, with the date>`) that says provenance is required. `callShape` is a new optional `Operation` field; only `remember` sets it.
+- `src/core/verbs.ts`: `remember`'s description opens with the call itself, `{fact, provenance (required: source), \`entity\` (subject; recall needs it)} or items[]`, inside the 117 characters a one-line tool listing keeps. A missing `fact` quotes the same placeholder call instead of an example without provenance, and the missing- and empty-provenance refusals quote its provenance placeholder instead of a realistic source an agent could copy.
 - `src/core/remember-batch.ts`: an item that carries `text` is told to rename it to `fact`.
 
 ## [0.60.585.0] - 2026-11-05
