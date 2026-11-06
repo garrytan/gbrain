@@ -379,7 +379,7 @@ export async function planGitConversion(engine: BrainEngine, sourceId: string, o
     return decision.decision;
   };
   /** d4: where content evidence sends a page that differs from its committed file with no import record. */
-  const byEvidence = (page: GitGapPage, path: string) => {
+  const byEvidence = (page: GitGapPage, path: string, held = false) => {
     const evidence = page.evidence!;
     tally(preview.evidence, evidence.kind, path);
     const subject = { id: page.id, slug: page.slug, revision: page.revision, blob: page.headBlob ?? null, evidence: evidence.kind };
@@ -389,7 +389,8 @@ export async function planGitConversion(engine: BrainEngine, sourceId: string, o
     if (decision === 'adopt') { candidates.push({ page, state: 'database_ahead', evidence: 'decided' }); return; }
     if (decision === 'git_wins') { gitWins('decided', path, subject); return; }
     review.push({ id: page.id, slug: page.slug, path, revision: page.revision, blob: page.headBlob ?? null, evidence });
-    discard(evidence.kind === 'both_moved' ? 'no_record_both_moved' : 'no_record_no_evidence', path);
+    // A path sync already holds as an unknown-side drift keeps that category: the evidence did not place it either.
+    discard(held ? 'held_drift_unknown_differs' : evidence.kind === 'both_moved' ? 'no_record_both_moved' : 'no_record_no_evidence', path);
   };
   const declaredEqual = await equalDeclaredPaths(engine, sourceId, root, mode,
     pages.filter(page => page.state === 'declared_database_only' && page.path && page.headBlob && !page.segmented));
@@ -426,13 +427,13 @@ export async function planGitConversion(engine: BrainEngine, sourceId: string, o
       case 'unparseable': discard('unparseable', path); bump(preview.discard.detail.unparseable, page.unparseable ?? 'unknown'); continue;
       case 'unsafe_path': discard('unsafe_path', path); continue;
       case 'git_ahead':
-        if (page.evidence && side !== 'both') byEvidence(page, path);
+        if (page.evidence && side !== 'both') byEvidence(page, path, side === 'unknown');
         else if (side === 'unknown') discard('held_drift_unknown_differs', path);
         else if (page.databaseAlsoMoved && side !== 'both') discard('both_moved', path);
         else if (!page.databaseAlsoMoved) gitWins('git_ahead', path, { id: page.id, slug: page.slug, revision: page.revision, blob: page.headBlob ?? null });
         continue;
       case 'database_ahead':
-        if (page.evidence && side !== 'both') { byEvidence(page, path); continue; }
+        if (page.evidence && side !== 'both') { byEvidence(page, path, side === 'unknown'); continue; }
         if (side === 'unknown') { discard('held_drift_unknown_differs', path); continue; }
         if (side === 'both') continue;
         candidates.push({ page, state: 'database_ahead' });
@@ -751,6 +752,7 @@ export async function applyApprovedConversion(engine: BrainEngine, sourceId: str
     .map(decision => ({ item: `decision:${decision.slug}`, reason: 'new_decision' as const }));
   const current = approvalItems(plan);
   for (const [item, fingerprint] of Object.entries(current)) if (approval.items[item] !== fingerprint) delta.push({ item, reason: approval.items[item] === undefined ? 'new' : 'changed' });
+  for (const item of Object.keys(approval.items)) if (current[item] === undefined) delta.push({ item, reason: 'changed' });
   for (const category of DISCARD_CATEGORIES) if (plan.preview.discard.by[category]) delta.push({ item: `discard:${category}`, reason: `discard:${category}` });
   if (!delta.length) return runConversion(engine, plan, plan.preview.preview_hash, opts);
   const unchanged = (kind: string, path: string) => current[`${kind}:${path}`] === approval.items[`${kind}:${path}`];
@@ -780,7 +782,8 @@ async function runConversion(engine: BrainEngine, plan: GitConversionPlan, expec
   // Item 3: the strict passes may replace a database version only where the plan approved Git replacing that page at that
   // revision and blob (an adopted page at its planned revision, its blob being the one just committed); any other is held.
   const binding: ConversionBinding = { expect: new Map<string, { id: string; revision: string | null; blob?: string | null }>([...plan.gitWins.flatMap(item => item.id ? [[item.path, { id: item.id, revision: item.revision, blob: item.blob }] as const] : []),
-    ...plan.adopt.map(item => [item.path, { id: item.id, revision: item.revision, blob: undefined }] as const)]), reclassified: new Set() };
+    ...plan.adopt.map(item => [item.path, { id: item.id, revision: item.revision, blob: undefined }] as const),
+    ...[...plan.compared].map(([path, page]) => [path, { id: page.id, revision: page.revision, blob: undefined }] as const)]), reclassified: new Set() };
   try {
     if (plan.preview.discard.count) throw blockedError(plan.preview);
     report({});
@@ -842,7 +845,7 @@ async function runConversion(engine: BrainEngine, plan: GitConversionPlan, expec
     return { status: after.remaining === 0 && !binding.reclassified.size ? 'converted' : 'incomplete', source_id: sourceId, head: after.head, committed, withheld, holds_cleared: holdsCleared, parked, push,
       closing_passes: closing, after, reclassified: [...binding.reclassified].sort() };
   } catch (error) {
-    if (error instanceof OperationError) {
+    if (error && typeof error === 'object') {
       recovery.phase = progress.phase;
       recovery.mode = (await engine.executeRaw<{ strict: boolean }>("SELECT COALESCE(config->>'canonical','')='git' AS strict FROM sources WHERE id=$1", [sourceId]).catch(() => []))[0]?.strict ? 'git' : recovery.mode;
       recovery.push ??= progress.push ?? null;

@@ -201,6 +201,23 @@ for (const backend of testBackends()) describe(`[${backend}] #8071: rows behind 
     expect((await pageOf(engine, 'notes/c')).body).toContain('The committed body of notes/c.');
   }, { databaseUrl, setup }), 240_000);
 
+  test('d4: a row with no record whose database moved never joins, even with --include-ambiguous; one whose file moved does', () => managedBrain(async ({ engine, ctx, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await putDatabaseOnly(engine, ctx, 'notes/a', 'A database-only edit of notes/a.');
+    await seedBehind(engine, root, {
+      'notes/a': { content: note('notes/a', 'The committed body of notes/a.'), record: 'none' },
+      'notes/d': { content: note('notes/d', 'The redacted body of notes/d.'), record: 'none' },
+    });
+    const scan = await scanRowsBehind(engine, 'default', { evidence: true });
+    expect(scan.unproven.map(row => [row.slug, row.evidence?.kind])).toEqual([['notes/a', 'adopt_db_moved'], ['notes/d', 'git_wins_file_moved']]);
+    expect(scan).toMatchObject({ live_pages: 5, unproven_by: { adopt_db_moved: 1, git_wins_file_moved: 1, both_moved: 0, no_evidence: 0 } });
+    const widened = await repair(engine, { includeAmbiguous: true });
+    expect(listing(widened)).toEqual([['default:notes/a', 'excluded:database_moved'], ['default:notes/d', 'reimport']]);
+    await repair(engine, { apply: true, expect: widened.preview_hash, includeAmbiguous: true });
+    expect((await pageOf(engine, 'notes/a')).body).toContain('A database-only edit of notes/a.');
+    expect((await pageOf(engine, 'notes/d')).body).toContain('The redacted body of notes/d.');
+  }, { databaseUrl, setup }), 240_000);
+
   test('a checkpoint file the import refuses is held with the refusal code instead of imported', () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     await seedBehind(engine, root, { 'notes/a': { content: '---\ntype: concept\ntitle: [unclosed\n---\n\nThe redacted body of notes/a.\n', record: 'checkpoint' } });
