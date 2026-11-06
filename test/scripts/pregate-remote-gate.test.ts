@@ -354,3 +354,36 @@ describe('.gstack policy floor', () => {
     expect(a * 1e8 + b * 1e4 + c).toBeGreaterThanOrEqual(1 * 1e8 + 91 * 1e4 + 377);
   });
 });
+
+describe('ship_lanes_from (/ship lanes carried from CI, docs/ci-event-parity.md#ship-lanes)', () => {
+  const root = join(import.meta.dir, '..', '..');
+  const pregate = JSON.parse(readFileSync(join(root, '.gstack/pregate.json'), 'utf8'));
+  const ship = JSON.parse(readFileSync(join(root, '.gstack/ship-policy.json'), 'utf8'));
+  const lanes: Record<string, { profiles: string[]; inventory: string }> = pregate.ship_lanes_from ?? {};
+  const doc = readFileSync(join(root, 'docs/ci-event-parity.md'), 'utf8');
+  const start = doc.indexOf('<a id="ship-lanes"></a>');
+  const body = start < 0 ? '' : doc.slice(doc.indexOf('\n', doc.indexOf('### ', start)));
+  const section = body.slice(0, body.search(/\n#{1,6} /) >>> 0);
+  const rows = [...section.matchAll(/^\| `([a-z0-9-]+)` \| `([^`]+)` \| ([^|]+) \| `([a-z0-9,-]+)` \|$/gm)]
+    .map(([, label, command, profiles, gateLanes]) => ({ label, command, profiles: [...profiles.matchAll(/`([a-z0-9-]+)`/g)].map(m => m[1]), gateLanes }));
+
+  it('maps exactly the documented lane commands, byte for byte, to the documented run profiles', () => {
+    expect(rows.length).toBeGreaterThan(0);
+    expect(Object.keys(lanes).sort()).toEqual(rows.map(r => r.command).sort());
+    for (const r of rows) expect(lanes[r.command]!.profiles).toEqual(r.profiles);
+    for (const m of Object.values(lanes)) for (const name of m.profiles) expect(Object.keys(pregate.run_profiles)).toContain(name);
+  });
+
+  it("lists each lane's files through the full gate's --list, so a tree that changes the CI reuse files never carries its own runs", () => {
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      expect(lanes[r.command]!.inventory).toBe(`GBRAIN_PREGATE_GATE_CMD='bun run ci:ubicloud' bash scripts/pregate-remote-gate.sh --list --lanes ${r.gateLanes}`);
+    }
+  });
+
+  it('ship-policy.json declares min_gstack_version 1.94.0.0 or newer, the first gstack that reads ship_lanes_from', () => {
+    expect(Object.keys(lanes).length).toBeGreaterThan(0);
+    const [a, b, c] = String(ship.min_gstack_version ?? '').split('.').map(Number);
+    expect(a * 1e8 + b * 1e4 + c).toBeGreaterThanOrEqual(1 * 1e8 + 94 * 1e4 + 0);
+  });
+});

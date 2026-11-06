@@ -34,7 +34,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { MCP_SERVER_DESCRIPTION, readInstructionContent, resolveMcpInstructions } from './instructions.ts';
 import { httpInstructionTools } from './initialize-context.ts';
-import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
+import { ambientOptsFrom } from '../core/facts/writeback-config.ts';
+import { resolveAgentWriteback } from '../core/facts/writeback-settings.ts';
 import { operations, operationsByName, opAllowedForBoundClient } from '../core/operations.ts';
 import { scopeDeniedError } from '../core/ops/op-fix.ts';
 import { ON_BEHALF_OF_HEADER } from '../core/access/audience.ts';
@@ -461,7 +462,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         // extract_facts is advertised only when the resolved surface can
         // actually call it (OV2-14; a verbs/starter-pinned serve must not
         // order agents to call a tool dispatch will deny).
-        const writeback = await resolveWritebackConfig(engine, fileConfig);
+        const writeback = (await resolveAgentWriteback(engine, fileConfig)).bundle;
         const canWriteOp = (name: string) => hasScope(auth.auth!.scopes, 'write') && (!surfaceAllowedOps || surfaceAllowedOps.has(name));
         return Response.json(
           {

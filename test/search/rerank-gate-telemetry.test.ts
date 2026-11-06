@@ -39,7 +39,7 @@ const off: Gate = { mode: 'shadow', eligible: false, ineligible_reason: 'reranke
 async function flushFrom(engine: BrainEngine, metas: HybridSearchMeta[]): Promise<void> {
   _resetTelemetryWriterForTest();
   for (const m of metas) recordSearchTelemetry(engine, m, { results_count: 3 });
-  await getTelemetryWriter().flush();
+  await getTelemetryWriter(engine).flush();
 }
 
 for (const backend of testBackends()) {

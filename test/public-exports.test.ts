@@ -39,6 +39,7 @@ const EXPECTED_EXPORTS: ExpectedExport[] = [
   { subpath: 'gbrain/operations', canary: ['operations', 'OperationError'] },
   { subpath: 'gbrain/minions', canary: [] }, // barrel module; re-exports many names
   { subpath: 'gbrain/engine-factory', canary: [] }, // factory exports a default creator
+  { subpath: 'gbrain/engine-open', canary: ['openEngine', 'DEFAULT_EMBEDDED_POOL_MAX'] },
   { subpath: 'gbrain/pglite-engine', canary: ['PGLiteEngine'] },
   { subpath: 'gbrain/link-extraction', canary: ['extractEntityRefs', 'extractPageLinks'] },
   { subpath: 'gbrain/import-file', canary: ['importFromContent'] },
@@ -81,7 +82,8 @@ describe('public exports — package.json exports map', () => {
     // breaking change going forward" — bump minor and update this count.
     // 23→24 (2026-08 fix wave): ./core/skillopt (audit skillopt-cats-11).
     // 28→29: ./version (gbrain-evals reads the installed version directly).
-    expect(count).toBe(29);
+    // 29→30: ./engine-open (experimental openEngine(settings), GBRA-283 Wave B1).
+    expect(count).toBe(30);
   });
 
   test('EXPECTED_EXPORTS list matches the exports map exactly (no drift)', () => {

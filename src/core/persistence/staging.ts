@@ -113,7 +113,8 @@ export function cleanupRecoveryStaging(record: StagedRecovery, opts: { keepBefor
 }
 
 /**
- * Recovery's restoration of a version 3 record: the verified copy of the prior file is renamed over the canonical
+ * Recovery's restoration of a file record whose prior is staged (`staging.before`, a prior over the single-string
+ * ceiling): the verified copy of the prior file is renamed over the canonical
  * path with its recorded mode. A missing copy refuses (`unexpected_staging_bytes`): the bytes cannot be guessed.
  */
 export function restoreBeforeStage(record: StagedRecovery & { mode: number | null }, boundary?: (phase: 'file_replaced' | 'directory_flushed') => void): void {

@@ -1,31 +1,14 @@
 import type { BrainEngine } from './engine.ts';
 import type { EngineConfig } from './types.ts';
 import { registerChatUsageSink, makeEngineChatUsageSink } from './ai/chat-usage.ts';
+import { constructEngine } from './engine-construct.ts';
 
 /**
  * Create an engine instance based on config.
  * Uses dynamic imports so PGLite WASM is never loaded for Postgres users.
  */
 export async function createEngine(config: EngineConfig): Promise<BrainEngine> {
-  const engineType = config.engine || 'postgres';
-
-  const engine = await (async (): Promise<BrainEngine> => {
-    switch (engineType) {
-      case 'pglite': {
-        const { PGLiteEngine } = await import('./pglite-engine.ts');
-        return new PGLiteEngine();
-      }
-      case 'postgres': {
-        const { PostgresEngine } = await import('./postgres-engine.ts');
-        return new PostgresEngine();
-      }
-      default:
-        throw new Error(
-          `Unknown engine type: "${engineType}". Supported engines: postgres, pglite.` +
-          (engineType === 'sqlite' ? ' SQLite is not supported. Use pglite instead.' : '')
-        );
-    }
-  })();
+  const engine = await constructEngine(config);
 
   // #4218: route gateway.chat() usage accounting into this engine's
   // chat_usage_log. Every production engine flows through this factory, so
@@ -35,8 +18,9 @@ export async function createEngine(config: EngineConfig): Promise<BrainEngine> {
   // doctor probe) no longer permanently steals the ledger, and records never
   // route to a closed engine. Concurrent multi-engine attribution remains
   // top-of-stack best-effort; the sink is fail-open, so a not-yet-migrated
-  // engine never breaks a chat call.
-  const deregisterUsageSink = registerChatUsageSink(makeEngineChatUsageSink(engine));
+  // engine never breaks a chat call. An engine opened from settings never
+  // comes through here (engine-open.ts): its sink is its own.
+  const deregisterUsageSink = registerChatUsageSink(makeEngineChatUsageSink(engine), engine);
   const origDisconnect = engine.disconnect.bind(engine);
   engine.disconnect = async (): Promise<void> => {
     deregisterUsageSink();

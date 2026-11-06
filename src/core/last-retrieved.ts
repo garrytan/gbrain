@@ -48,8 +48,10 @@
 import type { BrainEngine } from './engine.ts';
 import { isMissingSchemaObject } from './utils.ts';
 import { deferUntilResponse, registerBackgroundWorkDrainer } from './background-work.ts';
+import { engineKey } from './engine-key.ts';
 
-let _trackRetrievalCache: { ts: number; enabled: boolean } | null = null;
+/** Per engine, so each mounted brain honors its own setting. */
+let _trackRetrievalCache = new WeakMap<object, { ts: number; enabled: boolean }>();
 const TRACK_RETRIEVAL_CACHE_TTL_MS = 30_000;
 
 /**
@@ -147,14 +149,16 @@ registerBackgroundWorkDrainer({
 });
 
 /**
- * Resolve `search.track_retrieval` config with a 30s in-process cache so
- * hot-path callers don't pay a SELECT per search. Default-on: missing
+ * Resolve `search.track_retrieval` config with a 30s in-process cache per
+ * engine so hot-path callers don't pay a SELECT per search. Default-on: missing
  * config OR unparseable value → true (D13 default).
  */
 async function isTrackingEnabled(engine: BrainEngine): Promise<boolean> {
   const now = Date.now();
-  if (_trackRetrievalCache && now - _trackRetrievalCache.ts < TRACK_RETRIEVAL_CACHE_TTL_MS) {
-    return _trackRetrievalCache.enabled;
+  const key = engineKey(engine);
+  const cached = _trackRetrievalCache.get(key);
+  if (cached && now - cached.ts < TRACK_RETRIEVAL_CACHE_TTL_MS) {
+    return cached.enabled;
   }
   let enabled = true;
   try {
@@ -165,13 +169,13 @@ async function isTrackingEnabled(engine: BrainEngine): Promise<boolean> {
   } catch {
     // getConfig miss / connection blip → default to enabled (D13 default).
   }
-  _trackRetrievalCache = { ts: now, enabled };
+  _trackRetrievalCache.set(key, { ts: now, enabled });
   return enabled;
 }
 
 /** Test seam — drops the cache so subsequent calls re-read config. */
 export function _resetTrackRetrievalCacheForTests(): void {
-  _trackRetrievalCache = null;
+  _trackRetrievalCache = new WeakMap();
 }
 
 /**

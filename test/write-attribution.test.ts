@@ -242,8 +242,10 @@ describe('write attribution on a managed brain', () => {
       expect(row.expired_at).not.toBeNull();
       expect(created(row)).toEqual(actor(await requestRow(brain, brain.oauth, remembered), brain.principals.oauth));
       expect(last(row)).toEqual(forgetRequest);
-      const effects = await engine.executeRaw<{ request_id: string | null }>("SELECT request_id::text FROM persistence_effects WHERE kind='withdrawal-mirror' AND source_id=$1", [brain.sourceId]);
-      expect(effects.map(effect => effect.request_id)).toEqual([forgetRequest.request]);
+      // GBRA-190 G4: the withdrawal is the forget request's own page publication (the struck fence row), never a later mirror.
+      const revision = await pageRevisionActor(brain, 'people/alice-example');
+      expect({ request: revision.request, kind: revision.kind, id: revision.id }).toEqual(forgetRequest);
+      expect(await engine.executeRaw("SELECT 1 FROM persistence_effects WHERE kind='withdrawal-mirror' AND source_id=$1", [brain.sourceId])).toEqual([]);
     }
   }, 120_000);
 

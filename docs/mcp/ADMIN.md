@@ -265,6 +265,10 @@ read or write is not yet kept to the person: `list_write_conflicts`, `capture`,
 `add_timeline_entry`, `add_link`, `put_page` and `edit_page`, which wait for owner-approved
 proposals. An `--attest-ops` list that already names one of these is refused for it
 (`actor_not_attested`, reason `op_not_attested`), and a queued attested write of one fails when it publishes.
+An attested read sees what that person sees, private facts included, and gbrain
+cannot tell who else reads the answer. Use the attest client only for QM's
+personal-scope memory route: never register it as a model-callable MCP connector
+or route it to shared scopes ([QM guide](../guides/qm.md#set-up-on-the-brain-host)).
 `gbrain access check --token <name>` shows the
 result ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
 

@@ -11,7 +11,9 @@
  * 3. Existing coverage: test/cold-read-folded-statements.test.ts counts the sources reads of one snapshot, not their
  *    order; test/facts-context-injection.serial.test.ts pins the hook's payload, not when it runs.
  * 4. Seam: none. test/helpers/statement-depth.ts holds every PGLite statement and records its serial depth; the stdio
- *    arm runs the real `startMcpServer` (test/fixtures/mcp-stdio-round-trip-driver.ts).
+ *    arm runs the real `startMcpServer` (test/fixtures/mcp-stdio-round-trip-driver.ts), which tags each statement with
+ *    the JSON-RPC request that sent it, so the server's background work (the resident persistence consumer ticks every
+ *    250ms or more) never lands in, or deepens, the request's trace. A second stdio case forces that interleaving.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -143,7 +145,7 @@ describe('MCP stdio warm search (real startMcpServer)', () => {
   const DRIVER = join(REPO_ROOT, 'test', 'fixtures', 'mcp-stdio-round-trip-driver.ts');
   const CHILD_STRIP = ['GBRAIN_DATABASE_URL', 'DATABASE_URL', 'GBRAIN_BRAIN_ID', 'GBRAIN_SOURCE', 'GBRAIN_SURFACE', 'GBRAIN_MCP_FORCE_SURFACE', 'GBRAIN_MCP_INSTRUCTIONS'];
 
-  test('resolves its source and reads config in one round trip; the hook runs beside the op', async () => {
+  const warmSearch = async (extraEnv: Record<string, string>) => {
     const parent = mkdtempSync(join(tmpdir(), 'gbrain-stdio-round-trips-'));
     const log = join(parent, 'statements.ndjson');
     writeFileSync(log, '');
@@ -151,7 +153,7 @@ describe('MCP stdio warm search (real startMcpServer)', () => {
     writeFileSync(join(parent, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: join(parent, 'db'), embedding_dimensions: 1536 }));
     const env = { ...process.env } as Record<string, string>;
     for (const k of CHILD_STRIP) delete env[k];
-    Object.assign(env, { GBRAIN_HOME: parent, HOME: parent, GBRAIN_SWEEP: '0', GBRAIN_SKIP_STARTUP_HOOKS: '1', GBRAIN_SERVE_SYNC_IPC: '0', ROUND_TRIP_LOG: log });
+    Object.assign(env, { GBRAIN_HOME: parent, HOME: parent, GBRAIN_SWEEP: '0', GBRAIN_SKIP_STARTUP_HOOKS: '1', GBRAIN_SERVE_SYNC_IPC: '0', ROUND_TRIP_LOG: log, ...extraEnv });
     const proc = Bun.spawn([process.execPath, DRIVER], { cwd: parent, env, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
     const responses = new Map<number, unknown>();
     const reader = (async () => {
@@ -185,19 +187,20 @@ describe('MCP stdio warm search (real startMcpServer)', () => {
       send({ jsonrpc: '2.0', method: 'notifications/initialized' });
       searchCall(2);
       await waitFor(2);
-      await Bun.sleep(500);
-      const before = logged().length;
       searchCall(3);
       const result = await waitFor(3) as { isError?: boolean };
-      await Bun.sleep(200);
-      const call = logged().slice(before);
-      const base = call[0]!.depth - 1;
-      const records = call.map(r => ({ ...r, depth: r.depth - base }));
+      const all = logged();
+      const records = all.filter(r => r.scope === 3);
       expect(result.isError).toBeFalsy();
       const { resolution, op } = resolutionThenOp(records);
       expect(resolution.length).toBeGreaterThanOrEqual(2);
       expect(resolution.map(r => r.depth)).toEqual(resolution.map(() => 1));
       expect(op.depth).toBe(2);
+      if (extraEnv.ROUND_TRIP_INTERLEAVE) {
+        const background = all.findIndex(r => r.scope === null && r.sql === 'SELECT count(*)::int AS n FROM page_projection_jobs');
+        expect(background).toBeGreaterThan(all.indexOf(resolution[0]!));
+        expect(background).toBeLessThan(all.indexOf(op));
+      }
       const withdrawals = records.find(r => WITHDRAWALS.test(r.sql));
       const generation = records.find(r => GENERATION.test(r.sql));
       const search = records.find(r => SEARCH.test(r.sql))!;
@@ -209,5 +212,14 @@ describe('MCP stdio warm search (real startMcpServer)', () => {
       await reader.catch(() => {});
       rmSync(parent, { recursive: true, force: true });
     }
-  }, 120_000);
+  };
+
+  test('resolves its source and reads config in one round trip; the hook runs beside the op', () => warmSearch({}), 120_000);
+
+  // Value: protects=the stdio trace counts only the request's own statements, so a background statement sent while the
+  //   config snapshot read is in flight (a resident persistence consumer tick, by chance about 1 run in 6 on a loaded
+  //   runner) neither becomes the "op" nor shifts its depth; fails_when=the trace goes back to "every statement logged
+  //   after the previous call" (op.depth 1, expected 2, as full-ci saw); why_new=the case above meets the race only by
+  //   chance; seam=ROUND_TRIP_INTERLEAVE in the driver sends the background statement; no_claim=how often ticks fire
+  test('a background statement sent beside the request leaves its trace and depths unchanged', () => warmSearch({ ROUND_TRIP_INTERLEAVE: '3' }), 120_000);
 });

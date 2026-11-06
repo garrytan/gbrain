@@ -19,7 +19,7 @@ import { materializeTimeline, prepareCanonicalProjections } from './canonical-pr
 import { digest, sha256 } from './digest.ts';
 import { admitWriteInTransaction, assertReplayIntent, getWriteRequest, getWriteRequestById, intentDigest, receiptFor } from './journal.ts';
 import { acquireWorktree, containsPath, getWorktreeBinding, probeWorktreeWriter, readManagedMode, type WorktreeBinding } from './ownership.ts';
-import { localHostId } from './identity.ts';
+import { hostIdFor } from './identity.ts';
 import { assertPersistenceAccepting, startPersistenceConsumer, waitForWrite, writeResponse } from './service.ts';
 import { maintenancePublishWaitMs } from './maintenance-wait.ts';
 import { AGENT_WRITE_WAIT_MS, configuredWriteWaitMs } from './write-wait.ts';
@@ -174,8 +174,8 @@ function connectorPublicationRefusal(code: RegistryCode, message: string, row: W
 }
 
 /** The connector binding's owner and incarnation checks; returns the paths they prove present. */
-function checkedConnectorBinding(sourceId: string, source: ConnectorSource, binding: WorktreeBinding) {
-  if (binding.owner_host_id !== localHostId() || !binding.local_path || !binding.coordination_path) {
+function checkedConnectorBinding(engine: object, sourceId: string, source: ConnectorSource, binding: WorktreeBinding) {
+  if (binding.owner_host_id !== hostIdFor(engine) || !binding.local_path || !binding.coordination_path) {
     throw opError('owner_unavailable', 'The connector canonical owner is unavailable on this host.',
       `Source ${sourceId} is owned by another host or its worktree binding is incomplete; run its connector sync on the owner host that gbrain sources writer status --source ${sourceId} --json names.`,
       { fix: ownerStatusFix(sourceId, 'Shows which host owns the source and whether its binding records a local and coordination path.') });
@@ -188,9 +188,9 @@ function checkedConnectorBinding(sourceId: string, source: ConnectorSource, bind
   return { localPath: binding.local_path, coordinationPath: binding.coordination_path, sourcePath: source.local_path };
 }
 
-function connectorBindingRoot(sourceId: string, source: ConnectorSource, binding: WorktreeBinding | null): string | null {
+function connectorBindingRoot(engine: object, sourceId: string, source: ConnectorSource, binding: WorktreeBinding | null): string | null {
   if (!binding) return null;
-  const { localPath, coordinationPath, sourcePath } = checkedConnectorBinding(sourceId, source, binding);
+  const { localPath, coordinationPath, sourcePath } = checkedConnectorBinding(engine, sourceId, source, binding);
   assertPhysicalRoot(localPath, { worktreeId: binding.worktree_id, coordinationPath });
   try {
     const root = realpathSync(join(localPath, binding.relative_path));
@@ -298,9 +298,9 @@ export async function beginConnectorSync(engine: BrainEngine, sourceId: string, 
   const authority = await managedSyncAuthority(engine, sourceId, source.incarnation, source.local_path ?? '');
   const binding = await getWorktreeBinding(engine, sourceId);
   // The locked acquisition re-stamps a device-only physical-root change (#5604) before the root is asserted.
-  if (binding) { checkedConnectorBinding(sourceId, source, binding); await probeWorktreeWriter(binding, engine); }
+  if (binding) { checkedConnectorBinding(engine, sourceId, source, binding); await probeWorktreeWriter(binding, engine); }
   else authority.writer.databaseOnlyReason = 'connector_database';
-  const canonicalRoot = connectorBindingRoot(sourceId, source, binding);
+  const canonicalRoot = connectorBindingRoot(engine, sourceId, source, binding);
   const session = new ManagedConnectorSync(engine, sourceId, identity, source, authority, binding, canonicalRoot, opts.noEmbed === true, opts.noSchemaPack === true,
     opts.retryFailed === true, lease, opts.resetCheckpoint === true, opts.githubItem !== undefined, opts.full === true);
   await session.load();
@@ -547,7 +547,7 @@ export class ManagedConnectorSync {
     const binding = await getWorktreeBinding(engine, this.sourceId);
     if ((binding?.worktree_id ?? null) !== (this.binding?.worktree_id ?? null) ||
         String(binding?.owner_epoch) !== String(this.binding?.owner_epoch) ||
-        connectorBindingRoot(this.sourceId, source, binding) !== this.canonicalRoot) {
+        connectorBindingRoot(engine, this.sourceId, source, binding) !== this.canonicalRoot) {
       throw opError('source_changed', 'The connector ownership changed during the sweep.',
         `The owner binding or canonical root of ${this.sourceId} changed while this sweep ran; writes it already admitted keep their receipts. Inspect the owner before running gbrain sync --source ${this.sourceId} again.`,
         { fix: ownerStatusFix(this.sourceId, 'Shows the current owner, epoch and canonical root of the source.') });
@@ -1118,7 +1118,7 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
       throw connectorPublicationRefusal('source_changed', 'The connector ownership binding changed after admission.', row,
         `The owner binding of ${row.source_id} changed after this write was admitted.`);
     }
-    if (connectorBindingRoot(row.source_id, source, binding) !== p.canonicalRoot) throw connectorPublicationRefusal('source_changed', 'The connector canonical root changed after admission.', row,
+    if (connectorBindingRoot(engine, row.source_id, source, binding) !== p.canonicalRoot) throw connectorPublicationRefusal('source_changed', 'The connector canonical root changed after admission.', row,
       `The canonical root of ${row.source_id} changed after this write was admitted.`);
     if (p.filePath !== null && (!p.canonicalRoot || !isWriteTargetContained(p.filePath, p.canonicalRoot) || persistenceFileHash(p.filePath) !== p.fileBeforeHash)) {
       throw connectorPublicationRefusal('source_changed', 'The connector canonical file changed after admission.', row,

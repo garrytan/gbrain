@@ -173,6 +173,7 @@ work behind exits 0, so scripts should also check `results[].complete`.
 | `missing-tables` | `schema_missing_tables` | Explicit-only, preview-bound. Recreates, empty, a rebuildable cache table (`query_cache`, `code_traversal_cache`) that the applied migrations created but the brain no longer has, on a brain whose schema version already covers its creating migration, so `apply-migrations` never recreates it (#6911). DDL only (`IF NOT EXISTS`), no journal admission, brain-wide. See [missing tables](#missing-tables). | `user_data_tables`: a missing table that holds user data; this repair never recreates it, so restore its rows from a backup first. `other_tables`: a missing table that holds no user data; `gbrain init --migrate-only` recreates it if the base schema defines it. |
 | `url-clone-fences` | none (`gbrain sync --source <id>` stops at the pull with `pull_blocked_local_changes`) | Explicit-only, preview-bound, destructive consent. Clears the `## Facts` fence rows an older gbrain appended to files of a clone it owns (`gbrain sources add --url`), which block every `git pull --ff-only` that touches those files (#6946). The preview proves each changed file differs from HEAD only by appended fence rows; `--apply --expect <hash> --yes` backs each file up, keeps its rows database-only and restores the file from HEAD. Unmanaged brains only. See [URL clone fences](#url-clone-fences). | `non_fence_edit`, `unparsed_fence`, `staged_change`, `deleted`, `not_in_head`, `unreadable_checkout`: a file with any other difference from HEAD, named with why; a file whose HEAD would not import as its page (`visibility_noncanonical` and the other import holds): apply keeps its rows database-only and restores the file so the clone can pull, but does not import HEAD and reports `held`; files that changed after the preview (`changed_since_preview`). |
 | `segmented-mirror` | none (doctor does not read segmented files; run the preview once if the brain ran a version before v0.60.299.0) | Explicit-only, preview-bound, destructive consent. Rewrites the canonical file of a page stored in segments that an older binary's withdrawal mirror passed by (`page_body_segmented`), so the file still holds a row `forget`, `forget_fact` or `purge_fact` removed from the database. The file becomes the page's canonical render (`gbrain export`'s bytes), written by the withdrawal mirror and committed by its Git effect. See [segmented mirror](#segmented-mirror). | `file_database_drift`: the file also differs from the database for another reason; it is listed held and never rewritten. `not_owner_host`: the preview ran off the source's owner host and read none of its files. |
+| `segmented-tiling` | `segmented_tiling` | Explicit-only, preview-bound, trusted local CLI on the owner host. Republishes, from the file Git holds at HEAD, each live page stored in segments whose live generation's rows do not cover its body (every read of it refuses `page_body_rows_unreadable` and a managed sync holds its file). `--source <id>` (`--slug <slug>` narrows), then `--apply --expect <hash>`. See [segmented tiling](#segmented-tiling). | Pages with no file, a file HEAD does not hold or one over `pages.max_bytes`, a file another sync hold withholds or one the next sync's import screen would hold (listed `held`); pages that changed after the preview (`changed_since_preview`). A source with no Git checkout, a repo-less brain included, refuses (`not_a_git_repo`) once it holds a damaged page; with none the preview lists nothing. |
 | `secret-spans` | none (the operator names the pages) | Explicit-only, preview-bound, trusted local CLI. Replaces the credentials the secret scanner finds in the database copies of the named pages with `<REDACTED:rule>` markers and changes nothing else: title, frontmatter values (never keys), the body (inline or segmented), timeline, fact, take and link rows, raw data; chunks holding a value are rebuilt. Database only: no file write, no Git commit, and a sync hold stays. `--source <id> --slug <slug>... [--rules <list>]`, then `--apply --expect <hash>`. See [secret spans](#secret-spans). | `clean` (no match), `refused` (`page_not_found`, `page_kind_unsupported`, `page_too_large`, `proof_failed`, `fact_value_unsupported`, `timeline_rows_collide`); pages that moved after the preview (`preview_changed`, `changed_since_preview`). |
 
 Timeline rows that an earlier version of a page produced and its current text
@@ -410,6 +411,81 @@ earlier Git commits; this repair does not rewrite history.
 
 The repair runs only when named and never on upgrade, `apply-migrations` or the
 maintenance cycle.
+
+<a id="segmented-tiling"></a>
+### Segmented tiling
+
+A page stored in segments is read from the manifest rows of its live
+generation, and those rows must cover the page's recorded body size from
+byte 0 with no gap. Before this release a write could publish a generation
+without its rows: a fact purge's abort, or a sweep's expiry, collected the
+write's staging (and deleted its staged rows) while the write prepared, and
+the write's last preparation step moved the staging back to `prepared`. The
+publish then passed its staging check, closed the page's old rows and
+published none. Every read of such a page refuses `page_body_rows_unreadable`,
+and a managed sync holds its file `page_write_failed` on every retry; that
+hold reads `needs_human` with `safe_actions: ["repair"]`, and its fix is this
+repair's preview for the page (`gbrain sync status --source <id> --code
+page_body_rows_unreadable --json` lists it).
+Current versions refuse both steps with `body_staging_expired` (send the write
+again), but upgrading rewrites nothing, so a page damaged earlier stays
+unreadable until this repair runs.
+
+Doctor `segmented_tiling` lists such pages: source, slug, live generation,
+how many rows it has, the bytes they cover (or that they leave a gap) and the
+body size. It reads the manifest only and writes nothing. It skips archived
+sources, runs as its own doctor entry, and its fix names the first damaged
+source (`--source`) with the other sources' commands. A preview lists at most
+1,000 pages; one that finds more reports `truncated`, so preview again after
+the apply.
+
+To republish them from Git, preview, then apply after the user agrees:
+
+```bash
+gbrain repair segmented-tiling --source default                     # preview: each page, its file, HEAD's blob and its sync hold, with a hash
+gbrain repair segmented-tiling --source default --apply --expect <hash>
+```
+
+The preview runs only from the trusted local CLI, on the host that owns the
+source's checkout, and writes nothing. For each page it lists the live
+generation, the bytes its rows cover, the page's file, HEAD's commit, the
+file's blob at HEAD (object id, SHA-256 and size) and the sync hold on it. A
+page with no file, a file HEAD does not hold or a file over `pages.max_bytes`
+is listed `held` and never written. So is a file that another sync hold
+withholds (any hold but the `page_write_failed` one a sync opens when it
+cannot read the stored body), and a file the next sync's import screen would
+hold: purged page content, a write-gate reject, private visibility it would
+not store, a fence it refuses. The apply keeps the stored frontmatter, so a
+file that changes who can read the page is held too (`visibility`,
+`readable_by`, a privacy alias such as `access` or `confidentiality`, or a
+type that is private by default), as is one the next sync's content gate
+would quarantine, flag or stop embedding when the stored page carries no
+such marker. So is a file over 24 MiB, the most the import screen reads
+whole. A source without a Git checkout, a repo-less brain included, previews
+nothing while no page is damaged and refuses with `not_a_git_repo` once one
+is: this repair republishes the copy Git holds, and there the database has no
+other copy. On such a brain, rewrite the page from a copy you hold
+(`put_page`).
+
+The apply needs the preview's hash. It checks each page again (revision,
+generation and blob) and refuses `preview_changed` when one moved. Then, per
+page, in one transaction under the page's key lock (a coordinated maintenance
+write on a managed brain), it versions the damaged generation by reference,
+screens the blob again, publishes the body the screen's fence step and the
+purge and withdrawal overlay admit (a claim the owner purged stays out even
+when the file still carries it; a withdrawal committed after the preview
+makes the page `changed_since_preview`) as a new generation through the same flip that
+refuses a generation that does not cover its body, keeps the page's title,
+type, frontmatter, tags and trust tier, clears the sync hold the preview saw
+(a newer hold stays until the next sync re-imports the file),
+records the new revision as imported from the HEAD blob when the file imports
+to the stored title, type, frontmatter and tags (so the next sync holds no
+`file_drift` for it), asks the next sync to screen the file again (so a file that differs from the
+stored page in anything else imports normally) and writes the page's receipt
+(`op_checkpoints` op `segmented-tiling-receipt`) and a `segmented-tiling` audit
+line. A rerun with the same hash skips pages that already have a receipt.
+The repair runs only when named, never from doctor, a remediation plan or an
+upgrade.
 
 <a id="request-growth"></a>
 ### Request-table growth
@@ -1224,6 +1300,40 @@ gbrain repair timeline-comments --source <id> --apply  # clean them
 It drops generated bullets that carry markup (yours are left alone), deletes
 markup-only rows and strips the rest, under the page lock. A second apply finds
 nothing, and a timeline-only rewrite queues no facts extraction.
+
+<a id="contact-rows"></a>
+### Contact rows
+
+A writer that appended a `{type, value, last_used}` row to a page's
+frontmatter `contacts:` list on every touch, instead of updating the existing
+row, left the same value many times (#8109). This explicit-only, preview-bound
+kind collapses the rows already stored, whichever writer left them. It never runs from `--all`, doctor's remediation plan, the
+maintenance cycle or an upgrade.
+
+**Say to your agent:** *"Preview which pages repeat contact rows, show me the
+counts, then apply after I agree."*
+
+```bash
+gbrain repair contact-rows --source <id> [--slug <slug>]...                 # preview: dedupe / needs_reconcile
+gbrain repair contact-rows --source <id> --apply --expect <hash> --yes      # rewrites exactly the previewed pages
+```
+
+Rows group by type (trimmed, case-insensitive) and value (trimmed), so two
+spellings of one number stay two rows. A group collapses into its first row,
+keeping the newest `last_used` (and any other activity date); a field present on
+one row only is kept. A group whose rows differ in any other field only loses
+exact copies. Rows that are not `{type, value}` objects are left alone, and only
+the `contacts` key changes.
+
+The preview counts `pages_to_dedupe`, `rows_to_remove` and `needs_reconcile`.
+A page whose canonical file differs from the database is listed
+`needs_reconcile` and never written: preview
+`gbrain sources reconcile <source> <slug> --brain host --preview --auto-additive`
+(a `last_used` that moved forward is structurally additive), apply it, then
+preview this repair again. The apply publishes one revision-bound `put_page` per
+page, so a source with a checkout commits the file through the coordinated
+writer and a repo-less source writes the database; a page that changed since the
+preview refuses with `preview_changed`.
 
 <a id="timeline-order"></a>
 ### Timeline order
@@ -3992,6 +4102,11 @@ names.
 `known_as_of` got a calendar date (`reason: date_for_instant`). A date is
 valid time; recorded time needs an instant. Pass a full instant such as
 `2026-10-01T12:00:00Z`.
+
+get_page `as_of` got an instant (`reason: instant_for_date`). `as_of` is valid
+time: the date an edition was in force, so pass the date alone
+(`2026-10-01`). For the page as the brain had recorded it at a moment, pass
+the instant to `known_as_of` instead ([valid time](page-history.md#valid-time)).
 
 ### Known as of unproven
 

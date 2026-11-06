@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
-import { existingLocalHostId, persistenceHome } from './identity.ts';
+import { persistenceHome, existingHostIdFor } from './identity.ts';
 import { containsPath, getWorktreeBinding, readManagedMode, type WorktreeBinding } from './ownership.ts';
 import { verifyOwnerRoot } from './owner-verification.ts';
 import { readPhysicalRootReservation, readWedgedPhysicalRootReservation } from './physical-root-record.ts';
@@ -55,7 +55,7 @@ export async function writerOnboardingPreflight(engine: BrainEngine, sourceId?: 
   const managed = await readManagedMode(engine);
   const rows = await engine.executeRaw<{ id: string; local_path: string | null; incarnation: string; kind: string | null }>(
     "SELECT id,local_path,incarnation,config->>'kind' AS kind FROM sources WHERE NOT archived AND ($1::text IS NULL OR id=$1) ORDER BY id", [sourceId ?? null]);
-  const fallback = await engine.getConfig('sync.repo_path'), host = existingLocalHostId();
+  const fallback = await engine.getConfig('sync.repo_path'), host = existingHostIdFor(engine);
   const writeThrough = writeThroughConfigured(await engine.getConfig('sync.write_through'));
   const sources = [];
   for (const row of rows) {

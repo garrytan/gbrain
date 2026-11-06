@@ -16,7 +16,7 @@ export const GUARDED_TABLE_COLUMNS: Readonly<Record<string, readonly string[]>> 
     'generation', 'id', 'import_filename', 'ingested_at', 'ingested_via', 'knowledge_revision', 'last_retrieved_at', 'links_attendance_blocked_at',
     'links_attendance_blocked_revision', 'links_extract_failure', 'links_extracted_at', 'page_kind', 'page_readers', 'revision_principal_id', 'revision_principal_kind', 'revision_write_request_id',
     'salience_touched_at', 'search_vector', 'segment_count', 'segmenter_version', 'slug', 'source_id', 'source_kind', 'source_path', 'source_uri',
-    'text_projection_revision', 'timeline', 'timeline_lead', 'title', 'trust_tier', 'truth_bytes', 'truth_lead', 'type', 'updated_at', 'withheld_source_path', 'write_origin'],
+    'text_projection_revision', 'timeline', 'timeline_lead', 'title', 'trust_tier', 'truth_bytes', 'truth_lead', 'type', 'updated_at', 'version_history_gap_at', 'withheld_source_path', 'write_origin'],
   tags: ['id', 'page_id', 'tag', 'tag_source'],
   slug_aliases: ['alias_slug', 'canonical_slug', 'created_at', 'id', 'notes', 'source_id'],
   page_aliases: ['alias_norm', 'alias_text', 'case_sensitive', 'created_at', 'id', 'origin', 'slug', 'source_id'],

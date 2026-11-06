@@ -1,4 +1,4 @@
-import { verbError, opError, OperationError } from '../ops/contract.ts';
+import { markNotAdmitted, verbError, opError, OperationError } from '../ops/contract.ts';
 import type { Action } from '../agent-output.ts';
 import { isTerminalWriteState, isWriteErrorCode, type WriteErrorCode, type WriteReceipt } from './types.ts';
 import { pendingWriteHint } from './health.ts';
@@ -285,6 +285,13 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
       Object.assign(segmented, { canonical: 'page_body_segmented', writeError: 'page_body_segmented', fix: error.fix ?? segmentedRememberFix() });
       throw segmented;
     }
+    // GST-1387: a refresh fence is a retryable wait, not an outage: the frozen code stays unavailable, and the canonical code,
+    // its retry_after_ms detail and its wait fix ride along so the caller retries the same request_id.
+    if (error.code === 'worktree_refreshing') {
+      const fenced = verbError('unavailable', error.message, error.suggestion ?? 'Retry the same request_id after retry_after_ms.', error.detail);
+      Object.assign(fenced, { canonical: 'worktree_refreshing', docs: error.docs, fix: error.fix, retryable: true });
+      throw markNotAdmitted(fenced);
+    }
     const code = ['permission_denied','scope_denied','source_changed','writer_registration_required'].includes(error.code)
       ? 'scope_denied' : ['revision_required','revision_conflict','idempotency_conflict','invalid_params','page_identity_changed'].includes(error.code)
         ? 'invalid_params' : 'unavailable';
@@ -294,6 +301,8 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
     if (error.code === 'idempotency_conflict' && error.fix) frozen.fix = error.fix;
     // #6608: an unbound-source refusal keeps its detail, docs and ask-the-user fix additively; the frozen code stays.
     if (error.detail === 'unbound_source') Object.assign(frozen, { detail: error.detail, docs: error.docs, fix: error.fix, retryable: error.retryable });
+    // GBRA-200: a write-grant refusal keeps the caller's writable sources and its retry fix additively.
+    if (error.writableSourceIds) Object.assign(frozen, { writableSourceIds: error.writableSourceIds, fix: error.fix });
     if (isWriteErrorCode(error.code)) frozen.writeError=error.code;
     throw frozen;
   }

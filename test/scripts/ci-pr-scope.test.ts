@@ -11,8 +11,10 @@ type Matrix = Record<string, unknown> & { exclude?: string };
 type Job = { if?: string; 'runs-on'?: string; strategy?: { matrix: Matrix }; steps?: Array<{ id?: string; run?: string; env?: Record<string, string> }> };
 const root = join(import.meta.dir, '../..');
 const load = (name: string) => loadYaml(readFileSync(join(root, '.github/workflows', name), 'utf8')) as { jobs: Record<string, Job> };
+// A job gated by Trunk Dynamic CI reads needs['dynamic-ci']: no verdict (the filter skipped off pull requests) runs it.
 const evaluate = (expression: string, context: Record<string, unknown>) =>
-  runInNewContext(expression.replace(/^\$\{\{\s*|\s*\}\}$/g, ''), { fromJSON: JSON.parse, ...context }, { timeout: 100 });
+  runInNewContext(expression.replace(/^\$\{\{\s*|\s*\}\}$/g, '').replace(/needs\.dynamic-ci\.outputs\.([\w-]+)/g, "needs['dynamic-ci'].outputs['$1']"),
+    { fromJSON: JSON.parse, cancelled: () => false, needs: { 'dynamic-ci': { outputs: {} } }, ...context }, { timeout: 100 });
 
 function cells(job: Job, context: Record<string, unknown>): string[] {
   if (job.if && !evaluate(job.if, context)) return [];
@@ -182,7 +184,7 @@ esac
     const conditional = /github\.event_name|github\.event\.(?:pull_request|merge_group|action)|inputs\.scope|"\$EVENT"|\$EVENT\b/;
     const dispatchMode = /github\.event_name\s*(?:!=|==)\s*'workflow_dispatch'/g;
     const unclassified: string[] = [];
-    for (const name of ['test', 'stress', 'persistence-validation', 'convergence-nightly', 'native-locks', 'e2e', 'heavy-tests', 'macos-validation', 'scale-tier', 'semgrep']) {
+    for (const name of ['test', 'stress', 'persistence-validation', 'convergence-nightly', 'native-locks', 'e2e', 'heavy-tests', 'macos-validation', 'scale-tier', 'semgrep', 'harness-check']) {
       const lines = readFileSync(join(root, '.github/workflows', `${name}.yml`), 'utf8').split('\n');
       // Blocks: each job (from the comments directly above its key to the next job) and the top-level preamble.
       const starts = lines.flatMap((line, i) => (/^  [\w-]+:\s*$/.test(line) && lines.slice(0, i).some(l => l === 'jobs:') ? [i] : []));
@@ -205,7 +207,7 @@ esac
     expect(readFileSync(join(root, 'docs/TESTING.md'), 'utf8')).toContain('### Event parity');
     const docs = readFileSync(join(root, 'docs/ci-event-parity.md'), 'utf8');
     const section = docs.slice(docs.indexOf('## Classification'), docs.indexOf('## Dependency-audit rule'));
-    for (const name of ['test', 'stress', 'persistence-validation', 'convergence-nightly', 'native-locks', 'e2e', 'heavy-tests', 'macos-validation', 'scale-tier', 'semgrep', 'osv-scanner', 'nightly-watch']) {
+    for (const name of ['test', 'stress', 'persistence-validation', 'convergence-nightly', 'native-locks', 'e2e', 'heavy-tests', 'macos-validation', 'scale-tier', 'semgrep', 'osv-scanner', 'nightly-watch', 'harness-check']) {
       expect(section, name).toContain(`${name}.yml`);
     }
     expect(docs).toContain('## Dependency-audit rule');

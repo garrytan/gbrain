@@ -8,7 +8,7 @@
 import { join } from 'node:path';
 import type { BrainEngine, PageSnapshot } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
-import { prepareManagedSyncMutation, type SyncIntent } from './sync-prepare.ts';
+import { heldDiskBytes, prepareManagedSyncMutation, type SyncIntent } from './sync-prepare.ts';
 import { heldGitPaths, readSyncImportProvenances, syncImportParserFor, recordSyncImportProvenances, syncDiskProvenance, type SyncImportProvenance, type SyncImportProvenanceBase } from './sync-holds.ts';
 import { sameParser } from './sync-prescreen.ts';
 import { isSyncReadBound, isUnreadableSyncFile } from './sync-screen.ts';
@@ -347,13 +347,20 @@ function waiverRead(root: string, path: string): Buffer | null | undefined {
  * #6712: the import provenance a waived import records in its waiver transaction, from the file read there: false when
  * the file no longer has the frozen raw hash (the entry is not waived), null for a waiver that records none (a delete,
  * or an import whose preparation carried no provenance, such as a code file).
+ * #8089: the disk half follows `syncDiskBytes`' rule. The imported bytes are the ones whose hash the provenance records
+ * (the frozen content, or for a `published` no-op the working file); the file read here is recorded only when it holds
+ * them (up to line endings), else the imported bytes are. When neither is in hand, nothing is recorded.
  */
-function waivedProvenance(cursor: WaiverCursor, pending: WaiverEntry, waived: NoopWaiver, revision: string): Omit<SyncImportProvenance, 'recorded_at' | 'validated'> | false | null {
+export function waivedProvenance(cursor: WaiverCursor, pending: WaiverEntry, waived: NoopWaiver, revision: string): Omit<SyncImportProvenance, 'recorded_at' | 'validated'> | false | null {
   if (waived.kind !== 'import') return null;
   const bytes = waiverRead(cursor.root, pending.intent.path!);
   if (bytes === undefined || (bytes === null ? null : sha256(bytes)) !== pending.intent.rawHash) return false;
   if (!waived.provenance) return null;
-  return { ...waived.provenance, page_id: pending.pageId!, revision, ...syncDiskProvenance(bytes, pending.intent.target) };
+  const content = typeof pending.intent.content === 'string' ? Buffer.from(pending.intent.content) : null;
+  const imported = content && sha256(content) === waived.provenance.raw_sha256 ? content
+    : bytes && sha256(bytes) === waived.provenance.raw_sha256 ? bytes : null;
+  if (!imported) return null;
+  return { ...waived.provenance, page_id: pending.pageId!, revision, ...syncDiskProvenance(heldDiskBytes(bytes, imported), pending.intent.target) };
 }
 
 function softDeletedAt(snapshot: Awaited<ReturnType<BrainEngine['readPageSnapshot']>>, pending: WaiverEntry): boolean {

@@ -358,9 +358,9 @@ export function ownerBuildMismatch(detail: unknown, cliVersion: string): { owner
 }
 
 /** Stamps which build, host and stage ran the failed attempt. */
-export function withAttempt(failure: PublicationFailure, stage: PublicationStage): PublicationFailure {
+export function withAttempt(failure: PublicationFailure, stage: PublicationStage, engine?: object): PublicationFailure {
   if (!failure.detail) return failure;
-  const stamp = writerStamp();
+  const stamp = writerStamp({ engine });
   return { ...failure, detail: { ...failure.detail, stage, attempt: { consumer_version: stamp.version, consumer_host_id: stamp.hostId } } };
 }
 

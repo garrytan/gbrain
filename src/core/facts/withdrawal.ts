@@ -51,36 +51,69 @@ export function reviewWithdrawOn(raw: string | null | undefined): boolean {
   return v === '' || ['true', 'on', '1', 'yes'].includes(v);
 }
 
+/**
+ * GST-359 D: the facts a withdrawal admits besides world facts for a remote caller: an attested person's own
+ * member-page fact (`memberPage`, positional $4; the caller checked it). Positional $3 is worldOnly.
+ */
+function withdrawalAdmitSql(excludePrivate?: boolean): string {
+  return `AND ($3::boolean=false OR visibility='world' OR (visibility='private' AND source_markdown_slug=$4::text))${excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`;
+}
+
+/**
+ * What withdrawing fact `id` changes: its claim (visibility, fingerprint, subject), whether a withdrawal already
+ * covers it, the pages discovery finds carrying the claim for that subject (`affected`), and every page key the
+ * withdrawal holds (`slugs`: those pages and the belief streams of the facts it expires). Null when the fact is not
+ * visible to the caller. Read-only; forget's preparation (persistence/forget-prepare.ts) and the withdrawal share it.
+ * A fact on a member page is withdrawn for that page alone (its subject is the page's slug, GST-359 D).
+ */
+export async function planFactWithdrawal(engine: BrainEngine, id: number, sourceId: string, worldOnly: boolean, excludePrivate?: boolean, memberPage?: string | null) {
+  const visible = await engine.executeRaw<{ visibility: 'private' | 'world'; fact: string; fact_hash: string; subject: string; expired: boolean }>(
+    `SELECT visibility,fact,gbrain_fact_fingerprint(fact) AS fact_hash,${factWithdrawalSubjectSql('facts')} AS subject,expired_at IS NOT NULL AS expired FROM facts WHERE id=$1 AND source_id=$2
+      AND NOT ${outcomeMarkerSql('facts')} ${withdrawalAdmitSql(excludePrivate)}`, [id, sourceId, worldOnly, memberPage ?? null]);
+  if (!visible.length) return null;
+  const { visibility, fact, fact_hash, subject, expired } = visible[0];
+  // Discovery is keyed on the claim and its subject: a subject-scoped
+  // withdrawal changes only that entity's pages and its facts' provenance.
+  // Only an existing withdrawal covering this subject makes it a no-op.
+  const existing = (await engine.executeRaw(`SELECT 1 FROM fact_withdrawals
+    WHERE source_id=$1 AND visibility=$2 AND fact_hash IN ($3,gbrain_fact_fingerprint_v1($5)) AND (subject='*' OR subject=$4) LIMIT 1`,
+  [sourceId, visibility, fact_hash, subject, fact])).length > 0;
+  const affected = existing ? [] : await discoverWithdrawalTargets(engine, sourceId, [{ visibility, fact_hash, subject, claim: fact }]).catch(withdrawalDiscoveryFailure);
+  // The belief ledger's streams of the facts this withdrawal expires (fence pages and database-only subjects), locked with the pages.
+  const streams = (await engine.executeRaw<{ slug: string }>(`SELECT DISTINCT COALESCE(source_markdown_slug, entity_slug) AS slug FROM facts
+    WHERE source_id=$1 AND visibility=$2 AND gbrain_fact_fingerprint(fact)=$3 AND ($4='*' OR entity_slug=$4 OR (${onMemberPageSql('facts')} AND source_markdown_slug=$4)) AND expired_at IS NULL
+      AND COALESCE(source_markdown_slug, entity_slug) IS NOT NULL`, [sourceId, visibility, fact_hash, subject]))
+    .map(r => r.slug).filter(slug => { try { validateSlug(slug); return true; } catch { return false; } });
+  const slugs = [...new Set([...affected.map(page => page.slug), ...streams])].sort();
+  return { visibility, fact, fact_hash, subject, expired: expired === true, existing, affected, slugs };
+}
+
 export async function recordFactWithdrawal(
   engine: BrainEngine, id: number, sourceId: string, worldOnly = false,
-  opts: { requestId?: string; publicationId?: string; semanticReview?: boolean; excludePrivate?: boolean; beliefReport?: { appended: number }; memberPage?: string } = {},
+  opts: { requestId?: string; publicationId?: string; semanticReview?: boolean; excludePrivate?: boolean; beliefReport?: { appended: number }; memberPage?: string;
+    /**
+     * GBRA-190 G4: the withdrawal is the database half of a coordinated publication (forget-prepare.ts) whose page
+     * files the coordinator already published and committed, under page keys and a belief batch the publication holds.
+     * Nothing is locked, batched or queued here; the ledger row carries the timestamp the files were struck with, and
+     * a discovery that no longer finds exactly `expectedSlugs` refuses `revision_conflict` so the request prepares again.
+     */
+    publication?: { withdrawnAt: string; expectedSlugs: readonly string[] } } = {},
 ): Promise<WithdrawalCommit> {
-  // GST-359 D: an attested person's own member-page fact (memberPage) is admitted besides world facts; the caller checked it.
-  const admit = `AND ($3::boolean=false OR visibility='world' OR (visibility='private' AND source_markdown_slug=$4::text))${opts.excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`;
+  const admit = withdrawalAdmitSql(opts.excludePrivate);
   const pageScoped = `(${onMemberPageSql('facts')} AND source_markdown_slug=$4)`;
   return engine.transaction(async tx => {
     // A managed caller takes this EXCLUSIVE source lock before authority,
     // counters and request rows. Repeating an already-held lock is safe.
-    await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
-    const visible = await tx.executeRaw<{ visibility: 'private' | 'world'; fact: string; fact_hash: string; subject: string }>(
-      `SELECT visibility,fact,gbrain_fact_fingerprint(fact) AS fact_hash,${factWithdrawalSubjectSql('facts')} AS subject FROM facts WHERE id=$1 AND source_id=$2
-        AND NOT ${outcomeMarkerSql('facts')} ${admit}`, [id, sourceId, worldOnly, opts.memberPage ?? null]);
-    if (!visible.length) return { withdrawn: false, pages: [] };
-    const { visibility, fact, fact_hash, subject } = visible[0];
-    // Discovery is keyed on the claim and its subject: a subject-scoped
-    // withdrawal changes only that entity's pages and its facts' provenance.
-    // Only an existing withdrawal covering this subject makes it a no-op.
-    const existing = await tx.executeRaw(`SELECT 1 FROM fact_withdrawals
-      WHERE source_id=$1 AND visibility=$2 AND fact_hash IN ($3,gbrain_fact_fingerprint_v1($5)) AND (subject='*' OR subject=$4) LIMIT 1`,
-    [sourceId, visibility, fact_hash, subject, fact]);
-    const affected = existing.length ? [] : await discoverWithdrawalTargets(tx, sourceId, [{ visibility, fact_hash, subject, claim: fact }]).catch(withdrawalDiscoveryFailure);
-    // The belief ledger's streams of the facts this withdrawal expires (fence pages and database-only subjects), locked with the pages.
-    const streams = (await tx.executeRaw<{ slug: string }>(`SELECT DISTINCT COALESCE(source_markdown_slug, entity_slug) AS slug FROM facts
-      WHERE source_id=$1 AND visibility=$2 AND gbrain_fact_fingerprint(fact)=$3 AND ($4='*' OR entity_slug=$4 OR ${pageScoped}) AND expired_at IS NULL
-        AND COALESCE(source_markdown_slug, entity_slug) IS NOT NULL`, [sourceId, visibility, fact_hash, subject]))
-      .map(r => r.slug).filter(slug => { try { validateSlug(slug); return true; } catch { return false; } });
-    const slugs = [...new Set([...affected.map(page => page.slug), ...streams])];
-    await tx.lockPageKeys(slugs.map(slug => ({ sourceId, slug })));
+    if (!opts.publication) await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
+    const plan = await planFactWithdrawal(tx, id, sourceId, worldOnly, opts.excludePrivate, opts.memberPage);
+    if (!plan) return { withdrawn: false, pages: [] };
+    const { affected, slugs } = plan;
+    if (opts.publication) {
+      if (JSON.stringify(slugs) !== JSON.stringify([...opts.publication.expectedSlugs].sort())) {
+        throw new OperationError('revision_conflict', 'The pages this withdrawal changes moved during preparation.',
+          'Read the fact again and submit the forget with a new request_id; nothing was withdrawn.');
+      }
+    } else await tx.lockPageKeys(slugs.map(slug => ({ sourceId, slug })));
     const rows = await tx.executeRaw<{ visibility: string; fact: string; subject: string }>(
       `SELECT visibility,fact,${factWithdrawalSubjectSql('facts')} AS subject FROM facts WHERE id=$1 AND source_id=$2
         ${admit} FOR UPDATE`, [id, sourceId, worldOnly, opts.memberPage ?? null]);
@@ -94,13 +127,15 @@ export async function recordFactWithdrawal(
         if (preimage) await createPageVersion(tx, page.slug, sourceId, preimage);
       }
     }
-    return withBeliefBatch(tx, { sourceId, slugs, publicationId: opts.requestId ?? opts.publicationId ?? null, op: 'forget', pageEventType: 'page.view_changed',
-      remote: worldOnly, ...(opts.beliefReport ? { report: opts.beliefReport } : {}) }, async () => {
+    const batch = async (fn: () => Promise<WithdrawalCommit>) => opts.publication ? fn()
+      : withBeliefBatch(tx, { sourceId, slugs, publicationId: opts.requestId ?? opts.publicationId ?? null, op: 'forget', pageEventType: 'page.view_changed',
+        remote: worldOnly, ...(opts.beliefReport ? { report: opts.beliefReport } : {}) }, fn);
+    return batch(async () => {
       // Scoped to the forgotten row's entity: the same claim about another
       // entity stays active and rememberable. A subjectless fact withdraws
       // source-wide ('*').
-      const inserted = await tx.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash)
-        VALUES ($1,$2,$4,gbrain_fact_fingerprint($3)) ON CONFLICT DO NOTHING RETURNING fact_hash`, [sourceId,row.visibility,row.fact,row.subject]);
+      const inserted = await tx.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash,withdrawn_at)
+        VALUES ($1,$2,$4,gbrain_fact_fingerprint($3),COALESCE($5::timestamptz,now())) ON CONFLICT DO NOTHING RETURNING fact_hash`, [sourceId,row.visibility,row.fact,row.subject,opts.publication?.withdrawnAt ?? null]);
       const expired = await tx.executeRaw<{ id: number }>(`UPDATE facts SET expired_at=now(),valid_until=LEAST(COALESCE(valid_until,now()),now())
         WHERE source_id=$1 AND visibility=$2 AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)
           AND ($4='*' OR entity_slug=$4 OR ${pageScoped}) AND expired_at IS NULL RETURNING id`, [sourceId,row.visibility,row.fact,row.subject]);
@@ -127,7 +162,7 @@ export async function recordFactWithdrawal(
       if (inline.length) await tx.executeRaw('DELETE FROM content_chunks WHERE page_id=ANY($1::integer[])', [inline.map(page => page.id)]);
       const pages = [...inline, ...segmented.length ? await tx.executeRaw<{ id: number; slug: string; knowledge_revision: string }>(
         'SELECT id,slug,knowledge_revision FROM pages WHERE id=ANY($1::int[])', [segmented.map(page => page.id)]) : []];
-      if (opts.requestId) {
+      if (opts.requestId && !opts.publication) {
         await tx.executeRaw(`INSERT INTO persistence_effects(request_id,kind,data,source_id,source_incarnation,worktree_id)
           SELECT $1::uuid,k.kind,$3::text::jsonb,s.id,s.incarnation,b.worktree_id
           FROM sources s LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation

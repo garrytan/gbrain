@@ -16,6 +16,7 @@ import { agentJsonGuardMode } from './cli/json-guard.ts';
 import { parseGlobalFlags } from './core/cli-options.ts';
 import { runCliPreflight } from './core/cli-preflight.ts';
 import { printHelp } from './cli/top-help.ts';
+import { withLocalScope } from './core/engine-scope-store.ts';
 
 /**
  * The fast path main() would take for `argv`, or null when the dispatcher must
@@ -56,11 +57,11 @@ if (import.meta.main) {
   if (shouldForceExitAfterMain()) installStdoutPipeDelivery(agentJsonGuardMode(process.argv.slice(2)));
   const fastPath = cliFastPath(process.argv.slice(2));
   if (fastPath) {
-    runFastPath(fastPath).then(
+    withLocalScope(() => runFastPath(fastPath)).then(
       () => flushThenExit(currentExitCode()),
       async (e) => (await import('./cli/main.ts')).exitOnFatalCliError(e),
     );
   } else {
-    void import('./cli/main.ts').then((m) => m.runCli());
+    void withLocalScope(() => import('./cli/main.ts').then((m) => m.runCli()));
   }
 }
