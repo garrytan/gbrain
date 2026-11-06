@@ -638,7 +638,7 @@ More: [docs/guides/page-history.md#reasons](../../docs/guides/page-history.md#re
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain git commit-push resolved a checkout that is not one of this brain's source checkouts on this host (for example a wrapper that changed into another repository), so nothing was staged. | Committing there would write into an unrelated repository, or fail later with a confusing path refusal. | Correct the request using the message above, then retry. | user | `repeat the read that failed` | 1 | no |
+| gbrain git commit-push resolved a checkout from the working directory that is not one of this brain's source checkouts on this host (for example a wrapper that changed into another repository), so nothing was staged. | Committing there would write into an unrelated repository, or fail later with a confusing path refusal. | Correct the request using the message above, then retry. | user | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/shared-checkout-git.md#checkout_not_a_source](../../docs/guides/shared-checkout-git.md#checkout_not_a_source)
 

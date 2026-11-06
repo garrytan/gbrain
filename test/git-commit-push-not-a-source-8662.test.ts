@@ -66,7 +66,7 @@ test('a checkout that is not a registered source is refused checkout_not_a_sourc
   expect(git(other, 'status', '--porcelain')).toBe('?? notes/');
 }, 60_000);
 
-test('the registered checkout still commits, and a gbrain source marker admits its checkout', async () => {
+test('the registered checkout still commits, a gbrain source marker admits its checkout, and an explicit --path is not checked', async () => {
   const { home, brain } = brainHome('admitted');
   const result = await commitPush(dir, home, '--path', brain, '--', 'people/alice-example.md');
   expect(result.exitCode).toBe(0);
@@ -77,6 +77,11 @@ test('the registered checkout still commits, and a gbrain source marker admits i
   const published = await commitPush(marked, home, '--', 'notes/a.md');
   expect(published.exitCode).toBe(0);
   expect(JSON.parse(published.stdout)).toMatchObject({ outcome: 'pushed', paths: ['notes/a.md'] });
+  // An explicit --path names its checkout: a legacy source the managed-root record does not list still commits.
+  const legacy = otherRepo('admitted-legacy');
+  const named = await commitPush(dir, home, '--path', legacy, '--', 'notes/a.md');
+  expect(named.exitCode).toBe(0);
+  expect(JSON.parse(named.stdout)).toMatchObject({ outcome: 'pushed', paths: ['notes/a.md'] });
 }, 60_000);
 
 test('a host whose brain records no source checkout commits in any checkout as before', async () => {

@@ -137,8 +137,9 @@ function parseResolutions(specs: string[]): Map<string, Resolution> {
 }
 
 /**
- * #8662: on a host whose brain records its source checkouts, a resolved checkout that is none of them and carries no
- * gbrain.sourceRoot marker is refused before anything is staged (a wrapper that changed into another repository).
+ * #8662: on a host whose brain records its source checkouts, a checkout resolved from the working directory that is none of
+ * them and carries no gbrain.sourceRoot marker is refused before anything is staged (a wrapper that changed into another
+ * repository). An explicit --path names its checkout and is not checked here (a legacy source is not in that record).
  */
 function assertSourceCheckout(repo: string): void {
   const registered = registeredManagedRootRecords();
@@ -172,7 +173,7 @@ export async function runGit(args: string[]): Promise<number> {
     if (p.sub !== 'commit-push') throw opError('commit_paths_invalid', `Unknown subcommand: gbrain git ${p.sub}.`, HELP.split('\n')[0]);
     if (p.install || p.uninstall) throw opError('commit_paths_invalid', '--install and --uninstall belong to gbrain git guard.', 'Run gbrain git guard --install.');
     const repo = checkoutRoot(p.path ?? process.cwd());
-    assertSourceCheckout(repo);
+    if (!p.path) assertSourceCheckout(repo);
     const cwd = p.path ? realpathSync(p.path) : process.cwd();
     if ((p.pull && p.pushOnly) || (p.pull && (p.message || p.paths.length || p.resolve.length || p.branch))
       || (p.pushOnly && (p.message || p.paths.length)) || ((p.resolve.length || p.branch || p.expectRemote || p.keepCheckout) && !p.pushOnly)
