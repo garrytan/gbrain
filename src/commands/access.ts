@@ -105,22 +105,31 @@ export interface WhoCanReadEntry {
 
 /** Who may read `slug` remotely: its normalized readers, privacy and the enabled members those readers admit. */
 export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: string): Promise<WhoCanReadEntry[]> {
-  const rows = await engine.executeRaw<{ slug: string; source_id: string; type: string | null; frontmatter: unknown }>(
-    `SELECT slug, source_id, type, frontmatter FROM pages WHERE slug = $1${sourceId ? ' AND source_id = $2' : ''} ORDER BY source_id`,
+  const rows = await engine.executeRaw<{ slug: string; source_id: string; type: string | null; frontmatter: unknown; folder_rule_ids: string[] | null }>(
+    `SELECT slug, source_id, type, frontmatter, folder_rule_ids FROM pages WHERE slug = $1${sourceId ? ' AND source_id = $2' : ''} ORDER BY source_id`,
     sourceId ? [slug, sourceId] : [slug]);
   if (!rows.length) {
     throw opError('not_found', `No page "${slug}"${sourceId ? ` in source ${sourceId}` : ''}.`, 'Check the slug with gbrain list or gbrain search.');
   }
   const members = (await listMembers(engine)).filter(m => m.status === 'enabled');
+  const rules = new Map((await engine.executeRaw<{ source_id: string; rule_id: string; readable_by: string[] }>(
+    'SELECT source_id, rule_id, readable_by FROM access_rules')).map(r => [`${r.source_id}:${r.rule_id}`, r.readable_by ?? []]));
   return rows.map(row => {
     const fm = typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter;
     const readers = normalizeReaders(fm);
     const priv = isPrivacyPrivatePage({ type: row.type, frontmatter: fm });
-    const allowed = readers === null ? 'every_source_reader' as const : members.filter(m => readersAllow(fm, identityFor(m.id, m.groups))).map(m => m.id);
+    // A remote read needs the member on every folder rule covering the slug (an unknown rule id admits nobody) and on readable_by.
+    const ruleIds = row.folder_rule_ids ?? [];
+    const allowed = readers === null && !ruleIds.length ? 'every_source_reader' as const
+      : members.filter(m => {
+        const identity = identityFor(m.id, m.groups);
+        return readersAllow(fm, identity) && ruleIds.every(id => (rules.get(id) ?? []).some(r => identity.includes(r)));
+      }).map(m => m.id);
     const notes = [
-      readers === null ? 'No readable_by: every caller entitled to the source reads it.'
+      readers === null ? (ruleIds.length ? 'No readable_by on the page; the folder rules cover it.' : 'No readable_by: every caller entitled to the source reads it.')
         : readers.includes('!nobody') ? 'readable_by is malformed, so no remote caller reads it; fix the frontmatter.'
         : 'Only credentials bound to these members (directly or through a group) read it remotely; unbound credentials and stdio do not.',
+      ...(ruleIds.length ? [`Folder rules covering it (a member must be on every one): ${ruleIds.join(', ')}.`] : []),
       ...(priv ? ['visibility: private also applies: a member still needs private_pages: granted_sources on this source.'] : []),
       'Derived pages (atoms, facts, chronicle events) of a page that names readers are hidden from every remote caller.',
     ];
@@ -299,7 +308,7 @@ export async function runAccess(engine: BrainEngine, args: string[]): Promise<vo
         const pages = await whoCanRead(engine, slug, flagValue(rest, '--source'));
         return print(json, { pages }, () => pages.flatMap(p => [
           `${p.source_id}:${p.slug}`,
-          `  Readers: ${p.readers === null ? 'not restricted' : p.readers.join(', ')}${p.private ? '  (visibility: private)' : ''}`,
+          `  Readers: ${p.readers === null ? (p.members === 'every_source_reader' ? 'not restricted' : 'none named on the page') : p.readers.join(', ')}${p.private ? '  (visibility: private)' : ''}`,
           `  Members who may read it: ${p.members === 'every_source_reader' ? 'every caller entitled to the source' : p.members.join(', ') || 'none'}`,
           `  ${p.note}`]));
       }
