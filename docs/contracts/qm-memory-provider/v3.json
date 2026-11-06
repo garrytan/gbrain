@@ -480,7 +480,7 @@
       },
       {
         "name": "get_page",
-        "description": "Read a page; `section`/`grep` reads one part. Pass at most one window selector: lines, bytes, around_chunk_id or cursor (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
+        "description": "Read a page; `section`/`grep` reads one part. Window selector order: cursor, around_chunk_id, lines, bytes (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
         "scope": "read",
         "mutating": false,
         "input_schema": {
@@ -515,7 +515,7 @@
             },
             "lines": {
               "type": "object",
-              "description": "Window: 1-based lines. One window selector only: not with bytes, around_chunk_id or cursor.",
+              "description": "Window: 1-based lines.",
               "properties": {
                 "from": {
                   "type": "number"
@@ -532,7 +532,7 @@
             },
             "bytes": {
               "type": "object",
-              "description": "Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start). One window selector only: not with lines, around_chunk_id or cursor.",
+              "description": "Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start).",
               "properties": {
                 "offset": {
                   "type": "number"
@@ -549,7 +549,7 @@
             },
             "around_chunk_id": {
               "type": "number",
-              "description": "Window around a search hit chunk_id. One window selector only: not with lines, bytes or cursor."
+              "description": "Window around a search hit chunk_id."
             },
             "context_lines": {
               "type": "number",
@@ -557,7 +557,7 @@
             },
             "cursor": {
               "type": "string",
-              "description": "next_cursor: read on. One window selector only: not with lines, bytes or around_chunk_id."
+              "description": "next_cursor: read on."
             },
             "max_bytes": {
               "type": "number",
@@ -622,6 +622,10 @@
             "known_as_of": {
               "type": "string",
               "description": "Recorded time: the page as this brain had recorded it at this ISO 8601 instant (2026-10-01T12:00:00Z), from the belief ledger. Not as_of, which is valid time (a date)."
+            },
+            "as_of": {
+              "type": "string",
+              "description": "YYYY-MM-DD: edition in force then. No valid_time in reply: current page."
             }
           },
           "required": [
