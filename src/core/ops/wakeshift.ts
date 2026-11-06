@@ -106,9 +106,8 @@ const watch_job: Operation = {
     }
     const runtime = wakeshiftRuntime();
     if (!runtime) throw notEnabled();
-    const members = await liveAccessMembers(ctx.engine);
-    if (members > 0) {
-      throw opError('wakeshift_shared_brain', `This brain now has ${members} live access member(s), so reporting back is paused; nothing was watched.`,
+    if (await liveAccessMembers(ctx.engine) > 0) {
+      throw opError('wakeshift_shared_brain', 'This brain now has live access members, so reporting back is paused; nothing was watched.',
         `Call wait_job ${id} to wait for the job.`, { fix: waitFix(id) });
     }
     const owner = agentOwnerFence(ctx, 'watch_job');

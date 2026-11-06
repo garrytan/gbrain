@@ -155,7 +155,9 @@ async function deliver(engine: BrainEngine, api: WakeshiftApi, row: WakeRow, rep
     }
   } catch (e) {
     const dead = attempts >= WAKE_MAX_ATTEMPTS;
-    await settle(engine, row.id, lease, dead ? 'dead' : 'open', { attempts, ...(dead ? {} : { delayS: retryDelayS(attempts) }), error: 'drain_error' }).catch(() => false);
+    if (dead) await endAtWakeshift(api, row);
+    const settled = await settle(engine, row.id, lease, dead ? 'dead' : 'open', { attempts, ...(dead ? {} : { delayS: retryDelayS(attempts) }), error: 'drain_error' }).catch(() => false);
+    if (settled && dead) report.dead++;
     throw e;
   }
 }
@@ -185,12 +187,15 @@ export async function drainWakes(engine: BrainEngine, opts: { ids?: number[]; ap
 /** Passes until one has nothing left to settle (at most 10): the final pass of a process about to exit (`gbrain jobs work`). */
 export async function drainWakesUntilIdle(engine: BrainEngine): Promise<DrainReport> {
   const total: DrainReport = { delivered: 0, retried: 0, dead: 0, ended: 0 };
+  let failure: unknown = null;
   for (let i = 0; i < 10; i++) {
-    const r = await drainWakes(engine);
+    let r: DrainReport;
+    try { r = await drainWakes(engine); } catch (e) { failure ??= e; continue; }
     if (r.skipped) return { ...total, skipped: r.skipped };
     total.delivered += r.delivered; total.retried += r.retried; total.dead += r.dead; total.ended += r.ended;
     if (r.delivered + r.dead + r.ended === 0) break;
   }
+  if (failure !== null) throw failure;
   return total;
 }
 

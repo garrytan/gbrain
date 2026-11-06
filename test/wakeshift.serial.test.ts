@@ -264,6 +264,11 @@ describe('failure schedule', () => {
     expect(rows[0]).toMatchObject({ target: String(a), state: 'open', attempts: 1, delay: 30, lease: false });
     expect(rows[1]).toMatchObject({ target: String(b), state: 'delivered' });
     expect(emits()).toHaveLength(1);
+    await engine.executeRaw("UPDATE wake_subscriptions SET attempts = $1, next_attempt_at = now() - interval '1 second' WHERE target = $2", [WAKE_MAX_ATTEMPTS - 1, String(a)]);
+    await expect(drainWakes(poisoned)).rejects.toThrow('lookup failed');
+    const [last] = await engine.executeRaw<{ state: string; last_error: string }>('SELECT state, last_error FROM wake_subscriptions WHERE target = $1', [String(a)]);
+    expect(last).toMatchObject({ state: 'dead', last_error: 'drain_error' });
+    expect(fake.calls.filter(c => c.path === '/event-subscriptions/end')).toHaveLength(1);
   });
 
   test('an emit nobody matched ends the watch instead of calling it delivered; a duplicate counts as delivered', async () => {
@@ -291,6 +296,7 @@ describe('failure schedule', () => {
       expect(r.isError).toBe(true);
       const env = JSON.parse(r.content[0]!.text);
       expect(env.code ?? env.error).toBe('wakeshift_shared_brain');
+      expect(JSON.stringify(env)).not.toMatch(/\d+ live access member/);
       expect(await drainWakes(engine)).toMatchObject({ skipped: 'shared' });
       expect(emits()).toHaveLength(0);
       expect(fake.calls.filter(c => c.path === '/event-subscriptions')).toHaveLength(1);
