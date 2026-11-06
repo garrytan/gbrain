@@ -25,7 +25,7 @@ export interface WriteApplied {
   watermark: WriteWatermark;
 }
 
-const UNSETTLED = ['queued', 'running', 'recovering'];
+const UNSETTLED = ['queued', 'deferred', 'running', 'recovering'];
 
 export async function readWriteApplied(engine: BrainEngine, row: { source_id: string; source_incarnation: string; slug: string; sequence: string | number; state: string }): Promise<WriteApplied> {
   const sequence = Number(row.sequence);
@@ -33,7 +33,7 @@ export async function readWriteApplied(engine: BrainEngine, row: { source_id: st
   const base = { sequence, watermark, page: null, embedding_hold: null, searchable_yet: false, searchable: false as const };
   if (UNSETTLED.includes(row.state)) {
     const [ahead] = await engine.executeRaw<{ count: number | string }>(`SELECT count(*) AS count FROM persistence_requests
-      WHERE source_id=$1 AND source_incarnation=$2::uuid AND state IN ('queued','running','recovering') AND sequence < $3::bigint`, [row.source_id, row.source_incarnation, sequence]);
+      WHERE source_id=$1 AND source_incarnation=$2::uuid AND state IN ('queued','deferred','running','recovering') AND sequence < $3::bigint`, [row.source_id, row.source_incarnation, sequence]);
     return { ...base, state: 'pending_write', gap: { requests_ahead: Number(ahead?.count ?? 0), unembedded_chunks: 0 } };
   }
   if (row.state !== 'committed') return { ...base, state: 'not_written', gap: { requests_ahead: 0, unembedded_chunks: 0 } };

@@ -228,7 +228,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
       visibility, ...(call.visibilityDefaulted ? { visibility_defaulted: true } : {}), ...(memberPage ? { member_page: true } : {}),
       ...(linked ? { entity_inferred: linked.via } : {}), ...(inference && 'warning' in inference ? { entity_warning: inference.warning } : {}),
       session_id: ctx.sessionId ?? null },
-    authority, worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null });
+    authority, worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null, deferrable: true });
   const written = await waitForWrite(ctx.engine, row, ctx.config, waitMs ?? ctx.writeWaitMs);
   const response = throwIfHeld(withRememberTarget(row, () => writeResponse(written)));
   emitFenceNotice(ctx, response, row.slug);
@@ -350,7 +350,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   const row = await admitWrite(ctx.engine, { origin: ctx.admissionOrigin, principal, operation, sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, clientRequestId, callerIntent,
     intent: { ...callerIntent, reason, semantic_review: !ownPage && p.semantic_review !== false, ...(ownPage ? { member_page: ownPage } : {}) }, authority,
-    worktreeId: binding?.worktree_id ?? null, topologyGeneration: binding?.topology_generation ?? null });
+    worktreeId: binding?.worktree_id ?? null, topologyGeneration: binding?.topology_generation ?? null, deferrable: true });
   const written = await waitForWrite(ctx.engine, row, ctx.config, waitMs ?? ctx.writeWaitMs);
   return withSimilarActive(ctx, operation, sourceId, p, writeResponse(written));
 }

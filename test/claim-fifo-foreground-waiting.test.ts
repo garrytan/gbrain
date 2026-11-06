@@ -155,3 +155,23 @@ test('a write queued behind an earlier write that waits on a sync row naming its
     expect(await s.claim()).toBe(behind);
   }
 }, 60_000);
+
+// PR B: a write deferred behind a refresh that has been released is queued work again (RELEASED_DEFERRED), so a write
+// behind it that waits on the same sync row is held the same way as one behind a queued write.
+test('a write queued behind a released deferred write that waits on a sync row naming its page holds back no sync head', async () => {
+  for (const engine of engines) {
+    const s = await scene(engine);
+    const head = await s.sync('notes/synced-e');
+    const named = await s.add('notes/synced-e');
+    const behind = await s.add('notes/foreground-e');
+    const [refresh] = await engine.executeRaw<{ id: string }>(`INSERT INTO persistence_worktree_refreshes(worktree_id,source_ids,principal_id,owner_epoch,topology_generation,state,old_head,target_head,upstream_ref,released_at)
+      VALUES($1::uuid,ARRAY[$2::text],$3::uuid,1,1,'completed','a','b','origin/main',now()) RETURNING id::text`, [s.worktree, sourceId, randomUUID()]);
+    await engine.transaction(async tx => {
+      await tx.executeRaw("SET LOCAL session_replication_role = replica");
+      await tx.executeRaw("UPDATE persistence_requests SET state='deferred',deferred_refresh_id=$2::uuid WHERE id=$1::uuid", [named, refresh!.id]);
+    });
+    s.seen[s.worktree] = await s.maxSequence();
+    expect(await s.claim()).toBe(head);
+    await s.commit(head);
+  }
+}, 60_000);
