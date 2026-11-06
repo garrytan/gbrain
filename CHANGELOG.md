@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.596.0] - 2026-11-06
+## [0.60.597.0] - 2026-11-06
 
 **`gbrain upgrade` now restarts a jobs supervisor started from a source checkout as `bun run src/cli.ts jobs supervisor` instead of refusing the upgrade with `restart_refused`.** The restart planner recognised a gbrain process only when its command line held a path containing "gbrain", so a supervisor launched with a relative `src/cli.ts` was invisible, its worker looked unsupervised, and the upgrade stopped. Four smaller fixes ride along with it, covering a flaky spend-guard SIGTERM test, the PGLite snapshot cache keys, the stress gate's pooled-owner match, and the ownership stamp on a checkout that became a Git repository after it was stamped.
 
