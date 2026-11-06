@@ -34,6 +34,7 @@ import { attestRightOf, linkedMember, linkMember } from '../src/core/access/acto
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { boundFactLines, isoDate, memoryWriteRequestId, plainFactText, MEMORY_RECALL_MAX_CHARS } from '../src/core/ops/qm-memory.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
+import { operations } from '../src/core/operations.ts';
 import { startHttpTransport } from '../src/mcp/http-transport.ts';
 import { RateLimiter } from '../src/mcp/rate-limit.ts';
 import { BEHAVIOR_CHANGES } from '../src/core/behavior-change-notice.ts';
@@ -493,6 +494,8 @@ for (const kind of testBackends()) {
         expect(out.json.code ?? out.json.error).toBe('invalid_params');
         expect(out.text).not.toContain('canaryharnrecall');
       }
+      // A client that fills optional integers from the schema sends at least the minimum, never 0.
+      expect(operations.find(o => o.name === 'recall')!.params.max_chars).toMatchObject({ type: 'integer', minimum: MEMORY_RECALL_MAX_CHARS.min });
     }, 120_000);
 
     test('an unlinked person gets an empty success whose code rides structuredContent only', async () => {

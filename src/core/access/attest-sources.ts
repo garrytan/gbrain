@@ -54,16 +54,20 @@ type Db = BrainEngine | SqlQuery;
 const sqlOf = (db: Db): SqlQuery => typeof db === 'function' ? db : sqlQueryForEngine(db);
 
 /**
- * The marked scope sources among `ids`. `lock` takes their rows FOR UPDATE (inside the caller's transaction), so a grant
- * write and an attest_sources change on the same source serialize instead of each missing the other's commit.
+ * The marked scope sources among `ids`. `lock` takes their rows in id order inside the caller's transaction: a grant
+ * write FOR SHARE, an attest_sources change FOR UPDATE on the sources it marks, so the two serialize instead of each
+ * missing the other's commit, while grant writes and publications (source FOR SHARE, then credential) never wait on
+ * each other's source locks. Callers lock their credential row first.
  */
-export async function markedScopeSources(db: Db, ids: readonly string[], lock = false): Promise<Set<string>> {
+export async function markedScopeSources(db: Db, ids: readonly string[], lock?: 'share' | 'update'): Promise<Set<string>> {
   if (!ids.length) return new Set();
   const sql = sqlOf(db);
   const list = JSON.stringify([...new Set(ids)]);
-  const rows = lock
+  const rows = lock === 'update'
     ? await sql`SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text(${list}::text::jsonb)) ORDER BY id FOR UPDATE`
-    : await sql`SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text(${list}::text::jsonb))`;
+    : lock === 'share'
+      ? await sql`SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text(${list}::text::jsonb)) ORDER BY id FOR SHARE`
+      : await sql`SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text(${list}::text::jsonb))`;
   return new Set(rows.filter(r => isScopeSourceConfig(r.config)).map(r => String(r.id)));
 }
 
@@ -119,7 +123,7 @@ export async function assertScopeSourceGrant(db: Db, self: CredentialRef | null,
   }
   const candidates = reads.filter(s => s !== 'default');
   if (!candidates.length) return;
-  const marked = await markedScopeSources(sql, candidates, true);
+  const marked = await markedScopeSources(sql, candidates, 'share');
   if (!marked.size) return;
   const own = self ? (await credentialSources(sql)).find(c => same(c.ref, self))?.attest ?? [] : [];
   const reserved = [...marked].filter(s => !own.includes(s)).sort();
@@ -140,10 +144,12 @@ function attestInvalid(message: string, suggestion: string): OperationError {
  */
 export async function applyAttestSources(db: Db, self: CredentialRef, next: readonly string[] | null, before: readonly string[] | null, opts: { dryRun?: boolean } = {}): Promise<boolean> {
   const sql = sqlOf(db);
-  const marked = await markedScopeSources(sql, next ?? [], true);
+  const marked = await markedScopeSources(sql, next ?? []);
   const added = (next ?? []).filter(s => !(before ?? []).includes(s) || !marked.has(s));
   const dropped = (before ?? []).filter(s => !(next ?? []).includes(s));
   if (!added.length && !dropped.length) return false;
+  // The caller holds this credential's row FOR UPDATE; the sources it marks are locked before the other grants are read.
+  await markedScopeSources(sql, added, 'update');
   const all = await credentialSources(sql);
   const mine = all.find(c => same(c.ref, self));
   const stillRead = dropped.filter(s => mine?.reads.includes(s));

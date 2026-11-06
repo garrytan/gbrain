@@ -39,6 +39,7 @@ import { restoreSource, softDeleteSource } from '../src/core/destructive-guard.t
 import { proposeRevision } from '../src/core/access/policy.ts';
 import { quarantineRestoredExecution } from '../src/core/backup/quarantine.ts';
 import { registerScopedClient } from '../src/commands/auth.ts';
+import { runSources } from '../src/commands/sources.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { attestRightFrom } from '../src/core/access/actor-model.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -367,6 +368,114 @@ for (const kind of testBackends()) {
       expect((await refusal(bindCredential(engine, { kind: 'client', id: clients.scopes!.id }, { attestOps: [...MEMORY_OPS, 'search'] })))?.message).toContain('scope sources');
       expect((await refusal(bindCredential(engine, { kind: 'client', id: clients.plain!.id }, { attestSources: [SCOPE_A] })))?.message).toContain('attest right');
       expect((await markedScopeSources(engine, [SHARED, HOME])).size).toBe(0);
+    }, 60_000);
+
+    const storedAuthority = async (requestId: string) => {
+      const [row] = await engine.executeRaw<{ authority: any }>('SELECT authority FROM persistence_requests WHERE request_id = $1::uuid', [requestId]);
+      return typeof row!.authority === 'string' ? JSON.parse(row!.authority) : row!.authority;
+    };
+    const scopeClient = async (name: string, attest: string[], reads: string[]) => {
+      for (const id of attest) await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [id]);
+      const c = await register(name, HOME);
+      await bindCredential(engine, { kind: 'client', id: c.id }, { attestActor: 'qm', attestOps: MEMORY_OPS, attestSources: attest });
+      await rescopeClientGrant(engine, c.id, { federatedRead: reads }, { actor: 'test' });
+      tokens[name] = (await provider().exchangeClientCredentials(c.id, c.secret)).access_token;
+      return c;
+    };
+    const raceWhile = (matches: (sql: string, params: unknown[]) => boolean, racer: () => Promise<unknown>) => {
+      const original = engine.executeRaw;
+      let race: Promise<Error | null> | null = null;
+      engine.executeRaw = (async function (this: BrainEngine, ...args: Parameters<typeof engine.executeRaw>) {
+        if (!race && matches(String(args[0]), (args[1] ?? []) as unknown[])) {
+          let settled = false;
+          race = refusal(racer()).finally(() => { settled = true; });
+          for (let i = 0; i < 30 && !settled; i++) await new Promise(r => setTimeout(r, 50));
+        }
+        return original.apply(this, args);
+      }) as typeof engine.executeRaw;
+      return { restore: () => { engine.executeRaw = original; }, result: () => race };
+    };
+
+    test('a stored scope write is refused once its OAuth client or legacy token is rescoped to no sources', async () => {
+      const NONE_SCOPE = 'qm-scope-none';
+      const c = await scopeClient('nonescope', [NONE_SCOPE], [HOME, NONE_SCOPE]);
+      const out = await write({ token: 'nonescope', actor: ALICE_ID }, [{ fact: 'No sources canarynonesources', provenance: 'turn n' }], { source_id: NONE_SCOPE });
+      expect(out.structured!.status).toBe('committed');
+      const authority = await storedAuthority(out.structured!.request_id);
+      await authorizeWrite(engine as never, authority, 'remember', 'memory/scope');
+      await rescopeClientGrant(engine, c.id, { sourcesNone: true, sourceId: null, federatedRead: [] }, { actor: 'test' });
+      expect((await refusal(authorizeWrite(engine as never, authority, 'remember', 'memory/scope')))?.message).toContain('revoked or its source changed');
+
+      const TOKEN_SCOPE = 'qm-scope-none-token';
+      await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [TOKEN_SCOPE]);
+      const minted = await mintLegacyToken(engine, { name: 'none-tok-' + randomUUID().slice(0, 8), scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [HOME, TOKEN_SCOPE] });
+      await bindCredential(engine, { kind: 'token', id: minted.id }, { attestActor: 'qm', attestOps: MEMORY_OPS, attestSources: [TOKEN_SCOPE] });
+      tokens.nonetoken = minted.token;
+      const viaToken = await write({ token: 'nonetoken', actor: ALICE_ID }, [{ fact: 'No sources token canarynonetoken', provenance: 'turn t' }], { source_id: TOKEN_SCOPE });
+      expect(viaToken.structured!.status).toBe('committed');
+      const tokenAuthority = await storedAuthority(viaToken.structured!.request_id);
+      await authorizeWrite(engine as never, tokenAuthority, 'remember', 'memory/scope');
+      await rescopeLegacyToken(engine, { ...tokenArgs, reset: [], target: { id: minted.id }, sources: [] });
+      expect((await refusal(authorizeWrite(engine as never, tokenAuthority, 'remember', 'memory/scope')))?.message).toContain('no longer permits this source write');
+    }, 60_000);
+
+    test('sources federate racing an --attest-sources mark never leaves a federated or unmarked scope source', async () => {
+      const FED = 'qm-scope-fed-race';
+      await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [FED]);
+      const racer = await register('fedracer', HOME);
+      await bindCredential(engine, { kind: 'client', id: racer.id }, { attestActor: 'qm', attestOps: MEMORY_OPS });
+      const race = raceWhile((sql, params) => sql.includes('UPDATE sources SET config = $1::text::jsonb WHERE id = $2') && params[1] === FED,
+        () => bindCredential(engine, { kind: 'client', id: racer.id }, { attestSources: [FED] }));
+      try {
+        await runSources(engine, ['federate', FED]);
+      } finally {
+        race.restore();
+      }
+      expect(race.result()).not.toBeNull();
+      const bound = await race.result();
+      const [row] = await engine.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id = $1', [FED]);
+      const config = parseSourceConfig(row!.config);
+      if (bound === null) expect(config).toMatchObject({ qm_scope: true, federated: false });
+      else expect({ marked: config.qm_scope === true, federated: config.federated }).toEqual({ marked: false, federated: true });
+    }, 60_000);
+
+    test('a read grant widened while --attest-sources drops that source never leaves the credential reading an unlisted scope', async () => {
+      const [D1, D2] = ['qm-scope-drop-1', 'qm-scope-drop-2'];
+      const c = await scopeClient('droprace', [D1, D2], [HOME, D1]);
+      const race = raceWhile(sql => sql.includes('UPDATE oauth_clients SET member_id'),
+        () => rescopeClientGrant(engine, c.id, { federatedRead: [HOME, D1, D2] }, { actor: 'test' }));
+      let dropped: Error | null;
+      try {
+        dropped = await refusal(bindCredential(engine, { kind: 'client', id: c.id }, { attestSources: [D1] }));
+      } finally {
+        race.restore();
+      }
+      expect(race.result()).not.toBeNull();
+      const widened = await race.result();
+      expect(dropped === null && widened === null).toBe(false);
+      const [row] = await engine.executeRaw<{ federated_read: string[] | null; attest_sources: string[] | null }>('SELECT federated_read, attest_sources FROM oauth_clients WHERE client_id = $1', [c.id]);
+      const unlisted = (row!.federated_read ?? []).filter(s => [D1, D2].includes(s) && !(row!.attest_sources ?? []).includes(s));
+      expect(unlisted).toEqual([]);
+    }, 60_000);
+
+    test('a read grant widened onto a scope source while a publication holds that source does not deadlock', async () => {
+      const LOCKED = 'qm-scope-share';
+      const c = await scopeClient('sharelock', [LOCKED], [HOME]);
+      const out = await write({ token: 'sharelock', actor: ALICE_ID }, [{ fact: 'Share lock canarysharelock', provenance: 'turn s' }], { source_id: LOCKED });
+      expect(out.structured!.status).toBe('committed');
+      const authority = await storedAuthority(out.structured!.request_id);
+      const ROLLBACK = new Error('rollback');
+      let grant: Promise<Error | null> | null = null;
+      let published: Error | null = new Error('not run');
+      await engine.transaction(async tx => {
+        await tx.executeRaw('SELECT 1 FROM sources WHERE id = $1 FOR SHARE', [LOCKED]);
+        grant = refusal(rescopeClientGrant(engine, c.id, { federatedRead: [HOME, LOCKED] }, { actor: 'test' }));
+        await new Promise(r => setTimeout(r, 300));
+        published = await refusal(authorizeWrite(tx as never, authority, 'remember', 'memory/scope', true));
+        throw ROLLBACK;
+      }).catch(e => { if (e !== ROLLBACK) throw e; });
+      expect(published).toBeNull();
+      expect(await grant).toBeNull();
     }, 60_000);
   });
 }

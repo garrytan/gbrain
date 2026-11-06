@@ -161,12 +161,13 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
     await storedActorIdentity(engine, a.principal, actor, a.attestedOp ?? operation, storedPerCallWriteSource(a, slug) ?? undefined);
   }
   // GST-1113: the one exception to the owner's single write source (the scope page), re-checked against the live attest_sources above.
-  const ownSource = (source: unknown) => source === a.sourceId || storedPerCallWriteSource(a, slug) !== null;
+  // A live grant of no sources writes nothing, so it refuses before that exception.
+  const ownSource = (source: unknown, sourcesNone: boolean) => !sourcesNone && (source === a.sourceId || storedPerCallWriteSource(a, slug) !== null);
   const suffix = lock ? ' FOR SHARE' : '';
   if (a.principal.kind === 'oauth_client') {
-    const [row] = await engine.executeRaw<Record<string, unknown>>(`SELECT deleted_at,scope,source_id,allowed_operations,
+    const [row] = await engine.executeRaw<Record<string, unknown>>(`SELECT deleted_at,scope,source_id,source_grant,allowed_operations,
       bound_slug_prefixes,bound_tools,delegated_namespace,delegated_slug_prefixes FROM oauth_clients WHERE client_id=$1${suffix}`, [a.principal.id]);
-    if (!row || row.deleted_at != null || !ownSource(row.source_id)) deny('The owning OAuth client is revoked or its source changed.');
+    if (!row || row.deleted_at != null || !ownSource(row.source_id, row.source_grant === 'none')) deny('The owning OAuth client is revoked or its source changed.');
     const scopes = typeof row.scope === 'string' ? row.scope.split(/\s+/) : [];
     assertSkillWriteScopes(scopes, operation, a.remote);
     if (skillWrite(operation) && (!strings(row.allowed_operations) || !row.allowed_operations.includes(operation))) deny('The current skill operation grant was removed.');
@@ -186,7 +187,7 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
     assertSkillWriteScopes(normalizeTokenScopes(row.scopes) ?? [], operation, a.remote);
     const liveOperations = grant.allowedOperations;
     if (!operationAllowed(liveOperations, granted) || skillWrite(operation) && !liveOperations?.includes(operation)) deny('The current legacy operation grant excludes this write.');
-    if (!hasScope(grant.scopes, 'write') || !ownSource(authSourcesFromGrant(grant).sourceId)) deny('The current token no longer permits this source write.');
+    if (!hasScope(grant.scopes, 'write') || !ownSource(authSourcesFromGrant(grant).sourceId, grant.sources.kind === 'none')) deny('The current token no longer permits this source write.');
     return;
   }
   if (a.principal.kind === 'local_cli' || a.principal.kind === 'local_stdio') {
