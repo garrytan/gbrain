@@ -2805,7 +2805,11 @@ trust, source and scan fields) stays as the database holds it, tags are the
 union of both sides, and protected takes and private fact rows are kept as
 stored. Each page's preview lists `exceptions`, the places where the result
 differs from the preferred side and why (`protected_metadata`, `scan_state`,
-`tags_union`, `protected_takes_or_private_facts`).
+`tags_union`, `protected_takes_or_private_facts`). Pages stored in segments
+(`pages.segmented_storage`) resolve the same way and stay segmented. A page
+the apply would refuse is listed `refused` in the preview, and every refused
+row or apply outcome prints its next step as `fix:` (with its consent), or a
+read-only preview of that page alone when the refusal names none.
 
 <a id="file-drift-globs"></a>`--only <path>` and `--skip <path>` (both repeatable) narrow any selection by
 the page's canonical file path, relative to the source. A value with no `*`
