@@ -11,6 +11,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { ACTOR_REASON_FIXES, QM_CONTRACT_PATH, QM_CONTRACT_PATHS, renderQmMemoryContract } from '../scripts/build-qm-memory-contract.ts';
 import { CODES } from '../src/core/error-registry.ts';
 import { operations } from '../src/core/operations.ts';
@@ -75,6 +76,11 @@ describe('QM memory-provider contract v2 (GST-1094 scope read, GST-900)', () => 
 
   test('the committed fixture matches the live registry (regenerate with bun scripts/build-qm-memory-contract.ts)', () => {
     expect(readFileSync(QM_CONTRACT_PATHS[2], 'utf8')).toBe(renderQmMemoryContract(2));
+  });
+
+  test('v2 is written beside v1 at the path QM vendors', () => {
+    expect(QM_CONTRACT_PATHS[2].endsWith(join('docs', 'contracts', 'qm-memory-provider', 'v2.json'))).toBe(true);
+    expect(QM_CONTRACT_PATHS[1].endsWith(join('docs', 'contracts', 'qm-memory-provider', 'v1.json'))).toBe(true);
   });
 
   test('the tool schemas are the ones MCP serves', () => {
