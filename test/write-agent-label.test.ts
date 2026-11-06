@@ -7,7 +7,7 @@
  * admission records it, on a managed-worktree brain and on a repo-less brain; an unlabelled write is unchanged; a
  * label is unverified text that never changes what the request may do (the stored authority is otherwise identical,
  * and a read-only token is still refused); a label that is not 1-120 printable ASCII characters is dropped, never
- * stored or refused.
+ * stored or refused; an allowlisted browser origin's CORS preflight on either transport allows the header.
  * Fails when: the header is dropped before admission, invented at read time, read by authorization, or a value that is
  * unsafe to render (controls, bidi or zero-width characters, non-ASCII bytes) reaches the record.
  * Seams: the mounted SDK transport and the legacy Bun transport over real sockets with real bearer tokens, and the
@@ -34,6 +34,8 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { AGENT_LABEL_HEADER, parseAgentLabel } from '../src/core/persistence/attribution.ts';
+import { buildServeHttpApp } from '../src/commands/serve-http.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const CONFIG = { engine: 'pglite', embedding_disabled: true } as const;
 const content = (title: string) => '---\ntype: note\ntitle: ' + title + '\n---\n\n# ' + title + '\n\nA synthetic page.\n';
@@ -127,9 +129,13 @@ describe('OAuth serve --http mount, managed worktree brain', () => {
   }, 240_000);
 
   test('a label is never authority: the stored authority is otherwise identical and a read-only token is still refused', async () => {
+    const slug = 'notes/authority-check';
+    await put(engine, url, TOKEN, slug, 'Authority by Claude', 'Claude Code');
+    await put(engine, url, TOKEN, slug, 'Authority by Codex', 'Codex');
+    await put(engine, url, TOKEN, slug, 'Authority unlabelled');
     const rows = await engine.executeRaw<{ label: string | null; rest: Record<string, unknown> }>(
-      "SELECT authority->>'agentLabel' AS label, authority - 'agentLabel' AS rest FROM persistence_requests WHERE slug=$1 ORDER BY created_at", [SLUG]);
-    expect(rows.map(r => r.label)).toEqual(['Claude Code', 'Codex', null, null]);
+      "SELECT authority->>'agentLabel' AS label, authority - 'agentLabel' AS rest FROM persistence_requests WHERE slug=$1 ORDER BY created_at", [slug]);
+    expect(rows.map(r => r.label)).toEqual(['Claude Code', 'Codex', null]);
     const rest = rows.map(r => typeof r.rest === 'string' ? JSON.parse(r.rest) : r.rest);
     for (const other of rest.slice(1)) expect(other).toEqual(rest[0]);
 
@@ -177,3 +183,50 @@ describe('legacy bearer transport, repo-less brain', () => {
     expect(after.created.agent_label).toBe('Claude Code');
   }, 240_000);
 });
+
+describe('a browser caller on an allowlisted origin may send the header', () => {
+  const ORIGIN = 'https://allowed.example';
+  let engine: BrainEngine;
+  let http: Server;
+  let legacy: { port: number; stop: (force?: boolean) => unknown };
+
+  beforeAll(async () => {
+    const db = new PGLiteEngine();
+    await db.connect({});
+    await db.initSchema();
+    engine = db;
+    await withEnv({ GBRAIN_HTTP_CORS_ORIGIN: ORIGIN }, async () => {
+      const app = express();
+      http = await new Promise(resolve => { const listener = app.listen(0, '127.0.0.1', () => resolve(listener)); });
+      const port = (http.address() as AddressInfo).port;
+      await buildServeHttpApp(app, engine, { port, tokenTtl: 3600, enableDcr: false, publicUrl: 'http://127.0.0.1:' + port });
+      legacy = await startHttpTransport({ port: 0, engine, surface: 'full', limiters: {
+        ip: new RateLimiter({ limit: 10_000, windowMs: 60_000, lruCap: 100 }),
+        token: new RateLimiter({ limit: 10_000, windowMs: 60_000, lruCap: 100 }),
+      } }) as unknown as { port: number; stop: (force?: boolean) => unknown };
+    });
+  }, 120_000);
+
+  afterAll(async () => {
+    await legacy?.stop(true);
+    if (http) await new Promise<void>(resolve => { http.closeAllConnections?.(); http.close(() => resolve()); });
+    await engine.disconnect();
+  });
+
+  const preflight = async (port: number) => await fetch('http://127.0.0.1:' + port + '/mcp', { method: 'OPTIONS', headers: {
+    Origin: ORIGIN, 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization, content-type, x-gbrain-agent-label' } });
+  const allowsLabel = (response: Response) => (response.headers.get('access-control-allow-headers') ?? '').toLowerCase().split(/\s*,\s*/).includes(AGENT_LABEL_HEADER.toLowerCase());
+
+  test('the OAuth serve --http mount allows the header in its preflight', async () => {
+    const response = await preflight((http.address() as AddressInfo).port);
+    expect(response.headers.get('access-control-allow-origin')).toBe(ORIGIN);
+    expect(allowsLabel(response)).toBe(true);
+  });
+
+  test('the legacy bearer transport allows the header in its preflight', async () => {
+    const response = await preflight(legacy.port);
+    expect(response.headers.get('access-control-allow-origin')).toBe(ORIGIN);
+    expect(allowsLabel(response)).toBe(true);
+  });
+});
+
