@@ -143,7 +143,7 @@ const remember: Operation = {
       throw verbError(
         'invalid_params',
         'Missing required parameter: provenance',
-        'Pass `provenance` as a string (where the fact came from), e.g. provenance: "user told me, 2026-06-12". With items, provenance may be given per item instead.',
+        'Pass `provenance` as a string (where the fact came from), e.g. provenance: "<where you learned it, with the date>". With items, provenance may be given per item instead.',
       );
     }
     const provenance = typeof p.provenance === 'string' ? p.provenance.trim() : '';
@@ -151,7 +151,7 @@ const remember: Operation = {
       throw verbError(
         'provenance_required',
         'provenance is required and must be non-empty.',
-        'Pass where the fact came from, e.g. provenance: "user told me, 2026-06-12" or "import: notes.md".',
+        'Pass where the fact came from, e.g. provenance: "<where you learned it, with the date>" or "import: notes.md".',
       );
     }
     if (provenance.length > PROVENANCE_MAX) {

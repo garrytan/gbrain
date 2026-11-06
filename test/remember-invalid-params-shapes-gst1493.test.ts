@@ -61,7 +61,14 @@ describe('remember refusals name the rule and a corrected example (GST-1493)', (
     expect(isError).toBe(true);
     expect(envelope.error).toBe('invalid_params');
     expect(envelope.message).toBe('Missing required parameter: provenance');
-    expect(envelope.suggestion).toContain('provenance');
+    expect(envelope.suggestion).toContain('provenance: "<where you learned it, with the date>"');
+  });
+
+  test('an empty provenance is refused and quotes the placeholder, not a source to copy', async () => {
+    const { isError, envelope } = await call({ fact: FACT, entity: 'Alice Example', provenance: ' ' });
+    expect(isError).toBe(true);
+    expect(envelope.error).toBe('provenance_required');
+    expect(envelope.suggestion).toContain('provenance: "<where you learned it, with the date>"');
   });
 
   test('the saved shape {fact, entity, provenance} validates', async () => {
