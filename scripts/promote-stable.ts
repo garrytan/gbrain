@@ -272,10 +272,10 @@ export async function currentStable(deps: PromoteDeps): Promise<{ version: strin
   return { version: versions.sort(compareVersions).at(-1)!, tagObject };
 }
 
-interface PriorRecord { commit: string; version: string | null; releaseCommit: string | null; knownBad: string[] }
+export interface PriorRecord { commit: string; version: string | null; releaseCommit: string | null; knownBad: string[] }
 
 /** The published evidence record (the remote stable-record head), or null before the first record. */
-async function readPriorRecord(deps: PromoteDeps): Promise<PriorRecord | null> {
+export async function readPriorRecord(deps: PromoteDeps): Promise<PriorRecord | null> {
   await deps.git(['fetch', '--no-tags', 'origin', `+${RECORD_BRANCH_REF}:${RECORD_REMOTE_REF}`]);
   if (!(await refExists(deps, `${RECORD_REMOTE_REF}^{commit}`))) return null;
   const commit = await gitOut(deps, ['rev-parse', `${RECORD_REMOTE_REF}^{commit}`], `Could not resolve ${RECORD_REMOTE_REF}; re-run this workflow.`);

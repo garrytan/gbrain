@@ -9,6 +9,9 @@ name: Stable daily
 # release, and a later run promotes it. It never promotes without that soak,
 # never moves stable backward, pauses while stable is a rollback, and does
 # nothing while the STABLE_AUTO_PROMOTE repository variable is "off".
+# When the published stable.json is missing or names another commit than
+# stable, a run first writes the record for the current stable from its tag
+# message (no tag moves) and stops (GBRA-346).
 #
 # A schedule event runs only this file as merged on the default branch, so a
 # scheduled run promotes by rule without a maintainer

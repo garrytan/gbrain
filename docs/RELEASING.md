@@ -656,9 +656,12 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
 - **Record backfill (one time, GBRA-346).** Promotions made before this
   script wrote the evidence record moved `stable` with no `stable.json`,
   and a client that has the stable channel reads only the record, so it
-  would report `stable_missing`. Before the first release with the channel
-  client publishes, write the record for the current stable by promoting it
-  again with the soak run its tag names:
+  would report `stable_missing`. The backfill is automatic on the first
+  scheduled run of the [daily stable check](#daily-stable-check) after the
+  channel client lands: when `stable.json` is missing or names another
+  commit than `stable`, that run writes the record for the current stable
+  and stops. The manual dispatch still works, for example to write the
+  record before the first release with the channel client publishes:
 
   ```bash
   git fetch --tags --force origin
@@ -671,10 +674,9 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   name the same release, tree and soak run, writes `stable.json` from it
   (`known_bad` carried forward, `withdraw` accepted) and pushes only the
   record branch, leasing `stable` unchanged. Running it from a branch before
-  the client merges is safe: older clients never read the record. Repeat it
-  after any promotion a pre-record copy of this script makes; a record that
-  already names the current stable makes the run a no-op refusal. Every
-  later promotion writes the record itself.
+  the client merges is safe: older clients never read the record. A record
+  that already names the current stable makes the run a no-op refusal.
+  Every later promotion, manual or scheduled, writes the record itself.
 
 <a id="daily-stable-check"></a>
 ### Daily stable check
@@ -704,6 +706,13 @@ and keeps stable between one day and one week behind what matters:
   manual dispatch defaults to `dry_run` (report only); `dry_run=false` needs an
   admin or maintainer. It shares the `promote-stable` concurrency group, so it
   never races a manual promotion.
+- **Record first.** Before the reason check, when `stable.json` is missing or
+  names another commit than `stable`, it writes the record for the current
+  stable from the stable tag's message through the same re-promotion path as
+  the manual backfill (no tag moves; release, exact tree, soak run and leases
+  checked; `known_bad` carried forward) and stops; a dry run reports
+  `would: backfill the record for v<version>`. A record that already names
+  stable changes nothing. The kill switch and a rollback pause skip it.
 - **Stop it.** Set the repository variable `STABLE_AUTO_PROMOTE=off` (Settings →
   Secrets and variables → Actions → Variables). It also pauses by itself while
   the current stable record says `rollback: true`, until a maintainer promotes by
