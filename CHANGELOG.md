@@ -16,11 +16,11 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ### Itemized changes
 
-- `src/core/repair/failed-writes.ts`: recovered fact requests are read once for all refused writes instead of inside the candidate read; replay attempts are read for every refused write together (`request_id = ANY`); later requests of the same page and the file check are read per page, not per write. The listing, classes, residuals and preview hash are unchanged.
+- `src/core/repair/failed-writes.ts`: recovered fact requests are read once for all refused writes instead of inside the candidate read; replay attempts are read for every refused write together (`request_id = ANY`); the later requests of each refused write's page are read for groups of writes sized by how long their pages' later history is, so one page with hundreds of refused writes and a long history cannot make one read outlast the statement timeout; the file check runs once per page. The listing, classes, residuals and preview hash are unchanged.
 - New refusal `repair_preview_timeout`. When the request indexes the preview reads are missing or INVALID, it names them and its fix is the read-only `gbrain repair request-indexes --json` preview, whose apply command builds them; when they are valid, it tells the brain host to run the same preview once with a longer statement timeout.
 - Schema migration v291 builds two request-table indexes online (`persistence_requests_replay_id` on the request id, `persistence_requests_slug_sequence` on source, slug and sequence). They join the indexes `gbrain repair request-indexes` and doctor's `persistence_request_indexes` check report. Without them the preview is still bounded, only slower. PGLite and repo-less brains get them unchanged.
 - The request-index states doctor and `gbrain repair request-indexes` print now come back in the order the indexes are declared on Postgres as well as PGLite.
-- `test/repair-failed-writes-bounded-8707.test.ts` (PGLite and Postgres) seeds a journal with refused writes of every class and checks that the preview's request-table reads stay flat as refused writes grow, that each write gets its class, and that a read ended at the statement timeout refuses `repair_preview_timeout` and saves nothing.
+- `test/repair-failed-writes-bounded-8707.test.ts` (PGLite and Postgres) seeds a journal with refused writes of every class and checks that the preview's request-table reads stay flat as refused writes grow, that each write gets its class, and that a read ended at the statement timeout refuses `repair_preview_timeout` and saves nothing, and (Postgres) that 500 refused writes on one page followed by 20,000 later commits preview inside a 1 s statement timeout.
 
 ## [0.60.592.0] - 2026-11-06
 
