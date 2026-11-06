@@ -72,9 +72,12 @@ export function jobMarker(job: JobSnapshot | null): string {
   return job?.status ? `${job.finished_us ?? '0'}:${job.status}` : 'gone';
 }
 
-/** Emit id: `<event>:<target>:<marker>:<watch row id>`, so two watchers and a re-run job never collide. */
-export function wakeEmitId(event: string, target: string, marker: string, rowId: number | string): string {
-  return `${event}:${target}:${marker}:${rowId}`;
+/**
+ * Emit id: `<event>:<target>:<marker>:<watch row id>:<namespace>`, so two watchers and a re-run job never collide,
+ * and neither do two brains (or a re-initialized one) on one Wakeshift key, whose job and row ids restart at 1.
+ */
+export function wakeEmitId(event: string, target: string, marker: string, rowId: number | string, namespace: string): string {
+  return `${event}:${target}:${marker}:${rowId}:${namespace}`;
 }
 
 /** Payload and the line the agent reads first, for a watched job (or its removed row). */

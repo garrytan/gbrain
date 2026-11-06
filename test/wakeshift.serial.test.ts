@@ -15,7 +15,8 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { disabledOpsForPublishGates } from '../src/mcp/publish-gates.ts';
 import { encodeWakeshiftKey } from '../src/core/wakeshift/client.ts';
 import { drainWakes, WAKE_MAX_ATTEMPTS } from '../src/core/wakeshift/drain.ts';
-import { resetWakeshiftEnvKeyForTests } from '../src/core/wakeshift/config.ts';
+import { readWakeshiftKey, resetWakeshiftEnvKeyForTests } from '../src/core/wakeshift/config.ts';
+import { loadConfig } from '../src/core/config.ts';
 import { startFakeWakeshift, type FakeWakeshift } from './helpers/fake-wakeshift.ts';
 import { runWakeshift } from '../src/commands/wakeshift.ts';
 import { readFileSync } from 'node:fs';
@@ -102,7 +103,7 @@ describe('watch_job → completion → one pointer emit', () => {
     expect(e.body.name).toBe('gbrain.job.finished');
     expect(e.body.to).toEqual([{ user: sub.body.call.user, subscription: 'sub_1' }]);
     expect(e.body.text).toMatch(new RegExp(`^gbrain: job ${id} \\(sync\\) finished ok in 3m0[0-9]s\\. Call get_job ${id} for the result\\.$`));
-    expect(e.body.id).toMatch(new RegExp(`^gbrain\\.job\\.finished:${id}:\\d+:completed:\\d+$`));
+    expect(e.body.id).toMatch(new RegExp(`^gbrain\\.job\\.finished:${id}:\\d+:completed:\\d+:[0-9a-f]{12}$`));
     const raw = JSON.stringify(e.body);
     expect(raw).not.toContain('alice-example');
     expect(raw).not.toContain('canary');
@@ -305,6 +306,46 @@ describe('failure schedule', () => {
     }
   });
 
+  test('a 429 without Retry-After backs off on the schedule', async () => {
+    const id = await seedJob('active');
+    await dispatchToolCall(engine, 'watch_job', { id }, stdio);
+    await finish(id);
+    fake.respond.set('/events/emit', () => ({ status: 429, body: { error: { code: 'rate_limited', message: 'slow' } } }));
+    await drainWakes(engine);
+    const [row] = await engine.executeRaw<{ delay: number; attempts: number }>('SELECT attempts, round(extract(epoch FROM next_attempt_at - now()))::int AS delay FROM wake_subscriptions');
+    expect(row).toMatchObject({ attempts: 1, delay: 30 });
+  });
+
+  test('a drainer holding a stale snapshot never skips the backoff another drainer just set', async () => {
+    const id = await seedJob('active');
+    await dispatchToolCall(engine, 'watch_job', { id }, stdio);
+    await finish(id);
+    const stale = new Proxy(engine, {
+      get(t, k, r) {
+        if (k !== 'executeRaw') return Reflect.get(t, k, r);
+        return async (sql: string, params?: unknown[]) => {
+          const out = await t.executeRaw(sql, params);
+          if (sql.includes('FROM wake_subscriptions w')) {
+            await t.executeRaw("UPDATE wake_subscriptions SET attempts = 2, next_attempt_at = now() + interval '2 minutes', lease_until = NULL");
+          }
+          return out;
+        };
+      },
+    });
+    expect(await drainWakes(stale)).toMatchObject({ delivered: 0, retried: 0 });
+    expect(emits()).toHaveLength(0);
+    const [row] = await engine.executeRaw<{ attempts: number }>('SELECT attempts FROM wake_subscriptions');
+    expect(row!.attempts).toBe(2);
+  });
+
+  test('a terminal job with no finished_at still wakes its watcher', async () => {
+    const id = await seedJob('active');
+    await dispatchToolCall(engine, 'watch_job', { id }, stdio);
+    await engine.executeRaw("UPDATE minion_jobs SET status = 'cancelled', finished_at = NULL WHERE id = $1", [id]);
+    expect(await drainWakes(engine)).toMatchObject({ delivered: 1 });
+    expect(emits()).toHaveLength(1);
+  });
+
   test('Wakeshift down during watch_job: a clear error with the wait_job fix and no row', async () => {
     const id = await seedJob('active');
     fake.respond.set('/event-subscriptions', () => ({ status: 503, body: { error: { code: 'unavailable', message: 'down' } } }));
@@ -391,6 +432,37 @@ describe('gbrain wakeshift', () => {
       expect(JSON.parse(readFileSync(join(home, '.gbrain', 'config.json'), 'utf8')).wakeshift).toBeUndefined();
     } finally {
       await engine.executeRaw("DELETE FROM access_members WHERE id = 'alice-example'");
+    }
+  });
+
+  test('disable reports a failed watch-ending update instead of claiming it ended none', async () => {
+    const failing = new Proxy(engine, {
+      get(t, k, r) {
+        if (k !== 'executeRaw') return Reflect.get(t, k, r);
+        return (sql: string, params?: unknown[]) => sql.includes("last_error = 'disabled'") ? Promise.reject(new Error('db down')) : t.executeRaw(sql, params);
+      },
+    });
+    const orig = console.log;
+    console.log = () => {};
+    try {
+      await expect(runWakeshift(failing, ['disable', '--json'])).rejects.toThrow('db down');
+    } finally { console.log = orig; }
+    expect(JSON.parse(readFileSync(join(home, '.gbrain', 'config.json'), 'utf8')).wakeshift.enabled).toBe(false);
+  });
+
+  test('a key in ~/.gbrain/.env is taken out of process.env when config loads, so children never inherit it', async () => {
+    const envFile = join(home, '.gbrain', '.env');
+    writeFileSync(envFile, `WAKESHIFT_API_KEY=${KEY}\n`, { mode: 0o600 });
+    try {
+      loadConfig();
+      expect(process.env.WAKESHIFT_API_KEY).toBeUndefined();
+      expect(readWakeshiftKey()).toEqual({ source: 'env', raw: KEY });
+      loadConfig();
+      expect(process.env.WAKESHIFT_API_KEY).toBeUndefined();
+    } finally {
+      rmSync(envFile, { force: true });
+      delete process.env.WAKESHIFT_API_KEY;
+      resetWakeshiftEnvKeyForTests();
     }
   });
 

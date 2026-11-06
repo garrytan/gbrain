@@ -142,7 +142,8 @@ export function wakeshiftClient(key: WakeshiftKey, opts: { url?: string; fetch?:
     try { json = text ? JSON.parse(text) : null; } catch { /* non-JSON body */ }
     if (!res.ok) {
       const err = (json as { error?: { code?: unknown; message?: unknown } } | null)?.error;
-      const retryAfter = Number(res.headers.get('retry-after'));
+      const retryHeader = res.headers.get('retry-after')?.trim();
+      const retryAfter = retryHeader ? Number(retryHeader) : NaN;
       throw new WakeshiftError(res.status, typeof err?.code === 'string' ? err.code.slice(0, 64) : `http_${res.status}`,
         typeof err?.message === 'string' ? err.message.slice(0, 300) : `Wakeshift answered HTTP ${res.status}.`,
         Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter : undefined);

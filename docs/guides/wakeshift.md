@@ -20,7 +20,7 @@ The watch tools (`watch_job`, `list_watches`, `unwatch`) appear on the next `too
 
 A Wakeshift key is an Ed25519 private key: `wst_` followed by 50 base58 characters, the last four bytes a checksum, so a mistyped key is caught before anything is sent. Older `test_…`/`live_…` keys are refused; make a new one in the console.
 
-- gbrain reads `WAKESHIFT_API_KEY` once and then removes it from its own environment, so child processes don't inherit it. Otherwise it reads `~/.gbrain/wakeshift.key`, which must be readable by its owner only (a looser file is ignored, and `gbrain doctor` says so).
+- gbrain moves `WAKESHIFT_API_KEY` out of its own environment as soon as it loads its config (including a value in `~/.gbrain/.env`), so child processes and jobs don't inherit it. `gbrain wakeshift enable --key-stdin` saves a key only after the checks and your consent pass. Otherwise it reads `~/.gbrain/wakeshift.key`, which must be readable by its owner only (a looser file is ignored, and `gbrain doctor` says so).
 - The key never leaves the brain host. Each request carries a fresh signed assertion that expires in two minutes.
 - The key is never stored in the database or printed. `status`, `test` and `doctor` show only its kid, a 22-character fingerprint.
 

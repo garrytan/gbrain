@@ -812,10 +812,13 @@ function attachResponseMeta(out: ToolResult, responseMeta: Record<string, unknow
 
 type ToolTail = Parameters<NonNullable<OperationContext['emitToolTail']>>[0];
 
-/** Wakeshift's addition: its text as the LAST text block, its meta merged into `_meta` (a conversation credential: never logged). */
+/**
+ * Wakeshift's addition: its text (at most 2,000 characters) as the LAST text block, its meta merged into `_meta`
+ * under gbrain's own keys, which it never replaces (a conversation credential: never logged).
+ */
 function appendToolTail(out: ToolResult, tail: ToolTail): void {
-  if (tail.text) out.content.push({ type: 'text', text: tail.text });
-  if (tail.meta && typeof tail.meta === 'object') out._meta = { ...(out._meta ?? {}), ...tail.meta };
+  if (tail.text) out.content.push({ type: 'text', text: tail.text.slice(0, 2000) });
+  if (tail.meta && typeof tail.meta === 'object') out._meta = { ...tail.meta, ...(out._meta ?? {}) };
 }
 
 /** The one error result path: toAgentError → exactly one content block. */

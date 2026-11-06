@@ -15,6 +15,7 @@
  * told. Off or keyless: the tick returns before touching the database. A brain
  * with live access members sends nothing (watch_job refuses there too).
  */
+import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { memberIdentityFor } from '../access/caller.ts';
 import { WakeshiftError, type WakeshiftApi } from './client.ts';
@@ -38,6 +39,7 @@ export interface WakeRow {
   wake_user: string;
   ws_subscription_id: string;
   attempts: number;
+  created_us: string;
   job_id: number | null;
   job_name: string | null;
   job_status: string | null;
@@ -50,6 +52,7 @@ export interface DrainReport { delivered: number; retried: number; dead: number;
 
 const CANDIDATES_SQL = (byId: boolean) => `
 SELECT w.id, w.event, w.target, w.principal_kind, w.principal_id, w.member_id, w.wake_user, w.ws_subscription_id, w.attempts,
+       (floor(extract(epoch FROM w.created_at) * 1000000))::bigint::text AS created_us,
        j.id AS job_id, j.name AS job_name, j.status AS job_status, j.started_at, j.finished_at,
        (floor(extract(epoch FROM j.finished_at) * 1000000))::bigint::text AS finished_us
   FROM wake_subscriptions w
@@ -57,17 +60,21 @@ SELECT w.id, w.event, w.target, w.principal_kind, w.principal_id, w.member_id, w
  WHERE w.state = 'open' AND w.next_attempt_at <= now() AND (w.lease_until IS NULL OR w.lease_until < now())
    AND (j.id IS NULL OR j.status IN ${TERMINAL})
    AND w.delivered_marker IS DISTINCT FROM CASE WHEN j.id IS NULL THEN 'gone' ELSE
-       (floor(extract(epoch FROM j.finished_at) * 1000000))::bigint::text || ':' || j.status END
+       COALESCE((floor(extract(epoch FROM j.finished_at) * 1000000))::bigint::text, '0') || ':' || j.status END
    ${byId ? 'AND w.id = ANY($1::bigint[])' : ''}
  ORDER BY w.next_attempt_at, w.id
  LIMIT ${WAKE_DRAIN_BATCH}`;
 
-/** Lease one open row; the lease's timestamp in epoch microseconds (text, so no driver rounds it) is the token settle() must match. */
-async function claim(engine: BrainEngine, id: number): Promise<string | null> {
-  const rows = await engine.executeRaw<{ lease: string }>(
+/**
+ * Lease one open, due row. Returns the lease's timestamp in epoch microseconds (text, so no driver rounds it), the
+ * token settle() must match, and the row's current attempts: the candidate snapshot may be stale by now.
+ */
+async function claim(engine: BrainEngine, id: number): Promise<{ lease: string; attempts: number } | null> {
+  const rows = await engine.executeRaw<{ lease: string; attempts: number }>(
     `UPDATE wake_subscriptions SET lease_until = now() + interval '${LEASE_S} seconds', updated_at = now()
-      WHERE id = $1 AND state = 'open' AND (lease_until IS NULL OR lease_until < now()) RETURNING (floor(extract(epoch FROM lease_until) * 1000000))::bigint::text AS lease`, [id]);
-  return rows[0]?.lease ?? null;
+      WHERE id = $1 AND state = 'open' AND next_attempt_at <= now() AND (lease_until IS NULL OR lease_until < now())
+      RETURNING (floor(extract(epoch FROM lease_until) * 1000000))::bigint::text AS lease, attempts`, [id]);
+  return rows[0] ? { lease: rows[0].lease, attempts: Number(rows[0].attempts) } : null;
 }
 
 /** Settle a leased row; false when it was ended (unwatch, disable, expiry) or re-leased meanwhile, which then wins. */
@@ -118,9 +125,10 @@ function jobOf(row: WakeRow): JobSnapshot | null {
 }
 
 async function deliver(engine: BrainEngine, api: WakeshiftApi, row: WakeRow, report: DrainReport): Promise<void> {
-  const lease = await claim(engine, row.id);
-  if (!lease) return;
-  const attempts = row.attempts + 1;
+  const claimed = await claim(engine, row.id);
+  if (!claimed) return;
+  const { lease } = claimed;
+  const attempts = claimed.attempts + 1;
   try {
     if (!(await principalLive(engine, row))) {
       await endAtWakeshift(api, row);
@@ -134,7 +142,7 @@ async function deliver(engine: BrainEngine, api: WakeshiftApi, row: WakeRow, rep
     try {
       sent = await api.emit({
         name: row.event, arguments: { job: Number(row.target) }, payload, text,
-        id: wakeEmitId(row.event, row.target, marker, row.id),
+        id: wakeEmitId(row.event, row.target, marker, row.id, createHash('sha256').update(`${row.wake_user}:${row.created_us}`).digest('hex').slice(0, 12)),
         to: [{ user: row.wake_user, subscription: row.ws_subscription_id }],
       });
     } catch (e) {

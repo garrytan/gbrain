@@ -91,7 +91,8 @@ describe('wakeshift events', () => {
     expect(jobMarker(j)).toBe('100:failed');
     expect(jobMarker({ ...j, finished_us: '200' })).not.toBe(jobMarker(j));
     expect(jobMarker(null)).toBe('gone');
-    expect(wakeEmitId(JOB_FINISHED, '1', '100:failed', 1)).not.toBe(wakeEmitId(JOB_FINISHED, '1', '100:failed', 2));
+    expect(wakeEmitId(JOB_FINISHED, '1', '100:failed', 1, 'brain-a')).not.toBe(wakeEmitId(JOB_FINISHED, '1', '100:failed', 2, 'brain-a'));
+    expect(wakeEmitId(JOB_FINISHED, '1', 'gone', 1, 'brain-a')).not.toBe(wakeEmitId(JOB_FINISHED, '1', 'gone', 1, 'brain-b'));
     expect(formatDuration(59_000)).toBe('59s');
     expect(formatDuration(3_725_000)).toBe('1h02m');
   });

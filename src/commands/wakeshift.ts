@@ -8,7 +8,7 @@
  * watches; `status` and `test` show the key's kid fingerprint, never the key.
  * Guide: docs/guides/wakeshift.md.
  */
-import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfigFileOnly, saveConfig, type GBrainConfig } from '../core/config.ts';
 import { opError } from '../core/ops/contract.ts';
@@ -109,14 +109,14 @@ async function status(engine: BrainEngine, json: boolean): Promise<void> {
 }
 
 async function enable(engine: BrainEngine, args: string[]): Promise<void> {
-  if (args.includes('--key-stdin')) {
-    const raw = readFileSync(0, 'utf8').trim();
-    try { parseWakeshiftKey(raw); } catch (e) { if (e instanceof WakeshiftKeyError) throw keyError(e.reason, e.message, KEY_HINT); throw e; }
-    writeFileSync(wakeshiftKeyFile(), raw + '\n', { mode: 0o600 });
-    chmodSync(wakeshiftKeyFile(), 0o600);
-    console.error(`[wakeshift] saved the key to ${wakeshiftKeyFile()} (0600).`);
+  const stdinKey = args.includes('--key-stdin') ? readFileSync(0, 'utf8').trim() : null;
+  let loaded: { key: WakeshiftKey; source: 'env' | 'file' | 'stdin' };
+  if (stdinKey !== null) {
+    try { loaded = { key: parseWakeshiftKey(stdinKey), source: 'stdin' }; } catch (e) { if (e instanceof WakeshiftKeyError) throw keyError(e.reason, e.message, KEY_HINT); throw e; }
+  } else {
+    loaded = loadKey();
   }
-  const { key, source } = loadKey();
+  const { key, source } = loaded;
   const members = await liveAccessMembers(engine);
   if (members > 0) {
     throw opError('wakeshift_shared_brain', `This brain has ${members} live access member(s); this release reports back only on a brain that serves its owner alone. Nothing was turned on.`,
@@ -141,6 +141,12 @@ async function enable(engine: BrainEngine, args: string[]): Promise<void> {
       `Wakeshift did not accept the key or the manifest: ${describeWakeshiftError(e)}. Nothing was turned on.`,
       'Check the key belongs to your Wakeshift app (gbrain wakeshift test) and retry.', { reason: e instanceof WakeshiftError ? e.code : 'error' });
   }
+  if (stdinKey !== null) {
+    const tmp = `${wakeshiftKeyFile()}.${process.pid}.tmp`;
+    writeFileSync(tmp, stdinKey + '\n', { mode: 0o600, flag: 'wx' });
+    renameSync(tmp, wakeshiftKeyFile());
+    console.error(`[wakeshift] saved the key to ${wakeshiftKeyFile()} (0600).`);
+  }
   wakeshiftSecret();
   writeFilePlane(w => {
     const next: { enabled?: boolean; url?: string } = { ...w, enabled: true, url };
@@ -158,7 +164,7 @@ async function disable(engine: BrainEngine, json: boolean): Promise<void> {
   writeFilePlane(w => ({ ...w, enabled: false }));
   const rows = await engine.executeRaw<{ id: number; wake_user: string; ws_subscription_id: string }>(
     `UPDATE wake_subscriptions SET state = 'ended', last_error = 'disabled', lease_until = NULL, updated_at = now() WHERE state = 'open'
-     RETURNING id, wake_user, ws_subscription_id`).catch(() => []);
+     RETURNING id, wake_user, ws_subscription_id`);
   let told = 0;
   if (rows.length > 0) {
     try {
