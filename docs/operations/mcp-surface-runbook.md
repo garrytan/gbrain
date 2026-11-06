@@ -181,7 +181,7 @@ passthrough keys (D14.1), keeping schema-validating clients aligned with
 the server's reject posture. Read per request; flipping back to `warn`
 reopens the schemas on the next list. A transient config-read failure
 cannot re-open the grace period: dispatch holds the last successfully
-read mode per process, so a reject-mode server stays reject through a
+read mode per engine, so a reject-mode server stays reject through a
 config outage. `test/mcp-tool-defs.test.ts` pins
 both emission states; the default stays `warn` until the project-level
 flip (see TODOS.md, strict_params reject-flip).
@@ -327,7 +327,7 @@ Post-deploy checks, in order:
    `SELECT token_name, params->>'tool_count' FROM mcp_request_log WHERE operation='tools/list' ORDER BY created_at DESC LIMIT 10;`
 2. **Empty-query probe shows the degraded block** — call `search` with a
    nonsense query; the empty result must carry a second content block
-   ("0 results. … clean miss." or degraded stages) + `_meta.retrieval`.
+   ("0 results. … retrieval healthy …" or degraded stages) + `_meta.retrieval`.
 3. **Workerless submit warns** — `submit_agent` while no worker runs must
    still succeed and carry `queue_state.warning` (worker_alive false).
 4. **put_page lint fields present** — put an uncited page; the response

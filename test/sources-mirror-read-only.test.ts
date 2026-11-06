@@ -180,22 +180,20 @@ for (const backend of testBackends()) {
       expect(existsSync(join(m.root, 'notes/brain-only.md'))).toBe(false);
     }), 120_000);
 
-    test('a fact withdrawal in a read-only mirror settles its Git effect as skipped, never failed (Codex review)', () => withEnv({ GBRAIN_HOME: home }, async () => {
+    test('a fact withdrawal in a read-only mirror commits database-only with no Git or mirror effect, never failed (Codex review)', () => withEnv({ GBRAIN_HOME: home }, async () => {
       const m = await mirror(true);
       await submitPageMutation(ctx(m.id), { operation: 'put_page', params: { slug: 'people/alice-example', request_id: randomUUID(),
         content: '---\ntitle: Alice Example\ntype: person\n---\n# Alice Example\n' } });
       const [{ id }] = await engine.transaction(tx => withCoordinatedWrite(tx, [m.id], () => tx.executeRaw<{ id: number }>(
         `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source) VALUES ($1, 'people/alice-example', 'Alice prefers mornings', 'preference', 'private', 'test')
          RETURNING id::int AS id`, [m.id]), TEST_WRITE_ATTRIBUTION));
-      const forgot = await submitForgetMutation(ctx(m.id), 'forget', { id: Number(id), request_id: randomUUID() }) as { request_id: string };
-      let effects: Array<{ kind: string; state: string; outcome: Record<string, unknown> | null }> = [];
-      for (let i = 0; i < 100; i++) {
-        effects = await engine.executeRaw(`SELECT e.kind, e.state, e.outcome FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
-          WHERE r.request_id=$1::uuid AND e.kind='git'`, [forgot.request_id]);
-        if (effects.length && effects.every(e => e.state !== 'queued' && e.state !== 'running')) break;
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-      expect(effects).toEqual([expect.objectContaining({ kind: 'git', state: 'committed', outcome: expect.objectContaining({ git: 'skipped', reason: 'mirror_read_only' }) })]);
+      const forgot = await submitForgetMutation(ctx(m.id), 'forget', { id: Number(id), request_id: randomUUID() }) as { request_id: string; state: string; persistence: unknown };
+      // GBRA-190 G4: a withdrawal is a page publication; a read-only mirror publishes its writes database-only, so nothing
+      // is left for a Git or withdrawal-mirror effect to do.
+      expect(forgot).toMatchObject({ state: 'committed', persistence: { mode: 'database' } });
+      const effects = await engine.executeRaw<{ kind: string }>(`SELECT e.kind FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
+        WHERE r.request_id=$1::uuid AND e.kind IN ('git','withdrawal-mirror')`, [forgot.request_id]);
+      expect(effects).toEqual([]);
       expect(tracked(m.root)).toBe('');
     }), 120_000);
   });

@@ -226,6 +226,25 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "bundled-skill": {
+        "hasSwitchCase": false,
+        "phase": "pre-connect",
+        "preConnectRules": [
+          {
+            "condition": "command === 'bundled-skill'",
+            "connectsEngine": false,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": false,
+            "unconditionalFor": [
+              "bundled-skill"
+            ]
+          }
+        ],
+        "thinClient": "none",
+        "thinClientRoutedSubcommands": []
+      },
       "cache": {
         "hasSwitchCase": false,
         "phase": "pre-connect",

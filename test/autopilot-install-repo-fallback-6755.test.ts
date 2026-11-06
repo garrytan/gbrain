@@ -76,7 +76,7 @@ describe('autopilot --install repo resolution (#6755)', () => {
   // /ship coverage audit (GBRA-207, #7630).
   // Value: protects=a relative sync.repo_path is skipped, not fatal: install falls through to an absolute default local_path, and refuses when both are relative;
   //   fails_when=installRepoFallback returns null on a relative sync.repo_path without consulting local_path, or bakes "." into the wrapper;
-  //   why_new=sync-relative-anchor-refusal-7630 asserts only the all-relative null, never the fall-through to an absolute local_path; seam=none;
+  //   why_new=sync-relative-anchor-readers-7630 asserts only the all-relative null, never the fall-through to an absolute local_path; seam=none;
   //   no_claim=a real supervisor install (ephemeral-container target, stub engine)
   test('#7630: a relative sync.repo_path falls through to an absolute default local_path; relative everywhere refuses', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'gbrain-ap-fallback-relative-'));

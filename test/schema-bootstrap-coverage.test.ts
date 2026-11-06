@@ -976,6 +976,12 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // column order; no blob statement or index reads it, and the DCR insert falls
   // back to the unmarked insert while the column is missing.
   'oauth_clients.registered_via',
+  // GBRA-217 page change reasons (v289 page_change_reasons): migration-only so
+  // fresh and upgraded brains share column ordinals; no blob statement or index
+  // reads them, and only post-migration writers and readers name them.
+  'page_versions.change_reason',
+  'page_versions.successor_pruned',
+  'pages.version_history_gap_at',
   // GBRA-156 access_tokens/oauth_clients.private_pages (migration
   // principal_private_pages): migration-only like min_trust, so fresh and
   // upgraded catalogs keep the same column order; no blob statement or index
@@ -1217,7 +1223,7 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'oauth_clients.attest_actor',
   'oauth_clients.attest_ops',
   'oauth_tokens.grant_type',
-  // GST-1113 (migration v287) - attest_sources, the scope sources an attested memory_write may name. Same posture as
+  // GST-1113 (migration v290) - attest_sources, the scope sources an attested memory_write may name. Same posture as
   // v286: absent from both schema blobs; readers go through to_jsonb(row), so a schema without it reads as none.
   'access_tokens.attest_sources',
   'oauth_clients.attest_sources',

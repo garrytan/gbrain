@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { OperationError } from '../ops/contract.ts';
 import { isRelativeFileUri, resolveSourceLocalFilePath, sourceGitScope } from '../markdown.ts';
 import { screeningPath } from '../persistence/screening-paths.ts';
-import { localHostId } from '../persistence/identity.ts';
+import { hostIdFor } from '../persistence/identity.ts';
 import type { SqlEngine, WriteRequest } from '../persistence/model.ts';
 import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 
@@ -92,7 +92,7 @@ function sharedPacks(engine: SqlEngine): Promise<PackRoot[]> {
       h.local_path AS worktree_root,b.relative_path FROM shared_skill_packs p
       JOIN sources s ON s.id=p.source_id AND s.incarnation=p.source_incarnation
       LEFT JOIN persistence_source_bindings b ON b.source_id=p.source_id AND b.source_incarnation=p.source_incarnation
-      LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid`, [localHostId()]);
+      LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid`, [hostIdFor(engine)]);
   };
   if ((engine as { _pageTransaction?: boolean })._pageTransaction !== true) return read();
   let cached = packsInTransaction.get(engine);

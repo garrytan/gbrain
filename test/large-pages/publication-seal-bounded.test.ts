@@ -57,8 +57,9 @@ interface Statement { sql: string; rows?: number; nodes?: string[]; subplan?: bo
 
 const TABLES = /content_chunks|page_body_manifest/;
 const DELTA_DELETE = /^DELETE FROM content_chunks WHERE page_id=\$1 AND body_generation=\$2 AND NOT \(chunk_index = ANY\(\$3::int\[\]\)\)$/;
-/** The generation flip's statements on the two tables (engine-sql/page-body.ts flipBodyGeneration). */
+/** The generation flip's statements on the two tables (engine-sql/page-body.ts flipBodyGeneration), its tiling guard included (GST-1209: the live generation's manifest rows, never chunk rows). */
 const FLIP = [
+  /^SELECT t\.n, t\.covered, t\.gapless FROM pages p CROSS JOIN LATERAL \(SELECT count\(\*\)::bigint AS n, COALESCE\(sum\(r\.byte_len\), 0\)::bigint AS covered, .* FROM page_body_manifest m WHERE m\.page_id = p\.id /,
   /^SELECT count\(\*\)::bigint AS n FROM content_chunks c WHERE c\.page_id = \$1 AND \(/,
   /^UPDATE page_body_manifest SET gen_to = \$1::bigint WHERE page_id = \$2 AND gen_to IS NULL AND staging_id IS NULL AND occurrence_id = ANY\(/,
   /^DELETE FROM content_chunks c WHERE c\.page_id = \$1 AND \(/,

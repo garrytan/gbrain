@@ -21,7 +21,7 @@ import { authorizeStoredRequest, authorizeWrite, submissionAuthority } from './a
 import { authorizePageVisibility } from './page-visibility.ts';
 import { initializeLocalPersistence } from './page-mutations.ts';
 import { prepareFileTarget } from './page-prepare.ts';
-import { currentVerifiedLocalWriter, localHostId } from './identity.ts';
+import { currentVerifiedLocalWriter, hostIdFor } from './identity.ts';
 import { getWorktreeBinding, managedPersistenceEnabled, probeWorktreeWriter, type WorktreeBinding } from './ownership.ts';
 import { authorizeFactsBackstop } from './effect-facts.ts';
 import { admitWriteInTransaction, getWriteRequest, getWriteRequestById, receiptFor } from './journal.ts';
@@ -291,7 +291,7 @@ export async function prepareManagedFactsSession(ctx: FactsBackstopCtx,
     if (binding.state !== 'active' || !binding.owner_host_id) throw opError('owner_unavailable', 'The canonical fact writer is unavailable; extraction has not started.',
       `Source ${ctx.sourceId}'s canonical worktree is ${binding.state}, not active, so facts cannot be published yet. Check writer status and extract again once the owner is active.`,
       { fix: ownerStatusFix(ctx.sourceId) });
-    if (binding.owner_host_id === localHostId()) {
+    if (binding.owner_host_id === hostIdFor(engine)) {
       if (!await probeWorktreeWriter(binding, engine)) throw opError('writer_lock_unavailable', 'The canonical fact writer is busy; extraction has not started.',
         `Another write holds source ${ctx.sourceId}'s canonical writer. Nothing was admitted, so run the extraction again once the writer is idle (the same request_id is safe).`,
         { fix: ownerStatusFix(ctx.sourceId) });

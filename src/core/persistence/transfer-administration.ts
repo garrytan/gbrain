@@ -8,7 +8,7 @@ import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { acceptWriterTransfer, cancelWriterTransfer, getWorktreeBinding, humanManifestProgress, prepareWriterTransfer, storedManifestScope, worktreeManifest, type StoredWorktreeManifest } from './ownership.ts';
-import { existingLocalHostId } from './identity.ts';
+import { existingHostIdFor } from './identity.ts';
 import { requireWriterAdminIntent } from './admin-intent.ts';
 import { bool, invalid, keys, path, source } from './administration.ts';
 
@@ -37,7 +37,7 @@ export async function runWriterTransferAdministration(engine: BrainEngine, opera
     keys(params, ['source_id', 'expected_epoch', 'dry_run', 'admin_intent', 'expected_state']);
     const sourceId = source(params.source_id), epoch = expectedEpoch(params, sourceId);
     if (params.dry_run) {
-      const preview = await cancelWriterTransfer(engine, sourceId, epoch, existingLocalHostId()!, undefined, { dryRun: true });
+      const preview = await cancelWriterTransfer(engine, sourceId, epoch, existingHostIdFor(engine)!, undefined, { dryRun: true });
       return { dry_run: true, action: operation, source_id: sourceId, ...preview,
         ...(preview.cancellable ? { apply_command: `gbrain sources writer transfer cancel ${sourceId} --expected-epoch ${epoch} --admin-intent writer_transfer_cancel --expected-state <admin_state>` } : {}) };
     }
@@ -51,13 +51,13 @@ export async function runWriterTransferAdministration(engine: BrainEngine, opera
     bool(params, 'self_transfer');
     const transfer = transferOptions(params);
     if (params.dry_run) {
-      const binding = await getWorktreeBinding(engine, sourceId, existingLocalHostId());
-      if (!binding || binding.owner_host_id !== existingLocalHostId() || !binding.local_path) {
+      const binding = await getWorktreeBinding(engine, sourceId, existingHostIdFor(engine));
+      if (!binding || binding.owner_host_id !== existingHostIdFor(engine) || !binding.local_path) {
         throw opError('permission_denied', 'Only the current owner can prepare a transfer.',
           `This host is not source ${sourceId}'s current owner. Run the transfer prepare on the owner host that writer status names; a transfer is a deliberate topology change the operator reviews.`,
           { fix: readFix(`Shows which host owns source ${sourceId}, read-only.`, { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] }) });
       }
-      const { manifest } = await prepareWriterTransfer(engine, sourceId, existingLocalHostId()!, undefined, { ...transfer, dryRun: true });
+      const { manifest } = await prepareWriterTransfer(engine, sourceId, existingHostIdFor(engine)!, undefined, { ...transfer, dryRun: true });
       return { dry_run: true, action: operation, binding, manifest: { digest: manifest.digest, file_count: manifest.file_count }, ...(transfer.relocated ? { relocated: true } : {}) };
     }
     const expectedState = await requireWriterAdminIntent(engine, operation, params);
@@ -75,9 +75,9 @@ export async function runWriterTransferAdministration(engine: BrainEngine, opera
   const epoch = expectedEpoch(params, sourceId);
   if (typeof params.manifest !== 'string' || !/^[a-f0-9]{64}$/.test(params.manifest)) throw invalid('manifest must be the prepared SHA-256 manifest digest.',
     `Pass --manifest with the 64-character manifest digest that gbrain sources writer transfer prepare ${sourceId} printed.`, transferStatusFix(sourceId));
-  if (params.dry_run && params.self_transfer === true) await acceptWriterTransfer(engine, sourceId, root, epoch, params.manifest, existingLocalHostId()!, undefined, { ...transfer, dryRun: true });
+  if (params.dry_run && params.self_transfer === true) await acceptWriterTransfer(engine, sourceId, root, epoch, params.manifest, existingHostIdFor(engine)!, undefined, { ...transfer, dryRun: true });
   if (params.dry_run) {
-    const current = await getWorktreeBinding(engine, sourceId, existingLocalHostId());
+    const current = await getWorktreeBinding(engine, sourceId, existingHostIdFor(engine));
     const [prepared] = current ? await engine.executeRaw<{ manifest: StoredWorktreeManifest | null }>('SELECT manifest FROM persistence_worktrees WHERE id=$1::uuid', [current.worktree_id]) : [];
     const candidate = worktreeManifest(root, { progress: humanManifestProgress(), scope: storedManifestScope(prepared?.manifest) });
     return { dry_run: true, action: operation, source_id: sourceId, current, manifest_matches: candidate.digest === params.manifest, expected_epoch: epoch,

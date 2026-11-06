@@ -1254,7 +1254,7 @@ export interface SearchOpts extends PageReadPolicy {
   /** #5989: bounded CJK keyword arm (deadline + meta sink); set by hybrid only (engine-sql/cjk-search.ts). */
   cjkKeyword?: import('./engine-sql/cjk-search.ts').CjkKeywordRun;
   /** GBRA-156: the Postgres keyword arm ranked a bounded sample of its matches, or its OR retry dropped common terms (search/keyword-chunk-match.ts, search/keyword-or-narrow.ts). */
-  onKeywordIncomplete?: (reason: 'candidate_budget') => void;
+  onKeywordIncomplete?: (reason: 'candidate_budget' | 'timeout' | 'provider_error') => void;
   /**
    * v0.42 — intent-aware adaptive return-sizing. `true` enables with config/
    * default caps; an object overrides caps per-call; omitted/`false` = off
@@ -1363,6 +1363,8 @@ export interface SearchOpts extends PageReadPolicy {
   keywordTimeoutCache?: boolean;
   /** Keyword `score` query (websearch syntax) while `query` decides the matches (alias fan-out); ignored on the CJK path. */
   rankQuery?: string;
+  /** #7175: true applies the opt-in keyword phrase factor (`search.keyword_phrase true`); unset or false leaves it off. */
+  keywordPhrase?: boolean;
   /**
    * v0.27.1 / v0.36 (D11): target column for vector search. Two shapes:
    *
@@ -2164,6 +2166,7 @@ export function affectsRecall(d: { stage?: string; reason?: string } | undefined
 export interface HybridSearchMeta {
   /** True iff vector search actually ran. False when OPENAI_API_KEY missing or embed failed. */
   vector_enabled: boolean;
+  /** #7492: an image-reading vector arm ran (cross-modal image or unified multimodal), so pending image pages could change the answer. */ image_arm?: true;
   /** System One: slot diagnostics (only when a slot ran visibly) and the reranker model version that answered. */
   decide?: import('./search/decide-stage.ts').DecideSearchMeta; rerank?: { model_resolved: string };
   /** System One S4 on the query op (diagnostic only): probability the top-k answer the query, threshold and verdict. */

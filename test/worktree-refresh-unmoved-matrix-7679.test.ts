@@ -7,6 +7,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -108,10 +109,12 @@ test('7d. #7679 state matrix: an interrupted refresh that the unattended paths c
         } finally { await lock!.release(); }
       } else if (action === 'other_host_holder') {
         const [{ outcome }] = await f.refreshRows();
-        await f.engine.executeRaw(`UPDATE persistence_worktree_refreshes SET outcome=jsonb_set(outcome,'{holder,host_id}',to_jsonb($2::text)) WHERE id=$1::uuid`, [orphan.id, randomUUID()]);
+        const foreignHost = randomUUID();
+        await f.engine.executeRaw(`UPDATE persistence_worktree_refreshes SET outcome=jsonb_set(outcome,'{holder,host_id}',to_jsonb($2::text)) WHERE id=$1::uuid`, [orphan.id, foreignHost]);
         await refusedWith(refreshWorktree(f.engine, f.alpha), plainCode);
+        // #7731: next names the host the command must run on.
         if (kind !== 'recovery_required') expect(await writerStatus(), label).toMatchObject({ liveness: 'unknown', auto_recovery: 'unknown', fix: { actor: 'host_admin' },
-          next: `gbrain sources writer status --source ${f.alpha} --json` });
+          next: `On host ${hostname()} (${foreignHost}), which holds the refresh lock: gbrain sources writer status --source ${f.alpha} --json` });
         await f.engine.executeRaw('UPDATE persistence_worktree_refreshes SET outcome=$2::text::jsonb WHERE id=$1::uuid', [orphan.id, JSON.stringify(outcome)]);
       } else {
         const headFile = join(f.root, '.git', 'HEAD');

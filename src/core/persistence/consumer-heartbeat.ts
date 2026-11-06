@@ -32,7 +32,7 @@ import { readlinkSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
 import { isProcessAlive, processStartTime, readBootId } from '../pglite-lock.ts';
 import { VERSION } from '../../version.ts';
-import { localHostIdentity } from './identity.ts';
+import { hostIdentityPathsFor } from './identity.ts';
 import type { SqlEngine } from './model.ts';
 
 /** Kinds whose process stays resident: they defer to the first live full consumer of their host (`serve` always starts full). */
@@ -229,7 +229,7 @@ const RENEW_SQL = `WITH purged AS (
 export function startConsumerHeartbeat(engine: DirectEngine, hostId: string, opts: ConsumerHeartbeatOpts): ConsumerHeartbeat {
   if (engine.kind === 'pglite') return { renew: async () => {}, get failures() { return 0; }, stop: async () => {} };
   const self = opts.identity ?? consumerIdentity();
-  const paths = opts.paths ?? (() => { const id = localHostIdentity(); return { host_json_path: id.path, persistence_home: id.persistence_home, minted_under: id.minted_under }; })();
+  const paths = opts.paths ?? hostIdentityPathsFor(engine);
   const execute = (sql: string, params: unknown[], signal: AbortSignal) =>
     engine.executeRawDirect ? engine.executeRawDirect(sql, params, { signal }) : engine.executeRaw(sql, params, { signal });
   const everyMs = opts.everyMs ?? CONSUMER_RENEWAL_MS;

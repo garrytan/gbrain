@@ -124,12 +124,14 @@ import { extractionOperations } from './ops/extraction.ts';
 import { entityIdentityOperations } from './ops/entity-identity.ts';
 import { requestToolsOperations } from './ops/request-tools.ts';
 import { noticesOperations } from './ops/notices.ts';
+import { memorySettingsOperations } from './ops/memory-settings.ts';
 import { pageEditOperations } from './ops/page-edit.ts';
 import { pageAppendOperations } from './ops/page-append.ts';
 import { pageBatchOperations } from './ops/page-batch.ts';
 import { pageUploadOperations } from './ops/page-upload.ts';
 import { feedbackOperations } from './ops/feedback.ts';
 import { trustOperations } from './ops/trust.ts';
+import { findPagesOperations } from './ops/find-pages.ts';
 
 // parseTtlParam moved to ops/facts.ts with the facts cluster; the `remember`
 // verb (verbs.ts) loads it from THIS module at runtime — re-exported so every
@@ -147,7 +149,7 @@ export const operations: Operation[] = [
   ...verbOperations,
   // Page CRUD (get_page, put_page, delete_page, list_pages + the v0.26.5
   // destructive-guard ops restore_page, purge_deleted_pages) — ops/pages.ts
-  ...pagesOperations, ...pageEditOperations, ...pageAppendOperations, ...pageBatchOperations, ...pageUploadOperations,
+  ...pagesOperations, ...findPagesOperations, ...pageEditOperations, ...pageAppendOperations, ...pageBatchOperations, ...pageUploadOperations,
   ...persistenceOperations,
   // Search (search, query) — ops/search.ts; search_exact — ops/search-exact.ts
   ...searchOperations, ...searchExactOperations,
@@ -213,7 +215,7 @@ export const operations: Operation[] = [
   ...entityIdentityOperations,
   // v0.31: hot memory (extract_facts, recall, context_pack, delta,
   // forget_fact) — ops/facts.ts
-  ...factsOperations, ...purgeOperations, ...qmMemoryOperations, // + GST-359 QM memory pair — ops/qm-memory.ts
+  ...factsOperations, ...purgeOperations, ...qmMemoryOperations, ...memorySettingsOperations, // + GST-359 QM memory pair — ops/qm-memory.ts; GBRA-219 memory settings — ops/memory-settings.ts
   // v0.32.6: contradiction probe MCP surface (M3) — ops/insights.ts
   find_contradictions,
   // v0.33: expertise + relationship-proximity routing — ops/insights.ts

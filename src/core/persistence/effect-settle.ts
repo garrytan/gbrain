@@ -35,7 +35,7 @@ import { computePlanHash } from '../consent.ts';
 import { execFileBounded } from '../bounded-child-exec.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { digest } from './digest.ts';
-import { existingLocalHostId } from './identity.ts';
+import { existingHostIdFor } from './identity.ts';
 import { guardEffectSource } from './effect-recovery.ts';
 import { storedAuthorityRefusal } from './effect-retry.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
@@ -168,7 +168,7 @@ export async function settleEffects(engine: BrainEngine, input: SettleEffectsInp
     'A retired effect is un-settled like any other: preview --unsettle with the same selector, without --retire.', { fix: statusFix(sourceId) });
   if (apply && !input.expect) throw opError('invalid_params', 'settle-effects --apply needs --expect <plan_hash> from its preview.',
     'Run the preview (--dry-run), show the user the plan, and run the apply_command it prints after they agree.', { fix: statusFix(sourceId) });
-  const hostId = existingLocalHostId();
+  const hostId = existingHostIdFor(engine);
   if (!hostId) throw opError('permission_denied', 'Settling effects requires the registered local CLI host.',
     `This machine has no registered gbrain host identity, so it cannot settle effects of source ${sourceId}; nothing changed. Run it on the brain host that owns ${sourceId}.`, { fix: statusFix(sourceId) });
   const selector = requestId !== undefined ? ['--request-id', requestId] : ['--parked-code', parkedCode!];

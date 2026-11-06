@@ -209,7 +209,7 @@ export async function stampHeldHits(engine: Exec, hits: Array<{ page_id?: number
       SELECT NULL, NULL, (SELECT count(*)::int FROM (SELECT 1 ${HOLD_PAGE_JOIN}
         WHERE h.op=$1 AND s.archived IS NOT TRUE AND s.id=ANY($3::text[])
           AND ((h.completed_keys->0->>'page_id')=ANY($2::text[]) OR p.type=ANY($4::text[])
-            OR lower(concat_ws(' ', h.completed_keys->0->>'path', h.completed_keys->0->>'slug', p.title)) LIKE ANY($5::text[]))
+            OR lower(concat_ws(' ', h.completed_keys->0->>'path', h.completed_keys->0->>'slug', p.title)) ~ ANY($5::text[]))
         LIMIT ${COVERAGE_COUNT_CAP}) x)`,
     [GIT_HOLD_OP, ids, coverage.map(source => source.source_id), relevance.types, relevance.patterns]);
   } catch {

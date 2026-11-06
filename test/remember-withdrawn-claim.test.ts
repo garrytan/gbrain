@@ -68,8 +68,17 @@ describe('remember after forget of the same claim', () => {
     expect(await requestCount()).toBe(before);
 
     const batch = await call('remember', { items: [{ fact: CLAIM, entity: 'crm/acme-example', provenance: 'team update' }] });
-    expect(batch.body.failed).toBe(1);
-    expect(batch.body.items[0].error).toMatchObject({ code: 'invalid_params', message: FACT_WITHDRAWN_MESSAGE, suggestion: FACT_WITHDRAWN_SUGGESTION });
+    // #8621: a batch that saved nothing is refused with its item's error, never a success envelope.
+    expect(batch.isError).toBe(true);
+    expect(batch.body).toMatchObject({ code: 'invalid_params', message: `items[0]: ${FACT_WITHDRAWN_MESSAGE} None of the 1 item(s) was saved.`, suggestion: FACT_WITHDRAWN_SUGGESTION });
+
+    // #8621: a partial batch is an MCP error too, and its body keeps the saved item's receipt.
+    const partial = await call('remember', { items: [{ fact: CLAIM, entity: 'crm/acme-example', provenance: 'team update' },
+      { fact: 'acme-example opened a second office', entity: 'crm/acme-example', provenance: 'team update' }] });
+    expect(partial.isError).toBe(true);
+    expect(partial.body).toMatchObject({ status: 'error', code: 'invalid_params', saved: 1, failed: 1, partial: true });
+    expect(partial.body.items[0].status).toBe('failed');
+    expect(partial.body.items[1].id).toBeDefined();
   });
 
   test('a withdrawal that lands after admission fails the receipt with fact_withdrawn, readable through get_write_request', async () => {

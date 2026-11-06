@@ -202,5 +202,7 @@ writes `valid_until` (a grep guard pins this).
 
 ## See also
 
+- Keyless conflicts between typed claims (no model, no key): the "Old and
+  conflicting facts" section of `docs/guides/memory-trust.md`.
 - Cost discipline: `docs/eval-bench.md` for the recommended nightly cadence
   + trend-tracking workflow.

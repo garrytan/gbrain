@@ -557,7 +557,7 @@ describe('review, explain and accept-all (CEO-2, DX-10, DX-15, DX-16)', () => {
     tty(`allow-${b.sourceId}`);
     await ownerDo(b, { action: 'allow', source: b.sourceId, uri_prefix: 'https://mail.acme-example.com/', reason: 'newsletters' });
     const review = await buildTrustReview(engine, { sourceId: b.sourceId });
-    expect(review.counts).toEqual({ proposal: 0, lowered_page: 1, preference: 0, hold: 1 });
+    expect(review.counts).toEqual({ proposal: 0, lowered_page: 1, preference: 0, hold: 1, contradiction: 0 });
     const tp = edit.trust_lowered.proposal_ref as string;
     // Pin the shape: stable placeholders for the per-run source, ids and dates.
     const text = renderTrustReview({ ...review, items: review.items.map(i => ({ ...i, day: i.kind === 'hold' ? i.day : '2026-10-03' })),

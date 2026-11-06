@@ -78,6 +78,18 @@ export function boundFactLines(lines: readonly string[], maxChars: number): { ke
   return { kept, text: lines.slice(0, kept).join('\n') };
 }
 
+/**
+ * GST-900: recall's max_chars, memory_recall's bound on recall's text: the fact texts, then the results' chunk texts,
+ * one per line, keep the whole items that fit; the first item that would cross the cap ends both lists, with no
+ * marker. `truncated` says whether anything was cut and `total` counts the facts kept.
+ */
+export function boundRecallChars<T extends { facts: Array<{ fact: string }>; total: number; results?: Array<{ chunk?: unknown }> }>(out: T, maxChars: number): T & { truncated: boolean } {
+  const lines = [...out.facts.map(f => f.fact), ...(out.results ?? []).map(r => String(r.chunk ?? ''))];
+  const { kept } = boundFactLines(lines, maxChars);
+  const facts = out.facts.slice(0, kept);
+  return { ...out, facts, total: facts.length, ...(out.results ? { results: out.results.slice(0, Math.max(0, kept - out.facts.length)) } : {}), truncated: kept < lines.length };
+}
+
 /** YYYY-MM-DD of a stored time, read from its own fields: a database text value keeps its date as written (a non-ISO
  * parse reads year 50 as 1950), a Date its UTC year, month and day; 'undated' outside years 0001-9999. */
 export function isoDate(value: Date | string | null | undefined): string {

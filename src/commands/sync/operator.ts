@@ -30,6 +30,7 @@ const SUPERSEDED_TEXT: Record<NonNullable<NonNullable<SyncStatus['last_error']>[
 export function printSyncStatusHelp(): void {
   console.log(`Usage: gbrain sync status --source <id> [--detail] [--json]
                           [--limit <n>] [--cursor <next_cursor>] [--all] [--hold-state <state>]
+                          [--slug <slug>] [--code <code>]
 
 Where a managed catch-up stands and what to do next, for an operator agent:
 the newest sync pass (convergence: outcome, round, candidates, settled,
@@ -69,12 +70,15 @@ Every status names last_commit (the commit sync applied through) and live (the
 process holding the drain lease, a serve pass included, with its heartbeat and
 progress; null when nothing holds it).
 
-Holds are bounded: holds_summary counts every hold by code and by state
-(needs_human | actionable | held), then holds lists the first ${PLAIN_STATUS_HOLDS}
+Holds are bounded: holds_summary counts every hold by code, by state
+(needs_human | actionable | held) and by fault_code (the failure a
+page_write_failed hold recorded), then holds lists the first ${PLAIN_STATUS_HOLDS}
 (needs_human first). With --detail the list pages (100 per page): holds_page
 carries returned, limit, complete, next_cursor and next_command; --limit <n>
 sets the page size, --cursor <next_cursor> prints the next page, --all prints
-every hold, and --hold-state <state> lists only that state.
+every hold, and --hold-state <state> lists only that state. --slug <slug>
+lists the hold on one slug (or path) and --code <code> the holds with that
+code or fault_code, so one hold is found without paging.
 
 Decision table: docs/guides/sync-unblock-runbook.md
 `);
@@ -165,18 +169,31 @@ const holdState = (hold: SyncStatusHold): HoldState => hold.needs_human ? 'needs
  */
 function holdsListing(holds: readonly SyncStatusHold[], args: string[], sourceId: string) {
   const { request, rest } = parseListingFlags(args, 'gbrain sync status');
-  const stateAt = rest.indexOf('--hold-state');
-  const state = stateAt >= 0 ? rest[stateAt + 1] : undefined;
-  if (stateAt >= 0 && !HOLD_STATES.includes(state as HoldState)) {
-    throw opError('invalid_params', `--hold-state must be one of ${HOLD_STATES.join(', ')} (got "${state ?? ''}").`, `Example: gbrain sync status --source ${sourceId} --detail --hold-state needs_human --json`);
+  const value = (flag: string, example: string) => {
+    const at = rest.indexOf(flag);
+    if (at < 0) return undefined;
+    const given = rest[at + 1];
+    if (given === undefined || given === '' || given.startsWith('--')) throw opError('invalid_params', `${flag} needs a value.`, `Example: gbrain sync status --source ${sourceId} ${flag} ${example} --json`);
+    return given;
+  };
+  const state = value('--hold-state', 'needs_human');
+  if (state !== undefined && !HOLD_STATES.includes(state as HoldState)) {
+    throw opError('invalid_params', `--hold-state must be one of ${HOLD_STATES.join(', ')} (got "${state}").`, `Example: gbrain sync status --source ${sourceId} --detail --hold-state needs_human --json`);
   }
+  const slug = value('--slug', '<slug>');
+  const code = value('--code', 'page_write_failed');
+  const filter = { ...(slug ? { slug } : {}), ...(code ? { code } : {}) };
+  const listed = holds.filter(hold => (!state || holdState(hold) === state) && (!slug || hold.slug === slug || hold.path === slug)
+    && (!code || hold.code === code || hold.fault_code === code));
   const sized = args.some(a => a === '--all' || a === '--limit' || a.startsWith('--limit='));
-  const page = pageSortedRows(state ? holds.filter(hold => holdState(hold) === state) : holds, hold => [String(HOLD_STATES.indexOf(holdState(hold))), hold.path],
-    args.includes('--detail') || sized ? request : { ...request, limit: PLAIN_STATUS_HOLDS }, `sync_status_holds:${sourceId}:${state ?? 'all'}`);
-  const summary = { total: holds.length, by_code: topCounts(holds, hold => hold.code, 20), by_state: topCounts(holds, holdState, 20) };
+  const page = pageSortedRows(listed, hold => [String(HOLD_STATES.indexOf(holdState(hold))), hold.path],
+    args.includes('--detail') || sized ? request : { ...request, limit: PLAIN_STATUS_HOLDS }, `sync_status_holds:${sourceId}:${state ?? 'all'}:${JSON.stringify(filter)}`);
+  const faulted = holds.filter(hold => hold.fault_code);
+  const summary = { total: holds.length, by_code: topCounts(holds, hold => hold.code, 20), by_state: topCounts(holds, holdState, 20),
+    by_fault_code: topCounts(faulted, hold => hold.fault_code!, 20) };
   const paging = page.complete && request.cursor === undefined ? null
     : { returned: page.returned, limit: page.limit, complete: page.complete, next_cursor: page.next_cursor, next_command: nextListingCommand(['gbrain', 'sync', 'status', ...rest], page) };
-  return { summary, paging, rows: page.rows };
+  return { summary, filter: Object.keys(filter).length ? filter : null, matched: listed.length, paging, rows: page.rows };
 }
 
 export async function runSyncStatus(engine: BrainEngine, args: string[]): Promise<void> {
@@ -206,7 +223,7 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
     landing_read: read(status.landing_read), landing: status.landing?.status === 'ok' ? { ...status.landing, pages: status.landing.pages.map(page => ({ ...page, fix: page.fix ? renderAction(page.fix, ctx) : null })) } : status.landing,
     capacity: { status: snapshot.status, pause_pct: snapshot.pause_pct, low: snapshot.low, paused: snapshot.paused }, freshness, notifier, ...(notices.length ? { notices } : {}),
     // #7243: the holds come last, summary first, so a reader can stop before the rows.
-    holds_summary: listing.summary, ...(listing.paging ? { holds_page: listing.paging } : {}), holds: listing.rows.map(hold => ({ ...hold, fix: renderAction(hold.fix, ctx) })) };
+    ...(listing.filter ? { holds_filter: listing.filter } : {}), holds_summary: listing.summary, ...(listing.paging ? { holds_page: listing.paging } : {}), holds: listing.rows.map(hold => ({ ...hold, fix: renderAction(hold.fix, ctx) })) };
   if (args.includes('--json')) return writeJsonDocument(JSON.stringify(rendered, null, 2));
   const c = status.cursor;
   console.log(syncStatusHeadline(status));
@@ -227,10 +244,10 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
   if (freshness) console.log(`  freshness: ${formatSyncFreshness(freshness)}`);
   if (notifierBlock) console.log(`  ${formatNotifierBlock(sourceId, notifierBlock)}`);
   console.log(`  holds: ${status.holds.length}${status.holds.length ? ` (${status.holds.filter(h => h.needs_human).length} need a person)` : ''}; last error: ${status.last_error ? `${status.last_error.code} [${status.last_error.class}]` : 'none'}`);
-  for (const hold of listing.rows) console.log(`    ${hold.path}${hold.slug ? ` (${hold.slug})` : ''}: ${hold.code} [${hold.class}] safe: ${hold.safe_actions.join(',')}${hold.needs_human ? ` NEEDS HUMAN: ${hold.human_reason}` : ''}${hold.attempts > 1 ? ` (held ${hold.attempts} times)` : ''}`);
+  for (const hold of listing.rows) console.log(`    ${hold.path}${hold.slug ? ` (${hold.slug})` : ''}: ${hold.code}${hold.fault_code ? ` (${hold.fault_code})` : ''} [${hold.class}] safe: ${hold.safe_actions.join(',')}${hold.needs_human ? ` NEEDS HUMAN: ${hold.human_reason}` : ''}${hold.attempts > 1 ? ` (held ${hold.attempts} times)` : ''}`);
   if (listing.paging && !listing.paging.complete) {
     const codes = Object.entries(listing.summary.by_code.counts).map(([code, n]) => `${code} ${n}`).join(', ');
-    console.log(`    ... ${status.holds.length - listing.rows.length} more not listed here (${codes}${listing.summary.by_code.other ? `, other ${listing.summary.by_code.other}` : ''}); `
+    console.log(`    ... ${listing.matched - listing.rows.length} more not listed here (${codes}${listing.summary.by_code.other ? `, other ${listing.summary.by_code.other}` : ''}); `
       + `${listing.paging?.next_command ? listing.paging.next_command.join(' ') : `gbrain sync status --source ${sourceId} --detail --json`} lists them`);
   }
   const superseded = status.last_error?.superseded;

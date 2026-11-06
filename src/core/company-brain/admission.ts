@@ -9,7 +9,7 @@ import { isValidSourceId } from '../source-id.ts';
 import { assertNoOverlappingPath } from '../sources-ops.ts';
 import { checkApprovedSchemaForEngine } from '../schema-pack/engine-resolution.ts';
 import { getWorktreeBinding, managedPersistenceEnabled, readPersistenceBrain } from '../persistence/ownership.ts';
-import { registerLocalWriter, localHostId, currentVerifiedLocalWriter } from '../persistence/identity.ts';
+import { registerLocalWriter, currentVerifiedLocalWriter, hostIdFor } from '../persistence/identity.ts';
 import { isWriteRequestId } from '../persistence/types.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { topologyTransaction } from '../persistence/topology-transaction.ts';
@@ -104,7 +104,7 @@ export function assertCompanyBrainCaller(input: CompanyBrainDestination): void {
 export async function ingestionFence(engine: BrainEngine, sourceId: string): Promise<SourceIngestionFence> {
   if (!await managedPersistenceEnabled(engine)) return { mode: 'unmanaged' };
   const binding = await getWorktreeBinding(engine, sourceId);
-  if (!binding?.owner_host_id || binding.owner_host_id !== localHostId() || binding.state !== 'active' || !binding.local_path) {
+  if (!binding?.owner_host_id || binding.owner_host_id !== hostIdFor(engine) || binding.state !== 'active' || !binding.local_path) {
     throw opError('owner_unavailable', 'The managed source must run on its active registered local owner.',
       `Source ${sourceId} is managed and this host is not its active owner. Check the owner, then run the command on that host or wait until its owner is active again.`,
       { fix: ownerStatusFix(sourceId) });

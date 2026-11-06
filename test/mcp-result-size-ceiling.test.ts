@@ -22,6 +22,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { serializeMarkdown } from '../src/core/markdown.ts';
 import { dispatchToolCall, type ToolResult } from '../src/mcp/dispatch.ts';
+import { DEGRADED_STAMP_PREFIX } from '../src/core/degraded-stamp.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { asOwner } from './helpers/owner-tier.ts';
 
@@ -49,7 +50,13 @@ const CEILINGS = { search: 3356, query: 3593 };
  * keyed brain (Cat 40) never sees it. 629 measured at v0.60.46.0, x 1.05.
  */
 const DEGRADED_NOTICE_MAX_CHARS = 661;
-const isDegradedNotice = (text: string) => text.startsWith('[gbrain notice degraded_recall ');
+/**
+ * GBRA-200's degraded stamp (one last block naming why the keyless result is
+ * partial) rides the same keyless calls and is bounded the same way: a keyed
+ * brain never sees it. 116 measured, x 1.05.
+ */
+const DEGRADED_STAMP_MAX_CHARS = 122;
+const isDegradedNotice = (text: string) => text.startsWith('[gbrain notice degraded_recall ') || text.startsWith(DEGRADED_STAMP_PREFIX);
 
 const PAGES: Array<[string, string, string]> = [
   ['crm/numbat-labs', 'CRM record: Numbat Labs', 'Account record. Account code: NULA. Segment: mid-market. Renewal owner: the platform team. Billing contact: Old Person.'],
@@ -84,9 +91,12 @@ async function visible(name: 'search' | 'query'): Promise<{ res: ToolResult; tex
   const args = name === 'query' ? { query: 'Numbat Labs billing contact renewal', expand: false } : { query: 'Numbat Labs billing contact renewal' };
   const res = await withEnv({ GBRAIN_BACKUP_CHECK: '0' }, () => dispatchToolCall(engine, name, args, HTTP_CLIENT));
   expect(res.isError).not.toBe(true);
-  const degraded = res.content.filter(c => isDegradedNotice(c.text));
+  const degraded = res.content.filter(c => isDegradedNotice(c.text) && !c.text.startsWith(DEGRADED_STAMP_PREFIX));
   expect(degraded.length).toBe(1);
   expect(degraded[0].text.length).toBeLessThanOrEqual(DEGRADED_NOTICE_MAX_CHARS);
+  const stamps = res.content.filter(c => c.text.startsWith(DEGRADED_STAMP_PREFIX));
+  expect(stamps.length).toBe(1);
+  expect(stamps[0].text.length).toBeLessThanOrEqual(DEGRADED_STAMP_MAX_CHARS);
   return { res, text: res.content.filter(c => !isDegradedNotice(c.text)).map(c => c.text).join('\n') };
 }
 

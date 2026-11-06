@@ -27,6 +27,7 @@ import { BACKGROUND_PRODUCERS } from './admission-origin.ts';
 import { readCapacityConfig, readCapacityForecast } from './capacity-forecast.ts';
 import { CAPACITY_VERIFY } from './capacity-verify.ts';
 import { deadlineBoundEngine, deadlineFailure, engineCacheKey, withStatementDeadline } from '../statement-deadline.ts';
+import { engineKey } from '../engine-key.ts';
 
 export const CAPACITY_SNAPSHOT_TTL_MS = 60_000;
 export const CAPACITY_NOTICE_INTERVAL_MS = 60 * 60_000;
@@ -51,8 +52,8 @@ export interface CapacitySnapshot {
 }
 
 const snapshots = new WeakMap<object, { at: number; value: Promise<CapacitySnapshot> }>();
-const lowShownAt = new Map<string, number>();
-const pausedShown = new Set<string>();
+/** Per engine: when each scope|resource last showed `write_capacity_low`, and which are inside the pause. */
+let noticeState = new WeakMap<object, { lowShownAt: Map<string, number>; pausedShown: Set<string> }>();
 
 const UNKNOWN: CapacitySnapshot = { rows: [], low: [], paused: [], pause_pct: 0, status: 'unknown' };
 
@@ -125,7 +126,7 @@ function pausedNotice(rows: CapacityAttention[], pausePct: number): Notice {
 /**
  * The capacity notices one output carries. `throttle` (write and sync
  * receipts) shows `write_capacity_low` at most once an hour per process per
- * scope and resource; unthrottled (sync status, doctor, cycle output) shows it
+ * brain, scope and resource; unthrottled (sync status, doctor, cycle output) shows it
  * whenever a cap needs attention. The pause notice fires on each transition
  * into the pause, in either mode. `scopes` limits both to the scopes a
  * caller may see (a remote client: the brain and its own principal).
@@ -137,6 +138,10 @@ export async function capacityNotices(engine: SqlEngine, opts: { throttle: boole
   const snapshot = opts.snapshot ?? (opts.deadlineAt !== undefined ? await capacitySnapshotWithin(engine, opts.deadlineAt, now) : await cachedCapacitySnapshot(engine, now));
   if (snapshot.status === 'unknown') return [];
   const visible = (row: CapacityAttention) => !opts.scopes || opts.scopes.includes(row.scope);
+  const stateKey = engineKey(engine);
+  let state = noticeState.get(stateKey);
+  if (!state) noticeState.set(stateKey, state = { lowShownAt: new Map(), pausedShown: new Set() });
+  const { lowShownAt, pausedShown } = state;
   const notices: Notice[] = [];
   const candidates = snapshot.low.filter(visible);
   const low = opts.throttle ? candidates.filter(row => now - (lowShownAt.get(key(row)) ?? -Infinity) >= CAPACITY_NOTICE_INTERVAL_MS) : candidates;
@@ -155,8 +160,7 @@ export async function capacityNotices(engine: SqlEngine, opts: { throttle: boole
 }
 
 export function __resetCapacityNoticesForTests(): void {
-  lowShownAt.clear();
-  pausedShown.clear();
+  noticeState = new WeakMap();
 }
 
 /** #6696 (A4): a write receipt's capacity notices, throttled hourly per scope; a remote caller sees only the brain and its own principal. Never throws. */

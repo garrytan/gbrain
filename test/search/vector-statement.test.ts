@@ -372,15 +372,20 @@ describe('vector legacy guard setting', () => {
     });
   });
 
-  test('resolves once per process and logs activation once to stderr', async () => {
+  test('resolves once per engine and logs activation once to stderr', async () => {
     const stderr = spyOn(console, 'error').mockImplementation(() => {});
+    const engineA = {};
+    const engineB = {};
+    const engineC = {};
     try {
       await withEnv({ GBRAIN_VECTOR_LEGACY_GUARD: 'true' }, async () => {
-        expect(resolveVectorLegacyGuard(null)).toBe(true);
-        expect(resolveVectorLegacyGuard(null)).toBe(true);
+        expect(resolveVectorLegacyGuard(engineA, null)).toBe(true);
+        expect(resolveVectorLegacyGuard(engineA, null)).toBe(true);
+        expect(resolveVectorLegacyGuard(engineB, null)).toBe(true);
       });
       await withEnv({ GBRAIN_VECTOR_LEGACY_GUARD: undefined }, async () => {
-        expect(resolveVectorLegacyGuard(null)).toBe(true);
+        expect(resolveVectorLegacyGuard(engineA, null)).toBe(true);
+        expect(resolveVectorLegacyGuard(engineC, null)).toBe(false);
       });
       expect(stderr).toHaveBeenCalledTimes(1);
       expect(String(stderr.mock.calls[0][0])).toStartWith('[gbrain] vector legacy guard active');

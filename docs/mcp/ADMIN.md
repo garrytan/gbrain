@@ -261,6 +261,10 @@ only a fact on the person's own page (also for a credential bound to a member).
 A request carrying `x-qm-audience` is refused (`audience_not_supported`). Not attestable yet, because what they
 read or write is not yet kept to the person: `list_write_conflicts`, `capture`,
 `extract_facts` and `takes_add|update|resolve|supersede`.
+An attested read sees what that person sees, private facts included, and gbrain
+cannot tell who else reads the answer. Use the attest client only for QM's
+personal-scope memory route: never register it as a model-callable MCP connector
+or route it to shared scopes ([QM guide](../guides/qm.md#set-up-on-the-brain-host)).
 `gbrain access check --token <name>` shows the
 result ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
 

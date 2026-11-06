@@ -96,6 +96,8 @@ export class OperationError extends Error {
   public fenceIssues?: Array<Record<string, unknown>>;
   /** A `fact_withdrawn` refusal's withdrawal: when and for which subject the exact claim was forgotten. Absence carries no meaning. */
   public withdrawn?: WithdrawnDetail;
+  /** A write-grant refusal's writable sources: only ids the caller's own grant lets it write, never another source (GBRA-200). */
+  public writableSourceIds?: string[];
   /** #6643: a managed-sync refusal's owner-side classification (knock-on root, cursor fence snapshot); stored as the receipt's error_detail, never in the envelope. */
   public syncRefusal?: Record<string, unknown>;
   /** Set to 1 by opError(); toJSON() emits `contract_version` only when set. */
@@ -162,6 +164,7 @@ export class OperationError extends Error {
       ...(this.fence ? { fence: this.fence } : {}),
       ...(this.fenceIssues?.length ? { fence_issues: this.fenceIssues } : {}),
       ...(this.withdrawn ? { withdrawn: this.withdrawn } : {}),
+      ...(this.writableSourceIds ? { writable_source_ids: this.writableSourceIds } : {}),
       ...(this.contractVersion !== undefined ? { contract_version: this.contractVersion } : {}),
     };
   }
@@ -794,6 +797,11 @@ export interface Operation {
   name: string;
   description: string;
   params: Record<string, ParamDef>;
+  /**
+   * GST-1493: one sentence with a valid call as JSON, appended to the suggestion when dispatch refuses an unknown
+   * parameter, so a client that never read the schema gets the whole required shape, not only the nearest name.
+   */
+  callShape?: string;
   handler: (ctx: OperationContext, params: Record<string, unknown>) => Promise<unknown>;
   outputRedaction: OutputRedactionPolicy;
   mutating?: boolean;
@@ -840,7 +848,7 @@ export interface Operation {
    * fail-closed call-time backstop; stdio (local pipe) bypasses publish
    * gates entirely. Resolution lives in src/mcp/publish-gates.ts.
    */
-  publishGateKey?: 'mcp.publish_skills' | 'mcp.publish_advisor';
+  publishGateKey?: 'mcp.publish_skills' | 'mcp.publish_advisor' | 'mcp.publish_memory_settings';
   /**
    * MEMORY_VERBS v1: marks the seven frozen protocol verbs (recall, remember,
    * entity, synthesize, forget, context_pack, delta). `gbrain serve --surface
