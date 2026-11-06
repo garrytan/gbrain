@@ -12,7 +12,7 @@
  *   gbrain git guard [--install | --uninstall] [--path <dir>] [--json]
  */
 import { realpathSync } from 'node:fs';
-import { commitAndPush, checkoutRoot, pullShared, scopePaths, COMMIT_LOCK_NAME, type Resolution } from '../core/git/commit-push.ts';
+import { commitAndPush, checkoutRoot, pullShared, scopePaths, COMMIT_LOCK_NAME, SOURCE_ROOT_CONFIG, type Resolution } from '../core/git/commit-push.ts';
 import { guardStatus, installGuard, uninstallGuard } from '../core/git/commit-guard.ts';
 import { appendPushLog } from '../core/brain-repo-durability.ts';
 import { opError } from '../core/ops/contract.ts';
@@ -21,6 +21,8 @@ import { writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { execFileSync } from '../core/spawn.ts';
 import { gitChildEnv } from '../core/git-env.ts';
 import { GIT_ENV } from '../core/git-transport.ts';
+import { managedFilesystemRootFor } from '../core/persistence/filesystem-guard.ts';
+import { registeredManagedRootRecords } from '../core/persistence/root-registry.ts';
 
 const HELP = `Usage: gbrain git commit-push [--path <dir>] -m <msg> [--json] [--] <paths...>
        gbrain git commit-push --push-only [--path <dir>] [--branch <b>]
@@ -131,6 +133,27 @@ function parseResolutions(specs: string[]): Map<string, Resolution> {
   return out;
 }
 
+/**
+ * #8662: on a host whose brain records its source checkouts, a resolved checkout that is none of them and carries no
+ * gbrain.sourceRoot marker is refused before anything is staged (a wrapper that changed into another repository).
+ */
+function assertSourceCheckout(repo: string): void {
+  const registered = registeredManagedRootRecords();
+  if (!registered.length || managedFilesystemRootFor(repo)) return;
+  try {
+    execFileSync('git', ['-C', repo, 'config', '--local', '--get-all', SOURCE_ROOT_CONFIG], { env: gitChildEnv({ ...GIT_ENV }), stdio: ['ignore', 'pipe', 'ignore'] });
+    return;
+  } catch { /* no marker */ }
+  const first = registered[0]!.root;
+  const listed = registered.slice(0, 5).map(record => `${record.root}${record.source_id ? ` (${record.source_id})` : ''}`).join(', ') + (registered.length > 5 ? ` and ${registered.length - 5} more` : '');
+  throw opError('checkout_not_a_source', `${repo} is not a source checkout of this brain; its source checkouts on this host are ${listed}. Nothing was staged.`,
+    `Pass the brain checkout with an absolute --path, for example gbrain git commit-push --path ${first} -m <msg> -- <paths>; a script or cron wrapper that changes directory first must name it the same way.`,
+    { fix: { argv: ['gbrain', 'git', 'commit-push', '--dry-run', '--path', first], consent: [], actor: 'user', requires_exclusive: false,
+      why: 'The dry run shows the checkout, branch and lock commit-push uses with that --path, writing nothing.',
+      user_message: `gbrain git commit-push resolved ${repo}, which is not one of this brain's source checkouts (${listed}). Change the script or wrapper that ran it to pass --path with the absolute brain checkout.`,
+      verify: { argv: ['gbrain', 'git', 'commit-push', '--dry-run', '--path', first] } } });
+}
+
 function emit(json: boolean, doc: Record<string, unknown>, human: string): void {
   if (json) void writeStdoutFinal(`${JSON.stringify(doc)}\n`);
   else console.log(human);
@@ -146,6 +169,7 @@ export async function runGit(args: string[]): Promise<number> {
     if (p.sub !== 'commit-push') throw opError('commit_paths_invalid', `Unknown subcommand: gbrain git ${p.sub}.`, HELP.split('\n')[0]);
     if (p.install || p.uninstall) throw opError('commit_paths_invalid', '--install and --uninstall belong to gbrain git guard.', 'Run gbrain git guard --install.');
     const repo = checkoutRoot(p.path ?? process.cwd());
+    assertSourceCheckout(repo);
     const cwd = p.path ? realpathSync(p.path) : process.cwd();
     if ((p.pull && p.pushOnly) || (p.pull && (p.message || p.paths.length || p.resolve.length || p.branch))
       || (p.pushOnly && (p.message || p.paths.length)) || ((p.resolve.length || p.branch || p.expectRemote || p.keepCheckout) && !p.pushOnly)

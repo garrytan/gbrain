@@ -173,6 +173,7 @@ Follow the error's `fix.next` as the
 | `committed_local` | 0 | A managed canonical worktree, or a checkout with no Git remote (`no_remote: true`): the paths were committed locally and nothing was pushed. Report the commit; it reaches a remote on the owner's next publish, or after a remote is added and `--push-only` runs. |
 | `pushed_checkout_lagging` | 0 | The push landed but this checkout was not advanced; a `[gbrain notice]` names the files that blocked it. Change nothing: the next commit-push or `--pull` catches the checkout up. Never stash or reset to "fix" it. |
 | `commit_lock_busy` | 1 | Another writer held the lock for the whole wait; nothing was committed. Retry once. If it is still busy, tell the user which checkout and lock path the message names and stop. |
+| <a id="checkout_not_a_source"></a>`checkout_not_a_source` | 1 | The checkout commit-push resolved (from `--path` or the working directory) is not one of the brain's source checkouts on this host, typically a wrapper that changed into another repository; nothing was staged. The message lists the brain's checkouts. Tell the user to make the script pass `--path` with the absolute brain checkout. A host whose brain records no source checkout, or a checkout with `gbrain.sourceRoot` set, is never refused this way. |
 | `commit_paths_invalid` | 1 | No paths, a path outside the checkout, the checkout root itself, or a path git would not stage. Name the explicit files you wrote and rerun. |
 | `commit_prestaged_paths` | 1 | Another writer staged files under a directory you named; nothing was staged or committed. Name your own files explicitly. Unstage the others (`git restore --staged -- <file>`, which keeps their bytes) only after the user agrees. |
 | `commit_outside_source_root` | 1 | The commit, or a local commit about to be published, changes files outside the brain's [source root](#source-roots); nothing was pushed. Show the user `git show --stat <sha>`; rerun with `--allow-outside-source-root` only if they want it published. |
@@ -252,7 +253,8 @@ commits come in. Four rules keep that checkout able to move:
    plain git leaves commits the upstream lacks and nobody publishes. The
    checkout diverges, and every later refresh refuses `refresh_diverged` and
    changes nothing. Commit the files a script wrote with
-   `gbrain git commit-push -m "<msg>" -- <paths>`: on a managed worktree it
+   `gbrain git commit-push --path <absolute checkout> -m "<msg>" -- <paths>`
+   (a checkout that is not the brain's refuses `checkout_not_a_source`): on a managed worktree it
    commits only those paths under the commit lock (`committed_local`) and the
    owner publishes them on its next Git publish. Pages can also go through
    `put_page`, `edit_page`, `remember` or `capture`. CLI calls go through
