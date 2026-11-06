@@ -216,6 +216,8 @@ export interface SyncOpts {
   canonicalOverride?: 'git';
   /** #7866, internal (the conversion's strict passes): a full round without a `--full` episode, so a page equal to its blob is not re-imported. */
   fullRound?: boolean;
+  /** PR A, internal (the conversion's strict passes): the Git verdicts over database versions the plan approved; any other is held (sync-pass.ts ConversionBinding). */
+  conversionBinding?: import('../core/persistence/sync-pass.ts').ConversionBinding;
   /**
    * v0.18.0 Step 5 — sync a specific named source. When set, sync reads
    * local_path + last_commit from the sources table (not the global

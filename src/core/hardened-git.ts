@@ -91,6 +91,17 @@ export const REASON_LOG_OPTIONS: readonly string[] = ['-z', '--first-parent', '-
   '--no-ext-diff', '--no-textconv', '--no-show-signature', '--format=%x00%H%x00%(trailers:key=gbrain-reason,valueonly,unfold)'];
 
 /**
+ * The second `git log` gbrain runs in an untrusted checkout, the direction-evidence history read (persistence/git-gap.ts
+ * `readPathHistory`): a raw listing (modes and full blob ids, no patch) of every commit, merges against their first
+ * parent, with no renames, so only tree entries are compared and no filter, textconv or external diff runs. Every option
+ * is required.
+ */
+export const HISTORY_LOG_OPTIONS: readonly string[] = ['-z', '--raw', '--no-abbrev', '--full-history', '--root', '--diff-merges=first-parent', '--no-renames', '--no-relative',
+  '--no-ext-diff', '--no-textconv', '--no-show-signature', '--format=%x1e%H%x1f%ct'];
+/** Each `log` shape allowed: its options exactly, all of them. */
+const LOG_SHAPES: ReadonlyArray<readonly string[]> = [REASON_LOG_OPTIONS, HISTORY_LOG_OPTIONS];
+
+/**
  * The exact options each allowed plumbing subcommand may take; anything not
  * listed here refuses.
  */
@@ -98,13 +109,13 @@ const ALLOWED_OPTIONS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['rev-parse', new Set(['--show-toplevel', '--absolute-git-dir', '--verify', '--quiet', '--show-object-format'])],
   ['ls-files', new Set(['-s', '--stage', '--eol', '-z', '--cached', '--others', '--exclude-standard'])],
   ['ls-tree', new Set(['-r', '-l', '-z', '--full-tree'])],
-  ['cat-file', new Set(['--batch'])],
+  ['cat-file', new Set(['--batch', '--batch-check'])],
   ['hash-object', new Set(['--no-filters', '--stdin-paths'])],
   ['check-attr', new Set(['-z', '--stdin'])],
   ['check-ignore', new Set(['-z', '--stdin'])],
   ['diff-index', new Set(['--cached', '--quiet'])],
   ['diff-tree', new Set(['-r', '-z', '--no-renames'])],
-  ['log', new Set(REASON_LOG_OPTIONS)],
+  ['log', new Set(LOG_SHAPES.flat())],
 ]);
 
 /** Options a subcommand must carry, so its output stays raw and machine-readable. */
@@ -112,7 +123,6 @@ const REQUIRED_OPTIONS: ReadonlyMap<string, readonly string[]> = new Map([
   ['hash-object', ['--no-filters']],
   ['diff-index', ['--cached']],
   ['diff-tree', ['-r', '-z', '--no-renames']],
-  ['log', REASON_LOG_OPTIONS],
 ]);
 
 /**
@@ -128,7 +138,8 @@ export function assertHardenedGitArgs(args: readonly string[]): void {
   const end = args.findIndex(arg => arg === '--' || arg === '--end-of-options');
   const options = args.slice(1, end < 0 ? undefined : end).filter(arg => arg.startsWith('-'));
   const ok = allowed !== undefined && options.every(arg => allowed.has(arg))
-    && (REQUIRED_OPTIONS.get(sub) ?? []).every(arg => options.includes(arg));
+    && (REQUIRED_OPTIONS.get(sub) ?? []).every(arg => options.includes(arg))
+    && (sub !== 'log' || LOG_SHAPES.some(shape => shape.every(arg => options.includes(arg)) && options.every(arg => shape.includes(arg))));
   if (!ok) throw new Error(`hardened git refuses \`git ${args.slice(0, 2).join(' ')}\`: only filter-free plumbing may run in an untrusted checkout (see src/core/hardened-git.ts)`);
 }
 
