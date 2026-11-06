@@ -33,6 +33,7 @@
  */
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { parseGlobalFlags } from './cli-options.ts';
+import { redactConnectionInfo } from './audit/redact-connection-info.ts';
 
 export type ProcessRole = 'serve' | 'autopilot' | 'supervisor' | 'worker' | 'mcp' | 'sync';
 
@@ -80,6 +81,8 @@ const SERVE_SUBCOMMANDS_TRANSIENT = new Set(['status', 'install', 'uninstall', '
 /** `gbrain autopilot` forms that report or change the service and exit; anything else is the daemon (`--repo <path>`, `start`). */
 const AUTOPILOT_TRANSIENT = new Set(['status', 'install', 'uninstall', 'pause', 'resume', 'help']);
 const INTERPRETERS = new Set(['bun', 'node']);
+/** Interpreter flags whose value is the next token (gbrain's own sanitized re-run passes them this way: cli-preflight.ts PATH_RUNTIME_FLAGS). */
+const VALUE_FLAGS = new Set(['--preload', '-r', '--require', '--import', '--config', '-c', '--env-file', '--tsconfig-override', '--cwd']);
 
 /**
  * What decides whether a script entry point is gbrain: the process's working directory, which a relative entry
@@ -98,26 +101,26 @@ function isGbrainCli(path: string, packageName: EntryLookup['packageName']): boo
  * The gbrain entry point of a command line and the arguments after it, or null when the command is not gbrain
  * itself: a wrapper that starts gbrain as its child (tini, a shell, `timeout`, `bunx`, `bun x`, `bun run <bin>`)
  * is not the gbrain process, while `bun run <file>` runs the file in its own process. A relative entry is
- * returned resolved against the process's working directory, and is null when that directory is unknown.
+ * returned resolved against the process's working directory; when that directory is unknown it stays relative and
+ * only a gbrain path matches.
  */
 export function gbrainEntry(command: string, lookup: EntryLookup = {}): { entry: string; args: string[] } | null {
   const tokens = command.trim().split(/\s+/);
   const isPath = (token: string) => token.includes('/') || /\.[cm]?[jt]s$/.test(token);
   let at = 0;
   if (INTERPRETERS.has(basename(tokens[0]!))) {
-    for (at = 1; tokens[at]?.startsWith('-'); at++);
+    for (at = 1; tokens[at]?.startsWith('-'); at++) if (VALUE_FLAGS.has(tokens[at]!)) at++;
     if (basename(tokens[0]!) === 'bun') {
       if (tokens[at] === 'x') return null;
-      if (tokens[at] === 'run') for (at++; tokens[at]?.startsWith('-'); at++);
+      if (tokens[at] === 'run') for (at++; tokens[at]?.startsWith('-'); at++) if (VALUE_FLAGS.has(tokens[at]!)) at++;
       if (tokens[at] !== undefined && !isPath(tokens[at]!)) return null;
     }
   }
   const token = tokens[at];
   if (token === undefined) return null;
-  const relative = isPath(token) && !isAbsolute(token);
-  if (relative && !lookup.cwd) return null;
-  const entry = relative ? resolve(lookup.cwd!, token) : token;
-  if (basename(entry) !== 'gbrain' && !isGbrainCli(entry, lookup.packageName)) return null;
+  const unresolved = isPath(token) && !isAbsolute(token) && !lookup.cwd;
+  const entry = isPath(token) && !isAbsolute(token) && lookup.cwd ? resolve(lookup.cwd, token) : token;
+  if (basename(entry) !== 'gbrain' && !isGbrainCli(entry, unresolved ? undefined : lookup.packageName)) return null;
   return { entry, args: tokens.slice(at + 1) };
 }
 
@@ -302,7 +305,7 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
       case 'worker':
         if (parent?.role === 'supervisor' && parent.args) supervisors.set(parent.pid, [...(supervisors.get(parent.pid) ?? []), p.pid]);
         else if (parent?.role === 'autopilot' && runsUnder(parent, ctx.autopilotService)) addService('autopilot', parent.pid);
-        else kill(p, `${label(p)} is not run by a jobs supervisor this restart can relaunch${parent?.role === 'autopilot' ? ' (its autopilot runs under no installed service)' : ''}${p.unclassified_parent ? ` (its parent, pid ${p.unclassified_parent.pid} (\`${p.unclassified_parent.command}\`), is not a process this restart recognises as gbrain)` : ''}: stop it (\`kill ${p.pid}\`, SIGTERM drains its jobs) and start \`gbrain jobs work\` again the way it was launched, or run workers under \`gbrain jobs supervisor start --detach\`.`);
+        else kill(p, `${label(p)} is not run by a jobs supervisor this restart can relaunch${parent?.role === 'autopilot' ? ' (its autopilot runs under no installed service)' : ''}${p.unclassified_parent ? ` (its parent, pid ${p.unclassified_parent.pid} (\`${redactConnectionInfo(p.unclassified_parent.command)}\`), is not a process this restart recognises as gbrain)` : ''}: stop it (\`kill ${p.pid}\`, SIGTERM drains its jobs) and start \`gbrain jobs work\` again the way it was launched, or run workers under \`gbrain jobs supervisor start --detach\`.`);
         break;
       case 'mcp':
         if (ctx.stopMcp && p.args) stops.push({ kind: 'stop', role: 'mcp', pid: p.pid, started_ms: p.started_ms });

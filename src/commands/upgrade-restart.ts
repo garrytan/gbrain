@@ -10,7 +10,7 @@
  */
 import { existsSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { spawnSync } from '../core/spawn.ts';
 import { isThinClient, loadConfig, toEngineConfig } from '../core/config.ts';
 import { opError } from '../core/ops/contract.ts';
@@ -86,7 +86,7 @@ function installOf(command: string, cwd?: string | null): { root: string | null;
   const entry = gbrainEntry(command, { cwd, packageName: packageNameAt })?.entry;
   if (!entry) return { root: null, version: null };
   try {
-    const found = entry.includes('/') ? entry : (process.env.PATH ?? '').split(delimiter).map(dir => join(dir, entry)).find(path => existsSync(path));
+    const found = entry.includes('/') ? (isAbsolute(entry) ? entry : undefined) : (process.env.PATH ?? '').split(delimiter).map(dir => join(dir, entry)).find(path => existsSync(path));
     if (!found) return { root: null, version: null };
     let dir = dirname(realpathSync(found));
     for (let i = 0; i < 4; i++, dir = dirname(dir)) {

@@ -75,6 +75,18 @@ describe('gbrainEntry (#8723)', () => {
     expect(classifyGbrainCommand('bun /srv/gbrain/src/cli.ts serve', { packageName })).toBe('mcp');
   });
 
+  test('interpreter flags that take a value are skipped with their value, as gbrain\'s own sanitized re-run passes them', () => {
+    expect(classifyGbrainCommand('bun --preload ./p.ts /home/alice-example/.bun/bin/gbrain serve --http')).toBe('serve');
+    expect(classifyGbrainCommand(`bun --cwd /x ${CHECKOUT}/src/cli.ts serve`, { packageName })).toBe('mcp');
+    expect(classifyGbrainCommand('node --require /x/hook.js /home/alice-example/.bun/bin/gbrain jobs work')).toBe('worker');
+    expect(classifyGbrainCommand('bun run --env-file .env src/cli.ts jobs supervisor', { cwd: CHECKOUT, packageName })).toBe('supervisor');
+  });
+
+  test('with no working directory a relative entry still matches a gbrain path (macOS)', () => {
+    expect(classifyGbrainCommand('bun ../gbrain/src/cli.ts serve', { cwd: null })).toBe('mcp');
+    expect(gbrainEntry('bun ../gbrain/src/cli.ts serve', { cwd: null })?.entry).toBe('../gbrain/src/cli.ts');
+  });
+
   test('bunx and bun run <bin> are wrappers; the child they start is the gbrain process', () => {
     expect(gbrainEntry('/usr/local/bin/bun x gbrain jobs supervisor --queue q')).toBeNull();
     expect(gbrainEntry('bunx gbrain jobs supervisor')).toBeNull();
@@ -103,12 +115,16 @@ describe('gbrainEntry (#8723)', () => {
       heartbeats: async () => [], workers: () => [], supervisor: () => null, home: HOME, exclude: [], packageName,
       processTable: () => [
         { pid: 20, ppid: 1, command: 'bun run src/cli.ts jobs supervisor', started_ms: 600, gbrain_home: HOME, cwd: null },
+        { pid: 30, ppid: 1, command: 'sh -c DATABASE_URL=postgres://alice-example:hunter2@db.example:5432/brain bun run src/cli.ts jobs supervisor', started_ms: 600, gbrain_home: HOME, cwd: null },
+        { pid: 31, ppid: 30, command: `bun ${CHECKOUT}/src/cli.ts jobs work`, started_ms: 700, gbrain_home: HOME, cwd: null },
         { pid: 21, ppid: 20, command: `bun ${CHECKOUT}/src/cli.ts jobs work`, started_ms: 700, gbrain_home: HOME, cwd: null },
       ],
     });
-    expect(processes.map(p => [p.pid, p.role])).toEqual([[21, 'worker']]);
-    const [manual] = planRestart(processes, ctx()).manual;
+    expect(processes.map(p => [p.pid, p.role])).toEqual([[21, 'worker'], [31, 'worker']]);
+    const [manual, redacted] = planRestart(processes, ctx()).manual;
     expect(manual!.instruction).toContain('its parent, pid 20 (`bun run src/cli.ts jobs supervisor`), is not a process this restart recognises as gbrain');
+    expect(redacted!.instruction).toContain('its parent, pid 30 (');
+    expect(redacted!.instruction).not.toContain('hunter2');
   });
 });
 
