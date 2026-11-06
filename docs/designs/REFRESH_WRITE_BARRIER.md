@@ -190,15 +190,15 @@ barrier exists to keep, and with the flag on each now waits instead (with it off
   The row is released when the refresh is resumed or abandoned (both end it `completed` or
   `aborted`), takes the refresh-change check, and is bound by the same age limit.
 - **The per-refresh cap.** Removed (see Capacity).
-- **`pending_import`.** A `put_page`, `capture` or `remember` whose page file holds a change
+- **`pending_import`.** A `put_page`, `capture`, `remember` or `add_timeline_entry` whose page file holds a change
   committed through Git that managed sync has not imported yet was refused at preparation
   (`source_changed`, reason `pending_import`), after admission. The refusal now carries the last
   imported commit the check compared against (read before the check, so a commit the check saw
   imported is never awaited), and the consumer moves its own claim back to `deferred` with
   `deferred_import_from` set to that commit (`''` when the source had never imported). The row is
   released when `sources.last_commit` differs from it (and any refresh it also names is released),
-  then claimed and prepared from scratch, as if it had queued behind the import: a `remember` or
-  `capture` applies on top; a `put_page` with `expected_revision` meets the moved page and ends
+  then claimed and prepared from scratch, as if it had queued behind the import: a `remember`,
+  `capture` or `add_timeline_entry` applies on top; a `put_page` with `expected_revision` meets the moved page and ends
   `revision_conflict`; a blind (`force`) `put_page` lands. An import that lands without covering
   the file only re-arms the hold at the new commit. The receipt reads `queued` with
   `deferred: { pending_import: true }`, and the caller's wait returns pending at once.

@@ -2,9 +2,9 @@
  * GST-1582: a page write never bounces because a sync is running (docs/designs/REFRESH_WRITE_BARRIER.md, "Writes that
  * wait for an import").
  *
- * Protects: with persistence.refresh_barrier on, a put_page, capture or remember whose page file holds a committed change
+ * Protects: with persistence.refresh_barrier on, a put_page, capture, remember or add_timeline_entry whose page file holds a committed change
  * managed sync has not imported yet (`pending_import`) is held `deferred` and answered pending, then published by itself
- * once the import lands, prepared again as if it had queued behind the import: remember applies on top, a put_page with
+ * once the import lands, prepared again as if it had queued behind the import: remember and add_timeline_entry apply on top, a put_page with
  * expected_revision (what a remote caller must send for an existing page) ends revision_conflict, a blind (force) put_page or capture lands, and a put_page's receipt,
  * its commit trailer and the commit ledger name the imported revision and commit it replaced (both stay in page history and git). A write admitted while a
  * refresh is in recovery_required waits behind it and lands once the refresh is released. A held write whose import never
@@ -160,6 +160,20 @@ test('a remember onto a file awaiting import lands on top of the imported page',
   const content = file(f, 'people/alice-example.md');
   expect(content).toContain(IMPORTED);
   expect(content).toContain('alice-example likes tea');
+}), 180_000);
+
+test('an add_timeline_entry onto a file awaiting import lands on top of the imported page', () => each(async f => {
+  foreignCommit(f, 'one.md', page('Alpha one', IMPORTED));
+  const out = await call(f, 'add_timeline_entry', { slug: 'one', date: '2026-11-06', summary: 'Entry added while the import waited.' });
+  expect(out.isError).toBe(false);
+  expect(out.body.status).toBe('pending');
+  const held = await requestRow(f, out.body.request_id);
+  expect(held.state).toBe('deferred');
+  await importNow(f);
+  expect((await settle(f, held)).state).toBe('committed');
+  const content = file(f, 'one.md');
+  expect(content).toContain(IMPORTED);
+  expect(content).toContain('Entry added while the import waited.');
 }), 180_000);
 
 test('a put_page with expected_revision onto a file awaiting import ends revision_conflict once the import moved the page', () => each(async f => {

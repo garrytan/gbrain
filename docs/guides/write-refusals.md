@@ -617,11 +617,11 @@ syncing it is accepted and waits for the refresh instead of being refused `workt
 - A refresh in `recovery_required` holds writes the same way: they wait until the refresh is resumed
   or abandoned, under the same wait limit. There is no per-refresh cap: deferred writes count against
   the journal's ordinary outstanding and byte limits, like queued ones.
-- <a id="pending_import_expired"></a>A `put_page`, `capture` or `remember` whose page file holds a
+- <a id="pending_import_expired"></a>A `put_page`, `capture`, `remember` or `add_timeline_entry` whose page file holds a
   committed change managed sync has not imported yet ([`pending_import`](#pending_import)) also waits
   instead of being refused: the receipt stays pending with `deferred: { pending_import: true }`, and
-  once the import lands the write is prepared again against the imported page. A `remember` or
-  `capture` applies on top; a `put_page` with `expected_revision` ends `revision_conflict` when the
+  once the import lands the write is prepared again against the imported page. A `remember`,
+  `capture` or `add_timeline_entry` applies on top; a `put_page` with `expected_revision` ends `revision_conflict` when the
   import moved the page; a blind (`force`) `put_page` lands, and its receipt (`supersedes`), its
   commit trailer (`gbrain-supersedes: <path>: revision <id> from <commit>`) and the commit ledger
   name the imported revision and commit it replaced, both still in page history and Git. A write

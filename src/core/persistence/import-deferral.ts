@@ -1,9 +1,9 @@
 /**
  * GST-1582 (docs/designs/REFRESH_WRITE_BARRIER.md, "Writes that wait for an import"): with the refresh write barrier on, a
- * put_page, capture or remember whose page file holds a committed change managed sync has not imported yet is not refused
+ * put_page, capture, remember or add_timeline_entry whose page file holds a committed change managed sync has not imported yet is not refused
  * `pending_import`. The consumer moves its own claim back to `deferred`, naming the source's last imported commit, and the
  * row waits (invisible to claims, journal.ts RELEASED_DEFERRED) until `sources.last_commit` moves past it. It is then
- * prepared again from scratch, as if it had queued behind the import: a remember or capture applies on top, a put_page
+ * prepared again from scratch, as if it had queued behind the import: a remember, capture or add_timeline_entry applies on top, a put_page
  * with expected_revision ends revision_conflict when the import moved the page, and a blind put_page lands. A blind
  * put_page that replaces content the import brought in names what it replaced (`supersedes`) on its receipt, in a
  * `gbrain-supersedes:` commit trailer and on the commit ledger line; the replaced revision stays in page history and
@@ -18,7 +18,7 @@ import { landedCommit } from './pending-import.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { writeSwitchOn } from './switches.ts';
 
-const IMPORT_HELD_OPERATIONS = ['put_page', 'capture', 'remember'];
+const IMPORT_HELD_OPERATIONS = ['put_page', 'capture', 'remember', 'add_timeline_entry'];
 export const SUPERSEDES_TRAILER_KEY = 'gbrain-supersedes';
 
 /**
