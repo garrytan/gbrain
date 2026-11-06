@@ -38,6 +38,7 @@ import { isSourceFederated, loadAllSources, parseSourceConfig } from '../src/cor
 import { restoreSource, softDeleteSource } from '../src/core/destructive-guard.ts';
 import { proposeRevision } from '../src/core/access/policy.ts';
 import { quarantineRestoredExecution } from '../src/core/backup/quarantine.ts';
+import { registerScopedClient } from '../src/commands/auth.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { attestRightFrom } from '../src/core/access/actor-model.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -431,4 +432,22 @@ describe('backup restore quarantine keeps the scope mark', () => {
       await engine.disconnect();
     }
   }, 120_000);
+});
+
+describe('CLI client registration keeps the pre-migration fallback', () => {
+  test('register-client on an oauth_clients table without source_id still registers when given a transaction', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite' } as never);
+    try {
+      await engine.executeRaw(`CREATE TABLE oauth_clients (client_id TEXT PRIMARY KEY, client_secret_hash TEXT, client_name TEXT NOT NULL,
+        redirect_uris TEXT[], grant_types TEXT[], scope TEXT, token_endpoint_auth_method TEXT, client_id_issued_at BIGINT, deleted_at TIMESTAMPTZ)`);
+      const sql = sqlQueryForEngine(engine);
+      const registered = await registerScopedClient(sql, 'old-schema-client', { grantTypes: ['client_credentials'], scopes: 'read', sourceId: 'default', federatedRead: [], redirectUris: [], tokenEndpointAuthMethod: 'client_secret_post' } as never,
+        { transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+      const rows = await engine.executeRaw<{ client_name: string }>('SELECT client_name FROM oauth_clients WHERE client_id = $1', [registered.clientId]);
+      expect(rows.map(r => r.client_name)).toEqual(['old-schema-client']);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 60_000);
 });
