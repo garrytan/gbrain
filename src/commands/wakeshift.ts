@@ -112,6 +112,10 @@ async function enable(engine: BrainEngine, args: string[]): Promise<void> {
   const stdinKey = args.includes('--key-stdin') ? readFileSync(0, 'utf8').trim() : null;
   let loaded: { key: WakeshiftKey; source: 'env' | 'file' | 'stdin' };
   if (stdinKey !== null) {
+    if (readWakeshiftKey().source === 'env') {
+      throw keyError('env_overrides', 'WAKESHIFT_API_KEY is set (in the environment or ~/.gbrain/.env) and takes precedence over a saved key, so --key-stdin would save a key gbrain never uses. Nothing was saved.',
+        'Remove WAKESHIFT_API_KEY, then run gbrain wakeshift enable --key-stdin again; or run gbrain wakeshift enable without --key-stdin to use it.');
+    }
     try { loaded = { key: parseWakeshiftKey(stdinKey), source: 'stdin' }; } catch (e) { if (e instanceof WakeshiftKeyError) throw keyError(e.reason, e.message, KEY_HINT); throw e; }
   } else {
     loaded = loadKey();

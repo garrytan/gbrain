@@ -58,6 +58,7 @@ export function loadGbrainEnvFile(resolveDir: () => string): void {
   } catch {
     // The file is optional — missing, unreadable, or an invalid home dir
     // must not break config loading.
+  } finally {
+    takeWakeshiftEnvKey();
   }
-  takeWakeshiftEnvKey();
 }

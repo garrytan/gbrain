@@ -466,6 +466,24 @@ describe('gbrain wakeshift', () => {
     }
   });
 
+  test('a shell-exported key leaves process.env on config load with no .env, and keeps precedence over a .env key', async () => {
+    const other = encodeWakeshiftKey(Buffer.alloc(32, 7));
+    const envFile = join(home, '.gbrain', '.env');
+    process.env.WAKESHIFT_API_KEY = KEY;
+    try {
+      loadConfig();
+      expect(process.env.WAKESHIFT_API_KEY).toBeUndefined();
+      writeFileSync(envFile, `WAKESHIFT_API_KEY=${other}\n`, { mode: 0o600 });
+      loadConfig();
+      expect(process.env.WAKESHIFT_API_KEY).toBeUndefined();
+      expect(readWakeshiftKey()).toEqual({ source: 'env', raw: KEY });
+    } finally {
+      rmSync(envFile, { force: true });
+      delete process.env.WAKESHIFT_API_KEY;
+      resetWakeshiftEnvKeyForTests();
+    }
+  });
+
   test('enable with the default URL drops a custom URL saved earlier', async () => {
     writeConfig({ enabled: true, url: 'http://127.0.0.1:9' });
     const realFetch = globalThis.fetch;
