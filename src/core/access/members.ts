@@ -132,6 +132,13 @@ async function assertEmailFree(engine: BrainEngine, email: string, memberId: str
     'An email finds exactly one member, so it is unique per brain.');
 }
 
+/** A write that lost a race for one email (23505 on access_members_email_key, both engines' error shapes) refuses as assertEmailFree does. */
+async function refuseEmailRace(engine: BrainEngine, error: unknown, email: string | null, memberId: string): Promise<never> {
+  const e = (error ?? {}) as Record<string, unknown>;
+  if (email !== null && String(e.code) === '23505' && (e.constraint_name ?? e.constraint) === 'access_members_email_key') await assertEmailFree(engine, email, memberId);
+  throw error;
+}
+
 /** GST-1158: the one member whose declared email is `raw`; not_found when none, refused when several. Never creates one. */
 export async function memberByEmail(engine: BrainEngine, raw: unknown): Promise<MemberRecord> {
   const email = assertMemberEmail(raw);
@@ -205,7 +212,7 @@ export async function addMember(engine: BrainEngine, rawId: unknown, opts: { nam
     created = await ensureGroups(tx, groups);
     for (const g of groups) await tx.executeRaw('INSERT INTO access_group_members (group_id, member_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [g, id]);
     if (bindTarget) await tx.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id::text = $1', [bindTarget.id, id]);
-  });
+  }).catch(error => refuseEmailRace(engine, error, email, id));
   return { member: (await getMember(engine, id))!, groups_created: created, bound: bindTarget };
 }
 
@@ -226,7 +233,7 @@ export async function setMemberEmail(engine: BrainEngine, rawId: unknown, rawEma
   const email = rawEmail === null ? null : assertMemberEmail(rawEmail);
   if (email === member.email) return { member, changed: false };
   if (email !== null) await assertEmailFree(engine, email, member.id);
-  await engine.executeRaw('UPDATE access_members SET email = $2, updated_at = now() WHERE id = $1', [member.id, email]);
+  await engine.executeRaw('UPDATE access_members SET email = $2, updated_at = now() WHERE id = $1', [member.id, email]).catch(error => refuseEmailRace(engine, error, email, member.id));
   return { member: (await getMember(engine, member.id))!, changed: true };
 }
 

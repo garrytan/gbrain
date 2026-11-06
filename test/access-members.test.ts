@@ -202,5 +202,17 @@ for (const kind of testBackends()) {
       expect(await refusal(setMemberEmail(engine, 'hal-example', 'hal@example.com'))).toEqual({ code: 'access_member_id_retired' });
       expect((await addMember(engine, 'hal2-example', { email: 'hal@example.com' })).member.email).toBe('hal@example.com');
     });
+
+    test('GST-1158: two concurrent declarations of one email refuse the second with email_taken, never a raw unique violation', async () => {
+      await addMember(engine, 'ivy-example');
+      await addMember(engine, 'jon-example');
+      const set = await Promise.allSettled([setMemberEmail(engine, 'ivy-example', 'race@example.com'), setMemberEmail(engine, 'jon-example', 'race@example.com')]);
+      expect(set.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+      for (const r of set) if (r.status === 'rejected') expect(await refusal(Promise.reject(r.reason))).toEqual({ code: 'access_member_invalid', reason: 'email_taken' });
+      const add = await Promise.allSettled([addMember(engine, 'kim-example', { email: 'race2@example.com' }), addMember(engine, 'lee-example', { email: 'race2@example.com' })]);
+      expect(add.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+      for (const r of add) if (r.status === 'rejected') expect(await refusal(Promise.reject(r.reason))).toEqual({ code: 'access_member_invalid', reason: 'email_taken' });
+      expect((await listMembers(engine)).filter(m => m.id === 'kim-example' || m.id === 'lee-example')).toHaveLength(1);
+    });
   });
 }

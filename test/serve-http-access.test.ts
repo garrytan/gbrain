@@ -27,6 +27,7 @@ import { listMemberLinks } from '../src/core/access/actor.ts';
 import { mountAdminAccess } from '../src/commands/serve-http-access.ts';
 import { createRequireAdmin } from '../src/commands/serve-http-admin-api.ts';
 import { operations } from '../src/core/operations.ts';
+import { readClientOpUsage } from '../src/core/mcp-usage.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
@@ -188,6 +189,24 @@ for (const kind of testBackends()) {
       expect(cleared.attest ?? null).toBeNull();
       expect((await audits()).filter(a => a.action === 'client_attest').map(a => [a.client_id, a.attest_actor]))
         .toEqual([[qm.clientId, 'qm'], [qm.clientId, null]]);
+    });
+
+    test('GST-1113: clearing the attest right over HTTP clears attest_sources too, as auth rescope does', async () => {
+      const scope = 'scope-http-' + randomUUID().slice(0, 8);
+      await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1)', [scope]);
+      const qm = await register('qm-scope', ['client_credentials']);
+      await bindCredential(engine, { kind: 'client', id: qm.clientId }, { attestActor: 'qm', attestOps: ['get_write_request', 'memory_recall', 'memory_write'], attestSources: [scope] });
+      const row = async () => (await engine.executeRaw<Record<string, unknown>>('SELECT attest_actor, attest_ops, attest_sources FROM oauth_clients WHERE client_id = $1', [qm.clientId]))[0];
+      expect((await call('POST', '/admin/api/access/attest', { clientId: qm.clientId, attestActor: null, dryRun: true })).json).toMatchObject({ applied: false, changed: true });
+      expect(await row()).toMatchObject({ attest_actor: 'qm', attest_sources: [scope] });
+      expect((await call('POST', '/admin/api/access/attest', { clientId: qm.clientId, attestActor: null })).json).toMatchObject({ applied: true, attest_actor: null });
+      expect(await row()).toEqual({ attest_actor: null, attest_ops: null, attest_sources: null });
+    });
+
+    test('the audit rows an applied change writes are never read as client usage', async () => {
+      expect((await call('POST', '/admin/api/access/members', { action: 'add', id: 'usage-example' })).json).toMatchObject({ applied: true });
+      expect((await audits()).some(a => a.action === 'member_add' && a.member === 'usage-example')).toBe(true);
+      expect((await readClientOpUsage(engine)).map(u => u.token_name)).not.toContain('admin-api');
     });
   });
 }
