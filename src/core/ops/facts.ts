@@ -318,7 +318,7 @@ const recall: Operation = {
     return_unit: { type: 'string', enum: ['chunk', 'window', 'section', 'page', 'auto'], description: 'results[] unit (see search).', fullSurfaceOnly: true },
     return_window: { type: 'number', description: 'Window 1-3.', fullSurfaceOnly: true },
     min_trust: MIN_TRUST_PARAM,
-    max_chars: { type: 'integer', description: `Cap on fact (then results) text, ${MEMORY_RECALL_MAX_CHARS.min}-${MEMORY_RECALL_MAX_CHARS.max}; whole items only, truncated says if cut.`, fullSurfaceOnly: true },
+    max_chars: { type: 'integer', minimum: MEMORY_RECALL_MAX_CHARS.min, description: `Cap on fact (then results) text, ${MEMORY_RECALL_MAX_CHARS.min}-${MEMORY_RECALL_MAX_CHARS.max}; whole items only, truncated says if cut.`, fullSurfaceOnly: true },
   },
   scope: 'read',
   verb: true,
