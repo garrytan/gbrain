@@ -34,6 +34,7 @@ import { attestRightOf, linkedMember, linkMember } from '../src/core/access/acto
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { boundFactLines, isoDate, memoryWriteRequestId, plainFactText, MEMORY_RECALL_MAX_CHARS } from '../src/core/ops/qm-memory.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
+import { operations } from '../src/core/operations.ts';
 import { startHttpTransport } from '../src/mcp/http-transport.ts';
 import { RateLimiter } from '../src/mcp/rate-limit.ts';
 import { BEHAVIOR_CHANGES } from '../src/core/behavior-change-notice.ts';
@@ -392,6 +393,111 @@ for (const kind of testBackends()) {
       }
     }, 120_000);
 
+    test('a recall that names sources reads as the scope, never as the person: none of their own member-page facts (GST-1094)', async () => {
+      const SCOPE = 'qm-scope-room';
+      await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [SCOPE]);
+      const c = await provider().registerClientManual('d-scope-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);
+      await provider().rescopeClient(c.clientId, { federatedRead: [SRC, SCOPE] });
+      await bindCredential(engine, { kind: 'client', id: c.clientId }, { attestActor: 'qm' });
+      tokens.scoped = (await provider().exchangeClientCredentials(c.clientId, c.clientSecret ?? '')).access_token;
+      const aliceScoped: Who = { token: 'scoped', actor: ALICE_ID };
+      expect((await write(aliceScoped, [{ fact: 'Alice keeps her seat preference canaryscopeown budget ledger', provenance: 'turn 40' }])).structured?.status).toBe('committed');
+      const restricted = 'notes/alice-only-scope';
+      await importFromContent(engine, restricted, '---\ntype: note\ntitle: Alice only\nreadable_by:\n  - member:alice-example\n---\n# Alice only\n', { sourceId: SRC });
+      await engine.insertFact({ fact: 'Alice salary review canaryscoperestricted budget ledger', kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'world' }, { source_id: SRC });
+      await engine.executeRaw('UPDATE facts SET source_markdown_slug = $1 WHERE fact LIKE $2', [restricted, '%canaryscoperestricted%']);
+      await engine.insertFact({ fact: 'The room budget ledger review is Friday canaryscoperoom', kind: 'event', entity_slug: null, source: 'test', visibility: 'world' }, { source_id: SCOPE });
+      await engine.insertFact({ fact: 'Acme budget ledger audit is open canaryscopeworld', kind: 'event', entity_slug: ACME, source: 'test', visibility: 'world' }, { source_id: SRC });
+      __resetPrivateVisibilityCacheForTests();
+      const asPerson = await recall(aliceScoped, 'budget ledger', { max_chars: 12_000 });
+      for (const needle of ['canaryscopeown', 'canaryscopeworld', 'canaryscoperoom']) expect(asPerson.text).toContain(needle);
+      expect(asPerson.all).not.toContain('canaryscoperestricted');
+      for (const args of [{ source_id: SRC }, { source_ids: [SRC] }, { source_ids: [SRC, SCOPE] }]) {
+        const asScope = await recall(aliceScoped, 'budget ledger', { max_chars: 12_000, ...args });
+        expect(asScope.isError).toBe(false);
+        expect(asScope.text).toContain('canaryscopeworld');
+        for (const needle of ['canaryscopeown', 'canaryscoperestricted', 'canarywritealice', 'canaryownrecent']) expect(asScope.all).not.toContain(needle);
+        expect(JSON.stringify(asScope.out._meta?.warnings ?? [])).not.toContain('unknown_param');
+      }
+      const room = await recall(aliceScoped, 'budget ledger', { source_ids: [SCOPE] });
+      expect(room.text).toContain('canaryscoperoom');
+      for (const needle of ['canaryscopeworld', 'canaryscopeown', 'canaryscoperestricted']) expect(room.all).not.toContain(needle);
+      const outside = await recall(alice, 'budget ledger', { source_ids: [SCOPE] });
+      expect({ isError: outside.isError, code: outside.json.code }).toEqual({ isError: true, code: 'permission_denied' });
+      expect(outside.structured?.error?.code).toBe('permission_denied');
+      const all = await recall(aliceScoped, 'budget ledger', { source_id: '__all__' });
+      expect({ isError: all.isError, code: all.json.code }).toEqual({ isError: true, code: 'invalid_params' });
+      const none = await recall(aliceScoped, 'budget ledger', { source_id: SCOPE, source_ids: [SRC] });
+      expect({ isError: none.isError, text: none.text, facts: none.structured?.facts }).toEqual({ isError: false, text: '', facts: [] });
+      const unlinked = await recall({ token: 'scoped', actor: 'U0NOBODY' }, 'budget ledger', { source_ids: [SCOPE] });
+      expect(unlinked.structured).toEqual({ facts: [], truncated: false, code: 'actor_unlinked' });
+    }, 120_000);
+
+    test('a recall that names sources keeps folder fail-closed coverage: facts under a pending prefix stay hidden', async () => {
+      expect(tokens.scoped).toBeDefined();
+      const aliceScoped: Who = { token: 'scoped', actor: ALICE_ID };
+      const held = 'pending-hr/scope-note';
+      await importFromContent(engine, held, '---\ntype: note\ntitle: Held note\n---\n# Held note\n', { sourceId: SRC });
+      await engine.insertFact({ fact: 'Payroll budget ledger draft canaryscopepending', kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'world' }, { source_id: SRC });
+      await engine.executeRaw('UPDATE facts SET source_markdown_slug = $1 WHERE fact LIKE $2', [held, '%canaryscopepending%']);
+      __resetPrivateVisibilityCacheForTests();
+      expect((await recall(aliceScoped, 'payroll budget ledger', { max_chars: 12_000, source_id: SRC })).text).toContain('canaryscopepending');
+      await engine.executeRaw('INSERT INTO access_policy_state (source_id) VALUES ($1) ON CONFLICT (source_id) DO NOTHING', [SRC]);
+      await engine.executeRaw("INSERT INTO access_pending_coverage (source_id, prefix, reason) VALUES ($1, 'pending-hr/', 'invalid')", [SRC]);
+      try {
+        __resetPrivateVisibilityCacheForTests();
+        for (const args of [{ source_id: SRC }, { source_ids: [SRC] }]) {
+          const asScope = await recall(aliceScoped, 'payroll budget ledger', { max_chars: 12_000, ...args });
+          expect(asScope.isError).toBe(false);
+          expect(asScope.all).not.toContain('canaryscopepending');
+        }
+      } finally {
+        await engine.executeRaw("DELETE FROM access_pending_coverage WHERE source_id = $1 AND prefix = 'pending-hr/'", [SRC]);
+        __resetPrivateVisibilityCacheForTests();
+      }
+    }, 120_000);
+
+    test('generic recall takes max_chars: whole facts in order, no marker, structured truncated, invalid values refused; without it recall is unchanged (HARN-15)', async () => {
+      const ENTITY = 'companies/harn-recall-example';
+      for (let i = 0; i < 12; i++) {
+        await engine.insertFact({ fact: 'Harn recall world fact ' + String(i).padStart(2, '0') + ' ' + 'ledger detail '.repeat(6) + 'canaryharnrecall', kind: 'fact', entity_slug: ENTITY, source: 'test', visibility: 'world' }, { source_id: SRC });
+      }
+      const recallAll = (args: Record<string, unknown> = {}) => call({ token: 'plain' }, 'recall', { entity: ENTITY, ...args });
+      const base = await recallAll();
+      expect(base.isError).toBe(false);
+      expect(base.json.facts.length).toBe(12);
+      expect('truncated' in base.json).toBe(false);
+      expect(base.json.total).toBe(12);
+      const again = await recallAll();
+      expect(Object.keys(again.json).sort()).toEqual(Object.keys(base.json).sort());
+      const baseIds = base.json.facts.map((f: { id: number }) => f.id);
+      for (const max_chars of [500, 1000, 1500]) {
+        const out = await recallAll({ max_chars });
+        expect(out.isError).toBe(false);
+        const facts = out.json.facts as Array<{ id: number; fact: string }>;
+        expect(facts.length).toBeGreaterThan(0);
+        expect(facts.length).toBeLessThan(12);
+        expect(facts.map(f => f.fact).join('\n').length).toBeLessThanOrEqual(max_chars);
+        expect(facts.map(f => f.id)).toEqual(baseIds.slice(0, facts.length));
+        const next = base.json.facts[facts.length].fact as string;
+        expect(facts.map(f => f.fact).join('\n').length + 1 + next.length).toBeGreaterThan(max_chars);
+        expect(out.json.truncated).toBe(true);
+        expect(out.json.total).toBe(facts.length);
+        expect(out.text).not.toMatch(/\d+ more|truncated at/i);
+      }
+      const roomy = await recallAll({ max_chars: MEMORY_RECALL_MAX_CHARS.max });
+      expect(roomy.json.truncated).toBe(false);
+      expect(roomy.json.facts.map((f: { id: number }) => f.id)).toEqual(baseIds);
+      for (const max_chars of [199, 12_001, 500.5, '600']) {
+        const out = await recallAll({ max_chars });
+        expect(out.isError).toBe(true);
+        expect(out.json.code ?? out.json.error).toBe('invalid_params');
+        expect(out.text).not.toContain('canaryharnrecall');
+      }
+      // A client that fills optional integers from the schema sends at least the minimum, never 0.
+      expect(operations.find(o => o.name === 'recall')!.params.max_chars).toMatchObject({ type: 'integer', minimum: MEMORY_RECALL_MAX_CHARS.min });
+    }, 120_000);
+
     test('an unlinked person gets an empty success whose code rides structuredContent only', async () => {
       const out = await recall({ token: 'qm', actor: 'U0NOBODY' }, 'budget ledger');
       expect(out.isError).toBe(false);
@@ -634,6 +740,33 @@ for (const kind of testBackends()) {
         remote: true, transport: 'http', auth: await verify(tokens.qm!), sourceId: SRC, actor: { header: ALICE_ID }, allowedOps: new Set(['get_page']) });
       expect(hidden.isError).toBe(true);
       expect((hidden.structuredContent as { error: { code: string } }).error.code).toBe('unknown_tool');
+    }, 60_000);
+
+    test('acting_user without attestation names what is missing in detail: the header, the attest right, or both (GST-1304)', async () => {
+      const cases: Array<[Who, string]> = [
+        [{ token: 'qm' }, 'missing=x-qm-actor'],
+        [{ token: 'plain' }, 'missing=attest_right,x-qm-actor'],
+        [{ token: 'plain', actor: ALICE_ID }, 'missing=attest_right'],
+      ];
+      for (const [as, detail] of cases) {
+        const out = await call(as, 'memory_recall', { query: 'harbor ledger', acting_user: ALICE_ID });
+        expect(out.json).toMatchObject({ code: 'actor_not_attested', reason: 'argument_without_attestation', detail });
+        expect(out.structured?.error).toMatchObject({ code: 'actor_not_attested', reason: 'argument_without_attestation', detail });
+      }
+      const qmOnly = await call({ token: 'qm' }, 'memory_recall', { query: 'harbor ledger', acting_user: ALICE_ID });
+      expect(qmOnly.json.message).toContain('x-qm-actor');
+      expect(qmOnly.json.message).not.toContain('attest right');
+    }, 60_000);
+
+    test('a memory_recall query over query_chars_ranked is ranked on its first 2,000 characters, never refused (v1 contract; GST-1304)', async () => {
+      expect((await write(alice, [{ fact: 'Alice audits the harbor ledger canarylongquery', provenance: 'x' }])).structured!.status).toBe('committed');
+      const head = 'harbor ledger budget canarylongquery ';
+      const out = await recall(alice, head + 'filler words that pad the question '.repeat(80));
+      expect(out.isError).toBe(false);
+      expect(out.json.code).toBeUndefined();
+      expect(out.text).toContain('canarylongquery');
+      const tailOnly = await recall(alice, 'filler words that pad the question '.repeat(60) + ' harbor ledger budget');
+      expect(tailOnly.isError).toBe(false);
     }, 60_000);
 
     test('a keyless brain ranks by keyword and makes no embedding call', async () => {

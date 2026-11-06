@@ -11,6 +11,8 @@ export const QM_AUDIENCE_HEADER = 'x-qm-audience';
 export const ACTOR_ARGUMENT = 'acting_user';
 export const ATTEST_SYSTEMS: readonly string[] = ['qm'];
 export const DEFAULT_ATTEST_OPS: readonly string[] = ['get_write_request', 'memory_recall', 'memory_write'];
+/** GST-1113: the attested operations a credential with attest_sources may run: the memory pair, receipts and own-page withdrawal. */
+export const SCOPE_ATTEST_OPS: ReadonlySet<string> = new Set(['forget', 'forget_fact', 'get_write_request', 'memory_recall', 'memory_write']);
 /**
  * Operations no attested call may run yet: what they read or write is not keyed to the person, so one person could
  * change or see another's (a conflict list across writers) or write facts and takes every reader sees. GST-359 C2
@@ -27,20 +29,24 @@ export const ACTOR_DEFERRED_OPS: ReadonlySet<string> = new Set([
 /** Canonical person ids: 1-256 visible ASCII characters (QM's credential broker rule), no case folding. */
 export const EXTERNAL_ID_RE = /^[\x21-\x7e]{1,256}$/;
 
-export interface AttestRight { system: string; ops: string[] }
+/** GST-1113: `sources` are the scope sources an attested memory_write may name per call (attest_sources); null = none. */
+export interface AttestRight { system: string; ops: string[]; sources: string[] | null }
 export interface AttestedActor { system: string; external_id: string; member: string }
 
 /**
  * The attest right a credential row carries, given the grant that issued the token (`legacy` for a legacy token,
  * else the OAuth grant type) and its member binding. Null unless the system is known, the credential is bound to no
- * member, and the token is a legacy token or a client-credentials token.
+ * member, and the token is a legacy token or a client-credentials token. A credential listing scope sources keeps only
+ * SCOPE_ATTEST_OPS, at every call, so a later default never widens it.
  */
 export function attestRightFrom(row: Record<string, unknown> | undefined, grant: unknown, member: unknown): AttestRight | null {
   const system = row?.attest_actor;
   if (typeof system !== 'string' || !ATTEST_SYSTEMS.includes(system) || member != null) return null;
   if (grant !== 'legacy' && grant !== 'client_credentials') return null;
   const ops = Array.isArray(row!.attest_ops) ? (row!.attest_ops as unknown[]).filter((v): v is string => typeof v === 'string') : [...DEFAULT_ATTEST_OPS];
-  return { system, ops };
+  const sources = Array.isArray(row!.attest_sources) ? (row!.attest_sources as unknown[]).filter((v): v is string => typeof v === 'string') : null;
+  if (!sources?.length) return { system, ops, sources: null };
+  return { system, ops: ops.filter(op => SCOPE_ATTEST_OPS.has(op)), sources };
 }
 
 /** The verify join plus the live attest right, for AuthInfo (a verifier spreads the result). */

@@ -6693,7 +6693,7 @@
         "members": [
           "allowedOperations?: string[] | null | undefined",
           "allowedSources?: string[] | undefined",
-          "attest?: { system: string; ops: string[]; } | null | undefined",
+          "attest?: { system: string; ops: string[]; sources: string[] | null; } | null | undefined",
           "boundBrainId?: string | null | undefined",
           "boundMaxConcurrent?: number | undefined",
           "boundSlugPrefixes?: string[] | undefined",
@@ -6800,6 +6800,7 @@
           "allowedSlugPrefixes?: string[] | undefined",
           "applyRemoteReadPolicy?: boolean | undefined",
           "attestedOp?: string | undefined",
+          "attestedSource?: string | undefined",
           "auth?: AuthInfo | undefined",
           "brainId?: string | undefined",
           "cliOpts?: { quiet: boolean; progressJson: boolean; progressInterval: number; } | undefined",

@@ -217,7 +217,7 @@ Git, an ancestor of the write's commit.
 **Age bound and schema.** A row held for an import that has not landed past
 `persistence.refresh_barrier_max_wait_ms` ends `failed` with `pending_import_expired` in the owner's
 housekeeping turn, which rechecks under the request lock that the row is still unclaimed and its
-import still pending. Migration v293 adds the nullable `persistence_requests.deferred_import_from` and
+import still pending. Migration v294 adds the nullable `persistence_requests.deferred_import_from` and
 widens `gbrain_guard_deferred_request`: a running row may move to `deferred` only under the barrier's
 session declaration and only naming the import it waits for, and a deferred row moves to `running`
 only once every hold it names is released. Only the write owner's consumer, already a barrier
