@@ -34,7 +34,7 @@ on:
         default: true
 
 permissions:
-  contents: write  # push the stable-v<version> and stable tags
+  contents: write  # push the stable-v<version> and stable tags and the stable-record branch (stable.json)
   actions: write   # read soak runs and their scoreboards; dispatch a soak
 
 concurrency:
