@@ -21,17 +21,18 @@ export interface WriteAttribution {
 export { withWriteAttribution };
 
 /**
- * The request header a caller uses to sign a write with the AI it is. The hosting
- * layer knows which model is calling (Claude, Codex, an OpenClaw job); gbrain does
- * not, and every write from one brain otherwise looks alike. Descriptive only: it
- * never authorizes, never widens a grant, and a caller that omits it is recorded
- * exactly as before.
+ * The HTTP MCP request header a caller uses to say which AI made a write ("Claude Code", "Codex", a job name). The
+ * host knows which agent is calling through one credential; gbrain does not. It is a label the caller declares and
+ * gbrain never verifies: it is stored on the write request and shown as `agent_label` by attribution reads, and
+ * nothing that authorizes (grants, access rules, trust tiers) reads it. Not "writer": that word names the principal
+ * and the write owner (persistence_local_writers, `gbrain sources writer`). Stdio and the local CLI have no request
+ * headers and record none; their principal already names the lane.
  */
-export const WRITER_SIGNATURE_HEADER = 'x-gbrain-writer';
-/** A usable signature, or undefined: 1-120 printable characters and no control characters. */
-export function parseWriterSignature(value: string | null | undefined): string | undefined {
+export const AGENT_LABEL_HEADER = 'X-Gbrain-Agent-Label';
+/** A label safe to store and render, or undefined: 1-120 printable ASCII characters after trimming, else dropped. */
+export function parseAgentLabel(value: string | null | undefined): string | undefined {
   const text = value?.trim();
-  return text && text.length <= 120 && !/\p{Cc}/u.test(text) ? text : undefined;
+  return text && /^[\x20-\x7e]{1,120}$/.test(text) ? text : undefined;
 }
 
 /** A journaled request publishes as itself. */

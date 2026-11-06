@@ -1670,6 +1670,7 @@
       {
         "kind": "interface",
         "members": [
+          "agent_label?: string | undefined",
           "at: string | null",
           "operation: string | null",
           "origin: \"request\" | \"maintenance\" | \"unrecorded\"",
@@ -6793,6 +6794,7 @@
         "members": [
           "accessIdentity?: readonly string[] | undefined",
           "admissionOrigin?: AdmissionOrigin | undefined",
+          "agentLabel?: string | undefined",
           "allowedSlugPrefixes?: string[] | undefined",
           "applyRemoteReadPolicy?: boolean | undefined",
           "attestedOp?: string | undefined",
@@ -10116,6 +10118,7 @@
       {
         "kind": "interface",
         "members": [
+          "agent_label?: string | undefined",
           "at: string | null",
           "operation: string | null",
           "origin: \"request\" | \"maintenance\" | \"unrecorded\"",

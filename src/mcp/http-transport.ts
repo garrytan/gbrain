@@ -40,7 +40,7 @@ import { operations, operationsByName, opAllowedForBoundClient } from '../core/o
 import { scopeDeniedError } from '../core/ops/op-fix.ts';
 import { ON_BEHALF_OF_HEADER } from '../core/access/audience.ts';
 import { ACTOR_HEADER, QM_AUDIENCE_HEADER, withAttestRight } from '../core/access/actor-model.ts';
-import { parseWriterSignature, WRITER_SIGNATURE_HEADER } from '../core/persistence/attribution.ts';
+import { parseAgentLabel, AGENT_LABEL_HEADER } from '../core/persistence/attribution.ts';
 import { qmMemoryToolResult } from '../core/ops/qm-memory.ts';
 import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
 import type { AuthInfo } from '../core/operations.ts';
@@ -538,7 +538,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         const toolName: string = params?.name ?? 'unknown';
         const args: Record<string, unknown> = params?.arguments ?? {};
         const op = operationsByName[toolName];
-        const writerSignature = parseWriterSignature(req.headers.get(WRITER_SIGNATURE_HEADER));
+        const agentLabel = parseAgentLabel(req.headers.get(AGENT_LABEL_HEADER));
         // #5575: cliOnly ops reach the dispatcher's trusted_local_only refusal (the host command), never a grant-widening scope fix.
         if (op && !op.localOnly && !op.cliOnly && !operationScopesAllowed(auth.auth!.scopes, op)) {
           logRequest(auth.tokenName!, `tools/call:${toolName}`, 'denied_after_list', Date.now() - startedMs);
@@ -572,8 +572,8 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           sourceId: auth.sourceId,
           ...(localFederated ? { localFederatedSourceIds: localFederated } : {}), onBehalfOf: { header: req.headers.get(ON_BEHALF_OF_HEADER) ?? undefined, requestMeta: params?._meta },
           actor: { header: req.headers.get(ACTOR_HEADER) ?? undefined, audience: req.headers.get(QM_AUDIENCE_HEADER) ?? undefined }, // #1336: thread the token's federated_read grant so read ops scope
-          ...(writerSignature ? { writerSignature } : {}),
           // to the operator-granted sources via sourceScopeOpts.
+          ...(agentLabel ? { agentLabel } : {}),
           auth: auth.auth,
           // MEMORY_VERBS v1 [c1/c2]: fail-closed surface enforcement here too.
           ...(surfaceAllowedOps ? { allowedOps: surfaceAllowedOps } : {}),
