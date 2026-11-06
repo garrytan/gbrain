@@ -21,13 +21,21 @@
  *    rollback with a reason; re-promoting the current stable is a no-op;
  * 6. the annotated record tag `stable-v<VERSION>` is created (once per
  *    version, never moved) and the annotated `stable` tag is moved to the
- *    release commit, both carrying renderTagMessage(). One atomic push moves
- *    both, `stable` leased on the value read in step 5, so a failed push
- *    leaves the remote unchanged and a re-run starts clean.
+ *    release commit, both carrying renderTagMessage();
+ * 7. the evidence record (renderRecord(): version, commit, tree, soak run,
+ *    and the `known_bad` list, carried forward from the previous record plus
+ *    this run's `withdraw` versions) is committed as `stable.json` on the
+ *    `stable-record` branch, parented on the previous record commit. One
+ *    atomic push moves all three, `stable` and `stable-record` leased on
+ *    the values read, so a failed push leaves the remote unchanged and a
+ *    re-run starts clean.
  *
- * Clients peel `refs/tags/stable^{}`; the update check reads
- * https://raw.githubusercontent.com/garrytan/gbrain/stable/VERSION, the same
- * pattern as `latest-stable` (src/commands/check-update.ts RELEASE_REF_RAW).
+ * Clients read the record at
+ * https://raw.githubusercontent.com/garrytan/gbrain/stable-record/stable.json
+ * (src/core/stable-channel.ts: no API call, no git) and an explicit upgrade
+ * checks it against `refs/tags/stable^{}` and `v<VERSION>`. Generation 1
+ * records carry soak evidence only; the upgrade matrix (W2) adds matrix_run
+ * and sets MATRIX_REQUIRED_FROM in src/core/self-upgrade.ts.
  * Side effects (gh, git, clock, log, step summary) come in through
  * PromoteDeps, so the decisions are tested without network or a real remote
  * (test/scripts/promote-stable.test.ts). Every refusal exits 1 with one
@@ -38,6 +46,9 @@ import { appendFileSync } from 'node:fs';
 
 export const DOCS = 'docs/RELEASING.md#stable-channel-promotion';
 export const STABLE_REF = 'refs/tags/stable';
+export const RECORD_BRANCH_REF = 'refs/heads/stable-record';
+export const RECORD_REMOTE_REF = 'refs/remotes/origin/stable-record';
+export const RECORD_FILE = 'stable.json';
 const VERSION_RE = /^\d+\.\d+\.\d+(\.\d+)?$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
 const PROMOTER_ROLES = new Set(['admin', 'maintain']);
@@ -51,6 +62,8 @@ export interface PromoteInputs {
   scoreboardUrl: string;
   rollback: boolean;
   reason: string;
+  /** Versions to add to the record's known_bad list (withdrawn releases clients move off). */
+  withdraw?: string[];
 }
 
 export interface GitResult { code: number; stdout: string; stderr: string }
@@ -60,7 +73,7 @@ export interface PromoteDeps {
   actor: string;
   soakWorkflow: string;
   ghApi(path: string): Promise<unknown>;
-  git(args: string[]): Promise<GitResult>;
+  git(args: string[], input?: string): Promise<GitResult>;
   now(): Date;
   log(line: string): void;
   summary(markdown: string): void;
@@ -86,7 +99,36 @@ export interface TagFields {
   reason: string;
 }
 
-export interface Promotion extends TagFields { recordCreated: boolean }
+export interface Promotion extends TagFields { recordCreated: boolean; knownBad: string[] }
+
+/** The evidence record clients read (src/core/stable-channel.ts parseStableRecord); generation 1: soak evidence. */
+export function renderRecord(f: TagFields, knownBad: readonly string[]): string {
+  return JSON.stringify({
+    schema: 1,
+    channel: 'stable',
+    version: f.version,
+    commit: f.commit,
+    tree: f.tree,
+    soak_run: f.soakRun,
+    scoreboard: f.scoreboard,
+    promoted_by: f.promotedBy,
+    promoted_at: f.promotedAt,
+    previous: f.previous,
+    rollback: f.rollback,
+    reason: f.reason.trim().replace(/\s+/g, ' '),
+    known_bad: [...knownBad],
+  }, null, 2) + '\n';
+}
+
+/** The previous record's known_bad plus this run's withdrawals, deduplicated and sorted; refuses withdrawing the promoted version. */
+export function mergeKnownBad(previous: readonly string[], withdraw: readonly string[], version: string): string[] {
+  for (const v of withdraw) {
+    if (!VERSION_RE.test(v)) throw new Refusal(`withdraw entry "${v}" is not a release version; pass versions like 0.60.361.0, comma-separated.`);
+  }
+  const all = [...new Set([...previous, ...withdraw])].sort(compareVersions);
+  if (all.includes(version)) throw new Refusal(`v${version} is on the stable record's known_bad list (withdrawn); promote a different release.`);
+  return all;
+}
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number);
@@ -158,6 +200,7 @@ export function renderSummary(p: Promotion): string {
     ['Scoreboard', p.scoreboard],
     ['Previous stable', p.previous ? `v${p.previous}` : 'none'],
     ['Rollback', p.rollback ? `yes: ${p.reason.trim()}` : 'no'],
+    ['Known bad', p.knownBad.length ? p.knownBad.map(v => `v${v}`).join(', ') : 'none'],
     ['Record tag', p.recordCreated ? `\`stable-v${p.version}\` created` : `\`stable-v${p.version}\` already existed (re-promotion)`],
     ['Promoted by', `${p.promotedBy} at ${p.promotedAt}`],
   ];
@@ -165,8 +208,8 @@ export function renderSummary(p: Promotion): string {
   return [`## Stable channel: v${p.version}`, '', '| Field | Value |', '|---|---|', ...rows.map(([k, v]) => `| ${k} | ${cell(v)} |`), ''].join('\n');
 }
 
-async function gitOut(deps: PromoteDeps, args: string[], refusal: string): Promise<string> {
-  const r = await deps.git(args);
+async function gitOut(deps: PromoteDeps, args: string[], refusal: string, input?: string): Promise<string> {
+  const r = await deps.git(args, input);
   if (r.code !== 0) throw new Refusal(`${refusal}${r.stderr.trim() ? ` (git: ${r.stderr.trim().split('\n').at(-1)})` : ''}`);
   return r.stdout.trim();
 }
@@ -248,19 +291,44 @@ export async function promote(deps: PromoteDeps, inputs: PromoteInputs): Promise
     rollback, reason,
   };
   const message = renderTagMessage(fields);
+
+  // The evidence record: carried forward from the previous record commit (none before the first promotion).
+  await deps.git(['fetch', '--no-tags', 'origin', `+${RECORD_BRANCH_REF}:${RECORD_REMOTE_REF}`]);
+  const priorRecordCommit = (await refExists(deps, `${RECORD_REMOTE_REF}^{commit}`))
+    ? await gitOut(deps, ['rev-parse', `${RECORD_REMOTE_REF}^{commit}`], `Could not resolve ${RECORD_REMOTE_REF}; re-run this workflow.`)
+    : null;
+  let priorKnownBad: string[] = [];
+  if (priorRecordCommit) {
+    const shown = await deps.git(['show', `${priorRecordCommit}:${RECORD_FILE}`]);
+    try {
+      const prior = JSON.parse(shown.stdout) as { known_bad?: unknown };
+      priorKnownBad = Array.isArray(prior.known_bad) ? prior.known_bad.filter((v): v is string => typeof v === 'string' && VERSION_RE.test(v)) : [];
+    } catch {
+      throw new Refusal(`The previous stable record (${priorRecordCommit}:${RECORD_FILE}) is not JSON, so its known_bad list cannot be carried forward; repair the stable-record branch by hand (${DOCS}).`);
+    }
+  }
+  const knownBad = mergeKnownBad(priorKnownBad, inputs.withdraw ?? [], version);
+  const blob = await gitOut(deps, ['hash-object', '-w', '--stdin'], 'Could not write the stable record blob; re-run this workflow.', renderRecord(fields, knownBad));
+  const recordTree = await gitOut(deps, ['mktree'], 'Could not write the stable record tree; re-run this workflow.', `100644 blob ${blob}\t${RECORD_FILE}\n`);
+  const recordCommit = await gitOut(deps, ['commit-tree', recordTree, ...(priorRecordCommit ? ['-p', priorRecordCommit] : []), '-m', `stable record: v${version}`],
+    'Could not commit the stable record; re-run this workflow.');
+  deps.log(`[promote-stable] stable record ${recordCommit} (known_bad: ${knownBad.length ? knownBad.join(', ') : 'none'}).`);
+
   if (!recordExists) {
     await gitOut(deps, ['tag', '-a', '--cleanup=verbatim', '-m', message, `stable-v${version}`, commit], `Could not create the tag stable-v${version}; re-run this workflow.`);
   }
   await gitOut(deps, ['tag', '-a', '-f', '--cleanup=verbatim', '-m', message, 'stable', commit], 'Could not create the stable tag; re-run this workflow.');
-  // One atomic push: the record tag and stable land together or not at all. stable is leased on the tag object read above
-  // (empty: stable must not exist yet), so a concurrent move refuses instead of being overwritten.
-  await gitOut(deps, ['push', '--atomic', `--force-with-lease=${STABLE_REF}:${current?.tagObject ?? ''}`, 'origin',
-    ...(recordExists ? [] : [`${recordRef}:${recordRef}`]), `${STABLE_REF}:${STABLE_REF}`],
+  // One atomic push: the record tag, stable and the evidence record land together or not at all. stable and the record
+  // branch are leased on the values read above (empty: must not exist yet), so a concurrent move refuses instead of being
+  // overwritten.
+  await gitOut(deps, ['push', '--atomic', `--force-with-lease=${STABLE_REF}:${current?.tagObject ?? ''}`,
+    `--force-with-lease=${RECORD_BRANCH_REF}:${priorRecordCommit ?? ''}`, 'origin',
+    ...(recordExists ? [] : [`${recordRef}:${recordRef}`]), `${STABLE_REF}:${STABLE_REF}`, `${recordCommit}:${RECORD_BRANCH_REF}`],
     'Moving the stable tag failed and nothing changed on the remote (stable may have moved since this run read it); re-run this workflow, which re-reads the current stable.');
   if (!recordExists) deps.log(`[promote-stable] pushed record tag stable-v${version}.`);
   deps.log(`[promote-stable] stable now points at v${version} (${commit}).`);
 
-  const promotion: Promotion = { ...fields, recordCreated: !recordExists };
+  const promotion: Promotion = { ...fields, recordCreated: !recordExists, knownBad };
   deps.summary(renderSummary(promotion));
   return promotion;
 }
@@ -275,8 +343,8 @@ export function processDeps(env: NodeJS.ProcessEnv = process.env, cwd = process.
       if (r.status !== 0) throw new Error(`gh api ${path} failed: ${(r.stderr || r.error?.message || '').trim()}`);
       return JSON.parse(r.stdout);
     },
-    async git(args) {
-      const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+    async git(args, input) {
+      const r = spawnSync('git', args, { cwd, env, encoding: 'utf8', ...(input !== undefined ? { input } : {}) });
       return { code: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
     },
     now: () => new Date(),
@@ -293,6 +361,7 @@ if (import.meta.main) {
     scoreboardUrl: env.PROMOTE_SCOREBOARD_URL ?? '',
     rollback: env.PROMOTE_ROLLBACK === 'true',
     reason: env.PROMOTE_REASON ?? '',
+    withdraw: (env.PROMOTE_WITHDRAW ?? '').split(',').map(v => v.trim().replace(/^v/, '')).filter(Boolean),
   };
   const deps = processDeps();
   try {

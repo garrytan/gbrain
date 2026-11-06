@@ -46,6 +46,7 @@ done
 # The runtime pin follows the repository's supported CI release. Repair reads
 # its prior version from the non-secret receipt; no mutable latest runtime URL.
 gbrain_bun_version=1.4.4
+gbrain_install_ref=latest-stable
 gbrain_source_ref=''
 if [[ -f "$gbrain_receipt" && "$gbrain_upgrade" == 0 ]]; then
   gbrain_prior_bun=$(sed -n 's/.*"bun_version": *"\([0-9.]*\)".*/\1/p' "$gbrain_receipt" | head -1)
@@ -56,7 +57,7 @@ fi
 if [[ -z "$gbrain_source_ref" ]]; then
   # Resolve the stable tag once; the installed receipt records this immutable
   # commit, so an ordinary repair never upgrades the software implicitly.
-  gbrain_refs=$(git ls-remote https://github.com/garrytan/gbrain.git 'refs/tags/latest-stable' 'refs/tags/latest-stable^{}')
+  gbrain_refs=$(git ls-remote https://github.com/garrytan/gbrain.git "refs/tags/$gbrain_install_ref" "refs/tags/$gbrain_install_ref^{}")
   gbrain_source_ref=$(printf '%s\n' "$gbrain_refs" | awk '/\^\{\}$/ {print $1; found=1} END {if (!found) exit 1}') || gbrain_source_ref=$(printf '%s\n' "$gbrain_refs" | awk 'NR==1 {print $1}')
 fi
 [[ "$gbrain_source_ref" =~ ^[a-f0-9]{40}$ ]] || { echo 'Could not resolve the GBrain package commit.' >&2; exit 1; }

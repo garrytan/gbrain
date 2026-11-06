@@ -11,10 +11,11 @@ name: Promote stable
 # tree; and the version is newer than the current stable (an older one only
 # with rollback=true and a reason). It then creates the immutable annotated
 # record tag stable-v<version> (first promotion only) and moves the annotated
-# `stable` tag to the release commit, both carrying the same key: value body.
-# Clients read refs/tags/stable^{}; the update check reads
-# raw.githubusercontent.com/<repo>/stable/VERSION, mirroring latest-stable
-# in release.yml.
+# `stable` tag to the release commit, both carrying the same key: value body,
+# and commits the evidence record stable.json (version, commit, tree, soak run,
+# known_bad) to the stable-record branch, all in one atomic push. Clients read
+# raw.githubusercontent.com/<repo>/stable-record/stable.json and check it
+# against refs/tags/stable^{} (src/core/stable-channel.ts).
 #
 # Inputs reach the script through env only, never interpolated into run:
 # (script injection). No dependency install runs in this job, so the
@@ -46,9 +47,14 @@ on:
         required: false
         type: string
         default: ''
+      withdraw:
+        description: Versions to add to the stable record's known_bad list, comma-separated (clients on them are offered the current stable)
+        required: false
+        type: string
+        default: ''
 
 permissions:
-  contents: write  # create and push the stable-v<version> and stable tags
+  contents: write  # create and push the stable-v<version> and stable tags and the stable-record branch
   actions: read    # read the soak run
 
 concurrency:
@@ -77,6 +83,7 @@ jobs:
           PROMOTE_SCOREBOARD_URL: ${{ inputs.scoreboard_url }}
           PROMOTE_ROLLBACK: ${{ inputs.rollback }}
           PROMOTE_REASON: ${{ inputs.reason }}
+          PROMOTE_WITHDRAW: ${{ inputs.withdraw }}
         run: |
           git config user.name "gbrain-release-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

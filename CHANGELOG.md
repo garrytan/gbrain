@@ -10,6 +10,28 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Updates follow a stable channel by default; every release is one setting away on alpha.**
+
+gbrain publishes a release for nearly every merged change, more than a hundred a week. Every install followed all of them, so an always-on brain upgraded several times a week onto releases no one had run on a production-shaped brain. Installs now follow the stable channel: weekly releases a maintainer promoted after the soak passed on that release's exact tree. The alpha channel (the old `latest`, which still works as an alias) keeps every release.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A new or existing install with no channel set | offered every published release | offered the newest stable release; one notice on stderr says so, once per brain home |
+| Following every release | the default | `gbrain config set self_upgrade.channel alpha` (or `--channel alpha`, `GBRAIN_RELEASE_CHANNEL=alpha`) |
+| Which stable release is offered | `VERSION` at the `stable` tag | the published evidence record (`stable.json` on `stable-record`): version, commit, tree, soak run, withdrawn versions; a record without the evidence is never trusted |
+| Stable has no usable answer | `stable_channel_unresolved` on upgrade | `stable_missing`, `stable_invalid` or `stable_unreadable`; the background check only reports it, an explicit upgrade exits non-zero, neither falls back to alpha |
+| An install ahead of stable (it ran alpha) | — | offered nothing until stable passes it; never downgraded unless its version was withdrawn |
+| Update cache and snooze | one file for every channel; a snooze ended when a newer release shipped | one per channel, tagged with the evidence policy; a snooze holds its whole window (24 h, 48 h, 7 days); a stable rollback below it clears it |
+| `gbrain upgrade --dry-run` | refused without `--restart-only` | reports channel, its source, current and target version and the action, installing nothing |
+| doctor `self_upgrade_health` | — | names the channel and its source, warns on an invalid channel or a failed stable check |
+| `Promote stable` workflow | moved the `stable` tag | also commits the evidence record in the same atomic push; new `withdraw` input adds versions to `known_bad` |
+
+Install commands still name `latest-stable`. Every install surface now goes through one constant (`src/core/install-ref.ts`), checked by `bun run check:install-ref`; it moves to `stable` after a release with this change has been promoted.
+
 ## [0.60.593.0] - 2026-11-06
 
 **`gbrain repair failed-writes` now previews a brain with a large write journal in about a second instead of timing out.** On Postgres, the preview of refused writes read the request table once per refused write, and one of those reads walked the table from that write to its end. With hundreds of refused writes and a journal of over a million requests, the preview ran for minutes and the server's statement timeout ended it with a bare `internal_error`, so the operator had no way to see or recover the lost writes. The preview now classes refused writes together in set reads, each sized so it stays short even on a page with hundreds of refused writes and a long history. On a synthetic journal of 1.5 million requests with over 800 refused writes it took about a second (it took 265 seconds before), with the same classes and the same preview hash. When a preview read does still run past the timeout, it refuses `repair_preview_timeout` with a fix instead of `internal_error`, and nothing is saved.

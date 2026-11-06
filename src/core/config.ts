@@ -284,7 +284,7 @@ export interface GBrainConfig {
    */
   self_upgrade?: {
     mode?: 'auto' | 'notify' | 'off';
-    channel?: 'latest' | 'stable';
+    channel?: 'stable' | 'alpha' | 'latest';
     /** Set true once the upgrade-time consent prompt has been shown. */
     mode_prompted?: boolean;
     /** Quiet-hours window for the autopilot silent channel. */

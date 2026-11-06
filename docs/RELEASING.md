@@ -590,8 +590,9 @@ git push origin "+refs/tags/v<VERSION>^{commit}:refs/tags/latest-stable"
 
 ### Stable channel promotion
 
-The stable channel is a slower ref than `latest-stable`: a release reaches it
-only after the production-shaped soak passed on its exact git tree. A
+The stable channel, the clients' default since GBRA-224, is a slower ref than
+`latest-stable` (the alpha channel): a release reaches it only after the
+production-shaped soak passed on its exact git tree. A
 maintainer promotes with `.github/workflows/promote-stable.yml`
 (`scripts/promote-stable.ts`), weekly or whenever a soak passes; both go
 through the same dispatch:
@@ -603,8 +604,10 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
 
 - **Refs.** `refs/tags/stable` is an annotated tag on the promoted release
   commit, moved only by this workflow. Clients peel it (`refs/tags/stable^{}`)
-  and take the `v<VERSION>` tag on that commit; the update check reads
-  `https://raw.githubusercontent.com/<owner>/<repo>/stable/VERSION`.
+  and take the `v<VERSION>` tag on that commit. The same push commits the
+  evidence record `stable.json` (the tag fields plus `known_bad`) to the
+  `stable-record` branch; clients read only that file and refuse a record
+  without its evidence (`stable_invalid`, `src/core/stable-channel.ts`).
   `refs/tags/stable-v<VERSION>` is an immutable annotated record created on a
   version's first promotion and never moved or deleted. Both carry the same
   message: a title line (`gbrain`, then `stable channel: v<VERSION>`), then one
@@ -615,7 +618,9 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
 - **Inputs.** `version` (an existing `v<VERSION>` release tag),
   `soak_run_url` (the soak's Actions run URL, optionally
   `/attempts/<n>`), `scoreboard_url` (optional, defaults to the run URL),
-  `rollback` (default false) and `reason` (required with rollback).
+  `rollback` (default false), `reason` (required with rollback) and
+  `withdraw` (versions added to the carried-forward `known_bad` list;
+  clients on one are offered the current stable, even when older).
 - **Who.** Only an actor with the admin or maintain role; anyone else is
   refused.
 - **Soak run.** The run must belong to this repository, be completed with
@@ -636,8 +641,9 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   no-op refusal. `rollback=true` with a `reason` moves stable to an older
   release, or back to one promoted before (its record tag already exists and
   is kept; without rollback an existing record tag is refused).
-- **One atomic push.** The record tag and `stable` land together or not at
-  all, `stable` leased on the value the run read, so a concurrent move fails
+- **One atomic push.** The record tag, `stable` and the `stable-record`
+  branch land together or not at all, `stable` and `stable-record` leased on
+  the values the run read, so a concurrent move fails
   the run instead of being overwritten and a failed push leaves nothing to
   clean up before the re-run. The `promote-stable` concurrency group runs one promotion at a
   time. The run's step summary lists the version, commit, tree, soak run,
