@@ -51,6 +51,8 @@ Flags:
   --require-clean     Unattended rule: --pull skips when the checkout has any local edit;
                       a push never advances a checkout that has one, and never waits for
                       another push (it asks that push to publish HEAD too: push_deferred).
+  --base <p>=<blob>   Refuse (commit_base_moved) unless path p's blob at HEAD is still <blob> (full object
+                      id, or absent for a new file); repeat per path. Each p must also be committed.
   --resolve <p>=<v>   After integrate_conflict: which side wins for path p (ours, theirs, file:<merged copy>).
   --expect-remote <sha>  Required with --resolve: the remote commit the choice was made against
                       (printed by integrate_conflict); a remote that moved since is reported again.
@@ -75,12 +77,12 @@ is installed.`;
 
 interface Parsed {
   sub?: string; path?: string; message?: string; branch?: string; expectRemote?: string; json: boolean; pushOnly: boolean; pull: boolean;
-  requireClean: boolean; dryRun: boolean; help: boolean; keepCheckout: boolean; paths: string[]; resolve: string[];
+  requireClean: boolean; dryRun: boolean; help: boolean; keepCheckout: boolean; paths: string[]; resolve: string[]; base: string[];
   pending: boolean; allowOutside: boolean; install: boolean; uninstall: boolean;
 }
 
 function parse(args: string[]): Parsed {
-  const p: Parsed = { json: false, pushOnly: false, pull: false, requireClean: false, dryRun: false, help: false, keepCheckout: false, paths: [], resolve: [],
+  const p: Parsed = { json: false, pushOnly: false, pull: false, requireClean: false, dryRun: false, help: false, keepCheckout: false, paths: [], resolve: [], base: [],
     pending: false, allowOutside: false, install: false, uninstall: false };
   let rest = false;
   for (let i = 0; i < args.length; i++) {
@@ -108,6 +110,7 @@ function parse(args: string[]): Parsed {
     else if (a === '--path' || a.startsWith('--path=') || a === '--repo' || a.startsWith('--repo=')) p.path = take('--path');
     else if (a === '-m' || a === '--message' || a.startsWith('--message=')) { const m = take('--message'); p.message = p.message === undefined ? m : `${p.message}\n\n${m}`; }
     else if (a === '--resolve' || a.startsWith('--resolve=')) p.resolve.push(take('--resolve'));
+    else if (a === '--base' || a.startsWith('--base=')) p.base.push(take('--base'));
     else if (a === '--branch' || a.startsWith('--branch=')) p.branch = take('--branch');
     else if (a === '--expect-remote' || a.startsWith('--expect-remote=')) p.expectRemote = take('--expect-remote');
     else if (!p.sub) p.sub = a;
@@ -149,10 +152,17 @@ export async function runGit(args: string[]): Promise<number> {
     const cwd = p.path ? realpathSync(p.path) : process.cwd();
     if ((p.pull && p.pushOnly) || (p.pull && (p.message || p.paths.length || p.resolve.length || p.branch))
       || (p.pushOnly && (p.message || p.paths.length)) || ((p.resolve.length || p.branch || p.expectRemote || p.keepCheckout) && !p.pushOnly)
-      || (p.pending && (p.pull || p.pushOnly || p.paths.length)) || (p.allowOutside && p.pull)) {
+      || (p.pending && (p.pull || p.pushOnly || p.paths.length)) || (p.allowOutside && p.pull) || (p.base.length && (p.pull || p.pushOnly || p.pending))) {
       throw opError('commit_paths_invalid', 'These flags do not combine.',
         'Use one mode: -m <msg> -- <paths> (commit + push), --pending [-m <msg>], --push-only [--keep-checkout] [--branch <b>] [--expect-remote <sha> --resolve ...], or --pull [--require-clean].');
     }
+    const bases = new Map(p.base.map(spec => {
+      const eq = spec.lastIndexOf('=');
+      const [path, blob] = [spec.slice(0, eq), spec.slice(eq + 1)];
+      if (eq <= 0 || !(blob === 'absent' || /^([0-9a-f]{40}|[0-9a-f]{64})$/.test(blob))) throw opError('commit_paths_invalid', `--base ${spec} is not <path>=<blob>.`,
+        'Pass the full object id git rev-parse HEAD:<path> printed when you read the file, or absent for a new file.');
+      return [path, blob] as const;
+    }));
     if ((p.resolve.length && !p.expectRemote) || (p.expectRemote && !/^[0-9a-f]{7,64}$/i.test(p.expectRemote))) {
       throw opError('commit_paths_invalid', '--resolve and --expect-remote <sha> go together.',
         'Copy both from the integrate_conflict report: --expect-remote names the remote commit your choice was made against.');
@@ -184,6 +194,7 @@ export async function runGit(args: string[]): Promise<number> {
       ...(p.branch ? { branch: p.branch } : {}),
       ...(p.resolve.length ? { resolutions: parseResolutions(p.resolve) } : {}),
       ...(p.expectRemote ? { expectRemote: p.expectRemote } : {}),
+      ...(bases.size ? { bases } : {}),
     });
     if (result.outcome === 'push_deferred') {
       emit(json, { ...result, repo }, `push deferred: another push is running in ${repo} and will publish HEAD too`);

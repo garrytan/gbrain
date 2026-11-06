@@ -790,6 +790,16 @@ More: [docs/guides/write-refusals.md#colon_slug_windows_write_through](../../doc
 |---|---|---|---|---|---|---|
 | The command failed before it wrote its JSON result. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### commit_base_moved
+
+<a id="commit_base_moved"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A file named with --base changed at HEAD since the writer read it, so nothing was staged or committed. | --base <path>=<blob> binds a commit to the bytes the writer read; another writer committed that file since, and committing now would overwrite its change. | Read the file at HEAD again, redo the change on it, and rerun with the new --base the message names. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-checkout-git.md#base-check](../../docs/guides/shared-checkout-git.md#base-check)
+
 ### commit_lock_busy
 
 <a id="commit_lock_busy"></a>

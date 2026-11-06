@@ -206,6 +206,22 @@ Every run also appends a line to `~/.gbrain/brain-push.log`, which
 reports it for that checkout until a publish resolves it.
 
 <a id="source-roots"></a>
+## Base check
+
+A script that reads a file, edits it and commits can overwrite a change another writer committed in
+between. `--base` closes that gap: record the blob when you read the file
+(`git rev-parse HEAD:<path>`, or `absent` for a file that does not exist yet) and pass it back:
+
+```bash
+gbrain git commit-push --base notes/summary.md=<blob> -m "update summary" -- notes/summary.md
+```
+
+Under the commit lock and before anything is staged, each `--base` path's blob at HEAD must still
+equal the one given. Otherwise the command refuses `commit_base_moved` naming the path, the base and
+HEAD's blob; nothing is staged or committed. Read the file at HEAD again, redo the change and rerun with
+the new base. Every `--base` path must also be one of the committed paths. Pages the agent also edits
+are better written with `gbrain put` (put_page), which carries its own revision check.
+
 ## Source roots
 
 A brain can be one folder inside a larger repository. `gbrain sources harden`
