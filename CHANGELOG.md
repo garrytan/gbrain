@@ -46,6 +46,43 @@ QM clients that read v1 keep working unchanged. A shared-scope turn should name 
 | `recall` `question` over 2,000 characters | bare `invalid_params` | `invalid_params` reason `question_too_long`, detail `max_chars=2000 received_chars=<n>`; never cut |
 | `acting_user` refused `argument_without_attestation` | no detail | detail `missing=x-qm-actor`, `missing=attest_right` or both, also in `structuredContent.error` |
 
+## [0.60.589.0] - 2026-11-06
+
+**gbrain can now wake an agent's conversation when a job it started finishes, through Wakeshift. It's off until the brain owner turns it on.**
+
+An agent that submits a long job no longer has to poll. With reporting back on, it calls `watch_job` with the job id and ends its turn. When the job completes, fails, dies or is cancelled, Wakeshift wakes that conversation with one line naming the job and the `get_job` call that reads the result. The wake is a pointer (the job id, kind, status and times), never page text, titles or slugs, so it can't widen what anyone reads. The owner turns it on with `gbrain wakeshift enable` on the brain host, using a key from their own Wakeshift app, and `gbrain wakeshift disable` turns it off at once. Until then nothing changes: the tools aren't listed, no rows are written and nothing is sent. This release reports back only on brains that serve their owner alone. `wait_job` and `gbrain jobs wait <id>` remain the way to wait with nothing leaving the machine. Guide: docs/guides/wakeshift.md.
+
+### Itemized changes
+
+- New MCP tools `watch_job`, `list_watches` and `unwatch`, listed only while reporting back is on and a usable key is on the host. `watch_job` runs the same owner check as `get_job`: a job the caller doesn't own reads like a missing one and nothing is sent. A watch belongs to the credential that made it, and a revoked credential's watch ends without a wake.
+- New `gbrain wakeshift enable | disable | status | test`. `enable` asks consent (it sends data off the machine and stores a credential), refuses a brain with live access members, checks the key with Wakeshift and publishes gbrain's `gbrain.job.finished` event. The key comes from `WAKESHIFT_API_KEY` or a 0600 `~/.gbrain/wakeshift.key`, and is never stored in the database or printed (status shows its fingerprint).
+- Delivery runs inside `gbrain serve` (stdio and HTTP) and the job worker every 5 seconds, and once more at the end of `gbrain jobs work`. A watch on a job that already finished wakes at once. A failed delivery is retried at most 5 times over about 40 minutes, then the watch ends and the conversation is told. Jobs are never slowed by Wakeshift.
+- New doctor check `wakeshift`: a key file other users can read, reporting back enabled without a usable key, and watches that died or were refused as `id_reused` in the last 7 days.
+- Schema migration v290 adds `wake_subscriptions` (empty unless reporting back is on). Repo-less brains get it unchanged.
+- `--log-full-params` on `gbrain serve --http` now redacts a tool call's `session_key` argument.
+
+## [0.60.588.0] - 2026-11-06
+
+**Engines that make their first write at the same moment no longer fail one of the writes registering the same writer.** Two or more engines opened from the same settings on one Postgres database (the same writer id, credential and lane), or two processes that share one credential file, could both find no registration and both insert it. The loser hit the credential's unique index and failed with `duplicate key value violates unique constraint "persistence_local_writers_credential_hash_key"`; four engines on a fresh database lost three of their four first writes. Registration is now idempotent under that race, and every refusal still holds. PGLite was never affected, because its single connection runs the read and the insert one after the other. Contributed by @bradgessler.
+
+### Itemized changes
+
+- `src/core/persistence/identity.ts`: the registration insert names no conflict target, so a conflict on either unique index (the id or the credential hash) does nothing. When nothing was inserted, the row under the id is read again and checked exactly as an existing row is. The same credential and lane pass, while a revoked row or another credential or lane under the id refuses `permission_denied`. No row under the id means the credential belongs to another registration, which now refuses `permission_denied` with a fix where it used to raise a raw 23505.
+- `test/e2e/engine-open-postgres.test.ts`: four engines opened from one writer value make their first writes at once, twelve rounds on a scratch database (master: `['23505','resolved','resolved','resolved']`). A second case forces the lost-insert branch and checks each refusal on Postgres.
+- `test/engine-open.test.ts`: the same lost-insert cases on PGLite, plus four concurrent first writes on one engine landing under one registration.
+
+## [0.60.587.0] - 2026-11-06
+
+**An HTTP MCP caller can now say which AI made a write, and attribution reads show it.** Send `X-Gbrain-Agent-Label: Claude Code` (or `Codex`, or a job name) on a request, and the writes that request makes itself show `agent_label` in `gbrain attribution` / `get_write_attribution` and in `get_versions` for admin and local readers. This answers "which of my AIs wrote this?" when several share one OAuth client or token. The label is text the caller declares and gbrain does not verify. The principal is still who was authorized, and no grant, access rule or trust tier reads it. A request without the header is recorded exactly as before, so nothing changes until a caller sends it. Contributed by @JamisonMercurio (#8664).
+
+### Itemized changes
+
+- Both HTTP transports (the OAuth `serve --http` mount and the legacy bearer transport) read the header. Admission stores it on the request's existing `authority` record as `agentLabel`, so there's no new column or migration, and repo-less brains record it too. Stdio MCP and the local CLI have no request headers and record no label.
+- A label is 1 to 120 printable ASCII characters after trimming. Anything else (control, bidi, zero-width or non-ASCII characters, or a longer value) is dropped, never refused.
+- Jobs a labelled request queues (`submit_job` remote jobs and agent jobs) run under their own authority and record no label.
+- Both transports' CORS preflight now allows the header, so a browser client on an origin in `GBRAIN_HTTP_CORS_ORIGIN` can send it without its whole MCP call being blocked.
+- `test/write-agent-label.test.ts` covers both transports, a repo-less brain, the parser bounds, a stored authority that is otherwise identical with and without a label, and a read-only token that is still refused. The export-surface golden gains the optional `agentLabel` and `agent_label` fields.
+
 ## [0.60.586.0] - 2026-11-06
 
 **A `remember` refused for its arguments now names the whole valid call, so an agent that never read the schema saves on its next try.**

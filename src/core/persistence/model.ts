@@ -4,6 +4,8 @@ import { assertRecoveryVersion } from './recovery-version.ts';
 export type Principal = { kind: 'oauth_client' | 'legacy_token' | 'local_cli' | 'local_stdio' | 'application'; id: string };
 export type RequestState = 'queued' | 'running' | 'recovering' | 'committed' | 'conflict' | 'failed' | 'cancelled';
 export interface WriteAuthority {
+  /** The caller's self-declared agent label (X-Gbrain-Agent-Label). Unverified text: nothing authorizes on it. */
+  agentLabel?: string;
   version: 1;
   principal: Principal;
   remote: boolean;

@@ -1223,7 +1223,7 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'oauth_clients.attest_actor',
   'oauth_clients.attest_ops',
   'oauth_tokens.grant_type',
-  // GST-1113 (migration v290) - attest_sources, the scope sources an attested memory_write may name. Same posture as
+  // GST-1113 (migration v291) - attest_sources, the scope sources an attested memory_write may name. Same posture as
   // v286: absent from both schema blobs; readers go through to_jsonb(row), so a schema without it reads as none.
   'access_tokens.attest_sources',
   'oauth_clients.attest_sources',

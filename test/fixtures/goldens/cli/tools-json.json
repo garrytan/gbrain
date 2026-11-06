@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 280017,
-    "stdoutSha256": "7199788b524a1f69561261a42200e740271217b3e48caa855e8a674e92eeae07",
+    "stdoutBytes": 282967,
+    "stdoutSha256": "73f135de04ba7cceced4d9fd952b23aaefd7fb4cad5ebdf3dce1aca953c70f84",
     "toolNames": [
       "remember",
       "entity",
@@ -107,6 +107,9 @@
       "submit_agent",
       "get_agent_job",
       "get_job_stats",
+      "watch_job",
+      "list_watches",
+      "unwatch",
       "find_orphans",
       "rank_entities",
       "get_calibration_profile",
@@ -4935,6 +4938,84 @@
             }
           },
           "required": [],
+          "type": "object"
+        },
+        "scope": "admin"
+      },
+      {
+        "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn or keep working. The wake names the job and says to call get_job for the result; it carries no page text. Agent-scoped tokens watch only jobs they own. If no wake arrives, call wait_job.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "watch_job",
+        "parameters": {
+          "conversation_id": "string?",
+          "harness": "string?",
+          "id": "number",
+          "session_key": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "conversation_id": {
+              "description": "Your own ID for this conversation, if your program gives you one. Cursor and Grok Bot: the output of `printenv CURSOR_CONVERSATION_ID`. Codex and Antigravity send it automatically; others leave it empty",
+              "type": "string"
+            },
+            "harness": {
+              "description": "The program you're running in: codex, claude-code, cursor (local CLI or IDE), cursor-cloud (Cursor cloud agent), grok-bot, copilot-cli, opencode, antigravity, openclaw (even when it runs your turns in Codex), hermes, chatgpt, or your program's name if it isn't listed",
+              "type": "string"
+            },
+            "id": {
+              "description": "Job ID (from submit_job, submit_agent or list_jobs).",
+              "type": "number"
+            },
+            "session_key": {
+              "description": "This conversation's session_key, from an earlier result (a secret token, or a handle such as claude-code#2). Keep it to this conversation; don't share or log it.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
+        "scope": "admin"
+      },
+      {
+        "description": "List the jobs this connection is watching through Wakeshift (open watches, plus ones that ended in the last day) with their state: open, delivered, dead or ended.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "list_watches",
+        "parameters": {},
+        "required_scopes": [],
+        "schema": {
+          "properties": {},
+          "required": [],
+          "type": "object"
+        },
+        "scope": "admin"
+      },
+      {
+        "description": "Stop watching a job: ends this connection's open Wakeshift watches on it, so no wake comes for it. Returns how many ended (0 when none was open).",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "unwatch",
+        "parameters": {
+          "job": "number"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "job": {
+              "description": "Job ID you passed to watch_job.",
+              "type": "number"
+            }
+          },
+          "required": [
+            "job"
+          ],
           "type": "object"
         },
         "scope": "admin"
