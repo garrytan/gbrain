@@ -1245,8 +1245,6 @@ export async function initPGLite(opts: {
     // v0.42: new installs default self-upgrade to NOTIFY (a nudge on every
     // gbrain invocation). mode_prompted=true so the upgrade-time banner doesn't
     // also fire on a fresh install. Hands-off: gbrain config set self_upgrade.mode auto
-    // GBRA-346: a new install follows the soaked stable channel; an existing
-    // brain's channel (or its absence) is never changed by a re-init.
     config.self_upgrade = { mode: 'notify', mode_prompted: true, ...(freshContentDatabase && !existingFile.engine ? { channel: 'stable' as const } : {}), ...(config.self_upgrade ?? {}) };
     // MEMORY_VERBS v1 [D6C]: TTHW stamp — `gbrain protocol stats` derives
     // install→first-verb-call from this. Idempotent on re-init.
@@ -1589,8 +1587,6 @@ export async function initPostgresCore(opts: {
     // v0.42: new installs default self-upgrade to NOTIFY (a nudge on every
     // gbrain invocation). mode_prompted=true so the upgrade-time banner doesn't
     // also fire on a fresh install. Hands-off: gbrain config set self_upgrade.mode auto
-    // GBRA-346: a new install follows the soaked stable channel; an existing
-    // brain's channel (or its absence) is never changed by a re-init.
     config.self_upgrade = { mode: 'notify', mode_prompted: true, ...(freshContentDatabase && !existingFile.engine ? { channel: 'stable' as const } : {}), ...(config.self_upgrade ?? {}) };
     // MEMORY_VERBS v1 [D6C]: TTHW stamp (see the PGLite path).
     config.protocol_installed_at = config.protocol_installed_at ?? new Date().toISOString();
