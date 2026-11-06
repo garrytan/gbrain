@@ -545,8 +545,10 @@ export type RequestLogStatus = 'success' | 'success_with_warnings' | 'accepted_p
 
 /** #5249: the receipt of a write the dispatcher returned as accepted but not yet committed. */
 export function acceptedPendingReceipt(result: ToolResult): WriteReceipt | null {
+  const text = result.content[0]?.text ?? '{}';
+  if (!result.isError && !/^\s*\{\s*"status"\s*:\s*"pending"/.test(text.slice(0, 64))) return null;
   try {
-    const parsed: unknown = JSON.parse(result.content[0]?.text ?? '{}');
+    const parsed: unknown = JSON.parse(text);
     return result.isError ? admittedPendingReceipt(parsed) : deferredPendingReceipt(parsed);
   } catch { return null; }
 }

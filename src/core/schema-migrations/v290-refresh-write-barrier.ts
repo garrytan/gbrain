@@ -1,4 +1,8 @@
 import type { Migration } from './types.ts';
+import { buildIndexOnline, migrationNotice } from './helpers.ts';
+
+const PERSISTENCE_DEFERRED_INDEX = { name: 'persistence_requests_deferred', table: 'persistence_requests',
+  sql: `CREATE INDEX IF NOT EXISTS persistence_requests_deferred ON persistence_requests(worktree_id, sequence) WHERE state='deferred'` } as const;
 
 // Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
 // ("Canonical schema sources") for when schema.sql or a TS fragment also changes.
@@ -15,9 +19,11 @@ import type { Migration } from './types.ts';
 //   barrier-aware claim of a released refresh), conflict, failed or cancelled.
 // - persistence_consumers.capabilities: what a live consumer can drain; admission
 //   defers only when every live consumer of the owner host can.
-// Postgres swaps the state CHECK with ADD ... NOT VALID then VALIDATE (no long
-// ACCESS EXCLUSIVE scan), outside a transaction like v114; PGLite does it in one
-// shot. The number is a placeholder restamped at the merge slot.
+// Postgres swaps the state CHECK and adds the deferred_refresh_id foreign key with
+// ADD ... NOT VALID then VALIDATE (no long ACCESS EXCLUSIVE scan of the permanent
+// receipts), outside a transaction like v114, and builds the deferred index
+// CONCURRENTLY like v223; PGLite does each in one shot. The number is a placeholder
+// restamped at the merge slot.
 export const v290: Migration = {
   version: 290,
   name: 'refresh_write_barrier',
@@ -29,9 +35,15 @@ export const v290: Migration = {
     ALTER TABLE persistence_worktree_refreshes ADD COLUMN IF NOT EXISTS barrier_sequence bigint;
     ALTER TABLE persistence_worktree_refreshes ADD COLUMN IF NOT EXISTS released_at timestamptz;
     UPDATE persistence_worktree_refreshes SET released_at=COALESCE(completed_at,updated_at) WHERE state IN ('completed','aborted') AND released_at IS NULL;
-    ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS deferred_refresh_id uuid REFERENCES persistence_worktree_refreshes(id);
+    ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS deferred_refresh_id uuid;
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='persistence_requests_deferred_refresh_id_fkey' AND conrelid='persistence_requests'::regclass) THEN
+        ALTER TABLE persistence_requests ADD CONSTRAINT persistence_requests_deferred_refresh_id_fkey
+          FOREIGN KEY (deferred_refresh_id) REFERENCES persistence_worktree_refreshes(id) NOT VALID;
+      END IF;
+    END $$;
+    ALTER TABLE persistence_requests VALIDATE CONSTRAINT persistence_requests_deferred_refresh_id_fkey;
     ALTER TABLE persistence_consumers ADD COLUMN IF NOT EXISTS capabilities text[] NOT NULL DEFAULT '{}';
-    CREATE INDEX IF NOT EXISTS persistence_requests_deferred ON persistence_requests(worktree_id, sequence) WHERE state='deferred';
     CREATE OR REPLACE FUNCTION gbrain_release_refresh_barrier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
     BEGIN
       NEW.released_at := COALESCE(NEW.released_at, now());
@@ -69,7 +81,6 @@ export const v290: Migration = {
     UPDATE persistence_worktree_refreshes SET released_at=COALESCE(completed_at,updated_at) WHERE state IN ('completed','aborted') AND released_at IS NULL;
     ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS deferred_refresh_id uuid REFERENCES persistence_worktree_refreshes(id);
     ALTER TABLE persistence_consumers ADD COLUMN IF NOT EXISTS capabilities text[] NOT NULL DEFAULT '{}';
-    CREATE INDEX IF NOT EXISTS persistence_requests_deferred ON persistence_requests(worktree_id, sequence) WHERE state='deferred';
     CREATE OR REPLACE FUNCTION gbrain_release_refresh_barrier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
     BEGIN
       NEW.released_at := COALESCE(NEW.released_at, now());
@@ -101,4 +112,5 @@ export const v290: Migration = {
       CHECK (state IN ('queued','deferred','running','recovering','committed','conflict','failed','cancelled'));
   `,
   },
+  handler: async engine => { await buildIndexOnline(engine, 290, PERSISTENCE_DEFERRED_INDEX, { notice: migrationNotice }); },
 };

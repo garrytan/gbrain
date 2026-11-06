@@ -308,11 +308,12 @@ async function runForeignWriters(ctx: DoctorContext): Promise<Check[]> {
       if (found === null) partial = true; else dirty.push(...found);
     }
   }
-  dirty.sort((a, b) => b.age_ms - a.age_ms || a.checkout.localeCompare(b.checkout) || a.path.localeCompare(b.path));
+  const isOld = (d: Dirty) => d.age_ms > FOREIGN_DIRTY_WARN_MS;
+  dirty.sort((a, b) => Number(isOld(b)) - Number(isOld(a)) || a.checkout.localeCompare(b.checkout) || a.path.localeCompare(b.path));
   const foreign = reports.flatMap(r => r.foreign).sort((a, b) => b.time.localeCompare(a.time) || a.sha.localeCompare(b.sha));
   const unconfirmed = reports.flatMap(r => r.unconfirmed);
   const unknown = reports.flatMap(r => r.unknown);
-  const old = dirty.filter(d => d.age_ms > FOREIGN_DIRTY_WARN_MS);
+  const old = dirty.filter(isOld).sort((a, b) => b.age_ms - a.age_ms);
   const details = {
     window: reports.map(r => ({ common: r.common, from: r.window_from, to: new Date(now).toISOString(), ledger_start: r.ledger_start, oldest_reflog: r.oldest_reflog, uncovered: r.uncovered, ledger: r.ledger })),
     foreign, unconfirmed, unknown, dirty: dirty.slice(0, MAX_LISTED), dirty_count: dirty.length, dirty_warn_after_minutes: FOREIGN_DIRTY_WARN_MS / 60_000, partial,

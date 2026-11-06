@@ -21,7 +21,8 @@ Two problems keep a shared brain checkout from converging:
 PR B turns (1) into a deferred write that commits after the refresh, and makes (2) visible with an
 append-only ledger of every commit gbrain makes plus a doctor check that names every other commit.
 It also lets the owner install the commit guard on a managed worktree, adds a per-path base check
-to `gbrain git commit-push`, and folds four small bugs (#8615, #8616, #8617, #8662).
+to `gbrain git commit-push`, and folds three small bugs (#8615, #8617, #8662); #8616 is left out
+(below).
 
 Out of scope: who routes the box's writers (lane L2), when the flag is turned on (an operations
 decision with stated preconditions, below), and the soak cell (lane L5).
@@ -217,8 +218,9 @@ Deferred rows are durable rows; nothing about them lives in process memory.
   `refresh_barrier_1` in `capabilities`; otherwise it refuses as today. A consumer started later by
   an older binary still cannot claim a deferred row; what it could do is claim a queued row of the
   same worktree ahead of a released deferred one, which is why the upgrade order below requires
-  quiescence of older binaries before the flag goes on, and doctor reports a live consumer without
-  the capability on a brain with the flag on.
+  quiescence of older binaries before the flag goes on. A doctor check that reports a live consumer
+  without the capability on a brain with the flag on, and a gate on older refreshers, are follow-ups
+  (#8688); until they land the upgrade order below is the only guard.
 - **Upgrade order:** apply the migration (harmless with the flag off) → upgrade every binary on the
   owner host → restart resident consumers so their heartbeats carry the capability (quiescence) →
   watch a clean deploy → turn the flag on per brain.
@@ -310,7 +312,7 @@ commits are plumbing whose ref move happens later, so the line belongs where the
   `max(ledger start or oldest retained line, oldest reflog entry)` to now, and doctor prints it.
 - **Crash reconciliation (porcelain sites only).** The intent line records `head_before`, the commit
   message's sha256 and the writer. A crash between `git commit` and the commit line leaves an open
-  intent. doctor lists an unledgered commit as `gbrain_unconfirmed` only when its parent is the
+  intent. doctor lists an unledgered commit under `unconfirmed` only when its parent is the
   intent's `head_before`, its message digest matches and it was created within 60 s of the intent;
   that is a `warn`, never a `fail`, and it is **never written back into the ledger** automatically,
   so an ambiguous outcome cannot certify a foreign commit. A failed ledger append never fails the
@@ -392,9 +394,8 @@ its owner host, under the worktree's native writer lock (the owner check `source
   line; the outside branch is read as text only. The file belongs to PR A's planned set, so the hunk
   is agreed with that lane first.
 - **#8616** (an impossible calendar date such as 2026-09-31 aborted a whole preview window with
-  `internal_error` from a `::date` cast): the timeline parser rejects dates that are not real
-  calendar dates, so sync and repair agree, and the projection guards its cast so a residual bad
-  row refuses its own page (`invalid_timeline_date`, naming the line) while the window continues.
+  `internal_error` from a `::date` cast): left out of this PR. It does not reproduce on current master,
+  where the timeline date guard from #8049 already refuses the bad date; nothing changed here.
 - **#8617** (`refresh_source_changed` lost a whole tick): exactly one same-tick retry when the cause
   is HEAD moving or work arriving after the drain check, after waiting (bounded by the commit-lock
   wait) for the committing writer to finish. Ownership or membership changes are not retried. A
@@ -430,7 +431,7 @@ its owner host, under the worktree's native writer lock (the owner check `source
   capacity and age bounds; flag off unchanged; repo-less never defers; MCP `isError: false` pending;
   the two refusals non-zero on both surfaces; `--check-downgrade` exit 3 while rows remain.
 - **Base check:** a moved blob refuses `commit_base_moved` and leaves the index untouched; `absent`.
-- **Bug folds:** one red-first test each.
+- **Bug folds:** one red-first test each (#8615, #8617, #8662).
 
 ## Docs and skills
 

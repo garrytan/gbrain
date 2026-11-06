@@ -8014,7 +8014,25 @@
                 {
                   "age_ms": "<volatile>",
                   "checkout": "<home>/notes-src",
+                  "path": "fences/late.md",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fences/untracked.md",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
                   "path": "fm/image.png",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/late-broken.md",
                   "state": "untracked"
                 },
                 {
@@ -8033,24 +8051,6 @@
                   "age_ms": "<volatile>",
                   "checkout": "<home>/notes-src",
                   "path": "fm/untracked-yaml.md",
-                  "state": "untracked"
-                },
-                {
-                  "age_ms": "<volatile>",
-                  "checkout": "<home>/notes-src",
-                  "path": "fences/late.md",
-                  "state": "untracked"
-                },
-                {
-                  "age_ms": "<volatile>",
-                  "checkout": "<home>/notes-src",
-                  "path": "fences/untracked.md",
-                  "state": "untracked"
-                },
-                {
-                  "age_ms": "<volatile>",
-                  "checkout": "<home>/notes-src",
-                  "path": "fm/late-broken.md",
                   "state": "untracked"
                 }
               ],

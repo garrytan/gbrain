@@ -232,6 +232,7 @@ export const CLI_ROUTING_FLAGS: Record<string, readonly string[]> = {
   'think': ['--brain', '--source'],
   'transcripts': ['--brain', '--source'],
   'trust': ['--brain'],
+  'upgrade': ['--brain'],
   'waiting': ['--brain', '--source'],
   'watch': ['--brain', '--source'],
   'whoknows': ['--brain'],

@@ -12,6 +12,8 @@
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
+import { rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { run as runUpgradeCommand } from '../src/cli/commands/upgrade.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
@@ -270,6 +272,54 @@ test('a deferred write whose token is revoked while it waits ends permission_den
   expect(await settle(f, deferred)).toMatchObject({ state: 'failed', error_code: 'permission_denied' });
   const [{ n }] = await f.engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND slug=$2', [f.alpha, 'notes/revoked']);
   expect(Number(n)).toBe(0);
+}), 180_000);
+
+test('a write admitted after the release waits behind the released deferred write on its worktree', () => each(async f => {
+  let first!: WriteRequest;
+  const refresh = await duringRefresh(f, async () => {
+    const out = await call(f, 'put_page', { slug: 'notes/order', content: page('Order', 'the deferred version') });
+    first = await requestRow(f, out.body.request_id);
+    expect(first.state).toBe('deferred');
+  });
+  expect((await refresh).status).toBe('completed');
+  expect((await requestRow(f, first.request_id)).state).toBe('deferred');
+  const later = await call(f, 'put_page', { slug: 'notes/order', content: page('Order', 'the later version') });
+  expect(later).toMatchObject({ isError: true, body: { code: 'revision_required' } });
+  expect((await settle(f, first)).state).toBe('committed');
+  const [stored] = await f.engine.executeRaw<{ compiled_truth: string }>('SELECT compiled_truth FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [f.alpha, 'notes/order']);
+  expect(stored?.compiled_truth ?? '').toContain('the deferred version');
+}), 180_000);
+
+test('a write deferred behind a refresh that aborts commits once the refresh is released', () => each(async f => {
+  let deferred!: WriteRequest;
+  await expect(duringRefresh(f, async () => {
+    const out = await call(f, 'put_page', { slug: 'notes/after-abort', content: page('After abort', 'body') });
+    deferred = await requestRow(f, out.body.request_id);
+    expect(deferred.state).toBe('deferred');
+    writeFileSync(join(f.root, 'alpha', 'two.md'), page('Alpha two', 'A local edit the merge would overwrite.'));
+  })).rejects.toMatchObject({ code: 'refresh_dirty' });
+  rmSync(join(f.root, 'alpha', 'two.md'), { force: true });
+  const [{ state }] = await f.engine.executeRaw<{ state: string }>('SELECT state FROM persistence_worktree_refreshes WHERE id=$1::uuid', [deferred.deferred_refresh_id]);
+  expect(state).toBe('aborted');
+  expect((await settle(f, deferred)).state).toBe('committed');
+}), 180_000);
+
+test('a deferred write cancelled while its refresh runs ends cancelled with nothing applied and its counters released', () => each(async f => {
+  let deferred!: WriteRequest;
+  const before = await outstanding(f);
+  const refresh = await duringRefresh(f, async () => {
+    const out = await call(f, 'put_page', { slug: 'notes/cancelled', content: page('Cancelled', 'body') });
+    deferred = await requestRow(f, out.body.request_id);
+    expect(deferred.state).toBe('deferred');
+    const cancelled = await call(f, 'cancel_write_request', { request_id: deferred.request_id });
+    expect(cancelled.isError).toBe(false);
+    expect((await requestRow(f, deferred.request_id)).state).toBe('cancelled');
+  });
+  expect((await refresh).status).toBe('completed');
+  expect(await outstanding(f)).toBe(before);
+  const [{ n }] = await f.engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [f.alpha, 'notes/cancelled']);
+  expect(Number(n)).toBe(0);
+  expect((await deferredBacklog(f.engine)).count).toBe(0);
 }), 180_000);
 
 test('with the barrier off a write during a refresh is still refused worktree_refreshing', () => each(async f => {

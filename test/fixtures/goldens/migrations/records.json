@@ -41,6 +41,7 @@
       "PERSISTENCE_COMMITTED_WATERMARK_INDEX": "f472fa0acb542c1caebaaa3bc69fb2da1647e5e201239429fc02ccef0d669533",
       "PERSISTENCE_COMPACTABLE_INDEX": "25ee657878efb41ba9ea3a7624464ddcf66407d861659456c230366e57f230a0",
       "PERSISTENCE_DATABASE_PENDING_INDEX_SQL": "6e0f618be33d037454933ea4dea11438413d45aef35d3bd4f33e89624d6e199e",
+      "PERSISTENCE_DEFERRED_INDEX": "197c708370699aa5e8362b329abc47135ad6fc9c78ab751bd82bdb39d020c3c7",
       "PERSISTENCE_EFFECT_PARKED_INDEX_SQL": "0107863883415378d7c0dce7a0cbd5311c2c5a59fc0f81917cc8b767fd235cf2",
       "PERSISTENCE_FOREGROUND_COMMITTED_INDEX": "cb6bb9f8e9bcfd2524a04d05e5da865e92c69442bbcd438d8191d311f76d0663",
       "PERSISTENCE_REQUEST_ID_INDEX": "2c5325e86cf395f617d93a39a45593931639cd8b14fd513b6d9e7d125f16c78f",
@@ -4689,7 +4690,23 @@
         "version": 289
       },
       {
-        "handler": "absent",
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "PERSISTENCE_DEFERRED_INDEX",
+            "PLANNER_REPAIR_TABLES",
+            "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
+            "migrationNotice",
+            "quietMigrationNotices",
+            "tableRows"
+          ],
+          "sha256": "69eea77482e935be165caf0d2daa8f24128a2a5f252e28d7408ac4ed0f2ac2c9"
+        },
         "idempotent": true,
         "name": "refresh_write_barrier",
         "sql": {
@@ -4698,12 +4715,12 @@
         },
         "sqlFor": {
           "pglite": {
-            "length": 2816,
-            "sha256": "7051b03885dc4e0c97f900549a29ace6f7112815ea54bd2d5c1144ef1ea0bea8"
+            "length": 2684,
+            "sha256": "042e36e067f6244954b6d5cd895b944ed5a0e3aa3de52b56e1f774f6720e9d7b"
           },
           "postgres": {
-            "length": 2917,
-            "sha256": "30b59966ee2b45c1eb33199dd83eaa0b771b8b494e107b0f3147764c19728662"
+            "length": 3251,
+            "sha256": "69a8e657a89483837176501f038ca709ef6bb45e1f810ca1f4c11cc3daf699c2"
           }
         },
         "transaction": false,
