@@ -82,7 +82,8 @@ export const REFRESH_BARRIER_MAX_WAIT_MS = 15 * 60_000;
  * the release that would make the row claimable never both win.
  * GST-1582: one held for an import that has not landed past the limit ends `pending_import_expired` the same way; its
  * claim and its expiry both move the row, so the expiry checks the row is still unclaimed and its import still pending
- * under the request lock completeWrite takes.
+ * with the sources row locked FOR SHARE (after the protocol's brain lock, the order a fence takes them in), so an import
+ * that is landing makes the check wait and then see it landed.
  */
 export async function expireDeferredWrites(engine: BrainEngine, hostId: string, signal?: AbortSignal): Promise<WriteRequest[]> {
   const [config] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [REFRESH_BARRIER_MAX_WAIT_KEY], { signal });
@@ -110,8 +111,9 @@ export async function expireDeferredWrites(engine: BrainEngine, hostId: string, 
       AND r.created_at<now()-($2::double precision*interval '1 millisecond') ORDER BY r.sequence LIMIT 100`, [hostId, maxWaitMs], { signal });
   for (const row of imports) {
     const done = await engine.transaction(async tx => {
+      await declarePersistenceProtocol(tx);
       const [held] = await tx.executeRaw(`SELECT 1 FROM persistence_requests r JOIN sources s ON s.id=r.source_id
-        WHERE r.id=$1::uuid AND r.state='deferred' AND COALESCE(s.last_commit,'')=r.deferred_import_from`, [row.id]);
+        WHERE r.id=$1::uuid AND r.state='deferred' AND COALESCE(s.last_commit,'')=r.deferred_import_from FOR SHARE OF s`, [row.id]);
       if (!held) return null;
       return completeWrite(tx, row, 'failed', {}, { code: 'pending_import_expired',
         message: `Request ${row.request_id} waited more than ${Math.round(maxWaitMs / 1000)} s for managed sync to import a committed change to the file of ${row.slug}, and the import has not landed, so nothing was applied. Check the source with gbrain sync status --source ${row.source_id} --json, then submit the write again with a new request_id.` });
