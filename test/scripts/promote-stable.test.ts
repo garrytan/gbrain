@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { load } from 'js-yaml';
 import {
-  checkOrder, checkSoakRun, compareVersions, mergeKnownBad, normaliseWorkflowPath, parseRunUrl, processDeps, promote, Refusal, renderRecord, renderSummary, renderTagMessage,
+  checkOrder, checkSoakRun, compareVersions, mergeKnownBad, normaliseWorkflowPath, parseRunUrl, parseTagMessage, processDeps, promote, Refusal, renderRecord, renderSummary, renderTagMessage,
   type GitResult, type PromoteDeps, type PromoteInputs, type SoakRun, type TagFields,
 } from '../../scripts/promote-stable.ts';
 import { parseStableRecord } from '../../src/core/stable-channel.ts';
@@ -119,6 +119,10 @@ function fakeGit(repo: FakeRepo, calls: string[]) {
       return repo.tags[ref] ? ok(repo.versionFile ?? ref.replace(/^v/, '')) : fail;
     }
     if (cmd === 'fetch') return ok();
+    if (cmd === 'for-each-ref' && rest[0] === '--format=%(contents)') {
+      const tag = repo.tags[rest[1]!.replace(/^refs\/tags\//, '')];
+      return tag ? ok(tag.message ?? '') : fail;
+    }
     return fail;
   };
 }
@@ -486,6 +490,141 @@ describe('promote against real git', () => {
       // The evidence record moved with the tag, in the same push, and carries the withdrawal; its history is the audit log.
       expect(readRecord()).toMatchObject({ ok: true, record: { version: '1.0.0', rollback: true, known_bad: ['1.0.1'] } });
       expect(git(dir, '--git-dir', origin, 'rev-list', '--count', 'refs/heads/stable-record')).toBe('3');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('stable.json bridge for a stable promoted before the evidence record (GBRA-346)', () => {
+  const prior: TagFields = {
+    version: '0.60.361.0', commit: sha('b'), tree: sha('2'), soakRun: RUN_URL, scoreboard: RUN_URL,
+    promotedBy: 'alice-example', promotedAt: '2026-10-20T09:00:00Z', previous: '0.60.360.0', rollback: false, reason: '',
+  };
+  /** Stable at 0.60.361.0, moved by a promotion that wrote no evidence record (no stable-record branch). */
+  const preRecord = () => {
+    const h = harness();
+    h.repo.tags.stable = { commit: sha('b'), object: 'tagobj-stable-361', message: renderTagMessage(prior) };
+    h.repo.tags['stable-v0.60.361.0'] = { commit: sha('b'), object: 'tagobj-record-361', message: renderTagMessage(prior) };
+    h.repo.remote = { stable: 'tagobj-stable-361', 'stable-v0.60.361.0': 'tagobj-record-361' };
+    return h;
+  };
+
+  test('the tag message parses back to the fields it was rendered from; anything else is null', () => {
+    expect(parseTagMessage(renderTagMessage(prior))).toEqual(prior);
+    expect(parseTagMessage(renderTagMessage({ ...prior, previous: null, rollback: true, reason: 'bad release' }))).toMatchObject({ previous: null, rollback: true, reason: 'bad release' });
+    for (const junk of ['', 'hand-moved', renderTagMessage(prior).replace(/^commit: .*$/m, 'commit: nope'), renderTagMessage(prior).replace(/^soak_run: .*\n/m, '')]) {
+      expect(parseTagMessage(junk)).toBeNull();
+    }
+  });
+
+  test('re-promoting the current stable writes stable.json from its tag message and moves no tag', async () => {
+    const h = preRecord();
+    const p = await promote(h.deps, inputs());
+    expect(p).toMatchObject({ version: '0.60.361.0', previous: '0.60.360.0', promotedAt: '2026-10-20T09:00:00Z', promotedBy: 'alice-example', recordCreated: false, knownBad: [] });
+    expect(h.calls.filter(c => c.startsWith('tag -a'))).toEqual([]);
+    expect(h.calls.filter(c => c.startsWith('push'))).toEqual([
+      `push --atomic --force-with-lease=refs/tags/stable:tagobj-stable-361 --force-with-lease=refs/heads/stable-record: origin refs/tags/stable:refs/tags/stable ${h.repo.recordBranch}:refs/heads/stable-record`,
+    ]);
+    expect(h.repo.remote).toEqual({ stable: 'tagobj-stable-361', 'stable-v0.60.361.0': 'tagobj-record-361' });
+    expect(parseStableRecord(h.repo.records![h.repo.recordBranch!]!)).toMatchObject({ ok: true, record: { version: '0.60.361.0', commit: sha('b'), tree: sha('2'), soak_run: RUN_URL, previous: '0.60.360.0', rollback: false, known_bad: [] } });
+    expect(h.summaries).toHaveLength(1);
+  });
+
+  test('a published record that already matches is a no-op; a withdrawal still writes, carried forward', async () => {
+    const h = preRecord();
+    await promote(h.deps, inputs());
+    await refusedAsync(promote(h.deps, inputs()), /already the stable release, and stable\.json on stable-record records it/);
+    const first = h.repo.recordBranch!;
+    const p = await promote(h.deps, inputs({ withdraw: ['0.60.355.0'] }));
+    expect(p.knownBad).toEqual(['0.60.355.0']);
+    expect(h.calls.some(c => c.startsWith('commit-tree') && c.includes(`-p ${first}`))).toBe(true);
+    expect(JSON.parse(h.repo.records![h.repo.recordBranch!]!).known_bad).toEqual(['0.60.355.0']);
+  });
+
+  test('a record left behind by a later record-less promotion is brought up to the stable tag, keeping known_bad', async () => {
+    const h = preRecord();
+    h.repo.records = { 'rec-360': renderRecord({ ...prior, version: '0.60.360.0', commit: sha('a'), tree: sha('1'), previous: null }, ['0.60.300.0']) };
+    h.repo.recordBranch = 'rec-360';
+    await promote(h.deps, inputs());
+    expect(JSON.parse(h.repo.records![h.repo.recordBranch!]!)).toMatchObject({ version: '0.60.361.0', commit: sha('b'), known_bad: ['0.60.300.0'] });
+    expect(h.calls.filter(c => c.startsWith('push'))[0]).toContain('--force-with-lease=refs/heads/stable-record:rec-360');
+  });
+
+  test('refuses, writing nothing, when the tag message is missing, names another release or another soak run', async () => {
+    const cases: Array<[string | undefined, Partial<PromoteInputs>, RegExp]> = [
+      [undefined, {}, /stable tag carries no promotion message .* to write stable\.json from/],
+      [renderTagMessage({ ...prior, commit: sha('c') }), {}, /stable tag's message names commit c+, not v0\.60\.361\.0's commit b+/],
+      [renderTagMessage({ ...prior, tree: sha('3') }), {}, /names tree 3+, not v0\.60\.361\.0's tree 2+/],
+      [renderTagMessage(prior), { soakRunUrl: `${RUN_URL}/attempts/2` }, /promoted on soak run .*runs\/123456, not .*attempts\/2; pass the soak run the stable tag names/],
+    ];
+    for (const [message, over, pattern] of cases) {
+      const h = preRecord();
+      h.repo.tags.stable!.message = message;
+      await refusedAsync(promote(h.deps, inputs(over)), pattern);
+      expect(h.calls.filter(c => c.startsWith('push') || c.startsWith('tag -a'))).toEqual([]);
+    }
+  });
+
+  test('the soak run is verified again: a failed run writes nothing', async () => {
+    const h = preRecord();
+    h.deps.ghApi = async path => (path.endsWith('/permission') ? { permission: 'admin' } : path.includes('/releases/') ? { draft: false } : { status: 'completed', conclusion: 'failure', path: SOAK, head_sha: sha('b') });
+    await refusedAsync(promote(h.deps, inputs()), /concluded failure, not success/);
+    expect(h.calls.filter(c => c.startsWith('push'))).toEqual([]);
+  });
+
+  test('a stable tag moved after it was read loses the lease and the record is not written', async () => {
+    const h = preRecord();
+    h.repo.remote!.stable = 'tagobj-someone-else';
+    await refusedAsync(promote(h.deps, inputs()), /Writing the stable record failed and nothing changed on the remote/);
+    expect(h.repo.recordBranch).toBeUndefined();
+  });
+
+  test('against real git: the backfill pushes only the record, and a moved stable tag refuses', async () => {
+    const git = (cwd: string, ...args: string[]) => {
+      const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' } });
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+      return r.stdout.trim();
+    };
+    const dir = mkdtempSync(join(tmpdir(), 'promote-stable-bridge-'));
+    try {
+      const origin = join(dir, 'origin.git');
+      const work = join(dir, 'work');
+      git(dir, 'init', '-q', '--bare', origin);
+      git(dir, 'init', '-q', work);
+      for (const [k, v] of [['user.name', 'test-bot'], ['user.email', 'test-bot@example.com'], ['commit.gpgsign', 'false'], ['tag.gpgsign', 'false']]) git(work, 'config', k!, v!);
+      git(work, 'remote', 'add', 'origin', origin);
+      writeFileSync(join(work, 'VERSION'), '1.0.0\n');
+      git(work, 'add', 'VERSION');
+      git(work, 'commit', '-q', '-m', 'release 1.0.0');
+      git(work, 'tag', 'v1.0.0');
+      const commit = git(work, 'rev-parse', 'HEAD');
+      const fields: TagFields = { ...prior, version: '1.0.0', commit, tree: git(work, 'rev-parse', 'HEAD^{tree}'), previous: null };
+      // What a promotion without the evidence record left: the annotated tags, no stable-record branch.
+      for (const tag of ['stable-v1.0.0', 'stable']) git(work, 'tag', '-a', '--cleanup=verbatim', '-m', renderTagMessage(fields), tag, commit);
+      git(work, 'push', '-q', 'origin', 'HEAD:refs/heads/master', '--tags');
+      const stableObject = git(work, 'rev-parse', 'refs/tags/stable');
+      const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' };
+      const deps = (): PromoteDeps => ({
+        ...processDeps(env, work), repo: REPO, actor: 'alice-example', soakWorkflow: 'soak.yml', now: () => NOW, log: () => {}, summary: () => {},
+        ghApi: async path => (path.endsWith('/permission') ? { permission: 'admin', role_name: 'admin' } : path.includes('/releases/tags/') ? { draft: false } : { status: 'completed', conclusion: 'success', path: SOAK, head_sha: commit }),
+      });
+
+      await promote(deps(), inputs({ version: '1.0.0' }));
+      expect(git(work, 'ls-remote', origin, 'refs/tags/stable').split('\t')[0]).toBe(stableObject);
+      const record = parseStableRecord(git(dir, '--git-dir', origin, 'show', 'refs/heads/stable-record:stable.json'));
+      expect(record).toMatchObject({ ok: true, record: { version: '1.0.0', commit, tree: fields.tree, soak_run: RUN_URL, promoted_at: '2026-10-20T09:00:00Z', previous: null } });
+      await refusedAsync(promote(deps(), inputs({ version: '1.0.0' })), /records it, so there is nothing to promote/);
+
+      // Someone moves stable on the remote after this checkout read it: the leased push refuses and the record stays.
+      const other = join(dir, 'other');
+      git(dir, 'clone', '-q', origin, other);
+      for (const [k, v] of [['user.name', 'test-bot'], ['user.email', 'test-bot@example.com'], ['tag.gpgsign', 'false']]) git(other, 'config', k!, v!);
+      git(other, 'tag', '-a', '-f', '-m', 'moved by hand', 'stable', commit);
+      git(other, 'push', '-q', '-f', 'origin', 'refs/tags/stable:refs/tags/stable');
+      const recordHead = git(dir, '--git-dir', origin, 'rev-parse', 'refs/heads/stable-record');
+      await refusedAsync(promote(deps(), inputs({ version: '1.0.0', withdraw: ['0.9.0'] })), /Writing the stable record failed and nothing changed on the remote/);
+      expect(git(dir, '--git-dir', origin, 'rev-parse', 'refs/heads/stable-record')).toBe(recordHead);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

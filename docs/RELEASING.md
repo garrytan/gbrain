@@ -640,8 +640,10 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   run's head commit, even when the version string matches; soak the release
   itself, then promote that run.
 - **Ordering and rollback.** The version must be newer than the current
-  stable (numeric 3- or 4-part comparison); promoting the current stable is a
-  no-op refusal. `rollback=true` with a `reason` moves stable to an older
+  stable (numeric 3- or 4-part comparison). Promoting the current stable
+  again moves no tag: it writes `stable.json` when the published record does
+  not already name that release (see the backfill below), and is a no-op
+  refusal otherwise. `rollback=true` with a `reason` moves stable to an older
   release, or back to one promoted before (its record tag already exists and
   is kept; without rollback an existing record tag is refused).
 - **One atomic push.** The record tag, `stable` and the `stable-record`
@@ -651,6 +653,28 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   clean up before the re-run. The `promote-stable` concurrency group runs one promotion at a
   time. The run's step summary lists the version, commit, tree, soak run,
   scoreboard, previous stable and rollback reason.
+- **Record backfill (one time, GBRA-346).** Promotions made before this
+  script wrote the evidence record moved `stable` with no `stable.json`,
+  and a client that has the stable channel reads only the record, so it
+  would report `stable_missing`. Before the first release with the channel
+  client publishes, write the record for the current stable by promoting it
+  again with the soak run its tag names:
+
+  ```bash
+  git fetch --tags --force origin
+  git for-each-ref --format='%(contents)' refs/tags/stable   # version: and soak_run: lines
+  gh workflow run promote-stable.yml [--ref <branch with this script>] \
+    -f version=<that version> -f soak_run_url=<that soak_run>
+  ```
+
+  The run re-checks the release and the soak run, requires the tag message to
+  name the same release, tree and soak run, writes `stable.json` from it
+  (`known_bad` carried forward, `withdraw` accepted) and pushes only the
+  record branch, leasing `stable` unchanged. Running it from a branch before
+  the client merges is safe: older clients never read the record. Repeat it
+  after any promotion a pre-record copy of this script makes; a record that
+  already names the current stable makes the run a no-op refusal. Every
+  later promotion writes the record itself.
 
 ### The `publish-template` job
 

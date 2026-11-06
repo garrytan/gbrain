@@ -15,7 +15,10 @@ name: Promote stable
 # and commits the evidence record stable.json (version, commit, tree, soak run,
 # known_bad) to the stable-record branch, all in one atomic push. Clients read
 # raw.githubusercontent.com/<repo>/stable-record/stable.json and check it
-# against refs/tags/stable^{} (src/core/stable-channel.ts).
+# against refs/tags/stable^{} (src/core/stable-channel.ts). Dispatching the
+# current stable version again moves no tag and writes the record from the
+# stable tag's message when the published one does not name it (the one-time
+# backfill for promotions made before the record existed, GBRA-346).
 #
 # Inputs reach the script through env only, never interpolated into run:
 # (script injection). No dependency install runs in this job, so the

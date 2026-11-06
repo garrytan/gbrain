@@ -28,7 +28,7 @@ gbrain publishes a release for nearly every merged change, more than a hundred a
 | Update cache and snooze | one file for every channel; a snooze ended when a newer release shipped | one per channel, tagged with the evidence policy; a snooze holds its whole window (24 h, 48 h, 7 days); a stable rollback below it clears it |
 | `gbrain upgrade --dry-run` | refused without `--restart-only` | reports channel, its source, current and target version and the action, installing nothing |
 | doctor `self_upgrade_health` | — | names the channel and its source, warns on an invalid channel or a failed stable check |
-| `Promote stable` workflow | moved the `stable` tag | also commits the evidence record in the same atomic push; new `withdraw` input adds versions to `known_bad` |
+| `Promote stable` workflow | moved the `stable` tag | also commits the evidence record in the same atomic push; new `withdraw` input adds versions to `known_bad`; promoting the current stable again writes its record from the stable tag's message, moving no tag (the one-time backfill for releases promoted before the record existed) |
 
 Install commands now name `stable` (`bun install -g github:garrytan/gbrain#stable`), so a new install starts on the channel it follows. Every install surface goes through one constant (`src/core/install-ref.ts`), checked by `bun run check:install-ref`; `latest-stable` still installs the newest release for anyone who pins it.
 
