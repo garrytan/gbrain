@@ -41,7 +41,7 @@ CONSTANTS
   MaxForeign,       \* commits to F by another agent with plain git (a pending import until sync imports them)
   MaxLocalEdits,    \* uncommitted edits to F in the worktree
   ImportHolds,      \* #8705: a claimed write refused pending_import is moved back to deferred until the import lands
-  HeldImportBlocks, \* a write held for an import blocks later writes of its worktree (the claim's FIFO rule); FALSE as coded
+  HoldBehindHeld,   \* #8705's fix: a write to a page with a write held for an import is held too (refused pending_import)
   ImportExpiryLocksSource, \* the import expiry re-checks last_commit under a lock on the source row; FALSE as coded
   RecoveryDefers,   \* #8705: admission defers behind a refresh in recovery_required instead of refusing
   AdoptLocalEdits,  \* #8708: a drift refusal on a one-sided local edit adopts the edit and prepares the write again
@@ -124,7 +124,8 @@ VARIABLES
   \* locks
   held, want,
   \* process locals
-  pc, cw, cprep, cfin, ew, aref, aread, passHead
+  pc, cw, cprep, cfin, ew, aref, aread, passHead,
+  sseq         \* the admission sequence of the sync pass's queued rows (0 when no pass runs)
 
 reqv   == <<st, code, seq, nseq, dref, dimp, applied, cpos, ncommit, expRev, overdue, adopted>>
 refv   == <<rstate, rel, rchg, rhead, rmoved, cur, nref>>
@@ -132,7 +133,7 @@ gitv   == <<head, verAt, fileV, dbV, hist, lastCommit, local, nver, nforeign, nl
 envv   == <<restored, revoked, preRestore>>
 ghostv == <<hidden, badExpiry, badRelease, badDefer, badRevoke>>
 lockv  == <<held, want>>
-procv  == <<pc, cw, cprep, cfin, ew, aref, aread, passHead>>
+procv  == <<pc, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 vars   == <<reqv, refv, gitv, envv, ghostv, lockv, procv>>
 
 NoLocks == [r \in Rows |-> "-"]
@@ -158,7 +159,10 @@ FenceClear == ~RefIs({"fenced", "merged", "recovery"})
 \* claimableWriteSql: queued, or deferred with every hold released.
 ClaimState(w) == st[w] = "queued" \/ Released(w)
 \* EARLIER_HEAD (queued, running, recovering) and EARLIER_DEFERRED (released deferred): a write never passes an earlier one.
-Blocks(e) == st[e] \in {"queued", "running"} \/ Released(e) \/ (HeldImportBlocks /\ st[e] = "deferred" /\ dimp[e] # None)
+Blocks(e) == st[e] \in {"queued", "running"} \/ Released(e)
+\* With HoldBehindHeld: compareFileTarget's held-first read, the writes to the page still held for an import that has
+\* not landed.
+HeldAhead(w) == {e \in Writes : e # w /\ st[e] = "deferred" /\ dimp[e] # None /\ ~Released(e)}
 \* The v292 trigger: a deferred row moves to running only when its refresh (and, since v291, its import) is released.
 TriggerAllows(w) == st[w] # "deferred" \/ Released(w)
 \* deferredReplayRefusal: a refresh that changed the write's file ends it revision_conflict.
@@ -194,6 +198,11 @@ AdoptOneSided == fileV = dbV
 Claimable(w) == /\ ClaimState(w)
                 /\ FenceClear
                 /\ ~\E e \in Writes : seq[e] # 0 /\ seq[e] < seq[w] /\ Blocks(e)
+                /\ pc[SYN] \notin {"s_import", "s_stamp"}   \* no write passes a running sync row (it is never a lane group)
+                /\ ~(pc[SYN] = "s_queued" /\ sseq < seq[w])  \* NAMES_PAGE: no write passes the queued row importing its page
+\* A sync row is claimed only with no earlier write ahead of it (EARLIER_HEAD) and no write claimed at all (a sync row never
+\* runs beside a later running foreground write).
+SyncBehind == (\E w \in Writes : seq[w] # 0 /\ seq[w] < sseq /\ Blocks(w)) \/ cw # 0
 DrainZero == /\ \A w \in Writes : ~DrainCounts(w) /\ ~Released(w)
              /\ pc[SYN] = "idle"   \* a sync pass in flight is queued work too
 
@@ -252,6 +261,7 @@ Init ==
   /\ aref = [w \in Writes |-> None]
   /\ aread = [w \in Writes |-> "none"]
   /\ passHead = 0
+  /\ sseq = 0
 
 \* A step that only acquires the next lock a process waits for.
 Acquire(p) ==
@@ -283,14 +293,14 @@ AdmBegin(w) ==
   /\ Need(ADM(w), <<L(BRAIN, "S"), L(WT, "S")>>)
   /\ Go(ADM(w), "a_ref")
   /\ UNCHANGED <<st, code, seq, nseq, dref, dimp, applied, cpos, ncommit, overdue, adopted, refv, gitv, envv, ghostv, held,
-                 cw, cprep, cfin, ew, aref, aread, passHead>>
+                 cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 AdmRef(w) ==
   /\ Ready(ADM(w), "a_ref")
   /\ aref' = [aref EXCEPT ![w] = cur]
   /\ Need(ADM(w), IF cur # None THEN AdmRefLock(cur) ELSE <<>>)
   /\ Go(ADM(w), "a_read")
-  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aread, passHead>>
+  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aread, passHead, sseq>>
 
 \* The SELECT ... FOR NO KEY UPDATE reads the refresh row once it holds it (an EvalPlanQual recheck drops a row that
 \* went terminal meanwhile).
@@ -299,7 +309,7 @@ AdmRead(w) ==
   /\ aread' = [aread EXCEPT ![w] = IF aref[w] # None /\ rstate[aref[w]] \in RefActive THEN rstate[aref[w]] ELSE "none"]
   /\ Need(ADM(w), <<L(SRC, "S"), L(CTR, "U")>>)
   /\ Go(ADM(w), "a_commit")
-  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aref, passHead>>
+  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aref, passHead, sseq>>
 
 AdmCommit(w) ==
   /\ Ready(ADM(w), "a_commit")
@@ -322,7 +332,7 @@ AdmCommit(w) ==
   /\ Commit(ADM(w)) /\ Go(ADM(w), "idle") /\ Need(ADM(w), <<>>)
   /\ aref' = [aref EXCEPT ![w] = None] /\ aread' = [aread EXCEPT ![w] = "none"]
   /\ UNCHANGED <<code, dimp, applied, cpos, ncommit, expRev, overdue, adopted, rchg, rhead, rmoved, nref, gitv, envv,
-                 hidden, badExpiry, badRelease, badRevoke, cw, cprep, cfin, ew, passHead>>
+                 hidden, badExpiry, badRelease, badRevoke, cw, cprep, cfin, ew, passHead, sseq>>
 
 \* -------------------------------- consumer --------------------------------
 \* claimNextWrite: the protocol declaration and the head read, SELECT ... ORDER BY sequence LIMIT 1 FOR UPDATE SKIP
@@ -330,7 +340,7 @@ AdmCommit(w) ==
 ConsBegin ==
   /\ pc[CONS] = "idle" /\ \E w \in Writes : Claimable(w)
   /\ Need(CONS, ClaimLocks) /\ Go(CONS, "c_select")
-  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aref, aread, passHead>>
+  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 ConsSelect ==
   /\ Ready(CONS, "c_select")
@@ -342,7 +352,7 @@ ConsSelect ==
                /\ cw' = w
                /\ held' = [held EXCEPT ![CONS][REQ(w)] = "U"]
                /\ Go(CONS, "c_claim")
-  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, want, cprep, cfin, ew, aref, aread, passHead>>
+  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, want, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 ConsClaim ==
   /\ Ready(CONS, "c_claim")
@@ -352,13 +362,14 @@ ConsClaim ==
   /\ Commit(CONS)
   /\ cw' = IF TriggerAllows(cw) THEN cw ELSE 0
   /\ UNCHANGED <<code, seq, nseq, dref, dimp, applied, cpos, ncommit, expRev, overdue, adopted, refv, gitv, envv, ghostv,
-                 want, cprep, cfin, ew, aref, aread, passHead>>
+                 want, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 \* Preparation reads the page and the file (no database lock), then the deferred replay check.
 Outcome(w) ==
   LET drift   == Worktree # dbV
       pending == drift /\ local = None /\ fileV # verAt[lastCommit]
   IN IF drift /\ PrepRefusesDrift THEN (IF pending THEN "pending" ELSE IF local # None THEN "local" ELSE "drift")
+     ELSE IF ImportHolds /\ HoldBehindHeld /\ HeldAhead(w) # {} THEN "pending"
      ELSE IF w \notin Blind /\ dbV # expRev[w] THEN "conflict"
      ELSE IF dref[w] # None /\ ReplayDiff(dref[w]) THEN "conflict"
      ELSE IF dref[w] # None /\ revoked /\ ReplayAuth THEN "denied"
@@ -371,7 +382,8 @@ Finish(s, c) == /\ cfin' = <<s, c>>
 ConsPrep ==
   /\ Ready(CONS, "c_prep")
   /\ LET o == Outcome(cw)
-     IN /\ cprep' = [o |-> o, db |-> dbV, wt |-> Worktree, lc |-> lastCommit]
+         lc == IF ImportHolds /\ HoldBehindHeld /\ HeldAhead(cw) # {} THEN dimp[CHOOSE e \in HeldAhead(cw) : TRUE] ELSE lastCommit
+     IN /\ cprep' = [o |-> o, db |-> dbV, wt |-> Worktree, lc |-> lc]
         /\ CASE o = "ok" ->
                   /\ Need(CONS, <<L(BRAIN, "S"), L(WT, "S"), L(SRC, "S"), L(CTR, "U"), L(REQ(cw), "U")>>)
                   /\ Go(CONS, "c_pub") /\ UNCHANGED cfin
@@ -383,7 +395,7 @@ ConsPrep ==
              [] o \in {"local", "drift"} -> Finish("failed", "source_changed")
              [] o = "conflict" -> Finish("conflict", "revision_conflict")
              [] o = "denied" -> Finish("failed", "permission_denied")
-  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, ew, aref, aread, passHead>>
+  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, ew, aref, aread, passHead, sseq>>
 
 \* publishMutation's transaction: declarePublication, guardOwnership, authorizeStoredRequest (the source FOR SHARE),
 \* lockCounters, the request FOR UPDATE (claim and state rechecked), the page revision and file rechecked.
@@ -406,7 +418,7 @@ ConsPub ==
              /\ UNCHANGED <<head, verAt, fileV, nver, dbV, hist, local, applied, ncommit, cpos, hidden, badRelease, badRevoke>>
   /\ Commit(CONS) /\ ConsIdle
   /\ UNCHANGED <<seq, nseq, dref, dimp, expRev, overdue, adopted, refv, lastCommit, nforeign, nlocal, envv, badExpiry, badDefer,
-                 want, ew, aref, aread, passHead>>
+                 want, ew, aref, aread, passHead, sseq>>
 
 \* holdForImport: UPDATE ... SET state='deferred', deferred_import_from=<last_commit read before the check>
 \* WHERE execution_token=<ours> AND state='running' AND publication_started=false.
@@ -417,7 +429,7 @@ ConsHold ==
      ELSE UNCHANGED <<st, dimp>>
   /\ Commit(CONS) /\ ConsIdle
   /\ UNCHANGED <<code, seq, nseq, dref, applied, cpos, ncommit, expRev, overdue, adopted, refv, gitv, envv, ghostv,
-                 want, ew, aref, aread, passHead>>
+                 want, ew, aref, aread, passHead, sseq>>
 
 \* adoptLocalEdit: the owner publishes the edit as its own managed_file_repair write (one commit of the file), then
 \* releases the caller's claim so it is prepared again.
@@ -428,7 +440,7 @@ ConsAdopt ==
   /\ adopted' = [adopted EXCEPT ![cw] = TRUE]
   /\ Need(CONS, <<L(REQ(cw), "U")>>) /\ Go(CONS, "c_release")
   /\ UNCHANGED <<st, code, seq, nseq, dref, dimp, applied, cpos, ncommit, expRev, overdue, refv, lastCommit, nver, nforeign,
-                 nlocal, envv, badExpiry, badRelease, badDefer, badRevoke, held, cw, cprep, cfin, ew, aref, aread, passHead>>
+                 nlocal, envv, badExpiry, badRelease, badDefer, badRevoke, held, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 \* releaseUnpublishedClaim: back to queued, prepared again by the next claim.
 ConsRelease ==
@@ -436,7 +448,7 @@ ConsRelease ==
   /\ st' = [st EXCEPT ![cw] = IF @ = "running" THEN "queued" ELSE @]
   /\ Commit(CONS) /\ ConsIdle
   /\ UNCHANGED <<code, seq, nseq, dref, dimp, applied, cpos, ncommit, expRev, overdue, adopted, refv, gitv, envv, ghostv,
-                 want, ew, aref, aread, passHead>>
+                 want, ew, aref, aread, passHead, sseq>>
 
 \* completeWrite of a refusal: declarePersistenceProtocol, lockCounters, the request FOR UPDATE.
 ConsDone ==
@@ -445,14 +457,14 @@ ConsDone ==
   /\ code' = [code EXCEPT ![cw] = IF st[cw] = "running" THEN cfin[2] ELSE @]
   /\ Commit(CONS) /\ ConsIdle
   /\ UNCHANGED <<seq, nseq, dref, dimp, applied, cpos, ncommit, expRev, overdue, adopted, refv, gitv, envv, ghostv,
-                 want, ew, aref, aread, passHead>>
+                 want, ew, aref, aread, passHead, sseq>>
 
 \* -------------------------------- refresher --------------------------------
 \* fenceDraining: lockTopologyRows (brain FOR UPDATE, worktree FOR UPDATE, sources FOR UPDATE), INSERT draining.
 RefBegin ==
   /\ pc[RFR] = "idle" /\ cur = None /\ nref < MaxRefreshes
   /\ Need(RFR, <<L(BRAIN, "U"), L(WT, "U"), L(SRC, "U")>>) /\ Go(RFR, "r_fd")
-  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aref, aread, passHead>>
+  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 FdCommit ==
   /\ Ready(RFR, "r_fd")
@@ -463,19 +475,19 @@ FdCommit ==
   /\ rhead' = [rhead EXCEPT ![nref + 1] = head]
   /\ cur' = nref + 1 /\ nref' = nref + 1
   /\ Commit(RFR) /\ Go(RFR, "r_drain")
-  /\ UNCHANGED <<reqv, rel, rmoved, gitv, envv, ghostv, want, cw, cprep, cfin, ew, aref, aread, passHead>>
+  /\ UNCHANGED <<reqv, rel, rmoved, gitv, envv, ghostv, want, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 \* The drain poll (no locks), then fenceAndMerge's transaction: lockTopologyRows, drainCounts, transition to fenced.
 RefDrained ==
   /\ pc[RFR] = "r_drain" /\ want[RFR] = <<>> /\ DrainZero
   /\ Need(RFR, <<L(BRAIN, "U"), L(WT, "U"), L(SRC, "U"), L(REF(nref), "NKU")>>) /\ Go(RFR, "r_fm")
-  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aref, aread, passHead>>
+  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 \* --wait-drain ran out: transition draining -> aborted.
 RefDrainTimeout ==
   /\ pc[RFR] = "r_drain" /\ ~DrainZero
   /\ Need(RFR, <<L(REF(nref), "NKU")>>) /\ Go(RFR, "r_abort")
-  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aref, aread, passHead>>
+  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 FmCommit ==
   /\ Ready(RFR, "r_fm")
@@ -483,7 +495,7 @@ FmCommit ==
      THEN /\ rstate' = [rstate EXCEPT ![nref] = "fenced"] /\ Go(RFR, "r_merge") /\ Need(RFR, <<>>)
      ELSE /\ UNCHANGED rstate /\ Go(RFR, "r_abort") /\ Need(RFR, <<L(REF(nref), "NKU")>>)  \* refresh_source_changed
   /\ Commit(RFR)
-  /\ UNCHANGED <<reqv, rel, rchg, rhead, rmoved, cur, nref, gitv, envv, ghostv, cw, cprep, cfin, ew, aref, aread, passHead>>
+  /\ UNCHANGED <<reqv, rel, rchg, rhead, rmoved, cur, nref, gitv, envv, ghostv, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 \* transition(..., 'aborted'): the release trigger stamps released_at.
 AbortCommit ==
@@ -493,7 +505,7 @@ AbortCommit ==
      ELSE UNCHANGED <<rstate, rel>>
   /\ cur' = None
   /\ Commit(RFR) /\ Go(RFR, "idle")
-  /\ UNCHANGED <<reqv, rchg, rhead, rmoved, nref, gitv, envv, ghostv, want, cw, cprep, cfin, ew, aref, aread, passHead>>
+  /\ UNCHANGED <<reqv, rchg, rhead, rmoved, nref, gitv, envv, ghostv, want, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 \* Under the commit lock: HEAD must still be old_head (another agent's plain-git commit is not), then the ff-only merge.
 RefMerge ==
@@ -505,13 +517,13 @@ RefMerge ==
              ELSE NewCommit(fileV) /\ UNCHANGED <<nver, rmoved>>
           /\ Need(RFR, <<L(REF(nref), "NKU"), L(SRC, "NKU")>>) /\ Go(RFR, "r_bk")
   /\ UNCHANGED <<reqv, rstate, rel, rchg, rhead, cur, nref, dbV, hist, lastCommit, local, nforeign, nlocal, envv, ghostv,
-                 held, cw, cprep, cfin, ew, aref, aread, passHead>>
+                 held, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 MarkCommit ==
   /\ Ready(RFR, "r_mark")
   /\ rstate' = [rstate EXCEPT ![nref] = "recovery"]
   /\ Commit(RFR) /\ Go(RFR, "r_recovery")
-  /\ UNCHANGED <<reqv, rel, rchg, rhead, rmoved, cur, nref, gitv, envv, ghostv, want, cw, cprep, cfin, ew, aref, aread, passHead>>
+  /\ UNCHANGED <<reqv, rel, rchg, rhead, rmoved, cur, nref, gitv, envv, ghostv, want, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 \* A person resolves recovery_required: reset to old_head and --abandon, or reset to the target and --resume.
 PersonAbandon ==
@@ -519,7 +531,7 @@ PersonAbandon ==
   /\ head' = rhead[nref] /\ fileV' = verAt[rhead[nref]] /\ local' = None
   /\ Need(RFR, <<L(REF(nref), "NKU")>>) /\ Go(RFR, "r_abort")
   /\ UNCHANGED <<reqv, refv, verAt, dbV, hist, lastCommit, nver, nforeign, nlocal, envv, ghostv, held,
-                 cw, cprep, cfin, ew, aref, aread, passHead>>
+                 cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 PersonResume ==
   /\ pc[RFR] = "r_recovery"
@@ -531,20 +543,20 @@ PersonResume ==
   /\ local' = None
   /\ Need(RFR, <<L(REF(nref), "NKU"), L(SRC, "NKU")>>) /\ Go(RFR, "r_bk")
   /\ UNCHANGED <<reqv, rstate, rel, rchg, rhead, cur, nref, dbV, hist, lastCommit, nforeign, nlocal, envv, ghostv, held,
-                 cw, cprep, cfin, ew, aref, aread, passHead>>
+                 cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 \* bookkeeping: transition to merged (the refresh row), the sources' upstream observation, then syncing.
 BkCommit ==
   /\ Ready(RFR, "r_bk")
   /\ rstate' = [rstate EXCEPT ![nref] = IF @ \in {"fenced", "merged", "recovery"} THEN "syncing" ELSE @]
   /\ Commit(RFR) /\ Go(RFR, "r_syncing")
-  /\ UNCHANGED <<reqv, rel, rchg, rhead, rmoved, cur, nref, gitv, envv, ghostv, want, cw, cprep, cfin, ew, aref, aread, passHead>>
+  /\ UNCHANGED <<reqv, rel, rchg, rhead, rmoved, cur, nref, gitv, envv, ghostv, want, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 \* syncMembers ends: completed once members reach the target, or (#8072) when a member's sync is blocked or deferred.
 RefComplete ==
   /\ pc[RFR] = "r_syncing"
   /\ Need(RFR, <<L(REF(nref), "NKU")>>) /\ Go(RFR, "r_complete")
-  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aref, aread, passHead>>
+  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 CompleteCommit ==
   /\ Ready(RFR, "r_complete")
@@ -553,14 +565,14 @@ CompleteCommit ==
           /\ cur' = None
      ELSE UNCHANGED <<rstate, rel, cur>>
   /\ Commit(RFR) /\ Go(RFR, "idle")
-  /\ UNCHANGED <<reqv, rchg, rhead, rmoved, nref, gitv, envv, ghostv, want, cw, cprep, cfin, ew, aref, aread, passHead>>
+  /\ UNCHANGED <<reqv, rchg, rhead, rmoved, nref, gitv, envv, ghostv, want, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 \* --------------------------------- expiry ---------------------------------
 \* The candidate query reads without locks; then one transaction per row.
 ExpRefBegin(w) ==
   /\ pc[EXP] = "idle" /\ st[w] = "deferred" /\ dref[w] # None /\ ~rel[dref[w]] /\ overdue[w]
   /\ ew' = w /\ Need(EXP, ExpiryLocks(dref[w], w)) /\ Go(EXP, "e_ref")
-  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, aref, aread, passHead>>
+  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, aref, aread, passHead, sseq>>
 
 \* completeWrite: a terminal row stays as it is; a row someone claimed (a live execution token) is write_claim_lost.
 ExpRefCommit ==
@@ -571,7 +583,7 @@ ExpRefCommit ==
         /\ badExpiry' = (badExpiry \/ (fire /\ ~(st[ew] = "deferred" /\ ~rel[dref[ew]])))
   /\ Commit(EXP) /\ Go(EXP, "idle") /\ ew' = 0
   /\ UNCHANGED <<seq, nseq, dref, dimp, applied, cpos, ncommit, expRev, overdue, adopted, refv, gitv, envv,
-                 hidden, badRelease, badDefer, badRevoke, want, cw, cprep, cfin, aref, aread, passHead>>
+                 hidden, badRelease, badDefer, badRevoke, want, cw, cprep, cfin, aref, aread, passHead, sseq>>
 
 \* #8705: a write held for an import that has not landed past the limit ends pending_import_expired.
 ExpImpBegin(w) ==
@@ -581,7 +593,7 @@ ExpImpBegin(w) ==
   /\ overdue[w]
   /\ ew' = w /\ Go(EXP, "e_recheck")
   /\ Need(EXP, IF ImportExpiryLocksSource THEN ImportExpiryLocks ELSE <<>>)
-  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, aref, aread, passHead>>
+  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, aref, aread, passHead, sseq>>
 
 ExpImpRecheck ==
   /\ Ready(EXP, "e_recheck")
@@ -590,7 +602,7 @@ ExpImpRecheck ==
      ELSE UNCHANGED want /\ Go(EXP, "idle")
   /\ held' = IF ImportExpiryRecheck(ew) THEN held ELSE [held EXCEPT ![EXP] = NoLocks]
   /\ ew' = IF ImportExpiryRecheck(ew) THEN ew ELSE 0
-  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, cw, cprep, cfin, aref, aread, passHead>>
+  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, cw, cprep, cfin, aref, aread, passHead, sseq>>
 
 ExpImpCommit ==
   /\ Ready(EXP, "e_imp")
@@ -600,7 +612,7 @@ ExpImpCommit ==
         /\ badExpiry' = (badExpiry \/ (fire /\ ~(st[ew] = "deferred" /\ dimp[ew] # None /\ lastCommit = dimp[ew])))
   /\ Commit(EXP) /\ Go(EXP, "idle") /\ ew' = 0
   /\ UNCHANGED <<seq, nseq, dref, dimp, applied, cpos, ncommit, expRev, overdue, adopted, refv, gitv, envv,
-                 hidden, badRelease, badDefer, badRevoke, want, cw, cprep, cfin, aref, aread, passHead>>
+                 hidden, badRelease, badDefer, badRevoke, want, cw, cprep, cfin, aref, aread, passHead, sseq>>
 
 \* ------------------------------ managed sync ------------------------------
 \* A pass starts only with no refresh, or as the refresh's own member sync (assertManagedSyncAllowed). It imports F's
@@ -608,23 +620,36 @@ ExpImpCommit ==
 SyncBegin ==
   /\ pc[SYN] = "idle" /\ (cur = None \/ RefIs({"syncing"})) /\ lastCommit # head
   /\ passHead' = head
+  /\ sseq' = nseq + 1 /\ nseq' = nseq + 1
+  /\ Go(SYN, "s_queued")
+  /\ UNCHANGED <<st, code, seq, dref, dimp, applied, cpos, ncommit, expRev, overdue, adopted, refv, gitv, envv, ghostv,
+                 lockv, cw, cprep, cfin, ew, aref, aread>>
+
+\* The page row is claimed once no earlier write is ahead of it (EARLIER_HEAD), then imported.
+SyncImportBegin ==
+  /\ pc[SYN] = "s_queued" /\ ~SyncBehind
   /\ Need(SYN, <<L(BRAIN, "S")>>) /\ Go(SYN, "s_import")
-  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aref, aread>>
+  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 SyncImport ==
   /\ Ready(SYN, "s_import")
   /\ IF local = None /\ fileV = verAt[passHead] /\ fileV # dbV
      THEN dbV' = fileV /\ hist' = hist \cup {fileV}
      ELSE UNCHANGED <<dbV, hist>>   \* nothing to import, or a dirty file sync holds
-  /\ Commit(SYN)
-  /\ Need(SYN, <<L(BRAIN, "S"), L(SRC, "NKU")>>) /\ Go(SYN, "s_stamp")
+  /\ Commit(SYN) /\ Go(SYN, "s_ckpt")
   /\ UNCHANGED <<reqv, refv, head, verAt, fileV, lastCommit, local, nver, nforeign, nlocal, envv, ghostv,
-                 cw, cprep, cfin, ew, aref, aread, passHead>>
+                 want, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
+
+\* The checkpoint row is claimed once no earlier write is ahead of it; the pass stamp moves last_commit (UPDATE sources).
+SyncStampBegin ==
+  /\ pc[SYN] = "s_ckpt" /\ ~SyncBehind
+  /\ Need(SYN, <<L(BRAIN, "S"), L(SRC, "NKU")>>) /\ Go(SYN, "s_stamp")
+  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 SyncStamp ==
   /\ Ready(SYN, "s_stamp")
   /\ lastCommit' = passHead
-  /\ Commit(SYN) /\ Go(SYN, "idle") /\ passHead' = 0
+  /\ Commit(SYN) /\ Go(SYN, "idle") /\ passHead' = 0 /\ sseq' = 0
   /\ UNCHANGED <<reqv, refv, head, verAt, fileV, dbV, hist, local, nver, nforeign, nlocal, envv, ghostv,
                  want, cw, cprep, cfin, ew, aref, aread>>
 
@@ -666,7 +691,7 @@ ConsStep == ConsBegin \/ ConsSelect \/ ConsClaim \/ ConsPrep \/ ConsPub \/ ConsH
 RefStep  == FdCommit \/ RefDrained \/ RefDrainTimeout \/ FmCommit \/ AbortCommit \/ RefMerge \/ MarkCommit
             \/ BkCommit \/ RefComplete \/ CompleteCommit
 ExpStep  == (\E w \in Writes : ExpRefBegin(w) \/ ExpImpBegin(w)) \/ ExpRefCommit \/ ExpImpRecheck \/ ExpImpCommit
-SyncStep == SyncBegin \/ SyncImport \/ SyncStamp
+SyncStep == SyncBegin \/ SyncImportBegin \/ SyncImport \/ SyncStampBegin \/ SyncStamp
 AdmStep(w) == AdmRef(w) \/ AdmRead(w) \/ AdmCommit(w)
 
 Next ==

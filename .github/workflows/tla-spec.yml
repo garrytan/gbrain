@@ -31,6 +31,20 @@ on:
       - 'test/helpers/managed-brain.ts'
       - 'test/helpers/test-backends.ts'
       - 'test/helpers/persistence-postgres.ts'
+      - 'src/core/persistence/refresh-barrier.ts'
+      - 'src/core/persistence/journal.ts'
+      - 'src/core/persistence/worktree-refresh.ts'
+      - 'src/core/persistence/worktree-refresh-schema.ts'
+      - 'src/core/persistence/protocol.ts'
+      - 'src/core/shared-skills/restore.ts'
+      - 'src/core/schema-migrations/v292-refresh-write-barrier.ts'
+      - 'test/spec-refresh-barrier.test.ts'
+      - 'test/refresh-write-barrier.test.ts'
+      - 'src/core/persistence/coordinator.ts'
+      - 'src/core/persistence/group-publish.ts'
+      - 'src/core/persistence/page-prepare.ts'
+      - 'test/persistence-worktree-refresh.test.ts'
+      - 'test/pending-import-async-git-7436.test.ts'
   push:
     branches: [master]
     paths:  # the same list as pull_request (actionlint does not accept YAML aliases)
@@ -56,6 +70,20 @@ on:
       - 'test/helpers/managed-brain.ts'
       - 'test/helpers/test-backends.ts'
       - 'test/helpers/persistence-postgres.ts'
+      - 'src/core/persistence/refresh-barrier.ts'
+      - 'src/core/persistence/journal.ts'
+      - 'src/core/persistence/worktree-refresh.ts'
+      - 'src/core/persistence/worktree-refresh-schema.ts'
+      - 'src/core/persistence/protocol.ts'
+      - 'src/core/shared-skills/restore.ts'
+      - 'src/core/schema-migrations/v292-refresh-write-barrier.ts'
+      - 'test/spec-refresh-barrier.test.ts'
+      - 'test/refresh-write-barrier.test.ts'
+      - 'src/core/persistence/coordinator.ts'
+      - 'src/core/persistence/group-publish.ts'
+      - 'src/core/persistence/page-prepare.ts'
+      - 'test/persistence-worktree-refresh.test.ts'
+      - 'test/pending-import-async-git-7436.test.ts'
   schedule:
     - cron: '40 9 * * *'  # nightly, 09:40 UTC
   workflow_dispatch:
@@ -69,9 +97,13 @@ concurrency:
 
 jobs:
   tla:
-    name: TLC and guard mutants
+    name: TLC and guard mutants (${{ matrix.spec }})
     runs-on: ubicloud-standard-4-ubuntu-2404
-    timeout-minutes: 40
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        spec: [drain-lease, refresh-barrier]
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -106,23 +138,23 @@ jobs:
           jar="$(bash scripts/spec/tla-jar.sh)" || exit "$?"
           printf 'TLA2TOOLS=%s\n' "$jar" >> "$GITHUB_ENV"
       - name: The configs match the code
-        run: bun test --timeout=60000 test/spec-drain-lease-constants.test.ts
+        run: bun test --timeout=60000 test/spec-${{ matrix.spec }}*.test.ts
       - name: Model-check every config (the *Nightly.cfg ones on the schedule and on dispatch)
         env:
           TLC_NIGHTLY: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
           TLC_TIMEOUT_S: '900'
-        run: bash scripts/spec/tlc.sh
+        run: bash scripts/spec/tlc.sh ${{ matrix.spec }}
       # Only after the model check passed: a mutant means something only against a spec whose properties hold.
       - name: Every guard mutant is caught, in the model and in the code
         env:
           DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
-        run: bun scripts/spec/mutants.ts --require-postgres
+        run: bun scripts/spec/mutants.ts ${{ matrix.spec }} --require-postgres
       - name: Keep the logs and counterexample traces
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
-          name: tla-spec-logs
+          name: tla-spec-logs-${{ matrix.spec }}
           path: ${{ runner.temp }}/tlc
           if-no-files-found: ignore
           retention-days: 14

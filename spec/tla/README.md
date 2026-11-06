@@ -12,6 +12,7 @@ interleaving of the modelled actions inside their bounds. The approach follows P
 bun run test:tla                                   # every config of every spec, then every mutant (model and code)
 bash scripts/spec/tlc.sh drain-lease DrainLease.cfg  # one config
 bun scripts/spec/mutants.ts --only renewal-ignores-token
+bun scripts/spec/mutants.ts refresh-barrier          # one spec's mutants (the default is drain-lease)
 bun scripts/spec/mutants.ts --spec-only            # model mutants only (no Bun tests)
 ```
 
@@ -22,7 +23,7 @@ that need Postgres run when `DATABASE_URL` points at a test database (with `GBRA
 otherwise they print `skip`, and CI passes `--require-postgres`. Logs and counterexample traces land in
 `.context/tlc/` (`TLC_OUT`), and CI uploads them as the `tla-spec-logs` artifact.
 
-`.github/workflows/tla-spec.yml` runs all of it nightly, on dispatch, and on pull requests and master pushes that touch a
+`.github/workflows/tla-spec.yml` runs all of it, one job per spec, nightly, on dispatch, and on pull requests and master pushes that touch a
 spec, its runner, the code a spec models, or a test a mutant names.
 
 ### When it fails
@@ -143,3 +144,113 @@ length of their transaction, so they count against the renewal timeout like a lo
 None in the lease protocol at these bounds. The two gaps this model first found (#7442: fenced transactions not bounded
 under the renewal timeout, and the pass stamp's share lock overlapping the holder's) are closed by the `FOR KEY SHARE`
 fence and the key-writing takeover upsert (#7450); `DrainLease.cfg` now checks `NoSpuriousLapse` with both conditions on.
+
+## refresh-barrier: the refresh write barrier and its deferred-write queue
+
+With `persistence.refresh_barrier` on, a page write admitted while a managed refresh runs is journaled `deferred`
+behind that refresh and published by itself once the refresh is released (docs/designs/REFRESH_WRITE_BARRIER.md). The
+model holds one managed worktree with one page P whose canonical file is F, single-page writes to P (one blind
+put_page, one with expected_revision), one refresh at a time, another agent's plain-git commit to F, managed sync, the
+owner's expiry, and Postgres's four row-lock modes per transaction (`KS`, `S`, `NKU`, `U`) over the brain row,
+the worktree, the source row, the counters, each refresh row and each request row. A transaction holds its locks until
+it commits; a waits-for cycle among them is a deadlock (Postgres aborts one side with 40P01), so `NoDeadlock` is an
+invariant. Behind constants it also models the stacked follow-ups: writes held for an import and deferral behind
+`recovery_required` (#8705), and local-edit adoption (#8708).
+
+| Config | What it checks |
+| --- | --- |
+| `RefreshBarrier.cfg` | #8682 as coded: two writes (one blind), one refresh, one foreign commit: every safety property. |
+| `RefreshBarrierEnv.cfg` | The same with a shared-skill restore and a credential revocation that may each run once, no foreign commit. |
+| `RefreshBarrierLiveness.cfg` | `FairSpec`, one write: every deferred write leaves deferral and every admitted write ends. `RefreshBarrierLivenessNightly.cfg` checks two writes (nightly). |
+| `RefreshBarrierAdopt.cfg` | #8708 on #8705 with its fixes: an uncommitted local edit adopted by a drift refusal, no foreign commit. `RefreshBarrierAdoptNightly.cfg` adds the foreign commit (nightly). |
+| `RefreshBarrierImport.cfg` | #8705 with its fixes (03b89121): writes held for an import, a later write held beside them, the import expiry, deferral behind `recovery_required`: every property. |
+
+`test/spec-refresh-barrier.test.ts` keeps the default config on #8682 alone, every safety config on every invariant,
+and the workflow's path filter covering every file a mutant names.
+
+### Properties
+
+| Property | Holds that |
+| --- | --- |
+| `NoDeadlock` | no waits-for cycle among open transactions' row locks |
+| `AppliedAtMostOnce`, `ReceiptMatchesApply` | no write is applied twice, and a receipt says committed exactly when it was applied |
+| `EveryEndNamed` | every write that ends has a named outcome (nothing is dropped silently) |
+| `ImportedRevisionNeverHidden` | a write never replaces a committed version of F the page never had, so a blind put_page after an import never hides the imported revision from page history |
+| `FenceNeverMidPrepare` | the fence never comes up, and the checkout never moves, while a write is claimed |
+| `DeferredWaitsForRelease`, `RefreshChangeNeverOverwritten` | a deferred write commits only after its refresh is released, and never over a file that refresh changed |
+| `NoDeferToReleased`, `ReleasedWhenEnded` | admission never defers to a released refresh; a completed or aborted refresh is released |
+| `ExpiryOnlyWhileWaiting` | an expiry ends only a write that still waits (its refresh unreleased, or its import not landed) |
+| `RestoreLeavesNoOpenWrite` | a restore leaves no write admitted before it open (finding C) |
+| `NoApplyAfterRevoke` | no write commits after its credential was revoked |
+| `CommitsInAdmissionOrder` | writes to one page commit in admission order |
+| `DeferredLeaves`, `EveryWriteEnds` | liveness under `Fairness`: a deferred write leaves deferral; an admitted write ends |
+
+### Actions and code
+
+| Action | Code |
+| --- | --- |
+| `AdmBegin`, `AdmRef`, `AdmRead`, `AdmCommit` | `admitWrite` (journal.ts): the protocol declaration, the worktree `FOR SHARE`, the active refresh row `FOR NO KEY UPDATE`, the source, `lockCounters`, the INSERT (queued, or deferred with `deferred_refresh_id`) |
+| `ConsBegin`, `ConsSelect`, `ConsClaim` | `claimNextWrite`: `claimableWriteSql` (EARLIER_HEAD, EARLIER_DEFERRED, RELEASED_DEFERRED, `refreshFenceClear`) then the v292 guard trigger |
+| `ConsPrep` | preparation: `compareFileTarget` (page-prepare.ts) and `deferredReplayRefusal` (refresh-barrier.ts) |
+| `ConsPub` | `publishMutation` / `publishGroup`: `authorizeStoredRequest`, the request row, the revision and file rechecks |
+| `ConsHold` | #8705 `holdForImport` |
+| `ConsAdopt`, `ConsRelease` | #8708 `adoptLocalEdit`, then the claim's release |
+| `ConsDone` | `completeWrite` of a refusal |
+| `RefBegin` … `CompleteCommit` | worktree-refresh.ts: `fenceDraining`, the drain poll, `fenceAndMerge` (re-counts under `lockTopologyRows`), the ff-only merge under the commit lock, `bookkeeping`, `syncMembers`, `resumeOrAbandon`, and the v292 release trigger on completed or aborted |
+| `ExpRefBegin`, `ExpRefCommit` | `expireDeferredWrites`: the protocol, the refresh row re-read `released_at IS NULL FOR NO KEY UPDATE`, `completeWrite` |
+| `ExpImpBegin`, `ExpImpRecheck`, `ExpImpCommit` | #8705's import expiry in `expireDeferredWrites` |
+| `SyncBegin` … `SyncStamp` | a managed sync pass, whose rows go through the claim like writes: no write passes the queued row importing its page or a running sync row, and a sync row waits behind earlier writes and is never claimed while a write runs; the page row, then its checkpoint row's `UPDATE sources SET last_commit` (sync-prepare.ts) |
+| `Foreign`, `LocalEdit`, `Age`, `Revoke`, `Restore` | the environment: another agent's plain-git commit, an uncommitted edit, the wait limit passing, a revoked token, `quarantineSharedSkillRestore` (PGLite-only, one transaction, no worker) |
+
+### Mutants
+
+`mutants.json`. Each guard mutant has a code edit (every engine branch) and the tests that must fail under it.
+
+| Mutant | Kind | Caught by | Code and test |
+| --- | --- | --- | --- |
+| `expiry-locks-refresh-first` | guard | `NoDeadlock` | finding D reverted: the expiry locks the refresh row before the brain row; the Postgres test where an expiry overlaps a fence |
+| `restore-keeps-deferred` | guard | `RestoreLeavesNoOpenWrite` (Env) | finding C reverted in restore.ts; the restore test (PGLite) |
+| `replay-ignores-refresh-change` | guard | `RefreshChangeNeverOverwritten` | `deferredReplayRefusal`'s diff check; the deferred blind write over a refreshed page |
+| `release-only-on-completed` | guard | `ReleasedWhenEnded` | the v292 release trigger (both engines); the write deferred behind an aborted refresh |
+| `expiry-skips-release-recheck` | guard | `ExpiryOnlyWhileWaiting` | the expiry's `released_at IS NULL` under the lock; a Postgres race with a refresh ending |
+| `admission-skips-refresh-lock` | guard | `NoDeferToReleased` | admission's `FOR NO KEY UPDATE` on the refresh row; a Postgres race with a refresh ending |
+| `publication-skips-reauth` | guard | `NoApplyAfterRevoke` (Env) | `authorizeStoredRequest` in publishMutation and publishGroup; a token revoked after the claim |
+| `preparation-ignores-drift` | guard | `ImportedRevisionNeverHidden` | `compareFileTarget`; the #7436 pending-import test |
+| `drain-ignores-running` | guard | `FenceNeverMidPrepare` | `drainCounts`; test 13e in persistence-worktree-refresh.test.ts |
+| `trigger-allows-unreleased` | survivor | — | the model's only consumer claims through the predicate; the trigger stops an older binary's claim, and the code test still pins it |
+| `fence-skips-recount` | survivor | — | every admission after the refresh row exists is deferred, so nothing queues between the drain poll and the fence |
+| `claim-ignores-fence` | survivor | — | under the fence nothing is claimable at these bounds |
+| `claim-skips-protocol` | survivor | — | the drain count and the request-row lock already order a claim against the fence |
+| `replay-skips-reauth` | survivor | — | publication re-authorizes every write |
+| `hold-beside-held-off` | guard | `CommitsInAdmissionOrder` (Import) | #8705's compareFileTarget held-first read; model only until #8705 is on master |
+| `import-expiry-locks-source-first` | guard | `NoDeadlock` (Import) | #8705's import expiry; model only until #8705 is on master |
+| `import-expiry-skips-source-lock` | guard | `ExpiryOnlyWhileWaiting` (Import) | the same |
+
+#8705's and #8708's guards get code edits and tests (#8705's repro tests in test/import-write-barrier.test.ts) once their code is on master; until then they are checked in the model only.
+
+### Races found in #8705
+
+This model found two races in #8705's first version; 03b89121 fixed both, with the repro tests in
+test/import-write-barrier.test.ts. The mutants below put each one back.
+
+- **A held write landed on top of a later one** (`hold-beside-held-off`, `CommitsInAdmissionOrder`). A write held for
+  an import holds back nothing in the claim's FIFO rules, so after the sync's page row imported F (the file now matching
+  the page) and before its checkpoint stamped `last_commit`, a later write to P was claimed, passed the queued
+  checkpoint, prepared cleanly and committed; the stamp then released the held write, which landed over it, its
+  `supersedes` naming the later write's commit as the import. The fix holds the later write beside the held one
+  (compareFileTarget refuses it `pending_import` with the held write's `deferred_import_from`; constant
+  `HoldBehindHeld`). A later write claimed while the held one waits cannot be prepared after the stamp: a sync row is
+  never claimed while a foreground write runs. Blocking the later write behind the held one in the claim FIFO instead
+  stalls the sync: a pass stopped after a slice queues its checkpoint behind the blocked write.
+- **The import expiry failed a write whose import had landed** (`import-expiry-skips-source-lock`,
+  `ExpiryOnlyWhileWaiting`; Postgres only). The re-check read `last_commit` without a lock on the source row, so a
+  checkpoint that committed between it and `completeWrite` left the write `pending_import_expired`. The fix declares the
+  protocol and then reads the source row `FOR SHARE` (`ImportExpiryLocksSource`); taking the source row first deadlocks
+  with `fenceDraining`'s brain, worktree, source order (`import-expiry-locks-source-first`).
+
+### Not modelled
+
+The deferred-write cap (`persistence.refresh_barrier_max_deferred`), consumers without the capability, repo-less
+sources, `gbrain upgrade --check-downgrade`, edit_page and forget replays, and source lifecycle changes, each covered
+by test/refresh-write-barrier.test.ts; more than one worktree, page or refresh at a time; older binaries' claims
+(the v292 guard trigger, pinned by its test); effects other than page writes; side effects outside the database.
