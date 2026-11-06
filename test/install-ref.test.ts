@@ -9,10 +9,10 @@ import { driftIn, findInstallRefDrift, rewriteText } from '../scripts/check-inst
 const ROOT = join(import.meta.dir, '..');
 
 describe('install ref lint', () => {
-  test('the constant is latest-stable until a stable-channel release is promoted', () => {
-    expect(INSTALL_REF).toBe('latest-stable');
-    expect(INSTALL_PIN).toBe('github:garrytan/gbrain#latest-stable');
-    expect(INSTALL_RAW_BASE).toBe('https://raw.githubusercontent.com/garrytan/gbrain/latest-stable');
+  test('the constant is stable, the channel a new install follows by default', () => {
+    expect(INSTALL_REF).toBe('stable');
+    expect(INSTALL_PIN).toBe('github:garrytan/gbrain#stable');
+    expect(INSTALL_RAW_BASE).toBe('https://raw.githubusercontent.com/garrytan/gbrain/stable');
   });
 
   test('the repository has no install surface off the constant', () => {
@@ -29,13 +29,13 @@ describe('install ref lint', () => {
       'read https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md',
       'bun install -g github:garrytan/gbrain#latest-stable',
     ].join('\n');
-    expect(driftIn('docs/x.md', doc).map(d => [d.line, d.found])).toEqual([
+    expect(driftIn('docs/x.md', doc, 'latest-stable').map(d => [d.line, d.found])).toEqual([
       [1, 'github:garrytan/gbrain#master'],
       [2, 'github:garrytan/gbrain#stable'],
       [4, 'raw.githubusercontent.com/garrytan/gbrain/master/BOOTSTRAP_FOR_AGENTS.md'],
       [5, 'raw.githubusercontent.com/garrytan/gbrain/main/scripts/setup-in-agent.sh'],
     ]);
-    expect(driftIn('docs/x.md', doc, 'stable').map(d => d.line).sort()).toEqual([1, 4, 5, 7]);
+    expect(driftIn('docs/x.md', doc).map(d => d.line).sort()).toEqual([1, 4, 5, 7]);
     expect(driftIn('CHANGELOG.md', doc)).toEqual([]);
   });
 
