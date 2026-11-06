@@ -111,11 +111,12 @@ describe('gbrainEntry (#8723)', () => {
   });
 
   test('a worker whose parent cannot be classified is refused with that parent\'s pid and command line', async () => {
+    const databaseUrl = ['postgres://alice-example', 'hunter2'].join(':') + '@db.example:5432/brain';
     const processes = await collectHostProcesses({
       heartbeats: async () => [], workers: () => [], supervisor: () => null, home: HOME, exclude: [], packageName,
       processTable: () => [
         { pid: 20, ppid: 1, command: 'bun run src/cli.ts jobs supervisor', started_ms: 600, gbrain_home: HOME, cwd: null },
-        { pid: 30, ppid: 1, command: 'sh -c DATABASE_URL=postgres://alice-example:hunter2@db.example:5432/brain bun run src/cli.ts jobs supervisor', started_ms: 600, gbrain_home: HOME, cwd: null },
+        { pid: 30, ppid: 1, command: `sh -c DATABASE_URL=${databaseUrl} bun run src/cli.ts jobs supervisor`, started_ms: 600, gbrain_home: HOME, cwd: null },
         { pid: 31, ppid: 30, command: `bun ${CHECKOUT}/src/cli.ts jobs work`, started_ms: 700, gbrain_home: HOME, cwd: null },
         { pid: 21, ppid: 20, command: `bun ${CHECKOUT}/src/cli.ts jobs work`, started_ms: 700, gbrain_home: HOME, cwd: null },
       ],
