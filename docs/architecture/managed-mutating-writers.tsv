@@ -44,6 +44,8 @@ op	cancel_job	no_canonical_write	Minion queue state only.
 op	retry_job	no_canonical_write	Minion queue state only.
 op	pause_job	no_canonical_write	Minion queue state only.
 op	resume_job	no_canonical_write	Minion queue state only.
+op	watch_job	no_canonical_write	Wake subscription state only (wake_subscriptions).
+op	unwatch	no_canonical_write	Wake subscription state only (wake_subscriptions).
 op	replay_job	no_canonical_write	Minion queue state only.
 op	send_job_message	no_canonical_write	Minion inbox rows only.
 op	submit_agent	no_canonical_write	Queues a subagent job; its tools write through put_page.

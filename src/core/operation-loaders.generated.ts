@@ -57,6 +57,7 @@ const load_timeline = () => import('./ops/timeline.ts') as Promise<Record<string
 const load_transcripts = () => import('./ops/transcripts.ts') as Promise<Record<string, unknown>>;
 const load_trust = () => import('./ops/trust.ts') as Promise<Record<string, unknown>>;
 const load_usage = () => import('./ops/usage.ts') as Promise<Record<string, unknown>>;
+const load_wakeshift = () => import('./ops/wakeshift.ts') as Promise<Record<string, unknown>>;
 const load_whois = () => import('./ops/whois.ts') as Promise<Record<string, unknown>>;
 const load_verbs = () => import('./verbs.ts') as Promise<Record<string, unknown>>;
 
@@ -163,6 +164,9 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "submit_agent": [load_jobs, "jobsOperations"],
   "get_agent_job": [load_jobs, "jobsOperations"],
   "get_job_stats": [load_jobs, "jobsOperations"],
+  "watch_job": [load_wakeshift, "wakeshiftOperations"],
+  "list_watches": [load_wakeshift, "wakeshiftOperations"],
+  "unwatch": [load_wakeshift, "wakeshiftOperations"],
   "find_orphans": [load_orphans, "orphansOperations"],
   "rank_entities": [load_graph_rank, "graphRankOperations"],
   "get_calibration_profile": [load_calibration, "calibrationOperations"],

@@ -914,6 +914,10 @@
         "name": "facts_drain"
       },
       {
+        "category": "ops",
+        "name": "wakeshift"
+      },
+      {
         "category": "brain",
         "name": "fact_take_vectors"
       },

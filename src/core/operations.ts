@@ -131,6 +131,7 @@ import { pageBatchOperations } from './ops/page-batch.ts';
 import { pageUploadOperations } from './ops/page-upload.ts';
 import { feedbackOperations } from './ops/feedback.ts';
 import { trustOperations } from './ops/trust.ts';
+import { wakeshiftOperations } from './ops/wakeshift.ts';
 import { findPagesOperations } from './ops/find-pages.ts';
 
 // parseTtlParam moved to ops/facts.ts with the facts cluster; the `remember`
@@ -184,8 +185,8 @@ export const operations: Operation[] = [
   ...filesOperations,
   // Jobs (Minions: submit_job, get_job, list_jobs, cancel_job, retry_job,
   // get_job_progress, pause_job, resume_job, replay_job, send_job_message)
-  // + v0.38 Slice 3 agent lane (submit_agent, get_agent_job) — ops/jobs.ts
-  ...jobsOperations,
+  // + v0.38 Slice 3 agent lane (submit_agent, get_agent_job) — ops/jobs.ts; Wakeshift watches (watch_job, list_watches, unwatch) — ops/wakeshift.ts
+  ...jobsOperations, ...wakeshiftOperations,
   // Orphans (find_orphans) — ops/orphans.ts; rank_entities — ops/graph-rank.ts
   ...orphansOperations, ...graphRankOperations,
   // v0.36.1.0 (T7) — Hindsight calibration wave (get_calibration_profile) —
