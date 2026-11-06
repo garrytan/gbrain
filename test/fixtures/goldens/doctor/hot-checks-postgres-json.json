@@ -1194,7 +1194,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 172/172 public tables",
+            "message": "RLS enabled on 173/173 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -1222,7 +1222,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 172 table(s) the applied migrations create exist.",
+            "message": "All 173 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -1574,6 +1574,14 @@
                 },
                 {
                   "name": "persistence_requests_foreground_committed",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_replay_id",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_slug_sequence",
                   "state": "valid"
                 }
               ],
@@ -2965,6 +2973,70 @@
             "status": "ok"
           },
           {
+            "category": "brain",
+            "details": {
+              "dirty": [
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fences/deterministic.md",
+                  "state": "modified"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fences/untracked.md",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/image.png",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/null-bytes.md",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/null-in-frontmatter.md",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/untracked-yaml.md",
+                  "state": "untracked"
+                }
+              ],
+              "dirty_count": 6,
+              "dirty_warn_after_minutes": 30,
+              "foreign": [],
+              "partial": false,
+              "unconfirmed": [],
+              "unknown": [],
+              "window": [
+                {
+                  "common": "<home>/notes-src/.git",
+                  "from": null,
+                  "ledger": false,
+                  "ledger_start": null,
+                  "oldest_reflog": "<ts>",
+                  "to": "<ts>",
+                  "uncovered": 4
+                }
+              ]
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every locally created commit in the covered window of 1 repository is in gbrain's commit ledger, and no page file waits uncommitted for more than 30 minutes. A repository gbrain has not committed in yet has no ledger, so its window is empty.",
+            "name": "foreign_writers",
+            "status": "ok"
+          },
+          {
             "category": "ops",
             "elapsed_ms": "<volatile>",
             "message": "System One is off (every decide slot is off; nothing is sent).",
@@ -3234,6 +3306,20 @@
             "message": "Postgres brains run facts-absorb jobs on the job worker (gbrain jobs supervisor), not the automatic drain.",
             "name": "facts_drain",
             "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "docs": "docs/guides/wakeshift.md#troubleshooting",
+              "enabled": false,
+              "key_source": "none"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Reporting back through Wakeshift is off (gbrain wakeshift enable turns it on).",
+            "name": "wakeshift",
+            "readiness_state": "disabled_by_choice",
             "severity": "info",
             "status": "ok"
           },
@@ -3965,6 +4051,7 @@
                     "mirror_source": 0,
                     "private": 0
                   },
+                  "live_pages": 19,
                   "pages": 19,
                   "source_id": "notes",
                   "states": {
@@ -3990,7 +4077,7 @@
               "timeout_ms": "<volatile>"
             },
             "elapsed_ms": "<volatile>",
-            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
+            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 19 live page(s), 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
             "name": "db_ahead_of_git",
             "status": "ok"
           },
@@ -6167,7 +6254,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 172/172 public tables",
+            "message": "RLS enabled on 173/173 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -6195,7 +6282,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 172 table(s) the applied migrations create exist.",
+            "message": "All 173 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -6547,6 +6634,14 @@
                 },
                 {
                   "name": "persistence_requests_foreground_committed",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_replay_id",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_slug_sequence",
                   "state": "valid"
                 }
               ],
@@ -7938,6 +8033,82 @@
             "status": "ok"
           },
           {
+            "category": "brain",
+            "details": {
+              "dirty": [
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fences/deterministic.md",
+                  "state": "modified"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fences/late.md",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fences/untracked.md",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/image.png",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/late-broken.md",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/null-bytes.md",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/null-in-frontmatter.md",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/untracked-yaml.md",
+                  "state": "untracked"
+                }
+              ],
+              "dirty_count": 8,
+              "dirty_warn_after_minutes": 30,
+              "foreign": [],
+              "partial": false,
+              "unconfirmed": [],
+              "unknown": [],
+              "window": [
+                {
+                  "common": "<home>/notes-src/.git",
+                  "from": null,
+                  "ledger": false,
+                  "ledger_start": null,
+                  "oldest_reflog": "<ts>",
+                  "to": "<ts>",
+                  "uncovered": 4
+                }
+              ]
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every locally created commit in the covered window of 1 repository is in gbrain's commit ledger, and no page file waits uncommitted for more than 30 minutes. A repository gbrain has not committed in yet has no ledger, so its window is empty.",
+            "name": "foreign_writers",
+            "status": "ok"
+          },
+          {
             "category": "ops",
             "elapsed_ms": "<volatile>",
             "message": "System One is off (every decide slot is off; nothing is sent).",
@@ -8207,6 +8378,20 @@
             "message": "Postgres brains run facts-absorb jobs on the job worker (gbrain jobs supervisor), not the automatic drain.",
             "name": "facts_drain",
             "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "docs": "docs/guides/wakeshift.md#troubleshooting",
+              "enabled": false,
+              "key_source": "none"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Reporting back through Wakeshift is off (gbrain wakeshift enable turns it on).",
+            "name": "wakeshift",
+            "readiness_state": "disabled_by_choice",
             "severity": "info",
             "status": "ok"
           },
@@ -8938,6 +9123,7 @@
                     "mirror_source": 0,
                     "private": 0
                   },
+                  "live_pages": 19,
                   "pages": 19,
                   "source_id": "notes",
                   "states": {
@@ -8963,7 +9149,7 @@
               "timeout_ms": "<volatile>"
             },
             "elapsed_ms": "<volatile>",
-            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
+            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 19 live page(s), 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
             "name": "db_ahead_of_git",
             "status": "ok"
           },

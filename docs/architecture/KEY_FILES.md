@@ -43,7 +43,7 @@ link it here; never raise the cap.
 | [Core Cycle (continued)](key-files/core-cycle-continued.md) | synthesis postprocess |
 | [Core Cycle (patterns)](key-files/core-cycle-patterns.md) | patterns, drift, synthesis |
 | [Core Minions (1/2)](key-files/core-minions-1.md) | `src/core/minions/` through `src/core/minions/protected-names.ts` |
-| [Core Minions (2/2)](key-files/core-minions-2.md) | `src/core/minions/queue.ts` through `src/core/minions/worker.ts` |
+| [Core Minions (2/2)](key-files/core-minions-2.md) | `minions/queue.ts` to `worker.ts`; [Wakeshift](key-files/wakeshift.md) |
 | [Core Persistence](key-files/core-persistence.md) | `src/core/persistence/` journal, coordinator, effects, managed sync |
 | [Core Persistence (continued)](key-files/core-persistence-continued.md) | connectors, holds, receipts; [Git writer](key-files/core-persistence-git.md); [fence repair](key-files/core-fence-repair.md) |
 | [Persistence capacity](key-files/core-persistence-capacity.md) | write caps, true-up; [history](key-files/page-history.md), [as_of](key-files/valid-time.md) |

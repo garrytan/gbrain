@@ -52,6 +52,7 @@ import { hashFile } from './large-file.ts';
 import type { FileRecoveryRecord, SqlEngine } from './model.ts';
 import { nativeFileTarget } from './native-file-target.ts';
 import type { NativeLockHandle } from './native-lock.ts';
+import { recordCommitAsync } from '../git/commit-ledger.ts';
 import { committedBlob, headBlob, headCommit } from './pending-import.ts';
 
 /** Whether `sourceId` is a strict (git-canonical) source; `lock` reads its row FOR SHARE inside a publication. */
@@ -327,6 +328,7 @@ async function doorCommit(session: GitSession, root: string, files: DoorFile[], 
       if (commit.code !== 0) throw gitFailure('Cannot commit the canonical Git target.',
         `git commit-tree failed for ${changed.length} file(s); a missing Git identity (user.name, user.email) in that checkout is one cause to check.`);
       const created = commit.stdout.trim();
+      await recordCommitAsync(root, { sha: created, writer: 'door', ref: branch });
       await doorSeams.beforeUpdateRef?.(root, attempt);
       const moved = await git(session, ['update-ref', '-m', `commit: ${message[0]!.split('\n')[0]}`, branch, created, head]);
       if (moved.code === 0) {

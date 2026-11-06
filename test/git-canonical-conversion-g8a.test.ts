@@ -188,6 +188,8 @@ const DRIFT_COMMITTED = 'The committed edit of notes/drift.';
 async function mixedSource(brain: ManagedBrain, driftMatches = true): Promise<void> {
   const { engine, root } = brain;
   expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+  // A real writer archives the preimage before it rewrites a page, so notes/legacy's content evidence shows only the database moved (d4).
+  await engine.createVersion('notes/legacy', { sourceId: 'default' });
   for (const slug of ['notes/ahead', 'notes/drift', 'notes/removed', 'notes/legacy']) await databaseOnlyEdit(engine, slug, `Written to the database alone: ${slug}.`);
   writeFileSync(join(root, 'notes/drift.md'), note('notes/drift', DRIFT_COMMITTED));
   git(root, 'rm', '-q', 'notes/removed.md'); git(root, 'commit', '-qam', 'edit drift, remove removed');

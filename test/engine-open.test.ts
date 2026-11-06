@@ -15,6 +15,7 @@ import { operationsByName, type OperationContext } from '../src/core/operations.
 import { readStoredEmbeddingIdentity } from '../src/core/stored-embedding-identity.ts';
 import { ConnectionManager } from '../src/core/connection-manager.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import type { SqlEngine } from '../src/core/persistence/model.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { engineKey } from '../src/core/engine-key.ts';
 import { awaitPendingTelemetryFlush, getTelemetryWriter, recordSearchTelemetry, _telemetryWriterCountForTest } from '../src/core/search/telemetry.ts';
@@ -40,6 +41,14 @@ const hostCtx = (engine: BrainEngine): OperationContext => ({
   engine, config: {}, logger: { info: () => {}, warn: () => {}, error: () => {} }, dryRun: false, remote: true,
 } as unknown as OperationContext);
 const codeOf = async (work: Promise<unknown>) => { try { await work; return 'resolved'; } catch (error) { return (error as { code?: string }).code ?? String(error); } };
+/** `engine` whose next registration read answers no row, as when another caller registers between that read and the insert. */
+const racedRead = (engine: BrainEngine): SqlEngine => {
+  let hidden = false;
+  return { executeRaw: (<T>(sql: string, params?: unknown[]) => {
+    if (!hidden && sql.startsWith('SELECT revoked_at,credential_hash,lane,grant_ceiling FROM persistence_local_writers')) { hidden = true; return Promise.resolve([] as T[]); }
+    return engine.executeRaw<T>(sql, params);
+  }) as SqlEngine['executeRaw'] };
+};
 /** Ambient settings that must never reach an embedded engine: a clean GBRAIN_HOME, a canary HOME and bogus database URLs. */
 function canaries() {
   const home = dir('canary-home');
@@ -304,7 +313,7 @@ describe('host identity', () => {
 });
 
 describe('writer given as a value', () => {
-  test('registration is idempotent; another credential or lane under its id refuses; a revoked one is never replaced', async () => {
+  test('registration is idempotent; another credential or lane under its id, or its credential under another id, refuses; a revoked one is never replaced', async () => {
     const engine = await openEngine(settingsFor());
     try {
       await engine.initSchema();
@@ -315,12 +324,49 @@ describe('writer given as a value', () => {
       expect(await rows()).toEqual([{ lane: 'stdio', revoked: false }]);
       expect(await codeOf(registerLocalWriterValue(engine, { ...writer, credential: randomBytes(32).toString('hex') }))).toBe('permission_denied');
       expect(await codeOf(registerLocalWriterValue(engine, { ...writer, lane: 'cli' }))).toBe('permission_denied');
+      // The same credential under another id is that other registration's, not a second one.
+      expect(await codeOf(registerLocalWriterValue(engine, { ...writer, id: randomUUID() }))).toBe('permission_denied');
       expect(await codeOf(registerLocalWriterValue(engine, { ...writer, id: 'not-a-uuid' }))).toBe('engine_settings_invalid');
       expect(await codeOf(registerLocalWriterValue(engine, { ...writer, credential: 'x'.repeat(31) }))).toBe('engine_settings_invalid');
       expect(await codeOf(registerLocalWriterValue(engine, { ...writer, lane: 'http' as 'cli' }))).toBe('engine_settings_invalid');
       expect(await revokeLocalWriter(engine, writer.id)).toBe(true);
       expect(await codeOf(registerLocalWriterValue(engine, writer))).toBe('permission_denied');
       expect(await rows()).toEqual([{ lane: 'stdio', revoked: true }]);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 120_000);
+
+  test('a registration that read no row and then lost its insert checks the row that won, and refuses as an existing row would', async () => {
+    const engine = await openEngine(settingsFor());
+    try {
+      await engine.initSchema();
+      const writer = writerValue('stdio');
+      await registerLocalWriterValue(engine, writer);
+      const rows = (id: string) => engine.executeRaw<{ lane: string; revoked: boolean }>('SELECT lane, revoked_at IS NOT NULL AS revoked FROM persistence_local_writers WHERE id=$1::uuid', [id]);
+      expect(await codeOf(registerLocalWriterValue(racedRead(engine), writer))).toBe('resolved');
+      expect(await codeOf(registerLocalWriterValue(racedRead(engine), { ...writer, credential: randomBytes(32).toString('hex') }))).toBe('permission_denied');
+      expect(await codeOf(registerLocalWriterValue(racedRead(engine), { ...writer, lane: 'cli' }))).toBe('permission_denied');
+      const other = randomUUID();
+      expect(await codeOf(registerLocalWriterValue(racedRead(engine), { ...writer, id: other }))).toBe('permission_denied');
+      expect(await rows(other)).toEqual([]);
+      expect(await revokeLocalWriter(engine, writer.id)).toBe(true);
+      expect(await codeOf(registerLocalWriterValue(racedRead(engine), writer))).toBe('permission_denied');
+      expect(await rows(writer.id)).toEqual([{ lane: 'stdio', revoked: true }]);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 120_000);
+
+  test('first writes made at once from one writer value all land under one registration', async () => {
+    const writer = writerValue('stdio');
+    const engine = await openEngine(settingsFor({ writer }));
+    try {
+      await engine.initSchema();
+      const outcomes = await Promise.all([0, 1, 2, 3].map(i => codeOf(operationsByName.put_page.handler(hostCtx(engine),
+        { slug: `notes/first-write-${i}`, content: `---\ntitle: First write ${i}\n---\nEngine write ${i}.\n` }))));
+      expect(outcomes).toEqual(['resolved', 'resolved', 'resolved', 'resolved']);
+      expect(await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM persistence_local_writers WHERE id=$1::uuid', [writer.id])).toEqual([{ n: 1 }]);
     } finally {
       await engine.disconnect();
     }
@@ -468,6 +514,7 @@ describe('repo source', () => {
 const FILE_IDENTITY_ALLOWLIST: Record<string, string> = {
   'persistence/coordination-lock.ts': 'fallback only when a caller passes no host id; every claim and reservation passes hostIdFor(engine)',
   'persistence/engine-graduation.ts': 'PGLite to Postgres graduation, run only by gbrain migrate on the brain host',
+  'git/commit-ledger.ts': 'PR B commit ledger: written by the git commit sites, which hold no engine; stamps the host that made the commit, null when it has none',
 };
 
 describe('static guards', () => {

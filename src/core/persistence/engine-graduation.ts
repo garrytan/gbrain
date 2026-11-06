@@ -655,7 +655,7 @@ async function quiesceFresh(run: Run, input: PlanInputs, expect: string): Promis
   run.m.source = plan.source;
   run.m.triggerBypass = plan.triggerBypass!;
   const [pending] = await run.source!.executeRaw<{ request_id: string | null }>(
-    `SELECT request_id::text AS request_id FROM persistence_requests WHERE state IN ('queued','running','recovering') ORDER BY sequence LIMIT 1`).catch(() => [{ request_id: null }]);
+    `SELECT request_id::text AS request_id FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering') ORDER BY sequence LIMIT 1`).catch(() => [{ request_id: null }]);
   run.m.replayRequestId = pending?.request_id ?? null;
   save(run);
 }

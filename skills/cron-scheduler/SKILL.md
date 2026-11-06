@@ -149,7 +149,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - `checkpoint_validation_timeout` in a sync log: run the retry command the error prints; do not cancel the request.
 - `writer_coordinator_required` from a scheduled sync: the brain is managed. Replace the line with the [managed brain](#managed-brain) recipe; never retry with `--skip-failed` or without `--no-pull`.
 - `sync_in_progress` from `gbrain sources refresh`: a managed sync cursor is unfinished, and the refresh never waits on it. Run the `gbrain sync --source <id> --no-pull …` command the refusal prints; the next tick's refresh then runs.
-- `worktree_refreshing` from a sync: a refresh is draining or merging that checkout. Leave it; the next tick syncs it.
+- `worktree_refreshing` from a sync: a refresh is draining or merging that checkout. Leave it; the next tick syncs it. A page write answered `pending` (exit 10) during a refresh is waiting behind it: poll its receipt, never resubmit.
 - A job's lookups all come back empty, or its log shows `no_brain` or `GBRAIN_DB_ACCESS no_url`: the job runs without the brain's config. Call gbrain through the wrapper; an empty result from a job whose stderr went to `/dev/null` is not evidence of "no notes".
 - `refresh_not_owner` from cron while the same refresh works by hand: the job resolves another gbrain home, so it is another host. The refusal names the identity file, `HOME` and `GBRAIN_HOME` it read; set the owner's `GBRAIN_HOME` in the wrapper. Never copy or delete a `host.json`.
 - A `--json` caller fails to parse gbrain's output: something the wrapper runs prints to stdout. Send that hook's output to a log file.

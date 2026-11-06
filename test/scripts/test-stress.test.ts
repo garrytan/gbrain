@@ -10,7 +10,8 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { failureSignature, parseArgs, readReport } from '../../scripts/stress/run.ts';
+import { failureSignature, parseArgs, readReport, skipReason } from '../../scripts/stress/run.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 const RUNNER = join(import.meta.dir, '..', '..', 'scripts', 'stress', 'run.ts');
 const dirs: string[] = [];
@@ -100,6 +101,22 @@ describe('test:stress runner', () => {
     expect(byFile['test/pooled.test.ts']).toMatchObject({ status: 'not-stressed', reason: expect.stringContaining('owning pooled job in .github/workflows/persistence-validation.yml') });
     expect(byFile['test/orphan-pooled.test.ts']).toMatchObject({ status: 'fail' });
     expect(owned.code, owned.out).toBe(1);
+  });
+
+  test('a pooled file whose owning job picks it in a CI script under scripts/ is not stressed', () => {
+    const root = tree({
+      'test/script-pooled.test.ts': "import { test } from 'bun:test';\nconst pooled = process.env.GBRAIN_PGBOUNCER_URL;\ntest.skipIf(!pooled)('pooled', () => {});\n",
+      '.github/workflows/e2e.yml': 'jobs:\n  e2e:\n    steps:\n      - run: bash scripts/run-e2e.sh\n',
+      'scripts/run-e2e.sh': 'if [ "$f" = "test/script-pooled.test.ts" ] && [ "${GBRAIN_CI_REQUIRE_PGBOUNCER:-0}" = "1" ]; then exit 1; fi\n',
+    });
+    const r = stress(root, 'test/script-pooled.test.ts', '--iterations', '2');
+    expect(r.code, r.out).toBe(0);
+    expect(r.manifest.files[0]).toMatchObject({ status: 'not-stressed', reason: expect.stringContaining('owning pooled job in scripts/run-e2e.sh') });
+  });
+
+  test('test/e2e/pgbouncer-teardown.test.ts is pooler-owned in this repository', async () => {
+    const reason = await withEnv({ GBRAIN_PGBOUNCER_URL: undefined }, () => skipReason('test/e2e/pgbouncer-teardown.test.ts'));
+    expect(reason).toContain('PgBouncer fixture');
   });
 
   test('a file that skips without an external Supavisor URL no CI job holds is not stressed', () => {

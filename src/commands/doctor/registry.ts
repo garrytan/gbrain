@@ -102,10 +102,12 @@ import { runtimeBuildSkewEntry } from './checks/runtime-build-skew.ts';
 import { cliSocketRefusalsEntry } from './checks/cli-socket-refusals.ts';
 import { gitConvergenceEntry } from './checks/git-convergence.ts';
 import { gitWriterEntry } from './checks/git-writer.ts';
+import { foreignWritersEntry } from './checks/foreign-writers.ts';
 import { retrievalFeedbackEntry } from './checks/retrieval-feedback.ts';
 import { transcriptSecretExposureEntry } from './checks/transcript-secrets.ts';
 import { autoChronicleEntry } from './checks/auto-chronicle.ts';
 import { factsDrainEntry } from './checks/facts-drain.ts';
+import { wakeshiftEntry } from './checks/wakeshift.ts';
 import { factTakeVectorsEntry } from './checks/vector-coverage.ts';
 import { decideHealthEntry } from './checks/decide.ts';
 import { memoryProposalsEntry } from './checks/memory-proposals.ts';
@@ -272,12 +274,14 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   commitNotifierEntry,
   gitConvergenceEntry,
   gitWriterEntry,
+  foreignWritersEntry,
   decideHealthEntry,
   memoryProposalsEntry,
   unlinkedFactsEntry,
   edgeValidityEntry,
   autoChronicleEntry,
   factsDrainEntry,
+  wakeshiftEntry,
   factTakeVectorsEntry,
   plannerStatsEntry,
   retrievalFeedbackEntry,

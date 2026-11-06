@@ -151,7 +151,7 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
     COUNT(r.id) FILTER (WHERE r.state='queued')::integer AS queued,
     COUNT(r.id) FILTER (WHERE r.state='running')::integer AS running,
     COUNT(r.id) FILTER (WHERE r.state='recovering')::integer AS recovering,
-    MIN(r.created_at) FILTER (WHERE r.state IN ('queued','running','recovering')) AS oldest_request_at,
+    MIN(r.created_at) FILTER (WHERE r.state IN ('queued','deferred','running','recovering')) AS oldest_request_at,
     (MAX(r.sequence) FILTER (WHERE r.state='committed'))::text AS last_completed_sequence,
     COALESCE((SELECT c.recovery_bytes FROM persistence_counters c WHERE c.key='worktree:'||w.id::text),0)::text AS recovery_bytes,
     (SELECT COUNT(*)::integer FROM persistence_effects e WHERE e.worktree_id=w.id AND e.recovery IS NOT NULL) AS recovering_effects
@@ -163,11 +163,11 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
     operation: string; intent_kind: string | null; preparation_attempts: number | null } & Omit<ClaimRow, 'state'>>(
     `SELECT request_id,worktree_id,source_id,state,blocked_reason,error_code,created_at,claim_phase,execution_token,claim_expires_at<now() AS claim_lapsed,publication_started,
       operation,intent->>'kind' AS intent_kind,preparation_attempts,id::text AS id
-    FROM persistence_requests WHERE state IN ('queued','running','recovering') OR blocked_reason IS NOT NULL ORDER BY sequence LIMIT 100`);
+    FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering') OR blocked_reason IS NOT NULL ORDER BY sequence LIMIT 100`);
   const queue = await engine.executeRaw(`SELECT state,COUNT(*)::integer AS count,COALESCE(SUM(intent_bytes),0)::text AS intent_bytes,
     MIN(created_at) AS oldest_request_at,
     MAX(EXTRACT(EPOCH FROM (now()-created_at))*1000)::bigint::text AS oldest_age_ms
-    FROM persistence_requests WHERE state IN ('queued','running','recovering') GROUP BY state ORDER BY state`);
+    FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering') GROUP BY state ORDER BY state`);
   const effects = await engine.executeRaw(`SELECT e.kind,e.state,COUNT(*)::integer AS count,MIN(r.created_at) AS oldest_at
     FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
     WHERE e.state<>'committed' AND NOT (e.data ? 'settled') GROUP BY e.kind,e.state ORDER BY e.kind,e.state`);

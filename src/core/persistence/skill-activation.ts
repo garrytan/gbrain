@@ -60,7 +60,7 @@ export async function activateSharedSkillPersistence(engine: BrainEngine,
         row.owner_host_id, String(row.owner_epoch), String(row.topology_generation), row.relative_path, row.local_path, row.coordination_path]));
       if (identity(current) !== identity(initial)
         || (await tx.executeRaw(`SELECT id FROM gbrain_cycle_locks WHERE ${NOT_PAGE_EMBEDDING_LEASE} LIMIT 1`)).length) throw quiescence();
-      if ((await tx.executeRaw("SELECT id FROM persistence_requests WHERE state IN ('queued','running','recovering') OR recovery IS NOT NULL LIMIT 1")).length
+      if ((await tx.executeRaw("SELECT id FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL LIMIT 1")).length
         || (await tx.executeRaw("SELECT id FROM persistence_effects WHERE state IN ('queued','running') OR recovery IS NOT NULL LIMIT 1")).length) {
         throw await notQuiescedError(tx, quiescence().message, { queuedEffects: true });
       }

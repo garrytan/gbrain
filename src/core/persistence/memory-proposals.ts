@@ -1,6 +1,6 @@
 /**
  * GST-1158 memory_propose (GBRA-284): QM's held writes, a timeline entry or a typed link it proposes for the person it
- * attests, waiting in memory_proposals (v290) for the brain owner's yes. Nothing here is page content and nothing here
+ * attests, waiting in memory_proposals (v294) for the brain owner's yes. Nothing here is page content and nothing here
  * reaches git, an export or a recall: on approval the write is admitted into the persistence journal under the
  * proposal's stored authority, in the same transaction that marks the proposal approved (the failed-writes replay seam,
  * replayAuthority), and published through the normal writer door. One request id names the proposal and the write.

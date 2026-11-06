@@ -13,6 +13,7 @@ import { DELETE_BATCH_SIZE } from './engine-constants.ts';
 import { invalidateGitListingCache, knownOutsideGitRepo, noteGitFailure } from './git-visible-files.ts';
 import { hasUnresolvedDbOnlyDeclaration, loadStorageConfig } from './storage-config.ts';
 import { GIT_READ_ENV, gitChildEnv } from './git-env.ts';
+import { recordCommit, recordIntent } from './git/commit-ledger.ts';
 
 /**
  * v0.32.7 CJK wave (codex post-merge F4): resolve a slug by `pages.source_path`
@@ -592,6 +593,7 @@ export function createSyncBaselineCommit(repoPath: string): void {
     const stderr = err && typeof err === 'object' && 'stderr' in err ? String((err as { stderr: unknown }).stderr) : '';
     if (!stderr.includes('ignored by one of your .gitignore files')) throw err;
   }
+  recordIntent(repoPath, { writer: 'sync_init', head_before: null, message: 'gbrain: initial commit (auto-init by sync)' });
   git(
     repoPath,
     // --no-verify only skips pre-commit/commit-msg — prepare-commit-msg
@@ -613,6 +615,7 @@ export function createSyncBaselineCommit(repoPath: string): void {
     ],
     ['user.name=gbrain', 'user.email=gbrain@localhost', 'core.hooksPath=/dev/null'],
   );
+  recordCommit(repoPath, { sha: git(repoPath, ['rev-parse', 'HEAD']), writer: 'sync_init' });
 }
 
 /**

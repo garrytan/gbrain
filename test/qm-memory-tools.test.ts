@@ -34,6 +34,7 @@ import { attestRightOf, linkedMember, linkMember } from '../src/core/access/acto
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { boundFactLines, isoDate, memoryWriteRequestId, plainFactText, MEMORY_RECALL_MAX_CHARS } from '../src/core/ops/qm-memory.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
+import { operations } from '../src/core/operations.ts';
 import { startHttpTransport } from '../src/mcp/http-transport.ts';
 import { RateLimiter } from '../src/mcp/rate-limit.ts';
 import { BEHAVIOR_CHANGES } from '../src/core/behavior-change-notice.ts';
@@ -432,6 +433,30 @@ for (const kind of testBackends()) {
       expect(unlinked.structured).toEqual({ facts: [], truncated: false, code: 'actor_unlinked' });
     }, 120_000);
 
+    test('a recall that names sources keeps folder fail-closed coverage: facts under a pending prefix stay hidden', async () => {
+      expect(tokens.scoped).toBeDefined();
+      const aliceScoped: Who = { token: 'scoped', actor: ALICE_ID };
+      const held = 'pending-hr/scope-note';
+      await importFromContent(engine, held, '---\ntype: note\ntitle: Held note\n---\n# Held note\n', { sourceId: SRC });
+      await engine.insertFact({ fact: 'Payroll budget ledger draft canaryscopepending', kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'world' }, { source_id: SRC });
+      await engine.executeRaw('UPDATE facts SET source_markdown_slug = $1 WHERE fact LIKE $2', [held, '%canaryscopepending%']);
+      __resetPrivateVisibilityCacheForTests();
+      expect((await recall(aliceScoped, 'payroll budget ledger', { max_chars: 12_000, source_id: SRC })).text).toContain('canaryscopepending');
+      await engine.executeRaw('INSERT INTO access_policy_state (source_id) VALUES ($1) ON CONFLICT (source_id) DO NOTHING', [SRC]);
+      await engine.executeRaw("INSERT INTO access_pending_coverage (source_id, prefix, reason) VALUES ($1, 'pending-hr/', 'invalid')", [SRC]);
+      try {
+        __resetPrivateVisibilityCacheForTests();
+        for (const args of [{ source_id: SRC }, { source_ids: [SRC] }]) {
+          const asScope = await recall(aliceScoped, 'payroll budget ledger', { max_chars: 12_000, ...args });
+          expect(asScope.isError).toBe(false);
+          expect(asScope.all).not.toContain('canaryscopepending');
+        }
+      } finally {
+        await engine.executeRaw("DELETE FROM access_pending_coverage WHERE source_id = $1 AND prefix = 'pending-hr/'", [SRC]);
+        __resetPrivateVisibilityCacheForTests();
+      }
+    }, 120_000);
+
     test('generic recall takes max_chars: whole facts in order, no marker, structured truncated, invalid values refused; without it recall is unchanged (HARN-15)', async () => {
       const ENTITY = 'companies/harn-recall-example';
       for (let i = 0; i < 12; i++) {
@@ -469,6 +494,8 @@ for (const kind of testBackends()) {
         expect(out.json.code ?? out.json.error).toBe('invalid_params');
         expect(out.text).not.toContain('canaryharnrecall');
       }
+      // A client that fills optional integers from the schema sends at least the minimum, never 0.
+      expect(operations.find(o => o.name === 'recall')!.params.max_chars).toMatchObject({ type: 'integer', minimum: MEMORY_RECALL_MAX_CHARS.min });
     }, 120_000);
 
     test('an unlinked person gets an empty success whose code rides structuredContent only', async () => {
@@ -713,6 +740,33 @@ for (const kind of testBackends()) {
         remote: true, transport: 'http', auth: await verify(tokens.qm!), sourceId: SRC, actor: { header: ALICE_ID }, allowedOps: new Set(['get_page']) });
       expect(hidden.isError).toBe(true);
       expect((hidden.structuredContent as { error: { code: string } }).error.code).toBe('unknown_tool');
+    }, 60_000);
+
+    test('acting_user without attestation names what is missing in detail: the header, the attest right, or both (GST-1304)', async () => {
+      const cases: Array<[Who, string]> = [
+        [{ token: 'qm' }, 'missing=x-qm-actor'],
+        [{ token: 'plain' }, 'missing=attest_right,x-qm-actor'],
+        [{ token: 'plain', actor: ALICE_ID }, 'missing=attest_right'],
+      ];
+      for (const [as, detail] of cases) {
+        const out = await call(as, 'memory_recall', { query: 'harbor ledger', acting_user: ALICE_ID });
+        expect(out.json).toMatchObject({ code: 'actor_not_attested', reason: 'argument_without_attestation', detail });
+        expect(out.structured?.error).toMatchObject({ code: 'actor_not_attested', reason: 'argument_without_attestation', detail });
+      }
+      const qmOnly = await call({ token: 'qm' }, 'memory_recall', { query: 'harbor ledger', acting_user: ALICE_ID });
+      expect(qmOnly.json.message).toContain('x-qm-actor');
+      expect(qmOnly.json.message).not.toContain('attest right');
+    }, 60_000);
+
+    test('a memory_recall query over query_chars_ranked is ranked on its first 2,000 characters, never refused (v1 contract; GST-1304)', async () => {
+      expect((await write(alice, [{ fact: 'Alice audits the harbor ledger canarylongquery', provenance: 'x' }])).structured!.status).toBe('committed');
+      const head = 'harbor ledger budget canarylongquery ';
+      const out = await recall(alice, head + 'filler words that pad the question '.repeat(80));
+      expect(out.isError).toBe(false);
+      expect(out.json.code).toBeUndefined();
+      expect(out.text).toContain('canarylongquery');
+      const tailOnly = await recall(alice, 'filler words that pad the question '.repeat(60) + ' harbor ledger budget');
+      expect(tailOnly.isError).toBe(false);
     }, 60_000);
 
     test('a keyless brain ranks by keyword and makes no embedding call', async () => {

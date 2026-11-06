@@ -1068,7 +1068,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 173 table(s) the applied migrations create exist.",
+          "message": "All 174 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -1362,6 +1362,14 @@
               },
               {
                 "name": "persistence_requests_foreground_committed",
+                "state": "valid"
+              },
+              {
+                "name": "persistence_requests_replay_id",
+                "state": "valid"
+              },
+              {
+                "name": "persistence_requests_slug_sequence",
                 "state": "valid"
               }
             ],
@@ -2467,6 +2475,15 @@
           "status": "ok"
         },
         {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no registered source on this host is a Git checkout, so there are no commits to attribute (the database is the record on a repo-less brain).",
+          "name": "foreign_writers",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
           "category": "ops",
           "elapsed_ms": "<volatile>",
           "message": "System One is off (every decide slot is off; nothing is sent).",
@@ -2744,6 +2761,20 @@
           "elapsed_ms": "<volatile>",
           "message": "No facts-absorb jobs are queued (no run recorded yet).",
           "name": "facts_drain",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "docs": "docs/guides/wakeshift.md#troubleshooting",
+            "enabled": false,
+            "key_source": "none"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Reporting back through Wakeshift is off (gbrain wakeshift enable turns it on).",
+          "name": "wakeshift",
+          "readiness_state": "disabled_by_choice",
+          "severity": "info",
           "status": "ok"
         },
         {
