@@ -31,6 +31,7 @@ import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
 import { queuePublicationEffects } from './effect-journal.ts';
 import { deferredReplayRefusal } from './refresh-barrier.ts';
 import { holdForImport } from './import-deferral.ts';
+import { adoptLocalEdit } from './local-edit-adoption.ts';
 import { timePublicationStep } from './publication-timing.ts';
 import type { AppendedRange, GitCommitNote } from './effect-model.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
@@ -393,7 +394,10 @@ export async function finishUnpublishedFailure(engine: BrainEngine, row: WriteRe
   stage: PublicationStage = 'publication'): Promise<WriteRequest> {
   const charged = await releaseChargedInterruption(engine, row, error, stage);
   if (charged) return charged;
-  const failure = withAttempt(requestError(error), stage, engine);
+  // GST-1601: with persistence.adopt_local_edits on for the source, a one-sided local edit is adopted and the write prepared again.
+  const adoption = await adoptLocalEdit(engine, row, error);
+  if (adoption && 'released' in adoption) return adoption.released;
+  const failure = withAttempt(requestError(adoption?.error ?? error), stage, engine);
   // GST-1582: with the refresh barrier on, a write refused because its file awaits an import waits for that import instead.
   const held = failure.code === 'source_changed' ? await holdForImport(engine, row, error) : null;
   if (held) return held;

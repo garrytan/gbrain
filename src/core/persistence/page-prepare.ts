@@ -267,6 +267,19 @@ async function frontmatterDriftWrite(engine: BrainEngine, slug: string, fileText
   return digest(check.frontmatter) === digest(file.frontmatter) && check.title === file.title && check.type === incoming.type && digest(check.tags) === digest(file.tags)
     && check.compiled_truth === incoming.compiled_truth && (check.timeline ?? '') === (incoming.timeline ?? '') ? spliced : null;
 }
+/**
+ * GST-1601: whether a local edit changes what an adoption must never take without a person: the title, the type, or a
+ * policy, protected, access, lineage or trust-lowering frontmatter key (the keys frontmatterDriftWrite never splices).
+ */
+export async function protectedLocalEdit(engine: BrainEngine, slug: string, fileText: string, snapshot: PageSnapshot, activePack?: ParseOpts['activePack']): Promise<boolean> {
+  snapshot = (await materializedSnapshot(engine, snapshot))!;
+  const file = parseMarkdown(fileText, slug, { activePack });
+  if (file.title !== snapshot.page.title || importedFileType(file, snapshot.page, false) !== snapshot.page.type) return true;
+  const fileFrontmatter = comparableFrontmatter(withoutSafetyAssessments(file.frontmatter));
+  const stored = comparableFrontmatter(withoutSafetyAssessments(snapshot.page.frontmatter ?? {}));
+  return [...new Set([...Object.keys(fileFrontmatter), ...Object.keys(stored)])].some(key => digest(fileFrontmatter[key] ?? null) !== digest(stored[key] ?? null)
+    && (POLICY_KEYS.has(key) || protectedReconcileKey(key) || SPLICE_REFUSED_KEYS.has(key) || key === 'slug'));
+}
 /** The type a file's parse compares with (`fileMatchesSnapshot`), after aligning the parse with what its import over `page` stores. */
 function importedFileType(parsed: ParsedMarkdown, page: Pick<Page, 'type' | 'frontmatter'>, inferred: boolean): Page['type'] {
   // #5521 parity for subtype (#5928): a pack rule is not part of the file's bytes, so a file
@@ -467,10 +480,12 @@ async function compareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 's
       const spliced = !adopt.length && options.deleting !== true && typeof content === 'string' && before instanceof Buffer && !bodyUnread(snapshot.page) && before.length <= PUSH_SCAN_MAX_FILE_BYTES
         ? await frontmatterDriftWrite(engine, row.slug, before.toString('utf8'), snapshot, content, options.activePack) : null;
       if (spliced !== null) return { path, root, content: spliced, expectedBeforeHash: beforeHash() };
-      throw opError('source_changed', 'The canonical file contains an uncoordinated local edit.',
+      // GST-1601: the drifted file rides the refusal, so the owner can adopt a one-sided local edit (local-edit-adoption.ts).
+      throw Object.assign(opError('source_changed', 'The canonical file contains an uncoordinated local edit.',
         `On the brain host, run gbrain sources reconcile ${row.source_id} ${row.slug} --brain <brain id, host by default> --preview${adopt.length ? ' --adopt-slug-path (the page records no file of its own, so the preview adopts the file at its slug path)' : ''}, review and apply the resolved preview, then retry this write with a new request_id. Neither copy was overwritten.`,
         { detail: 'file_database_drift', fix: readFix(`Previews how page ${row.slug}'s canonical file and database copy reconcile; a preview never changes canonical content.`,
-          { argv: ['gbrain', 'sources', 'reconcile', row.source_id, row.slug, '--brain', 'host', '--preview', ...adopt] }) });
+          { argv: ['gbrain', 'sources', 'reconcile', row.source_id, row.slug, '--brain', 'host', '--preview', ...adopt] }) }),
+        adopt.length || options.deleting === true ? {} : { localEdit: { root, path } });
     }
   } else if (before && !snapshot && content !== null && beforeHash() !== fileContentHash(content)
     && !(options.capture && beforeHash() === options.capture.hash)) {

@@ -25,6 +25,7 @@ test/access-page-indexes-online.test.ts
 test/access-qm-actor.test.ts
 test/access-writes.test.ts
 test/activation-unbound-rooted-6449.test.ts
+test/adopt-local-edit.test.ts
 test/alias-source-cascade-5094.test.ts
 test/attribution-backfill-history.test.ts
 test/backstop-same-page-shadow-managed-6333.test.ts

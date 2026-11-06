@@ -97,6 +97,11 @@ export async function headBlob(root: string, path: string, signal?: AbortSignal)
   return quiet(gitRead(root, ['rev-parse', '--verify', '--quiet', `HEAD:./${relative(root, path).split(sep).join('/')}`], signal), signal);
 }
 
+/** The bytes of blob `blob` in `root`'s repository as text, or null when Git cannot read it. */
+export async function blobText(root: string, blob: string, signal?: AbortSignal): Promise<string | null> {
+  return gitRead(root, ['cat-file', 'blob', blob], signal).then(out => out, error => { if (signal?.aborted) throw error; return null; });
+}
+
 /**
  * The blob id HEAD holds at `path` when the working-tree file there is exactly that blob (`hash-object` applies the
  * path's clean filters, as `git add` would); null when the file differs, is absent, or HEAD has no entry there.
