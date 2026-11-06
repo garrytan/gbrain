@@ -443,10 +443,13 @@ export function renderRepairResult(result: RepairResult, opts: { diff: boolean }
   }
   if (result.scan?.partial) lines.push('  scan: partial (the census did not finish within its bound; more candidates may exist, rerun to resume it)');
   if (result.stopped) lines.push(`  STOPPED: ${result.stopped.message}`);
-  if (result.stopped?.fix?.argv) lines.push(`  fix: ${shellQuote(result.stopped.fix.argv)}${result.stopped.fix.consent.length ? ` (asks the user first: ${result.stopped.fix.consent.join(', ')})` : ''}`);
+  const fixLine = (indent: string, fix: { argv?: string[]; consent?: string[] } | undefined) => {
+    if (fix?.argv) lines.push(`${indent}fix: ${shellQuote(fix.argv)}${fix.consent?.length ? ` (asks the user first: ${fix.consent.join(', ')})` : ''}`);
+  };
+  fixLine('  ', result.stopped?.fix);
   for (const entry of result.listing ?? []) {
     lines.push(`  ${entry.class}: ${entry.item}${entry.detail ? ` (${entry.detail})` : ''}`);
-    if (entry.fix?.argv) lines.push(`    fix: ${shellQuote(entry.fix.argv)}`);
+    fixLine('    ', entry.fix);
   }
   const render = repairSpec(result.kind).handler.render;
   if (result.details && render) lines.push(...render(result.details, opts));
@@ -455,8 +458,7 @@ export function renderRepairResult(result: RepairResult, opts: { diff: boolean }
     if (!outcome.detail) continue;
     lines.push(`  ${outcome.outcome}: ${outcome.item} ${Object.entries(outcome.detail).filter(([key]) => key !== 'commit_step' && key !== 'fix').map(([k, v]) => `${k}=${v}`).join(', ')}${outcome.reason ? ` (${outcome.reason})` : ''}`);
     if (typeof outcome.detail.commit_step === 'string') lines.push(`    commit: ${outcome.detail.commit_step}`);
-    const fix = outcome.detail.fix as { argv?: string[] } | undefined;
-    if (fix?.argv) lines.push(`    fix: ${shellQuote(fix.argv)}`);
+    fixLine('    ', outcome.detail.fix as { argv?: string[]; consent?: string[] } | undefined);
   }
   if (result.mode === 'dry_run' && result.affected) lines.push(`  apply: ${result.apply_command}`);
   return lines.join('\n');

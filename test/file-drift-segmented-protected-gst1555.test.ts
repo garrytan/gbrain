@@ -30,7 +30,8 @@ import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { strictReconcileKeys } from '../src/core/persistence/reconcile-merge.ts';
 import { materializedSnapshot } from '../src/core/persistence/segmented-apply.ts';
 import { REVISION_BACKFILL_MAX_ATTEMPTS, REVISION_BACKFILL_STATE_KEY } from '../src/core/page-state/revision-backfill-schema.ts';
-import { resolveRepairScope } from '../src/core/repair/core.ts';
+import { renderRepairResult } from '../src/commands/repair.ts';
+import { resolveRepairScope, type RepairResult } from '../src/core/repair/core.ts';
 import { repairRunner } from '../src/core/repair/registry.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -183,5 +184,19 @@ describe('GST-1555 reconcile field refusals name the fields', () => {
   test('an unsupported or missing field is named in why', () => {
     const refusal = (() => { try { strictReconcileKeys({ path: '/title', extra: 1 }, ['path', 'action'], ['path', 'action']); } catch (error) { return error; } })() as { code: string; why: string };
     expect(refusal).toMatchObject({ code: 'invalid_params', why: 'unsupported: extra; missing: action' });
+  });
+
+  test('the text output prints each row\'s fix with its consent, and never the fix as a detail value', () => {
+    const text = renderRepairResult({ kind: 'file-drift', mode: 'apply', affected: 1, sample: [], residuals: {}, scope: { kind: 'all' },
+      cost: { lifetime_ids: 0, receipt_bytes: 0, embedding_pages: 0, embedding_usd: null }, capacity: [], resumed_from: null, applied: 0, skipped: 0, failed: [],
+      complete: true, apply_command: 'gbrain repair file-drift --source default --slug notes/alpha --apply',
+      listing: [{ item: 'default:notes/alpha', class: 'refused', detail: 'invalid_params: example', fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', why: 'example', requires_exclusive: false } }],
+      outcomes: { changed_since_preview: 1 },
+      outcome_items: [{ item: 'default:notes/alpha', outcome: 'changed_since_preview', detail: { request_id: 'example',
+        fix: { argv: ['gbrain', 'repair', 'file-drift', '--source', 'default', '--slug', 'notes/alpha', '--prefer', 'file'], consent: ['destructive'], actor: 'agent', why: 'example', requires_exclusive: false } } }],
+    } as unknown as RepairResult);
+    expect(text).toContain('    fix: gbrain doctor --json\n');
+    expect(text).toContain('    fix: gbrain repair file-drift --source default --slug notes/alpha --prefer file (asks the user first: destructive)');
+    expect(text).not.toContain('fix=');
   });
 });

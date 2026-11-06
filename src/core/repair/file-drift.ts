@@ -687,7 +687,7 @@ async function applyDeletedSide(ctx: OperationContext, page: ApprovedPage, artif
     if (acceptedPendingReceipt(error) || !(error instanceof OperationError) || ['owner_unavailable', 'writer_lock_unavailable', 'writer_busy', 'write_pending'].includes(error.code)) throw error;
     const changed = ['changed_since_preview', 'revision_conflict', 'page_identity_changed', 'page_not_found', 'source_changed'].includes(error.code);
     return { applied: false, outcome: changed ? 'changed_since_preview' : 'refused', reason: error.code,
-      detail: { request_id: requestId, action, message: error.message, fix: error.fix ?? repreviewFix(page, 'detach_page' in artifact
+      detail: { request_id: requestId, action, message: error.message, ...(error.why ? { why: error.why } : {}), fix: error.fix ?? repreviewFix(page, 'detach_page' in artifact
         ? ['gbrain', 'repair', 'file-drift', '--source', page.source_id, '--held', '--side', 'deleted', '--state', 'file_gone', '--provenance', 'never_committed', '--only', artifact.detach_page.path, '--prefer', 'database']
         : heldDriftPreviewArgv(page.source_id, 'deleted', ('remove_file' in artifact ? artifact.remove_file : artifact.import_file).state, artifact.prefer,
           ('remove_file' in artifact ? artifact.remove_file : artifact.import_file).path)) } };
@@ -846,7 +846,7 @@ export const fileDriftRepair: RepairHandler = {
         } catch (error) {
           if (!(error instanceof OperationError) || ['owner_unavailable', 'writer_registration_required'].includes(error.code)) throw error;
           count(`refused_${error.code}`);
-          listing.push({ item: `${sourceId}:${label}`, class: 'refused', detail: `${error.code}: ${error.message}`, ...(error.fix ? { fix: error.fix } : {}) });
+          listing.push({ item: `${sourceId}:${label}`, class: 'refused', detail: `${error.code}: ${error.message}${error.why ? ` (${error.why})` : ''}`, ...(error.fix ? { fix: error.fix } : {}) });
         }
       }
     });
@@ -933,7 +933,7 @@ export const fileDriftRepair: RepairHandler = {
       const changed = error.code === 'revision_conflict' || error.code === 'page_identity_changed' || error.code === 'page_not_found'
         || error.code === 'source_changed' && error.message.startsWith('Reconciliation preview is stale');
       outcome = { applied: false, outcome: changed ? 'changed_since_preview' : 'refused', reason: error.code,
-        detail: { request_id: requestId, message: error.message, fix: error.fix ?? repreviewFix(page, ['gbrain', 'repair', 'file-drift', '--source', page.source_id, '--slug', page.slug, '--prefer', artifact.prefer]) } };
+        detail: { request_id: requestId, message: error.message, ...(error.why ? { why: error.why } : {}), fix: error.fix ?? repreviewFix(page, ['gbrain', 'repair', 'file-drift', '--source', page.source_id, '--slug', page.slug, '--prefer', artifact.prefer]) } };
     }
     if (last) {
       await clearApprovedSet(ctx.engine, { command: 'file-drift', hash });
