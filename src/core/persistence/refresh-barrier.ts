@@ -15,6 +15,7 @@ import { OperationError } from '../ops/contract.ts';
 import { authorizeWrite } from './authority.ts';
 import type { BrainEngine } from '../engine.ts';
 import { completeWrite } from './journal.ts';
+import { PENDING_IMPORT } from './pending-import.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 
@@ -78,8 +79,14 @@ const MAX_WAIT_SQL = `COALESCE((SELECT CASE WHEN value ~ '^[1-9][0-9]{0,14}$' TH
 const overdueDeferredFrom = (host: string, maxWait: string) => `JOIN persistence_worktrees w ON w.id=r.worktree_id
     JOIN persistence_worktree_refreshes f ON f.id=r.deferred_refresh_id
     WHERE w.owner_host_id=${host}::uuid AND r.state='deferred' AND f.released_at IS NULL AND r.created_at<now()-(${maxWait}*interval '1 millisecond')`;
-/** The owner's idle probe counts an overdue deferred write as work, so its expiry runs even when nothing else is queued. */
-export const overdueDeferredWorkSql = (host: string) => `EXISTS (SELECT 1 FROM persistence_requests r ${overdueDeferredFrom(host, MAX_WAIT_SQL)})`;
+/** GST-1582: a write held for an import still pending (its refresh, if any, released) whose hold is older than the limit. */
+const overdueImportFrom = (host: string, maxWait: string) => `JOIN persistence_worktrees w ON w.id=r.worktree_id JOIN sources s ON s.id=r.source_id
+    WHERE w.owner_host_id=${host}::uuid AND r.state='deferred' AND r.deferred_import_from IS NOT NULL AND COALESCE(s.last_commit,'')=r.deferred_import_from
+      AND (r.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.id=r.deferred_refresh_id AND f.released_at IS NOT NULL))
+      AND r.updated_at<now()-(${maxWait}*interval '1 millisecond')`;
+/** The owner's idle probe counts an overdue deferred or import-held write as work, so its expiry runs even when nothing else is queued. */
+export const overdueDeferredWorkSql = (host: string) => `(EXISTS (SELECT 1 FROM persistence_requests r ${overdueDeferredFrom(host, MAX_WAIT_SQL)})
+  OR EXISTS (SELECT 1 FROM persistence_requests r ${overdueImportFrom(host, MAX_WAIT_SQL)}))`;
 
 /**
  * The owner's housekeeping: a deferred write whose refresh is still unreleased past the wait limit ends failed with
@@ -87,10 +94,12 @@ export const overdueDeferredWorkSql = (host: string) => `EXISTS (SELECT 1 FROM p
  * brain row FOR SHARE) before it locks the refresh row, the order fenceAndMerge takes them in (brain FOR UPDATE, then the
  * refresh), so an expiry overlapping a fence waits instead of deadlocking; with the refresh row locked, an expiry and
  * the release that would make the row claimable never both win.
- * GST-1582: one held for an import that has not landed past the limit ends `pending_import_expired` the same way; its
- * claim and its expiry both move the row, so the expiry checks the row is still unclaimed and its import still pending
- * with the sources row locked FOR SHARE (after the protocol's brain lock, the order a fence takes them in), so an import
- * that is landing makes the check wait and then see it landed.
+ * GST-1582: one held for an import that has not landed within the limit of its hold ends `pending_import_expired` the
+ * same way, except a `remember`, which ends as its `pending_import` refusal did (conflict `source_changed`, origin
+ * `pending_import`), so the first sync that imports the file replays the fact. Its claim and its expiry both move the row,
+ * so the expiry checks the row is still unclaimed and its import still pending with the sources row locked FOR SHARE
+ * (after the protocol's brain lock, the order a fence takes them in), so an import that is landing makes the check wait
+ * and then see it landed.
  */
 export async function expireDeferredWrites(engine: BrainEngine, hostId: string, signal?: AbortSignal): Promise<WriteRequest[]> {
   const [config] = await engine.executeRaw<{ ms: number }>(`SELECT ${MAX_WAIT_SQL} AS ms`, undefined, { signal });
@@ -108,17 +117,16 @@ export async function expireDeferredWrites(engine: BrainEngine, hostId: string, 
     });
     if (done) finished.push(done);
   }
-  const imports = await engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
-    JOIN persistence_worktrees w ON w.id=r.worktree_id JOIN sources s ON s.id=r.source_id
-    WHERE w.owner_host_id=$1::uuid AND r.state='deferred' AND r.deferred_import_from IS NOT NULL AND COALESCE(s.last_commit,'')=r.deferred_import_from
-      AND (r.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.id=r.deferred_refresh_id AND f.released_at IS NOT NULL))
-      AND r.created_at<now()-($2::double precision*interval '1 millisecond') ORDER BY r.sequence LIMIT 100`, [hostId, maxWaitMs], { signal });
+  const imports = await engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r ${overdueImportFrom('$1', '$2::double precision')}
+    ORDER BY r.sequence LIMIT 100`, [hostId, maxWaitMs], { signal });
   for (const row of imports) {
     const done = await engine.transaction(async tx => {
       await declarePersistenceProtocol(tx);
       const [held] = await tx.executeRaw(`SELECT 1 FROM persistence_requests r JOIN sources s ON s.id=r.source_id
         WHERE r.id=$1::uuid AND r.state='deferred' AND COALESCE(s.last_commit,'')=r.deferred_import_from FOR SHARE OF s`, [row.id]);
       if (!held) return null;
+      if (row.operation === 'remember') return completeWrite(tx, row, 'conflict', {}, { code: 'source_changed', detail: { origin: PENDING_IMPORT },
+        message: `Request ${row.request_id} waited more than ${Math.round(maxWaitMs / 1000)} s for managed sync to import a committed change to the file of ${row.slug}, and the import has not landed, so the fact is not saved yet. It is kept: the first managed sync that imports the file replays it once. Do not save it again; check the source with gbrain sync status --source ${row.source_id} --json.` });
       return completeWrite(tx, row, 'failed', {}, { code: 'pending_import_expired',
         message: `Request ${row.request_id} waited more than ${Math.round(maxWaitMs / 1000)} s for managed sync to import a committed change to the file of ${row.slug}, and the import has not landed, so nothing was applied. Check the source with gbrain sync status --source ${row.source_id} --json, then submit the write again with a new request_id.` });
     }).catch(error => { if ((error as { code?: string })?.code === 'write_claim_lost') return null; throw error; });

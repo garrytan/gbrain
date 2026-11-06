@@ -625,9 +625,12 @@ syncing it is accepted and waits for the refresh instead of being refused `workt
   import moved the page; a blind (`force`) `put_page` lands, and its receipt (`supersedes`), its
   commit trailer (`gbrain-supersedes: <path>: revision <id> from <commit>`) and the commit ledger
   name the imported revision and commit it replaced, both still in page history and Git. A write
-  whose import has not landed after the wait limit ends `failed` with `pending_import_expired`,
+  whose import has not landed within the wait limit of its hold ends `failed` with `pending_import_expired`,
   nothing applied: check `gbrain sync status --source <source> --json`, then read the page again and
-  submit with a new request ID.
+  submit with a new request ID. A `remember` ends as the [`pending_import`](#pending_import) refusal
+  did instead: the fact is kept, the first sync that imports the file replays it, and the caller does
+  not save it again. A write keeps the refusal when a live consumer on the owner host runs a release
+  that cannot claim a held write.
 - Still refused as before: batches (`put_pages`, `remember` with `items`), jobs, skill bundles,
   and any brain where a live consumer on the owner host runs a release without the barrier.
   Repo-less brains and database-only sources never wait.
