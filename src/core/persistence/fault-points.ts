@@ -104,8 +104,9 @@ export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${Effect
   | 'generation:published' | 'generation:retired' | 'generation:activated'
   // GBRA-161 PR 1b: as a managed generation member (an overwrite or retirement after its activation committed) is prepared.
   | 'generation:member'
-  // G8a (git-conversion.ts): after a conversion group's door commit, and after the strict-equivalent pass, before the flag is set.
-  | 'conversion:group_committed' | 'conversion:withhold_stamped' | 'conversion:withhold_committed' | 'conversion:before_flip';
+  // G8a (git-conversion.ts): after a conversion group's door commit, after the recheck (before the holds are cleared and the
+  // strict passes run), and after the strict-equivalent pass, before the flag is set.
+  | 'conversion:group_committed' | 'conversion:withhold_stamped' | 'conversion:withhold_committed' | 'conversion:after_recheck' | 'conversion:before_flip';
 /**
  * `signal` (#6278, `consumer:preparing` only): the preparation's abort signal, so
  * a stalling hook can model both the reporter's cases: a preparer that honours

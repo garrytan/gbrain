@@ -3987,6 +3987,7 @@
                     "mirror_source": 0,
                     "private": 0
                   },
+                  "live_pages": 19,
                   "pages": 19,
                   "source_id": "notes",
                   "states": {
@@ -4012,7 +4013,7 @@
               "timeout_ms": "<volatile>"
             },
             "elapsed_ms": "<volatile>",
-            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
+            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 19 live page(s), 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
             "name": "db_ahead_of_git",
             "status": "ok"
           },
@@ -8982,6 +8983,7 @@
                     "mirror_source": 0,
                     "private": 0
                   },
+                  "live_pages": 19,
                   "pages": 19,
                   "source_id": "notes",
                   "states": {
@@ -9007,7 +9009,7 @@
               "timeout_ms": "<volatile>"
             },
             "elapsed_ms": "<volatile>",
-            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
+            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 19 live page(s), 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
             "name": "db_ahead_of_git",
             "status": "ok"
           },
