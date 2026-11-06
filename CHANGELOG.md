@@ -145,7 +145,7 @@ An agent that submits a long job no longer has to poll. With reporting back on, 
 - New `gbrain wakeshift enable | disable | status | test`. `enable` asks consent (it sends data off the machine and stores a credential), refuses a brain with live access members, checks the key with Wakeshift and publishes gbrain's `gbrain.job.finished` event. The key comes from `WAKESHIFT_API_KEY` or a 0600 `~/.gbrain/wakeshift.key`, and is never stored in the database or printed (status shows its fingerprint).
 - Delivery runs inside `gbrain serve` (stdio and HTTP) and the job worker every 5 seconds, and once more at the end of `gbrain jobs work`. A watch on a job that already finished wakes at once. A failed delivery is retried at most 5 times over about 40 minutes, then the watch ends and the conversation is told. Jobs are never slowed by Wakeshift.
 - New doctor check `wakeshift`: a key file other users can read, reporting back enabled without a usable key, and watches that died or were refused as `id_reused` in the last 7 days.
-- Schema migration v294 adds `wake_subscriptions` (empty unless reporting back is on). Repo-less brains get it unchanged.
+- Schema migration v290 adds `wake_subscriptions` (empty unless reporting back is on). Repo-less brains get it unchanged.
 - `--log-full-params` on `gbrain serve --http` now redacts a tool call's `session_key` argument.
 
 ## [0.60.588.0] - 2026-11-06
