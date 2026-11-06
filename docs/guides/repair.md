@@ -1636,7 +1636,9 @@ Listed but left out of the set: rows with no import record
 record whose older version equals the committed file, so the database moved
 since and a re-import would replace that edit (`excluded:database_moved`, never
 joined; `gbrain repair file-drift --source <id> --slug <slug> --prefer database`
-keeps it), rows whose
+keeps it), rows with no import record whose page and file both moved since the
+last state they shared (`excluded:both_moved`, never joined; `gbrain repair
+file-drift --source <id> --slug <slug>` decides each one), rows whose
 working-tree file differs from the committed one (`excluded:worktree_differs`:
 commit the edit and sync), and rows whose import would keep page data the
 file does not carry (`excluded:import_overlay`; resolve them with
