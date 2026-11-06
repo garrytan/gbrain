@@ -22,7 +22,6 @@ import { preimageGaps } from '../src/core/belief/preimages.ts';
 import { beliefLedgerEntry } from '../src/commands/doctor/checks/belief-ledger.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import type { Check } from '../src/commands/doctor.ts';
-import { waitForValue } from './helpers/wait-for.ts';
 import { beliefBrain, beliefEngineCase, beliefPage, type BeliefBrain } from './helpers/belief-ledger.ts';
 
 afterEach(() => __setBeliefEmitterFaultForTests(null));
@@ -150,23 +149,26 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       expect(JSON.stringify(history)).not.toContain('Back again.');
     }), 120_000);
 
-    test('create, forget, materialize, edit: the pre-forget body, the withdrawn view and the materialized body each answer their own instant', () => brain(async b => {
+    test('create, forget, edit: the pre-forget body and the struck body the withdrawal published each answer their own instant', () => brain(async b => {
       await b.put(slug, beliefPage({ prose: 'Profile.', facts: ['Acme raised a seed round', 'Acme has ten staff'] }));
       const created = await at(b);
       const [fact] = await b.engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source_id = $1 AND fact = 'Acme has ten staff' AND expired_at IS NULL`, [b.sourceId]);
       const mark = await b.lastId();
       await operationsByName.forget!.handler(b.ctx, { id: String(fact!.id), request_id: randomUUID() });
-      const materialized = await waitForValue(async () => (await b.events(mark)).find(e => e.cause.op === 'withdrawal_materialize'), { timeoutMs: 30_000, label: 'withdrawal materialization' });
-      const afterMaterialize = await at(b);
+      const afterForget = await at(b);
       await b.put(slug, beliefPage({ prose: 'Profile, edited.', facts: ['Acme raised a seed round'] }));
       const edited = await at(b);
       const forget = (await b.events(mark)).find(e => e.cause.op === 'forget' && e.subject_kind === 'page')!;
       expect((await read(b, { slug, known_as_of: created })).compiled_truth).toContain('Acme has ten staff');
       const history = await versions(b, { slug, known_as_of: edited, include_body: true });
-      expect(history.versions.map((v: any) => [v.event, v.body])).toEqual([['page.published', 'live'], ['page.view_changed', 'version'], ['page.view_changed', 'version'], ['page.published', 'version']]);
-      expect(history.versions.map((v: any) => v.event_id).slice(1, 3)).toEqual([materialized!.id, forget.id]);
-      expect(history.versions[3].compiled_truth).toContain('Acme has ten staff');
-      expect((await read(b, { slug, known_as_of: afterMaterialize })).event_id).toBe(materialized!.id);
+      // GBRA-190 G4: the withdrawal publishes the struck file itself; no materialization follows it.
+      expect((await b.events(mark)).filter(e => e.cause.op === 'withdrawal_materialize')).toEqual([]);
+      expect(history.versions.map((v: any) => [v.event, v.body])).toEqual([['page.published', 'live'], ['page.view_changed', 'version'], ['page.published', 'version']]);
+      expect(history.versions[1].event_id).toBe(forget.id);
+      expect(history.versions[2].compiled_truth).toContain('| Acme has ten staff |');
+      const withdrawn = await read(b, { slug, known_as_of: afterForget });
+      expect(withdrawn.event_id).toBe(forget.id);
+      expect(withdrawn.compiled_truth).toContain('~~Acme has ten staff~~');
       expect((await read(b, { slug, known_as_of: edited })).compiled_truth).toContain('Profile, edited.');
     }), 180_000);
 

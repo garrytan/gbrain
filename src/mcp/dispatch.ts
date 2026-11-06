@@ -31,6 +31,7 @@ import { searchCountLine } from '../core/search/keyword-paging.ts';
 import { pageCapLine } from '../core/search/remote-page-cap.ts';
 import { dateLabelLine } from '../core/search/date-labels.ts';
 import { emptyRead, hiddenTakesNotice, localTranscriptsNotice, recallInteropNotices, wantsTranscriptHint } from '../core/interop-notices.ts';
+import { degradedStampFor, degradedStampLine, type DegradedStamp } from '../core/degraded-stamp.ts';
 import { assertUnscopedReadReachesPages } from '../core/sources-not-readable.ts';
 import { accessPolicyNotices } from '../core/access/policy-notice.ts';
 import { hiddenToolHint, hiddenToolNext, hiddenToolRoute, type ToolConnection } from './hidden-tool-hint.ts';
@@ -60,6 +61,7 @@ import { isEngineDegraded } from '../core/degraded-marker.ts';
 import { admittedPendingReceipt, type WriteReceipt } from '../core/persistence/types.ts';
 import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, withRequestIdentityMemo, withVerifiedLocalRegistration } from '../core/persistence/identity.ts';
 import { frameOverCap, resultTooLargeError } from '../core/egress-budget.ts';
+import { isAIInvocationPolicyError } from '../core/ai/invocation-guard.ts';
 
 // WP3: normalization + validation moved to validate-params.ts (direct unit
 // surface). Re-exported here so existing imports/tests keep working.
@@ -505,7 +507,7 @@ export function buildEmptyRetrievalBlock(retrieval: unknown): string | null {
     .filter((s): s is string => typeof s === 'string' && s.length > 0);
   parts.push(stages.length > 0
     ? `degraded: ${[...new Set(stages)].join(', ')}.`
-    : 'no retrieval degradation — this is a clean miss.');
+    : 'retrieval healthy (no recall-impairing stage). Try the display name, a synonym or hybrid match (the default) before concluding the brain has nothing.');
   if (typeof r.hint === 'string' && r.hint.length > 0) parts.push(`hint: ${r.hint}`);
   return parts.join(' ');
 }
@@ -794,6 +796,18 @@ async function sessionSafetyNotices(engine: BrainEngine, opts: DispatchOpts, con
   return out;
 }
 
+/**
+ * Merges the handler-emitted response meta into a success result, then the GBRA-200 degraded stamp:
+ * `_meta.degraded` and one text block after every other block. The stamp is derived from every notice
+ * the call produced, before dedupe, so it rides every degraded call.
+ */
+function attachResponseMeta(out: ToolResult, responseMeta: Record<string, unknown>, stamp: DegradedStamp | null): void {
+  if (Object.keys(responseMeta).length > 0) out._meta = { ...(out._meta ?? {}), ...responseMeta };
+  if (!stamp) return;
+  out.content.push({ type: 'text', text: degradedStampLine(stamp) });
+  out._meta = { ...(out._meta ?? {}), degraded: stamp };
+}
+
 /** The one error result path: toAgentError → exactly one content block. */
 export function errorResult(e: unknown, opts: DispatchOpts, extra: { op?: string; mutating?: boolean; idempotent?: boolean; notices?: Notice[] } = {}): ToolResult {
   const carried = !!extra.notices?.length && e instanceof OperationError;
@@ -809,6 +823,22 @@ export function errorResult(e: unknown, opts: DispatchOpts, extra: { op?: string
   const { contract_version, ...rest } = envelope;
   const added = extra.notices.map(n => redactForTransport(renderNotice(n, render), render.transport));
   return toolErrorResult({ ...rest, notices: orderNotices([...(envelope.notices ?? []), ...added]), contract_version });
+}
+
+/**
+ * GST-1054: SkillOpt's tool loops hand the model a thrown error's message, so their read handlers throw this: the
+ * error text an MCP caller reads for the same failed read (code, message, suggestion, fix), with `code` kept for
+ * callers that branch on it. It renders for the caller's grant (a read-scope reader when the loop has none) and the
+ * loop's own tools, so a fix names a tool call the model can make. An AI invocation policy stop passes through
+ * unchanged, because the loop rethrows it.
+ */
+export function asAgentToolError(e: unknown, op: string, ctx: Pick<OperationContext, 'sourceId' | 'auth'>, allowedOps: ReadonlySet<string>): unknown {
+  if (isAIInvocationPolicyError(e)) return e;
+  const auth: AuthInfo = ctx.auth ?? { token: '', clientId: '', scopes: ['read'] };
+  const text = errorResult(e, { remote: true, transport: 'http', sourceId: ctx.sourceId, auth, allowedOps }, { op, mutating: false, idempotent: true }).content[0]!.text;
+  const err: Error & { code?: string } = new Error(text);
+  err.code = (JSON.parse(text) as { code?: string }).code;
+  return err;
 }
 
 const stderrLogger: OperationContext['logger'] = {
@@ -1120,7 +1150,7 @@ async function dispatchResolvedCall(
         .map(w => w.suggestion
           ? `Unknown parameter "${w.param}" — did you mean "${w.suggestion}"?`
           : `Unknown parameter "${w.param}".`)
-        .join(' ');
+        .join(' ') + (op.callShape ? ` ${op.callShape}` : '');
       const strict = new OperationError('invalid_params',
         `${n} unknown parameter${n === 1 ? '' : 's'} not declared in the ${name} tool schema (${op.mutating === true ? 'write operations always reject unknown parameters; nothing was written' : 'mcp.strict_params=reject'}). See suggestion for the submitted name${n === 1 ? '' : 's'}.`,
         suggestion);
@@ -1265,12 +1295,13 @@ async function dispatchResolvedCall(
       } catch { /* a pointer, never a failure */ }
     }
     maybeBackupNotice(notices, opts);
-    if (opts.transport === 'stdio' && opts.remote !== false) { const up = takePostUpgradeMcpNotice(); if (up) notices.push(up); } // F7
-    if (opts.transport === 'stdio' && opts.remote !== false) notices.push(...await mcpOnboardingNotices({ engine, op: name, result, meta: responseMeta, config: ctx.config, render: dispatchRenderContext(opts) }));
-    if (opts.transport === 'stdio' && opts.remote !== false) { const drain = takeFactsDrainNotice(); if (drain) notices.push(drain); } // Lane D facts drain
-    notices.push(...await sessionSafetyNotices(engine, opts, ctx.config));
-    notices.push(...await grantBlockedNotices(engine, opts, false));
-    const out: ToolResult = toolResultWithNotices(result, admitNotices(notices, opts), dispatchRenderContext(opts));
+    // GST-1387: a remember batch with a failed item is an MCP error; its body keeps every item's receipt.
+    const batchError = name === 'remember' && typeof result === 'object' && result !== null && (result as { status?: unknown }).status === 'error' && Array.isArray((result as { items?: unknown }).items);
+    if (opts.transport === 'stdio' && opts.remote !== false && !batchError) { const up = takePostUpgradeMcpNotice(); if (up) notices.push(up); } // F7
+    if (opts.transport === 'stdio' && opts.remote !== false && !batchError) notices.push(...await mcpOnboardingNotices({ engine, op: name, result, meta: responseMeta, config: ctx.config, render: dispatchRenderContext(opts) }));
+    if (opts.transport === 'stdio' && opts.remote !== false && !batchError) { const drain = takeFactsDrainNotice(); if (drain) notices.push(drain); } // Lane D facts drain
+    if (!batchError) notices.push(...await sessionSafetyNotices(engine, opts, ctx.config), ...await grantBlockedNotices(engine, opts, false));
+    const out: ToolResult = batchError ? toolErrorResult(result as never) : toolResultWithNotices(result, admitNotices(notices, opts), dispatchRenderContext(opts));
     if (evidenceBlocks.length > 0) out.content.splice(1, 0, ...evidenceBlocks.map(text => ({ type: 'text' as const, text })));
     if (opts.transport === 'stdio') {
       maybeRefreshBackupStatusInProcess(engine);
@@ -1280,9 +1311,7 @@ async function dispatchResolvedCall(
     // BEFORE and independently of the metaHook, so a hot-memory hook
     // failure can never drop the retrieval channel. Per-key merge, never
     // wholesale assignment. See docs/protocol/MCP_META_CHANNELS.md.
-    if (Object.keys(responseMeta).length > 0) {
-      out._meta = { ...(out._meta ?? {}), ...responseMeta };
-    }
+    attachResponseMeta(out, responseMeta, degradedStampFor(name, result, responseMeta, notices));
     // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.
     // The hook is wrapped in its own try/catch — any DB blip / cache miss /
     // helper crash degrades to no hook keys rather than flipping the whole

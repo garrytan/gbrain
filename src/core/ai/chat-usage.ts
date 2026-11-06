@@ -35,6 +35,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { canonicalLookup, priceAtPromptSize } from '../model-pricing.ts';
 import { priceFor, type PricingOverrides } from '../budget/reservation-cost.ts';
+import { embeddedEngineInScope } from '../engine-scope.ts';
+import { engineKey } from '../engine-key.ts';
 
 export interface ChatUsageRecord {
   /** "provider:modelId" of the model that actually answered. */
@@ -101,16 +103,40 @@ export function withChatCallMeter<T>(meter: ChatCallMeter, fn: () => T): T {
  * sink. Records route to the TOP live entry (still single-writer —
  * simultaneous multi-brain attribution stays documented best-effort).
  */
-interface SinkEntry { sink: ChatUsageSink }
+interface SinkEntry { sink: ChatUsageSink; engine?: object }
 let _sinks: SinkEntry[] = [];
+/** An embedded engine's own sink, keyed by engineKey; never on the stack, and kept across reconnect() until it closes. */
+const _engineSinks = new WeakMap<object, ChatUsageSink>();
 
-/** Register a usage sink. Returns an idempotent deregister handle. */
-export function registerChatUsageSink(sink: ChatUsageSink): () => void {
-  const entry: SinkEntry = { sink };
+/**
+ * The sink a record goes to: in an embedded engine's scope, that engine's own (engine-scope.ts) or none once it
+ * closed; otherwise the top of the stack, which never holds an embedded engine, so one brain's usage never lands in
+ * another's database.
+ */
+function sinkInScope(): ChatUsageSink | null {
+  const scoped = embeddedEngineInScope();
+  if (scoped) return _engineSinks.get(engineKey(scoped)) ?? null;
+  return _sinks.at(-1)?.sink ?? null;
+}
+
+/** Gives an engine opened from settings its own sink, off the process stack. Returns the handle its close calls. */
+export function registerEngineChatUsageSink(engine: object, sink: ChatUsageSink): () => void {
+  _engineSinks.set(engineKey(engine), sink);
+  return () => { _engineSinks.delete(engineKey(engine)); };
+}
+
+/** Register a usage sink, for `engine` when given. Returns an idempotent deregister handle. */
+export function registerChatUsageSink(sink: ChatUsageSink, engine?: object): () => void {
+  const entry: SinkEntry = { sink, engine };
   _sinks.push(entry);
   return () => {
     _sinks = _sinks.filter((e) => e !== entry);
   };
+}
+
+/** @internal exported for tests: how many sinks the process stack holds. */
+export function __chatUsageSinkCountForTests(): number {
+  return _sinks.length;
 }
 
 /**
@@ -173,7 +199,7 @@ export function recordChatUsage(input: {
 }): void {
   const meter = __chatMeterStore.getStore();
   if (meter) meter.calls++;
-  const sink = _sinks.length > 0 ? _sinks[_sinks.length - 1]!.sink : null;
+  const sink = sinkInScope();
   const pricedMeter = meter && meter.cost_usd !== undefined ? meter : null;
   if (!sink && !pricedMeter) return;
   try {

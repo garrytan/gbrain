@@ -37,7 +37,7 @@ import { folderRestricted } from '../search/private-visibility.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { resolveSlugForPath } from '../sync.ts';
 import { sha256 } from '../persistence/digest.ts';
-import { localHostId } from '../persistence/identity.ts';
+import { hostIdFor } from '../persistence/identity.ts';
 import { getWorktreeBinding, managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { checkOwner, ownerRefusal, type OwnerRefusal } from '../persistence/owner-refusal.ts';
 import { loadRepairBusySet, type RepairBusySet } from '../persistence/repair-busy.ts';
@@ -92,7 +92,7 @@ export async function loadFenceSource(engine: BrainEngine, sourceId: string, opt
     const binding = await getWorktreeBinding(engine, sourceId);
     // A source with no binding at all has no checkout anywhere: it is repaired in the database (db mode), not refused.
     if (binding) {
-      const hostId = localHostId();
+      const hostId = hostIdFor(engine);
       const checked = checkOwner(binding, row.incarnation, hostId);
       if (checked.reason) owner = ownerRefusal({ sourceId, reason: checked.reason, binding, incarnation: row.incarnation, hostId, remote: opts.remote !== false, work: opts.work ?? 'fence repair' });
       else root = join(checked.binding.local_path, checked.binding.relative_path);

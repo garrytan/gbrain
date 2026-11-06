@@ -15,6 +15,7 @@ Under contract v1 an `error` value never changes. Where a surface sends a legacy
 
 | `error` (frozen) | `code` (canonical) | Meaning |
 |---|---|---|
+| `invalid_params` | `change_reason_rejected` | The write's reason was refused before anything was admitted: it is longer than 500 characters, or it looks like it holds a secret. |
 | `invalid_params` | `fact_withdrawn` | `remember`, or an owner `gbrain trust release` that writes a held fact into its entity page's `## Facts` table (a managed brain), refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved, and a refused release leaves the fact held. |
 | `permission_denied` | `insufficient_scope` | The connection lacks the OAuth scope the operation requires. |
 | `invalid_params` | `invalid_fence` | A facts or takes fence in the page cannot be imported without dropping or guessing rows, so the page (or the file) was not written. |
@@ -611,6 +612,18 @@ More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../
 |---|---|---|---|---|---|---|
 | Shared skill storage is not ready on this brain. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
+### change_reason_rejected
+
+<a id="change_reason_rejected"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The write's reason was refused before anything was admitted: it is longer than 500 characters, or it looks like it holds a secret. | A reason is kept in page history and, on a page that reaches Git, in the commit message, which a push makes permanent; it is checked before the write is journaled so no copy of a refused reason is stored anywhere. | Shorten the reason, or remove the secret from it, and send the write again. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `reason_too_long`, `reason_contains_secret`.
+
+More: [docs/guides/page-history.md#reasons](../../docs/guides/page-history.md#reasons)
+
 ### changed_since_preview
 
 <a id="changed_since_preview"></a>
@@ -711,9 +724,9 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A time parameter got a value on the wrong clock: `known_as_of` (recorded time) needs an instant with a zone, not a calendar date. | Recorded time (`known_as_of`) is when the brain had recorded something; valid time (`as_of`) is when a fact held in the world, as a date. A bare date is ambiguous as a recorded-time instant, so it is refused instead of guessed. | Pass a full instant such as 2026-10-01T12:00:00Z to known_as_of, or use as_of where the tool takes a valid-time date. | agent | `repeat the read that failed` | 1 | no |
+| A time parameter got a value on the wrong clock: `known_as_of` (recorded time) needs an instant with a zone, not a calendar date (`date_for_instant`); get_page `as_of` (valid time) needs a calendar date, not an instant (`instant_for_date`). | Recorded time (`known_as_of`) is when the brain had recorded something; valid time (`as_of`) is when a fact held in the world, as a date. A bare date is ambiguous as a recorded-time instant, and an instant is not an edition date, so each is refused instead of guessed. | Pass a full instant such as 2026-10-01T12:00:00Z to known_as_of, or use as_of where the tool takes a valid-time date. | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `date_for_instant`.
+Reasons: `date_for_instant`, `instant_for_date`.
 
 More: [docs/guides/repair.md#clock-mismatch](../../docs/guides/repair.md#clock-mismatch)
 
@@ -1333,6 +1346,26 @@ More: [docs/operations/spend-controls.md#dream-paid-loop-breaker-dreambreakermax
 
 More: [docs/guides/repair.md#embed-backfill-stalled](../../docs/guides/repair.md#embed-backfill-stalled)
 
+### embedded_core_required
+
+<a id="embedded_core_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| openEngine (gbrain/engine-open) was called without embedded_core: true, so no engine was opened. | Opening an engine from settings alone is an experimental embedding surface that is off by default; a host opts in explicitly so no existing caller changes behavior. | Pass embedded_core: true in the settings; the CLI, gbrain serve and mounts open brains through their own connect path and need nothing. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
+
+### embedded_engine_required
+
+<a id="embedded_engine_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An operation that serves an embedding host (file_register, file_verify) was called on an engine the CLI or a server opened, so it did nothing. | These operations trust a host that stores bytes itself; a brain opened the usual way stores files through file_upload, so the operations stay off there and its behavior is unchanged. | Call it on an engine opened from settings with settings.storage; a brain the CLI or a server opens stores files only through file_upload (gbrain files upload). | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
+
 ### embedding_auth_failed
 
 <a id="embedding_auth_failed"></a>
@@ -1443,6 +1476,26 @@ More: [docs/guides/troubleshooting.md#embedding-state](../../docs/guides/trouble
 |---|---|---|---|---|---|---|
 | The embedding model cannot produce the width of the brain's vector column; nothing was changed. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### engine_closed
+
+<a id="engine_closed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An engine opened from settings was disconnected, which closes it for good, so connect() and reconnect() refuse and nothing was reopened. | The request itself was wrong or no longer matches the brain; nothing was changed. | Call openEngine again with the settings to open a new engine. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
+
+### engine_embedding_mismatch
+
+<a id="engine_embedding_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An engine opened from settings names an embedding model or width that differs from the one its database already records, so initSchema changed nothing. | The vector column has one width and the brain one embedding model; seeding another over it would make every stored and future embedding unreadable. Changing it is an explicit re-embed the user decides on. | Pass the database's recorded model and width in settings.embedding, or read the recorded identity with gbrain migrate embeddings --status on the brain host and preview a migration from there. Run: gbrain migrate embeddings --status --json | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
+
 ### engine_graduated
 
 <a id="engine_graduated"></a>
@@ -1452,6 +1505,46 @@ More: [docs/guides/troubleshooting.md#embedding-state](../../docs/guides/trouble
 | A client opened a PGLite brain that moved to Postgres; its old path holds a tombstone. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/move-to-postgres.md#graduated-datastore](../../docs/guides/move-to-postgres.md#graduated-datastore)
+
+### engine_host_missing
+
+<a id="engine_host_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An engine opened from settings has no host identity, so nothing that needs one ran and no host.json was created. | An embedded engine publishes and claims work under the host id its host gave at open; minting a host.json under the home directory instead would tie its writes to whatever process happens to share that directory. | Pass host: { id: <uuid> } to openEngine; keep the same id for the same host across restarts. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
+
+### engine_scope_missing
+
+<a id="engine_scope_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An engine opened from settings made an AI call (embed, chat, expansion or rerank) through a provider its settings.ai does not name, or after it was disconnected, so nothing was sent. | An embedded engine's AI calls reach only the providers and keys its host passed as values. Falling back to a process.env key, ~/.gbrain/config.json or the process-wide gateway would spend another brain's key and send this brain's text where its host never pointed it. | Pass the provider in settings.ai.providers (apiKey, and baseUrl when it is not the default) to openEngine, or point settings.ai.models (or settings.embedding) at a provider the engine has. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
+
+### engine_scope_required
+
+<a id="engine_scope_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An AI call (embed, chat, expansion or rerank) ran outside any engine scope while this process holds engines opened from settings, so nothing was sent. | With no scope the call's brain is unknown. Using the process gateway, a process.env key or ~/.gbrain/config.json would spend a key no brain's host gave and could send one brain's text where its host never pointed it, so the call refuses whatever process gateway the host configured. | Run the call inside withEngineScope(engine, fn) for the engine it belongs to, or withLocalScope(fn) for a call that belongs to the process gateway (both exported from gbrain/engine-open). | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
+
+### engine_settings_invalid
+
+<a id="engine_settings_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A setting passed to openEngine is missing or malformed (engine kind, database url or path, pool size, host or writer id, writer credential or lane, embedding identity), so nothing was opened or registered. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the setting the message names and call again. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
 
 ### entity_types_unavailable
 
@@ -1515,7 +1608,7 @@ More: [docs/guides/move-to-postgres.md#graduated-datastore](../../docs/guides/mo
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The fact had already expired before this write. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+| The fact had already expired before this write. | For `forget_fact` the withdrawal is still recorded first (the ledger row and the struck page row), so a later import cannot bring the fact back; any other write changed nothing. | Do not retry with the same fact id. List the active facts (recall) to find the current one. | agent | `repeat the read that failed` | 1 | no |
 
 ### fact_not_found
 
@@ -2311,6 +2404,16 @@ More: [docs/guides/repair.md#hook-session-cwd](../../docs/guides/repair.md#hook-
 
 More: [docs/guides/troubleshooting.md#host-identity-mismatch](../../docs/guides/troubleshooting.md#host-identity-mismatch)
 
+### host_upgrade_required
+
+<a id="host_upgrade_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The brain host is older than this client and did not answer the question asked: a get_page reply to an `as_of` read came back without `valid_time.as_of`, so it is the current page, not the edition in force on that date. Nothing historical was printed. | An older host ignores a read parameter it does not know and answers the plain read. Printing that answer as the edition in force on a date would quote the wrong text, so the client fails closed. The error carries the client version, the host version when known, and the minimum host version. | Upgrade gbrain on the brain host (`gbrain upgrade`), or ask its operator to; then run the same read again. | host_admin | `gbrain doctor --json` | 16 | no |
+
+More: [docs/guides/page-history.md#host_upgrade_required](../../docs/guides/page-history.md#host_upgrade_required)
+
 ### hosted_repo_refused
 
 <a id="hosted_repo_refused"></a>
@@ -2793,6 +2896,16 @@ More: [docs/guides/shared-brain-skills.md#membership-inactive-after-a-re-enrollm
 
 More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover)
 
+### memory_setting_write_outcome_unknown
+
+<a id="memory_setting_write_outcome_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A memory writeback setting change did not confirm, so it may or may not have been saved. | A database write that throws can be a rollback or a lost acknowledgement, and the two look the same to the caller. The setting and its audit row commit together, so a re-read shows which happened. | Call get_memory_settings to read the mode in effect, and change it again only if the change did not land. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/ambient-writeback.md#reading-and-changing-it-remotely](../../docs/guides/ambient-writeback.md#reading-and-changing-it-remotely)
+
 ### merge_recommended
 
 <a id="merge_recommended"></a>
@@ -3115,7 +3228,7 @@ More: [docs/guides/troubleshooting.md#owner-unavailable](../../docs/guides/troub
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| This large page's segment rows readable on this connection do not cover its body, so the read returned nothing rather than a short or empty body. | A segmented page keeps its body in manifest rows that must tile the stored body from its first byte to body_bytes; a role that sees the page row but not its manifest rows (a row-level security policy or grant that covers pages only), or rows missing from the database, would otherwise read as an empty or truncated page with nothing to say so. | Give the role that reads the brain the same access to page_body_manifest and page_segment_texts it has to pages (the brain host's operator), then read again; run gbrain doctor --json to check the segment tables. | host_admin | `gbrain doctor --json` | 1 | no |
+| This large page's segment rows readable on this connection do not cover its body, so the read returned nothing rather than a short or empty body. | A segmented page keeps its body in manifest rows that must tile the stored body from its first byte to body_bytes; a role that sees the page row but not its manifest rows (a row-level security policy or grant that covers pages only), or rows missing from the database, would otherwise read as an empty or truncated page with nothing to say so. | Give the role that reads the brain the same access to page_body_manifest and page_segment_texts it has to pages (the brain host's operator), then read again; run gbrain doctor --json to check the segment tables. When doctor segmented_tiling lists the page, its rows are missing: preview gbrain repair segmented-tiling --source <id>, which republishes it from Git. | host_admin | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/windowed-reads.md#page_body_rows_unreadable](../../docs/guides/windowed-reads.md#page_body_rows_unreadable)
 
@@ -3604,6 +3717,56 @@ More: [docs/guides/dream-patterns.md#child-read-budget](../../docs/guides/dream-
 | A remote write's readable_by is malformed, removes the field from a page that names readers, or would leave the page unreadable by the writer; nothing was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#readable_by_invalid](../../docs/guides/write-refusals.md#readable_by_invalid)
+
+### reason_purge_scan_capped
+
+<a id="reason_purge_scan_capped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A fact purge stopped before deleting anything: the source's Git history has more commits than the purge reads (200,000) when it looks for change reasons quoting the claim. | Purge tombstones every commit whose gbrain-reason trailer quotes the claim, so no later sync or re-import stores that reason again. Past the limit it cannot say which older commits do, so the user decides. | Ask the user: purge now and check only the newest commits (--reason-scan-limit <n>, their choice; older commits are not tombstoned), or stop. | user | `repeat the read that failed` | 3 | no |
+
+More: [docs/guides/page-history.md#purge-and-reasons](../../docs/guides/page-history.md#purge-and-reasons)
+
+### reason_purge_scan_failed
+
+<a id="reason_purge_scan_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A fact purge stopped before deleting anything: reading the change reasons in the source's Git history failed (a Git error or a timeout). | Purge reads the reason trailers that quote the claim before it changes anything, so it can tombstone them; nothing was removed, so retrying is safe. | Wait, then run the same purge again. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/page-history.md#purge-and-reasons](../../docs/guides/page-history.md#purge-and-reasons)
+
+### reason_scan_capped
+
+<a id="reason_scan_capped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A sync imported its files but did not read their change reasons from Git: the range held more than 10,000 commits. Each reason in the pass is stored as empty and each page it changed is marked with a history gap. | Reasons are metadata, so content import never waits on them. The pass still advances last_commit and this release does not backfill reasons for that range; they stay in Git. | Nothing to repair. The reasons for the range are in Git: git log --first-parent <range> shows them. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/page-history.md#reasons-from-git](../../docs/guides/page-history.md#reasons-from-git)
+
+### reason_scan_failed
+
+<a id="reason_scan_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A sync imported its files but could not read their change reasons from Git (a Git error or a timeout). Each reason in the pass is stored as empty and each page it changed is marked with a history gap. | Reasons are metadata, so content import never waits on them. The pass still advances last_commit and this release does not backfill reasons for that range; they stay in Git. | Nothing to repair. The reasons for the range are in Git: git log --first-parent <range> shows them. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/page-history.md#reasons-from-git](../../docs/guides/page-history.md#reasons-from-git)
+
+### reason_trailer_secret
+
+<a id="reason_trailer_secret"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A gbrain-reason trailer already pushed to Git looks like it holds a secret; sync stored no reason for that commit and path. | A secret in a reason is refused at write time; a commit made outside gbrain can still carry one. Git history keeps commit messages, so the credential stays exposed until it is rotated. | Rotate the credential the notice names (by commit and path); the brain stores nothing of it. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/page-history.md#reasons-from-git](../../docs/guides/page-history.md#reasons-from-git)
 
 ### receipt_conflict
 
@@ -4431,6 +4594,16 @@ Reasons: `database_contention`.
 
 Override: reason `database_contention`: retryable, exit 1, retryable.
 
+### store_unavailable
+
+<a id="store_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The object store an engine opened from settings names did not answer a file check (file_register, file_verify, file_url), so nothing was recorded and no file was reported missing. | A failed read says nothing about whether the object exists; reporting it missing could lead a host to re-upload or delete a file that is still there. | Check the store named in settings.storage (its path, or its endpoint, bucket and keys), then call again. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
+
 ### strict_requires_managed
 
 <a id="strict_requires_managed"></a>
@@ -4903,6 +5076,16 @@ More: [docs/guides/troubleshooting.md#upstream-rewritten](../../docs/guides/trou
 
 More: [docs/guides/troubleshooting.md#upstream-rewritten](../../docs/guides/troubleshooting.md#upstream-rewritten)
 
+### valid_time_undeclared
+
+<a id="valid_time_undeclared"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An `as_of` read found no version of the page that declares a readable `valid_from`, so no edition can be placed on the date. | Valid time comes only from the `valid_from` / `valid_until` frontmatter the page carries; gbrain never infers when text took effect. Only the user knows the date, so the fix asks them before a templated edit_page records it. | Ask the user when the text took effect and record it as a quoted valid_from (the fix carries the edit). For what the brain had recorded at a time, read with known_as_of instead. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/page-history.md#valid_time_undeclared](../../docs/guides/page-history.md#valid_time_undeclared)
+
 ### vector_prewarm_extension_missing
 
 <a id="vector_prewarm_extension_missing"></a>
@@ -5004,6 +5187,16 @@ More: [docs/guides/write-refusals.md#visibility_not_applied](../../docs/guides/w
 | A managed sync held a file whose uncommitted working-tree bytes match neither the pinned commit nor the current page; the rest of the source synced and the local edit was not overwritten. | On a live checkout an agent may be mid-edit on a file the catch-up reaches. The bytes are not committed at HEAD, so sync cannot tell a deliberate local change from a stray one, and importing the pinned version would discard the edit; before #6340 this refusal stopped the whole run. | Commit the file (or restore it), then run gbrain sync unblock --source <id> --apply (it re-screens every held file that is now committed) and the same gbrain sync; a later commit that changes the file re-screens it on its own. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#worktree_dirty](../../docs/guides/write-refusals.md#worktree_dirty)
+
+### worktree_refreshing
+
+<a id="worktree_refreshing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write reached a checkout while `gbrain sources refresh` was draining, fast-forwarding or syncing it, so it was not journaled; nothing was recorded. | A refresh fences every source bound to the checkout until its syncs finish, so no write publishes onto a moving HEAD. An interactive write waits out the fence for up to 10 s before this refusal; a refresh tick can hold it for minutes. | Repeat the same call with the same request_id after retry_after_ms (in detail); nothing was recorded, so the retry cannot write twice. gbrain sources writer status --source <id> --json shows the refresh. | provider | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/write-refusals.md#worktree_refreshing](../../docs/guides/write-refusals.md#worktree_refreshing)
 
 ### write_capacity_backpressure
 

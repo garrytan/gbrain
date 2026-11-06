@@ -183,6 +183,22 @@ is fixed by running `gbrain extract --stale`. Given a slug
 the page derives with its origin and declaring line, each rejected candidate
 with its reason, and the identity-sibling decision.
 
+## Questions that name no entity
+
+`recall` with a `question` and no `entity` ranks facts across every entity, so
+two clients' figures can come back side by side. To have them grouped:
+
+```bash
+gbrain config set recall.group_by_entity on
+```
+
+Each entity's facts then sit together, facts saved with no entity form their
+own group, and `facts_groups` lists the groups. When facts from two or more
+entities answer, `entity_unspecified` names them and the `entity_unspecified`
+notice offers the same recall with `entity` set for each, so the agent can
+ask which one was meant. A call that passes `entity` is never grouped. Off by
+default.
+
 ## Settings
 
 | Key | Default | Effect |

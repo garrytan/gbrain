@@ -51,10 +51,13 @@ moving again; ask me only about the ones gbrain will not decide by itself."*
    names the process holding its drain lease (a serve pass, a sync job, a CLI
    sync), with its heartbeat, `progress` and `stalled`; null means nothing is
    syncing it now. Holds are bounded: `holds_summary` counts every hold by
-   code and by state (`needs_human`, `actionable`, `held`), and `holds` lists
-   the first 20, needs-human first. When it leaves rows out, `holds_page`
-   names `next_command`; `--detail` pages 100 at a time, `--hold-state
-   needs_human` lists only the holds a person decides. A `last_error` with
+   code, by state (`needs_human`, `actionable`, `held`) and by `fault_code`
+   (the failure a `page_write_failed` hold recorded, which each such hold
+   also names), and `holds` lists the first 20, needs-human first. When it
+   leaves rows out, `holds_page` names `next_command`; `--detail` pages 100
+   at a time, `--hold-state needs_human` lists only the holds a person
+   decides, and `--slug <slug>` or `--code <code>` (a hold code or a
+   `fault_code`) lists the one hold you are looking for without paging. A `last_error` with
    `superseded` (`by`, `age_seconds`) is history: a later attempt got past
    the phase it failed in, so it drives neither `state` nor `next`.
 2. If `needs_human` is false and nothing committed in the last ten minutes,
@@ -148,6 +151,8 @@ Every hold and error has three fields, from one table
 | `write_gate_rejected` | page | none | yes | always: write_gate.external_mode=reject is the user's setting |
 | `legacy_slug_conflict` | page | none | yes | always: only a person decides which legacy page the file takes over |
 | `settle_mismatch` | page | none | yes | always: the pass cannot tell why the path does not settle |
+| `freeze_page_body_segmented` | page | upgrade | yes | always: a sync path read a page stored in segments whole |
+| `freeze_page_body_rows_unreadable` | page | repair | yes | always: the page's segment rows do not cover its stored body, so no sync can read it |
 | `page_write_failed` | page | upgrade | yes | always: the writer cannot place the failure |
 | `file_unreadable` | page | none | yes | always: only a change to the checkout makes the file readable |
 | `visibility_noncanonical` | page | none | yes | always: only an edit to the file clears it |

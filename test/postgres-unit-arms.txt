@@ -57,6 +57,7 @@ test/company-brain-policy.test.ts
 test/company-brain-runtime.test.ts
 test/consolidate-fenced-close-reimport.test.ts
 test/consolidate-same-instant-6023.test.ts
+test/contact-rows-drift-8109.test.ts
 test/conversation-facts-outcome-marker-purge-7778.test.ts
 test/conversation-facts-oversized-sidecar.test.ts
 test/conversation-facts-purged-claim-7438.test.ts
@@ -98,6 +99,7 @@ test/fenced-embed-reuse-6961.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
 test/forecast-journal.test.ts
 test/frontmatter-reserved-keys-6454.test.ts
+test/g4-forget-fence-edit.test.ts
 test/get-chunks-paging.test.ts
 test/git-canonical-conversion-g8a.test.ts
 test/git-canonical-conversion-live-writer.test.ts
@@ -297,10 +299,13 @@ test/orphan-effect-diagnostics-7985.test.ts
 test/overwritten-edits-6712.test.ts
 test/owner-refusal.test.ts
 test/pack-relation-direction-engine.test.ts
+test/page-change-reason-gbra217.test.ts
+test/page-change-reason-git-gbra217.test.ts
 test/page-embedding-budget.test.ts
 test/page-embedding-content-validity.test.ts
 test/page-embedding-install-batch.test.ts
 test/page-embedding-lease.serial.test.ts
+test/page-history-guards-gbra286.test.ts
 test/page-prepare-shared-origin-6517.test.ts
 test/page-purge-batch-sweep-6884.test.ts
 test/page-purge-journal-timeout-6511.test.ts
@@ -446,6 +451,7 @@ test/purge-read-surfaces.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
 test/qm-memory-tools.test.ts
 test/read-meta-diag.test.ts
+test/reason-trailers-gbra217.test.ts
 test/recall-page-fill.test.ts
 test/receipt-compaction-newest-sync-gbra130.test.ts
 test/reconcile-clears-stalled-hold-7364.test.ts
@@ -488,6 +494,7 @@ test/search-vector-scope-parity.test.ts
 test/search/page-rank-cut.test.ts
 test/search/rerank-gate-hybrid.test.ts
 test/search/rerank-gate-telemetry.test.ts
+test/segmented-untiled-hold-gst1209.test.ts
 test/serve-head-watcher-managed.serial.test.ts
 test/serve-http-access.test.ts
 test/shared-content-freshness.test.ts
@@ -506,6 +513,7 @@ test/sync-apply-held-deletions-gbra133.test.ts
 test/sync-capacity-preflight.test.ts
 test/sync-checkpoint-moved-6834.test.ts
 test/sync-classic-drift-7199.test.ts
+test/sync-disabled-cycle-window.test.ts
 test/sync-discovery-legacy-origin-7130.test.ts
 test/sync-drain-claims.test.ts
 test/sync-drain-effect-recovery-blocked.test.ts
@@ -575,6 +583,7 @@ test/unbound-source-6536.test.ts
 test/unindexed-files-convergence-7149.test.ts
 test/unindexed-files.test.ts
 test/v273-validate-timeouts.test.ts
+test/valid-time-gbra217.test.ts
 test/vector-manifest-probe-bound.test.ts
 test/visibility-fail-closed-derived-writes.test.ts
 test/visibility-repair-scale.test.ts
@@ -582,6 +591,7 @@ test/withdrawal-overlay-concurrency.test.ts
 test/withdrawal-publication-file.test.ts
 test/worktree-refresh-recovery-row-gbra130.test.ts
 test/worktree-refresh-unexpected-throw.test.ts
+test/write-refusal-refresh-fence-8621.test.ts
 test/write-roundtrips-gbra156.test.ts
 test/write-through-leak-guard-alias-7203.test.ts
 test/writer-admin-state-embed-lease.test.ts

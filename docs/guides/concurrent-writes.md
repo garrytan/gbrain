@@ -188,7 +188,7 @@ outcomes and reasons, never values), and `classified` counts the batch:
 
 | Classification | Meaning | Next step |
 | --- | --- | --- |
-| `structurally_additive` | Only additive metadata changed: a `contacts` list with entries appended after every stored entry (order and repeats kept), an activity date that moved forward (`updated`, `last_*`, `*_last_used`), or a field present on one side only. | Preview with `--auto-additive`, then apply. |
+| `structurally_additive` | Only additive metadata changed: a `contacts` list with entries appended after every stored entry (order and repeats kept) or whose stored rows changed only by an activity date moving forward (a row's `last_used`), an activity date that moved forward (`updated`, `last_*`, `*_last_used`), or a field present on one side only. | Preview with `--auto-additive`, then apply. |
 | `additive_with_suggestions` | The above, plus body or timeline lines inserted without changing or removing any stored line. | Read the inserted lines, then preview with `--auto-additive --accept-suggested`. |
 | `review_required` | Stored text changed or was removed; or a policy, privacy, title, type, tag, alias or fence change; or a date that moved backward, changed format or is in the future. | Resolve manually as above, after asking the user. |
 | `formatting_only` | The parsed content already agrees. | Preview; the result is the database content. |
@@ -1010,7 +1010,7 @@ stored, and compaction frees the window's reservations as receipts age out.
 within `persistence.capacity.warn_days` (default 30), adds the
 `[gbrain notice write_capacity_low]` notice (kind `info`) with the same
 `gbrain config set` command. Write and sync receipts carry it at most once an
-hour per process per scope (a remote client sees only the brain and its own
+hour per engine per scope (a remote client sees only the brain and its own
 principal); `gbrain sync status`, doctor and autopilot cycle output carry it
 every time. `gbrain notices mute write_capacity_low` mutes it on receipts;
 doctor still reports it. When a cap passes

@@ -32,6 +32,7 @@ import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { VERSION } from '../../version.ts';
 import { sha256 } from './digest.ts';
 import { readPageBodyPolicy, type PageBodyPolicy } from '../page-body/limits.ts';
+import { materializedSnapshot } from './segmented-apply.ts';
 import { readPagePurgeTombstones } from './page-purge.ts';
 import { listTrustAllowRules } from '../trust/allow-rules.ts';
 import { readSyncContent, readSyncFile, syncGitPath, UNREADABLE_SYNC_FILE, type SyncDiscovery, type SyncEntry } from './sync-discovery.ts';
@@ -313,9 +314,11 @@ export interface FrozenImportScreen {
  */
 export async function frozenImportScreenInput(engine: BrainEngine,
   input: Pick<FrozenImportScreen, 'cursor' | 'entry' | 'slug' | 'snapshot' | 'rawHash' | 'lineEndingOnly'> & { content: string }, run: SyncScreenRun): Promise<SyncImportScreenInput> {
-  const { entry, slug, snapshot } = input;
+  const { entry, slug } = input;
   const moved = entry.renameFrom && entry.renameFrom.slug !== slug ? entry.renameFrom : undefined;
-  const base = moved ? await engine.readPageSnapshot(moved.slug, { sourceId: input.cursor.sourceId, includeDeleted: true }) : snapshot;
+  // GBRA-287: a page stored in segments up to the single-string ceiling is compared read back whole, as its publication compares it.
+  const snapshot = await materializedSnapshot(engine, input.snapshot);
+  const base = moved ? await materializedSnapshot(engine, await engine.readPageSnapshot(moved.slug, { sourceId: input.cursor.sourceId, includeDeleted: true })) : snapshot;
   return { content: input.content, rawHash: input.rawHash, lineEndingOnly: input.lineEndingOnly, slug, sourcePath: entry.sourcePath, path: entry.path,
     root: input.cursor.root, snapshot, base, renamed: !!moved, activePack: run.activePack, sanity: run.sanity,
     purgedPages: await runPurgeTombstones(engine, run, input.cursor.sourceId), writeGateSource: await runWriteGateSource(engine, run, input.cursor.sourceId) };
@@ -325,6 +328,20 @@ export async function frozenImportScreenInput(engine: BrainEngine,
 export async function screenFrozenContent(screenInput: SyncImportScreenInput, run: SyncScreenRun): Promise<ImportScreenResult> {
   const { screen } = screenSyncImport(screenInput);
   return screenNormalized(screen) && !await run.normalize() ? screenSyncImport({ ...screenInput, normalize: false }).screen : screen;
+}
+
+/**
+ * GST-1209: the screen the next sync gives a file imported over a page whose stored body cannot be read (the segmented-tiling
+ * repair's input): the run's schema pack, sanity settings, purge tombstones and write gate, the coordinated fence step and
+ * the private-visibility hold, against the page's snapshot unread. A hold policy of `fail` still screens.
+ */
+export async function unreadPageImportScreen(engine: BrainEngine, input: { sourceId: string; root: string; path: string; slug: string; content: string;
+  snapshot: SyncImportScreenInput['snapshot'] }): Promise<ImportScreenResult> {
+  const activePack = (await loadActivePackForEngine(engine, { remote: false, sourceId: input.sourceId }).catch(() => null))?.manifest;
+  const run: SyncScreenRun = { policy: await readSyncHoldPolicy(engine), sanity: await loadImportSanityConfig(engine), activePack, normalize: () => fencesNormalizeEnabled(engine) };
+  return screenFrozenContent({ content: input.content, rawHash: sha256(input.content), lineEndingOnly: false, slug: input.slug, sourcePath: input.path, path: input.path,
+    root: input.root, snapshot: input.snapshot, base: input.snapshot, renamed: false, activePack, sanity: run.sanity,
+    purgedPages: await readPagePurgeTombstones(engine, input.sourceId), writeGateSource: await runWriteGateSource(engine, run, input.sourceId) }, run);
 }
 
 /**
@@ -386,12 +403,20 @@ export async function screenFrozenImport(engine: BrainEngine, input: FrozenImpor
 /**
  * Dry run: screens every pending import entry read-only (batched Git reads)
  * and lists the holds a real run would record. Entries the screen cannot
- * judge are reported in `screen_skipped`, never as holds.
+ * judge are reported in `screen_skipped`, never as holds. #7087: the counts are the changes still to publish (a
+ * prescreened no-op and a fenced unowned deletion change nothing); they replace the cursor's committed counts.
  */
 export async function dryRunScreen(engine: BrainEngine, discovery: SyncDiscovery & { index?: number }, run: SyncScreenRun | null, retryCommand: string): Promise<{
-  dry_run: true; would_hold?: GitHoldItem[]; would_hold_count?: number; would_normalize?: Array<{ path: string; classes: string[] }>; would_normalize_count?: number;
+  dry_run: true; added: number; modified: number; deleted: number; renamed: number; would_hold?: GitHoldItem[]; would_hold_count?: number; would_normalize?: Array<{ path: string; classes: string[] }>; would_normalize_count?: number;
   screen_skipped?: Array<{ path: string; code: string }> }> {
-  if (!run || discovery.companyPlan) return { dry_run: true };
+  const planned = { added: 0, modified: 0, deleted: 0, renamed: 0 };
+  for (const entry of discovery.entries.slice(discovery.index ?? 0)) {
+    if (entry.action === 'delete') { if (!entry.unownedDeletion) planned.deleted++; }
+    else if (entry.renameFrom) planned.renamed++;
+    else if (entry.pageId == null) planned.added++;
+    else if (!entry.prescreened) planned.modified++;
+  }
+  if (!run || discovery.companyPlan) return { dry_run: true, ...planned };
   const entries = discovery.entries.slice(discovery.index ?? 0).filter(entry => entry.action === 'import' && entry.slug);
   const committed = entries.filter(entry => !entry.working);
   const blobs = readTreeBlobs(discovery.gitRoot, discovery.target, committed.map(entry => syncGitPath(discovery, entry.path)));
@@ -432,7 +457,7 @@ export async function dryRunScreen(engine: BrainEngine, discovery: SyncDiscovery
       skipped.push({ path: entry.path, code: error instanceof OperationError ? error.code : 'storage_error' });
     }
   }
-  return { dry_run: true, ...(held.length ? { would_hold: held.slice(0, run.policy.cap), would_hold_count: held.length } : {}),
+  return { dry_run: true, ...planned, ...(held.length ? { would_hold: held.slice(0, run.policy.cap), would_hold_count: held.length } : {}),
     ...(normalized.length ? { would_normalize: normalized.slice(0, run.policy.cap), would_normalize_count: normalized.length } : {}),
     ...(skipped.length ? { screen_skipped: skipped } : {}) };
 }

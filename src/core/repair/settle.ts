@@ -54,9 +54,9 @@ export async function repairPublicationOwner(engine: BrainEngine): Promise<{ ali
   if (local.state === 'open' && (!mode || mode === 'full' || mode === 'promoted')) {
     return local.restart_required ? { alive: false, owner: 'this process, which reports restart_required' } : { alive: true, owner: 'this process' };
   }
-  const { existingLocalHostId } = await import('../persistence/identity.ts');
+  const { existingHostIdFor } = await import('../persistence/identity.ts');
   const { listHostConsumers } = await import('../persistence/consumer-heartbeat.ts');
-  const host = existingLocalHostId();
+  const host = existingHostIdFor(engine);
   const rows = host ? await listHostConsumers(engine, host).catch(() => []) : [];
   const row = rows.find(r => !r.self && (r.mode === 'full' || r.mode === 'promoted') && r.liveness === 'live');
   if (!row) return { alive: false, owner: 'no live consumer on this host' };

@@ -12,8 +12,8 @@ import type { Migration } from './types.ts';
 // is removed. Database only, so a repo-less brain gets it unchanged. Nothing is
 // rewritten on upgrade. No schema.sql mirror: like v282 and v286, it exists only
 // through migrations. Provisional number: renumbered at the merge slot.
-export const v287: Migration = {
-  version: 287,
+export const v290: Migration = {
+  version: 290,
   name: 'member_email',
   idempotent: true,
   sql: `

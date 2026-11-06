@@ -64,7 +64,7 @@ import { parseFenceRepairReceipt, type FenceRepairReceipt } from '../fence-repai
 import { parseContentRepairReceipt, type ContentRepairReceipt } from '../content-repair/receipt.ts';
 import { prepareCanonicalProjections } from './canonical-projections.ts';
 import { digest, sha256 } from './digest.ts';
-import { currentVerifiedLocalWriter, localHostId } from './identity.ts';
+import { currentVerifiedLocalWriter, hostIdFor } from './identity.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { checkOwner, ownerUnavailableError } from './owner-refusal.ts';
 import { loadRepairBusySet, repairBusy, repairBusyError } from './repair-busy.ts';
@@ -272,7 +272,7 @@ function assertTrustedRepairCaller(ctx: Pick<OperationContext, 'remote'>): void 
 export async function managedRepairRoot(engine: BrainEngine, sourceId: string, kind: FileRepairKind = 'frontmatter', opts: { remote?: boolean } = {}): Promise<{ root: string; ownerEpoch: string; incarnation: string }> {
   const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
   const binding = await getWorktreeBinding(engine, sourceId);
-  const hostId = localHostId();
+  const hostId = hostIdFor(engine);
   const owner = checkOwner(binding, source?.incarnation ?? '', hostId);
   if (owner.reason) throw ownerUnavailableError({ sourceId, reason: owner.reason, binding, incarnation: source?.incarnation ?? '', hostId, remote: opts.remote !== false, work: `the ${WORK[kind]} repair` });
   return { root: join(owner.binding.local_path, owner.binding.relative_path), ownerEpoch: String(owner.binding.owner_epoch), incarnation: owner.binding.source_incarnation };

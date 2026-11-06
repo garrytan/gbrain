@@ -27,6 +27,7 @@ import { LockStolenError } from '../db-lock.ts';
 import { RECOVERY_VERSION } from '../markdown.ts';
 import { VERSION } from '../../version.ts';
 import { isWriteCapacityWait } from './admission-retry.ts';
+import { PAGE_BODY_FAULT_CODES } from './sync-fault-class.ts';
 import { gitBlobOid } from './digest.ts';
 import { readBlobBytes, type TreeBlob } from './sync-blobs.ts';
 import { readSyncFile, type SyncEntry } from './sync-discovery.ts';
@@ -98,13 +99,15 @@ function runScoped(error: unknown): boolean {
 
 /**
  * S-63/S-64/S-33/S-7: the hold a throw while freezing one entry earns when holds are on, or null to rethrow it. A
- * `git_object_missing` or `path_not_utf8` refusal is held under its code; any other `OperationError` is a deliberate refusal and keeps
+ * `git_object_missing` or `path_not_utf8` refusal is held under its code; a page-body fault (`PAGE_BODY_FAULT_CODES`) is held
+ * `page_write_failed` like an unexpected throw, naming its code; any other `OperationError` is a deliberate refusal and keeps
  * its route. An unexpected throw is held `page_write_failed` (origin `freeze`) unless it is run-scoped or the run
  * looks systemic (`ITEM_BREAKER_MIN_ITEMS` faults and at least as many faults as clean freezes).
  */
 export function freezeFaultHold(run: object, entry: HoldEntry, slug: string, pageId: number | null, error: unknown, blob: () => TreeBlob | null): HeldFault | null {
   const missing = error instanceof OperationError && (error.code === 'git_object_missing' || error.code === 'path_not_utf8');
-  if (!missing && (error instanceof OperationError || runScoped(error))) return null;
+  const pageBody = error instanceof OperationError && PAGE_BODY_FAULT_CODES.has(error.code);
+  if (!missing && !pageBody && (error instanceof OperationError || runScoped(error))) return null;
   if (!missing) {
     const tally = tallies.get(run) ?? { faults: 0, frozen: 0 };
     tally.faults++; tallies.set(run, tally);
@@ -117,12 +120,14 @@ export function freezeFaultHold(run: object, entry: HoldEntry, slug: string, pag
     ...(rename ? { rename_from: rename } : {}), ...(entry.action === 'delete' ? { deleted: true as const } : {}) };
   if (missing) return { path: entry.path, source_path: entry.sourcePath, slug, page_id: pageId, code: (error as OperationError).code as 'git_object_missing' | 'path_not_utf8',
     message: `${(error as OperationError).message} ${(error as OperationError).suggestion ?? ''}`.trim(), upstream_version: null, meta };
-  const name = error instanceof Error ? error.name : typeof error;
+  const name = pageBody ? (error as OperationError).code : error instanceof Error ? error.name : typeof error;
   const errno = (error as { code?: unknown } | null)?.code;
   const text = (error instanceof Error ? error.message : String(error)).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 300);
   return { path: entry.path, source_path: entry.sourcePath, slug, page_id: pageId, code: 'page_write_failed',
     message: `${entry.path}: sync could not prepare its ${entry.action === 'delete' ? 'deletion' : 'import'} (${name}: ${text}), so it is held and the rest of the source synced. `
-      + 'The next syncs re-test it; if it stays held, report it with the gbrain version or fix the file when the error names it, then gbrain sources retry-held.',
+      + ((error as OperationError | null)?.code === 'page_body_rows_unreadable' && pageBody
+        ? `The page's segment rows do not cover its body, so no retry clears it: preview gbrain repair segmented-tiling --source <source> --slug ${slug}.`
+        : 'The next syncs re-test it; if it stays held, report it with the gbrain version or fix the file when the error names it, then gbrain sources retry-held.'),
     upstream_version: null,
-    meta: { ...meta, write_failure: { code: 'storage_error', origin: 'freeze', error_class: name, errno: typeof errno === 'string' ? errno.slice(0, 32) : null, request_id: null, attempts: 1, gbrain_version: VERSION } } };
+    meta: { ...meta, write_failure: { code: pageBody ? (error as OperationError).code : 'storage_error', origin: 'freeze', error_class: name, errno: typeof errno === 'string' ? errno.slice(0, 32) : null, request_id: null, attempts: 1, gbrain_version: VERSION } } };
 }

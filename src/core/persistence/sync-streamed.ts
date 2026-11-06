@@ -74,6 +74,8 @@ export interface StreamedSyncContext {
   snapshot: PageSnapshot | null; base: PageSnapshot | null;
   renamed?: SyncRename;
   activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> };
+  /** GBRA-217: the file's reason from its pass's trailer scan, and its history-gap marker. */
+  history?: import('../page-state/versions.ts').VersionHistory;
   importProvenance: SyncImportProvenanceBase;
   validate: (tx: BrainEngine) => Promise<void>;
   releaseHold: (tx: BrainEngine) => Promise<void>;
@@ -101,7 +103,7 @@ export async function prepareManagedSyncStreamed(engine: BrainEngine, row: Write
   if (!filePath || !stat || stat.size !== ref.bytes) throw changed();
   let ready: StreamedPreparedImport | undefined;
   enterClaimStep(ctx.clock, 'import_content', undefined, 'fs');
-  const result = await importStreamedMarkdownFile(engine, filePath, p.sourcePath, { sourceId: row.source_id, noEmbed: true, ...(ctx.activePack ? { activePack: ctx.activePack } : {}),
+  const result = await importStreamedMarkdownFile(engine, filePath, p.sourcePath, { sourceId: row.source_id, noEmbed: true, ...(ctx.activePack ? { activePack: ctx.activePack } : {}), history: ctx.history,
     coordinated: { snapshot: base, sha256: ref.sha256, slug: row.slug, moved: !!renamed, prepare: async value => { ready = value; return value.result; },
       owner: { kind: 'sync', principalKind: row.principal_kind, principalId: row.principal_id, baseRevision: base?.revision ?? null } } }, stat, policy)
     .catch(error => { throw error instanceof OperationError && error.code === 'source_changed' ? changed() : error; });

@@ -19,7 +19,7 @@ import { resolveSlugRootMode } from '../sync-anchor.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { unboundBindCommand } from './unbound-source.ts';
-import { currentVerifiedLocalWriter, localHostId } from './identity.ts';
+import { currentVerifiedLocalWriter, hostIdFor } from './identity.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { trustedCliRequired } from '../ops/op-fix.ts';
 import { ownerUnavailableReason } from './owner-refusal.ts';
@@ -280,12 +280,12 @@ export async function resolveManagedSyncContext(engine: BrainEngine, opts: SyncO
   const source = read && opts.canonicalOverride === 'git' ? { ...read, config: { ...read.config, canonical: 'git' } } : read;
   if (source?.config?.canonical === 'git' && managedForbiddenFlag(opts, true)) throw managedSyncFlagRefusal('--working-tree', sourceId, ['--source', sourceId, '--no-pull', '--working-tree']);
   if (!source || source.archived || !binding || binding.source_incarnation !== source.incarnation ||
-      binding.owner_host_id !== localHostId() || binding.state !== 'active' || !binding.local_path) {
+      binding.owner_host_id !== hostIdFor(engine) || binding.state !== 'active' || !binding.local_path) {
     // #6449: a rooted source with no owner at all is the database-only one activation listed; the exit is a deliberate claim.
     const unbound = source && !source.archived && !binding && source.local_path && source.config?.kind == null;
     // #7239: a missing, archived or re-registered source, or a checkout another host id owns, refuses the same way on every
     // retry from this host, so a sync job ends at once; a transfer or clone in progress can finish, so it stays retryable.
-    const reason = source && !source.archived ? ownerUnavailableReason(binding, source.incarnation, localHostId()) : null;
+    const reason = source && !source.archived ? ownerUnavailableReason(binding, source.incarnation, hostIdFor(engine)) : null;
     const deterministic = !source || source.archived || (reason !== null && reason !== 'transfer_in_progress' && reason !== 'clone_in_progress');
     throw opError('owner_unavailable', 'Sync must run on the active registered worktree owner.',
       unbound
