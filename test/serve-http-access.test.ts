@@ -167,7 +167,7 @@ for (const kind of testBackends()) {
       expect(applied.json).toMatchObject({ applied: true, attest_actor: 'qm', attest_ops: ['get_write_request', 'memory_recall', 'memory_write'] });
       const token = (await provider().exchangeClientCredentials(qm.clientId, qm.clientSecret!)).access_token;
       const auth = await provider().verifyAccessToken(token) as unknown as { attest?: { system: string; ops: string[] } | null };
-      expect(auth.attest).toEqual({ system: 'qm', ops: ['get_write_request', 'memory_recall', 'memory_write'] });
+      expect(auth.attest).toEqual({ system: 'qm', ops: ['get_write_request', 'memory_recall', 'memory_write'], sources: null });
 
       expect((await call('POST', '/admin/api/access/attest', { clientId: qm.clientId, attestOps: ['capture'] })).json).toMatchObject({ code: 'invalid_params' });
       expect((await call('POST', '/admin/api/access/attest', { clientId: qm.clientId, attestOps: ['admin_only_op_example'] })).json).toMatchObject({ code: 'invalid_params' });
