@@ -26,6 +26,7 @@ import { isWriteThroughDisabled } from '../write-through.ts';
 import { isSourceDbOnlySlug } from '../persistence/source-storage.ts';
 import type { GoogleSourceConfig, GoogleSourceState } from './types.ts';
 import type { LoopsExclusionPolicy } from './loops-exclusion.ts';
+import { intentCarriesPurgedContent } from '../persistence/purged-intent.ts';
 
 /** The "my addresses" identity set: account + Gmail sendAs aliases. */
 export function myAddressSet(entry: CredentialEntry): Set<string> {
@@ -133,6 +134,7 @@ function withStoredFactsFence(existing: Page): (fileBytes: string) => string | n
   return fileBytes => block === null || hasFence(fileBytes) ? null : replaceOrInsertFactsFence(fileBytes, block);
 }
 
+/** Returns null for a classic page-purge skip: callers must not project or retire related content. */
 export async function importRendered(
   deps: GoogleSyncDeps,
   relPath: string,
@@ -141,7 +143,7 @@ export async function importRendered(
   summary: GoogleSyncSummary,
   countedSlugs: Set<string>,
   identity: Record<string, string | readonly string[]> = {},
-): Promise<string> {
+): Promise<string | null> {
   markdown = connectorRender(markdown, { path: relPath, account: deps.cfg.account, ...identity });
   const slug = slugifyPath(relPath);
   const [labels] = await deps.engine.executeRaw<{ type: string; frontmatter: unknown }>(
@@ -161,9 +163,20 @@ export async function importRendered(
   }
   const filePath = join(deps.cfg.dir, relPath);
   assertContained(deps.cfg.dir, filePath);
+  // Screen the provider render before drift checks, fence carry or any temp-file
+  // mutation. A retained checkout of a purged page is not an independent edit.
+  const purged = async (content: string) => intentCarriesPurgedContent(deps.engine,
+    { source_id: deps.sourceId, slug, intent: { content } }, { facts: false, pages: true });
+  const skipPurged = () => {
+    deps.log(`[google] skipped ${slug}: its content matches a page purge tombstone; to restore it, use gbrain pages unpurge ${slug}`);
+    return null;
+  };
+  if (await purged(markdown)) return skipPurged();
   const existing = await deps.engine.getPage(slug, { sourceId: deps.sourceId });
   if (existing) assertInlineBody(existing, 'Google connector materialization');
+  const providerMarkdown = markdown;
   markdown = await carryStoredFences(deps.sourceId, slug, relPath, existing, markdown, 'Google connector fence carry');
+  if (markdown !== providerMarkdown && await purged(markdown)) return skipPurged();
   const databaseOnly = await isWriteThroughDisabled(deps.engine) || isSourceDbOnlySlug(deps.cfg.dir, slug, 'refuse');
   const guard = databaseOnly ? null : await replaceableFile(deps.engine, deps.sourceId, slug, filePath, existing ? withStoredFactsFence(existing) : undefined);
   const drift = () => new OperationError('file_database_drift',
