@@ -38,12 +38,6 @@ import { AGENT_LABEL_HEADER, parseAgentLabel } from '../src/core/persistence/att
 const CONFIG = { engine: 'pglite', embedding_disabled: true } as const;
 const content = (title: string) => '---\ntype: note\ntitle: ' + title + '\n---\n\n# ' + title + '\n\nA synthetic page.\n';
 
-async function freshEngine(): Promise<BrainEngine> {
-  const db = new PGLiteEngine();
-  await db.connect({});
-  await db.initSchema();
-  return db;
-}
 async function addToken(engine: BrainEngine, name: string, token: string, scopes: string): Promise<void> {
   await engine.executeRaw('INSERT INTO access_tokens(name,token_hash,scopes) VALUES($1,$2,$3::text[])', [name, hashToken(token), scopes]);
 }
@@ -85,7 +79,10 @@ describe('OAuth serve --http mount, managed worktree brain', () => {
   let url: string;
 
   beforeAll(async () => {
-    engine = await freshEngine();
+    const db = new PGLiteEngine();
+    await db.connect({});
+    await db.initSchema();
+    engine = db;
     root = mkdtempSync(join(tmpdir(), 'gbrain-agent-label-'));
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     await engine.executeRaw('UPDATE sources SET local_path=$1 WHERE id=\'default\'', [root]);
@@ -150,7 +147,10 @@ describe('legacy bearer transport, repo-less brain', () => {
   let url: string;
 
   beforeAll(async () => {
-    engine = await freshEngine();
+    const db = new PGLiteEngine();
+    await db.connect({});
+    await db.initSchema();
+    engine = db;
     const [source] = await engine.executeRaw<{ local_path: string | null }>("SELECT local_path FROM sources WHERE id='default'");
     expect(source?.local_path ?? null).toBeNull();
     await addToken(engine, 'Synthetic legacy token', TOKEN, '{read,write}');
