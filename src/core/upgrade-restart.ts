@@ -99,7 +99,8 @@ function isGbrainCli(path: string, packageName: EntryLookup['packageName']): boo
 /**
  * The gbrain entry point of a command line and the arguments after it, or null when the command is not gbrain
  * itself: a wrapper that starts gbrain as its child (tini, a shell, `timeout`, `bunx`, `bun x`, `bun run <bin>`)
- * is not the gbrain process, while `bun run <file>` runs the file in its own process. A relative entry is
+ * is not the gbrain process, while `bun run <file>` runs the file in its own process. The value of an interpreter
+ * flag the walk does not list is skipped: after it, the entry is the next path. A relative entry is
  * returned resolved against the process's working directory; when that directory is unknown it stays relative and
  * only a gbrain path matches.
  */
@@ -112,7 +113,10 @@ export function gbrainEntry(command: string, lookup: EntryLookup = {}): { entry:
     if (basename(tokens[0]!) === 'bun') {
       if (tokens[at] === 'x') return null;
       if (tokens[at] === 'run') for (at++; tokens[at]?.startsWith('-'); at++) if (VALUE_FLAGS.has(tokens[at]!)) at++;
-      if (tokens[at] !== undefined && !isPath(tokens[at]!)) return null;
+    }
+    if (tokens[at] !== undefined && !isPath(tokens[at]!)) {
+      if (tokens[at - 1]!.startsWith('-')) at = tokens.findIndex((token, i) => i > at && isPath(token));
+      else if (basename(tokens[0]!) === 'bun') return null;
     }
   }
   const token = tokens[at];

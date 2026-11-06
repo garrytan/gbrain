@@ -192,6 +192,20 @@ describe('collectHostProcesses', () => {
     ]);
   });
 
+  test('an interpreter flag whose value the walk does not know is skipped: the entry is the next path (#8727 review)', async () => {
+    const serve = 'bun --dns-result-order ipv4first /workspace/gbrain/src/cli.ts serve --http';
+    expect(classifyGbrainCommand(serve)).toBe('serve');
+    expect(classifyGbrainCommand('bun --define X=1 /opt/gbrain/src/cli.ts serve')).toBe('mcp');
+    expect(classifyGbrainCommand('node --stack-size 4000 /home/alice-example/.bun/bin/gbrain jobs work')).toBe('worker');
+    expect(gbrainEntry('bun --dns-result-order ipv4first /workspace/acme-example/src/cli.ts serve', { packageName: () => 'acme-example' })).toBeNull();
+    expect(gbrainEntry('bun run gbrain serve')).toBeNull();
+    const processes = await collectHostProcesses(sources({
+      processTable: () => [{ pid: 61, ppid: 1, command: serve, started_ms: 500, gbrain_home: HOME }],
+      heartbeats: async () => [{ pid: 61, kind: 'serve', version: OLD }],
+    }));
+    expect(processes).toEqual([{ pid: 61, ppid: null, role: 'serve', version: OLD, started_ms: 500, ancestors: [], args: ['serve', '--http'], install_version: null, install_root: null }]);
+  });
+
   test('a record whose pid the process table does not list as gbrain is stale and dropped (a dead or reused pid is never signalled)', async () => {
     const processes = await collectHostProcesses(sources({
       processTable: () => [{ pid: 77, ppid: 1, command: 'sleep 600', started_ms: 500, gbrain_home: HOME }],
