@@ -10,6 +10,19 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.591.0] - 2026-11-06
+
+**`gbrain repair file-drift --prefer file` now imports a page stored in segments that keeps protected parts, instead of refusing every apply with no next step.**
+
+A held page whose body is stored in segments (`pages.segmented_storage`, a page over 1 MiB) and whose database copy keeps a protected frontmatter key and a timeline row the file lacks previewed cleanly, listing both exceptions and an apply command. That apply refused every time with `invalid_params` "Unsupported or missing reconciliation fields." and no `fix`, so the page stayed held and blocked writes to it. The apply now imports the file with the same protections (the file keeps its bytes plus the appended key and row, the page keeps both), the page stays segmented and searchable, and the next sync releases the hold. A preview now refuses a page its own apply would refuse, and every refusal on this path names its next step.
+
+### Itemized changes
+
+- `src/core/persistence/reconcile-state.ts`: a reconcile preview of a segmented page validates: its snapshot's `bodyGeneration` and the page's `body_storage` / `body_bytes` are accepted (the preimage checks are unchanged). A page with no revision yet (the revision backfill has not reached it) refuses `revision_backfill_pending` in the preview, with `gbrain apply-migrations --force-schema` in `fix` (or `gbrain repair orphan-children` when the backfill already used every attempt on the row), instead of a stale-preview refusal with none; `revision_backfill_pending` joins the error registry. Read-only drift classification and the audit read such a page as before.
+- `src/core/persistence/reconcile-prepare.ts`: the reconcile publication of a segmented page leaves its text seal to the segmented import (as the managed file repair does), runs the import's `afterCommit`, and reads the published page back materialized.
+- `src/core/repair/file-drift.ts`: the preview validates each page's reconcile artifact as the apply reads it back, so a page the apply would refuse is listed `refused` in the preview. A refused preview row carries the refusal's `fix` and its `why`; a refused or changed apply outcome carries both, with a read-only preview of that page alone (for a held deleted-side page, its held preview) when the refusal has no `fix`. `gbrain repair` prints each row's `fix` with its consent.
+- `src/core/persistence/reconcile-merge.ts`: "Unsupported or missing reconciliation fields." names the fields in `why`.
+
 ## [0.60.590.0] - 2026-11-06
 
 **A managed sync no longer stops for good when a write queues behind another write that waits on the sync, and the convergence nightly's kill loop tests only points a sync actually reaches.**
