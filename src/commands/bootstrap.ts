@@ -722,7 +722,7 @@ async function runStatus(ws: string, rest: string[], home: string): Promise<numb
   if (report.runbookSkew) {
     console.log(
       `\nWARNING: runbook stamp ${report.runbookSkew.runbookStamp} != installed binary ${report.runbookSkew.binaryVersion} — ` +
-        'prefer the binary; re-fetch the runbook from the latest-stable ref.',
+        'prefer the binary; re-fetch the runbook from the stable ref.',
     );
   }
   console.log('\nSupport (relay verbatim when something is broken):');

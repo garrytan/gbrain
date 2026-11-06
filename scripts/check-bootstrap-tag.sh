@@ -2,19 +2,21 @@
 # scripts/check-bootstrap-tag.sh — sanctioned-distribution-ref guard [C1 = D6-A].
 #
 # The agent-bootstrap distribution contract (docs/designs/AGENT_BOOTSTRAP_PLAN.md,
-# "Release mechanics") is a SINGLE maintainer-controlled ref: `latest-stable`,
-# force-advanced by .github/workflows/release.yml only AFTER a release fully
-# publishes (binaries + provenance). Paste blocks copied into the wild never
+# "Release mechanics") is a SINGLE maintainer-controlled ref: `stable`, moved by
+# .github/workflows/promote-stable.yml only to a published release whose exact
+# tree passed the production soak (docs/RELEASING.md#stable-channel-promotion).
+# `latest-stable` (every release, the alpha line) is refused here: new users
+# start on stable. Paste blocks copied into the wild never
 # rot and never point at an unreviewed branch head. This guard keeps the two
 # public entry documents on that contract:
 #
 #   1. Every raw.githubusercontent.com/garrytan/gbrain/<ref>/<path> reference
-#      in README.md and BOOTSTRAP_FOR_AGENTS.md uses <ref> = latest-stable.
+#      in README.md and BOOTSTRAP_FOR_AGENTS.md uses <ref> = stable.
 #      Carve-out: <path> = INSTALL_FOR_AGENTS.md — that is the pre-bootstrap
 #      OpenClaw/Hermes headline install path with its own (master) contract,
 #      outside the bootstrap ref rule.
 #   2. Every explicit `github:garrytan/gbrain#<ref>` install pin in those
-#      files is #latest-stable — no v-prefixed pins, no branch refs
+#      files is #stable — no v-prefixed pins, no branch refs
 #      (master/main). The historical un-pinned `github:garrytan/gbrain`
 #      quick-start form is tolerated (it predates bootstrap and is owned by
 #      the README task).
@@ -72,7 +74,7 @@ for rel in README.md BOOTSTRAP_FOR_AGENTS.md; do
     echo "      (no v-prefixed pins, no branch refs). See .github/workflows/release.yml." >&2
   done <<< "$raw_refs"
 
-  # ── Rule 2: explicit install pins must be #latest-stable ─────────────────
+  # ── Rule 2: explicit install pins must be #stable ────────────────────────
   pins=$(grep -oE "$PIN_RE" "$f" | LC_ALL=C sort -u || true)
   while IFS= read -r p; do
     [ -n "$p" ] || continue
@@ -110,7 +112,7 @@ fi
 
 # ── Rule 4: plugin marketplace refs pin a sanctioned ref ─────────────────────
 # `codex plugin marketplace add garrytan/gbrain@<ref>` in docs must use the
-# release channel (@latest-stable) or the slim dist branch (@codex-plugin).
+# stable channel (@stable) or the slim dist branch (@codex-plugin).
 # The @-less form (`plugin marketplace add garrytan/gbrain`) is deliberately
 # OUT of scope: Claude Code marketplace adds have no ref pin syntax, so the
 # Claude lane documents the bare form and installs the repo default branch —

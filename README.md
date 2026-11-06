@@ -118,7 +118,8 @@ GBrain is MIT-licensed and free to self-host. It needs **Bun 1.4.4 or newer**; e
 > **GBrain is NOT distributed on npm.** The npm `gbrain` package is unrelated and
 > can shadow the real binary, so never run `npm install -g gbrain` or
 > `bun add -g gbrain`. Install only via `bun install -g github:garrytan/gbrain#stable`
-> or `git clone` + `bun install && bun link`. Installed by mistake? `gbrain doctor` gives the fix.
+> (the soaked stable channel; `#latest-stable` is the alpha line with every release)
+> or `git clone --branch stable` + `bun install && bun link`. Installed by mistake? `gbrain doctor` gives the fix.
 > Schema not migrated ([#218](https://github.com/garrytan/gbrain/issues/218))? Run
 > `gbrain apply-migrations --yes --no-autopilot-install`; if it exits 1, run `gbrain doctor --json`, not another `--yes` (`wedged`: relay its fix).
 

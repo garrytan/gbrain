@@ -27,7 +27,7 @@ start here.
    ([#218](https://github.com/garrytan/gbrain/issues/218)), run `gbrain apply-migrations --yes --no-autopilot-install`.
    Exit 1 with `migrations_pending` means the schema is still behind and another `--yes` repeats the failure:
    run `gbrain doctor --json` and fall back to the deterministic install:
-   `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
+   `git clone --branch stable https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
    Reason `wedged` means one migration failed three or more times in a row: relay its `fix` (ask the user)
    instead of reinstalling; they fix the cause, then `gbrain apply-migrations --force-retry <version>`.
 

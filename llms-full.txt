@@ -1799,7 +1799,7 @@ start here.
    ([#218](https://github.com/garrytan/gbrain/issues/218)), run `gbrain apply-migrations --yes --no-autopilot-install`.
    Exit 1 with `migrations_pending` means the schema is still behind and another `--yes` repeats the failure:
    run `gbrain doctor --json` and fall back to the deterministic install:
-   `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
+   `git clone --branch stable https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
    Reason `wedged` means one migration failed three or more times in a row: relay its `fix` (ask the user)
    instead of reinstalling; they fix the cause, then `gbrain apply-migrations --force-retry <version>`.
 
@@ -2743,7 +2743,8 @@ If you fetched this file by URL without cloning yet, the companion files live at
 > **NEVER install from the npm registry.** The npm package named `gbrain` is unrelated and
 > can shadow the real binary. Never run `npm install -g gbrain` or `bun add -g gbrain` (the
 > missing `github:` prefix is the trap). Install only `github:garrytan/gbrain#stable`
-> (plain `github:garrytan/gbrain` installs master) or a git clone, as below. Already installed
+> (the soaked stable channel; `#latest-stable` is the alpha line with every release, and plain
+> `github:garrytan/gbrain` installs master) or a git clone, as below. Already installed
 > from npm? Remove it (`npm uninstall -g gbrain` / `bun remove -g gbrain`); `gbrain doctor` detects it.
 
 > **On Codex or Claude Code?** After the install, the plugin wires MCP plus curated skills:
@@ -2773,7 +2774,7 @@ key ([Step 3](#step-3-create-the-brain)). On any other harness, `gbrain init --p
 > (reinstalling does not help).
 >
 > ```bash
-> git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
+> git clone --branch stable https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
 > bun install && bun link
 > ```
 
@@ -5254,7 +5255,8 @@ GBrain is MIT-licensed and free to self-host. It needs **Bun 1.4.4 or newer**; e
 > **GBrain is NOT distributed on npm.** The npm `gbrain` package is unrelated and
 > can shadow the real binary, so never run `npm install -g gbrain` or
 > `bun add -g gbrain`. Install only via `bun install -g github:garrytan/gbrain#stable`
-> or `git clone` + `bun install && bun link`. Installed by mistake? `gbrain doctor` gives the fix.
+> (the soaked stable channel; `#latest-stable` is the alpha line with every release)
+> or `git clone --branch stable` + `bun install && bun link`. Installed by mistake? `gbrain doctor` gives the fix.
 > Schema not migrated ([#218](https://github.com/garrytan/gbrain/issues/218))? Run
 > `gbrain apply-migrations --yes --no-autopilot-install`; if it exits 1, run `gbrain doctor --json`, not another `--yes` (`wedged`: relay its fix).
 

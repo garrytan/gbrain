@@ -146,6 +146,11 @@ brain home's config, then the default. An invalid value at the first one set
 is an error (`invalid_params`), never a fall-through to the next. Channel state
 lives under `GBRAIN_HOME`, so a repo-less brain and a repo brain behave the
 same. When a channel is set, `gbrain doctor` prints `channel=<channel> (<source>)`.
+New installs start on stable: the documented install
+(`github:garrytan/gbrain#stable`, or `git clone --branch stable`) installs the
+stable release, and a fresh `gbrain init` (new content database, no prior
+config file) writes `self_upgrade.channel: stable`, so it never sees the
+notice below.
 
 ```bash
 gbrain config set self_upgrade.channel alpha    # follow every release on this brain home
