@@ -48,6 +48,17 @@ export async function run(engine: BrainEngine, args: string[]): Promise<void> {
     }
     return;
   }
+  if (args.includes('--synopsis')) {
+    const { runReindexSynopsis } = await import('../../commands/reindex-synopsis.ts');
+    try {
+      await runReindexSynopsis(engine, args);
+    } catch (e) {
+      const { OperationError } = await import('../../core/ops/contract.ts');
+      if (e instanceof OperationError) { setCliExitVerdict(writeCliError(e, 'reindex')); return; }
+      throw e;
+    }
+    return;
+  }
   if (args.includes('--segmented')) {
     await reindex.runReindexSegmented(engine, args);
     return;

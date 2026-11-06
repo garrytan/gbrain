@@ -130,11 +130,29 @@ export interface SearchModesReport {
    * file-plane + process env. Absent only when readiness itself threw.
    */
   reranker_readiness?: RerankerReadinessReport;
+  /**
+   * #8744: when the configured contextual-retrieval tier is per_chunk_synopsis,
+   * how many chunks actually carry synopsis vectors (import and sync embed at
+   * the title tier; the sweep is `gbrain reindex --synopsis`). Brain-wide
+   * counts, so ABSENT on the remote surface.
+   */
+  synopsis_coverage?: SynopsisCoverageReport;
   /** #4604: what this report does NOT include (per-call plane). */
   per_call_note: string;
   _meta?: {
     metric_glossary?: Record<string, string>;
   };
+}
+
+export interface SynopsisCoverageReport {
+  eligible_pages: number;
+  eligible_chunks: number;
+  synopsis_pages: number;
+  synopsis_chunks: number;
+  coverage_pct: number | null;
+  large_title_pages: number;
+  line: string;
+  fix: string;
 }
 
 export interface RerankerReadinessReport {
@@ -163,7 +181,8 @@ export function redactReadinessForRemote(report: SearchModesReport): SearchModes
   // self_hosted is deployment topology (a private base-URL override exists) —
   // not needed for the verdict, so it stays local too.
   const { model, enabled, ready } = rr;
-  return { ...report, reranker_readiness: { model, enabled, ready, self_hosted: false } };
+  const { synopsis_coverage: _brainWide, ...rest } = report;
+  return { ...rest, reranker_readiness: { model, enabled, ready, self_hosted: false } };
 }
 
 export async function buildModesReport(engine: BrainEngine): Promise<SearchModesReport> {
@@ -227,12 +246,24 @@ export async function buildModesReport(engine: BrainEngine): Promise<SearchModes
     };
   }
 
+  let synopsis_coverage: SynopsisCoverageReport | undefined;
+  try {
+    const sweep = await import('../synopsis-sweep.ts');
+    const c = await sweep.readSynopsisCoverage(engine);
+    if (c.config.configured) {
+      synopsis_coverage = { eligible_pages: c.eligible_pages, eligible_chunks: c.eligible_chunks, synopsis_pages: c.synopsis_pages,
+        synopsis_chunks: c.synopsis_chunks, coverage_pct: c.coverage_pct, large_title_pages: c.large_title_pages,
+        line: sweep.formatSynopsisCoverageLine(c), fix: sweep.SYNOPSIS_SWEEP_ARGV.join(' ') };
+    }
+  } catch { /* coverage is advisory; the doctor check synopsis_tier_coverage reports read failures */ }
+
   return {
     schema_version: 2,
     active_mode: resolved.resolved_mode,
     active_mode_valid: resolved.mode_valid,
     resolved: attributions,
     ...(reranker_readiness ? { reranker_readiness } : {}),
+    ...(synopsis_coverage ? { synopsis_coverage } : {}),
     bundles: {
       conservative: { ...MODE_BUNDLES.conservative },
       balanced: { ...MODE_BUNDLES.balanced },
