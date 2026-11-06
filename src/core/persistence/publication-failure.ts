@@ -70,7 +70,12 @@ export type CheckoutRefusalOrigin = typeof CHECKOUT_REFUSAL_ORIGINS[number];
 export interface CheckoutRefusalDetail { origin: CheckoutRefusalOrigin; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
 /** #6693: a page write refused because its file holds a committed change sync has not imported (`pending_import`) or sync holds the file (`sync_held`). */
 export interface PendingImportDetail { origin: 'pending_import' | 'sync_held'; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
-export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail | FenceRefusalDetail | WithdrawalRefusalDetail | OwnerExceptionDetail | CanonicalFileDetail | CheckoutRefusalDetail | PendingImportDetail }
+/** GST-1601: the cause of any other source_changed refusal, from its message (verb-errors.ts writeFailureDiagnostic). */
+export const SOURCE_CHANGED_ORIGINS = ['file_database_drift', 'canonical_path_occupied', 'raw_file_changed', 'pinned_git_worktree_conflict', 'unsafe_file_target',
+  'source_binding_changed', 'unbound_source'] as const;
+export type SourceChangedOrigin = typeof SOURCE_CHANGED_ORIGINS[number];
+export interface SourceChangedDetail { origin: SourceChangedOrigin; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
+export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail | FenceRefusalDetail | WithdrawalRefusalDetail | OwnerExceptionDetail | CanonicalFileDetail | CheckoutRefusalDetail | PendingImportDetail | SourceChangedDetail }
 
 const IDENT = /^[A-Za-z_][A-Za-z0-9_.:-]{0,79}$/;
 const ident = (value: unknown) => typeof value === 'string' && IDENT.test(value) ? value : undefined;
