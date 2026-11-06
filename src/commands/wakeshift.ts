@@ -16,7 +16,7 @@ import { requireConsent } from '../core/consent.ts';
 import { WakeshiftError, WakeshiftKeyError, normalizeWakeshiftUrl, parseWakeshiftKey, wakeshiftClient, type WakeshiftKey } from '../core/wakeshift/client.ts';
 import { readWakeshiftKey, wakeshiftFileConfig, wakeshiftKeyFile, wakeshiftPublished, wakeshiftSecret } from '../core/wakeshift/config.ts';
 import { wakeshiftManifest } from '../core/wakeshift/events.ts';
-import { endAtWakeshift } from '../core/wakeshift/drain.ts';
+import { endAtWakeshift, liveAccessMembers } from '../core/wakeshift/drain.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
 const HELP = `gbrain wakeshift <command> — report back to agent conversations when jobs finish (off by default)
@@ -57,11 +57,6 @@ function loadKey(): { key: WakeshiftKey; source: 'env' | 'file' } {
     if (e instanceof WakeshiftKeyError) throw keyError(e.reason, e.message, KEY_HINT);
     throw e;
   }
-}
-
-async function liveMembers(engine: BrainEngine): Promise<number> {
-  const [row] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL');
-  return Number(row?.n ?? 0);
 }
 
 async function watchCounts(engine: BrainEngine): Promise<Record<string, number>> {
@@ -122,7 +117,7 @@ async function enable(engine: BrainEngine, args: string[]): Promise<void> {
     console.error(`[wakeshift] saved the key to ${wakeshiftKeyFile()} (0600).`);
   }
   const { key, source } = loadKey();
-  const members = await liveMembers(engine);
+  const members = await liveAccessMembers(engine);
   if (members > 0) {
     throw opError('wakeshift_shared_brain', `This brain has ${members} live access member(s); this release reports back only on a brain that serves its owner alone. Nothing was turned on.`,
       'Leave reporting back off on this brain; agents wait for a job with wait_job or gbrain jobs wait and the job id.');
@@ -147,7 +142,11 @@ async function enable(engine: BrainEngine, args: string[]): Promise<void> {
       'Check the key belongs to your Wakeshift app (gbrain wakeshift test) and retry.', { reason: e instanceof WakeshiftError ? e.code : 'error' });
   }
   wakeshiftSecret();
-  writeFilePlane(w => ({ ...w, enabled: true, ...(url !== 'https://app.wakeshift.ai' ? { url } : {}) }));
+  writeFilePlane(w => {
+    const next: { enabled?: boolean; url?: string } = { ...w, enabled: true, url };
+    if (url === 'https://app.wakeshift.ai') delete next.url;
+    return next;
+  });
   say(args.includes('--json'), { enabled: true, url, app: { id: app?.id, name: app?.name }, key: { source, kid: key.kid } }, [
     `Wakeshift reporting back is on (app ${app?.name ?? '?'}, key kid ${key.kid}, from ${source}).`,
     'Agents now see watch_job, list_watches and unwatch; gbrain serve and the job worker deliver wakes.',

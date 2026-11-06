@@ -5194,7 +5194,7 @@ More: [docs/guides/wakeshift.md#troubleshooting](../../docs/guides/wakeshift.md#
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain wakeshift enable refused: this brain has live access members, and this release reports back only on brains that serve their owner alone. | Every member of the brain owner's Wakeshift organization can read the wakes it sends, and Wakeshift's terms make the operator pass its Connector Terms to each member. Shared brains get a terms step in a later release; until then reporting back stays off there. | Leave reporting back off on this brain; agents can use wait_job or gbrain jobs wait <id>. | user | `gbrain doctor --json` | 1 | no |
+| Reporting back refused (gbrain wakeshift enable, or watch_job after a member was added): this brain has live access members, and this release reports back only on brains that serve their owner alone. | Every member of the brain owner's Wakeshift organization can read the wakes it sends, and Wakeshift's terms make the operator pass its Connector Terms to each member. Shared brains get a terms step in a later release; until then reporting back stays off there. | Leave reporting back off on this brain; agents can use wait_job or gbrain jobs wait <id>. | user | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/wakeshift.md#who-it-is-for](../../docs/guides/wakeshift.md#who-it-is-for)
 

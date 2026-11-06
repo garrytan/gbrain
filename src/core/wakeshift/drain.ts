@@ -12,7 +12,8 @@
  * never emit one row; 5 attempts backing off 30 s, 2 m, 8 m, 30 m (a 429 waits
  * its Retry-After within the same cap); any other 4xx is final. A dead,
  * revoked or expired watch is ended at Wakeshift once, so the conversation is
- * told. Off or keyless: the tick returns before touching the database.
+ * told. Off or keyless: the tick returns before touching the database. A brain
+ * with live access members sends nothing (watch_job refuses there too).
  */
 import type { BrainEngine } from '../engine.ts';
 import { memberIdentityFor } from '../access/caller.ts';
@@ -45,7 +46,7 @@ export interface WakeRow {
   finished_us: string | null;
 }
 
-export interface DrainReport { delivered: number; retried: number; dead: number; ended: number; skipped?: 'off' }
+export interface DrainReport { delivered: number; retried: number; dead: number; ended: number; skipped?: 'off' | 'shared' }
 
 const CANDIDATES_SQL = (byId: boolean) => `
 SELECT w.id, w.event, w.target, w.principal_kind, w.principal_id, w.member_id, w.wake_user, w.ws_subscription_id, w.attempts,
@@ -61,20 +62,36 @@ SELECT w.id, w.event, w.target, w.principal_kind, w.principal_id, w.member_id, w
  ORDER BY w.next_attempt_at, w.id
  LIMIT ${WAKE_DRAIN_BATCH}`;
 
-async function claim(engine: BrainEngine, id: number): Promise<boolean> {
-  const rows = await engine.executeRaw<{ id: number }>(
+/** Lease one open row; the lease's timestamp in epoch microseconds (text, so no driver rounds it) is the token settle() must match. */
+async function claim(engine: BrainEngine, id: number): Promise<string | null> {
+  const rows = await engine.executeRaw<{ lease: string }>(
     `UPDATE wake_subscriptions SET lease_until = now() + interval '${LEASE_S} seconds', updated_at = now()
-      WHERE id = $1 AND state = 'open' AND (lease_until IS NULL OR lease_until < now()) RETURNING id`, [id]);
-  return rows.length > 0;
+      WHERE id = $1 AND state = 'open' AND (lease_until IS NULL OR lease_until < now()) RETURNING (floor(extract(epoch FROM lease_until) * 1000000))::bigint::text AS lease`, [id]);
+  return rows[0]?.lease ?? null;
 }
 
-async function settle(engine: BrainEngine, id: number, state: 'open' | 'delivered' | 'dead' | 'ended', fields: { marker?: string; attempts?: number; delayS?: number; error?: string | null }): Promise<void> {
-  await engine.executeRaw(
+/** Settle a leased row; false when it was ended (unwatch, disable, expiry) or re-leased meanwhile, which then wins. */
+async function settle(engine: BrainEngine, id: number, lease: string, state: 'open' | 'delivered' | 'dead' | 'ended', fields: { marker?: string; attempts?: number; delayS?: number; error?: string | null }): Promise<boolean> {
+  const rows = await engine.executeRaw(
     `UPDATE wake_subscriptions SET state = $2, lease_until = NULL, updated_at = now(),
         delivered_marker = COALESCE($3, delivered_marker), attempts = COALESCE($4, attempts),
         next_attempt_at = CASE WHEN $5::int IS NULL THEN next_attempt_at ELSE now() + make_interval(secs => $5::int) END,
         last_error = $6
-      WHERE id = $1`, [id, state, fields.marker ?? null, fields.attempts ?? null, fields.delayS ?? null, fields.error ?? null]);
+      WHERE id = $1 AND state = 'open' AND (floor(extract(epoch FROM lease_until) * 1000000))::bigint::text = $7 RETURNING id`,
+    [id, state, fields.marker ?? null, fields.attempts ?? null, fields.delayS ?? null, fields.error ?? null, lease]);
+  return rows.length > 0;
+}
+
+/** Live access members: reporting back runs only on a brain that serves its owner alone (docs/guides/wakeshift.md#who-it-is-for). */
+export async function liveAccessMembers(engine: BrainEngine): Promise<number> {
+  const [row] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL');
+  return Number(row?.n ?? 0);
+}
+
+function retryDelayS(attempts: number, err?: WakeshiftError): number {
+  const cap = WAKE_RETRY_SCHEDULE_S[WAKE_RETRY_SCHEDULE_S.length - 1];
+  if (err?.status === 429 && err.retryAfterS !== undefined) return Math.min(cap, Math.max(1, Math.ceil(err.retryAfterS)));
+  return WAKE_RETRY_SCHEDULE_S[attempts - 1] ?? cap;
 }
 
 /** The subscribing credential still exists and, when it was bound to a member, that member is still live. */
@@ -101,43 +118,44 @@ function jobOf(row: WakeRow): JobSnapshot | null {
 }
 
 async function deliver(engine: BrainEngine, api: WakeshiftApi, row: WakeRow, report: DrainReport): Promise<void> {
-  if (!(await claim(engine, row.id))) return;
+  const lease = await claim(engine, row.id);
+  if (!lease) return;
+  const attempts = row.attempts + 1;
   try {
     if (!(await principalLive(engine, row))) {
       await endAtWakeshift(api, row);
-      await settle(engine, row.id, 'ended', { error: 'principal_revoked' });
-      report.ended++;
+      if (await settle(engine, row.id, lease, 'ended', { error: 'principal_revoked' })) report.ended++;
       return;
     }
     const job = jobOf(row);
     const marker = jobMarker(job);
     const { payload, text } = jobWake(Number(row.target), job);
+    let sent;
     try {
-      await api.emit({
+      sent = await api.emit({
         name: row.event, arguments: { job: Number(row.target) }, payload, text,
         id: wakeEmitId(row.event, row.target, marker, row.id),
         to: [{ user: row.wake_user, subscription: row.ws_subscription_id }],
       });
-      await settle(engine, row.id, 'delivered', { marker, error: null });
-      report.delivered++;
     } catch (e) {
       const err = e instanceof WakeshiftError ? e : new WakeshiftError(0, 'network', String(e));
-      const attempts = row.attempts + 1;
       const retryable = err.status === 0 || err.status === 429 || err.status >= 500;
       if (!retryable || attempts >= WAKE_MAX_ATTEMPTS) {
         await endAtWakeshift(api, row);
-        await settle(engine, row.id, 'dead', { attempts, error: err.code });
-        report.dead++;
+        if (await settle(engine, row.id, lease, 'dead', { attempts, error: err.code })) report.dead++;
         return;
       }
-      const cap = WAKE_RETRY_SCHEDULE_S[WAKE_RETRY_SCHEDULE_S.length - 1];
-      const base = WAKE_RETRY_SCHEDULE_S[attempts - 1] ?? cap;
-      const delayS = err.status === 429 && err.retryAfterS !== undefined ? Math.min(cap, Math.max(1, Math.ceil(err.retryAfterS))) : base;
-      await settle(engine, row.id, 'open', { attempts, delayS, error: err.code });
-      report.retried++;
+      if (await settle(engine, row.id, lease, 'open', { attempts, delayS: retryDelayS(attempts, err), error: err.code })) report.retried++;
+      return;
+    }
+    if (sent.matched > 0 || sent.duplicate) {
+      if (await settle(engine, row.id, lease, 'delivered', { marker, error: null })) report.delivered++;
+    } else if (await settle(engine, row.id, lease, 'ended', { marker, error: 'unmatched' })) {
+      report.ended++;
     }
   } catch (e) {
-    await settle(engine, row.id, 'open', { error: 'drain_error' }).catch(() => {});
+    const dead = attempts >= WAKE_MAX_ATTEMPTS;
+    await settle(engine, row.id, lease, dead ? 'dead' : 'open', { attempts, ...(dead ? {} : { delayS: retryDelayS(attempts) }), error: 'drain_error' }).catch(() => false);
     throw e;
   }
 }
@@ -150,12 +168,17 @@ export async function drainWakes(engine: BrainEngine, opts: { ids?: number[]; ap
   const report: DrainReport = { delivered: 0, retried: 0, dead: 0, ended: 0 };
   const api = opts.api ?? wakeshiftRuntime()?.api;
   if (!api) return { ...report, skipped: 'off' };
+  if (await liveAccessMembers(engine) > 0) return { ...report, skipped: 'shared' };
   const expired = await engine.executeRaw<{ id: number; wake_user: string; ws_subscription_id: string }>(
     `UPDATE wake_subscriptions SET state = 'ended', last_error = 'expired', updated_at = now()
       WHERE state = 'open' AND expires_at < now() RETURNING id, wake_user, ws_subscription_id`);
   report.ended += expired.length;
   const rows = await engine.executeRaw<WakeRow>(CANDIDATES_SQL(opts.ids !== undefined), opts.ids !== undefined ? [opts.ids] : []);
-  for (const row of rows) await deliver(engine, api, row, report);
+  let failure: unknown = null;
+  for (const row of rows) {
+    try { await deliver(engine, api, row, report); } catch (e) { failure ??= e; }
+  }
+  if (failure !== null) throw failure;
   return report;
 }
 
@@ -171,13 +194,20 @@ export async function drainWakesUntilIdle(engine: BrainEngine): Promise<DrainRep
   return total;
 }
 
-/** The 5 s drainer timer for a long-lived process (serve, worker). Never throws, never keeps the process alive. */
+/** The 5 s drainer timer for a long-lived process (serve, worker). Never throws, never keeps the process alive; logs each distinct failure once to stderr. */
 export function startWakeDrain(engine: BrainEngine, opts: { intervalMs?: number; onError?: (e: unknown) => void } = {}): { stop(): void } {
+  const logged = new Set<string>();
+  const onError = opts.onError ?? ((e: unknown) => {
+    const message = e instanceof Error ? e.message : String(e);
+    if (logged.has(message) || logged.size >= 20) return;
+    logged.add(message);
+    console.error(`[wakeshift] wake drain failed: ${message}`);
+  });
   let running = false;
   const timer = setInterval(() => {
     if (running) return;
     running = true;
-    drainWakes(engine).catch(e => opts.onError?.(e)).finally(() => { running = false; });
+    drainWakes(engine).catch(onError).finally(() => { running = false; });
   }, opts.intervalMs ?? WAKE_DRAIN_TICK_MS);
   timer.unref?.();
   return { stop: () => clearInterval(timer) };

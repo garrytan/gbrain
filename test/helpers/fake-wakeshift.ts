@@ -15,7 +15,7 @@ type Answer = { status: number; body: unknown; headers?: Record<string, string> 
 export interface FakeWakeshift {
   url: string;
   calls: FakeCall[];
-  respond: Map<string, (body: any) => Answer>;
+  respond: Map<string, (body: any) => Answer | Promise<Answer>>;
   stop(): void;
 }
 
@@ -26,7 +26,7 @@ export function startFakeWakeshift(rawKey: string): FakeWakeshift {
   const kid = createHash('sha256').update(spki.subarray(spki.length - 32)).digest().subarray(0, 16).toString('base64url');
   const seenJti = new Set<string>();
   const calls: FakeCall[] = [];
-  const respond = new Map<string, (body: any) => Answer>();
+  const respond = new Map<string, (body: any) => Answer | Promise<Answer>>();
   let subSeq = 0;
   const subs = new Map<string, string>();
   const server = Bun.serve({
@@ -52,7 +52,7 @@ export function startFakeWakeshift(rawKey: string): FakeWakeshift {
       if (problem) return Response.json({ error: { code: 'unauthenticated', message: problem } }, { status: 401 });
       const override = respond.get(path);
       if (override) {
-        const a = override(body);
+        const a = await override(body);
         return Response.json(a.body, { status: a.status, headers: a.headers ?? {} });
       }
       switch (path) {

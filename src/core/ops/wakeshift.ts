@@ -16,7 +16,7 @@ import { memberIdentityFor } from '../access/caller.ts';
 import { WakeshiftError, type WakeshiftCall } from '../wakeshift/client.ts';
 import { wakeshiftBrainKey, wakeshiftRuntime, wakeshiftSecret, wakeshiftUserId } from '../wakeshift/config.ts';
 import { JOB_FINISHED } from '../wakeshift/events.ts';
-import { drainWakes, endAtWakeshift } from '../wakeshift/drain.ts';
+import { drainWakes, endAtWakeshift, liveAccessMembers } from '../wakeshift/drain.ts';
 
 const WATCH_TTL = '7d';
 const TERMINAL = new Set(['completed', 'failed', 'dead', 'cancelled']);
@@ -106,6 +106,11 @@ const watch_job: Operation = {
     }
     const runtime = wakeshiftRuntime();
     if (!runtime) throw notEnabled();
+    const members = await liveAccessMembers(ctx.engine);
+    if (members > 0) {
+      throw opError('wakeshift_shared_brain', `This brain now has ${members} live access member(s), so reporting back is paused; nothing was watched.`,
+        `Call wait_job ${id} to wait for the job.`, { fix: waitFix(id) });
+    }
     const owner = agentOwnerFence(ctx, 'watch_job');
     if (owner !== null) await assertJobOwned(ctx, id, owner);
     const [job] = await ctx.engine.executeRaw<{ status: string }>('SELECT status FROM minion_jobs WHERE id = $1', [id]);

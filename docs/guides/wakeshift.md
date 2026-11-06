@@ -26,7 +26,7 @@ A Wakeshift key is an Ed25519 private key: `wst_` followed by 50 base58 characte
 
 ## Who it is for
 
-This release reports back only on brains that serve their owner alone. `gbrain wakeshift enable` refuses a brain with live access members (`gbrain access member list`), because every member of the owner's Wakeshift organization can read the wakes it sends, and Wakeshift's terms make the operator pass its Connector Terms to each member. Shared brains get a terms step in a later release.
+This release reports back only on brains that serve their owner alone. `gbrain wakeshift enable` refuses a brain with live access members (`gbrain access member list`), because every member of the owner's Wakeshift organization can read the wakes it sends, and Wakeshift's terms make the operator pass its Connector Terms to each member. A member added after enable pauses reporting back: watch_job refuses with `wakeshift_shared_brain`, no wakes are sent, and `gbrain doctor` warns. Shared brains get a terms step in a later release.
 
 A watch belongs to the credential that made it: the OAuth client or token, or the local stdio pipe. `list_watches` and `unwatch` touch only the caller's own watches. `watch_job` runs the same owner check as `get_job`, so an agent-scoped token can watch only the jobs it submitted. A job it doesn't own reads exactly like a missing one, and nothing is sent. If the credential is revoked or its client is deleted before the job finishes, the watch ends without a wake.
 
@@ -46,7 +46,7 @@ Delivery is a pull, not a hook. `gbrain serve` (stdio and HTTP) and the job work
 
 On PGLite there is no background worker. A job submitted from a stdio session runs when `gbrain jobs work` drains the queue, after `gbrain serve` stops, and that run delivers its wakes before it exits. A wake it can't deliver arrives from the next `gbrain serve`.
 
-Each watch lasts 7 days and delivers once. A failed delivery is retried at most 5 times, after 30 s, 2 min, 8 min and 30 min (a rate limit waits its `Retry-After`). Any other refusal is final. A watch that dies is ended at Wakeshift, so the conversation is told. Jobs are never blocked or slowed by Wakeshift: it is down only means the wake comes late or not at all.
+Each watch lasts 7 days and delivers once. A failed delivery is retried at most 5 times, after 30 s, 2 min, 8 min and 30 min (a rate limit waits its `Retry-After`). Any other refusal is final. A watch that dies is ended at Wakeshift, so the conversation is told. A wake Wakeshift matched to no open conversation (the user ended it, or it expired there) ends the watch with `last_error: unmatched` rather than counting as delivered. Jobs are never blocked or slowed by Wakeshift: it is down only means the wake comes late or not at all.
 
 Repo-less brains work the same way. Watches are operational database rows, not brain content.
 

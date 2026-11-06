@@ -2,13 +2,15 @@
  * wakeshift (plan PR 1 item 9): reporting back through Wakeshift. Off is
  * `ok` (disabled by choice). It warns when the key file is readable by other
  * users, when reporting back is enabled but no usable key is found (the watch
- * tools stay hidden), and when watches died (5 failed attempts or a final
+ * tools stay hidden), when the brain gained live access members after enable
+ * (reporting back pauses), and when watches died (5 failed attempts or a final
  * Wakeshift refusal) or hit `id_reused` (a bug signal) in the last 7 days.
  * Shows the key's kid fingerprint only, never the key. Guide: docs/guides/wakeshift.md.
  */
 import { loadConfigFileOnly } from '../../../core/config.ts';
 import { parseWakeshiftKey } from '../../../core/wakeshift/client.ts';
 import { readWakeshiftKey, wakeshiftFileConfig, wakeshiftKeyFile } from '../../../core/wakeshift/config.ts';
+import { liveAccessMembers } from '../../../core/wakeshift/drain.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
@@ -38,13 +40,16 @@ async function runWakeshiftCheck(ctx: DoctorContext): Promise<Check[]> {
       counts[r.state] = (counts[r.state] ?? 0) + Number(r.n);
       if (r.id_reused) counts.id_reused! += Number(r.n);
     }
-    const details = { enabled, key_source: read.source, kid, watches_7d: counts, docs: DOCS };
-    const message = counts.id_reused! > 0
+    const members = await liveAccessMembers(connectedEngine(ctx));
+    const details = { enabled, key_source: read.source, kid, watches_7d: counts, live_members: members, docs: DOCS };
+    const message = members > 0
+      ? `Reporting back is paused: this brain now has ${members} live access member(s), and this release reports back only on a brain that serves its owner alone. watch_job refuses and no wakes are sent. Fix: gbrain wakeshift disable, or remove the members.`
+      : counts.id_reused! > 0
       ? `${counts.id_reused} watch(es) were refused with id_reused in the last 7 days: a gbrain bug, so please report it with this output.`
       : counts.dead! > 0
         ? `${counts.dead} wake(s) died in the last 7 days (5 failed attempts or a final Wakeshift refusal); the agents were told the watch ended. Check the key and the app with gbrain wakeshift test.`
         : `Reporting back through Wakeshift is on (key kid ${kid}); ${counts.open} open watch(es), ${counts.delivered} delivered in the last 7 days.`;
-    checks.push({ name: 'wakeshift', status: counts.id_reused! > 0 || counts.dead! > 0 ? 'warn' : 'ok', message, details });
+    checks.push({ name: 'wakeshift', status: members > 0 || counts.id_reused! > 0 || counts.dead! > 0 ? 'warn' : 'ok', message, details });
   }
   return checks;
 }

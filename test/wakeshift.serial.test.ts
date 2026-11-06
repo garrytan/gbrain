@@ -231,6 +231,74 @@ describe('failure schedule', () => {
     expect(emits()).toHaveLength(0);
   });
 
+  test('an unwatch while a drainer holds the lease stays ended when the emit then fails', async () => {
+    const id = await seedJob('active');
+    await dispatchToolCall(engine, 'watch_job', { id }, stdio);
+    await finish(id);
+    fake.respond.set('/events/emit', async () => {
+      await dispatchToolCall(engine, 'unwatch', { job: id }, stdio);
+      return { status: 500, body: { error: { code: 'internal', message: 'boom' } } };
+    });
+    expect(await drainWakes(engine)).toMatchObject({ retried: 0 });
+    const [row] = await engine.executeRaw<{ state: string; attempts: number }>('SELECT state, attempts FROM wake_subscriptions');
+    expect(row).toMatchObject({ state: 'ended', attempts: 0 });
+  });
+
+  test('a row whose processing throws backs off and does not block the rows behind it', async () => {
+    const a = await seedJob('active');
+    const b = await seedJob('active');
+    await dispatchToolCall(engine, 'watch_job', { id: a }, stdio);
+    await dispatchToolCall(engine, 'watch_job', { id: b }, stdio);
+    await finish(a); await finish(b);
+    await engine.executeRaw("UPDATE wake_subscriptions SET principal_kind = 'oauth_client', principal_id = 'poison-client' WHERE target = $1", [String(a)]);
+    const poisoned = new Proxy(engine, {
+      get(t, k, r) {
+        if (k !== 'executeRaw') return Reflect.get(t, k, r);
+        return (sql: string, params?: unknown[]) => sql.includes('FROM oauth_clients') && params?.[0] === 'poison-client'
+          ? Promise.reject(new Error('lookup failed')) : t.executeRaw(sql, params);
+      },
+    });
+    await expect(drainWakes(poisoned)).rejects.toThrow('lookup failed');
+    const rows = await engine.executeRaw<{ target: string; state: string; attempts: number; delay: number; lease: boolean }>(
+      'SELECT target, state, attempts, round(extract(epoch FROM next_attempt_at - now()))::int AS delay, lease_until IS NOT NULL AS lease FROM wake_subscriptions ORDER BY id');
+    expect(rows[0]).toMatchObject({ target: String(a), state: 'open', attempts: 1, delay: 30, lease: false });
+    expect(rows[1]).toMatchObject({ target: String(b), state: 'delivered' });
+    expect(emits()).toHaveLength(1);
+  });
+
+  test('an emit nobody matched ends the watch instead of calling it delivered; a duplicate counts as delivered', async () => {
+    const a = await seedJob('active');
+    const b = await seedJob('active');
+    await dispatchToolCall(engine, 'watch_job', { id: a }, stdio);
+    await dispatchToolCall(engine, 'watch_job', { id: b }, stdio);
+    await finish(a); await finish(b);
+    fake.respond.set('/events/emit', e => (e.arguments.job === a
+      ? { status: 200, body: { matched: 0, duplicate: false, unmatched: e.to, ended: [] } }
+      : { status: 200, body: { matched: 0, duplicate: true, unmatched: [], ended: [] } }));
+    expect(await drainWakes(engine)).toMatchObject({ delivered: 1, ended: 1 });
+    const rows = await engine.executeRaw<{ target: string; state: string; last_error: string | null }>('SELECT target, state, last_error FROM wake_subscriptions ORDER BY id');
+    expect(rows).toEqual([{ target: String(a), state: 'ended', last_error: 'unmatched' }, { target: String(b), state: 'delivered', last_error: null }]);
+  });
+
+  test('a member added after enable pauses reporting back: watch_job refuses and the drainer sends nothing', async () => {
+    const id = await seedJob('active');
+    await dispatchToolCall(engine, 'watch_job', { id }, stdio);
+    await finish(id);
+    await engine.executeRaw("INSERT INTO access_members (id) VALUES ('alice-example') ON CONFLICT DO NOTHING");
+    try {
+      const other = await seedJob('active');
+      const r = await dispatchToolCall(engine, 'watch_job', { id: other }, stdio);
+      expect(r.isError).toBe(true);
+      const env = JSON.parse(r.content[0]!.text);
+      expect(env.code ?? env.error).toBe('wakeshift_shared_brain');
+      expect(await drainWakes(engine)).toMatchObject({ skipped: 'shared' });
+      expect(emits()).toHaveLength(0);
+      expect(fake.calls.filter(c => c.path === '/event-subscriptions')).toHaveLength(1);
+    } finally {
+      await engine.executeRaw("DELETE FROM access_members WHERE id = 'alice-example'");
+    }
+  });
+
   test('Wakeshift down during watch_job: a clear error with the wait_job fix and no row', async () => {
     const id = await seedJob('active');
     fake.respond.set('/event-subscriptions', () => ({ status: 503, body: { error: { code: 'unavailable', message: 'down' } } }));
@@ -318,6 +386,25 @@ describe('gbrain wakeshift', () => {
     } finally {
       await engine.executeRaw("DELETE FROM access_members WHERE id = 'alice-example'");
     }
+  });
+
+  test('enable with the default URL drops a custom URL saved earlier', async () => {
+    writeConfig({ enabled: true, url: 'http://127.0.0.1:9' });
+    const realFetch = globalThis.fetch;
+    const hosts: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const u = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);
+      hosts.push(u.origin);
+      return Response.json(u.pathname.endsWith('/app') ? { id: 'app_test', name: 'Test app' } : { events: [] });
+    }) as typeof fetch;
+    try {
+      const r = await cli(['enable', '--yes', '--url', 'https://app.wakeshift.ai']);
+      expect(r.error).toBeUndefined();
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    expect([...new Set(hosts)]).toEqual(['https://app.wakeshift.ai']);
+    expect(JSON.parse(readFileSync(join(home, '.gbrain', 'config.json'), 'utf8')).wakeshift).toEqual({ enabled: true });
   });
 
   test('enable without --yes off a terminal refuses through consent, sending nothing', async () => {
