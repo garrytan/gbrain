@@ -127,6 +127,18 @@ gbrain auth rescope --token openclaw-dm-bot --sources <source-id> --may-act-for 
 gbrain access check --token openclaw-dm-bot --as alice-example
 ```
 
+Keep the token read-only. The audience limits which existing pages a write can
+reach, but not where new pages land: a token that may write keeps its own write
+grant whatever the header says, so a page made in one person's DM outside a
+ruled folder, such as a new top-level page or a `capture` in `inbox/`, is read by
+everyone the source admits, `guest` included, unless the write itself names
+`readable_by` (the model's choice, so not a fence). Where the people must not
+affect each other's data and the bot still has to write, give each person their
+own client registered with `--bound-slug-prefixes <their folder>/`, so writes
+outside that folder refuse `permission_denied`
+([Model B](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape));
+the resolver can return each sender's own credential.
+
 Put the token in the gateway's environment as `GBRAIN_DM_BOT_TOKEN`, never in
 `openclaw.json`. On the OpenClaw host, declare the server by URL alone (this
 replaces Option 2's stdio entry; an `mcp.servers` entry also takes the place of
