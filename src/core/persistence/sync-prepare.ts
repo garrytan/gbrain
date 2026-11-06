@@ -688,6 +688,7 @@ async function syncWriteState(tx: BrainEngine, row: WriteRequest, page: Paramete
   return { ...await sizeStateField(tx, row.source_id, row.slug, page), ...segmentedOutcome(segmented, isQuarantined(frontmatter)) };
 }
 
+/** #8729: a screen (`screening`) publishes nothing, so the segmented staging its import opened is aborted at once, never left live beside the admitted write's. */
 async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _config: GBrainConfig, clock: ClaimPhaseClock | undefined,
   screening: { unsaved: true } | undefined, at: { root?: string }): Promise<SyncPreparedMutation> {
   const engine = boundedReads(unbounded, clock, { engineReads: true });
@@ -893,8 +894,8 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
   if (!prepared) throw result.refusal ? syncContentRefusal(result.refusal, row, p) : syncPublicationRefusal('invalid_params', result.error ?? 'The sync file could not be prepared.', row, p,
     `The file could not be prepared as page ${row.slug}.`);
   const ready = prepared;
-  if (ready.observedRevision !== (base?.revision ?? null)) throw syncPublicationRefusal('revision_conflict', 'The page changed during sync preparation.', row, p,
-    `Page ${renamed?.slug ?? row.slug} changed while this sync was being prepared.`);
+  if (screening) await abortSegmentedStaging(engine, ready.segmented?.prepared);
+  if (ready.observedRevision !== (base?.revision ?? null)) throw syncPublicationRefusal('revision_conflict', 'The page changed during sync preparation.', row, p, `Page ${renamed?.slug ?? row.slug} changed while this sync was being prepared.`);
   if (ready.slug !== (renamed?.slug ?? row.slug)) {
     // Cross-slug dedup must never advance the origin's checkpoint without a
     // guarded proof about the other identity. Keep the cursor explicitly blocked.

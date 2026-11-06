@@ -699,7 +699,7 @@ export const STOPS_PER_ENTRY = 3;
 /**
  * #6712: the entry of a request that did not commit and whose fault is not the page's (a transport fault proven by its
  * receipt, a systemic stop an earlier invocation recorded, or a legacy knock-on an older gbrain cancelled) is re-frozen in
- * place under a fresh request: the cursor does not advance past it and the failed receipt is recorded as converted
+ * place under a fresh request (#8729: in a pass, the retry's own `passRequestId`, never the failed one): the cursor does not advance past it and the failed receipt is recorded as converted
  * (`convertedFromFailed`), so it never blocks the checkpoint. Bounded by `STOPS_PER_ENTRY` re-freezes in a row at the
  * entry (`Pending.stops`); null past the bound, so the failure is recorded and the next sync takes the entry again (a pass re-classifies its path; a company run retries its recorded stop).
  */
@@ -718,7 +718,7 @@ async function refreezeInPlace(engine: BrainEngine, input: SettleInput): Promise
     const held = await holdUnderGate(engine, { cursor, key, pending, hold: fresh.hold, assertActive, observedAt, waitMs: input.waitMs, base });
     return held === 'pending' ? null : held;
   }
-  return saveCursor(engine, key, cursor, { ...base, convertedFromFailed: converted, pending: { ...fresh, stops: (pending.stops ?? 0) + 1 } }, false, assertActive,
+  return saveCursor(engine, key, cursor, { ...base, convertedFromFailed: converted, pending: { ...fresh, stops: (pending.stops ?? 0) + 1, requestId: cursor.passId ? passRequestId(cursor.passId, entry.path, (entry as PassEntry).level ?? null, (pending.stops ?? 0) + 1) : fresh.requestId } }, false, assertActive,
     tx => recordSyncConversion(tx, cursor.sourceId, cursor.incarnation, { request_id: pending.requestId, path: pending.intent.path ?? null, slug: pending.slug, run_id: cursor.runId, outcome: 'refrozen' }));
 }
 
