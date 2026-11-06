@@ -46,7 +46,7 @@ import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { audienceRefusal, dispatchToolCall, requestLogStatusForResult, errorResult } from './dispatch.ts';
-import { GBRAIN_CLIENT_HEADER, isGbrainThinClient, resolveResultRowsMode, resultRowsForRequest } from './result-rows.ts';
+import { GBRAIN_CLIENT_HEADER, isGbrainThinClient, resolveResultRowsMode, resultRowsForRequest, MCP_CORS_ALLOWED_HEADERS } from './result-rows.ts';
 import { parseStrictParamsMode } from './validate-params.ts';
 import { filterOpsForSurface, clampSurface, advertisedOps, resolveAdvertisedSurface, type McpSurface } from './surface.ts';
 import { disabledOpsForPublishGates } from './publish-gates.ts';
@@ -279,7 +279,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       headers['Vary'] = 'Origin';
       if (preflight) {
         headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS';
-        headers['Access-Control-Allow-Headers'] = `Content-Type, Authorization, Accept, ${AGENT_LABEL_HEADER}`;
+        headers['Access-Control-Allow-Headers'] = MCP_CORS_ALLOWED_HEADERS.join(', ');
       }
     }
     return headers;

@@ -17,6 +17,7 @@ import { describe, test, expect } from 'bun:test';
 import express from 'express';
 import cors from 'cors';
 import type { Server } from 'http';
+import * as resultRows from '../src/mcp/result-rows.ts';
 import { parseCorsAllowlistOAuth, resolveCorsOrigin, mountOAuthCorsGate } from '../src/commands/serve-http.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -140,7 +141,7 @@ describe('mountOAuthCorsGate — OAuth preflight is default-deny (#3845)', () =>
       origin: resolveCorsOrigin(allowlist),
       credentials: false,
       methods: ['GET', 'POST', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+      allowedHeaders: resultRows.MCP_CORS_ALLOWED_HEADERS ? [...resultRows.MCP_CORS_ALLOWED_HEADERS] : ['Content-Type', 'Authorization', 'Accept'],
     };
     const app = express();
     // gbrain gate (runs first) — mirrors serve-http.ts.
@@ -193,6 +194,24 @@ describe('mountOAuthCorsGate — OAuth preflight is default-deny (#3845)', () =>
       const res = await preflight(base, '/revoke', 'https://evil.example');
       expect(res.headers.get('access-control-allow-origin')).toBeNull();
       expect(res.status).toBe(204);
+    });
+  });
+
+  test('matching Origin preflight advertises the non-authority MCP client header', async () => {
+    await withServer(new Set(['https://claude.ai']), async base => {
+      const res = await fetch(`${base}/token`, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'https://claude.ai',
+          'Access-Control-Request-Method': 'POST',
+          'Access-Control-Request-Headers': 'x-gbrain-client',
+        },
+      });
+      expect(res.status).toBe(204);
+      expect(res.headers.get('access-control-allow-origin')).toBe('https://claude.ai');
+      expect(res.headers.get('access-control-allow-headers')?.toLowerCase()).toContain('x-gbrain-client');
+      expect(res.headers.get('access-control-allow-headers')?.toLowerCase()).not.toContain('x-gbrain-on-behalf-of');
+      expect(res.headers.get('access-control-allow-headers')?.toLowerCase()).not.toContain('x-qm-actor');
     });
   });
 

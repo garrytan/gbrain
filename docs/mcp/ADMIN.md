@@ -586,7 +586,10 @@ on each request with the `X-Gbrain-Agent-Label` header, for example
 `X-Gbrain-Agent-Label: Claude Code`. Writes from that request show it as
 `agent_label`; jobs the request queues run under their own authority and record
 no label. Browser callers on an origin in `GBRAIN_HTTP_CORS_ORIGIN` may send it,
-since both transports' CORS preflight allows it. It is a label the caller declares and gbrain does not verify:
+since both transports' CORS preflight allows it. The same preflight allows
+`X-Gbrain-Client`, which selects result-row shape only. Audience and attested-actor
+headers remain outside the browser allowlist until a trusted browser harness use
+is established. These labels are caller-declared and gbrain does not verify:
 the principal is still who was authorized, and no grant, access rule or trust
 tier reads the label. Any token may send it, and it lands only on that token's
 own write requests. A value that is not 1 to 120 printable ASCII characters is
