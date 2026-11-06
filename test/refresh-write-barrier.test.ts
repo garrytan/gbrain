@@ -577,3 +577,39 @@ test('GBEV-44: the owner scan aborts an orphaned fenced row whose HEAD moved onl
   expect((await settle(f, deferred)).state).toBe('committed');
 }), 180_000);
 
+
+test('GST-1674: a refresh killed at fenced after a commit gbrain did not make moved HEAD before the merge resumes: the row aborts and its deferred write commits', () => each(async f => {
+  const { deferred, landed } = await crashAtFenced(f, () => commitFile(f.root, 'alpha/outside.md', page('Outside', 'A commit made around gbrain.'), 'outside'));
+  const resumed = await refreshWorktree(f.engine, f.alpha, { resume: true });
+  expect(resumed.status).toBe('abandoned');
+  const [row] = await f.refreshRows();
+  expect(row.state).toBe('aborted');
+  expect((row.outcome.refusal as { code: string }).code).toBe('refresh_interrupted');
+  expect(f.head()).toBe(landed);
+  expect((await settle(f, deferred)).state).toBe('committed');
+}), 180_000);
+
+test('GST-1674: a refresh killed after its merge, with a commit landed on the target before bookkeeping, recovers on the owner scan and completes without --resume', () => each(async f => {
+  const target = f.push('alpha/two.md', page('Alpha two', 'An upstream observation.'));
+  let deferred!: WriteRequest; let landed!: string;
+  await expect(refreshWorktree(f.engine, f.alpha, { hooks: { boundary: async point => {
+    if (point === 'drained') {
+      const out = await call(f, 'put_page', { slug: 'notes/held-past-merge', content: page('Held past merge', 'body') });
+      deferred = await requestRow(f, out.body.request_id);
+    }
+    if (point === 'merged') {
+      landed = commitFile(f.root, 'alpha/after-merge.md', page('After merge', 'A commit on top of the target.'), 'gbrain: persist canonical memory update');
+      throw new Error('simulated crash after merge');
+    }
+  } } })).rejects.toThrow('simulated crash');
+  expect(git(f.root, 'rev-parse', 'HEAD~1')).toBe(target);
+  await resumeWorktreeRefreshes(f.engine);
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['syncing']);
+  const next = await refreshWorktree(f.engine, f.alpha).catch(error => error);
+  // The scheduled refresh finishes the orphan first; its own tick then stops at the unpublished local commit.
+  expect(next.code).toBe('refresh_diverged');
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['completed']);
+  expect(f.head()).toBe(landed);
+  expect((await settle(f, deferred)).state).toBe('committed');
+}), 180_000);
+

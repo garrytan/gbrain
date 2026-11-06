@@ -248,6 +248,15 @@ Deferred rows are durable rows; nothing about them lives in process memory.
 - Admitting process dies after commit: the receipt exists; the caller replays the request id.
 - Refresh process dies: its row stays active; orphan adoption or `sources refresh --resume`
   completes or aborts it, and the trigger releases it. `--abandon` aborts, which also releases.
+  The row records `outcome.merge_started` (false when it is fenced, true just before
+  `git merge --ff-only`), so recovery tells a merge that never ran from one that ran:
+  - Killed while `fenced`, before the merge started, with HEAD moved past `old_head` on its own line
+    (writes that landed while it drained, or a commit gbrain did not make): recovery aborts the row,
+    as the live tick would, and its deferred writes commit (GBEV-44, GST-1674).
+  - Killed after the merge, with HEAD at the target or a commit on top of it and no member synced off
+    it: recovery records the merge and the next refresh finishes the member syncs, with no `--resume`.
+  - A merge that started and a HEAD that no longer holds the target (a reset and an unrelated commit)
+    stays `recovery_required` for the operator.
 - Consumer dies after claiming: the row is `running` with a lease; ordinary expiry and reclaim.
 - Release and the deferred-to-running claim are single statements.
 
