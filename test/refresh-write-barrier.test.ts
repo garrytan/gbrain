@@ -6,11 +6,15 @@
  * refresh ends it commits, unless the refresh changed its file, which ends it `revision_conflict` with nothing applied;
  * a consumer claim without the barrier's session declaration (an older binary) cannot move a deferred row; a replay of the
  * request id returns the same receipt; a write past the wait limit ends `refresh_barrier_expired` with its counters
- * released; past the per-refresh cap a further write keeps the refusal; a live consumer without the capability keeps the
- * refusal; a repo-less source is never deferred.
+ * released; a token revoked while its write waits ends it `permission_denied`; past the per-refresh cap a further write keeps the refusal; a live consumer without the capability keeps the
+ * refusal; a repo-less source is never deferred; `gbrain upgrade --check-downgrade` exits 3 while a deferred write waits.
  * Seams: the real refresh state machine paused at its drained boundary (`hooks.boundary`); GBRAIN_REFRESH_BARRIER.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, spyOn, test } from 'bun:test';
+import { randomUUID } from 'node:crypto';
+import { run as runUpgradeCommand } from '../src/cli/commands/upgrade.ts';
+import { mintLegacyToken } from '../src/core/token-mint.ts';
+import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
@@ -219,6 +223,52 @@ test('past persistence.refresh_barrier_max_deferred a further write during the r
   } finally {
     await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_deferred'");
   }
+}), 180_000);
+
+test('gbrain upgrade --check-downgrade exits 3 downgrade_blocked_deferred_writes while a deferred write waits, 0 once it drained', () => each(async f => {
+  const engine = new Proxy(f.engine, { get: (target, key) => key === 'disconnect' ? async () => undefined : Reflect.get(target, key, target) });
+  const check = async () => {
+    _resetCliExitVerdictForTests();
+    const errors: string[] = []; const errorSpy = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errors.push(a.map(String).join(' ')); });
+    const writes: string[] = []; const stderrSpy = spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => { writes.push(String(chunk)); return true; }) as never);
+    const logs: string[] = []; const logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { logs.push(a.map(String).join(' ')); });
+    try { await runUpgradeCommand(['--check-downgrade', '--json'], { connectEngine: async () => engine } as never); }
+    finally { errorSpy.mockRestore(); stderrSpy.mockRestore(); logSpy.mockRestore(); }
+    const code = currentExitCode(); _resetCliExitVerdictForTests(); process.exitCode = 0;
+    return { code, out: [...errors, ...writes, ...logs].join('\n') };
+  };
+  let deferred!: WriteRequest;
+  const refresh = await duringRefresh(f, async () => {
+    const out = await call(f, 'put_page', { slug: 'notes/downgrade', content: page('Downgrade', 'waits') });
+    deferred = await requestRow(f, out.body.request_id);
+    const blocked = await check();
+    expect(blocked.code).toBe(3);
+    expect(blocked.out).toContain('downgrade_blocked_deferred_writes');
+  });
+  expect((await refresh).status).toBe('completed');
+  expect((await settle(f, deferred)).state).toBe('committed');
+  const clear = await check();
+  expect(clear.code).toBe(0);
+  expect(JSON.parse(clear.out)).toEqual({ ok: true, deferred: 0 });
+}), 180_000);
+
+test('a deferred write whose token is revoked while it waits ends permission_denied with nothing applied', () => each(async f => {
+  const minted = await mintLegacyToken(f.engine, { name: `token-${randomUUID()}`, scopes: ['read', 'write'], sourceGrant: [f.alpha], takesHolders: ['world'] });
+  let deferred!: WriteRequest;
+  const refresh = await duringRefresh(f, async () => {
+    const result = await dispatchToolCall(f.engine, 'put_page', { slug: 'notes/revoked', content: page('Revoked', 'never applied') }, { remote: true, transport: 'http', sourceId: f.alpha,
+      admissionOrigin: 'interactive', takesHoldersAllowList: ['world'],
+      auth: { token: '', clientId: minted.id, principal: { kind: 'legacy_token', id: minted.id }, sourceId: f.alpha, allowedSources: [f.alpha], scopes: ['read', 'write'] } } as never);
+    const body = JSON.parse(result.content[0]!.text) as Record<string, any>;
+    expect(body.status).toBe('pending');
+    deferred = await requestRow(f, body.request_id);
+    expect(deferred.state).toBe('deferred');
+    await f.engine.executeRaw('UPDATE access_tokens SET revoked_at=now() WHERE id=$1', [minted.id]);
+  });
+  expect((await refresh).status).toBe('completed');
+  expect(await settle(f, deferred)).toMatchObject({ state: 'failed', error_code: 'permission_denied' });
+  const [{ n }] = await f.engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND slug=$2', [f.alpha, 'notes/revoked']);
+  expect(Number(n)).toBe(0);
 }), 180_000);
 
 test('with the barrier off a write during a refresh is still refused worktree_refreshing', () => each(async f => {
