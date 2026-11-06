@@ -376,8 +376,19 @@
       "expect": "RecoveryOnlyByPolicy",
       "spec": {
         "file": "RefreshBarrier.tla",
-        "before": "FencedAbortable(i) == rtgt[i] = 0 /\\ OwnSince(i)",
+        "before": "FencedAbortable(i) == ~rmstart[i]",
         "after": "FencedAbortable(i) == head = rhead[i]"
+      }
+    },
+    {
+      "id": "resume-needs-exact-target",
+      "kind": "guard",
+      "title": "recoverOne runs bookkeeping for an orphaned fenced refresh only when HEAD is exactly the target, not a descendant (#8682 as coded)",
+      "expect": "RecoveryOnlyByPolicy",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "ResumeAtTarget(i) == HoldsTarget(i)",
+        "after": "ResumeAtTarget(i) == rtgt[i] # 0 /\\ head = rtgt[i] /\\ ~lost[i]"
       }
     }
   ]
