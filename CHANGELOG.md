@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.594.0] - 2026-11-06
 
 **A page write that reaches a checkout while `gbrain sources refresh` runs can now wait for the refresh instead of being refused, and every commit gbrain makes is recorded, so doctor can name commits made outside it.** The write barrier is off by default (`persistence.refresh_barrier`). With it on, a single page write that arrives while a refresh drains or merges the checkout is journaled and answered pending at once: MCP gets `isError: false` with `status: "pending"`, and the CLI exits 10 with the command that polls it, on the owner socket and on a thin client alike. The write commits after the refresh. It ends `revision_conflict` with nothing applied when the refresh changed its file, and `refresh_barrier_expired` when the refresh outlives `persistence.refresh_barrier_max_wait_ms` (15 minutes), even on an owner with nothing else to do. The commit ledger and doctor's new `foreign_writers` check run on every brain with a Git checkout. The owner-path guard installs only when you run `gbrain sources guard --install`.
 
