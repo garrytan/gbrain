@@ -1,6 +1,7 @@
 import { tryAcquirePoolLongHold, PoolCapacityError } from './pool-budget.ts';
 import { capabilitiesForEngineKind, type EngineCapabilities } from './engine-capabilities.ts';
 import { noteRequestConfigWrite, requestConfigRows, requestConfigValue } from './config-snapshot.ts';
+import { readConfigTableCached, type ConfigTableRow } from './config-table-cache.ts';
 import { replaceDerivedLinks, replaceDerivedLinksBatch, type DerivedLinkBatchItem, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
 import { mutatePageTag } from './page-state/tags.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
@@ -2997,14 +2998,11 @@ export class PostgresEngine implements BrainEngine {
   async getAllConfig(): Promise<Record<string, string>> {
     const held = await requestConfigRows(this);
     if (held) return held;
-    return this.connRetry(async () => {
-      const rows = await this.sql<{ key: string; value: string }[]>`
-        SELECT key, value FROM config
-      `;
-      const out: Record<string, string> = {};
-      for (const row of rows) out[row.key] = row.value;
-      return out;
-    });
+    // Egress: re-send the table only when its content hash moved (config-table-cache.ts).
+    return this.connRetry(() => readConfigTableCached(this, known => this.sql<ConfigTableRow[]>`
+      WITH h AS (SELECT md5(COALESCE(string_agg(key || chr(1) || value, chr(2) ORDER BY key), '')) AS h FROM config)
+      SELECT NULL::text AS key, h AS value FROM h
+      UNION ALL SELECT c.key, c.value FROM config c, h WHERE h.h IS DISTINCT FROM ${known}::text`));
   }
 
   // Migration support
