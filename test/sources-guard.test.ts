@@ -65,6 +65,11 @@ test('owner host only; enforce refuses a plain commit; refresh, effect and door 
   expect(installed).toMatchObject({ installed: true, mode: 'enforce', changed: true, source_id: f.alpha });
   expect(installed.hooks_path).toBe(join(git(f.root, 'rev-parse', '--absolute-git-dir'), 'gbrain-hooks'));
   expect((await sourcesGuard(f.engine, { sourceId: f.alpha, action: 'install', mode: 'enforce' })).changed).toBe(false);
+  const later = join(f.dir, 'later');
+  git(f.root, 'worktree', 'add', '-q', '-b', 'later', later);
+  writeFileSync(join(later, 'alpha', 'later.md'), page('Later', 'A worktree added after the install commits freely.'));
+  git(later, 'add', 'alpha/later.md');
+  git(later, 'commit', '-q', '-m', 'commit in a worktree added after the install');
 
   writeFileSync(join(f.root, 'alpha', 'stray.md'), page('Stray', 'A plain commit.'));
   git(f.root, 'add', 'alpha/stray.md');

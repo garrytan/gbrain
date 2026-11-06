@@ -205,12 +205,17 @@ interface RepoReport {
 function scanRepo(repo: Repo, deadline: number): { report: RepoReport; partial: boolean } {
   const ledger = readLedger(repo.common);
   const ledgered = new Set<string>();
-  const intents: { head_before: string | null; msg: string; t: number }[] = [];
+  const intents: { head_before: string | null; msg: string; t: number; who: string; resolved: boolean }[] = [];
   let start: number | null = null;
   for (const r of ledger) {
     if (r.e === 'start') start = Date.parse(r.t);
-    else if (r.e === 'commit') ledgered.add(r.sha);
-    else intents.push({ head_before: r.head_before, msg: r.msg_sha256, t: Date.parse(r.t) });
+    else if (r.e === 'commit') {
+      ledgered.add(r.sha);
+      // The intent this commit line completes: the same process's newest open one. Only an intent left open can explain a commit.
+      const who = `${r.host}\0${r.pid}\0${r.writer}`;
+      const open = intents.findLast(i => !i.resolved && i.who === who);
+      if (open) open.resolved = true;
+    } else intents.push({ head_before: r.head_before, msg: r.msg_sha256, t: Date.parse(r.t), who: `${r.host}\0${r.pid}\0${r.writer}`, resolved: false });
   }
   if (start === null && ledger.length) start = Date.parse(ledger[0]!.t);
   const startSec = start === null ? null : Math.floor(start / 1000);
@@ -256,7 +261,10 @@ function scanRepo(repo: Repo, deadline: number): { report: RepoReport; partial: 
     if (Date.now() > deadline) { partial = true; break; }
     const batch = open.slice(i, i + 200);
     const out = git(anyTop, ['log', '--no-walk', '--ignore-missing', '--stdin', '--format=%H%x00%P%x00%ct%x00%cn <%ce>%x00%s%x00%B%x1e'], batch.map(c => c.sha).join('\n') + '\n');
-    if (out === null) { partial = true; break; }
+    if (out === null) {
+      for (const c of batch) report.unknown.push({ ref: c.ref, old: '', new: c.sha, time: new Date(c.time * 1000).toISOString() });
+      continue;
+    }
     const meta = new Map<string, string[]>();
     for (const rec of out.split('\x1e')) {
       const f = rec.replace(/^\n/, '').split('\0');
@@ -271,7 +279,7 @@ function scanRepo(repo: Repo, deadline: number): { report: RepoReport; partial: 
       const guard = c.kind === 'plain' ? enforceGuardSince(c.gitDir) : null;
       const commit: ForeignCommit = { sha: c.sha, kind: c.kind, guard_bypassed: guard !== null && guard <= ct * 1000, ref: c.ref, time: new Date(ct * 1000).toISOString(), subject: f[4]!, committer: f[3]!, checkout: c.checkout };
       const digest = messageDigest(f[5]!);
-      const matched = intents.some(t => t.head_before === (parents[0] ?? null) && t.msg === digest && ct * 1000 >= t.t - 1000 && ct * 1000 - t.t <= UNCONFIRMED_WINDOW_MS);
+      const matched = intents.some(t => !t.resolved && t.head_before === (parents[0] ?? null) && t.msg === digest && ct * 1000 >= t.t - 1000 && ct * 1000 - t.t <= UNCONFIRMED_WINDOW_MS);
       (matched ? report.unconfirmed : report.foreign).push(commit);
     }
   }
@@ -318,7 +326,7 @@ async function runForeignWriters(ctx: DoctorContext): Promise<Check[]> {
     window: reports.map(r => ({ common: r.common, from: r.window_from, to: new Date(now).toISOString(), ledger_start: r.ledger_start, oldest_reflog: r.oldest_reflog, uncovered: r.uncovered, ledger: r.ledger })),
     foreign, unconfirmed, unknown, dirty: dirty.slice(0, MAX_LISTED), dirty_count: dirty.length, dirty_warn_after_minutes: FOREIGN_DIRTY_WARN_MS / 60_000, partial,
   };
-  const scope = `${repos.length} repositor${repos.length === 1 ? 'y' : 'ies'}${partial ? ' (partial: the scan stopped at doctor\'s budget)' : ''}`;
+  const scope = `${repos.length} repositor${repos.length === 1 ? 'y' : 'ies'}${partial ? ' (partial)' : ''}`;
   if (foreign.length) {
     const newest = foreign[0]!;
     const line = `Commit ${newest.sha.slice(0, 12)} (${label(newest)}, "${newest.subject}", ${newest.time}) in ${newest.checkout} was not made by gbrain; route that writer through gbrain git commit-push or a page write`;
@@ -330,8 +338,9 @@ async function runForeignWriters(ctx: DoctorContext): Promise<Check[]> {
         verify: doctorVerify('foreign_writers') } });
     return checks;
   }
-  if (unconfirmed.length || unknown.length || old.length) {
+  if (unconfirmed.length || unknown.length || old.length || partial) {
     const parts = [
+      partial ? 'the scan did not finish (doctor\'s time budget, or a git status that failed), so part of the window is unchecked' : '',
       unconfirmed.length ? `${unconfirmed.length} commit(s) match a gbrain intent whose commit line is missing (a crash between git commit and the ledger append): ${unconfirmed.slice(0, 5).map(c => c.sha.slice(0, 12)).join(', ')}; they are not written back to the ledger` : '',
       unknown.length ? `${unknown.length} ref move(s) whose commits could not be read: ${unknown.slice(0, 5).map(u => `${u.ref} -> ${u.new.slice(0, 12)}`).join(', ')}` : '',
       old.length ? `${old.length} page file(s) have been untracked or modified for more than ${FOREIGN_DIRTY_WARN_MS / 60_000} minutes with no gbrain commit pending: ${old.slice(0, 5).map(d => `${d.path} (${d.state}, ${ago(d.age_ms)})`).join(', ')}${old.length > 5 ? ', ...' : ''}` : '',

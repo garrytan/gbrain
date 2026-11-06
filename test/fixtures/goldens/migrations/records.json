@@ -4702,10 +4702,13 @@
             "dropInvalidConcurrentIndex",
             "lockTableForAnalyze",
             "migrationNotice",
+            "migrationStatementTimeoutMs",
             "quietMigrationNotices",
-            "tableRows"
+            "runMigrationStatement",
+            "tableRows",
+            "withSchemaLockTimeout"
           ],
-          "sha256": "69eea77482e935be165caf0d2daa8f24128a2a5f252e28d7408ac4ed0f2ac2c9"
+          "sha256": "471e0c6ef19acc300cc08d1d86d75713788b121ff04430246bab823c05ca6c19"
         },
         "idempotent": true,
         "name": "refresh_write_barrier",
@@ -4719,8 +4722,8 @@
             "sha256": "042e36e067f6244954b6d5cd895b944ed5a0e3aa3de52b56e1f774f6720e9d7b"
           },
           "postgres": {
-            "length": 3251,
-            "sha256": "69a8e657a89483837176501f038ca709ef6bb45e1f810ca1f4c11cc3daf699c2"
+            "length": 3056,
+            "sha256": "e1546db362bf52ca97c2e1d0068c1a7cad3ca5d53763352d7322f2160c97f61e"
           }
         },
         "transaction": false,

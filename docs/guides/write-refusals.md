@@ -622,8 +622,8 @@ syncing it is accepted and waits for the refresh instead of being refused `workt
   each active refresh.
 - <a id="downgrade_blocked_deferred_writes"></a>Before installing an older release, turn the barrier
   off and wait for `gbrain upgrade --check-downgrade` to exit 0. It exits 3 with
-  `downgrade_blocked_deferred_writes` (count and oldest age) while deferred writes remain, because an
-  older release never drains them.
+  `downgrade_blocked_deferred_writes` (count and oldest age) while any write admitted deferred has not
+  finished, waiting or already claimed, because an older release never drains them safely.
 
 ## Managed sync drain stops
 

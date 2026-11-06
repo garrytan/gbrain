@@ -11,7 +11,8 @@
  *   gbrain git commit-push --pending [--path <dir>] [-m <msg>]
  *   gbrain git guard [--install | --uninstall] [--path <dir>] [--json]
  */
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
 import { commitAndPush, checkoutRoot, pullShared, scopePaths, COMMIT_LOCK_NAME, SOURCE_ROOT_CONFIG, type Resolution } from '../core/git/commit-push.ts';
 import { guardStatus, installGuard, uninstallGuard } from '../core/git/commit-guard.ts';
 import { appendPushLog } from '../core/brain-repo-durability.ts';
@@ -138,14 +139,17 @@ function parseResolutions(specs: string[]): Map<string, Resolution> {
 
 /**
  * #8662: on a host whose brain records its source checkouts, a checkout resolved from the working directory that is none of
- * them and carries no gbrain.sourceRoot marker is refused before anything is staged (a wrapper that changed into another
- * repository). An explicit --path names its checkout and is not checked here (a legacy source is not in that record).
+ * them and carries no mark of a gbrain brain checkout is refused before anything is staged (a wrapper that changed into
+ * another repository). A legacy source is not in that record, so `gbrain sources harden`'s marks admit it: a
+ * gbrain.sourceRoot or gbrain.cliPath entry, or the committed scripts/brain-commit-push.sh (whose own calls pass no --path).
+ * An explicit --path names its checkout and is not checked here.
  */
 function assertSourceCheckout(repo: string): void {
   const registered = registeredManagedRootRecords();
   if (!registered.length || managedFilesystemRootFor(repo)) return;
+  if (existsSync(join(repo, 'scripts', 'brain-commit-push.sh'))) return;
   try {
-    execFileSync('git', ['-C', repo, 'config', '--local', '--get-all', SOURCE_ROOT_CONFIG], { env: gitChildEnv({ ...GIT_ENV }), stdio: ['ignore', 'pipe', 'ignore'] });
+    execFileSync('git', ['-C', repo, 'config', '--local', '--get-regexp', `^(${SOURCE_ROOT_CONFIG}|gbrain.clipath)$`.replace(/\./g, '\\.').toLowerCase()], { env: gitChildEnv({ ...GIT_ENV }), stdio: ['ignore', 'pipe', 'ignore'] });
     return;
   } catch { /* no marker */ }
   const first = registered[0]!.root;
@@ -196,7 +200,7 @@ export async function runGit(args: string[]): Promise<number> {
     if (p.dryRun) {
       const lock = execFileSync('git', ['-C', repo, 'rev-parse', '--git-path', COMMIT_LOCK_NAME], { env: gitChildEnv({ ...GIT_ENV }) }).toString().trim();
       const branch = execFileSync('git', ['-C', repo, 'symbolic-ref', '--quiet', '--short', 'HEAD'], { env: gitChildEnv({ ...GIT_ENV }) }).toString().trim();
-      const paths = p.pull || p.pushOnly ? [] : scopePaths(repo, p.paths, cwd);
+      const paths = p.pull || p.pushOnly || !p.paths.length ? [] : scopePaths(repo, p.paths, cwd);
       emit(json, { dry_run: true, repo, branch, lock, paths, mode: p.pull ? 'pull' : p.pushOnly ? 'push-only' : 'commit-push' },
         `dry run: ${p.pull ? 'pull' : p.pushOnly ? 'push-only' : `commit ${paths.join(' ')}`} on ${branch} in ${repo} (lock ${lock}); nothing written`);
       return 0;

@@ -588,7 +588,11 @@ writes through the door and the in-memory merges are plumbing that runs no
 commit hook, sync's auto-init turns hooks off, `commit-push` names the commit
 lock it holds, and a refresh fast-forward runs no commit hook.
 `gbrain sources guard <source> --status` prints whether it is installed, its
-mode and the effective hooks path; `--uninstall` removes it.
+mode and the effective hooks path; `--uninstall` removes it. A worktree added
+later with `git worktree add` inherits the hooks path (git copies
+`config.worktree`); the guard lets its commits through, and
+`git config --worktree --unset core.hooksPath` in that worktree restores its
+own hooks.
 
 A writer that turns hooks off itself (`git -c core.hooksPath=/dev/null commit`)
 is not stopped by any hook. The [commit ledger](#commit-ledger) names it.

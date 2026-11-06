@@ -249,6 +249,13 @@ test('gbrain upgrade --check-downgrade exits 3 downgrade_blocked_deferred_writes
     expect(blocked.out).toContain('downgrade_blocked_deferred_writes');
   });
   expect((await refresh).status).toBe('completed');
+  const rollback = new Error('rollback');
+  await expect(f.engine.transaction(async tx => {
+    await tx.executeRaw("SELECT set_config('gbrain.refresh_barrier','1',true)");
+    await tx.executeRaw("UPDATE persistence_requests SET state='running' WHERE id=$1::uuid", [deferred.id]);
+    expect((await deferredBacklog(tx)).count).toBe(1);
+    throw rollback;
+  })).rejects.toBe(rollback);
   expect((await settle(f, deferred)).state).toBe('committed');
   const clear = await check();
   expect(clear.code).toBe(0);

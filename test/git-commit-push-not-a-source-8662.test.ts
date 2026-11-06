@@ -64,6 +64,10 @@ test('a checkout that is not a registered source is refused checkout_not_a_sourc
   }
   expect(git(other, 'rev-parse', 'HEAD')).toBe(before);
   expect(git(other, 'status', '--porcelain')).toBe('?? notes/');
+  // The fix and verify it prescribes run as given: a dry run of the named checkout, with no paths, writes nothing.
+  const dry = await runCli(['git', 'commit-push', '--json', '--dry-run', '--path', canonicalFilesystemPath(brain)], { cwd: other, home, env: identity });
+  expect(dry.exitCode).toBe(0);
+  expect(JSON.parse(dry.stdout)).toMatchObject({ dry_run: true, paths: [] });
 }, 60_000);
 
 test('the registered checkout still commits, a gbrain source marker admits its checkout, and an explicit --path is not checked', async () => {
@@ -77,6 +81,15 @@ test('the registered checkout still commits, a gbrain source marker admits its c
   const published = await commitPush(marked, home, '--', 'notes/a.md');
   expect(published.exitCode).toBe(0);
   expect(JSON.parse(published.stdout)).toMatchObject({ outcome: 'pushed', paths: ['notes/a.md'] });
+  // A legacy source checkout hardened by gbrain (its committed helper calls commit-push from the checkout with no --path).
+  for (const [name, mark] of [['admitted-clipath', (root: string) => git(root, 'config', '--local', 'gbrain.cliPath', '/usr/local/bin/gbrain')],
+    ['admitted-helper', (root: string) => { mkdirSync(join(root, 'scripts')); writeFileSync(join(root, 'scripts', 'brain-commit-push.sh'), '#!/bin/sh\n'); }]] as const) {
+    const hardened = otherRepo(name);
+    mark(hardened);
+    const committed = await commitPush(hardened, home, '--', 'notes/a.md');
+    expect(committed.exitCode).toBe(0);
+    expect(JSON.parse(committed.stdout)).toMatchObject({ outcome: 'pushed', paths: ['notes/a.md'] });
+  }
   // An explicit --path names its checkout: a legacy source the managed-root record does not list still commits.
   const legacy = otherRepo('admitted-legacy');
   const named = await commitPush(dir, home, '--path', legacy, '--', 'notes/a.md');

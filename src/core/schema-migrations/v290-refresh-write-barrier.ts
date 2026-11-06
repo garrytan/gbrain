@@ -1,5 +1,5 @@
 import type { Migration } from './types.ts';
-import { buildIndexOnline, migrationNotice } from './helpers.ts';
+import { buildIndexOnline, migrationNotice, runMigrationStatement } from './helpers.ts';
 
 const PERSISTENCE_DEFERRED_INDEX = { name: 'persistence_requests_deferred', table: 'persistence_requests',
   sql: `CREATE INDEX IF NOT EXISTS persistence_requests_deferred ON persistence_requests(worktree_id, sequence) WHERE state='deferred'` } as const;
@@ -19,10 +19,11 @@ const PERSISTENCE_DEFERRED_INDEX = { name: 'persistence_requests_deferred', tabl
 //   barrier-aware claim of a released refresh), conflict, failed or cancelled.
 // - persistence_consumers.capabilities: what a live consumer can drain; admission
 //   defers only when every live consumer of the owner host can.
-// Postgres swaps the state CHECK and adds the deferred_refresh_id foreign key with
-// ADD ... NOT VALID then VALIDATE (no long ACCESS EXCLUSIVE scan of the permanent
-// receipts), outside a transaction like v114, and builds the deferred index
-// CONCURRENTLY like v223; PGLite does each in one shot. The number is a placeholder
+// Postgres swaps the state CHECK and adds the deferred_refresh_id foreign key NOT
+// VALID in the SQL batch, then validates each in its own statement from the handler
+// (SHARE UPDATE EXCLUSIVE, after the batch's ACCESS EXCLUSIVE is released, so the
+// scan of the permanent receipts blocks no reader or writer), and builds the
+// deferred index CONCURRENTLY like v223; PGLite does each in one shot. The number is a placeholder
 // restamped at the merge slot.
 export const v290: Migration = {
   version: 290,
@@ -42,7 +43,6 @@ export const v290: Migration = {
           FOREIGN KEY (deferred_refresh_id) REFERENCES persistence_worktree_refreshes(id) NOT VALID;
       END IF;
     END $$;
-    ALTER TABLE persistence_requests VALIDATE CONSTRAINT persistence_requests_deferred_refresh_id_fkey;
     ALTER TABLE persistence_consumers ADD COLUMN IF NOT EXISTS capabilities text[] NOT NULL DEFAULT '{}';
     CREATE OR REPLACE FUNCTION gbrain_release_refresh_barrier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
     BEGIN
@@ -73,7 +73,6 @@ export const v290: Migration = {
     ALTER TABLE persistence_requests DROP CONSTRAINT IF EXISTS persistence_requests_state_check;
     ALTER TABLE persistence_requests ADD CONSTRAINT persistence_requests_state_check
       CHECK (state IN ('queued','deferred','running','recovering','committed','conflict','failed','cancelled')) NOT VALID;
-    ALTER TABLE persistence_requests VALIDATE CONSTRAINT persistence_requests_state_check;
   `,
     pglite: `
     ALTER TABLE persistence_worktree_refreshes ADD COLUMN IF NOT EXISTS barrier_sequence bigint;
@@ -112,5 +111,12 @@ export const v290: Migration = {
       CHECK (state IN ('queued','deferred','running','recovering','committed','conflict','failed','cancelled'));
   `,
   },
-  handler: async engine => { await buildIndexOnline(engine, 290, PERSISTENCE_DEFERRED_INDEX, { notice: migrationNotice }); },
+  handler: async engine => {
+    if (engine.kind === 'postgres') {
+      for (const name of ['persistence_requests_deferred_refresh_id_fkey', 'persistence_requests_state_check']) {
+        await runMigrationStatement(engine, 290, `ALTER TABLE persistence_requests VALIDATE CONSTRAINT ${name}`);
+      }
+    }
+    await buildIndexOnline(engine, 290, PERSISTENCE_DEFERRED_INDEX, { notice: migrationNotice });
+  },
 };

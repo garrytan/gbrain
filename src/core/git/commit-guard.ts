@@ -40,7 +40,9 @@ ${enforce ? `${GUARD_ENFORCE_MARKER}
 # A person can bypass it for one command: ${GUARD_BYPASS_ENV}=off git <command>
 [ "\${${GUARD_BYPASS_ENV}:-}" = off ] && exit 0
 [ "\${2:-}" = merge ] && exit 0
-for _op in ${enforce ? 'MERGE_HEAD' : 'MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply sequencer'}; do
+${enforce ? `# git worktree add copies config.worktree, so a worktree added after the install inherits this hooks path: only the owner worktree is guarded.
+[ "$(cd "$(git rev-parse --absolute-git-dir)" && pwd -P)" = "$(cd "$(dirname "$0")/.." && pwd -P)" ] || exit 0
+` : ''}for _op in ${enforce ? 'MERGE_HEAD' : 'MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply sequencer'}; do
   [ -e "$(git rev-parse --git-path "$_op")" ] && exit 0
 done
 _lock="$(git rev-parse --path-format=absolute --git-path ${COMMIT_LOCK_NAME} 2>/dev/null || true)"
@@ -190,8 +192,7 @@ export function installOwnerGuard(worktree: string, mode: GuardMode): OwnerGuard
     changed = true;
   }
   if (p.effective !== p.own) {
-    const linked = gitMust(p.root, ['worktree', 'list', '--porcelain']).split('\n').filter(l => l.startsWith('worktree ')).length > 1;
-    if (linked && !before.worktree_config) enableWorktreeConfig(p.root, p.common);
+    if (!before.worktree_config) enableWorktreeConfig(p.root, p.common);
     gitMust(p.root, ['config', '--worktree', 'core.hooksPath', p.own]);
     changed = true;
   }

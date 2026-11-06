@@ -106,10 +106,11 @@ export async function refreshReleased(engine: SqlEngine, refreshId: string | nul
   return row?.released === true;
 }
 
-/** Deferred writes still waiting, for `gbrain upgrade --check-downgrade` and writer status. */
+/** Writes admitted deferred that have not finished (waiting, or claimed and still publishing), for `gbrain upgrade --check-downgrade`. */
 export async function deferredBacklog(engine: SqlEngine): Promise<{ count: number; oldest_age_ms: number }> {
   const [row] = await engine.executeRaw<{ count: number; oldest_age_ms: number | null }>(`SELECT count(*)::int AS count,
-    (EXTRACT(EPOCH FROM now()-min(created_at))*1000)::bigint AS oldest_age_ms FROM persistence_requests WHERE state='deferred'`);
+    (EXTRACT(EPOCH FROM now()-min(created_at))*1000)::bigint AS oldest_age_ms FROM persistence_requests
+    WHERE deferred_refresh_id IS NOT NULL AND state IN ('deferred','queued','running','recovering')`);
   return { count: Number(row?.count ?? 0), oldest_age_ms: Number(row?.oldest_age_ms ?? 0) };
 }
 

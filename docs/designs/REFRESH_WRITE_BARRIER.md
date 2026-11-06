@@ -229,8 +229,10 @@ Deferred rows are durable rows; nothing about them lives in process memory.
   operationally on a clean deploy watch and on every routed producer of that brain having its three
   proofs (pending to committed, pending to conflict, restart), reported by the box lane. Turning it
   off stops new deferrals; existing deferred rows still drain.
-- **Downgrade order:** turn the flag off → wait until no row is `deferred` → downgrade.
-  `gbrain upgrade --check-downgrade` (read-only, new) exits 0 when no deferred row remains and exits
+- **Downgrade order:** turn the flag off → wait until every write admitted deferred has finished → downgrade.
+  `gbrain upgrade --check-downgrade` (read-only, new) exits 0 when none remains (a released row that
+  a consumer claimed counts until it commits or fails, because an older consumer that recovers it
+  skips the refresh-change check) and exits
   3 with `downgrade_blocked_deferred_writes` (count, oldest age) otherwise; the box's automatic
   binary restore calls it and refuses to restore an older binary on exit 3. Safety does not rest on
   that gate (an older binary cannot claim the rows); liveness does: after a downgrade they would wait
@@ -371,8 +373,9 @@ its owner host, under the worktree's native writer lock (the owner check `source
   (and honours a global `core.hooksPath`), so installing there would also guard a person's own
   linked checkout. The owner path installs into a hooks directory private to that worktree
   (`<worktree git dir>/gbrain-hooks`) and points that worktree's `core.hooksPath` at it with
-  `git config --worktree` (enabling `extensions.worktreeConfig` only when the repository has linked
-  worktrees). It refuses, changing nothing, when another tool's hook already lives at the effective
+  `git config --worktree`, enabling `extensions.worktreeConfig` first so the setting never lands in the
+  shared config; the enforce hook also lets through any worktree whose git dir is not its own, so a
+  worktree that inherits the hooks path is not guarded. It refuses, changing nothing, when another tool's hook already lives at the effective
   path, and `--status` reports the effective hooks path.
 - **Enforce mode** refuses plain commits, `--amend`, `--no-verify` commits, and, unlike the opt-in
   guard, also cherry-pick, revert, rebase and sequencer commits: in a managed worktree only the owner

@@ -219,6 +219,37 @@ test('an open intent matching a commit is unconfirmed (warn) and never written b
   expect((await run()).status).toBe('fail');
 }, 60_000);
 
+test('an intent its own commit line completed never covers a later commit with the same parent and message', async () => {
+  const { work } = checkout();
+  await register('reused', join(work, 'notes'));
+  write(work, 'notes/a.md', 'a\n');
+  commitPathsLocked(work, ['notes/a.md'], 'start the ledger', { lockWaitMs: 1000 });
+  const parent = head(work);
+  write(work, 'notes/b.md', 'b\n');
+  commitPathsLocked(work, ['notes/b.md'], 'same message', { lockWaitMs: 1000 });
+  git(work, ['reset', '-q', '--hard', parent]);
+  write(work, 'notes/c.md', 'c\n');
+  git(work, ['add', '-A']); git(work, ['commit', '-q', '-m', 'same message']);
+  const sha = head(work);
+  const check = await run();
+  expect(check.status).toBe('fail');
+  expect((check.details!.foreign as ForeignCommit[]).map(c => c.sha)).toContain(sha);
+  expect(check.details!.unconfirmed).toEqual([]);
+}, 60_000);
+
+test('a git status that fails leaves the scan partial, which warns instead of reading ok', async () => {
+  const { work } = checkout();
+  await register('unreadable', join(work, 'notes'));
+  write(work, 'notes/a.md', 'a\n');
+  commitPathsLocked(work, ['notes/a.md'], 'start the ledger', { lockWaitMs: 1000 });
+  expect((await run()).status).toBe('ok');
+  writeFileSync(join(work, '.git', 'index'), 'not an index');
+  const check = await run();
+  expect(check.details!.partial).toBe(true);
+  expect(check.status).toBe('warn');
+  expect(check.message).toContain('the scan did not finish');
+}, 60_000);
+
 test('after rotation the ledgered commits in commit-ledger.1.jsonl still count', async () => {
   const { work } = checkout();
   await register('rotated', join(work, 'notes'));
