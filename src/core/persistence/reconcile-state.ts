@@ -9,7 +9,7 @@ import { parseDataFrontmatter } from '../data-frontmatter.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { REVISION_BACKFILL_PENDING, type PageSnapshot } from '../page-state/types.ts';
-import { readRevisionBackfillStatus, REVISION_BACKFILL_MAX_ATTEMPTS, REVISION_BACKFILL_RESUME_COMMAND } from '../page-state/revision-backfill-schema.ts';
+import { revisionBackfillExhausted, REVISION_BACKFILL_RESUME_COMMAND } from '../page-state/revision-backfill-schema.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
 import { absentCanonicalPath, findLiveFileClaimants, recordedReconcilePath, type FileClaimTarget } from './file-claims.ts';
@@ -322,7 +322,7 @@ export function reconcilePreviewAdopts(artifact: Pick<ReconcileArtifact, 'preima
  */
 export async function assertReconcileRevision(engine: BrainEngine, snapshot: PageSnapshot, sourceId: string, slug: string): Promise<void> {
   if (snapshot.revision !== REVISION_BACKFILL_PENDING) return;
-  const exhausted = (await readRevisionBackfillStatus(engine)).failed.some(f => f.id === Number(snapshot.page.id) && f.attempts >= REVISION_BACKFILL_MAX_ATTEMPTS);
+  const exhausted = await revisionBackfillExhausted(engine, Number(snapshot.page.id));
   const verify = { argv: ['gbrain', 'doctor', '--only', 'revision_backfill', '--json'] };
   throw opError('revision_backfill_pending', 'Reconciliation requires the page revision, and this page has none yet.',
     `Nothing changed. Page ${slug} in '${sourceId}' was written before page revisions and the revision backfill has not reached it, so no reconcile preview can bind to it. `
