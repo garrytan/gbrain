@@ -68,7 +68,7 @@ export function startFakeWakeshift(rawKey: string): FakeWakeshift {
           if (created) subs.set(k, `sub_${++subSeq}`);
           return Response.json({
             event_subscription: { id: subs.get(k), user: body.call.user, event: body.name, arguments: body.arguments, created, expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString() },
-            session: 'claude-code#1', addition: { text: 'Wakeshift: this conversation is subscribed (secret-addition-text).', meta: { 'wakeshift/session': 'secret-addition-meta' } },
+            addition: { text: 'Wakeshift: this conversation is subscribed (secret-addition-text).', meta: { 'wakeshift/session': 'secret-addition-meta' } }, session: 'claude-code#1',
             agent: { harness: body.call.client === 'claude-code' ? 'claude-code' : null, via: body.call.client === 'claude-code' ? 'client' : null, claimed: body.call.harness ?? null },
           });
         }
