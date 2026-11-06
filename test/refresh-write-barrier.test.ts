@@ -28,6 +28,7 @@ import { PENDING_WRITE_EXIT_CODE } from '../src/core/exit-codes.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { refreshWorktree } from '../src/core/persistence/worktree-refresh.ts';
 import { getWriteRequestById } from '../src/core/persistence/journal.ts';
+import { readWriteWatermark } from '../src/core/persistence/applied-watermark.ts';
 import { resetWriteSwitches } from '../src/core/persistence/switches.ts';
 import { _setRefreshFenceWaitForTests } from '../src/core/persistence/admission-retry.ts';
 import { _resetRefreshBarrierCacheForTests, deferredBacklog, expireDeferredWrites } from '../src/core/persistence/refresh-barrier.ts';
@@ -503,4 +504,28 @@ test('a source lifecycle change while a deferred write waits ends it source_chan
     expect(await outstanding(f)).toBe(before);
   });
   expect((await refresh).status).toBe('completed');
+}), 180_000);
+
+test('a receipt poll reads the open-request index, never the permanent receipt history', () => each(async f => {
+  const [source] = await f.engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [f.alpha]);
+  await f.engine.executeRaw(`INSERT INTO persistence_requests(principal_kind,principal_id,request_id,operation,source_id,source_incarnation,slug,worktree_id,
+      digest,intent,authority,intent_bytes,terminal_reservation,state)
+    SELECT 'local_cli','history',gen_random_uuid(),'put_page',$1,$2::uuid,'history-'||g,$3::uuid,'d','{}'::jsonb,'{}'::jsonb,1,16384,'committed'
+    FROM generate_series(1,20000) g`, [f.alpha, source!.incarnation, f.worktreeId]);
+  try {
+    await f.engine.executeRaw('ANALYZE persistence_requests');
+    const scans: string[] = [];
+    const nodes = (plan: Record<string, any>): Array<Record<string, any>> => [plan, ...(plan.Plans ?? []).flatMap(nodes)];
+    const explaining = { executeRaw: async (sql: string, params?: unknown[]) => {
+      const [row] = await f.engine.executeRaw<Record<string, unknown>>(`EXPLAIN (FORMAT JSON) ${sql}`, params);
+      const raw = row!['QUERY PLAN'];
+      const [explained] = (typeof raw === 'string' ? JSON.parse(raw) : raw) as Array<{ Plan: Record<string, any> }>;
+      for (const node of nodes(explained!.Plan)) if (node['Node Type'] === 'Seq Scan' && node['Relation Name'] === 'persistence_requests') scans.push(sql);
+      return f.engine.executeRaw(sql, params);
+    } } as Pick<BrainEngine, 'executeRaw'>;
+    expect((await readWriteWatermark(explaining, f.alpha)).requests_pending.count).toBe(0);
+    expect(scans).toEqual([]);
+  } finally {
+    await f.engine.executeRaw("DELETE FROM persistence_requests WHERE principal_id='history'");
+  }
 }), 180_000);
