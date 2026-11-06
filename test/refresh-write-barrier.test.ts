@@ -27,6 +27,7 @@ import { resetWriteSwitches } from '../src/core/persistence/switches.ts';
 import { _setRefreshFenceWaitForTests } from '../src/core/persistence/admission-retry.ts';
 import { _resetRefreshBarrierCacheForTests, deferredBacklog, expireDeferredWrites } from '../src/core/persistence/refresh-barrier.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
+import { quarantineSharedSkillRestore } from '../src/core/shared-skills/restore.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -184,6 +185,64 @@ test('a deferred write past the wait limit ends refresh_barrier_expired and rele
     expect(after).toMatchObject({ state: 'failed', error_code: 'refresh_barrier_expired' });
     expect(await outstanding(f)).toBe(before);
     await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
+  });
+  expect((await refresh).status).toBe('completed');
+}), 180_000);
+
+test('a shared-skill restore cancels a deferred write too and releases its counters (restore is PGLite-only)', () => each(async f => {
+  if (f.engine.kind !== 'pglite') return;
+  let deferred!: WriteRequest;
+  const refresh = await duringRefresh(f, async () => {
+    const before = await outstanding(f);
+    const out = await call(f, 'put_page', { slug: 'notes/restored', content: page('Restored', 'deferred before the restore') });
+    deferred = await requestRow(f, out.body.request_id);
+    expect(deferred.state).toBe('deferred');
+    expect(await outstanding(f)).toBe(before + 1);
+    const rolledBack = new Error('roll the restore back');
+    await f.engine.transaction(async tx => {
+      await quarantineSharedSkillRestore(tx, randomUUID());
+      const [row] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [deferred.id]);
+      expect(row).toMatchObject({ state: 'cancelled', error_code: 'restore_new_brain' });
+      const [counter] = await tx.executeRaw<{ n: number }>("SELECT outstanding_count::int AS n FROM persistence_counters WHERE key='brain'");
+      expect(Number(counter!.n)).toBe(before);
+      throw rolledBack;
+    }).catch(error => { if (error !== rolledBack) throw error; });
+  });
+  expect((await refresh).status).toBe('completed');
+  expect((await settle(f, deferred)).state).toBe('committed');
+}), 180_000);
+
+test('an expiry that overlaps a fence waits on the brain row instead of deadlocking with it (Postgres)', () => each(async f => {
+  if (f.engine.kind !== 'postgres') return;
+  const refresh = await duringRefresh(f, async () => {
+    const out = await call(f, 'put_page', { slug: 'notes/expiry-order', content: page('Expiry order', 'body') });
+    const deferred = await requestRow(f, out.body.request_id);
+    expect(deferred.state).toBe('deferred');
+    await f.engine.executeRaw("INSERT INTO config(key,value) VALUES('persistence.refresh_barrier_max_wait_ms','1') ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value");
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const [{ owner }] = await f.engine.executeRaw<{ owner: string }>('SELECT owner_host_id::text AS owner FROM persistence_worktrees WHERE id=$1::uuid', [f.worktreeId]);
+    let holding!: () => void; const held = new Promise<void>(resolve => { holding = resolve; });
+    let waiting!: () => void; const expiryWaits = new Promise<void>(resolve => { waiting = resolve; });
+    // fenceAndMerge's order: the brain row FOR UPDATE, then the refresh row.
+    const fence = f.engine.transaction(async tx => {
+      await tx.executeRaw("SELECT set_config('lock_timeout','10s',true)");
+      await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+      holding();
+      await expiryWaits;
+      await tx.executeRaw('SELECT 1 FROM persistence_worktree_refreshes WHERE id=$1::uuid FOR NO KEY UPDATE', [deferred.deferred_refresh_id]);
+    });
+    await held;
+    const expiry = expireDeferredWrites(f.engine, owner);
+    for (let i = 0; i < 400; i++) {
+      const [w] = await f.engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'");
+      if (Number(w!.n) > 0) break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    waiting();
+    const [fenced, expired] = await Promise.allSettled([fence, expiry]);
+    await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
+    expect(fenced.status === 'rejected' ? String(fenced.reason) : 'fence committed').toBe('fence committed');
+    expect(expired.status === 'fulfilled' ? expired.value.map(row => row.id) : String(expired.reason)).toEqual([deferred.id]);
   });
   expect((await refresh).status).toBe('completed');
 }), 180_000);
