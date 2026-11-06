@@ -290,6 +290,7 @@ import { v286 } from './v286-qm-actor-links.ts';
 import { v287 } from './v287-multi-page-recovery-record.ts';
 import { v288 } from './v288-decide-proposals-claim-pair-index.ts';
 import { v289 } from './v289-page-change-reasons.ts';
+import { v290 } from './v290-wake-subscriptions.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -578,4 +579,5 @@ export const MIGRATIONS: Migration[] = [
   v287,
   v288,
   v289,
+  v290,
 ];

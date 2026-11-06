@@ -173,6 +173,7 @@ async function setGates(on: boolean): Promise<void> {
   await engine.setConfig('mcp.publish_skills', on ? 'true' : 'false');
   await engine.setConfig('mcp.publish_advisor', on ? 'true' : 'false');
   await engine.setConfig('mcp.publish_memory_settings', on ? 'true' : 'false');
+  await engine.setConfig('mcp.publish_wakeshift', on ? 'true' : 'false');
 }
 
 interface Cell {
@@ -216,6 +217,7 @@ function expectedVisibleSet(cell: Cell): Set<string> {
     if (!(op.requiredScopes ?? []).every(scope => hasScope(scopes, scope))) continue;
     if (cell.bound && !opAllowedForBoundClient({ boundSlugPrefixes: [BOUND_PREFIX] }, op)) continue;
     if (op.publishGateKey && !cell.gatesOn) continue;            // WP1 honest catalog
+    if (op.publishGateKey === 'mcp.publish_wakeshift') continue; // host file plane plus key only; a DB row never lists it
     out.add(op.name);
   }
   return out;

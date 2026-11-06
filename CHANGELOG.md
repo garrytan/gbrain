@@ -10,6 +10,21 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.589.0] - 2026-11-06
+
+**gbrain can now wake an agent's conversation when a job it started finishes, through Wakeshift. It's off until the brain owner turns it on.**
+
+An agent that submits a long job no longer has to poll. With reporting back on, it calls `watch_job` with the job id and ends its turn. When the job completes, fails, dies or is cancelled, Wakeshift wakes that conversation with one line naming the job and the `get_job` call that reads the result. The wake is a pointer (the job id, kind, status and times), never page text, titles or slugs, so it can't widen what anyone reads. The owner turns it on with `gbrain wakeshift enable` on the brain host, using a key from their own Wakeshift app, and `gbrain wakeshift disable` turns it off at once. Until then nothing changes: the tools aren't listed, no rows are written and nothing is sent. This release reports back only on brains that serve their owner alone. `wait_job` and `gbrain jobs wait <id>` remain the way to wait with nothing leaving the machine. Guide: docs/guides/wakeshift.md.
+
+### Itemized changes
+
+- New MCP tools `watch_job`, `list_watches` and `unwatch`, listed only while reporting back is on and a usable key is on the host. `watch_job` runs the same owner check as `get_job`: a job the caller doesn't own reads like a missing one and nothing is sent. A watch belongs to the credential that made it, and a revoked credential's watch ends without a wake.
+- New `gbrain wakeshift enable | disable | status | test`. `enable` asks consent (it sends data off the machine and stores a credential), refuses a brain with live access members, checks the key with Wakeshift and publishes gbrain's `gbrain.job.finished` event. The key comes from `WAKESHIFT_API_KEY` or a 0600 `~/.gbrain/wakeshift.key`, and is never stored in the database or printed (status shows its fingerprint).
+- Delivery runs inside `gbrain serve` (stdio and HTTP) and the job worker every 5 seconds, and once more at the end of `gbrain jobs work`. A watch on a job that already finished wakes at once. A failed delivery is retried at most 5 times over about 40 minutes, then the watch ends and the conversation is told. Jobs are never slowed by Wakeshift.
+- New doctor check `wakeshift`: a key file other users can read, reporting back enabled without a usable key, and watches that died or were refused as `id_reused` in the last 7 days.
+- Schema migration v290 adds `wake_subscriptions` (empty unless reporting back is on). Repo-less brains get it unchanged.
+- `--log-full-params` on `gbrain serve --http` now redacts a tool call's `session_key` argument.
+
 ## [0.60.588.0] - 2026-11-06
 
 **Engines that make their first write at the same moment no longer fail one of the writes registering the same writer.** Two or more engines opened from the same settings on one Postgres database (the same writer id, credential and lane), or two processes that share one credential file, could both find no registration and both insert it. The loser hit the credential's unique index and failed with `duplicate key value violates unique constraint "persistence_local_writers_credential_hash_key"`; four engines on a fresh database lost three of their four first writes. Registration is now idempotent under that race, and every refusal still holds. PGLite was never affected, because its single connection runs the read and the insert one after the other. Contributed by @bradgessler.

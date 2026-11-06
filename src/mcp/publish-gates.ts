@@ -21,11 +21,12 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { GBrainConfig } from '../core/config.ts';
 import type { OperationMeta } from '../core/ops/contract.ts';
 import { OPERATION_MANIFEST } from '../core/operation-manifest.generated.ts';
+import { wakeshiftPublished } from '../core/wakeshift/config.ts';
 
 export type PublishGateKey = NonNullable<OperationMeta['publishGateKey']>;
 
-/** Every config key an operation's publish gate reads; `config get` resolves these DB-first like the gate (#5358). */
-export const PUBLISH_GATE_KEYS: ReadonlySet<PublishGateKey> = new Set(OPERATION_MANIFEST.flatMap(op => (op.publishGateKey ? [op.publishGateKey] : [])));
+/** Every config key a DB-first publish gate reads; `config get` resolves these DB-first like the gate (#5358). Wakeshift's has no config key. */
+export const PUBLISH_GATE_KEYS: ReadonlySet<PublishGateKey> = new Set(OPERATION_MANIFEST.flatMap(op => (op.publishGateKey && op.publishGateKey !== 'mcp.publish_wakeshift' ? [op.publishGateKey] : [])));
 
 /**
  * Gates that default ON for the owner's stdio pipe when neither plane sets
@@ -41,6 +42,8 @@ export async function readPublishGate(
   key: PublishGateKey,
   transport?: string,
 ): Promise<boolean> {
+  // Wakeshift: the host file plane (`gbrain wakeshift enable`) plus a usable key, never the DB plane a remote writer reaches.
+  if (key === 'mcp.publish_wakeshift') return wakeshiftPublished();
   let dbVal: string | null = null;
   let readFailed = false;
   try {
