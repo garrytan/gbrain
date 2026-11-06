@@ -22,6 +22,22 @@ identifiers and attribution are available in the pre-removal Git revision
 - The request-index states doctor and `gbrain repair request-indexes` print now come back in the order the indexes are declared on Postgres as well as PGLite.
 - `test/repair-failed-writes-bounded-8707.test.ts` (PGLite and Postgres) seeds a journal with refused writes of every class and checks that the preview's request-table reads stay flat as refused writes grow, that each write gets its class, and that a read ended at the statement timeout refuses `repair_preview_timeout` and saves nothing.
 
+## [0.60.592.0] - 2026-11-06
+
+**On a page with no import record, converting a source to git-canonical, `sources git-gap` and `repair rows-behind` now pick the winner from content evidence, never from a timestamp, and nothing overwrites a page that changed after it was reviewed.**
+
+A page whose database copy differs from its committed file and that has no import record used to count as database-ahead. Converting a source to git-canonical then adopted it, so a plain Git edit of that page could be lost. Now its archived versions are compared with the blobs its path held in Git. An older version that equals the committed file means the database moved, so it is adopted. A page that equals an older committed blob means the file moved, so Git wins. A page where both sides moved, or where nothing is shared, waits for the owner's decision. A revert on either side counts as a move, and a history that was capped or pruned gives no verdict. The owner reviews a list, decides each page in a decisions file, or approves the whole plan once. Either way, only pages unchanged since the review apply.
+
+### Itemized changes
+
+- `src/core/persistence/git-gap.ts`: one direction classifier (`adopt_db_moved`, `git_wins_file_moved`, `both_moved`, `no_evidence`) reads each page's newest 32 versions and 32 blobs from one scoped history walk run from the Git top level. Renames are followed, version bodies are read under a byte budget, and a segmented page or a version with no comparable content gives no one-sided verdict. `sources git-gap` reports `direction_evidence`.
+- `gbrain sources canonical <id> --to git`: each page is placed by its evidence kind, and the kind is bound into the preview hash. `both_moved` and `no_evidence` are new discards (`no_record_both_moved`, `no_record_no_evidence`). `--list-out <file>` writes the review list, `--decisions <file>` applies the owner's decisions, and `--approval-out` / `--approved` apply an approval across time. Only items unchanged since the approval apply, and the rest comes back as `git_conversion_delta` with counts. These files are written 0600 and refused inside a source checkout or the Git working tree that holds it (`conversion_file_in_source_root`).
+- The conversion's strict passes may replace a database version only where the plan approved it. A page that changes during the apply is held instead of overwritten, the apply stops with `changed_since_preview`, and the source stays mixed. A failed apply reports `recovery` (mode, commits, push, writes and the non-destructive rollback).
+- `gbrain repair rows-behind` never re-imports a row with no import record whose database moved since (`excluded:database_moved`). `--include-ambiguous` also no longer re-imports a row with no import record where both the page and its file moved. Such a row is listed `excluded:both_moved`, and `gbrain repair file-drift` decides it.
+- `sources git-gap` and doctor `db_ahead_of_git` report each source's `live_pages`. A scan the time budget stopped reads `PARTIAL, <read> of <live> live page(s) read`.
+- The hardened git runner accepts a second `log` shape for the history walk and bare `cat-file --batch-check`; every other form still refuses.
+- Tests: `test/git-gap-direction-evidence-d4.test.ts`, `test/git-canonical-conversion-evidence-d4.test.ts` and `test/rows-behind-checkpoint-8071.test.ts` run on PGLite and Postgres. Guides: docs/guides/git-canonical.md and docs/guides/repair.md.
+
 ## [0.60.591.0] - 2026-11-06
 
 **`gbrain repair file-drift --prefer file` now imports a page stored in segments that keeps protected parts, instead of refusing every apply with no next step.**
