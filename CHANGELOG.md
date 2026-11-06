@@ -25,6 +25,19 @@ Two new events join job completion. `watch_write_request` wakes the conversation
 - `gbrain setup claude-code` and `gbrain setup codex` show a "Report back (Wakeshift)" row in the first-run settings. After a remote `submit_job` or `submit_agent`, a once-per-session notice (`wakeshift_report_back`, muteable) says how to have the conversation woken. With reporting back on, the MCP instructions gain one sentence about it. With it off, the instructions are unchanged.
 - Fixed: Wakeshift's instructions in a watch result were cut at 2,000 characters, which dropped the step that starts Claude Code's listener. They now pass through whole, up to 16,000.
 - Schema migration v291 adds `wake_crons`, `wake_cron_runs`, `wake_terms_acceptances`, `wake_forgets` and `wake_subscriptions.target_ref`. All are empty unless reporting back is on, and repo-less brains get them unchanged.
+## [0.60.590.0] - 2026-11-06
+
+**A managed sync no longer stops for good when a write queues behind another write that waits on the sync, and the convergence nightly's kill loop tests only points a sync actually reaches.**
+
+A write queued behind an earlier write that waited on a sync row naming its page used to count as a write that could go first. That held back the very sync row the earlier write waited on, so the three rows waited on each other and nothing committed until the drain gave up, about an hour into the nightly run. The claim now skips such a write, so the sync row commits and both writes follow in order. The live `stalled Ns on queued` line also stops reporting a stall while the head keeps moving, for example while this process commits the in-flight writes of a serve that was killed.
+
+### Itemized changes
+
+- `src/core/persistence/journal.ts`: the FIFO claim no longer counts a write that sits behind an earlier queued write waiting on a sync row naming its page. That write can't go first anyway, because a write never passes an earlier one.
+- `src/core/persistence/sync-drain.ts`: the in-pass stall line counts an unclaimed head's age from when that head became the head, and never from before the drain's own last commit.
+- `src/core/persistence/sync-run.ts` and `fault-points.ts`: a new `sync:passed_over` fault point after the cursor step that passes over an entry whose file changed after admission. It does nothing without a test hook.
+- `test/sync-convergence.serial.test.ts`: the kill loop drops `sync:prescreened` and `sync:retry_deferred`, which only company sources reach since #6712 PR 4b, and kills at `sync:passed_over` and `sync:batch_entries` instead. A primed edit that the round's sync never froze is now reported by the "every planned fault fired" check, where it used to crash the harness on an empty commit.
+- `test/claim-fifo-foreground-waiting.test.ts` covers the chained write on PGLite and Postgres, and `test/sync-drain-claims.test.ts` covers a head that keeps moving.
 
 ## [0.60.589.0] - 2026-11-06
 
