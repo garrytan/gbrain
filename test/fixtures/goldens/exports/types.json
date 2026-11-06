@@ -6771,6 +6771,7 @@
           "agentCallable?: true | undefined",
           "annotations?: { title?: string; readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; } | undefined",
           "area?: string | undefined",
+          "callShape?: string | undefined",
           "cliHints?: { name?: string; aliases?: string[]; positional?: string[]; stdin?: string; hidden?: boolean; } | undefined",
           "cliOnly?: { argv: readonly string[]; } | undefined",
           "description: string",
