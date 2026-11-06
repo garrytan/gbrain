@@ -440,6 +440,10 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   submit_job: 'error',
   get_job: 'error',
   wait_job: 'error',
+  // Wakeshift is off in the sweep brain: each watch op refuses wakeshift_not_enabled before any read.
+  watch_job: 'error',
+  list_watches: 'error',
+  unwatch: 'error',
   cancel_job: 'error',
   retry_job: 'error',
   get_job_progress: 'error',

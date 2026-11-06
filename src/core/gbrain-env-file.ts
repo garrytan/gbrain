@@ -13,6 +13,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { splitDotenvLines } from './env-trust.ts';
+import { takeWakeshiftEnvKey } from './wakeshift-env-key.ts';
 
 // KEY=VALUE with a POSIX-shaped name. `export KEY=...` is deliberately not
 // accepted: this is an env FILE, not a shell script (same stance as Bun's
@@ -57,5 +58,7 @@ export function loadGbrainEnvFile(resolveDir: () => string): void {
   } catch {
     // The file is optional — missing, unreadable, or an invalid home dir
     // must not break config loading.
+  } finally {
+    takeWakeshiftEnvKey();
   }
 }

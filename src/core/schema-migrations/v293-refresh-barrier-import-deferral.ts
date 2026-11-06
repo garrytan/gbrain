@@ -11,8 +11,8 @@ import type { Migration } from './types.ts';
 //   the import it waits for; a deferred row is claimed only once every hold it names (refresh, import) is released.
 // A nullable column with no backfill; fresh installs get it from this migration too, so fresh and upgraded brains share
 // column ordinals. The number is a placeholder restamped at the merge slot.
-export const v291: Migration = {
-  version: 291,
+export const v293: Migration = {
+  version: 293,
   name: 'refresh_barrier_import_deferral',
   idempotent: true,
   sql: `

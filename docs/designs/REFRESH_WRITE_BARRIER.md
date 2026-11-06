@@ -91,8 +91,10 @@ ALTER TABLE persistence_requests
   ADD COLUMN IF NOT EXISTS deferred_refresh_id uuid REFERENCES persistence_worktree_refreshes(id);
 -- the state CHECK gains 'deferred': drop the old constraint, ADD the new one NOT VALID, then VALIDATE
 -- in a separate statement (no long ACCESS EXCLUSIVE scan; #7636's no-table-lock rule)
-CREATE INDEX IF NOT EXISTS persistence_requests_deferred
-  ON persistence_requests(deferred_refresh_id, sequence) WHERE state='deferred';
+-- every open-state predicate gains 'deferred', so one index covers all four open states: a receipt poll
+-- (state IN ('queued','deferred','running','recovering')) stays index-served on a permanent receipt history
+CREATE INDEX IF NOT EXISTS persistence_requests_open
+  ON persistence_requests(worktree_id, sequence) WHERE state IN ('queued','deferred','running','recovering');
 ALTER TABLE persistence_consumers ADD COLUMN IF NOT EXISTS capabilities text[] NOT NULL DEFAULT '{}';
 ```
 
@@ -176,7 +178,8 @@ the writes the barrier exists to keep. The setting is no longer read.
 
 **Age bound.** A deferred row whose refresh is still unreleased after
 `persistence.refresh_barrier_max_wait_ms` (default 15 minutes; a tick runs a few minutes) is finished
-`failed` with `refresh_barrier_expired` by the owner consumer's housekeeping turn, in one statement
+`failed` with `refresh_barrier_expired` by the owner consumer's housekeeping turn (its idle probe
+counts an overdue deferred row as work, so an otherwise idle owner still runs it), in one statement
 that rechecks `released_at IS NULL` and releases its counters. Nothing is applied; the producer
 resubmits with a new request id. If the owner host is down, nothing claims or expires rows; receipts
 stay pending and readable, as for any queued row on that host.
@@ -214,7 +217,7 @@ Git, an ancestor of the write's commit.
 **Age bound and schema.** A row held for an import that has not landed past
 `persistence.refresh_barrier_max_wait_ms` ends `failed` with `pending_import_expired` in the owner's
 housekeeping turn, which rechecks under the request lock that the row is still unclaimed and its
-import still pending. Migration v291 adds the nullable `persistence_requests.deferred_import_from` and
+import still pending. Migration v293 adds the nullable `persistence_requests.deferred_import_from` and
 widens `gbrain_guard_deferred_request`: a running row may move to `deferred` only under the barrier's
 session declaration and only naming the import it waits for, and a deferred row moves to `running`
 only once every hold it names is released. Only the write owner's consumer, already a barrier
@@ -282,7 +285,9 @@ Deferred rows are durable rows; nothing about them lives in process memory.
 ### Surfaces
 
 - CLI write verbs: deferred → exit 10 with the receipt (`state: deferred`, `deferred`), `--json`
-  carries `outcome: pending`. `gbrain write-request <id>` shows the deferral until it drains.
+  carries `outcome: pending`. This holds on every CLI route: the owner socket asks dispatch for the
+  `write_pending` error (`pendingAsError`), and a thin client turns a `status: "pending"` success
+  into the same pending error. `gbrain write-request <id>` shows the deferral until it drains.
 - MCP: deferred → `isError: false`, `status: "pending"`; `requestLogStatusForResult` classifies a
   pending non-error result as `accepted_pending` (today it only reads pending from error results).
   Other `write_pending` results (an acknowledgement lost to the owner) are unchanged.

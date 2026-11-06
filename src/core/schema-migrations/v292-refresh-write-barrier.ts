@@ -1,8 +1,8 @@
 import type { Migration } from './types.ts';
 import { buildIndexOnline, migrationNotice, runMigrationStatement } from './helpers.ts';
 
-const PERSISTENCE_DEFERRED_INDEX = { name: 'persistence_requests_deferred', table: 'persistence_requests',
-  sql: `CREATE INDEX IF NOT EXISTS persistence_requests_deferred ON persistence_requests(worktree_id, sequence) WHERE state='deferred'` } as const;
+const PERSISTENCE_OPEN_INDEX = { name: 'persistence_requests_open', table: 'persistence_requests',
+  sql: `CREATE INDEX IF NOT EXISTS persistence_requests_open ON persistence_requests(worktree_id, sequence) WHERE state IN ('queued','deferred','running','recovering')` } as const;
 
 // Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
 // ("Canonical schema sources") for when schema.sql or a TS fragment also changes.
@@ -23,10 +23,11 @@ const PERSISTENCE_DEFERRED_INDEX = { name: 'persistence_requests_deferred', tabl
 // VALID in the SQL batch, then validates each in its own statement from the handler
 // (SHARE UPDATE EXCLUSIVE, after the batch's ACCESS EXCLUSIVE is released, so the
 // scan of the permanent receipts blocks no reader or writer), and builds the
-// deferred index CONCURRENTLY like v223; PGLite does each in one shot. The number is a placeholder
-// restamped at the merge slot.
-export const v290: Migration = {
-  version: 290,
+// open-request index CONCURRENTLY like v223; PGLite does each in one shot. The open index covers the four open states
+// together, so the predicates that list 'deferred' beside queued/running/recovering (receipt polls, drains, doctor) stay
+// index-served on a permanent receipt history; persistence_requests_pending keeps serving the three-state ones.
+export const v292: Migration = {
+  version: 292,
   name: 'refresh_write_barrier',
   idempotent: true,
   transaction: false,
@@ -114,9 +115,9 @@ export const v290: Migration = {
   handler: async engine => {
     if (engine.kind === 'postgres') {
       for (const name of ['persistence_requests_deferred_refresh_id_fkey', 'persistence_requests_state_check']) {
-        await runMigrationStatement(engine, 290, `ALTER TABLE persistence_requests VALIDATE CONSTRAINT ${name}`);
+        await runMigrationStatement(engine, 292, `ALTER TABLE persistence_requests VALIDATE CONSTRAINT ${name}`);
       }
     }
-    await buildIndexOnline(engine, 290, PERSISTENCE_DEFERRED_INDEX, { notice: migrationNotice });
+    await buildIndexOnline(engine, 292, PERSISTENCE_OPEN_INDEX, { notice: migrationNotice });
   },
 };

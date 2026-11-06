@@ -163,10 +163,11 @@ export async function readRequestIndexStates(engine: Pick<BrainEngine, 'executeR
   }
   const rows = await engine.executeRaw<{ name: string; valid: boolean | null; phase: string | null; blocks_done: string | null; blocks_total: string | null }>(
     `SELECT n.name, i.indisvalid AS valid, p.phase, p.blocks_done::text, p.blocks_total::text
-       FROM unnest($1::text[]) AS n(name)
+       FROM unnest($1::text[]) WITH ORDINALITY AS n(name, position)
        LEFT JOIN pg_index i ON i.indexrelid = to_regclass(n.name)
        LEFT JOIN LATERAL (SELECT phase, blocks_done, blocks_total FROM pg_stat_progress_create_index p
-         WHERE p.relid = i.indrelid AND p.index_relid IN (i.indexrelid, 0) LIMIT 1) p ON true`, [names]);
+         WHERE p.relid = i.indrelid AND p.index_relid IN (i.indexrelid, 0) LIMIT 1) p ON true
+      ORDER BY n.position`, [names]);
   return rows.map(row => row.valid === null ? { name: row.name, state: 'missing' }
     : row.valid ? { name: row.name, state: 'valid' }
       : row.phase !== null ? { name: row.name, state: 'building', progress: { phase: row.phase, blocks_done: Number(row.blocks_done ?? 0), blocks_total: Number(row.blocks_total ?? 0) } }

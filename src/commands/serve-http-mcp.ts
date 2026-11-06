@@ -78,6 +78,8 @@ interface McpRequestState {
   actorHeader: string | undefined;
   /** GST-359 D: the x-qm-audience header (QM's channel audience, wave 2); any request carrying it is refused before any work. */
   audienceHeader: string | undefined;
+  /** Wakeshift: the request's User-Agent, which tells it some agent programs apart. Shape only. */
+  userAgent: string | undefined;
   /** The caller's self-declared agent label (X-Gbrain-Agent-Label): recorded on its write requests, never authority. */
   agentLabel: string | undefined;
 }
@@ -192,7 +194,7 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
     const thinClient = isGbrainThinClient(req.get(GBRAIN_CLIENT_HEADER));
     const state: McpRequestState = { authInfo, agentName, startTime, mcpOperations, surface, surfaceCeiling, surfaceAllowedOps, resultRows, thinClient,
       onBehalfOfHeader: req.get(ON_BEHALF_OF_HEADER), actorHeader: req.get(ACTOR_HEADER), audienceHeader: req.get(QM_AUDIENCE_HEADER),
-      agentLabel: parseAgentLabel(req.get(AGENT_LABEL_HEADER)) };
+      userAgent: req.get('user-agent'), agentLabel: parseAgentLabel(req.get(AGENT_LABEL_HEADER)) };
     const server = createMcpRequestServer(ctx, state, writeback);
     await serveMcpRequest(server, req, res);
   }
@@ -375,10 +377,12 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
   // 'tools/list'. Pre-existing string-shaped rows are normalized by
   // migration v41 in src/core/migrate.ts.
   const safeParamsSummary = summarizeMcpParams(name, params);
+  // Wakeshift's session_key is a conversation credential: never logged, even under --log-full-params.
+  const fullParams = params && typeof params === 'object' && 'session_key' in params ? { ...params, session_key: '[redacted]' } : params;
   const logParamsObj: unknown = logFullParams
-    ? (params || null)
+    ? (fullParams || null)
     : (safeParamsSummary || null);
-  const broadcastParams = logFullParams ? (params || {}) : safeParamsSummary;
+  const broadcastParams = logFullParams ? (fullParams || {}) : safeParamsSummary;
 
   // v0.31 (D12 / eE1): refactor the inlined op.handler call to go through
   // src/mcp/dispatch.ts so HTTP MCP shares the same dispatch path as
@@ -442,6 +446,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
       ...(sessionId ? { sessionId } : {}),
       ...(hotMemoryOffIn(request.params) ? { hotMemoryOff: true } : {}),
       onBehalfOf: { header: state.onBehalfOfHeader, requestMeta: (request.params as { _meta?: unknown })._meta },
+      mcpCaller: { client: authInfo.clientName, userAgent: state.userAgent, meta: (request.params as { _meta?: Record<string, unknown> })._meta },
       actor: { header: state.actorHeader, audience: state.audienceHeader },
       ...(state.agentLabel ? { agentLabel: state.agentLabel } : {}),
       takesHoldersAllowList: tokenAllowList,
