@@ -37,6 +37,7 @@ import { stagePutPage } from './staged-put-page.ts';
 import { withCallerAccess } from '../../search/private-visibility.ts';
 import { remoteCallerAccess } from '../../access/caller.ts';
 import { attestedCallerAccess, storedActorIdentity } from '../../access/actor.ts';
+import { attestedReadScope } from '../../access/member-sources.ts';
 import type { AudiencePrincipal } from '../../access/audience.ts';
 import { currentSubmissionAuthority } from '../submission-authority.ts';
 
@@ -309,9 +310,9 @@ function brainTool(op: Operation, opts: BuildBrainToolsOpts): ToolDef {
       const validationError = validateParams(op, params);
       if (validationError) throw new Error(`${toolName}: ${validationError}`);
       const write = op.name === 'put_page' && opts.stageWrites ? stagePutPage : op.handler;
-      const run = () => op.name === 'put_page'
-        ? write(opCtx, params).catch(e => rethrowWithCurrentRevision(ctx.engine, opCtx.sourceId ?? 'default', params.slug, e))
-        : op.handler(opCtx, params);
+      const run = (c: typeof opCtx = opCtx) => op.name === 'put_page'
+        ? write(c, params).catch(e => rethrowWithCurrentRevision(ctx.engine, c.sourceId ?? 'default', params.slug, e))
+        : op.handler(c, params);
       // GBRA-218: a remote-owned job reads as its client's member, looked up live on every call (a disabled member or
       // removed binding takes effect at the next tool call); never a GBRA-156 private-pages grant.
       // GBRA-231: a job a shared agent submitted for an audience reads as that audience, re-checked the same way.
@@ -321,7 +322,8 @@ function brainTool(op: Operation, opts: BuildBrainToolsOpts): ToolDef {
       const agent = submitted?.kind === 'remote_agent' ? submitted : undefined;
       const actor = agent?.grant.actor;
       const output = agent && actor
-        ? await withCallerAccess(await attestedCallerAccess(ctx.engine, actor, await storedActorIdentity(ctx.engine, agent.principal, actor, op.name)), run)
+        ? await withCallerAccess(await attestedCallerAccess(ctx.engine, actor, await storedActorIdentity(ctx.engine, agent.principal, actor, op.name)),
+          async () => run(await attestedReadScope(ctx.engine, opCtx, actor.member, false)))
         : opCtx.auth
         ? await withCallerAccess(await remoteCallerAccess(ctx.engine, opCtx.auth, [], undefined, actingFor), run)
         : await run();

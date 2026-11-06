@@ -221,6 +221,13 @@ current member's sources, but a prompt-injected or buggy bot can omit it, so
 it does not separate members who must not see each other's pages. Use
 per-member tokens for that, and `source_ids` to narrow further.
 
+A trusted system that names the person on each call (QM's `x-qm-actor`) can
+share one client instead: grant it every member's source and bind each source
+to its member (`gbrain access member source add alice-example dm-alice-example`).
+An attested call then reads the grant minus sources bound to other members,
+and binding never adds a source to a grant
+([QM guide](qm.md#each-persons-own-sources)).
+
 ### Lay out sources by who may read them
 
 Source grants are the coarse boundary: without page readers, two pages in one

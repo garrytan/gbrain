@@ -98,7 +98,7 @@ export async function listMembers(engine: BrainEngine, opts: { includeRemoved?: 
   return rows.map(toRecord);
 }
 
-async function existingMember(engine: BrainEngine, raw: unknown, action: string): Promise<MemberRecord> {
+export async function existingMember(engine: BrainEngine, raw: unknown, action: string): Promise<MemberRecord> {
   const id = assertAccessId(raw);
   const member = await getMember(engine, id);
   if (member) return member;
