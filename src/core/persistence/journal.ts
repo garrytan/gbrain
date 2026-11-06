@@ -684,7 +684,7 @@ export const EARLIER_HEAD = (earlier: string, r: string, priority: string, laneR
  * A probe of its own (the deferred partial index), so `EARLIER_HEAD` stays a range scan of the pending index.
  */
 export const EARLIER_DEFERRED = (earlier: string, r: string) => `${earlier}.sequence<${r}.sequence AND ${RELEASED_DEFERRED(earlier)}`;
-/** Sets the session flag the v291 deferred-row guard requires of a claim that moves a deferred row to running. */
+/** Sets the session flag the v292 deferred-row guard requires of a claim that moves a deferred row to running. */
 export const REFRESH_BARRIER_CLAIM_PREDICATE = "set_config('gbrain.refresh_barrier','1',true)='1'";
 /**
  * The rows `claimNextWrite` may claim, over `persistence_requests r LEFT JOIN

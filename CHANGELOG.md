@@ -46,6 +46,61 @@ QM clients that read v1 keep working unchanged. A shared-scope turn should name 
 | `recall` `question` over 2,000 characters | bare `invalid_params` | `invalid_params` reason `question_too_long`, detail `max_chars=2000 received_chars=<n>`; never cut |
 | `acting_user` refused `argument_without_attestation` | no detail | detail `missing=x-qm-actor`, `missing=attest_right` or both, also in `structuredContent.error` |
 
+## [0.60.593.0] - 2026-11-06
+
+**`gbrain repair failed-writes` now previews a brain with a large write journal in about a second instead of timing out.** On Postgres, the preview of refused writes read the request table once per refused write, and one of those reads walked the table from that write to its end. With hundreds of refused writes and a journal of over a million requests, the preview ran for minutes and the server's statement timeout ended it with a bare `internal_error`, so the operator had no way to see or recover the lost writes. The preview now classes refused writes together in set reads, each sized so it stays short even on a page with hundreds of refused writes and a long history. On a synthetic journal of 1.5 million requests with over 800 refused writes it took about a second (it took 265 seconds before), with the same classes and the same preview hash. When a preview read does still run past the timeout, it refuses `repair_preview_timeout` with a fix instead of `internal_error`, and nothing is saved.
+
+### Itemized changes
+
+- `src/core/repair/failed-writes.ts`: recovered fact requests are read once for all refused writes instead of inside the candidate read; replay attempts are read for every refused write together (`request_id = ANY`); the later requests of each refused write's page are read for groups of writes sized by how long their pages' later history is, so one page with hundreds of refused writes and a long history cannot make one read outlast the statement timeout; the file check runs once per page. The listing, classes, residuals and preview hash are unchanged.
+- New refusal `repair_preview_timeout`. When the request indexes the preview reads are missing or INVALID, it names them and its fix is the read-only `gbrain repair request-indexes --json` preview, whose apply command builds them; when they are valid, it tells the brain host to run the same preview once with a longer statement timeout.
+- Schema migration v291 builds two request-table indexes online (`persistence_requests_replay_id` on the request id, `persistence_requests_slug_sequence` on source, slug and sequence). They join the indexes `gbrain repair request-indexes` and doctor's `persistence_request_indexes` check report. Without them the preview is still bounded, only slower. PGLite and repo-less brains get them unchanged.
+- The request-index states doctor and `gbrain repair request-indexes` print now come back in the order the indexes are declared on Postgres as well as PGLite.
+- `test/repair-failed-writes-bounded-8707.test.ts` (PGLite and Postgres) seeds a journal with refused writes of every class and checks that the preview's request-table reads stay flat as refused writes grow, that each write gets its class, and that a read ended at the statement timeout refuses `repair_preview_timeout` and saves nothing, and (Postgres) that 500 refused writes on one page followed by 20,000 later commits preview inside a 1 s statement timeout.
+
+## [0.60.592.0] - 2026-11-06
+
+**On a page with no import record, converting a source to git-canonical, `sources git-gap` and `repair rows-behind` now pick the winner from content evidence, never from a timestamp, and nothing overwrites a page that changed after it was reviewed.**
+
+A page whose database copy differs from its committed file and that has no import record used to count as database-ahead. Converting a source to git-canonical then adopted it, so a plain Git edit of that page could be lost. Now its archived versions are compared with the blobs its path held in Git. An older version that equals the committed file means the database moved, so it is adopted. A page that equals an older committed blob means the file moved, so Git wins. A page where both sides moved, or where nothing is shared, waits for the owner's decision. A revert on either side counts as a move, and a history that was capped or pruned gives no verdict. The owner reviews a list, decides each page in a decisions file, or approves the whole plan once. Either way, only pages unchanged since the review apply.
+
+### Itemized changes
+
+- `src/core/persistence/git-gap.ts`: one direction classifier (`adopt_db_moved`, `git_wins_file_moved`, `both_moved`, `no_evidence`) reads each page's newest 32 versions and 32 blobs from one scoped history walk run from the Git top level. Renames are followed, version bodies are read under a byte budget, and a segmented page or a version with no comparable content gives no one-sided verdict. `sources git-gap` reports `direction_evidence`.
+- `gbrain sources canonical <id> --to git`: each page is placed by its evidence kind, and the kind is bound into the preview hash. `both_moved` and `no_evidence` are new discards (`no_record_both_moved`, `no_record_no_evidence`). `--list-out <file>` writes the review list, `--decisions <file>` applies the owner's decisions, and `--approval-out` / `--approved` apply an approval across time. Only items unchanged since the approval apply, and the rest comes back as `git_conversion_delta` with counts. These files are written 0600 and refused inside a source checkout or the Git working tree that holds it (`conversion_file_in_source_root`).
+- The conversion's strict passes may replace a database version only where the plan approved it. A page that changes during the apply is held instead of overwritten, the apply stops with `changed_since_preview`, and the source stays mixed. A failed apply reports `recovery` (mode, commits, push, writes and the non-destructive rollback).
+- `gbrain repair rows-behind` never re-imports a row with no import record whose database moved since (`excluded:database_moved`). `--include-ambiguous` also no longer re-imports a row with no import record where both the page and its file moved. Such a row is listed `excluded:both_moved`, and `gbrain repair file-drift` decides it.
+- `sources git-gap` and doctor `db_ahead_of_git` report each source's `live_pages`. A scan the time budget stopped reads `PARTIAL, <read> of <live> live page(s) read`.
+- The hardened git runner accepts a second `log` shape for the history walk and bare `cat-file --batch-check`; every other form still refuses.
+- Tests: `test/git-gap-direction-evidence-d4.test.ts`, `test/git-canonical-conversion-evidence-d4.test.ts` and `test/rows-behind-checkpoint-8071.test.ts` run on PGLite and Postgres. Guides: docs/guides/git-canonical.md and docs/guides/repair.md.
+
+## [0.60.591.0] - 2026-11-06
+
+**`gbrain repair file-drift --prefer file` now imports a page stored in segments that keeps protected parts, instead of refusing every apply with no next step.**
+
+A held page whose body is stored in segments (`pages.segmented_storage`, a page over 1 MiB) and whose database copy keeps a protected frontmatter key and a timeline row the file lacks previewed cleanly, listing both exceptions and an apply command. That apply refused every time with `invalid_params` "Unsupported or missing reconciliation fields." and no `fix`, so the page stayed held and blocked writes to it. The apply now imports the file with the same protections (the file keeps its bytes plus the appended key and row, the page keeps both), the page stays segmented and searchable, and the next sync releases the hold. A preview now refuses a page its own apply would refuse, and every refusal on this path names its next step.
+
+### Itemized changes
+
+- `src/core/persistence/reconcile-state.ts`: a reconcile preview of a segmented page validates: its snapshot's `bodyGeneration` and the page's `body_storage` / `body_bytes` are accepted (the preimage checks are unchanged). A page with no revision yet (the revision backfill has not reached it) refuses `revision_backfill_pending` in the preview, with `gbrain apply-migrations --force-schema` in `fix` (or `gbrain repair orphan-children` when the backfill already used every attempt on the row), instead of a stale-preview refusal with none; `revision_backfill_pending` joins the error registry. Read-only drift classification and the audit read such a page as before.
+- `src/core/persistence/reconcile-prepare.ts`: the reconcile publication of a segmented page leaves its text seal to the segmented import (as the managed file repair does), runs the import's `afterCommit`, and reads the published page back materialized.
+- `src/core/repair/file-drift.ts`: the preview validates each page's reconcile artifact as the apply reads it back, so a page the apply would refuse is listed `refused` in the preview. A refused preview row carries the refusal's `fix` and its `why`; a refused or changed apply outcome carries both, with a read-only preview of that page alone (for a held deleted-side page, its held preview) when the refusal has no `fix`. `gbrain repair` prints each row's `fix` with its consent.
+- `src/core/persistence/reconcile-merge.ts`: "Unsupported or missing reconciliation fields." names the fields in `why`.
+
+## [0.60.590.0] - 2026-11-06
+
+**A managed sync no longer stops for good when a write queues behind another write that waits on the sync, and the convergence nightly's kill loop tests only points a sync actually reaches.**
+
+A write queued behind an earlier write that waited on a sync row naming its page used to count as a write that could go first. That held back the very sync row the earlier write waited on, so the three rows waited on each other and nothing committed until the drain gave up, about an hour into the nightly run. The claim now skips such a write, so the sync row commits and both writes follow in order. The live `stalled Ns on queued` line also stops reporting a stall while the head keeps moving, for example while this process commits the in-flight writes of a serve that was killed.
+
+### Itemized changes
+
+- `src/core/persistence/journal.ts`: the FIFO claim no longer counts a write that sits behind an earlier queued write waiting on a sync row naming its page. That write can't go first anyway, because a write never passes an earlier one.
+- `src/core/persistence/sync-drain.ts`: the in-pass stall line counts an unclaimed head's age from when that head became the head, and never from before the drain's own last commit.
+- `src/core/persistence/sync-run.ts` and `fault-points.ts`: a new `sync:passed_over` fault point after the cursor step that passes over an entry whose file changed after admission. It does nothing without a test hook.
+- `test/sync-convergence.serial.test.ts`: the kill loop drops `sync:prescreened` and `sync:retry_deferred`, which only company sources reach since #6712 PR 4b, and kills at `sync:passed_over` and `sync:batch_entries` instead. A primed edit that the round's sync never froze is now reported by the "every planned fault fired" check, where it used to crash the harness on an empty commit.
+- `test/claim-fifo-foreground-waiting.test.ts` covers the chained write on PGLite and Postgres, and `test/sync-drain-claims.test.ts` covers a head that keeps moving.
+
 ## [0.60.589.0] - 2026-11-06
 
 **gbrain can now wake an agent's conversation when a job it started finishes, through Wakeshift. It's off until the brain owner turns it on.**

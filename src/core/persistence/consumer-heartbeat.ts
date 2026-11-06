@@ -213,7 +213,7 @@ export interface ConsumerHeartbeat {
 }
 
 type DirectEngine = SqlEngine & Partial<Pick<BrainEngine, 'kind' | 'executeRawDirect'>>;
-/** What this binary's consumer can drain (v291): `refresh_barrier_1` claims writes deferred behind a worktree refresh. */
+/** What this binary's consumer can drain (v292): `refresh_barrier_1` claims writes deferred behind a worktree refresh. */
 export const CONSUMER_CAPABILITIES = ['refresh_barrier_1'] as const;
 const RENEW_SQL = `WITH purged AS (
     DELETE FROM persistence_consumers WHERE host_id=$1::uuid AND renewed_at < now() - ($14::integer * interval '1 millisecond') AND NOT (pid=$2::integer AND nonce=$3))

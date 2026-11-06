@@ -1088,6 +1088,16 @@ More: [docs/ai-providers/claude-cli.md#claude-cli-troubleshooting](../../docs/ai
 
 More: [docs/guides/sync-unblock-runbook.md#dry-run-convergence-classes](../../docs/guides/sync-unblock-runbook.md#dry-run-convergence-classes)
 
+### conversion_file_in_source_root
+
+<a id="conversion_file_in_source_root"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A conversion review list, decisions file or approval was refused because its path is inside a source's checkout. | Those files name pages and paths. Written or read only outside every registered source root and the Git working tree holding it (mode 0600), they can never be synced, imported or committed. | Pass a path outside every source checkout, e.g. under ~/.gbrain. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/git-canonical.md#review-list-and-decisions](../../docs/guides/git-canonical.md#review-list-and-decisions)
+
 ### core_budget_exceeded
 
 <a id="core_budget_exceeded"></a>
@@ -1988,11 +1998,21 @@ More: [docs/guides/repair.md#ghost-pages](../../docs/guides/repair.md#ghost-page
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Converting a source to git-canonical would discard database content or cannot place it, so the apply wrote nothing. | gbrain sources canonical --to git applies only when every database row will be in Git or in a declared database-only class afterwards. The preview counts what would be lost or cannot be placed by category (detail lists them): both_moved and held_drift_both, a page Git and the database both changed; deleted_in_git, a page Git deleted that the database edited since; uncommitted_edit, a working-tree edit the adoption would overwrite; ignored_target, a page whose file Git ignores without a declared class; unparseable and unsafe_path, a committed file or path sync cannot read; segmented_page, a segmented page conversion does not adopt yet; export_mismatch, a page whose export does not read back equal; git_overwrites_database, a page version a strict pass would replace that nothing accepted; ignore_status_unknown, a target whose ignore status Git cannot read (beyond a symlink, outside the checkout, a timed-out check). There is no override. | Relay the categories and their paths (the --dry-run preview lists them) and ask the user how each should be resolved; preview again afterwards. | user | `repeat the read that failed` | 1 | no |
+| Converting a source to git-canonical would discard database content or cannot place it, so the apply wrote nothing. | gbrain sources canonical --to git applies only when every database row will be in Git or in a declared database-only class afterwards. The preview counts what would be lost or cannot be placed by category (detail lists them): both_moved and held_drift_both, a page Git and the database both changed; no_record_both_moved and no_record_no_evidence, a page with no import record whose content history shows both sides moved, or shows nothing, until the owner's --decisions file decides it; deleted_in_git, a page Git deleted that the database edited since; uncommitted_edit, a working-tree edit the adoption would overwrite; ignored_target, a page whose file Git ignores without a declared class; unparseable and unsafe_path, a committed file or path sync cannot read; segmented_page, a segmented page conversion does not adopt yet; export_mismatch, a page whose export does not read back equal; git_overwrites_database, a page version a strict pass would replace that nothing accepted; ignore_status_unknown, a target whose ignore status Git cannot read (beyond a symlink, outside the checkout, a timed-out check). There is no override. | Relay the categories and their paths (the --dry-run preview lists them) and ask the user how each should be resolved; preview again afterwards. | user | `repeat the read that failed` | 1 | no |
 
-Reasons: `both_moved`, `held_drift_both`, `held_drift_unknown_differs`, `deleted_in_git`, `uncommitted_edit`, `ignored_target`, `unparseable`, `unsafe_path`, `segmented_page`, `export_mismatch`, `git_overwrites_database`, `ignore_status_unknown`.
+Reasons: `both_moved`, `held_drift_both`, `held_drift_unknown_differs`, `deleted_in_git`, `uncommitted_edit`, `ignored_target`, `unparseable`, `unsafe_path`, `segmented_page`, `export_mismatch`, `git_overwrites_database`, `ignore_status_unknown`, `no_record_both_moved`, `no_record_no_evidence`.
 
 More: [docs/designs/GIT_CANONICAL_MEMORY.md#conversion](../../docs/designs/GIT_CANONICAL_MEMORY.md#conversion)
+
+### git_conversion_delta
+
+<a id="git_conversion_delta"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An approved conversion found pages that changed since the approval, or decisions it did not approve, so only the unchanged pages were applied and the source stays mixed. | gbrain sources canonical --to git --apply --approved applies only the pages whose slug, revision, committed blob, evidence and action are the ones the owner approved. A page that changed since, a new page, a database edit the plan would now discard, and any decision the approval did not hold stay unapplied and are listed (delta) with counts; nothing outside the approved set is applied without a new decision. | Relay the delta list and its counts to the owner; once they decide, preview again with --approval-out and apply the new approval. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/git-canonical.md#approval-across-time](../../docs/guides/git-canonical.md#approval-across-time)
 
 ### git_conversion_incomplete
 
@@ -4072,6 +4092,16 @@ Reasons: `rename_source_changed`.
 |---|---|---|---|---|---|---|
 | A renamed file imported, but removing the page of its old name failed unexpectedly, so that page was kept and may be a duplicate. | An unexpected error is deterministic, so a blocking marker would stop the source on every run; the rename is held instead and the rest of the source keeps syncing. | Ask the user before a full sync of the source (gbrain sync --source <source> --full --no-pull), which removes pages whose file is gone, or remove the old page with gbrain delete. | agent | `repeat the read that failed` | 1 | no |
 
+### repair_preview_timeout
+
+<a id="repair_preview_timeout"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A `gbrain repair failed-writes` preview read ran past the database statement timeout, so the preview stopped; nothing was saved, no approval checkpoint was written and no page changed. | The preview classes every refused caller write against the write journal (replay attempts, later requests of the same page, recovered fact requests) in a few set reads. They use the `persistence_requests_replay_id` and `persistence_requests_slug_sequence` indexes; when either is missing or INVALID, or the journal is large enough that a set read outlasts the timeout, the server ends the read. | Build the request indexes with gbrain repair request-indexes --apply, then run the same preview again; if it stops again with the indexes valid, run it once with a longer statement timeout on the brain host. Run: gbrain repair request-indexes --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/troubleshooting.md#repair-preview-timeout](../../docs/guides/troubleshooting.md#repair-preview-timeout)
+
 ### request_already_submitted
 
 <a id="request_already_submitted"></a>
@@ -4173,6 +4203,16 @@ More: [docs/guides/windowed-reads.md#result_too_large](../../docs/guides/windowe
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Resume spec mismatch. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### revision_backfill_pending
+
+<a id="revision_backfill_pending"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The page was written before page revisions existed and the revision backfill has not reached it, so it has no revision a write or preview can bind to. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain apply-migrations --force-schema | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#revision-backfill](../../docs/guides/write-refusals.md#revision-backfill)
 
 ### revision_changed
 

@@ -25,8 +25,8 @@ const PERSISTENCE_DEFERRED_INDEX = { name: 'persistence_requests_deferred', tabl
 // scan of the permanent receipts blocks no reader or writer), and builds the
 // deferred index CONCURRENTLY like v223; PGLite does each in one shot. The number is a placeholder
 // restamped at the merge slot.
-export const v291: Migration = {
-  version: 291,
+export const v292: Migration = {
+  version: 292,
   name: 'refresh_write_barrier',
   idempotent: true,
   transaction: false,
@@ -114,9 +114,9 @@ export const v291: Migration = {
   handler: async engine => {
     if (engine.kind === 'postgres') {
       for (const name of ['persistence_requests_deferred_refresh_id_fkey', 'persistence_requests_state_check']) {
-        await runMigrationStatement(engine, 291, `ALTER TABLE persistence_requests VALIDATE CONSTRAINT ${name}`);
+        await runMigrationStatement(engine, 292, `ALTER TABLE persistence_requests VALIDATE CONSTRAINT ${name}`);
       }
     }
-    await buildIndexOnline(engine, 291, PERSISTENCE_DEFERRED_INDEX, { notice: migrationNotice });
+    await buildIndexOnline(engine, 292, PERSISTENCE_DEFERRED_INDEX, { notice: migrationNotice });
   },
 };
