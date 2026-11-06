@@ -215,7 +215,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // selfHelp: backup ships its own HELP (runBackupCli guard, engine-free — the command dispatches in
   // the pre-engine lane, so help never touches the PGLite lock).
   { name: 'backup', phase: 'pre-connect-own-engine', thinClient: 'none', selfHelp: true, load: () => import('./commands/backup.ts') },
-  { name: 'upgrade', phase: 'pre-connect', thinClient: 'none', selfHelp: true, skipStartupHooks: true, load: () => import('./commands/upgrade.ts') },
+  { name: 'upgrade', phase: 'pre-connect-own-engine', thinClient: 'none', selfHelp: true, skipStartupHooks: true, load: () => import('./commands/upgrade.ts') },
   { name: 'post-upgrade', phase: 'pre-connect', thinClient: 'none', selfHelp: true, skipStartupHooks: true, json: 'document', load: () => import('./commands/post-upgrade.ts') },
   { name: 'check-update', phase: 'pre-connect', thinClient: 'none', selfHelp: true, skipStartupHooks: true, load: () => import('./commands/check-update.ts') },
   // selfHelp: v0.42 self-upgrade ships its own usage (flags + the agent-skill story).
@@ -404,6 +404,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // selfHelp: connectors ships its own printHelp (commands/connectors/index.ts) with the
   // per-subcommand usage; keep the generic short-circuit from hiding it.
   { name: 'connectors', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/connectors.ts') },
+  // selfHelp: Wakeshift report-back switch (commands/wakeshift.ts HELP); host-only (it writes the file plane and the key), docs/guides/wakeshift.md.
+  { name: 'wakeshift', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/wakeshift.ts') },
   // selfHelp: #3502 sweep: pages + bench print their own usage (pages.ts printHelp, bench-publish.ts
   // printHelp). Both were documented but undispatchable — `pages` had a live handleCliOnly case but
   // was missing from CLI_ONLY (the #2035 calibration bug class); `bench` was never wired at all.

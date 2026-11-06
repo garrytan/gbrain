@@ -26,7 +26,8 @@ import { prepareMemoryMutation } from './memory-prepare.ts';
 import { readForgetTarget, refuseForgetReachingOtherCopies } from './forget-prepare.ts';
 import { UNATTRIBUTED_MEMORY_SLUG } from '../facts/extract-from-fence.ts';
 import { resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
-import { callerMember, memberFactAdmitSql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug } from '../access/member-facts.ts';
+import { callerMember, memberFactAdmitSql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug, scopePageIsShared, scopePageNotShared, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
+import { perCallWriteSource } from '../access/attest-sources.ts';
 
 export { prepareMemoryMutation } from './memory-prepare.ts';
 /** Only semantic appends without an explicit caller revision can be recomputed. */
@@ -47,7 +48,7 @@ async function submission(ctx: OperationContext, operation: string, params: Reco
   const requestId = typeof p.request_id === 'string' ? p.request_id : randomUUID();
   const sourceId = typeof p.source_id === 'string' ? p.source_id : ctx.sourceId ?? 'default';
   const granted = grantedWriteSource(ctx);
-  if (ctx.remote !== false && sourceId !== granted) {
+  if (ctx.remote !== false && sourceId !== granted && !perCallWriteSource(ctx, sourceId)) {
     throw writeGrantRefusal(ctx,
       `This connection may write only to source ${granted}. Omit source_id to write there, or ask the brain host's operator to grant source ${sourceId}.`,
       retryArguments ? { tool: operation, arguments: retryArguments } : undefined);
@@ -89,7 +90,8 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
     throw opError('page_not_found', 'The target entity is not writable by this caller.',
       `Entity page ${slug} in source ${sourceId} is deleted or not visible to this caller, so nothing was saved. Remember the fact against a visible entity, or without an entity (it is then filed under memory/unattributed).`);
   }
-  if (memberPage && snapshot && !memberPageIsOwn(memberPage, snapshot.page.frontmatter)) throw memberPageNotOwned(memberPage);
+  if (memberPage === SCOPE_PAGE_SLUG) { if (snapshot && !await scopePageIsShared(ctx.engine, { ...snapshot.page, source_id: sourceId, slug })) throw scopePageNotShared(sourceId); }
+  else if (memberPage && snapshot && !memberPageIsOwn(memberPage, snapshot.page.frontmatter)) throw memberPageNotOwned(memberPage);
   if (inferred && !snapshot) throw new InferredTargetRejected('NO_ENTITY');
   // Wave B: a segmented entity page over the single-string ceiling cannot take a fence row; named or inferred, the save refuses
   // before admission instead of misfiling it. Below the ceiling an inferred target's checks read the page back whole, as preparation does.
@@ -198,8 +200,10 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const entity = typeof p.entity === 'string' && !isNullLikeEntity(p.entity) ? p.entity.trim() : null;
   const resolved = entity ? await resolveRememberEntity(ctx, sourceId, entity) : null;
   // GST-359 C2: a remote member's fact is private, on its member page, and never inferred onto another page.
-  const memberPage = memberFactPage(ctx);
-  const call: RememberCall = memberPage ? { p: { ...p, visibility: 'private', infer_entity: false }, visibilityDefaulted: false }
+  // GST-1113: an attested memory_write that named a scope source saves world facts on that source's scope page instead.
+  const scopePage = perCallWriteSource(ctx, sourceId);
+  const memberPage = scopePage ? SCOPE_PAGE_SLUG : memberFactPage(ctx);
+  const call: RememberCall = memberPage ? { p: { ...p, visibility: scopePage ? 'world' : 'private', infer_entity: false }, visibilityDefaulted: false }
     : { p, visibilityDefaulted: opts.visibilityDefaulted === true };
   const inference = entity === null && !memberPage ? await inferRememberTarget(ctx, sourceId, source, call) : null;
   const linked = inference && 'target' in inference ? inference : null;
@@ -225,10 +229,10 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
     // The transport's session (MCP `_meta.session_id`) is recorded on the fact, as extract_facts records
     // it, so recall's session_id filter finds single facts too. Identity only — never a trust surface.
     intent: { ...callerIntent, entity_slug: entitySlug, fence, valid_from: typeof p.valid_from === 'string' ? new Date(p.valid_from).toISOString() : new Date().toISOString(), valid_until: validUntil?.toISOString() ?? null,
-      visibility, ...(call.visibilityDefaulted ? { visibility_defaulted: true } : {}), ...(memberPage ? { member_page: true } : {}),
+      visibility, ...(call.visibilityDefaulted ? { visibility_defaulted: true } : {}), ...(scopePage ? { scope_page: true } : memberPage ? { member_page: true } : {}),
       ...(linked ? { entity_inferred: linked.via } : {}), ...(inference && 'warning' in inference ? { entity_warning: inference.warning } : {}),
       session_id: ctx.sessionId ?? null },
-    authority, worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null });
+    authority, worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null, deferrable: true });
   const written = await waitForWrite(ctx.engine, row, ctx.config, waitMs ?? ctx.writeWaitMs);
   const response = throwIfHeld(withRememberTarget(row, () => writeResponse(written)));
   emitFenceNotice(ctx, response, row.slug);
@@ -350,7 +354,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   const row = await admitWrite(ctx.engine, { origin: ctx.admissionOrigin, principal, operation, sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, clientRequestId, callerIntent,
     intent: { ...callerIntent, reason, semantic_review: !ownPage && p.semantic_review !== false, ...(ownPage ? { member_page: ownPage } : {}) }, authority,
-    worktreeId: binding?.worktree_id ?? null, topologyGeneration: binding?.topology_generation ?? null });
+    worktreeId: binding?.worktree_id ?? null, topologyGeneration: binding?.topology_generation ?? null, deferrable: true });
   const written = await waitForWrite(ctx.engine, row, ctx.config, waitMs ?? ctx.writeWaitMs);
   return withSimilarActive(ctx, operation, sourceId, p, writeResponse(written));
 }

@@ -12,6 +12,7 @@ import type { BrainEngine } from '../../core/engine.ts';
 import { loadConfig } from '../../core/config.ts';
 import { startPersistenceConsumer } from '../../core/persistence/service.ts';
 import { describeLanePolicy, resolveLanePolicy } from '../../core/minions/lanes.ts';
+import { drainWakesUntilIdle } from '../../core/wakeshift/drain.ts';
 
 export async function maybeRunWorkerStartupRecovery(
   queue: MinionQueue,
@@ -55,6 +56,8 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
   const queueName = parseFlag(args, '--queue') ?? 'default';
   if (engine.kind === 'pglite') {
     await drainPgliteQueue(engine, queue, queueName, registerBuiltinHandlers);
+    // Wakeshift (plan D8): deliver the wakes this drain's jobs owe before the process exits; a no-op while off.
+    await drainWakesUntilIdle(engine).catch(e => console.error(`[gbrain jobs] wake drain failed: ${e instanceof Error ? e.message : String(e)}`));
     return;
   }
   const concurrency = resolveWorkerConcurrency(args);

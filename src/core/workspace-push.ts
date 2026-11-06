@@ -78,6 +78,7 @@ import {
 import { scanTextStream } from './secret-scan-stream.ts';
 import { shellQuote } from './mcp-registration.ts';
 import { gitChildEnv } from './git-env.ts';
+import { recordCommit, recordIntent } from './git/commit-ledger.ts';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -314,6 +315,13 @@ function git(
     maxBuffer: 64 * 1024 * 1024,
     env: gitChildEnv({ ...(opts.auth ? GIT_ENV_AUTH : GIT_ENV) }),
   }).toString();
+}
+
+/** PR B: the workspace push commit, with its commit-ledger intent and commit lines (src/core/git/commit-ledger.ts). */
+function commitRecorded(root: string, message: string): void {
+  recordIntent(root, { writer: 'workspace_push', head_before: tryGit(root, ['rev-parse', '--verify', '--quiet', 'HEAD']), message });
+  git(root, ['commit', '-m', message], { timeoutMs: 60_000 });
+  recordCommit(root, { sha: tryGit(root, ['rev-parse', 'HEAD']) ?? '', writer: 'workspace_push' });
 }
 
 function tryGit(root: string, args: string[], opts: { timeoutMs?: number; auth?: boolean } = {}): string | null {
@@ -1074,7 +1082,7 @@ export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspaceP
     try {
       const clean = tryGit(root, ['diff', '--cached', '--quiet']) !== null;
       if (!clean) {
-        git(root, ['commit', '-m', opts.commitMessage ?? 'gbrain: workspace push'], { timeoutMs: 60_000 });
+        commitRecorded(root, opts.commitMessage ?? 'gbrain: workspace push');
         committed = true;
       }
     } catch (e) {

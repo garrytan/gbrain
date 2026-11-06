@@ -21,11 +21,11 @@ import { writerStamp } from './writer-versions.ts';
 import { intentCarriesContent, intentCarriesPurgedContent, PURGE_PRESENCE_COLUMNS } from './purged-intent.ts';
 import { hostname } from 'node:os';
 import { claimOwner, claimOwnerKind, claimPhaseStamp, startClaimPhase } from './claim-phase.ts';
-import { consumerIdentity, RESIDENT_CONSUMER_KINDS } from './consumer-heartbeat.ts';
+import { CONSUMER_LIVE_MS, consumerIdentity, RESIDENT_CONSUMER_KINDS } from './consumer-heartbeat.ts';
 import { classifyHolderLiveness, syncLockId } from '../db-lock.ts';
 import { publicFailureDetail } from './publication-failure.ts';
 import { catalogueError } from '../error-catalogue.ts';
-import { ACTIVE_REFRESH_STATES_SQL, refreshFenceClear } from './worktree-refresh-schema.ts';
+import { ACTIVE_REFRESH_STATES_SQL, refreshFenceClear, RELEASED_DEFERRED } from './worktree-refresh-schema.ts';
 import { assertMutationProtocol, assertSharedSkillPersistence, declareDurablePersistence, declarePersistenceProtocol, isPersistenceDeclaration, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { assertGraduationAdmission } from './graduation-custody.ts';
 import { schemaAdmissionRefusal } from './schema-admission.ts';
@@ -67,6 +67,8 @@ export interface WriteAdmission {
   origin?: AdmissionOrigin;
   /** Phase 4.2: the brain the cached pre-admission reads came from; admission under another brain throws PreadmitBrainChanged. */
   brainId?: string;
+  /** PR B: the caller reports a pending receipt for a write deferred behind a refresh (page and memory verbs); others keep the refusal. */
+  deferrable?: boolean;
 }
 interface Counter {
   key: string; outstanding_count: number | string; intent_bytes: number | string;
@@ -292,14 +294,16 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
   const origin = resolveAdmissionOrigin(input.origin);
   // #6741 C: a declared background producer is refused before any receipt when the source's owner fails its verification.
   if (input.worktreeId && declaredBackground(input.origin)) await assertBackgroundOwner(engine, input.sourceId, ownerStatusFix);
+  const barrier = input.worktreeId && deferrable(input) ? await readRefreshBarrier(engine) : null;
   return { requestId, apply: async (tx: BrainEngine): Promise<WriteRequest> => {
     await declarePersistenceProtocol(tx);
     // The guards are sent together in lock order (worktree, source, writer, counters) and judged in
     // that order: the first refusal in this list is the one reported, as when they ran one by one.
+    let deferTo: string | null = null;
     const [, , , , , counters, topology, prior] = await pipelined(tx, [
       () => assertGraduationAdmission(tx),
       async () => assertMutationProtocol({ target_kind: input.targetKind, protocol_version: input.protocolVersion }),
-      async () => { if (input.worktreeId) await assertWorktreeAdmission(tx, input, true); },
+      async () => { if (input.worktreeId) deferTo = await assertWorktreeAdmission(tx, input, true, barrier); },
       // Source membership is locked before principal/counter/request guards. A
       // deleted/recreated source never receives work accepted for its old identity.
       async () => {
@@ -346,12 +350,12 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
       INSERT INTO persistence_requests
       (principal_kind,principal_id,request_id,operation,source_id,source_incarnation,page_id,slug,
        worktree_id,topology_generation,digest,intent,authority,intent_bytes,terminal_reservation,target_kind,protocol_version,
-       admitter_version,admitter_host_id,client_request_id,admitter_segment_reader)
-      VALUES($1,$2,$3::uuid,$4,$5,$6::uuid,$7,$8,$9::uuid,$10,$11,$12::text::jsonb,$13::text::jsonb,$14,$15,$16,$17,$18,$19::uuid,$21,true)
+       admitter_version,admitter_host_id,client_request_id,admitter_segment_reader,state,deferred_refresh_id)
+      VALUES($1,$2,$3::uuid,$4,$5,$6::uuid,$7,$8,$9::uuid,$10,$11,$12::text::jsonb,$13::text::jsonb,$14,$15,$16,$17,$18,$19::uuid,$21,true,$22,$23::uuid)
       RETURNING *`, [input.principal.kind, input.principal.id, requestId, input.operation, input.sourceId,
       input.sourceIncarnation, input.pageId ?? null, input.slug, input.worktreeId ?? null, input.topologyGeneration ?? null,
       fingerprint, JSON.stringify(input.intent), JSON.stringify(input.authority), bytes, terminalBytes, input.targetKind ?? 'page', input.protocolVersion ?? 1,
-      stamp.version, stamp.hostId, counters.map(c => c.key), input.clientRequestId ?? null]);
+      stamp.version, stamp.hostId, counters.map(c => c.key), input.clientRequestId ?? null, deferTo ? 'deferred' : 'queued', deferTo]);
     return row;
   } };
 }
@@ -504,7 +508,7 @@ export async function claimGroupFollowers(engine: BrainEngine, head: WriteReques
     // (the first non-member) for the claim's round trips, so its recovery record and reads waited on the lane.
     const next = await tx.executeRaw<{ id: string; state: string; grp: string | null; recovering: boolean; claim_phase: unknown }>(`WITH next AS (
         SELECT id,sequence,state,${GROUP_KEY_SQL} AS grp,recovery IS NOT NULL AS recovering,NOT ${BACKOFF_ELAPSED('persistence_requests')} AS backoff,transient_interruptions>0 AS charged FROM persistence_requests
-        WHERE worktree_id=$1::uuid AND sequence>$2 AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL) ORDER BY sequence LIMIT $3),
+        WHERE worktree_id=$1::uuid AND sequence>$2 AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL OR ${RELEASED_DEFERRED('persistence_requests')}) ORDER BY sequence LIMIT $3),
       -- v261: a member still in its transient backoff ends the group's prefix like a non-member, and so does one already
       -- charged a transient interruption: it publishes alone, so a batch that overruns only as a whole is not retried as one.
       bound AS (SELECT min(sequence) AS sequence FROM next WHERE grp IS DISTINCT FROM $4 OR state<>'queued' OR recovering OR backoff OR charged)
@@ -590,33 +594,64 @@ export async function chargePreparationAttempt(engine: SqlEngine, row: WriteRequ
  * binding (#6007: both read in one statement after the lock; the fence is
  * judged first, as before).
  */
-async function assertWorktreeAdmission(tx: BrainEngine, input: WriteAdmission, replayable = false): Promise<void> {
-  // Sent together: the server takes the share lock before it reads the fence and the binding.
+async function assertWorktreeAdmission(tx: BrainEngine, input: WriteAdmission, replayable = false, barrier: RefreshBarrier | null = null): Promise<string | null> {
+  // Sent together: the server takes the share lock before it reads the fence and the binding. PR B: with the barrier on, the
+  // active refresh row is locked right after the worktree (protocol.ts lock order), so a deferral and the refresh's terminal
+  // transition serialize on it, and the syncing completion below upgrades no lock.
   const [[worktree], [state]] = await pipelined(tx, [
     () => tx.executeRaw<{ state: string; owner_epoch: string }>('SELECT state,owner_epoch::text AS owner_epoch FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [input.worktreeId]),
     () => tx.executeRaw<{ refresh: { id: string; state: string; source_ids: string[] } | string | null; bound: boolean }>(`SELECT
       (SELECT row_to_json(f) FROM (SELECT id,state,source_ids FROM persistence_worktree_refreshes
-        WHERE worktree_id=$3::uuid AND state IN ${ACTIVE_REFRESH_STATES_SQL} LIMIT 1) f) AS refresh,
+        WHERE worktree_id=$3::uuid AND state IN ${ACTIVE_REFRESH_STATES_SQL} LIMIT 1${barrier ? ' FOR NO KEY UPDATE' : ''}) f) AS refresh,
       EXISTS (SELECT 1 FROM persistence_source_bindings WHERE source_id=$1
         AND source_incarnation=$2::uuid AND worktree_id=$3::uuid AND topology_generation=$4) AS bound`,
     [input.sourceId, input.sourceIncarnation, input.worktreeId, input.topologyGeneration]),
   ]) as [Array<{ state: string; owner_epoch: string }>, Array<{ refresh: { id: string; state: string; source_ids: string[] } | string | null; bound: boolean }>];
   const refresh = typeof state?.refresh === 'string' ? JSON.parse(state.refresh) as { id: string; state: string; source_ids: string[] } : state?.refresh ?? null;
-  if (refresh) await assertWorktreeNotRefreshing(tx, input, refresh, replayable);
+  const deferTo = refresh ? await assertWorktreeNotRefreshing(tx, input, refresh, replayable, barrier) : null;
   // #6741 C: a background producer never takes a permanent request id against a worktree in recovery (a draining owner still replays).
   if (worktree?.state === 'recovering' && resolveAdmissionOrigin(input.origin) === 'background') throw backgroundWorktreeInactive(input.sourceId, worktree.state, ownerStatusFix(input.sourceId));
   if (!state?.bound || input.ownerEpoch != null && worktree && worktree.owner_epoch !== String(input.ownerEpoch)) throw opError('source_changed', 'The source binding changed during admission.',
     `Source ${input.sourceId}'s worktree binding changed (a claim, transfer or lifecycle change) while this write was being admitted, so nothing was accepted. Check the owner with the command in fix, then submit the write again; reusing the same request_id is safe because nothing was recorded.`,
     { fix: ownerStatusFix(input.sourceId) });
+  return deferTo;
 }
-async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmission, refresh: { id: string; state: string; source_ids: string[] }, replayable: boolean): Promise<void> {
+
+/** PR B: the refresh barrier's bound when it is on (docs/designs/REFRESH_WRITE_BARRIER.md). */
+export interface RefreshBarrier { maxDeferred: number }
+export const REFRESH_BARRIER_MAX_DEFERRED_KEY = 'persistence.refresh_barrier_max_deferred';
+export const REFRESH_BARRIER_MAX_DEFERRED = 1000;
+/** What a consumer advertises (consumer-heartbeat.ts CONSUMER_CAPABILITIES) and admission requires of every live one on the owner host. */
+export const REFRESH_BARRIER_CAPABILITY = 'refresh_barrier_1';
+/** A single page write whose caller opted in may wait behind a refresh; jobs (managed sync included), grouped batches and skill bundles keep the refusal. */
+function deferrable(input: WriteAdmission): boolean {
+  return input.deferrable === true && (input.targetKind ?? 'page') === 'page' && input.operation !== 'submit_job' && publicationGroupKey({ operation: input.operation, intent: input.intent }) === null;
+}
+async function readRefreshBarrier(engine: BrainEngine): Promise<RefreshBarrier | null> {
+  if (!await writeSwitchOn(engine, 'refresh_barrier').catch(() => false)) return null;
+  const [row] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [REFRESH_BARRIER_MAX_DEFERRED_KEY]);
+  const configured = Number(row?.value);
+  return { maxDeferred: Number.isSafeInteger(configured) && configured > 0 ? configured : REFRESH_BARRIER_MAX_DEFERRED };
+}
+/** Room under the per-refresh cap, and every live consumer of the worktree's owner host can drain a deferred write. */
+async function deferralRoom(tx: BrainEngine, worktreeId: string, refreshId: string, barrier: RefreshBarrier): Promise<boolean> {
+  const [row] = await tx.executeRaw<{ deferred: number; incapable: boolean }>(`SELECT
+    (SELECT count(*) FROM persistence_requests WHERE worktree_id=$2::uuid AND state='deferred' AND deferred_refresh_id=$1::uuid)::int AS deferred,
+    EXISTS (SELECT 1 FROM persistence_consumers c JOIN persistence_worktrees w ON w.owner_host_id=c.host_id WHERE w.id=$2::uuid
+      AND c.renewed_at>now()-($3::integer*interval '1 millisecond') AND NOT ($4=ANY(c.capabilities))) AS incapable`,
+  [refreshId, worktreeId, CONSUMER_LIVE_MS, REFRESH_BARRIER_CAPABILITY]);
+  return !!row && !row.incapable && Number(row.deferred) < barrier.maxDeferred;
+}
+/** The refresh to defer this write behind, or null when it is admitted normally; otherwise refuses. */
+async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmission, refresh: { id: string; state: string; source_ids: string[] }, replayable: boolean,
+  barrier: RefreshBarrier | null): Promise<string | null> {
   const managedSync = input.operation === 'submit_job' && String(input.intent.kind ?? '').startsWith('managed_sync_');
-  if (refresh.state === 'syncing' && managedSync) return;
+  if (refresh.state === 'syncing' && managedSync) return null;
   if (refresh.state === 'syncing') {
     const completed = await tx.executeRaw(`UPDATE persistence_worktree_refreshes f SET state='completed',completed_at=now(),updated_at=now()
       WHERE f.id=$1::uuid AND f.state='syncing' AND NOT EXISTS (SELECT 1 FROM sources s WHERE s.id=ANY(f.source_ids)
         AND s.last_commit IS DISTINCT FROM f.target_head) RETURNING f.id`, [refresh.id]);
-    if (completed.length) return;
+    if (completed.length) return null;
   }
   if (refresh.state === 'recovery_required') throw catalogueError('refresh_recovery_required',
     `Refresh ${refresh.id} could not verify the checkout HEAD of source ${input.sourceId}; writes to its worktree stay fenced.`,
@@ -626,7 +661,9 @@ async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmissio
     `Retry the same request_id after retry_after_ms: 1000. Check progress with gbrain sources writer status ${input.sourceId}.`);
   // A single write's replay of a request already accepted (its acknowledgement lost before the fence) reconciles to its
   // receipt instead; a group admission never bypasses, since its other items may be new.
-  if (replayable && input.requestId && await getWriteRequest(tx, input.principal, input.requestId)) return;
+  if (replayable && input.requestId && await getWriteRequest(tx, input.principal, input.requestId)) return null;
+  // PR B: with the barrier on, the write waits behind the refresh as a deferred request instead of being refused.
+  if (barrier && input.worktreeId && await deferralRoom(tx, input.worktreeId, refresh.id, barrier)) return refresh.id;
   error.detail = 'retry_after_ms=1000';
   error.retryable = true;
   // GST-1387: nothing was recorded, so the same call is retried after the delay (actor provider renders next: wait).
@@ -642,6 +679,13 @@ async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmissio
  */
 export const EARLIER_HEAD = (earlier: string, r: string, priority: string, laneRoots: string) => `${earlier}.sequence<${r}.sequence
         AND ${earlier}.state IN ('queued','running','recovering') AND NOT ${PASSES_QUEUED_SYNC(earlier, r, priority, laneRoots)}`;
+/**
+ * PR B: a released deferred write ahead of `r` on its worktree, a page write that is never a sync row, so nothing passes it.
+ * A probe of its own (the deferred partial index), so `EARLIER_HEAD` stays a range scan of the pending index.
+ */
+export const EARLIER_DEFERRED = (earlier: string, r: string) => `${earlier}.sequence<${r}.sequence AND ${RELEASED_DEFERRED(earlier)}`;
+/** Sets the session flag the v292 deferred-row guard requires of a claim that moves a deferred row to running. */
+export const REFRESH_BARRIER_CLAIM_PREDICATE = "set_config('gbrain.refresh_barrier','1',true)='1'";
 /**
  * The rows `claimNextWrite` may claim, over `persistence_requests r LEFT JOIN
  * persistence_worktrees w`, with $1 = host id and $2 = excluded root keys. An
@@ -671,7 +715,7 @@ const PASSES_QUEUED_SYNC = (earlier: string, r: string, priority: string, laneRo
  * run in the claiming process: there a foreground write also passes running lane groups that do not name its
  * page and publishes beside them on the process's shared worktree lock (group-publish.ts).
  */
-export const claimableWriteSql = (priority: string, laneRoots = "'{}'::text[]") => `r.state='queued' AND (r.worktree_id IS NULL OR (w.owner_host_id=$1::uuid AND w.state='active'))
+export const claimableWriteSql = (priority: string, laneRoots = "'{}'::text[]") => `(r.state='queued' OR ${RELEASED_DEFERRED('r')}) AND (r.worktree_id IS NULL OR (w.owner_host_id=$1::uuid AND w.state='active'))
       AND (r.worktree_id IS NULL OR ${refreshFenceClear('r')})
       AND NOT (COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)=ANY($2::text[]))
       AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
@@ -685,6 +729,8 @@ export const claimableWriteSql = (priority: string, laneRoots = "'{}'::text[]") 
       AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier
         WHERE r.worktree_id IS NULL AND earlier.worktree_id IS NULL AND earlier.source_incarnation=r.source_incarnation
         AND ${EARLIER_HEAD('earlier', 'r', priority, laneRoots)})
+      AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier
+        WHERE r.worktree_id IS NOT NULL AND earlier.worktree_id=r.worktree_id AND ${EARLIER_DEFERRED('earlier', 'r')})
       AND NOT ((${priority}) AND ${SYNC_KIND('r')} AND EXISTS (SELECT 1 FROM persistence_requests ahead
         WHERE ahead.worktree_id=r.worktree_id AND ahead.sequence>r.sequence AND ahead.state IN ('running','recovering') AND NOT ${SYNC_KIND('ahead')}))`;
 /** With the switch on, a claimable foreground request is claimed before the sync rows it passes. */
@@ -734,14 +780,21 @@ const LEASE_HELD = `EXISTS (SELECT 1 FROM gbrain_cycle_locks l WHERE ${SYNC_KIND
  * the worktree after sequence `seen` (the newest sequence when this process last claimed a sync head there) earns the sync
  * side one head, so a stream of writes cannot starve it. Uncorrelated with the candidate row, so a claim reads it once.
  * The FIFO claim holds back only sync rows the write would pass (sequence below it): an earlier unfinished write is the
- * head-of-root rules' business, and one stalled in another process must not stop the sync behind it.
+ * head-of-root rules' business, and one stalled in another process must not stop the sync behind it. A write queued
+ * behind an earlier queued (or released deferred) write that waits on a sync row naming its page cannot go first either (a write never passes
+ * an earlier one), so it holds back nothing: counting it held back the very sync row the earlier write waited on, and
+ * the three rows waited on each other with no foreground commit left to earn the sync side a head.
  */
 const FOREGROUND_WAITING_ON = (nonce: string, seen: string, worktree = 'TRUE') => `SELECT f.worktree_id, f.sequence FROM persistence_requests f
-    WHERE ${worktree} AND f.state IN ('queued','running','recovering') AND (f.state<>'running' OR (NOT f.publication_started
+    WHERE ${worktree} AND (f.state IN ('queued','running','recovering') OR ${RELEASED_DEFERRED('f')}) AND (f.state<>'running' OR (NOT f.publication_started
       AND f.claim_phase->'owner'->>'nonce' IS DISTINCT FROM ${nonce}))
     AND f.recovery IS NULL AND NOT ${SYNC_KIND('f')}
     AND NOT EXISTS (SELECT 1 FROM persistence_requests named WHERE named.worktree_id=f.worktree_id AND named.sequence<f.sequence
       AND named.state IN ('queued','running','recovering') AND ${SYNC_KIND('named')} AND ${NAMES_PAGE('named', 'f')})
+    AND NOT EXISTS (SELECT 1 FROM persistence_requests ahead WHERE ahead.worktree_id=f.worktree_id AND ahead.sequence<f.sequence
+      AND (ahead.state='queued' OR ${RELEASED_DEFERRED('ahead')}) AND NOT ${SYNC_KIND('ahead')}
+      AND EXISTS (SELECT 1 FROM persistence_requests named WHERE named.worktree_id=ahead.worktree_id AND named.sequence<ahead.sequence
+        AND named.state IN ('queued','running','recovering') AND ${SYNC_KIND('named')} AND ${NAMES_PAGE('named', 'ahead')}))
     AND NOT EXISTS (SELECT 1 FROM persistence_requests c WHERE c.sequence>COALESCE(${seen},0) AND c.worktree_id=f.worktree_id
       AND c.state='committed' AND NOT ${SYNC_KIND('c')})`;
 
@@ -781,7 +834,7 @@ export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseM
     const token = randomUUID();
     const [claimed] = await tx.executeRaw<WriteRequest & { passed_sync: boolean; seen_sequence: string | null }>(`UPDATE persistence_requests SET state='running',
       execution_token=$2::uuid,claim_expires_at=now()+($3::double precision*interval '1 millisecond'),
-      updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb WHERE id=$1::uuid RETURNING *,EXISTS (SELECT 1 FROM persistence_requests earlier
+      updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb WHERE id=$1::uuid AND ${REFRESH_BARRIER_CLAIM_PREDICATE} RETURNING *,EXISTS (SELECT 1 FROM persistence_requests earlier
         WHERE earlier.worktree_id=persistence_requests.worktree_id AND earlier.sequence<persistence_requests.sequence
         AND earlier.state='queued' AND ${SYNC_KIND('earlier')}) AS passed_sync,
         CASE WHEN ${SYNC_KIND('persistence_requests')} THEN (SELECT max(sequence) FROM persistence_requests)::text END AS seen_sequence`,
@@ -816,7 +869,7 @@ export async function claimNextLaneHead(engine: BrainEngine, hostId: string, wor
           AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running'))
         AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
         AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier WHERE earlier.worktree_id=r.worktree_id AND earlier.sequence<r.sequence
-          AND (earlier.state IN ('queued','recovering') OR (earlier.state='running' AND COALESCE(earlier.intent->>'lane','')<>$3)))
+          AND (earlier.state IN ('queued','recovering') OR ${RELEASED_DEFERRED('earlier')} OR (earlier.state='running' AND COALESCE(earlier.intent->>'lane','')<>$3)))
         -- #5984 Phase 4.5: no new lane head while a foreground write that may go first waits (a claimed one publishes
         -- beside the lanes), except one head after each foreground commit since this run's last head claim.
         AND NOT ((${foregroundPrioritySql()}) AND r.worktree_id IN (SELECT f.worktree_id FROM (${FOREGROUND_WAITING_ON('$5::text', '$4::bigint', 'f.worktree_id=$2::uuid')}) f))
@@ -1217,11 +1270,15 @@ export async function compactReceipt(engine: BrainEngine, row: Pick<WriteRequest
     return { freed_bytes: freed };
   });
 }
-export function receiptFor(row: WriteRequest, facts?: WriteHealthFacts, now = Date.now()) {
+export function receiptFor(stored: WriteRequest, facts?: WriteHealthFacts, now = Date.now()) {
+  // PR B: a deferred row reads as queued (every receipt reader, an older client's included, knows that state) plus `deferred`.
+  const state: Exclude<RequestState, 'deferred'> = stored.state === 'deferred' ? 'queued' : stored.state;
+  const row = { ...stored, state };
   return {
     ...(row.outcome ?? {}),
     ...(row.outcome ? { outcome: row.outcome } : {}),
-    request_id: row.request_id, ...(row.client_request_id ? { client_request_id: row.client_request_id } : {}), state: row.state,
+    request_id: row.request_id, ...(row.client_request_id ? { client_request_id: row.client_request_id } : {}), state,
+    ...(stored.state === 'deferred' && stored.deferred_refresh_id ? { deferred: { refresh_id: stored.deferred_refresh_id } } : {}),
     ...writeHealth(row, facts, now),
     ...(row.error_code ? { write_error: row.error_code } : {}),
     ...(row.error_detail ? { write_error_detail: publicFailureDetail(row.error_detail) } : {}),

@@ -19,7 +19,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { PostgresEngine } from '../src/core/postgres-engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { readRequestIndexStates } from '../src/core/persistence/checkpoint-validation.ts';
-import { PERSISTENCE_REQUEST_ONLINE_INDEXES, PERSISTENCE_REQUEST_SLUG_INTENT_INDEX, POSTGRES_CONCURRENT_PERSISTENCE_INDEXES } from '../src/core/persistence/schema.ts';
+import { PERSISTENCE_REQUEST_ONLINE_INDEXES, PERSISTENCE_REQUEST_SLUG_INTENT_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX, POSTGRES_CONCURRENT_PERSISTENCE_INDEXES } from '../src/core/persistence/schema.ts';
 import { PGLITE_SCHEMA_SQL } from '../src/core/pglite-schema.generated.ts';
 import { SCHEMA_SQL } from '../src/core/schema-embedded.generated.ts';
 import { MIGRATIONS } from '../src/core/schema-migrations/registry.generated.ts';
@@ -98,9 +98,12 @@ for (const backend of testBackends()) describe(`[${backend}] #6511 the slug inde
       await engine.executeRaw('ANALYZE persistence_requests');
       expect(await explain('seed-7')).toContain(INDEX.name);
       await engine.executeRaw(`DROP INDEX ${INDEX.name}`);
+      // #8707: the failed-writes (source, slug, sequence) index also holds these rows; without either slug index the lookup scans the table.
+      await engine.executeRaw(`DROP INDEX ${PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX.name}`);
       expect(await explain('seed-7')).toContain('Seq Scan');
       await migration!.handler!(engine);
       expect(await explain('seed-7')).toContain(INDEX.name);
+      await engine.executeRaw(PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX.sql);
     }, 120_000);
 
     test('an INVALID index (an interrupted concurrent build) is dropped and rebuilt; the build is CONCURRENTLY outside a transaction and sets nothing on the session', async () => {

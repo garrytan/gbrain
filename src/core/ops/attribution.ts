@@ -52,8 +52,8 @@ export async function resolveWriteAttributions(engine: BrainEngine, stored: Stor
   const requestIds = [...new Set(stored.map(s => s.request_id).filter((id): id is string => !!id))];
   const localIds = [...ids('local_cli'), ...ids('local_stdio')];
   const [requests, clients, tokens, writers] = await Promise.all([
-    requestIds.length ? engine.executeRaw<{ id: string; operation: string; completed_at: Date | string | null }>(
-      'SELECT id::text AS id, operation, completed_at FROM persistence_requests WHERE id = ANY($1::uuid[])', [requestIds]) : [],
+    requestIds.length ? engine.executeRaw<{ id: string; operation: string; completed_at: Date | string | null; agent_label: string | null }>(
+      "SELECT id::text AS id, operation, completed_at, authority->>'agentLabel' AS agent_label FROM persistence_requests WHERE id = ANY($1::uuid[])", [requestIds]) : [],
     ids('oauth_client').length ? engine.executeRaw<{ id: string; name: string }>(
       'SELECT client_id AS id, client_name AS name FROM oauth_clients WHERE client_id = ANY($1::text[])', [ids('oauth_client')]) : [],
     ids('legacy_token').length ? engine.executeRaw<{ id: string; name: string }>(
@@ -76,6 +76,7 @@ export async function resolveWriteAttributions(engine: BrainEngine, stored: Stor
       principal: s.principal_kind && s.principal_id
         ? { kind: s.principal_kind, id: s.principal_id, name: names.get(`${s.principal_kind}:${s.principal_id}`) ?? null } : null,
       at: iso(request?.completed_at ?? s.at),
+      ...(request?.agent_label ? { agent_label: request.agent_label } : {}),
       origin: s.request_id ? 'request' : 'maintenance',
     };
   });

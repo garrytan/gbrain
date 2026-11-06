@@ -21,7 +21,7 @@ import { currentWriteTrust, withTrustPromotion, withWriteAttribution } from '../
 import { normalizeDimension } from '../chronicle/ontology.ts';
 import { verbError, type OperationError } from '../ops/contract.ts';
 import type { Principal } from '../persistence/model.ts';
-import { onMemberPageSql } from '../access/member-facts.ts';
+import { onOwnedMemoryPageSql } from '../access/member-facts.ts';
 import {
   decisionResult, getTrustProposal, insertTrustProposal, pendingTrustProposalsFor, registerTrustProposalHandler, transitionTrustProposal, trustProposalRef,
   type TrustDecision, type TrustDecisionContext, type TrustProposalAction, type TrustProposalRow,
@@ -59,7 +59,7 @@ export async function lexicalContestCandidate(engine: BrainEngine, sourceId: str
   const rows = await engine.executeRaw<{ id: number; fact: string; trust_tier: string }>(
     `SELECT id, fact, trust_tier FROM facts WHERE source_id = $1 AND entity_slug = $2 AND kind = $3 AND visibility = $4
        AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND ${trustRankSql('trust_tier')} > ${trustRankSql('$5::text')}
-       AND ${input.page_slug ? 'source_markdown_slug = $6' : `($6::text IS NULL AND NOT ${onMemberPageSql('facts')})`}
+       AND ${input.page_slug ? 'source_markdown_slug = $6' : `($6::text IS NULL AND NOT ${onOwnedMemoryPageSql('facts')})`}
      ORDER BY id DESC LIMIT 200`, [sourceId, input.entity_slug, input.kind, input.visibility, writer, input.page_slug ?? null]);
   const mine = slotTokens(input.fact);
   let best: { id: number; trust_tier: TrustTier; score: number } | null = null;

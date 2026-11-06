@@ -20,7 +20,7 @@ export function gitGapScanTimeoutMs(): number {
   return Number.isFinite(n) && n > 0 ? n : 10_000;
 }
 
-type SourceTotals = Pick<GitGapCensus, 'source_id' | 'complete' | 'pages' | 'states' | 'declared' | 'worktree'>;
+type SourceTotals = Pick<GitGapCensus, 'source_id' | 'complete' | 'pages' | 'live_pages' | 'states' | 'declared' | 'worktree'>;
 
 const nonzero = (record: Record<string, number>) => Object.entries(record).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k}`).join(', ') || 'no pages';
 
@@ -36,8 +36,8 @@ async function runDbAheadOfGit(ctx: DoctorContext): Promise<Check[]> {
     for (const row of withCheckout) {
       if (Date.now() >= deadlineAt) { unread.push(row.id); continue; }
       try {
-        const { source_id, complete, pages, states, declared, worktree } = await censusGitGap(engine, row.id, { sample: 0, deadlineAt });
-        sources.push({ source_id, complete, pages, states, declared, worktree });
+        const { source_id, complete, pages, live_pages, states, declared, worktree } = await censusGitGap(engine, row.id, { sample: 0, deadlineAt });
+        sources.push({ source_id, complete, pages, live_pages, states, declared, worktree });
       } catch (error) {
         errors.push({ source_id: row.id, message: error instanceof Error ? error.message : String(error) });
       }
@@ -45,7 +45,7 @@ async function runDbAheadOfGit(ctx: DoctorContext): Promise<Check[]> {
     const partial = [...sources.filter(source => !source.complete).map(source => source.source_id), ...unread];
     const details = { informational: true, sources, partial_sources: partial, errors, sources_without_git_checkout: rows.length - withCheckout.length,
       timeout_ms: gitGapScanTimeoutMs(), docs: GIT_GAP_DOCS };
-    const listed = sources.map(source => `${source.source_id}: ${nonzero(source.states)}${source.complete ? '' : ' (partial)'}`);
+    const listed = sources.map(source => `${source.source_id}: ${source.complete ? `${source.live_pages} live page(s)` : `PARTIAL, ${source.pages} of ${source.live_pages} live page(s) read`}, ${nonzero(source.states)}`);
     const message = withCheckout.length
       ? `Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout.${listed.length ? ` ${listed.join('; ')}.` : ''}`
         + `${unread.length ? ` Not reached within the ${details.timeout_ms / 1000}s budget: ${unread.join(', ')}.` : ''}`

@@ -10,7 +10,7 @@ import { outcomeMarkerSql } from './audit-sources.ts';
 import { coverageActive, noteBelief, readLedgerSource, withBeliefBatch } from '../belief/ledger.ts';
 import { createPageVersion } from '../page-state/versions.ts';
 import { validateSlug } from '../utils.ts';
-import { factWithdrawalSubjectSql, onMemberPageSql } from '../access/member-facts.ts';
+import { factWithdrawalSubjectSql, onOwnedMemoryPageSql } from '../access/member-facts.ts';
 
 export interface WithdrawalCommit {
   withdrawn: boolean;
@@ -81,7 +81,7 @@ export async function planFactWithdrawal(engine: BrainEngine, id: number, source
   const affected = existing ? [] : await discoverWithdrawalTargets(engine, sourceId, [{ visibility, fact_hash, subject, claim: fact }]).catch(withdrawalDiscoveryFailure);
   // The belief ledger's streams of the facts this withdrawal expires (fence pages and database-only subjects), locked with the pages.
   const streams = (await engine.executeRaw<{ slug: string }>(`SELECT DISTINCT COALESCE(source_markdown_slug, entity_slug) AS slug FROM facts
-    WHERE source_id=$1 AND visibility=$2 AND gbrain_fact_fingerprint(fact)=$3 AND ($4='*' OR entity_slug=$4 OR (${onMemberPageSql('facts')} AND source_markdown_slug=$4)) AND expired_at IS NULL
+    WHERE source_id=$1 AND visibility=$2 AND gbrain_fact_fingerprint(fact)=$3 AND ($4='*' OR entity_slug=$4 OR (${onOwnedMemoryPageSql('facts')} AND source_markdown_slug=$4)) AND expired_at IS NULL
       AND COALESCE(source_markdown_slug, entity_slug) IS NOT NULL`, [sourceId, visibility, fact_hash, subject]))
     .map(r => r.slug).filter(slug => { try { validateSlug(slug); return true; } catch { return false; } });
   const slugs = [...new Set([...affected.map(page => page.slug), ...streams])].sort();
@@ -100,7 +100,7 @@ export async function recordFactWithdrawal(
     publication?: { withdrawnAt: string; expectedSlugs: readonly string[] } } = {},
 ): Promise<WithdrawalCommit> {
   const admit = withdrawalAdmitSql(opts.excludePrivate);
-  const pageScoped = `(${onMemberPageSql('facts')} AND source_markdown_slug=$4)`;
+  const pageScoped = `(${onOwnedMemoryPageSql('facts')} AND source_markdown_slug=$4)`;
   return engine.transaction(async tx => {
     // A managed caller takes this EXCLUSIVE source lock before authority,
     // counters and request rows. Repeating an already-held lock is safe.
