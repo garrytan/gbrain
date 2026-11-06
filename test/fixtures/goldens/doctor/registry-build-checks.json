@@ -886,6 +886,10 @@
         "name": "quarantined_changes"
       },
       {
+        "category": "brain",
+        "name": "foreign_writers"
+      },
+      {
         "category": "ops",
         "name": "decide_health"
       },

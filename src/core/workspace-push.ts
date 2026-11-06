@@ -78,6 +78,7 @@ import {
 import { scanTextStream } from './secret-scan-stream.ts';
 import { shellQuote } from './mcp-registration.ts';
 import { gitChildEnv } from './git-env.ts';
+import { recordCommit, recordIntent } from './git/commit-ledger.ts';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -1074,8 +1075,11 @@ export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspaceP
     try {
       const clean = tryGit(root, ['diff', '--cached', '--quiet']) !== null;
       if (!clean) {
-        git(root, ['commit', '-m', opts.commitMessage ?? 'gbrain: workspace push'], { timeoutMs: 60_000 });
+        const message = opts.commitMessage ?? 'gbrain: workspace push';
+        recordIntent(root, { writer: 'workspace_push', head_before: tryGit(root, ['rev-parse', '--verify', '--quiet', 'HEAD']), message });
+        git(root, ['commit', '-m', message], { timeoutMs: 60_000 });
         committed = true;
+        recordCommit(root, { sha: tryGit(root, ['rev-parse', 'HEAD']) ?? '', writer: 'workspace_push' });
       }
     } catch (e) {
       return finish({
