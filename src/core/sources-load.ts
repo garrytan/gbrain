@@ -196,10 +196,18 @@ export function relativeSourceLocalPathSkipWarning(sourceId: string, localPath: 
   );
 }
 
-/** True iff the source's config.federated field is the literal boolean true. */
+/**
+ * True iff the source's config.federated field is the literal boolean true. GST-1113: a QM scope source
+ * (config.qm_scope) is never federated, whatever its federated key says, so no connection without a grant reads it.
+ */
 export function isSourceFederated(config: unknown): boolean {
   const parsed = parseSourceConfig(config);
-  return parsed.federated === true;
+  return parsed.federated === true && parsed.qm_scope !== true;
+}
+
+/** GST-1113: whether a source is a QM scope source (config.qm_scope, set when a credential first lists it in attest_sources). */
+export function isScopeSourceConfig(config: unknown): boolean {
+  return parseSourceConfig(config).qm_scope === true;
 }
 
 /**

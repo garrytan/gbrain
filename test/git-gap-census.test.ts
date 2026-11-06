@@ -385,7 +385,7 @@ for (const backend of testBackends()) describe(`git-gap census (git-canonical G1
     expect(check!.status).toBe('ok');
     expect(check!.details.sources.find((s: { source_id: string }) => s.source_id === 'default')).toMatchObject({ pages: 2, complete: true,
       states: { equal: 1, undeclared_database_only: 1 } });
-    expect(check!.message).toContain('default: 1 equal, 1 undeclared_database_only');
+    expect(check!.message).toContain('default: 2 live page(s), 1 equal, 1 undeclared_database_only');
     expect(check!.message).not.toContain('notes/');
     const [late] = await withEnv({ GBRAIN_DOCTOR_GIT_GAP_TIMEOUT_MS: '1' }, () =>
       dbAheadOfGitEntry.run({ engine, progress: { heartbeat: () => {} }, entryDeadlineAt: Date.now() } as never)) as Array<{ status: string; details: any }>;

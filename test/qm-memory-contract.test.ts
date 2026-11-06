@@ -11,6 +11,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { ACTOR_REASON_FIXES, QM_CONTRACT_PATH, QM_CONTRACT_PATHS, renderQmMemoryContract } from '../scripts/build-qm-memory-contract.ts';
 import { CODES } from '../src/core/error-registry.ts';
 import { operations } from '../src/core/operations.ts';
@@ -77,6 +78,11 @@ describe('QM memory-provider contract v2 (GST-1094 scope read, GST-900)', () => 
     expect(readFileSync(QM_CONTRACT_PATHS[2], 'utf8')).toBe(renderQmMemoryContract(2));
   });
 
+  test('v2 is written beside v1 at the path QM vendors', () => {
+    expect(QM_CONTRACT_PATHS[2].endsWith(join('docs', 'contracts', 'qm-memory-provider', 'v2.json'))).toBe(true);
+    expect(QM_CONTRACT_PATHS[1].endsWith(join('docs', 'contracts', 'qm-memory-provider', 'v1.json'))).toBe(true);
+  });
+
   test('the tool schemas are the ones MCP serves', () => {
     const served = buildToolDefs(operations.filter(o => o.name === 'memory_recall' || o.name === 'memory_write'));
     for (const tool of fixture.tools) {
@@ -98,6 +104,20 @@ describe('QM memory-provider contract v2 (GST-1094 scope read, GST-900)', () => 
     expect(fixture.errors.codes.map((c: { code: string }) => c.code)).toContain('permission_denied');
     const v1 = JSON.parse(readFileSync(QM_CONTRACT_PATH, 'utf8'));
     expect(fixture.wave_2).toEqual(v1.wave_2);
-    expect(fixture.memory_write).toEqual(v1.memory_write);
+    const { scope_write: scopeWrite, ...memoryWrite } = fixture.memory_write;
+    expect(memoryWrite).toEqual(v1.memory_write);
+    const write = fixture.tools.find((t: { name: string }) => t.name === 'memory_write');
+    expect(write.input_schema.properties.source_id.type).toBe('string');
+    expect(write.input_schema.required).toEqual(v1.tools.find((t: { name: string }) => t.name === 'memory_write').input_schema.required);
+    expect(scopeWrite.saved_as).toMatchObject({ page: 'memory/scope', visibility: 'world' });
+    expect(scopeWrite.rule).toContain('attest_sources');
+  });
+
+  test('it says what an over-long query, an over-long recall question and an unattested acting_user get (GST-1304)', () => {
+    expect(fixture.memory_recall.arguments_checked).toContain('a longer query is ranked on its first 2000 characters and never refused');
+    const notes = Object.fromEntries(fixture.errors.codes.map((c: { code: string; note?: string }) => [c.code, c.note]));
+    expect(notes.invalid_params).toContain('question_too_long');
+    const reasons = fixture.errors.codes.find((c: { code: string }) => c.code === 'actor_not_attested').reasons;
+    expect(reasons.find((r: { reason: string }) => r.reason === 'argument_without_attestation').fix).toContain('detail missing=');
   });
 });

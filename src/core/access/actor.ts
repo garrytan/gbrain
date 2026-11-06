@@ -21,6 +21,7 @@ import { identityFor } from './principals.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { memberIdentity } from './members.ts';
 import { folderAccessFor, memberIdentityFor } from './caller.ts';
+import { markedScopeSources, sourceNotAttested } from './attest-sources.ts';
 import { ACTOR_ARGUMENT, ACTOR_DEFERRED_OPS, ACTOR_HEADER, attestRightFrom, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, QM_AUDIENCE_HEADER, type AttestedActor, type AttestRight } from './actor-model.ts';
 
 export * from './actor-model.ts';
@@ -46,12 +47,12 @@ export async function attestRightOf(engine: Pick<BrainEngine, 'executeRaw'>, cal
   try {
     if (principal?.kind === 'legacy_token') {
       const [row] = await engine.executeRaw<Record<string, unknown>>(
-        'SELECT attest_actor, attest_ops, member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL', [principal.id]);
+        `SELECT attest_actor, attest_ops, to_jsonb(access_tokens)->'attest_sources' AS attest_sources, member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL`, [principal.id]);
       return attestRightFrom(row, 'legacy', row?.member_id);
     }
     if (principal?.kind === 'oauth_client') {
       const [row] = await engine.executeRaw<Record<string, unknown>>(
-        `SELECT attest_actor, attest_ops, member_id, grant_types, client_secret_hash IS NOT NULL AS confidential FROM oauth_clients
+        `SELECT attest_actor, attest_ops, to_jsonb(oauth_clients)->'attest_sources' AS attest_sources, member_id, grant_types, client_secret_hash IS NOT NULL AS confidential FROM oauth_clients
          WHERE client_id = $1 AND (to_jsonb(oauth_clients)->>'deleted_at') IS NULL`, [principal.id]);
       const cc = Array.isArray(row?.grant_types) && (row!.grant_types as unknown[]).includes('client_credentials') && row!.confidential === true;
       return attestRightFrom(row, cc ? 'client_credentials' : null, row?.member_id);
@@ -100,7 +101,7 @@ function credentialArgv(caller: ActorCaller): string[] {
 const transportOf = (transport?: string) => ({ remote: true, transport: transport === 'stdio' ? 'stdio' as const : 'http' as const });
 
 /** actor_not_attested with its reason, remedy and (where the operator can fix it) the rescope command. */
-export function actorNotAttested(reason: ActorReason, caller: ActorCaller, ctx: { op: string; transport?: string; right?: AttestRight | null; reissue?: boolean; memberBound?: boolean }): OperationError {
+export function actorNotAttested(reason: ActorReason, caller: ActorCaller, ctx: { op: string; transport?: string; right?: AttestRight | null; reissue?: boolean; memberBound?: boolean; missing?: Array<'attest_right' | 'x-qm-actor'> }): OperationError {
   const docs = ERROR_CATALOGUE.actor_not_attested.docs;
   const rescope = (extra: string[]) => ['gbrain', 'auth', 'rescope', ...credentialArgv(caller), ...extra];
   const hostOnly = (message: string, argv: string[], why: string, suggestion: string) =>
@@ -130,9 +131,12 @@ export function actorNotAttested(reason: ActorReason, caller: ActorCaller, ctx: 
       }
       return opError('actor_not_attested', `The ${ACTOR_ARGUMENT} argument names someone other than the ${ACTOR_HEADER} header, so nothing was read or written.`,
         `The header decides whom the call serves; send ${ACTOR_ARGUMENT} equal to it, or leave it out. Text in a conversation never chooses whose notes are read.`, { reason, docs });
-    case 'argument_without_attestation':
-      return opError('actor_not_attested', `The ${ACTOR_ARGUMENT} argument is accepted only on an attested call, so nothing was read or written.`,
-        `Remove ${ACTOR_ARGUMENT} from the arguments. A trusted system names the person in the ${ACTOR_HEADER} header from a credential holding the attest right (gbrain auth rescope ... --attest-actor qm on the brain host).`, { reason, docs });
+    case 'argument_without_attestation': {
+      const missing = ctx.missing ?? ['attest_right', ACTOR_HEADER];
+      const lacks = missing.map(m => (m === 'attest_right' ? 'the attest right on this credential' : `the ${ACTOR_HEADER} header`)).join(' and ');
+      return opError('actor_not_attested', `The ${ACTOR_ARGUMENT} argument is accepted only on an attested call, and this call lacks ${lacks}, so nothing was read or written.`,
+        `Remove ${ACTOR_ARGUMENT} from the arguments. A trusted system names the person in the ${ACTOR_HEADER} header from a credential holding the attest right (gbrain auth rescope ... --attest-actor qm on the brain host).`, { reason, docs, detail: `missing=${missing.join(',')}` });
+    }
     case 'actor_required':
       return opError('actor_not_attested', `${ctx.op} writes only as an attested person, and this call names none (no ${ACTOR_HEADER} header on a credential holding the attest right), so nothing was written.`,
         `Send ${ACTOR_HEADER} with the person's canonical id from a credential the brain operator granted the attest right (${rescope(['--attest-actor', 'qm']).join(' ')}). To save a fact as yourself, call remember.`, { reason, docs });
@@ -178,11 +182,13 @@ export async function linkedMember(engine: Pick<BrainEngine, 'executeRaw'>, syst
  * live attest right for the system, and a live link from the id to an enabled member. Returns that member's identity;
  * throws actor_not_attested (no_attest_right) or actor_unlinked.
  */
-export async function actorCoverage(engine: Pick<BrainEngine, 'executeRaw'>, caller: ActorCaller, actor: { system: string; external_id: string }, transport?: string, op?: string):
+export async function actorCoverage(engine: Pick<BrainEngine, 'executeRaw'>, caller: ActorCaller, actor: { system: string; external_id: string }, transport?: string, op?: string, source?: string):
   Promise<{ member: string; groups: string[]; identity: string[] }> {
   const right = await attestRightOf(engine, caller);
   if (!right || right.system !== actor.system) throw actorNotAttested('no_attest_right', caller, { op: op ?? 'stored', transport });
   if (op !== undefined && (!right.ops.includes(op) || ACTOR_DEFERRED_OPS.has(op))) throw actorNotAttested('op_not_attested', caller, { op, transport, right });
+  // GST-1113: a write accepted for a per-call scope source needs the live right to still list it.
+  if (source !== undefined && (!right.sources?.includes(source) || !(await markedScopeSources(engine as BrainEngine, [source])).has(source))) throw sourceNotAttested(source);
   const linked = EXTERNAL_ID_RE.test(actor.external_id) ? await linkedMember(engine, actor.system, actor.external_id) : null;
   if (!linked) throw actorUnlinked(actor.external_id, transport);
   return linked;
@@ -192,8 +198,8 @@ export async function actorCoverage(engine: Pick<BrainEngine, 'executeRaw'>, cal
  * A stored attested authority (a queued write, an agent job) re-resolved through actorCoverage: the same member must
  * still be covered and, when `op` is given (publication, a job tool call), the operation must still be attested.
  */
-export async function storedActorIdentity(engine: Pick<BrainEngine, 'executeRaw'>, principal: Principal, actor: AttestedActor, op?: string): Promise<string[]> {
-  const covered = await actorCoverage(engine, { principal }, actor, undefined, op);
+export async function storedActorIdentity(engine: Pick<BrainEngine, 'executeRaw'>, principal: Principal, actor: AttestedActor, op?: string, source?: string): Promise<string[]> {
+  const covered = await actorCoverage(engine, { principal }, actor, undefined, op, source);
   if (covered.member !== actor.member) throw actorUnlinked(actor.external_id);
   return covered.identity;
 }
@@ -251,7 +257,7 @@ export async function resolveAttestedActor(engine: Pick<BrainEngine, 'executeRaw
   if (!right || right.system !== 'qm') {
     const principal = input.auth?.principal;
     const reissue = !hasArgument && !right && principal?.kind === 'oauth_client' && !!await attestRightOf(engine, { principal });
-    throw actorNotAttested(hasArgument ? 'argument_without_attestation' : 'no_attest_right', caller, { ...ctx, reissue });
+    throw actorNotAttested(hasArgument ? 'argument_without_attestation' : 'no_attest_right', caller, { ...ctx, reissue, missing: ['attest_right'] });
   }
   if (!right.ops.includes(input.op) || !attestableOp(input.op, input.opShape)) throw actorNotAttested('op_not_attested', caller, { ...ctx, right });
   if (hasArgument && argument !== header) throw actorNotAttested('argument_mismatch', caller, ctx);
@@ -271,7 +277,10 @@ async function ownMemberArgument(engine: Pick<BrainEngine, 'executeRaw'>, input:
   argument: string, caller: ActorCaller, ctx: { op: string; transport?: string }): Promise<{ params: Record<string, unknown> }> {
   const own = input.transport === 'stdio' || input.audienceAsserted || !input.auth ? null
     : (await memberIdentityFor(engine, input.auth)).find(p => p.startsWith('member:'))?.slice('member:'.length) ?? null;
-  if (!own) throw actorNotAttested('argument_without_attestation', caller, ctx);
+  if (!own) {
+    const right = input.transport === 'stdio' ? null : await attestRightOf(engine, caller);
+    throw actorNotAttested('argument_without_attestation', caller, { ...ctx, missing: right?.system === 'qm' ? [ACTOR_HEADER] : ['attest_right', ACTOR_HEADER] });
+  }
   if (argument !== own && (await linkedMember(engine, 'qm', argument))?.member !== own) throw actorNotAttested('argument_mismatch', caller, { ...ctx, memberBound: true });
   const { [ACTOR_ARGUMENT]: _stripped, ...params } = input.params ?? {};
   return { params };

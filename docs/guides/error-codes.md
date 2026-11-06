@@ -632,6 +632,16 @@ More: [docs/guides/page-history.md#reasons](../../docs/guides/page-history.md#re
 |---|---|---|---|---|---|---|
 | The file changed after its repair was previewed, so nothing was written. | A repair writes exactly the bytes the operator approved; it binds approval to the previewed file hash and refuses when the file moved on. | Preview the repair again, review the new proposal, and approve its new hash. | agent | `repeat the read that failed` | 1 | no |
 
+### checkout_not_a_source
+
+<a id="checkout_not_a_source"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain git commit-push resolved a checkout from the working directory that is not one of this brain's source checkouts on this host (for example a wrapper that changed into another repository), so nothing was staged. | Committing there would write into an unrelated repository, or fail later with a confusing path refusal. | Correct the request using the message above, then retry. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-checkout-git.md#checkout_not_a_source](../../docs/guides/shared-checkout-git.md#checkout_not_a_source)
+
 ### checkpoint_missing
 
 <a id="checkpoint_missing"></a>
@@ -789,6 +799,16 @@ More: [docs/guides/write-refusals.md#colon_slug_windows_write_through](../../doc
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The command failed before it wrote its JSON result. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### commit_base_moved
+
+<a id="commit_base_moved"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A file named with --base changed at HEAD since the writer read it, so nothing was staged or committed. | --base <path>=<blob> binds a commit to the bytes the writer read; another writer committed that file since, and committing now would overwrite its change. | Read the file at HEAD again, redo the change on it, and rerun with the new --base the message names. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-checkout-git.md#base-check](../../docs/guides/shared-checkout-git.md#base-check)
 
 ### commit_lock_busy
 
@@ -1068,6 +1088,16 @@ More: [docs/ai-providers/claude-cli.md#claude-cli-troubleshooting](../../docs/ai
 
 More: [docs/guides/sync-unblock-runbook.md#dry-run-convergence-classes](../../docs/guides/sync-unblock-runbook.md#dry-run-convergence-classes)
 
+### conversion_file_in_source_root
+
+<a id="conversion_file_in_source_root"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A conversion review list, decisions file or approval was refused because its path is inside a source's checkout. | Those files name pages and paths. Written or read only outside every registered source root and the Git working tree holding it (mode 0600), they can never be synced, imported or committed. | Pass a path outside every source checkout, e.g. under ~/.gbrain. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/git-canonical.md#review-list-and-decisions](../../docs/guides/git-canonical.md#review-list-and-decisions)
+
 ### core_budget_exceeded
 
 <a id="core_budget_exceeded"></a>
@@ -1295,6 +1325,16 @@ More: [docs/guides/ambient-recall.md#replay-after-a-degraded-wake](../../docs/gu
 | The remote serve cannot answer this doctor tier or check for this client, so the thin client ran nothing. | A serve older than the doctor ops tier does not advertise run_doctor's tier and only parameters or get_brain_health, and a token without admin scope cannot call run_doctor; the thin client never falls back to the full report. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. Run: gbrain doctor --tier ops --json | host_admin | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#doctor-ops-tier](../../docs/guides/troubleshooting.md#doctor-ops-tier)
+
+### downgrade_blocked_deferred_writes
+
+<a id="downgrade_blocked_deferred_writes"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Writes deferred behind a worktree refresh are still waiting, and an older gbrain cannot drain them. | A release before the refresh write barrier never claims a deferred write, so after a downgrade those writes wait until the next upgrade. Safety does not depend on this check; liveness does. | Turn the barrier off (gbrain config set persistence.refresh_barrier false); wait until gbrain upgrade --check-downgrade exits 0, then downgrade. | host_admin | `repeat the read that failed` | 3 | no |
+
+More: [docs/guides/write-refusals.md#deferred-writes](../../docs/guides/write-refusals.md#deferred-writes)
 
 ### drain_holder_stalled
 
@@ -1958,11 +1998,21 @@ More: [docs/guides/repair.md#ghost-pages](../../docs/guides/repair.md#ghost-page
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Converting a source to git-canonical would discard database content or cannot place it, so the apply wrote nothing. | gbrain sources canonical --to git applies only when every database row will be in Git or in a declared database-only class afterwards. The preview counts what would be lost or cannot be placed by category (detail lists them): both_moved and held_drift_both, a page Git and the database both changed; deleted_in_git, a page Git deleted that the database edited since; uncommitted_edit, a working-tree edit the adoption would overwrite; ignored_target, a page whose file Git ignores without a declared class; unparseable and unsafe_path, a committed file or path sync cannot read; segmented_page, a segmented page conversion does not adopt yet; export_mismatch, a page whose export does not read back equal; git_overwrites_database, a page version a strict pass would replace that nothing accepted; ignore_status_unknown, a target whose ignore status Git cannot read (beyond a symlink, outside the checkout, a timed-out check). There is no override. | Relay the categories and their paths (the --dry-run preview lists them) and ask the user how each should be resolved; preview again afterwards. | user | `repeat the read that failed` | 1 | no |
+| Converting a source to git-canonical would discard database content or cannot place it, so the apply wrote nothing. | gbrain sources canonical --to git applies only when every database row will be in Git or in a declared database-only class afterwards. The preview counts what would be lost or cannot be placed by category (detail lists them): both_moved and held_drift_both, a page Git and the database both changed; no_record_both_moved and no_record_no_evidence, a page with no import record whose content history shows both sides moved, or shows nothing, until the owner's --decisions file decides it; deleted_in_git, a page Git deleted that the database edited since; uncommitted_edit, a working-tree edit the adoption would overwrite; ignored_target, a page whose file Git ignores without a declared class; unparseable and unsafe_path, a committed file or path sync cannot read; segmented_page, a segmented page conversion does not adopt yet; export_mismatch, a page whose export does not read back equal; git_overwrites_database, a page version a strict pass would replace that nothing accepted; ignore_status_unknown, a target whose ignore status Git cannot read (beyond a symlink, outside the checkout, a timed-out check). There is no override. | Relay the categories and their paths (the --dry-run preview lists them) and ask the user how each should be resolved; preview again afterwards. | user | `repeat the read that failed` | 1 | no |
 
-Reasons: `both_moved`, `held_drift_both`, `held_drift_unknown_differs`, `deleted_in_git`, `uncommitted_edit`, `ignored_target`, `unparseable`, `unsafe_path`, `segmented_page`, `export_mismatch`, `git_overwrites_database`, `ignore_status_unknown`.
+Reasons: `both_moved`, `held_drift_both`, `held_drift_unknown_differs`, `deleted_in_git`, `uncommitted_edit`, `ignored_target`, `unparseable`, `unsafe_path`, `segmented_page`, `export_mismatch`, `git_overwrites_database`, `ignore_status_unknown`, `no_record_both_moved`, `no_record_no_evidence`.
 
 More: [docs/designs/GIT_CANONICAL_MEMORY.md#conversion](../../docs/designs/GIT_CANONICAL_MEMORY.md#conversion)
+
+### git_conversion_delta
+
+<a id="git_conversion_delta"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An approved conversion found pages that changed since the approval, or decisions it did not approve, so only the unchanged pages were applied and the source stays mixed. | gbrain sources canonical --to git --apply --approved applies only the pages whose slug, revision, committed blob, evidence and action are the ones the owner approved. A page that changed since, a new page, a database edit the plan would now discard, and any decision the approval did not hold stay unapplied and are listed (delta) with counts; nothing outside the approved set is applied without a new decision. | Relay the delta list and its counts to the owner; once they decide, preview again with --approval-out and apply the new approval. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/git-canonical.md#approval-across-time](../../docs/guides/git-canonical.md#approval-across-time)
 
 ### git_conversion_incomplete
 
@@ -3876,6 +3926,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 More: [docs/guides/retrieval-feedback.md#ref_not_in_answer](../../docs/guides/retrieval-feedback.md#ref_not_in_answer)
 
+### refresh_barrier_expired
+
+<a id="refresh_barrier_expired"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write that waited behind a worktree refresh was not applied, because the refresh was still unfinished after the barrier's wait limit. | With persistence.refresh_barrier on, a page write that reaches a refreshing checkout is accepted and waits for the refresh to end. A refresh that never ends (a stuck member sync, a host that stopped) would hold those writes forever, so the owner finishes each one failed after persistence.refresh_barrier_max_wait_ms (15 minutes by default). Nothing was applied. | Check the refresh with gbrain sources writer status --source <id> --json, then submit the write again with a new request_id. | provider | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#deferred-writes](../../docs/guides/write-refusals.md#deferred-writes)
+
 ### refresh_dirty
 
 <a id="refresh_dirty"></a>
@@ -4032,6 +4092,16 @@ Reasons: `rename_source_changed`.
 |---|---|---|---|---|---|---|
 | A renamed file imported, but removing the page of its old name failed unexpectedly, so that page was kept and may be a duplicate. | An unexpected error is deterministic, so a blocking marker would stop the source on every run; the rename is held instead and the rest of the source keeps syncing. | Ask the user before a full sync of the source (gbrain sync --source <source> --full --no-pull), which removes pages whose file is gone, or remove the old page with gbrain delete. | agent | `repeat the read that failed` | 1 | no |
 
+### repair_preview_timeout
+
+<a id="repair_preview_timeout"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A `gbrain repair failed-writes` preview read ran past the database statement timeout, so the preview stopped; nothing was saved, no approval checkpoint was written and no page changed. | The preview classes every refused caller write against the write journal (replay attempts, later requests of the same page, recovered fact requests) in a few set reads. They use the `persistence_requests_replay_id` and `persistence_requests_slug_sequence` indexes; when either is missing or INVALID, or the journal is large enough that a set read outlasts the timeout, the server ends the read. | Build the request indexes with gbrain repair request-indexes --apply, then run the same preview again; if it stops again with the indexes valid, run it once with a longer statement timeout on the brain host. Run: gbrain repair request-indexes --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/troubleshooting.md#repair-preview-timeout](../../docs/guides/troubleshooting.md#repair-preview-timeout)
+
 ### request_already_submitted
 
 <a id="request_already_submitted"></a>
@@ -4133,6 +4203,16 @@ More: [docs/guides/windowed-reads.md#result_too_large](../../docs/guides/windowe
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Resume spec mismatch. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### revision_backfill_pending
+
+<a id="revision_backfill_pending"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The page was written before page revisions existed and the revision backfill has not reached it, so it has no revision a write or preview can bind to. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain apply-migrations --force-schema | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#revision-backfill](../../docs/guides/write-refusals.md#revision-backfill)
 
 ### revision_changed
 
@@ -5145,6 +5225,68 @@ More: [docs/guides/write-refusals.md#visibility_noncanonical](../../docs/guides/
 Reasons: `noncanonical_value`, `not_kept`.
 
 More: [docs/guides/write-refusals.md#visibility_not_applied](../../docs/guides/write-refusals.md#visibility_not_applied)
+
+### wakeshift_key_invalid
+
+<a id="wakeshift_key_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Wakeshift key is missing, mistyped, in an older format, or in a key file other users can read, so reporting back was not turned on. | A Wakeshift key is an Ed25519 private key (wst_ followed by 50 base58 characters whose last four bytes are a checksum). gbrain reads it from WAKESHIFT_API_KEY or ~/.gbrain/wakeshift.key, which must be readable by its owner only; it never stores the key in the database or prints it. | Ask the user to create a key in their Wakeshift console and put it in ~/.gbrain/wakeshift.key (chmod 600) or WAKESHIFT_API_KEY in ~/.gbrain/.env, then run gbrain wakeshift enable again. | user | `repeat the read that failed` | 1 | no |
+
+Reasons: `format`, `checksum`, `legacy`, `file_too_open`, `missing`.
+
+More: [docs/guides/wakeshift.md#the-key](../../docs/guides/wakeshift.md#the-key)
+
+### wakeshift_needs_conversation
+
+<a id="wakeshift_needs_conversation"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| watch_job wakes an MCP conversation, and a local CLI run has none to wake. | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain jobs wait <id> to block until the job finishes. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/wakeshift.md#delivery-and-latency](../../docs/guides/wakeshift.md#delivery-and-latency)
+
+### wakeshift_not_enabled
+
+<a id="wakeshift_not_enabled"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Reporting back through Wakeshift is off on this brain (the owner has not run gbrain wakeshift enable, or the key is missing). | Wakeshift is off by default; only the brain owner turns it on, on the brain host, because it sends wake metadata to a third-party service. | Use wait_job (or gbrain jobs wait <id>) instead, or ask the brain owner to run gbrain wakeshift enable. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/wakeshift.md#turn-it-on](../../docs/guides/wakeshift.md#turn-it-on)
+
+### wakeshift_refused
+
+<a id="wakeshift_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Wakeshift refused the request; the reason carries its error code. Nothing was watched or sent. | Wakeshift checks each request (the signed key, the event and its arguments, the conversation's session key). A refusal other than a rate limit does not go away on retry. | Call wait_job to wait without Wakeshift; the brain owner can run gbrain wakeshift test to check the key and the app. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/wakeshift.md#troubleshooting](../../docs/guides/wakeshift.md#troubleshooting)
+
+### wakeshift_shared_brain
+
+<a id="wakeshift_shared_brain"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Reporting back refused (gbrain wakeshift enable, or watch_job after a member was added): this brain has live access members, and this release reports back only on brains that serve their owner alone. | Every member of the brain owner's Wakeshift organization can read the wakes it sends, and Wakeshift's terms make the operator pass its Connector Terms to each member. Shared brains get a terms step in a later release; until then reporting back stays off there. | Leave reporting back off on this brain; agents can use wait_job or gbrain jobs wait <id>. | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/wakeshift.md#who-it-is-for](../../docs/guides/wakeshift.md#who-it-is-for)
+
+### wakeshift_unavailable
+
+<a id="wakeshift_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Wakeshift could not be reached or answered with a server error or rate limit; nothing was watched. | gbrain makes one request with a 10 s timeout and never retries inside a tool call, so a slow or down Wakeshift never holds the call. | Retry in a minute, or call wait_job to wait without Wakeshift. | agent | `gbrain doctor --json` | 1 | yes |
+
+More: [docs/guides/wakeshift.md#troubleshooting](../../docs/guides/wakeshift.md#troubleshooting)
 
 ### withdrawal_capacity
 

@@ -12,12 +12,16 @@
  */
 import { createHash } from 'node:crypto';
 import type { OperationContext } from '../ops/contract.ts';
-import { currentCallerAccess, folderRestrictedSql, privatePagesFilterForCaller } from '../search/private-visibility.ts';
-import { ACCESS_ID_RE, MEMBER_PAGE_PREFIX, normalizeReaders } from './principals.ts';
+import { currentCallerAccess, folderRestrictedSql, isDerivationPrivate, privatePagesFilterForCaller, withFolderRestricted } from '../search/private-visibility.ts';
+import type { BrainEngine } from '../engine.ts';
+import { ACCESS_ID_RE, MEMBER_PAGE_PREFIX, normalizeReaders, SCOPE_PAGE_SLUG } from './principals.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { slugifyPath } from '../sync.ts';
 
-export { MEMBER_PAGE_PREFIX };
+export { MEMBER_PAGE_PREFIX, SCOPE_PAGE_SLUG };
+
+/** GST-1113: the scope page or anything under its reserved prefix. */
+export const isScopePageSlug = (slug: string): boolean => slug === SCOPE_PAGE_SLUG || slug.startsWith(`${SCOPE_PAGE_SLUG}/`);
 
 export const memberPageSlug = (member: string): string => `${MEMBER_PAGE_PREFIX}${member}`;
 
@@ -68,6 +72,34 @@ export function assertMemberPageWriter(ctx: Pick<OperationContext, 'remote'>, sl
     `Nothing was written. Pages under ${MEMBER_PAGE_PREFIX} hold one member's own facts; write elsewhere, or save a fact with remember as that member.`);
 }
 
+/**
+ * GST-1113: a remote write to the scope page (memory/scope, or under it) is only an attested memory_write that named its
+ * scope source (access/attest-sources.ts); trusted local callers are unaffected. A receipt read (write_request) is not a
+ * write: ownRequestAccessible has already kept it to the member who wrote it.
+ */
+export function assertScopePageWriter(ctx: Pick<OperationContext, 'remote' | 'attestedOp' | 'attestedSource'>, slug: string, opName: string): void {
+  if (ctx.remote === false || !isScopePageSlug(slug) || opName === 'write_request') return;
+  if (slug === SCOPE_PAGE_SLUG && ctx.attestedOp === 'memory_write' && ctx.attestedSource !== undefined && currentCallerAccess().actor) return;
+  throw opError('permission_denied', `${opName}: ${slug} is written remotely only by an attested memory_write to its scope source.`,
+    `Nothing was written. ${SCOPE_PAGE_SLUG} holds a shared scope's memory; write elsewhere.`);
+}
+
+/** Whether a scope page is shared with its whole source: no readers, no privacy and no folder rule narrow it (a squatted page is not). */
+export async function scopePageIsShared(engine: Pick<BrainEngine, 'executeRaw'>, page: { source_id: string; slug: string; type?: string | null; frontmatter?: unknown }): Promise<boolean> {
+  return normalizeReaders(page.frontmatter) === null && !isDerivationPrivate(await withFolderRestricted(engine, page));
+}
+
+export function scopePageNotShared(sourceId: string): OperationError {
+  return opError('permission_denied', `${SCOPE_PAGE_SLUG} in source ${sourceId} names readers, is private or sits under a folder rule, so no scope fact is saved there.`,
+    `Nothing was saved. The brain host removes readable_by and visibility: private from ${SCOPE_PAGE_SLUG} in ${sourceId}, or the folder rule covering it (the scope source's read grant is its audience), then the fact can be saved again.`,
+    { reason: 'scope_page_not_shared' });
+}
+
+/** The frontmatter of the scope page its first fact creates: no readers, so the source's read grant is its audience. */
+export function scopePageFrontmatter(): string {
+  return ['---', 'type: note', 'title: Scope memory', '---', ''].join('\n');
+}
+
 /** The frontmatter of a member page its first fact creates: the member is its only reader. */
 export function memberPageFrontmatter(member: string): string {
   return ['---', 'type: note', `title: Memory of ${member}`, 'readable_by:', `  - member:${member}`, '---', ''].join('\n');
@@ -96,28 +128,31 @@ export function factVisibilitySql(alias: string, visibility: readonly string[]):
   return own === 'FALSE' ? listed : `(${listed} OR ${own})`;
 }
 
-/** Facts on any member page, as SQL: writers that dedup, supersede or contest never cross from one member's page to another. */
-export function onMemberPageSql(alias: string): string {
-  return `starts_with(COALESCE(${alias}.source_markdown_slug, ''), '${MEMBER_PAGE_PREFIX}')`;
+/**
+ * Facts on any owned memory page (a member page or a scope page), as SQL: writers that dedup, supersede or contest never
+ * cross from one such page to another or to an ordinary page.
+ */
+export function onOwnedMemoryPageSql(alias: string): string {
+  return `(starts_with(COALESCE(${alias}.source_markdown_slug, ''), '${MEMBER_PAGE_PREFIX}') OR COALESCE(${alias}.source_markdown_slug, '') = '${SCOPE_PAGE_SLUG}')`;
 }
 
 /**
- * GST-359 D: the withdrawal-ledger subject of a fact, as SQL. A fact on a member page is withdrawn for that page alone
- * (its slug), so forgetting it never reaches another member's copy of the same claim; any other fact keeps its entity
- * ('*' without one).
+ * GST-359 D: the withdrawal-ledger subject of a fact, as SQL. A fact on an owned memory page (a member page, GST-1113 a
+ * scope page) is withdrawn for that page alone (its slug), so forgetting it never reaches another copy of the same claim;
+ * any other fact keeps its entity ('*' without one).
  */
 export function factWithdrawalSubjectSql(alias: string): string {
-  return `CASE WHEN ${onMemberPageSql(alias)} THEN ${alias}.source_markdown_slug ELSE COALESCE(${alias}.entity_slug, '*') END`;
+  return `CASE WHEN ${onOwnedMemoryPageSql(alias)} THEN ${alias}.source_markdown_slug ELSE COALESCE(${alias}.entity_slug, '*') END`;
 }
 
-/** Whether withdrawal row `w` covers fact `f`, as SQL: every subject ('*'), the fact's entity, or the member page it sits on. */
+/** Whether withdrawal row `w` covers fact `f`, as SQL: every subject ('*'), the fact's entity, or the owned memory page it sits on. */
 export function withdrawalCoversFactSql(w: string, f: string): string {
-  return `(${w}.subject = '*' OR ${w}.subject = COALESCE(${f}.entity_slug, '*') OR (${onMemberPageSql(f)} AND ${w}.subject = ${f}.source_markdown_slug))`;
+  return `(${w}.subject = '*' OR ${w}.subject = COALESCE(${f}.entity_slug, '*') OR (${onOwnedMemoryPageSql(f)} AND ${w}.subject = ${f}.source_markdown_slug))`;
 }
 
-/** The member page a claim is checked on for withdrawals, or null: `slug` when it is one, so a page-scoped withdrawal applies there alone. */
-export function memberWithdrawalSubject(slug: string | null | undefined): string | null {
-  return slug && slug.startsWith(MEMBER_PAGE_PREFIX) ? slug : null;
+/** The owned memory page a claim is checked on for withdrawals, or null: `slug` when it is one, so a page-scoped withdrawal applies there alone. */
+export function ownedPageWithdrawalSubject(slug: string | null | undefined): string | null {
+  return slug && (slug.startsWith(MEMBER_PAGE_PREFIX) || slug === SCOPE_PAGE_SLUG) ? slug : null;
 }
 
 /**

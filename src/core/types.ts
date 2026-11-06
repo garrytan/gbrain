@@ -1875,6 +1875,8 @@ export type { PageVersion } from './page-state/version-types.ts';
 export interface WriteAttributionView {
   request_id: string | null; operation: string | null; at: string | null;
   principal: { kind: string; id: string; name: string | null } | null;
+  /** The agent label the caller declared on the write request (X-Gbrain-Agent-Label); unverified, absent when none was sent. */
+  agent_label?: string;
   origin: 'request' | 'maintenance' | 'unrecorded';
 }
 /** A `get_versions` row as trusted local and admin callers see it. */

@@ -60,7 +60,7 @@ describe('allow-list additions', () => {
       ['hash-object', '--no-filters', '--stdin-paths'], ['hash-object', '--stdin-paths', '--no-filters'],
       ['check-attr', '-z', '--stdin', 'filter', 'text', 'eol', 'working-tree-encoding'],
       ['diff-tree', '-r', '-z', '--no-renames', 'a', 'b'], ['diff-tree', '--no-renames', '-z', '-r', 'a', 'b', '--', 'notes'],
-      ['cat-file', '--batch'], ['cat-file', 'blob', 'abc'],
+      ['cat-file', '--batch'], ['cat-file', '--batch-check'], ['cat-file', 'blob', 'abc'],
     ]) expect(() => assertHardenedGitArgs(args)).not.toThrow();
   });
 
@@ -76,7 +76,8 @@ describe('allow-list additions', () => {
       ['diff-tree', '-r', '-z', '--no-renames', '--stdin'], ['diff-tree', '-r', '-z', '--no-renames', '-C', 'a', 'b'],
       ['cat-file', '--filters', 'HEAD:a'], ['cat-file', '--textconv', 'HEAD:a'], ['cat-file', '--batch-command'],
       ['cat-file', '--batch-all-objects', '--batch'], ['cat-file', '--batch', '--filters'], ['cat-file', '--batch', '--textconv'],
-      ['cat-file', '--batch=%(objectname)'], ['cat-file', '--batch-check'],
+      ['cat-file', '--batch=%(objectname)'], ['cat-file', '--batch-check=%(objectname)'], ['cat-file', '--batch-check', '--filters'],
+      ['cat-file', '--batch-check', '--textconv'], ['cat-file', '--batch-check', '--batch-all-objects'], ['cat-file', '--batch-check', '--follow-symlinks'],
     ]) expect(() => assertHardenedGitArgs(args)).toThrow(/hardened git refuses/);
   });
 });

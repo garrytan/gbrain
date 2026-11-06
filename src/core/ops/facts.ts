@@ -318,7 +318,7 @@ const recall: Operation = {
     return_unit: { type: 'string', enum: ['chunk', 'window', 'section', 'page', 'auto'], description: 'results[] unit (see search).', fullSurfaceOnly: true },
     return_window: { type: 'number', description: 'Window 1-3.', fullSurfaceOnly: true },
     min_trust: MIN_TRUST_PARAM,
-    max_chars: { type: 'integer', description: `Cap on fact (then results) text, ${MEMORY_RECALL_MAX_CHARS.min}-${MEMORY_RECALL_MAX_CHARS.max}; whole items only, truncated says if cut.`, fullSurfaceOnly: true },
+    max_chars: { type: 'integer', minimum: MEMORY_RECALL_MAX_CHARS.min, description: `Cap on fact (then results) text, ${MEMORY_RECALL_MAX_CHARS.min}-${MEMORY_RECALL_MAX_CHARS.max}; whole items only, truncated says if cut.`, fullSurfaceOnly: true },
   },
   scope: 'read',
   verb: true,
@@ -633,7 +633,7 @@ const recall: Operation = {
       total: packedFacts.length,
       facts_order: ranking ? 'relevance' : 'newest',
       ...(quoted.withheld ? { facts_degraded: { reason: 'saved_facts_withheld' } } : ranking?.degraded || contested.degraded ? { facts_degraded: { ...contested.degraded, ...ranking?.degraded } } : {}),
-      ...(ranking?.calibration ? { facts_calibration: ranking.calibration } : {}),
+      ...(ranking?.calibration ? { facts_calibration: ranking.calibration } : {}), ...(ranking?.belowFloor ? { facts_below_floor: ranking.belowFloor } : {}),
       ...grouped?.fields, ...(ambiguousEntity ? { ambiguous_entity: { candidates: ambiguousEntity, suggestion: AMBIGUOUS_ENTITY_SUGGESTION } } : {}),
       ...(pending_consolidation_count !== undefined ? { pending_consolidation_count } : {}),
       // MEMORY_VERBS v1 envelope (G1B superset — additive on every response).

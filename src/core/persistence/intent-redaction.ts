@@ -67,7 +67,7 @@ async function sweepChunk(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: str
   ids: readonly string[] | null = null, exclude: string | null = null): Promise<{ rows: ChunkRow[]; scanned: number; last: string | null }> {
   const rows = await engine.executeRaw<SweepRow>(`WITH chunk AS MATERIALIZED (
       SELECT id,principal_kind,principal_id,sequence,
-        (state IN ('queued','running','recovering') OR recovery IS NOT NULL) AS pending,
+        (state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL) AS pending,
         lower(COALESCE(intent::text,'')) AS i,lower(COALESCE(outcome::text,'')) AS o,lower(COALESCE(error_detail::text,'')) AS d,lower(COALESCE(error_message,'')) AS m
       FROM persistence_requests WHERE source_id=$1 AND sequence>$2::bigint AND ($3::bigint IS NULL OR sequence<=$3::bigint)
         AND ($6::uuid[] IS NULL OR id=ANY($6::uuid[])) AND ($7::uuid IS NULL OR id<>$7::uuid)
@@ -233,7 +233,7 @@ export async function findRequestsForSlugs(engine: BrainEngine, sourceId: string
 export async function findRequestsHoldingStagings(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, stagingIds: readonly string[]): Promise<IntentRedactionTarget[]> {
   if (!stagingIds.length) return [];
   return engine.executeRaw<IntentRedactionTarget>(`SELECT id::text AS id,principal_kind,principal_id FROM persistence_requests
-    WHERE source_id=$1 AND state IN ('queued','running','recovering') AND intent->'body_ref'->>'staging_id'=ANY($2::text[]) ORDER BY sequence`, [sourceId, [...stagingIds]]);
+    WHERE source_id=$1 AND state IN ('queued','deferred','running','recovering') AND intent->'body_ref'->>'staging_id'=ANY($2::text[]) ORDER BY sequence`, [sourceId, [...stagingIds]]);
 }
 
 /**

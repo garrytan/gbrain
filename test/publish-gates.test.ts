@@ -11,7 +11,7 @@ import { operations, opAllowedForBoundClient, CLIENT_FENCED_WRITE_OPS } from '..
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 
-const GATED_OPS = ['list_skills', 'get_skill', 'get_skill_asset', 'list_brain_skillpack', 'advisor', 'set_memory_writeback'];
+const GATED_OPS = ['list_skills', 'get_skill', 'get_skill_asset', 'list_brain_skillpack', 'advisor', 'set_memory_writeback', 'watch_job', 'list_watches', 'unwatch'];
 
 function engineWithConfig(values: Record<string, string | null> | 'throws'): BrainEngine {
   return {

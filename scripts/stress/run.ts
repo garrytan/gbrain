@@ -352,7 +352,7 @@ const OWNING_WORKFLOWS = ['heavy-tests.yml', 'native-locks.yml', 'macos-validati
 /** Credentialed URLs of external services (a live Supabase Supavisor pooler) that no CI job provides: a secret by another name. */
 const EXTERNAL_SERVICE_URLS = ['GBRAIN_SUPAVISOR_URL'];
 
-function skipReason(file: string): string | null {
+export function skipReason(file: string): string | null {
   const text = readFileSync(join(ROOT, file), 'utf8');
   if (/process\.platform/.test(text)) return `every test skipped on ${process.platform}: platform-only tests, run by their owning native lane; not stressed`;
   const keys = [...new Set([...text.matchAll(/process\.env\.([A-Z0-9_]*(?:API_KEY|TOKEN|SECRET))/g)].map(m => m[1]!))];
@@ -362,8 +362,9 @@ function skipReason(file: string): string | null {
   const owner = OWNING_WORKFLOWS.find(w => { const p = join(ROOT, '.github/workflows', w); return existsSync(p) && readFileSync(p, 'utf8').includes(file); });
   if (owner) return `every test skipped here: its prerequisite (agent binary or native target) comes from its owning job in .github/workflows/${owner}; not stressed`;
   if (/process\.env\.GBRAIN_PGBOUNCER_URL/.test(text) && !process.env.GBRAIN_PGBOUNCER_URL) {
-    const pooled = readdirSync(join(ROOT, '.github/workflows')).find(w => { const body = readFileSync(join(ROOT, '.github/workflows', w), 'utf8'); return body.includes(file) && body.includes('GBRAIN_CI_REQUIRE_PGBOUNCER'); });
-    if (pooled) return `every test skipped without the PgBouncer fixture (GBRAIN_PGBOUNCER_URL); its owning pooled job in .github/workflows/${pooled} requires it; not stressed`;
+    const scripts = existsSync(join(ROOT, 'scripts')) ? readdirSync(join(ROOT, 'scripts')).filter(s => s.endsWith('.sh')).map(s => `scripts/${s}`) : [];
+    const pooled = [...readdirSync(join(ROOT, '.github/workflows')).map(w => `.github/workflows/${w}`), ...scripts].find(p => { const body = readFileSync(join(ROOT, p), 'utf8'); return body.includes(file) && body.includes('GBRAIN_CI_REQUIRE_PGBOUNCER'); });
+    if (pooled) return `every test skipped without the PgBouncer fixture (GBRAIN_PGBOUNCER_URL); its owning pooled job in ${pooled} requires it; not stressed`;
   }
   return null;
 }

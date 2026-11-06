@@ -185,7 +185,7 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
   if (!options.dryRun && options.confirmQuiesced && ((await ctx.engine.executeRaw(
     'SELECT id FROM gbrain_cycle_locks WHERE $1::uuid IS NULL OR acquisition_token IS DISTINCT FROM $1::uuid LIMIT 1',
     [options.ownLeaseToken ?? null])).length ||
-    (await ctx.engine.executeRaw("SELECT id FROM persistence_requests WHERE state IN ('queued','running','recovering') OR recovery IS NOT NULL LIMIT 1")).length)) {
+    (await ctx.engine.executeRaw("SELECT id FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL LIMIT 1")).length)) {
     throw opError('writer_not_quiesced', 'Active maintenance locks or durable writes remain; finish or recover them before exporting.',
       `Stop memory and file writers and old skill servers, let queued or recovering writes settle (the command in fix shows them for source ${options.sourceId}), then run the export again with --confirm-quiesced. Nothing was exported.`,
       { fix: readFix(`Shows source ${options.sourceId}'s writer, queued requests and pending recovery.`, { argv: ['gbrain', 'sources', 'writer', 'status', '--source', options.sourceId, '--json'] }) });
