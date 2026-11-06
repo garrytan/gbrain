@@ -164,6 +164,7 @@ export function publicWriteReceipt(receipt: WriteReceipt): WriteReceipt {
     ...(receipt.created_at !== undefined ? { created_at: receipt.created_at } : {}),
     ...(receipt.updated_at !== undefined ? { updated_at: receipt.updated_at } : {}),
     ...(receipt.target !== undefined ? { target: receipt.target } : {}),
+    ...(receipt.deferred !== undefined && !isTerminalWriteState(receipt.state) ? { deferred: { refresh_id: receipt.deferred.refresh_id } } : {}),
     ...(!isTerminalWriteState(receipt.state) && isWriteDiagnostic(receipt.diagnostic) ? { diagnostic: {
       age_ms: receipt.diagnostic.age_ms, assessment: receipt.diagnostic.assessment,
       reason: receipt.diagnostic.reason, next_action: receipt.diagnostic.next_action,

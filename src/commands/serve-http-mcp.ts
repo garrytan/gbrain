@@ -638,7 +638,7 @@ async function recordMcpToolResult(
       `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
        VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
       [authInfo.clientId, agentName, name, latency, successStatus],
-      [logParamsObj],
+      [successStatus === 'accepted_pending' ? { ...(logParamsObj && typeof logParamsObj === 'object' ? logParamsObj : {}), write_request_id: acceptedPendingReceipt(toolResult)?.request_id } : logParamsObj],
     );
   } catch { /* best effort */ }
   broadcastEvent({

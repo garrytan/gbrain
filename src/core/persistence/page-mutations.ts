@@ -552,5 +552,5 @@ export async function preparePageAdmission(ctx: OperationContext,
   return { typeWarning, slugAdvisory, admission: { origin: ctx.admissionOrigin, principal, operation: input.operation, sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, clientRequestId: input.batch ? undefined : clientRequestIdOf(params.request_id), callerIntent, intent, authority,
     ...(input.operation === 'edit_page' ? { terminalReservation: receiptReservation({ intent, authority }, (await import('./page-edit.ts')).EDIT_PAGE_RECEIPT_RESERVE) } : {}),
-    worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null } };
+    worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null, deferrable: true } };
 }

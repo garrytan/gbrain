@@ -67,6 +67,8 @@ export interface WriteAdmission {
   origin?: AdmissionOrigin;
   /** Phase 4.2: the brain the cached pre-admission reads came from; admission under another brain throws PreadmitBrainChanged. */
   brainId?: string;
+  /** PR B: the caller reports a pending receipt for a write deferred behind a refresh (page and memory verbs); others keep the refusal. */
+  deferrable?: boolean;
 }
 interface Counter {
   key: string; outstanding_count: number | string; intent_bytes: number | string;
@@ -621,9 +623,9 @@ export const REFRESH_BARRIER_MAX_DEFERRED_KEY = 'persistence.refresh_barrier_max
 export const REFRESH_BARRIER_MAX_DEFERRED = 1000;
 /** What a consumer advertises (consumer-heartbeat.ts CONSUMER_CAPABILITIES) and admission requires of every live one on the owner host. */
 export const REFRESH_BARRIER_CAPABILITY = 'refresh_barrier_1';
-/** A single page write may wait behind a refresh; jobs (managed sync included), grouped batches and skill bundles keep the refusal. */
+/** A single page write whose caller opted in may wait behind a refresh; jobs (managed sync included), grouped batches and skill bundles keep the refusal. */
 function deferrable(input: WriteAdmission): boolean {
-  return (input.targetKind ?? 'page') === 'page' && input.operation !== 'submit_job' && publicationGroupKey({ operation: input.operation, intent: input.intent }) === null;
+  return input.deferrable === true && (input.targetKind ?? 'page') === 'page' && input.operation !== 'submit_job' && publicationGroupKey({ operation: input.operation, intent: input.intent }) === null;
 }
 async function readRefreshBarrier(engine: BrainEngine): Promise<RefreshBarrier | null> {
   if (!await writeSwitchOn(engine, 'refresh_barrier').catch(() => false)) return null;

@@ -13,6 +13,8 @@ import { execFileBounded } from '../bounded-child-exec.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { OperationError } from '../ops/contract.ts';
 import { authorizeWrite } from './authority.ts';
+import type { BrainEngine } from '../engine.ts';
+import { completeWrite } from './journal.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 
 const GIT_ENV = { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never', LC_ALL: 'C', GIT_OPTIONAL_LOCKS: '0' };
@@ -31,7 +33,7 @@ async function refreshChangedPaths(engine: SqlEngine, refreshId: string, root: s
       'SELECT state,old_head,target_head,released_at IS NOT NULL AS released FROM persistence_worktree_refreshes WHERE id=$1::uuid', [refreshId]);
     if (!refresh?.released) return null;
     if (refresh.state === 'aborted' || refresh.old_head === refresh.target_head) return new Set<string>();
-    const { error, stdout } = await execFileBounded('git', ['-C', root, '-c', 'core.quotepath=false', 'diff', '--name-only', '-z', '--no-renames',
+    const { error, stdout } = await execFileBounded('git', ['-C', root, '-c', 'core.quotepath=false', 'diff', '--name-only', '-z', '--no-renames', '--relative',
       refresh.old_head, refresh.target_head], { timeout: DIFF_TIMEOUT_MS, maxBuffer: 64 * 1024 ** 2, env: gitChildEnv(GIT_ENV) });
     return error ? null : new Set(stdout.split('\0').filter(Boolean));
   })();
@@ -66,6 +68,49 @@ export async function deferredReplayRefusal(engine: SqlEngine, row: WriteRequest
   return { state: 'conflict', failure: { code: 'revision_conflict', message: unreadable
     ? `Request ${row.request_id} waited behind refresh ${refreshId}, and what that refresh changed could not be read, so nothing was applied. Read the page again and submit the change with a new request_id.`
     : `Refresh ${refreshId} changed ${touched.join(', ')} after request ${row.request_id} was accepted, so nothing was applied and no newer content was overwritten. Read the page again and submit the change with a new request_id.` } };
+}
+
+export const REFRESH_BARRIER_MAX_WAIT_KEY = 'persistence.refresh_barrier_max_wait_ms';
+export const REFRESH_BARRIER_MAX_WAIT_MS = 15 * 60_000;
+
+/**
+ * The owner's housekeeping: a deferred write whose refresh is still unreleased past the wait limit ends failed with
+ * `refresh_barrier_expired` (nothing applied, counters released). The refresh row is locked first (lock order: worktree,
+ * refresh, counters, request), so an expiry and the release that would make the row claimable never both win.
+ */
+export async function expireDeferredWrites(engine: BrainEngine, hostId: string, signal?: AbortSignal): Promise<WriteRequest[]> {
+  const [config] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [REFRESH_BARRIER_MAX_WAIT_KEY], { signal });
+  const configured = Number(config?.value);
+  const maxWaitMs = Number.isSafeInteger(configured) && configured > 0 ? configured : REFRESH_BARRIER_MAX_WAIT_MS;
+  const expired = await engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
+    JOIN persistence_worktrees w ON w.id=r.worktree_id JOIN persistence_worktree_refreshes f ON f.id=r.deferred_refresh_id
+    WHERE w.owner_host_id=$1::uuid AND r.state='deferred' AND f.released_at IS NULL
+      AND r.created_at<now()-($2::double precision*interval '1 millisecond') ORDER BY r.sequence LIMIT 100`, [hostId, maxWaitMs], { signal });
+  const finished: WriteRequest[] = [];
+  for (const row of expired) {
+    const done = await engine.transaction(async tx => {
+      const [held] = await tx.executeRaw('SELECT 1 FROM persistence_worktree_refreshes WHERE id=$1::uuid AND released_at IS NULL FOR NO KEY UPDATE', [row.deferred_refresh_id]);
+      if (!held) return null;
+      return completeWrite(tx, row, 'failed', {}, { code: 'refresh_barrier_expired',
+        message: `Request ${row.request_id} waited behind refresh ${row.deferred_refresh_id} for more than ${Math.round(maxWaitMs / 1000)} s, and the refresh has not finished, so nothing was applied. Check the refresh with gbrain sources writer status --source ${row.source_id} --json, then submit the write again with a new request_id.` });
+    });
+    if (done) finished.push(done);
+  }
+  return finished;
+}
+
+/** Whether the refresh a deferred write waits behind has ended (a read that fails counts as not ended). */
+export async function refreshReleased(engine: SqlEngine, refreshId: string | null | undefined): Promise<boolean> {
+  if (!refreshId) return true;
+  const [row] = await engine.executeRaw<{ released: boolean }>('SELECT released_at IS NOT NULL AS released FROM persistence_worktree_refreshes WHERE id=$1::uuid', [refreshId]).catch(() => []);
+  return row?.released === true;
+}
+
+/** Deferred writes still waiting, for `gbrain upgrade --check-downgrade` and writer status. */
+export async function deferredBacklog(engine: SqlEngine): Promise<{ count: number; oldest_age_ms: number }> {
+  const [row] = await engine.executeRaw<{ count: number; oldest_age_ms: number | null }>(`SELECT count(*)::int AS count,
+    (EXTRACT(EPOCH FROM now()-min(created_at))*1000)::bigint AS oldest_age_ms FROM persistence_requests WHERE state='deferred'`);
+  return { count: Number(row?.count ?? 0), oldest_age_ms: Number(row?.oldest_age_ms ?? 0) };
 }
 
 /** Test seam: forget every cached refresh diff. */

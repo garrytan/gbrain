@@ -3,6 +3,7 @@ import { withoutCallerAccess } from '../search/private-visibility.ts';
 import { withEngineScope } from '../engine-scope.ts';
 import type { GBrainConfig } from '../config.ts';
 import { claimableWriteSql, foregroundPrioritySql, claimGroupFollowers, claimNextLaneHead, claimNextWrite, publicationGroupKey, syncGroup, floorPreparationAttempts, hasClaimableWrite, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim, vacuumPersistenceQueues, independentGroup, sweepSegmentStorage, yieldToEventLoop } from './journal.ts';
+import { expireDeferredWrites } from './refresh-barrier.ts';
 import { connectionCapFailure, finishPreparationStalled, finishUnpublishedFailure, preparationAbortReason, recoverPublication, transientDatabaseFailure, type PreparedMutation } from './coordinator.ts';
 import { hostIdFor } from './identity.ts';
 import { executeClaimedGroup, PAGE_BATCH_GROUP_MAX, publishSingleWrite, singleWrite } from './group-publish.ts';
@@ -710,6 +711,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
         UPDATE persistence_requests r SET state='queued',execution_token=NULL,claim_expires_at=NULL,
           preparation_attempts=r.preparation_attempts+CASE WHEN $2::boolean THEN ${EXPIRED_PREPARING_CHARGE_SQL('r')} ELSE 0 END
         FROM expired WHERE r.id=expired.id`, [this.hostId, this.policy.deadlines, deadOwners], { signal }));
+      // PR B: a write deferred behind a refresh that outlived the barrier's wait limit ends failed, nothing applied.
+      for (const row of await this.phase('deferred_expiry', signal => expireDeferredWrites(this.engine, this.hostId, signal))) this.settled(row);
     }
     if (this.housekeepingOnly) return;
     if (publicationConcurrency(this.engine) === 0) {

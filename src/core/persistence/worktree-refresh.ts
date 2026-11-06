@@ -1202,7 +1202,10 @@ export async function refreshHolderReport(engine: BrainEngine, row: Pick<Worktre
 
 /** `gbrain sources writer status`: active refreshes (optionally of one source's worktree) with their holder and the command that moves each on. */
 export async function activeWorktreeRefreshes(engine: BrainEngine, sourceId?: string): Promise<Array<Record<string, unknown>>> {
-  const rows = await engine.executeRaw<WorktreeRefreshRow & { owner_host_id: string | null }>(`SELECT f.*,w.owner_host_id::text AS owner_host_id FROM persistence_worktree_refreshes f
+  const rows = await engine.executeRaw<WorktreeRefreshRow & { owner_host_id: string | null; deferred_count: number; deferred_oldest_ms: number | null }>(`SELECT f.*,w.owner_host_id::text AS owner_host_id,
+    (SELECT count(*)::int FROM persistence_requests d WHERE d.deferred_refresh_id=f.id AND d.state='deferred') AS deferred_count,
+    (SELECT (EXTRACT(EPOCH FROM now()-min(d.created_at))*1000)::bigint FROM persistence_requests d WHERE d.deferred_refresh_id=f.id AND d.state='deferred') AS deferred_oldest_ms
+    FROM persistence_worktree_refreshes f
     LEFT JOIN persistence_worktrees w ON w.id=f.worktree_id WHERE f.state IN ${ACTIVE_REFRESH_STATES_SQL}
     AND ($1::text IS NULL OR $1=ANY(f.source_ids)) ORDER BY f.created_at`, [sourceId ?? null]);
   return Promise.all(rows.map(async row => {
@@ -1210,6 +1213,7 @@ export async function activeWorktreeRefreshes(engine: BrainEngine, sourceId?: st
     return { refresh_id: row.id, worktree_id: row.worktree_id, state: row.state, source_ids: row.source_ids,
       old_head: row.old_head, target_head: row.target_head, upstream_ref: row.upstream_ref, updated_at: new Date(row.updated_at).toISOString(),
       ...(row.outcome.refusal ? { refusal: row.outcome.refusal } : {}), ...report,
+      ...(Number(row.deferred_count) > 0 ? { deferred: { count: Number(row.deferred_count), oldest_age_ms: Number(row.deferred_oldest_ms ?? 0), refresh_id: row.id } } : {}),
       next: report.liveness === 'live' && row.state === 'draining' ? 'Writes to this worktree are refused while queued work drains; retry them after about a second.'
         : report.liveness === 'live' ? `Wait for it: ${describeHolder(report.holder)} holds the refresh lock and finishes it.`
         : report.liveness === 'unknown' && report.fix?.argv ? `On host ${report.holder?.hostname ?? 'unknown'} (${report.holder?.host_id ?? row.owner_host_id ?? 'unknown host id'}), which holds the refresh lock: ${report.fix.argv.map(q).join(' ')}`
