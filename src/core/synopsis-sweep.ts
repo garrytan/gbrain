@@ -19,6 +19,7 @@
 import type { BrainEngine } from './engine.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
 import { largePageBodyFilter } from './page-size-policy.ts';
+import { chunkGenerationFilter } from './search/safe-chunks.ts';
 import {
   SEGMENT_SYNOPSIS_LEAD_BYTES,
   SEGMENT_SYNOPSIS_WINDOW_BYTES,
@@ -71,15 +72,14 @@ function eligiblePagesSql(opts: { sourceParam?: string; withChars: boolean }): s
     WITH chunk_stats AS (
       SELECT c.page_id, count(*)::bigint AS chunks${opts.withChars ? ', COALESCE(sum(length(c.chunk_text)), 0)::bigint AS chunk_chars' : ''}
         FROM content_chunks c
-       WHERE c.chunk_source <> 'image_asset'
+        JOIN pages p ON p.id = c.page_id
+       WHERE c.chunk_source <> 'image_asset' AND ${chunkGenerationFilter('p', 'c')}
        GROUP BY c.page_id
     ), resolved AS (
       SELECT p.id, p.slug, p.source_id, p.contextual_retrieval_mode AS stamped,
              p.text_projection_revision AS revision,
              p.body_storage = 'segmented' AS segmented,
              (COALESCE(p.body_storage, 'inline') <> 'segmented' AND ${largePageBodyFilter('p')}) AS large_inline,
-             CASE WHEN p.body_storage = 'segmented' THEN COALESCE(p.body_bytes, 0)
-                  ELSE length(COALESCE(p.compiled_truth, '')) + length(COALESCE(p.timeline, '')) END::bigint AS body_chars,
              CASE
                WHEN p.frontmatter ? 'contextual_retrieval'
                     AND (p.source_id = 'default' OR COALESCE(s.trust_frontmatter_overrides, false))
@@ -172,8 +172,8 @@ export interface SynopsisSweepPlan {
 /**
  * The pages a sweep would queue (eligible, not large-inline, not yet stamped
  * per_chunk_synopsis), oldest id first, with the token and dollar estimate on
- * the configured synopsis model. A page's synopsis document is its body capped
- * at SYNOPSIS_DOC_MAX_CHARS (a segmented page: its lead plus one segment window),
+ * the configured synopsis model. A page's synopsis document is its chunks joined
+ * (synopsisDocument) capped at SYNOPSIS_DOC_MAX_CHARS (a segmented page: its lead plus one segment window),
  * sent once per chunk with the chunk and the prompt overhead, at 4 chars per
  * token (estimateSynopsisCallUsd's rate).
  */
@@ -189,8 +189,8 @@ export async function planSynopsisSweep(engine: BrainEngine, opts: {
     est_synopsis_usd: 0, est_embedding_usd: 0, est_usd: 0, remaining_pages: 0 };
   if (!config.configured) return base;
   const rows = await engine.executeRaw<{ id: number | string; slug: string; source_id: string; revision: string | null; segmented: boolean | null;
-    body_chars: number | string; chunks: number | string; chunk_chars: number | string }>(
-    `SELECT id, slug, source_id, revision, segmented, body_chars, chunks, chunk_chars
+    chunks: number | string; chunk_chars: number | string }>(
+    `SELECT id, slug, source_id, revision, segmented, chunks, chunk_chars
        FROM (${eligiblePagesSql({ sourceParam: opts.sourceId ? '$2' : undefined, withChars: true })}) eligible
       WHERE NOT large_inline AND stamped IS DISTINCT FROM 'per_chunk_synopsis'
       ORDER BY id`,
@@ -204,7 +204,8 @@ export async function planSynopsisSweep(engine: BrainEngine, opts: {
   for (const row of selected) {
     const pageChunks = Number(row.chunks);
     const chunkChars = Number(row.chunk_chars);
-    const docChars = row.segmented ? Math.min(Number(row.body_chars), segmentedDocChars) : Math.min(Number(row.body_chars), SYNOPSIS_DOC_MAX_CHARS);
+    const documentChars = chunkChars + 2 * Math.max(0, pageChunks - 1);
+    const docChars = Math.min(documentChars, row.segmented ? segmentedDocChars : SYNOPSIS_DOC_MAX_CHARS);
     chunks += pageChunks;
     inputTokens += Math.ceil((pageChunks * (docChars + SYNOPSIS_PROMPT_OVERHEAD_CHARS) + chunkChars) / 4);
     embeddedChars += chunkChars + pageChunks * SYNOPSIS_WRAPPER_CHARS;

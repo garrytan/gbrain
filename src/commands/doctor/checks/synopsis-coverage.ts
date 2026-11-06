@@ -16,7 +16,9 @@ import { agentFix, checkError, infoCheck } from '../check-fix.ts';
 export async function checkSynopsisTierCoverage(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
   try {
     const sweep = await import('../../../core/synopsis-sweep.ts');
-    const config = await sweep.readSynopsisTierConfig(engine);
+    const read = await sweep.readSynopsisTierConfig(engine);
+    const granted = opts.sourceIds ? read.synopsis_sources.filter(id => opts.sourceIds!.includes(id)) : read.synopsis_sources;
+    const config = { ...read, synopsis_sources: granted, configured: !read.kill_switch && (read.global_tier === 'per_chunk_synopsis' || granted.length > 0) };
     if (!config.configured) {
       return infoCheck('synopsis_tier_coverage', `Not applicable: the configured contextual-retrieval tier is ${config.kill_switch ? 'off (kill switch)' : config.global_tier}, not per_chunk_synopsis.`,
         'not_applicable', undefined, { configured: false, global_tier: config.global_tier });
@@ -31,7 +33,7 @@ export async function checkSynopsisTierCoverage(engine: BrainEngine, opts: { sou
     const details = {
       configured: true,
       global_tier: config.global_tier,
-      synopsis_sources: opts.sourceIds ? config.synopsis_sources.filter(id => opts.sourceIds!.includes(id)) : config.synopsis_sources,
+      synopsis_sources: config.synopsis_sources,
       eligible_pages: coverage.eligible_pages,
       eligible_chunks: coverage.eligible_chunks,
       synopsis_pages: coverage.synopsis_pages,

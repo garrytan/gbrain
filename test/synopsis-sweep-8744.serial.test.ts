@@ -93,8 +93,8 @@ for (const kind of testBackends()) describe(`#8744 synopsis sweep (${kind})`, ()
   afterAll(async () => { if (close) await close(); else await engine.disconnect(); });
 
   const chunkStats = async (slug: string) => {
-    const rows = await engine.executeRaw<{ chunk_text: string; body: string }>(
-      `SELECT c.chunk_text, COALESCE(p.compiled_truth, '') || COALESCE(p.timeline, '') AS body
+    const rows = await engine.executeRaw<{ chunk_text: string }>(
+      `SELECT c.chunk_text
          FROM content_chunks c JOIN pages p ON p.id = c.page_id WHERE p.slug = $1 AND c.chunk_source <> 'image_asset' ORDER BY c.chunk_index`, [slug]);
     return rows;
   };
@@ -119,6 +119,10 @@ for (const kind of testBackends()) describe(`#8744 synopsis sweep (${kind})`, ()
     expect(check.message).toContain('1 large page(s)');
     expect(check.details).toMatchObject({ coverage_pct: 0, synopsis_chunks: 0, eligible_pages: 2, large_title_pages: 1, sweep_jobs: 0 });
     expect(check.fix?.argv).toEqual(['gbrain', 'reindex', '--synopsis']);
+    // The remote doctor's grant confines every count: a caller granted another source sees none of these pages.
+    const scoped = await checkSynopsisTierCoverage(engine, { sourceIds: ['source-b'] });
+    expect(scoped.details).toMatchObject({ eligible_chunks: 0, eligible_pages: 0, large_title_pages: 0 });
+    expect(scoped.details).not.toHaveProperty('sweep_jobs');
     const report = await buildModesReport(engine);
     expect(report.synopsis_coverage).toMatchObject({ coverage_pct: 0, synopsis_chunks: 0, fix: 'gbrain reindex --synopsis' });
     expect(report.synopsis_coverage!.line).toContain('0% of chunks');
@@ -139,7 +143,8 @@ for (const kind of testBackends()) describe(`#8744 synopsis sweep (${kind})`, ()
     expect(plan.chunks).toBe(all.length);
     expect(plan.est_output_tokens).toBe(all.length * SYNOPSIS_MAX_TOKENS);
     // The ceiling matches the per-call reservation estimator summed over every chunk (one call per chunk).
-    const perCall = all.reduce((sum, c) => sum + estimateSynopsisCallUsd(SYNOPSIS_MODEL, c.body, c.chunk_text, SYNOPSIS_MAX_TOKENS), 0);
+    const document = (rows: typeof alpha) => rows.map(c => c.chunk_text).join('\n\n');
+    const perCall = [alpha, beta].reduce((sum, rows) => sum + rows.reduce((s, c) => s + estimateSynopsisCallUsd(SYNOPSIS_MODEL, document(rows), c.chunk_text, SYNOPSIS_MAX_TOKENS), 0), 0);
     expect(plan.est_synopsis_usd).not.toBeNull();
     expect(plan.est_synopsis_usd!).toBeGreaterThan(0);
     expect(plan.est_synopsis_usd!).toBeCloseTo(perCall, 4);
