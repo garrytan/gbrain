@@ -47,8 +47,8 @@ export function attestRightFrom(row: Record<string, unknown> | undefined, grant:
   if (typeof system !== 'string' || !ATTEST_SYSTEMS.includes(system) || member != null) return null;
   if (grant !== 'legacy' && grant !== 'client_credentials') return null;
   const ops = Array.isArray(row!.attest_ops) ? (row!.attest_ops as unknown[]).filter((v): v is string => typeof v === 'string') : [...DEFAULT_ATTEST_OPS];
-  const read = row!.attest_read === 'person' || row!.attest_read === 'scope' ? row!.attest_read : null;
   const sources = Array.isArray(row!.attest_sources) ? (row!.attest_sources as unknown[]).filter((v): v is string => typeof v === 'string') : null;
+  const read: 'person' | 'scope' | null = row!.attest_read === 'scope' ? 'scope' : row!.attest_read === 'person' && !sources?.length ? 'person' : null;
   const readField = read ? { read } : {};
   if (!sources?.length) return { system, ops, sources: null, ...readField };
   return { system, ops: ops.filter(op => SCOPE_ATTEST_OPS.has(op)), sources, ...readField };
