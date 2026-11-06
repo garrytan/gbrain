@@ -5,13 +5,14 @@
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { parseSourcesGuardArgs, sourcesGuard } from '../src/commands/sources-guard.ts';
-import { renderGuardHook } from '../src/core/git/commit-guard.ts';
+import { installOwnerGuard, renderGuardHook, uninstallOwnerGuard } from '../src/core/git/commit-guard.ts';
+import { gitDurabilityPolicy } from '../src/core/persistence/git-durability-policy.ts';
 import { commitThroughDoor } from '../src/core/persistence/git-door.ts';
 import { commitGitTargets } from '../src/core/persistence/effect-git.ts';
 import { refreshWorktree } from '../src/core/persistence/worktree-refresh.ts';
@@ -45,6 +46,23 @@ test('the opt-in hook is byte-identical; both owner-path modes guard only the ow
   expect(enforce).toContain(ownerOnly);
   expect(enforce).toContain('for _op in MERGE_HEAD; do');
   expect(enforce).not.toContain('CHERRY_PICK_HEAD');
+});
+
+test('installing the owner guard keeps the brain-durability post-commit hook, so an unrecorded binding stays durable', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'gbrain-guard-durable-'));
+  try {
+    git(repo, 'init', '-q', '-b', 'main');
+    const hooks = join(repo, '.git', 'hooks');
+    mkdirSync(hooks, { recursive: true });
+    writeFileSync(join(hooks, 'post-commit'), '#!/bin/sh\n# gbrain brain-durability post-commit hook (v0.42.44+)\nexit 0\n', { mode: 0o755 });
+    expect(await gitDurabilityPolicy({ git_durability: null }, repo)).toEqual({ durable: true, source: 'legacy_hook' });
+    for (const mode of ['default', 'enforce'] as const) {
+      expect(installOwnerGuard(repo, mode).installed).toBe(true);
+      expect(await gitDurabilityPolicy({ git_durability: null }, repo)).toEqual({ durable: true, source: 'legacy_hook' });
+    }
+    uninstallOwnerGuard(repo);
+    expect(await gitDurabilityPolicy({ git_durability: null }, repo)).toEqual({ durable: true, source: 'legacy_hook' });
+  } finally { rmSync(repo, { recursive: true, force: true }); }
 });
 
 test('arguments: one source, one action, --mode only with --install', () => {

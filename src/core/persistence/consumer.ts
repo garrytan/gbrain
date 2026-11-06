@@ -3,7 +3,7 @@ import { withoutCallerAccess } from '../search/private-visibility.ts';
 import { withEngineScope } from '../engine-scope.ts';
 import type { GBrainConfig } from '../config.ts';
 import { claimableWriteSql, foregroundPrioritySql, claimGroupFollowers, claimNextLaneHead, claimNextWrite, publicationGroupKey, syncGroup, floorPreparationAttempts, hasClaimableWrite, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim, vacuumPersistenceQueues, independentGroup, sweepSegmentStorage, yieldToEventLoop } from './journal.ts';
-import { expireDeferredWrites } from './refresh-barrier.ts';
+import { expireDeferredWrites, overdueDeferredWorkSql } from './refresh-barrier.ts';
 import { connectionCapFailure, finishPreparationStalled, finishUnpublishedFailure, preparationAbortReason, recoverPublication, transientDatabaseFailure, type PreparedMutation } from './coordinator.ts';
 import { hostIdFor } from './identity.ts';
 import { executeClaimedGroup, PAGE_BATCH_GROUP_MAX, publishSingleWrite, singleWrite } from './group-publish.ts';
@@ -445,6 +445,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       OR EXISTS (SELECT 1 FROM persistence_topology_changes c
         JOIN persistence_worktrees w ON w.id=(c.recovery->>'worktreeId')::uuid
         WHERE c.recovery IS NOT NULL AND w.owner_host_id=$1::uuid AND NOT (c.id::text=ANY($4::text[])))
+      OR ${overdueDeferredWorkSql('$1')}
     ) AS work`, params, signal));
     // A window holding work stays put, so the tick it wakes reads the same rows.
     advanceProjectionCursor(cursor, row?.projection_work ? null : row?.projection_last, row?.high_water);

@@ -172,7 +172,9 @@ export function ownerGuardStatus(worktree: string): OwnerGuardStatus {
  * Point only this worktree's core.hooksPath at a hooks directory inside its own git dir and write the guard there. With
  * linked worktrees present, extensions.worktreeConfig is enabled first (moving core.bare / core.worktree into the main
  * worktree's config.worktree, as git requires), so a sibling worktree keeps its own hooks. Refuses, changing nothing, on
- * git older than 2.31 or another tool's hook at the effective hooks path. The caller holds the worktree's writer lock.
+ * git older than 2.31 or another tool's hook at the effective hooks path. gbrain's own hooks there (the brain-durability
+ * post-commit hook decides whether Git effects commit and push) are copied along, so the switch silences none of them.
+ * The caller holds the worktree's writer lock.
  */
 export function installOwnerGuard(worktree: string, mode: GuardMode): OwnerGuardStatus & { changed: boolean } {
   const p = ownerPaths(worktree);
@@ -195,6 +197,14 @@ export function installOwnerGuard(worktree: string, mode: GuardMode): OwnerGuard
     changed = true;
   }
   if (p.effective !== p.own) {
+    for (const name of existsSync(p.effective) ? readdirSync(p.effective) : []) {
+      const from = join(p.effective, name), to = join(p.own, name);
+      if (name === GUARD_HOOK || name.endsWith('.sample') || !statSync(from).isFile()) continue;
+      const body = readFileSync(from, 'utf8');
+      if (!GBRAIN_HOOK.test(body) || (existsSync(to) && readFileSync(to, 'utf8') === body)) continue;
+      writeFileSync(to, body);
+      chmodSync(to, 0o755);
+    }
     if (!before.worktree_config) enableWorktreeConfig(p.root, p.common);
     gitMust(p.root, ['config', '--worktree', 'core.hooksPath', p.own]);
     changed = true;
