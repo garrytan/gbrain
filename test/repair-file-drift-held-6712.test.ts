@@ -249,6 +249,8 @@ for (const backend of testBackends()) describe(`#6712 PR 4b: repair file-drift -
     writeFileSync(join(f.root, path), page('notes/tomb', 'Edited again after the preview.'));
     const applied = await run(f.sourceId, { side: 'deleted', state: 'tombstone_edited', prefer: 'database', expect: preview.preview_hash! });
     expect(applied.outcomes).toEqual({ changed_since_preview: 1 });
+    // GST-1555: the outcome carries the refusal's own next step.
+    expect((applied.outcome_items![0]!.detail!.fix as { argv: string[] }).argv).toEqual(['gbrain', 'sources', 'status', f.sourceId, '--json']);
     expect(readFileSync(join(f.root, path), 'utf8')).toContain('Edited again after the preview.');
     expect(await readGitHold(engine, f.sourceId, f.incarnation, path)).not.toBeNull();
   }), 240_000);
