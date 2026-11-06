@@ -721,7 +721,7 @@ async function runStatus(ws: string, rest: string[], home: string): Promise<numb
   if (report.runbookSkew) {
     console.log(
       `\nWARNING: runbook stamp ${report.runbookSkew.runbookStamp} != installed binary ${report.runbookSkew.binaryVersion} — ` +
-        'prefer the binary; re-fetch the runbook from the latest-stable ref.',
+        'prefer the binary; re-fetch the runbook from the stable ref.',
     );
   }
   console.log('\nSupport (relay verbatim when something is broken):');
@@ -1127,7 +1127,7 @@ async function runHooks(
   if (!gbrainBin) {
     console.error(
       'cannot resolve an absolute gbrain binary path (GUI hosts inherit no PATH) — ' +
-        'install gbrain globally (`bun install -g github:garrytan/gbrain#latest-stable`) or pass --gbrain-bin <abs path>',
+        'install gbrain globally (`bun install -g github:garrytan/gbrain#stable`) or pass --gbrain-bin <abs path>',
     );
     return 2;
   }

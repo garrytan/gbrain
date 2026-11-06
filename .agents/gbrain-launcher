@@ -73,7 +73,7 @@ resolve_bin() {
   fi
   [ "$HOOK" = 1 ] && exit 0
   echo "gbrain-launcher: gbrain binary not found." >&2
-  echo "  install: bun install -g github:garrytan/gbrain#latest-stable" >&2
+  echo "  install: bun install -g github:garrytan/gbrain#stable" >&2
   echo "  (the npm package named 'gbrain' is unrelated - do not npm install it)" >&2
   echo "  then run the bundled 'setup' skill to initialize your brain," >&2
   echo "  or set GBRAIN_BIN to an absolute gbrain binary path." >&2

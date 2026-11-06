@@ -9,7 +9,7 @@
  * stamp (adopter-skew check [CX-P1.11]).
  *
  * The README content contract (stamp line, "Use this template" steps,
- * latest-stable-only refs, no timestamps) is pinned via the pure
+ * stable-only refs, no timestamps) is pinned via the pure
  * renderTemplateReadme.
  */
 
@@ -43,11 +43,11 @@ describe('renderTemplateReadme', () => {
     expect(readme.toLowerCase()).toContain('public');
   });
 
-  test('references only the sanctioned latest-stable distribution ref [C1]', () => {
+  test('references only the sanctioned stable distribution ref [C1]', () => {
     expect(readme).toContain(
-      'https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/BOOTSTRAP_FOR_AGENTS.md',
+      'https://raw.githubusercontent.com/garrytan/gbrain/stable/BOOTSTRAP_FOR_AGENTS.md',
     );
-    expect(readme).toContain('github:garrytan/gbrain#latest-stable');
+    expect(readme).toContain('github:garrytan/gbrain#stable');
     expect(readme).not.toMatch(/raw\.githubusercontent\.com\/garrytan\/gbrain\/(master|main|v\d)/);
   });
 

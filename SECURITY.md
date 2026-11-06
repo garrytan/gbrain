@@ -51,7 +51,7 @@ enforced structurally by actionlint on every workflow change.
   fetched over TLS; it does NOT independently verify the attestation's Sigstore
   signature (the Fulcio certificate chain or Rekor inclusion).
 - **From-source and pinned-tag installs remain trust-on-first-use.**
-  `bun install -g github:garrytan/gbrain#latest-stable` follows a force-moved
+  `bun install -g github:garrytan/gbrain#stable` follows a force-moved
   tag, and the `codex-plugin` branch / template repo are force-published; these
   paths trust TLS + GitHub without an independent integrity check. From-source
   installs also serve the committed `admin/dist` bundle (devDeps for a fresh

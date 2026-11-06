@@ -19,7 +19,7 @@ placeholders from YOUR interview answers, on your machine.
 
    ```
    Read and follow every step of:
-   https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/BOOTSTRAP_FOR_AGENTS.md
+   https://raw.githubusercontent.com/garrytan/gbrain/stable/BOOTSTRAP_FOR_AGENTS.md
    Goal: finish setting up this cloned template as my persistent personal
    agent, with gbrain as your memory. Interview me before writing any
    identity file — never invent answers. You are not done until
@@ -27,7 +27,7 @@ placeholders from YOUR interview answers, on your machine.
    ```
 
    Already running the gbrain CLI
-   (`bun install -g github:garrytan/gbrain#latest-stable`)? Then the first
+   (`bun install -g github:garrytan/gbrain#stable`)? Then the first
    step is always:
 
    ```
