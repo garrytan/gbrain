@@ -229,6 +229,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'dirty_age',
   'commits_outside_source_root',
   'quarantined_changes',
+  // PR B: commits in a source checkout that gbrain's commit ledger does not name, and page files left uncommitted (doctor/checks/foreign-writers.ts).
+  'foreign_writers',
   'takes_count',
   'takes_weight_grid',
   // #5836: active facts with no entity (invisible to entity recall and the conflict sweep).
@@ -406,6 +408,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'pool_budget',
   'progressive_batch_audit_health',
   'queue_health',
+  // Wakeshift PR 1: report-back key, enabled state and dead/id_reused watches (doctor/checks/wakeshift.ts).
+  'wakeshift',
   // #4578: brain-wide maintenance jobs dying at their deadline.
   'global_maintenance_timeouts',
   // GBRA-130 C-6: no completed brain-wide pass while jobs fail or a phase keeps blocking it.

@@ -917,6 +917,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     // the runtime does — env/file plane wins over DB (loadConfig() already
     // overlays env onto the file) — and report which plane answered on
     // stderr, keeping stdout a bare value for scripts.
+    if (key === 'mcp.publish_wakeshift') return (await import('./wakeshift.ts')).printWakeshiftGate();
     const filePlane = loadConfig() as Record<string, unknown> | null;
     // Dotted keys (push.allow_unverified_remote, hooks.stop_push_debounce_min)
     // are stored NESTED by `set`; resolve the path so `get`/`unset` see them.

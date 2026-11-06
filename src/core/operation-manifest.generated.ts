@@ -4215,6 +4215,83 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "area": "jobs"
   },
   {
+    "name": "watch_job",
+    "mutating": true,
+    "idempotent": true,
+    "writeInference": "non_content",
+    "outputRedaction": {
+      "exempt": "watch bookkeeping: job ids, states and times, never retrieved brain text"
+    },
+    "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn or keep working. The wake names the job and says to call get_job for the result; it carries no page text. Agent-scoped tokens watch only jobs they own. If no wake arrives, call wait_job.",
+    "params": {
+      "id": {
+        "type": "number",
+        "required": true,
+        "description": "Job ID (from submit_job, submit_agent or list_jobs)."
+      },
+      "session_key": {
+        "type": "string",
+        "description": "This conversation's session_key, from an earlier result (a secret token, or a handle such as claude-code#2). Keep it to this conversation; don't share or log it."
+      },
+      "harness": {
+        "type": "string",
+        "description": "The program you're running in: codex, claude-code, cursor (local CLI or IDE), cursor-cloud (Cursor cloud agent), grok-bot, copilot-cli, opencode, antigravity, openclaw (even when it runs your turns in Codex), hermes, chatgpt, or your program's name if it isn't listed"
+      },
+      "conversation_id": {
+        "type": "string",
+        "description": "Your own ID for this conversation, if your program gives you one. Cursor and Grok Bot: the output of `printenv CURSOR_CONVERSATION_ID`. Codex and Antigravity send it automatically; others leave it empty"
+      }
+    },
+    "scope": "admin",
+    "agentCallable": true,
+    "publishGateKey": "mcp.publish_wakeshift",
+    "cliHints": {
+      "hidden": true
+    },
+    "area": "jobs"
+  },
+  {
+    "name": "list_watches",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": {
+      "exempt": "watch bookkeeping: job ids, states and times, never retrieved brain text"
+    },
+    "description": "List the jobs this connection is watching through Wakeshift (open watches, plus ones that ended in the last day) with their state: open, delivered, dead or ended.",
+    "params": {},
+    "scope": "admin",
+    "agentCallable": true,
+    "publishGateKey": "mcp.publish_wakeshift",
+    "cliHints": {
+      "hidden": true
+    },
+    "area": "jobs"
+  },
+  {
+    "name": "unwatch",
+    "mutating": true,
+    "idempotent": true,
+    "writeInference": "non_content",
+    "outputRedaction": {
+      "exempt": "watch bookkeeping: job ids, states and times, never retrieved brain text"
+    },
+    "description": "Stop watching a job: ends this connection's open Wakeshift watches on it, so no wake comes for it. Returns how many ended (0 when none was open).",
+    "params": {
+      "job": {
+        "type": "number",
+        "required": true,
+        "description": "Job ID you passed to watch_job."
+      }
+    },
+    "scope": "admin",
+    "agentCallable": true,
+    "publishGateKey": "mcp.publish_wakeshift",
+    "cliHints": {
+      "hidden": true
+    },
+    "area": "jobs"
+  },
+  {
     "name": "find_orphans",
     "mutating": false,
     "idempotent": true,
@@ -6004,6 +6081,12 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         ],
         "description": "Lowest trust tier to return (the connection floor still applies).",
         "fullSurfaceOnly": true
+      },
+      "max_chars": {
+        "type": "integer",
+        "minimum": 200,
+        "description": "Cap on fact (then results) text, 200-12000; whole items only, truncated says if cut.",
+        "fullSurfaceOnly": true
       }
     },
     "scope": "read",
@@ -6379,6 +6462,19 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",
         "fullSurfaceOnly": true
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Read this one source as its audience (a shared scope): never the person's own facts.",
+        "fullSurfaceOnly": true
+      },
+      "source_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Read only these sources as their audience (a shared scope): never the person's own facts.",
+        "fullSurfaceOnly": true
       }
     },
     "scope": "read",
@@ -6438,6 +6534,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "acting_user": {
         "type": "string",
         "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",
+        "fullSurfaceOnly": true
+      },
+      "source_id": {
+        "type": "string",
+        "description": "One of this credential's scope sources: save on its shared memory/scope page.",
         "fullSurfaceOnly": true
       }
     },

@@ -169,7 +169,7 @@ grant.
 
 ### Narrow one request with `source_ids`
 
-`search`, `query`, `recall` and `list_pages` take `source_ids`, a list of
+`search`, `query`, `recall`, `memory_recall` and `list_pages` take `source_ids`, a list of
 source ids (CLI: `--source-ids source-a,source-b`). The request reads only
 those sources:
 
@@ -388,9 +388,10 @@ gbrain sources set-sync <id> <on|off> [--dry-run] [--expect <on|off>]
 gbrain sources host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>]
                                Managed brains: host a new, empty source in a bare
                                repository under <path> (see below). Previews without --expect.
-gbrain sources canonical <id> --to git|mixed [--dry-run | --apply --expect <hash>] [--json]
+gbrain sources canonical <id> --to git|mixed [--dry-run [--list-out <file>] [--approval-out <file>] | --apply (--expect <hash> | --approved <file>)] [--decisions <file>] [--json]
                                Managed brains: convert a source to git-canonical or back
-                               to mixed. Previews without --apply; the apply prints progress
+                               to mixed. Previews without --apply (review list, decisions
+                               and approvals: docs/guides/git-canonical.md); the apply prints progress
                                on stderr and, if stopped, where it stopped
                                (docs/designs/GIT_CANONICAL_MEMORY.md#conversion).
 ```

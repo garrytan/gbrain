@@ -173,6 +173,7 @@ Follow the error's `fix.next` as the
 | `committed_local` | 0 | A managed canonical worktree, or a checkout with no Git remote (`no_remote: true`): the paths were committed locally and nothing was pushed. Report the commit; it reaches a remote on the owner's next publish, or after a remote is added and `--push-only` runs. |
 | `pushed_checkout_lagging` | 0 | The push landed but this checkout was not advanced; a `[gbrain notice]` names the files that blocked it. Change nothing: the next commit-push or `--pull` catches the checkout up. Never stash or reset to "fix" it. |
 | `commit_lock_busy` | 1 | Another writer held the lock for the whole wait; nothing was committed. Retry once. If it is still busy, tell the user which checkout and lock path the message names and stop. |
+| <a id="checkout_not_a_source"></a>`checkout_not_a_source` | 1 | The checkout commit-push resolved from the working directory (no `--path`) is not one of the brain's source checkouts on this host, typically a wrapper that changed into another repository; nothing was staged. The message lists the brain's checkouts. Tell the user to make the script pass `--path` with the absolute brain checkout. A host whose brain records no source checkout, or a checkout with `gbrain.sourceRoot` set, is never refused this way. |
 | `commit_paths_invalid` | 1 | No paths, a path outside the checkout, the checkout root itself, or a path git would not stage. Name the explicit files you wrote and rerun. |
 | `commit_prestaged_paths` | 1 | Another writer staged files under a directory you named; nothing was staged or committed. Name your own files explicitly. Unstage the others (`git restore --staged -- <file>`, which keeps their bytes) only after the user agrees. |
 | `commit_outside_source_root` | 1 | The commit, or a local commit about to be published, changes files outside the brain's [source root](#source-roots); nothing was pushed. Show the user `git show --stat <sha>`; rerun with `--allow-outside-source-root` only if they want it published. |
@@ -206,6 +207,22 @@ Every run also appends a line to `~/.gbrain/brain-push.log`, which
 reports it for that checkout until a publish resolves it.
 
 <a id="source-roots"></a>
+## Base check
+
+A script that reads a file, edits it and commits can overwrite a change another writer committed in
+between. `--base` closes that gap: record the blob when you read the file
+(`git rev-parse HEAD:<path>`, or `absent` for a file that does not exist yet) and pass it back:
+
+```bash
+gbrain git commit-push --base notes/summary.md=<blob> -m "update summary" -- notes/summary.md
+```
+
+Under the commit lock and before anything is staged, each `--base` path's blob at HEAD must still
+equal the one given. Otherwise the command refuses `commit_base_moved` naming the path, the base and
+HEAD's blob; nothing is staged or committed. Read the file at HEAD again, redo the change and rerun with
+the new base. Every `--base` path must also be one of the committed paths. Pages the agent also edits
+are better written with `gbrain put` (put_page), which carries its own revision check.
+
 ## Source roots
 
 A brain can be one folder inside a larger repository. `gbrain sources harden`
@@ -252,7 +269,8 @@ commits come in. Four rules keep that checkout able to move:
    plain git leaves commits the upstream lacks and nobody publishes. The
    checkout diverges, and every later refresh refuses `refresh_diverged` and
    changes nothing. Commit the files a script wrote with
-   `gbrain git commit-push -m "<msg>" -- <paths>`: on a managed worktree it
+   `gbrain git commit-push --path <absolute checkout> -m "<msg>" -- <paths>`
+   (run from another repository without `--path`, it refuses `checkout_not_a_source`): on a managed worktree it
    commits only those paths under the commit lock (`committed_local`) and the
    owner publishes them on its next Git publish. Pages can also go through
    `put_page`, `edit_page`, `remember` or `capture`. CLI calls go through
@@ -547,6 +565,90 @@ A person who needs a plain commit once bypasses it for that one command:
 GBRAIN_COMMIT_GUARD=off git commit -m "fix the README by hand" -- README.md
 ```
 
+<a id="owner-path-guard"></a>
+### Owner-path guard (managed worktrees)
+
+`gbrain git guard --install` refuses a managed canonical worktree. Its owner
+installs the guard there with
+`gbrain sources guard <source> --install [--mode enforce]` instead. It runs
+only on the source's owner host (any other host is refused
+`permission_denied`), under the worktree's writer lock, from the trusted local
+CLI. The hook goes in a hooks directory private to that worktree
+(`<worktree git dir>/gbrain-hooks`), and only that worktree's
+`core.hooksPath` points at it (`git config --worktree`; gbrain enables
+`extensions.worktreeConfig` when the repository has linked worktrees), so a
+person's own linked checkout of the same repository keeps its hooks. It refuses,
+changing nothing, when another tool's hook lives at the worktree's current
+hooks path.
+
+`--mode enforce` also refuses cherry-pick, revert, rebase and sequencer
+commits: in a managed worktree only the owner commits. The owner's writers
+pass unchanged: the effect worker commits with an empty hooks directory, page
+writes through the door and the in-memory merges are plumbing that runs no
+commit hook, sync's auto-init turns hooks off, `commit-push` names the commit
+lock it holds, and a refresh fast-forward runs no commit hook.
+`gbrain sources guard <source> --status` prints whether it is installed, its
+mode and the effective hooks path; `--uninstall` removes it. A worktree added
+later with `git worktree add` inherits the hooks path (git copies
+`config.worktree`); the guard lets its commits through, and
+`git config --worktree --unset core.hooksPath` in that worktree restores its
+own hooks.
+
+A writer that turns hooks off itself (`git -c core.hooksPath=/dev/null commit`)
+is not stopped by any hook. The [commit ledger](#commit-ledger) names it.
+
+<a id="commit-ledger"></a>
+## Commit ledger
+
+Every commit gbrain makes is appended as one JSON line to
+`<git common dir>/gbrain/commit-ledger.jsonl`: the sha, the writer
+(`commit_push`, `door`, `merge`, `replay`, `effect`, `sync_init`,
+`workspace_push`, `bootstrap`, `hosted_repo`), the worktree, ref, pid and host.
+The file sits inside `.git`, so it is never tracked, and every worktree of the
+repository shares it. Appends take their own lock
+(`commit-ledger.lock` beside it) for microseconds, never while git runs. The
+first append writes a `start` line; at 4 MiB the file rotates to
+`commit-ledger.1.jsonl` (one previous file is kept). A `git commit` gbrain runs
+writes an `intent` line first (the HEAD before it and the message's sha256)
+and the commit line after; a plumbing commit is recorded before its ref moves.
+A failed append never fails the commit: gbrain logs it once, and doctor then
+reports that commit as foreign. Nothing reads or writes the ledger in a
+repo-less brain.
+
+<a id="foreign-writers"></a>
+## Foreign writers (doctor `foreign_writers`)
+
+`gbrain doctor --only foreign_writers` reads every registered source checkout
+on this host, managed worktrees included, once per repository. It is read-only.
+
+- **Foreign commits.** It reads the reflogs of local ref moves (`logs/HEAD`,
+  `logs/refs/heads/*` and each linked worktree's `HEAD` log). A commit created
+  here (`commit`, `--amend`, cherry-pick, revert, rebase or `pull --rebase`
+  picks, `am`, or an `update-ref` after `commit-tree`) that the ledger does not
+  name was made by another writer. Merges, fast-forwards, pulls, resets,
+  checkouts, branch moves and clones are not commits made here. Each is
+  labelled `plain`, `amend`, `rewrite` or `plumbing`; a plain commit made while
+  the enforce guard was installed reads `plain (guard bypassed)`. Any foreign
+  commit fails the check, naming the newest one:
+  `Commit <sha12> (<kind>, "<subject>", <time>) in <checkout> was not made by
+  gbrain; route that writer through gbrain git commit-push or a page write`.
+  Ask the user which job makes such commits before changing anything.
+- **Covered window.** Reflog entries older than the ledger's start (or its
+  oldest retained line after rotation) are reported as uncovered, never
+  foreign. A repository gbrain has not committed in yet has an empty window.
+- **Unconfirmed commits.** A commit whose parent and message match an open
+  intent within 60 seconds (gbrain crashed between `git commit` and the
+  ledger line) is a warning and is never written back to the ledger.
+- **Dirty page files.** Untracked and modified files under the source roots
+  are listed by age (their mtime), leaving out files gbrain is about to commit
+  (a queued or running git effect, or the write-through pending ledger). Files
+  older than 30 minutes warn.
+
+The JSON (`details`) carries the window per repository, every foreign commit
+(sha, kind, ref, time, subject, committer), the unconfirmed ones, ref moves it
+could not read, and at most 20 dirty files with the total count. A brain with
+no Git checkout reports `not_applicable`.
+
 ## Limits
 
 - **Two agents editing the same file at the same time still conflict.** The
@@ -568,9 +670,10 @@ GBRAIN_COMMIT_GUARD=off git commit -m "fix the README by hand" -- README.md
   [source root](#source-roots) recorded, gbrain refuses to publish one that
   reaches outside it. `gbrain doctor` reports such unpushed commits
   (`commits_outside_source_root`), a checkout behind its upstream for over an
-  hour (`checkout_lagging`), pending or long-staged files (`dirty_age`), and
+  hour (`checkout_lagging`), pending or long-staged files (`dirty_age`),
   local versions the opt-in [quarantine](#quarantine) parked
-  (`quarantined_changes`).
+  (`quarantined_changes`), and every commit gbrain did not make
+  ([`foreign_writers`](#foreign-writers)).
 - **No page-aware merge.** Two edits to the same page meet as a text conflict;
   a merge driver that understands page sections is a planned follow-up.
 

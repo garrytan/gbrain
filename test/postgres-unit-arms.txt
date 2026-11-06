@@ -101,6 +101,7 @@ test/forecast-journal.test.ts
 test/frontmatter-reserved-keys-6454.test.ts
 test/g4-forget-fence-edit.test.ts
 test/get-chunks-paging.test.ts
+test/git-canonical-conversion-evidence-d4.test.ts
 test/git-canonical-conversion-g8a.test.ts
 test/git-canonical-conversion-live-writer.test.ts
 test/git-canonical-conversion-no-checkout-7885.test.ts
@@ -115,6 +116,7 @@ test/git-door-remote-g7b.test.ts
 test/git-door-strict-gbra133.test.ts
 test/git-door-write-cost.test.ts
 test/git-gap-census.test.ts
+test/git-gap-direction-evidence-d4.test.ts
 test/google-connector-facts-fence-7292.test.ts
 test/grade-takes-window.test.ts
 test/graduation-copy.test.ts
@@ -450,11 +452,13 @@ test/purge-missing-cache-6911.test.ts
 test/purge-read-surfaces.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
 test/qm-memory-tools.test.ts
+test/qm-scope-writes.test.ts
 test/read-meta-diag.test.ts
 test/reason-trailers-gbra217.test.ts
 test/recall-page-fill.test.ts
 test/receipt-compaction-newest-sync-gbra130.test.ts
 test/reconcile-clears-stalled-hold-7364.test.ts
+test/refresh-write-barrier.test.ts
 test/remediation-manual-only.test.ts
 test/remember-batch-entity-7432.test.ts
 test/repair-apply-pending-6543.test.ts

@@ -246,7 +246,8 @@ what every named person may read.
 A trusted system that already knows who each person is (QM) instead holds the
 attest right: register a client-credentials client, grant it with `gbrain auth
 rescope --client <id> --attest-actor qm [--attest-ops <op,...>]` (default
-`get_write_request,memory_recall,memory_write`), and link each person's canonical id with `gbrain
+`get_write_request,memory_recall,memory_write`; `--attest-sources <scope sources>` lets `memory_write` save to a shared scope's
+`memory/scope` page, see the [QM guide](../guides/qm.md#shared-scopes-projects-channels-teams)), and link each person's canonical id with `gbrain
 access member link <member> --qm <id>` (`unlink`, `links`). Its `x-qm-actor`
 header then runs each attested operation as that member, never reading private
 pages; see [attested-actor refusals](../guides/write-refusals.md#attested-actor-refusals).
@@ -595,13 +596,27 @@ gbrain attribution people/alice-example --timeline 17
 ```
 
 Each attribution is `{ request_id, operation, principal: { kind, id, name }, at,
-origin }`. Branch on `origin`:
+agent_label?, origin }`. Branch on `origin`:
 
 | `origin` | Meaning |
 | --- | --- |
 | `request` | Written by the named journaled request; `operation` and `at` come from it. |
 | `maintenance` | Written by a maintenance pass (cycle extraction, repair) as the named principal, with no request. |
 | `unrecorded` | Written before attribution existed, or by a legacy writer that records none. Not an error. |
+
+**Which AI made the write.** One credential often serves several AIs (a hosted
+app calling for Claude Code and Codex, say). An HTTP MCP caller can name the AI
+on each request with the `X-Gbrain-Agent-Label` header, for example
+`X-Gbrain-Agent-Label: Claude Code`. Writes from that request show it as
+`agent_label`; jobs the request queues run under their own authority and record
+no label. Browser callers on an origin in `GBRAIN_HTTP_CORS_ORIGIN` may send it,
+since both transports' CORS preflight allows it. It is a label the caller declares and gbrain does not verify:
+the principal is still who was authorized, and no grant, access rule or trust
+tier reads the label. Any token may send it, and it lands only on that token's
+own write requests. A value that is not 1 to 120 printable ASCII characters is
+dropped, not refused. Stdio MCP and the local CLI have no request headers and
+record no label; their principal already names the lane. Without the header a
+write is recorded exactly as before.
 
 Who can read it:
 

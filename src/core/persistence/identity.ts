@@ -238,19 +238,34 @@ async function ensureLocalWriterRow(engine: BrainEngine, lane: 'cli' | 'stdio', 
   const existing = await ensureRegistrationRow(engine, local, grant, () => credentialMismatch(path, local.id, lane));
   return { local, ...(existing ? { existing } : {}) };
 }
-/** Inserts `local`'s row unless it exists; a revoked row, or one with another lane or credential, refuses. Returns the row it read. */
+/**
+ * Inserts `local`'s row unless it exists; a revoked row, or one with another lane or credential, refuses. Returns the row it
+ * read (undefined when it inserted the registration). Two callers registering the same value at once both read no row and
+ * both insert: the insert names no conflict target, because the loser can meet the winner's row on the credential hash's
+ * unique index before the id's, and either conflict means the registration may already be there. The loser then reads the
+ * row the winner wrote and checks it like any existing one; a credential registered under another id refuses.
+ */
 async function ensureRegistrationRow(engine: SqlEngine, local: LocalRegistration, grant: LocalGrant, mismatch: () => OperationError): Promise<LocalWriterRow | undefined> {
-  const [existing] = await engine.executeRaw<LocalWriterRow>(
-    'SELECT revoked_at,credential_hash,lane,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid', [local.id]);
-  if (existing?.revoked_at != null) throw new OperationError('permission_denied', 'This local writer registration was revoked.', 'Explicitly register a new writer to authorize future work.');
-  if (existing && (existing.lane !== local.lane || existing.credential_hash !== sha256(local.credential))) throw mismatch();
-  // A registered writer is left as it is (the insert would conflict and do nothing).
-  if (!existing) {
-    await engine.executeRaw(`INSERT INTO persistence_local_writers(id,lane,credential_hash,grant_ceiling)
-    VALUES($1::uuid,$2,$3,$4::text::jsonb) ON CONFLICT(id) DO NOTHING`, [local.id, local.lane, sha256(local.credential), JSON.stringify(grant)]);
-    forgetRequestIdentity();
-  }
-  return existing;
+  const read = async () => (await engine.executeRaw<LocalWriterRow>(
+    'SELECT revoked_at,credential_hash,lane,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid', [local.id]))[0];
+  const check = (row: LocalWriterRow): LocalWriterRow => {
+    if (row.revoked_at != null) throw new OperationError('permission_denied', 'This local writer registration was revoked.', 'Explicitly register a new writer to authorize future work.');
+    if (row.lane !== local.lane || row.credential_hash !== sha256(local.credential)) throw mismatch();
+    return row;
+  };
+  const existing = await read();
+  // A registered writer is left as it is.
+  if (existing) return check(existing);
+  const inserted = await engine.executeRaw<{ id: string }>(`INSERT INTO persistence_local_writers(id,lane,credential_hash,grant_ceiling)
+    VALUES($1::uuid,$2,$3,$4::text::jsonb) ON CONFLICT DO NOTHING RETURNING id`, [local.id, local.lane, sha256(local.credential), JSON.stringify(grant)]);
+  // This request read the registration as missing; its later checks read it again either way.
+  forgetRequestIdentity();
+  if (inserted.length > 0) return undefined;
+  const raced = await read();
+  if (!raced) throw opError('permission_denied', 'This local writer credential is registered under another id.',
+    `The credential given for registration ${local.id} already belongs to another registration in this brain's database, so nothing was registered. A credential authorizes one registration: pass that registration's own id, or a new credential.`,
+    { fix: registrationsFix() });
+  return check(raced);
 }
 /**
  * Registers a local writer whose credential the host holds as a value: the row in `persistence_local_writers` and no

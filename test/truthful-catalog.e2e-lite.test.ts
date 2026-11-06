@@ -173,6 +173,7 @@ async function setGates(on: boolean): Promise<void> {
   await engine.setConfig('mcp.publish_skills', on ? 'true' : 'false');
   await engine.setConfig('mcp.publish_advisor', on ? 'true' : 'false');
   await engine.setConfig('mcp.publish_memory_settings', on ? 'true' : 'false');
+  await engine.setConfig('mcp.publish_wakeshift', on ? 'true' : 'false');
 }
 
 interface Cell {
@@ -216,6 +217,7 @@ function expectedVisibleSet(cell: Cell): Set<string> {
     if (!(op.requiredScopes ?? []).every(scope => hasScope(scopes, scope))) continue;
     if (cell.bound && !opAllowedForBoundClient({ boundSlugPrefixes: [BOUND_PREFIX] }, op)) continue;
     if (op.publishGateKey && !cell.gatesOn) continue;            // WP1 honest catalog
+    if (op.publishGateKey === 'mcp.publish_wakeshift') continue; // host file plane plus key only; a DB row never lists it
     out.add(op.name);
   }
   return out;
@@ -463,9 +465,9 @@ describe('E5 truthful catalog — legacy bearer transport (real HTTP, PGLite)', 
       const meta = result._meta as { warnings?: Array<{ code: string; param: string }> } | undefined;
       expect(meta?.warnings?.[0]?.code).toBe('unknown_param');
       expect(meta?.warnings?.[0]?.param).toBe('e5_garbage_probe');
-      // The model-visible grace-period notice rides the second content block.
+      // HARN-15: the warning lives in _meta.warnings only; no content block names it.
       const blocks = result.content.map(c => c.text);
-      expect(blocks.some(t => t.includes('unknown parameter "e5_garbage_probe"'))).toBe(true);
+      expect(blocks.some(t => t.includes('e5_garbage_probe'))).toBe(false);
     } finally {
       await engine.setConfig('mcp.strict_params', 'reject');
     }

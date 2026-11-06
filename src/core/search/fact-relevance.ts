@@ -42,9 +42,15 @@ const STOPWORDS = new Set(['the', 'and', 'for', 'who', 'what', 'when', 'where', 
   'now', 'current', 'currently', 'should', 'does', 'did', 'has', 'have', 'how', 'any', 'all', 'about', 'into', 'its', 'next', 'use', 'uses', 'tell']);
 const WORD_RE = /[\p{L}\p{N}][\p{L}\p{N}'-]+/gu;
 
+/** A question with more content terms than this is scored on the ones its candidates hold (`heldTerms`). */
+export const MAX_QUERY_TERMS = 12;
+/** The content terms such a question is searched on: its last ones, where a provider puts the turn after its preamble. */
+const SEARCH_TERMS = 24;
+const contentTerms = (query: string) => [...new Set(query.toLowerCase().match(WORD_RE) ?? [])].filter(t => t.length >= 3 && !STOPWORDS.has(t));
+
 /** The question's content terms: distinct words of 3+ characters, stopwords dropped, at most 12. */
 export function queryTerms(query: string): string[] {
-  return [...new Set(query.toLowerCase().match(WORD_RE) ?? [])].filter(t => t.length >= 3 && !STOPWORDS.has(t)).slice(0, 12);
+  return contentTerms(query).slice(0, MAX_QUERY_TERMS);
 }
 
 export const DATED_BONUS = 0.1;
@@ -102,6 +108,8 @@ export interface FactPoolOpts {
   cosineForAll?: boolean;
   /** Set for filtered recall pools: hnsw.ef_search sized to the depth plus pgvector's iterative scan when supported. */
   hnswIterativeScan?: HnswIterativeScanMode;
+  /** Search a question over MAX_QUERY_TERMS content terms on its last SEARCH_TERMS and score it on those its candidates hold (recall). */
+  distinctiveTerms?: boolean;
 }
 
 export interface FactCandidate {
@@ -118,6 +126,8 @@ export interface FactPool {
   cosine: boolean;
   /** Whether the facts table has an embedding column (probed only when an embedding was given). */
   column: boolean;
+  /** The content terms the keyword arm searched and `scoreFactCandidates` scores with. */
+  terms: string[];
 }
 
 const COLS = 'f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period';
@@ -171,12 +181,28 @@ function customPlan<T>(engine: BrainEngine, sql: string, params: unknown[]): Pro
 }
 
 /**
+ * GST-1304: a question of up to MAX_QUERY_TERMS content terms is scored on them all. A longer one (a provider's
+ * instruction preamble ahead of the turn) is searched on its last SEARCH_TERMS and scored on the MAX_QUERY_TERMS of
+ * those the fewest pooled candidates hold, the later word first on a tie, so preamble words no readable fact holds stop
+ * filling the term share's denominator. The pool is already under the caller's read policy; when no candidate holds a
+ * term, the first MAX_QUERY_TERMS searched.
+ */
+function heldTerms(searched: string[], candidates: FactCandidate[]): string[] {
+  if (searched.length <= MAX_QUERY_TERMS) return searched;
+  const words = candidates.map(wordsOf);
+  const held = searched.map((t, i) => ({ i, n: words.filter(w => w.has(t)).length })).filter(r => r.n > 0)
+    .sort((a, b) => a.n - b.n || b.i - a.i).slice(0, MAX_QUERY_TERMS);
+  return held.length ? held.sort((a, b) => a.i - b.i).map(r => searched[r.i]!) : searched.slice(0, MAX_QUERY_TERMS);
+}
+
+/**
  * The bounded candidate pool for `question`. Throws on a database error
  * (callers choose fail-open or `unavailable`).
  */
 export async function collectFactCandidates(engine: BrainEngine, question: string, scope: FactPoolScope, queryEmbedding: Float32Array | null | undefined,
   opts: FactPoolOpts): Promise<FactPool> {
-  const terms = queryTerms(question);
+  const all = contentTerms(question);
+  const searched = opts.distinctiveTerms && all.length > MAX_QUERY_TERMS ? all.slice(-SEARCH_TERMS) : all.slice(0, MAX_QUERY_TERMS);
   const { where, params } = poolPredicate(scope, opts.filters);
   const column = queryEmbedding?.length ? await factsEmbeddingColumn(engine) : null;
   const cosine = !!column && (column.dims <= 0 || column.dims === queryEmbedding!.length);
@@ -197,14 +223,14 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
 
   type Row = FactCandidate & { similarity?: number | null };
   const keyword = async (): Promise<Row[]> => {
-    if (!terms.length) return [];
+    if (!searched.length) return [];
     const p = armParams(allSim ? simParams : []);
     const doc = factsFtsDocument('f');
     const tsq = `NULLIF(replace(plainto_tsquery('${getFtsLanguage()}'::regconfig, $${p.length + 1})::text, ' & ', ' | '), '')::tsquery`;
     return customPlan<Row>(engine,
       `SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${where} AND ${doc} @@ ${tsq}
        ORDER BY ts_rank_cd(${doc}, ${tsq}) DESC, f.valid_from DESC, f.id DESC LIMIT $${p.length + 2}`,
-      [...p, terms.join(' '), opts.depth.keyword]);
+      [...p, searched.join(' '), opts.depth.keyword]);
   };
   const nearest = async (): Promise<Row[]> => {
     if (!vec) return [];
@@ -235,7 +261,8 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
   add(byKeyword);
   add(byCosine);
   add(byEntity, true);
-  return { candidates: [...found.values()], cosine, column: !!column };
+  const candidates = [...found.values()];
+  return { candidates, cosine, column: !!column, terms: heldTerms(searched, candidates) };
 }
 
 /**
@@ -289,8 +316,7 @@ export const isDatedFact = (f: Pick<FactCandidate, 'valid_from' | 'created_at'>)
   !!f.created_at && Math.abs(new Date(f.valid_from).getTime() - new Date(f.created_at).getTime()) > DATED_MIN_MS;
 
 /** Score every candidate (cosine + term share + DATED_BONUS when dated), ordered by score, newest valid_from, then id. */
-export function scoreFactCandidates(question: string, candidates: FactCandidate[]): ScoredFact[] {
-  const terms = queryTerms(question);
+export function scoreFactCandidates(question: string, candidates: FactCandidate[], terms = queryTerms(question)): ScoredFact[] {
   return candidates.map(c => {
     const words = wordsOf(c);
     const matched = terms.filter(t => words.has(t)).length;

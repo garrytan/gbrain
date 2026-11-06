@@ -309,7 +309,7 @@ export interface AuthInfo {
    * the operations an attested call may run. Null when the credential holds none, is bound to a member, or (an OAuth
    * client) its token did not come from the client-credentials grant. Undefined when no verifier joined it.
    */
-  attest?: { system: string; ops: string[] } | null;
+  attest?: { system: string; ops: string[]; sources: string[] | null } | null;
   /**
    * Human-readable agent name resolved at token-verification time.
    * For OAuth clients this is `oauth_clients.client_name`; for legacy
@@ -497,6 +497,8 @@ export interface OperationContext {
    * transports). Unset is `background`; it is never derived from `remote` (persistence/admission-origin.ts).
    */
   admissionOrigin?: import('../persistence/admission-origin.ts').AdmissionOrigin;
+  /** The caller's self-declared agent label, read by an HTTP transport from X-Gbrain-Agent-Label (persistence/attribution.ts). Unverified text, never authority. */
+  agentLabel?: string;
   /**
    * Transport marker for auth-less remote surfaces (#1061). The stdio MCP
    * dispatch sets 'stdio' — it is deliberately `remote: true` (agent-facing,
@@ -531,6 +533,14 @@ export interface OperationContext {
    * on callers that have no notice channel; producers call it optionally.
    */
   emitNotice?: (n: Notice) => void;
+  /**
+   * Wakeshift (docs/guides/wakeshift.md): the MCP caller as the transport saw it, which Wakeshift uses to tell agent
+   * programs apart: `clientInfo.name` (stdio) or the OAuth `client_name` (HTTP), the HTTP User-Agent and the request's
+   * `_meta`. Set by the MCP transports only, never from tool arguments; shape only, never authority.
+   */
+  mcpCaller?: { client?: string; userAgent?: string; meta?: Record<string, unknown> };
+  /** Wakeshift: a handler's addition, rendered as the result's last text block plus `_meta` keys. A credential: never log it. */
+  emitToolTail?: (tail: { text?: string; meta?: Record<string, unknown> }) => void;
   /**
    * WP4 (D2): the SERVER surface ceiling for this transport (force-clamped),
    * threaded by the MCP dispatch layer. Consumed by `request_tools`: the
@@ -600,6 +610,11 @@ export interface OperationContext {
    * never from arguments; the stored authority keeps it, so publication re-checks that operation's attest right.
    */
   attestedOp?: string;
+  /**
+   * GST-1113: the scope source an attested memory_write named (source_id), allowed by the credential's attest_sources
+   * (access/attest-sources.ts). Set by the handler, never from arguments; the stored authority keeps it.
+   */
+  attestedSource?: string;
   /**
    * #4216 — defer chunk embeddings on put_page writes: importFromContent runs
    * noEmbed and the standing embed machinery (embed phase / phase-end
@@ -843,7 +858,7 @@ export interface Operation {
    * fail-closed call-time backstop; stdio (local pipe) bypasses publish
    * gates entirely. Resolution lives in src/mcp/publish-gates.ts.
    */
-  publishGateKey?: 'mcp.publish_skills' | 'mcp.publish_advisor' | 'mcp.publish_memory_settings';
+  publishGateKey?: 'mcp.publish_skills' | 'mcp.publish_advisor' | 'mcp.publish_memory_settings' | 'mcp.publish_wakeshift';
   /**
    * MEMORY_VERBS v1: marks the seven frozen protocol verbs (recall, remember,
    * entity, synthesize, forget, context_pack, delta). `gbrain serve --surface

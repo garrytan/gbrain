@@ -55,6 +55,7 @@ export async function quarantineRestoredExecution(tx: BrainEngine, options: {
       const detached = {
         ...(typeof config.federated === 'boolean' ? { federated: config.federated } : {}),
         ...(typeof config.strategy === 'string' ? { strategy: config.strategy } : {}),
+        ...(config.qm_scope === true ? { qm_scope: true } : {}),
         syncEnabled: false, restore_detached: options.restoreId,
       };
       await tx.executeRaw('UPDATE sources SET local_path = NULL, config = $1::text::jsonb WHERE id = $2', [JSON.stringify(detached), row.id]);

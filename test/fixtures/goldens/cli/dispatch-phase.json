@@ -2042,11 +2042,11 @@
       },
       "upgrade": {
         "hasSwitchCase": false,
-        "phase": "pre-connect",
+        "phase": "pre-connect-own-engine",
         "preConnectRules": [
           {
             "condition": "command === 'upgrade'",
-            "connectsEngine": false,
+            "connectsEngine": true,
             "refusesThinClient": false,
             "routesThinClient": false,
             "terminates": true,
@@ -2064,6 +2064,13 @@
         "phase": "post-connect",
         "preConnectRules": [],
         "thinClient": "none",
+        "thinClientRoutedSubcommands": []
+      },
+      "wakeshift": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
       "watch": {
