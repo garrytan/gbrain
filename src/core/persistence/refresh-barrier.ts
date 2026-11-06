@@ -15,6 +15,7 @@ import { OperationError } from '../ops/contract.ts';
 import { authorizeWrite } from './authority.ts';
 import type { BrainEngine } from '../engine.ts';
 import { completeWrite } from './journal.ts';
+import { declarePersistenceProtocol } from './protocol.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 
 const GIT_ENV = { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never', LC_ALL: 'C', GIT_OPTIONAL_LOCKS: '0' };
@@ -75,8 +76,10 @@ export const REFRESH_BARRIER_MAX_WAIT_MS = 15 * 60_000;
 
 /**
  * The owner's housekeeping: a deferred write whose refresh is still unreleased past the wait limit ends failed with
- * `refresh_barrier_expired` (nothing applied, counters released). The refresh row is locked first (lock order: worktree,
- * refresh, counters, request), so an expiry and the release that would make the row claimable never both win.
+ * `refresh_barrier_expired` (nothing applied, counters released). The transaction declares the persistence protocol (the
+ * brain row FOR SHARE) before it locks the refresh row, the order fenceAndMerge takes them in (brain FOR UPDATE, then the
+ * refresh), so an expiry overlapping a fence waits instead of deadlocking; with the refresh row locked, an expiry and
+ * the release that would make the row claimable never both win.
  */
 export async function expireDeferredWrites(engine: BrainEngine, hostId: string, signal?: AbortSignal): Promise<WriteRequest[]> {
   const [config] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [REFRESH_BARRIER_MAX_WAIT_KEY], { signal });
@@ -89,6 +92,7 @@ export async function expireDeferredWrites(engine: BrainEngine, hostId: string, 
   const finished: WriteRequest[] = [];
   for (const row of expired) {
     const done = await engine.transaction(async tx => {
+      await declarePersistenceProtocol(tx);
       const [held] = await tx.executeRaw('SELECT 1 FROM persistence_worktree_refreshes WHERE id=$1::uuid AND released_at IS NULL FOR NO KEY UPDATE', [row.deferred_refresh_id]);
       if (!held) return null;
       return completeWrite(tx, row, 'failed', {}, { code: 'refresh_barrier_expired',

@@ -34,10 +34,15 @@ afterAll(async () => {
 
 const refused = async (promise: Promise<unknown>) => promise.then(() => null, e => e as { code?: string; message?: string });
 
-test('the opt-in hook is byte-identical in default mode; enforce drops only the rewrite exemptions', () => {
+test('the opt-in hook is byte-identical; both owner-path modes guard only the owner worktree; enforce drops only the rewrite exemptions', () => {
+  const ownerOnly = 'only the owner worktree is guarded';
   expect(createHash('sha256').update(renderGuardHook()).digest('hex')).toBe('f5afdf64fd917d42c444c7e5b3f721670b2701a92047fceaa2e8fd2c0dac962d');
-  expect(renderGuardHook('default')).toBe(renderGuardHook());
+  expect(renderGuardHook()).not.toContain(ownerOnly);
+  const owner = renderGuardHook('default');
+  expect(owner).toContain(ownerOnly);
+  expect(owner).toContain('for _op in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply sequencer; do');
   const enforce = renderGuardHook('enforce');
+  expect(enforce).toContain(ownerOnly);
   expect(enforce).toContain('for _op in MERGE_HEAD; do');
   expect(enforce).not.toContain('CHERRY_PICK_HEAD');
 });
@@ -100,6 +105,29 @@ test('owner host only; enforce refuses a plain commit; refresh, effect and door 
 
   const removed = await sourcesGuard(f.engine, { sourceId: f.alpha, action: 'uninstall', mode: 'default' });
   expect(removed).toMatchObject({ installed: false, changed: true });
+}), 120_000);
+
+test('default mode guards only the owner worktree: a worktree added after the install inherits the hooks path and commits freely', () => withRefreshFixture(engine, async f => {
+  git(f.root, 'config', 'user.name', 'Example');
+  git(f.root, 'config', 'user.email', 'example@example.invalid');
+  const installed = await sourcesGuard(f.engine, { sourceId: f.alpha, action: 'install', mode: 'default' });
+  expect(installed).toMatchObject({ installed: true, mode: 'default' });
+  const later = join(f.dir, 'later-default');
+  git(f.root, 'worktree', 'add', '-q', '-b', 'later-default', later);
+  expect(git(later, 'rev-parse', '--path-format=absolute', '--git-path', 'hooks')).toBe(installed.hooks_path);
+  writeFileSync(join(later, 'alpha', 'later.md'), page('Later', 'A person commits in a worktree added after the install.'));
+  git(later, 'add', 'alpha/later.md');
+  git(later, 'commit', '-q', '-m', 'commit in a worktree added after a default-mode install');
+  writeFileSync(join(later, 'alpha', 'later-two.md'), page('Later two', 'And with --no-verify.'));
+  git(later, 'add', 'alpha/later-two.md');
+  git(later, 'commit', '-q', '--no-verify', '-m', 'no-verify in the later worktree');
+
+  writeFileSync(join(f.root, 'alpha', 'stray.md'), page('Stray', 'Refused in the owner worktree.'));
+  git(f.root, 'add', 'alpha/stray.md');
+  expect(() => git(f.root, 'commit', '-q', '-m', 'plain commit in the managed worktree')).toThrow(/gbrain commit guard/);
+  git(f.root, 'restore', '--staged', 'alpha/stray.md');
+  rmSync(join(f.root, 'alpha', 'stray.md'));
+  await sourcesGuard(f.engine, { sourceId: f.alpha, action: 'uninstall', mode: 'default' });
 }), 120_000);
 
 test('the install is worktree-local: a linked sibling keeps its hooks and commits freely; a foreign hook refuses', () => withRefreshFixture(engine, async f => {
