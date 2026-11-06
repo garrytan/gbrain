@@ -42,6 +42,7 @@ CONSTANTS
   MaxLocalEdits,    \* uncommitted edits to F in the worktree
   ImportHolds,      \* #8705: a claimed write refused pending_import is moved back to deferred until the import lands
   HeldImportBlocks, \* a write held for an import blocks later writes of its worktree (the claim's FIFO rule); FALSE as coded
+  ImportExpiryLocksSource, \* the import expiry re-checks last_commit under a lock on the source row; FALSE as coded
   RecoveryDefers,   \* #8705: admission defers behind a refresh in recovery_required instead of refusing
   AdoptLocalEdits,  \* #8708: a drift refusal on a one-sided local edit adopts the edit and prepares the write again
   MayRestore,       \* a shared-skill restore may run once
@@ -177,6 +178,8 @@ FenceRecount == TRUE
 ExpiryLocks(i, w) == <<L(BRAIN, "S"), L(REF(i), "NKU"), L(CTR, "U"), L(REQ(w), "U")>>
 \* ... and the refresh row is re-read under its lock: released_at IS NULL.
 ExpiryRecheck(i) == ~rel[i]
+\* With ImportExpiryLocksSource: the protocol declaration (brain FOR SHARE), then the source row FOR SHARE, before the recheck.
+ImportExpiryLocks == <<L(BRAIN, "S"), L(SRC, "S")>>
 \* The import expiry's recheck that the row is still held for an import that has not landed.
 ImportExpiryRecheck(w) == st[w] = "deferred" /\ lastCommit = dimp[w]
 \* The v292 release trigger stamps released_at on every move into completed or aborted.
@@ -577,15 +580,17 @@ ExpImpBegin(w) ==
   /\ IF dref[w] = None THEN TRUE ELSE rel[dref[w]]
   /\ overdue[w]
   /\ ew' = w /\ Go(EXP, "e_recheck")
-  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, lockv, cw, cprep, cfin, aref, aread, passHead>>
+  /\ Need(EXP, IF ImportExpiryLocksSource THEN ImportExpiryLocks ELSE <<>>)
+  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, aref, aread, passHead>>
 
 ExpImpRecheck ==
-  /\ pc[EXP] = "e_recheck"
+  /\ Ready(EXP, "e_recheck")
   /\ IF ImportExpiryRecheck(ew)
      THEN Need(EXP, <<L(BRAIN, "S"), L(CTR, "U"), L(REQ(ew), "U")>>) /\ Go(EXP, "e_imp")
      ELSE UNCHANGED want /\ Go(EXP, "idle")
+  /\ held' = IF ImportExpiryRecheck(ew) THEN held ELSE [held EXCEPT ![EXP] = NoLocks]
   /\ ew' = IF ImportExpiryRecheck(ew) THEN ew ELSE 0
-  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, aref, aread, passHead>>
+  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, cw, cprep, cfin, aref, aread, passHead>>
 
 ExpImpCommit ==
   /\ Ready(EXP, "e_imp")

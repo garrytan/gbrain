@@ -11,6 +11,9 @@
 #                  spec is wrong and say why in the PR
 #   TLC_TIMEOUT    TLC did not finish within TLC_TIMEOUT_S (default 600): the state space grew; shrink the config
 #   TLC_ERROR      TLC stopped (parse or semantic error, out of memory): the log names the line
+#   TLC_FINDING_CLOSED  a config whose `\* OPEN_FINDING: <Property>` line documents a known violation of the code now
+#                  passes: the finding is fixed; flip the config to the fixed code and drop the line
+# A config with an OPEN_FINDING line passes (`open`) only when TLC reports exactly that property violated.
 # Env: TLA2TOOLS (a jar to use; otherwise scripts/spec/tla-jar.sh downloads the pinned one), TLC_OUT (logs; default
 # .context/tlc), TLC_WORKERS (default: every CPU; configs run one at a time), TLC_TIMEOUT_S, TLC_JAVA_OPTS, TLC_NIGHTLY (1 also runs
 # the *Nightly.cfg configs, which take too long for every pull request).
@@ -55,11 +58,17 @@ status=0
 for job in "${jobs[@]}"; do
   IFS='|' read -r d m c <<< "$job"
   work="$out/$(basename "$d")-${c%.cfg}"; log="$work/tlc.log"; rc="$(cat "$work/rc")"; name="$(basename "$d")/$c"
-  if grep -q "Model checking completed. No error has been found." "$log"; then
+  open="$(sed -nE 's/^\\\* OPEN_FINDING: ([A-Za-z0-9_]+).*/\1/p' "$d/$c" | head -1)"
+  v="$(grep -oE '(Invariant|Action property|Temporal properties|Property) [A-Za-z0-9_]* ?(is|were) violated' "$log" | head -1 || true)"
+  if [ -n "$open" ] && [ "$(echo "$v" | awk '{print $2}')" = "$open" ]; then
+    echo "open $name: $open is violated, as the config documents (an open finding; spec/tla/README.md)"
+  elif [ -n "$open" ] && grep -q "Model checking completed. No error has been found." "$log"; then
+    echo "FAIL TLC_FINDING_CLOSED $name: $open now holds, so the open finding this config documents is fixed. Drop its OPEN_FINDING line, set its constants to the fixed code and move it to the README's passing configs." >&2; status=1
+  elif grep -q "Model checking completed. No error has been found." "$log"; then
     echo "ok   $name: $(grep -oE '[0-9]+ distinct states found' "$log" | tail -1) ($(grep -oE 'Finished in [^ ]+' "$log" | head -1))"
   elif [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
     echo "FAIL TLC_TIMEOUT $name: TLC did not finish within ${limit}s. Log: $log" >&2; status=1
-  elif v="$(grep -oE '(Invariant|Action property|Temporal properties|Property) [A-Za-z0-9_]* ?(is|were) violated' "$log" | head -1)" && [ -n "$v" ]; then
+  elif [ -n "$v" ]; then
     echo "FAIL TLC_VIOLATION $name: $v. The counterexample trace is in $log; spec/tla/README.md maps each action to its code." >&2; status=1
   else
     echo "FAIL TLC_ERROR $name: TLC exited $rc without a result. Log: $log" >&2; grep -m3 -iE 'error|exception' "$log" >&2 || tail -5 "$log" >&2; status=1
