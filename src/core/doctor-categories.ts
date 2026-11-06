@@ -122,6 +122,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'content_hash_duplicates',
   'content_sanity_audit_recent',
   'contextual_retrieval_coverage',
+  // #8744: configured per_chunk_synopsis tier vs the chunks that carry it.
+  'synopsis_tier_coverage',
   'contradictions',
   'conversation_facts_backlog',
   'conversation_format_coverage',

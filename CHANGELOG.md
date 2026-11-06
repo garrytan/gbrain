@@ -10,6 +10,22 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A brain set to `search.mode tokenmax` now says when its pages are not on the synopsis tier, and `gbrain reindex --synopsis` puts them there.** Import and sync embed tokenmax pages at the free title tier and leave per-chunk synopses to the `contextual_reindex_per_chunk` job, but nothing ever queued that job, so a brain could search on title-tier vectors for weeks while reporting tokenmax.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| `gbrain doctor` on a brain whose configured tier is `per_chunk_synopsis` | nothing about it | `synopsis_tier_coverage` gives chunk and page coverage, the large pages left on the title tier and the last sweep job; it warns below 50% of chunks and names `gbrain reindex --synopsis`. The remote doctor runs it too, confined to the caller's sources |
+| `gbrain search modes` | the configured tier only | one line with the synopsis-tier coverage (local only; the `search_modes` op leaves it out) |
+| `gbrain reindex --synopsis` | did not exist | previews pages, chunks, synopsis tokens and dollars on the configured synopsis model plus the re-embed, and spends nothing |
+| `gbrain config set search.mode tokenmax` | the banner named `gbrain reindex --markdown` (which embeds at the title tier) and, on a TTY with a live worker, offered to queue it | the banner names `gbrain reindex --synopsis`; on a TTY it shows the sweep's preview and runs the sweep in that terminal only when you answer yes. Without a TTY it prints the preview command |
+| `gbrain reindex --synopsis --yes [--max-usd <usd>]` | did not exist | queues one `contextual_reindex_per_chunk` job per page under one spend cap the worker enforces across them, runs them in-process and reports the new coverage. Running it again resumes: finished pages are skipped and queued jobs are picked up |
+
+Nothing is scheduled automatically and no default changes. Inline pages over 1 MiB keep the title tier, as before. Repo-less brains work the same way: the sweep reads and writes the database only.
+
 ## [0.60.595.0] - 2026-11-06
 
 **A `memory_recall` that names sources reads as that scope, never as the attested person, so a shared turn can no longer recall one member's private facts into a shared channel.** `memory_recall` gains `source_id` and `source_ids`. Named, the read drops the person's own recent facts and every member-page fact, keeps restricted pages hidden and never relaxes `visibility: private`. The contract for it is the new `docs/contracts/qm-memory-provider/v2.json`; `v1.json` stays byte-identical and a test holds it there. Three smaller provider fixes ride along.
