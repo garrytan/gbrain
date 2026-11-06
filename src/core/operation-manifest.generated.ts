@@ -6387,14 +6387,16 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "source_id": {
         "type": "string",
-        "description": "Read this one source as its audience (a shared scope): never the person's own facts."
+        "description": "Read this one source as its audience (a shared scope): never the person's own facts.",
+        "fullSurfaceOnly": true
       },
       "source_ids": {
         "type": "array",
         "items": {
           "type": "string"
         },
-        "description": "Read only these sources as their audience (a shared scope): never the person's own facts."
+        "description": "Read only these sources as their audience (a shared scope): never the person's own facts.",
+        "fullSurfaceOnly": true
       }
     },
     "scope": "read",
@@ -6458,7 +6460,8 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "source_id": {
         "type": "string",
-        "description": "One of this credential's scope sources: save on its shared memory/scope page."
+        "description": "One of this credential's scope sources: save on its shared memory/scope page.",
+        "fullSurfaceOnly": true
       }
     },
     "scope": "write",
