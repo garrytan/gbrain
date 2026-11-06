@@ -309,7 +309,7 @@ export interface AuthInfo {
    * the operations an attested call may run. Null when the credential holds none, is bound to a member, or (an OAuth
    * client) its token did not come from the client-credentials grant. Undefined when no verifier joined it.
    */
-  attest?: { system: string; ops: string[] } | null;
+  attest?: { system: string; ops: string[]; sources: string[] | null } | null;
   /**
    * Human-readable agent name resolved at token-verification time.
    * For OAuth clients this is `oauth_clients.client_name`; for legacy
@@ -610,6 +610,11 @@ export interface OperationContext {
    * never from arguments; the stored authority keeps it, so publication re-checks that operation's attest right.
    */
   attestedOp?: string;
+  /**
+   * GST-1113: the scope source an attested memory_write named (source_id), allowed by the credential's attest_sources
+   * (access/attest-sources.ts). Set by the handler, never from arguments; the stored authority keeps it.
+   */
+  attestedSource?: string;
   /**
    * #4216 — defer chunk embeddings on put_page writes: importFromContent runs
    * noEmbed and the standing embed machinery (embed phase / phase-end

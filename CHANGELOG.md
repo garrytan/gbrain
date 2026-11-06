@@ -10,6 +10,42 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.595.0] - 2026-11-06
+
+**A `memory_recall` that names sources reads as that scope, never as the attested person, so a shared turn can no longer recall one member's private facts into a shared channel.** `memory_recall` gains `source_id` and `source_ids`. Named, the read drops the person's own recent facts and every member-page fact, keeps restricted pages hidden and never relaxes `visibility: private`. The contract for it is the new `docs/contracts/qm-memory-provider/v2.json`; `v1.json` stays byte-identical and a test holds it there. Three smaller provider fixes ride along.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| `memory_recall` with `source_id` / `source_ids` | the argument was ignored (`unknown_param`) and the call read as the person, own facts first | reads the named sources as their audience: no own facts, no member-page facts; a source outside the grant is `permission_denied`, `__all__` is `invalid_params` |
+| `memory_recall` without sources | the person's read | unchanged |
+| `acting_user` with no `x-qm-actor`, from a credential bound to a member | `argument_without_attestation` | its own member id (or a linked canonical id) is dropped and the call runs as the credential; any other value is `argument_mismatch` |
+| `recall` with `max_chars` | unknown argument | 200-12000: whole facts, then results, that fit; `truncated` says if some were cut |
+| A read that ignores an undeclared argument | a `[gbrain notice unknown_param]` text block in the result | only `_meta.warnings`, so a harness that stores tool output never stores it; writes still refuse |
+
+QM clients that read v1 keep working unchanged. A shared-scope turn should name its sources and read the v2 contract.
+
+**QM can now save a shared scope's memory (a project, channel or team) as well as each person's, and nothing else can read that scope.** `memory_write` gains `source_id`: named, the facts go to that scope source's `memory/scope` page, world-readable inside the source, still attested to the person who said them. The operator lists the scope sources on the QM credential with `gbrain auth rescope --attest-sources`, which marks each one a scope source for good. A scope source is never federated and never joins another credential's read grant, so its memory is read only by naming it from the scope credential, and a person read never sees it.
+
+| Situation | Before | Now |
+|---|---|---|
+| `memory_write` with `source_id` | refused (`unknown_param`) | saves on `memory/scope` in that source when the credential lists it in `--attest-sources`; otherwise `permission_denied` reason `source_not_attested`; the credential's own write source is `invalid_params` reason `source_is_member_source` |
+| `gbrain auth rescope --attest-sources a,b\|none` | no such flag | lists the scope sources; refuses `default`, a federated source, the own write source, a source another credential reads, ops beyond the memory tools and the private-pages grant |
+| A grant, token or registration that reads a scope source | n/a | refused (`QM scope source`), also after the scope credential is revoked |
+| `sources federate` / `sources restore` on a scope source | federates | refused / restored unfederated; a federated flag on a scope source is ignored |
+| Remote write to `memory/scope` (put_page, remember, delete_page, tags, links, timeline) | allowed like any page | refused unless it is a scope `memory_write` |
+| `memory_recall` without sources from a credential that reads a scope source | n/a | never reads the scope source |
+
+**A long recall question that opens with an instruction preamble finds the facts its last message asks about on a keyword-only brain, and refusals say what they need.** Recall used to score a question on its first 12 content words, so a provider preamble filled all 12 and nothing cleared the admission floor.
+
+| Situation | Before | Now |
+|---|---|---|
+| `recall` `question` over 12 content words | scored on its first 12 | searched on its last 24, scored on the 12 of those the fewest candidate facts hold; shorter questions unchanged |
+| Candidates found, none above the admission floor | empty `facts`, nothing else | empty `facts` plus `facts_below_floor: <n>` (absent when nothing matched) |
+| `recall` `question` over 2,000 characters | bare `invalid_params` | `invalid_params` reason `question_too_long`, detail `max_chars=2000 received_chars=<n>`; never cut |
+| `acting_user` refused `argument_without_attestation` | no detail | detail `missing=x-qm-actor`, `missing=attest_right` or both, also in `structuredContent.error` |
+
 ## [0.60.594.0] - 2026-11-06
 
 **A page write that reaches a checkout while `gbrain sources refresh` runs can now wait for the refresh instead of being refused, and every commit gbrain makes is recorded, so doctor can name commits made outside it.** The write barrier is off by default (`persistence.refresh_barrier`). With it on, a single page write that arrives while a refresh drains or merges the checkout is journaled and answered pending at once: MCP gets `isError: false` with `status: "pending"`, and the CLI exits 10 with the command that polls it, on the owner socket and on a thin client alike. The write commits after the refresh. It ends `revision_conflict` with nothing applied when the refresh changed its file, and `refresh_barrier_expired` when the refresh outlives `persistence.refresh_barrier_max_wait_ms` (15 minutes), even on an owner with nothing else to do. The commit ledger and doctor's new `foreign_writers` check run on every brain with a Git checkout. The owner-path guard installs only when you run `gbrain sources guard --install`.

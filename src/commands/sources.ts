@@ -1173,12 +1173,18 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
     console.error(`Source "${id}" not found.`);
     process.exit(4);
   }
-  const config = parseConfig(src.config);
-  config.federated = value;
-  await engine.executeRaw(
-    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
-    [JSON.stringify(normalizeSourceConfig(config)), id],
-  );
+  // GST-1113: the mark check and the config write hold the source row, so a concurrent --attest-sources mark commits
+  // before (and federate refuses) or after (and sees federated, so it refuses), never between them.
+  await engine.transaction(async tx => {
+    const [row] = await tx.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id = $1 FOR UPDATE', [id]);
+    if (value) await (await import('../core/access/attest-sources.ts')).assertNotScopeSource(tx, id);
+    const config = parseConfig(row?.config ?? src.config);
+    config.federated = value;
+    await tx.executeRaw(
+      `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
+      [JSON.stringify(normalizeSourceConfig(config)), id],
+    );
+  });
   console.log(`Source "${id}" is now ${value ? 'federated (appears in cross-source default search)' : 'isolated (only searched when explicitly named)'}.`);
 
   // v0.40 D19: auto-submit embed-backfill when coverage < 100%. Federation
