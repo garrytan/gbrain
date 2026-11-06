@@ -49,6 +49,7 @@ describe('remember refusals name the rule and a corrected example (GST-1493)', (
       expect(envelope.suggestion).toMatch(/provenance[^.]*required/);
       const example = quotedExample(envelope.suggestion);
       expect(Object.keys(example).sort()).toEqual(['entity', 'fact', 'provenance']);
+      for (const value of Object.values(example)) expect(String(value)).toMatch(/^<[^<>]+>$/);
       const retried = await call({ ...example, dry_run: true });
       expect(retried.isError).toBe(false);
       expect(retried.envelope.dry_run).toBe(true);

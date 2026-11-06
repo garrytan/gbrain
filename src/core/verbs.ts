@@ -59,7 +59,7 @@ const FACT_KINDS = ['event', 'preference', 'commitment', 'belief', 'fact'] as co
  */
 const FACT_KINDS_RESPONSE = [...FACT_KINDS, 'idea'] as const;
 const PROVENANCE_MAX = 500;
-const REMEMBER_CALL_SHAPE = 'A valid call: {"fact": "Alice Example prefers email", "entity": "alice-example", "provenance": "user told me, 2026-06-12"}; several: items: [{fact, entity, provenance}, ...]. provenance (where the fact came from) is required.';
+const REMEMBER_CALL_SHAPE = 'A valid call: {"fact": "<one claim>", "entity": "<subject-slug>", "provenance": "<where you learned it, with the date>"}; several: items: [{fact, entity, provenance}, ...]. provenance (where the fact came from) is required.';
 
 // ─── remember ────────────────────────────────────────────────────────────────
 
