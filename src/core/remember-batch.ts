@@ -79,7 +79,8 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
       throw verbError('invalid_params', `items[${index}] must be an object.`, 'Each item is { "fact": "...", optional entity, kind, ttl, visibility, provenance, content_origin, valid_from }.');
     }
     const extra = Object.keys(raw).filter(k => !ITEM_KEYS.has(k));
-    if (extra.length) throw verbError('invalid_params', `items[${index}] has unknown field(s): ${extra.join(', ')}.`, `Allowed item fields: ${[...ITEM_KEYS].join(', ')}.`);
+    if (extra.length) throw verbError('invalid_params', `items[${index}] has unknown field(s): ${extra.join(', ')}.`,
+      `${extra.includes('text') ? 'Rename text to fact. ' : ''}Allowed item fields: ${[...ITEM_KEYS].join(', ')}.`);
     return { ...shared, ...(raw as Record<string, unknown>) };
   });
   // All-or-none validation before any admission.

@@ -95,6 +95,7 @@ import { jobRefusal, refusedJobResult } from './refusal.ts';
 import { readFileSync } from 'fs';
 import { parseRssFromProcStatus } from './proc-rss.ts';
 import { withEngineScope } from '../engine-scope.ts';
+import { startWakeDrain } from '../wakeshift/drain.ts';
 
 export { parseRssFromProcStatus };
 
@@ -201,6 +202,7 @@ export class MinionWorker extends EventEmitter {
   private pausedByMarkerAnnounced = false;
   /** The idle poll wait a sync-queue wake ends early (minions/idle-wait.ts). */
   readonly idleWaiter = new IdleWaiter();
+  private wakeDrain: { stop(): void } | null = null;
   private inFlight = new Map<number, InFlightJob>();
   private executions = new Map<string, OwnedExecution>();
   private pendingClaim: { lockToken: string; promise: Promise<MinionJob | null> } | null = null;
@@ -527,6 +529,7 @@ export class MinionWorker extends EventEmitter {
     // run; stop() disables it so embedding hosts / test suites that cycle
     // start()/stop() don't leak a ~50Hz native sampling timer per instance.
     try { this.eldHistogram?.enable(); } catch { /* fail-open */ }
+    this.wakeDrain ??= startWakeDrain(this.engine); // Wakeshift: the 5 s wake drainer (wakeshift/drain.ts), a no-op tick while off
 
     // Graceful shutdown. Fires shutdownAbort so handlers subscribed to
     // `ctx.shutdownSignal` (currently: shell handler) can run their own cleanup
@@ -1045,6 +1048,7 @@ export class MinionWorker extends EventEmitter {
   stop(): void {
     this.running = false;
     this.idleWaiter.wake('stop');
+    this.wakeDrain?.stop(); this.wakeDrain = null;
     try { this.eldHistogram?.disable(); } catch { /* fail-open */ }
   }
 

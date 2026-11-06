@@ -175,6 +175,8 @@ export interface ToolResult {
 }
 
 export interface DispatchOpts {
+  /** Wakeshift: the MCP caller as the transport saw it (OperationContext.mcpCaller); never from tool arguments. */
+  mcpCaller?: OperationContext['mcpCaller'];
   /** GST-359 C1: the x-qm-actor header the HTTP transport read (a trusted system names the person); stdio never sets it. */
   actor?: ActorChannels;
   /**
@@ -184,6 +186,8 @@ export interface DispatchOpts {
   onBehalfOf?: AudienceChannels;
   /** #6696 (A5): set by the trusted transport for the user's own agent calls; never from wire params. */
   admissionOrigin?: OperationContext['admissionOrigin'];
+  /** The caller's self-declared agent label (X-Gbrain-Agent-Label), parsed by the transport; recorded only, never authority. */
+  agentLabel?: string;
   /** Configuration selected by the resident transport, never populated from wire params. */
   config?: OperationContext['config'];
   /** Defaults to true (remote/untrusted). Local CLI callers (`gbrain call`) pass false. */
@@ -808,6 +812,17 @@ function attachResponseMeta(out: ToolResult, responseMeta: Record<string, unknow
   out._meta = { ...(out._meta ?? {}), degraded: stamp };
 }
 
+type ToolTail = Parameters<NonNullable<OperationContext['emitToolTail']>>[0];
+
+/**
+ * Wakeshift's addition: its text (at most 2,000 characters) as the LAST text block, its meta merged into `_meta`
+ * under gbrain's own keys, which it never replaces (a conversation credential: never logged).
+ */
+function appendToolTail(out: ToolResult, tail: ToolTail): void {
+  if (tail.text) out.content.push({ type: 'text', text: tail.text.slice(0, 2000) });
+  if (tail.meta && typeof tail.meta === 'object') out._meta = { ...tail.meta, ...(out._meta ?? {}) };
+}
+
 /** The one error result path: toAgentError → exactly one content block. */
 export function errorResult(e: unknown, opts: DispatchOpts, extra: { op?: string; mutating?: boolean; idempotent?: boolean; notices?: Notice[] } = {}): ToolResult {
   const carried = !!extra.notices?.length && e instanceof OperationError;
@@ -914,8 +929,10 @@ export function buildOperationContext(
     ...(opts.revealTools ? { revealTools: opts.revealTools } : {}),
     ...(opts.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
     ...(opts.admissionOrigin ? { admissionOrigin: opts.admissionOrigin } : {}),
+    ...(opts.agentLabel ? { agentLabel: opts.agentLabel } : {}),
     ...(opts.resultRows ? { resultRows: opts.resultRows } : {}),
     ...(opts.thinClient ? { thinClient: true } : {}),
+    ...(opts.mcpCaller ? { mcpCaller: opts.mcpCaller } : {}),
     isCallable: (opName: string) => (render ??= dispatchRenderContext(opts)).isCallable(opName),
     auth: opts.auth,
   };
@@ -1150,7 +1167,7 @@ async function dispatchResolvedCall(
         .map(w => w.suggestion
           ? `Unknown parameter "${w.param}" — did you mean "${w.suggestion}"?`
           : `Unknown parameter "${w.param}".`)
-        .join(' ');
+        .join(' ') + (op.callShape ? ` ${op.callShape}` : '');
       const strict = new OperationError('invalid_params',
         `${n} unknown parameter${n === 1 ? '' : 's'} not declared in the ${name} tool schema (${op.mutating === true ? 'write operations always reject unknown parameters; nothing was written' : 'mcp.strict_params=reject'}). See suggestion for the submitted name${n === 1 ? '' : 's'}.`,
         suggestion);
@@ -1203,6 +1220,7 @@ async function dispatchResolvedCall(
   // failure renders the envelope's `notices` key (one block).
   const notices: Notice[] = [];
   ctx.emitNotice = (n) => { if (n) notices.push(n); };
+  let tail: ToolTail | undefined; ctx.emitToolTail = (t) => { tail = t; }; // Wakeshift's addition, appended last on success
 
   try {
     if (ctx.remote !== false && op.requiredScopes?.length) {
@@ -1311,7 +1329,7 @@ async function dispatchResolvedCall(
     // BEFORE and independently of the metaHook, so a hot-memory hook
     // failure can never drop the retrieval channel. Per-key merge, never
     // wholesale assignment. See docs/protocol/MCP_META_CHANNELS.md.
-    attachResponseMeta(out, responseMeta, degradedStampFor(name, result, responseMeta, notices));
+    attachResponseMeta(out, responseMeta, degradedStampFor(name, result, responseMeta, notices)); if (tail) appendToolTail(out, tail);
     // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.
     // The hook is wrapped in its own try/catch — any DB blip / cache miss /
     // helper crash degrades to no hook keys rather than flipping the whole

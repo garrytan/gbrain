@@ -17,6 +17,7 @@ import { scopesSupportedForDiscovery } from '../core/scope.ts';
 import { GRANT_PROFILES } from '../core/grants/model.ts';
 import { publicHarnessMetadata } from '../core/harness/registry.ts';
 import { mcpAdministrationGuidance } from '../mcp/capabilities.ts';
+import { AGENT_LABEL_HEADER } from '../core/persistence/attribution.ts';
 import { VERSION } from '../version.ts';
 import type { ServeHttpContext } from './serve-http.ts';
 
@@ -129,7 +130,7 @@ export function mountOAuth(app: Express, ctx: ServeHttpContext): void {
     origin: resolveCorsOrigin(corsAllowlistOAuth),
     credentials: false,
     methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', AGENT_LABEL_HEADER],
   };
   app.use('/mcp', cors(corsOAuthOptions));
   app.use('/authorize', cors(corsOAuthOptions));

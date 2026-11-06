@@ -1226,7 +1226,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 173 table(s) the applied migrations create exist.",
+            "message": "All 174 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -3233,6 +3233,20 @@
             "elapsed_ms": "<volatile>",
             "message": "No facts-absorb jobs are queued (no run recorded yet).",
             "name": "facts_drain",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "docs": "docs/guides/wakeshift.md#troubleshooting",
+              "enabled": false,
+              "key_source": "none"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Reporting back through Wakeshift is off (gbrain wakeshift enable turns it on).",
+            "name": "wakeshift",
+            "readiness_state": "disabled_by_choice",
+            "severity": "info",
             "status": "ok"
           },
           {
@@ -6198,7 +6212,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 173 table(s) the applied migrations create exist.",
+            "message": "All 174 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -8205,6 +8219,20 @@
             "elapsed_ms": "<volatile>",
             "message": "No facts-absorb jobs are queued (no run recorded yet).",
             "name": "facts_drain",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "docs": "docs/guides/wakeshift.md#troubleshooting",
+              "enabled": false,
+              "key_source": "none"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Reporting back through Wakeshift is off (gbrain wakeshift enable turns it on).",
+            "name": "wakeshift",
+            "readiness_state": "disabled_by_choice",
+            "severity": "info",
             "status": "ok"
           },
           {
