@@ -17,7 +17,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 
 const SURFACES = ['verbs', 'starter', 'full'] as const;
 const SCOPE_SETS: readonly string[][] = [['read'], ['read', 'write'], ['admin'], ['agent'], ['admin', 'skills_member_self']];
-const ALL_GATES_ON: Record<string, boolean> = Object.fromEntries([...PUBLISH_GATE_KEYS].map(key => [key, true]));
+const ALL_GATES_ON: Record<string, boolean> = Object.fromEntries([...PUBLISH_GATE_KEYS, 'mcp.publish_wakeshift'].map(key => [key, true]));
 const GATE_STATES: Record<string, boolean>[] = [{}, ALL_GATES_ON];
 
 /** The pre-A2 HTTP list filter minus F5's owner-only (`cliOnly`) ops, kept here as the independent oracle. */
