@@ -792,6 +792,11 @@ export interface Operation {
   name: string;
   description: string;
   params: Record<string, ParamDef>;
+  /**
+   * GST-1493: one sentence with a valid call as JSON, appended to the suggestion when dispatch refuses an unknown
+   * parameter, so a client that never read the schema gets the whole required shape, not only the nearest name.
+   */
+  callShape?: string;
   handler: (ctx: OperationContext, params: Record<string, unknown>) => Promise<unknown>;
   outputRedaction: OutputRedactionPolicy;
   mutating?: boolean;
