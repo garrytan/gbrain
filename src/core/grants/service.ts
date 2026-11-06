@@ -77,6 +77,8 @@ export async function readClientCatalogProvenance(db: GrantDatabase, clientId: s
 
 /** Called after validation. Never exposes the credential in the audit document. */
 export async function insertClientGrant(sql: SqlQuery, grant: ClientGrant, metadata: GrantClientMetadata, actor = 'operator'): Promise<void> {
+  const { assertScopeSourceGrant, clientGrantReads } = await import('../access/attest-sources.ts');
+  await assertScopeSourceGrant(sql, null, clientGrantReads(grant));
   await sql`
     WITH created AS (
       INSERT INTO oauth_clients (client_id, client_name, client_secret_hash, redirect_uris, grant_types,
@@ -190,6 +192,11 @@ export async function recordFirstConsentInTransaction(db: GrantDatabase, clientI
 
 /** One UPDATE+audit statement: SQL-only provider callers get atomicity too. */
 export async function persistGrant(sql: SqlQuery, before: ClientGrant, after: ClientGrant, actor: string, action: string): Promise<void> {
+  const { assertScopeSourceGrant, clientGrantReads } = await import('../access/attest-sources.ts');
+  const widened = clientGrantReads(after).filter(s => !clientGrantReads(before).includes(s));
+  await assertScopeSourceGrant(sql, { kind: 'client', id: before.clientId }, widened, {
+    privatePages: after.privatePages === 'granted_sources' && before.privatePages !== 'granted_sources', writeSource: after.sourcesNone === true ? null : after.sourceId ?? 'default',
+  });
   const result = await sql`
     WITH updated AS (
       UPDATE oauth_clients SET

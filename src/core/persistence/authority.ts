@@ -13,6 +13,7 @@ import { authorizePageVisibility, excludesPrivateWritesAtAdmission } from './pag
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { parseStoredActor, storedActorIdentity } from '../access/actor.ts';
 import { sameAttestedActor } from '../access/member-facts.ts';
+import { perCallWriteSource, storedPerCallWriteSource } from '../access/attest-sources.ts';
 import { pipelined, transactionMemo } from '../page-state/transactions.ts';
 
 function deny(message: string): never { throw new OperationError('permission_denied', message, 'Inspect the current writer registration and source/operation grants.'); }
@@ -70,6 +71,7 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
     excludePrivate: (actingFor !== undefined && currentCallerAccess().hidePrivate) || await excludesPrivateWritesAtAdmission(ctx.engine, ctx.remote !== false),
     ...(actingFor ? { actingFor } : {}),
     ...(access?.actor && ctx.attestedOp ? { attestedOp: ctx.attestedOp } : {}),
+    ...(perCallWriteSource(ctx, sourceId, slug) ? { attestedSource: sourceId } : {}),
     autoLinkTrusted: ctx.remote === false || ctx.viaSubagent === true && !ctx.auth && !!ctx.allowedSlugPrefixes?.length,
     takesHolders: ctx.remote === false ? null : [...(ctx.takesHoldersAllowList ?? ['world'])],
     scopes: [...(ctx.auth?.scopes ?? localGrant?.scopes ?? [])],
@@ -80,7 +82,7 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
       delegatedPrefixes: ctx.allowedSlugPrefixes?.length ? [...ctx.allowedSlugPrefixes]
         : typeof ctx.subagentId === 'number' ? [`wiki/agents/${ctx.subagentId}/*`] : [] } : {}),
   };
-  if (ctx.auth?.sourceId != null && ctx.auth.sourceId !== sourceId) deny('The source is outside this writer grant.');
+  if (ctx.auth?.sourceId != null && ctx.auth.sourceId !== sourceId && !a.attestedSource) deny('The source is outside this writer grant.');
   if (!prefixAllowed(a.slugPrefixes, slug)) deny('The target is outside this writer grant.');
   await authorizeWrite(ctx.engine, a, operation, slug);
   if (!skillWrite(operation)) await authorizePageVisibility(ctx.engine, a, slug);
@@ -153,13 +155,19 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
   if (a.actingFor && !Array.isArray(a.actingFor)) {
     const actor = parseStoredActor(a.actingFor);
     if (!actor) deny('The accepted attested actor is malformed.');
-    await storedActorIdentity(engine, a.principal, actor, a.attestedOp ?? operation);
+    // GST-1113: lock the credential row before reading its attest right, so a concurrent removal commits before or after this publication.
+    if (lock && a.principal.kind === 'oauth_client') await engine.executeRaw('SELECT 1 FROM oauth_clients WHERE client_id=$1 FOR SHARE', [a.principal.id]);
+    if (lock && a.principal.kind === 'legacy_token') await engine.executeRaw('SELECT 1 FROM access_tokens WHERE id=$1 FOR SHARE', [a.principal.id]);
+    await storedActorIdentity(engine, a.principal, actor, a.attestedOp ?? operation, storedPerCallWriteSource(a, slug) ?? undefined);
   }
+  // GST-1113: the one exception to the owner's single write source (the scope page), re-checked against the live attest_sources above.
+  // A live grant of no sources writes nothing, so it refuses before that exception.
+  const ownSource = (source: unknown, sourcesNone: boolean) => !sourcesNone && (source === a.sourceId || storedPerCallWriteSource(a, slug) !== null);
   const suffix = lock ? ' FOR SHARE' : '';
   if (a.principal.kind === 'oauth_client') {
-    const [row] = await engine.executeRaw<Record<string, unknown>>(`SELECT deleted_at,scope,source_id,allowed_operations,
+    const [row] = await engine.executeRaw<Record<string, unknown>>(`SELECT deleted_at,scope,source_id,source_grant,allowed_operations,
       bound_slug_prefixes,bound_tools,delegated_namespace,delegated_slug_prefixes FROM oauth_clients WHERE client_id=$1${suffix}`, [a.principal.id]);
-    if (!row || row.deleted_at != null || row.source_id !== a.sourceId) deny('The owning OAuth client is revoked or its source changed.');
+    if (!row || row.deleted_at != null || !ownSource(row.source_id, row.source_grant === 'none')) deny('The owning OAuth client is revoked or its source changed.');
     const scopes = typeof row.scope === 'string' ? row.scope.split(/\s+/) : [];
     assertSkillWriteScopes(scopes, operation, a.remote);
     if (skillWrite(operation) && (!strings(row.allowed_operations) || !row.allowed_operations.includes(operation))) deny('The current skill operation grant was removed.');
@@ -179,7 +187,7 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
     assertSkillWriteScopes(normalizeTokenScopes(row.scopes) ?? [], operation, a.remote);
     const liveOperations = grant.allowedOperations;
     if (!operationAllowed(liveOperations, granted) || skillWrite(operation) && !liveOperations?.includes(operation)) deny('The current legacy operation grant excludes this write.');
-    if (!hasScope(grant.scopes, 'write') || authSourcesFromGrant(grant).sourceId !== a.sourceId) deny('The current token no longer permits this source write.');
+    if (!hasScope(grant.scopes, 'write') || !ownSource(authSourcesFromGrant(grant).sourceId, grant.sources.kind === 'none')) deny('The current token no longer permits this source write.');
     return;
   }
   if (a.principal.kind === 'local_cli' || a.principal.kind === 'local_stdio') {
@@ -274,7 +282,7 @@ function onceReads(engine: BrainEngine): BrainEngine {
 export async function ownRequestAccessible(ctx: OperationContext, row: WriteRequest): Promise<boolean> {
   try {
     const engine = onceReads(ctx.engine);
-    const auth = await submissionAuthority({ ...ctx, engine, attestedOp: row.authority?.attestedOp }, row.operation, row.source_id, row.source_incarnation, row.slug);
+    const auth = await submissionAuthority({ ...ctx, engine, attestedOp: row.authority?.attestedOp, attestedSource: row.authority?.attestedSource }, row.operation, row.source_id, row.source_incarnation, row.slug);
     if (auth.principal.kind !== row.principal_kind || auth.principal.id !== row.principal_id) return false;
     // GST-359 C2: under one attest credential, a receipt belongs to the person it was written for.
     if (!sameAttestedActor(row.authority?.actingFor)) return false;

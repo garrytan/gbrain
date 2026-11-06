@@ -40,7 +40,7 @@ import { RELEASE_STAGED_CTE } from '../persistence/limits.ts';
 
 export const LIVE_STAGING_STATES = ['open', 'sealed', 'prepared'];
 const TERMINAL_STAGING_STATES = ['committed', 'aborted', 'expired'];
-const NON_TERMINAL_REQUEST_STATES = ['queued', 'running', 'recovering'];
+const NON_TERMINAL_REQUEST_STATES = ['queued', 'deferred', 'running', 'recovering'];
 
 const hex = (bytes: Uint8Array) => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('hex');
 const bytes = (value: unknown): Uint8Array => {

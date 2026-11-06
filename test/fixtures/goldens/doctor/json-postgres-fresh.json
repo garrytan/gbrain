@@ -1411,6 +1411,14 @@
               {
                 "name": "persistence_requests_foreground_committed",
                 "state": "valid"
+              },
+              {
+                "name": "persistence_requests_replay_id",
+                "state": "valid"
+              },
+              {
+                "name": "persistence_requests_slug_sequence",
+                "state": "valid"
               }
             ],
             "repair": "request-indexes"
@@ -2524,6 +2532,15 @@
           "elapsed_ms": "<volatile>",
           "message": "0 Git checkout(s) track no ownership marker (markers on disk stay untracked and are denied on push).",
           "name": "tracked_ownership_marker",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no registered source on this host is a Git checkout, so there are no commits to attribute (the database is the record on a repo-less brain).",
+          "name": "foreign_writers",
+          "readiness_state": "not_applicable",
+          "severity": "info",
           "status": "ok"
         },
         {

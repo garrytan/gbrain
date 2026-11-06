@@ -45,6 +45,13 @@ export const ACTIVE_REFRESH_STATES_SQL = "('draining','fenced','merged','syncing
 export const CHECKOUT_EFFECT_KINDS_SQL = "('git','withdrawal-mirror')";
 
 /**
+ * PR B (docs/designs/REFRESH_WRITE_BARRIER.md): a `deferred` request whose refresh is released is waiting work like a queued
+ * row; one whose refresh is still running is invisible to every claim, head and drain check (it waits for the refresh).
+ */
+export const RELEASED_DEFERRED = (r: string) => `(${r}.state='deferred' AND EXISTS (SELECT 1 FROM persistence_worktree_refreshes released
+        WHERE released.id=${r}.deferred_refresh_id AND released.released_at IS NOT NULL))`;
+
+/**
  * Claim predicate for a row aliased `alias` whose `column` (default `worktree_id`) names the worktree: while
  * a refresh holds the checkout fence (`fenced`, `merged`) or its HEAD is
  * unverified (`recovery_required`), nothing on that worktree is claimed.

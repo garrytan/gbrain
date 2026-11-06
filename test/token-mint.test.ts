@@ -24,6 +24,8 @@ beforeAll(async () => {
   // original schema) + the v38 permissions column + the F3 grant columns.
   await engine.executeRaw(PRE_GRANT_COLUMNS_TABLE);
   for (const statement of ACCESS_TOKEN_GRANT_SCHEMA_SQL.split(";").map(s => s.trim()).filter(Boolean)) await engine.executeRaw(statement);
+  // GST-1113: a grant naming a source is checked against sources (QM scope sources) before it is minted.
+  await engine.executeRaw('CREATE TABLE IF NOT EXISTS sources (id TEXT PRIMARY KEY, config JSONB)');
 }, 60_000);
 
 const PRE_GRANT_COLUMNS_TABLE = `

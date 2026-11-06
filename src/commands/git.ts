@@ -11,8 +11,9 @@
  *   gbrain git commit-push --pending [--path <dir>] [-m <msg>]
  *   gbrain git guard [--install | --uninstall] [--path <dir>] [--json]
  */
-import { realpathSync } from 'node:fs';
-import { commitAndPush, checkoutRoot, pullShared, scopePaths, COMMIT_LOCK_NAME, type Resolution } from '../core/git/commit-push.ts';
+import { existsSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
+import { commitAndPush, checkoutRoot, pullShared, scopePaths, COMMIT_LOCK_NAME, SOURCE_ROOT_CONFIG, type Resolution } from '../core/git/commit-push.ts';
 import { guardStatus, installGuard, uninstallGuard } from '../core/git/commit-guard.ts';
 import { appendPushLog } from '../core/brain-repo-durability.ts';
 import { opError } from '../core/ops/contract.ts';
@@ -21,6 +22,8 @@ import { writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { execFileSync } from '../core/spawn.ts';
 import { gitChildEnv } from '../core/git-env.ts';
 import { GIT_ENV } from '../core/git-transport.ts';
+import { managedFilesystemRootFor } from '../core/persistence/filesystem-guard.ts';
+import { registeredManagedRootRecords } from '../core/persistence/root-registry.ts';
 
 const HELP = `Usage: gbrain git commit-push [--path <dir>] -m <msg> [--json] [--] <paths...>
        gbrain git commit-push --push-only [--path <dir>] [--branch <b>]
@@ -51,6 +54,8 @@ Flags:
   --require-clean     Unattended rule: --pull skips when the checkout has any local edit;
                       a push never advances a checkout that has one, and never waits for
                       another push (it asks that push to publish HEAD too: push_deferred).
+  --base <p>=<blob>   Refuse (commit_base_moved) unless path p's blob at HEAD is still <blob> (full object
+                      id, or absent for a new file); repeat per path. Each p must also be committed.
   --resolve <p>=<v>   After integrate_conflict: which side wins for path p (ours, theirs, file:<merged copy>).
   --expect-remote <sha>  Required with --resolve: the remote commit the choice was made against
                       (printed by integrate_conflict); a remote that moved since is reported again.
@@ -75,12 +80,12 @@ is installed.`;
 
 interface Parsed {
   sub?: string; path?: string; message?: string; branch?: string; expectRemote?: string; json: boolean; pushOnly: boolean; pull: boolean;
-  requireClean: boolean; dryRun: boolean; help: boolean; keepCheckout: boolean; paths: string[]; resolve: string[];
+  requireClean: boolean; dryRun: boolean; help: boolean; keepCheckout: boolean; paths: string[]; resolve: string[]; base: string[];
   pending: boolean; allowOutside: boolean; install: boolean; uninstall: boolean;
 }
 
 function parse(args: string[]): Parsed {
-  const p: Parsed = { json: false, pushOnly: false, pull: false, requireClean: false, dryRun: false, help: false, keepCheckout: false, paths: [], resolve: [],
+  const p: Parsed = { json: false, pushOnly: false, pull: false, requireClean: false, dryRun: false, help: false, keepCheckout: false, paths: [], resolve: [], base: [],
     pending: false, allowOutside: false, install: false, uninstall: false };
   let rest = false;
   for (let i = 0; i < args.length; i++) {
@@ -108,6 +113,7 @@ function parse(args: string[]): Parsed {
     else if (a === '--path' || a.startsWith('--path=') || a === '--repo' || a.startsWith('--repo=')) p.path = take('--path');
     else if (a === '-m' || a === '--message' || a.startsWith('--message=')) { const m = take('--message'); p.message = p.message === undefined ? m : `${p.message}\n\n${m}`; }
     else if (a === '--resolve' || a.startsWith('--resolve=')) p.resolve.push(take('--resolve'));
+    else if (a === '--base' || a.startsWith('--base=')) p.base.push(take('--base'));
     else if (a === '--branch' || a.startsWith('--branch=')) p.branch = take('--branch');
     else if (a === '--expect-remote' || a.startsWith('--expect-remote=')) p.expectRemote = take('--expect-remote');
     else if (!p.sub) p.sub = a;
@@ -131,6 +137,31 @@ function parseResolutions(specs: string[]): Map<string, Resolution> {
   return out;
 }
 
+/**
+ * #8662: on a host whose brain records its source checkouts, a checkout resolved from the working directory that is none of
+ * them and carries no mark of a gbrain brain checkout is refused before anything is staged (a wrapper that changed into
+ * another repository). A legacy source is not in that record, so `gbrain sources harden`'s marks admit it: a
+ * gbrain.sourceRoot or gbrain.cliPath entry, or the committed scripts/brain-commit-push.sh (whose own calls pass no --path).
+ * An explicit --path names its checkout and is not checked here.
+ */
+function assertSourceCheckout(repo: string): void {
+  const registered = registeredManagedRootRecords();
+  if (!registered.length || managedFilesystemRootFor(repo)) return;
+  if (existsSync(join(repo, 'scripts', 'brain-commit-push.sh'))) return;
+  try {
+    execFileSync('git', ['-C', repo, 'config', '--local', '--get-regexp', `^(${SOURCE_ROOT_CONFIG}|gbrain.clipath)$`.replace(/\./g, '\\.').toLowerCase()], { env: gitChildEnv({ ...GIT_ENV }), stdio: ['ignore', 'pipe', 'ignore'] });
+    return;
+  } catch { /* no marker */ }
+  const first = registered[0]!.root;
+  const listed = registered.slice(0, 5).map(record => `${record.root}${record.source_id ? ` (${record.source_id})` : ''}`).join(', ') + (registered.length > 5 ? ` and ${registered.length - 5} more` : '');
+  throw opError('checkout_not_a_source', `${repo} is not a source checkout of this brain; its source checkouts on this host are ${listed}. Nothing was staged.`,
+    `Pass the brain checkout with an absolute --path, for example gbrain git commit-push --path ${first} -m <msg> -- <paths>; a script or cron wrapper that changes directory first must name it the same way.`,
+    { fix: { argv: ['gbrain', 'git', 'commit-push', '--dry-run', '--path', first], consent: [], actor: 'user', requires_exclusive: false,
+      why: 'The dry run shows the checkout, branch and lock commit-push uses with that --path, writing nothing.',
+      user_message: `gbrain git commit-push resolved ${repo}, which is not one of this brain's source checkouts (${listed}). Change the script or wrapper that ran it to pass --path with the absolute brain checkout.`,
+      verify: { argv: ['gbrain', 'git', 'commit-push', '--dry-run', '--path', first] } } });
+}
+
 function emit(json: boolean, doc: Record<string, unknown>, human: string): void {
   if (json) void writeStdoutFinal(`${JSON.stringify(doc)}\n`);
   else console.log(human);
@@ -146,13 +177,21 @@ export async function runGit(args: string[]): Promise<number> {
     if (p.sub !== 'commit-push') throw opError('commit_paths_invalid', `Unknown subcommand: gbrain git ${p.sub}.`, HELP.split('\n')[0]);
     if (p.install || p.uninstall) throw opError('commit_paths_invalid', '--install and --uninstall belong to gbrain git guard.', 'Run gbrain git guard --install.');
     const repo = checkoutRoot(p.path ?? process.cwd());
+    if (!p.path) assertSourceCheckout(repo);
     const cwd = p.path ? realpathSync(p.path) : process.cwd();
     if ((p.pull && p.pushOnly) || (p.pull && (p.message || p.paths.length || p.resolve.length || p.branch))
       || (p.pushOnly && (p.message || p.paths.length)) || ((p.resolve.length || p.branch || p.expectRemote || p.keepCheckout) && !p.pushOnly)
-      || (p.pending && (p.pull || p.pushOnly || p.paths.length)) || (p.allowOutside && p.pull)) {
+      || (p.pending && (p.pull || p.pushOnly || p.paths.length)) || (p.allowOutside && p.pull) || (p.base.length && (p.pull || p.pushOnly || p.pending))) {
       throw opError('commit_paths_invalid', 'These flags do not combine.',
         'Use one mode: -m <msg> -- <paths> (commit + push), --pending [-m <msg>], --push-only [--keep-checkout] [--branch <b>] [--expect-remote <sha> --resolve ...], or --pull [--require-clean].');
     }
+    const bases = new Map(p.base.map(spec => {
+      const eq = spec.lastIndexOf('=');
+      const [path, blob] = [spec.slice(0, eq), spec.slice(eq + 1)];
+      if (eq <= 0 || !(blob === 'absent' || /^([0-9a-f]{40}|[0-9a-f]{64})$/.test(blob))) throw opError('commit_paths_invalid', `--base ${spec} is not <path>=<blob>.`,
+        'Pass the full object id git rev-parse HEAD:<path> printed when you read the file, or absent for a new file.');
+      return [path, blob] as const;
+    }));
     if ((p.resolve.length && !p.expectRemote) || (p.expectRemote && !/^[0-9a-f]{7,64}$/i.test(p.expectRemote))) {
       throw opError('commit_paths_invalid', '--resolve and --expect-remote <sha> go together.',
         'Copy both from the integrate_conflict report: --expect-remote names the remote commit your choice was made against.');
@@ -161,7 +200,7 @@ export async function runGit(args: string[]): Promise<number> {
     if (p.dryRun) {
       const lock = execFileSync('git', ['-C', repo, 'rev-parse', '--git-path', COMMIT_LOCK_NAME], { env: gitChildEnv({ ...GIT_ENV }) }).toString().trim();
       const branch = execFileSync('git', ['-C', repo, 'symbolic-ref', '--quiet', '--short', 'HEAD'], { env: gitChildEnv({ ...GIT_ENV }) }).toString().trim();
-      const paths = p.pull || p.pushOnly ? [] : scopePaths(repo, p.paths, cwd);
+      const paths = p.pull || p.pushOnly || !p.paths.length ? [] : scopePaths(repo, p.paths, cwd);
       emit(json, { dry_run: true, repo, branch, lock, paths, mode: p.pull ? 'pull' : p.pushOnly ? 'push-only' : 'commit-push' },
         `dry run: ${p.pull ? 'pull' : p.pushOnly ? 'push-only' : `commit ${paths.join(' ')}`} on ${branch} in ${repo} (lock ${lock}); nothing written`);
       return 0;
@@ -184,6 +223,7 @@ export async function runGit(args: string[]): Promise<number> {
       ...(p.branch ? { branch: p.branch } : {}),
       ...(p.resolve.length ? { resolutions: parseResolutions(p.resolve) } : {}),
       ...(p.expectRemote ? { expectRemote: p.expectRemote } : {}),
+      ...(bases.size ? { bases } : {}),
     });
     if (result.outcome === 'push_deferred') {
       emit(json, { ...result, repo }, `push deferred: another push is running in ${repo} and will publish HEAD too`);

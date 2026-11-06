@@ -371,9 +371,22 @@ function stallText(index: number, total: number | null, stalledMs: number, claim
 }
 
 /** Re-enter `pass` until the managed cursor is done, the caller stops it, or it is blocked. */
+/**
+ * The in-pass line's age of an unclaimed head. A head that moved since the last read is the writer making progress (it
+ * commits requests queued ahead of this pass, a dead owner's in-flight writes among them), so the age counts from that
+ * read, never from before `floor` (the drain's own last commit).
+ */
+function inPassHeadAge(): (requestId: string | null | undefined, at: number, floor: number) => number {
+  let seen: { id: string | null | undefined; at: number; since: number } | null = null;
+  return (id, at, floor) => {
+    seen = { id, at, since: seen && seen.id !== id ? seen.at : seen?.since ?? floor };
+    return at - Math.max(floor, seen.since);
+  };
+}
+
 export async function runDrain(input: DrainInput): Promise<SyncResult> {
   const clock = input.clock ?? Date.now;
-  const startedAt = clock();
+  const startedAt = clock(), headAge = inPassHeadAge();
   const coop = cooperativeDeadline(input.deadlineAtMs);
   const signal = coop.signal && input.signal ? AbortSignal.any([input.signal, coop.signal]) : coop.signal ?? input.signal;
   /** #6706: the drain's own deadline (not the caller's cancellation) stopped it, so the stop is a resumable report. */
@@ -409,7 +422,7 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
     Promise.resolve().then(() => probe.head!()).then(head => {
       if (!head || !inPass || stall || clock() - lastCommitAt < every || tickAt - lastLine < every) return;
       lastLine = tickAt;
-      serr(stallText(index, total, head.claim?.step_age_ms ?? clock() - lastCommitAt, head.claim, head.head_state, head));
+      serr(stallText(index, total, head.claim?.step_age_ms ?? headAge(head.request_id, clock(), lastCommitAt), head.claim, head.head_state, head));
     }).catch(() => undefined).finally(() => { readingHead = false; });
   }, every) : null;
   stallLine?.unref?.();
