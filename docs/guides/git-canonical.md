@@ -105,10 +105,10 @@ recorded):
 
 | Evidence | Meaning | Category |
 |---|---|---|
-| `adopt_db_moved` | An older version of the page equals the committed file: only the database moved. | adopt |
-| `git_wins_file_moved` | The page equals an older committed blob of its path: only the file moved (a plain `git commit`, for example). | git wins (`file_moved`) |
-| `both_moved` | Both sides moved since the last state they shared. | discard until decided |
-| `no_evidence` | Nothing shared within the depth (no archived version, a path with one blob, a segmented page whose export matches no blob). | discard until decided |
+| `adopt_db_moved` | An older version of the page equals the committed file, and no newer state was shared: only the database moved. | adopt |
+| `git_wins_file_moved` | The page equals an older committed blob of its path, and no newer state was shared: only the file moved (a plain `git commit`, for example). | git wins (`file_moved`) |
+| `both_moved` | Both sides moved since the last state they shared. A revert counts as a move: a page reverted to an older state while Git edited the file is `both_moved`, not `git_wins_file_moved`. | discard until decided |
+| `no_evidence` | Nothing shared within the depth (no archived version, a path with one blob, a segmented page whose export matches no blob), or the other side's history reached the depth (basis `history_truncated`). | discard until decided |
 
 A later `updated_at` on the database row changes nothing here. The evidence
 kind of each page is part of the preview hash, and `gbrain sources git-gap
@@ -135,7 +135,8 @@ A decision names the page at its revision, blob and evidence: once the page
 moves again it is counted `stale` and not applied, and the page waits for a new
 decision. The file is bound into the preview hash. Review lists, decision files
 and approvals hold page names, so gbrain writes them owner-only (mode 0600) and
-refuses any path inside a source's checkout (`conversion_file_in_source_root`).
+refuses any path inside a source's checkout or the Git working tree that holds
+it, including a symlink into one (`conversion_file_in_source_root`).
 
 ### Approval across time
 

@@ -186,9 +186,14 @@ function gitLine(root: string, args: string[]): string | null {
   return result.ok ? result.stdout.toString('utf8').replace(/\n$/, '') : null;
 }
 
-/** Whether `root` is inside a Git working tree (hardened `rev-parse --show-toplevel`). */
+/** The top level of the Git working tree `root` is inside (hardened `rev-parse --show-toplevel`); null outside one. */
+export function gitTopLevel(root: string): string | null {
+  return gitLine(root, ['rev-parse', '--show-toplevel']);
+}
+
+/** Whether `root` is inside a Git working tree. */
 export function isGitCheckout(root: string): boolean {
-  return gitLine(root, ['rev-parse', '--show-toplevel']) !== null;
+  return gitTopLevel(root) !== null;
 }
 
 /**
@@ -285,7 +290,7 @@ export async function worktreeBlobOid(path: string, format: ObjectFormat): Promi
 export const DIRECTION_EVIDENCE = ['adopt_db_moved', 'git_wins_file_moved', 'both_moved', 'no_evidence'] as const;
 export type DirectionEvidence = typeof DIRECTION_EVIDENCE[number];
 export type EvidenceBasis = 'older_version_matches_file' | 'row_matches_older_file' | 'conflicting_history' | 'shared_older_state' | 'no_shared_state'
-  | 'segmented' | 'history_unreadable' | 'changed_during_read';
+  | 'segmented' | 'history_unreadable' | 'changed_during_read' | 'history_truncated';
 /** Versions and blobs compared per page, newest first. */
 export const EVIDENCE_DEPTH = 32;
 /** Pages whose versions, export views and blobs one evidence read holds at a time. */
@@ -352,15 +357,28 @@ export async function readBlobSizes(root: string, oids: readonly string[]): Prom
 /**
  * The direction pure decision: `row` and `head` are the canonical digests of the page's export view and of its file at
  * the tip (null when the file does not parse), `versions` the page's older versions and `blobs` the path's older blobs
- * (the tip's excluded), each newest first with its digest (null when it does not parse).
+ * (the tip's excluded), each newest first with its digest (null when it does not parse); `capped` says a list reached
+ * EVIDENCE_DEPTH, so older entries exist that were not read.
+ *
+ * A one-sided verdict needs the matched state to be the newest state both sides shared. The row equals an older blob
+ * (only the file moved) unless a state newer than that blob was shared with an older version that differs from the row:
+ * then the database left it too (a revert to the row's content is a move). The mirror holds for the file equal to an
+ * older version. When the other side's list is capped, a newer shared state may lie past it, so the verdict is no_evidence.
  */
 export function decideDirection(row: string, head: string | null, versions: ReadonlyArray<{ id: number; digest: string }>,
-  blobs: ReadonlyArray<{ oid: string; digest: string | null }>): Pick<Evidence, 'kind' | 'basis' | 'blob' | 'version'> {
-  const fileMoved = blobs.find(blob => blob.digest === row);
-  const databaseMoved = head === null ? undefined : versions.find(version => version.digest === head);
-  if (fileMoved && databaseMoved) return { kind: 'both_moved', basis: 'conflicting_history', blob: fileMoved.oid, version: databaseMoved.id };
-  if (fileMoved) return { kind: 'git_wins_file_moved', basis: 'row_matches_older_file', blob: fileMoved.oid, version: null };
-  if (databaseMoved) return { kind: 'adopt_db_moved', basis: 'older_version_matches_file', blob: null, version: databaseMoved.id };
+  blobs: ReadonlyArray<{ oid: string; digest: string | null }>, capped: { versions: boolean; blobs: boolean } = { versions: false, blobs: false }): Pick<Evidence, 'kind' | 'basis' | 'blob' | 'version'> {
+  const fileAt = blobs.findIndex(blob => blob.digest === row);
+  const databaseAt = head === null ? -1 : versions.findIndex(version => version.digest === head);
+  const fileMoved = fileAt >= 0 ? blobs[fileAt]! : undefined, databaseMoved = databaseAt >= 0 ? versions[databaseAt]! : undefined;
+  const sharedNewerThanBlob = fileAt >= 0 && blobs.slice(0, fileAt).some(blob => blob.digest !== null && blob.digest !== row && versions.some(version => version.digest === blob.digest));
+  const sharedNewerThanVersion = databaseAt >= 0 && versions.slice(0, databaseAt).some(version => version.digest !== head && blobs.some(blob => blob.digest === version.digest));
+  if ((fileMoved && databaseMoved) || sharedNewerThanBlob || sharedNewerThanVersion) {
+    return { kind: 'both_moved', basis: 'conflicting_history', blob: fileMoved?.oid ?? null, version: databaseMoved?.id ?? null };
+  }
+  if (fileMoved) return capped.versions ? { kind: 'no_evidence', basis: 'history_truncated', blob: fileMoved.oid, version: null }
+    : { kind: 'git_wins_file_moved', basis: 'row_matches_older_file', blob: fileMoved.oid, version: null };
+  if (databaseMoved) return capped.blobs ? { kind: 'no_evidence', basis: 'history_truncated', blob: null, version: databaseMoved.id }
+    : { kind: 'adopt_db_moved', basis: 'older_version_matches_file', blob: null, version: databaseMoved.id };
   const digests = new Map<string, string>();
   for (const blob of blobs) if (blob.digest !== null && !digests.has(blob.digest)) digests.set(blob.digest, blob.oid);
   const shared = versions.find(version => digests.has(version.digest));
@@ -396,14 +414,14 @@ export async function readDirectionEvidence(engine: BrainEngine, input: { source
       if (!rel.startsWith('../') && target.startsWith(root + sep)) paths.get(origin.page_id)?.add(gitPath(rel));
     } catch (error) { if (!(error instanceof RestoreTargetError)) throw error; }
   }
-  const history = await readPathHistory(root, tip, scope, new Set([...paths.values()].flatMap(set => [...set])));
+  const history = await readPathHistory(input.gitRoot, tip, scope, new Set([...paths.values()].flatMap(set => [...set])));
   const none = (basis: EvidenceBasis, committed_at: number | null = null): Evidence => ({ kind: 'no_evidence', basis, blob: null, version: null, versions: 0, blobs: 0, committed_at });
   if (!history) { for (const subject of subjects) out.set(subject.id, none('history_unreadable')); return out; }
   const older = (subject: EvidenceSubject) => {
     const merged = [...paths.get(subject.id)!].flatMap(path => history.get(path) ?? []).sort((a, b) => a.seq - b.seq);
     const seen = new Set<string>([subject.blob.oid]), list: HistoryEntry[] = [];
     for (const entry of merged) if (!seen.has(entry.oid) && list.length < EVIDENCE_DEPTH) { seen.add(entry.oid); list.push(entry); }
-    return { list, committed_at: merged[0]?.at ?? null };
+    return { list, committed_at: merged[0]?.at ?? null, capped: list.length >= EVIDENCE_DEPTH || [...paths.get(subject.id)!].some(path => (history.get(path)?.length ?? 0) > EVIDENCE_DEPTH) };
   };
   const withdrawals = await readExportWithdrawals(engine, sourceId);
   for (let start = 0; start < subjects.length; start += EVIDENCE_BATCH) {
@@ -451,7 +469,7 @@ export async function readDirectionEvidence(engine: BrainEngine, input: { source
       from = to;
     }
     for (const [i, subject] of read.current.entries()) {
-      const { list, committed_at } = older(subject);
+      const { list, committed_at, capped } = older(subject);
       if (subject.segmented) {
         const match = list.find(entry => read.segmentedOids.get(subject.id)?.has(entry.oid));
         out.set(subject.id, match ? { kind: 'git_wins_file_moved', basis: 'row_matches_older_file', blob: match.oid, version: null, versions: 0, blobs: list.length, committed_at }
@@ -463,7 +481,7 @@ export async function readDirectionEvidence(engine: BrainEngine, input: { source
         digest: digest(reconcileCanonical({ type: (row.type ?? snapshot.page.type) as Page['type'], title: row.title ?? snapshot.page.title, compiled_truth: row.compiled_truth!,
           timeline: row.timeline ?? '', frontmatter: json(row.frontmatter, {}) }, json<string[]>(row.tags, []))) }));
       const decided = decideDirection(digest(reconcileCanonical(snapshot.page, snapshot.tags)), fileDigests.get(`${subject.id}:${subject.blob.oid}`) ?? null, versions,
-        list.map(entry => ({ oid: entry.oid, digest: fileDigests.get(`${subject.id}:${entry.oid}`) ?? null })));
+        list.map(entry => ({ oid: entry.oid, digest: fileDigests.get(`${subject.id}:${entry.oid}`) ?? null })), { versions: (byPage.get(subject.id)?.length ?? 0) >= EVIDENCE_DEPTH, blobs: capped });
       out.set(subject.id, { ...decided, versions: versions.length, blobs: list.length, committed_at });
     }
   }

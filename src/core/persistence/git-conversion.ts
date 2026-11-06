@@ -54,7 +54,7 @@ import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { inlineExportMarkdown, readExportPage, readExportPages, readExportWithdrawals, type ExportSnapshot } from '../export-snapshot.ts';
 import { scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
 import { censusGitGap, type GitGapCensus, type GitGapPage } from '../../commands/sources-git-gap.ts';
-import { compareInlineExportFile, DIRECTION_EVIDENCE, ignoredPaths, readBlobs, type DeclaredClass, type DirectionEvidence, type Evidence, type ExportFileComparison } from './git-gap.ts';
+import { compareInlineExportFile, DIRECTION_EVIDENCE, gitTopLevel, ignoredPaths, readBlobs, type DeclaredClass, type DirectionEvidence, type Evidence, type ExportFileComparison } from './git-gap.ts';
 import { commitThroughDoor } from './git-door.ts';
 import { gitRootAhead, pushGitRoot } from './effect-git.ts';
 import { DURABILITY_NOT_ENABLED_REASON, gitDurabilityPolicy } from './git-durability-policy.ts';
@@ -204,22 +204,27 @@ const DECISION_VALUES = ['adopt', 'git_wins'] as const;
 
 /**
  * The review list and decision files hold page names and paths: each is written owner-only (0600) and refused anywhere
- * under a registered source's root, so no sync or commit ever picks one up. Checked on the real path of the file's directory.
+ * under a registered source's root or the Git working tree that holds it, so no sync or commit ever picks one up. Checked
+ * on the native real path of the file's directory and, when the file exists, of the file itself (a symlink into a checkout).
  */
 export async function assertOutsideSourceRoots(engine: BrainEngine, file: string, flag: string): Promise<string> {
   const target = resolve(file);
   let directory: string;
-  try { directory = realpathSync(dirname(target)); } catch {
+  try { directory = realpathSync.native(dirname(target)); } catch {
     throw opError('invalid_params', `${flag} ${file}: its directory does not exist.`, `Pass a path in an existing directory outside every source's checkout, e.g. under ~/.gbrain.`);
   }
   const real = join(directory, target.slice(dirname(target).length + 1));
+  let linked = real;
+  try { linked = realpathSync.native(real); } catch { /* not written yet */ }
   const roots = await engine.executeRaw<{ id: string; local_path: string }>('SELECT id, local_path FROM sources WHERE local_path IS NOT NULL');
   for (const root of roots) {
     let base: string;
-    try { base = realpathSync(root.local_path); } catch { base = resolve(root.local_path); }
-    const inside = relative(base, real);
-    if (inside === '' || (!inside.startsWith('..') && !inside.startsWith(sep) && !/^[A-Za-z]:/.test(inside))) {
-      throw opError('conversion_file_in_source_root', `${flag} ${file} is inside source ${root.id}'s root (${root.local_path}), so it was refused: a review or decisions file names pages and must never be synced or committed.`,
+    try { base = realpathSync.native(root.local_path); } catch { base = resolve(root.local_path); }
+    const top = gitTopLevel(base);
+    for (const fence of new Set([base, ...(top ? [top] : [])])) for (const path of new Set([real, linked])) {
+      const inside = relative(fence, path);
+      if (inside !== '' && (inside.startsWith('..') || inside.startsWith(sep) || /^[A-Za-z]:/.test(inside))) continue;
+      throw opError('conversion_file_in_source_root', `${flag} ${file} is inside source ${root.id}'s checkout (${fence}), so it was refused: a review or decisions file names pages and must never be synced or committed.`,
         `Pass a path outside every source's checkout, e.g. under ~/.gbrain.`, { docs: DOCS });
     }
   }
@@ -245,9 +250,14 @@ export async function readConversionDecisions(engine: BrainEngine, file: string,
   if (parsed?.kind !== DECISIONS_KIND || parsed.version !== 1) throw bad(`it is not a ${DECISIONS_KIND} file (version 1).`);
   if (parsed.source_id !== sourceId) throw bad(`it is for source ${String(parsed.source_id)}, not ${sourceId}.`);
   if (!Array.isArray(parsed.pages)) throw bad('it has no pages list.');
+  return decisionEntries(parsed.pages, bad);
+}
+
+/** The decided entries of a decisions list (null decisions skipped), each checked for its fields and decided once. */
+function decisionEntries(pages: unknown[], bad: (why: string) => OperationError): ConversionDecision[] {
   const out: ConversionDecision[] = [];
   const seen = new Set<string>();
-  for (const entry of parsed.pages as Array<Record<string, unknown>>) {
+  for (const entry of pages as Array<Record<string, unknown>>) {
     if (entry?.decision == null) continue;
     const { slug, revision, blob, evidence, decision } = entry;
     if (typeof slug !== 'string' || !(DECISION_VALUES as readonly unknown[]).includes(decision) || !(DIRECTION_EVIDENCE as readonly unknown[]).includes(evidence)
@@ -730,7 +740,7 @@ export async function readConversionApproval(engine: BrainEngine, file: string, 
   try { parsed = JSON.parse(readFileSync(real, 'utf8')); } catch { throw bad('it is not JSON.'); }
   if (parsed?.kind !== APPROVAL_KIND || parsed.version !== 1 || typeof parsed.items !== 'object' || !Array.isArray(parsed.decisions)) throw bad(`it is not a ${APPROVAL_KIND} file (version 1).`);
   if (parsed.source_id !== sourceId) throw bad(`it is for source ${String(parsed.source_id)}, not ${sourceId}.`);
-  return parsed;
+  return { ...parsed, decisions: decisionEntries(parsed.decisions, bad) };
 }
 
 /** One item of an approved apply that stays unapplied: changed or new since the approval, a discard, or a decision the approval did not hold. */
@@ -760,10 +770,17 @@ export async function applyApprovedConversion(engine: BrainEngine, sourceId: str
   const progress: ConversionProgress = { phase: 'adopt', groups_committed: 0, scanned: 0, total: partial.adopt.length };
   const report: ConversionReporter = patch => { Object.assign(progress, patch); opts.onProgress?.({ ...progress }); };
   const previewCommand = `gbrain sources canonical ${sourceId} --to git --dry-run --approval-out <file>`;
-  const committed = await adoptGroups(engine, partial, previewCommand, report);
-  report({ phase: 'withhold', scanned: 0, total: partial.withhold.length });
-  const withheld = await withholdGroups(engine, partial, previewCommand, groups => report({ scanned: progress.scanned + groups.pages, groups_committed: committed.groups + groups.commits }));
-  const push = await pushConversion(engine, plan.context);
+  const recovery: ConversionRecovery = { mode: plan.preview.strict ? 'git' : 'mixed', phase: 'adopt', commits: [], push: null,
+    accepted: { adopted: 0, withheld: 0, holds_cleared: 0, pass_writes: 0 }, reclassified: [], rollback: [] };
+  let committed: GitConversionResult['committed'], withheld: GitConversionResult['withheld'], push: ConversionPush;
+  try {
+    committed = await adoptGroups(engine, partial, previewCommand, report, recovery.commits);
+    recovery.accepted.adopted = committed.pages;
+    report({ phase: 'withhold', scanned: 0, total: partial.withhold.length });
+    withheld = await withholdGroups(engine, partial, previewCommand, groups => report({ scanned: progress.scanned + groups.pages, groups_committed: committed.groups + groups.commits }), recovery.commits);
+    recovery.accepted.withheld = withheld.pages;
+    push = await pushConversion(engine, plan.context);
+  } catch (error) { throw await withRecovery(engine, sourceId, error, recovery, progress); }
   const by: Record<string, number> = {};
   for (const item of delta) by[item.reason] = (by[item.reason] ?? 0) + (item.reason.startsWith('discard:') ? plan.preview.discard.by[item.reason.slice(8) as DiscardCategory] : 1);
   return { status: 'delta', source_id: sourceId, head: plan.preview.head, committed, withheld, holds_cleared: 0, parked: { retried: 0, reclassified: 0 }, push, closing_passes: 0,
@@ -813,7 +830,10 @@ async function runConversion(engine: BrainEngine, plan: GitConversionPlan, expec
     report({ phase: 'holds', scanned: 0, total: plan.holds.length }); recovery.phase = 'holds';
     let holdsCleared = 0;
     for (const hold of plan.holds) {
-      if (await engine.transaction(tx => clearGitHold(tx, { sourceId, incarnation: plan.incarnation, path: hold.path, observedAt: hold.observed_at }))) holdsCleared++;
+      if (!await engine.transaction(tx => clearGitHold(tx, { sourceId, incarnation: plan.incarnation, path: hold.path, observedAt: hold.observed_at }))) {
+        throw changedSincePlan(sourceId, new Set([hold.path]), 'mixed');
+      }
+      holdsCleared++;
       recovery.accepted.holds_cleared = holdsCleared;
       report({ scanned: progress.scanned + 1 });
     }
@@ -844,16 +864,18 @@ async function runConversion(engine: BrainEngine, plan: GitConversionPlan, expec
     }
     return { status: after.remaining === 0 && !binding.reclassified.size ? 'converted' : 'incomplete', source_id: sourceId, head: after.head, committed, withheld, holds_cleared: holdsCleared, parked, push,
       closing_passes: closing, after, reclassified: [...binding.reclassified].sort() };
-  } catch (error) {
-    if (error && typeof error === 'object') {
-      recovery.phase = progress.phase;
-      recovery.mode = (await engine.executeRaw<{ strict: boolean }>("SELECT COALESCE(config->>'canonical','')='git' AS strict FROM sources WHERE id=$1", [sourceId]).catch(() => []))[0]?.strict ? 'git' : recovery.mode;
-      recovery.push ??= progress.push ?? null;
-      recovery.rollback = conversionRollback(sourceId, recovery.mode);
-      Object.defineProperty(error, RECOVERY, { value: recovery, configurable: true });
-    }
-    throw error;
-  }
+  } catch (error) { throw await withRecovery(engine, sourceId, error, recovery, progress); }
+}
+
+/** A failed apply's error with its recovery report attached: where it stopped, the mode it left, its commits and the rollback. */
+async function withRecovery(engine: BrainEngine, sourceId: string, error: unknown, recovery: ConversionRecovery, progress: ConversionProgress): Promise<unknown> {
+  if (!error || typeof error !== 'object') return error;
+  recovery.phase = progress.phase;
+  recovery.mode = (await engine.executeRaw<{ strict: boolean }>("SELECT COALESCE(config->>'canonical','')='git' AS strict FROM sources WHERE id=$1", [sourceId]).catch(() => []))[0]?.strict ? 'git' : recovery.mode;
+  recovery.push ??= progress.push ?? null;
+  recovery.rollback = conversionRollback(sourceId, recovery.mode);
+  Object.defineProperty(error, RECOVERY, { value: recovery, configurable: true });
+  return error;
 }
 
 /**

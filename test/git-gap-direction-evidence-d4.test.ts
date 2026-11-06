@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -8,6 +8,7 @@ import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { inlineExportMarkdown, readExportPage, readExportWithdrawals } from '../src/core/export-snapshot.ts';
 import { decideDirection } from '../src/core/persistence/git-gap.ts';
+import { readConversionDecisions, writeConversionFile } from '../src/core/persistence/git-conversion.ts';
 import { censusGitGap, describeGitGap, type GitGapPage } from '../src/commands/sources-git-gap.ts';
 import { dbAheadOfGitEntry } from '../src/commands/doctor/checks/db-ahead-of-git.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -39,6 +40,18 @@ describe('decideDirection (d4 classifier)', () => {
     expect(decideDirection('row', 'head', [v(3, 'x'), v(2, 'shared')], [b('o1', 'shared')])).toMatchObject({ kind: 'both_moved', basis: 'shared_older_state', blob: 'o1', version: 2 });
     expect(decideDirection('row', 'head', [v(2, 'x')], [b('o1', 'y')])).toMatchObject({ kind: 'no_evidence', basis: 'no_shared_state' });
     expect(decideDirection('row', null, [v(2, 'x')], [b('o1', null)])).toMatchObject({ kind: 'no_evidence' });
+  });
+  test('a revert on one side is a move: the newest shared state decides, not any older match', () => {
+    expect(decideDirection('A', 'C', [v(3, 'B'), v(2, 'A')], [b('oB', 'B'), b('oA', 'A')])).toMatchObject({ kind: 'both_moved', basis: 'conflicting_history' });
+    expect(decideDirection('C', 'A', [v(3, 'B'), v(2, 'A')], [b('oB', 'B'), b('oA', 'A')])).toMatchObject({ kind: 'both_moved', basis: 'conflicting_history' });
+    expect(decideDirection('B', 'C', [v(3, 'B'), v(2, 'A')], [b('oB', 'B'), b('oA', 'A')])).toMatchObject({ kind: 'git_wins_file_moved', blob: 'oB' });
+    expect(decideDirection('C', 'B', [v(4, 'C'), v(3, 'B'), v(2, 'A')], [b('oA', 'A')])).toMatchObject({ kind: 'adopt_db_moved', version: 3 });
+  });
+  test('a one-sided verdict needs the other side read in full', () => {
+    const full = { versions: false, blobs: false };
+    expect(decideDirection('row', 'head', [v(2, 'older')], [b('o1', 'row')], { ...full, versions: true })).toMatchObject({ kind: 'no_evidence', basis: 'history_truncated' });
+    expect(decideDirection('row', 'head', [v(2, 'head')], [b('o1', 'older')], { ...full, blobs: true })).toMatchObject({ kind: 'no_evidence', basis: 'history_truncated' });
+    expect(decideDirection('row', 'head', [v(2, 'older')], [b('o1', 'row')], { ...full, blobs: true })).toMatchObject({ kind: 'git_wins_file_moved' });
   });
 });
 
@@ -128,6 +141,34 @@ for (const backend of testBackends()) describe(`git-gap direction evidence (d4):
     } else expect(late!.details.partial_sources).toContain('default');
     const [done] = await dbAheadOfGitEntry.run({ engine, progress: { heartbeat: () => {} } } as never) as Array<{ message: string }>;
     expect(done!.message).toContain('default: 7 live page(s), 7 equal');
+  }, 120000);
+
+  test('a source nested in a larger repository reads its history, and a database revert under a Git edit is both_moved', async () => {
+    const top = tempDir('git-gap-nested-'), root = join(top, 'brain');
+    git(top, 'init', '-q');
+    put(top, 'README.md', 'outside the source\n');
+    await engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'", [root]);
+    const write = async (slug: string, text: string) => { put(root, `${slug}.md`, (await rendered(slug)).replace(/Body [ABC]\./, text)); };
+    for (const slug of ['notes/file-moved', 'notes/reverted']) { await body(slug, 'Body A.'); await write(slug, 'Body A.'); }
+    commitAll(top, 'first');
+    await engine.createVersion('notes/reverted'); await body('notes/reverted', 'Body B.'); await write('notes/reverted', 'Body B.');
+    commitAll(top, 'both sides to B');
+    await engine.createVersion('notes/reverted'); await body('notes/reverted', 'Body A.');
+    await write('notes/reverted', 'Body C.'); await write('notes/file-moved', 'Body C.');
+    commitAll(top, 'git edits after the database revert');
+    const pages: GitGapPage[] = [];
+    await censusGitGap(engine, 'default', { sample: 0, evidence: true, collect: page => { pages.push(page); } });
+    const bySlug = Object.fromEntries(pages.map(page => [page.slug, page]));
+    expect(bySlug['notes/file-moved']).toMatchObject({ state: 'git_ahead', evidence: { kind: 'git_wins_file_moved', basis: 'row_matches_older_file' } });
+    expect(bySlug['notes/reverted']).toMatchObject({ evidence: { kind: 'both_moved', basis: 'conflicting_history' } });
+
+    // A review or decisions file is refused anywhere in the Git working tree that holds the source, and through a symlink into it.
+    await expect(writeConversionFile(engine, join(top, 'review.json'), '--list-out', {})).rejects.toMatchObject({ code: 'conversion_file_in_source_root' });
+    const outside = tempDir('git-gap-files-');
+    put(root, 'decisions.json', '{}');
+    symlinkSync(join(root, 'decisions.json'), join(outside, 'decisions.json'));
+    await expect(readConversionDecisions(engine, join(outside, 'decisions.json'), 'default')).rejects.toMatchObject({ code: 'conversion_file_in_source_root' });
+    expect(await writeConversionFile(engine, join(outside, 'review.json'), '--list-out', {})).toBe(join(outside, 'review.json'));
   }, 120000);
 
   test('repo-less: a source without a checkout reads no evidence (not_applicable) and counts its live pages', async () => {

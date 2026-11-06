@@ -1087,7 +1087,8 @@ async function confirmPages(exec: Exec, input: { kind: 'postgres' | 'pglite'; so
 function bindConversion(paths: ShadowPath[], scope: string, binding: ConversionBinding): void {
   for (const [i, entry] of paths.entries()) {
     const r = entry.result;
-    if (!r.gitWins || r.settled || r.inFlight || (r.action !== 'import' && r.action !== 'delete')) continue;
+    const gitWins = r.gitWins ?? (r.cls === 'held' && r.action === 'import' ? classifySyncPath({ ...entry.state, hold: null }, { strict: true }).gitWins : undefined);
+    if (!gitWins || r.settled || r.inFlight || (r.action !== 'import' && r.action !== 'delete')) continue;
     const path = scope && entry.path.startsWith(`${scope}/`) ? entry.path.slice(scope.length + 1) : entry.path;
     const expected = binding.expect.get(path);
     if (expected && String(entry.pageId) === expected.id && (entry.revision ?? null) === expected.revision && (expected.blob === undefined || (entry.state.level ?? null) === expected.blob)) continue;

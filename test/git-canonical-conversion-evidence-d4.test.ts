@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
+import { writeGitHold } from '../src/core/persistence/sync-holds.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { applyApprovedConversion, applyGitConversion, applyMixedConversion, conversionApproval, conversionRecovery, conversionReviewList, planGitConversion,
   planMixedConversion, readConversionApproval, readConversionDecisions, writeConversionFile, type ConversionDecision } from '../src/core/persistence/git-conversion.ts';
@@ -148,6 +149,57 @@ for (const backend of testBackends()) describe(`[${backend}] conversion by conte
     } finally { files.done(); }
   }, { databaseUrl, setup }), 240_000);
 
+  const staleHold = async (engine: BrainEngine, incarnation: string, slug: string) => {
+    const [page] = await engine.executeRaw<{ id: string }>("SELECT id::text FROM pages WHERE source_id='default' AND slug=$1", [slug]);
+    await engine.transaction(tx => writeGitHold(tx, { source_id: 'default', incarnation, path: `${slug}.md`, source_path: `${slug}.md`, slug, page_id: Number(page!.id),
+      code: 'concurrent_write', message: 'A write moved the page during the pass.', upstream_version: '0'.repeat(64), observed_at: new Date().toISOString(),
+      run_id: null, mode: 'managed', meta: { recovery_version: 1, blob_oid: '0'.repeat(40) } }));
+  };
+
+  test('item 3: a hold written after the plan over a page that moved since is bound, so its re-run never imports over the database', () => managedBrain(async brain => {
+    const { engine } = brain;
+    const files = outside();
+    try {
+      await evidenceSource(brain);
+      const decisions = await decide(brain, files.dir, { 'notes/both': 'git_wins', 'notes/none': 'adopt' });
+      const plan = await planGitConversion(engine, 'default', { decisions });
+      installFaultHook(async point => {
+        if (point !== 'conversion:after_recheck') return;
+        await databaseOnlyEdit(engine, 'notes/file', 'A racing database write under a hold.');
+        await staleHold(engine, plan.incarnation, 'notes/file');
+      });
+      let error: unknown;
+      try { await applyGitConversion(engine, 'default', plan.preview.preview_hash, { ...PROCESSING, decisions }); } catch (caught) { error = caught; } finally { installFaultHook(undefined); }
+      expect(error).toMatchObject({ code: 'git_conversion_incomplete', detail: 'changed_since_preview' });
+      expect(await body(engine, 'notes/file')).toBe('A racing database write under a hold.');
+      expect(conversionRecovery(error)).toMatchObject({ mode: 'mixed', reclassified: ['notes/file.md'] });
+      expect(await strict(engine)).toBe(false);
+    } finally { files.done(); }
+  }, { databaseUrl, setup }), 240_000);
+
+  test('item 3: a planned hold another run replaced after the plan stops the apply before any strict pass', () => managedBrain(async brain => {
+    const { engine } = brain;
+    const files = outside();
+    try {
+      await evidenceSource(brain);
+      const decisions = await decide(brain, files.dir, { 'notes/both': 'git_wins', 'notes/none': 'adopt' });
+      await staleHold(engine, (await planGitConversion(engine, 'default')).incarnation, 'notes/same');
+      const plan = await planGitConversion(engine, 'default', { decisions });
+      expect(plan.holds.map(hold => hold.path)).toEqual(['notes/same.md']);
+      installFaultHook(async point => {
+        if (point !== 'conversion:after_recheck') return;
+        await new Promise(resolve => setTimeout(resolve, 5));
+        await staleHold(engine, plan.incarnation, 'notes/same');
+      });
+      let error: unknown;
+      try { await applyGitConversion(engine, 'default', plan.preview.preview_hash, { ...PROCESSING, decisions }); } catch (caught) { error = caught; } finally { installFaultHook(undefined); }
+      expect(error).toMatchObject({ code: 'git_conversion_incomplete', detail: 'changed_since_preview' });
+      expect(conversionRecovery(error)).toMatchObject({ mode: 'mixed', phase: 'holds' });
+      expect(await strict(engine)).toBe(false);
+      expect(await holds(engine)).toContain('notes/same.md');
+    } finally { files.done(); }
+  }, { databaseUrl, setup }), 240_000);
+
   test('item 6: a failure after the flip reports the mode, commits, push and writes, and the rollback keeps the adopted pages\' live content', () => managedBrain(async brain => {
     const { engine, root } = brain;
     const files = outside();
@@ -207,6 +259,30 @@ for (const backend of testBackends()) describe(`[${backend}] conversion by conte
 
       const refused = await cli(engine, ['default', '--to', 'git', '--apply', '--approved', approvalFile, '--no-embed', '--no-extract']);
       expect(refused).toMatchObject({ status: 'delta', code: 'git_conversion_delta' });
+    } finally { files.done(); }
+  }, { databaseUrl, setup }), 240_000);
+
+  test('item 6: a partial approved apply that fails after a commit reports that commit; an approval\'s decisions are checked like a decisions file', () => managedBrain(async brain => {
+    const { engine, root } = brain;
+    const files = outside();
+    try {
+      await evidenceSource(brain);
+      const decisions = await decide(brain, files.dir, { 'notes/both': 'git_wins', 'notes/none': 'adopt' });
+      const approval = conversionApproval(await planGitConversion(engine, 'default', { decisions }));
+      const twice = join(files.dir, 'twice.json');
+      await writeConversionFile(engine, twice, '--approval-out', { ...approval, decisions: [...approval.decisions, approval.decisions[0]] });
+      await expect(readConversionApproval(engine, twice, 'default')).rejects.toMatchObject({ code: 'invalid_params', message: expect.stringContaining('decided twice') });
+
+      writeFileSync(join(root, 'notes/db.md'), note('notes/db', 'A commit that landed after the approval.'));
+      git(root, 'commit', '-qam', 'a commit after the approval');
+      const base = git(root, 'rev-parse', 'HEAD');
+      installFaultHook(async point => { if (point === 'conversion:group_committed') throw new Error('injected after the first group'); });
+      let error: unknown;
+      try { await applyApprovedConversion(engine, 'default', approval, PROCESSING); } catch (caught) { error = caught; } finally { installFaultHook(undefined); }
+      expect(error).toMatchObject({ message: 'injected after the first group' });
+      expect(conversionShas(root, base)).toHaveLength(1);
+      expect(conversionRecovery(error)).toMatchObject({ mode: 'mixed', phase: 'adopt', commits: conversionShas(root, base), rollback: [] });
+      expect(await strict(engine)).toBe(false);
     } finally { files.done(); }
   }, { databaseUrl, setup }), 240_000);
 
