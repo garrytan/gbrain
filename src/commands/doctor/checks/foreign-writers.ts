@@ -19,6 +19,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { execFileSync } from '../../../core/spawn.ts';
+import { GIT_READ_ENV, gitChildEnv } from '../../../core/git-env.ts';
 import type { Check } from '../../doctor.ts';
 import { readLedger, messageDigest } from '../../../core/git/commit-ledger.ts';
 import { readPendingWriteThrough } from '../../../core/git/commit-push.ts';
@@ -49,7 +50,7 @@ interface Reflog { file: string; ref: string; gitDir: string | null }
 interface Entry { old: string; next: string; time: number; message: string }
 
 function git(root: string, args: string[], input?: string): string | null {
-  try { return execFileSync('git', ['-C', root, ...args], { stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'], input, timeout: GIT_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 }).toString(); }
+  try { return execFileSync('git', ['-C', root, ...args], { stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'], input, timeout: GIT_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024, env: gitChildEnv(GIT_READ_ENV) }).toString(); }
   catch { return null; }
 }
 const canonical = (path: string) => { try { return realpathSync(path); } catch { return resolve(path); } };
