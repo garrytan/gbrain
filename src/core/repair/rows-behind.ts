@@ -10,7 +10,7 @@
  * holds those bytes, so no file is written, and the import record is rewritten). `hold:<code>`: the import of the
  * checkpoint file is refused (or it is over the sync read bound), so the apply opens the hold sync would have opened, with
  * the code and message of the refusal the apply recomputes (not the one saved with the preview). Left out of the set and listed: rows with no import record (`excluded:unproven`, joined
- * by --include-ambiguous; d4: one whose older version equals its committed file never joins, `excluded:database_moved`), rows whose working-tree file differs from the checkpoint blob (`excluded:worktree_differs`: an
+ * by --include-ambiguous; d4: one whose older version equals its committed file never joins, `excluded:database_moved`, nor one whose content evidence says both sides moved, `excluded:both_moved`), rows whose working-tree file differs from the checkpoint blob (`excluded:worktree_differs`: an
  * uncommitted edit; commit it and sync), and rows whose import would keep page data the file does not carry
  * (`excluded:import_overlay`). `--apply --expect <hash>` applies exactly that set; a row whose page, checkpoint or file
  * changed since is `changed_since_preview`. Never runs on upgrade, from --all or from the remediation plan.
@@ -111,6 +111,7 @@ export const rowsBehindRepair: RepairHandler = {
       // edit, so it never joins, flag or not.
       const evidence = row.record === 'none' ? row.evidence?.kind ?? 'no_evidence' : null;
       if (evidence === 'adopt_db_moved') { listing.push({ item: entry, class: 'excluded:database_moved', detail: `${describe(row)}; an older version of the page equals its committed file, so the database moved since and re-importing would replace that edit; gbrain repair file-drift --source ${sourceId} --slug ${row.slug} --prefer database keeps it` }); continue; }
+      if (evidence === 'both_moved') { listing.push({ item: entry, class: 'excluded:both_moved', detail: `${describe(row)}; the page and its file both moved since the last state they shared, so re-importing would replace a database edit; gbrain repair file-drift --source ${sourceId} --slug ${row.slug} decides it per page` }); continue; }
       if (evidence !== null && !selection.include_ambiguous) { listing.push({ item: entry, class: 'excluded:unproven', detail: `${describe(row)}; no import record proves the database did not move since (content evidence: ${evidence}), so it joins only with --include-ambiguous` }); continue; }
       if (row.overlay) { listing.push({ item: entry, class: 'excluded:import_overlay', detail: `${describe(row)}; importing it would keep page data the file does not carry (tags, a withdrawal or sanitized text), so it is not re-imported here; gbrain repair file-drift --source ${sourceId} --slug ${row.slug} --prefer file resolves it` }); continue; }
       if (row.refusal) {
