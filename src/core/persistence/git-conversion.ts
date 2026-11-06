@@ -40,7 +40,7 @@
  * remaining categories are reported. `--to mixed` removes the flag and changes nothing else.
  */
 import { chmodSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { SyncOpts, SyncResult } from '../../commands/sync.ts';
 import type { Action } from '../agent-output.ts';
@@ -213,7 +213,7 @@ export async function assertOutsideSourceRoots(engine: BrainEngine, file: string
   try { directory = realpathSync.native(dirname(target)); } catch {
     throw opError('invalid_params', `${flag} ${file}: its directory does not exist.`, `Pass a path in an existing directory outside every source's checkout, e.g. under ~/.gbrain.`);
   }
-  const real = join(directory, target.slice(dirname(target).length + 1));
+  const real = join(directory, basename(target));
   let linked = real;
   try { linked = realpathSync.native(real); } catch { /* not written yet */ }
   const roots = await engine.executeRaw<{ id: string; local_path: string }>('SELECT id, local_path FROM sources WHERE local_path IS NOT NULL');
@@ -237,7 +237,9 @@ export async function writeConversionFile(engine: BrainEngine, file: string, fla
   try { if (lstatSync(real).isSymbolicLink()) throw opError('invalid_params', `${flag} ${file} is a symlink, so it was not written.`, 'Pass the path of a regular file.'); }
   catch (error) { if (error instanceof OperationError) throw error; }
   const temp = `${real}.${process.pid}.tmp`;
-  try { writeFileSync(temp, JSON.stringify(value, null, 2) + '\n', { mode: 0o600, flag: 'wx' }); chmodSync(temp, 0o600); renameSync(temp, real); } finally { rmSync(temp, { force: true }); }
+  try { writeFileSync(temp, JSON.stringify(value, null, 2) + '\n', { mode: 0o600, flag: 'wx' }); chmodSync(temp, 0o600); renameSync(temp, real); }
+  catch (error) { throw opError('invalid_params', `${flag} ${file} could not be written (${(error as NodeJS.ErrnoException).code ?? 'error'}).`, 'Pass a writable path outside every source checkout, e.g. under ~/.gbrain.'); }
+  finally { rmSync(temp, { force: true }); }
   return real;
 }
 
@@ -714,7 +716,7 @@ function approvalItems(plan: GitConversionPlan): Record<string, string> {
   for (const item of plan.adopt) items[`adopt:${item.path}`] = JSON.stringify([item.id, item.slug, item.revision, item.blob ?? null, item.evidence ?? null, item.state, item.disk]);
   for (const item of plan.gitWins) items[`git_wins:${item.path}`] = JSON.stringify([item.id, item.slug, item.revision, item.blob, item.evidence ?? null, item.reason]);
   for (const item of plan.withhold) items[`withhold:${item.path}`] = JSON.stringify([item.id, item.slug, item.revision, item.kind, item.declared, item.disk]);
-  for (const hold of plan.holds) items[`hold:${hold.path}`] = JSON.stringify([hold.code, hold.side, hold.observed_at, hold.action]);
+  for (const hold of plan.holds) items[`hold:${hold.path}`] = JSON.stringify([hold.code, hold.side, hold.action]);
   for (const item of plan.parked) items[`parked:${item.effect}`] = JSON.stringify([item.action, item.codes]);
   return items;
 }
@@ -738,7 +740,7 @@ export async function readConversionApproval(engine: BrainEngine, file: string, 
   const bad = (why: string) => opError('invalid_params', `--approved ${file}: ${why}`, `Write the approval with gbrain sources canonical ${sourceId} --to git --dry-run --approval-out <file> and pass it unchanged.`);
   let parsed: ConversionApproval;
   try { parsed = JSON.parse(readFileSync(real, 'utf8')); } catch { throw bad('it is not JSON.'); }
-  if (parsed?.kind !== APPROVAL_KIND || parsed.version !== 1 || typeof parsed.items !== 'object' || !Array.isArray(parsed.decisions)) throw bad(`it is not a ${APPROVAL_KIND} file (version 1).`);
+  if (parsed?.kind !== APPROVAL_KIND || parsed.version !== 1 || typeof parsed.items !== 'object' || parsed.items === null || Array.isArray(parsed.items) || !Array.isArray(parsed.decisions)) throw bad(`it is not a ${APPROVAL_KIND} file (version 1).`);
   if (parsed.source_id !== sourceId) throw bad(`it is for source ${String(parsed.source_id)}, not ${sourceId}.`);
   return { ...parsed, decisions: decisionEntries(parsed.decisions, bad) };
 }
