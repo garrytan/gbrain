@@ -120,7 +120,11 @@ for (const backend of testBackends()) describe(`[${backend}] conversion by conte
       await databaseOnlyEdit(engine, 'notes/none', DB_EDIT('notes/none'));
       const again = await decide(brain, files.dir, { 'notes/both': 'git_wins', 'notes/none': 'adopt' });
       const final = await planGitConversion(engine, 'default', { decisions: again });
-      expect(await applyGitConversion(engine, 'default', final.preview.preview_hash, { ...PROCESSING, decisions: again })).toMatchObject({ status: 'converted', reclassified: [] });
+      // The printed apply carries the decisions file the hash binds, so running it exactly as printed applies.
+      const printed = await cli(engine, ['default', '--to', 'git', '--dry-run', '--decisions', join(files.dir, 'decisions.json')]);
+      expect(printed.apply).toEqual(['gbrain', 'sources', 'canonical', 'default', '--to', 'git', '--apply', '--expect', final.preview.preview_hash, '--decisions', join(files.dir, 'decisions.json')]);
+      expect(again).toHaveLength(2);
+      expect(await cli(engine, [...printed.apply.slice(3), '--no-embed', '--no-extract'])).toMatchObject({ status: 'converted', reclassified: [] });
       expect(await body(engine, 'notes/file')).toContain(GIT_EDIT('notes/file'));
       expect(await body(engine, 'notes/both')).toContain(GIT_EDIT('notes/both'));
       expect(await body(engine, 'notes/db')).toContain(DB_EDIT('notes/db'));

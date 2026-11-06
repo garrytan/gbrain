@@ -40,7 +40,7 @@
  * remaining categories are reported. `--to mixed` removes the flag and changes nothing else.
  */
 import { chmodSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { SyncOpts, SyncResult } from '../../commands/sync.ts';
 import type { Action } from '../agent-output.ts';
@@ -223,7 +223,7 @@ export async function assertOutsideSourceRoots(engine: BrainEngine, file: string
     const top = gitTopLevel(base);
     for (const fence of new Set([base, ...(top ? [top] : [])])) for (const path of new Set([real, linked])) {
       const inside = relative(fence, path);
-      if (inside !== '' && (inside.startsWith('..') || inside.startsWith(sep) || /^[A-Za-z]:/.test(inside))) continue;
+      if (inside !== '' && (inside === '..' || inside.startsWith('..' + sep) || isAbsolute(inside))) continue;
       throw opError('conversion_file_in_source_root', `${flag} ${file} is inside source ${root.id}'s checkout (${fence}), so it was refused: a review or decisions file names pages and must never be synced or committed.`,
         `Pass a path outside ${fence} and every other source checkout, e.g. under ~/.gbrain when your home directory is not inside it.`, { docs: DOCS });
     }
@@ -702,9 +702,9 @@ export function conversionRollback(sourceId: string, mode: 'mixed' | 'git'): str
 
 /** The apply of `--to git` (see the header). Throws preview_changed or git_conversion_blocked before writing anything. */
 export async function applyGitConversion(engine: BrainEngine, sourceId: string, expect: string,
-  opts: { noEmbed?: boolean; noExtract?: boolean; onProgress?: (progress: ConversionProgress) => void; decisions?: ConversionDecision[] } = {}): Promise<GitConversionResult> {
+  opts: { noEmbed?: boolean; noExtract?: boolean; onProgress?: (progress: ConversionProgress) => void; decisions?: ConversionDecision[]; decisionsFile?: string } = {}): Promise<GitConversionResult> {
   const plan = await planGitConversion(engine, sourceId, { decisions: opts.decisions });
-  if (plan.preview.preview_hash !== expect) throw previewChangedError(expect, `gbrain sources canonical ${sourceId} --to git --dry-run`);
+  if (plan.preview.preview_hash !== expect) throw previewChangedError(expect, `gbrain sources canonical ${sourceId} --to git --dry-run${opts.decisionsFile ? ` --decisions ${opts.decisionsFile}` : ''}`);
   return runConversion(engine, plan, expect, opts);
 }
 

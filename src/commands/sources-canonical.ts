@@ -4,6 +4,7 @@
  * prints the plan, by category with counts and a capped sample of paths, and its hash; `--apply --expect <hash>` runs it
  * (persistence/git-conversion.ts). Trusted local CLI on a managed brain only; not an MCP operation, since it prints paths.
  */
+import { resolve } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { OperationError, opError } from '../core/ops/contract.ts';
@@ -168,10 +169,11 @@ export async function runSourcesCanonical(engine: BrainEngine, args: string[]): 
         ...(parsed.listOut ? { review_list: await writeConversionFile(engine, parsed.listOut, '--list-out', await conversionReviewList(engine, plan)) } : {}),
         ...(parsed.approvalOut ? { approval: await writeConversionFile(engine, parsed.approvalOut, '--approval-out', conversionApproval(plan)) } : {}) };
       const files = Object.entries(written).map(([kind, path]) => `Wrote the ${kind.replace('_', ' ')} (mode 0600) to ${path}.`);
-      print({ ...plan.preview, ...(Object.keys(written).length ? { written } : {}) }, [describeGitPreview(plan.preview), ...files].join('\n'));
+      const preview = parsed.decisions ? { ...plan.preview, apply: [...plan.preview.apply, '--decisions', resolve(parsed.decisions)] } : plan.preview;
+      print({ ...preview, ...(Object.keys(written).length ? { written } : {}) }, [describeGitPreview(preview), ...files].join('\n'));
       return;
     }
-    const processing = { noEmbed: parsed.noEmbed, noExtract: parsed.noExtract, decisions };
+    const processing = { noEmbed: parsed.noEmbed, noExtract: parsed.noExtract, decisions, ...(parsed.decisions ? { decisionsFile: resolve(parsed.decisions) } : {}) };
     const approval = parsed.approved ? await readConversionApproval(engine, parsed.approved, parsed.sourceId) : null;
     const result = await withConversionReport(engine, parsed.sourceId, json, onProgress => approval
       ? applyApprovedConversion(engine, parsed.sourceId, approval, { ...processing, onProgress })
