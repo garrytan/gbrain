@@ -26,7 +26,8 @@ import { settleTopologyRequests, topologyPrincipal } from '../src/core/persisten
 import { pendingReceiptOf, writeErrorExitCode } from '../src/core/persistence/write-wait.ts';
 import { PENDING_WRITE_EXIT_CODE } from '../src/core/exit-codes.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
-import { refreshWorktree } from '../src/core/persistence/worktree-refresh.ts';
+import { refreshWorktree, resumeWorktreeRefreshes } from '../src/core/persistence/worktree-refresh.ts';
+import { recordCommit } from '../src/core/git/commit-ledger.ts';
 import { getWriteRequestById } from '../src/core/persistence/journal.ts';
 import { readWriteWatermark } from '../src/core/persistence/applied-watermark.ts';
 import { resetWriteSwitches } from '../src/core/persistence/switches.ts';
@@ -37,7 +38,7 @@ import { quarantineSharedSkillRestore } from '../src/core/shared-skills/restore.
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { git, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
+import { commitFile, git, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
@@ -527,3 +528,52 @@ test('a receipt poll reads the open-request index, never the permanent receipt h
     await f.engine.executeRaw("DELETE FROM persistence_requests WHERE principal_id='history'");
   }
 }), 180_000);
+
+/** A refresh whose drain let a write land a commit past old_head, then died at `fenced` before merging; `moveHead` makes that commit. */
+async function crashAtFenced(f: RefreshFixture, moveHead: () => string): Promise<{ deferred: WriteRequest; landed: string }> {
+  f.push('alpha/two.md', page('Alpha two', 'An upstream observation.'));
+  let deferred!: WriteRequest; let landed!: string;
+  await expect(refreshWorktree(f.engine, f.alpha, { hooks: { boundary: async point => {
+    if (point === 'drained') {
+      const out = await call(f, 'put_page', { slug: 'notes/held-at-crash', content: page('Held at crash', 'body') });
+      deferred = await requestRow(f, out.body.request_id);
+      landed = moveHead();
+    }
+    if (point === 'fenced') throw new Error('simulated crash at fenced');
+  } } })).rejects.toThrow('simulated crash');
+  expect(deferred.state).toBe('deferred');
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['fenced']);
+  return { deferred, landed };
+}
+
+test('GBEV-44: a refresh killed at fenced after its drain landed a gbrain commit resumes: the row aborts, nothing is reset and its deferred write commits', () => each(async f => {
+  const { deferred, landed } = await crashAtFenced(f, () => {
+    const sha = commitFile(f.root, 'alpha/drained.md', page('Drained', 'A write admitted before the fence.'), 'gbrain: persist canonical memory update');
+    recordCommit(f.root, { sha, writer: 'effect' });
+    return sha;
+  });
+  const resumed = await refreshWorktree(f.engine, f.alpha, { resume: true });
+  expect(resumed.status).toBe('abandoned');
+  const [row] = await f.refreshRows();
+  expect(row.state).toBe('aborted');
+  expect((row.outcome.refusal as { cause: string }).cause).toContain("gbrain's own commits");
+  expect(f.head()).toBe(landed);
+  expect((await settle(f, deferred)).state).toBe('committed');
+}), 180_000);
+
+test('GBEV-44: the owner scan aborts an orphaned fenced row whose HEAD moved only through gbrain commits before the merge', () => each(async f => {
+  const { deferred, landed } = await crashAtFenced(f, () => {
+    const first = commitFile(f.root, 'alpha/drained-1.md', page('Drained one', 'A write admitted before the fence.'), 'gbrain: persist canonical memory update');
+    recordCommit(f.root, { sha: first, writer: 'effect' });
+    const second = commitFile(f.root, 'alpha/drained-2.md', page('Drained two', 'Another write admitted before the fence.'), 'gbrain: persist canonical memory update');
+    recordCommit(f.root, { sha: second, writer: 'effect' });
+    return second;
+  });
+  await resumeWorktreeRefreshes(f.engine);
+  const [row] = await f.refreshRows();
+  expect(row.state).toBe('aborted');
+  expect((row.outcome.refusal as { code: string }).code).toBe('refresh_interrupted');
+  expect(f.head()).toBe(landed);
+  expect((await settle(f, deferred)).state).toBe('committed');
+}), 180_000);
+

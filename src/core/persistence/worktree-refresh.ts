@@ -49,6 +49,7 @@ import { redactUrlsInText } from '../url-redact.ts';
 import { classifyPgAccessError } from '../pg-access-classify.ts';
 import { classifyOriginUniqueViolation } from './origin-guard.ts';
 import { refreshProgress, refreshRetryHint, seconds } from './refresh-retry-hint.ts';
+import { ledgerLocation, readLedger } from '../git/commit-ledger.ts';
 
 export interface WorktreeRefreshRow {
   id: string; worktree_id: string; source_ids: string[]; principal_id: string; owner_epoch: string | number;
@@ -151,6 +152,25 @@ async function memberOutsideHead(engine: BrainEngine, git: Git, root: string, ro
     if (await ancestry(git, root, row.old_head, member.last_commit) !== false) return true;
   }
   return false;
+}
+/** GBEV-44: true when gbrain's commit ledger names every commit in from..to (writes admitted before the fence that landed while the refresh drained). */
+async function ownCommits(git: Git, root: string, from: string, to: string): Promise<boolean> {
+  const location = ledgerLocation(root);
+  const listed = await git(['-C', root, 'rev-list', `${from}..${to}`]);
+  const shas = listed.code === 0 ? listed.stdout.split('\n').map(sha => sha.trim()).filter(Boolean) : [];
+  if (!location || !shas.length) return false;
+  const ledgered = new Set(readLedger(location.common).flatMap(record => record.e === 'commit' ? [record.sha] : []));
+  return shas.every(sha => ledgered.has(sha));
+}
+const OWN_COMMITS = "gbrain's own commits: writes admitted before the fence that landed while the refresh drained";
+/**
+ * GBEV-44: a `fenced` row whose HEAD moved past old_head only through gbrain's own commits, with nothing of the target merged and no
+ * member synced off HEAD's line. The live refresh aborts this case before merging, so recovery aborts it too instead of holding the fence.
+ */
+async function movedBeforeMerge(engine: BrainEngine, git: Git, root: string, row: WorktreeRefreshRow, head: string | null): Promise<boolean> {
+  return row.state === 'fenced' && head !== null && head !== row.old_head && head !== row.target_head
+    && await ancestry(git, root, row.old_head, head) === true && await ancestry(git, root, row.target_head, head) === false
+    && await ownCommits(git, root, row.old_head, head) && !await memberOutsideHead(engine, git, root, row, head);
 }
 const keepSyncedWayOut = (row: Pick<WorktreeRefreshRow, 'source_ids'>, root: string, head: string) =>
   `Ask the user first: git -C ${q(root)} merge --ff-only ${head} moves the checkout to the commit its members already synced (it keeps uncommitted edits git can carry; git -C ${q(root)} status --short lists them), then gbrain sources refresh ${row.source_ids[0]} --resume finishes the refresh and keeps the pages its members synced. If git refuses (an uncommitted edit overlaps an incoming file, or HEAD is not an ancestor of ${head}), ask the user before git -C ${q(root)} reset --hard ${head}, which discards local commits and uncommitted edits not in it, then --resume.`;
@@ -867,7 +887,7 @@ async function fenceAndMerge(engine: BrainEngine, git: Git, sourceId: string, pl
         if (head !== row.old_head) {
           if (head === null) throw await markRecoveryRequired(engine, current, head, plan.root);
           await abort(engine, current, ['fenced'], retryInTick(refusal('refresh_source_changed',
-            `The checkout HEAD moved from ${row.old_head} to ${head} after the precheck (an external commit or checkout); nothing was merged.`, `Retry gbrain sources refresh ${sourceId}`)));
+            `The checkout HEAD moved from ${row.old_head} to ${head} after the precheck (${await ownCommits(git, plan.root, row.old_head, head) ? OWN_COMMITS : 'a commit or checkout gbrain did not make'}); nothing was merged.`, `Retry gbrain sources refresh ${sourceId}`)));
         }
         const dirt = await dirtyOverlap(git, plan.root, row.old_head, row.target_head);
         if (dirt.overlap.length) await abort(engine, current, ['fenced'], dirtyRefusal(sourceId, dirt.overlap));
@@ -928,6 +948,9 @@ async function recoverOne(engine: BrainEngine, git: Git, row: WorktreeRefreshRow
     await engine.transaction(tx => transition(tx, row, ['draining'], 'aborted', { refusal: { code: 'refresh_interrupted', cause: 'The refreshing process stopped while draining; no merge was started.' } }));
   } else if (row.state === 'fenced' && head === row.old_head) {
     await engine.transaction(tx => transition(tx, row, ['fenced'], 'aborted', { refusal: { code: 'refresh_interrupted', cause: 'The refreshing process stopped before merging; HEAD is unchanged.' } }));
+  } else if (await movedBeforeMerge(engine, git, root, row, head)) {
+    const cause = `The refreshing process stopped before merging; HEAD moved from ${row.old_head} to ${head} (${OWN_COMMITS}) and nothing was merged.`;
+    await engine.transaction(tx => transition(tx, row, ['fenced'], 'aborted', { refusal: { code: 'refresh_interrupted', cause }, observed_head: head }));
   } else if (['fenced', 'merged', 'recovery_required'].includes(row.state) && (head === row.target_head || (row.state === 'recovery_required' && head !== null && await isAncestor(git, root, row.target_head, head)))
     && await isAncestor(git, root, row.old_head, row.target_head) && (row.state !== 'recovery_required' || !await memberOutsideHead(engine, git, root, row, head!))) {
     await bookkeeping(engine, row);
@@ -1056,7 +1079,7 @@ async function resumeOrAbandon(engine: BrainEngine, sourceId: string, opts: Refr
         const row = await readRefresh(engine, active.id);
         if (row.state === 'syncing') throw refusal('refresh_in_progress', 'The checkout already holds the upstream commit; abandoning now would leave files ahead of the database.',
           `gbrain sources refresh ${sourceId} --resume`, row.id);
-        if (row.state !== 'draining' && head !== row.old_head) {
+        if (row.state !== 'draining' && head !== row.old_head && !await movedBeforeMerge(engine, git, root, row, head)) {
           if (head === row.target_head) throw refusal('refresh_in_progress', `The checkout is at the refresh target ${row.target_head}; finish it instead of abandoning.`,
             `gbrain sources refresh ${sourceId} --resume`, row.id);
           throw await markRecoveryRequired(engine, row, head, root);
