@@ -100,6 +100,9 @@ function refusal(name: CatalogueName, cause: string, fix: string, refreshId?: st
   if (refreshId) error.detail = `refresh_id=${refreshId}`;
   return error;
 }
+/** #8617: refusals a tick retries once from a fresh precheck: HEAD moved, or work reached the worktree after the drain check. */
+const retriedInTick = new WeakSet<OperationError>();
+const retryInTick = (error: OperationError) => { retriedInTick.add(error); return error; };
 /**
  * GST-1457: members whose last_commit is past the refresh's start commit: set (null means never synced) and not old_head or an ancestor
  * of it. With HEAD back at old_head, lifting the fence would let their next sync diff that commit back to old_head and soft-delete what it
@@ -703,9 +706,17 @@ async function runRefresh(engine: BrainEngine, sourceId: string, opts: RefreshOp
   const waitDrainMs = await configuredMs(engine, opts.waitDrainMs, 'GBRAIN_REFRESH_DRAIN_WAIT_MS', 'sources.refresh_drain_wait_ms', 60_000);
   const recovered = opts.dryRun ? null : await adoptOrphanedRefresh(engine, sourceId, syncBudgetMs);
   if (recovered && recovered.status !== 'completed' && recovered.status !== 'abandoned') return recovered;
-  if (!recovered?.recovered) return refreshOnce(engine, sourceId, opts, fetchTimeoutMs, waitDrainMs, syncBudgetMs);
+  const once = () => refreshOnce(engine, sourceId, opts, fetchTimeoutMs, waitDrainMs, syncBudgetMs);
+  const tick = () => once().catch(error => {
+    if (!retriedInTick.has(error)) throw error;
+    return once().catch(again => {
+      error.message += ` A retry in the same run was refused too (${again instanceof OperationError ? again.code : 'internal_error'}): ${again instanceof Error ? again.message : String(again)}`;
+      throw error;
+    });
+  });
+  if (!recovered?.recovered) return tick();
   const { refresh_id, status, previous_holder } = recovered.recovered;
-  const result = await refreshOnce(engine, sourceId, opts, fetchTimeoutMs, waitDrainMs, syncBudgetMs).catch(error => {
+  const result = await tick().catch(error => {
     // #7712: the recovery this run already made stays on record when its own refresh then refuses.
     if (error instanceof OperationError) error.message += ` Before that, this run finished orphaned refresh ${refresh_id} (${status}; previous holder: ${describeHolder(previous_holder)}).`;
     throw error;
@@ -838,9 +849,9 @@ async function fenceAndMerge(engine: BrainEngine, git: Git, sourceId: string, pl
           throw refusal('refresh_source_changed', 'The worktree ownership or source membership changed while the refresh drained; nothing moved.', `Retry gbrain sources refresh ${sourceId}`, row.id);
         }
         const counts = await drainCounts(tx, row.worktree_id);
-        if (counts.requests + counts.effects + counts.recovery > 0) throw refusal('refresh_source_changed',
+        if (counts.requests + counts.effects + counts.recovery > 0) throw retryInTick(refusal('refresh_source_changed',
           `Work reached the worktree after the drain check (${counts.requests} request(s), ${counts.effects} checkout effect(s), ${counts.recovery} recovery record(s)); nothing moved.`,
-          `Retry gbrain sources refresh ${sourceId}`, row.id);
+          `Retry gbrain sources refresh ${sourceId}`, row.id));
         if (!await transition(tx, row, ['draining'], 'fenced')) throw refusal('refresh_source_changed', 'The refresh record was moved by recovery while draining.', `gbrain sources refresh ${sourceId} --resume`, row.id);
       }).catch(error => { throw (error as { code?: string }).code === LOCK_NOT_AVAILABLE ? new FenceLockTimeout() : error; });
       const current = await readRefresh(engine, row.id);
@@ -854,8 +865,8 @@ async function fenceAndMerge(engine: BrainEngine, git: Git, sourceId: string, pl
         const head = await headOf(git, plan.root);
         if (head !== row.old_head) {
           if (head === null) throw await markRecoveryRequired(engine, current, head, plan.root);
-          await abort(engine, current, ['fenced'], refusal('refresh_source_changed',
-            `The checkout HEAD moved from ${row.old_head} to ${head} after the precheck (an external commit or checkout); nothing was merged.`, `Retry gbrain sources refresh ${sourceId}`));
+          await abort(engine, current, ['fenced'], retryInTick(refusal('refresh_source_changed',
+            `The checkout HEAD moved from ${row.old_head} to ${head} after the precheck (an external commit or checkout); nothing was merged.`, `Retry gbrain sources refresh ${sourceId}`)));
         }
         const dirt = await dirtyOverlap(git, plan.root, row.old_head, row.target_head);
         if (dirt.overlap.length) await abort(engine, current, ['fenced'], dirtyRefusal(sourceId, dirt.overlap));
