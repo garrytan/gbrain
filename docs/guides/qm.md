@@ -15,6 +15,10 @@ gbrain access member add alice-example
 gbrain access member link alice-example --qm U0ALICE            # the canonical id QM sends, compared exactly
 ```
 
+From another machine, the owner runs the same steps over the running server with
+`gbrain mcp admin attest`, `member-add` and `link` (owner session only; see
+[ADMIN](../mcp/ADMIN.md#inspect-clients-and-edit-access)).
+
 Add `forget` with `--attest-ops forget,get_write_request,memory_recall,memory_write` if QM
 should withdraw facts; an attested `forget` reaches only facts on the person's own
 page, and any other id is `not_found`.

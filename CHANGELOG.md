@@ -10,6 +10,20 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**The brain owner can now set a trusted system's attest right and manage members and their canonical-id links from another machine, over the running server, instead of needing a shell on the brain host.** Three owner-session routes back new `gbrain mcp admin` commands. Every refusal the local commands make still applies, and no OAuth token or MCP tool reaches them.
+
+### What changed
+
+| Task | Before | Now |
+|---|---|---|
+| Grant or clear a client's attest right | `gbrain auth rescope --client <id> --attest-actor qm` on the brain host | also `gbrain mcp admin attest <id> --attest-actor qm\|none [--attest-ops <list>] [--dry-run]` (`/admin/api/access/attest`) |
+| Add, disable, enable or list members | `gbrain access member add\|disable\|enable\|list` on the host | also `gbrain mcp admin member-add\|member-disable\|member-enable\|members` (`/admin/api/access/members`) |
+| Link or unlink a canonical id | `gbrain access member link\|unlink\|links` on the host | also `gbrain mcp admin link\|unlink\|links` (`/admin/api/access/member-links`) |
+
+These routes accept only the owner session. Each applied change writes an `access_admin` row to the request log. A member-bound or public client still can't hold the attest right, deferred operations still can't be attested, and a link still needs an enabled member and an unlinked id. Removing a member stays a brain-host command.
+
 ## [0.60.586.0] - 2026-11-06
 
 **A `remember` refused for its arguments now names the whole valid call, so an agent that never read the schema saves on its next try.**
