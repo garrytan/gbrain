@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { embeddedSettings, hostIdFor, isEmbeddedEngine, openEngine, processHasEmbeddedEngines, type EngineSettings } from '../src/core/engine-open.ts';
-import { markEmbeddedEngine, settingsConnectionOptions } from '../src/core/embedded-engine.ts';
+import { markEmbeddedEngine, releaseEmbeddedEngine, settingsConnectionOptions } from '../src/core/embedded-engine.ts';
 import { existingHostIdFor, existingLocalHostId, hostIdentityPathsFor, localHostId, localHostIdentity, registerLocalWriter, registerLocalWriterValue, revokeLocalWriter } from '../src/core/persistence/identity.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { readStoredEmbeddingIdentity } from '../src/core/stored-embedding-identity.ts';
@@ -254,9 +254,13 @@ describe('host identity', () => {
     await withEnv(env, async () => {
       const engine = {};
       markEmbeddedEngine(engine, { ...settingsFor(), host: undefined } as unknown as EngineSettings);
-      expect(await codeOf(Promise.resolve().then(() => hostIdFor(engine)))).toBe('engine_host_missing');
-      expect(await codeOf(Promise.resolve().then(() => existingHostIdFor(engine)))).toBe('engine_host_missing');
-      expect(await codeOf(Promise.resolve().then(() => hostIdentityPathsFor(engine)))).toBe('engine_host_missing');
+      try {
+        expect(await codeOf(Promise.resolve().then(() => hostIdFor(engine)))).toBe('engine_host_missing');
+        expect(await codeOf(Promise.resolve().then(() => existingHostIdFor(engine)))).toBe('engine_host_missing');
+        expect(await codeOf(Promise.resolve().then(() => hostIdentityPathsFor(engine)))).toBe('engine_host_missing');
+      } finally {
+        releaseEmbeddedEngine(engine);
+      }
     });
     expect(filesUnder(gbrainHome)).toEqual([]);
   });
@@ -265,7 +269,11 @@ describe('host identity', () => {
     const engine = {};
     const id = randomUUID();
     markEmbeddedEngine(engine, settingsFor({ host: { id } }));
-    expect(hostIdentityPathsFor(engine)).toEqual({ host_json_path: `embedded:${id}`, persistence_home: 'embedded', minted_under: null });
+    try {
+      expect(hostIdentityPathsFor(engine)).toEqual({ host_json_path: `embedded:${id}`, persistence_home: 'embedded', minted_under: null });
+    } finally {
+      releaseEmbeddedEngine(engine);
+    }
   });
 
   test('an unmarked engine keeps the file identity exactly as before (back-compat)', async () => {

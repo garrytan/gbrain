@@ -46,7 +46,10 @@ export async function detailOnEverySurface(engine: BrainEngine): Promise<void> {
     expect(r.body.withdrawn).toEqual(withdrawn);
   }
   const batch = await call(engine, 'remember', { items: [{ fact: CLAIM, entity: 'crm/acme-example', provenance: 'call notes' }] });
-  expect(batch.body.items[0].error).toMatchObject({ code: 'invalid_params', message: FACT_WITHDRAWN_MESSAGE, withdrawn });
+  // #8621: a batch whose only item is refused is the item's refusal, prefixed with its index, keeping the same object.
+  expect(batch.isError).toBe(true);
+  expect(batch.body).toMatchObject({ code: 'invalid_params', message: `items[0]: ${FACT_WITHDRAWN_MESSAGE} None of the 1 item(s) was saved.` });
+  expect(batch.body.withdrawn).toEqual(withdrawn);
 }
 
 /** Several ledger rows: the entity's own withdrawal outranks a newer one for all entities. */

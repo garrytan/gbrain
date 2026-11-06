@@ -52,7 +52,7 @@ function failingImport(engine: BrainEngine, slug: string, error: () => unknown):
   return new Proxy(engine, { get(target, prop) {
     const value = Reflect.get(target, prop);
     if (prop === 'getPage' && typeof value === 'function') {
-      return (...args: unknown[]) => new Error().stack?.includes('importOnePath') && args[0] === slug ? Promise.reject(error()) : (value as Function).apply(target, args);
+      return (...args: unknown[]) => args[0] === slug && (args[1] as { includeDeleted?: boolean } | undefined)?.includeDeleted === true ? Promise.reject(error()) : (value as Function).apply(target, args);
     }
     return typeof value === 'function' ? value.bind(target) : value;
   } }) as BrainEngine;

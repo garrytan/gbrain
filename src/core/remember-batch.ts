@@ -23,11 +23,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { OperationContext } from './operations.ts';
 import { OperationError } from './ops/contract.ts';
 import { clientRequestIdOf, parseWriteRequestId } from './persistence/preconditions.ts';
+import { CLAIM_PARAM_KEYS, claimColumns } from './facts/typed-claim.ts';
+import { withRefreshFenceBudget } from './persistence/admission-retry.ts';
 
 export const REMEMBER_BATCH_MAX = 20;
-const ITEM_KEYS = new Set(['fact', 'provenance', 'entity', 'infer_entity', 'kind', 'ttl', 'visibility', 'content_origin', 'valid_from', 'replaces']);
-/** #7432: every per-item field but the claim and `replaces` is also a top-level default (an item's own value wins); `source_id` is top-level only. */
-const SHARED_KEYS = [...ITEM_KEYS].filter(key => key !== 'fact' && key !== 'replaces').concat('source_id');
+const CLAIM_KEYS: readonly string[] = CLAIM_PARAM_KEYS;
+const ITEM_KEYS = new Set(['fact', 'provenance', 'entity', 'infer_entity', 'kind', 'ttl', 'visibility', 'content_origin', 'valid_from', 'replaces', ...CLAIM_KEYS]);
+/** #7432: every per-item field but the claim, `replaces` and the typed claim keys is also a top-level default (an item's own value wins); `source_id` is top-level only. */
+const SHARED_KEYS = [...ITEM_KEYS].filter(key => key !== 'fact' && key !== 'replaces' && !CLAIM_KEYS.includes(key)).concat('source_id');
 
 /** Deterministic UUID for child `index` of a batch request (stable across replays). */
 export function childRequestId(requestId: string, index: number): string {
@@ -60,6 +63,11 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
     throw verbError('invalid_params', 'replaces names one fact, so it cannot apply to a whole batch.',
       'Put replaces on the item it belongs to: items: [{ "fact": "...", "replaces": "<fact_id>" }].');
   }
+  const sharedClaim = CLAIM_KEYS.filter(key => p[key] !== undefined);
+  if (sharedClaim.length) {
+    throw verbError('invalid_params', `${sharedClaim.join(', ')} describe one fact, so they cannot apply to a whole batch.`,
+      'Put the typed claim on the item it belongs to: items: [{ "fact": "...", "claim_metric": "mrr", "claim_value": 50000 }].');
+  }
   // #6280: an unusable request_id refuses the batch before any write (F6 accepts a UUID or a printable client id).
   if (p.request_id !== undefined) parseWriteRequestId(p.request_id);
   const shared: Record<string, unknown> = {};
@@ -88,7 +96,9 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
   const clientRequestId = clientRequestIdOf(rootId);
   const results: BatchItemResult[] = [];
   const hints = new Set<string>();
-  for (const [index, item] of normalized.entries()) {
+  const failures: Array<{ index: number; error: OperationError }> = [];
+  // GST-1387: the items share one refresh-fence wait, so a fenced checkout delays the batch once, not once per item.
+  await withRefreshFenceBudget(async () => { for (const [index, item] of normalized.entries()) {
     const child = childRequestId(rootId, index);
     try {
       const out = await single(ctx, { ...item, request_id: child }) as Record<string, unknown>;
@@ -98,7 +108,7 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
         index, request_id: child, status: String(out?.status ?? 'saved'),
         ...(out?.id !== undefined ? { id: out.id } : {}),
         ...(out?.entity_slug !== undefined ? { entity_slug: out.entity_slug } : {}),
-        ...(out?.superseded_fact_id !== undefined ? { superseded_fact_id: out.superseded_fact_id } : {}),
+        ...(out?.superseded_fact_id !== undefined ? { superseded_fact_id: out.superseded_fact_id } : {}), ...claimColumns(out),
         ...(Array.isArray(out?.warnings) && out.warnings.length ? { warnings: out.warnings } : {}),
         ...(out?.valid_until ? { valid_until: out.valid_until } : {}),
         ...(typeof out?.state === 'string' && out.state !== 'committed' ? { state: out.state, retry_after_ms: out.retry_after_ms ?? null } : {}),
@@ -111,12 +121,23 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
           ...(e.writeRequest.target ? { target: e.writeRequest.target } : {}) });
         continue;
       }
-      results.push({ index, request_id: child, status: 'failed', error: { code: e.code, message: e.message, ...(e.detail ? { detail: e.detail } : {}), ...(e.suggestion ? { suggestion: e.suggestion } : {}), ...(e.withdrawn ? { withdrawn: e.withdrawn } : {}) } });
+      failures.push({ index, error: e });
+      results.push({ index, request_id: child, status: 'failed', error: { code: e.code, message: e.message, ...(e.canonical ? { canonical: e.canonical } : {}), ...(e.retryable !== undefined ? { retryable: e.retryable } : {}), ...(e.writeError ? { write_error: e.writeError } : {}), ...(e.detail ? { detail: e.detail } : {}), ...(e.suggestion ? { suggestion: e.suggestion } : {}), ...(e.withdrawn ? { withdrawn: e.withdrawn } : {}) } });
     }
-  }
+  } });
   const failed = results.filter(r => r.status === 'failed').length;
   const pending = results.filter(r => r.status === 'pending').length;
+  // GST-1387: a batch that saved nothing is a refusal on every surface (CLI exit non-zero, MCP isError), never a success
+  // envelope; its first item's error keeps that item's code and fix. An item with a receipt (accepted, or its outcome
+  // unknown) keeps the per-item envelope so its child request_id is never lost.
+  if (failures.length && failed === results.length && failures.every(f => !f.error.writeRequest && f.error.writeError !== 'write_outcome_unknown')) {
+    const [{ index, error }] = failures as [{ index: number; error: OperationError }];
+    error.message = `items[${index}]: ${error.message} None of the ${results.length} item(s) was saved.`;
+    throw error;
+  }
   return {
+    ...(failures.length ? { status: 'error', error: failures[0]!.error.code, code: failures[0]!.error.code,
+      message: `${failed} of ${results.length} item(s) failed (first: items[${failures[0]!.index}] ${failures[0]!.error.code}); see items[].error. Items not marked failed are stored.` } : {}),
     protocol_version: 1,
     request_id: requestId,
     ...(clientRequestId ? { client_request_id: clientRequestId } : {}),

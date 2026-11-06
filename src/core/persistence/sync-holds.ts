@@ -766,6 +766,15 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
     case 'page_write_failed': {
       const failure = record.meta.write_failure;
       const verify = { argv: ['gbrain', 'sources', 'status', source, '--json'] };
+      // GST-1209: rows that do not cover the stored body fail every read, so a retry never clears the hold; the repair republishes the page from its file.
+      if (failure?.code === 'page_body_rows_unreadable') {
+        return { argv: ['gbrain', 'repair', 'segmented-tiling', '--source', source, ...(record.slug ? ['--slug', record.slug] : [])], consent: [], actor: 'agent', requires_exclusive: false,
+          docs: 'docs/guides/repair.md#segmented-tiling',
+          why: `The segment rows of the page ${record.path} maps to do not cover its stored body, so every read of it refuses page_body_rows_unreadable and sync holds the file on every retry. `
+            + 'This previews republishing the page from its file at HEAD and writes nothing; applying it needs the user\'s agreement and the printed preview hash, and clears the hold. '
+            + `If doctor segmented_tiling does not list the page, the rows exist but the role that reads the brain cannot see them: give it access to page_body_manifest and page_segment_texts, then run gbrain sources retry-held ${source}.`,
+          verify: { argv: ['gbrain', 'doctor', '--only', 'segmented_tiling', '--json'] } };
+      }
       // GBRA-133 S-63: a freeze fault threw before any request was admitted, so there is no receipt; the hold names the error.
       if (failure?.origin === 'freeze') return { argv: ['gbrain', 'sources', 'retry-held', source], consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/guides/write-refusals.md#page_write_failed',
         why: `Sync could not prepare ${record.path} (${failure.error_class ?? 'an unexpected error'}${failure.errno ? `, ${failure.errno}` : ''}; the hold message names it), so it held that file and the rest of the source kept syncing. `

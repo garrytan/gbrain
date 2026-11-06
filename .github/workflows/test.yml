@@ -66,6 +66,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Trunk Dynamic CI filter (docs/ci-event-parity.md#trunk-dynamic-ci). It asks Trunk
+  # which of the gated cheap-tier jobs below this pull-request push needs and writes
+  # one output per gated job key; each gated job runs unless its output is exactly
+  # 'false'. It fails open: a missing token, a Trunk outage or a job with no verdict
+  # runs the job.
+  # Event parity (docs/ci-event-parity.md#trunk-dynamic-ci): pull_request only. On a
+  # push, merge-queue entry, schedule or dispatch (the full-ci run) this job is
+  # skipped, every output is empty, and every gated job runs as before.
+  # In Trunk's Learning mode it records verdicts and skips nothing; enforcement is the
+  # Mode setting on Trunk's Dynamic CI settings page, not this file.
+  # scripts/check-dynamic-ci.ts guards the wiring.
+  dynamic-ci:
+    if: github.event_name == 'pull_request'
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      security-regressions: ${{ steps.dynamic-ci.outputs.security-regressions }}
+      native-locks: ${{ steps.dynamic-ci.outputs.native-locks }}
+      persistence-validation: ${{ steps.dynamic-ci.outputs.persistence-validation }}
+      stress-changed-tests: ${{ steps.dynamic-ci.outputs.stress-changed-tests }}
+    steps:
+      - id: dynamic-ci
+        uses: trunk-io/dynamic-ci@5bcddbf3615c2b032c21eed1b514c91164bda4a8  # v1 (v0.1.7)
+        continue-on-error: true
+        timeout-minutes: 3
+        with:
+          token: ${{ secrets.TRUNK_API_TOKEN }}
+          job-keys: security-regressions,native-locks,persistence-validation,stress-changed-tests
+          enable-annotation: 'true'
+
   # Planning gate for the native platform matrix. Pull requests that touch
   # native, lock, IPC, publication, backup, export or sync paths run every
   # native target on the primary Bun version; other pull requests run the Linux
@@ -233,8 +266,10 @@ jobs:
           echo "Scanning commit range: $RANGE"
           gitleaks detect --redact --no-banner --log-opts "$RANGE"
 
+  # Gated by dynamic-ci (docs/ci-event-parity.md#trunk-dynamic-ci): runs unless Trunk's verdict is 'false'.
   security-regressions:
-    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
+    needs: [dynamic-ci]
+    if: ${{ !cancelled() && needs.dynamic-ci.outputs.security-regressions != 'false' && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}
     runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubicloud-standard-2-ubuntu-2404' || matrix.os }}
     timeout-minutes: 10
     strategy:
@@ -1046,9 +1081,10 @@ jobs:
   # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): a pull request (cheap
   # tier) runs the native cells only when its diff touches native code (scope other
   # than smoke); the full-ci dispatch, every push and the nightly run them all.
+  # Gated by dynamic-ci (docs/ci-event-parity.md#trunk-dynamic-ci): runs unless Trunk's verdict is 'false'.
   native-locks:
-    needs: [changes]
-    if: ${{ needs.changes.outputs.reuse != 'true' && ((github.event_name != 'pull_request' || needs.changes.outputs.native-scope != 'smoke') && (github.event_name != 'workflow_dispatch' || (inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base))) }}
+    needs: [changes, dynamic-ci]
+    if: ${{ !cancelled() && needs.dynamic-ci.outputs.native-locks != 'false' && needs.changes.result == 'success' && needs.changes.outputs.reuse != 'true' && ((github.event_name != 'pull_request' || needs.changes.outputs.native-scope != 'smoke') && (github.event_name != 'workflow_dispatch' || (inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base))) }}
     uses: ./.github/workflows/native-locks.yml
     # statuses: the darwin-x64 cells' diag/native-heartbeat/<cell> commit statuses (native-locks.yml); actions: read for its
     # heartbeat-finalize job, which reads the run's job conclusions.
@@ -1063,9 +1099,10 @@ jobs:
   # tier) calls it only when its diff can change persistence or managed sync, and
   # then runs only the crash robot and convergence; the full-ci dispatch, every
   # push and the nightly run every lane.
+  # Gated by dynamic-ci (docs/ci-event-parity.md#trunk-dynamic-ci): runs unless Trunk's verdict is 'false'.
   persistence-validation:
-    needs: [changes]
-    if: ${{ needs.changes.outputs.reuse != 'true' && ((github.event_name != 'pull_request' || needs.changes.outputs.convergence != 'skip') && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base))) }}
+    needs: [changes, dynamic-ci]
+    if: ${{ !cancelled() && needs.dynamic-ci.outputs.persistence-validation != 'false' && needs.changes.result == 'success' && needs.changes.outputs.reuse != 'true' && ((github.event_name != 'pull_request' || needs.changes.outputs.convergence != 'skip') && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base))) }}
     uses: ./.github/workflows/persistence-validation.yml
     with:
       convergence: ${{ needs.changes.outputs.convergence || 'run' }}
@@ -1076,9 +1113,12 @@ jobs:
   # (docs/TESTING.md#event-parity): outside pull_request and merge_group it
   # succeeds with "not a PR event", since push and nightly runs execute every
   # file. Its conclusion is success or failure, never skipped, so test-status
-  # gates on it.
+  # gates on it. Gated by dynamic-ci (docs/ci-event-parity.md#trunk-dynamic-ci):
+  # on a pull request it runs unless Trunk's verdict is 'false'; every other event
+  # runs it as before.
   stress-changed-tests:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
+    needs: [dynamic-ci]
+    if: ${{ !cancelled() && needs.dynamic-ci.outputs.stress-changed-tests != 'false' && (github.event_name != 'workflow_dispatch' || inputs.native_only != true) }}
     permissions:
       contents: read
       issues: read
@@ -1349,7 +1389,7 @@ jobs:
   # every other event runs the full profile and reports full-suite instead.
   cheap-tier:
     name: cheap-tier (full suite not run)
-    needs: [changes, gitleaks, security-regressions, dependency-audit, verify, typecheck, stress-changed-tests, native-locks, persistence-validation]
+    needs: [changes, dynamic-ci, gitleaks, security-regressions, dependency-audit, verify, typecheck, stress-changed-tests, native-locks, persistence-validation]
     if: ${{ always() && github.event_name == 'pull_request' }}
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 5
@@ -1361,6 +1401,7 @@ jobs:
           sparse-checkout-cone-mode: false
       - name: Aggregate the cheap tier
         env:
+          CHANGES: ${{ needs.changes.result }}
           GITLEAKS: ${{ needs.gitleaks.result }}
           SECURITY: ${{ needs.security-regressions.result }}
           AUDIT: ${{ needs.dependency-audit.result }}
@@ -1371,6 +1412,10 @@ jobs:
           NATIVE_SCOPE: ${{ needs.changes.outputs.native-scope }}
           PERSISTENCE: ${{ needs.persistence-validation.result }}
           CONVERGENCE: ${{ needs.changes.outputs.convergence }}
+          DCI_SECURITY: ${{ needs.dynamic-ci.outputs.security-regressions }}
+          DCI_STRESS: ${{ needs.dynamic-ci.outputs.stress-changed-tests }}
+          DCI_NATIVE: ${{ needs.dynamic-ci.outputs.native-locks }}
+          DCI_PERSISTENCE: ${{ needs.dynamic-ci.outputs.persistence-validation }}
         run: bash scripts/ci-cheap-tier.sh
 
   # Master-push reuse marker (scripts/ci-reuse.ts, scripts/release-gate.ts): exists

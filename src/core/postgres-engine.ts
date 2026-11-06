@@ -8,8 +8,9 @@ import { assertPageRevision } from './page-state/types.ts';
 import { assertOriginUnclaimed, assertRevivalUnclaimed, classifyOriginUniqueViolation } from './persistence/origin-guard.ts';
 import { lockUnheldPageKeys, withHeldPageKeys, type HeldPageKeys } from './page-state/guards.ts';
 import { readPageSnapshot as readCanonicalPageSnapshot } from './page-state/snapshot.ts';
+import { readDeadline } from './read-deadline.ts';
 import { readPageSnapshotsBatch } from './page-snapshot-batch.ts';
-import { createPageVersion } from './page-state/versions.ts';
+import { createPageVersion, type VersionHistory } from './page-state/versions.ts';
 import { moveSlugBindings, recordRenameAlias } from './page-state/rename-alias.ts';
 import { dropPhantomMigrationDuplicates } from './facts/ontology-rekey.ts';
 import { composablePostgresTransaction, transactionMemo, withCommitChecks } from './page-state/transactions.ts';
@@ -21,7 +22,7 @@ import { reservedTransactions, type ReservedTransactions } from './postgres-engi
 import { holdSearchConnection } from './search/connection-budget.ts';
 import { traceSqlOptions } from './sql-trace.ts';
 import { hasPostgresCancellationCapability, postgresCancellationUnavailable, reserveWithCancellation } from './postgres-engine/cancellation.ts';
-import { runBoundedStatement } from './postgres-engine/bounded-statement.ts';
+import { runBoundedStatement, runDeadlineRead } from './postgres-engine/bounded-statement.ts';
 import { needsJitOff, runJitOffStatement } from './postgres-engine/jit-off-statement.ts';
 import { retrySchemaReplayOnDeadlock, schemaDiagnosticConnection, withSchemaLockTimeout } from './postgres-engine/schema-lock-timeout.ts';
 export { hasPostgresCancellationCapability } from './postgres-engine/cancellation.ts';
@@ -117,8 +118,9 @@ import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { requestSignal, throwIfRequestAborted } from './request-signal.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns } from './search/sql-ranking.ts';
-import { narrowedOrFallbackQuery } from './search/keyword-or-narrow.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns, keywordPhraseFactorSql } from './search/sql-ranking.ts';
+import { commonOrTokens, narrowedOrFallbackText, readOrTokenShares } from './search/keyword-or-narrow.ts';
+import { keywordArmRows } from './search/keyword-identifier-probe.ts';
 import { RARE_TERM_CHUNK_CAP, rankOrFallbackByRarity, rareTermPagesSql, type RareTermPages } from './search/keyword-or-rarity.ts';
 import { buildKeywordChunkMatch, KEYWORD_RANK_CANDIDATES, KEYWORD_RANKED_ROWS_CTE, KEYWORD_STATEMENT_SETTINGS } from './search/keyword-chunk-match.ts';
 import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment, privatePagesFilterForCaller } from './search/private-visibility.ts';
@@ -136,6 +138,9 @@ import * as factsImpl from './engine-sql/facts.ts';
 import * as takesImpl from './engine-sql/takes.ts';
 import * as codeEdgesImpl from './engine-sql/code-edges.ts';
 import * as salienceImpl from './engine-sql/salience.ts';
+import * as pageLookupImpl from './engine-sql/page-lookup.ts';
+import type { FindPagesQuery, FoundPages } from './page-find.ts';
+import type { PageCountQuery, PageCounts, TypeGrouper } from './page-counts.ts';
 import * as healthImpl from './engine-sql/health.ts';
 import { resolveEntityTypes } from './schema-pack/entity-types.ts';
 import * as pagesImpl from './engine-sql/pages.ts';
@@ -362,9 +367,11 @@ export class PostgresEngine implements BrainEngine {
     callback: (tx: ReturnType<typeof postgres>) => Promise<T>,
     opts?: { alwaysTransaction?: boolean; jitOff?: boolean; settings?: SearchSettings | (() => SearchSettings) },
   ): Promise<T> {
+    const deadlineAt = this._pageTransaction ? undefined : readDeadline();
     // Flag off + no pre-existing transaction need: call through on the
     // shared pool exactly as master does. No tx round-trip, no pool slot
     // held for the duration of the read.
+    if (deadlineAt !== undefined && !this.rlsScopeBindingEnabled && !opts?.alwaysTransaction) return await runDeadlineRead(this.sql, deadlineAt, callback, this.checkoutGauge);
     if (!this.rlsScopeBindingEnabled && !opts?.alwaysTransaction) {
       return await callback(this.sql);
     }
@@ -387,6 +394,7 @@ export class PostgresEngine implements BrainEngine {
       const settings = {
         ...(this.rlsScopeBindingEnabled ? { 'app.scopes': scopesValue } : {}),
         ...(opts?.jitOff ? SEARCH_JIT_OFF : {}),
+        ...(deadlineAt === undefined ? {} : { statement_timeout: String(Math.max(1, Math.ceil(deadlineAt - Date.now()))) }),
         ...(typeof opts?.settings === 'function' ? opts.settings() : opts?.settings),
       };
       return withSearchSettings(tx, this._pageTransaction, settings, () => callback(tx), VECTOR_SETTING_DEFAULTS);
@@ -985,6 +993,12 @@ export class PostgresEngine implements BrainEngine {
   async listPages(filters?: PageFilters): Promise<Page[]> {
     return this.withScopedReadTransaction(filters?.sourceIds, filters?.sourceId, tx => pagesImpl.listPages(scopedRead(this.engineSqlOn(tx)), filters));
   }
+  async findPages(query: FindPagesQuery): Promise<FoundPages> {
+    return this.withScopedReadTransaction(query.sourceIds, query.sourceId, tx => pageLookupImpl.findPages(scopedRead(this.engineSqlOn(tx)), query));
+  }
+  async countPagesBy(query: PageCountQuery, groupTypes?: TypeGrouper): Promise<PageCounts> {
+    return this.withScopedReadTransaction(query.sourceIds, query.sourceId, tx => pageLookupImpl.countPagesBy(scopedRead(this.engineSqlOn(tx)), query, groupTypes));
+  }
 
   async getAllSlugs(opts?: { sourceId?: string }): Promise<Set<string>> {
     return this.withScopedReadTransaction(undefined, opts?.sourceId, tx => pagesImpl.getAllSlugs(scopedRead(this.engineSqlOn(tx)), opts));
@@ -1156,7 +1170,7 @@ export class PostgresEngine implements BrainEngine {
       WITH ranked_chunks AS (
         SELECT page_id, chunk_id, score, bounded_rows FROM (SELECT *, count(*) OVER () AS bounded_rows, row_number() OVER (PARTITION BY page_id ORDER BY score DESC, chunk_id ASC) AS page_rank FROM (SELECT
           p.id as page_id, cc.id as chunk_id,
-          ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $${rankIdx + 1})) * ${sourceFactorCase} AS score
+          ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $${rankIdx + 1})) * ${keywordPhraseFactorSql(ftsLang, `$${rankIdx + 1}`, opts?.keywordPhrase === true)} * ${sourceFactorCase} AS score
         FROM ${chunk.from}
         JOIN pages p ON p.id = cc.page_id
         JOIN sources s ON s.id = p.source_id
@@ -1203,32 +1217,26 @@ export class PostgresEngine implements BrainEngine {
         const boundParams = params.map((v, i) => i === 0 ? collapseWebsearchDashRuns(queryText) : i === rankIdx && !opts?.rankQuery ? collapseWebsearchDashRuns(rankText) : v);
         return tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
       }, { alwaysTransaction: true, jitOff: true, settings: relaxed ? { statement_timeout: statementTimeout, enable_seqscan: 'off', ...KEYWORD_STATEMENT_SETTINGS } : { statement_timeout: statementTimeout, ...KEYWORD_STATEMENT_SETTINGS } }));
-    let rows = await runKeyword(query);
-    // D2 fix (fix/title-retrieval-arm): websearch AND semantics at chunk
-    // grain mean one non-co-occurring token zeroes keyword recall. When the
-    // strict query returns nothing, retry ONCE with OR-of-terms — through
-    // the SAME scoped wrapper (the retry is a fresh scoped transaction, so
-    // RLS scope binding applies identically). Strict-AND results always win
-    // when non-empty (no change for working queries).
-    // Opt-in via SearchOpts.orFallback (Reviewer F1): only hybridSearch's
-    // recall arm relaxes; precision consumers (countMentions,
-    // link-extraction, eval) keep the strict-AND contract.
-    if (rows.length === 0 && opts?.orFallback) {
-      const orQuery = buildOrFallbackWebsearchQuery(query);
-      if (orQuery) {
-        const narrowed = await narrowedOrFallbackQuery((sql, p) => this.executeRaw(sql, p), query, ftsLang);
-        rows = await runKeyword(narrowed ?? orQuery, true, orQuery);
+    const strict = await runKeyword(query);
+    if (Number(strict[0]?.bounded_rows) >= KEYWORD_RANK_CANDIDATES) opts?.onKeywordIncomplete?.('candidate_budget');
+    // D2 fix (fix/title-retrieval-arm): when the strict AND finds nothing,
+    // retry ONCE with OR-of-terms through the SAME scoped wrapper (a fresh
+    // scoped transaction, so RLS scope binding applies identically). Opt-in
+    // via SearchOpts.orFallback (Reviewer F1): only hybridSearch's recall arm
+    // relaxes; precision consumers keep the strict-AND contract. #7491: the
+    // identifier probe and the relaxed-row tag (#3617 follow-up) live in
+    // search/keyword-identifier-probe.ts.
+    return keywordArmRows<Record<string, unknown>>({ query, strict, orFallback: opts?.orFallback, limit, offset, toResult: rowToSearchResult, onIncomplete: opts?.onKeywordIncomplete,
+      runProbe: (match, rank) => runKeyword(match, true, rank),
+      runHandles: handles => keywordPagesImpl.searchHandlePages((read, settings) => this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx => read(scopedRead(this.engineSqlOn(tx))), { alwaysTransaction: true, jitOff: true, settings }), query, handles, opts, limit, { statementTimeout }),
+      runRelaxed: async (orQuery) => {
+        const shares = await readOrTokenShares((sql, p) => this.executeRaw(sql, p), query, ftsLang);
+        const narrowed = narrowedOrFallbackText(shares), common = commonOrTokens(shares, RARE_TERM_CHUNK_CAP);
+        const rows = await runKeyword(narrowed ?? orQuery, true, orQuery);
         if (narrowed || Number(rows[0]?.bounded_rows) >= KEYWORD_RANK_CANDIDATES) opts?.onKeywordIncomplete?.('candidate_budget');
-        const ranked = await rankOrFallbackByRarity<Record<string, unknown>>({ query, rows, limit, offset, runRare: q => runKeyword(q, true, orQuery),
-          readTermPages: terms => this.executeRaw<RareTermPages>(rareTermPagesSql(ftsLang), [terms, RARE_TERM_CHUNK_CAP]) });
-        // 2026-09 (#3617 follow-up): relaxed rows are TAGGED so hybrid's
-        // fusion can demote them — an OR-of-common-terms match must not
-        // outvote a healthy vector arm (SearchResult.keyword_relaxed doc).
-        return ranked.map((r) => ({ ...rowToSearchResult(r), keyword_relaxed: true as const }));
-      }
-    }
-    if (Number(rows[0]?.bounded_rows) >= KEYWORD_RANK_CANDIDATES) opts?.onKeywordIncomplete?.('candidate_budget');
-    return rows.map(rowToSearchResult);
+        return rankOrFallbackByRarity<Record<string, unknown>>({ query, rows, limit, offset, runRare: q => runKeyword(q, true, orQuery),
+          readTermPages: terms => this.executeRaw<RareTermPages>(rareTermPagesSql(ftsLang), [terms.filter(t => !common.has(t)), RARE_TERM_CHUNK_CAP]) });
+      } });
   }
 
   /**
@@ -2537,8 +2545,8 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Versions
-  async createVersion(slug: string, opts?: { sourceId?: string; preimage?: PageSnapshot }): Promise<PageVersion> {
-    return createPageVersion(this, slug, opts?.sourceId ?? 'default', opts?.preimage);
+  async createVersion(slug: string, opts?: { sourceId?: string; preimage?: PageSnapshot } & VersionHistory): Promise<PageVersion> {
+    return createPageVersion(this, slug, opts?.sourceId ?? 'default', opts?.preimage, opts);
   }
 
   async getVersions<B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>): Promise<PageVersionRows<B>> {

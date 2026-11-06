@@ -186,12 +186,18 @@ CHECKS=(
   # Wave 18b: a missing column/table reads as "pre-migration" only when the
   # handler names it (isMissingSchemaObject); broad predicates are allowlisted.
   "check:schema-error-predicates"
+  # Trunk Dynamic CI: the filter runs only on pull_request and every gated job
+  # keeps the fail-open !cancelled() && != 'false' form.
+  "check:dynamic-ci"
   # #4992: subprocess launches go through src/core/spawn.ts (windowsHide
   # default); NOT_YET_MIGRATED is a ratchet that only shrinks.
   "check:windows-hide"
   # Goal (a) (refactor wave 1): engine SQL only shrinks; baseline
   # scripts/engine-sql-baseline.tsv.
   "check:engine-sql-ratchet"
+  # GBRA-248 W1: world reads in src/core (loadConfig, env, fs, module state,
+  # spawn, process hooks) only fall; baseline scripts/core-world-reads-baseline.tsv.
+  "check:core-world-reads"
   # GBRA-161: derived-retire writers only shrink; reviewed ceilings in
   # docs/architecture/derived-census.tsv.
   "check:derived-census"

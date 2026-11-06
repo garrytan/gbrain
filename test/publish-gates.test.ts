@@ -11,7 +11,7 @@ import { operations, opAllowedForBoundClient, CLIENT_FENCED_WRITE_OPS } from '..
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 
-const GATED_OPS = ['list_skills', 'get_skill', 'get_skill_asset', 'list_brain_skillpack', 'advisor'];
+const GATED_OPS = ['list_skills', 'get_skill', 'get_skill_asset', 'list_brain_skillpack', 'advisor', 'set_memory_writeback'];
 
 function engineWithConfig(values: Record<string, string | null> | 'throws'): BrainEngine {
   return {
@@ -23,7 +23,7 @@ function engineWithConfig(values: Record<string, string | null> | 'throws'): Bra
 }
 
 describe('publish-gates: gate declaration', () => {
-  test('exactly the four gated ops carry publishGateKey', () => {
+  test('exactly the gated ops carry publishGateKey', () => {
     const declared = operations.filter(o => o.publishGateKey).map(o => o.name).sort();
     expect(declared).toEqual([...GATED_OPS].sort());
   });

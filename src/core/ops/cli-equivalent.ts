@@ -9,6 +9,7 @@ import type { Operation } from './contract.ts';
 
 const OVERRIDES: Readonly<Record<string, readonly string[]>> = {
   get_health: ['gbrain', 'doctor', '--json'],
+  set_memory_writeback: ['gbrain', 'config', 'set', 'memory.agent_writeback', '<mode>'],
   sync_brain: ['gbrain', 'sync'],
   submit_job: ['gbrain', 'jobs', 'submit'],
   get_job: ['gbrain', 'jobs', 'get'],

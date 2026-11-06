@@ -423,14 +423,21 @@ write's staging (and deleted its staged rows) while the write prepared, and
 the write's last preparation step moved the staging back to `prepared`. The
 publish then passed its staging check, closed the page's old rows and
 published none. Every read of such a page refuses `page_body_rows_unreadable`,
-and a managed sync holds its file `page_write_failed` on every retry.
+and a managed sync holds its file `page_write_failed` on every retry; that
+hold reads `needs_human` with `safe_actions: ["repair"]`, and its fix is this
+repair's preview for the page (`gbrain sync status --source <id> --code
+page_body_rows_unreadable --json` lists it).
 Current versions refuse both steps with `body_staging_expired` (send the write
 again), but upgrading rewrites nothing, so a page damaged earlier stays
 unreadable until this repair runs.
 
 Doctor `segmented_tiling` lists such pages: source, slug, live generation,
 how many rows it has, the bytes they cover (or that they leave a gap) and the
-body size. It reads the manifest only and writes nothing.
+body size. It reads the manifest only and writes nothing. It skips archived
+sources, runs as its own doctor entry, and its fix names the first damaged
+source (`--source`) with the other sources' commands. A preview lists at most
+1,000 pages; one that finds more reports `truncated`, so preview again after
+the apply.
 
 To republish them from Git, preview, then apply after the user agrees:
 
@@ -471,7 +478,9 @@ makes the page `changed_since_preview`) as a new generation through the same fli
 refuses a generation that does not cover its body, keeps the page's title,
 type, frontmatter, tags and trust tier, clears the sync hold the preview saw
 (a newer hold stays until the next sync re-imports the file),
-asks the next sync to screen the file again (so a file that differs from the
+records the new revision as imported from the HEAD blob when the file imports
+to the stored title, type, frontmatter and tags (so the next sync holds no
+`file_drift` for it), asks the next sync to screen the file again (so a file that differs from the
 stored page in anything else imports normally) and writes the page's receipt
 (`op_checkpoints` op `segmented-tiling-receipt`) and a `segmented-tiling` audit
 line. A rerun with the same hash skips pages that already have a receipt.
@@ -1291,6 +1300,40 @@ gbrain repair timeline-comments --source <id> --apply  # clean them
 It drops generated bullets that carry markup (yours are left alone), deletes
 markup-only rows and strips the rest, under the page lock. A second apply finds
 nothing, and a timeline-only rewrite queues no facts extraction.
+
+<a id="contact-rows"></a>
+### Contact rows
+
+A writer that appended a `{type, value, last_used}` row to a page's
+frontmatter `contacts:` list on every touch, instead of updating the existing
+row, left the same value many times (#8109). This explicit-only, preview-bound
+kind collapses the rows already stored, whichever writer left them. It never runs from `--all`, doctor's remediation plan, the
+maintenance cycle or an upgrade.
+
+**Say to your agent:** *"Preview which pages repeat contact rows, show me the
+counts, then apply after I agree."*
+
+```bash
+gbrain repair contact-rows --source <id> [--slug <slug>]...                 # preview: dedupe / needs_reconcile
+gbrain repair contact-rows --source <id> --apply --expect <hash> --yes      # rewrites exactly the previewed pages
+```
+
+Rows group by type (trimmed, case-insensitive) and value (trimmed), so two
+spellings of one number stay two rows. A group collapses into its first row,
+keeping the newest `last_used` (and any other activity date); a field present on
+one row only is kept. A group whose rows differ in any other field only loses
+exact copies. Rows that are not `{type, value}` objects are left alone, and only
+the `contacts` key changes.
+
+The preview counts `pages_to_dedupe`, `rows_to_remove` and `needs_reconcile`.
+A page whose canonical file differs from the database is listed
+`needs_reconcile` and never written: preview
+`gbrain sources reconcile <source> <slug> --brain host --preview --auto-additive`
+(a `last_used` that moved forward is structurally additive), apply it, then
+preview this repair again. The apply publishes one revision-bound `put_page` per
+page, so a source with a checkout commits the file through the coordinated
+writer and a repo-less source writes the database; a page that changed since the
+preview refuses with `preview_changed`.
 
 <a id="timeline-order"></a>
 ### Timeline order
@@ -4059,6 +4102,11 @@ names.
 `known_as_of` got a calendar date (`reason: date_for_instant`). A date is
 valid time; recorded time needs an instant. Pass a full instant such as
 `2026-10-01T12:00:00Z`.
+
+get_page `as_of` got an instant (`reason: instant_for_date`). `as_of` is valid
+time: the date an edition was in force, so pass the date alone
+(`2026-10-01`). For the page as the brain had recorded it at a moment, pass
+the instant to `known_as_of` instead ([valid time](page-history.md#valid-time)).
 
 ### Known as of unproven
 

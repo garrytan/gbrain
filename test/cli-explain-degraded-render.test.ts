@@ -61,7 +61,7 @@ describe('formatResult --explain prints the stage timings', () => {
   test('an empty result names its cause, then the timings', () => {
     setCliOptions({ ...getCliOptions(), explain: true });
     captureRetrievalMeta('retrieval', { returned_count: 0, retrieved_count: 0, degraded: [], timings });
-    expect(formatResult('query', [], {})).toBe(`No results. (clean miss — no retrieval degradation)\n${line}\n`);
+    expect(formatResult('query', [], {})).toBe(`No results. (retrieval healthy; try the display name or --match hybrid before concluding the brain has nothing)\n${line}\n`);
   });
 
   test('without --explain no timings are printed', () => {

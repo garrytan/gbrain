@@ -14,6 +14,8 @@ import { submissionAuthority } from '../src/core/persistence/authority.ts';
 import { admitWrite, claimNextWrite, getWriteRequest, getWriteRequestById, receiptFor } from '../src/core/persistence/journal.ts';
 import { PersistenceConsumer } from '../src/core/persistence/consumer.ts';
 import { waitFor } from './helpers/wait-for.ts';
+import { legacyForget } from './helpers/legacy-forget.ts';
+import { cancelWriteRequest } from '../src/core/persistence/control.ts';
 import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
@@ -354,7 +356,7 @@ describe('journaled memory publication, both engines', () => {
     }
   });
 
-  test('forget commits offline, withdraws before sealing reads and replays after fact removal', async () => {
+  test('forget waits for an offline owner like every page write, withdraws nothing until it publishes, and replays after fact removal', async () => {
     for (const engine of engines) {
       const slug = 'people/withdraw-example';
       await setupPage(engine, slug);
@@ -364,6 +366,20 @@ describe('journaled memory publication, both engines', () => {
       await engine.executeRaw('INSERT INTO persistence_worktrees(id,owner_host_id) VALUES($1::uuid,$2::uuid)', [worktreeId, offlineHost]);
       await engine.executeRaw(`INSERT INTO persistence_source_bindings(source_id,source_incarnation,worktree_id)
         VALUES($1,$2::uuid,$3::uuid)`, [sourceId, before.sourceIncarnation, worktreeId]);
+      // GBRA-190 G4: a withdrawal is a page publication (Git is the parent), so it waits for the source's owner as
+      // remember does; until it publishes nothing is withdrawn.
+      const local = await registerLocalWriter(engine, 'cli');
+      const principal = { kind: 'local_cli' as const, id: local.id };
+      const offline = randomUUID();
+      const pending = await submitForgetMutation(context(engine), 'forget', { id: remembered.id, request_id: offline }, 200).catch((error: unknown) => error);
+      expect(pending).toMatchObject({ code: 'write_pending' });
+      expect((await getWriteRequest(engine, principal, offline))!.worktree_id).toBe(worktreeId);
+      expect(await engine.executeRaw('SELECT 1 FROM fact_withdrawals WHERE source_id=$1', [sourceId])).toEqual([]);
+      expect(await engine.executeRaw('SELECT 1 FROM facts WHERE id=$1 AND expired_at IS NULL', [Number(remembered.id)])).toHaveLength(1);
+      expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(before.revision);
+      expect((await cancelWriteRequest(engine, principal, offline))?.state).toBe('cancelled');
+      // The source is database-only again (its synthetic offline owner unbound): the withdrawal publishes at once.
+      await engine.executeRaw('DELETE FROM persistence_source_bindings WHERE source_id=$1', [sourceId]);
       const requestId = randomUUID();
       const params = { id: remembered.id, reason: 'User correction', request_id: requestId };
       const forgotten = await submitForgetMutation(context(engine), 'forget', params);
@@ -375,17 +391,11 @@ describe('journaled memory publication, both engines', () => {
       const chunks = (await engine.getChunks(slug, { sourceId })).map(chunk => chunk.chunk_text).join('\n');
       expect(chunks).toContain('Existing biography');
       expect(chunks).not.toContain('Withdraw this unique memory');
-      const local = await registerLocalWriter(engine, 'cli');
-      const request = (await getWriteRequest(engine, { kind: 'local_cli', id: local.id }, requestId))!;
+      const request = (await getWriteRequest(engine, principal, requestId))!;
       expect(request.worktree_id).toBeNull();
-      expect(await engine.executeRaw('SELECT kind FROM persistence_effects WHERE request_id=$1::uuid', [request.id])).not.toHaveLength(0);
+      expect(await engine.executeRaw("SELECT kind FROM persistence_effects WHERE request_id=$1::uuid AND kind='withdrawal-mirror'", [request.id])).toEqual([]);
       await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => tx.executeRaw('DELETE FROM facts WHERE id=$1', [Number(remembered.id)]), TEST_WRITE_ATTRIBUTION));
       expect(await submitForgetMutation(context(engine), 'forget', params)).toEqual(forgotten);
-      // The fixture's offline owner is synthetic. Durable effects otherwise
-      // deliberately retain their worktree identity until reconciliation.
-      await engine.executeRaw('DELETE FROM persistence_effects WHERE worktree_id=$1::uuid', [worktreeId]);
-      await engine.executeRaw('DELETE FROM persistence_source_bindings WHERE source_id=$1', [sourceId]);
-      await engine.executeRaw('DELETE FROM persistence_worktrees WHERE id=$1::uuid', [worktreeId]);
     }
   });
 
@@ -404,7 +414,9 @@ describe('journaled memory publication, both engines', () => {
         slug, pageId: snapshot.page.id, callerIntent: p, intent: p, authority, requestId: randomUUID() });
       const row = (await claimNextWrite(engine, randomUUID()))!;
       const prepared = await prepareMemoryMutation(engine, row, context(engine).config);
-      await submitForgetMutation(context(engine), 'forget', { id: String(old.id), request_id: randomUUID() });
+      // A current forget queues behind the claimed remember on its root; a gbrain before G4 sharing the brain still commits
+      // its withdrawal database-first, at any moment. The publication must refuse the withdrawn claim either way.
+      await legacyForget(context(engine), Number(old.id));
       const result = await publishMutation(engine, row, prepared);
       expect(result.state).not.toBe('committed');
       const live = await engine.executeRaw('SELECT id FROM facts WHERE source_id=$1 AND fact=$2 AND expired_at IS NULL', [sourceId, p.fact]);

@@ -5,46 +5,51 @@
 Sub-agents and fresh sessions inherit gbrain tools but not the knowledge of
 when and how to use them. This file is that knowledge.
 
-## Retrieval: gbrain first
+## Which gbrain call for which lookup
 
-For anything in the brain, search gbrain, then read the page a hit names. Don't
-`grep`, `rg` or `cat` the brain checkout, or run SQL over pages and
-frontmatter, before gbrain: gbrain reads the index across sources, ranks results,
-filters by type, date and source, and returns the slug to read next. Use the
-files only when gbrain is unreachable or for an edit not yet synced.
+<!-- BEGIN lookup-table -->
+Ask gbrain before you `grep`, `cat`, `ls` or run SQL on the brain checkout: it
+reads the index across every source, ranks, filters and names the slug to read
+next. With the gbrain MCP server connected, call the tool of the same name
+instead of the CLI (one connection, no per-call startup).
 
-Prefer the gbrain MCP tools (`search`, `query`, `get_page`, `recall`) when your
-harness has the server connected: it stays connected, so each call skips the
-CLI's startup, which costs seconds per call on a large pooled Postgres brain.
-The CLI commands below take the same filters.
+| Lookup | CLI | MCP tool |
+|---|---|---|
+| Find a page by name or path | `gbrain find <name\|prefix\|glob> [--type T] [--source S]` | `find_pages` |
+| Count pages by kind or source | `gbrain stats --by source,type [--since 30d] [--collapse-aliases]` | `get_stats` (needs an admin-scope token) |
+| Answer a question, search a topic | `gbrain query "<question>" [--types '["meeting"]'] [--since 30d]` | `query` |
+| Pages with these words | `gbrain search "<words>" [--match keyword] [--source S]` | `search` |
+| Read a known page | `gbrain get <slug>` | `get_page` |
+| Read only the part a search hit points at | `gbrain get <slug> --around-chunk-id <chunk_id>` or `--lines '{"from":1,"count":200}'` | `get_page` |
+| What the brain knows about a person or company | `gbrain entity <slug>`, then `gbrain recall "<topic>" --json` | `entity`, `recall` |
+| Links, dated events, every page of a type | `gbrain backlinks <slug>`, `gbrain timeline <slug>`, `gbrain list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
+| Save a fact the user stated | `gbrain remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
+| Why a page didn't rank | `gbrain query "<q>" --explain-target <slug>` | `query` |
 
-```bash
-gbrain search "Acme Example"                                    # names, codes, exact phrases
-gbrain search '"ZEBRA-42" OR "inventory sync"' --match keyword  # every page with any term (instead of grep)
-gbrain query "why did the launch move"                          # questions and concepts
-gbrain search "launch" --types '["meeting","person"]'           # only these page types
-gbrain query "launch" --since 2026-09-01 --until 2026-09-30     # date window (also --since 30d)
-gbrain search "launch" --source source-a --limit 5 --json | jq -r '.[].slug'
-gbrain get companies/acme-example                               # read the page a hit points to
-gbrain recall "Alice Example"                                   # facts saved with remember
-gbrain backlinks companies/acme-example --type meeting          # pages that link here (instead of grepping a slug)
-gbrain timeline companies/acme-example --since 2026-10-01       # dated events on one page
-gbrain list --type meeting --limit 50                           # enumerate by type or --tag (instead of SQL)
-```
-
-- `--types` takes a JSON array. `--since`/`--until` are `query` flags
-  (YYYY-MM-DD or 7d/2w/1y) and match each page's effective date: its
-  frontmatter date, else when it was imported.
-- Keyword search matches words, not slugs: search `"Acme Example"`, and use
-  `backlinks` to find pages linking to `companies/acme-example`.
-- Without `--source`, a search reads the resolved source (a notice names it
-  when it routes); `--source __all__` searches every source.
-- Notices and `[AGENT]` blocks go to stderr, so `--json` stdout is clean JSON.
-  Read a degraded notice before concluding the brain has nothing. Never send
-  stderr to `/dev/null`: a refusal there (`no_brain`, `GBRAIN_DB_ACCESS`)
-  then reads as "no results". Check the exit code too.
+Parse `--json` output instead of matching the text; notices go to stderr. Never
+send stderr to `/dev/null`: a refusal there (`no_brain`, `GBRAIN_DB_ACCESS`)
+then reads as "no results"; check the exit code too. Take
+`chunk_id` from a fresh `search --json` hit (an old one fails `revision_changed`),
+and read a degraded notice before concluding the brain has nothing.
+<!-- END lookup-table -->
 
 <a id="identity-exact-match"></a>
+## Dated questions: read by valid time
+
+When the user asks what a page said, or what was in force, on a date, read it
+with `get_page {slug, as_of: 'YYYY-MM-DD'}` (CLI: `gbrain get <slug> --as-of
+<date>`), not the current page. Quote text only from an `in_force` answer; any
+other status puts the edition under `last_in_force` or `earliest_known`, and
+says so. When `valid_time.uncertain` is true, tell the user why and follow the
+`fix` (it asks the user for a date or a backup; never invent either). A reply
+without `valid_time` is the current page.
+
+When you edit a page whose text takes effect on a date, keep its `valid_from`
+for a correction, or set a new quoted `valid_from` for a new edition. Read the
+write result's `valid_time` advisory and ask the user when it asks a question.
+Which record to use for a change in effect (edit in place, amendment record,
+`supersedes` link): the page history guide (`docs/guides/page-history.md`, Valid time).
+
 ## Identity needs an exact match
 
 Resolving an email sender, a calendar attendee or a contact to a person page is
@@ -192,3 +197,12 @@ until the canonical form lands. Silent typos would be the worst outcome
 When in doubt: declare `brain_first: exempt` explicitly OR add the
 canonical Convention callout near the top of the skill body. Both are
 zero-friction one-line operations.
+
+## Recording why a page changed
+
+When you edit a policy, contract, plan or any document page, pass `reason` on
+`put_page` or `edit_page` with one line on why, in the user's words where you
+have them ("Client asked for the 30-day window."). Edit the existing page with
+its `expected_revision`; don't create a second page for a new edition.
+`get_versions` shows each version's `replaced_because`. Never put a credential
+in a reason: it can be pushed in a Git commit message, and gbrain refuses it.

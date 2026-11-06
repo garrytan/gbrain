@@ -7,6 +7,7 @@ import { realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
+import { admitChangeReason, CHANGE_REASON_OPERATIONS } from './change-reason.ts';
 import { grantedWriteSource, writeGrantRefusal } from './write-grant.ts';
 import { VERSION } from '../../version.ts';
 import { ownerBuildMismatch } from './publication-failure.ts';
@@ -20,6 +21,7 @@ import { sha256 } from './digest.ts';
 import { receiptReservation } from './receipt-bytes.ts';
 import { assertPersistenceAccepting, estimatedRetryAfterMs, waiterOnlyOwner, onPersistenceLane, waitForWrite, writeResponse } from './service.ts';
 import { parseWireWriteWaitMs } from './write-wait.ts';
+import { withRefreshFenceBudget } from './admission-retry.ts';
 import { assertTimelineNotOmitted, isTimelineSection, timelineSectionOf, type TimelineSection } from './timeline-omission.ts';
 import { contentOriginTier } from '../trust/tier.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
@@ -239,8 +241,9 @@ export async function submitPageMutation(ctx: OperationContext,
   if (prepared.prior) return withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), false));
   const brainId = cached ? cachedPreadmitBrain(ctx.engine) : undefined;
   // Phase 4.4: the admission transaction runs on the warm single-write lane when it is free.
-  const admit = (admission: WriteAdmission) => onPersistenceLane(ctx.engine, transaction => admitWrite(ctx.engine, admission, undefined, transaction),
-    () => admitWrite(ctx.engine, admission));
+  // GST-1387: an explicit wait_ms also bounds the refresh-fence wait, so wait_ms 0 is refused at once, never held.
+  const admit = (admission: WriteAdmission) => withRefreshFenceBudget(() => onPersistenceLane(ctx.engine, transaction => admitWrite(ctx.engine, admission, undefined, transaction),
+    () => admitWrite(ctx.engine, admission)), wireWaitMs !== undefined ? waitMs() : undefined);
   let row: WriteRequest;
   try { row = await admit(brainId ? { ...prepared.admission, brainId } : prepared.admission); }
   catch (error) {
@@ -399,6 +402,12 @@ export async function preparePageAdmission(ctx: OperationContext,
     () => assertPageRequestIdentity(ctx.engine, principal, requestId),
     () => getWriteRequest(ctx.engine, principal, requestId),
   ]) as [unknown, WriteRequest | null];
+  // GBRA-217: a reason is refused before anything is journaled; its canonical form joins the replay identity. An
+  // operation that records no reason never journals one a caller passed anyway.
+  if (CHANGE_REASON_OPERATIONS.includes(input.operation) && Object.hasOwn(p, 'reason')) {
+    const reason = admitChangeReason(p.reason);
+    if (reason === null) delete p.reason; else p.reason = reason;
+  } else delete p.reason;
   const callerIntent = { ...p };
   delete callerIntent.request_id;
   if (prior) {

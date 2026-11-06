@@ -148,6 +148,17 @@ ${rls('decide_sweep_deferred')}
 `;
 
 /**
+ * The keyless claim-conflict lane (facts/claim-conflicts.ts): one proposal per
+ * unordered fact pair across all of its runs, and the pending proposals'
+ * fact-id lookups recall's contested label reads.
+ */
+export const DECIDE_CLAIM_PROPOSALS_INDEX_SQL = `
+CREATE UNIQUE INDEX IF NOT EXISTS decide_proposals_claim_pair_uidx ON decide_proposals (source_id, LEAST(new_fact_id, old_fact_id), GREATEST(new_fact_id, old_fact_id)) WHERE sweep_id LIKE 'claim_conflicts:%';
+CREATE INDEX IF NOT EXISTS decide_proposals_pending_new_idx ON decide_proposals (new_fact_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS decide_proposals_pending_old_idx ON decide_proposals (old_fact_id) WHERE status = 'pending';
+`;
+
+/**
  * The ambiguous-band review lane: decide_review_queue holds durable review work
  * (a withdrawn fact to compare against its neighbours, or a candidate pair
  * another subsystem enqueued); decide_review_proposals holds owner-reviewed
@@ -191,4 +202,4 @@ ${rls('decide_review_queue')}
 ${rls('decide_review_proposals')}
 `;
 
-export const DECIDE_SCHEMA_SQL = `${DECIDE_RECEIPTS_SCHEMA_SQL}${DECIDE_CALIBRATIONS_SCHEMA_SQL}${DECIDE_PROPOSALS_SCHEMA_SQL}${DECIDE_REVIEW_SCHEMA_SQL}`;
+export const DECIDE_SCHEMA_SQL = `${DECIDE_RECEIPTS_SCHEMA_SQL}${DECIDE_CALIBRATIONS_SCHEMA_SQL}${DECIDE_PROPOSALS_SCHEMA_SQL}${DECIDE_CLAIM_PROPOSALS_INDEX_SQL}${DECIDE_REVIEW_SCHEMA_SQL}`;
