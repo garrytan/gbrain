@@ -624,12 +624,17 @@ const traverse_graph: Operation = {
     const { paths, truncated } = await ctx.engine.traversePathsDetailed(slug, { depth, linkType, direction, ...scope });
     // Cap hit: the walk stopped at TRAVERSE_WALK_ROW_CAP visited pages or the
     // output at TRAVERSE_PATH_ROW_CAP edge rows, dropping the deepest edges.
-    // stderr-only so the GraphPath[] wire shape stays unchanged.
+    // The stderr note stays; a per-call notice (GBRA-200 stamps it) tells MCP callers, so the GraphPath[] wire shape stays unchanged.
     if (truncated) {
       ctx.logger.warn(
         `[gbrain] traverse_graph output truncated (walk cap ${TRAVERSE_WALK_ROW_CAP} pages, ${TRAVERSE_PATH_ROW_CAP} edge rows; shallowest first). ` +
         `Lower depth or narrow with link_type/direction for a complete walk.`,
       );
+      const why = `The walk stopped at its cap (${TRAVERSE_WALK_ROW_CAP} pages, ${TRAVERSE_PATH_ROW_CAP} edge rows; shallowest first), so deeper edges are missing; walk one level shallower or narrow with link_type or direction for a complete walk.`;
+      const fix = depth > 1 ? readFix(why, {
+        mcp: { tool: 'traverse_graph', arguments: { slug, depth: depth - 1, ...(linkType ? { link_type: linkType } : {}), direction } },
+      }) : undefined;
+      ctx.emitNotice?.({ code: 'graph_walk_truncated', kind: 'degraded', why, ...(fix ? { fix } : {}) });
     }
     return paths;
   },

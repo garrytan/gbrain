@@ -49,6 +49,27 @@ source name) and never picks the repo, on a local brain, through a running
 `GBRAIN_SOURCE`, `.gbrain-source` or the defaults select, and the JSON result
 names it in `source_id`.
 
+### Git is the parent of a source with a checkout
+
+Most sources are a Git checkout (`local_path`) plus the pages gbrain derived
+from it. The files are the record people read, review and clone; the
+database is an index that gbrain can rebuild from them. How tightly the
+database follows Git depends on the source:
+
+| Source | Where the record is | How the database follows |
+|---|---|---|
+| Checkout, mixed (the default) | The files in Git | Sync imports what is committed (or the working tree when asked). A write publishes the file and its database row together (managed) or the row first (classic), and the Git commit follows later (a background Git effect once Git durability is on). When the two disagree, sync keeps the database version or holds the page for review. |
+| Checkout, strict (`canonical: git`, opt-in per source) | Git commits | Every write is committed to Git before its row. Sync indexes committed blobs only, and Git wins. Private pages, `storage.db_only` directories and ignored paths are declared database-only. |
+| Read-only mirror (`gbrain sources mirror-readonly`) | The upstream repository | Sync imports; gbrain never writes into the checkout. |
+| No checkout (connector sources, database-only sources) | The database | Nothing to derive from; back up the database. |
+
+Scripts, crons and people that write files in a checkout commit them with
+`gbrain git commit-push -- <paths>`, which takes the same writer lock. To make
+a source strict, or to see how far its database is from Git, read
+[git-canonical sources](../guides/git-canonical.md); `gbrain sources git-gap <id>`
+is the read-only check, and doctor's `db_ahead_of_git` and `git_index_lag`
+report it brain-wide.
+
 ### When does each axis move?
 
 | You want to | Adjust |
@@ -358,5 +379,10 @@ ungranted source when remote callers must have no access to that source.
 
 - [`topologies.md`](./topologies.md) — where the DB lives (operator recipes
   for each deployment shape).
+- [`git-canonical.md`](../guides/git-canonical.md) — strict sources: Git
+  first, the database derived from the commits, and how to convert or roll
+  back a source.
+- [`multi-source-brains.md`](../guides/multi-source-brains.md) — adding,
+  scoping and hosting sources, and narrowing one request with `source_ids`.
 - `skills/conventions/brain-routing.md` — the agent-facing decision table.
 - `CHANGELOG.md` — release history for the `sources` and `mounts` primitives.

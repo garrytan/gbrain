@@ -167,11 +167,12 @@ afterAll(async () => {
 // Harness helpers
 // ---------------------------------------------------------------------------
 
-/** Flip BOTH publish gates together on the DB plane (per-key independence is
+/** Flip EVERY publish gate together on the DB plane (per-key independence is
  * pinned by test/publish-gates.test.ts; the matrix treats gates as one axis). */
 async function setGates(on: boolean): Promise<void> {
   await engine.setConfig('mcp.publish_skills', on ? 'true' : 'false');
   await engine.setConfig('mcp.publish_advisor', on ? 'true' : 'false');
+  await engine.setConfig('mcp.publish_memory_settings', on ? 'true' : 'false');
 }
 
 interface Cell {

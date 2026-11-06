@@ -10,7 +10,7 @@ import { getWriteRequest } from '../persistence/journal.ts';
 import { submissionAuthority } from '../persistence/authority.ts';
 import { requireUuid, sha256 } from '../persistence/digest.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
-import { localHostId } from '../persistence/identity.ts';
+import { hostIdFor } from '../persistence/identity.ts';
 import { hasScope } from '../scope.ts';
 import { getWorkingTreeStatusForFile, splitFrontmatter } from '../skillopt/apply-edits.ts';
 import { assertBundledMutationHeldOut, getBundledSkillContext, shouldMutateSkillFile } from '../skillopt/bundled-skill-gate.ts';
@@ -34,7 +34,7 @@ export async function sharedOptimizerSkillsDir(ctx: OperationContext, sourceId: 
   const binding = await getWorktreeBinding(ctx.engine, sourceId);
   const ownerFix = { fix: hostFix(ctx, ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'],
     `Shows source ${sourceId}'s designated canonical owner and binding; optimization runs only on that host.`) };
-  if (!binding || binding.source_incarnation !== incarnation || binding.state !== 'active' || binding.owner_host_id !== localHostId() || !binding.local_path) {
+  if (!binding || binding.source_incarnation !== incarnation || binding.state !== 'active' || binding.owner_host_id !== hostIdFor(ctx.engine) || !binding.local_path) {
     throw opError('owner_unavailable', 'Shared optimization must run on the active canonical owner.',
       `Source ${sourceId}'s skills are optimized only on its active canonical owner host, and this host is not it (or the binding is inactive). Nothing ran and nothing was spent; run the optimization there.`, ownerFix);
   }

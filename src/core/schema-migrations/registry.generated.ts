@@ -287,8 +287,11 @@ import { v283 } from './v283-folder-access-rules.ts';
 import { v284 } from './v284-access-page-indexes.ts';
 import { v285 } from './v285-slug-rename-history.ts';
 import { v286 } from './v286-qm-actor-links.ts';
-import { v287 } from './v287-attest-read.ts';
-import { v288 } from './v288-access-member-sources.ts';
+import { v287 } from './v287-multi-page-recovery-record.ts';
+import { v288 } from './v288-decide-proposals-claim-pair-index.ts';
+import { v289 } from './v289-page-change-reasons.ts';
+import { v290 } from './v290-attest-read.ts';
+import { v291 } from './v291-access-member-sources.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -576,4 +579,7 @@ export const MIGRATIONS: Migration[] = [
   v286,
   v287,
   v288,
+  v289,
+  v290,
+  v291,
 ];

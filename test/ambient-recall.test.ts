@@ -819,10 +819,11 @@ describe('budget packing + drop footer', () => {
     expect(entityAfterRemember.revision).not.toBe(entityBeforeRemember.revision);
     // Entity-bound remember publishes a canonical facts fence and advances the
     // page revision. Pin this fixture's page clock before the cutoff so the
-    // keyset assertions below isolate pages from newer fact/thread records.
+    // keyset assertions below isolate pages from newer fact/thread records. The
+    // facts remembered without an entity publish memory/unattributed (GBRA-190 G4); pin it too.
     expect(entityBeforeRemember.page.updated_at.getTime()).toBeLessThan(Date.parse(since));
-    await engine.executeRaw('UPDATE pages SET updated_at = $1::timestamptz WHERE source_id = $2 AND slug = $3',
-      [entityBeforeRemember.page.updated_at.toISOString(), 'default', 'people/bob-example']);
+    await engine.executeRaw('UPDATE pages SET updated_at = $1::timestamptz WHERE source_id = $2 AND slug = ANY($3::text[])',
+      [entityBeforeRemember.page.updated_at.toISOString(), 'default', ['people/bob-example', 'memory/unattributed']]);
     // delta never advances a cursor past now() - 2 s (commit-visibility lag),
     // so age the whole fixture a minute to keep the keyset assertions exact.
     await engine.executeRaw(`UPDATE pages SET updated_at = updated_at - interval '1 minute'`);

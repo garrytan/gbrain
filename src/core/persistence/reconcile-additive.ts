@@ -3,28 +3,28 @@ import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../takes-fence.ts';
 import { OperationError } from '../ops/contract.ts';
 import { digest } from './digest.ts';
+import { ACTIVITY_DATE_KEY as ACTIVITY_DATE } from '../contact-rows.ts';
 import { protectedReconcileKey, type ReconcileConflict, type ReconcileDecision } from './reconcile-merge.ts';
 
 /**
  * #5974: structural classification of file/database drift. It proves only
  * structure, never truth: an inserted line can still contradict an older one,
  * so inserted text is `suggested` (an explicit operator acceptance applies it)
- * while only append-only contact lists and allowlisted activity dates are
- * `auto`. Everything else is `review`. Pure; no I/O.
+ * while only append-only contact lists (whose existing rows may advance an
+ * activity date, #8109) and allowlisted activity dates are `auto`. Everything else is `review`. Pure; no I/O.
  */
 export const ADDITIVE_RULE_VERSION = 1;
-export type AdditiveRule = 'text_insertion_only' | 'contacts_append_only' | 'activity_date_advance' | 'file_only_field' | 'database_only_kept';
+export type AdditiveRule = 'text_insertion_only' | 'contacts_append_only' | 'contacts_activity_advance' | 'activity_date_advance' | 'file_only_field' | 'database_only_kept';
 export type DriftClass = 'auto' | 'suggested' | 'review';
-export interface DriftPath { path: string; class: DriftClass; rule?: AdditiveRule; reason: string; inserted_lines?: number; appended?: number }
+export interface DriftPath { path: string; class: DriftClass; rule?: AdditiveRule; reason: string; inserted_lines?: number; appended?: number; advanced?: number }
 export interface DriftClassification { paths: DriftPath[]; verdict: 'structurally_additive' | 'additive_with_suggestions' | 'review_required' | 'no_drift' }
 export interface AutoDecision { path: string; rule: AdditiveRule; rule_version: number; evidence_digest: string }
 
 const APPEND_ONLY_ARRAYS = new Set(['contacts']);
-const ACTIVITY_DATE = /^(?:updated|updated_at|modified|last_modified|last_[a-z0-9_]+|[a-z0-9_]+_last_used)$/;
 // Policy-bearing metadata a structural rule must never decide, beyond the protected merge keys.
-const POLICY_KEYS = new Set(['access', 'confidentiality', 'grants', 'grant', 'owner', 'owners', 'permissions', 'acl', 'sharing',
+export const POLICY_KEYS = new Set(['access', 'confidentiality', 'grants', 'grant', 'owner', 'owners', 'permissions', 'acl', 'sharing',
   'private', 'visibility', 'status', 'aliases', 'slug', 'id', 'type', 'title', 'tags', 'withdrawn', 'withdrawals', 'expires', 'expires_at',
-  'valid_until', 'archived', 'archived_at', 'deleted', 'deleted_at', 'consent', 'consented_at']);
+  'valid_until', 'archived', 'archived_at', 'deleted', 'deleted_at', 'consent', 'consented_at', 'validate']);
 const MAX_APPENDED = 500;
 const DAY_MS = 86_400_000;
 
@@ -67,7 +67,10 @@ export function classifyTextInsertion(file: string, database: string): { ok: tru
   return { ok: true, inserted };
 }
 
-function classifyDate(file: unknown, database: unknown, now: number): { ok: true } | { ok: false; reason: string } {
+function classifyDate(fileValue: unknown, databaseValue: unknown, now: number): { ok: true } | { ok: false; reason: string } {
+  // An unquoted YAML date parses to a Date; the database stores the same instant as its ISO string.
+  const text = (value: unknown) => value instanceof Date && Number.isFinite(value.getTime()) ? value.toISOString() : value;
+  const file = text(fileValue), database = text(databaseValue);
   if (typeof file !== 'string' || typeof database !== 'string') return { ok: false, reason: 'date_not_text' };
   const dateOnly = /^\d{4}-\d{2}-\d{2}$/, stamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
   const format = (v: string) => dateOnly.test(v) ? 'date' : stamp.test(v) ? 'timestamp' : null;
@@ -80,12 +83,27 @@ function classifyDate(file: unknown, database: unknown, now: number): { ok: true
   return { ok: true };
 }
 
-function classifyAppend(file: unknown, database: unknown): { ok: true; appended: number } | { ok: false; reason: string } {
+/** #8109: the same row with only activity dates (never a policy key) moved forward under classifyDate's rules. */
+function activityOnlyAdvance(file: unknown, database: unknown, now: number): boolean {
+  const row = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date);
+  if (!row(file) || !row(database)) return false;
+  const keys = Object.keys(file);
+  if (keys.length !== Object.keys(database).length || !keys.every(key => Object.hasOwn(database, key))) return false;
+  return keys.every(key => digest(file[key]) === digest(database[key])
+    || (ACTIVITY_DATE.test(key) && !POLICY_KEYS.has(key) && !protectedReconcileKey(key) && classifyDate(file[key], database[key], now).ok));
+}
+
+function classifyAppend(file: unknown, database: unknown, now: number): { ok: true; appended: number; advanced: number } | { ok: false; reason: string } {
   if (!Array.isArray(file) || !Array.isArray(database)) return { ok: false, reason: 'not_a_list' };
   if (file.length < database.length) return { ok: false, reason: 'list_entries_removed' };
-  for (let k = 0; k < database.length; k++) if (digest(file[k]) !== digest(database[k])) return { ok: false, reason: 'list_entries_changed_or_reordered' };
+  let advanced = 0;
+  for (let k = 0; k < database.length; k++) {
+    if (digest(file[k]) === digest(database[k])) continue;
+    if (!activityOnlyAdvance(file[k], database[k], now)) return { ok: false, reason: 'list_entries_changed_or_reordered' };
+    advanced++;
+  }
   if (file.length - database.length > MAX_APPENDED) return { ok: false, reason: 'too_many_appended' };
-  return { ok: true, appended: file.length - database.length };
+  return { ok: true, appended: file.length - database.length, advanced };
 }
 
 const absent = Symbol('absent');
@@ -113,9 +131,10 @@ export function classifyDrift(file: ParsedPage, database: ParsedPage, now = Date
     if (f === absent) { paths.push({ path, class: 'auto', rule: 'database_only_kept', reason: 'database_value_kept' }); continue; }
     if (d === absent) { paths.push({ path, class: 'auto', rule: 'file_only_field', reason: 'file_field_added' }); continue; }
     if (APPEND_ONLY_ARRAYS.has(key)) {
-      const append = classifyAppend(f, d);
-      paths.push(append.ok ? { path, class: 'auto', rule: 'contacts_append_only', reason: 'entries_appended', appended: append.appended }
-        : { path, class: 'review', reason: append.reason });
+      const append = classifyAppend(f, d, now);
+      paths.push(!append.ok ? { path, class: 'review', reason: append.reason }
+        : append.advanced ? { path, class: 'auto', rule: 'contacts_activity_advance', reason: 'activity_dates_advanced', appended: append.appended, advanced: append.advanced }
+        : { path, class: 'auto', rule: 'contacts_append_only', reason: 'entries_appended', appended: append.appended });
       continue;
     }
     if (ACTIVITY_DATE.test(key)) {

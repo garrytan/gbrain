@@ -70,9 +70,12 @@ describe('dispatch response meta (WP2/D3/D8)', () => {
     // D8: the model-visible diagnosis block, then F3's degraded_recall notice
     // (agent contract v1: a recall-affecting stage always rides a notice).
     // F2: the keyword count line rides right after the rows, before the notices.
-    expect(out.content.length).toBe(4);
+    // GBRA-200: the degraded stamp is the last block and `_meta.degraded`.
+    expect(out.content.length).toBe(5);
     expect(out.content[1].text).toStartWith('[gbrain search] Rows are a ranked top-K');
     expect(out.content[3].text).toStartWith('[gbrain notice degraded_recall kind=degraded]');
+    expect(out.content[4].text).toStartWith('[gbrain degraded: embed_unavailable]');
+    expect((out._meta as Record<string, any>).degraded).toEqual({ reasons: ['embed_unavailable'] });
     expect(out.content[2].text).toContain('0 results');
     expect(out.content[2].text).toContain('retrieved 3');
     expect(out.content[2].text).toContain('degraded: embed_unavailable');
@@ -82,16 +85,17 @@ describe('dispatch response meta (WP2/D3/D8)', () => {
     expect(retrieval.degraded).toEqual([{ stage: 'embed_unavailable' }]);
   });
 
-  test('clean miss → second block says clean miss, degraded absent', async () => {
+  test('clean miss → second block says retrieval healthy, degraded absent', async () => {
     nextResults = [];
     nextMeta = { vector_enabled: true, expansion_applied: false, detail_resolved: null };
     const out = await callSearch();
     expect(out.content.length).toBe(3);
     expect(out.content[1].text).toContain('Keyword matches: 0 pages');
-    expect(out.content[2].text).toContain('clean miss');
+    expect(out.content[2].text).toContain('retrieval healthy');
     const retrieval = (out._meta as Record<string, any>).retrieval;
     expect(retrieval.degraded).toBeUndefined();
     expect(retrieval.vector_enabled).toBe(true);
+    expect((out._meta as Record<string, any>).degraded).toBeUndefined();
   });
 
   test('non-empty results → body + degraded_recall notice only, _meta.retrieval still present (D3: on ALL responses)', async () => {
@@ -99,9 +103,10 @@ describe('dispatch response meta (WP2/D3/D8)', () => {
     nextMeta = DEGRADED_META;
     const out = await callSearch();
     // No empty-retrieval block; F3's degraded notice rides every affected HTTP call.
-    expect(out.content.length).toBe(3);
+    expect(out.content.length).toBe(4);
     expect(out.content[1].text).toStartWith('[gbrain search] Rows are a ranked top-K');
     expect(out.content[2].text).toStartWith('[gbrain notice degraded_recall kind=degraded]');
+    expect(out.content[3].text).toStartWith('[gbrain degraded: embed_unavailable]');
     const retrieval = (out._meta as Record<string, any>).retrieval;
     expect(retrieval.returned_count).toBe(1);
   });
@@ -127,7 +132,7 @@ describe('buildEmptyRetrievalBlock (unit)', () => {
   test('a ranking-only stage (reranker_skipped) never impairs recall → still a clean miss', async () => {
     const { buildEmptyRetrievalBlock } = await import('../src/mcp/dispatch.ts');
     const out = buildEmptyRetrievalBlock({ retrieved_count: 0, degraded: [{ stage: 'reranker_skipped', reason: 'no_key' }] });
-    expect(out).toContain('clean miss');
+    expect(out).toContain('retrieval healthy');
     expect(out).not.toContain('reranker_skipped');
     const mixed = buildEmptyRetrievalBlock({ retrieved_count: 0, degraded: [{ stage: 'reranker_skipped' }, { stage: 'embed_unavailable', reason: 'no_provider' }] });
     expect(mixed).toContain('degraded: embed_unavailable.');

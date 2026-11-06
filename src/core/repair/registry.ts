@@ -37,6 +37,7 @@ import { REPAIR_KINDS, runRepair, type RepairHandler, type RepairKind, type Repa
 import { timelineRepair } from './timeline.ts';
 import { timelineCommentsRepair } from './timeline-comments.ts';
 import { timelineOrderRepair } from './timeline-order.ts';
+import { contactRowsRepair } from './contact-rows.ts';
 import { visibilityRepair } from './visibility.ts';
 import { safeChunksRepair } from './safe-chunks.ts';
 import { contextualModeRepair } from './contextual-mode.ts';
@@ -84,6 +85,7 @@ import { overwrittenEditsRepair } from './overwritten-edits.ts';
 import { missingTablesRepair } from './missing-tables.ts';
 import { urlCloneFencesRepair } from './url-clone-fences.ts';
 import { segmentedMirrorRepair } from './segmented-mirror.ts';
+import { segmentedTilingRepair } from './segmented-tiling.ts';
 import { uncommittedDeletionsRepair, UNCOMMITTED_DELETIONS_CONSENT_TEXT } from './uncommitted-deletions.ts';
 import { factClaimDatesRepair } from './fact-claim-dates.ts';
 import { provenanceRepair } from './provenance.ts';
@@ -369,6 +371,20 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'page with a line the parser cannot place, or that would not read back with the same text and timeline rows, is listed needs_human. --slug '
       + '<slug> narrows. Preview-bound: --apply --expect <hash> --yes rewrites exactly the previewed pages through revision-bound put_page; runs only when named.',
   },
+  'contact-rows': {
+    handler: contactRowsRepair, embeds: 'effect', checks: [], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: {
+      what: 'Rewrite the previewed pages so each frontmatter contacts list keeps one row per (type, value)',
+      why: 'The preview listed each page whose contacts list repeats a (type, value) row, with its row counts and the page revision it read.',
+      risk: 'Only the contacts key changes: repeated rows collapse into the first, keeping the newest last_used; rows that differ in any other field and every distinct value stay. A page that changed since the preview refuses the apply (preview_changed). Managed sources commit the file through the Git effect; undo with git revert or gbrain revert.',
+      user_message: 'Collapse the previewed duplicated contact rows? One row per (type, value) is kept, with the newest last_used',
+    },
+    summary: 'Collapse duplicated frontmatter contact rows (#8109): a writer that appended a {type, value, last_used} row on every touch left the same value '
+      + 'many times. Keeps one row per (type, value), in first-seen order, with the newest last_used; a row that differs in another field is kept, and no '
+      + 'distinct value is dropped. A page whose canonical file differs from the database is listed needs_reconcile with the --auto-additive reconcile '
+      + 'command. --slug <slug> narrows. Preview-bound: --apply --expect <hash> --yes rewrites exactly the previewed pages through revision-bound put_page '
+      + '(the canonical file on sources with a checkout, the database on repo-less ones); runs only when named.',
+  },
   fences: {
     handler: fencesRepair, embeds: 'effect', checks: ['fence_integrity'], preview_bound: true, spends: 'llm',
     summary: 'Repair malformed facts and takes fences (#6188) that sync held or that pages store: per file or page the free tiers first (the lossless '
@@ -554,6 +570,17 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'of the canonical render (gbrain export\'s bytes). A file that differs from the database for another reason is listed held '
       + '(file_database_drift) and never rewritten. Preview-bound and destructive: --apply --expect <hash> --yes re-checks each page and commits, per '
       + 'page, one receipted request whose withdrawal-mirror and Git effects rewrite and commit the file. Runs only when named; never on upgrade.',
+  },
+  'segmented-tiling': {
+    handler: segmentedTilingRepair, embeds: 'none', checks: ['segmented_tiling'], explicit_only: true, preview_bound: true,
+    summary: 'Republish, from the file Git holds at HEAD, each live page stored in segments whose live generation\'s rows do not cover its body (GST-1209; '
+      + 'doctor segmented_tiling): such a page refuses every read (page_body_rows_unreadable) and a managed sync holds its file on every retry. Needs '
+      + '--source; --slug <slug> narrows. The preview, on the host that owns the checkout, lists each page with its generation, the bytes its rows '
+      + 'cover, its file, HEAD\'s commit, the blob\'s object id, SHA-256 and size and its sync hold; a page with no file or a file HEAD does not hold, '
+      + 'another sync hold withholds or the next sync\'s import screen would hold is listed held. A source without a Git checkout (a repo-less brain) refuses (not_a_git_repo). --apply --expect <hash> re-checks each page, then '
+      + 'per page, in one transaction under its key lock (a coordinated maintenance write on a managed brain): versions the damaged generation by '
+      + 'reference, publishes the body the import screen and the purge overlay admit as a new generation (title, type, frontmatter, tags and trust tier kept), clears the previewed sync hold, '
+      + 'asks the next sync to re-screen the file and writes the page\'s receipt and audit line. Trusted local CLI only; runs only when named; never on upgrade.',
   },
   'uncommitted-deletions': {
     handler: uncommittedDeletionsRepair, embeds: 'none', checks: ['uncommitted_sync_deletions'], explicit_only: true, preview_bound: true, consent: 'destructive',

@@ -17,6 +17,9 @@
  * hook runs in, which no pipelined call reaches.
  *
  * PGLite here; Postgres through test/e2e/fold-hook-noop-6712-postgres.test.ts.
+ * Pinned additions since that commit (neither is hook work): GBRA-217 names `change_reason` in the canonical import's
+ * page_versions insert (null when the commit carries no reason trailer) and adds the valid-time advisory's read of the
+ * written page after put_page's apply (persistence/valid-time-advisory.ts).
  * CAPTURE_FOLD_NOOP=1 rewrites the fixture for the engine under test (only ever from the pre-hook commit).
  */
 import { describe, expect, test } from 'bun:test';

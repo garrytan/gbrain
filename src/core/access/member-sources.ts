@@ -1,5 +1,5 @@
 /**
- * GBRA-284 (GST-359 G1 wave 2): personal sources. `access_member_sources` (v288) binds a source (a person's DM or
+ * GBRA-284 (GST-359 G1 wave 2): personal sources. `access_member_sources` (v291) binds a source (a person's DM or
  * member source) to the member it belongs to; a source with at least one binding is personal. Sources are not keyed to
  * members otherwise, so without this an attest client granted every person's DM source would let every attested person
  * read every other person's DM source.

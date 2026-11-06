@@ -200,7 +200,7 @@ export interface RosterSource extends PendingSource { managed: boolean }
  * path) and classic sources with a local path, not archived and not sync-disabled. `sourceIds` confines it in SQL.
  */
 export async function loadPendingRoster(engine: Pick<BrainEngine, 'executeRaw'>, sourceIds?: string[]): Promise<RosterSource[]> {
-  const { existingLocalHostId } = await import('./persistence/identity.ts');
+  const { existingHostIdFor } = await import('./persistence/identity.ts');
   const { isSyncDisabledConfig } = await import('./sync-policy.ts');
   const rows = await engine.executeRaw<{ id: string; last_commit: string | null; root: string | null; managed: unknown; config: unknown }>(
     `SELECT s.id, s.last_commit, s.config, (b.source_id IS NOT NULL) AS managed, COALESCE(h.local_path, s.local_path) AS root
@@ -209,7 +209,7 @@ export async function loadPendingRoster(engine: Pick<BrainEngine, 'executeRaw'>,
        LEFT JOIN persistence_host_bindings h ON h.worktree_id = b.worktree_id AND h.host_id::text = $2
       WHERE s.archived IS NOT TRUE AND (b.source_id IS NOT NULL OR s.local_path IS NOT NULL)
         AND ($1::text[] IS NULL OR s.id = ANY($1::text[]))
-      ORDER BY s.id`, [sourceIds ?? null, existingLocalHostId()]);
+      ORDER BY s.id`, [sourceIds ?? null, existingHostIdFor(engine)]);
   return rows.filter(row => !isSyncDisabledConfig(row.config))
     .map(row => ({ id: row.id, last_commit: row.last_commit, root: row.root, managed: row.managed === true || row.managed === 't' }));
 }

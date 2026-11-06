@@ -177,7 +177,7 @@ describe('#1972 — complete cooperative-abort coverage', () => {
     const body = src.slice(src.indexOf('export async function runCycle'));
     // Each long phase receives the signal (W0: the combined cycleSignal, so
     // phases also stop on lock-steal, not just external aborts).
-    expect(body).toContain('runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, cycleSignal, cycleSourceId)');
+    expect(body).toContain('runPhaseExtract(engine, brainDir, dryRun, sourceWindow?.slugs ?? syncPagesAffected, cycleSignal, cycleSourceId)');
     expect(body).toMatch(/runPhaseExtractFacts\([^)]*cycleSignal\)/);
     expect(body).toContain('signal: cycleSignal'); // consolidate opts
     expect(body).toContain("runPhaseLint(brainDir, dryRun, engine, cycleSignal, cycleSourceId, { once: opts.onceForPhase === 'lint' })"); // #5180 threads the source id after the signal; #6369 the --once bypass after it

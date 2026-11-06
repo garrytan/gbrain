@@ -84,6 +84,24 @@ describe('local --as <member> (repo-less PGLite)', () => {
     expect(listBob.stdout).not.toContain(ALICE.slug);
   }, 180_000);
 
+  test('find and grouped stats under --as count only the pages the member reads', async () => {
+    const findPlain = await cli(['find', 'notes/*', '--json']);
+    expect(findPlain.exitCode).toBe(0);
+    expect(findPlain.stdout).toContain(ALICE.slug);
+    const findBob = await cli(['find', 'notes/*', '--as', 'bob-example', '--json']);
+    expect(findBob.exitCode).toBe(0);
+    expect(findBob.stdout).toContain('notes/open-plan');
+    expect(findBob.stdout).not.toContain(ALICE.slug);
+    const findAlice = await cli(['find', 'notes/*', '--as', 'alice-example', '--json']);
+    expect(findAlice.stdout).toContain(ALICE.slug);
+    const statsPlain = await cli(['stats', '--by', 'type', '--json']);
+    expect(statsPlain.exitCode).toBe(0);
+    const statsBob = await cli(['stats', '--by', 'type', '--as', 'bob-example', '--json']);
+    expect(statsBob.exitCode).toBe(0);
+    expect(JSON.parse(statsPlain.stdout).total_pages).toBe(2);
+    expect(JSON.parse(statsBob.stdout).total_pages).toBe(1);
+  }, 180_000);
+
   test('an unknown, disabled or ill-formed --as is refused before any work', async () => {
     for (const [who, reason] of [['nobody-example', 'unknown'], ['carol-example', 'disabled'], ['Not_Valid!', 'ill_formed']] as const) {
       const r = await cli(['get', 'notes/open-plan', '--as', who, '--json']);
