@@ -101,8 +101,8 @@ function refusal(name: CatalogueName, cause: string, fix: string, refreshId?: st
   return error;
 }
 /** #8617: refusals a tick retries once from a fresh precheck: HEAD moved, or work reached the worktree after the drain check. */
-const retriedInTick = new WeakSet<OperationError>();
-const retryInTick = (error: OperationError) => { retriedInTick.add(error); return error; };
+const RETRY_IN_TICK = Symbol('retry_in_tick');
+const retryInTick = (error: OperationError) => Object.assign(error, { [RETRY_IN_TICK]: true });
 /**
  * GST-1457: members whose last_commit is past the refresh's start commit: set (null means never synced) and not old_head or an ancestor
  * of it. With HEAD back at old_head, lifting the fence would let their next sync diff that commit back to old_head and soft-delete what it
@@ -708,7 +708,7 @@ async function runRefresh(engine: BrainEngine, sourceId: string, opts: RefreshOp
   if (recovered && recovered.status !== 'completed' && recovered.status !== 'abandoned') return recovered;
   const once = () => refreshOnce(engine, sourceId, opts, fetchTimeoutMs, waitDrainMs, syncBudgetMs);
   const tick = () => once().catch(error => {
-    if (!retriedInTick.has(error)) throw error;
+    if (!(RETRY_IN_TICK in error)) throw error;
     return once().catch(again => {
       error.message += ` A retry in the same run was refused too (${again instanceof OperationError ? again.code : 'internal_error'}): ${again instanceof Error ? again.message : String(again)}`;
       throw error;

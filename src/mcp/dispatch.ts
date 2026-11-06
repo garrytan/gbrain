@@ -1353,8 +1353,7 @@ async function dispatchResolvedCall(
     // never tells a mutating op with an unknown outcome to retry.
     notices.push(...await sessionSafetyNotices(engine, opts, ctx.config));
     notices.push(...await grantBlockedNotices(engine, opts, refusedByGrant(e)));
-    const deferred = deferredWriteResult(e);
-    if (deferred) return toolResultWithNotices(deferred, admitNotices(notices, opts), dispatchRenderContext(opts));
+    const deferred = deferredWriteResult(e); if (deferred) return toolResultWithNotices(deferred, admitNotices(notices, opts), dispatchRenderContext(opts));
     return errorResult(e, opts, { op: name, mutating: op.mutating === true, idempotent: op.idempotent === true, notices: admitNotices(notices, opts) });
   }
 }

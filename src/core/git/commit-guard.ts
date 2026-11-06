@@ -178,7 +178,7 @@ export function installOwnerGuard(worktree: string, mode: GuardMode): OwnerGuard
   const before = ownerGuardStatus(p.root);
   if (before.foreign.length) {
     throw opError('git_unavailable', `Another tool's hook(s) live at this worktree's hooks path ${p.effective}: ${before.foreign.join(', ')}; gbrain does not replace or silence them.`,
-      'Move those hooks aside or chain them yourself, then rerun gbrain sources guard <source> --install. Nothing was changed.', { detail: before.foreign.join(',') });
+      'Move those hooks aside or chain them yourself, then rerun the same gbrain sources guard --install command. Nothing was changed.', { detail: before.foreign.join(',') });
   }
   const script = renderGuardHook(mode);
   const current = existsSync(p.hook) ? readFileSync(p.hook, 'utf8') : null;

@@ -27,12 +27,12 @@ import { _resetRefreshBarrierCacheForTests, deferredBacklog, expireDeferredWrite
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { withEnv } from './helpers/with-env.ts';
 import { page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
 let closePostgres: (() => Promise<void>) | undefined;
-const savedBarrier = process.env.GBRAIN_REFRESH_BARRIER;
 
 beforeAll(async () => {
   if (backends.includes('pglite')) {
@@ -48,13 +48,14 @@ afterAll(async () => {
   for (const engine of engines) { await disposePersistenceConsumer(engine); if (engine.kind === 'pglite') await engine.disconnect(); }
   await closePostgres?.();
 });
-beforeEach(() => { process.env.GBRAIN_REFRESH_BARRIER = '1'; resetWriteSwitches(); _setRefreshFenceWaitForTests(0); _resetRefreshBarrierCacheForTests(); });
-afterEach(() => {
-  if (savedBarrier === undefined) delete process.env.GBRAIN_REFRESH_BARRIER; else process.env.GBRAIN_REFRESH_BARRIER = savedBarrier;
-  resetWriteSwitches(); _setRefreshFenceWaitForTests(null);
-});
+beforeEach(() => { _setRefreshFenceWaitForTests(0); _resetRefreshBarrierCacheForTests(); });
+afterEach(() => { resetWriteSwitches(); _setRefreshFenceWaitForTests(null); });
 
-const each = async (fn: (f: RefreshFixture) => Promise<void>) => { for (const engine of engines) await withRefreshFixture(engine, fn); };
+/** Runs `fn` per engine with the barrier on (GBRAIN_REFRESH_BARRIER through withEnv). */
+const each = (fn: (f: RefreshFixture) => Promise<void>) => withEnv({ GBRAIN_REFRESH_BARRIER: '1' }, async () => {
+  resetWriteSwitches();
+  for (const engine of engines) await withRefreshFixture(engine, fn);
+});
 
 /** Runs `fn` while a real refresh of the checkout is paused at its drained boundary; the refresh changes alpha/two.md. */
 async function duringRefresh(f: RefreshFixture, fn: () => Promise<void>, change: [string, string] = ['alpha/two.md', page('Alpha two', 'An upstream observation.')]) {
@@ -272,11 +273,13 @@ test('a deferred write whose token is revoked while it waits ends permission_den
 }), 180_000);
 
 test('with the barrier off a write during a refresh is still refused worktree_refreshing', () => each(async f => {
-  process.env.GBRAIN_REFRESH_BARRIER = '0'; resetWriteSwitches();
-  const refresh = await duringRefresh(f, async () => {
-    const out = await call(f, 'put_page', { slug: 'notes/off', content: page('Off', 'refused') });
-    expect(out.isError).toBe(true);
-    expect(out.body.code).toBe('worktree_refreshing');
+  await withEnv({ GBRAIN_REFRESH_BARRIER: '0' }, async () => {
+    resetWriteSwitches();
+    const refresh = await duringRefresh(f, async () => {
+      const out = await call(f, 'put_page', { slug: 'notes/off', content: page('Off', 'refused') });
+      expect(out.isError).toBe(true);
+      expect(out.body.code).toBe('worktree_refreshing');
+    });
+    expect((await refresh).status).toBe('completed');
   });
-  expect((await refresh).status).toBe('completed');
 }), 180_000);

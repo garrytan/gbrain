@@ -317,6 +317,13 @@ function git(
   }).toString();
 }
 
+/** PR B: the workspace push commit, with its commit-ledger intent and commit lines (src/core/git/commit-ledger.ts). */
+function commitRecorded(root: string, message: string): void {
+  recordIntent(root, { writer: 'workspace_push', head_before: tryGit(root, ['rev-parse', '--verify', '--quiet', 'HEAD']), message });
+  git(root, ['commit', '-m', message], { timeoutMs: 60_000 });
+  recordCommit(root, { sha: tryGit(root, ['rev-parse', 'HEAD']) ?? '', writer: 'workspace_push' });
+}
+
 function tryGit(root: string, args: string[], opts: { timeoutMs?: number; auth?: boolean } = {}): string | null {
   try {
     return git(root, args, opts).trim();
@@ -1075,11 +1082,8 @@ export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspaceP
     try {
       const clean = tryGit(root, ['diff', '--cached', '--quiet']) !== null;
       if (!clean) {
-        const message = opts.commitMessage ?? 'gbrain: workspace push';
-        recordIntent(root, { writer: 'workspace_push', head_before: tryGit(root, ['rev-parse', '--verify', '--quiet', 'HEAD']), message });
-        git(root, ['commit', '-m', message], { timeoutMs: 60_000 });
+        commitRecorded(root, opts.commitMessage ?? 'gbrain: workspace push');
         committed = true;
-        recordCommit(root, { sha: tryGit(root, ['rev-parse', 'HEAD']) ?? '', writer: 'workspace_push' });
       }
     } catch (e) {
       return finish({
