@@ -2523,6 +2523,15 @@
           "status": "ok"
         },
         {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no registered source on this host is a Git checkout, so there are no commits to attribute (the database is the record on a repo-less brain).",
+          "name": "foreign_writers",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
           "category": "ops",
           "elapsed_ms": "<volatile>",
           "message": "System One is off (every decide slot is off; nothing is sent).",

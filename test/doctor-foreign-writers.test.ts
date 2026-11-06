@@ -121,7 +121,7 @@ test('seven commit kinds: only plain, amend, the guard bypass and plumbing are f
   expect(published.checkout).toBe('advanced');
   const ledger = readLedger(join(work, '.git'));
   expect(ledger.some(r => r.e === 'commit' && r.writer === 'replay')).toBe(true);
-  const merge = ledger.find(r => r.e === 'commit' && r.writer === 'merge');
+  const merge = ledger.find((r): r is Extract<typeof r, { e: 'commit' }> => r.e === 'commit' && r.writer === 'merge');
   expect(merge && git(work, ['log', '--no-walk', '--format=%P', merge.sha]).split(' ').length).toBe(2);
 
   // Upstream fast-forward of a commit made minutes ago on another clone.
