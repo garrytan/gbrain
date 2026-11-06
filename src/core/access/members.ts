@@ -233,7 +233,8 @@ export async function setMemberEmail(engine: BrainEngine, rawId: unknown, rawEma
   const email = rawEmail === null ? null : assertMemberEmail(rawEmail);
   if (email === member.email) return { member, changed: false };
   if (email !== null) await assertEmailFree(engine, email, member.id);
-  await engine.executeRaw('UPDATE access_members SET email = $2, updated_at = now() WHERE id = $1', [member.id, email]).catch(error => refuseEmailRace(engine, error, email, member.id));
+  const updated = await engine.executeRaw<{ id: string }>('UPDATE access_members SET email = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL RETURNING id', [member.id, email]).catch(error => refuseEmailRace(engine, error, email, member.id));
+  if (!updated.length) throw retired(member.id, 'Add a new member id instead.', 'A removed member stays removed; its email was cleared when it was removed.');
   return { member: (await getMember(engine, member.id))!, changed: true };
 }
 

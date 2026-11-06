@@ -214,5 +214,16 @@ for (const kind of testBackends()) {
       for (const r of add) if (r.status === 'rejected') expect(await refusal(Promise.reject(r.reason))).toEqual({ code: 'access_member_invalid', reason: 'email_taken' });
       expect((await listMembers(engine)).filter(m => m.id === 'kim-example' || m.id === 'lee-example')).toHaveLength(1);
     });
+
+    test('GST-1158: a member removed while its email is being set is refused as retired and keeps no email', async () => {
+      await addMember(engine, 'mia-example');
+      const racing = Object.create(engine, { executeRaw: { value: async (sql: string, params?: unknown[]) => {
+        if (sql.startsWith('UPDATE access_members SET email')) await removeMember(engine, 'mia-example');
+        return engine.executeRaw(sql, params);
+      } } }) as BrainEngine;
+      expect(await refusal(setMemberEmail(racing, 'mia-example', 'mia@example.com'))).toEqual({ code: 'access_member_id_retired' });
+      expect(await getMember(engine, 'mia-example')).toMatchObject({ status: 'removed', email: null });
+      expect((await addMember(engine, 'mia2-example', { email: 'mia@example.com' })).member.email).toBe('mia@example.com');
+    });
   });
 }
