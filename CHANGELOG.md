@@ -30,7 +30,7 @@ gbrain publishes a release for nearly every merged change, more than a hundred a
 | doctor `self_upgrade_health` | — | names the channel and its source, warns on an invalid channel or a failed stable check |
 | `Promote stable` workflow | moved the `stable` tag | also commits the evidence record in the same atomic push; new `withdraw` input adds versions to `known_bad` |
 
-Install commands still name `latest-stable`. Every install surface now goes through one constant (`src/core/install-ref.ts`), checked by `bun run check:install-ref`; it moves to `stable` after a release with this change has been promoted.
+Install commands now name `stable` (`bun install -g github:garrytan/gbrain#stable`), so a new install starts on the channel it follows. Every install surface goes through one constant (`src/core/install-ref.ts`), checked by `bun run check:install-ref`; `latest-stable` still installs the newest release for anyone who pins it.
 
 ## [0.60.593.0] - 2026-11-06
 

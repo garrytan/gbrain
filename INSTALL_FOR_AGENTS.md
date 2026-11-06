@@ -8,7 +8,7 @@
 > gbrainio workspace new         # a person picks the plan in the browser
 > curl -fsSL https://bun.sh/install | bash   # skip if Bun 1.4.4+ is installed
 > export PATH="$HOME/.bun/bin:$PATH"
-> bun install -g github:garrytan/gbrain#latest-stable   # the gbrain CLI only; no local brain
+> bun install -g github:garrytan/gbrain#stable   # the gbrain CLI only; no local brain
 > # Claude Code (an existing gbrain entry is kept):
 > (claude mcp get gbrain >/dev/null 2>&1 || claude mcp add --transport http --scope user gbrain https://gbrain.io/mcp) && gbrain setup claude-code --instructions-only
 > # Codex (an existing gbrain entry is kept):
@@ -51,7 +51,7 @@ If you fetched this file by URL without cloning yet, the companion files live at
 <!-- npm-trap + #218 recovery: canonical copy lives in README.md ("Install" warning) — sync edits. -->
 > **NEVER install from the npm registry.** The npm package named `gbrain` is unrelated and
 > can shadow the real binary. Never run `npm install -g gbrain` or `bun add -g gbrain` (the
-> missing `github:` prefix is the trap). Install only `github:garrytan/gbrain#latest-stable`
+> missing `github:` prefix is the trap). Install only `github:garrytan/gbrain#stable`
 > (plain `github:garrytan/gbrain` installs master) or a git clone, as below. Already installed
 > from npm? Remove it (`npm uninstall -g gbrain` / `bun remove -g gbrain`); `gbrain doctor` detects it.
 
@@ -64,7 +64,7 @@ Default path (Bun 1.4.4 or newer is required — gbrain is a Bun + TypeScript ru
 ```bash
 curl -fsSL https://bun.sh/install | bash
 export PATH="$HOME/.bun/bin:$PATH"
-bun install -g github:garrytan/gbrain#latest-stable
+bun install -g github:garrytan/gbrain#stable
 ```
 
 Verify: `gbrain --version` should print a version number. If `gbrain` is not found,
