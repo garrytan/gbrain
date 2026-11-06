@@ -1583,6 +1583,14 @@
                 {
                   "name": "persistence_requests_foreground_committed",
                   "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_replay_id",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_slug_sequence",
+                  "state": "valid"
                 }
               ],
               "repair": "request-indexes"
@@ -6568,6 +6576,14 @@
                 },
                 {
                   "name": "persistence_requests_foreground_committed",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_replay_id",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_slug_sequence",
                   "state": "valid"
                 }
               ],

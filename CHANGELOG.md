@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**`gbrain repair failed-writes` now previews a brain with a large write journal in about a second instead of timing out.** On Postgres, the preview of refused writes read the request table once per refused write, and one of those reads walked the table from that write to its end. With hundreds of refused writes and a journal of over a million requests, the preview ran for minutes and the server's statement timeout ended it with a bare `internal_error`, so the operator had no way to see or recover the lost writes. The preview now classes every refused write in a few set reads: on a synthetic journal of 1.5 million requests with over 800 refused writes it took 1.2 seconds (it took 265 seconds before), with the same classes and the same preview hash. When a preview read does still run past the timeout, it refuses `repair_preview_timeout` with a fix instead of `internal_error`, and nothing is saved.
+
+### Itemized changes
+
+- `src/core/repair/failed-writes.ts`: recovered fact requests are read once for all refused writes instead of inside the candidate read; replay attempts are read for every refused write together (`request_id = ANY`); later requests of the same page and the file check are read per page, not per write. The listing, classes, residuals and preview hash are unchanged.
+- New refusal `repair_preview_timeout`. When the request indexes the preview reads are missing or INVALID, its fix is `gbrain repair request-indexes --apply`; when they are valid, it tells the brain host to run the same preview once with a longer statement timeout.
+- Schema migration v291 builds two request-table indexes online (`persistence_requests_replay_id` on the request id, `persistence_requests_slug_sequence` on source, slug and sequence). They join the indexes `gbrain repair request-indexes` and doctor's `persistence_request_indexes` check report. Without them the preview is still bounded, only slower. PGLite and repo-less brains get them unchanged.
+- The request-index states doctor and `gbrain repair request-indexes` print now come back in the order the indexes are declared on Postgres as well as PGLite.
+- `test/repair-failed-writes-bounded-8707.test.ts` (PGLite and Postgres) seeds a journal with refused writes of every class and checks that the preview's request-table reads stay flat as refused writes grow, that each write gets its class, and that a read ended at the statement timeout refuses `repair_preview_timeout` and saves nothing.
+
 ## [0.60.589.0] - 2026-11-06
 
 **gbrain can now wake an agent's conversation when a job it started finishes, through Wakeshift. It's off until the brain owner turns it on.**

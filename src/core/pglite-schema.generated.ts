@@ -1697,6 +1697,10 @@ CREATE INDEX IF NOT EXISTS persistence_requests_request_id
   ON persistence_requests(source_id,request_id);
 CREATE INDEX IF NOT EXISTS persistence_requests_foreground_committed
   ON persistence_requests(worktree_id,sequence) WHERE state='committed' AND NOT COALESCE(intent->>'kind','') LIKE 'managed_sync_%';
+CREATE INDEX IF NOT EXISTS persistence_requests_replay_id
+  ON persistence_requests(request_id);
+CREATE INDEX IF NOT EXISTS persistence_requests_slug_sequence
+  ON persistence_requests(source_id,slug,sequence);
 CREATE INDEX IF NOT EXISTS persistence_requests_principal ON persistence_requests(principal_kind,principal_id,sequence DESC);
 CREATE TABLE IF NOT EXISTS persistence_effects (
     id bigserial PRIMARY KEY,
