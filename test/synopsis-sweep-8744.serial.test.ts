@@ -7,6 +7,8 @@
  *     is not applicable on a balanced brain;
  *   - the preview's pages, chunks, tokens and dollars on the configured
  *     synopsis model, and that it queues and spends nothing;
+ *   - switching to tokenmax on a TTY previews the sweep and asks before
+ *     running `gbrain reindex --synopsis --yes`; a no queues nothing;
  *   - a --yes run under a cap below one synopsis call is refused by the
  *     shared spend group and stamps nothing; a later run resumes;
  *   - --yes queues one contextual_reindex_per_chunk job per page under one
@@ -30,6 +32,7 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { __setChatTransportForTests, __setEmbedTransportForTests, configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { checkSynopsisTierCoverage } from '../src/commands/doctor/checks/synopsis-coverage.ts';
 import { runReindexSynopsis } from '../src/commands/reindex-synopsis.ts';
+import { runModeSwitchUx } from '../src/core/search/mode-switch-ux.ts';
 import { estimateSynopsisCallUsd, SYNOPSIS_MAX_TOKENS } from '../src/core/page-summary.ts';
 import { reservationCostUsd } from '../src/core/budget/reservation-cost.ts';
 import { lookupEmbeddingPrice } from '../src/core/embedding-pricing.ts';
@@ -73,10 +76,12 @@ beforeEach(() => { chatCalls = 0; _resetCliExitVerdictForTests(); });
 const body = (title: string, paragraphs: number) => `---\ntype: note\ntitle: ${title}\n---\n\n${Array.from({ length: paragraphs }, (_, i) => `Paragraph ${i} about ${title}. `.repeat(30)).join('\n\n')}\n`;
 const quiet = async <T>(fn: () => Promise<T>): Promise<T> => {
   const log = console.log;
+  const error = console.error;
   const write = process.stderr.write.bind(process.stderr);
   console.log = () => {};
+  console.error = () => {};
   process.stderr.write = (() => true) as typeof process.stderr.write;
-  try { return await fn(); } finally { console.log = log; process.stderr.write = write; }
+  try { return await fn(); } finally { console.log = log; console.error = error; process.stderr.write = write; }
 };
 
 for (const kind of testBackends()) describe(`#8744 synopsis sweep (${kind})`, () => {
@@ -155,6 +160,25 @@ for (const kind of testBackends()) describe(`#8744 synopsis sweep (${kind})`, ()
     expect(plan.est_embedding_usd!).toBeGreaterThan(0);
     expect(plan.est_usd!).toBeCloseTo(plan.est_synopsis_usd! + plan.est_embedding_usd!, 10);
     const jobs = await engine.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM minion_jobs WHERE name = 'contextual_reindex_per_chunk'`);
+    expect(Number(jobs[0]!.n)).toBe(0);
+    expect(chatCalls).toBe(0);
+  });
+
+  test('mode switch to tokenmax on a TTY: previews the sweep and asks before running it; a no queues and spends nothing', async () => {
+    const prompts: string[] = [];
+    const saved = process.env.GBRAIN_NO_MODE_SWITCH_UX;
+    delete process.env.GBRAIN_NO_MODE_SWITCH_UX;
+    try {
+      await quiet(() => runModeSwitchUx({ oldMode: 'balanced', newMode: 'tokenmax', engine, isTty: true,
+        answerFn: async (prompt) => { prompts.push(prompt); return 'n'; } }));
+    } finally {
+      if (saved === undefined) delete process.env.GBRAIN_NO_MODE_SWITCH_UX; else process.env.GBRAIN_NO_MODE_SWITCH_UX = saved;
+    }
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("Run 'gbrain reindex --synopsis --yes' now?");
+    expect(prompts[0]).toContain('for 2 page(s)');
+    expect(prompts[0]).not.toContain('reindex --markdown');
+    const jobs = await engine.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM minion_jobs`);
     expect(Number(jobs[0]!.n)).toBe(0);
     expect(chatCalls).toBe(0);
   });
