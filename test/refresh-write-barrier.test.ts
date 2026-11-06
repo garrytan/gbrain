@@ -6,7 +6,8 @@
  * refresh ends it commits, unless the refresh changed its file, which ends it `revision_conflict` with nothing applied;
  * a consumer claim without the barrier's session declaration (an older binary) cannot move a deferred row; a replay of the
  * request id returns the same receipt; a write past the wait limit ends `refresh_barrier_expired` with its counters
- * released; a live consumer without the capability keeps the refusal; a repo-less source is never deferred.
+ * released; past the per-refresh cap a further write keeps the refusal; a live consumer without the capability keeps the
+ * refusal; a repo-less source is never deferred.
  * Seams: the real refresh state machine paused at its drained boundary (`hooks.boundary`); GBRAIN_REFRESH_BARRIER.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test';
@@ -196,6 +197,28 @@ test('a live consumer without the capability keeps the refusal; a repo-less sour
     await f.engine.executeRaw("DELETE FROM persistence_consumers WHERE nonce='old-binary-example'");
   });
   expect((await refresh).status).toBe('completed');
+}), 180_000);
+
+test('past persistence.refresh_barrier_max_deferred a further write during the refresh keeps the refusal', () => each(async f => {
+  await f.engine.executeRaw("INSERT INTO config(key,value) VALUES('persistence.refresh_barrier_max_deferred','1') ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value");
+  let first!: WriteRequest;
+  try {
+    const refresh = await duringRefresh(f, async () => {
+      const out = await call(f, 'put_page', { slug: 'notes/cap-one', content: page('Cap one', 'deferred') });
+      expect(out.body.status).toBe('pending');
+      first = await requestRow(f, out.body.request_id);
+      expect(first.state).toBe('deferred');
+      const before = await f.requestCount();
+      const refused = await call(f, 'put_page', { slug: 'notes/cap-two', content: page('Cap two', 'refused') });
+      expect(refused.isError).toBe(true);
+      expect(refused.body.code).toBe('worktree_refreshing');
+      expect(await f.requestCount()).toBe(before);
+    });
+    expect((await refresh).status).toBe('completed');
+    expect((await settle(f, first)).state).toBe('committed');
+  } finally {
+    await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_deferred'");
+  }
 }), 180_000);
 
 test('with the barrier off a write during a refresh is still refused worktree_refreshing', () => each(async f => {
