@@ -47,6 +47,12 @@ describe('decideDirection (d4 classifier)', () => {
     expect(decideDirection('C', 'A', [v(3, 'B'), v(2, 'A')], [b('oB', 'B'), b('oA', 'A')])).toMatchObject({ kind: 'both_moved', basis: 'conflicting_history' });
     expect(decideDirection('B', 'C', [v(3, 'B'), v(2, 'A')], [b('oB', 'B'), b('oA', 'A')])).toMatchObject({ kind: 'git_wins_file_moved', blob: 'oB' });
     expect(decideDirection('C', 'B', [v(4, 'C'), v(3, 'B'), v(2, 'A')], [b('oA', 'A')])).toMatchObject({ kind: 'adopt_db_moved', version: 3 });
+    // A revert whose middle state the other side never held: the database went A to B and back while Git edited A to C,
+    // and the mirror, Git going A to B and back (the tip's blob held again) while the database went A to C.
+    expect(decideDirection('A', 'C', [v(3, 'B'), v(2, 'A')], [b('oA', 'A')])).toMatchObject({ kind: 'both_moved', basis: 'conflicting_history' });
+    expect(decideDirection('C', 'A', [v(2, 'A')], [b('oB', 'B'), b('oA', 'A')])).toMatchObject({ kind: 'both_moved', basis: 'conflicting_history' });
+    // A no-op write that archived the row's own content is no move.
+    expect(decideDirection('A', 'C', [v(3, 'A')], [b('oA', 'A')])).toMatchObject({ kind: 'git_wins_file_moved', blob: 'oA' });
   });
   test('a one-sided verdict needs the other side read in full', () => {
     const full = { versions: false, blobs: false };
@@ -114,7 +120,9 @@ for (const backend of testBackends()) describe(`git-gap direction evidence (d4):
   }, 120000);
 
   test('the timestamp trap: a non-content updated_at bump after a file edit still goes to Git', async () => {
-    await fixture();
+    const root = await fixture();
+    // A file name that starts with two dots is still inside the checkout.
+    await expect(writeConversionFile(engine, join(root, '..review.json'), '--list-out', {})).rejects.toMatchObject({ code: 'conversion_file_in_source_root' });
     await engine.executeRaw("UPDATE pages SET updated_at = now() + interval '30 days' WHERE slug IN ('notes/file-moved','notes/both-moved')");
     const pages: GitGapPage[] = [];
     await censusGitGap(engine, 'default', { sample: 0, evidence: true, collect: page => { pages.push(page); } });
@@ -172,7 +180,7 @@ for (const backend of testBackends()) describe(`git-gap direction evidence (d4):
     expect(await writeConversionFile(engine, join(outside, 'review.json'), '--list-out', {})).toBe(join(outside, 'review.json'));
   }, 120000);
 
-  test('a segmented page: an older blob equal to its export lets Git win only while no version was archived after that blob', async () => {
+  test('a segmented page: an older blob equal to its export lets Git win only while the page has no archived version', async () => {
     const root = tempDir('git-gap-segmented-');
     git(root, 'init', '-q');
     await engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'", [root]);
@@ -195,9 +203,27 @@ for (const backend of testBackends()) describe(`git-gap direction evidence (d4):
       return pages.find(page => page.slug === 'seg/page')?.evidence;
     };
     expect(await evidence()).toMatchObject({ kind: 'git_wins_file_moved', basis: 'row_matches_older_file' });
-    // A version archived after that blob means the database left that state and came back (a revert): not a one-sided move.
-    await engine.executeRaw("INSERT INTO page_versions (page_id, compiled_truth, frontmatter, snapshot_at) VALUES ($1, 'An archived state.', '{}', now() + interval '1 minute')", [id]);
+    // Its archived versions cannot be compared by content, so any one of them may be a revert: not a one-sided move.
+    await engine.executeRaw("INSERT INTO page_versions (page_id, compiled_truth, frontmatter, snapshot_at) VALUES ($1, 'An archived state.', '{}', now() - interval '1 day')", [id]);
     expect(await evidence()).toMatchObject({ kind: 'no_evidence', basis: 'segmented' });
+  }, 120000);
+
+  test('a Git revert under a database edit is both_moved: the path\'s history keeps a blob it held again', async () => {
+    const root = tempDir('git-gap-git-revert-');
+    git(root, 'init', '-q');
+    await engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'", [root]);
+    await body('notes/g', 'Body A.');
+    const a = await rendered('notes/g');
+    put(root, 'notes/g.md', a);
+    commitAll(root, 'A');
+    put(root, 'notes/g.md', a.replace('Body A.', 'Body B.'));
+    commitAll(root, 'B');
+    put(root, 'notes/g.md', a);
+    commitAll(root, 'back to A');
+    await engine.createVersion('notes/g'); await body('notes/g', 'Body C.');
+    const pages: GitGapPage[] = [];
+    await censusGitGap(engine, 'default', { sample: 0, evidence: true, collect: page => { pages.push(page); } });
+    expect(pages.find(page => page.slug === 'notes/g')).toMatchObject({ evidence: { kind: 'both_moved', basis: 'conflicting_history' } });
   }, 120000);
 
   test('a pruned version history counts as unread: an inline page with a history gap gets no one-sided Git verdict', async () => {
