@@ -76,7 +76,7 @@ The plan puts every live page in one category and prints a preview hash:
 | git wins | Git moved and the database did not (or the hold already matches the committed file). The strict pass indexes the committed file. |
 | holds | Open sync holds are cleared so Git's verdict runs over them. |
 | parked effects | Retried once, or recorded as declared when Git ignores the target. |
-| discard | Database content that Git-wins would throw away. The apply refuses with `git_conversion_blocked` until this is 0, and there is no override. |
+| discard | Database content that Git-wins would throw away, or a page with no import record whose side the content evidence could not place (`no_record_both_moved`, `no_record_no_evidence`). The apply refuses with `git_conversion_blocked` until this is 0, and there is no override: undecided pages need a [decision](#review-list-and-decisions). |
 
 When the plan is what you expect, apply exactly that plan:
 
@@ -93,6 +93,80 @@ writes that land during the conversion, end it with
 before the flag was set, and strict (Git wins) if it stopped after. Wait until
 `gbrain sync status --source <id> --json` shows it idle, preview again and apply
 the new hash.
+
+### Pages with no import record: content evidence
+
+A page whose database copy differs from its committed file and that has no
+import record (it was imported before records existed) gives no record to say
+which side moved. The plan decides it from content, never from a timestamp: it
+compares the page's archived versions with the blobs its path held in Git
+(newest first, 32 of each, following renames through the paths its versions
+recorded):
+
+| Evidence | Meaning | Category |
+|---|---|---|
+| `adopt_db_moved` | An older version of the page equals the committed file, and no newer state was shared: only the database moved. | adopt |
+| `git_wins_file_moved` | The page equals an older committed blob of its path, and no newer state was shared: only the file moved (a plain `git commit`, for example). | git wins (`file_moved`) |
+| `both_moved` | Both sides moved since the last state they shared. A revert counts as a move: a page reverted to an older state while Git edited the file is `both_moved`, not `git_wins_file_moved`. | discard until decided |
+| `no_evidence` | Nothing shared within the depth (no archived version, a path with one blob, a segmented page whose export matches no blob or that has any archived version, which cannot be compared by content), or the other side's history reached the depth or lost versions to pruning (basis `history_truncated`). | discard until decided |
+
+A later `updated_at` on the database row changes nothing here. The evidence
+kind of each page is part of the preview hash, and `gbrain sources git-gap
+<source-id> --json` reports the same split as `direction_evidence`.
+
+### Review list and decisions
+
+The undecided pages go on a review list:
+
+```bash
+gbrain sources canonical <source-id> --to git --dry-run --list-out ~/review.json
+```
+
+The file lists each page with its slug, path, revision, committed blob, evidence
+and `decision: null`, newest first. Fill in `decision` (`adopt` or `git_wins`)
+for the pages you decide, then preview with the file:
+
+```bash
+gbrain sources canonical <source-id> --to git --dry-run --decisions ~/review.json
+gbrain sources canonical <source-id> --to git --apply --expect <hash> --decisions ~/review.json
+```
+
+A decision names the page at its revision, blob and evidence: once the page
+moves again it is counted `stale` and not applied, and the page waits for a new
+decision. The file is bound into the preview hash. Review lists, decision files
+and approvals hold page names, so gbrain writes them owner-only (mode 0600) and
+refuses any path inside a source's checkout or the Git working tree that holds
+it, including a symlink into one (`conversion_file_in_source_root`).
+
+### Approval across time
+
+A preview hash is bound to HEAD, so a commit between review and apply refuses
+the whole apply. When the owner approves a large plan, write the approval
+instead and apply it later:
+
+```bash
+gbrain sources canonical <source-id> --to git --dry-run [--decisions <file>] --approval-out ~/approval.json
+gbrain sources canonical <source-id> --to git --apply --approved ~/approval.json
+```
+
+The approval records the categories and each item's page, revision, blob and
+evidence. The apply plans again and compares every item with the approved one.
+With no difference it converts as `--expect` would. Otherwise it commits only the
+adoptions and withholds that are unchanged since the approval, leaves the source
+mixed, and exits 1 with `git_conversion_delta`: the list of changed, new and
+undecided items with counts, for the owner to decide before a new approval.
+
+### When an apply stops
+
+A failed apply reports where it stopped (`recovery` in `--json`): the mode it
+reached (`mixed` or `git`), the door commits it made (each group's sha), their
+push state and the writes it made. Pages that changed during the apply are held
+instead of overwritten (`changed_since_preview`), so a page written between
+the preview's recheck and the strict pass keeps its database version. Nothing is
+rewritten on the way back: a source left strict is re-derived with
+`gbrain sources reindex <source-id> --from-git` and returned with `--to mixed`;
+the adopted pages keep the content they had, because their committed files
+hold the database's own bytes.
 
 **A new, empty source** can start strict instead:
 `gbrain sources host-repo <id> --dir <path> [--push-remote <url>]` previews a bare
@@ -162,8 +236,8 @@ next write and sync pass.
 | Where | What it tells you |
 |---|---|
 | `gbrain doctor` → `git_index_lag` | Per strict source, how many commits and seconds the index trails HEAD. It warns once the oldest unindexed commit is older than 900 s (`GBRAIN_DOCTOR_GIT_INDEX_LAG_WARN_SECONDS`), and its fix is `gbrain sync --source <id> --no-pull`. Until then, search and reads show the older version. |
-| `gbrain doctor` → `db_ahead_of_git` | The git-gap totals for every source with a checkout, strict or not. Informational: always ok. Bounded by `GBRAIN_DOCTOR_GIT_GAP_TIMEOUT_MS` (10 s by default). |
-| `gbrain sources git-gap <id> [--sample n] [--json]` | Each page's state against HEAD: `equal`, `database_ahead`, `git_ahead`, declared or undeclared database-only, `worktree_only`, `unparseable`, `unsafe_path`, with a sample of paths. Read-only. |
+| `gbrain doctor` → `db_ahead_of_git` | The git-gap totals for every source with a checkout, strict or not, with each source's live pages (a scan the budget stopped reads `PARTIAL, <read> of <live> live page(s) read`). Informational: always ok. Bounded by `GBRAIN_DOCTOR_GIT_GAP_TIMEOUT_MS` (10 s by default). |
+| `gbrain sources git-gap <id> [--sample n] [--json]` | Each page's state against HEAD: `equal`, `database_ahead`, `git_ahead`, declared or undeclared database-only, `worktree_only`, `unparseable`, `unsafe_path`, with a sample of paths, the source's `live_pages`, and `direction_evidence` for differing pages with no import record. Read-only. |
 | `gbrain sources reindex <id> --from-git` | A preview of every database version Git would replace, bound to HEAD by a hash; `--apply --expect <hash>` runs that pass. Use it to re-derive a strict source's index on purpose. |
 | `gbrain sync status --source <id> --json` | The sync pass that indexes commits: state, reason and the last error. |
 | A write receipt | `persistence.git_commit` and `git_state: committed`. A door commit that landed before its row, on a write that then ended without committing, keeps `landed_before_row: true`: Git holds those bytes and the indexer imports them. |
@@ -171,5 +245,6 @@ next write and sync pass.
 Explain any code offline with `gbrain errors <code>`. The ones specific to
 strict sources are `strict_requires_managed`, `git_home_required`,
 `git_private_commit_refused`, `git_lfs_not_enabled`, `git_protocol_required`,
-`git_detached_head`, `git_branch_unborn`, `git_conversion_blocked` and
+`git_detached_head`, `git_branch_unborn`, `git_conversion_blocked`,
+`git_conversion_delta`, `conversion_file_in_source_root` and
 `git_conversion_incomplete`.
