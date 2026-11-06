@@ -79,7 +79,7 @@ async function sourceOwners(engine: BrainEngine, source: string): Promise<string
 
 /**
  * The personal sources among `sources` an attested call for `member` must not read: every personal source not bound to
- * that member, or every personal source under a scope read. A schema before v288 has no personal source.
+ * that member, or every personal source under a scope read. A schema before v291 has no personal source.
  */
 export async function hiddenPersonalSources(engine: Pick<BrainEngine, 'executeRaw'>, sources: readonly string[], member: string, scopeRead: boolean): Promise<Set<string>> {
   const ids = [...new Set(sources)];
