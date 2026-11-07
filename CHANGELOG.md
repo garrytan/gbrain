@@ -25,7 +25,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [0.60.609.0] - 2026-11-07
 
-**`POST /ingest` no longer answers 202 for a capture it drops, and an unsigned GitHub webhook can no longer tell from response time which repositories a brain syncs.** The same body sent to two slugs now queues two captures, where the second caller used to get the first job back and nothing written to its slug. A capture over the 50-capture waiting cap now gets 429 `ingest_backlog_full` with `Retry-After: 30` and nothing queued, where it used to get another capture's job id. A slug over 1024 bytes gets 400 `invalid_slug` before anything is queued, because no page can be stored under it. Every webhook request now computes the HMAC over its body, whether the repository is unknown, has no secret or is covered by a source, so a 401 takes the same work either way.
+**`POST /ingest` no longer answers 202 for a capture it drops, and an unsigned GitHub webhook can no longer tell from response time which repositories a brain syncs.** The same body sent to two slugs now queues two captures, where the second caller used to get the first job back and nothing written to its slug. A capture over the 50-capture waiting cap now gets 429 `ingest_backlog_full` with `Retry-After: 30` and nothing queued, where it used to get another capture's job id. A slug over 1024 bytes gets 400 `invalid_slug` before anything is queued, well short of the roughly 2.7 KB where no page can be stored under it. Every webhook request now computes the HMAC over its body, whether the repository is unknown, has no secret or is covered by a source, so a 401 takes the same work either way.
 
 ### Itemized changes
 
