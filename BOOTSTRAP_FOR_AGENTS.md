@@ -1,4 +1,4 @@
-<!-- gbrain-runbook-stamp: 0.60.603.0 -->
+<!-- gbrain-runbook-stamp: 0.60.605.0 -->
 <!-- This stamp must equal the VERSION file at every release; CI enforces it
      (scripts/check-bootstrap-tag.sh). `gbrain bootstrap status` compares it to
      the installed binary and warns on skew. -->
@@ -51,7 +51,7 @@ that release's SHASUMS256.txt, and only then execute. Install gh the same way �
 platform package manager first (`brew install gh`, `apt install gh`, `dnf install gh`,
 `winget install GitHub.cli` per the official instructions); never a piped
 curl-to-shell one-liner. Install gbrain ONLY as
-`bun install -g github:garrytan/gbrain#latest-stable` — the npm package named
+`bun install -g github:garrytan/gbrain#stable` — the npm package named
 "gbrain" is an unrelated project. (Cloud-sandbox exception: bun's package fetching
 is proxy-incompatible there — use the `gbrain bootstrap cloud-setup-script` recipe,
 which installs from the same pinned GitHub source through npm.)

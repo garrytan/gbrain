@@ -572,12 +572,13 @@ succeed on the release commit.
 
 The **final step of the release job** force-advances the `latest-stable` tag to
 the gated release commit (`git push origin "+${RELEASE_SHA}:refs/tags/latest-stable"`).
-`latest-stable` is the single sanctioned distribution ref: the README paste
+`latest-stable` is the alpha line (every published release) that the `latest`
+update channel reads. New users start on the `stable` tag instead
+([Stable channel promotion](#stable-channel-promotion)): the README paste
 block, the `BOOTSTRAP_FOR_AGENTS.md` fetch URL, and
-`bun install -g github:garrytan/gbrain#latest-stable` all reference it
-permanently, so paste blocks copied into the wild never rot and there is no 404
-window between VERSION landing and assets publishing.
-`scripts/check-bootstrap-tag.sh` keeps the entry docs pinned to this ref.
+`bun install -g github:garrytan/gbrain#stable` all reference it, and
+`scripts/check-bootstrap-tag.sh` keeps the entry docs pinned to `stable` and
+refuses `latest-stable` there.
 
 Because it moves ONLY after binaries + provenance attestation have fully
 published, a half-built release never advances it. If the tag-advance step
@@ -593,8 +594,9 @@ git push origin "+refs/tags/v<VERSION>^{commit}:refs/tags/latest-stable"
 The stable channel is a slower ref than `latest-stable`: a release reaches it
 only after the production-shaped soak passed on its exact git tree. A
 maintainer promotes with `.github/workflows/promote-stable.yml`
-(`scripts/promote-stable.ts`), weekly or whenever a soak passes; both go
-through the same dispatch:
+(`scripts/promote-stable.ts`), or the scheduled
+[daily stable check](#daily-stable-check) promotes by rule; manual promotions and
+rollbacks go through the same dispatch:
 
 ```bash
 gh workflow run promote-stable.yml -f version=<VERSION> \
@@ -617,7 +619,7 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   `/attempts/<n>`), `scoreboard_url` (optional, defaults to the run URL),
   `rollback` (default false) and `reason` (required with rollback).
 - **Who.** Only an actor with the admin or maintain role; anyone else is
-  refused.
+  refused. The one exception is the scheduled daily check below.
 - **Soak run.** The run must belong to this repository, be completed with
   conclusion `success`, and run the workflow file named by the
   `STABLE_SOAK_WORKFLOW` repository variable (Settings → Secrets and
@@ -642,6 +644,49 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   clean up before the re-run. The `promote-stable` concurrency group runs one promotion at a
   time. The run's step summary lists the version, commit, tree, soak run,
   scoreboard, previous stable and rollback reason.
+
+<a id="daily-stable-check"></a>
+### Daily stable check
+
+`.github/workflows/stable-daily.yml` (`scripts/stable-daily.ts`) runs at 05:17 and 13:17 UTC
+and keeps stable between one day and one week behind what matters:
+
+- **Reason first.** It acts only when a merged PR labelled `stable:important` is in a
+  published release but not in stable, or stable is more than 7 days old and
+  a newer release exists (the weekly floor). Otherwise it does nothing. The
+  merge lane sets the label at merge on a security, regression or data-loss
+  fix, or a fix for something that blocks a crew or a user (on a train PR,
+  the train carries it); a label added after the merge counts too.
+- **Soak first.** The candidate is the newest release newer than stable whose
+  commit is on master and whose exact tree passed a successful
+  `STABLE_SOAK_WORKFLOW` run with the integrity gates (`privacy_leaks`,
+  `read_errors`, `version_skew`, `residents_alive`, `session_refusals`)
+  passing in every cell; the latency gates stay record-only. The soak must be
+  the full default one: both the 65 ms and 2 ms cells, at least 2 hours each,
+  on the requested 600,000-page fixture, with privacy probes run and none
+  erroring, so a smaller smoke dispatch never qualifies. On the important-only path the candidate must contain the fix.
+  It is promoted through the same `promote()` as a manual promotion, so every
+  check above still applies and the record's `promoted_by` is
+  `schedule (.github/workflows/stable-daily.yml)` with the reason in `reason`.
+  With no qualifying soak it dispatches one soak on the newest release's tag
+  (never while another soak runs, and never after a soak on any newer release
+  failed to qualify: then a maintainer decides, and the check warns once stable
+  is past the weekly floor), and a later run promotes it.
+- **Who.** A schedule event runs only the workflow file as merged on the
+  default branch, so a scheduled run promotes by rule without a maintainer. A
+  manual dispatch defaults to `dry_run` (report only); `dry_run=false` needs an
+  admin or maintainer before it dispatches a soak or promotes. It shares the `promote-stable` concurrency group, so it
+  never races a manual promotion.
+- **Stop it.** Set the repository variable `STABLE_AUTO_PROMOTE=off` (Settings →
+  Secrets and variables → Actions → Variables). It also pauses by itself while
+  the current stable record says `rollback: true`, until a maintainer promotes by
+  hand.
+- **Roll back.** Dispatch `promote-stable.yml` as a maintainer with `version` set to the
+  previous stable (`git tag --list 'stable-v*' --sort=-creatordate`, or the
+  record's `previous` field: `git show stable --no-patch`), `soak_run_url` set to the
+  soak run in that version's record tag, `rollback=true` and a `reason`. Clients on
+  stable never downgrade on their own; the daily check stays paused until the
+  next manual promotion.
 
 ### The `publish-template` job
 
