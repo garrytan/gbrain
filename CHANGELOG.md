@@ -10,6 +10,27 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.599.0] - 2026-11-06
+
+**`gbrain transcripts ingest --facts --json` now says when the facts pass did not extract everything (#8722).** The `facts` object carried only `pages`, `pagesFailed` and `spentUsd`, so a pass that the budget cut short, that was refused for an unpriced model, or that skipped a page as too large or because another run held its lease looked the same as a complete one: exit 0, `pagesFailed: 0`. A caller that marks a session done on that result never retried it. The object now also carries `budget_exhausted`, `budget_reason` (`cost`, `runtime` or `no_pricing`, only when the budget halted the pass), `pages_skipped_too_large` and `pages_lock_skipped`, and the plain output prints a line for each that applies. Existing fields and the exit code are unchanged. Contributed by @harjothkhara.
+
+**Say to your agent:** *"Ingest these session files with facts and tell me if any session did not get its facts extracted."*
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| `gbrain transcripts ingest <files> --facts --json`, the `facts` object | Adds `budget_exhausted`, `budget_reason`, `pages_skipped_too_large` and `pages_lock_skipped`. |
+| `gbrain transcripts ingest <files> --facts` (plain output) | Adds a line when the budget stopped the pass or pages were skipped. |
+
+## To take advantage of v0.60.599.0
+
+Nothing to migrate. Check the new fields:
+
+```bash
+gbrain transcripts ingest <session-files> --facts --json | jq .facts
+```
+
 ## [0.60.598.0] - 2026-11-07
 
 **A segmented page that sync replaces on Postgres now publishes on the first try instead of being refused `body_staging_expired` ("does not cover its N-byte body") and blocking its source until the next sync.** The import ran its version write, which for a segmented page prunes old versions and sweeps their segment rows, at the same time as the flip that publishes the new body. On Postgres the two overlap on one connection, so the sweep could delete the freshly published tail row between the flip clearing its staging and bumping the page's generation. PGLite runs them in order, so only Postgres was affected. The refusal now records which staging was short, a retry inside the run really prepares the page again, and `gbrain sources writer failures` answers within its bound on a source full of large sync writes.
