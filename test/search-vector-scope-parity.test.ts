@@ -88,6 +88,20 @@ for (const kind of testBackends()) {
         await engine.putPage(`photos/image-${sourceId}`, { type: 'image', page_kind: 'image', title: `Photo ${sourceId}`, compiled_truth: '', timeline: '' } as never, { sourceId });
         await installFixtureChunks(engine, `photos/image-${sourceId}`, [{ chunk_index: 0, chunk_text: `photo ${sourceId}`, chunk_source: 'image_asset', embedding_image: new Float32Array(IMAGE_VEC), modality: 'image' } as never], { sourceId });
       }
+      // Retained projections must not make a private/quarantined page searchable.
+      // Include both modalities so the image branch cannot pass vacuously.
+      for (const marker of ['private', 'quarantined']) {
+        const frontmatter = marker === 'private' ? { visibility: 'private' } : { quarantine: { reason: 'junk_pattern' } };
+        for (const modality of ['text', 'image'] as const) {
+          const slug = `hidden/${marker}-${modality}`;
+          const text = `The quillmarsh ledger kept by hidden-${marker}.`;
+          await engine.putPage(slug, { type: modality === 'image' ? 'image' : 'note',
+            page_kind: modality === 'image' ? 'image' : 'markdown', title: QUERY, compiled_truth: text, timeline: '', frontmatter } as never, { sourceId: 'default' });
+          await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_text: text,
+            chunk_source: modality === 'image' ? 'image_asset' : 'compiled_truth', modality,
+            ...(modality === 'image' ? { embedding_image: new Float32Array(IMAGE_VEC) } : { embedding: new Float32Array(TEXT_VEC) }) } as never], { sourceId: 'default' });
+        }
+      }
       serve = await startServeHttp(engine, { surface: 'full' });
       tokens.floor = await legacyToken(engine, ['read']);
       tokens.granted = (await mintLegacyToken(engine, { name: 'granted-bc', takesHolders: ['world'], scopes: ['read'], sourceGrant: ['source-b', 'source-c'] })).token;
@@ -128,6 +142,19 @@ for (const kind of testBackends()) {
     ];
 
     for (const path of PATHS) {
+      test(`${path.name}: private and quarantined projections stay hidden at small and large limits`, async () => {
+        useProvider(path.provider);
+        for (const limit of [1, 50]) {
+          const out = await callTool(serve.base, tokens.oauth!, path.tool, { ...path.args, limit });
+          expect(out.isError).not.toBe(true);
+          const found = JSON.parse(out.content[0]!.text) as Array<{ slug: string }>;
+          expect(found.length).toBeGreaterThan(0);
+          expect(found.length).toBeLessThanOrEqual(limit);
+          expect(found.every(row => !row.slug.startsWith('hidden/'))).toBe(true);
+          expect(sourcesOf(out)).toEqual(['default']);
+        }
+      }, 120_000);
+
       test(`${path.name}: every grant and per-call scope reads exactly its sources`, async () => {
         useProvider(path.provider);
         for (const c of CASES) {
