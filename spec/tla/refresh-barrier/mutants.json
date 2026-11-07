@@ -71,8 +71,8 @@
         "edits": [
           {
             "file": "src/core/persistence/refresh-barrier.ts",
-            "before": "if (paths === null || paths.has(target)) touched.push(target);",
-            "after": "if (paths === null) touched.push(target);"
+            "before": "if (changes === null || changes.paths.has(changes.fold ? target.toLowerCase() : target)) touched.push(target);",
+            "after": "if (changes === null) touched.push(target);"
           }
         ],
         "tests": [
@@ -375,8 +375,8 @@
         "edits": [
           {
             "file": "src/core/persistence/refresh-barrier.ts",
-            "before": "      await declarePersistenceProtocol(tx);\n      const [held] = await tx.executeRaw(`SELECT 1 FROM persistence_requests r JOIN sources s ON s.id=r.source_id\n        WHERE r.id=$1::uuid AND r.state='deferred' AND r.deferred_import_from=$2 AND COALESCE(s.last_commit,'')=r.deferred_import_from\n          AND r.updated_at<now()-($3::double precision*interval '1 millisecond') FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);\n",
-            "after": "      const [held] = await tx.executeRaw(`SELECT 1 FROM persistence_requests r JOIN sources s ON s.id=r.source_id\n        WHERE r.id=$1::uuid AND r.state='deferred' AND r.deferred_import_from=$2 AND COALESCE(s.last_commit,'')=r.deferred_import_from\n          AND r.updated_at<now()-($3::double precision*interval '1 millisecond') FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);\n      await declarePersistenceProtocol(tx);\n"
+            "before": "      await declarePersistenceProtocol(tx);\n      const [held] = await tx.executeRaw(`SELECT 1 FROM persistence_requests r JOIN sources s ON s.id=r.source_id\n        WHERE r.id=$1::uuid AND r.state='deferred' AND r.deferred_import_from=$2 AND COALESCE(s.last_commit,'')=r.deferred_import_from\n          AND ${holdOverdue('$3::double precision')} FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);\n",
+            "after": "      const [held] = await tx.executeRaw(`SELECT 1 FROM persistence_requests r JOIN sources s ON s.id=r.source_id\n        WHERE r.id=$1::uuid AND r.state='deferred' AND r.deferred_import_from=$2 AND COALESCE(s.last_commit,'')=r.deferred_import_from\n          AND ${holdOverdue('$3::double precision')} FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);\n      await declarePersistenceProtocol(tx);\n"
           }
         ],
         "tests": [
@@ -403,8 +403,8 @@
         "edits": [
           {
             "file": "src/core/persistence/refresh-barrier.ts",
-            "before": "interval '1 millisecond') FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);",
-            "after": "interval '1 millisecond')`, [row.id, row.deferred_import_from, maxWaitMs]);"
+            "before": "${holdOverdue('$3::double precision')} FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);",
+            "after": "${holdOverdue('$3::double precision')}`, [row.id, row.deferred_import_from, maxWaitMs]);"
           }
         ],
         "tests": [
