@@ -3457,6 +3457,17 @@
         {
           "category": "brain",
           "details": {
+            "docs": "docs/guides/write-refusals.md#file_database_drift",
+            "sources": []
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No local edit was adopted in the last 24 h.",
+          "name": "local_edit_adoptions",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "docs": "docs/guides/repair.md#outside-content-fences",
             "items": [],
             "pages": 0

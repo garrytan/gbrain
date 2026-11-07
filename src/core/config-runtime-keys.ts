@@ -23,5 +23,6 @@ export const RUNTIME_READER_CONFIG_KEYS: readonly string[] = [
   'sources.refresh_publish_diverged', // persistence/worktree-refresh.ts (#7686): refresh publishes a diverged checkout's local commits merged with the upstream before fast-forwarding, default off
   'serve.vector_prewarm', // config.ts loadConfigWithEngine (snapshot only) → serve.ts: a Postgres serve prewarms the HNSW indexes into shared_buffers at start when they fit, default off
   'mcp.stdio_member', // access/caller.ts (GBRA-218): binds a local stdio MCP server to one member; unbound, stdio reads no page that names readers
+  'persistence.adopt_quiet_ms', // persistence/local-edit-adoption.ts (GST-1601): how long a local edit must be quiet before it is adopted, default 5000
   'mcp.stdio_may_act_for', // access/audience.ts (GBRA-231): whom a local stdio server may act for (_meta.on_behalf_of); unset, stdio refuses every audience
 ];

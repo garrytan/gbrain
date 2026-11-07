@@ -329,7 +329,7 @@ async function assertConversionCheckout(sourceId: string, root: string): Promise
   const state = code === 'git_checkout_required' ? 'is not inside a Git checkout' : 'is a Git checkout with no commit yet';
   const why = 'A git-canonical source commits every page to Git on top of the checkout\'s branch, so its root needs a Git checkout with a first commit.';
   throw opError(code, `Source ${sourceId}'s root ${root} ${state}, so it has nothing to convert into; nothing was read or written. The source stays usable as it is, with the database as its record.`,
-    'Keep the source as it is, or make its root a Git repository with a first commit on the brain host (git init, git add -A, git commit), then preview again.',
+    'Keep the source as it is, or make its root a Git repository with a first commit on the brain host (git init, then echo \'.gbrain-owner*\' >> .git/info/exclude so the ownership marker stays out of Git, git add -A, git commit), then preview again.',
     { why, docs: DOCS, fix: { argv: ['gbrain', 'sources', 'canonical', sourceId, '--to', 'git', '--dry-run', '--json'], consent: [], actor: 'user', requires_exclusive: false,
       why: 'Previews the conversion again once the root has a first commit; read-only.',
       user_message: `Source ${sourceId} has no Git history to convert into. It keeps working as it is. Should its folder become a Git repository with a first commit so it can be converted?` } });
