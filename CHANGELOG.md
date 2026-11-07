@@ -16,9 +16,9 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ### Itemized changes
 
-- Install pins move from `#latest-stable` to `#stable` in README, AGENTS.md, INSTALL_FOR_AGENTS.md, BOOTSTRAP_FOR_AGENTS.md, docs/INSTALL.md, the MCP, headless, in-agent and tutorial guides, the setup skills, the Codex plugin manifests and launcher, doctor's npm-squat fix, the bootstrap hints and the agent-workspace template. The bootstrap runbook fetch and the in-agent setup helper read the `stable` ref, and the in-agent helper pins the commit `refs/tags/stable` peels to.
+- Install pins move from `#latest-stable` to `#stable` in README, AGENTS.md, INSTALL_FOR_AGENTS.md, BOOTSTRAP_FOR_AGENTS.md, docs/INSTALL.md, the MCP, headless, in-agent and tutorial guides, the setup skills, the Codex plugin manifests and launcher, doctor's npm-squat fix, the bootstrap hints and the agent-workspace template. The bootstrap runbook fetch and the in-agent setup helper read the `stable` ref, and the in-agent helper pins the commit `refs/tags/stable` peels to. Until a release containing this change is promoted to `stable`, the runbook and helper served from that ref are the previous stable release's copies.
 - `scripts/check-bootstrap-tag.sh` sanctions `stable` as the one distribution ref and now refuses `#latest-stable` in the entry docs.
-- `src/commands/init.ts`: a fresh install (new content database, no prior config file) persists `self_upgrade.channel: stable` on PGLite and Postgres. A re-init keeps whatever the config says, including no channel. `test/init-stable-channel.test.ts` covers the fresh, re-init and explicit-channel cases.
+- `src/commands/init.ts`: a fresh install (new content database, no prior config file) persists `self_upgrade.channel: stable` on PGLite and Postgres. A re-init keeps whatever the config says, including no channel. `test/init-stable-channel.test.ts` covers the fresh, re-init and explicit-channel cases, and `test/e2e/init-stable-channel-postgres.test.ts` the fresh and re-init cases on Postgres.
 - `docs/guides/upgrades-auto-update.md#stable-channel` describes stable as the default for new installs and `latest` as the alpha line.
 
 ## [0.60.602.0] - 2026-11-07
