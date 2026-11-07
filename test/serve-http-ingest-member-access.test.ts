@@ -120,6 +120,14 @@ describe('POST /ingest refuses pages the caller cannot write over MCP', () => {
     expect(await engine.readPageSnapshot(ALICE_MEMBER_PAGE, { sourceId: SRC })).toBeNull();
   });
 
+  test('a slug header that is not a valid slug: 400 invalid_slug, nothing queued', async () => {
+    const before = await queuedJobs();
+    const res = await ingest('../escape');
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toBe('invalid_slug');
+    expect(await queuedJobs()).toBe(before);
+  });
+
   test('a page the caller can read still imports through the job', async () => {
     const res = await ingest(OPEN, page('Team open', '') + '\nUpdated by bob.\n');
     expect(res.status).toBe(202);
