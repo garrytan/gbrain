@@ -125,6 +125,8 @@ export function checkResumeReaderConfig(
     }
     const legacyDirect = config.mode === 'direct' && config.promptSha === READER_PROMPT_SHA &&
       config.promptVersion === READER_PROMPT_VERSION && config.maxTokens === READER_MAX_TOKENS &&
+      // The system SHA alone cannot identify the literal contract in the user message.
+      row.reader_prompt_version === config.promptVersion &&
       row.reader_prompt_sha === READER_PROMPT_SHA && row.reader_max_tokens === READER_MAX_TOKENS &&
       typeof row.reader_model === 'string' && normalizeModelId(row.reader_model) === normalizeModelId(model);
     if (!legacyDirect) mismatched++;

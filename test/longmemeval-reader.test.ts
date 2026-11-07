@@ -66,13 +66,24 @@ describe('generateAnswer context construction', () => {
     expect(readerConfigHash(resolveReaderConfig({ mode: 'notes', maxTokens: 512 }), 'm')).not.toBe(hash);
     expect(readerConfigHash(resolveReaderConfig({ maxTokens: 1024 }), 'm')).not.toBe(hash);
     expect(readerConfigHash(direct, 'other')).not.toBe(hash);
-    const historical = { question_id: 'a', hypothesis: 'yes', reader_model: 'm', reader_prompt_sha: direct.promptSha, reader_max_tokens: 512 };
+    const historical = { question_id: 'a', hypothesis: 'yes', reader_model: 'm', reader_prompt_sha: direct.promptSha, reader_prompt_version: direct.promptVersion, reader_max_tokens: 512 };
     expect(checkResumeReaderConfig([historical], direct, 'm')).toEqual({ mismatched: 0, unknown: 0 });
     expect(checkResumeReaderConfig([historical], resolveReaderConfig({ mode: 'notes', maxTokens: 512 }), 'm').mismatched).toBe(1);
     expect(checkResumeReaderConfig([{ ...historical, reader_config_hash: hash }], direct, 'm').mismatched).toBe(0);
     expect(checkResumeReaderConfig([{ ...historical, reader_config_hash: hash }], direct, 'other').mismatched).toBe(1);
     expect(checkResumeReaderConfig([{ question_id: 'b', hypothesis: 'unknown' }], direct, 'm').unknown).toBe(1);
     expect(checkResumeReaderConfig([{ ...historical, reader_model: 'claude-sonnet-4-6' }], direct, 'anthropic:claude-sonnet-4-6').mismatched).toBe(0);
+  });
+
+  test.each([undefined, '', 'gbrain-lme-reader-v3-abstention-fullsessions'])('resume rejects an unstamped pre-literal protocol even with the same system SHA: %s', version => {
+    const direct = resolveReaderConfig({ mode: 'direct' });
+    const old = { question_id: 'nightly-5', hypothesis: 'old answer without literal instructions',
+      reader_model: 'deepseek:deepseek-flash', reader_prompt_sha: direct.promptSha,
+      reader_max_tokens: 512, reader_prompt_version: version };
+    expect(checkResumeReaderConfig([old], direct, old.reader_model)).toEqual({ mismatched: 1, unknown: 0 });
+    const oldHash = readerConfigHash({ ...direct, promptVersion: 'gbrain-lme-reader-v3-abstention-fullsessions' }, old.reader_model);
+    expect(checkResumeReaderConfig([{ ...old, reader_config_hash: oldHash }], direct, old.reader_model)).toEqual({ mismatched: 1, unknown: 0 });
+    expect(checkResumeReaderConfig([{ ...old, reader_prompt_version: direct.promptVersion }], direct, old.reader_model)).toEqual({ mismatched: 0, unknown: 0 });
   });
 
   test('a retrieved session reaches the reader in full (well past 4000 chars), once per distinct session, with a receipt on the answer', async () => {

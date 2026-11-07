@@ -50,6 +50,8 @@ export interface QualityProbeFailure {
   error?: string;
   /** Errors of the slots that did not score (inconclusive), each redacted and cut to 200 characters. */
   slot_errors?: Array<{ model: string; error: string }>;
+  /** Diagnosis from this question's reader receipt, not inferred from answer style. */
+  reader_cause?: string;
 }
 
 export interface QualityProbeAuditEvent {
@@ -76,6 +78,10 @@ export interface QualityProbeAuditEvent {
   /** Reader and extractor models the run used (rows written after the routes resolved). */
   reader_model?: string;
   extractor_model?: string;
+  /** Local recipe checks of explicit judge pins; no credential check or provider request. */
+  judge_capabilities?: Array<{ slot: string; model: string; capability_ready: boolean; error?: string }>;
+  /** Distinct canonical models among the capability-ready explicit pins (not a scored quorum). */
+  capability_distinct_models?: number;
   /** Judge models in slot order, as configured (completed batch). */
   judge_models?: string[];
   /** Per judge slot in slot order, the questions it scored; 0 names a slot that did not judge. */
@@ -114,6 +120,8 @@ const OPTIONAL_EVENT_FIELDS = [
   'detail',
   'reader_model',
   'extractor_model',
+  'judge_capabilities',
+  'capability_distinct_models',
   'judge_models',
   'judge_scored_questions',
   'distinct_judge_models',
