@@ -75,7 +75,7 @@ import type { SyncRename } from './sync-discovery.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import { contentRepairCommit, fenceRepairCommit, localEditAdoptionCommit } from './effect-model.ts';
-import { ADOPTED_CHANGE_REASON, commitAdoptedLocalEdit } from './local-edit-adoption.ts';
+import { ADOPTED_CHANGE_REASON, adoptedHeadHolds, commitAdoptedLocalEdit } from './local-edit-adoption.ts';
 import { recordSlugLineAlias } from '../page-state/rename-alias.ts';
 import type { WriteRequest } from './model.ts';
 import { bindOrigin } from './origin-guard.ts';
@@ -105,7 +105,7 @@ export interface ManagedFileRepairIntent extends Record<string, unknown> {
   /** #6696 C8: the hold observation the repair read; the publication clears the path's hold only while it is that observation (a newer hold stays). */
   holdObservedAt?: string;
   /** GST-1601: an adopted one-sided local edit (local-edit-adoption.ts): the worktree blob and the revision it replaces. */
-  adoptLocalEdit?: { blob: string; replaced_revision: string };
+  adoptLocalEdit?: { blob: string; replaced_revision: string; head: string | null };
 }
 
 /** The repair command a refusal names (D6 router): a fence repair's, the content repair's, or the frontmatter repair's. */
@@ -331,7 +331,7 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
   const fenceRepair = checkedFenceRepair(p, row.source_id);
   const contentRepair = checkedContentRepair(p, row.source_id);
   const adopted = p.adoptLocalEdit;
-  if (adopted !== undefined && (typeof adopted?.blob !== 'string' || typeof adopted.replaced_revision !== 'string' || p.expected_revision !== adopted.replaced_revision)) {
+  if (adopted !== undefined && (typeof adopted?.blob !== 'string' || typeof adopted.replaced_revision !== 'string' || (typeof adopted.head !== 'string' && adopted.head !== null) || p.expected_revision !== adopted.replaced_revision)) {
     throw opError('invalid_params', 'The local edit adoption intent is incomplete.', `Adoption request ${row.request_id} in source ${row.source_id} names no worktree blob or replaced revision, so it published nothing.`);
   }
   const binding = await getWorktreeBinding(engine, row.source_id);
@@ -394,6 +394,7 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
         `Source ${row.source_id}'s canonical owner changed while repair request ${row.request_id} was prepared, so it published nothing. Check the owner, then preview the repair again.`,
         { fix: ownerStatusFix(row.source_id) });
       checkFile();
+      if (adopted && !await adoptedHeadHolds(binding, root, target, adopted.head)) throw changedSincePreview(row.source_id, p.path, 'git HEAD moved after its local edit was read', kind);
       if (contentRepair?.declared_alias) await assertDeclaredSlugAbsent(tx, row.source_id, root, p, contentRepair.declared_alias, row.slug, kind);
       await assertRenameSource(tx);
       await ready.validate(tx);

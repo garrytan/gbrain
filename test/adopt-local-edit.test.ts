@@ -31,7 +31,8 @@ import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readLedger } from '../src/core/git/commit-ledger.ts';
-import { isTerminal, type WriteRequest } from '../src/core/persistence/model.ts';
+import { isTerminal, requestPrincipal, type WriteRequest } from '../src/core/persistence/model.ts';
+import { cancelWriteRequest } from '../src/core/persistence/control.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -307,6 +308,59 @@ test('an adoption still blocked on the worktree lock when the caller gives up is
   expect(head(f)).toBe(before.head);
   expect(await revision(f, 'one')).toBe(before.revision);
 }), 180_000);
+
+test('a commit that moves HEAD past the database before the adoption publishes keeps the refusal and the newer commit', () => each(async f => {
+  const { localEditAdoptionSeams } = await import('../src/core/persistence/local-edit-adoption.ts');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  const before = await revision(f, 'one');
+  const NEWER = page('Alpha one', 'The first alpha observation.\n\nA newer commit nobody imported yet.');
+  let newer = '';
+  localEditAdoptionSeams.beforePublish = path => { newer = commitFile(f.root, 'alpha/one.md', NEWER); writeFileSync(path, EDITED); };
+  await timeline(f)().catch(() => undefined);
+  const row = await settled(f.engine, await lastRow(f, 'add_timeline_entry'));
+  expect(row).toMatchObject({ state: 'conflict', error_code: 'source_changed' });
+  expect((await adoptionRows(f)).filter(r => r.state === 'committed')).toEqual([]);
+  expect(head(f)).toBe(newer);
+  expect(git(f.root, 'show', 'HEAD:alpha/one.md')).toContain('A newer commit nobody imported yet.');
+  expect(file(f, 'one.md')).toBe(EDITED);
+  expect(await revision(f, 'one')).toBe(before);
+}), 180_000);
+
+test('a checkout whose HEAD git cannot read keeps the refusal instead of adopting as if it had no repository', () => each(async f => {
+  commitFile(f.root, 'alpha/one.md', page('Alpha one', 'The first alpha observation.\n\nA commit the database never imported.'));
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  const before = await revision(f, 'one');
+  const branch = git(f.root, 'symbolic-ref', 'HEAD');
+  git(f.root, 'symbolic-ref', 'HEAD', 'refs/heads/missing-example');
+  try {
+    await timeline(f)().catch(() => undefined);
+    const row = await settled(f.engine, await lastRow(f, 'add_timeline_entry'));
+    expect(row).toMatchObject({ state: 'conflict', error_code: 'source_changed' });
+  } finally { git(f.root, 'symbolic-ref', 'HEAD', branch); }
+  expect((await adoptionRows(f)).filter(r => r.state === 'committed')).toEqual([]);
+  expect(file(f, 'one.md')).toBe(EDITED);
+  expect(await revision(f, 'one')).toBe(before);
+}), 180_000);
+
+test('a caller cancelled while its adoption waits for the file to settle has nothing adopted', () => each(async f => {
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  const before = { head: head(f), revision: await revision(f, 'one') };
+  const pending = timeline(f)().catch(() => undefined);
+  let caller: WriteRequest | undefined;
+  for (let i = 0; i < 100 && !caller; i++) {
+    const [row] = await f.engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE operation='add_timeline_entry' AND source_id=$1 AND state='running' ORDER BY sequence DESC LIMIT 1", [f.alpha]);
+    if (row) caller = row; else await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  expect(caller).toBeDefined();
+  await new Promise(resolve => setTimeout(resolve, 500));
+  expect((await cancelWriteRequest(f.engine, requestPrincipal(caller!), caller!.request_id))?.state).toBe('cancelled');
+  await pending;
+  await new Promise(resolve => setTimeout(resolve, 4000));
+  expect((await adoptionRows(f)).filter(r => r.state === 'committed')).toEqual([]);
+  expect(file(f, 'one.md')).toBe(EDITED);
+  expect(head(f)).toBe(before.head);
+  expect(await revision(f, 'one')).toBe(before.revision);
+}, { quietMs: 2000 }), 180_000);
 
 test('doctor local_edit_adoptions reports the adoptions of the last 24 h per source', () => each(async f => {
   const { localEditAdoptionsEntry } = await import('../src/commands/doctor/checks/local-edit-adoptions.ts');

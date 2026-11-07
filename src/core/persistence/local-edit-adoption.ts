@@ -6,7 +6,8 @@
  * The owner publishes the edit first as its own write: a `managed_file_repair` (file-repair.ts) carrying `adoptLocalEdit`,
  * admitted under this installation's CLI writer (never the caller's principal) with a request id derived from the
  * caller's, so a write adopts at most once. It imports the file's exact bytes under the hash it read (an edit landing
- * before publication ends `raw_file_changed` and nothing is written), archives the replaced revision with change_reason
+ * before publication ends `raw_file_changed` and nothing is written; a commit that moved HEAD or a cancelled caller
+ * adopts nothing), archives the replaced revision with change_reason
  * `adopted_local_edit`, and, on a Git-durable checkout, commits only that file before its row commits: subject
  * `gbrain: adopt local edit to <path>`, trailers `gbrain-adopted:` and `gbrain-author: unknown`, a commit-ledger line
  * (`adopted`). A repo-less brain records the adoption in the database alone. The caller's claim is then released and its
@@ -18,8 +19,8 @@
  * been quiet for `persistence.adopt_quiet_ms` (default 5000); one that is not quiet within three windows keeps the refusal.
  */
 import { randomUUID } from 'node:crypto';
-import { readFileSync, statSync } from 'node:fs';
-import { relative, sep } from 'node:path';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { OperationError, type OperationContext } from '../ops/contract.ts';
@@ -88,7 +89,10 @@ async function adoptionIntent(engine: BrainEngine, row: WriteRequest, target: Lo
   const text = bytes.toString('utf8');
   // An edit whose bytes do not decode losslessly would be rewritten by its own adoption, so it keeps the refusal.
   if (!Buffer.from(text, 'utf8').equals(bytes)) return null;
-  const head = await headCommit(target.root) ? await headBlob(target.root, target.path) : undefined;
+  const commit = await headCommit(target.root);
+  // A checkout whose HEAD git cannot read keeps the refusal; only a brain with no repository has no HEAD to ask.
+  if (!commit && existsSync(join(binding.local_path!, '.git'))) return null;
+  const head = commit ? await headBlob(target.root, target.path) : undefined;
   if (head === null) return null;
   // A checkout whose HEAD holds the database's copy: only the worktree file moved. A repo-less brain has no HEAD to ask.
   const committed = head ? await blobText(target.root, head) : null;
@@ -103,16 +107,28 @@ async function adoptionIntent(engine: BrainEngine, row: WriteRequest, target: Lo
   const adopted: AdoptedLocalEdit = { path, blob: gitBlobOid(bytes, head?.length === 64 ? 'sha256' : 'sha1'), replaced_revision: snapshot.revision };
   return { adopted, params: { kind: 'managed_file_repair', slug: row.slug, path, sourcePath, content: text, beforeHash: sha256(bytes),
     resultDigest: publication.digest, ownerEpoch: String(binding.owner_epoch), expected_revision: snapshot.revision, noEmbed: true,
-    adoptLocalEdit: { blob: adopted.blob, replaced_revision: adopted.replaced_revision }, source_id: row.source_id, request_id: adoptionRequestId(row) } };
+    adoptLocalEdit: { blob: adopted.blob, replaced_revision: adopted.replaced_revision, head: head ?? null }, source_id: row.source_id, request_id: adoptionRequestId(row) } };
+}
+
+/** Whether the caller still holds the claim its refusal is being answered under (a cancelled caller adopts nothing). */
+async function callerHolds(engine: BrainEngine, caller: WriteRequest): Promise<boolean> {
+  return (await engine.executeRaw(`SELECT 1 FROM persistence_requests WHERE id=$1::uuid AND state='running' AND execution_token=$2::uuid`,
+    [caller.id, caller.execution_token])).length > 0;
+}
+
+/** Publication's recheck (file-repair.ts validate): HEAD still holds the blob the adoption read, so no newer commit is overwritten. */
+export async function adoptedHeadHolds(binding: WorktreeBinding, root: string, path: string, head: string | null): Promise<boolean> {
+  return head === null ? !existsSync(join(binding.local_path!, '.git')) : await headBlob(root, path) === head;
 }
 
 /** Claims, prepares and publishes the admitted adoption, retrying while another owner task holds the worktree lock. */
-async function publishAdoption(engine: BrainEngine, admitted: WriteRequest, path: string): Promise<WriteRequest> {
+async function publishAdoption(engine: BrainEngine, caller: WriteRequest, admitted: WriteRequest, path: string): Promise<WriteRequest> {
   const { finishUnpublishedFailure, publishMutation } = await import('./coordinator.ts');
   const { prepareManagedFileRepairMutation } = await import('./file-repair.ts');
   const deadline = Date.now() + LOCK_RETRY_MS;
   let row = admitted;
   for (;;) {
+    if (!await callerHolds(engine, caller)) return (await getWriteRequestById(engine, row.id))!;
     const [claimed] = await engine.transaction(async tx => {
       await declarePersistenceProtocol(tx);
       return tx.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state='running',execution_token=$2::uuid,
@@ -130,8 +146,8 @@ async function publishAdoption(engine: BrainEngine, admitted: WriteRequest, path
 }
 
 /**
- * An adoption `publishAdoption` left unfinished (still blocked on the worktree lock) is cancelled, so a caller that keeps
- * its refusal never has its local edit adopted later; one the resident consumer already took is awaited instead.
+ * An adoption `publishAdoption` left unfinished (still blocked on the worktree lock, or claimed by the resident consumer
+ * before its publication started) is cancelled, so a caller that keeps its refusal never has its local edit adopted later.
  */
 async function settleAdoption(engine: BrainEngine, row: WriteRequest): Promise<WriteRequest> {
   if (isTerminal(row)) return row;
@@ -159,7 +175,7 @@ export async function adoptLocalEdit(engine: BrainEngine, row: WriteRequest, err
   let admission: Awaited<ReturnType<typeof adoptionIntent>>;
   let admitted: WriteRequest | null;
   try {
-    if (!await settled(target.path, await quietMs(engine))) return null;
+    if (!await settled(target.path, await quietMs(engine)) || !await callerHolds(engine, row)) return null;
     admission = await adoptionIntent(engine, row, target, binding);
     if (!admission) return null;
     const params = admission.params;
@@ -173,7 +189,7 @@ export async function adoptLocalEdit(engine: BrainEngine, row: WriteRequest, err
     });
   } catch { return null; }
   if (!admitted) return null;
-  const done = await settleAdoption(engine, await publishAdoption(engine, admitted, target.path));
+  const done = await settleAdoption(engine, await publishAdoption(engine, row, admitted, target.path));
   if (done.state === 'committed') {
     await engine.transaction(async tx => {
       await declarePersistenceProtocol(tx);
