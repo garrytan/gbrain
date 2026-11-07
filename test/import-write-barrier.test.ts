@@ -394,6 +394,7 @@ test('a write held for an import is never passed by a later write to the same pa
   expect(await f.lastCommit(f.alpha)).not.toBe(before);
   await settle(f, held);
   if (second.pending) await settle(f, later);
+  expect((await requestRow(f, first.receipt.request_id)).state).toBe('committed');
   // Writes to one page commit in admission order: the later write is the last to commit, so the earlier one never lands on top of it.
   const versions = (await f.engine.executeRaw<{ body: string }>(
     `SELECT compiled_truth AS body FROM (SELECT v.compiled_truth, v.id FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.source_id=$1 AND p.slug=$2
