@@ -168,6 +168,18 @@ function verifyFiles(root: string, hashes: Record<string, string>, exact = false
   }
 }
 
+function canRerootUnboundExport(prior: DatabaseContentExportReceipt, newRoot: string, sourceRoot: string | null): boolean {
+  if (sourceRoot !== null || typeof prior.root !== 'string' || prior.stage !== 'exported' || prior.status !== 'action_required' || !prior.root_identity
+    || !isAbsolute(prior.root) || resolve(prior.root) !== prior.root || prior.root === newRoot) return false;
+  try {
+    checkedContentRoot(prior.root);
+    const stat = statSync(prior.root);
+    if (!stat.isDirectory() || stat.dev !== prior.root_identity.device || stat.ino !== prior.root_identity.inode) return false;
+    verifyFiles(prior.root, prior.files, true);
+    return true;
+  } catch { return false; }
+}
+
 export async function exportDatabaseContent(ctx: OperationContext, options: DatabaseContentExportOptions): Promise<DatabaseContentExportReceipt> {
   if (ctx.remote !== false) {
     throw hostOnlyError(ctx, 'permission_denied', 'DB-only export is a trusted host action.',
@@ -193,15 +205,25 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
   const key = `shared_skills.export.v1.${options.sourceId}.${source.incarnation}`;
   const saved = await ctx.engine.getConfig(key);
   let prior: DatabaseContentExportReceipt | null = null;
+  let redirectedFrom: DatabaseContentExportReceipt | null = null;
   try { if (saved) prior = JSON.parse(saved); } catch {
     throw opError('local_conflict', 'The export checkpoint is malformed.',
       `The saved export checkpoint for source ${options.sourceId} (config key ${key}) is not valid JSON, so nothing was exported. Show it to the user and ask how to proceed before changing it.`,
       { fix: readFix('Prints the saved export checkpoint.', { argv: ['gbrain', 'config', 'get', key] }) });
   }
-  if (prior && (prior.version !== 1 || prior.root !== root || prior.brain_id !== brain.brain_id || prior.source_incarnation !== source.incarnation)) {
+  if (prior && (prior.version !== 1 || prior.brain_id !== brain.brain_id || prior.source_id !== options.sourceId || prior.source_incarnation !== source.incarnation)) {
     throw opError('local_conflict', 'The export checkpoint targets a different root or identity.',
       `An earlier export of source ${options.sourceId} is checkpointed for another root or source incarnation; resume it with its own --content-root, or ask the user to settle it before starting a new one.`,
       typeof prior.root === 'string' ? { fix: exportPreviewFix(prior.root, options.sourceId, `Previews the checkpointed export of source ${options.sourceId} at its original root.`) } : {});
+  }
+  if (prior && prior.root !== root) {
+    if (!canRerootUnboundExport(prior, root, source.local_path)) {
+      throw opError('local_conflict', 'The export checkpoint targets a different root or identity.',
+        `An earlier export of source ${options.sourceId} is checkpointed for another root or source incarnation; resume it with its own --content-root, or ask the user to settle it before starting a new one.`,
+        typeof prior.root === 'string' ? { fix: exportPreviewFix(prior.root, options.sourceId, `Previews the checkpointed export of source ${options.sourceId} at its original root.`) } : {});
+    }
+    redirectedFrom = prior;
+    prior = null;
   }
   if (prior?.root_identity && !existsSync(root)) {
     throw opError('local_conflict', 'The verified exported root is missing. Restore it; migration will not silently create a replacement.',
@@ -218,6 +240,7 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
   }
   const inventory = await exportInventory(ctx.engine, options.sourceId);
   const hashes = Object.fromEntries(Object.entries(inventory.files).map(([path, content]) => [path, setupHash(content)]));
+  const checkpointToCompare = prior ?? redirectedFrom;
   const receipt: DatabaseContentExportReceipt = prior ?? {
     version: 1, brain_id: brain.brain_id, source_id: options.sourceId, source_incarnation: source.incarnation, root,
     staging_root: `${root}.gbrain-export-${randomUUID()}`, request_id: randomUUID(), stage: 'inventory', status: 'planned',
@@ -226,8 +249,8 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
     schema_policy: inventory.schemaPolicy,
   };
   receipt.conflicts = inventory.conflicts;
-  if (prior && stableJson(prior.schema_policy ?? null) !== stableJson(inventory.schemaPolicy)) receipt.conflicts.push({ slug: '*', reason: 'The source schema or ingestion policy changed since the export checkpoint. Revalidate the original policy before resuming; the root was not rebound.' });
-  if (prior && !sameInventory(prior.files, hashes)) receipt.conflicts.push({ slug: '*', reason: 'Database content changed since the export checkpoint. Preserve the existing export and choose a reviewed recovery path.' });
+  if (checkpointToCompare && stableJson(checkpointToCompare.schema_policy ?? null) !== stableJson(inventory.schemaPolicy)) receipt.conflicts.push({ slug: '*', reason: 'The source schema or ingestion policy changed since the export checkpoint. Revalidate the original policy before resuming; the root was not rebound.' });
+  if (checkpointToCompare && !sameInventory(checkpointToCompare.files, hashes)) receipt.conflicts.push({ slug: '*', reason: 'Database content changed since the export checkpoint. Preserve the existing export and choose a reviewed recovery path.' });
   receipt.pending_actions = [];
   if (!options.confirmQuiesced) receipt.pending_actions.push('Stop all memory/file writers and old skill servers, then pass --confirm-quiesced.');
   if (!options.backup) receipt.pending_actions.push('Verify an operational backup and pass --backup-confirmed, or explicitly choose --acknowledge-no-backup. Markdown is not a full database backup.');
@@ -297,7 +320,8 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
     if (!protocol.skill_bundles_enabled) await activateSharedSkillPersistence(ctx.engine, { confirmQuiesced: true });
     await installPackagedSharedSkills(ctx, options.sourceId, Object.keys(hashes));
     receipt.stage = 'complete'; receipt.status = 'complete';
-    receipt.pending_actions = ['Operational database state is retained and still needs backup. Publication consent, grants and client-native activation are unchanged.'];
+    receipt.pending_actions = ['Operational database state is retained and still needs backup. Publication consent, grants and client-native activation are unchanged.',
+      ...(redirectedFrom ? [`The previous exported directory remains intact at ${redirectedFrom.root}; review it before removing it.`] : [])];
     await ctx.engine.setConfig(key, JSON.stringify(receipt));
     return receipt;
   } catch (error) {
