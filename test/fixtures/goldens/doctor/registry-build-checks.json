@@ -1071,6 +1071,10 @@
       },
       {
         "category": "brain",
+        "name": "local_edit_adoptions"
+      },
+      {
+        "category": "brain",
         "name": "outside_content_fences"
       },
       {

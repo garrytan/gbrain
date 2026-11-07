@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.599.0] - 2026-11-07
+## [0.60.600.0] - 2026-11-06
 
 **`gbrain transcripts ingest --facts --json` now says when the facts pass did not extract everything (#8722).** The `facts` object carried only `pages`, `pagesFailed` and `spentUsd`, so a pass that hit its budget, that was refused for an unpriced model, or that skipped a page as too large or because another run held its lease looked the same as a complete one: exit 0, `pagesFailed: 0`. A caller that marks a session done on that result never retried it. The object now also carries `budget_exhausted`, `budget_reason` (`cost`, `runtime` or `no_pricing`, only when the budget was reached), `pages_skipped_too_large` and `pages_lock_skipped`, and the plain output prints a line for each that applies. `budget_exhausted` means the pass reached its budget, so some pages may have no facts yet; it can also be set when the last page succeeded and pushed spend over the cap. Existing fields and the exit code are unchanged. Contributed by @harjothkhara.
 
@@ -23,9 +23,21 @@ identifiers and attribution are available in the pre-removal Git revision
 | `gbrain transcripts ingest <files> --facts --json`, the `facts` object | Adds `budget_exhausted`, `budget_reason`, `pages_skipped_too_large` and `pages_lock_skipped`. |
 | `gbrain transcripts ingest <files> --facts` (plain output) | Adds a line when the budget was reached or pages were skipped. |
 
-## To take advantage of v0.60.599.0
+## To take advantage of v0.60.600.0
 
 Nothing to migrate. The new fields appear in the `facts` object of the `--json` output.
+
+## [0.60.599.0] - 2026-11-07
+
+**A page write refused `source_changed` now says why in its receipt, and a source can opt in to having a `remember`, `capture` or `add_timeline_entry` adopt an uncommitted local edit instead of being refused.** Before, only `pending_import`, `sync_held` and `canonical_file_missing` refusals carried a cause, so a write lost to a hand edit, an occupied path or a file that moved mid-write looked the same in `gbrain write-request` and doctor. Every `source_changed` refusal now records `error_detail.origin`. With `persistence.adopt_local_edits.source.<id>` on (off by default), a one-sided local edit (Git `HEAD` still holds the database's copy, or any edit on a repo-less brain) is committed as its own write first, then the caller's write lands on top. Keep the flag off until the follow-ups in #8755 are done.
+
+### Itemized changes
+
+- `src/core/persistence/publication-failure.ts`, `coordinator.ts`, `page-prepare.ts`, `git-door.ts`: a `source_changed` refusal's `error_detail` is `{ origin }`, one of `file_database_drift`, `canonical_path_occupied`, `raw_file_changed`, `pinned_git_worktree_conflict`, `unsafe_file_target`, `source_binding_changed` or `unbound_source`. Classification, retries and replay are unchanged. `gbrain sources writer status` leaves these routine refusals out of its recent database refusals.
+- `src/core/persistence/local-edit-adoption.ts` (new), `file-repair.ts`, `effect-git.ts`, `commit-ledger.ts`: the adoption is a `managed_file_repair` admitted under the installation's CLI writer with a request id derived from the caller's, so a write adopts at most once. It waits until the file has been unchanged for `persistence.adopt_quiet_ms` (default 5000, at most three windows), imports the exact bytes, keeps the replaced revision with change reason `adopted_local_edit` and, on a Git-durable checkout, commits only that file (`gbrain: adopt local edit to <path>`, trailers `gbrain-adopted:` and `gbrain-author: unknown`, a commit-ledger `adopted` line). The caller's receipt names `adopted: { path, blob, replaced_revision }`.
+- The adoption keeps the refusal for an edit to the title, type or a protected frontmatter key, a file that does not import, an edit on both sides, bytes that are not valid UTF-8, a `HEAD` that moved before publication or that Git cannot read, a cancelled caller, `put_page`, batches and every other verb. A file changed again during the adoption ends `raw_file_changed` with nothing written. An adoption still waiting on the worktree lock when the caller gives up is cancelled.
+- `src/commands/doctor/checks/local-edit-adoptions.ts` (new): doctor `local_edit_adoptions` lists the last 24 hours of adoptions per source.
+- Tests on PGLite and Postgres: `test/adopt-local-edit.test.ts` (each verb, every kept refusal, the quiet window, the lock and cancel races, a moved or unreadable `HEAD`, the doctor check, a repo-less brain) and `test/remember-pending-import.test.ts`.
 
 ## [0.60.598.0] - 2026-11-07
 

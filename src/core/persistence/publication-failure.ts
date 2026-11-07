@@ -70,6 +70,11 @@ export type CheckoutRefusalOrigin = typeof CHECKOUT_REFUSAL_ORIGINS[number];
 export interface CheckoutRefusalDetail { origin: CheckoutRefusalOrigin; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
 /** #6693: a page write refused because its file holds a committed change sync has not imported (`pending_import`) or sync holds the file (`sync_held`). */
 export interface PendingImportDetail { origin: 'pending_import' | 'sync_held'; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
+/** GST-1601: the cause of any other source_changed refusal, from its message (verb-errors.ts writeFailureDiagnostic). */
+export const SOURCE_CHANGED_ORIGINS = ['file_database_drift', 'canonical_path_occupied', 'raw_file_changed', 'pinned_git_worktree_conflict', 'unsafe_file_target',
+  'source_binding_changed', 'unbound_source'] as const;
+export type SourceChangedOrigin = typeof SOURCE_CHANGED_ORIGINS[number];
+export interface SourceChangedDetail { origin: SourceChangedOrigin; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
 /**
  * #8729: a segmented write refused body_staging_expired: the staging it names and, when the flip found the generation it
  * would publish incomplete, what that generation's rows covered. Fixed identifiers and counts only; owner-only (`staging`
@@ -80,7 +85,7 @@ export interface StagingRefusalDetail {
   staging: { staging_id: string; state?: string | null; reason?: 'generation_incomplete'; rows?: number; segment_count?: number; covered_bytes?: number | null; body_bytes?: number };
   stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null };
 }
-export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail | FenceRefusalDetail | WithdrawalRefusalDetail | OwnerExceptionDetail | CanonicalFileDetail | CheckoutRefusalDetail | PendingImportDetail | StagingRefusalDetail }
+export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail | FenceRefusalDetail | WithdrawalRefusalDetail | OwnerExceptionDetail | CanonicalFileDetail | CheckoutRefusalDetail | PendingImportDetail | SourceChangedDetail | StagingRefusalDetail }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STAGING_STATES: readonly unknown[] = ['open', 'sealed', 'prepared', 'committed', 'aborted', 'expired'];
