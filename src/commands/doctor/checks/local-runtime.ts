@@ -184,7 +184,9 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
     // run are the next apply-migrations' ordinary work and stay quiet here.
     const newestRun = completedVersions.reduce<string | null>((a, v) => (a === null || compareVersions(v, a) > 0 ? v : a), null);
     const pending = completed.length === 0 ? [] : migrationLedgerSummary(VERSION, declined).pending.filter(v =>
-      (newestRun !== null && compareVersions(v, newestRun) < 0) || history.get(v)?.at(-1)?.status === 'retry');
+      // --fast has no engine, so the opt-out config is unreadable: a version that can be declined is unknown, not pending.
+      (engine || !(v in MIGRATION_OPT_OUT_KEYS)) &&
+      ((newestRun !== null && compareVersions(v, newestRun) < 0) || history.get(v)?.at(-1)?.status === 'retry'));
 
     if (declined.size > 0) {
       const keys = [...declined].map(v => `${MIGRATION_OPT_OUT_KEYS[v]}=false`);
