@@ -36,6 +36,7 @@ test/backup-invalidation.serial.test.ts	bootstrap repo — recordRepoInReceipt c
 test/backup-private-path-text-5312.test.ts	(file-level)	3	readFileSync
 test/behavior-change-notice-6712-block.test.ts	#6712 PR 4b BEHAVIOR_CHANGES block	4	readFileSync
 test/book-mirror.test.ts	gbrain book-mirror — source file invariants	3	readFileSync
+test/bootstrap-access-policy-precedence.test.ts	ACCESS_POLICY template (#8777)	2	readFileSync
 test/bootstrap-codex-door.test.ts	Codex door — rendered AGENTS.md pull protocol (Gate 3)	2	readFileSync
 test/bootstrap-contract.test.ts	bootstrap same-turn write-back contract	6	readFileSync
 test/bootstrap-opencode-door.serial.test.ts	opencode door — rendered AGENTS.md pull protocol	1	readFileSync
