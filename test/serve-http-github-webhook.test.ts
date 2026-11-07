@@ -95,6 +95,27 @@ describe('selectGitHubItemSources', () => {
     expect(verified.map((r) => r.id)).toEqual(['gh']);
   });
 
+  test('every candidate row is signature-checked, in scope or not (#8768)', () => {
+    let calls = 0;
+    const counting = (cfg: Record<string, unknown>) => { calls++; return verify(cfg); };
+    selectGitHubItemSources([ghRow('gh', 'good')], 'other/repo', counting);
+    const outOfScope = calls;
+    calls = 0;
+    selectGitHubItemSources([ghRow('gh', 'good')], 'acme/app', counting);
+    expect(outOfScope).toBeGreaterThan(0);
+    expect(outOfScope).toBe(calls);
+  });
+
+  test('a repo with a legacy push source costs as many signature checks as an unknown repo (#8768)', () => {
+    let calls = 0;
+    const counting = (cfg: Record<string, unknown>) => { calls++; return verify(cfg); };
+    selectGitHubItemSources([ghRow('gh', 'bad')], 'acme/unknown', counting);
+    const unknown = calls;
+    calls = 0;
+    selectGitHubItemSources([ghRow('gh', 'bad'), legacyRow('old', 'bad')], 'acme/app', counting);
+    expect(calls).toBe(unknown);
+  });
+
   test('out-of-scope github-kind source neither verifies nor flags legacy', () => {
     const { verified, legacyMatched } = selectGitHubItemSources([ghRow('gh', 'good')], 'other/repo', verify);
     expect(verified).toEqual([]);
