@@ -893,10 +893,12 @@ async function fenceAndMerge(engine: BrainEngine, git: Git, sourceId: string, pl
         }
         const dirt = await dirtyOverlap(git, plan.root, row.old_head, row.target_head);
         if (dirt.overlap.length) await abort(engine, current, ['fenced'], dirtyRefusal(sourceId, dirt.overlap));
-        await engine.transaction(async tx => {
+        // GST-1623: the merge runs only when this marked the row; a row recovery moved off `fenced` meanwhile is not merged over.
+        const marked = await engine.transaction(async tx => {
           await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-          await tx.executeRaw(`UPDATE persistence_worktree_refreshes SET outcome=outcome||'{"merge_started":true}'::jsonb,updated_at=now() WHERE id=$1::uuid AND state='fenced'`, [row.id]);
+          return tx.executeRaw(`UPDATE persistence_worktree_refreshes SET outcome=outcome||'{"merge_started":true}'::jsonb,updated_at=now() WHERE id=$1::uuid AND state='fenced' RETURNING id`, [row.id]);
         });
+        if (!marked.length) throw refusal('refresh_source_changed', 'The refresh record was moved by recovery before the merge; nothing was merged.', `gbrain sources refresh ${sourceId} --resume`, row.id);
         let merge = await git(['-C', plan.root, 'merge', '--ff-only', '--no-edit', '--quiet', row.target_head], 120_000);
         let after = await headOf(git, plan.root);
         for (let attempt = 1; attempt < INDEX_LOCK_ATTEMPTS && merge.code !== 0 && after === row.old_head && INDEX_LOCKED.test(merge.stderr); attempt++) {

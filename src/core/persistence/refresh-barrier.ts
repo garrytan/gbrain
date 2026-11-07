@@ -14,7 +14,7 @@ import { gitChildEnv } from '../git-env.ts';
 import { OperationError } from '../ops/contract.ts';
 import { authorizeWrite } from './authority.ts';
 import type { BrainEngine } from '../engine.ts';
-import { completeWrite } from './journal.ts';
+import { completeWrite, SYNC_KIND } from './journal.ts';
 import { PENDING_IMPORT } from './pending-import.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
@@ -23,10 +23,12 @@ const GIT_ENV = { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never', LC_ALL: 'C
 const DIFF_TIMEOUT_MS = 30_000;
 const CACHED_REFRESHES = 32;
 /** The paths each refresh changed, per checkout root: one diff serves the whole drain behind it. */
-const changed = new Map<string, Promise<ReadonlySet<string> | null>>();
+const changed = new Map<string, Promise<RefreshPaths | null>>();
+/** GST-1623: with `core.ignorecase` true the checkout names one file in any case, so paths are compared case-folded. */
+interface RefreshPaths { paths: ReadonlySet<string>; fold: boolean }
 
 /** Paths (repository-relative, forward slashes) refresh `refreshId` changed; empty for an aborted refresh; null when unreadable. */
-async function refreshChangedPaths(engine: SqlEngine, refreshId: string, root: string): Promise<ReadonlySet<string> | null> {
+async function refreshChangedPaths(engine: SqlEngine, refreshId: string, root: string): Promise<RefreshPaths | null> {
   const key = `${refreshId}\0${root}`;
   const held = changed.get(key);
   if (held) return held;
@@ -34,10 +36,13 @@ async function refreshChangedPaths(engine: SqlEngine, refreshId: string, root: s
     const [refresh] = await engine.executeRaw<{ state: string; old_head: string; target_head: string; released: boolean }>(
       'SELECT state,old_head,target_head,released_at IS NOT NULL AS released FROM persistence_worktree_refreshes WHERE id=$1::uuid', [refreshId]);
     if (!refresh?.released) return null;
-    if (refresh.state === 'aborted' || refresh.old_head === refresh.target_head) return new Set<string>();
-    const { error, stdout } = await execFileBounded('git', ['-C', root, '-c', 'core.quotepath=false', 'diff', '--name-only', '-z', '--no-renames', '--relative',
-      refresh.old_head, refresh.target_head], { timeout: DIFF_TIMEOUT_MS, maxBuffer: 64 * 1024 ** 2, env: gitChildEnv(GIT_ENV) });
-    return error ? null : new Set(stdout.split('\0').filter(Boolean));
+    if (refresh.state === 'aborted' || refresh.old_head === refresh.target_head) return { paths: new Set<string>(), fold: false };
+    const [diff, config] = await Promise.all([execFileBounded('git', ['-C', root, '-c', 'core.quotepath=false', 'diff', '--name-only', '-z', '--no-renames', '--relative',
+      refresh.old_head, refresh.target_head], { timeout: DIFF_TIMEOUT_MS, maxBuffer: 64 * 1024 ** 2, env: gitChildEnv(GIT_ENV) }),
+    execFileBounded('git', ['-C', root, 'config', '--bool', 'core.ignorecase'], { timeout: DIFF_TIMEOUT_MS, env: gitChildEnv(GIT_ENV) })]);
+    if (diff.error) return null;
+    const fold = !config.error && config.stdout.trim() === 'true';
+    return { paths: new Set(diff.stdout.split('\0').filter(Boolean).map(path => fold ? path.toLowerCase() : path)), fold };
   })();
   changed.set(key, read);
   read.then(paths => { if (paths === null && changed.get(key) === read) changed.delete(key); }, () => { if (changed.get(key) === read) changed.delete(key); });
@@ -47,13 +52,34 @@ async function refreshChangedPaths(engine: SqlEngine, refreshId: string, root: s
 
 export interface DeferredRefusal { state: 'conflict' | 'failed'; failure: { code: string; message: string } }
 
+/** Writes that apply on top of the page as it is, so one accepted later never makes them overwrite anything. */
+const APPENDING_OPERATIONS = ['remember', 'add_timeline_entry'];
+
+/**
+ * GST-1623: the refusal of deferred write `row` when a write to its page accepted after it has already committed (an older
+ * consumer, which has no EARLIER_DEFERRED in its claim, claimed the later write first), so the deferred one, replayed now,
+ * never lands on top of it. Managed sync's own rows are the import the write waited for and do not count; neither does a
+ * write that only appends.
+ */
+async function laterWriteRefusal(engine: SqlEngine, row: WriteRequest): Promise<DeferredRefusal | null> {
+  if (APPENDING_OPERATIONS.includes(row.operation)) return null;
+  const [later] = await engine.executeRaw<{ request_id: string }>(`SELECT r.request_id::text AS request_id FROM persistence_requests r
+    WHERE r.source_id=$1 AND r.slug=$2 AND r.sequence>$3 AND r.state='committed' AND NOT ${SYNC_KIND('r')} ORDER BY r.sequence LIMIT 1`,
+  [row.source_id, row.slug, String(row.sequence)]);
+  if (!later) return null;
+  return { state: 'conflict', failure: { code: 'revision_conflict', message: `Request ${row.request_id} waited ${row.deferred_refresh_id ? `behind refresh ${row.deferred_refresh_id}` : 'for an import'}, and request ${later.request_id}, accepted after it, has already changed ${row.slug}, so nothing was applied and the later write was not overwritten. Read the page again and submit the change with a new request_id.` } };
+}
+
 /**
  * Null when a claimed deferred write may publish `files` (its own page file and its companions'); otherwise the terminal
- * refusal to record. A row that was never deferred is not checked.
+ * refusal to record. A row that was never deferred is not checked. GST-1623: a write held for an import is checked too, for a
+ * later write to its page that committed first.
  */
 export async function deferredReplayRefusal(engine: SqlEngine, row: WriteRequest, files: ReadonlyArray<{ path: string; root: string }>): Promise<DeferredRefusal | null> {
   const refreshId = row.deferred_refresh_id;
-  if (!refreshId) return null;
+  if (!refreshId && row.deferred_import_from == null) return null;
+  const later = await laterWriteRefusal(engine, row);
+  if (later || !refreshId) return later;
   try { await authorizeWrite(engine, row.authority, row.operation, row.slug); } catch (error) {
     if (!(error instanceof OperationError)) throw error;
     return { state: 'failed', failure: { code: error.code, message: `Request ${row.request_id} waited behind refresh ${refreshId}, and its credential no longer grants this write: ${error.message}` } };
@@ -61,10 +87,10 @@ export async function deferredReplayRefusal(engine: SqlEngine, row: WriteRequest
   let unreadable = false;
   const touched: string[] = [];
   for (const file of files) {
-    const paths = await refreshChangedPaths(engine, refreshId, file.root);
+    const changes = await refreshChangedPaths(engine, refreshId, file.root);
     const target = relative(file.root, file.path).split(sep).join('/');
-    if (paths === null) unreadable = true;
-    if (paths === null || paths.has(target)) touched.push(target);
+    if (changes === null) unreadable = true;
+    if (changes === null || changes.paths.has(changes.fold ? target.toLowerCase() : target)) touched.push(target);
   }
   if (!touched.length) return null;
   return { state: 'conflict', failure: { code: 'revision_conflict', message: unreadable
@@ -79,11 +105,20 @@ const MAX_WAIT_SQL = `COALESCE((SELECT CASE WHEN value ~ '^[1-9][0-9]{0,14}$' TH
 const overdueDeferredFrom = (host: string, maxWait: string) => `JOIN persistence_worktrees w ON w.id=r.worktree_id
     JOIN persistence_worktree_refreshes f ON f.id=r.deferred_refresh_id
     WHERE w.owner_host_id=${host}::uuid AND r.state='deferred' AND f.released_at IS NULL AND r.created_at<now()-(${maxWait}*interval '1 millisecond')`;
-/** GST-1582: a write held for an import still pending (its refresh, if any, released) whose hold is older than the limit. */
+/**
+ * GST-1623: however often a write is held again (another writer committing to its file faster than sync imports), it waits at
+ * most this many wait limits from its admission, and never less than HOLD_CEILING_FLOOR_MS.
+ */
+const HOLD_CEILING_LIMITS = 4;
+const HOLD_CEILING_FLOOR_MS = 4 * 60 * 60_000;
+const holdCeiling = (maxWait: string) => `GREATEST(${maxWait}*${HOLD_CEILING_LIMITS},${HOLD_CEILING_FLOOR_MS})`;
+/** A held write past its limit: held longer than the wait limit, or accepted longer ago than the ceiling. */
+const holdOverdue = (maxWait: string) => `(r.updated_at<now()-(${maxWait}*interval '1 millisecond') OR r.created_at<now()-(${holdCeiling(maxWait)}*interval '1 millisecond'))`;
+/** GST-1582: a write held for an import still pending (its refresh, if any, released) whose hold is past its limit. */
 const overdueImportFrom = (host: string, maxWait: string) => `JOIN persistence_worktrees w ON w.id=r.worktree_id JOIN sources s ON s.id=r.source_id
     WHERE w.owner_host_id=${host}::uuid AND r.state='deferred' AND r.deferred_import_from IS NOT NULL AND COALESCE(s.last_commit,'')=r.deferred_import_from
       AND (r.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.id=r.deferred_refresh_id AND f.released_at IS NOT NULL))
-      AND r.updated_at<now()-(${maxWait}*interval '1 millisecond')`;
+      AND ${holdOverdue(maxWait)}`;
 /** The owner's idle probe counts an overdue deferred or import-held write as work, so its expiry runs even when nothing else is queued. */
 export const overdueDeferredWorkSql = (host: string) => `(EXISTS (SELECT 1 FROM persistence_requests r ${overdueDeferredFrom(host, MAX_WAIT_SQL)})
   OR EXISTS (SELECT 1 FROM persistence_requests r ${overdueImportFrom(host, MAX_WAIT_SQL)}))`;
@@ -100,7 +135,8 @@ export const overdueDeferredWorkSql = (host: string) => `(EXISTS (SELECT 1 FROM 
  * so the expiry checks the row is still unclaimed and its import still pending with the sources row locked FOR SHARE
  * (after the protocol's brain lock, the order a fence takes them in), so an import that is landing makes the check wait
  * and then see it landed. GST-1623: it also rechecks the hold it scanned (the same import and an age past the limit), so an
- * import and a new hold between the scan and the lock never expire the new hold.
+ * import and a new hold between the scan and the lock never expire the new hold. A write held again and again expires at
+ * the ceiling counted from its admission (holdOverdue). An expired remember says whether a sync will replay it: only one that named its entity is replayed (failed-writes.ts).
  */
 export async function expireDeferredWrites(engine: BrainEngine, hostId: string, signal?: AbortSignal): Promise<WriteRequest[]> {
   const [config] = await engine.executeRaw<{ ms: number }>(`SELECT ${MAX_WAIT_SQL} AS ms`, undefined, { signal });
@@ -126,12 +162,16 @@ export async function expireDeferredWrites(engine: BrainEngine, hostId: string, 
       await declarePersistenceProtocol(tx);
       const [held] = await tx.executeRaw(`SELECT 1 FROM persistence_requests r JOIN sources s ON s.id=r.source_id
         WHERE r.id=$1::uuid AND r.state='deferred' AND r.deferred_import_from=$2 AND COALESCE(s.last_commit,'')=r.deferred_import_from
-          AND r.updated_at<now()-($3::double precision*interval '1 millisecond') FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);
+          AND ${holdOverdue('$3::double precision')} FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);
       if (!held) return null;
+      const waited = `Request ${row.request_id} waited more than ${Math.round(maxWaitMs / 1000)} s`;
+      const status = `gbrain sync status --source ${row.source_id} --json`;
       if (row.operation === 'remember') return completeWrite(tx, row, 'conflict', {}, { code: 'source_changed', detail: { origin: PENDING_IMPORT },
-        message: `Request ${row.request_id} waited more than ${Math.round(maxWaitMs / 1000)} s for managed sync to import a committed change to the file of ${row.slug}, and the import has not landed, so the fact is not saved yet. It is kept: the first managed sync that imports the file replays it once. Do not save it again; check the source with gbrain sync status --source ${row.source_id} --json.` });
+        message: `${waited} for managed sync to import a committed change to the file of ${row.slug}, and the import has not landed, so the fact is not saved yet. ${typeof row.intent?.entity_slug === 'string'
+          ? `It is kept for one automatic replay attempt by the first managed sync that imports the file; until that replay commits, gbrain repair failed-writes --source ${row.source_id} lists it (a replay that is refused stays there for a person to replay).`
+          : `It is kept, but it named no entity, so no sync replays it: gbrain repair failed-writes --source ${row.source_id} lists it for a person to replay once the source has synced.`} Do not save it again; check the source with ${status}.` });
       return completeWrite(tx, row, 'failed', {}, { code: 'pending_import_expired',
-        message: `Request ${row.request_id} waited more than ${Math.round(maxWaitMs / 1000)} s for managed sync to import a committed change to the file of ${row.slug}, and the import has not landed, so nothing was applied. Check the source with gbrain sync status --source ${row.source_id} --json, then submit the write again with a new request_id.` });
+        message: `${waited} for managed sync to import a committed change to the file of ${row.slug}, and the import has not landed, so nothing was applied. Check the source with ${status}, then submit the write again with a new request_id.` });
     }).catch(error => { if ((error as { code?: string })?.code === 'write_claim_lost') return null; throw error; });
     if (done) finished.push(done);
   }

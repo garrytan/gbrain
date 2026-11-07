@@ -1332,7 +1332,7 @@ More: [docs/guides/troubleshooting.md#doctor-ops-tier](../../docs/guides/trouble
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Writes deferred behind a worktree refresh are still waiting, and an older gbrain cannot drain them. | A release before the refresh write barrier never claims a deferred write, so after a downgrade those writes wait until the next upgrade. Safety does not depend on this check; liveness does. | Turn the barrier off (gbrain config set persistence.refresh_barrier false); wait until gbrain upgrade --check-downgrade exits 0, then downgrade. | host_admin | `repeat the read that failed` | 3 | no |
+| Writes deferred behind a worktree refresh are still waiting, and an older gbrain cannot drain them. | A release before the refresh write barrier never claims a deferred write, so after a downgrade those writes wait until the next upgrade. Safety does not depend on this check; liveness does. A released write publishes only when a gbrain process runs the write consumer on the worktree's owner host; polling its receipt does not publish it. | Turn the barrier off (gbrain config set persistence.refresh_barrier false); wait until gbrain upgrade --check-downgrade exits 0, then downgrade. | host_admin | `repeat the read that failed` | 3 | no |
 
 More: [docs/guides/write-refusals.md#deferred-writes](../../docs/guides/write-refusals.md#deferred-writes)
 

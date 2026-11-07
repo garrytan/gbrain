@@ -160,6 +160,12 @@ row stores both heads). An aborted refresh moved nothing and skips the check.
 - No target path changed in R: the write publishes normally. Its own `expected_revision` and the
   existing file guards still apply, so two deferred writes to one page, or a pre-fence write and a
   deferred write, behave exactly as two ordinary queued writes do (no false conflict).
+- GST-1623: a write to the same page accepted after the deferred one has already committed (an
+  older consumer, whose claim lacks the deferred-row head rule, took it first): the row finishes
+  `conflict` / `revision_conflict` naming that request, so the earlier write never lands on top of
+  the later one. Managed sync's own rows and appends (`remember`, `add_timeline_entry`) do not count.
+  The same check runs for a write held for an import. Paths compare case-folded when the checkout's
+  `core.ignorecase` is true.
 - Any target path changed in R: the row finishes with receipt state `conflict`, code
   `revision_conflict`, detail naming the refresh and the changed paths. Nothing is applied, so a page
   the refresh changed is never overwritten. This applies to every page operation, appends included;
@@ -175,7 +181,9 @@ released rows are claimed normally during the next refresh's `draining` and coun
 them like queued rows. GST-1623: a managed sync job (and a bulk sync group made only of them) is
 admitted as if deferred rows held no slot and no intent bytes, since they cannot settle before the
 import does; the held rows are read only when the plain check would refuse, so the importer can pass
-a cap by at most what they hold. Every other write still counts them. GST-1582 removed the per-refresh cap (`persistence.refresh_barrier_max_deferred`):
+a cap by at most what they hold. Only rows still held for the sync's own source count (#8759): rows
+held for another source, and released rows about to settle, keep their slots. Every other write still
+counts them, and the local CLI fair share counts deferred rows toward their source's share. GST-1582 removed the per-refresh cap (`persistence.refresh_barrier_max_deferred`):
 a write past it queued as deferred instead of being refused, because a refusal there bounced exactly
 the writes the barrier exists to keep. The setting is no longer read.
 
@@ -206,23 +214,32 @@ barrier exists to keep, and with the flag on each now waits instead (with it off
   then claimed and prepared from scratch, as if it had queued behind the import: a `remember` or
   `add_timeline_entry` applies on top; a `put_page` with `expected_revision` meets the moved page and ends
   `revision_conflict`; a blind (`force`) `put_page` or a `capture` lands over it. An import that lands without covering
-  the file only re-arms the hold at the new commit. The receipt reads `queued` with
+  the file only re-arms the hold at the new commit. A later request to the same page waits behind the
+  held one (it is held too); an effect or a maintenance read of the file (Git and withdrawal-mirror
+  effects, lint, drift checks) is never refused by a hold (GST-1623). A write deferred behind a refresh
+  that meets `pending_import` takes the refresh-change check on that file first: a refresh that changed
+  it ends the write `revision_conflict` there, and otherwise the hold clears the released
+  `deferred_refresh_id`, so a consumer from before v294 never claims a row whose import is pending. The receipt reads `queued` with
   `deferred: { pending_import: true }`, and the caller's wait returns pending at once.
 
 **What a blind write replaced.** A held `put_page` or `capture` that replaces content an import brought in names
 it in three places, so the replacement is auditable and recoverable without digging: the receipt's
 `supersedes` (`slug`, `path`, the replaced `revision`, the imported `commit`: the newest commit
-after the held-at commit that touched the file), a `gbrain-supersedes: <path>: revision <id> from
+after the held-at commit that touched the file; a capture whose captured bytes are that commit's file
+replaced nothing and names none, #8759), a `gbrain-supersedes: <path>: revision <id> from
 <commit>` trailer on its commit, and a `supersedes` list on that commit's ledger line (effect and
 door commits). The replaced revision stays in `page_versions` and the imported commit stays in
 Git, an ancestor of the write's commit.
 
 **Age bound and schema.** A row held for an import that has not landed within
-`persistence.refresh_barrier_max_wait_ms` of its hold (measured from the hold, not from admission) ends
-`failed` with `pending_import_expired` in the owner's housekeeping turn, which rechecks under the
+`persistence.refresh_barrier_max_wait_ms` of its hold (measured from the hold, not from admission), or
+whose admission is older than four wait limits (at least four hours) however often it was held again
+(GST-1623), ends `failed` with `pending_import_expired` in the owner's housekeeping turn, which rechecks under the
 request lock that the row is still unclaimed and its import still pending. A `remember` ends as its
 `pending_import` refusal did instead (conflict `source_changed`, origin `pending_import`), so the
-first sync that imports the file replays the fact. Migration v294 adds the nullable `persistence_requests.deferred_import_from` and
+first sync that imports the file replays the fact; one that named no entity is not replayed, and its
+message sends a person to `gbrain repair failed-writes`. A source row is removed only through writer
+administration, which ends its deferred rows `source_changed`, so no held row outlives its source. Migration v294 adds the nullable `persistence_requests.deferred_import_from` and
 widens `gbrain_guard_deferred_request`: a running row may move to `deferred` only under the barrier's
 session declaration and only naming the import it waits for, and a deferred row moves to `running`
 only once every hold it names is released. Only the write owner's consumer holds a row for an
@@ -263,6 +280,8 @@ Deferred rows are durable rows; nothing about them lives in process memory.
     it: recovery records the merge and the next refresh finishes the member syncs, with no `--resume`.
   - A merge that started and a HEAD that no longer holds the target (a reset and an unrelated commit)
     stays `recovery_required` for the operator.
+  - The merge runs only when the update that records `merge_started` matched the `fenced` row; a row
+    recovery moved meanwhile ends the refresh `refresh_source_changed` with nothing merged (GST-1623).
 - Consumer dies after claiming: the row is `running` with a lease; ordinary expiry and reclaim.
 - Release and the deferred-to-running claim are single statements.
 
@@ -302,7 +321,16 @@ Deferred rows are durable rows; nothing about them lives in process memory.
 - CLI write verbs: deferred → exit 10 with the receipt (`state: deferred`, `deferred`), `--json`
   carries `outcome: pending`. This holds on every CLI route: the owner socket asks dispatch for the
   `write_pending` error (`pendingAsError`), and a thin client turns a `status: "pending"` success
-  into the same pending error. `gbrain write-request <id>` shows the deferral until it drains.
+  into the same pending error. `gbrain write-request <id>` shows the deferral until it drains; it
+  only reads the receipt. A released row publishes when a process runs the write consumer on the
+  owner host (`gbrain serve`, `gbrain jobs work`, any write or sync import there). Its receipt health
+  counts a released deferred row as an earlier write, and every write on a worktree whose refresh
+  awaits recovery (a deferred one included) reports `recovery_required` (GST-1623).
+- A replay of an accepted request id reconciles to its receipt before any deferral, so it is never
+  deferred again behind a refresh awaiting recovery.
+- The `worktree_refreshing` retry hint reads the worktree's newest completed refreshes through
+  `persistence_worktree_refreshes_completed` (`(worktree_id, completed_at DESC) WHERE state='completed'`,
+  migration v295), and a managed sync drain never sleeps a hint past its own refresh budget.
 - MCP: deferred → `isError: false`, `status: "pending"`; `requestLogStatusForResult` classifies a
   pending non-error result as `accepted_pending` (today it only reads pending from error results).
   Other `write_pending` results (an acknowledgement lost to the owner) are unchanged.

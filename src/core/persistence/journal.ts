@@ -119,7 +119,8 @@ export function capacityError(resource: string, outstanding?: { used: number; li
  * divided by the sources holding outstanding requests on the principal, this one included) is still admitted; the brain
  * cap and every other principal's cap stay hard. The share is checked before the admission, so a sync publication group
  * larger than the share is admitted whole and a source passes its share by at most one group. A refusal names the source
- * holding the most slots. GST-1623: a managed sync job passes `held`, the counter's writes waiting in `deferred` (heldBehindImport).
+ * holding the most slots. GST-1623: a managed sync job passes `held`, the counter's writes waiting in `deferred` (heldBehindImport). Deferred
+ * writes hold slots like queued ones, so they count toward their source's share.
  */
 async function outstandingRefusal(tx: SqlEngine, row: Counter, principal: Principal, sourceId: string, need: number, limit: number,
   held = 0): Promise<OperationError | null> {
@@ -127,7 +128,7 @@ async function outstandingRefusal(tx: SqlEngine, row: Counter, principal: Princi
   if (used - held + need <= limit) return null;
   if (row.key === 'brain' || principal.kind !== 'local_cli') return capacityError(`${row.key === 'brain' ? 'brain' : 'principal'} outstanding requests`, { used, limit });
   const holders = await tx.executeRaw<{ source_id: string; n: number | string }>(`SELECT source_id,count(*) AS n FROM persistence_requests
-    WHERE principal_kind=$1 AND principal_id=$2 AND state IN ('queued','running','recovering') GROUP BY source_id ORDER BY count(*) DESC,source_id`, [principal.kind, principal.id]);
+    WHERE principal_kind=$1 AND principal_id=$2 AND state IN ('queued','deferred','running','recovering') GROUP BY source_id ORDER BY count(*) DESC,source_id`, [principal.kind, principal.id]);
   const own = Number(holders.find(holder => holder.source_id === sourceId)?.n ?? 0);
   const sources = holders.length + (own > 0 ? 0 : 1);
   if (sources > 1 && own < Math.floor(limit / sources)) return null;
@@ -135,13 +136,17 @@ async function outstandingRefusal(tx: SqlEngine, row: Counter, principal: Princi
   return capacityError(`principal outstanding requests${top ? ` (source ${top.source_id} holds ${Number(top.n)})` : ''}`, { used, limit });
 }
 /**
- * GST-1623: the writes counted on `principal`'s counter (the brain's when null) that wait in `deferred` behind an import or
- * a refresh, and their intent bytes. They cannot settle before managed sync imports, so a managed sync job is admitted as
- * if they held no slot; the importer can pass a cap by at most what they hold. Read only when the plain check would refuse.
+ * GST-1623: the writes counted on `principal`'s counter (the brain's when null) that still wait in `deferred` on source
+ * `sourceId`'s managed sync: held for its import, or deferred behind an unreleased refresh it is a member of (a refresh is
+ * released only once all its members synced). They cannot settle before that sync, so its job is admitted as if they held
+ * no slot; the importer can pass a cap by at most what they hold. Writes waiting on another source's sync, and released ones
+ * about to settle, keep their slots (#8759). Read only when the plain check would refuse.
  */
-async function heldBehindImport(tx: SqlEngine, principal: Principal | null): Promise<{ count: number; bytes: number }> {
-  const [row] = await tx.executeRaw<{ count: number | string; bytes: number | string }>(`SELECT count(*) AS count,COALESCE(sum(intent_bytes),0) AS bytes
-    FROM persistence_requests WHERE state='deferred'${principal ? ' AND principal_kind=$1 AND principal_id=$2' : ''}`, principal ? [principal.kind, principal.id] : []);
+async function heldBehindImport(tx: SqlEngine, principal: Principal | null, sourceId: string): Promise<{ count: number; bytes: number }> {
+  const [row] = await tx.executeRaw<{ count: number | string; bytes: number | string }>(`SELECT count(*) AS count,COALESCE(sum(r.intent_bytes),0) AS bytes
+    FROM persistence_requests r WHERE r.state='deferred' AND NOT ${RELEASED_DEFERRED('r')} AND ((r.deferred_import_from IS NOT NULL AND r.source_id=$1)
+      OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.id=r.deferred_refresh_id AND f.released_at IS NULL AND $1=ANY(f.source_ids)))${principal ? ' AND r.principal_kind=$2 AND r.principal_id=$3' : ''}`,
+  principal ? [sourceId, principal.kind, principal.id] : [sourceId]);
   return { count: Number(row?.count ?? 0), bytes: Number(row?.bytes ?? 0) };
 }
 /** A managed sync job: the import itself, never deferred or refused behind a refresh that waits on it. */
@@ -350,7 +355,7 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
       const brain = row.key === 'brain';
       const countLimit = brain ? limits.brainOutstanding : limits.principalOutstanding, bytesLimit = brain ? limits.brainIntentBytes : limits.principalIntentBytes;
       const fits = Number(row.outstanding_count) + 1 <= countLimit && Number(row.intent_bytes) + bytes <= bytesLimit;
-      const held = managedSyncJob(input) && !fits ? await heldBehindImport(tx, brain ? null : input.principal) : { count: 0, bytes: 0 };
+      const held = managedSyncJob(input) && !fits ? await heldBehindImport(tx, brain ? null : input.principal, input.sourceId) : { count: 0, bytes: 0 };
       const outstanding = await outstandingRefusal(tx, row, input.principal, input.sourceId, 1, countLimit, held.count);
       if (outstanding) throw outstanding;
       if (Number(row.intent_bytes) - held.bytes + bytes > bytesLimit) throw capacityError(`${brain ? 'brain' : 'principal'} intent bytes`);
@@ -438,7 +443,7 @@ export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: Writ
       const brain = row.key === 'brain', scope = brain ? 'brain' : 'principal';
       const countLimit = brain ? limits.brainOutstanding : limits.principalOutstanding, bytesLimit = brain ? limits.brainIntentBytes : limits.principalIntentBytes;
       const fits = Number(row.outstanding_count) + fresh.length <= countLimit && Number(row.intent_bytes) + bytes <= bytesLimit;
-      const held = syncGroup && !fits ? await heldBehindImport(tx, brain ? null : first.principal) : { count: 0, bytes: 0 };
+      const held = syncGroup && !fits ? await heldBehindImport(tx, brain ? null : first.principal, first.sourceId) : { count: 0, bytes: 0 };
       const outstanding = await outstandingRefusal(tx, row, first.principal, first.sourceId, fresh.length, countLimit, held.count);
       if (outstanding) throw outstanding;
       if (Number(row.intent_bytes) - held.bytes + bytes > bytesLimit) throw capacityError(`${scope} intent bytes`);
@@ -671,14 +676,15 @@ async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmissio
         AND s.last_commit IS DISTINCT FROM f.target_head) RETURNING f.id`, [refresh.id]);
     if (completed.length) return null;
   }
+  // A single write's replay of a request already accepted (its acknowledgement lost before the fence) reconciles to its
+  // receipt instead; a group admission never bypasses, since its other items may be new. GST-1623: checked before any
+  // deferral, so a replay never waits behind a refresh as if it were new.
+  if (replayable && input.requestId && await getWriteRequest(tx, input.principal, input.requestId)) return null;
   // GST-1582: with the barrier on, a write waits behind a refresh awaiting recovery too, and lands once it is released.
   if (refresh.state === 'recovery_required' && barrier && input.worktreeId && await deferralRoom(tx, input.worktreeId)) return refresh.id;
   if (refresh.state === 'recovery_required') throw catalogueError('refresh_recovery_required',
     `Refresh ${refresh.id} could not verify the checkout HEAD of source ${input.sourceId}; writes to its worktree stay fenced.`,
     `gbrain sources writer status ${input.sourceId}, then gbrain sources refresh ${input.sourceId} --resume. Retry the same request_id afterwards.`);
-  // A single write's replay of a request already accepted (its acknowledgement lost before the fence) reconciles to its
-  // receipt instead; a group admission never bypasses, since its other items may be new.
-  if (replayable && input.requestId && await getWriteRequest(tx, input.principal, input.requestId)) return null;
   // PR B: with the barrier on, the write waits behind the refresh as a deferred request instead of being refused.
   if (barrier && input.worktreeId && await deferralRoom(tx, input.worktreeId)) return refresh.id;
   // GST-1582: the retry hint comes from the refresh's own state (its phase, how long it has run, how long this worktree's
@@ -1322,7 +1328,9 @@ const STUCK_RECOVERY = (r: string) => `(${r}.state='recovering' OR (${r}.recover
  * Receipt health facts per root. #5984: a queued request waits on any earlier unfinished request of its root;
  * a claimed one (a lane, a group follower, or a foreground write claimed ahead of queued sync rows) waits only
  * on an earlier one already publishing or recovering, so the queued rows it overtook never make it report
- * `waiting_on_earlier_write`.
+ * `waiting_on_earlier_write`. GST-1623: a released deferred write is an earlier unfinished request like a queued one (claims
+ * wait on it, EARLIER_DEFERRED), and a worktree whose refresh awaits recovery reports `recovery_required` for every write that
+ * waits there, a write deferred behind that refresh included, so the operator signal the refusal used to carry is not lost.
  */
 export async function writeHealthFacts(engine: BrainEngine, rows: WriteRequest[]): Promise<Map<string, WriteHealthFacts>> {
   if (rows.length > 100) throw new RangeError('Receipt health pages are limited to 100 rows.');
@@ -1336,7 +1344,8 @@ export async function writeHealthFacts(engine: BrainEngine, rows: WriteRequest[]
     WITH roots AS (SELECT unnest($1::text[]) AS root)
     SELECT roots.root,head.sequence::text,head.started_sequence::text,head.started_unlaned::text,COALESCE(head.inspect_owner,false) AS inspect_owner,
       COALESCE(head.recovering,false) OR EXISTS (SELECT 1 FROM persistence_effects e
-        WHERE e.worktree_id=w.id AND e.recovery IS NOT NULL) AS recovery_required,
+        WHERE e.worktree_id=w.id AND e.recovery IS NOT NULL)
+        OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.worktree_id=w.id AND f.state='recovery_required') AS recovery_required,
       w.id IS NOT NULL AND (w.state<>'active' OR w.owner_host_id IS NULL) AS owner_unavailable
     FROM roots LEFT JOIN persistence_worktrees w ON w.id::text=roots.root
     LEFT JOIN LATERAL (
@@ -1347,7 +1356,7 @@ export async function writeHealthFacts(engine: BrainEngine, rows: WriteRequest[]
           AND NOT (s.state='running' AND s.recovery IS NULL AND s.operation='submit_job') ORDER BY s.sequence LIMIT 1) AS started_unlaned,
         ${STUCK_RECOVERY('r')} AS recovering,
         r.blocked_reason IN ('unexpected_file_bytes','unexpected_staging_bytes') AS inspect_owner FROM persistence_requests r
-        WHERE r.worktree_id=w.id AND (r.state IN ('queued','running','recovering') OR r.recovery IS NOT NULL)
+        WHERE r.worktree_id=w.id AND (r.state IN ('queued','running','recovering') OR r.recovery IS NOT NULL OR ${RELEASED_DEFERRED('r')})
         ORDER BY r.sequence LIMIT 1)
       UNION ALL
       (SELECT r.sequence,(SELECT s.sequence FROM persistence_requests s WHERE s.worktree_id IS NULL AND s.source_incarnation=r.source_incarnation
