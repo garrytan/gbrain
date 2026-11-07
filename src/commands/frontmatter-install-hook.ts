@@ -260,6 +260,9 @@ export async function runFrontmatterInstallHook(args: string[]): Promise<void> {
         const where = join(target.root, '.githooks', 'pre-commit');
         console.log(`[${src.id}] hook written at ${where}; core.hooksPath left unset — ${hooksPathBlocker(target.root)}`);
         installed++;
+      } else if (result === 'skipped_hooks_off') {
+        console.log(`[${src.id}] skipped — ${hooksPathBlocker(target.root)}`);
+        skipped++;
       } else if (result === 'skipped_existing') {
         console.log(`[${src.id}] existing pre-commit hook found; pass --force to overwrite (.bak created)`);
         skipped++;
@@ -332,7 +335,10 @@ function resolveHookTarget(localPath: string): HookTarget {
   return { root, scope: rel ? `${rel}/` : '' };
 }
 
-type InstallResult = 'installed' | 'installed_unwired' | 'skipped_existing' | 'unchanged';
+type InstallResult = 'installed' | 'installed_unwired' | 'skipped_existing' | 'skipped_hooks_off' | 'unchanged';
+
+/** The core.hooksPath a remote-added URL clone carries (git-remote.ts LFS_OFF_CLONE_CONFIG): hooks off on purpose. */
+const HOOKS_OFF = '/dev/null';
 
 /**
  * `.githooks/` and its `pre-commit` under `root`. Refuses a symlink at either
@@ -413,6 +419,7 @@ const samePath = (a: string, b: string): boolean => {
  */
 export function hooksPathBlocker(root: string): string | null {
   const current = currentHooksPath(root);
+  if (current === HOOKS_OFF) return `hooks are off in this clone on purpose (core.hooksPath=${HOOKS_OFF}, set on a source a remote caller added by URL), and gbrain leaves them off`;
   if (current) {
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- fixed literal tail under the discovered git root
     if (samePath(current, join(root, '.githooks'))) return null;
@@ -429,6 +436,7 @@ export function hooksPathBlocker(root: string): string | null {
 
 export function installHook(localPath: string, force: boolean): InstallResult {
   const { root, scope } = resolveHookTarget(localPath);
+  if (currentHooksPath(root) === HOOKS_OFF) return 'skipped_hooks_off';
   const { hooksDir, hookPath } = hookPaths(root);
   mkdirSync(hooksDir, { recursive: true });
 

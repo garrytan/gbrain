@@ -105,6 +105,9 @@ export interface CloneOpts {
   skipLfs?: boolean;
 }
 
+/** `git clone` options that write the skipLfs lock-down into the clone's own .git/config. */
+export const LFS_OFF_CLONE_CONFIG = ['--config', 'lfs.fetchexclude=*', '--config', 'core.hooksPath=/dev/null', '--config', 'lfs.locksverify=false'] as const;
+
 export class GitOperationError extends Error {
   constructor(
     public op: 'clone' | 'pull' | 'fetch' | 'remote_get_url',
@@ -169,7 +172,7 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
   if (opts.branch) {
     args.push('--branch', opts.branch);
   }
-  if (opts.skipLfs) args.push('--config', 'lfs.fetchexclude=*', '--config', 'core.hooksPath=/dev/null', '--config', 'lfs.locksverify=false');
+  if (opts.skipLfs) args.push(...LFS_OFF_CLONE_CONFIG);
   args.push(url, destDir);
 
   try {

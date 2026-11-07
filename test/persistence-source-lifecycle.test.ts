@@ -367,4 +367,18 @@ test('remote URL changes during clone preparation refuse publication',()=>fixtur
   for(const counter of counters){expect(counter.outstanding_count).toBe('0');expect(counter.intent_bytes).toBe('0');expect(counter.recovery_bytes).toBe('0');}
 }),60_000);
 
+
+test('a reclone of a source a remote caller added by URL clones with git-lfs downloads and hooks off',()=>fixture(async(_home,source,root)=>{
+  const seen:Array<{skipLfs?:boolean}|undefined>=[];
+  for(const addedByRemote of [true,false]){
+    await engine.executeRaw('UPDATE sources SET config=$2::text::jsonb WHERE id=$1',[source,JSON.stringify({managed_clone:true,remote_url:'https://example.invalid/brain.git',...(addedByRemote?{added_by_remote_caller:true}:{})})]);
+    const input={operation:'reclone' as const,sourceId:source,requestId:randomUUID()};
+    const result=await runManagedSourceClone(engine,input,await topologyPrincipal(engine),input.requestId,{...input,requestId:undefined,dryRun:undefined},{
+      clone:async(_url,stage,_budget,options)=>{seen.push(options);cpSync(root,stage,{recursive:true,filter:path=>!isPhysicalRootMetadata(basename(path))});},
+    });
+    expect(result).toMatchObject({state:'committed'});
+  }
+  expect(seen.map(options=>options?.skipLfs===true)).toEqual([true,false]);
+}),60_000);
+
 });
