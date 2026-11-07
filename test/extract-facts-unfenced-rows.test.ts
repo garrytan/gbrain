@@ -58,6 +58,7 @@ import { parseFactsFence } from '../src/core/facts-fence.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import { managedPersistenceEnabled } from '../src/core/persistence/ownership.ts';
 import { fenceIntegrityResult } from '../src/commands/doctor/checks/fence-integrity.ts';
+import { computeExtractHealthCheck } from '../src/commands/doctor/checks/extraction-sync.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { LEGACY_DB_ONLY_SLUG, LEGACY_FILE_SLUG, seedLegacyManagedContent, type LegacySeed } from './helpers/managed-legacy-fixture.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
@@ -84,6 +85,20 @@ async function factState(engine: BrainEngine) {
 async function extractFactsPhase(engine: BrainEngine, root: string) {
   const report = await runCycle(engine, { brainDir: root, sourceId: 'default', phases: ['extract_facts'] });
   return report.phases.find(p => p.phase === 'extract_facts')!;
+}
+
+/** #8568: one event per run, not one per failed row; doctor reads the persisted rollup. */
+async function expectFenceRollup(engine: BrainEngine, halts: number, completed: number) {
+  const rows = await engine.executeRaw(`SELECT halt_count, round_completed_count, halt_reasons
+    FROM extract_rollup_7d WHERE kind='facts.fence' AND source_id='default'`);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ halt_count: halts, round_completed_count: completed,
+    halt_reasons: halts ? { item_error: halts } : {} });
+  const health = await computeExtractHealthCheck(engine);
+  expect(health.status).toBe(halts ? 'warn' : 'ok');
+  expect(health.details).toMatchObject({ kinds: expect.arrayContaining([
+    expect.objectContaining({ kind: 'facts.fence', halt_count: halts, round_completed_count: completed }),
+  ]) });
 }
 
 const FENCE_ROW_1 = `## Facts
@@ -180,6 +195,8 @@ for (const backend of testBackends()) {
       const first = await extractFactsPhase(engine, root);
       expect(first.status).toBe('warn');
       expect(first.details).toMatchObject({ legacyRowsPending: 4, unfencedRowsFenced: 5 });
+      expect(first.details).toMatchObject({ pagesFailed: 0 });
+      await expectFenceRollup(engine, 0, 1);
       expect(first.summary).toMatch(new RegExp(`^[1-9]\\d* fact\\(s\\) reconciled across [1-9]\\d* page\\(s\\); skipped 1 page\\(s\\) holding 4 unfenced fact row\\(s\\) that could not be fenced: ${SLUG} `));
       const warnings = (first.details as { warnings: string[] }).warnings;
       expect(warnings).toContain(UNADOPTABLE_TOKEN(SLUG));
@@ -232,6 +249,8 @@ for (const backend of testBackends()) {
       const first = await extractFactsPhase(managed, managedRoot);
       expect(first.status).toBe('warn');
       expect(first.details).toMatchObject({ legacyRowsPending: 4, unfencedRowsFenced: 7 });
+      expect(first.details).toMatchObject({ pagesFailed: 0 });
+      await expectFenceRollup(managed, 0, 1);
       expect((first.details as { warnings: string[] }).warnings).toContain(UNADOPTABLE_TOKEN(LEGACY_FILE_SLUG));
 
       const after = await rowsById(managed, [...Object.values(ids), withdrawnId]);
@@ -329,11 +348,101 @@ for (const backend of testBackends()) {
       const before = await factState(engine);
       const result = await extractFactsPhase(engine, root);
       expect(result.status).toBe('warn');
+      expect(result.details).toMatchObject({ pagesFailed: 1 });
+      await expectFenceRollup(engine, 1, 0);
       expect(result.summary).toBe(`0 fact(s) reconciled across 0 page(s); skipped 1 page(s) holding 2 unfenced fact row(s) that could not be fenced: ${SLUG} (2 warning(s))`);
       const warnings = (result.details as { warnings: string[] }).warnings;
       expect(warnings.some(w => w.startsWith(`FACTS_FENCE_FAILED: ${SLUG} (canonical file `) && w.includes('does not exist on this host'))).toBe(true);
       expect(warnings.some(w => w.includes('v0.31') || w.includes('force-retry'))).toBe(false);
       expect(await factState(engine)).toEqual(before);
+    });
+  }, 120_000);
+
+  test(`${backend}: #8568: a filesystem fence failure counts once even with codec holds, preserves rows and recovers`, async () => {
+    await unmanagedBrain(databaseUrl, async ({ engine, root }) => {
+      await seedCodecShapes(engine, SLUG);
+      const path = join(root, `${SLUG}.md`);
+      const bytes = readFileSync(path, 'utf8');
+      const before = await factState(engine);
+      // Deterministic real I/O failure at the temporary-file write, even when run as root.
+      mkdirSync(`${path}.tmp`);
+      const first = await extractFactsPhase(engine, root);
+      expect(first.details).toMatchObject({ pagesFailed: 1, unfencedRowsFenced: 0 });
+      expect((first.details as { warnings: string[] }).warnings.join('\n')).toContain('EISDIR');
+      await expectFenceRollup(engine, 1, 0);
+      expect(await factState(engine)).toEqual(before);
+      expect(readFileSync(path, 'utf8')).toBe(bytes);
+      rmSync(`${path}.tmp`, { recursive: true });
+      const second = await extractFactsPhase(engine, root);
+      expect(second.details).toMatchObject({ pagesFailed: 0, unfencedRowsFenced: 5, legacyRowsPending: 4 });
+      await expectFenceRollup(engine, 1, 1);
+    });
+  }, 120_000);
+
+  for (const managed of [false, true]) {
+    test(`${backend}: #8568: ${managed ? 'managed' : 'database-only'} fence failure is not a healthy round; siblings publish and retry recovers`, async () => {
+      const fixture = async ({ engine, root }: { engine: BrainEngine; root: string }) => {
+        if (!managed) {
+          await makeDatabaseOnly(engine, root);
+          await engine.setConfig('sync.write_through', 'false');
+        }
+        const failedSlug = managed ? LEGACY_FILE_SLUG : SLUG;
+        const before = (await factState(engine)).filter(row => row.entity_slug === failedSlug);
+        const original = engine.readPageSnapshot;
+        let failures = 0;
+        engine.readPageSnapshot = async function (slug, opts) {
+          if (slug === failedSlug && failures++ === 0) throw new Error('synthetic fence read failure');
+          return original.call(this, slug, opts);
+        };
+        try {
+          const first = await extractFactsPhase(engine, root);
+          expect(failures).toBeGreaterThan(0);
+          expect(first.details).toMatchObject({ pagesFailed: 1, unfencedRowsFenced: managed ? 1 : 0 });
+          expect((first.details as { warnings: string[] }).warnings.join('\n')).toContain('synthetic fence read failure');
+          expect((await factState(engine)).filter(row => row.entity_slug === failedSlug)).toEqual(before);
+          if (managed) {
+            const sibling = (await factState(engine)).filter(row => row.entity_slug === LEGACY_DB_ONLY_SLUG);
+            expect(sibling).toHaveLength(1);
+            expect(sibling[0]).toMatchObject({ row_num: 1, expired: false });
+          }
+          await expectFenceRollup(engine, 1, 0);
+        } finally { engine.readPageSnapshot = original; }
+        const second = await extractFactsPhase(engine, root);
+        expect(second.details).toMatchObject({ pagesFailed: 0, unfencedRowsFenced: 2, legacyRowsPending: 0 });
+        await expectFenceRollup(engine, 1, 1);
+      };
+      if (managed) await managedBrain(fixture, { databaseUrl, setup: async ({ engine, root }) => { await seedLegacyManagedContent(engine, root); } });
+      else await unmanagedBrain(databaseUrl, fixture);
+    }, 180_000);
+  }
+
+  test(`${backend}: #8568: a whole fence-plan failure books a halt without inventing a failed-page count, and dry run stays read-only`, async () => {
+    await unmanagedBrain(databaseUrl, async ({ engine, root }) => {
+      const before = await factState(engine);
+      const original = engine.executeRaw;
+      let failures = 0;
+      engine.executeRaw = async function (this: BrainEngine, sql, params) {
+        if (sql.includes('AS page_exists') && sql.includes('FROM facts f')) {
+          failures++;
+          throw new Error('synthetic unfenced census failure');
+        }
+        return original.call(this, sql, params);
+      } as BrainEngine['executeRaw'];
+      try {
+        const first = await extractFactsPhase(engine, root);
+        expect(failures).toBe(1);
+        expect(first.details).toMatchObject({ pagesFailed: 0, legacyRowsPending: 2, unfencedRowsFenced: 0 });
+        expect((first.details as { warnings: string[] }).warnings.join('\n')).toContain('synthetic unfenced census failure');
+        await expectFenceRollup(engine, 1, 0);
+        expect(await factState(engine)).toEqual(before);
+      } finally { engine.executeRaw = original; }
+      const dry = await runCycle(engine, { brainDir: root, sourceId: 'default', phases: ['extract_facts'], dryRun: true });
+      expect(dry.phases.find(p => p.phase === 'extract_facts')!.details).toMatchObject({ pagesFailed: 0 });
+      await expectFenceRollup(engine, 1, 0);
+      expect(await factState(engine)).toEqual(before);
+      const second = await extractFactsPhase(engine, root);
+      expect(second.details).toMatchObject({ pagesFailed: 0, unfencedRowsFenced: 2 });
+      await expectFenceRollup(engine, 1, 1);
     });
   }, 120_000);
 
@@ -389,7 +498,8 @@ for (const backend of testBackends()) {
         const before = await factState(engine);
         const result = await extractFactsPhase(engine, root);
         expect(result.status, JSON.stringify(result.details)).toBe('ok');
-        expect(result.details).toMatchObject({ unfencedRowsFenced: 0, legacyRowsPending: 0, legacyPages: [] });
+        expect(result.details).toMatchObject({ unfencedRowsFenced: 0, legacyRowsPending: 0, legacyPages: [], pagesFailed: 0 });
+        await expectFenceRollup(engine, 0, 1);
         expect((result.details as { warnings: string[] }).warnings.some(w => w.startsWith('FACTS_FENCE_FAILED'))).toBe(false);
         // Held out of reconciliation: nothing expired, detached or renumbered.
         expect(await factState(engine)).toEqual(before);
