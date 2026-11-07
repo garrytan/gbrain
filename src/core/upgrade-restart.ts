@@ -203,7 +203,22 @@ export interface RestartContext {
   stopMcp: boolean;
   /** The package directory of the install this upgrade replaces (realpath); null when unknown (a compiled binary). */
   ownInstallRoot?: string | null;
+  /** What starts autopilot again when it exits, for an autopilot no installed service runs; null when nothing is known to. */
+  autopilotLauncher?: AutopilotLauncher | null;
 }
+
+/**
+ * #8776: a launcher outside launchd and systemd that starts autopilot again when it exits: this brain's own
+ * gbrain cron line (the linux-cron install target), or a launcher the operator declared with
+ * `self_upgrade.autopilot_launcher external` (a cron entry or wrapper of their own). The restart hands autopilot to
+ * it: stop the daemon, then wait `wait_ms` for the launcher to start the installed build. Only the daemon this
+ * brain's autopilot lock names (`pid`) is handed over, so another brain's autopilot is never signalled on a host
+ * whose process environments cannot be read (macOS).
+ */
+export interface AutopilotLauncher { kind: 'cron' | 'declared'; wait_ms: number; pid: number | null }
+
+export const launcherName = (launcher: AutopilotLauncher) => launcher.kind === 'cron'
+  ? 'this brain\'s gbrain cron line' : 'the launcher self_upgrade.autopilot_launcher declares';
 
 /** Before the swap the installed build is not known yet: every process is stale. */
 export const PENDING_BUILD = 'pending';
@@ -232,6 +247,7 @@ export type RestartStep =
   | { kind: 'service'; role: 'serve' | 'autopilot'; argv: string[]; pids: number[] }
   | { kind: 'supervisor'; pid: number; workers: number[]; stop: string[]; start: string[]; pid_file: string | null }
   | { kind: 'stop'; role: 'mcp'; pid: number; started_ms: number | null }
+  | { kind: 'handoff'; role: 'autopilot'; pid: number; started_ms: number | null; launcher: AutopilotLauncher }
   | { kind: 'replace_copy'; root: string; bun_install: string; from: string | null; to: string; pids: number[] };
 
 export interface ManualStep { role: ProcessRole; pid: number; version: string | null; argv: string[]; instruction: string }
@@ -274,6 +290,9 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
   const stops: RestartStep[] = [];
   const byPid = new Map(processes.map(p => [p.pid, p]));
   const addService = (role: 'serve' | 'autopilot', pid: number) => services.set(role, [...(services.get(role) ?? []), pid]);
+  const handoffs = new Map<number, Extract<RestartStep, { kind: 'handoff' }>>();
+  const launcherOf = (p: HostProcess) => (ctx.autopilotLauncher?.pid === p.pid ? ctx.autopilotLauncher : null);
+  const addHandoff = (p: HostProcess, launcher: AutopilotLauncher) => handoffs.set(p.pid, { kind: 'handoff', role: 'autopilot', pid: p.pid, started_ms: p.started_ms, launcher });
   const runsUnder = (p: HostProcess, service: ServiceHandle | null) => !!service && service.pid !== null && (p.pid === service.pid || !!p.ancestors?.includes(service.pid));
   const kill = (p: HostProcess, instruction: string) => manual.push({ role: p.role, pid: p.pid, version: p.version, argv: ['kill', String(p.pid)], instruction });
 
@@ -299,7 +318,11 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
         break;
       case 'autopilot':
         if (runsUnder(p, ctx.autopilotService)) addService('autopilot', p.pid);
-        else kill(p, `${label(p)} does not run under an installed autopilot service: stop it (\`kill ${p.pid}\`) and start it again the way it was launched (\`gbrain autopilot --install\` installs the service).`);
+        else if (launcherOf(p)) addHandoff(p, launcherOf(p)!);
+        else manual.push({ role: p.role, pid: p.pid, version: p.version, argv: ['gbrain', 'autopilot', '--install'],
+          instruction: `${label(p)} was started outside gbrain's autopilot service (by a cron entry, a wrapper or by hand), so the upgrade cannot restart it. `
+            + 'Either run `gbrain autopilot --install`, which runs autopilot under launchd, systemd or a gbrain cron line so every upgrade restarts it (retire the launcher that starts it now first, or both race for the autopilot lock), '
+            + `or, when that launcher starts autopilot again within 5 minutes of it exiting, \`gbrain config set self_upgrade.autopilot_launcher external\` lets the upgrade stop it and wait for the launcher. By hand: \`kill ${p.pid}\` and start it again the way it was launched.` });
         break;
       case 'supervisor':
         if (p.args) supervisors.set(p.pid, supervisors.get(p.pid) ?? []);
@@ -308,6 +331,7 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
       case 'worker':
         if (parent?.role === 'supervisor' && parent.args) supervisors.set(parent.pid, [...(supervisors.get(parent.pid) ?? []), p.pid]);
         else if (parent?.role === 'autopilot' && runsUnder(parent, ctx.autopilotService)) addService('autopilot', parent.pid);
+        else if (parent?.role === 'autopilot' && launcherOf(parent)) addHandoff(parent, launcherOf(parent)!);
         else kill(p, `${label(p)} is not run by a jobs supervisor this restart can relaunch${parent?.role === 'autopilot' ? ' (its autopilot runs under no installed service)' : ''}${p.unclassified_parent ? ` (its parent, pid ${p.unclassified_parent.pid} (\`${p.unclassified_parent.executable}\`), is not a process this restart recognises as gbrain)` : ''}: stop it (\`kill ${p.pid}\`, SIGTERM drains its jobs) and start \`gbrain jobs work\` again the way it was launched, or run workers under \`gbrain jobs supervisor start --detach\`.`);
         break;
       case 'mcp':
@@ -327,14 +351,14 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
   const autopilot = services.get('autopilot');
   if (autopilot && ctx.autopilotService) steps.push({ kind: 'service', role: 'autopilot', argv: ctx.autopilotService.argv, pids: [...new Set(autopilot)] });
   for (const [pid, workers] of supervisors) steps.push({ kind: 'supervisor', pid, workers, ...supervisorRestartArgv(byPid.get(pid)!.args!) });
-  steps.push(...stops);
+  steps.push(...handoffs.values(), ...stops);
   return { expected: ctx.expected, current, stale, steps, manual };
 }
 
 export interface RestartExecutor {
   run: (argv: string[], env?: Record<string, string>) => { status: number | null; output: string };
-  /** SIGTERM the MCP server at pid only if it is still the process the plan saw: 'changed' when the pid now names another process. */
-  terminate: (pid: number, startedMs: number | null) => 'stopped' | 'gone' | 'changed';
+  /** SIGTERM the MCP server or autopilot at pid only if it is still the process the plan saw: 'changed' when the pid now names another process. */
+  terminate: (pid: number, startedMs: number | null, role: 'mcp' | 'autopilot') => 'stopped' | 'gone' | 'changed';
   /** The live supervisor's pid now (read from its PID file, the default one when null), or null. */
   supervisorPid: (pidFile: string | null) => number | null;
   sleep: (ms: number) => Promise<void>;
@@ -373,8 +397,13 @@ export async function runRestartSteps(plan: RestartPlan, exec: RestartExecutor):
       }
       const start = exec.run(step.start);
       results.push({ step, ok: start.status === 0, detail: start.status === 0 ? `stopped supervisor pid ${step.pid} and started it again with \`${step.start.join(' ')}\`` : failed(step.start, start) });
+    } else if (step.kind === 'handoff') {
+      const outcome = exec.terminate(step.pid, step.started_ms, 'autopilot');
+      results.push({ step, ok: outcome !== 'changed', detail: outcome === 'changed'
+        ? `pid ${step.pid} is no longer the autopilot the plan saw, so it was not signalled`
+        : `stopped autopilot pid ${step.pid}; ${launcherName(step.launcher)} starts it again` });
     } else {
-      const outcome = exec.terminate(step.pid, step.started_ms);
+      const outcome = exec.terminate(step.pid, step.started_ms, 'mcp');
       results.push({ step, ok: outcome !== 'changed', detail: outcome === 'changed'
         ? `pid ${step.pid} is no longer the MCP server the plan saw, so it was not signalled`
         : `stopped mcp pid ${step.pid}; reconnect gbrain in its harness` });
@@ -391,7 +420,7 @@ function refusesThisBuild(warm: WarmSocketState): boolean {
   return warm.state === 'refused' && !(warm.reason === 'identity_mismatch' && warm.mismatch && warm.mismatch !== 'version');
 }
 
-const restartedPids = (plan: RestartPlan) => new Set(plan.steps.flatMap(step => step.kind === 'service' ? step.pids : step.kind === 'supervisor' ? [step.pid, ...step.workers] : step.kind === 'stop' ? [step.pid] : []));
+const restartedPids = (plan: RestartPlan) => new Set(plan.steps.flatMap(step => step.kind === 'service' ? step.pids : step.kind === 'supervisor' ? [step.pid, ...step.workers] : step.kind === 'stop' || step.kind === 'handoff' ? [step.pid] : []));
 
 /** Processes that came back on a build other than the target, with the install each one runs from. */
 export function mismatchedBuilds(plan: RestartPlan, processes: readonly HostProcess[]): HostProcess[] {
@@ -419,9 +448,9 @@ export function restartProblems(plan: RestartPlan, processes: readonly HostProce
   }
   for (const step of plan.steps) {
     if (step.kind === 'stop' || step.kind === 'replace_copy') continue;
-    const role = step.kind === 'service' ? step.role : 'supervisor';
+    const role = step.kind === 'supervisor' ? 'supervisor' : step.role;
     if (!fresh.some(p => p.role === role)) {
-      problems.push(`${role} did not come back after ${step.kind === 'service' ? `\`${step.argv.join(' ')}\`` : 'the supervisor restart'}.`);
+      problems.push(`${role} did not come back after ${step.kind === 'service' ? `\`${step.argv.join(' ')}\`` : step.kind === 'handoff' ? `it was stopped for ${launcherName(step.launcher)} to start again` : 'the supervisor restart'}.`);
     } else if (step.kind === 'supervisor' && step.workers.length && !fresh.some(p => p.role === 'worker' && live.get(p.ppid ?? -1)?.role === 'supervisor' && !restarted.has(p.ppid!))) {
       problems.push(`the jobs worker did not come back under the restarted supervisor (\`${step.start.join(' ')}\`).`);
     }

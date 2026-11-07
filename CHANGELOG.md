@@ -10,6 +10,20 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**`gbrain upgrade` finishes on hosts where autopilot runs outside launchd and systemd, instead of refusing every time.**
+
+The upgrade restarted autopilot only through an installed launchd or systemd service, and refused (`restart_refused`, exit 3) for any other autopilot. That included gbrain's own Linux cron install (`gbrain autopilot --install` on a host without a user systemd bus), so a scheduled stable upgrade on such a host failed on every run. An autopilot whose launcher starts it again is now handed to that launcher: the upgrade stops it (only while `ps` still shows the same process; SIGTERM drains it) and waits up to six minutes for the launcher to start the installed build.
+
+| Situation | Before | Now |
+|---|---|---|
+| Autopilot started by this brain's gbrain cron line | `restart_refused` | handed to the cron line and verified back on the new build |
+| Autopilot started by your own cron entry or wrapper | `restart_refused`, fix `kill <pid>` | still refuses, naming `gbrain autopilot --install` or `gbrain config set self_upgrade.autopilot_launcher external` (declare it only when the launcher starts autopilot again within 5 minutes); declared, it is handed over like the cron line |
+| doctor `self_upgrade_health` | silent until an upgrade failed | runs the same pre-swap plan read-only: warns while `gbrain upgrade` would refuse, naming each process and its step (autopilot outside gbrain's service, a process from another install), and names a hand-off or a second Bun global install the upgrade replaces itself |
+
+**The daily stable check no longer sticks on a rolled-back release.** A release that was stable before (its `stable-v<version>` record tag exists) or that `stable.json` lists in `known_bad` is skipped and logged, so the newest release gets its soak instead of a refused promotion on every scheduled run (#8792).
+
 ## [0.60.606.0] - 2026-11-07
 
 **Updates follow a stable channel by default; every release is one setting away on alpha.**

@@ -277,7 +277,7 @@ async function gitOut(deps: PromoteDeps, args: string[], refusal: string, input?
   return r.stdout.trim();
 }
 
-async function refExists(deps: PromoteDeps, ref: string): Promise<boolean> {
+export async function refExists(deps: PromoteDeps, ref: string): Promise<boolean> {
   return (await deps.git(['rev-parse', '--verify', '--quiet', ref])).code === 0;
 }
 

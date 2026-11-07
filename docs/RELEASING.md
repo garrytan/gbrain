@@ -699,6 +699,10 @@ and keeps stable between one day and one week behind what matters:
   the full default one: both the 65 ms and 2 ms cells, at least 2 hours each,
   on the requested 600,000-page fixture, with privacy probes run and none
   erroring, so a smaller smoke dispatch never qualifies. On the important-only path the candidate must contain the fix.
+  A release that was stable before (its `stable-v<version>` record tag exists,
+  so it was promoted and rolled back) or that `stable.json` lists in `known_bad`
+  is skipped, logged, and never promoted or soaked by the schedule; a maintainer
+  re-promotes it by hand if it should return.
   It is promoted through the same `promote()` as a manual promotion, so every
   check above still applies and the record's `promoted_by` is
   `schedule (.github/workflows/stable-daily.yml)` with the reason in `reason`.

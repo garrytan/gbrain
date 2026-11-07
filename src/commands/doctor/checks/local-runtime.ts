@@ -246,7 +246,10 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
   // the surface an operator actually runs on the host, never emitted it,
   // so a wedged auto-upgrade loop was invisible exactly where it would be
   // diagnosed. Sits beside the upgrade_errors trail it complements.
-  checks.push(checkSelfUpgradeHealth());
+  // #8776: with the plan the next `gbrain upgrade` makes, so a restart it would
+  // refuse (an autopilot started outside gbrain's service) shows before it fails.
+  const restart = await import('../../upgrade-restart.ts').then((m) => m.upgradeRestartReadiness()).catch(() => null);
+  checks.push(checkSelfUpgradeHealth(restart));
   checks.push(checkBunRuntime());
   return checks;
 }
