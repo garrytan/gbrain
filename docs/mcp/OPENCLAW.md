@@ -5,19 +5,22 @@
 > [INSTALL_FOR_AGENTS.md](../../INSTALL_FOR_AGENTS.md); the README covers the
 > bootstrap and connect paths.
 
-Two supported shapes, both stdio.
+Use the supported MCP stdio route below. ClawHub bundle installation is
+currently unavailable.
 
-## Option 1: ClawHub bundle plugin
+## Option 1: ClawHub bundle plugin (currently unavailable)
 
-GBrain ships [`openclaw.plugin.json`](../../openclaw.plugin.json) at the repo
-root. Installing the bundle plugin registers the MCP server for you — the
-manifest carries an `mcpServers.gbrain` entry that runs the bundled
-`.agents/gbrain-launcher serve` (the same launcher the Codex and Claude Code
-plugins use; it resolves your installed `gbrain` via `GBRAIN_BIN`, then
-`~/.bun/bin/gbrain`, then `PATH`, so it works under launchd's bare PATH and
-never needs a build step) plus the bundled skills — and declares the
+Publishing the bundle is a manual release-owner step, separate from automated
+releases ([publishing procedure](../RELEASING.md#clawhub-bundle-plugin-publish-manual)),
+so this guide cannot promise a current compatible ClawHub package or install
+command. Use [Option 2](#option-2-openclaw-mcp-add) to connect an installed
+`gbrain` CLI over stdio. That route provides MCP tools; it does not register the
+`gbrain-context-engine` context-engine slot.
+
+For a compatible bundle installed from a trusted source, GBrain's
+[`openclaw.plugin.json`](../../openclaw.plugin.json) declares the
 `gbrain-context-engine` context engine. To route OpenClaw's context-engine slot
-through gbrain, two steps, in this order:
+through it, two steps, in this order:
 
 1. Install and enable the plugin by its own id, `gbrain-context-engine`
    (the `id` in `openclaw.plugin.json`).

@@ -119,10 +119,19 @@ export function loadBundleManifest(gbrainRoot: string): BundleManifest {
       'manifest_malformed',
     );
   }
-  const m = parsed as Partial<BundleManifest>;
+  const raw = parsed as Record<string, unknown>;
+  const m = raw as Partial<BundleManifest>;
   if (typeof m.name !== 'string' || typeof m.version !== 'string') {
     throw new BundleError(
       'openclaw.plugin.json: name and version must be strings',
+      'manifest_malformed',
+    );
+  }
+  const isOpenClawPlugin =
+    'mcpServers' in raw || 'kind' in raw || 'contextEngine' in raw;
+  if (isOpenClawPlugin && (typeof raw.id !== 'string' || !raw.id.trim())) {
+    throw new BundleError(
+      'openclaw.plugin.json: OpenClaw plugin manifests must declare a non-empty "id"',
       'manifest_malformed',
     );
   }
