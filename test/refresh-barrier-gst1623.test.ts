@@ -33,6 +33,7 @@ import { refreshWorktree, resumeWorktreeRefreshes } from '../src/core/persistenc
 import { _transientDelayForTests } from '../src/core/persistence/sync-drain.ts';
 import { deleteSourceRow } from '../src/core/source-delete.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
+import { commitAndPush } from '../src/core/git/commit-push.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -327,6 +328,15 @@ async function afterMerge(f: RefreshFixture, after: string, fn: () => Promise<vo
   writeFileSync(armed, '');
   await withEnv({ PATH: `${bin}:${process.env.PATH}` }, fn);
 }
+/** Runs `fn` with a `git` on PATH that, once armed, runs `before` in the checkout right before the refresh's own `git merge --ff-only`. */
+async function beforeMerge(f: RefreshFixture, before: string, fn: () => Promise<void>) {
+  const bin = join(f.dir, 'merge-race-bin'), armed = join(f.dir, 'merge-race-armed'), script = join(f.dir, 'merge-race.sh');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(script, `cd '${f.root}' || exit 1\n${before}\n`);
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" merge --ff-only "*) if [ -f '${armed}' ]; then rm -f '${armed}'; PATH='${process.env.PATH}' sh '${script}' >/dev/null 2>&1; fi;; esac\nPATH='${process.env.PATH}' exec git "$@"\n`, { mode: 0o755 });
+  writeFileSync(armed, '');
+  await withEnv({ PATH: `${bin}:${process.env.PATH}` }, fn);
+}
 const FOREIGN_ON_TOP = "mkdir -p alpha && printf -- '---\\ntitle: Foreign\\ntype: note\\n---\\nPlain git.\\n' > alpha/foreign.md && git add alpha/foreign.md && git -c user.name=Example -c user.email=example@example.invalid -c commit.gpgsign=false commit -qm foreign";
 const bothArms = (fn: (f: RefreshFixture) => Promise<void>) => (async () => {
   for (const arm of ['0', '1']) await withEnv({ GBRAIN_REFRESH_BARRIER: arm }, async () => {
@@ -346,6 +356,27 @@ test('seed 355: a plain-git commit landing on the target right after the merge i
   expect(git(f.root, 'rev-parse', 'HEAD~1')).toBe(target);
   for (const source of [f.alpha, f.beta]) expect(await f.lastCommit(source)).toBe(head);
   expect((await f.refreshRows()).at(-1)!.state).toBe('completed');
+}), 180_000);
+
+test('GST-1674: a plain-git commit landing on the pre-refresh commit right before the merge aborts with the fence lifted, keeps the commit, and the next refresh completes', () => bothArms(async f => {
+  const old = f.head();
+  const target = f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  let result: unknown;
+  await beforeMerge(f, FOREIGN_ON_TOP, async () => { result = await refreshWorktree(f.engine, f.alpha).catch(error => error); });
+  expect(result).toBeInstanceOf(OperationError);
+  expect((result as OperationError).code).toBe('refresh_source_changed');
+  const foreign = f.head();
+  expect(foreign).not.toBe(old);
+  expect(git(f.root, 'rev-parse', 'HEAD~1')).toBe(old);
+  expect(git(f.root, 'log', '-1', '--format=%s')).toBe('foreign');
+  expect((await f.refreshRows()).map(row => row.state)).toEqual(['aborted']);
+  commitAndPush({ repo: f.root, cwd: f.root, pushOnly: true, keepCheckout: true });
+  const done = await refreshWorktree(f.engine, f.alpha);
+  expect(done.status).toBe('completed');
+  const head = f.head();
+  for (const commit of [foreign, target]) expect(git(f.root, 'merge-base', '--is-ancestor', commit, head)).toBe('');
+  for (const source of [f.alpha, f.beta]) expect(await f.lastCommit(source)).toBe(head);
+  expect((await f.refreshRows()).map(row => row.state)).toEqual(['aborted', 'completed']);
 }), 180_000);
 
 test('seed 355 policy: a reset to the pre-refresh commit plus an unrelated commit right after the merge still needs the operator', () => bothArms(async f => {

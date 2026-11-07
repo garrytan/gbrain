@@ -914,6 +914,13 @@ async function fenceAndMerge(engine: BrainEngine, git: Git, sourceId: string, pl
           if (after === row.old_head) await abort(engine, current, ['fenced'], refusal('refresh_dirty',
             `git merge --ff-only refused (${refused}); HEAD is unchanged at ${row.old_head}.`,
             `Commit or discard the paths git names (check gbrain sources writer status ${sourceId} --json for pending git effects), then retry gbrain sources refresh ${sourceId}.`));
+          // GST-1674: a plain-git commit (which takes no commit lock) can land on old_head between the HEAD check and the merge; git
+          // then refuses the fast-forward and HEAD holds only that commit, so nothing was merged and the refresh aborts and retries.
+          if (merge.code !== 0 && after !== null && await ancestry(git, plan.root, row.old_head, after) === true
+            && await ancestry(git, plan.root, row.target_head, after) === false) {
+            await abort(engine, current, ['fenced'], retryInTick(refusal('refresh_source_changed',
+              `The checkout HEAD moved from ${row.old_head} to ${after} right before the merge (${await ownCommits(git, plan.root, row.old_head, after) ? OWN_COMMITS : 'a commit gbrain did not make'}); git refused the fast-forward and nothing was merged.`, `Retry gbrain sources refresh ${sourceId}`)));
+          }
           // GBEV-44 seed 355: a plain-git commit can land on the target between the merge and this read; the merge happened, so record it.
           const landedOnTarget = merge.code === 0 && after !== null && await ancestry(git, plan.root, row.target_head, after) === true
             && !await memberOutsideHead(engine, git, plan.root, current, after);
