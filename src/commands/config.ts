@@ -832,6 +832,13 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
       return;
     }
+    if ((await import('./config/object-storage.ts')).isObjectStorageConfigKey(key)) {
+      const fileHad = (await import('./config/object-storage.ts')).unsetObjectStorageConfig(key);
+      const dbDeleted = await dropStaleDbRow(engine, key);
+      if (fileHad || dbDeleted > 0) console.log(`Unset ${key} (${[fileHad ? 'file plane' : null, dbDeleted > 0 ? 'stale db-plane row' : null].filter(Boolean).join(' + ')})`);
+      else { console.error(`Config key not found: ${key}`); process.exit(1); }
+      return;
+    }
     if (isFilePlaneDottedKey(key)) {
       const fileHad = await unsetFilePlaneKey(key);
       const dbDeleted = await dropStaleDbRow(engine, key);
@@ -1132,6 +1139,11 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         // sessions until converged — say so (red-team review, this wave).
         for (const line of (await import('../core/facts/writeback-config.ts')).writebackOffMessage()) console.log(line);
       }
+      return;
+    }
+    if ((await import('./config/object-storage.ts')).isObjectStorageConfigKey(key)) {
+      (await import('./config/object-storage.ts')).setObjectStorageConfig(key, value);
+      if ((await dropStaleDbRow(engine, key)) > 0) console.log(`Removed a stale DB-plane row for ${key} (nothing reads it).`);
       return;
     }
     if (isFilePlaneDottedKey(key) || key === 'integrations.memorable.enabled') {

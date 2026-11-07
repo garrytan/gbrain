@@ -124,6 +124,12 @@ export const SECTIONS: DocSection[] = [
         path: "docs/ENGINES.md",
       },
       {
+        title: "docs/guides/object-storage.md",
+        description: "Private S3/MinIO/R2 file storage: presigned GET from file_url and files signed-url, and storage.publicEndpoint when the upload endpoint is loopback.",
+        path: "docs/guides/object-storage.md",
+        includeInFull: false,
+      },
+      {
         title: "docs/guides/move-to-postgres.md",
         description:
           "Move a PGLite brain to Postgres with its history: --url-env target setup, plan (exit 3) then --yes --expect, status/resume/rollback, what moves vs stays on this computer, recovery by error code.",
