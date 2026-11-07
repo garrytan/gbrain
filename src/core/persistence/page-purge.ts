@@ -47,6 +47,7 @@ import { writeOriginDeletedMarker } from './sync-markers.ts';
 import { clearRebuildableCache } from './rebuildable-cache.ts';
 import { carryingNeedles, findRequestsForSlugs, JOURNAL_SWEEP_MATCH_CAP, recheckRequestsCarrying, redactRequestIntents, sweepRequestsCarrying, sweepRequestsForGroups,
   type JournalSweep } from './intent-redaction.ts';
+import { purgeRetrievalLogResidue } from './retrieval-log-purge.ts';
 import { dropPurgedFenceRows } from '../facts/purge-overlay.ts';
 import { isOutcomeMarker, outcomeMarkerSql } from '../facts/audit-sources.ts';
 import { derivedRowsFrom, hideDerivedRows } from '../facts/derivation-inputs.ts';
@@ -356,6 +357,7 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
   await writeOriginDeletedMarker(tx, { sourceId, page: { id: page.id, slug, source_path: page.source_path } });
   const { shas, ...segmentRows } = await deletePageWithSegments(tx, sourceId, slug, page.id, segmentClaims);
   Object.assign(removed, segmentRows);
+  await purgeRetrievalLogResidue(tx, [slug]); // #8821: the retrieval logs name the slug but have no FK to pages
   if (!retention) appendPurgeIntent({ request: row.id, request_id: row.request_id, source_id: sourceId, source_incarnation: row.source_incarnation,
     scope: 'page', slug, purge_epoch: epoch, content_hashes: [...hashes], facts: mirrorFacts, takes: mirrorTakes, lifetimes });
   const key = `${sourceId}:${row.request_id}`;

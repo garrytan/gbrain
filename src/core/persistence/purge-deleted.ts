@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { purgeRetrievalLogResidue } from './retrieval-log-purge.ts';
 import type { BrainEngine } from '../engine.ts';
 import { loadConfig } from '../config.ts';
 import type { OperationContext } from '../ops/contract.ts';
@@ -294,6 +295,7 @@ export async function purgeDeletedPagesCoordinated(engine: BrainEngine, olderTha
     const recorded = await expireRecordedTombstones(engine, olderThanHours, opts.retryParked === true, new Set(kept.map(row => row.id)));
     const exclude = [...recorded.exclude, ...kept.map(row => row.id)];
     const result = await engine.purgeDeletedPages(olderThanHours, exclude.length ? { excludeIds: exclude } : undefined);
+    await purgeRetrievalLogResidue(engine, [...recorded.slugs, ...result.slugs]); // #8821
     const held = kept.filter(row => row.expired);
     return { slugs: [...recorded.slugs, ...result.slugs], count: recorded.slugs.length + result.count, blocked: [...recorded.blocked, ...held.map(row => syncDeleteHeld(row, olderThanHours))],
       deferred: 0, failed: recorded.failed, inactive: 0, parked: recorded.parked, capacity_deferred: 0, held: held.length };
