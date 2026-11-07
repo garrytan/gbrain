@@ -137,7 +137,7 @@ async function outstandingRefusal(tx: SqlEngine, row: Counter, principal: Princi
 /**
  * GST-1623: the writes counted on `principal`'s counter (the brain's when null) that wait in `deferred` behind an import or
  * a refresh, and their intent bytes. They cannot settle before managed sync imports, so a managed sync job is admitted as
- * if they held no slot; the importer can pass a cap by at most what they hold.
+ * if they held no slot; the importer can pass a cap by at most what they hold. Read only when the plain check would refuse.
  */
 async function heldBehindImport(tx: SqlEngine, principal: Principal | null): Promise<{ count: number; bytes: number }> {
   const [row] = await tx.executeRaw<{ count: number | string; bytes: number | string }>(`SELECT count(*) AS count,COALESCE(sum(intent_bytes),0) AS bytes
@@ -348,10 +348,12 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
     if (input.targetKind === 'skill_bundle') await assertSharedSkillPersistence(tx, input.sourceId);
     for (const row of counters) {
       const brain = row.key === 'brain';
-      const held = managedSyncJob(input) ? await heldBehindImport(tx, brain ? null : input.principal) : { count: 0, bytes: 0 };
-      const outstanding = await outstandingRefusal(tx, row, input.principal, input.sourceId, 1, brain ? limits.brainOutstanding : limits.principalOutstanding, held.count);
+      const countLimit = brain ? limits.brainOutstanding : limits.principalOutstanding, bytesLimit = brain ? limits.brainIntentBytes : limits.principalIntentBytes;
+      const fits = Number(row.outstanding_count) + 1 <= countLimit && Number(row.intent_bytes) + bytes <= bytesLimit;
+      const held = managedSyncJob(input) && !fits ? await heldBehindImport(tx, brain ? null : input.principal) : { count: 0, bytes: 0 };
+      const outstanding = await outstandingRefusal(tx, row, input.principal, input.sourceId, 1, countLimit, held.count);
       if (outstanding) throw outstanding;
-      if (Number(row.intent_bytes) - held.bytes + bytes > (brain ? limits.brainIntentBytes : limits.principalIntentBytes)) throw capacityError(`${brain ? 'brain' : 'principal'} intent bytes`);
+      if (Number(row.intent_bytes) - held.bytes + bytes > bytesLimit) throw capacityError(`${brain ? 'brain' : 'principal'} intent bytes`);
       const scope = brain ? 'brain' : 'principal';
       if (Number(row.lifetime_ids) + 1 > limits[`${scope}LifetimeIds`]) throw await cumulativeCapacityError(tx, `${scope} permanent request IDs`,
         row.key, `${scope}LifetimeIds`, Number(row.lifetime_ids), limits[`${scope}LifetimeIds`]);
@@ -434,10 +436,12 @@ export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: Writ
     const syncGroup = fresh.every(item => managedSyncJob(item.input));
     for (const row of counters) {
       const brain = row.key === 'brain', scope = brain ? 'brain' : 'principal';
-      const held = syncGroup ? await heldBehindImport(tx, brain ? null : first.principal) : { count: 0, bytes: 0 };
-      const outstanding = await outstandingRefusal(tx, row, first.principal, first.sourceId, fresh.length, brain ? limits.brainOutstanding : limits.principalOutstanding, held.count);
+      const countLimit = brain ? limits.brainOutstanding : limits.principalOutstanding, bytesLimit = brain ? limits.brainIntentBytes : limits.principalIntentBytes;
+      const fits = Number(row.outstanding_count) + fresh.length <= countLimit && Number(row.intent_bytes) + bytes <= bytesLimit;
+      const held = syncGroup && !fits ? await heldBehindImport(tx, brain ? null : first.principal) : { count: 0, bytes: 0 };
+      const outstanding = await outstandingRefusal(tx, row, first.principal, first.sourceId, fresh.length, countLimit, held.count);
       if (outstanding) throw outstanding;
-      if (Number(row.intent_bytes) - held.bytes + bytes > (brain ? limits.brainIntentBytes : limits.principalIntentBytes)) throw capacityError(`${scope} intent bytes`);
+      if (Number(row.intent_bytes) - held.bytes + bytes > bytesLimit) throw capacityError(`${scope} intent bytes`);
       if (Number(row.lifetime_ids) + fresh.length > limits[`${scope}LifetimeIds`]) throw await cumulativeCapacityError(tx, `${scope} permanent request IDs`,
         row.key, `${scope}LifetimeIds`, Number(row.lifetime_ids), limits[`${scope}LifetimeIds`]);
       if (Number(row.terminal_bytes) + terminalBytes > limits[`${scope}TerminalBytes`]) throw await cumulativeCapacityError(tx, `${scope} reserved receipt bytes`,
