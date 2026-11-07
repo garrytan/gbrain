@@ -4,7 +4,7 @@
  * A repository's committed .lfsconfig names the LFS endpoint, and git-lfs contacts it outside the remote-URL gate.
  * On a host with git-lfs installed globally, a remote caller's sources_add could make the brain host send requests to
  * any HTTP endpoint the repository named, on the clone and on every later pull. Protects:
- * - a skipLfs clone, and every later pull or merge in it, leave pointer files and contact no LFS endpoint (real git and git-lfs);
+ * - a skipLfs clone, and every later pull, merge or push in it, leave pointer files and contact no LFS endpoint (real git and git-lfs);
  * - sources_add from a remote caller clones that way, records it on the source, and a re-clone follows the record;
  * - sources_add from the trusted local CLI keeps LFS downloads;
  * - a remote caller's failed clone gets a fixed message instead of git's own error.
@@ -101,7 +101,7 @@ console.log(git.port + ' ' + lfs.port);
     expect(hits().length).toBeGreaterThan(0);
   }, 90_000);
 
-  test('a skipLfs clone, a later pull and a plain git merge in it leave pointers and contact no LFS endpoint', async () => {
+  test('a skipLfs clone, a later pull, a plain git merge and a push leave pointers and contact no LFS endpoint', async () => {
     const dest = join(ROOT, 'skipped');
     await withEnv(env(), async () => { cloneRepo(url, dest, { timeoutMs: 60_000, depth: 0, skipLfs: true }); });
     expect(readFileSync(join(dest, 'x.bin'), 'utf8')).toBe(pointer);
@@ -122,6 +122,10 @@ console.log(git.port + ' ' + lfs.port);
     execFileSync('git', ['-C', dest, 'fetch', '-q', 'origin'], { env: plain, stdio: 'pipe' });
     execFileSync('git', ['-C', dest, 'merge', '--ff-only', '-q', 'origin/main'], { env: plain, stdio: 'pipe' });
     expect(readFileSync(join(dest, 'z.bin'), 'utf8')).toContain('size 7');
+    writeFileSync(join(dest, 'page.md'), '# page\n');
+    execFileSync('git', ['-C', dest, 'add', 'page.md'], { env: plain, stdio: 'pipe' });
+    execFileSync('git', ['-C', dest, '-c', 'user.name=example', '-c', 'user.email=example@example.invalid', 'commit', '-q', '-m', 'page'], { env: plain, stdio: 'pipe' });
+    execFileSync('git', ['-C', dest, 'push', '-q', bare, 'HEAD:refs/heads/from-brain'], { env: plain, stdio: 'pipe' });
     expect(hits()).toEqual([]);
   }, 90_000);
 });

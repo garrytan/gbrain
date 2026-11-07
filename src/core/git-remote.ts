@@ -99,7 +99,8 @@ export interface CloneOpts {
   timeoutMs?: number; // default 600_000 (10 min)
   /**
    * Keep git-lfs from downloading, in this clone and every later git command in it: the repository's own .lfsconfig
-   * picks the LFS endpoint, outside the URL gate. Written to the clone's .git/config, which outranks .lfsconfig.
+   * picks the LFS endpoint, outside the URL gate. Written to the clone's .git/config, which outranks .lfsconfig;
+   * hooks are off too, so git-lfs's pre-push hook never asks that endpoint on a push.
    */
   skipLfs?: boolean;
 }
@@ -168,7 +169,7 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
   if (opts.branch) {
     args.push('--branch', opts.branch);
   }
-  if (opts.skipLfs) args.push('--config', 'lfs.fetchexclude=*');
+  if (opts.skipLfs) args.push('--config', 'lfs.fetchexclude=*', '--config', 'core.hooksPath=/dev/null', '--config', 'lfs.locksverify=false');
   args.push(url, destDir);
 
   try {
