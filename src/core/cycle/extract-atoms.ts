@@ -86,7 +86,7 @@ import { resolveAlias, resolveTierDefault } from '../model-config.ts';
 import { isMissingSchemaObject, warnOncePerProcess } from '../utils.ts';
 import { utcDate } from './cycle-date.ts';
 import { atomSourceDate } from './atom-source-date.ts';
-import { normalizeForGrounding } from './synthesize-verify.ts';
+import { normalizeAtomSourceQuote } from './synthesize-verify.ts';
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 import { atomOriginPin, atomWriteFailure, type AtomWriteFailure, managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedAtoms, publishManagedAtomGeneration, resumeManagedGenerationMembers,
   MANAGED_ATOM_DISCOVERY_SQL, managedAtomDiscoverySql, type AtomOrigin } from '../persistence/atom-maintenance.ts';
@@ -287,8 +287,8 @@ export function locateQuote(
   quote: string,
 ): { start: number; end: number } | null {
   if (!quote || !content) return null;
-  const c = normalizeForGrounding(content);
-  const q = normalizeForGrounding(quote);
+  const c = normalizeAtomSourceQuote(content);
+  const q = normalizeAtomSourceQuote(quote);
   if (!q.norm) return null;
 
   // Enumerate every folded hit, keep those that survive the round-trip
@@ -302,16 +302,18 @@ export function locateQuote(
   let seen = 0;
   while (at !== -1 && seen < MAX_CANDIDATES) {
     seen++;
-    const start = c.map[at]!;
+    let start = c.map[at]!;
     // map[] names the FIRST code unit of the original character; advance the
     // end by the whole code point, not +1 — a bare +1 splits the surrogate
     // pair when the quote ends with a non-BMP char ('ship it 🚀'), and the
     // half-pair slice then fails the round-trip re-fold below.
     const lastOrig = c.map[at + q.norm.length - 1]!;
     const lastCp = content.codePointAt(lastOrig);
-    const end = lastOrig + (lastCp !== undefined && lastCp > 0xffff ? 2 : 1);
+    let end = lastOrig + (lastCp !== undefined && lastCp > 0xffff ? 2 : 1);
+    while (start > 0 && isQuoteMark(content[start - 1]!)) start--;
+    while (end < content.length && isQuoteMark(content[end]!)) end++;
     if (
-      normalizeForGrounding(content.slice(start, end)).norm === q.norm &&
+      normalizeAtomSourceQuote(content.slice(start, end)).norm === q.norm &&
       !valid.some(v => v.start === start && v.end === end)
     ) {
       valid.push({ start, end });
@@ -325,6 +327,10 @@ export function locateQuote(
   // Exactly one surviving passage, or we cannot say which the atom used.
   if (valid.length !== 1) return null;
   return valid[0]!;
+}
+
+function isQuoteMark(ch: string): boolean {
+  return /["'‘’“”„‟«»‹›]/u.test(ch);
 }
 
 /** #5705: wrap the transcript as data (an inner closing tag is escaped) so a chat export is not read as a turn to answer. */
