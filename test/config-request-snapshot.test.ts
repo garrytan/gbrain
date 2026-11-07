@@ -83,7 +83,7 @@ describe('a remote search reads the config table once', () => {
       expect(r.isError).toBeFalsy();
       expect((JSON.parse(r.content[0].text!) as unknown[]).length).toBeGreaterThan(0);
     });
-    expect(reads.filter(sql => sql === 'SELECT key, value FROM config')).toHaveLength(1);
+    expect(reads.filter(sql => sql === "SELECT key, value FROM config WHERE NOT starts_with(key, 'brainstorm.domain_bank.prefixes:')")).toHaveLength(1);
     expect(reads.filter(sql => sql.startsWith('SELECT value FROM config WHERE key'))).toEqual([]);
   });
 
@@ -101,7 +101,7 @@ describe('a remote search reads the config table once', () => {
       expect((JSON.parse(rpc.result.content[0].text) as unknown[]).length).toBeGreaterThan(0);
     });
     // Token verification runs before the route and may read config on its own; the route reads the table once.
-    expect(reads.filter(sql => sql === 'SELECT key, value FROM config')).toHaveLength(1);
+    expect(reads.filter(sql => sql === "SELECT key, value FROM config WHERE NOT starts_with(key, 'brainstorm.domain_bank.prefixes:')")).toHaveLength(1);
     expect(reads.filter(sql => sql.startsWith('SELECT value FROM config WHERE key'))).toEqual([]);
   });
 });

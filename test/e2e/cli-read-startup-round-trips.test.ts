@@ -90,7 +90,7 @@ describeDatabase('cold read verb startup through a transaction pooler (#7147)', 
     test(`gbrain ${args[0]}: one config read, one sources read, one custody read, two connections`, async () => {
       const { statements } = await tracedRead(args, `folded-${args[0]}`);
       const config = configStatements(statements);
-      expect(config.map(sql), show(config)).toEqual(['SELECT key, value FROM config']);
+      expect(config.map(sql), show(config)).toEqual(["SELECT key, value FROM config WHERE NOT starts_with(key, 'brainstorm.domain_bank.prefixes:')"]);
       const sources = statements.filter(s => /\bFROM\s+sources\b/i.test(s.sql) && !/\bJOIN\s+sources\b/i.test(s.sql) && /^\s*SELECT\s+id\b/i.test(s.sql));
       expect(sources.length, show(sources)).toBe(1);
       expect(statements.filter(s => s.sql.includes("to_regclass('persistence_graduation')"))).toEqual([]);
