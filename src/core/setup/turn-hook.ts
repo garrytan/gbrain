@@ -38,7 +38,7 @@ import { codexHookCensus, codexHookGroupRuns, codexHookTrustHash, codexSetupHook
 import { appendCodexTomlTable, readCodexTomlTable, removeCodexTomlTable } from '../bootstrap/codex-toml.ts';
 import { buildClaudeHookCommand, classifyHarnessHook, hookEntryHash, removeClaudeHooksAt, writeClaudeHooksAt } from '../bootstrap/hooks.ts';
 import { CLAUDE_HOOK_DEFAULT_TIMEOUT_SECS, GBRAIN_HOOK_MARKER_KEY, claudeManagedSettingsPaths, claudeUserSettingsPath, codexConfigPath, codexHooksPath } from '../bootstrap/host-specs.ts';
-import { ensureHookLauncher, hookLauncherPath, hookLauncherState } from './hook-launcher.ts';
+import { ensureHookLauncher, hookLauncherPath, hookLauncherState, hookShellPath, isAbsoluteHookPath } from './hook-launcher.ts';
 
 export const TURN_RULE_LANE = 'turn-rule';
 export const TURN_RULE_MARKER = 'turn-rule-v1';
@@ -72,11 +72,11 @@ const claudePath = (p: TurnHookPaths) => p.claudeSettings ?? claudeUserSettingsP
 const codexPaths = (p: TurnHookPaths) => ({ hooks: p.codexHooks ?? codexHooksPath(), config: p.codexConfig ?? codexConfigPath() });
 
 export function claudeTurnRuleCommand(gbrainBin: string, gbrainHome: string | undefined, launcher: string): string {
-  return buildClaudeHookCommand(gbrainBin, EVENT, { ...(gbrainHome ? { GBRAIN_HOME: gbrainHome } : {}), GBRAIN_HOOK_LANE: TURN_RULE_LANE }, launcher);
+  return buildClaudeHookCommand(hookShellPath(gbrainBin), EVENT, { ...(gbrainHome ? { GBRAIN_HOME: gbrainHome } : {}), GBRAIN_HOOK_LANE: TURN_RULE_LANE }, hookShellPath(launcher));
 }
 
 export function codexTurnRuleGroup(gbrainBin: string, gbrainHome: string | undefined, launcher: string): CodexHookGroup {
-  return codexSetupHookGroup(gbrainBin, EVENT, gbrainHome ? { GBRAIN_HOME: gbrainHome } : {}, TURN_RULE_LANE, launcher);
+  return codexSetupHookGroup(hookShellPath(gbrainBin), EVENT, gbrainHome ? { GBRAIN_HOME: gbrainHome } : {}, TURN_RULE_LANE, hookShellPath(launcher));
 }
 
 /** A Claude Code hook entry that is this lane's: marked, or (marker dropped) its command shape. */
@@ -131,7 +131,7 @@ export function syncTurnRuleHook(opts: { harness: TurnRuleHarness; gbrainBin: st
   const paths = opts.paths ?? {};
   const where = opts.harness === 'codex' ? codexPaths(paths).hooks : claudePath(paths);
   const print = (why: string): TurnHookOutcome => ({ harness: opts.harness, action: 'print', path: where, detail: `per-turn rule hook not installed: ${why}`, next: opts.rerun });
-  if (!opts.gbrainBin || !opts.gbrainBin.startsWith('/')) return print('no absolute gbrain binary was found (harnesses inherit no PATH); install gbrain globally or pass --gbrain-bin');
+  if (!opts.gbrainBin || !isAbsoluteHookPath(opts.gbrainBin)) return print('no absolute gbrain binary was found (harnesses inherit no PATH); install gbrain globally or pass --gbrain-bin');
   try {
     const launcher = paths.hookLauncher ?? hookLauncherPath();
     // The launcher goes down first: a hook that names it must find it.
@@ -155,7 +155,7 @@ function syncClaude(bin: string, home: string | undefined, launcher: string, pat
   if (dryRun) return { harness: 'claude-code', action: 'write', path, detail };
   mkdirSync(dirname(path), { recursive: true });
   const owned = new Set([wantHash, ...ours.map((e) => hookEntryHash(e)).filter((h): h is string => !!h)]);
-  writeClaudeHooksAt(path, { gbrainBin: bin, hookLauncher: launcher, env: { ...(home ? { GBRAIN_HOME: home } : {}), GBRAIN_HOOK_LANE: TURN_RULE_LANE, GBRAIN_SEAT: '' },
+  writeClaudeHooksAt(path, { gbrainBin: hookShellPath(bin), hookLauncher: hookShellPath(launcher), env: { ...(home ? { GBRAIN_HOME: home } : {}), GBRAIN_HOOK_LANE: TURN_RULE_LANE, GBRAIN_SEAT: '' },
     events: [EVENT], marker: TURN_RULE_MARKER, ownedEntryHashes: owned, freshMode: 0o600 });
   return { harness: 'claude-code', action: 'write', path, detail };
 }
