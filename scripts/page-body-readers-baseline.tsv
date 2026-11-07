@@ -188,9 +188,9 @@ src/core/embedding-migration-worst-case.ts	REPROJECTED_PAGE	sql	META
 src/core/embedding-readiness.ts	countArchivedEmbeddingWork	sql	META	
 src/core/engine-sql/chunks.ts	chunklessPagesWhere	sql	META	lane 1e file: body <> '' predicate
 src/core/engine-sql/chunks.ts	getChunkWindows	sql	STREAM	lane 1e file: ships whole bodies per hit for inline pages; a segmented page ships none (NULL) and its chunks carry occurrence_id + span, read by search/segmented-evidence.ts
+src/core/engine-sql/chunks.ts	iterateChunklessEmbeddingStates	sql	META	octet-length metadata moved from listEmbeddingStateRows; segmented byte accounting unchanged
 src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	field	STREAM	lane 1e file
 src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	sql	STREAM	lane 1e file
-src/core/engine-sql/chunks.ts	listEmbeddingStateRows	sql	META	lane 1e file: octet_length metadata
 src/core/engine-sql/page-body.ts	createSegmentedPageShell	sql	NONE	not a reader: the segmented storage writer sets the body columns NULL on the shell row
 src/core/engine-sql/page-body.ts	flipBodyGeneration	sql	NONE	not a reader: the generation flip sets the body columns NULL and the segmented body columns
 src/core/engine-sql/pages.ts	PAGE_VERSION_COLUMNS	sql	SEGW	lane 1e: versions of segmented pages carry no body
@@ -376,6 +376,7 @@ src/core/output/writer.ts	runValidators	field	INLINE
 src/core/oversized-backfill.ts	PAGE_BYTES_SQL	sql	SEGW	
 src/core/oversized-backfill.ts	rewritePage	call:serializeMarkdown	SEGW	
 src/core/oversized-backfill.ts	rewritePage	field	SEGW	
+src/core/ordinary-chunk-presence.ts	inspectOrdinaryChunkPresence	field	INLINE	scoped snapshot identity, revision and inline-shape checks gate use; fence overlay and prose preparation exclude private claims from ordinary chunks
 src/core/page-body/body-digests.ts	fileBodyDigests	field	NONE	scan.timeline is the scanned file's timeline byte ranges and digests.timeline a SHA-256, not a page body; each region is hashed piece by piece
 src/core/page-body/body-scan.ts	scanMarkdownString	field	NONE	not a stored body: scans an incoming markdown string for the segmenter
 src/core/page-body/content-hash-stream.ts	ContentHashStream.fromState	field	NONE	not a stored body: resumes the streaming content hash over incoming text

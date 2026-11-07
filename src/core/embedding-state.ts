@@ -4,12 +4,7 @@
  * themselves (no stored status column, no migration).
  *
  * Unit: one `content_chunks` row, plus one unit per page that has no chunk
- * row. Each unit is in exactly one state; the classifier SQL lives once in
- * `src/core/engine-sql/chunks.ts` (`chunkEmbeddingState` /
- * `chunklessPageState`, next to `staleChunkWhere`) and both engines delegate
- * to it. Precedence for a chunk: deleted page, quarantined page, stored
- * vector, embed job predicate, else embed_skip. For a chunkless live page:
- * quarantined, healable body, else empty.
+ * row.
  *
  * - `embedded`: a chunk on a live, unquarantined page whose active column
  *   holds a vector (vectors retained on an embed_skip page count: vector
@@ -27,14 +22,15 @@
  * - `quarantined`: the chunks of a live page carrying the `quarantine` marker,
  *   or the page itself when it has none (the gate writes zero chunks). Hidden
  *   from search; doctor `quarantined_pages` owns the warning.
- * - `empty`: a live page with no chunk rows and an empty body
- *   (`compiled_truth` and `timeline` both ''): nothing to index.
+ * - `empty`: a live page with no chunk rows and no body, or an inline Markdown
+ *   body whose ordinary projection produces no chunks.
  * - `deleted_page_chunks`: chunks on a soft-deleted page. The purge lifecycle
  *   (`gbrain pages purge-deleted`, the autopilot purge phase, 72 h) removes
  *   them; past that window they are overdue.
  * - `chunkless_healable`: a live, unquarantined page with body text and no
- *   chunk rows (`listChunklessPagesWithContent`'s predicate): `gbrain embed
- *   --stale` chunks it before embedding. An `embed_skip` page is included
+ *   chunk rows. Inline Markdown must produce ordinary prose chunks under the
+ *   healer's preparation. `gbrain embed --stale` chunks it before embedding.
+ *   An `embed_skip` page is included
  *   (#7174): writes keep its chunks (#6722), so none means keyword search
  *   cannot find it; it is chunked and still gets no vectors.
  *
@@ -95,6 +91,7 @@ export interface EmbeddingStateRow {
   quarantine_reason: string | null;
   deleted_at: Date | null;
   overdue: boolean;
+  projection_empty?: true;
 }
 
 export interface EmbeddingStateSummary {
@@ -175,7 +172,7 @@ export function embeddingStateVerify(sourceId: string, state: EmbeddingState): {
  * docs). Null for `embedded`, which needs none. Without `sourceId` the
  * commands run brain-wide; pass `verify` then (doctor verifies with itself).
  */
-export function embeddingStateFix(state: EmbeddingState, ctx: { sourceId?: string; slug?: string; markerBytes?: number | null; blockBytes?: number; embeddingsEnabled: boolean; verify?: { argv: string[] } }): Action | null {
+export function embeddingStateFix(state: EmbeddingState, ctx: { sourceId?: string; slug?: string; markerBytes?: number | null; blockBytes?: number; projectionEmpty?: true; embeddingsEnabled: boolean; verify?: { argv: string[] } }): Action | null {
   const verify = ctx.verify ?? embeddingStateVerify(ctx.sourceId ?? 'default', state);
   const base = { verify, docs: EMBEDDING_STATE_DOCS, requires_exclusive: false };
   const source = ctx.sourceId ? ['--source', ctx.sourceId] : [];
@@ -215,6 +212,7 @@ export function embeddingStateFix(state: EmbeddingState, ctx: { sourceId?: strin
         why: 'The content-quality gate hid this page as junk, so it has no searchable chunks. Clearing is the owner\'s judgement for a false positive; it re-imports and embeds the page.',
         user_message: 'A page was hidden from search as junk. Review it and clear it if it is a false positive?' };
     case 'empty':
+      if (ctx.projectionEmpty) return null;
       return { ...base, ask_user: true, argv: ctx.slug ? ['gbrain', 'delete', ctx.slug, ...source, '--force'] : ['gbrain', 'list', '--json'],
         consent: ['destructive'], actor: 'user',
         why: 'The page has no body text, so there is nothing to index. Writing content to it chunks it on the next write; delete it only if it is a stub nobody needs (soft delete, restorable).',

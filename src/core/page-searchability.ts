@@ -22,6 +22,7 @@ export interface PageSearchability {
   chunks: number;
   unembedded: number;
   embedding_hold: { state: 'held' | 'capped'; reason: string; updated_at: string } | null;
+  projection_empty?: true;
 }
 
 export const PAGE_SEARCHABLE: Record<EmbeddingState, true | 'keyword' | false> = { embedded: true, pending: 'keyword', keyword_only: 'keyword', quarantined: false, empty: false,
@@ -43,11 +44,12 @@ export async function readPageSearchability(engine: BrainEngine, sourceId: strin
   const unembedded = new Map((await engine.executeRaw<{ slug: string; unembedded: number | string }>(
     `SELECT p.slug, count(cc.id) AS unembedded FROM pages p JOIN content_chunks cc ON cc.page_id = p.id AND ${chunkGenerationFilter('p', 'cc')} AND ${column} IS NULL
       WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND p.deleted_at IS NULL GROUP BY p.slug`, [sourceId, live])).map(row => [row.slug, Number(row.unembedded)]));
-  const folded = new Map<string, { state: EmbeddingState; chunks: number }>();
+  const folded = new Map<string, { state: EmbeddingState; chunks: number; projection_empty?: true }>();
   for (const row of rows) {
     const prior = folded.get(row.slug);
     const state = prior && PAGE_STATE_ORDER.indexOf(prior.state) < PAGE_STATE_ORDER.indexOf(row.state) ? prior.state : row.state;
-    folded.set(row.slug, { state, chunks: (prior?.chunks ?? 0) + Number(row.chunks) });
+    const projectionEmpty = state === 'empty' && (prior?.projection_empty || row.projection_empty);
+    folded.set(row.slug, { state, chunks: (prior?.chunks ?? 0) + Number(row.chunks), ...(projectionEmpty ? { projection_empty: true } : {}) });
   }
   const keywordOnly = [...folded].filter(([, emb]) => emb.state === 'keyword_only').map(([slug]) => slug);
   const holds = new Map<string, NonNullable<PageSearchability['embedding_hold']>>();
@@ -69,6 +71,7 @@ export async function readPageSearchability(engine: BrainEngine, sourceId: strin
       chunks: emb?.chunks ?? 0,
       unembedded: unembedded.get(slug) ?? 0,
       embedding_hold: hold,
+      ...(emb?.projection_empty ? { projection_empty: true } : {}),
     });
   }
   return out;

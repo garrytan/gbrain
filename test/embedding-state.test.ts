@@ -220,3 +220,331 @@ describe('embedding state rows and fixes', () => {
       argv: ['gbrain', 'pages', 'purge-deleted', '--yes'], preview_argv: ['gbrain', 'pages', 'purge-deleted', '--dry-run', '--json'], consent: ['destructive'] });
   });
 });
+
+import { spyOn } from 'bun:test';
+import type { Action, RenderedAction } from '../src/core/agent-output.ts';
+import type { EmbeddingState } from '../src/core/embedding-state.ts';
+import { prepareMarkdownChunks } from '../src/core/markdown-chunks.ts';
+import { preparePageProjection, readProjectionSnapshot } from '../src/core/page-state/projections.ts';
+import { readPagesStatus } from '../src/commands/pages-status.ts';
+import { runPagesUnsearchable } from '../src/commands/pages-unsearchable.ts';
+
+const COLD_TAKE_BEGIN = '<!--- gbrain:takes:begin -->';
+const COLD_TAKE_END = '<!--- gbrain:takes:end -->';
+const COLD_TAKE_TABLE = '| # | claim | kind | who | weight | since | source |\n|---|---|---|---|---|---|---|\n| 1 | Protectedsentinel prefers the synthetic plan | take | brain | 0.7 | 2026-01 | chat |';
+const COLD_TAKES = `${COLD_TAKE_BEGIN}\n${COLD_TAKE_TABLE}\n${COLD_TAKE_END}\n`;
+const COLD_FACT_HEADER = '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|';
+const coldFact = (n: number, claim: string, visibility: 'private' | 'world') =>
+  `| ${n} | ${claim} | fact | 1.0 | ${visibility} | medium | 2026-01-01 |  | chat |  |`;
+const coldFacts = (...rows: string[]) => `<!--- gbrain:facts:begin -->\n\n${COLD_FACT_HEADER}\n${rows.join('\n')}\n<!--- gbrain:facts:end -->\n`;
+
+async function coldPage(slug: string, body: string, timeline = '', source = 'default'): Promise<number> {
+  const id = await page(slug, { body: '', source });
+  await engine.executeRaw('UPDATE pages SET compiled_truth=$2, timeline=$3 WHERE id=$1', [id, body, timeline]);
+  return id;
+}
+
+async function coldInventory() {
+  return engine.executeRaw<{ source_id: string; slug: string; compiled_truth: string | null; timeline: string | null; body_storage: string; body_bytes: number | null; chunks: number }>(
+    `SELECT p.source_id,p.slug,p.compiled_truth,p.timeline,p.body_storage,p.body_bytes,
+      (SELECT count(*)::int FROM content_chunks cc WHERE cc.page_id=p.id) AS chunks
+     FROM pages p ORDER BY p.source_id,p.slug`);
+}
+
+async function coldRows(states: readonly EmbeddingState[], limit = 100, sourceIds?: string[]) {
+  return engine.listEmbeddingStateRows({ states, limit, sourceIds, purgeWindowHours: 72 });
+}
+
+function projectionObservation(name: string, observed: unknown): void {
+  console.info(`embedding-projection-observation ${JSON.stringify({ case: name, observed })}`);
+}
+
+function expectNoHealingOrDeletion(fix: Action | RenderedAction | null): void {
+  if (!fix) return;
+  expect(fix.consent).not.toContain('destructive');
+  expect(fix.consent).not.toContain('paid');
+  expect(fix.argv?.[1]).not.toBe('embed');
+  expect(fix.argv?.[1]).not.toBe('delete');
+  expect(fix.argv?.slice(1, 3)).not.toEqual(['pages', 'purge-deleted']);
+  if (fix.then) expectNoHealingOrDeletion(fix.then);
+}
+
+interface ColdListing {
+  rows: Array<{ slug: string; source_id: string; state: EmbeddingState; reason: string; chunks: number; fix: RenderedAction | null }>;
+  limit: number;
+  complete: boolean;
+}
+
+async function coldListing(): Promise<ColdListing> {
+  const lines: string[] = [];
+  const originalLog = console.log;
+  console.log = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+  try {
+    await runPagesUnsearchable(engine, ['--source', 'default', '--limit', '100', '--json']);
+  } finally {
+    console.log = originalLog;
+  }
+  return JSON.parse(lines.join('\n')) as ColdListing;
+}
+
+const stateIdentity = (rows: Awaited<ReturnType<typeof coldRows>>) => rows.map(r => [r.source_id, r.slug, r.state, r.chunks]);
+
+describe('cold ordinary-projection classification', () => {
+  test('closed takes-only content is empty, while lost public prose remains healable', async () => {
+    await coldPage('notes/protected-only', COLD_TAKES);
+    const before = await coldInventory();
+    const projected = await prepareMarkdownChunks({ compiled_truth: COLD_TAKES });
+    const candidateCount = await engine.countChunklessPagesWithContent();
+    const protectedSummary = await readEmbeddingState(engine, { mode: 'full' });
+    const protectedRows = await coldRows(['empty', 'chunkless_healable']);
+    const after = await coldInventory();
+    await coldPage('notes/lost-prose', 'Publicsentinel describes an ordinary missing paragraph.');
+    const controlRows = await coldRows(['chunkless_healable']);
+    projectionObservation('closed-takes', { projected: projected.length, candidateCount, counts: protectedSummary.counts,
+      rows: stateIdentity(protectedRows), controls: stateIdentity(controlRows), before, after });
+    expect(projected).toHaveLength(0);
+    expect(candidateCount).toBe(1);
+    expect(controlRows.find(r => r.slug === 'notes/lost-prose')).toMatchObject({ state: 'chunkless_healable', chunks: 0 });
+    expect(protectedSummary.counts).toMatchObject({ empty: 1, chunkless_healable: 0 });
+    expect(stateIdentity(protectedRows)).toEqual([['default', 'notes/protected-only', 'empty', 0]]);
+    expect(after).toEqual(before);
+    expect(after[0]).toMatchObject({ compiled_truth: COLD_TAKES, chunks: 0 });
+  });
+
+  test('private facts stay excluded from the healable nonzero projected shell, and withdrawn world fences keep their observed nonzero shell', async () => {
+    const privateBody = coldFacts(coldFact(1, 'Privatefactsentinel holds a synthetic preference', 'private'));
+    const worldClaims = ['Worldsentinel ships synthetic widgets', 'Worldsentinel maintains a public catalogue'];
+    const worldBody = coldFacts(...worldClaims.map((claim, i) => coldFact(i + 1, claim, 'world')));
+    await coldPage('notes/private-only', privateBody);
+    await coldPage('notes/world-control', worldBody);
+    await coldPage('notes/mixed-private-control', `Ordinary public paragraph.\n${privateBody}`);
+    const before = await coldInventory();
+    const privateProjection = await prepareMarkdownChunks({ compiled_truth: privateBody });
+    const worldProjection = await prepareMarkdownChunks({ compiled_truth: worldBody });
+    const initialSnapshot = await readProjectionSnapshot(engine, 'notes/world-control', 'default', { allowUnsealed: true });
+    expect(initialSnapshot).not.toBeNull();
+    const initialProjection = await preparePageProjection(initialSnapshot!);
+    for (const claim of worldClaims) {
+      await engine.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash)
+        VALUES ('default','world','*',gbrain_fact_fingerprint($1))`, [claim]);
+    }
+    const withdrawnSnapshot = await readProjectionSnapshot(engine, 'notes/world-control', 'default', { allowUnsealed: true });
+    expect(withdrawnSnapshot).not.toBeNull();
+    const withdrawnProjection = await preparePageProjection(withdrawnSnapshot!);
+    const rawAfter = await prepareMarkdownChunks({ compiled_truth: worldBody });
+    const rows = await coldRows(['empty', 'chunkless_healable']);
+    const summary = await readEmbeddingState(engine, { mode: 'full' });
+    const after = await coldInventory();
+    const [withdrawals] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM fact_withdrawals');
+    projectionObservation('private-facts', { privateChunks: privateProjection.length, worldChunks: worldProjection.length,
+      initialSnapshotChunks: initialProjection.chunks.length, withdrawnSnapshotChunks: withdrawnProjection.chunks.length,
+      rawAfterChunks: rawAfter.length, withdrawals: withdrawals?.n, rows: stateIdentity(rows), counts: summary.counts, before, after });
+    expect(privateProjection).toHaveLength(1);
+    expect(worldProjection.map(c => c.chunk_text).join('\n')).toContain(worldClaims[0]!);
+    expect(privateProjection.map(c => c.chunk_text).join('\n')).not.toContain('Privatefactsentinel');
+    expect(initialProjection.chunks).toHaveLength(1);
+    expect(withdrawnProjection.chunks).toHaveLength(1);
+    expect(rawAfter).toHaveLength(1);
+    expect(withdrawals?.n).toBe(2);
+    for (const claim of worldClaims) expect(withdrawnProjection.chunks.map(c => c.chunk_text).join('\n')).not.toContain(claim);
+    expect(stateIdentity(rows)).toEqual([
+      ['default', 'notes/mixed-private-control', 'chunkless_healable', 0],
+      ['default', 'notes/private-only', 'chunkless_healable', 0],
+      ['default', 'notes/world-control', 'chunkless_healable', 0],
+    ]);
+    expect(summary.counts).toMatchObject({ empty: 0, chunkless_healable: 3 });
+    expect(after).toEqual(before);
+  });
+
+  test('mixed public prose and takes are healable without rewriting protected bytes or installing chunks', async () => {
+    const mixedBody = `Publicsentinel is ordinary prose that lost its chunks.\n\n${COLD_TAKES}`;
+    await coldPage('notes/mixed-takes', mixedBody);
+    await coldPage('notes/prose-control', 'Public control without a protected fence.');
+    const before = await coldInventory();
+    const projection = await prepareMarkdownChunks({ compiled_truth: mixedBody });
+    const summary = await readEmbeddingState(engine, { mode: 'full' });
+    const rows = await coldRows(['empty', 'chunkless_healable']);
+    const after = await coldInventory();
+    projectionObservation('mixed-takes', { projection: projection.map(c => c.chunk_text), counts: summary.counts, rows: stateIdentity(rows), before, after });
+    expect(projection.map(c => c.chunk_text).join('\n')).toContain('Publicsentinel');
+    expect(projection.map(c => c.chunk_text).join('\n')).not.toContain('Protectedsentinel');
+    expect(stateIdentity(rows)).toEqual([
+      ['default', 'notes/mixed-takes', 'chunkless_healable', 0],
+      ['default', 'notes/prose-control', 'chunkless_healable', 0],
+    ]);
+    expect(summary.counts).toMatchObject({ empty: 0, chunkless_healable: 2 });
+    expect(after).toEqual(before);
+  });
+
+  test('timeline-only takes and whitespace are empty, but timeline-only ordinary prose is healable', async () => {
+    await coldPage('notes/timeline-takes', '', COLD_TAKES);
+    await coldPage('notes/timeline-prose', '', 'Timelinepublicsentinel records an ordinary event.');
+    await coldPage('notes/whitespace', ' \t\n ', '\n\t');
+    await coldPage('notes/blank-stub', '');
+    const before = await coldInventory();
+    const protectedProjection = await prepareMarkdownChunks({ compiled_truth: '', timeline: COLD_TAKES });
+    const controlProjection = await prepareMarkdownChunks({ compiled_truth: '', timeline: 'Timelinepublicsentinel records an ordinary event.' });
+    const rows = await coldRows(['empty', 'chunkless_healable']);
+    const summary = await readEmbeddingState(engine, { mode: 'full' });
+    const after = await coldInventory();
+    projectionObservation('timeline', { protectedChunks: protectedProjection.length, controlChunks: controlProjection.length,
+      counts: summary.counts, rows: stateIdentity(rows), before, after });
+    expect(protectedProjection).toHaveLength(0);
+    expect(controlProjection.map(c => c.chunk_text).join('\n')).toContain('Timelinepublicsentinel');
+    expect(stateIdentity(rows)).toEqual([
+      ['default', 'notes/timeline-prose', 'chunkless_healable', 0],
+      ['default', 'notes/blank-stub', 'empty', 0],
+      ['default', 'notes/timeline-takes', 'empty', 0],
+      ['default', 'notes/whitespace', 'empty', 0],
+    ]);
+    expect(summary.counts).toMatchObject({ empty: 3, chunkless_healable: 1 });
+    expect(after).toEqual(before);
+  });
+
+  test('projection classification is source-specific and preserves quarantine, embed_skip, deletion and unsearchable units', async () => {
+    await engine.executeRaw("INSERT INTO sources(id,name) VALUES('src-b','src-b')");
+    await coldPage('notes/shared', COLD_TAKES);
+    await coldPage('notes/shared', 'Public prose in another source.', '', 'src-b');
+    await page('notes/quarantined', { body: COLD_TAKES, frontmatter: { quarantine: { reason: 'junk_pattern' } } });
+    await page('notes/embed-skipped', { body: 'Ordinary lost prose retains keyword eligibility.', frontmatter: { embed_skip: { reason: 'oversized', bytes: 700_000 } } });
+    await page('notes/deleted-protected', { body: COLD_TAKES, deletedHoursAgo: 1 });
+    await page('notes/deleted-prose', { deletedHoursAgo: 1 });
+    const before = await coldInventory();
+    const a = await readEmbeddingState(engine, { mode: 'full', sourceIds: ['default'] });
+    const b = await readEmbeddingState(engine, { mode: 'full', sourceIds: ['src-b'] });
+    const all = await readEmbeddingState(engine, { mode: 'full' });
+    const rows = await coldRows(['empty', 'chunkless_healable', 'quarantined', 'deleted_page_chunks']);
+    const aRows = await coldRows(['empty', 'chunkless_healable', 'quarantined'], 100, ['default']);
+    const bRows = await coldRows(['empty', 'chunkless_healable', 'quarantined'], 100, ['src-b']);
+    const after = await coldInventory();
+    projectionObservation('scope-and-markers', { a: a.counts, b: b.counts, all: all.counts, unsearchable: all.unsearchable,
+      rows: stateIdentity(rows), aRows: stateIdentity(aRows), bRows: stateIdentity(bRows), before, after });
+    expect(stateIdentity(bRows)).toEqual([['src-b', 'notes/shared', 'chunkless_healable', 0]]);
+    expect(stateIdentity(aRows)).toEqual([
+      ['default', 'notes/embed-skipped', 'chunkless_healable', 0],
+      ['default', 'notes/shared', 'empty', 0],
+      ['default', 'notes/quarantined', 'quarantined', 0],
+    ]);
+    expect(rows).toHaveLength(4);
+    expect(rows.some(r => r.slug.startsWith('notes/deleted-'))).toBe(false);
+    expect(a.counts).toMatchObject({ empty: 1, chunkless_healable: 1, quarantined: 1 });
+    expect(b.counts).toMatchObject({ empty: 0, chunkless_healable: 1, quarantined: 0 });
+    expect(all.counts).toMatchObject({ empty: 1, chunkless_healable: 2, quarantined: 1, deleted_page_chunks: 0 });
+    expect(all.unsearchable).toBe(4);
+    expect(after).toEqual(before);
+  });
+
+  test('more than fifty projection-empty candidates cannot consume a requested eligible-row limit', async () => {
+    const protectedSlugs = Array.from({ length: 55 }, (_, i) => `aaa/protected-${String(i).padStart(2, '0')}`);
+    for (const slug of protectedSlugs) await coldPage(slug, COLD_TAKES);
+    for (const slug of ['zzz/lost-c', 'zzz/lost-a', 'zzz/lost-b']) await coldPage(slug, 'Ordinary later prose lost its chunks.');
+    const before = await coldInventory();
+    const limited = await coldRows(['chunkless_healable'], 2);
+    const emptyOne = await coldRows(['empty'], 1);
+    const allRows = await coldRows(['empty', 'chunkless_healable'], 58);
+    const after = await coldInventory();
+    projectionObservation('eligible-limit', { requestedLimit: 2, protectedCandidates: protectedSlugs.length,
+      limited: stateIdentity(limited), emptyOne: stateIdentity(emptyOne), all: stateIdentity(allRows), unchanged: JSON.stringify(after) === JSON.stringify(before) });
+    expect(limited.map(r => r.slug)).toEqual(['zzz/lost-a', 'zzz/lost-b']);
+    expect(limited).toHaveLength(2);
+    expect(stateIdentity(emptyOne)).toEqual([['default', 'aaa/protected-00', 'empty', 0]]);
+    expect(stateIdentity(allRows)).toEqual([
+      ...['zzz/lost-a', 'zzz/lost-b', 'zzz/lost-c'].map(slug => ['default', slug, 'chunkless_healable', 0]),
+      ...protectedSlugs.map(slug => ['default', slug, 'empty', 0]),
+    ]);
+    expect(after).toEqual(before);
+  }, 60_000);
+
+  test('page status and unsearchable commands do not recommend embedding or deleting protected-only content', async () => {
+    await engine.setConfig('embedding_disabled', 'false');
+    await coldPage('notes/protected-advice', COLD_TAKES);
+    await coldPage('notes/blank-advice', '');
+    await coldPage('notes/prose-advice', 'Ordinary lost public prose.');
+    const before = await coldInventory();
+    const status = await readPagesStatus(engine, 'default', ['notes/protected-advice', 'notes/blank-advice', 'notes/prose-advice']);
+    const listing = await coldListing();
+    const after = await coldInventory();
+    projectionObservation('command-advice', { status, listing, before, after });
+    const protectedStatus = status.pages.find(p => p.slug === 'notes/protected-advice')!;
+    const blankStatus = status.pages.find(p => p.slug === 'notes/blank-advice')!;
+    const proseStatus = status.pages.find(p => p.slug === 'notes/prose-advice')!;
+    expect(blankStatus.state).toBe('empty');
+    expect(blankStatus.fix).toMatchObject({ ask_user: true, consent: ['destructive'] });
+    expect(blankStatus.fix?.argv?.slice(0, 3)).toEqual(['gbrain', 'delete', 'notes/blank-advice']);
+    expect(proseStatus.state).toBe('chunkless');
+    expect(proseStatus.fix?.argv?.[1]).toBe('embed');
+    expect(protectedStatus.state).toBe('empty');
+    expect(protectedStatus.searchable).toBe(false);
+    expect(protectedStatus.why).not.toContain('has no body text');
+    expect(protectedStatus.why).toMatch(/protect|take|fact|projection|indexable/i);
+    expectNoHealingOrDeletion(protectedStatus.fix);
+    const protectedRow = listing.rows.find(r => r.slug === 'notes/protected-advice')!;
+    const blankRow = listing.rows.find(r => r.slug === 'notes/blank-advice')!;
+    const proseRow = listing.rows.find(r => r.slug === 'notes/prose-advice')!;
+    expect(blankRow.fix?.argv?.[1]).toBe('delete');
+    expect(blankRow.fix?.next).toBe('ask_user');
+    expect(proseRow.fix?.argv?.[1]).toBe('embed');
+    expect(protectedRow.state).toBe('empty');
+    expect(protectedRow.reason).not.toBe('no_chunk_rows');
+    expect(`${protectedRow.reason} ${protectedRow.fix?.why ?? ''}`).toMatch(/protect|take|fact|projection|indexable/i);
+    expectNoHealingOrDeletion(protectedRow.fix);
+    expect(listing.complete).toBe(true);
+    expect(after).toEqual(before);
+  });
+
+  test('legacy unpaired markers stay non-exposing and non-destructive while segmented pages keep their raw classifier path', async () => {
+    const unpaired = `${COLD_TAKE_BEGIN}\n${COLD_TAKE_TABLE}\n`;
+    await coldPage('notes/legacy-unpaired', unpaired);
+    await coldPage('notes/legacy-prose-control', `Publicprefixsentinel precedes an unpaired marker.\n${unpaired}`);
+    const segmentedId = await coldPage('notes/segmented-control', 'Synthetic segmented precondition.');
+    await engine.executeRaw(`UPDATE pages SET body_storage='segmented',compiled_truth=NULL,timeline=NULL,body_bytes=128,body_generation=1 WHERE id=$1`, [segmentedId]);
+    const before = await coldInventory();
+    const emptyProjection = await prepareMarkdownChunks({ compiled_truth: unpaired });
+    const controlProjection = await prepareMarkdownChunks({ compiled_truth: `Publicprefixsentinel precedes an unpaired marker.\n${unpaired}` });
+    const bodyAttempts: string[] = [];
+    const originalSnapshot = engine.readPageSnapshot.bind(engine);
+    const snapshotSpy = spyOn(engine, 'readPageSnapshot').mockImplementation(async (slug, opts) => {
+      if (slug === 'notes/segmented-control') { bodyAttempts.push(slug); throw new Error('Classifier must not materialize a segmented body'); }
+      return originalSnapshot(slug, opts);
+    });
+    const originalGet = engine.getPage.bind(engine);
+    const getSpy = spyOn(engine, 'getPage').mockImplementation(async (slug, opts) => {
+      if (slug === 'notes/segmented-control') { bodyAttempts.push(slug); throw new Error('Classifier must not materialize a segmented body'); }
+      return originalGet(slug, opts);
+    });
+    let rows: Awaited<ReturnType<typeof coldRows>>;
+    let summary: Awaited<ReturnType<typeof readEmbeddingState>>;
+    let status: Awaited<ReturnType<typeof readPagesStatus>>;
+    let listing: ColdListing;
+    try {
+      rows = await coldRows(['empty', 'chunkless_healable']);
+      summary = await readEmbeddingState(engine, { mode: 'full' });
+      status = await readPagesStatus(engine, 'default', ['notes/legacy-unpaired', 'notes/legacy-prose-control']);
+      listing = await coldListing();
+    } finally {
+      snapshotSpy.mockRestore();
+      getSpy.mockRestore();
+    }
+    const after = await coldInventory();
+    projectionObservation('legacy-and-segmented', { emptyChunks: emptyProjection.length, control: controlProjection.map(c => c.chunk_text),
+      rows: stateIdentity(rows), counts: summary.counts, status, listing, bodyAttempts, before, after });
+    expect(emptyProjection).toHaveLength(0);
+    expect(controlProjection.map(c => c.chunk_text).join('\n')).toContain('Publicprefixsentinel');
+    expect(controlProjection.map(c => c.chunk_text).join('\n')).not.toContain('Protectedsentinel');
+    expect(stateIdentity(rows)).toEqual([
+      ['default', 'notes/legacy-prose-control', 'chunkless_healable', 0],
+      ['default', 'notes/segmented-control', 'chunkless_healable', 0],
+      ['default', 'notes/legacy-unpaired', 'empty', 0],
+    ]);
+    expect(summary.counts).toMatchObject({ empty: 1, chunkless_healable: 2 });
+    expect(status.pages.find(p => p.slug === 'notes/legacy-prose-control')?.state).toBe('chunkless');
+    const protectedStatus = status.pages.find(p => p.slug === 'notes/legacy-unpaired')!;
+    expect(protectedStatus.state).toBe('empty');
+    expectNoHealingOrDeletion(protectedStatus.fix);
+    const protectedRow = listing.rows.find(r => r.slug === 'notes/legacy-unpaired')!;
+    expect(protectedRow.state).toBe('empty');
+    expectNoHealingOrDeletion(protectedRow.fix);
+    expect(bodyAttempts).toEqual([]);
+    expect(after).toEqual(before);
+  });
+});

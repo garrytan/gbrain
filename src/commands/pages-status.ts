@@ -165,7 +165,9 @@ function stateWhy(slug: string, state: PageStatusState, ctx: { row?: EmbeddingSt
     case 'keyword_only': return `Page ${slug} is searchable by keyword only: the import gate marked it embed_skip (${ctx.row?.embed_skip_reason ?? 'embed_skip'}), so it gets no vectors.`;
     case 'quarantined': return `Page ${slug} is quarantined (${ctx.row?.quarantine_reason ?? 'quarantine'}): the content-quality gate hides it from search.`;
     case 'chunkless': return `Page ${slug} has body text but no chunk rows, so neither keyword nor vector search can read its body.`;
-    case 'empty': return `Page ${slug} has no body text, so there is nothing to search.`;
+    case 'empty': return ctx.row?.projection_empty
+      ? `Page ${slug} intentionally has no indexable ordinary-chunk projection; its stored content is unchanged.`
+      : `Page ${slug} has no body text, so there is nothing to search.`;
     case 'page_deleted': return `Page ${slug} is soft-deleted, so search never returns it. If it should come back, restore it with gbrain restore ${slug} --force.`;
     case 'missing': return `No page with slug ${slug} exists in this source, live or deleted.`;
   }
@@ -210,7 +212,7 @@ export async function readPagesStatus(engine: BrainEngine, sourceId: string, slu
       fix = heldApproveAction({ source_id: sourceId, slug, pending_chunks: unembedded, ...approvalAmount(Number(page.unembedded_chars), basis) }, basis.free);
     } else if (classifier && classifier !== 'embedded' && !(disabled && classifier === 'pending')) {
       if (classifier === 'keyword_only') blockBytes ??= await effectiveBytesBlock(engine);
-      fix = embeddingStateFix(classifier, { sourceId, slug, markerBytes: row?.marker_bytes ?? null, blockBytes, embeddingsEnabled: !disabled,
+      fix = embeddingStateFix(classifier, { sourceId, slug, markerBytes: row?.marker_bytes ?? null, blockBytes, projectionEmpty: row?.projection_empty, embeddingsEnabled: !disabled,
         verify: { argv: ['gbrain', 'pages', 'status', slug, '--source', sourceId, '--json'] } });
     }
     out.push({ slug, source_id: sourceId, state, searchable: SEARCHABLE[state],
