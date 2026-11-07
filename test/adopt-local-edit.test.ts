@@ -15,9 +15,10 @@
  * Seams: the refresh fixture (one clone, sources alpha and beta), managedBrain for the repo-less case, the effect
  * worker run in-process, `localEditAdoptionSeams.beforePublish`.
  */
-import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, expect, spyOn, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import * as fs from 'node:fs';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { acquireWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
@@ -472,9 +473,18 @@ test('#8755 d: a stale editor save keeps the refusal: the earlier revision as it
   await expectRefused(f, before.replace('The first alpha observation.', `The first alpha observation.\n\n${LOCAL}`), timeline(f), 'add_timeline_entry');
 }), 180_000);
 
-test('#8755 e: a file over the page size limit keeps the refusal', () => each(async f => {
+test('#8755 e: a file over the page size limit keeps the refusal, and the adoption never reads it', () => each(async f => {
   const { PAGE_MAX_BYTES } = await import('../src/core/page-size-policy.ts');
-  await expectRefused(f, page('Alpha one', `The first alpha observation.\n\n${'x'.repeat(PAGE_MAX_BYTES + 1)}`), timeline(f), 'add_timeline_entry');
+  const read = fs.readFileSync, target = join(f.root, 'alpha', 'one.md');
+  let adoptionReads = 0;
+  const reads = spyOn(fs, 'readFileSync').mockImplementation(((path: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+    if (String(path) === target && String(new Error().stack).includes('adoptionIntent')) adoptionReads++;
+    return (read as (...args: unknown[]) => unknown)(path, ...rest);
+  }) as typeof fs.readFileSync);
+  try {
+    await expectRefused(f, page('Alpha one', `The first alpha observation.\n\n${'x'.repeat(PAGE_MAX_BYTES + 1)}`), timeline(f), 'add_timeline_entry');
+  } finally { reads.mockRestore(); }
+  expect(adoptionReads).toBe(0);
 }), 180_000);
 
 test('#8755 j: an empty persistence.adopt_quiet_ms reads as the default window, not as no wait', () => each(async f => {
