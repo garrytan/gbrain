@@ -103,15 +103,21 @@ export function selectGitHubItemSources<Row extends { local_path: string | null;
 ): { verified: Row[]; legacyMatched: boolean } {
   const verified: Row[] = [];
   let legacyMatched = false;
-  let legacyChecked = false;
+  const candidates = rows.map((row) => ({
+    row,
+    cfg: (typeof row.config === 'string' ? JSON.parse(row.config) : (row.config ?? {})) as Record<string, unknown>,
+  }));
+  const isLegacy = (cfg: Record<string, unknown>) => !(cfg.kind === 'github' && cfg.webhook_secret != null);
   // Every github-kind row is checked before scope decides anything, and the legacy rows share exactly one check (a
   // throwaway one when the repo has none), so the work done for an unsigned request does not depend on whether or how
-  // many sources name the repository (#8768). Like the push route, only the first legacy row's secret is tried.
-  for (const row of rows) {
-    const cfg = (typeof row.config === 'string' ? JSON.parse(row.config) : (row.config ?? {})) as Record<string, unknown>;
-    const legacy = !(cfg.kind === 'github' && cfg.webhook_secret != null);
-    if (legacy && legacyChecked) continue;
-    legacyChecked ||= legacy;
+  // many sources name the repository (#8768). The check goes to the first legacy row that has a secret; like the push
+  // route, a second legacy source with a different secret is not tried.
+  const legacyPick =
+    candidates.find((c) => isLegacy(c.cfg) && typeof c.cfg.webhook_secret === 'string' && c.cfg.webhook_secret !== '') ??
+    candidates.find((c) => isLegacy(c.cfg));
+  for (const candidate of candidates) {
+    const { row, cfg } = candidate;
+    if (isLegacy(cfg) && candidate !== legacyPick) continue;
     const signed = verify(cfg);
     if (cfg.kind === 'github' && githubKindCoversRepo(cfg, row.local_path, repo) && signed) {
       verified.push(row);
@@ -119,7 +125,7 @@ export function selectGitHubItemSources<Row extends { local_path: string | null;
     }
     if (cfg.github_repo === repo && signed) legacyMatched = true;
   }
-  if (!legacyChecked) verify({});
+  if (!legacyPick) verify({});
   return { verified, legacyMatched };
 }
 
@@ -176,7 +182,8 @@ async function handleGitHubItemEvent(
       `SELECT id, local_path, config FROM sources
          WHERE archived = false
            AND ((config->>'github_repo' = $1)
-             OR (config->>'kind' = 'github' AND config->>'webhook_secret' IS NOT NULL))`,
+             OR (config->>'kind' = 'github' AND config->>'webhook_secret' IS NOT NULL))
+         ORDER BY id`,
       [ref.repo],
     );
     const { verified, legacyMatched } = selectGitHubItemSources(rows, ref.repo, (cfg) =>

@@ -126,6 +126,13 @@ describe('selectGitHubItemSources', () => {
     expect(calls).toBe(unknown);
   });
 
+  test('a signing legacy source behind one with no secret is still flagged (#8768)', () => {
+    const noSecret = { id: 'gh-no-secret', local_path: null, config: { kind: 'github', gh_scope: 'repos', gh_repos: 'acme/app', github_repo: 'acme/app' } };
+    const { verified, legacyMatched } = selectGitHubItemSources([noSecret, legacyRow('old', 'good')], 'acme/app', verify);
+    expect(verified).toEqual([]);
+    expect(legacyMatched).toBe(true);
+  });
+
   test('out-of-scope github-kind source neither verifies nor flags legacy', () => {
     const { verified, legacyMatched } = selectGitHubItemSources([ghRow('gh', 'good')], 'other/repo', verify);
     expect(verified).toEqual([]);
