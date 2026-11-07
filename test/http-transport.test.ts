@@ -520,11 +520,18 @@ describe('http-transport: CORS', () => {
       try {
         const r = await fetch(`${srv.url}/mcp`, {
           method: 'OPTIONS',
-          headers: { 'Origin': 'https://claude.ai', 'Access-Control-Request-Method': 'POST' },
+          headers: {
+            'Origin': 'https://claude.ai',
+            'Access-Control-Request-Method': 'POST',
+            'Access-Control-Request-Headers': 'x-gbrain-client',
+          },
         });
         expect(r.headers.get('access-control-allow-origin')).toBe('https://claude.ai');
         expect(r.headers.get('access-control-allow-methods')).toContain('POST');
         expect(r.headers.get('access-control-allow-headers')).toContain('Authorization');
+        expect(r.headers.get('access-control-allow-headers')?.toLowerCase()).toContain('x-gbrain-client');
+        expect(r.headers.get('access-control-allow-headers')?.toLowerCase()).not.toContain('x-gbrain-on-behalf-of');
+        expect(r.headers.get('access-control-allow-headers')?.toLowerCase()).not.toContain('x-qm-actor');
         expect(r.headers.get('vary')).toBe('Origin');
       } finally { srv.stop(); }
     });

@@ -15,12 +15,25 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import type { GBrainConfig } from '../core/config.ts';
+import { AGENT_LABEL_HEADER } from '../core/persistence/attribution.ts';
 
 export type ResultRowsMode = 'lean' | 'full';
 
 /** HTTP header gbrain's thin client sends on every request: `gbrain-remote-cli/<version>`. */
 export const GBRAIN_CLIENT_HEADER = 'X-Gbrain-Client';
 export const GBRAIN_THIN_CLIENT_NAME = 'gbrain-remote-cli';
+
+/** Request headers safe for explicitly allowlisted browser MCP clients.
+ * Keep authority-adjacent audience and attested-actor headers out until a
+ * trusted browser harness use is explicitly established.
+ */
+export const MCP_CORS_ALLOWED_HEADERS = [
+  'Content-Type',
+  'Authorization',
+  'Accept',
+  AGENT_LABEL_HEADER,
+  GBRAIN_CLIENT_HEADER,
+] as const;
 
 export function parseResultRowsMode(v: unknown): ResultRowsMode | null {
   return v === 'lean' || v === 'full' ? v : null;
