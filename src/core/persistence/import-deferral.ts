@@ -3,9 +3,9 @@
  * put_page, capture, remember or add_timeline_entry whose page file holds a committed change managed sync has not imported yet is not refused
  * `pending_import`. The consumer moves its own claim back to `deferred`, naming the source's last imported commit, and the
  * row waits (invisible to claims, journal.ts RELEASED_DEFERRED) until `sources.last_commit` moves past it. It is then
- * prepared again from scratch, as if it had queued behind the import: a remember, capture or add_timeline_entry applies on top, a put_page
- * with expected_revision ends revision_conflict when the import moved the page, and a blind put_page lands. A blind
- * put_page that replaces content the import brought in names what it replaced (`supersedes`) on its receipt, in a
+ * prepared again from scratch, as if it had queued behind the import: a remember or add_timeline_entry applies on top, a put_page
+ * with expected_revision ends revision_conflict when the import moved the page, and a blind put_page or a capture lands. A blind
+ * put_page or a capture that replaces content the import brought in names what it replaced (`supersedes`) on its receipt, in a
  * `gbrain-supersedes:` commit trailer and on the commit ledger line; the replaced revision stays in page history and
  * the imported commit in git. A held write whose import never lands ends `pending_import_expired` (refresh-barrier.ts).
  */
@@ -19,6 +19,8 @@ import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { writeSwitchOn } from './switches.ts';
 
 const IMPORT_HELD_OPERATIONS = ['put_page', 'capture', 'remember', 'add_timeline_entry'];
+/** A held write that renders the caller's whole body over the imported page, so it names what it replaced. */
+const REPLACING_OPERATIONS = ['put_page', 'capture'];
 export const SUPERSEDES_TRAILER_KEY = 'gbrain-supersedes';
 
 /**
@@ -48,11 +50,11 @@ export function supersededBy(trailers: Iterable<string>): string[] {
 }
 
 /**
- * A put_page that was held for an import and replaces the page the import wrote: its outcome carries `supersedes`
+ * A put_page or capture that was held for an import and replaces the page the import wrote: its outcome carries `supersedes`
  * (slug, path, the replaced revision, the imported commit) and its commit the matching trailer.
  */
 export async function withSupersedes(row: WriteRequest, prepared: PreparedMutation): Promise<PreparedMutation> {
-  if (row.deferred_import_from == null || row.operation !== 'put_page' || !prepared.file || prepared.noop || !prepared.observedRevision) return prepared;
+  if (row.deferred_import_from == null || !REPLACING_OPERATIONS.includes(row.operation) || !prepared.file || prepared.noop || !prepared.observedRevision) return prepared;
   const { root, path } = prepared.file;
   const commit = await landedCommit(root, row.deferred_import_from || null, path);
   if (!commit) return prepared;

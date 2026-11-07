@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.600.0] - 2026-11-07
+
+**With the refresh write barrier on, writes waiting behind an import no longer use up the capacity the import itself needs, so a full cap no longer stalls managed sync until the waits expire.** The barrier is still off by default (`persistence.refresh_barrier`), and with it off nothing changes. Before, every held write kept its outstanding-request slot and intent bytes, so enough of them could leave a managed sync job, or a bulk import group, refused `queue_capacity`, and the writes it would have released waited out the limit and expired. A held `capture` that replaces an imported page now names what it replaced, as a blind `put_page` does, and the expiry pass no longer expires a hold that an import and a new deferral replaced while it ran.
+
+### Itemized changes
+
+- `src/core/persistence/journal.ts`: a managed sync job, and a bulk sync group in `admitWriteGroupInTransaction` whose writes are all managed sync jobs, is admitted as if the writes held for an import or a refresh took no outstanding-request slot and no intent bytes. The held writes are counted only when the plain check would refuse, so an admission that fits reads nothing more. The importer can pass a cap by at most what the held writes hold. Other writes still count them.
+- `src/core/persistence/import-deferral.ts`: a held `capture` that lands over imported content records `supersedes` on its receipt, the `gbrain-supersedes:` commit trailer and the commit-ledger line, as a blind `put_page` does.
+- `src/core/persistence/refresh-barrier.ts`: `expireDeferredWrites` rechecks, under the lock, that the hold it scanned is still waiting on the same import and is still older than the wait limit, so a hold that an import and a new deferral replaced between the scan and the lock is left alone.
+- Tests on PGLite and Postgres: `test/import-write-barrier.test.ts` (a held capture's `supersedes`, the capacity a single import and a bulk import group need, the expiry racing a new hold) and `test/refresh-write-barrier.test.ts` (the capacity a refresh's own sync needs). Follow-ups are in #8759.
+
 ## [0.60.599.0] - 2026-11-07
 
 **A page write refused `source_changed` now says why in its receipt, and a source can opt in to having a `remember`, `capture` or `add_timeline_entry` adopt an uncommitted local edit instead of being refused.** Before, only `pending_import`, `sync_held` and `canonical_file_missing` refusals carried a cause, so a write lost to a hand edit, an occupied path or a file that moved mid-write looked the same in `gbrain write-request` and doctor. Every `source_changed` refusal now records `error_detail.origin`. With `persistence.adopt_local_edits.source.<id>` on (off by default), a one-sided local edit (Git `HEAD` still holds the database's copy, or any edit on a repo-less brain) is committed as its own write first, then the caller's write lands on top. Keep the flag off until the follow-ups in #8755 are done.
