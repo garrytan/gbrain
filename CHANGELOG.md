@@ -10,6 +10,15 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A `links` or `facts-backstop` effect that meets another write's publication in flight now waits as `writer_busy` and retries within a second, instead of reporting `recovery_required` and waiting 30 s.** These effects run without the worktree lock, so on PostgreSQL, where several processes publish at once, a concurrent writer could record its publication's recovery between the effect's claim and its guard. The guard read that record as an unfinished recovery: the effect was requeued with `recovery_required`, a code that tells an agent to inspect the brain host, and a fixed 30 s delay, which often outlasted the process that queued it. Nothing was lost (the next effect pass after the delay derived the links), but the receipt said a recovery was needed when none was.
+
+### Itemized changes
+
+- `src/core/persistence/effects.ts`: the effect guard tells a publication in flight (its request `running` with a live claim, or already terminal with its record not yet cleared) from one that needs recovery. An effect that does not hold the worktree lock and meets only publications in flight is requeued `writer_busy` with the existing busy backoff (250 ms doubling, at most 60 s, never parked). A record whose publisher's claim lapsed, or a request in `recovering`, still requeues it `recovery_required`, and an effect that holds the lock (Git, withdrawal mirror) is unchanged. An `embedding` effect in the same wait records `writer_busy` too, on its unchanged retry schedule.
+- `test/persistence-derived-effect-publication-race.test.ts` (PGLite, and PostgreSQL through `test/e2e/persistence-derived-effect-publication-race-postgres.test.ts`): drives a real put_page publication to its `prepared` and `after_commit` boundaries between a links effect's claim and its guard, and checks the effect waits as `writer_busy` with a delay under 5 s, then commits its link on the next pass; with the publisher's claim lapsed it stays `recovery_required` and still links once the record settles.
+
 ## [0.60.597.0] - 2026-11-06
 
 **`gbrain upgrade` now restarts a jobs supervisor started from a source checkout as `bun run src/cli.ts jobs supervisor` instead of refusing the upgrade with `restart_refused`.** The restart planner recognised a gbrain process only when its command line held a path containing "gbrain", so a supervisor launched with a relative `src/cli.ts` was invisible, its worker looked unsupervised, and the upgrade stopped. Four smaller fixes ride along with it, covering a flaky spend-guard SIGTERM test, the PGLite snapshot cache keys, the stress gate's pooled-owner match, and the ownership stamp on a checkout that became a Git repository after it was stamped.
