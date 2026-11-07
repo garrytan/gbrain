@@ -1,6 +1,7 @@
 import { PENDING_IMPORT, pendingImportRefusal } from './pending-import.ts';
 import { deferredWaiting } from './refresh-barrier.ts';
 import { withSupersedes } from './import-deferral.ts';
+import { withAdoptedLocalEdit } from './local-edit-adoption.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { OperationError } from '../ops/contract.ts';
@@ -81,6 +82,10 @@ export function registerMutationPreparer(operation: string, prepare: PrepareMuta
  * phase clock, which carries the preparation's cancellation to every preparer's `enterClaimStep` boundaries.
  */
 export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest, cfg: GBrainConfig, signal?: AbortSignal, clock?: ClaimPhaseClock) {
+  // GST-1601: a write prepared again after its page's local edit was adopted names the adoption on its receipt.
+  return withAdoptedLocalEdit(row, await prepareByOperation(e, row, cfg, signal, clock));
+}
+async function prepareByOperation(e: BrainEngine, row: WriteRequest, cfg: GBrainConfig, signal?: AbortSignal, clock?: ClaimPhaseClock) {
   assertMutationProtocol(row);
   enterClaimStep(clock, 'dispatch');
   const registered = preparers.get(row.operation);
