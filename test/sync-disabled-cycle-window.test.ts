@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { makeAutopilotCycleHandler } from '../src/core/minions/handlers/autopilot-cycle.ts';
 import { SOURCE_FRESHNESS_PHASES } from '../src/core/cycle/phase-scope.ts';
-import { sourceCycleWindowStamp, sourceWindow } from '../src/core/cycle/source-window.ts';
+import { listSourceChangedPages, sourceCycleWindowStamp, sourceWindow } from '../src/core/cycle/source-window.ts';
 import { performSync } from '../src/commands/sync.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -228,6 +228,86 @@ describe('#8573 sync-disabled source cycle window', () => {
       await writer.end();
       await disposePersistenceConsumer(engine);
       await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    }
+  }), 180_000);
+
+  test('non-ISO database sessions produce UTC microsecond cursors and preserve equal-time slug ties', async () => withEnv(env, async () => {
+    for (const engine of engines) {
+      const { id } = await source(engine, { syncEnabled: false });
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      try {
+        for (const slug of ['precision/a', 'precision/b', 'precision/c', 'precision/d']) {
+          await engine.putPage(slug, { title: slug, type: 'note', compiled_truth: 'Synthetic cursor fixture.' }, { sourceId: id });
+        }
+        await engine.executeRaw(`UPDATE pages SET updated_at=CASE WHEN slug='precision/d'
+          THEN '2026-01-19T12:34:56.123457Z'::timestamptz ELSE '2026-01-19T12:34:56.123456Z'::timestamptz END WHERE source_id=$1`, [id]);
+        sourceWindow.pageLimit = 2;
+        for (const style of ['SQL, DMY', 'German, DMY', 'Postgres, MDY', 'ISO, YMD']) {
+          for (const zone of ['Asia/Kathmandu', 'America/New_York']) {
+            await engine.updateSourceConfig(id, { last_source_cycle_window_at: '', last_source_cycle_window_slug: '' });
+            await engine.transaction(async tx => {
+              await tx.executeRaw("SELECT set_config('DateStyle',$1,true), set_config('TimeZone',$2,true)", [style, zone]);
+              const one = await listSourceChangedPages(tx, id, null);
+              expect(one.slugs).toEqual(['precision/a', 'precision/b']);
+              expect(one.next).toEqual({ at: '2026-01-19T12:34:56.123456Z', slug: 'precision/b' });
+              expect(Number.isFinite(Date.parse(one.next!.at))).toBe(true);
+              const phases = ['extract', 'extract_facts', 'recompute_emotional_weight'].map(phase => ({ phase, status: 'ok' }));
+              await tx.updateSourceConfig(id, sourceCycleWindowStamp(phases, one));
+              const two = await listSourceChangedPages(tx, id, one.next!.at);
+              expect(two.slugs).toEqual(['precision/c', 'precision/d']);
+              expect(two.next!.slug).toBe('');
+              expect(two.next!.at).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/);
+              expect(Number.isFinite(Date.parse(two.next!.at))).toBe(true);
+              // Failed consumers retain the original full-precision boundary, not the listing instant.
+              expect(sourceCycleWindowStamp(phases.map(p => ({ ...p, status: p.phase === 'extract' ? 'fail' : 'ok' })), two))
+                .toEqual({ last_source_cycle_window_at: one.next!.at, last_source_cycle_window_slug: 'precision/b' });
+              const repeated = await listSourceChangedPages(tx, id, one.next!.at);
+              expect(repeated.slugs).toEqual(two.slugs);
+              await tx.updateSourceConfig(id, sourceCycleWindowStamp(phases, two));
+              expect((await listSourceChangedPages(tx, id, two.next!.at)).slugs).toEqual([]);
+            });
+          }
+        }
+      } finally {
+        await disposePersistenceConsumer(engine);
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      }
+    }
+  }), 180_000);
+
+  test('the real queued handler resumes a non-ISO window instead of resetting to the oldest page', async () => withEnv(env, async () => {
+    for (const engine of engines) {
+      const { id } = await source(engine, { syncEnabled: false });
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      const original = engine.executeRaw;
+      let localizedReads = 0;
+      try {
+        for (let i = 0; i < 5; i++) await engine.putPage(`locale/n-${i}`, { title: `Note ${i}`, type: 'note', compiled_truth: `Body ${i}.` }, { sourceId: id });
+        await engine.executeRaw("UPDATE pages SET updated_at='2026-01-19T12:34:56.123456Z'::timestamptz WHERE source_id=$1", [id]);
+        sourceWindow.pageLimit = 2;
+        // Change only the real window reads' session settings, keeping the cycle's normal transaction/lease wiring.
+        engine.executeRaw = async function (this: BrainEngine, sql, params) {
+          if (sql.includes('pg_stat_activity') || /SELECT slug,.*updated_at[\s\S]*FROM pages/.test(sql) || sql.includes('AS before')) {
+            localizedReads++;
+            return this.transaction(async tx => {
+              await original.call(tx, "SET LOCAL DateStyle='German, DMY'");
+              await original.call(tx, "SET LOCAL TimeZone='Asia/Kathmandu'");
+              return original.call(tx, sql, params);
+            });
+          }
+          return original.call(this, sql, params);
+        } as BrainEngine['executeRaw'];
+        const counts: number[] = [];
+        for (let n = 0; n < 4; n++) counts.push(Number((await cycle(engine, id, n + 1)).weight.pages_recomputed));
+        expect(counts).toEqual([2, 2, 1, 0]);
+        expect(localizedReads).toBe(10);
+        const stamp = (await config(engine, id)).last_source_cycle_window_at as string;
+        expect(Number.isFinite(Date.parse(stamp))).toBe(true);
+      } finally {
+        engine.executeRaw = original;
+        await disposePersistenceConsumer(engine);
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      }
     }
   }), 180_000);
 });
