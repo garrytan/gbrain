@@ -22,6 +22,7 @@ import type { CliDispatchContext } from '../cli/command-table.ts';
 import type { RecentTranscript } from '../core/transcripts.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import type { TranscriptFormat } from '../core/transcripts/types.ts';
+import type { IngestFactsResult } from '../core/transcripts/ingest-facts.ts';
 import { runTranscriptsIngest, type TranscriptsIngestResult } from '../core/transcripts/ingest.ts';
 import { isOpenclawCheckpointFile } from '../core/transcripts/openclaw.ts';
 import { isGrokSessionSidecarStrict } from '../core/transcripts/grok.ts';
@@ -537,7 +538,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
 
   // --facts: ONE extractor invocation over every touched slug (including
   // hash-skipped pages — the extractor's version-token gate dedupes work).
-  let factsSummary: { pages: number; pagesFailed: number; spentUsd?: number } | undefined;
+  let factsSummary: IngestFactsResult | undefined;
   if (parsed.facts && !parsed.dryRun && result.slugsTouched.length > 0) {
     const { runIngestFacts } = await import('../core/transcripts/ingest-facts.ts');
     factsSummary = await runIngestFacts(engine, {
@@ -558,6 +559,9 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
           (factsSummary.spentUsd !== undefined ? `, ~$${factsSummary.spentUsd.toFixed(2)} spent` : '') +
           (factsSummary.pagesFailed > 0 ? ' (failed pages stay unfinished; stderr names each retry command)' : ''),
       );
+      if (factsSummary.budget_exhausted) console.log(`facts: stopped early, budget ${factsSummary.budget_reason ?? 'exhausted'}; unprocessed pages have no facts yet`);
+      if (factsSummary.pages_skipped_too_large) console.log(`facts: ${factsSummary.pages_skipped_too_large} page(s) skipped as too large`);
+      if (factsSummary.pages_lock_skipped) console.log(`facts: ${factsSummary.pages_lock_skipped} page(s) skipped, held by another run`);
     }
     const firstImported = result.files.flatMap((f) => f.sessions).find((s) => !s.error && s.baseSlug);
     if (firstImported && !parsed.dryRun) {

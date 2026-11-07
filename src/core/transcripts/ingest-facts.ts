@@ -17,7 +17,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { isFactsExtractionEnabled } from '../facts/extract.ts';
-import { BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
+import { BudgetTracker, loadPricingOverrides, type BudgetReason } from '../budget/budget-tracker.ts';
 import { withBudgetTracker } from '../ai/gateway.ts';
 import { conversationFactsCostCap } from '../facts/conversation-budget.ts';
 import {
@@ -30,6 +30,14 @@ export interface IngestFactsResult {
   pagesFailed: number;
   spentUsd?: number;
   skippedDisabled?: boolean;
+  /** True when the cost cap or a missing price halted the pass; unprocessed pages keep no facts. */
+  budget_exhausted?: boolean;
+  /** Why the budget halted the pass (`cost`, `runtime` or `no_pricing`). Absent when it did not halt. */
+  budget_reason?: BudgetReason;
+  /** Pages skipped because a window batch would pass the request limit. */
+  pages_skipped_too_large?: number;
+  /** Pages skipped because another run still holds their lease. */
+  pages_lock_skipped?: number;
 }
 
 export async function runIngestFacts(
@@ -59,5 +67,13 @@ export async function runIngestFacts(
       budgetTracker: tracker,
     }),
   );
-  return { pages: opts.slugs.length, pagesFailed: result.pages_failed, spentUsd: tracker.totalSpent };
+  return {
+    pages: opts.slugs.length,
+    pagesFailed: result.pages_failed,
+    spentUsd: tracker.totalSpent,
+    budget_exhausted: result.budget_exhausted === true,
+    ...(result.budget_reason ? { budget_reason: result.budget_reason } : {}),
+    pages_skipped_too_large: result.pages_skipped_too_large,
+    pages_lock_skipped: result.pages_lock_skipped,
+  };
 }
