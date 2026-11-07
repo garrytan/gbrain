@@ -248,6 +248,7 @@ test('a git status that fails leaves the scan partial, which warns instead of re
   expect(check.details!.partial).toBe(true);
   expect(check.status).toBe('warn');
   expect(check.message).toContain('the scan did not finish');
+  expect(check.message).toContain(`git status failed in ${work}`);
 }, 60_000);
 
 test('after rotation the ledgered commits in commit-ledger.1.jsonl still count', async () => {
@@ -326,4 +327,58 @@ test('the scan reads git without optional locks: a stat-dirty index is left as i
   await run();
   expect(readFileSync(join(work, '.git/index')).equals(before)).toBe(true);
 });
+
+
+test('GST-1623: a foreign commit carrying a gbrain- trailer is named as possibly an older gbrain without the commit ledger, and still fails', async () => {
+  const { work } = checkout();
+  await register('older', join(work, 'notes'));
+  write(work, 'notes/a.md', 'a\n');
+  commitPathsLocked(work, ['notes/a.md'], 'start the ledger', { lockWaitMs: 1000 });
+  write(work, 'notes/b.md', 'b\n');
+  git(work, ['add', '-A']); git(work, ['commit', '-q', '-m', 'gbrain: repair a page', '-m', 'gbrain-repair: frontmatter_slug_conflict deterministic high']);
+  const trailed = head(work);
+  write(work, 'notes/c.md', 'c\n');
+  git(work, ['add', '-A']); git(work, ['commit', '-q', '-m', 'plain commit']);
+  const check = await run();
+  expect(check.status).toBe('fail');
+  const bySha = Object.fromEntries((check.details!.foreign as ForeignCommit[]).map(c => [c.sha, c]));
+  expect(bySha[trailed]).toMatchObject({ gbrain_trailer: true });
+  expect(bySha[head(work)]).toMatchObject({ gbrain_trailer: false });
+  expect(check.message).toContain('an older gbrain without the commit ledger');
+}, 60_000);
+
+test('GST-1623: a root whose git probe fails, and a scan where every root fails, warn as partial instead of not_applicable', async () => {
+  const { work } = checkout();
+  await register('broken', join(work, 'notes'));
+  writeFileSync(join(work, '.git', 'HEAD'), 'not a ref\n');
+  const check = await run();
+  expect(check.status).toBe('warn');
+  expect(check.readiness_state).not.toBe('not_applicable');
+  expect(check.details!.partial).toBe(true);
+  expect((check.details!.partial_reasons as string[]).join(' ')).toContain(join(work, 'notes'));
+  expect(check.message).toContain('could not be read as a Git checkout');
+}, 60_000);
+
+test('GST-1623: roots past the scan cap leave the scan partial, never not_applicable', async () => {
+  const plain = mkdtempSync(join(dir, 'capped-'));
+  for (let i = 0; i < 51; i++) { mkdirSync(join(plain, `r${String(i).padStart(2, '0')}`)); await register(`capped-${String(i).padStart(2, '0')}`, join(plain, `r${String(i).padStart(2, '0')}`)); }
+  const check = await run();
+  expect(check.status).toBe('warn');
+  expect(check.details!.partial).toBe(true);
+  expect(check.message).toContain('past the 50-root scan cap');
+}, 60_000);
+
+test('GST-1623: an unreadable commit ledger warns as partial instead of reading as an empty ledger', async () => {
+  const { work } = checkout();
+  await register('ledger', join(work, 'notes'));
+  write(work, 'notes/a.md', 'a\n');
+  commitPathsLocked(work, ['notes/a.md'], 'start the ledger', { lockWaitMs: 1000 });
+  const files = ledgerFiles(join(work, '.git'));
+  rmSync(files.current); mkdirSync(files.current);
+  const check = await run();
+  expect(check.status).toBe('warn');
+  expect(check.details!.partial).toBe(true);
+  expect(check.message).toContain('commit ledger');
+  expect(check.message).toContain('could not be read');
+}, 60_000);
 

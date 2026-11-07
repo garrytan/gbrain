@@ -17,6 +17,7 @@
  * is resubmitted by its caller after that sync.
  */
 import { spawn } from '../spawn.ts';
+import { existsSync } from 'node:fs';
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
@@ -118,6 +119,20 @@ export async function committedBlob(root: string, path: string, signal?: AbortSi
  */
 export async function landedCommit(root: string, from: string | null, path: string): Promise<string | null> {
   return quiet(gitRead(root, ['rev-list', '-1', from ? `${from}..HEAD` : 'HEAD', '--', `:(literal)${relative(root, path).split(sep).join('/')}`]));
+}
+
+/** #8755: whether the index holds unmerged stages for `path` (a conflict); null when Git cannot read it. */
+export async function unmergedPath(root: string, path: string, signal?: AbortSignal): Promise<boolean | null> {
+  return gitRead(root, ['ls-files', '-u', '-z', '--', `:(literal)${relative(root, path).split(sep).join('/')}`], signal)
+    .then(out => out.length > 0, error => { if (signal?.aborted) throw error; return null; });
+}
+
+/** #8755: whether a merge, cherry-pick, revert or rebase is in progress in `root`'s checkout; null when Git cannot say. */
+export async function mergeInProgress(root: string, signal?: AbortSignal): Promise<boolean | null> {
+  const markers = ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply'];
+  return gitRead(root, ['rev-parse', '--path-format=absolute', ...markers.flatMap(marker => ['--git-path', marker])], signal)
+    .then(out => { const paths = out.split('\n').filter(Boolean); return paths.length === markers.length ? paths.some(path => existsSync(path)) : null; },
+      error => { if (signal?.aborted) throw error; return null; });
 }
 
 /** The commit HEAD names in `root`, or null on an unborn branch or when Git cannot read it. */

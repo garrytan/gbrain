@@ -168,13 +168,18 @@ export async function recordIntentAsync(root: string, intent: LedgerIntent): Pro
   await writeLockedAsync(root, loc => intentRecord(loc, intent));
 }
 
-/** The retained ledger lines, oldest first (the rotated file, then the current one); unparseable lines are skipped. */
+/**
+ * The retained ledger lines, oldest first (the rotated file, then the current one); unparseable lines are skipped. Only a
+ * missing file reads as empty: any other read error throws (GST-1623), so doctor never reads an unreadable ledger as
+ * "nothing ledgered".
+ */
 export function readLedger(common: string): LedgerRecord[] {
   const files = ledgerFiles(common);
   const out: LedgerRecord[] = [];
   for (const file of [files.rotated, files.current]) {
     let text: string;
-    try { text = readFileSync(file, 'utf8'); } catch { continue; }
+    try { text = readFileSync(file, 'utf8'); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
     for (const raw of text.split('\n')) {
       if (!raw) continue;
       try {
