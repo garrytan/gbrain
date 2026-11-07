@@ -5,7 +5,15 @@
 > [INSTALL_FOR_AGENTS.md](../../INSTALL_FOR_AGENTS.md); the README covers the
 > bootstrap and connect paths.
 
-Two supported shapes, both stdio.
+Two stdio shapes below, plus a remote shape: OpenClaw also ships a remote MCP
+client. Against an existing `gbrain serve --http`, run
+`openclaw mcp set gbrain '{"url":"https://<host>/mcp","transport":"streamable-http","auth":"oauth"}'`,
+then `openclaw mcp login gbrain` (add `--code <code>` when the browser is on
+another machine). Follow the Native OAuth path in
+[hosted-harness-access.md](../guides/hosted-harness-access.md); the owner picks
+sources at consent or via `gbrain auth rescope --client`. Prefer it when the
+host already runs a shared `serve --http` or the agent should get a scoped,
+revocable grant instead of local database access.
 
 ## Option 1: ClawHub bundle plugin
 

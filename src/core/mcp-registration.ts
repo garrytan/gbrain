@@ -253,10 +253,11 @@ export const OAUTH_SECRET_NOTE =
   'short-lived, scoped access tokens; revoke with `gbrain auth revoke-client`.';
 
 /**
- * Paste-ready OpenClaw wiring block — HONEST v1. OpenClaw has no native
- * remote-MCP client yet, so the scoped path is a thin gbrain install on the
- * OpenClaw machine (`gbrain init` in mcp-only mode), which routes brain access
- * through the OAuth client minted for it. Deliberately NOT an mcpServers/
+ * Paste-ready OpenClaw wiring block — HONEST v1. OpenClaw also ships a remote
+ * MCP client (streamable-http + OAuth, see docs/mcp/OPENCLAW.md); this block is
+ * the fallback: a thin gbrain install on the OpenClaw machine (`gbrain init` in
+ * mcp-only mode), which routes brain access through the OAuth client minted
+ * for it. Deliberately NOT an mcpServers/
  * stdio JSON config: the stdio config in docs/mcp/OPENCLAW.md grants FULL
  * local DB access and does not use this client.
  */
@@ -279,7 +280,7 @@ export function openclawThinClientBlock(opts: {
     init,
     '',
     'Your OpenClaw reaches the brain through the scoped gbrain CLI (search/query/recall/put);',
-    "native remote MCP isn't supported yet — the stdio config in docs/mcp/OPENCLAW.md grants",
+    'OpenClaw can also use native remote MCP (see docs/mcp/OPENCLAW.md); the stdio config there grants',
     'FULL local DB access and does not use this client.',
   ].join('\n');
 }
