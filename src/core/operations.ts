@@ -39,6 +39,7 @@ export {
   opAllowedForBoundClient,
   enforceBoundClientOpAllowList,
   validateFilename,
+  authorizeOperationContext,
   sourceScopeOpts,
   thinkSourceScopeOpts,
   linkReadScopeOpts,

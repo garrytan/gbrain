@@ -52,9 +52,7 @@ export function _clearMcpClientTokenCache(opts: { keepDisk?: boolean } = {}): vo
   if (!opts.keepDisk) clearTokenCacheFile();
 }
 
-function dropAccessToken(config: GBrainConfig): void {
-  const remote = requireRemoteMcp(config);
-  const key = tokenCacheKey(remote, resolveSecret(remote));
+function dropAccessToken({ key }: RemoteCallIdentity): void {
   tokenCache.delete(key);
   dropCachedToken(key);
 }
@@ -238,15 +236,26 @@ function resolveSecret(remote: NonNullable<GBrainConfig['remote_mcp']>): string 
   return secret;
 }
 
+interface RemoteCallIdentity {
+  readonly remote: Readonly<NonNullable<GBrainConfig['remote_mcp']>>;
+  readonly secret: string;
+  readonly key: string;
+}
+
+/** One call's identity, captured before any await or mutable environment rotation. */
+function snapshotRemoteIdentity(config: GBrainConfig): RemoteCallIdentity {
+  const remote = Object.freeze({ ...requireRemoteMcp(config) });
+  const secret = resolveSecret(remote);
+  return Object.freeze({ remote, secret, key: tokenCacheKey(remote, secret) });
+}
+
 /**
- * Mint or reuse a cached access_token for the given config. Throws
+ * Mint or reuse a cached access_token for the entry identity. Throws
  * RemoteMcpError on discovery failure or auth rejection.
  */
-async function getAccessToken(config: GBrainConfig, force = false, signal?: AbortSignal): Promise<string> {
+async function getAccessToken(identity: RemoteCallIdentity, force = false, signal?: AbortSignal): Promise<string> {
   signal?.throwIfAborted();
-  const remote = requireRemoteMcp(config);
-  const secret = resolveSecret(remote);
-  const key = tokenCacheKey(remote, secret);
+  const { remote, secret, key } = identity;
   if (!force) {
     const cached = tokenCache.get(key) ?? readCachedToken(key);
     if (cached && cached.expires_at_ms > Date.now()) {
@@ -409,13 +418,23 @@ export async function callRemoteTool(
   args: Record<string, unknown> = {},
   opts: CallRemoteToolOptions = {},
 ): Promise<unknown> {
-  const remote = requireRemoteMcp(config);
+  return callRemoteToolWithIdentity(snapshotRemoteIdentity(config), toolName, args, opts);
+}
+
+/** Retries, including pending-write exchanges, belong to the same entry identity. */
+async function callRemoteToolWithIdentity(
+  identity: RemoteCallIdentity,
+  toolName: string,
+  args: Record<string, unknown>,
+  opts: CallRemoteToolOptions,
+): Promise<unknown> {
+  const { remote } = identity;
   // Retain on the caller's object so transport refresh and caller retries use
   // the same durable identity. Explicit malformed IDs still reach validation.
   if (isPersistenceIpcMutation(toolName) && args.request_id === undefined && args.dry_run !== true) args.request_id = randomUUID();
   if (opts.writeWaitMs !== undefined && isPersistenceIpcMutation(toolName) && args.dry_run !== true) {
     const { writeWaitMs, ...exchange } = opts;
-    return replayWhilePending(() => callRemoteTool(config, toolName, args, exchange), writeWaitMs);
+    return replayWhilePending(() => callRemoteToolWithIdentity(identity, toolName, args, exchange), writeWaitMs);
   }
   const requestId = isPersistenceIpcMutation(toolName) && isWriteRequestId(args.request_id) ? args.request_id : undefined;
   let submitted = false;
@@ -428,7 +447,7 @@ export async function callRemoteTool(
     // Step 1: mint (or reuse cached) token. If THIS fails — bad credentials,
     // unreachable issuer, etc. — surface immediately. Retry-on-401 is for
     // the mid-session token-rotation case, NOT for initial-credentials-wrong.
-    const initialToken = await getAccessToken(config, false, signal);
+    const initialToken = await getAccessToken(identity, false, signal);
 
     // Step 2: try the tool call. On an HTTP 401 here, drop the cache
     // and retry ONCE with a freshly-minted token (handles host-side rotation
@@ -478,10 +497,10 @@ export async function callRemoteTool(
       if (!isStreamableHttpError(e) || e.code !== 401) throw e;
       submitted = false; // This attempt was explicitly refused, not accepted.
       // Drop cached token and retry once with a fresh mint.
-      dropAccessToken(config);
+      dropAccessToken(identity);
       let freshToken: string;
       try {
-        freshToken = await getAccessToken(config, true, signal);
+        freshToken = await getAccessToken(identity, true, signal);
       } catch (mintErr) {
         if (mintErr instanceof RemoteMcpError && mintErr.reason === 'auth') {
           throw new RemoteMcpError(
@@ -499,7 +518,7 @@ export async function callRemoteTool(
         signal.throwIfAborted();
         if (isStreamableHttpError(e2) && e2.code === 401) {
           submitted = false;
-          dropAccessToken(config);
+          dropAccessToken(identity);
           throw new RemoteMcpError(
             'auth_after_refresh',
             `Auth failed after token refresh. Verify oauth_client_id and secret are still valid; the host operator may need to re-run \`gbrain auth register-client\`.`,
@@ -536,7 +555,8 @@ export interface RemoteToolListing { name: string; params: string[] }
  * `callRemoteTool`: a cached token, one refresh on an HTTP 401.
  */
 export async function listRemoteTools(config: GBrainConfig, opts: CallRemoteToolOptions = {}): Promise<RemoteToolListing[]> {
-  const remote = requireRemoteMcp(config);
+  const identity = snapshotRemoteIdentity(config);
+  const { remote } = identity;
   const { signal, cleanup } = buildAbortController(opts);
   const list = async (token: string): Promise<RemoteToolListing[]> => {
     const client = await buildClient(remote.mcp_url, token, signal);
@@ -549,12 +569,12 @@ export async function listRemoteTools(config: GBrainConfig, opts: CallRemoteTool
   };
   try {
     try {
-      return await list(await getAccessToken(config, false, signal));
+      return await list(await getAccessToken(identity, false, signal));
     } catch (e) {
       signal.throwIfAborted();
       if (!isStreamableHttpError(e) || e.code !== 401) throw e;
-      dropAccessToken(config);
-      return await list(await getAccessToken(config, true, signal));
+      dropAccessToken(identity);
+      return await list(await getAccessToken(identity, true, signal));
     }
   } catch (e) {
     throw toRemoteMcpError(e, remote.mcp_url, signal);

@@ -18,6 +18,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import {
   callRemoteTool,
+  listRemoteTools,
   unpackToolResult,
   RemoteMcpError,
   _clearMcpClientTokenCache,
@@ -29,6 +30,7 @@ import { VERSION } from '../src/version.ts';
 import { pendingReceiptOf, writeErrorExitCode } from '../src/core/persistence/write-wait.ts';
 import { PENDING_WRITE_EXIT_CODE } from '../src/core/exit-codes.ts';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { readCachedToken, tokenCacheKey } from '../src/core/remote-token-cache.ts';
 
 let server: ReturnType<typeof Bun.serve>;
 let port: number;
@@ -37,7 +39,7 @@ let port: number;
 let tokenStatus = 200;
 let mcpResponseFor: (req: { method: string; params?: unknown }) => unknown = () => ({});
 let tokenMintCount = 0;
-type Stage = 'discovery' | 'token' | 'initialize' | 'notifications/initialized' | 'tools/call';
+type Stage = 'discovery' | 'token' | 'initialize' | 'notifications/initialized' | 'tools/call' | 'tools/list';
 let requests: Partial<Record<Stage, number>> = {};
 let statusFor: (stage: Stage, attempt: number) => number | undefined = () => undefined;
 let hangingStage: Stage | undefined;
@@ -49,9 +51,13 @@ let toolExecutions = 0;
 let initializeTokens: string[] = [];
 let toolArguments: Record<string, unknown>[] = [];
 let clientHeaders: Array<string | null> = [];
+let onRequest: (stage: Stage) => void = () => {};
+let mintedClients: Array<{ clientId: string | null; secret: string | null }> = [];
+let mcpPaths: string[] = [];
 
 function intercept(stage: Stage, req: Request): Response | Promise<Response> | undefined {
   requests[stage] = (requests[stage] ?? 0) + 1;
+  onRequest(stage);
   if (stage === hangingStage && requests[stage]! >= hangFromAttempt) {
     const closed = onHangClosed;
     onHang?.();
@@ -85,6 +91,8 @@ beforeAll(() => {
       }
       if (path === '/token') {
         tokenMintCount++;
+        const body = new URLSearchParams(await req.text());
+        mintedClients.push({ clientId: body.get('client_id'), secret: body.get('client_secret') });
         const intercepted = intercept('token', req);
         if (intercepted) return intercepted;
         return Response.json(tokenStatus === 200 ? {
@@ -92,7 +100,8 @@ beforeAll(() => {
           token_type: 'bearer', expires_in: 3600, scope: 'read write admin',
         } : { error: 'invalid_client' }, { status: tokenStatus });
       }
-      if (path === '/mcp' && req.method === 'POST') {
+      if ((path === '/mcp' || path === '/rotated/mcp') && req.method === 'POST') {
+        mcpPaths.push(path);
         const body = await req.json() as { id?: number; method: string; params?: { protocolVersion?: string } };
         if (body.method === 'initialize') initializeTokens.push(req.headers.get('authorization') ?? '');
         clientHeaders.push(req.headers.get('x-gbrain-client'));
@@ -110,6 +119,8 @@ beforeAll(() => {
         } else if (body.method === 'tools/call') {
           toolExecutions++;
           result = mcpResponseFor({ method: body.method, params: body.params });
+        } else if (body.method === 'tools/list') {
+          result = { tools: [{ name: 'synthetic_tool', inputSchema: { type: 'object', properties: {} } }] };
         } else {
           result = {};
         }
@@ -141,6 +152,9 @@ beforeEach(() => {
   _clearMcpClientTokenCache();
   toolArguments = [];
   clientHeaders = [];
+  onRequest = () => {};
+  mintedClients = [];
+  mcpPaths = [];
 });
 
 function makeConfig(): GBrainConfig {
@@ -154,6 +168,88 @@ function makeConfig(): GBrainConfig {
     },
   };
 }
+
+describe('OAuth entry identity snapshot', () => {
+  test('pending-write replays retain the entry identity as well as the request ID', async () => {
+    await withEnv({ GBRAIN_REMOTE_CLIENT_SECRET: 'synthetic-entry-secret' }, async () => {
+      const config = makeConfig();
+      const args: Record<string, unknown> = { slug: 'synthetic/page', content: 'fixture' };
+      mcpResponseFor = () => {
+        if (toolExecutions !== 1) return { content: [{ type: 'text', text: '{"ok":true}' }] };
+        config.remote_mcp!.oauth_client_id = 'synthetic-rotated-client';
+        process.env.GBRAIN_REMOTE_CLIENT_SECRET = 'synthetic-other-secret';
+        return { isError: true, content: [{ type: 'text', text: JSON.stringify({
+          error: 'unavailable', write_error: 'write_pending',
+          write_request: { request_id: args.request_id, state: 'queued', retry_after_ms: 1 },
+        }) }] };
+      };
+      await callRemoteTool(config, 'put_page', args, { writeWaitMs: 1000 });
+      expect(toolArguments).toHaveLength(2);
+      expect(toolArguments.every(p => p.request_id === args.request_id)).toBe(true);
+      expect(mintedClients).toEqual([{ clientId: 'cid', secret: 'synthetic-entry-secret' }]);
+      expect(initializeTokens[0]).toBe(initializeTokens[1]);
+    });
+  });
+
+  for (const mode of ['call', 'list'] as const) {
+    test(`${mode}: HTTP 401 refresh and invalidation retain the entry secret and leave other identities cached`, async () => {
+      await withEnv({ GBRAIN_REMOTE_CLIENT_SECRET: 'synthetic-other-secret' }, async () => {
+        const config = makeConfig();
+        const original = { ...config.remote_mcp! };
+        const otherKey = tokenCacheKey(original, 'synthetic-other-secret');
+        await callRemoteTool(config, 'synthetic_tool');
+        const otherToken = readCachedToken(otherKey);
+        expect(otherToken).toBeDefined();
+        mintedClients = [];
+        requests = {};
+        process.env.GBRAIN_REMOTE_CLIENT_SECRET = 'synthetic-entry-secret';
+        const rejectedStage = mode === 'call' ? 'tools/call' : 'tools/list';
+        onRequest = stage => {
+          if (stage !== rejectedStage || requests[stage] !== 1) return;
+          config.remote_mcp = { ...original, oauth_client_id: 'synthetic-rotated-client', mcp_url: `${original.issuer_url}/rotated/mcp` };
+          process.env.GBRAIN_REMOTE_CLIENT_SECRET = 'synthetic-other-secret';
+        };
+        statusFor = (stage, attempt) => stage === rejectedStage && attempt === 1 ? 401 : undefined;
+        if (mode === 'call') await callRemoteTool(config, 'synthetic_tool');
+        else await listRemoteTools(config);
+        expect(mintedClients).toEqual([
+          { clientId: original.oauth_client_id, secret: 'synthetic-entry-secret' },
+          { clientId: original.oauth_client_id, secret: 'synthetic-entry-secret' },
+        ]);
+        expect(readCachedToken(otherKey)).toEqual(otherToken);
+        expect(readCachedToken(tokenCacheKey(original, 'synthetic-entry-secret'))).toBeDefined();
+        expect(mcpPaths.every(path => path === '/mcp')).toBe(true);
+      });
+    });
+
+    test(`${mode}: discovery cannot mix a rotated client with the original cache identity`, async () => {
+      await withEnv({ GBRAIN_REMOTE_CLIENT_SECRET: 'synthetic-entry-secret' }, async () => {
+        const config = makeConfig();
+        const original = { ...config.remote_mcp! };
+        onRequest = stage => {
+          if (stage !== 'discovery') return;
+          Object.assign(config.remote_mcp!, {
+            oauth_client_id: 'synthetic-rotated-client', oauth_client_secret: 'synthetic-rotated-secret',
+            mcp_url: `${original.issuer_url}/rotated/mcp`, issuer_url: `${original.issuer_url}/rotated`,
+          });
+          config.remote_mcp = { ...config.remote_mcp! };
+          process.env.GBRAIN_REMOTE_CLIENT_SECRET = 'synthetic-rotated-env-secret';
+        };
+        if (mode === 'call') await callRemoteTool(config, 'synthetic_tool');
+        else await listRemoteTools(config);
+        expect(mintedClients).toEqual([{ clientId: original.oauth_client_id, secret: 'synthetic-entry-secret' }]);
+        expect(mcpPaths.every(path => path === '/mcp')).toBe(true);
+        // Simulate the next process. The original identity's persisted token
+        // must be reusable, not a token minted for the rotated client.
+        _clearMcpClientTokenCache({ keepDisk: true });
+        onRequest = () => {};
+        process.env.GBRAIN_REMOTE_CLIENT_SECRET = 'synthetic-entry-secret';
+        await callRemoteTool({ ...config, remote_mcp: original }, 'synthetic_tool');
+        expect(tokenMintCount).toBe(1);
+      });
+    });
+  }
+});
 
 describe('durable mutation identity across OAuth refresh', () => {
   test.each([[false, 'queued'], [true, 'queued'], [false, 'conflict'], [true, 'conflict']] as const)('received write receipt survives abort during cleanup (refresh=%s, state=%s)', async (refresh, state) => {

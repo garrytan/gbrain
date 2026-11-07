@@ -188,7 +188,7 @@ describe('__all__ is never narrower than an unqualified read', () => {
       remote: true,
       sourceId: 'default',
       localFederatedSourceIds,
-      auth: { token: 't', clientId: 'c', scopes: [], allowedSources: [] } as any,
+      auth: { token: 't', clientId: 'c', scopes: [], sourceId: 'default', allowedSources: [] } as any,
     });
     expect(federatedSearchScope(emptyGrant, '__all__')).toEqual({ sourceId: 'default' });
   });
