@@ -10,6 +10,11 @@ const IDENTITY_FIELDS = new Set([
   'id', 'slug', 'source_id', 'page_id', 'chunk_id', 'message_id', 'thread_id',
   'graph_session_prefix', 'relational_seed', 'relational_path', 'superseded_by',
   'fact_id', 'entity_slug',
+  // Link and graph rows: canonical page references and their source ids are
+  // identities too. A slug can match a credential shape (a `pa-<name>-<id>`
+  // slug of 20+ characters looks like a voyage key); scanning it as text
+  // rewrote the reference and broke the edge for every caller.
+  'from_slug', 'to_slug', 'origin_slug', 'from_source_id', 'to_source_id', 'origin_source_id',
 ]);
 const MAX_DEPTH = 24;
 const MAX_TEXT_FIELDS = 8192;
