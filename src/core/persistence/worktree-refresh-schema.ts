@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS persistence_worktree_refreshes (
 CREATE UNIQUE INDEX IF NOT EXISTS persistence_worktree_refreshes_active
   ON persistence_worktree_refreshes(worktree_id)
   WHERE state IN ('draining','fenced','merged','syncing','recovery_required');
+CREATE INDEX IF NOT EXISTS persistence_worktree_refreshes_completed
+  ON persistence_worktree_refreshes(worktree_id, completed_at DESC) WHERE state='completed';
 `;
 
 export const ACTIVE_REFRESH_STATES = ['draining', 'fenced', 'merged', 'syncing', 'recovery_required'] as const;
