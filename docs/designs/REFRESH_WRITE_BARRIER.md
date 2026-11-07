@@ -214,15 +214,18 @@ after the held-at commit that touched the file), a `gbrain-supersedes: <path>: r
 door commits). The replaced revision stays in `page_versions` and the imported commit stays in
 Git, an ancestor of the write's commit.
 
-**Age bound and schema.** A row held for an import that has not landed past
-`persistence.refresh_barrier_max_wait_ms` ends `failed` with `pending_import_expired` in the owner's
-housekeeping turn, which rechecks under the request lock that the row is still unclaimed and its
-import still pending. Migration v293 adds the nullable `persistence_requests.deferred_import_from` and
+**Age bound and schema.** A row held for an import that has not landed within
+`persistence.refresh_barrier_max_wait_ms` of its hold (measured from the hold, not from admission) ends
+`failed` with `pending_import_expired` in the owner's housekeeping turn, which rechecks under the
+request lock that the row is still unclaimed and its import still pending. A `remember` ends as its
+`pending_import` refusal did instead (conflict `source_changed`, origin `pending_import`), so the
+first sync that imports the file replays the fact. Migration v294 adds the nullable `persistence_requests.deferred_import_from` and
 widens `gbrain_guard_deferred_request`: a running row may move to `deferred` only under the barrier's
 session declaration and only naming the import it waits for, and a deferred row moves to `running`
-only once every hold it names is released. Only the write owner's consumer, already a barrier
-consumer, holds a row for an import; a mixed-version window on one owner host is the
-consumer-capability gap #8688 tracks.
+only once every hold it names is released. Only the write owner's consumer holds a row for an
+import, and only when every live consumer of the owner host advertises `refresh_barrier_import_1`
+(a barrier consumer from before v294 would stall on the held row); otherwise the write keeps the
+`pending_import` refusal.
 
 ### Idempotency
 

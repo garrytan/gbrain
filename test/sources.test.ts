@@ -47,6 +47,7 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}): {
     kind: 'pglite' as const,
     executeRaw,
     setConfig,
+    transaction: async (fn: (tx: BrainEngine) => Promise<unknown>) => fn(engine),
     // Unused methods throw if called accidentally during these tests.
     getConfig: async () => null,
   } as unknown as BrainEngine;

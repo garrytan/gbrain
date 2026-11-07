@@ -104,6 +104,17 @@ test('with no refresh history, or past its typical duration, the hint is the pha
   expect((await refused(f)).retryAfterMs).toBe(15_000);
 }), 120_000);
 
+test('a refresh that waited in recovery_required does not stretch the typical duration', () => each(async f => {
+  _setRefreshFenceWaitForTests(0);
+  await history(f.engine, f, [200, 240, 220, 7200, 7200, 7200, 7200]);
+  await f.engine.executeRaw(`UPDATE persistence_worktree_refreshes SET outcome='{"refusal":{"code":"refresh_recovery_required"}}'::jsonb
+    WHERE state='completed' AND completed_at-created_at>interval '1000 seconds'`);
+  await activeRefresh(f.engine, f, 'syncing', 20);
+  const { retryAfterMs } = await refused(f);
+  expect(retryAfterMs).toBeGreaterThanOrEqual(190_000);
+  expect(retryAfterMs).toBeLessThanOrEqual(201_000);
+}), 120_000);
+
 test('a managed sync the refresh refused gets the same derived hint', () => each(async f => {
   await history(f.engine, f, [120]);
   await activeRefresh(f.engine, f, 'fenced', 30);

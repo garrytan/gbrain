@@ -186,4 +186,11 @@ describe('pglite-snapshot CI cache keys (DX O7)', () => {
       expect(keys[0]!.patterns).toContain(extra);
     }
   });
+
+  test('the keys cover any src/core subdirectory, so a new folder in the closure needs no workflow edit (#8700)', () => {
+    const globs = keys[0]!.patterns.map((p) => new Bun.Glob(p));
+    for (const probe of ['src/core/feature-example/x.ts', 'src/core/feature-example/nested/y.ts', 'src/core/z.ts']) {
+      expect({ probe, covered: globs.some((g) => g.match(probe)) }).toEqual({ probe, covered: true });
+    }
+  });
 });

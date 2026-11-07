@@ -9,7 +9,7 @@
  * claim_unit and claim_period (null-safe), the same as-of bucket
  * (typed-claim.ts claimBucket) and different claim_value. Points in different
  * buckets are history and are never proposed. A fact on a member page pairs
- * only with another fact on that same page (access/member-facts.ts onMemberPageSql).
+ * only with another fact on that same page (access/member-facts.ts onOwnedMemoryPageSql).
  * The newer fact (valid_from, then id) is proposed to supersede the older one.
  *
  * Bounded: at most max_pairs pairs per source per run, and a pair that already
@@ -26,7 +26,7 @@ import type { PhaseResult } from '../cycle.ts';
 import { AUDIT_ROW_SOURCES } from './audit-sources.ts';
 import { insertProposal } from '../ai/decide/proposals-store.ts';
 import { claimBucketSql } from './typed-claim.ts';
-import { onMemberPageSql } from '../access/member-facts.ts';
+import { onOwnedMemoryPageSql } from '../access/member-facts.ts';
 import { CLAIM_CONFLICTS_MAX_PAIRS_KEY, readPhaseConfigNumber } from '../cycle/phase-config-values.ts';
 
 export const CLAIM_CONFLICTS_MODE_KEY = 'dream.claim_conflicts.mode';
@@ -86,7 +86,7 @@ const PAIR_JOIN = 'FROM f n JOIN f o\n'
   + '    ON o.entity_slug = n.entity_slug AND o.visibility = n.visibility AND o.claim_metric = n.claim_metric\n'
   + '   AND o.claim_unit IS NOT DISTINCT FROM n.claim_unit AND o.claim_period IS NOT DISTINCT FROM n.claim_period\n'
   + '   AND o.bucket = n.bucket AND o.claim_value <> n.claim_value\n'
-  + '   AND (NOT (' + onMemberPageSql('n') + ' OR ' + onMemberPageSql('o') + ') OR o.source_markdown_slug = n.source_markdown_slug)\n'
+  + '   AND (NOT (' + onOwnedMemoryPageSql('n') + ' OR ' + onOwnedMemoryPageSql('o') + ') OR o.source_markdown_slug = n.source_markdown_slug)\n'
   + '   AND (o.valid_from < n.valid_from OR (o.valid_from = n.valid_from AND o.id < n.id))\n'
   + ' WHERE NOT EXISTS (SELECT 1 FROM decide_proposals p WHERE p.source_id = $1\n'
   + '         AND LEAST(p.new_fact_id, p.old_fact_id) = LEAST(n.id, o.id) AND GREATEST(p.new_fact_id, p.old_fact_id) = GREATEST(n.id, o.id))\n'

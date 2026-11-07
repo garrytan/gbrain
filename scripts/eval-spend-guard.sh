@@ -359,6 +359,12 @@ on_exit() {  # <exit status>
   stop_child
   reconcile "$EST" "$1" || exit 3
 }
+# The lease's start time is read before the traps are armed (#8717): no
+# command substitution may be parsed between here and `wait`. Bash 5.2 can run
+# a trap that lands while it parses a top-level `$(...)` inside that parse,
+# where the trap command fails ("unexpected EOF while looking for matching
+# `)'") and the signal is lost, so the guard waited out its command and exited 0.
+STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # Traps BEFORE the reservation: a signal in the append→launch window must
 # still reconcile (RESERVED gates whether there is anything to reconcile).
 trap 'on_signal 2' INT
@@ -397,7 +403,7 @@ set -m
 CHILD=$!
 set +m
 if mkdir -p "$LEASES" 2>/dev/null && printf 'run_id=%s\nguard_pid=%s\npgid=%s\nhost=%s\nboot_id=%s\nstarted=%s\n' \
-    "$RUN_ID" "$$" "$CHILD" "$GUARD_HOST" "$BOOT_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$LEASES/$RUN_ID.lease" 2>/dev/null; then
+    "$RUN_ID" "$$" "$CHILD" "$GUARD_HOST" "$BOOT_ID" "$STARTED" > "$LEASES/$RUN_ID.lease" 2>/dev/null; then
   LEASE="$LEASES/$RUN_ID.lease"
 else
   echo "eval-spend-guard: could not write the run lease under $LEASES; a later guard cannot report this run if the guard is SIGKILLed" >&2

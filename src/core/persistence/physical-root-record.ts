@@ -403,5 +403,21 @@ export function assertPhysicalRoot(path: string, identity: { worktreeId: string;
     const reservation = readPhysicalRootReservation(root);
     if (!reservation || reservation.worktreeId !== identity.worktreeId || identity.coordinationPath && reservation.coordinationPath !== identity.coordinationPath) throw physicalRootError();
     assertPhysicalRootStamp(root, reservation);
+    excludeMarkersInLaterCheckout(root);
   } catch (error) { if (error instanceof OperationError) throw error; throw physicalRootError(); }
+}
+/**
+ * #8713: a root stamped before it was a Git checkout (`git init` on a repo-less brain) got no exclude, so an add-all
+ * writer commits its stamp. A verified root inside a checkout whose exclude file lacks a marker glob gets them written.
+ * A root in no checkout costs a few stats and an existing exclude one read; git runs only when one is missing (or the
+ * checkout is a linked worktree, whose exclude git resolves).
+ */
+function excludeMarkersInLaterCheckout(root: string): void {
+  let top = root;
+  while (!existsSync(join(top, '.git'))) { if (dirname(top) === top) return; top = dirname(top); }
+  try {
+    const present = new Set(readFileSync(join(top, '.git', 'info', 'exclude'), 'utf8').split('\n').map(line => line.trim()));
+    if (OWNERSHIP_MARKER_GLOBS.every(glob => present.has(glob))) return;
+  } catch { /* no exclude file yet, or .git is a linked worktree's pointer file */ }
+  excludeOwnershipMarkers([root, dirname(root)]);
 }
