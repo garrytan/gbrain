@@ -29,6 +29,7 @@ import { OperationError, opError, verbError } from './contract.ts';
 import { invalidParam, paramUse } from './op-fix.ts';
 import { parseSourceIdParam, sourceScopeOpts, stampEvidenceSafe } from './context.ts';
 import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
+import { boundRecallChars, MEMORY_RECALL_MAX_CHARS, parseMaxChars } from './qm-memory.ts';
 import { markKeywordHits } from '../search/evidence.ts';
 import { hybridSearchCached, stampContentFlags, type HybridSearchOpts } from '../search/hybrid.ts';
 import { dedupResults } from '../search/dedup.ts';
@@ -317,11 +318,13 @@ const recall: Operation = {
     return_unit: { type: 'string', enum: ['chunk', 'window', 'section', 'page', 'auto'], description: 'results[] unit (see search).', fullSurfaceOnly: true },
     return_window: { type: 'number', description: 'Window 1-3.', fullSurfaceOnly: true },
     min_trust: MIN_TRUST_PARAM,
+    max_chars: { type: 'integer', minimum: MEMORY_RECALL_MAX_CHARS.min, description: `Cap on fact (then results) text, ${MEMORY_RECALL_MAX_CHARS.min}-${MEMORY_RECALL_MAX_CHARS.max}; whole items only, truncated says if cut.`, fullSurfaceOnly: true },
   },
   scope: 'read',
   verb: true,
   annotations: { title: 'recall (memory read)', readOnlyHint: true },
   handler: async (ctx, p) => {
+    const maxChars = p.max_chars === undefined || p.max_chars === null ? null : parseMaxChars(p.max_chars);
     const sourceId = ctx.sourceId ?? 'default';
     const limit = clampRecallLimit(p.limit);
     const includeExpired = p.include_expired === true;
@@ -630,7 +633,7 @@ const recall: Operation = {
       total: packedFacts.length,
       facts_order: ranking ? 'relevance' : 'newest',
       ...(quoted.withheld ? { facts_degraded: { reason: 'saved_facts_withheld' } } : ranking?.degraded || contested.degraded ? { facts_degraded: { ...contested.degraded, ...ranking?.degraded } } : {}),
-      ...(ranking?.calibration ? { facts_calibration: ranking.calibration } : {}),
+      ...(ranking?.calibration ? { facts_calibration: ranking.calibration } : {}), ...(ranking?.belowFloor ? { facts_below_floor: ranking.belowFloor } : {}),
       ...grouped?.fields, ...(ambiguousEntity ? { ambiguous_entity: { candidates: ambiguousEntity, suggestion: AMBIGUOUS_ENTITY_SUGGESTION } } : {}),
       ...(pending_consolidation_count !== undefined ? { pending_consolidation_count } : {}),
       // MEMORY_VERBS v1 envelope (G1B superset — additive on every response).
@@ -661,7 +664,7 @@ const recall: Operation = {
       ...(delivery ? { delivery } : {}),
     };
     recordRecallOutcome(out);
-    return out;
+    return maxChars === null ? out : boundRecallChars(out, maxChars);
   },
 };
 

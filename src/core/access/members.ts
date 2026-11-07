@@ -16,7 +16,8 @@ import type { SqlQuery } from '../sql-query.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import type { Action } from '../agent-output.ts';
 import { ACCESS_ID_RE, identityFor, normalizePrincipal } from './principals.ts';
-import { ACTOR_DEFERRED_OPS } from './actor-model.ts';
+import { ACTOR_DEFERRED_OPS, DEFAULT_ATTEST_OPS } from './actor-model.ts';
+import { applyAttestSources, SCOPE_ATTEST_OPS } from './attest-sources.ts';
 
 export interface MemberRecord {
   id: string;
@@ -289,8 +290,9 @@ export function parseMemberFlag(raw: string): string | null {
 }
 
 /** GST-359 C1: attestActor names the system whose actor header this credential may send (null clears it and attestOps). */
-export interface BindingPatch { member?: string | null; mayActFor?: string[] | null; attestActor?: string | null; attestOps?: string[] | null }
-export interface BindingResult { member: string | null; may_act_for: string[] | null; attest_actor?: string; attest_ops?: string[] | null; changed: boolean }
+/** GST-1113: attestSources lists the scope sources an attested memory_write may name (null clears it; access/attest-sources.ts). */
+export interface BindingPatch { member?: string | null; mayActFor?: string[] | null; attestActor?: string | null; attestOps?: string[] | null; attestSources?: string[] | null }
+export interface BindingResult { member: string | null; may_act_for: string[] | null; attest_actor?: string; attest_ops?: string[] | null; attest_sources?: string[] | null; changed: boolean }
 
 function attestRefused(message: string, suggestion: string): OperationError {
   return opError('invalid_params', message, suggestion, { why: 'Only a credential bound to no member that authenticates as itself (a client-credentials client with a secret, or a legacy token) may name the people a trusted system serves.' });
@@ -305,34 +307,50 @@ export async function bindCredential(engine: BrainEngine, target: { kind: 'token
   if (patch.member != null) await requireEnabledMember(engine, patch.member);
   const table = target.kind === 'token' ? 'access_tokens' : 'oauth_clients';
   const key = target.kind === 'token' ? 'id::text' : 'client_id';
-  const [before] = await engine.executeRaw<{ member_id: string | null; may_act_for: string[] | null; attest_actor: string | null; attest_ops: string[] | null; grant_types?: string[] | null; confidential?: boolean }>(
-    `SELECT member_id, may_act_for, attest_actor, attest_ops${target.kind === 'client' ? ', grant_types, client_secret_hash IS NOT NULL AS confidential' : ''} FROM ${table} WHERE ${key} = $1`, [target.id]);
-  if (!before) {
-    throw opError('invalid_params', `No ${target.kind === 'token' ? 'token' : 'OAuth client'} "${target.id}" exists.`,
-      target.kind === 'token' ? 'List tokens with gbrain auth list.' : 'List clients with gbrain auth clients --json.');
-  }
-  const member = patch.member === undefined ? before.member_id : patch.member;
-  const mayActFor = patch.mayActFor === undefined ? before.may_act_for : patch.mayActFor;
-  const attestActor = patch.attestActor === undefined ? before.attest_actor : patch.attestActor;
-  const attestOps = attestActor === null ? null : patch.attestOps === undefined ? before.attest_ops : patch.attestOps;
-  const what = target.kind === 'token' ? 'This token' : `OAuth client ${target.id}`;
-  if (patch.attestOps != null && attestActor === null) throw attestRefused('--attest-ops needs the attest right.', 'Pass --attest-actor qm with it.');
-  const deferred = (patch.attestOps ?? []).filter(op => ACTOR_DEFERRED_OPS.has(op));
-  if (deferred.length) throw attestRefused(`--attest-ops names ${deferred.join(', ')}, which an attested actor cannot run yet.`, `Leave them out. Not attestable yet: ${[...ACTOR_DEFERRED_OPS].join(', ')}.`);
-  if (attestActor !== null && (patch.attestActor !== undefined || patch.member !== undefined)) {
-    if (member !== null) throw attestRefused(`${what} is bound to member "${member}", so it cannot attest other people.`, 'Use a credential bound to no member (--member none), or a separate client for the trusted system.');
-    if (target.kind === 'client' && (!(before.grant_types ?? []).includes('client_credentials') || before.confidential !== true)) {
-      throw attestRefused(`${what} is not a confidential client-credentials client, so it cannot attest people.`,
-        'Register one for the trusted system: gbrain auth register-client <name> --grant-types client_credentials, then grant it --attest-actor qm.');
+  // GST-1113: lock the credential row first and read it under the lock (grant rescopes lock it first too), so a
+  // concurrent rescope commits before or after this change, never between its checks and its write.
+  return engine.transaction(async tx => {
+    const [before] = await tx.executeRaw<{ member_id: string | null; may_act_for: string[] | null; attest_actor: string | null; attest_ops: string[] | null; attest_sources: string[] | null; grant_types?: string[] | null; confidential?: boolean }>(
+      `SELECT member_id, may_act_for, attest_actor, attest_ops, attest_sources${target.kind === 'client' ? ', grant_types, client_secret_hash IS NOT NULL AS confidential' : ''} FROM ${table} WHERE ${key} = $1 FOR UPDATE`, [target.id]);
+    if (!before) {
+      throw opError('invalid_params', `No ${target.kind === 'token' ? 'token' : 'OAuth client'} "${target.id}" exists.`,
+        target.kind === 'token' ? 'List tokens with gbrain auth list.' : 'List clients with gbrain auth clients --json.');
     }
-  }
-  const changed = member !== before.member_id || JSON.stringify(mayActFor ?? null) !== JSON.stringify(before.may_act_for ?? null)
-    || attestActor !== before.attest_actor || JSON.stringify(attestOps ?? null) !== JSON.stringify(before.attest_ops ?? null);
-  if (changed && !opts.dryRun) {
-    await engine.executeRaw(`UPDATE ${table} SET member_id = $2, may_act_for = $3::text[], attest_actor = $4, attest_ops = $5::text[] WHERE ${key} = $1`,
-      [target.id, member, mayActFor, attestActor, attestOps]);
-  }
-  return { member, may_act_for: mayActFor ?? null, ...(attestActor ? { attest_actor: attestActor, attest_ops: attestOps ?? null } : {}), changed };
+    const member = patch.member === undefined ? before.member_id : patch.member;
+    const mayActFor = patch.mayActFor === undefined ? before.may_act_for : patch.mayActFor;
+    const attestActor = patch.attestActor === undefined ? before.attest_actor : patch.attestActor;
+    const attestOps = attestActor === null ? null : patch.attestOps === undefined ? before.attest_ops : patch.attestOps;
+    const attestSources = attestActor === null ? null : patch.attestSources === undefined ? before.attest_sources : patch.attestSources?.length ? [...new Set(patch.attestSources)].sort() : null;
+    const what = target.kind === 'token' ? 'This token' : `OAuth client ${target.id}`;
+    if (patch.attestOps != null && attestActor === null) throw attestRefused('--attest-ops needs the attest right.', 'Pass --attest-actor qm with it.');
+    if (patch.attestSources != null && attestActor === null) throw attestRefused('--attest-sources needs the attest right.', 'Pass --attest-actor qm with it.');
+    // GST-1113: a credential that writes scope memory runs only the memory operations as a person, never a general read.
+    const outside = attestSources ? (attestOps ?? DEFAULT_ATTEST_OPS).filter(op => !SCOPE_ATTEST_OPS.has(op)) : [];
+    if (outside.length) throw attestRefused(`${what} lists scope sources (--attest-sources), so its attested operations stay within ${[...SCOPE_ATTEST_OPS].join(', ')}; ${outside.join(', ')} is not.`, 'Drop those operations (--attest-ops), or use a separate credential for them.');
+
+    const deferred = (patch.attestOps ?? []).filter(op => ACTOR_DEFERRED_OPS.has(op));
+    if (deferred.length) throw attestRefused(`--attest-ops names ${deferred.join(', ')}, which an attested actor cannot run yet.`, `Leave them out. Not attestable yet: ${[...ACTOR_DEFERRED_OPS].join(', ')}.`);
+    if (attestActor !== null && (patch.attestActor !== undefined || patch.member !== undefined)) {
+      if (member !== null) throw attestRefused(`${what} is bound to member "${member}", so it cannot attest other people.`, 'Use a credential bound to no member (--member none), or a separate client for the trusted system.');
+      if (target.kind === 'client' && (!(before.grant_types ?? []).includes('client_credentials') || before.confidential !== true)) {
+        throw attestRefused(`${what} is not a confidential client-credentials client, so it cannot attest people.`,
+          'Register one for the trusted system: gbrain auth register-client <name> --grant-types client_credentials, then grant it --attest-actor qm.');
+      }
+    }
+    let changed = member !== before.member_id || JSON.stringify(mayActFor ?? null) !== JSON.stringify(before.may_act_for ?? null)
+      || attestActor !== before.attest_actor || JSON.stringify(attestOps ?? null) !== JSON.stringify(before.attest_ops ?? null)
+      || JSON.stringify(attestSources ?? null) !== JSON.stringify(before.attest_sources ?? null);
+    if (changed || patch.attestSources != null) {
+      // GST-1113: the scope-source checks, the marks and the binding commit together, under this row's lock and then the
+      // marked sources' row locks. A restated list also re-marks a listed source that lost its mark.
+      if (await applyAttestSources(tx, target, attestSources ?? null, before.attest_sources ?? null, opts)) changed = true;
+      if (!opts.dryRun) {
+        await tx.executeRaw(`UPDATE ${table} SET member_id = $2, may_act_for = $3::text[], attest_actor = $4, attest_ops = $5::text[], attest_sources = $6::text[] WHERE ${key} = $1`,
+          [target.id, member, mayActFor, attestActor, attestOps, attestSources]);
+      }
+    }
+    return { member, may_act_for: mayActFor ?? null, ...(attestActor ? { attest_actor: attestActor, attest_ops: attestOps ?? null, attest_sources: attestSources ?? null } : {}), changed };
+  });
 }
 
 /** A credential bound to a member that cannot read: verification refuses it. */

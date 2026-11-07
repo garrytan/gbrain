@@ -19,6 +19,8 @@ import { activateSharedSkillPersistence } from '../src/core/persistence/skill-ac
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { commitGitTargets } from '../src/core/persistence/effect-git.ts';
 import { gitConvergenceCheck } from '../src/commands/doctor/checks/git-convergence.ts';
+import { commitAndPush } from '../src/core/git/commit-push.ts';
+import { ledgerLocation, readLedger } from '../src/core/git/commit-ledger.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { type Repo, bindSource, createGitCoalescingFixture, git, harden, pageSlug, pass, pauseGitEffects, putPage, release } from './helpers/git-coalescing-fixture.ts';
@@ -143,9 +145,13 @@ for (const kind of testBackends()) describe(`#7091 a source root below the Git t
     const page = `${SUBDIR}/${pageSlug(1)}.md`;
     writeFileSync(join(top.root, page), edited(1));
     const dirty = await gitConvergenceCheck(engine);
-    expect(dirty).toMatchObject({ status: 'warn', fix: { ask_user: true, actor: 'user', argv: ['git', '-C', top.root, 'commit', '-m', 'gbrain: persist canonical memory update', '--', page],
+    expect(dirty).toMatchObject({ status: 'warn', fix: { ask_user: true, actor: 'user', argv: ['gbrain', 'git', 'commit-push', '--path', top.root, '-m', 'gbrain: persist canonical memory update', '--', page],
       then: { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', top.root] } } });
     expect((dirty!.details as { roots: unknown[] }).roots).toEqual([expect.objectContaining({ root: top.root, stranded: true, uncommitted_pages: [page] })]);
+
+    const fixed = commitAndPush({ repo: top.root, cwd: top.root, paths: [page], message: 'gbrain: persist canonical memory update' });
+    expect(fixed.committed).toBe(git(top.root, 'rev-parse', 'HEAD').trim());
+    expect(readLedger(ledgerLocation(top.root)!.common).some(r => r.e === 'commit' && r.sha === fixed.committed)).toBe(true);
   }), 300_000);
 });
 

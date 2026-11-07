@@ -243,7 +243,7 @@ async function derivationSweep(fn: () => Promise<void>, factId: number, sourceId
 async function assertNoPendingPublication(tx: BrainEngine, sourceId: string, pages: PurgePlan['pages'], ownRequest: string): Promise<void> {
   if (!pages.length) return;
   const [blocked] = await tx.executeRaw<{ request_id: string; slug: string; state: string }>(`SELECT r.request_id::text,r.slug,r.state FROM persistence_requests r
-      WHERE r.source_id=$1 AND r.id<>$3::uuid AND r.slug=ANY($2::text[]) AND (r.recovery IS NOT NULL OR r.state IN ('queued','running','recovering'))
+      WHERE r.source_id=$1 AND r.id<>$3::uuid AND r.slug=ANY($2::text[]) AND (r.recovery IS NOT NULL OR r.state IN ('queued','deferred','running','recovering'))
     UNION ALL SELECT r.request_id::text,COALESCE(t->>'slug',r.slug),e.state FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
       CROSS JOIN LATERAL jsonb_array_elements(COALESCE(e.data->'targets','[]'::jsonb)) t
       WHERE e.source_id=$1 AND e.request_id<>$3::uuid AND e.kind='withdrawal-mirror' AND (e.state<>'committed' OR e.recovery IS NOT NULL) AND t->>'slug'=ANY($2::text[])

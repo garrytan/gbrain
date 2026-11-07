@@ -10,7 +10,7 @@ import { readSupersessionThreshold } from './supersession-threshold.ts';
 import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
 import { pageNotVisibleError } from '../persistence/page-visibility.ts';
 import { slugUnderBoundPrefixes } from '../ops/context.ts';
-import { memberWithdrawalSubject, onMemberPageSql, withdrawalCoversFactSql } from '../access/member-facts.ts';
+import { ownedPageWithdrawalSubject, onOwnedMemoryPageSql, withdrawalCoversFactSql } from '../access/member-facts.ts';
 import { UNATTRIBUTED_MEMORY_SLUG } from './extract-from-fence.ts';
 import { sameClaimSlot } from './typed-claim.ts';
 
@@ -56,7 +56,7 @@ export async function prepareFactEmbedding(fact: string, signal?: AbortSignal, d
  */
 export async function assertFactNotWithdrawn(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean } = {}): Promise<void> {
   await assertFactNotPurged(engine, sourceId, input);
-  if (await isFactWithdrawn(engine, sourceId, input.visibility, input.fact, input.entity_slug, memberWithdrawalSubject(input.page_slug))) throw await factWithdrawnRefusal(engine, sourceId, input, opts);
+  if (await isFactWithdrawn(engine, sourceId, input.visibility, input.fact, input.entity_slug, ownedPageWithdrawalSubject(input.page_slug))) throw await factWithdrawnRefusal(engine, sourceId, input, opts);
 }
 
 /**
@@ -76,7 +76,7 @@ export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string
         AND ${withdrawalCoversFactSql('w', 'f')}
       WHERE f.source_id=$1 AND f.visibility=$2 AND f.expired_at IS NOT NULL
         AND gbrain_fact_fingerprint(f.fact)=gbrain_fact_fingerprint($3) AND (w.subject='*' OR w.subject=$4::text OR w.subject=$5::text)`,
-    [sourceId, input.visibility, input.fact, input.entity_slug, memberWithdrawalSubject(input.page_slug)]);
+    [sourceId, input.visibility, input.fact, input.entity_slug, ownedPageWithdrawalSubject(input.page_slug)]);
     if (backing?.hidden && !backing.visible) return pageNotVisibleError();
   }
   const [row] = await engine.executeRaw<{ subject: string; withdrawn_at: string; visibility: 'world' | 'private' }>(`SELECT w.subject,w.visibility,w.withdrawn_at::text AS withdrawn_at
@@ -87,7 +87,7 @@ export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string
     GROUP BY w.subject,w.visibility,w.withdrawn_at
     HAVING $5::boolean=false OR COALESCE(bool_or(${seen(6)}), false) OR NOT COALESCE(bool_or(f.id IS NOT NULL), false)
     ORDER BY (w.subject<>'*') DESC, w.withdrawn_at DESC LIMIT 1`,
-  [sourceId, input.visibility, input.fact, input.entity_slug, opts.excludePrivate === true, memberWithdrawalSubject(input.page_slug)]);
+  [sourceId, input.visibility, input.fact, input.entity_slug, opts.excludePrivate === true, ownedPageWithdrawalSubject(input.page_slug)]);
   const error = verbError('invalid_params', FACT_WITHDRAWN_MESSAGE, FACT_WITHDRAWN_SUGGESTION);
   if (row) error.withdrawn = { at: new Date(row.withdrawn_at).toISOString(), subject: row.subject === '*' ? 'all_entities' : row.subject, visibility: row.visibility };
   return error;
@@ -129,7 +129,7 @@ export async function decideSingleFact(engine: BrainEngine, sourceId: string, in
     AND entity_slug IS NOT DISTINCT FROM $2 AND visibility=$3 AND expired_at IS NULL
     AND (valid_until IS NULL OR valid_until>now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($4)
     AND ($5::text IS NULL OR attributed_to IS NULL OR attributed_to=$5)${opts.excludePrivate && !input.page_slug ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}
-    AND ${input.page_slug ? 'source_markdown_slug=$6' : `($6::text IS NULL AND NOT ${onMemberPageSql('facts')})`}
+    AND ${input.page_slug ? 'source_markdown_slug=$6' : `($6::text IS NULL AND NOT ${onOwnedMemoryPageSql('facts')})`}
     ORDER BY id LIMIT 1`, [sourceId, input.entity_slug, input.visibility, input.fact, input.attributed_to ?? null, input.page_slug ?? null]);
   if (exact) return { status: 'duplicate', candidate: { ...exact, id: Number(exact.id) } };
   if (embedding && input.entity_slug) {

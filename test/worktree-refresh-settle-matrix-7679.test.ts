@@ -86,7 +86,9 @@ test('7c. #7679 state matrix: an interrupted refresh of each kind, settled by th
     await disposePersistenceConsumer(f.engine);
     const [orphan] = await cellRows();
     // The resident consumer's owner scan may already have settled it; restore what the crash left.
-    await f.engine.executeRaw(`UPDATE persistence_worktree_refreshes SET state=$2,completed_at=NULL WHERE id=$1::uuid`, [orphan.id, stateOf(kind)]);
+    // GST-1674: an _unrelated kind is a merge that ran and was then reset under an unrelated commit, so its row records the merge as started.
+    await f.engine.executeRaw(`UPDATE persistence_worktree_refreshes SET state=$2,completed_at=NULL,outcome=CASE WHEN $3::boolean THEN outcome||'{"merge_started":true}'::jsonb ELSE outcome END WHERE id=$1::uuid`,
+      [orphan.id, stateOf(kind), kind.includes('_unrelated')]);
     if (kind === 'fenced_target' || kind === 'merged_target') git(f.root, 'merge', '-q', '--ff-only', target);
     if (kind === 'syncing_descendant') commitFile(f.root, 'beta/local.md', page('Local', 'Committed on top of the target.'));
     if (kind.includes('_unrelated')) { git(f.root, 'reset', '-q', '--hard', old); commitFile(f.root, 'beta/unrelated.md', page('Unrelated', 'Not the upstream commit.')); }

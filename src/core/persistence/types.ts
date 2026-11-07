@@ -60,6 +60,8 @@ export interface WriteReceipt {
   created_at?: string;
   updated_at?: string;
   diagnostic?: WriteDiagnostic;
+  /** PR B: the write waits behind this worktree refresh and publishes after it (docs/guides/write-refusals.md#deferred-writes). */
+  deferred?: { refresh_id?: string; pending_import?: boolean };
   /** #7248: a remember's target page and the entity slug its fact is keyed under (set on its own replies, never read back from the journal). */
   target?: { slug: string | null; entity_slug: string | null };
 }
@@ -81,7 +83,7 @@ export function isWriteErrorCode(value: unknown): value is WriteErrorCode {
   return typeof value === 'string' && (WRITE_ERROR_CODES as readonly string[]).includes(value);
 }
 
-export function isTerminalWriteState(state: WriteRequestState): boolean {
+export function isTerminalWriteState(state: WriteRequestState | 'deferred'): boolean {
   return state === 'committed' || state === 'conflict' || state === 'failed' || state === 'cancelled';
 }
 
@@ -162,6 +164,9 @@ export function publicWriteReceipt(receipt: WriteReceipt): WriteReceipt {
     ...(receipt.created_at !== undefined ? { created_at: receipt.created_at } : {}),
     ...(receipt.updated_at !== undefined ? { updated_at: receipt.updated_at } : {}),
     ...(receipt.target !== undefined ? { target: receipt.target } : {}),
+    ...(receipt.deferred !== undefined && !isTerminalWriteState(receipt.state) ? { deferred: {
+      ...(receipt.deferred.refresh_id !== undefined ? { refresh_id: receipt.deferred.refresh_id } : {}),
+      ...(receipt.deferred.pending_import === true ? { pending_import: true } : {}) } } : {}),
     ...(!isTerminalWriteState(receipt.state) && isWriteDiagnostic(receipt.diagnostic) ? { diagnostic: {
       age_ms: receipt.diagnostic.age_ms, assessment: receipt.diagnostic.assessment,
       reason: receipt.diagnostic.reason, next_action: receipt.diagnostic.next_action,
