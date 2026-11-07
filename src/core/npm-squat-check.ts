@@ -16,6 +16,7 @@
 import { closeSync, openSync, readFileSync, readSync, realpathSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import type { Action } from './agent-output.ts';
+import { INSTALL_PIN } from './install-ref.ts';
 
 export type GbrainBinaryKind = 'real' | 'foreign' | 'broken' | 'unknown';
 
@@ -58,8 +59,8 @@ export interface ClassifyGbrainBinaryOptions {
 /** Repository marker identifying this project's package.json. */
 const REAL_REPO_MARKER = 'garrytan/gbrain';
 
-/** The documented install command (the `stable` release ref). */
-const INSTALL_ARGV = ['bun', 'install', '-g', `github:${REAL_REPO_MARKER}#stable`];
+/** The documented install command (INSTALL_PIN, the one install ref in core/install-ref.ts). */
+const INSTALL_ARGV = ['bun', 'install', '-g', INSTALL_PIN];
 
 /** #218 recovery: a Bun global install can skip the postinstall that applies schema migrations. */
 const SCHEMA_RECOVERY_ARGV = ['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install'];
