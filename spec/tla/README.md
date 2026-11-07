@@ -235,7 +235,7 @@ every config killing the refresh at least once, and the workflow's path filter c
 | `resume-marks-unmerged-recovery` | guard | `RecoveryOnlyByPolicy` | `movedBeforeMerge` (the finding below): the code edit aborts only a HEAD moved by gbrain's own commits; the refresh killed at fenced after a foreign commit, aborted by the owner scan |
 | `resume-needs-exact-target` | guard | `RecoveryOnlyByPolicy` | `recoverOne`'s bookkeeping branch: with HEAD only exactly at the target, a commit between the merge and bookkeeping strands the row; the refresh killed after its merge |
 
-#8708's guards get code edits and tests once its code is on master; until then they are checked in the model only.
+#8708's local-edit adoption has no guard mutant of its own: `RefreshBarrierAdopt.cfg` checks it against every safety property.
 
 ### Found in #8682: a refresh killed at fenced after HEAD moved
 
