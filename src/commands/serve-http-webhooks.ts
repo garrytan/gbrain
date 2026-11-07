@@ -5,7 +5,7 @@
  */
 import express, { type Express, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
-import { createHmac, randomBytes } from 'crypto';
+import { createHash, createHmac, randomBytes } from 'crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
@@ -110,8 +110,8 @@ export function selectGitHubItemSources<Row extends { local_path: string | null;
   const isLegacy = (cfg: Record<string, unknown>) => !(cfg.kind === 'github' && cfg.webhook_secret != null);
   // Every github-kind row is checked before scope decides anything, and the legacy rows share exactly one check (a
   // throwaway one when the repo has none), so the work done for an unsigned request does not depend on whether or how
-  // many sources name the repository (#8768). The check goes to the first legacy row that has a secret; like the push
-  // route, a second legacy source with a different secret is not tried.
+  // many sources name the repository (#8768). The check goes to the lowest-id legacy row that has a secret, so a second
+  // legacy source with a different secret is not tried.
   const legacyPick =
     candidates.find((c) => isLegacy(c.cfg) && typeof c.cfg.webhook_secret === 'string' && c.cfg.webhook_secret !== '') ??
     candidates.find((c) => isLegacy(c.cfg));
@@ -516,8 +516,10 @@ async function handleIngest(
 
   // The same body sent to two slugs is two writes, so the normalized target slug (empty when the job picks one) is part
   // of the key next to the write source; dropping it handed the second caller the first job, a 202 with nothing
-  // written to its slug (#8769).
-  const idempotencyKey = `ingest:webhook:${authInfo.clientId}:${writeSourceId}:${targetSlug}:${contentHash}`;
+  // written to its slug (#8769). The slug goes in hashed: a caller's slug has no length limit, and a raw one past the
+  // key index's row size would turn the insert into a 500.
+  const slugKey = targetSlug ? createHash('sha256').update(targetSlug).digest('hex') : '';
+  const idempotencyKey = `ingest:webhook:${authInfo.clientId}:${writeSourceId}:${slugKey}:${contentHash}`;
   try {
     const job = await ingestQueue.add(
       'ingest_capture',

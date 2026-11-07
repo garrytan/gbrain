@@ -601,7 +601,7 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
     const secondBody = (await second.json()) as { job_id?: number | string };
 
     // Queue idempotency_key:
-    // `ingest:webhook:${clientId}:${writeSourceId}:${slug}:${contentHash}` — same input
+    // `ingest:webhook:${clientId}:${writeSourceId}:${sha256(slug)}:${contentHash}` — same input
     // and same write source, same key, MinionQueue.add returns the existing job.
     expect(secondBody.job_id).toBe(firstBody.job_id!);
   });

@@ -13,6 +13,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import express from 'express';
+import { createHash } from 'node:crypto';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -112,6 +113,13 @@ describe('POST /ingest idempotency includes the target slug', () => {
     const inbox = await ingest(body);
     expect(await ingest(body)).toBe(inbox);
     expect(await ingest(body, 'notes/inbox-copy')).not.toBe(inbox);
+  });
+
+  test('a valid slug of about 3 KB is queued rather than failing the key index, and its retry collapses', async () => {
+    const body = note('Long-slug capture');
+    const slug = `notes/${Array.from({ length: 47 }, (_, i) => createHash('sha256').update(String(i)).digest('hex')).join('')}`;
+    const first = await ingest(body, slug);
+    expect(await ingest(body, slug)).toBe(first);
   });
 });
 
