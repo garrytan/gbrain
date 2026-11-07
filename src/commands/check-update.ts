@@ -187,7 +187,7 @@ export function extractChangelogBetween(changelog: string, from: string, to: str
  * last verified answer for the notice (never for an apply), a missing or invalid
  * one drops it.
  */
-function recordFailedCheck(channel: ReleaseChannel, release: Extract<LatestReleaseResult, { ok: false }>, checkedAt: number): void {
+export function recordFailedCheck(channel: ReleaseChannel, release: Extract<LatestReleaseResult, { ok: false }>, checkedAt: number): void {
   try {
     const prior = readUpdateCache(channel);
     if (!('cause' in release)) {

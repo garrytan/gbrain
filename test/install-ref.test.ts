@@ -37,6 +37,8 @@ describe('install ref lint', () => {
     ]);
     expect(driftIn('docs/x.md', doc).map(d => d.line).sort()).toEqual([1, 4, 5, 7]);
     expect(driftIn('CHANGELOG.md', doc)).toEqual([]);
+    expect(driftIn('docs/x.md', `bun add -g github:garrytan/gbrain#${'d'.repeat(40)}\nbun add -g github:garrytan/gbrain#abc1234\n`)).toEqual([]);
+    expect(rewriteText('docs/x.md', `github:garrytan/gbrain#${'a'.repeat(40)}`, 'stable')).toBe(`github:garrytan/gbrain#${'a'.repeat(40)}`);
   });
 
   test('TypeScript never spells an install ref; it imports the constant', () => {

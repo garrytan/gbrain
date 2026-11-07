@@ -22,7 +22,7 @@ export interface InstallRefDrift { file: string; line: number; found: string; wh
 const PIN = /github:garrytan\/gbrain#([A-Za-z][A-Za-z0-9._-]*)/g;
 const ARTIFACT = /raw\.githubusercontent\.com\/garrytan\/gbrain\/([A-Za-z0-9._-]+)\/(BOOTSTRAP_FOR_AGENTS\.md|scripts\/setup-in-agent\.sh)/g;
 const HELPER_REF = /^gbrain_install_ref=([A-Za-z0-9._-]+)$/gm;
-const EXACT_PIN = /^v|^[0-9]/;
+const EXACT_PIN = /^v|^[0-9]|^[0-9a-f]{7,40}$/;
 const OWNER = 'src/core/install-ref.ts';
 
 const skipped = (file: string) => file === 'CHANGELOG.md' || file.startsWith('test/') || file === OWNER;

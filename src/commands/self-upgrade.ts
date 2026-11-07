@@ -1,6 +1,6 @@
 import { VERSION } from '../version.ts';
 import { isValidVersionString } from '../core/semver.ts';
-import { fetchChangelog, fetchLatestRelease } from './check-update.ts';
+import { fetchChangelog, fetchLatestRelease, recordFailedCheck } from './check-update.ts';
 import { detectInstallMethod, runUpgrade } from './upgrade.ts';
 import {
   invalidChannelMessage,
@@ -139,8 +139,8 @@ export async function runSelfUpgrade(args: string[]): Promise<void> {
         offered ? { kind: 'upgrade_available', current: VERSION, latest: offered } : { kind: 'up_to_date', current: VERSION },
         { channel, latest, knownBad: release?.knownBad ?? [], checkedAt },
       );
-    } else if (stableFailure) {
-      writeUpdateCache(null, { channel, error: stableFailure, checkedAt });
+    } else if (!result.ok) {
+      recordFailedCheck(channel, result, checkedAt);
     }
   } catch {
     /* best-effort */

@@ -725,9 +725,12 @@ and keeps stable between one day and one week behind what matters:
 - **Roll back.** Dispatch `promote-stable.yml` as a maintainer with `version` set to the
   previous stable (`git tag --list 'stable-v*' --sort=-creatordate`, or the
   record's `previous` field: `git show stable --no-patch`), `soak_run_url` set to the
-  soak run in that version's record tag, `rollback=true` and a `reason`. Clients on
-  stable never downgrade on their own; the daily check stays paused until the
-  next manual promotion.
+  soak run in that version's record tag, `rollback=true`, a `reason` and `withdraw`
+  set to the version you are rolling back from. `withdraw` puts it on the record's
+  `known_bad` list, so clients that already installed it are offered the previous
+  stable. Without it they stay on the bad release, because clients on stable never
+  downgrade on their own. The daily check stays paused until the next manual
+  promotion.
 
 ### The `publish-template` job
 

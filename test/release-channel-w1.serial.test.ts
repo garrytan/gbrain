@@ -260,6 +260,19 @@ for (const brain of ['repo-less', 'repo'] as const) {
       expect(readSnooze('stable')).toMatchObject({ version: AHEAD, level: 1 });
     });
 
+    test('self-upgrade --check-only keeps the verified answer on stable_unreadable and drops it on stable_missing', async () => {
+      writeConfig({}, brain);
+      console.log = () => {};
+      serve({ record: record(AHEAD) });
+      await refreshUpdateCache();
+      serve({ record: null });
+      await runSelfUpgrade(['--check-only', '--json']);
+      expect(readUpdateCache('stable')).toMatchObject({ error: { code: 'stable_unreadable' }, marker: { kind: 'upgrade_available', latest: AHEAD } });
+      serve({});
+      await runSelfUpgrade(['--check-only', '--json']);
+      expect(readUpdateCache('stable')).toMatchObject({ error: { code: 'stable_missing' }, marker: null });
+    });
+
     test('doctor names a channel that was set and its source (the default stays mode=notify), and warns with the code when stable failed', async () => {
       writeConfig({}, brain);
       expect(checkSelfUpgradeHealth().message).toBe('mode=notify');
