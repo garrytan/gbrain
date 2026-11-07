@@ -346,7 +346,18 @@ const request_tools: Operation = {
       const { resolveStrictParamsMode } = await import('../../mcp/validate-params.ts');
       const strictParams = (await resolveStrictParamsMode(ctx.engine, ctx.config)) === 'reject';
       if (ctx.revealTools) {
-        ctx.revealTools(picked.map(o => o.name));
+        // Only tools inside the session's callable set can be listed; the rest are schema-only.
+        const { filterOpsForSurface } = await import('../../mcp/surface.ts');
+        const callable = new Set(filterOpsForSurface(operations, ceiling).map(o => o.name));
+        const reachable = picked.filter(o => callable.has(o.name));
+        if (reachable.length > 0) ctx.revealTools(reachable.map(o => o.name));
+        if (reachable.length < picked.length) {
+          return {
+            tools: buildToolDefs(picked, { strictParams }),
+            ...(reachable.length > 0 ? { listed: true } : {}),
+            note: 'Some of these tools are outside this session\'s surface and are not callable yet; call request_tools {"surface":"full"} first. Tools inside the surface are in your tool list.',
+          };
+        }
         return { tools: buildToolDefs(picked, { strictParams }), listed: true, note: 'These tools are now in your tool list (tools/list_changed was sent); call them directly.' };
       }
       return { tools: buildToolDefs(picked, { strictParams }) };
