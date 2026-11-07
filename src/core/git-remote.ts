@@ -97,12 +97,12 @@ export interface CloneOpts {
   depth?: number; // default 1; 0 means full clone
   branch?: string;
   timeoutMs?: number; // default 600_000 (10 min)
-  /** Keep git-lfs from downloading: the repository's own .lfsconfig picks the LFS endpoint, outside the URL gate. */
+  /**
+   * Keep git-lfs from downloading, in this clone and every later git command in it: the repository's own .lfsconfig
+   * picks the LFS endpoint, outside the URL gate. Written to the clone's .git/config, which outranks .lfsconfig.
+   */
   skipLfs?: boolean;
 }
-
-/** git-lfs leaves pointer files in place and contacts no LFS endpoint. */
-const LFS_DOWNLOADS_OFF = { GIT_LFS_SKIP_SMUDGE: '1' } as const;
 
 export class GitOperationError extends Error {
   constructor(
@@ -168,13 +168,14 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
   if (opts.branch) {
     args.push('--branch', opts.branch);
   }
+  if (opts.skipLfs) args.push('--config', 'lfs.fetchexclude=*');
   args.push(url, destDir);
 
   try {
     execFileSync('git', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: opts.timeoutMs ?? 600_000,
-      env: gitChildEnv({ ...GIT_ENV, ...(opts.skipLfs ? LFS_DOWNLOADS_OFF : {}) }),
+      env: gitChildEnv({ ...GIT_ENV }),
     });
   } catch (e) {
     throw new GitOperationError(
@@ -198,7 +199,7 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
  * `opts.timeoutMs` (default 5 min); `isStoppedGitPull` recognizes the error
  * that produces, so callers can tell "we stopped it" from "git failed".
  */
-export async function pullRepo(repoPath: string, opts: { timeoutMs?: number; signal?: AbortSignal; skipLfs?: boolean } = {}): Promise<void> {
+export async function pullRepo(repoPath: string, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<void> {
   assertManagedFilesystemWrite(repoPath);
   const fail = (reason: string, error: unknown): never => {
     throw new GitOperationError('pull', `git pull failed in ${repoPath}: ${reason}`, error);
@@ -222,7 +223,7 @@ export async function pullRepo(repoPath: string, opts: { timeoutMs?: number; sig
   try {
     const merge = await execFileBounded('git', ['-C', repoPath, '-c', 'core.hooksPath=/dev/null', '-c', 'merge.autoStash=false', 'merge', '--ff-only', '--quiet', '@{upstream}'], {
       timeout: opts.timeoutMs ?? 300_000,
-      env: gitChildEnv({ ...GIT_ENV, ...(opts.skipLfs ? LFS_DOWNLOADS_OFF : {}) }),
+      env: gitChildEnv({ ...GIT_ENV }),
       signal: opts.signal,
     });
     if (merge.error) fail(merge.stderr.trim() || merge.error.message, merge.error);
