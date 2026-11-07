@@ -422,6 +422,22 @@ test('a write held for an import never takes the capacity the import needs', () 
 }), 180_000);
 
 
+test('a write held for an import never takes the capacity a bulk import group needs', () => each(async f => {
+  await f.engine.setConfig('persistence.limits.principal_outstanding', '2');
+  try {
+    for (const name of ['one', 'two', 'three']) foreignCommit(f, `${name}.md`, page(`Alpha ${name}`, IMPORTED));
+    const out = await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Mine, held while a bulk group imports.') });
+    const held = await requestRow(f, out.receipt.request_id);
+    expect(held.state).toBe('deferred');
+    await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true,
+      bulk: { enabled: true, reason: null, size: 16, maxTxnMs: 15_000, maxTxnExplicit: false } } as never);
+    expect(await f.lastCommit(f.alpha)).toBe(git(f.root, 'rev-parse', 'HEAD'));
+    expect((await settle(f, held)).state).toBe('committed');
+  } finally {
+    await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.limits.principal_outstanding'");
+  }
+}), 180_000);
+
 test('GST-1623: an import and a new hold between the expiry scan and its lock never expire the new hold', () => each(async f => {
   foreignCommit(f, 'one.md', page('Alpha one', IMPORTED));
   const out = await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Mine, held again after an import.') });
