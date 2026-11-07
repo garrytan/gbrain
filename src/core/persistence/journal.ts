@@ -119,11 +119,12 @@ export function capacityError(resource: string, outstanding?: { used: number; li
  * divided by the sources holding outstanding requests on the principal, this one included) is still admitted; the brain
  * cap and every other principal's cap stay hard. The share is checked before the admission, so a sync publication group
  * larger than the share is admitted whole and a source passes its share by at most one group. A refusal names the source
- * holding the most slots.
+ * holding the most slots. GST-1623: a managed sync job passes `held`, the counter's writes waiting in `deferred` (heldBehindImport).
  */
-async function outstandingRefusal(tx: SqlEngine, row: Counter, principal: Principal, sourceId: string, need: number, limit: number): Promise<OperationError | null> {
+async function outstandingRefusal(tx: SqlEngine, row: Counter, principal: Principal, sourceId: string, need: number, limit: number,
+  held = 0): Promise<OperationError | null> {
   const used = Number(row.outstanding_count);
-  if (used + need <= limit) return null;
+  if (used - held + need <= limit) return null;
   if (row.key === 'brain' || principal.kind !== 'local_cli') return capacityError(`${row.key === 'brain' ? 'brain' : 'principal'} outstanding requests`, { used, limit });
   const holders = await tx.executeRaw<{ source_id: string; n: number | string }>(`SELECT source_id,count(*) AS n FROM persistence_requests
     WHERE principal_kind=$1 AND principal_id=$2 AND state IN ('queued','running','recovering') GROUP BY source_id ORDER BY count(*) DESC,source_id`, [principal.kind, principal.id]);
@@ -133,6 +134,18 @@ async function outstandingRefusal(tx: SqlEngine, row: Counter, principal: Princi
   const top = holders[0];
   return capacityError(`principal outstanding requests${top ? ` (source ${top.source_id} holds ${Number(top.n)})` : ''}`, { used, limit });
 }
+/**
+ * GST-1623: the writes counted on `principal`'s counter (the brain's when null) that wait in `deferred` behind an import or
+ * a refresh, and their intent bytes. They cannot settle before managed sync imports, so a managed sync job is admitted as
+ * if they held no slot; the importer can pass a cap by at most what they hold.
+ */
+async function heldBehindImport(tx: SqlEngine, principal: Principal | null): Promise<{ count: number; bytes: number }> {
+  const [row] = await tx.executeRaw<{ count: number | string; bytes: number | string }>(`SELECT count(*) AS count,COALESCE(sum(intent_bytes),0) AS bytes
+    FROM persistence_requests WHERE state='deferred'${principal ? ' AND principal_kind=$1 AND principal_id=$2' : ''}`, principal ? [principal.kind, principal.id] : []);
+  return { count: Number(row?.count ?? 0), bytes: Number(row?.bytes ?? 0) };
+}
+/** A managed sync job: the import itself, never deferred or refused behind a refresh that waits on it. */
+const managedSyncJob = (input: Pick<WriteAdmission, 'operation' | 'intent'>) => input.operation === 'submit_job' && String(input.intent.kind ?? '').startsWith('managed_sync_');
 /**
  * #6696 (A6): a cumulative cap refusal is `write_quota_exhausted` (host only;
  * waiting does not free a permanent id, and receipt bytes free only as
@@ -335,9 +348,10 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
     if (input.targetKind === 'skill_bundle') await assertSharedSkillPersistence(tx, input.sourceId);
     for (const row of counters) {
       const brain = row.key === 'brain';
-      const outstanding = await outstandingRefusal(tx, row, input.principal, input.sourceId, 1, brain ? limits.brainOutstanding : limits.principalOutstanding);
+      const held = managedSyncJob(input) ? await heldBehindImport(tx, brain ? null : input.principal) : { count: 0, bytes: 0 };
+      const outstanding = await outstandingRefusal(tx, row, input.principal, input.sourceId, 1, brain ? limits.brainOutstanding : limits.principalOutstanding, held.count);
       if (outstanding) throw outstanding;
-      if (Number(row.intent_bytes) + bytes > (brain ? limits.brainIntentBytes : limits.principalIntentBytes)) throw capacityError(`${brain ? 'brain' : 'principal'} intent bytes`);
+      if (Number(row.intent_bytes) - held.bytes + bytes > (brain ? limits.brainIntentBytes : limits.principalIntentBytes)) throw capacityError(`${brain ? 'brain' : 'principal'} intent bytes`);
       const scope = brain ? 'brain' : 'principal';
       if (Number(row.lifetime_ids) + 1 > limits[`${scope}LifetimeIds`]) throw await cumulativeCapacityError(tx, `${scope} permanent request IDs`,
         row.key, `${scope}LifetimeIds`, Number(row.lifetime_ids), limits[`${scope}LifetimeIds`]);
@@ -644,8 +658,7 @@ export async function deferralRoom(tx: SqlEngine, worktreeId: string, capability
 /** The refresh to defer this write behind, or null when it is admitted normally; otherwise refuses. */
 async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmission, refresh: { id: string; state: string; source_ids: string[] }, replayable: boolean,
   barrier: boolean): Promise<string | null> {
-  const managedSync = input.operation === 'submit_job' && String(input.intent.kind ?? '').startsWith('managed_sync_');
-  if (refresh.state === 'syncing' && managedSync) return null;
+  if (refresh.state === 'syncing' && managedSyncJob(input)) return null;
   if (refresh.state === 'syncing') {
     const completed = await tx.executeRaw(`UPDATE persistence_worktree_refreshes f SET state='completed',completed_at=now(),updated_at=now()
       WHERE f.id=$1::uuid AND f.state='syncing' AND NOT EXISTS (SELECT 1 FROM sources s WHERE s.id=ANY(f.source_ids)

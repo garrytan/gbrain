@@ -200,13 +200,13 @@ barrier exists to keep, and with the flag on each now waits instead (with it off
   imported is never awaited), and the consumer moves its own claim back to `deferred` with
   `deferred_import_from` set to that commit (`''` when the source had never imported). The row is
   released when `sources.last_commit` differs from it (and any refresh it also names is released),
-  then claimed and prepared from scratch, as if it had queued behind the import: a `remember`,
-  `capture` or `add_timeline_entry` applies on top; a `put_page` with `expected_revision` meets the moved page and ends
-  `revision_conflict`; a blind (`force`) `put_page` lands. An import that lands without covering
+  then claimed and prepared from scratch, as if it had queued behind the import: a `remember` or
+  `add_timeline_entry` applies on top; a `put_page` with `expected_revision` meets the moved page and ends
+  `revision_conflict`; a blind (`force`) `put_page` or a `capture` lands over it. An import that lands without covering
   the file only re-arms the hold at the new commit. The receipt reads `queued` with
   `deferred: { pending_import: true }`, and the caller's wait returns pending at once.
 
-**What a blind write replaced.** A held `put_page` that replaces content an import brought in names
+**What a blind write replaced.** A held `put_page` or `capture` that replaces content an import brought in names
 it in three places, so the replacement is auditable and recoverable without digging: the receipt's
 `supersedes` (`slug`, `path`, the replaced `revision`, the imported `commit`: the newest commit
 after the held-at commit that touched the file), a `gbrain-supersedes: <path>: revision <id> from

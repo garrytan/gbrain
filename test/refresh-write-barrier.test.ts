@@ -613,3 +613,21 @@ test('GST-1674: a refresh killed after its merge, with a commit landed on the ta
   expect((await settle(f, deferred)).state).toBe('committed');
 }), 180_000);
 
+
+test('GST-1623: a write deferred behind a refresh never takes the capacity its refresh sync needs', () => each(async f => {
+  try {
+    let deferred!: WriteRequest;
+    const refresh = await duringRefresh(f, async () => {
+      await f.engine.setConfig('persistence.limits.brain_outstanding', String(await outstanding(f) + 1));
+      const out = await call(f, 'put_page', { slug: 'notes/held-at-cap', content: page('Held', 'written while the cap is full') });
+      expect(out.body).toMatchObject({ status: 'pending' });
+      deferred = await requestRow(f, out.body.request_id);
+      expect(deferred.state).toBe('deferred');
+    });
+    expect((await refresh).status).toBe('completed');
+    expect((await settle(f, deferred)).state).toBe('committed');
+  } finally {
+    await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.limits.brain_outstanding'");
+  }
+}), 180_000);
+

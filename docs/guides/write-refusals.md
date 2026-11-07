@@ -620,9 +620,9 @@ syncing it is accepted and waits for the refresh instead of being refused `workt
 - <a id="pending_import_expired"></a>A `put_page`, `capture`, `remember` or `add_timeline_entry` whose page file holds a
   committed change managed sync has not imported yet ([`pending_import`](#pending_import)) also waits
   instead of being refused: the receipt stays pending with `deferred: { pending_import: true }`, and
-  once the import lands the write is prepared again against the imported page. A `remember`,
-  `capture` or `add_timeline_entry` applies on top; a `put_page` with `expected_revision` ends `revision_conflict` when the
-  import moved the page; a blind (`force`) `put_page` lands, and its receipt (`supersedes`), its
+  once the import lands the write is prepared again against the imported page. A `remember` or
+  `add_timeline_entry` applies on top; a `put_page` with `expected_revision` ends `revision_conflict` when the
+  import moved the page; a blind (`force`) `put_page` or a `capture` lands over it, and its receipt (`supersedes`), its
   commit trailer (`gbrain-supersedes: <path>: revision <id> from <commit>`) and the commit ledger
   name the imported revision and commit it replaced, both still in page history and Git. A write
   whose import has not landed within the wait limit of its hold ends `failed` with `pending_import_expired`,
