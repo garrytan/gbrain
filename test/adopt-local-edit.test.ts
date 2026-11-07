@@ -19,6 +19,7 @@ import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { acquireWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
@@ -271,6 +272,38 @@ test('a file changed between the adoption\'s preparation and publication ends ra
   expect(adoption).toMatchObject({ state: 'conflict', error_code: 'source_changed' });
   expect((adoption!.error_detail as { origin?: string } | null)?.origin).toBe('raw_file_changed');
   expect(file(f, 'one.md')).toBe(RACED);
+  expect(head(f)).toBe(before.head);
+  expect(await revision(f, 'one')).toBe(before.revision);
+}), 180_000);
+
+test('a local edit that is not valid UTF-8 keeps the refusal and its exact bytes', () => each(async f => {
+  const bytes = Buffer.concat([Buffer.from(EDITED.replace(LOCAL, 'Bytes no decoder reads: ')), Buffer.from([0xff, 0xfe, 0x0a])]);
+  writeFileSync(join(f.root, 'alpha', 'one.md'), bytes);
+  const before = { head: head(f), revision: await revision(f, 'one') };
+  await timeline(f)().catch(() => undefined);
+  const row = await settled(f.engine, await lastRow(f, 'add_timeline_entry'));
+  expect(row).toMatchObject({ state: 'conflict', error_code: 'source_changed' });
+  expect(readFileSync(join(f.root, 'alpha', 'one.md')).equals(bytes)).toBe(true);
+  expect(head(f)).toBe(before.head);
+  expect(await revision(f, 'one')).toBe(before.revision);
+  expect((await adoptionRows(f)).filter(r => r.state === 'committed')).toEqual([]);
+}), 180_000);
+
+test('an adoption still blocked on the worktree lock when the caller gives up is cancelled, never published later', () => each(async f => {
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  const before = { head: head(f), revision: await revision(f, 'one') };
+  const lock = (await acquireWorktree((await getWorktreeBinding(f.engine, f.alpha))!, 0, undefined, f.engine))!;
+  expect(lock).not.toBeNull();
+  try {
+    await timeline(f)().catch(() => undefined);
+    const row = await settled(f.engine, await lastRow(f, 'add_timeline_entry'));
+    expect(row).toMatchObject({ state: 'conflict', error_code: 'source_changed' });
+  } finally { await lock.release(); }
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  const adoptions = await adoptionRows(f);
+  expect(adoptions.length).toBe(1);
+  expect(adoptions[0]!.state).toBe('cancelled');
+  expect(file(f, 'one.md')).toBe(EDITED);
   expect(head(f)).toBe(before.head);
   expect(await revision(f, 'one')).toBe(before.revision);
 }), 180_000);

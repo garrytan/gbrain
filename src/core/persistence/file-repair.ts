@@ -342,6 +342,8 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
   const adoptNote = adopted ? localEditAdoptionCommit(p.path, adopted.blob, adopted.replaced_revision) : undefined;
   const bytes = Buffer.from(p.content, 'utf8');
   const fileChanges = sha256(bytes) !== p.beforeHash;
+  if (adopted && fileChanges) throw opError('invalid_params', 'A local edit adoption may not rewrite the file it adopts.',
+    `Adoption request ${row.request_id} in source ${row.source_id} would change ${p.path} instead of recording it as it is, so it published nothing.`);
   const checkFile = () => {
     const target = confinedRepairTarget(root, p.path, row.source_id, kind);
     if (fileSha256(target) !== p.beforeHash) throw changedSincePreview(row.source_id, p.path, 'the file bytes differ from the previewed hash', kind);

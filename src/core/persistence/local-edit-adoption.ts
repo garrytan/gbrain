@@ -29,7 +29,7 @@ import { sourceCanonicalGit } from './git-door.ts';
 import { gitDurabilityPolicy } from './git-durability-policy.ts';
 import { withRegisteredLocalWriter } from './identity.ts';
 import { admitWrite, getWriteRequest, getWriteRequestById, publicationGroupKey, releaseUnpublishedClaim } from './journal.ts';
-import { isTerminal, type WriteRequest } from './model.ts';
+import { isTerminal, requestPrincipal, type WriteRequest } from './model.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 import type { WorktreeBinding } from './ownership.ts';
 import { getWorktreeBinding } from './ownership.ts';
@@ -86,6 +86,8 @@ async function adoptionIntent(engine: BrainEngine, row: WriteRequest, target: Lo
   if (!snapshot || !sourcePath || snapshot.page.deleted_at) return null;
   const bytes = readFileSync(target.path);
   const text = bytes.toString('utf8');
+  // An edit whose bytes do not decode losslessly would be rewritten by its own adoption, so it keeps the refusal.
+  if (!Buffer.from(text, 'utf8').equals(bytes)) return null;
   const head = await headCommit(target.root) ? await headBlob(target.root, target.path) : undefined;
   if (head === null) return null;
   // A checkout whose HEAD holds the database's copy: only the worktree file moved. A repo-less brain has no HEAD to ask.
@@ -128,6 +130,21 @@ async function publishAdoption(engine: BrainEngine, admitted: WriteRequest, path
 }
 
 /**
+ * An adoption `publishAdoption` left unfinished (still blocked on the worktree lock) is cancelled, so a caller that keeps
+ * its refusal never has its local edit adopted later; one the resident consumer already took is awaited instead.
+ */
+async function settleAdoption(engine: BrainEngine, row: WriteRequest): Promise<WriteRequest> {
+  if (isTerminal(row)) return row;
+  const { cancelWriteRequest } = await import('./control.ts');
+  const deadline = Date.now() + LOCK_RETRY_MS;
+  for (;;) {
+    const current = await cancelWriteRequest(engine, requestPrincipal(row), row.request_id) ?? row;
+    if (isTerminal(current) || Date.now() > deadline) return current;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+}
+
+/**
  * The owner's answer to a drift refusal of `row` (coordinator.ts finishUnpublishedFailure): `released` once the local edit
  * is adopted and the write queued to prepare again, `error` when the adoption found the file changed under it (the
  * write ends with that refusal), null when the write keeps its own refusal.
@@ -156,7 +173,7 @@ export async function adoptLocalEdit(engine: BrainEngine, row: WriteRequest, err
     });
   } catch { return null; }
   if (!admitted) return null;
-  const done = await publishAdoption(engine, admitted, target.path);
+  const done = await settleAdoption(engine, await publishAdoption(engine, admitted, target.path));
   if (done.state === 'committed') {
     await engine.transaction(async tx => {
       await declarePersistenceProtocol(tx);
