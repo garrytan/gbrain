@@ -332,26 +332,31 @@ test.skipIf(!backends.includes('postgres'))('an import expiry that overlaps a fe
     await new Promise(resolve => setTimeout(resolve, 20));
     const owner = await ownerHost(f);
     let holding!: () => void; const held1 = new Promise<void>(resolve => { holding = resolve; });
+    let fenceIs!: (rows: Array<{ pid: number }>) => void; const fencePid = new Promise<Array<{ pid: number }>>(resolve => { fenceIs = resolve; });
     let waiting!: () => void; const expiryWaits = new Promise<void>(resolve => { waiting = resolve; });
     // fenceDraining's order (lockTopologyRows): the brain row FOR UPDATE, then the worktree, then the sources.
     const fence = f.engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('lock_timeout','10s',true)");
       await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+      fenceIs(await tx.executeRaw<{ pid: number }>('SELECT pg_backend_pid() AS pid'));
       holding();
       await expiryWaits;
       await tx.executeRaw('SELECT 1 FROM sources WHERE id=$1 FOR UPDATE', [f.alpha]);
     });
     await held1;
     const expiry = expireDeferredWrites(f.engine, owner);
-    for (let i = 0; i < 400; i++) {
-      const [w] = await f.engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'");
-      if (Number(w!.n) > 0) break;
-      await new Promise(resolve => setTimeout(resolve, 25));
+    const [{ pid }] = await fencePid;
+    let blocked = false;
+    for (let i = 0; i < 400 && !blocked; i++) {
+      const [w] = await f.engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))', [pid]);
+      blocked = Number(w!.n) > 0;
+      if (!blocked) await new Promise(resolve => setTimeout(resolve, 25));
     }
     waiting();
     const [fenced, expired] = await Promise.allSettled([fence, expiry]);
     expect(fenced.status === 'rejected' ? String(fenced.reason) : 'fence committed').toBe('fence committed');
     expect(expired.status === 'fulfilled' ? expired.value.map(row => row.id) : String(expired.reason)).toEqual([held.id]);
+    expect(blocked).toBe(true);
   } finally {
     await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
   }

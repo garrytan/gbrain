@@ -99,9 +99,10 @@ async function settle(f: RefreshFixture, row: WriteRequest): Promise<WriteReques
 
 /**
  * Postgres only: on a separate connection, moves refresh `refreshId` to aborted and keeps that transaction open while `start`
- * runs, until `start` waits on that connection's lock (or settles), then commits and returns what `start` returns.
+ * runs, until `start` waits on that connection's lock (or settles), then commits and returns what `start` returns and
+ * whether it waited on that lock (a race test that never waited proves nothing).
  */
-async function endRefreshDuring<T>(f: RefreshFixture, refreshId: string, start: () => Promise<T>): Promise<T> {
+async function endRefreshDuring<T>(f: RefreshFixture, refreshId: string, start: () => Promise<T>): Promise<{ value: T; blocked: boolean }> {
   const sql = postgres(postgresUrl!, { max: 1, prepare: false });
   try {
     const conn = await sql.reserve();
@@ -109,16 +110,16 @@ async function endRefreshDuring<T>(f: RefreshFixture, refreshId: string, start: 
       await conn.unsafe('BEGIN');
       const [{ pid }] = await conn.unsafe<Array<{ pid: number }>>('SELECT pg_backend_pid() AS pid');
       await conn.unsafe("UPDATE persistence_worktree_refreshes SET state='aborted',completed_at=now(),updated_at=now() WHERE id=$1::uuid", [refreshId]);
-      let settled = false;
+      let settled = false; let blocked = false;
       const running = start().finally(() => { settled = true; });
       running.catch(() => undefined);
       for (let i = 0; i < 800 && !settled; i++) {
         const [waiting] = await f.engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))', [pid]);
-        if (Number(waiting!.n) > 0) break;
+        if (Number(waiting!.n) > 0) { blocked = true; break; }
         await new Promise(resolve => setTimeout(resolve, 25));
       }
       await conn.unsafe('COMMIT');
-      return await running;
+      return { value: await running, blocked };
     } finally { conn.release(); }
   } finally { await sql.end(); }
 }
@@ -241,9 +242,10 @@ test('an expiry racing the end of its refresh leaves the write deferred, and it 
     try {
       await new Promise(resolve => setTimeout(resolve, 20));
       const [{ owner }] = await f.engine.executeRaw<{ owner: string }>('SELECT owner_host_id::text AS owner FROM persistence_worktrees WHERE id=$1::uuid', [f.worktreeId]);
-      const expired = await endRefreshDuring(f, deferred.deferred_refresh_id!, () => expireDeferredWrites(f.engine, owner));
+      const { value: expired, blocked } = await endRefreshDuring(f, deferred.deferred_refresh_id!, () => expireDeferredWrites(f.engine, owner));
       expect(expired.map(row => row.id)).toEqual([]);
       expect((await getWriteRequestById(f.engine, deferred.id))!.state).toBe('deferred');
+      expect(blocked).toBe(true);
     } finally {
       await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
     }
@@ -256,10 +258,11 @@ test('a write admitted while its refresh ends is never deferred to the released 
   let row!: WriteRequest;
   await duringRefresh(f, async () => {
     const active = (await f.refreshRows()).find(r => r.state === 'draining')!;
-    const out = await endRefreshDuring(f, active.id, () => call(f, 'put_page', { slug: 'notes/admission-race', content: page('Admission race', 'body') }));
+    const { value: out, blocked } = await endRefreshDuring(f, active.id, () => call(f, 'put_page', { slug: 'notes/admission-race', content: page('Admission race', 'body') }));
     row = await requestRow(f, out.body.request_id);
     expect(row.deferred_refresh_id).toBeNull();
     expect(row.state).not.toBe('deferred');
+    expect(blocked).toBe(true);
   }).catch(error => { if (!(error instanceof OperationError)) throw error; });
   expect((await settle(f, row)).state).toBe('committed');
 }), 180_000);

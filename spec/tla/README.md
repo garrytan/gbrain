@@ -21,7 +21,7 @@ Needs Java 11 or later (CI uses temurin 21), GNU `timeout` (`brew install coreut
 `scripts/spec/tla-tools.env`; set `TLA2TOOLS` to use a jar you already have (it is checked too). The code mutants
 that need Postgres run when `DATABASE_URL` points at a test database (with `GBRAIN_TEST_ALLOW_DATABASE_URL=1`);
 otherwise they print `skip`, and CI passes `--require-postgres`. Logs and counterexample traces land in
-`.context/tlc/` (`TLC_OUT`), and CI uploads them as the `tla-spec-logs` artifact.
+`.context/tlc/` (`TLC_OUT`), and CI uploads them as the `tla-spec-logs-<spec>` artifact (`tla-spec-logs-refresh-barrier`, for example).
 
 `.github/workflows/tla-spec.yml` runs all of it, one job per spec, nightly, on dispatch, and on pull requests and master pushes that touch a
 spec, its runner, the code a spec models, or a test a mutant names.

@@ -44,6 +44,10 @@ on:
       - 'src/core/persistence/coordinator.ts'
       - 'src/core/persistence/group-publish.ts'
       - 'src/core/persistence/page-prepare.ts'
+      - 'src/core/persistence/topology-locks.ts'
+      - 'src/core/persistence/authority.ts'
+      - 'src/core/persistence/import-deferral.ts'
+      - 'src/core/persistence/local-edit-adoption.ts'
       - 'test/persistence-worktree-refresh.test.ts'
       - 'test/pending-import-async-git-7436.test.ts'
   push:
@@ -84,6 +88,10 @@ on:
       - 'src/core/persistence/coordinator.ts'
       - 'src/core/persistence/group-publish.ts'
       - 'src/core/persistence/page-prepare.ts'
+      - 'src/core/persistence/topology-locks.ts'
+      - 'src/core/persistence/authority.ts'
+      - 'src/core/persistence/import-deferral.ts'
+      - 'src/core/persistence/local-edit-adoption.ts'
       - 'test/persistence-worktree-refresh.test.ts'
       - 'test/pending-import-async-git-7436.test.ts'
   schedule:
@@ -151,6 +159,7 @@ jobs:
         env:
           DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
+          TLC_TIMEOUT_S: '900'
         run: bun scripts/spec/mutants.ts ${{ matrix.spec }} --require-postgres
       - name: Keep the logs and counterexample traces
         if: always()
