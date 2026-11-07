@@ -15,6 +15,9 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { executeRawJsonb } from '../core/sql-query.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
+import { coalesceOnIdempotencyKey } from '../core/minions/idempotency-coalesce.ts';
+import { APPLICATION_AUTHORITY } from '../core/minions/submission-authority.ts';
+import type { MinionJob } from '../core/minions/types.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { ERROR_CATALOGUE } from '../core/error-catalogue.ts';
 import {
@@ -252,6 +255,30 @@ function ingestTargetSlug(callerSlug: string): string {
   const bytes = Buffer.byteLength(callerSlug, 'utf8');
   if (bytes > MAX_INGEST_SLUG_BYTES) throw new Error(`Invalid slug: X-Gbrain-Slug is ${bytes} bytes; the limit is ${MAX_INGEST_SLUG_BYTES}.`);
   return validateSlug(callerSlug);
+}
+
+/**
+ * The job a server before v0.60.609.0 recorded for this capture, or null. Its key had no slug part
+ * (`ingest:webhook:<client>:<write source>:<content hash>`), and a job row keeps its key until `gbrain jobs prune`
+ * removes it, which nothing runs on a schedule, so such a row can answer a retry for as long as the brain keeps it. A
+ * retry that missed it queued a second job, and that job wrote the old body over any edit made since. The row answers
+ * only for the target slug it was queued with: the old key collapsed one body sent to two slugs, which is the dropped
+ * write #8769 fixed. A dead or cancelled row frees its key and answers nothing, as under the current key.
+ */
+async function legacyIngestJob(engine: BrainEngine, clientId: string, writeSourceId: string, contentHash: string, targetSlug: string): Promise<MinionJob | null> {
+  const key = `ingest:webhook:${clientId}:${writeSourceId}:${contentHash}`;
+  return engine.transaction(async (tx) => {
+    const [row] = await tx.executeRaw<{ data: unknown }>('SELECT data FROM minion_jobs WHERE idempotency_key = $1', [key]);
+    if (!row) return null;
+    const data = (typeof row.data === 'string' ? JSON.parse(row.data) : row.data) as { slug?: unknown } | null;
+    let rowSlug = '';
+    try {
+      if (typeof data?.slug === 'string' && data.slug) rowSlug = ingestTargetSlug(data.slug);
+    } catch {
+      return null;
+    }
+    return rowSlug === targetSlug ? coalesceOnIdempotencyKey(tx, key, APPLICATION_AUTHORITY) : null;
+  });
 }
 
 /** Stands in for a missing webhook secret; no source holds it and a match against it is still refused. */
@@ -530,7 +557,8 @@ async function handleIngest(
   const slugKey = targetSlug ? createHash('sha256').update(targetSlug).digest('hex') : '';
   const idempotencyKey = `ingest:webhook:${authInfo.clientId}:${writeSourceId}:${slugKey}:${contentHash}`;
   try {
-    const job = await ingestQueue.add(
+    const legacyJob = await legacyIngestJob(engine, authInfo.clientId, writeSourceId, contentHash, targetSlug);
+    const job = legacyJob ?? await ingestQueue.add(
       'ingest_capture',
       {
         event,
@@ -554,7 +582,7 @@ async function handleIngest(
     );
     // At the cap the queue hands back the newest waiting job instead of inserting this capture. Answering 202 with
     // that job id would drop this body without a trace, so the caller is told to retry once the backlog drains.
-    if (job.idempotency_key !== idempotencyKey) {
+    if (!legacyJob && job.idempotency_key !== idempotencyKey) {
       res.setHeader('Retry-After', '30');
       res.status(429).json({
         error: 'ingest_backlog_full',
