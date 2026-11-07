@@ -138,7 +138,8 @@ async function applyContact(deps: GoogleSyncDeps, c: ContactData,
   // a changed contacts directory). The new page lands first, then the page
   // it owned at the old path is retired, so a sweep that dies in between
   // leaves the contact with a page rather than none.
-  await importRendered(deps, rendered.relPath, rendered.markdown, sweep.activePack, sweep.summary, sweep.countedSlugs);
+  const imported = await importRendered(deps, rendered.relPath, rendered.markdown, sweep.activePack, sweep.summary, sweep.countedSlugs);
+  if (imported === null) return;
   if (existingPath && existingPath !== rendered.relPath && await contactOwner(deps, existingPath) === c.resourceName) {
     await deletePageByRelPath(deps, existingPath, sweep.summary);
   }
@@ -399,8 +400,9 @@ async function applyEvent(deps: GoogleSyncDeps, ev: CalendarEventData, range: Ca
   const change = planCalendarPage(side, page?.relPath ?? null, await calendarPageRelPathByEventId(deps, ev.id), calendarRelPath(ev));
   if (change.kind === 'remove') await deletePageByRelPath(deps, change.relPath, ctx.summary);
   if (change.kind !== 'write' || !page) return;
+  const imported = await importRendered(deps, page.relPath, page.markdown, ctx.activePack, ctx.summary, ctx.countedSlugs);
+  if (imported === null) return;
   if (change.removeFirst) await deletePageByRelPath(deps, change.removeFirst, ctx.summary);
-  await importRendered(deps, page.relPath, page.markdown, ctx.activePack, ctx.summary, ctx.countedSlugs);
   deps.tick(`event ${ev.id}`);
 }
 

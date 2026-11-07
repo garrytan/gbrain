@@ -185,6 +185,7 @@ async function processThread(
   if (!rendered) return thread;
   const slug = await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs,
     { thread_id: thread.threadId, message_ids: thread.messages.map((m) => m.id) });
+  if (slug === null) return thread;
   for (const message of thread.messages) {
     const state = message.attachmentInspection?.state ?? 'not_inspected';
     summary.attachmentInspection[state] = (summary.attachmentInspection[state] ?? 0) + 1;
