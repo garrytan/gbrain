@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.600.0] - 2026-11-07
 
 **With the refresh write barrier on, writes waiting behind an import no longer use up the capacity the import itself needs, so a full cap no longer stalls managed sync until the waits expire.** The barrier is still off by default (`persistence.refresh_barrier`), and with it off nothing changes. Before, every held write kept its outstanding-request slot and intent bytes, so enough of them could leave a managed sync job, or a bulk import group, refused `queue_capacity`, and the writes it would have released waited out the limit and expired. A held `capture` that replaces an imported page now names what it replaced, as a blind `put_page` does, and the expiry pass no longer expires a hold that an import and a new deferral replaced while it ran.
 
