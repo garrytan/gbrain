@@ -874,6 +874,9 @@ export function renderCliError(e: unknown, opts: { json: boolean; command: strin
   lines.push(`Fix: ${env.fix?.command ?? relay ?? env.suggestion}`);
   if (env.why) lines.push(`Why: ${env.why}`);
   if (env.docs) lines.push(`Docs: ${env.docs}`);
+  // GST-1582: a retryable refusal that names its delay ends with one line saying so, which survives `| tail -1`.
+  const retryAfter = env.retryable === true ? Number(/^retry_after_ms=(\d+)$/.exec(String(env.detail ?? ''))?.[1]) : NaN;
+  if (retryAfter > 0) lines.push(`Nothing was saved; retry the same command in about ${Math.max(1, Math.round(retryAfter / 1000))} s (retry_after_ms=${retryAfter}).`);
   return { stderr: `${lines.join('\n')}\n`, exitCode };
 }
 

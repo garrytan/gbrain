@@ -6,7 +6,7 @@
  * refresh ends it commits, unless the refresh changed its file, which ends it `revision_conflict` with nothing applied;
  * a consumer claim without the barrier's session declaration (an older binary) cannot move a deferred row; a replay of the
  * request id returns the same receipt; a write past the wait limit ends `refresh_barrier_expired` with its counters
- * released; a token revoked while its write waits ends it `permission_denied`; past the per-refresh cap a further write keeps the refusal; a live consumer without the capability keeps the
+ * released; a token revoked while its write waits ends it `permission_denied`; every write during a refresh is deferred, with no per-refresh cap; a live consumer without the capability keeps the
  * refusal; a repo-less source is never deferred; `gbrain upgrade --check-downgrade` exits 3 while a deferred write waits.
  * Seams: the real refresh state machine paused at its drained boundary (`hooks.boundary`); GBRAIN_REFRESH_BARRIER.
  */
@@ -27,7 +27,8 @@ import { settleTopologyRequests, topologyPrincipal } from '../src/core/persisten
 import { pendingReceiptOf, writeErrorExitCode } from '../src/core/persistence/write-wait.ts';
 import { PENDING_WRITE_EXIT_CODE } from '../src/core/exit-codes.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
-import { refreshWorktree } from '../src/core/persistence/worktree-refresh.ts';
+import { refreshWorktree, resumeWorktreeRefreshes } from '../src/core/persistence/worktree-refresh.ts';
+import { recordCommit } from '../src/core/git/commit-ledger.ts';
 import { getWriteRequestById } from '../src/core/persistence/journal.ts';
 import { readWriteWatermark } from '../src/core/persistence/applied-watermark.ts';
 import { resetWriteSwitches } from '../src/core/persistence/switches.ts';
@@ -39,7 +40,7 @@ import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { git, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
+import { commitFile, git, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
@@ -343,23 +344,21 @@ test('a live consumer without the capability keeps the refusal; a repo-less sour
   expect((await refresh).status).toBe('completed');
 }), 180_000);
 
-test('past persistence.refresh_barrier_max_deferred a further write during the refresh keeps the refusal', () => each(async f => {
+test('GST-1582: writes during one refresh are all deferred, none refused, and each commits after it (a configured cap no longer refuses)', () => each(async f => {
   await f.engine.executeRaw("INSERT INTO config(key,value) VALUES('persistence.refresh_barrier_max_deferred','1') ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value");
-  let first!: WriteRequest;
+  const held: WriteRequest[] = [];
   try {
     const refresh = await duringRefresh(f, async () => {
-      const out = await call(f, 'put_page', { slug: 'notes/cap-one', content: page('Cap one', 'deferred') });
-      expect(out.body.status).toBe('pending');
-      first = await requestRow(f, out.body.request_id);
-      expect(first.state).toBe('deferred');
-      const before = await f.requestCount();
-      const refused = await call(f, 'put_page', { slug: 'notes/cap-two', content: page('Cap two', 'refused') });
-      expect(refused.isError).toBe(true);
-      expect(refused.body.code).toBe('worktree_refreshing');
-      expect(await f.requestCount()).toBe(before);
+      for (const name of ['cap-one', 'cap-two', 'cap-three']) {
+        const out = await call(f, 'put_page', { slug: `notes/${name}`, content: page(name, 'deferred') });
+        expect(out.isError).toBe(false);
+        expect(out.body.status).toBe('pending');
+        held.push(await requestRow(f, out.body.request_id));
+      }
+      expect(held.map(row => row.state)).toEqual(['deferred', 'deferred', 'deferred']);
     });
     expect((await refresh).status).toBe('completed');
-    expect((await settle(f, first)).state).toBe('committed');
+    for (const row of held) expect((await settle(f, row)).state).toBe('committed');
   } finally {
     await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_deferred'");
   }
@@ -611,3 +610,88 @@ test('a receipt poll reads the open-request index, never the permanent receipt h
     await f.engine.executeRaw("DELETE FROM persistence_requests WHERE principal_id='history'");
   }
 }), 180_000);
+
+/** A refresh whose drain let a write land a commit past old_head, then died at `fenced` before merging; `moveHead` makes that commit. */
+async function crashAtFenced(f: RefreshFixture, moveHead: () => string): Promise<{ deferred: WriteRequest; landed: string }> {
+  f.push('alpha/two.md', page('Alpha two', 'An upstream observation.'));
+  let deferred!: WriteRequest; let landed!: string;
+  await expect(refreshWorktree(f.engine, f.alpha, { hooks: { boundary: async point => {
+    if (point === 'drained') {
+      const out = await call(f, 'put_page', { slug: 'notes/held-at-crash', content: page('Held at crash', 'body') });
+      deferred = await requestRow(f, out.body.request_id);
+      landed = moveHead();
+    }
+    if (point === 'fenced') throw new Error('simulated crash at fenced');
+  } } })).rejects.toThrow('simulated crash');
+  expect(deferred.state).toBe('deferred');
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['fenced']);
+  return { deferred, landed };
+}
+
+test('GBEV-44: a refresh killed at fenced after its drain landed a gbrain commit resumes: the row aborts, nothing is reset and its deferred write commits', () => each(async f => {
+  const { deferred, landed } = await crashAtFenced(f, () => {
+    const sha = commitFile(f.root, 'alpha/drained.md', page('Drained', 'A write admitted before the fence.'), 'gbrain: persist canonical memory update');
+    recordCommit(f.root, { sha, writer: 'effect' });
+    return sha;
+  });
+  const resumed = await refreshWorktree(f.engine, f.alpha, { resume: true });
+  expect(resumed.status).toBe('abandoned');
+  const [row] = await f.refreshRows();
+  expect(row.state).toBe('aborted');
+  expect((row.outcome.refusal as { cause: string }).cause).toContain("gbrain's own commits");
+  expect(f.head()).toBe(landed);
+  expect((await settle(f, deferred)).state).toBe('committed');
+}), 180_000);
+
+test('GBEV-44: the owner scan aborts an orphaned fenced row whose HEAD moved only through gbrain commits before the merge', () => each(async f => {
+  const { deferred, landed } = await crashAtFenced(f, () => {
+    const first = commitFile(f.root, 'alpha/drained-1.md', page('Drained one', 'A write admitted before the fence.'), 'gbrain: persist canonical memory update');
+    recordCommit(f.root, { sha: first, writer: 'effect' });
+    const second = commitFile(f.root, 'alpha/drained-2.md', page('Drained two', 'Another write admitted before the fence.'), 'gbrain: persist canonical memory update');
+    recordCommit(f.root, { sha: second, writer: 'effect' });
+    return second;
+  });
+  await resumeWorktreeRefreshes(f.engine);
+  const [row] = await f.refreshRows();
+  expect(row.state).toBe('aborted');
+  expect((row.outcome.refusal as { code: string }).code).toBe('refresh_interrupted');
+  expect(f.head()).toBe(landed);
+  expect((await settle(f, deferred)).state).toBe('committed');
+}), 180_000);
+
+
+test('GST-1674: a refresh killed at fenced after a commit gbrain did not make moved HEAD before the merge resumes: the row aborts and its deferred write commits', () => each(async f => {
+  const { deferred, landed } = await crashAtFenced(f, () => commitFile(f.root, 'alpha/outside.md', page('Outside', 'A commit made around gbrain.'), 'outside'));
+  const resumed = await refreshWorktree(f.engine, f.alpha, { resume: true });
+  expect(resumed.status).toBe('abandoned');
+  const [row] = await f.refreshRows();
+  expect(row.state).toBe('aborted');
+  expect((row.outcome.refusal as { code: string }).code).toBe('refresh_interrupted');
+  expect(f.head()).toBe(landed);
+  expect((await settle(f, deferred)).state).toBe('committed');
+}), 180_000);
+
+test('GST-1674: a refresh killed after its merge, with a commit landed on the target before bookkeeping, recovers on the owner scan and completes without --resume', () => each(async f => {
+  const target = f.push('alpha/two.md', page('Alpha two', 'An upstream observation.'));
+  let deferred!: WriteRequest; let landed!: string;
+  await expect(refreshWorktree(f.engine, f.alpha, { hooks: { boundary: async point => {
+    if (point === 'drained') {
+      const out = await call(f, 'put_page', { slug: 'notes/held-past-merge', content: page('Held past merge', 'body') });
+      deferred = await requestRow(f, out.body.request_id);
+    }
+    if (point === 'merged') {
+      landed = commitFile(f.root, 'alpha/after-merge.md', page('After merge', 'A commit on top of the target.'), 'gbrain: persist canonical memory update');
+      throw new Error('simulated crash after merge');
+    }
+  } } })).rejects.toThrow('simulated crash');
+  expect(git(f.root, 'rev-parse', 'HEAD~1')).toBe(target);
+  await resumeWorktreeRefreshes(f.engine);
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['syncing']);
+  const next = await refreshWorktree(f.engine, f.alpha).catch(error => error);
+  // The scheduled refresh finishes the orphan first; its own tick then stops at the unpublished local commit.
+  expect(next.code).toBe('refresh_diverged');
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['completed']);
+  expect(f.head()).toBe(landed);
+  expect((await settle(f, deferred)).state).toBe('committed');
+}), 180_000);
+
