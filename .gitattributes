@@ -28,6 +28,13 @@
 # removes the whole class for anyone working here.
 *.md text eol=lf
 
+# TSV baselines get the pin too: the ratchet parsers (engine-sql, function-size,
+# agent-contract) split rows on LF, so a CRLF checkout leaves a trailing "\r"
+# on each row's last field. The engine-sql ratchet then rejects every row as
+# malformed and the function-size ratchet matches no baseline key, so both
+# report every grandfathered entry as a new violation.
+*.tsv text eol=lf
+
 # Native source hashes and prebuilds must survive Windows checkout unchanged.
 native/locks/** text eol=lf
 native/locks/prebuilds/*.node binary
