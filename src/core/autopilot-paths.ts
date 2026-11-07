@@ -264,6 +264,13 @@ export function resolveAutopilotJob(opts: { mint?: boolean } = {}): AutopilotJob
   };
 }
 
+/** Launchd opens its program and log files before the wrapper can run. Keep
+ * those launch-time paths on the host home even when brain state is external. */
+export function autopilotLaunchdLogPaths(home: string, label: string): { logPath: string; errPath: string } {
+  const dir = join(home, 'Library', 'Logs', 'GBrain');
+  return { logPath: join(dir, `${label}.log`), errPath: join(dir, `${label}.err`) };
+}
+
 /**
  * Who a job definition belongs to, judged by the wrapper path it runs (the
  * wrapper always lives at `<brain home>/autopilot-run.sh`):
