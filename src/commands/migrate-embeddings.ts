@@ -341,7 +341,7 @@ export async function probeTargetReranker(
 
 /**
  * Persist the target model+dims to the FILE plane and reconfigure the
- * in-process gateway. The gateway reads file/env config, not the DB plane —
+ * in-process gateway, retaining the effective provider URLs used by the probe —
  * without this the re-embed would silently run against the OLD provider.
  * Shared by the CLI command and the `migrate_embeddings` op handler.
  */
@@ -350,8 +350,16 @@ export async function persistEmbeddingFileConfig(
   toDims: number,
 ): Promise<void> {
   const { loadConfig, loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
-  const { configureGateway } = await import('../core/ai/gateway.ts');
+  const { configureGateway, requireConfig } = await import('../core/ai/gateway.ts');
   const { buildGatewayConfig } = await import('../core/ai/build-gateway-config.ts');
+  const reconfigure = (config: ReturnType<typeof buildGatewayConfig>) => {
+    // Keep DB-only endpoints already approved by the probe in memory only.
+    // Their file/env/DB precedence was already resolved before the probe.
+    configureGateway({
+      ...config,
+      base_urls: { ...config.base_urls, ...requireConfig().base_urls },
+    });
+  };
   // Round-2 #2: read the FILE plane, not env-merged loadConfig(). Persisting
   // the merged view wrote env-sourced API keys/DB URLs into
   // ~/.gbrain/config.json as a side effect of every migration.
@@ -369,7 +377,7 @@ export async function persistEmbeddingFileConfig(
     if (envPinsTarget) {
       serr('  [migrate] no ~/.gbrain/config.json — env-canonical mode: GBRAIN_EMBEDDING_* pins the target; keep it set for every gbrain process.');
       const merged = loadConfig();
-      if (merged) configureGateway(buildGatewayConfig(merged));
+      if (merged) reconfigure(buildGatewayConfig(merged));
       return;
     }
     // REFUSE rather than warn-and-proceed. Without a file plane to write, the
@@ -394,7 +402,7 @@ export async function persistEmbeddingFileConfig(
   // at runtime; when env is set it matches the target — the ≠ case was
   // refused before apply).
   const merged = loadConfig();
-  configureGateway(buildGatewayConfig(merged ?? fileCfg));
+  reconfigure(buildGatewayConfig(merged ?? fileCfg));
 }
 
 // ============================================================================
