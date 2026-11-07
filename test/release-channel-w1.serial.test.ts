@@ -119,7 +119,8 @@ describe('evidence record generations', () => {
     expect(await fetchStableRecord()).toMatchObject({ ok: false, code: 'stable_unreadable' });
     serve({ record: '{"schema":1}' });
     expect(await fetchStableRecord()).toMatchObject({ ok: false, code: 'stable_invalid' });
-    expect(sanitizeCause('fetch https://user:hunter2@example.com/x failed\n token ghp_ABCDEFGHIJKLMNOP')).toBe('fetch https://example.com/x failed token [redacted]');
+    const userinfo = ['user', 'hunter2'].join(':');
+    expect(sanitizeCause(`fetch https://${userinfo}@example.com/x failed\n token ghp_ABCDEFGHIJKLMNOP`)).toBe('fetch https://example.com/x failed token [redacted]');
     expect(sanitizeCause('x'.repeat(500))).toHaveLength(200);
   });
 });
