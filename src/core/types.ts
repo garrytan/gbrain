@@ -1874,7 +1874,7 @@ export type { PageVersion } from './page-state/version-types.ts';
 /** Who wrote a row, joined at read time (`ops/attribution.ts`); `unrecorded` = pre-attribution or an unattributed legacy writer. */
 export interface WriteAttributionView {
   request_id: string | null; operation: string | null; at: string | null;
-  principal: { kind: string; id: string; name: string | null } | null;
+  principal: { kind: string; id: string; name: string | null; metadata?: Record<string, unknown> } | null;
   /** The agent label the caller declared on the write request (X-Gbrain-Agent-Label); unverified, absent when none was sent. */
   agent_label?: string;
   origin: 'request' | 'maintenance' | 'unrecorded';

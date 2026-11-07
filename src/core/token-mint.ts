@@ -25,6 +25,7 @@ import { permissionsMirror, tokenGrantColumnValues, tokenGrantFromPermissions, T
 
 /** Canonical token-id shape — shared with the `auth revoke --id` CLI gate. */
 export const TOKEN_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const TOKEN_METADATA_MAX_BYTES = 4096;
 
 export interface MintLegacyTokenOpts {
   name: string;
@@ -39,6 +40,8 @@ export interface MintLegacyTokenOpts {
    */
   sourceGrant?: string[];
   allowedOperations?: string[];
+  /** Host-supplied JSON echoed on write-attribution principals; unvalidated, at most 4 KB serialized. */
+  metadata?: Record<string, unknown>;
 }
 
 export interface MintedLegacyToken {
@@ -82,6 +85,7 @@ export async function mintLegacyToken(
   const rows = await insertUnifiedToken(engine, {
     name: opts.name, tokenHash: hashToken(token), scopes: opts.scopes,
     grant: { sources, takesHolders: opts.takesHolders, allowedOperations: opts.allowedOperations === undefined ? null : [...new Set(opts.allowedOperations)] },
+    metadata: opts.metadata,
   });
   const id = rows[0]?.id;
   if (!id) throw new Error('token insert returned no id');
@@ -101,15 +105,21 @@ export async function mintLegacyToken(
 export async function insertUnifiedToken(engine: BrainEngine, opts: {
   name: string; tokenHash: string; scopes?: string[];
   grant: Pick<PrincipalGrant, 'sources' | 'allowedOperations' | 'takesHolders'>;
+  metadata?: Record<string, unknown>;
 }): Promise<Array<{ id: string }>> {
   const scopes = opts.scopes === undefined ? null : `{${opts.scopes.join(',')}}`;
+  const withMetadata = opts.metadata !== undefined;
+  if (opts.metadata !== undefined && Buffer.byteLength(JSON.stringify(opts.metadata)) > TOKEN_METADATA_MAX_BYTES) {
+    throw opError('invalid_params', `Token metadata must be at most ${TOKEN_METADATA_MAX_BYTES} bytes as JSON.`,
+      'Resubmit with smaller metadata, for example { ai, harness, connection_id }.');
+  }
   const { assertScopeSourceGrant, sourcesOf } = await import('./access/attest-sources.ts');
   const reads = sourcesOf(opts.grant.sources).reads;
   const insert = (db: BrainEngine) => db.executeRaw<{ id: string }>(
-    `INSERT INTO access_tokens (name, token_hash, scopes, permissions, ${TOKEN_GRANT_COLUMNS.join(', ')}, grant_revision)
-     VALUES ($1, $2, $3::text[], $4::jsonb, $5, $6, $7::text[], $8::text[], $9::text[], 1)
+    `INSERT INTO access_tokens (name, token_hash, scopes, permissions, ${TOKEN_GRANT_COLUMNS.join(', ')}, grant_revision${withMetadata ? ', metadata' : ''})
+     VALUES ($1, $2, $3::text[], $4::jsonb, $5, $6, $7::text[], $8::text[], $9::text[], 1${withMetadata ? ', $10::jsonb' : ''})
      RETURNING id`,
-    [opts.name, opts.tokenHash, scopes, permissionsMirror(opts.grant, {}), ...tokenGrantColumnValues(opts.grant)],
+    [opts.name, opts.tokenHash, scopes, permissionsMirror(opts.grant, {}), ...tokenGrantColumnValues(opts.grant), ...(withMetadata ? [opts.metadata] : [])],
   );
   try {
     // GST-1113: a grant reading a named source checks it and inserts in one transaction, under the source row locks.
@@ -121,7 +131,7 @@ export async function insertUnifiedToken(engine: BrainEngine, opts: {
   } catch (e) {
     // isUndefinedColumnError also matches message-shaped variants: some
     // driver-wrapped errors drop the SQLSTATE code.
-    if (['scopes', 'permissions', 'grant_revision', ...TOKEN_GRANT_COLUMNS].some(column => isUndefinedColumnError(e, column))) {
+    if (['scopes', 'permissions', 'grant_revision', 'metadata', ...TOKEN_GRANT_COLUMNS].some(column => isUndefinedColumnError(e, column))) {
       throw opError('migrations_pending',
         'This brain is missing the access-token grant columns, so it cannot mint a token.',
         'Apply the pending schema migrations on the brain host, then mint the token again.',
