@@ -1,3 +1,4 @@
+import { withEnv } from './helpers/with-env.ts';
 import { afterEach, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -43,7 +44,7 @@ function fixture() {
     loseAck: () => { loseAck = true; }, leaveDuringFetch: () => { leaveDuringFetch = true; } };
 }
 
-test('qualified revision cache refreshes body and helper without notifications and never claims native activation', async () => {
+test('qualified revision cache refreshes body and helper without notifications and never claims native activation', async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const f = fixture(), root = temp();
   const adapter = createSharedSkillsAdapter({ call: f.call, root, adapter: 'codex', connectionName: 'team-brain' });
   const receipt = await adapter.join({ approved: true });
@@ -58,9 +59,9 @@ test('qualified revision cache refreshes body and helper without notifications a
   expect(statSync(join(root, updated.files['SKILL.md'])).mode & 0o111).toBe(0);
   expect(readFileSync(join(root, 'router/SKILL.md'), 'utf8')).toContain('team-brain');
   expect(readFileSync(join(root, 'router/SKILL.md'), 'utf8')).toContain('advisory, not an enforced invocation hook');
-});
+}));
 
-test('offline and partial enumeration block admission without deleting the prior authorized cache', async () => {
+test('offline and partial enumeration block admission without deleting the prior authorized cache', async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const f = fixture(), root = temp();
   const adapter = createSharedSkillsAdapter({ call: f.call, root, adapter: 'muse', launcher: '/example/bin/gbrain' });
   await adapter.join({ approved: true });
@@ -72,9 +73,9 @@ test('offline and partial enumeration block admission without deleting the prior
   f.offline(false); f.partial();
   await expect(adapter.refresh()).rejects.toThrow('complete');
   expect(readFileSync(join(root, 'active.json'), 'utf8')).toBe(before);
-});
+}));
 
-test('ownership preflight preserves edits and leave reports retained files without changing identity', async () => {
+test('ownership preflight preserves edits and leave reports retained files without changing identity', async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const f = fixture(), root = temp();
   const adapter = createSharedSkillsAdapter({ call: f.call, root, adapter: 'codex' });
   await adapter.join({ approved: true });
@@ -88,9 +89,9 @@ test('ownership preflight preserves edits and leave reports retained files witho
   expect(readFileSync(join(root, 'router/SKILL.md'), 'utf8')).toBe('# User edited router');
   expect(readFileSync(join(root, 'identity.md'), 'utf8')).toBe('Unrelated identity');
   await expect(adapter.refresh()).rejects.toThrow('left');
-});
+}));
 
-test('offline leave deactivates owned cache before remote acknowledgment and retries safely', async () => {
+test('offline leave deactivates owned cache before remote acknowledgment and retries safely', async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const f = fixture(), root = temp();
   const adapter = createSharedSkillsAdapter({ call: f.call, root, adapter: 'generic' });
   await adapter.join({ approved: true });
@@ -105,9 +106,9 @@ test('offline leave deactivates owned cache before remote acknowledgment and ret
   const retried = await adapter.leave();
   expect('remote_membership_pending' in retried && retried.remote_membership_pending).toBe(false);
   expect(retried.status).toBe('left');
-});
+}));
 
-test('rejoin clears stale leave warnings only after delivery succeeds and preserves a new failure', async () => {
+test('rejoin clears stale leave warnings only after delivery succeeds and preserves a new failure', async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const f = fixture(), root = temp();
   const adapter = createSharedSkillsAdapter({ call: f.call, root, adapter: 'generic' });
   await adapter.join({ approved: true });
@@ -122,9 +123,9 @@ test('rejoin clears stale leave warnings only after delivery succeeds and preser
   expect(ready.acknowledged_view).toBe(ready.installed_view);
   expect(ready.remote_membership_pending).toBeUndefined();
   expect(ready.remote_membership_reason).toBeUndefined();
-});
+}));
 
-test('leave while fetching prevents activating downloaded revisions', async () => {
+test('leave while fetching prevents activating downloaded revisions', async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const f = fixture(), root = temp();
   const adapter = createSharedSkillsAdapter({ call: f.call, root, adapter: 'generic' });
   await adapter.join({ approved: true });
@@ -132,9 +133,9 @@ test('leave while fetching prevents activating downloaded revisions', async () =
   f.update(); f.leaveDuringFetch();
   await expect(adapter.refresh()).rejects.toThrow('membership_inactive');
   expect(readFileSync(join(root, 'active.json'), 'utf8')).toBe(before);
-});
+}));
 
-test('lost acknowledgment resumes from durable files in a fresh adapter instance', async () => {
+test('lost acknowledgment resumes from durable files in a fresh adapter instance', async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const f = fixture(), root = temp(); f.loseAck();
   await expect(createSharedSkillsAdapter({ call: f.call, root, adapter: 'generic' }).join({ approved: true })).rejects.toThrow('lost acknowledgment');
   expect(existsSync(join(root, 'active.json'))).toBe(true);
@@ -143,9 +144,9 @@ test('lost acknowledgment resumes from durable files in a fresh adapter instance
   expect(synced.acknowledged_view).toBe('r1');
   f.empty(); await fresh.refresh();
   expect(JSON.parse(readFileSync(join(root, 'active.json'), 'utf8')).skills).toEqual({});
-});
+}));
 
-test('two local adapter instances serialize refresh without losing the durable reference', async () => {
+test('two local adapter instances serialize refresh without losing the durable reference', async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const f = fixture(), root = temp();
   const first = createSharedSkillsAdapter({ call: f.call, root, adapter: 'codex' });
   await first.join({ approved: true }); f.update();
@@ -154,10 +155,10 @@ test('two local adapter instances serialize refresh without losing the durable r
   expect(results.map(r => r.installed_view)).toEqual(['r2', 'r2']);
   expect(JSON.parse(readFileSync(join(root, 'active.json'), 'utf8')).view_token).toBe('r2');
   expect(first.status()?.pending_files).toEqual({});
-});
+}));
 
 for (const detail of [{ usable: false }, { delivery: 'prose_only' }, { delivery: undefined }, { unavailable_requirements: ['tool:missing-fixture'] }]) {
-  test(`admission rejects unusable detail ${JSON.stringify(detail)} even when all file hashes match`, async () => {
+  test(`admission rejects unusable detail ${JSON.stringify(detail)} even when all file hashes match`, async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
     const f = fixture(), root = temp(); let invalid = false;
     const call: SharedSkillsToolCaller = async <T>(name: string, params: Record<string, unknown>): Promise<T> => {
       const result = await f.call<T>(name, params);
@@ -171,10 +172,10 @@ for (const detail of [{ usable: false }, { delivery: 'prose_only' }, { delivery:
     expect(f.calls.filter(name => name === 'get_skill_asset').length).toBe(assets);
     expect(JSON.parse(readFileSync(join(root, 'active.json'), 'utf8')).skills[sharedSkillKey(f.skill())]).toBeUndefined();
     expect(adapter.status()?.blocked_skills).toContainEqual({ key: sharedSkillKey(f.skill()), reason: 'requirements_changed' });
-  });
+  }));
 }
 
-test('admission rejects a blocked follow-policy skill instead of using its prior local copy', async () => {
+test('admission rejects a blocked follow-policy skill instead of using its prior local copy', async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const f = fixture(), root = temp(); let blocked = false;
   const call: SharedSkillsToolCaller = async <T>(name: string, params: Record<string, unknown>): Promise<T> => {
     const result = await f.call<T>(name, params);
@@ -184,9 +185,9 @@ test('admission rejects a blocked follow-policy skill instead of using its prior
   await adapter.join({ approved: true }); blocked = true;
   await expect(adapter.admit(sharedSkillKey(f.skill()))).rejects.toMatchObject({ code: 'requirements_changed' });
   expect(adapter.status()?.status).toBe('requirements_changed');
-});
+}));
 
-test('a thousand-skill authoritative view installs completely without the former 512-skill ceiling', async () => {
+test('a thousand-skill authoritative view installs completely without the former 512-skill ceiling', async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const root = temp();
   const brain = randomUUID(), source = randomUUID(), installation = randomUUID();
   const body = '# Synthetic skill';
@@ -209,9 +210,9 @@ test('a thousand-skill authoritative view installs completely without the former
   expect(result.installed_view).toBe('fixture-view');
   expect(acknowledged).toBe(1000);
   expect(Object.keys(JSON.parse(readFileSync(join(root, 'active.json'), 'utf8')).skills).length).toBe(1000);
-});
+}));
 
-test('connect install performs approved enrollment while preserving unrelated harness config', async () => {
+test('connect install performs approved enrollment while preserving unrelated harness config', async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const f = fixture(), root = temp();
   const configPath = join(root, 'config.json');
   writeFileSync(configPath, JSON.stringify({ identity: 'keep', mcpServers: { unrelated: { command: 'local-fixture' } } }));
@@ -221,16 +222,16 @@ test('connect install performs approved enrollment while preserving unrelated ha
   expect(f.calls).toContain('join_brain'); expect(f.calls).toContain('get_skill_asset');
   const config = JSON.parse(readFileSync(configPath, 'utf8'));
   expect(config.identity).toBe('keep'); expect(config.mcpServers.unrelated.command).toBe('local-fixture');
-});
+}));
 
-test('memory-only install neither enrolls nor expands authority', async () => {
+test('memory-only install neither enrolls nor expands authority', async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const root = temp(); const f = fixture();
   const c: HarnessCredentials = { version: 1, mcp_url: 'https://brain.example.com/mcp', issuer_url: 'https://brain.example.com', client_id: 'fixture', access_token: 'synthetic-fixture-token', shared_skills: { follow: false } };
   const result = await installHarnessConnection(c, { harness: 'claude-code', configPath: join(root, 'config.json'), toolCaller: f.call });
   expect(result.shared_skills?.status).toBe('pending'); expect(f.calls).toEqual([]);
-});
+}));
 
-test('launcher router uses registered CLI commands, exact schema flags and shell-safe absolute paths', async () => {
+test('launcher router uses registered CLI commands, exact schema flags and shell-safe absolute paths', async () => withEnv({ GBRAIN_HOME: temp() }, async () => {
   const root = temp(), f = fixture();
   const launcher = join(root, "fixture launcher 'with spaces'");
   writeFileSync(launcher, '#!/bin/sh\nprintf \'%s\\0\' "$@"\n', { mode: 0o700 });
@@ -269,4 +270,4 @@ test('launcher router uses registered CLI commands, exact schema flags and shell
   expect(seen).toEqual(['sync-brain-skills', 'skills', 'skill', 'skill-asset', 'join-brain', 'leave-brain']);
   expect(router).not.toContain('call sync_brain_skills');
   expect(router).not.toContain('get_skill with schema_version');
-});
+}));
