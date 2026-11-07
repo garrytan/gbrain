@@ -21,7 +21,7 @@
 
 import { spawn } from '../spawn.ts';
 import { closeSync, mkdirSync, openSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { resolveAuditDir } from '../audit/audit-writer.ts';
 
 export interface DetachedStderrSink {
@@ -74,7 +74,7 @@ export function spawnDetachedSupervisor(
   childArgs: string[],
 ): { pid: number | undefined; stderrPath: string | null } {
   const sink = openDetachedStderrSink();
-  const child = spawn(execPath, [cliScript, ...childArgs], {
+  const child = spawn(execPath, detachedSupervisorArgs(execPath, cliScript, childArgs), {
     detached: true,
     stdio: ['ignore', 'ignore', sink.fd],
     env: process.env,
@@ -82,4 +82,13 @@ export function spawnDetachedSupervisor(
   child.unref();
   closeDetachedStderrSink(sink);
   return { pid: child.pid, stderrPath: sink.path };
+}
+
+/** A Bun-compiled binary already contains its CLI entrypoint. Passing its
+ * virtual /$bunfs script as argv[1] turns that path into an unknown command.
+ * Interpreted Bun/Node launches still need their real source script first.
+ */
+export function detachedSupervisorArgs(execPath: string, cliScript: string, childArgs: string[]): string[] {
+  const interpreted = ['bun', 'bun.exe', 'node', 'node.exe'].includes(basename(execPath).toLowerCase());
+  return interpreted ? [cliScript, ...childArgs] : [...childArgs];
 }
