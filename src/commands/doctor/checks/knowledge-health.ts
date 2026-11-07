@@ -214,6 +214,25 @@ async function runFactsExtraction(ctx: DoctorContext): Promise<Check[]> {
     // failures, so they never count toward the threshold; contention that persists warns on its own.
     const { WRITE_PENDING_ACCEPTED, WRITE_DEFERRED_UNADMITTED } = await import('../../../core/facts/absorb-log.ts');
     const notFailures = [WRITE_PENDING_ACCEPTED, WRITE_DEFERRED_UNADMITTED];
+    const { getFactsExtractionModel } = await import('../../../core/facts/extract.ts');
+    const extractionModel = await getFactsExtractionModel(engine);
+    const otherModels = await engine.executeRaw<{ model: string; n: string | number }>(
+      `SELECT model, COUNT(*)::text AS n
+         FROM chat_usage_log
+        WHERE phase = 'job:facts-absorb'
+          AND created_at >= now() - INTERVAL '24 hours'
+          AND model <> $1
+        GROUP BY model
+        ORDER BY COUNT(*) DESC, model`,
+      [extractionModel],
+    ).catch(err => {
+      if (isMissingSchemaObject(err, 'table', 'chat_usage_log')) return [];
+      throw err;
+    });
+    const otherModelCalls = otherModels.reduce((sum, row) => sum + (Number(row.n) || 0), 0);
+    const otherModelNote = otherModelCalls
+      ? `${otherModelCalls} facts-absorb call(s) in the last 24h were answered by models other than resolved extraction model ${extractionModel} (${otherModels.map(row => `${row.model}: ${row.n}`).join(', ')}).`
+      : '';
     // #6761: the incident count is history (a rolling window); the facts-absorb jobs still dead are the current state.
     const failures = rows.filter(r => !notFailures.includes(r.reason));
     const incidents = failures.reduce((sum, r) => sum + (Number(r.n) || 0), 0);
@@ -230,17 +249,15 @@ async function runFactsExtraction(ctx: DoctorContext): Promise<Check[]> {
       // engine, so probe the ACTUAL resolved extraction model (sees DB-plane
       // facts.extraction_model / models.* overrides the engine-blind
       // detectCapabilities() cannot) — the same gate the runtime uses.
-      const { getFactsExtractionModel } = await import('../../../core/facts/extract.ts');
       const { isAvailable } = await import('../../../core/ai/gateway.ts');
-      const extractionAvailable = isAvailable('chat', await getFactsExtractionModel(engine));
+      const extractionAvailable = isAvailable('chat', extractionModel);
       if (!extractionAvailable) {
         // Keyless vs keyed-but-misrouted split (same classification the
         // backstop uses): a quiet keyed brain whose pinned extraction model
         // lost its key must NOT read as calm "(keyless)" — that masks a
         // fixable misconfiguration.
         const { KEYLESS_EXTRACTION_GUIDANCE, classifyUnavailable } = await import('../../../core/facts/backstop.ts');
-        const { getFactsExtractionModel } = await import('../../../core/facts/extract.ts');
-        const unavailableModel = await getFactsExtractionModel(engine);
+        const unavailableModel = extractionModel;
         if ((await classifyUnavailable(unavailableModel)) === 'keyed') {
           checks.push({
             name: 'facts_extraction_health',
@@ -308,6 +325,10 @@ async function runFactsExtraction(ctx: DoctorContext): Promise<Check[]> {
       });
     }
     const check = checks[checks.length - 1];
+    if (check && otherModelCalls > 0) {
+      check.status = 'warn';
+      check.message = `${check.message} ${otherModelNote}`;
+    }
     if (check && (rows.length > 0 || dead.total > 0)) {
       if (deadSentence) check.message = `${check.message} ${deadSentence}`;
       check.details = { ...(check.details ?? {}),
