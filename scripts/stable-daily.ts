@@ -20,8 +20,9 @@
  *    promoted through scripts/promote-stable.ts promote(), so every promotion
  *    check (published release, exact tree, never older) still applies.
  * 4. Nothing promotable yet: the newest release is soaked (one dispatch of the
- *    soak on its tag) unless a soak is already running, or one already ran on
- *    that tree; a failed soak is never retried by the schedule.
+ *    soak on its tag) unless a soak is already running, or a soak on any newer
+ *    release did not qualify (a maintainer decides; past the weekly floor it
+ *    warns); a failed soak is never retried by the schedule.
  *
  * Docs: docs/RELEASING.md#daily-stable-check
  */
@@ -45,8 +46,8 @@ const VERSION_RE = /^\d+\.\d+\.\d+(\.\d+)?$/;
 
 export interface SoakRunRow { id: number; status: string | null; conclusion: string | null; head_sha: string; html_url: string }
 export interface Scoreboard {
-  label?: string; rtt_ms?: number | null; hours?: number | null; elapsed_s?: number | null; privacy?: { probes?: number };
-  brain?: { fixture?: { pages?: number } } | null;
+  label?: string; rtt_ms?: number | null; hours?: number | null; elapsed_s?: number | null; privacy?: { probes?: number; probe_errors?: number };
+  brain?: { fixture?: { pages?: number; options?: { pages?: number } } } | null;
   gates?: Array<{ id: string; pass: boolean | null }>;
 }
 
@@ -85,14 +86,16 @@ export function integrityFailures(boards: Scoreboard[]): string[] {
   return failures;
 }
 
-/** Ways a soak falls short of the full default soak (SOAK_SHAPE): a missing cell, a short run, a small fixture, no privacy probes. */
+/** Ways a soak falls short of the full default soak (SOAK_SHAPE): a missing cell, a short run, a small requested fixture, no clean privacy probes. */
 export function shapeFailures(boards: Scoreboard[]): string[] {
   const failures = SOAK_SHAPE.rtts.filter(rtt => !boards.some(b => b.rtt_ms === rtt)).map(rtt => `no ${rtt} ms cell`);
   for (const b of boards) {
     const cell = b.label ?? 'cell';
     if ((b.hours ?? 0) < SOAK_SHAPE.hours || (b.elapsed_s ?? 0) < SOAK_SHAPE.hours * 3600) failures.push(`${cell}: ran ${b.elapsed_s ?? 0} s of a ${SOAK_SHAPE.hours} h soak`);
-    if ((b.brain?.fixture?.pages ?? 0) < SOAK_SHAPE.pages) failures.push(`${cell}: ${b.brain?.fixture?.pages ?? 0} fixture pages, under ${SOAK_SHAPE.pages}`);
+    const requested = b.brain?.fixture?.options?.pages ?? 0;
+    if (requested < SOAK_SHAPE.pages) failures.push(`${cell}: a ${requested}-page fixture, under ${SOAK_SHAPE.pages}`);
     if (!((b.privacy?.probes ?? 0) > 0)) failures.push(`${cell}: no privacy probes ran`);
+    if (b.privacy?.probe_errors !== 0) failures.push(`${cell}: ${b.privacy?.probe_errors ?? 'unknown'} privacy probe errors`);
   }
   return failures;
 }
@@ -168,10 +171,12 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
     if (tree) runsByTree.set(tree, [...(runsByTree.get(tree) ?? []), run]);
   }
   const oldestImportant = important.reduce<string | null>((v, i) => (!v || compareVersions(i.version, v) < 0 ? i.version : v), null);
+  let failedSoak: { version: string; run: SoakRunRow } | null = null;
   for (const rel of releases) {
     if (!weekly && oldestImportant && compareVersions(rel.version, oldestImportant) < 0) break;
     const tree = await treeOf(deps, rel.commit);
-    const passed = (runsByTree.get(tree ?? '') ?? []).filter(r => r.status === 'completed' && r.conclusion === 'success');
+    const completed = (runsByTree.get(tree ?? '') ?? []).filter(r => r.status === 'completed');
+    const passed = completed.filter(r => r.conclusion === 'success');
     let chosen: SoakRunRow | null = null;
     for (const run of passed) {
       const boards = await deps.scoreboards(run.id);
@@ -179,19 +184,18 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
       if (failures.length === 0) { chosen = run; break; }
       deps.log(`[stable-daily] not promotable: v${rel.version} soak ${run.html_url}: ${failures.join(', ')}.`);
     }
-    if (!chosen) continue;
+    if (!chosen) { failedSoak ??= completed[0] ? { version: rel.version, run: completed[0] } : null; continue; }
     if (deps.dryRun) return { action: 'dry_run', why: reason, would: `promote v${rel.version} on soak ${chosen.html_url}` };
     const promotion = await promote(deps, { version: rel.version, soakRunUrl: chosen.html_url, scoreboardUrl: '', rollback: false, reason: `scheduled daily check; ${reason}` });
     return { action: 'promoted', why: reason, promotion };
   }
 
   const newest = releases[0]!;
-  const newestTree = await treeOf(deps, newest.commit);
   const active = runs.find(r => r.status !== 'completed');
   if (active) return { action: 'waiting', why: `${reason}; soak ${active.html_url} is still running.`, version: newest.version };
-  const ranOnNewest = runsByTree.get(newestTree ?? '') ?? [];
-  if (ranOnNewest.length > 0) {
-    return { action: 'waiting', why: `${reason}; v${newest.version} already had a soak (${ranOnNewest[0]!.html_url}, ${ranOnNewest[0]!.conclusion}) that did not qualify, so a maintainer decides.`, version: newest.version };
+  if (failedSoak) {
+    if (weekly) deps.log(`::warning::Daily stable check: stable v${current.version} is past the ${WEEKLY_FLOOR_DAYS}-day floor and no soak qualifies; a maintainer decides. Docs: docs/RELEASING.md#daily-stable-check`);
+    return { action: 'waiting', why: `${reason}; v${failedSoak.version} already had a soak (${failedSoak.run.html_url}, ${failedSoak.run.conclusion}) that did not qualify, so no new soak is dispatched and a maintainer decides.`, version: newest.version };
   }
   if (deps.dryRun) return { action: 'dry_run', why: reason, would: `dispatch the soak on v${newest.version}` };
   await deps.ghPost(`repos/${deps.repo}/actions/workflows/${soakPath.split('/').at(-1)}/dispatches`, { ref: `v${newest.version}` });
