@@ -40,7 +40,8 @@
 set -uo pipefail
 
 ROOT="${GBRAIN_BOOTSTRAP_GUARD_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-SANCTIONED='stable'
+SANCTIONED=$(sed -n "s/^export const INSTALL_REF = '\(.*\)';$/\1/p" "$(cd "$(dirname "$0")/.." && pwd)/src/core/install-ref.ts")
+[ -n "$SANCTIONED" ] || { echo 'FAIL: could not read INSTALL_REF from src/core/install-ref.ts' >&2; exit 1; }
 
 # URL terminators: whitespace, ), <, >, ", ', backtick. Built by concatenation
 # so the single quote and backtick stay literal.
@@ -119,10 +120,10 @@ fi
 while IFS=: read -r file line match; do
   ref="${match##*@}"
   case "$ref" in
-    stable|codex-plugin) ;;
+    "$SANCTIONED"|codex-plugin) ;;
     *)
       fail=1
-      echo "FAIL: $file:$line pins 'marketplace add garrytan/gbrain@$ref' — use @stable or @codex-plugin." >&2
+      echo "FAIL: $file:$line pins 'marketplace add garrytan/gbrain@$ref' — use @$SANCTIONED or @codex-plugin." >&2
       ;;
   esac
 done < <(grep -RInE 'plugin marketplace add garrytan/gbrain@[A-Za-z0-9._-]+' \

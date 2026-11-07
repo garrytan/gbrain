@@ -116,6 +116,7 @@
     "check:batch-audit-site": "bash scripts/check-batch-audit-site.sh",
     "check:worker-lock-renewal-shape": "bash scripts/check-worker-lock-renewal-shape.sh",
     "check:bootstrap-tag": "bash scripts/check-bootstrap-tag.sh",
+    "check:install-ref": "bun scripts/check-install-ref.ts",
     "check:bootstrap-templates": "bash scripts/check-bootstrap-templates.sh",
     "check:source-id-projection": "bash scripts/check-source-id-projection.sh",
     "check:privacy": "bash scripts/check-privacy.sh",
@@ -251,7 +252,7 @@
     "bun": ">=1.4.4"
   },
   "license": "MIT",
-  "version": "0.60.605.0",
+  "version": "0.60.606.0",
   "overrides": {
     "@ai-sdk/provider-utils": "4.0.56",
     "@hono/node-server": "^2.0.5",

@@ -10,6 +10,28 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.606.0] - 2026-11-07
+
+**Updates follow a stable channel by default; every release is one setting away on alpha.**
+
+gbrain publishes a release for nearly every merged change, more than a hundred a week. Every install followed all of them, so an always-on brain upgraded several times a week onto releases no one had run on a production-shaped brain. Installs now follow the stable channel, which gets about one release a week, each promoted by a maintainer after the soak passed on that release's exact tree. The alpha channel (the old `latest`, which still works as an alias) keeps every release.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A new or existing install with no channel set | offered every published release | offered the newest stable release; one notice on stderr says so, once per brain home |
+| Following every release | the default | `gbrain config set self_upgrade.channel alpha` (or `--channel alpha`, `GBRAIN_RELEASE_CHANNEL=alpha`) |
+| Which stable release is offered | `VERSION` at the `stable` tag | the published evidence record (`stable.json` on `stable-record`): version, commit, tree, soak run, withdrawn versions; a record without the evidence is never trusted |
+| Stable has no usable answer | `stable_channel_unresolved` on upgrade | `stable_missing`, `stable_invalid` or `stable_unreadable`; the background check only reports it, an explicit upgrade exits non-zero, neither falls back to alpha |
+| An install ahead of stable (it ran alpha) | — | offered nothing until stable passes it; never downgraded unless its version was withdrawn |
+| Update cache and snooze | one file for every channel; a snooze ended when a newer release shipped | one per channel, tagged with the evidence policy; a snooze holds its whole window (24 h, 48 h, 7 days); a stable rollback below it clears it |
+| `gbrain upgrade --dry-run` | refused without `--restart-only` | reports channel, its source, current and target version and the action, installing nothing |
+| doctor `self_upgrade_health` | — | names the channel and its source, warns on an invalid channel or a failed stable check |
+| `Promote stable` workflow | moved the `stable` tag | also commits the evidence record in the same atomic push; new `withdraw` input adds versions to `known_bad`; promoting the current stable again writes its record from the stable tag's message, moving no tag (the one-time backfill for releases promoted before the record existed; the daily stable check does it on its first scheduled run) |
+
+Install commands now name `stable` (`bun install -g github:garrytan/gbrain#stable`), so a new install starts on the channel it follows. Every install surface goes through one constant (`src/core/install-ref.ts`), checked by `bun run check:install-ref`; `latest-stable` still installs the newest release for anyone who pins it.
+
 ## [0.60.605.0] - 2026-11-07
 
 **Stable now moves forward by itself: a daily check promotes an important fix within a day and anything else within a week, and only after the soak passed on that exact release.** `.github/workflows/stable-daily.yml` runs at 05:17 and 13:17 UTC. It acts only when a merged PR labelled `stable:important` is released but not yet in stable, or stable is more than 7 days old. It promotes the newest release whose exact tree passed the production soak with every integrity gate clean, and otherwise dispatches one soak so a later run can promote. It never moves stable backward, pauses while stable is a rollback, and stops entirely with the repository variable `STABLE_AUTO_PROMOTE=off`.

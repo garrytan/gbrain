@@ -9,6 +9,12 @@
  * 1. Off when the STABLE_AUTO_PROMOTE repository variable is `off`, and paused
  *    while the current stable record says `rollback: true` (a maintainer
  *    promotes by hand to resume).
+ * 1b. When the published evidence record (stable.json on stable-record) is
+ *    missing or names another commit than stable, it writes the record for
+ *    the current stable first, from the stable tag's message, through
+ *    promote()'s re-promotion path (no tag moves; the release, exact tree,
+ *    soak run and leases are checked as for any promotion), and stops there
+ *    (GBRA-346: stable was promoted before the record existed).
  * 2. A reason must exist: a merged PR labelled `stable:important` (security,
  *    regression, data-loss or blocking fix, set by the merge lane) that is in a
  *    published release but not in stable, or stable older than 7 days with a
@@ -31,7 +37,7 @@ import { appendFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  authorize, compareVersions, currentStable, onReleaseBranch, processDeps, promote, Refusal, requireSoakWorkflow, scheduleAuthorized, STABLE_REF,
+  authorize, compareVersions, currentStable, DOCS, onReleaseBranch, processDeps, promote, readPriorRecord, Refusal, requireSoakWorkflow, scheduleAuthorized, STABLE_REF,
   type PromoteDeps, type Promotion,
 } from './promote-stable.ts';
 
@@ -60,7 +66,7 @@ export interface DailyDeps extends PromoteDeps {
 
 export type DailyResult =
   | { action: 'off' | 'paused' | 'none'; why: string }
-  | { action: 'promoted'; why: string; promotion: Promotion }
+  | { action: 'promoted' | 'backfilled'; why: string; promotion: Promotion }
   | { action: 'soak_dispatched' | 'waiting'; why: string; version: string }
   | { action: 'dry_run'; why: string; would: string };
 
@@ -126,6 +132,15 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
     return { action: 'paused', why: `stable v${current.version} is a rollback (${record.reason ?? '-'}); the daily check stays paused until a maintainer promotes by hand.` };
   }
   const stableCommit = await ok(deps, ['rev-parse', `${STABLE_REF}^{commit}`]);
+
+  const published = await readPriorRecord(deps);
+  if (published?.releaseCommit !== stableCommit) {
+    const why = `stable.json ${published ? `names ${published.version ? `v${published.version}` : 'another release'}` : 'is not published'}, not stable v${current.version}`;
+    if (deps.dryRun) return { action: 'dry_run', why, would: `backfill the record for v${current.version}` };
+    if (!record.soak_run) throw new Refusal(`stable v${current.version}'s tag message names no soak_run, so its stable.json cannot be written from it; write the record by hand (${DOCS}).`);
+    const promotion = await promote(deps, { version: current.version, soakRunUrl: record.soak_run, scoreboardUrl: '', rollback: false, reason: '' });
+    return { action: 'backfilled', why, promotion };
+  }
   const promotedAt = Date.parse(record.promoted_at ?? '');
   const ageDays = Number.isFinite(promotedAt) ? (deps.now().getTime() - promotedAt) / DAY_MS : Infinity;
 
@@ -230,6 +245,7 @@ export function dailyDeps(env: NodeJS.ProcessEnv = process.env, cwd = process.cw
 
 export function renderDailySummary(r: DailyResult): string {
   const detail = r.action === 'promoted' ? `Promoted v${r.promotion.version} (previous v${r.promotion.previous ?? 'none'}).`
+    : r.action === 'backfilled' ? `Wrote stable.json for v${r.promotion.version}; no tag moved.`
     : r.action === 'dry_run' ? `Dry run: would ${r.would}.`
     : 'version' in r ? `Release v${r.version}.` : '';
   return [`## Daily stable check: ${r.action}`, '', r.why, '', detail, ''].join('\n');
