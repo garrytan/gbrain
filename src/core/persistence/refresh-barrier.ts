@@ -66,7 +66,7 @@ async function laterWriteRefusal(engine: SqlEngine, row: WriteRequest): Promise<
   if (APPENDING_OPERATIONS.includes(row.operation)) return null;
   const [later] = await engine.executeRaw<{ request_id: string }>(`SELECT r.request_id::text AS request_id FROM persistence_requests r
     WHERE r.source_id=$1 AND r.slug=$2 AND r.sequence>$3 AND r.state='committed' AND NOT (r.operation='submit_job'
-      AND (${SYNC_KIND('r')} OR (r.intent IS NULL AND r.outcome->>'imported_file'='true'))) ORDER BY r.sequence LIMIT 1`,
+      AND (${SYNC_KIND('r')} OR (r.intent IS NULL AND COALESCE(r.outcome->>'imported_file','')='true'))) ORDER BY r.sequence LIMIT 1`,
   [row.source_id, row.slug, String(row.sequence)]);
   if (!later) return null;
   return { state: 'conflict', failure: { code: 'revision_conflict', message: `Request ${row.request_id} waited ${row.deferred_refresh_id ? `behind refresh ${row.deferred_refresh_id}` : 'for an import'}, and request ${later.request_id}, accepted after it, has already changed ${row.slug}, so nothing was applied and the later write was not overwritten. Read the page again and submit the change with a new request_id.` } };

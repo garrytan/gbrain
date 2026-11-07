@@ -246,6 +246,9 @@ test('#8765 outside voice: a later write counts unless managed sync wrote it (su
   // A compacted foreground write still counts.
   await f.engine.executeRaw(`UPDATE persistence_requests SET operation='put_page', outcome=outcome-'imported_file' WHERE id=$1::uuid`, [later.id]);
   expect(await refusal()).toMatchObject({ state: 'conflict', failure: { code: 'revision_conflict' } });
+  // So does a compacted submit_job that imported no file (maintenance work), whose outcome has no imported_file at all.
+  await f.engine.executeRaw(`UPDATE persistence_requests SET operation='submit_job' WHERE id=$1::uuid`, [later.id]);
+  expect(await refusal()).toMatchObject({ state: 'conflict', failure: { code: 'revision_conflict' } });
   const before = (await f.engine.readPageSnapshot('two', { sourceId: f.alpha }))?.revision;
   const captured = await local(f, 'capture', { slug: 'two', content: 'An event.', kind: 'managed_sync_import' }).catch(error => error);
   expect(captured).toBeInstanceOf(OperationError);
