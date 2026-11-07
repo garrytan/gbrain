@@ -76,7 +76,8 @@ export function requestUuid(hex: string): string {
 }
 export const activationRequestId = (operationId: string, scope: string | null = null): string =>
   requestUuid(digest(['generation-activate-v1', operationId, ...(scope ? [scope] : [])]));
-export const memberRequestId = (activationId: string, slug: string, action: string): string => requestUuid(digest([activationId, slug, action]));
+export const memberRequestId = (activationId: string, slug: string, action: string, identity?: string): string =>
+  requestUuid(digest([activationId, slug, action, ...(identity ? [identity] : [])]));
 
 export type ManagedPlan =
   | { kind: 'held'; outcome: Extract<PublishOutcome, { state: 'held' }> }
