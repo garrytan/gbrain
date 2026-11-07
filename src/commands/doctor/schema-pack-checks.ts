@@ -91,6 +91,13 @@ function notVerified(err: unknown, fix: string, docs = SCHEMA_PACK_DOCS): Omit<C
   };
 }
 
+/**
+ * The receipt page gbrain's extract framework writes under `extracts/`. It is
+ * gbrain's own page, not user schema drift, so a pack copied from base-v2
+ * before the type existed must not make the operator declare or retype it.
+ */
+const gbrainOwnedReceiptType ='extract_receipt';
+
 interface SourceConformance {
   source_id: string;
   total: number;
@@ -140,7 +147,7 @@ export async function checkSchemaPackConsistency(
     const pack = await loadActivePackForLocalEngine(engine, { sourceId: src });
     if (!pack) { unresolved.push(src); continue; }
     const undeclaredTypes = types
-      .filter((t): t is { type: string; n: number } => !!t.type && storedTypeMissesPack(t.type, pack.manifest))
+      .filter((t): t is { type: string; n: number } => !!t.type && t.type !== gbrainOwnedReceiptType && storedTypeMissesPack(t.type, pack.manifest))
       .map((t) => ({ type: t.type, count: t.n }))
       .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type));
     graded.push({
