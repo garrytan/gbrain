@@ -12,6 +12,69 @@ import {
   DEFAULT_DIRECT_POOL_SIZE,
 } from '../src/core/connection-manager.ts';
 
+describe('ConnectionManager — late initialization after shutdown (#8478)', () => {
+  type Pool = ReturnType<typeof ConnectionManager.prototype.read>;
+  const url = ['postgresql://', 'postgres.example:fixture@', 'aws.pooler.supabase.com:6543/gbrain_test'].join('');
+  const deferred = <T>() => {
+    let resolve!: (value: T) => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+    return { promise, resolve, reject };
+  };
+
+  for (const shutdown of ['retire', 'disconnect'] as const) {
+    for (const session of [false, true]) {
+      test(`${shutdown} closes a late ${session ? 'session fallback' : 'direct'} pool once and refuses concurrent waiters`, async () => {
+        await withEnv({ GBRAIN_DISABLE_DIRECT_POOL: undefined, GBRAIN_DIRECT_DATABASE_URL: undefined }, async () => {
+          const cm = new ConnectionManager({ url });
+          let readEnds = 0, directEnds = 0, attempts = 0;
+          cm.setReadPool({ end: async () => { readEnds++; } } as unknown as Pool);
+          const gate = deferred<Pool>();
+          const entered = deferred<void>();
+          const control = { end: async () => { directEnds++; } } as unknown as Pool;
+          const seam = cm as unknown as { initDirectPool(): Promise<Pool>; _directPool: Pool | null };
+          seam.initDirectPool = async () => {
+            attempts++;
+            if (session && attempts === 1) throw Object.assign(new Error('unreachable'), { code: 'ENETUNREACH' });
+            entered.resolve();
+            return gate.promise;
+          };
+          const settled = Promise.allSettled([cm.ddl(), cm.ddl()]);
+          await entered.promise;
+          await cm[shutdown]();
+          gate.resolve(control);
+          const outcomes = await settled;
+          expect(outcomes.map(outcome => outcome.status)).toEqual(['rejected', 'rejected']);
+          expect(directEnds).toBe(1);
+          expect(readEnds).toBe(0); // borrowed pool belongs to its engine, not this manager
+          expect(seam._directPool).toBeNull();
+          expect(cm.isKillSwitchActive()).toBe(false);
+          await expect(cm.ddl()).rejects.toThrow(/closed/);
+          await expect(cm.getReadPool()).rejects.toThrow(/closed/);
+          expect(attempts).toBe(session ? 2 : 1);
+          await cm.disconnect();
+          expect(directEnds).toBe(1);
+        });
+      });
+    }
+
+    test(`${shutdown} does not start a fallback after a late network failure`, async () => {
+      await withEnv({ GBRAIN_DISABLE_DIRECT_POOL: undefined, GBRAIN_DIRECT_DATABASE_URL: undefined }, async () => {
+        const cm = new ConnectionManager({ url });
+        const gate = deferred<Pool>();
+        let attempts = 0;
+        (cm as unknown as { initDirectPool(): Promise<Pool> }).initDirectPool = () => { attempts++; return gate.promise; };
+        const settled = Promise.allSettled([cm.ddl(), cm.ddl()]);
+        await cm[shutdown]();
+        gate.reject(Object.assign(new Error('unreachable'), { code: 'ENETUNREACH' }));
+        expect((await settled).map(outcome => outcome.status)).toEqual(['rejected', 'rejected']);
+        expect(attempts).toBe(1);
+        expect(cm.isKillSwitchActive()).toBe(false);
+      });
+    });
+  }
+});
+
 describe('isSupabasePoolerUrl', () => {
   test('detects port 6543', () => {
     expect(isSupabasePoolerUrl('postgresql://u:p@host:6543/db')).toBe(true);
