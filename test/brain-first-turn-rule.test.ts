@@ -277,10 +277,15 @@ describe('per-turn rule: OpenClaw before_prompt_build plugin', () => {
       expect(JSON.parse(readFileSync(join(dir, 'openclaw.plugin.json'), 'utf8'))).toMatchObject({ id: OPENCLAW_TURN_PLUGIN_ID, configSchema: { type: 'object' } });
       expect(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).openclaw).toEqual({ extensions: ['./index.js'] });
       const mod = await import(join(dir, 'index.js'));
-      const handlers: Record<string, () => unknown> = {};
-      mod.default.register({ on: (event: string, fn: () => unknown) => { handlers[event] = fn; } });
+      const handlers: Record<string, (...args: unknown[]) => unknown> = {};
+      mod.default.register({ on: (event: string, fn: (...args: unknown[]) => unknown) => { handlers[event] = fn; } });
       expect(Object.keys(handlers)).toEqual(['before_prompt_build']);
       expect(handlers.before_prompt_build()).toEqual({ prependContext: renderBrainFirstTurnRule(access, 'openclaw') });
+      expect(handlers.before_prompt_build({}, { inputProvenance: { kind: 'internal_system', sourceTool: 'exec' } })).toEqual({
+        prependContext: renderBrainFirstTurnRule(access, 'openclaw').replace(' Then answer and finish the task.', ''),
+      });
+      expect(handlers.before_prompt_build({}, { inputProvenance: { kind: 'external_user' } })).toEqual({ prependContext: renderBrainFirstTurnRule(access, 'openclaw') });
+      expect(handlers.before_prompt_build({}, { inputProvenance: { kind: 'inter_session' } })).toEqual({ prependContext: renderBrainFirstTurnRule(access, 'openclaw') });
       expect(syncOpenclawTurnPlugin({ access, dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run }).action).toBe('keep');
     });
   });
