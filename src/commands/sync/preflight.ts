@@ -630,6 +630,9 @@ async function pullAndResolveHead(
     // stop). Both stop the pull: a `git pull` still running after this
     // process exits could fast-forward the tree behind a released lock.
     const { pullRepo, isStoppedGitPull } = await import('../../core/git-remote.ts');
+    const { lfsDownloadsOff } = await import('../../core/sources-ops.ts');
+    const skipLfs = opts.sourceId ? lfsDownloadsOff((await engine.executeRaw<{ config: unknown }>(
+      'SELECT config FROM sources WHERE id = $1', [opts.sourceId]))[0]?.config) : false;
     const shutdown = abortOnCleanupPass('sync-git-pull');
     if (opts.sourceId) await recordUpstreamBeforeFetch(engine, opts.sourceId, gitContextRoot);
     try {
@@ -637,7 +640,7 @@ async function pullAndResolveHead(
       // --timeout through opts.signal, and by pullRepo's own 300s default
       // when no --timeout is set. Pull applies to the whole git repo
       // (gitContextRoot), not just the sync scope — git has no per-subdir pull.
-      await pullRepo(gitContextRoot, { signal: composeAbortSignals(opts.signal, shutdown.signal) });
+      await pullRepo(gitContextRoot, { signal: composeAbortSignals(opts.signal, shutdown.signal), skipLfs });
       serr(`[gbrain phase] sync.git_pull done ${Date.now() - _t0}ms`);
       if (opts.sourceId) await settleUpstreamAfterPull(engine, opts.sourceId, gitContextRoot, true);
     } catch (e: unknown) {
