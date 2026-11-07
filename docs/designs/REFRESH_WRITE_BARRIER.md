@@ -172,7 +172,10 @@ released rows are claimed normally during the next refresh's `draining` and coun
 (the claim moves them to `running`), within the existing `--wait-drain` budget.
 
 **Capacity.** Deferred rows reserve the existing outstanding and intent-byte counters, which bound
-them like queued rows. GST-1582 removed the per-refresh cap (`persistence.refresh_barrier_max_deferred`):
+them like queued rows. GST-1623: a managed sync job (and a bulk sync group made only of them) is
+admitted as if deferred rows held no slot and no intent bytes, since they cannot settle before the
+import does; the held rows are read only when the plain check would refuse, so the importer can pass
+a cap by at most what they hold. Every other write still counts them. GST-1582 removed the per-refresh cap (`persistence.refresh_barrier_max_deferred`):
 a write past it queued as deferred instead of being refused, because a refusal there bounced exactly
 the writes the barrier exists to keep. The setting is no longer read.
 
