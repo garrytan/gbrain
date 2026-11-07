@@ -12,6 +12,7 @@ import { connectionUrlProblem, markEmbeddedEngine, releaseEmbeddedEngine, type E
 import { assertLocalWriterValue, setEngineHostId } from './persistence/identity.ts';
 import { engineProviderProblem, recipeKeyEnv, releaseEngineGatewayState, sharedProviderEnvConflict } from './ai/engine-gateway.ts';
 import { getRecipe } from './ai/recipes/index.ts';
+import { httpEndpointProblem, signedUrlExpiresProblem } from './storage-url.ts';
 
 export type { EngineAISettings, EngineSettings, EngineStorageSettings, EmbeddedSettingsView } from './embedded-engine.ts';
 export { embeddedSettings, isEmbeddedEngine, processHasEmbeddedEngines } from './embedded-engine.ts';
@@ -31,7 +32,7 @@ const AI_MODELS = ['chat', 'expansion', 'reranker'];
 const STORAGE_NEEDS: Record<string, readonly (keyof EngineStorageSettings)[]> = {
   local: ['localPath'], s3: ['bucket', 'endpoint', 'accessKeyId', 'secretAccessKey'],
 };
-const STORAGE_FIELDS = new Set(['backend', 'bucket', 'localPath', 'region', 'endpoint', 'accessKeyId', 'secretAccessKey', 'prefix']);
+const STORAGE_FIELDS = new Set(['backend', 'bucket', 'localPath', 'region', 'endpoint', 'publicEndpoint', 'signedUrlExpiresIn', 'accessKeyId', 'secretAccessKey', 'prefix']);
 const PREFIX = /^[a-z0-9][a-z0-9_-]*$/i;
 
 /** Every value the backend needs is given, so no backend falls back to a default path or reads an endpoint or credentials from the environment. */
@@ -43,6 +44,14 @@ function checkStorage(storage: EngineStorageSettings): void {
   const missing = needs.find(field => !text(storage[field]));
   if (missing) throw invalid(`storage.${missing}`, `A ${storage.backend} store needs ${needs.join(', ')}.`);
   if (storage.prefix !== undefined && !PREFIX.test(storage.prefix)) throw invalid('storage.prefix', 'prefix is one segment of letters, digits, - and _.');
+  if (storage.publicEndpoint !== undefined) {
+    const problem = httpEndpointProblem(storage.publicEndpoint);
+    if (problem) throw invalid('storage.publicEndpoint', problem);
+  }
+  if (storage.signedUrlExpiresIn !== undefined) {
+    const problem = signedUrlExpiresProblem(storage.signedUrlExpiresIn);
+    if (problem) throw invalid('storage.signedUrlExpiresIn', problem);
+  }
 }
 
 /** Names the setting that is wrong, never a key: a key's value is never part of a refusal. */

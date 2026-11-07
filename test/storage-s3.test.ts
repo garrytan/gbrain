@@ -1,9 +1,12 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, spyOn } from 'bun:test';
 import type { S3Client } from '@aws-sdk/client-s3';
-import { HeadObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, S3Client as RealS3Client } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { S3Storage } from '../src/core/storage/s3.ts';
+import { presignS3Get } from '../src/core/storage/s3-presign.ts';
 
 const CONFIG = { backend: 's3' as const, bucket: 'blobs' };
+const KEYS = { accessKeyId: 'AKIATESTKEY0000001', secretAccessKey: 'test-secret-not-in-the-url' };
 
 /**
  * Minimal stub for the slice of S3Client the backend touches: `send` plus
@@ -81,24 +84,129 @@ describe('S3Storage exists', () => {
 });
 
 describe('S3Storage getUrl', () => {
-  test('string endpoint (R2/MinIO): endpoint/bucket/path', async () => {
-    const { client } = stubClient({ endpoint: 'https://acct.r2.example.com' });
-    expect(await new S3Storage(CONFIG, client).getUrl('img/a.png'))
-      .toBe('https://acct.r2.example.com/blobs/img/a.png');
+  const now = new Date('2026-06-01T12:00:00.000Z');
+
+  test('custom endpoint: path-style presigned GET, secret stays out of the URL', async () => {
+    const storage = new S3Storage({ ...CONFIG, ...KEYS, endpoint: 'https://acct.r2.example.com/' });
+    const url = new URL(await storage.getUrl('img/a.png'));
+    expect(url.origin + url.pathname).toBe('https://acct.r2.example.com/blobs/img/a.png');
+    expect(url.searchParams.get('X-Amz-Algorithm')).toBe('AWS4-HMAC-SHA256');
+    expect(url.searchParams.get('X-Amz-Expires')).toBe('3600');
+    expect(url.searchParams.get('X-Amz-Credential')).toStartWith(`${KEYS.accessKeyId}/`);
+    expect(url.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/);
+    expect(url.toString()).not.toContain(KEYS.secretAccessKey);
+    expect(url.searchParams.has('X-Amz-Acl') || url.searchParams.has('x-amz-acl')).toBe(false);
+    expect(url.toString().toLowerCase()).not.toContain('checksum');
   });
 
-  test('function endpoint: resolves the provider and uses its url', async () => {
-    const { client } = stubClient({
-      endpoint: async () => ({ url: new URL('https://minio.local:9000/s3') }),
+  test('publicEndpoint is the signed host; exists() still uses the data-plane endpoint', async () => {
+    const errs: string[] = [];
+    const spy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => { errs.push(args.join(' ')); });
+    const hits = { data: 0 };
+    const data = Bun.serve({ port: 0, fetch: () => { hits.data++; return new Response(null, { status: 404 }); } });
+    try {
+      const storage = new S3Storage({
+        ...CONFIG, ...KEYS, region: 'us-east-1',
+        endpoint: `http://127.0.0.1:${data.port}`,
+        publicEndpoint: 'https://files.example.ts.net:9000/',
+        signedUrlExpiresIn: 120,
+      });
+      const raw = await storage.getUrl('img/a.png');
+      const url = new URL(raw);
+      expect(url.origin + url.pathname).toBe('https://files.example.ts.net:9000/blobs/img/a.png');
+      expect(url.searchParams.get('X-Amz-Expires')).toBe('120');
+      expect(raw).not.toContain('127.0.0.1');
+      expect(hits.data).toBe(0);
+      expect(await storage.exists('img/a.png')).toBe(false);
+      expect(hits.data).toBeGreaterThan(0);
+      expect(errs.join('\n')).not.toContain('loopback');
+      expect(errs.join('\n')).not.toContain('X-Amz-');
+    } finally {
+      spy.mockRestore();
+      data.stop(true);
+    }
+  });
+
+  test('loopback endpoint with no publicEndpoint still signs, and the notice omits the URL', async () => {
+    const errs: string[] = [];
+    const spy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => { errs.push(args.join(' ')); });
+    try {
+      const { client, sent } = stubClient();
+      const storage = new S3Storage({ ...CONFIG, ...KEYS, endpoint: 'http://127.0.0.1:9000' }, client);
+      const raw = await storage.getUrl('目录/文件 名+测试.pdf');
+      const url = new URL(raw);
+      expect(sent).toEqual([]);
+      expect(url.hostname).toBe('127.0.0.1');
+      expect(url.pathname).toBe('/' + ['blobs', '目录', '文件 名+测试.pdf'].map(encodeURIComponent).join('/'));
+      expect(url.pathname).toContain('%E7%9B%AE');
+      expect(url.pathname).toContain('%20');
+      expect(url.pathname).toContain('%2B');
+      expect(url.pathname).not.toContain('+');
+      expect(url.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/);
+      const notice = errs.join('\n');
+      expect(notice).toContain('storage.publicEndpoint');
+      expect(notice).not.toContain('X-Amz-');
+      expect(notice).not.toContain(KEYS.secretAccessKey);
+      expect(notice).not.toContain(raw);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('no endpoint: regional virtual-hosted presigned AWS URL', async () => {
+    const storage = new S3Storage({ ...CONFIG, ...KEYS, region: 'eu-central-1' });
+    const url = new URL(await storage.getUrl('img/a.png'));
+    expect(url.hostname).toBe('blobs.s3.eu-central-1.amazonaws.com');
+    expect(url.pathname).toBe('/img/a.png');
+    expect(url.searchParams.get('X-Amz-Algorithm')).toBe('AWS4-HMAC-SHA256');
+    expect(url.searchParams.get('X-Amz-Expires')).toBe('3600');
+  });
+
+  test('percent-encodes ?, #, and % in the key, and matches the SDK signer for that host', async () => {
+    const key = 'notes/100%_a?b#c.txt';
+    const endpoint = 'https://files.example.ts.net/s3';
+    const signed = await presignS3Get({
+      bucket: 'blobs', key, region: 'us-east-1', endpoint, credentials: KEYS, expiresIn: 3600, now,
     });
-    expect(await new S3Storage(CONFIG, client).getUrl('img/a.png'))
-      .toBe('https://minio.local:9000/s3/blobs/img/a.png');
+    const client = new RealS3Client({
+      region: 'us-east-1',
+      endpoint,
+      forcePathStyle: true,
+      credentials: KEYS,
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
+    });
+    try {
+      const direct = await getSignedUrl(client, new GetObjectCommand({ Bucket: 'blobs', Key: key }), {
+        expiresIn: 3600, signingDate: now,
+      });
+      expect(signed).toBe(direct);
+    } finally {
+      client.destroy();
+    }
+    const url = new URL(signed);
+    expect(url.pathname).toBe('/' + ['s3', 'blobs', 'notes', '100%_a?b#c.txt'].map(encodeURIComponent).join('/'));
+    expect(url.pathname).toContain('100%25_');
+    expect(url.pathname).toContain('%3F');
+    expect(url.pathname).toContain('%23');
+    expect(url.searchParams.get('X-Amz-Algorithm')).toBe('AWS4-HMAC-SHA256');
   });
 
-  test('no endpoint: regional virtual-hosted AWS URL', async () => {
-    const { client } = stubClient({ region: 'eu-central-1' });
-    expect(await new S3Storage(CONFIG, client).getUrl('img/a.png'))
-      .toBe('https://blobs.s3.eu-central-1.amazonaws.com/img/a.png');
+  test('the same inputs and signing time produce the same URL; a different key does not', async () => {
+    const base = { bucket: 'blobs', region: 'us-east-1', endpoint: 'http://minio.example:9000', credentials: KEYS, expiresIn: 60, now };
+    const a = await presignS3Get({ ...base, key: 'a.txt' });
+    const b = await presignS3Get({ ...base, key: 'a.txt' });
+    const c = await presignS3Get({ ...base, key: 'b.txt' });
+    expect(a).toBe(b);
+    expect(c).not.toBe(a);
+  });
+
+  test('refuses to sign without keys, and refuses a bad publicEndpoint or lifetime', async () => {
+    const { client } = stubClient({ endpoint: 'http://127.0.0.1:9000' });
+    await expect(new S3Storage(CONFIG, client).getUrl('a.txt')).rejects.toThrow('accessKeyId and secretAccessKey');
+    expect(() => new S3Storage({ ...CONFIG, ...KEYS, publicEndpoint: 'ftp://files.example' })).toThrow('publicEndpoint is invalid');
+    expect(() => new S3Storage({ ...CONFIG, ...KEYS, signedUrlExpiresIn: 0 })).toThrow('signedUrlExpiresIn');
+    expect(() => new S3Storage({ ...CONFIG, ...KEYS, signedUrlExpiresIn: 604801 })).toThrow('signedUrlExpiresIn');
   });
 });
 

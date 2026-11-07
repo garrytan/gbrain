@@ -142,6 +142,10 @@ describe('settings.storage', () => {
       [{ backend: 'nope' }, 'storage.backend'], [{ backend: 'local' }, 'storage.localPath'],
       [{ backend: 'supabase', bucket: 'b' }, 'storage.backend'], [{ ...unreachable, endpoint: undefined }, 'storage.endpoint'], [{ ...unreachable, secretAccessKey: '' }, 'storage.secretAccessKey'],
       [{ ...storage, region2: 'x' }, 'storage.region2'], [{ ...storage, prefix: '../a' }, 'storage.prefix'], [{ ...storage, prefix: 'a/b' }, 'storage.prefix'],
+      [{ ...unreachable, publicEndpoint: 'not-a-url' }, 'storage.publicEndpoint'],
+      [{ ...unreachable, publicEndpoint: 'https://user:pw@files.example' }, 'storage.publicEndpoint'],
+      [{ ...unreachable, signedUrlExpiresIn: 0 }, 'storage.signedUrlExpiresIn'],
+      [{ ...unreachable, signedUrlExpiresIn: 604801 }, 'storage.signedUrlExpiresIn'],
     ];
     for (const [given, setting] of cases) {
       const error = await failure(() => openEngine(settings({ storage: given as EngineStorageSettings })));
@@ -149,6 +153,11 @@ describe('settings.storage', () => {
     }
     const engine = await embedded({ storage: unreachable });
     expect(embeddedSettings(engine)!.storage).toEqual({ backend: 's3', bucket: 'test', endpoint: 'http://127.0.0.1:1', region: 'us-east-1', accessKeyId: 'test-key', hasSecret: true });
+    const published = await embedded({ storage: { ...unreachable, publicEndpoint: 'https://files.example.ts.net', signedUrlExpiresIn: 600 } });
+    expect(embeddedSettings(published)!.storage).toEqual({
+      backend: 's3', bucket: 'test', endpoint: 'http://127.0.0.1:1', region: 'us-east-1', accessKeyId: 'test-key',
+      publicEndpoint: 'https://files.example.ts.net', signedUrlExpiresIn: 600, hasSecret: true,
+    });
     expect(JSON.stringify(embeddedSettings(engine))).not.toContain('test-secret');
   });
 });
@@ -181,10 +190,14 @@ describe('hashing a stored object', () => {
     expect(await s3.hashObject('a/b.txt')).toEqual({ size: 23, sha256: sha(Buffer.concat(parts)) });
   });
 
-  test('an s3 store with an endpoint builds file URLs from it', async () => {
+  test('an s3 store with an endpoint signs a private GET against it', async () => {
     const { S3Storage } = await import('../src/core/storage/s3.ts');
-    const s3 = new S3Storage({ backend: 's3', bucket: 'test', endpoint: 'http://127.0.0.1:9000', region: 'us-east-1', accessKeyId: 'k', secretAccessKey: 's' });
-    expect(await s3.getUrl('notes/plan/a.txt')).toBe('http://127.0.0.1:9000/test/notes/plan/a.txt');
+    const s3 = new S3Storage({ backend: 's3', bucket: 'test', endpoint: 'http://127.0.0.1:9000', region: 'us-east-1', accessKeyId: 'test-key', secretAccessKey: 'test-secret-value' });
+    const url = new URL(await s3.getUrl('notes/plan/a.txt'));
+    expect(url.origin + url.pathname).toBe('http://127.0.0.1:9000/test/notes/plan/a.txt');
+    expect(url.searchParams.get('X-Amz-Algorithm')).toBe('AWS4-HMAC-SHA256');
+    expect(url.searchParams.get('X-Amz-Expires')).toBe('3600');
+    expect(url.toString()).not.toContain('test-secret-value');
   });
 
   test('a backend without hashObject is hashed from one download', async () => {

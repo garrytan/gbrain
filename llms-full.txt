@@ -6307,7 +6307,7 @@ working directory:
 - **Close.** `disconnect()` closes the engine for good and drops its settings, even while a reconnect is in flight
   (any pool that reconnect builds is ended). A later `connect()` or `reconnect()` refuses `engine_closed`; call
   `openEngine` again instead.
-- **Files.** File ops use `settings.storage` (local, or s3 with an endpoint) and its key `prefix`.
+- **Files.** File ops use `settings.storage` (local, or s3 with an endpoint) and its key `prefix`. An s3 `getUrl` is a presigned GET (default one hour, `signedUrlExpiresIn`, at most 7 days). `publicEndpoint`, when set, is the host in that URL; `endpoint` stays the address used for upload, download, and existence checks. The bucket ACL is left unchanged. See [object storage](guides/object-storage.md).
 
 Still process-wide: CLI file storage, transcription, the AI call log and timeouts, `GBRAIN_*` tuning variables (pool lifetime,
 connect and session timeouts, `GBRAIN_PREPARE`, `GBRAIN_DIRECT_POOL_SIZE`, `GBRAIN_DISABLE_DIRECT_POOL`,

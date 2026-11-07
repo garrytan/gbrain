@@ -69,7 +69,7 @@ FILES
   files list [slug]                  List stored files
   files upload <file> --page <slug>  Upload file to storage
   files upload-raw <file> --page <s> Smart upload (size routing + .redirect.yaml)
-  files signed-url <path>            Generate signed URL (1-hour)
+  files signed-url <path>            Presigned GET (default 1 hour)
   files sync <dir>                   Bulk upload directory
   files verify                       Verify all uploads
 

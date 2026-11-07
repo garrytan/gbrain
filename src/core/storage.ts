@@ -30,7 +30,16 @@ export interface StorageConfig {
   backend: 's3' | 'supabase' | 'local';
   bucket: string;
   region?: string;
+  /** Data-plane address for upload, download, and existence checks (often loopback MinIO). */
   endpoint?: string;
+  /**
+   * Origin remote clients use to GET the same bucket. Presigned URLs are signed
+   * for this host; `endpoint` stays the data plane. Same shape as `endpoint`:
+   * http(s) origin plus an optional path prefix.
+   */
+  publicEndpoint?: string;
+  /** Presigned GET lifetime in seconds. Default 3600. Maximum 604800 (7 days). */
+  signedUrlExpiresIn?: number;
   // S3 credentials
   accessKeyId?: string;
   secretAccessKey?: string;

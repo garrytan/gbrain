@@ -136,7 +136,7 @@ export async function runFiles(engine: BrainEngine, args: string[]) {
       console.error(`  list [slug]               List files for a page (or all)`);
       console.error(`  upload <file> --page <slug>  Upload file linked to page`);
       console.error(`  upload-raw <file> --page <slug> [--type <type>]  Smart upload with .redirect.yaml pointer`);
-      console.error(`  signed-url <path>         Generate signed URL for stored file`);
+      console.error(`  signed-url <path>         Presigned GET for a stored file (default 1 hour)`);
       console.error(`  sync <dir>                Upload directory to storage`);
       console.error(`  verify                    Verify all uploads match local`);
       console.error(`  mirror <dir> [--dry-run]  Mirror files to cloud storage`);

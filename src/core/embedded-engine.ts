@@ -40,8 +40,10 @@ export interface EngineSettings {
   cache_namespace?: string;
   /**
    * The object store every file operation on this engine uses, as values: `local` needs `localPath`, `s3` its bucket,
-   * endpoint and keys (nothing is read from AWS_* variables or ~/.aws). Every object key is `<prefix>/<path>` when
-   * `prefix` (one segment) is set; brains sharing a bucket each set a different prefix. No prefix keeps today's keys.
+   * endpoint and keys (nothing is read from AWS_* variables or ~/.aws). `publicEndpoint`, when set, is the host in
+   * presigned GET URLs; `endpoint` stays the data plane. `signedUrlExpiresIn` is the GET lifetime in seconds.
+   * Every object key is `<prefix>/<path>` when `prefix` (one segment) is set; brains sharing a bucket each set a
+   * different prefix. No prefix keeps today's keys.
    */
   storage?: EngineStorageSettings;
 }
@@ -51,7 +53,12 @@ export interface EngineStorageSettings {
   bucket?: string;
   localPath?: string;
   region?: string;
+  /** Data-plane address for upload, download, and existence checks. */
   endpoint?: string;
+  /** Host signed into getUrl. Uploads keep using `endpoint`. */
+  publicEndpoint?: string;
+  /** Presigned GET lifetime in seconds (default 3600, max 7 days). */
+  signedUrlExpiresIn?: number;
   accessKeyId?: string;
   secretAccessKey?: string;
   prefix?: string;

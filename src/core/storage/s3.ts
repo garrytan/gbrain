@@ -13,6 +13,8 @@ import {
   ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
 import { FileDigest, type StorageBackend, type StorageConfig } from '../storage.ts';
+import { coerceSignedUrlExpiresIn, httpEndpointProblem, normalizeHttpEndpoint, signedUrlLoopbackNotice } from '../storage-url.ts';
+import { presignS3Get } from './s3-presign.ts';
 
 const MIN_PART_SIZE = 16 * 1024 * 1024;
 const MAX_PART_SIZE = 5 * 1024 * 1024 * 1024;
@@ -32,33 +34,45 @@ export function multipartPartSize(size: number): number {
 export class S3Storage implements StorageBackend {
   private client: S3Client;
   private bucket: string;
+  private region: string;
+  private endpoint?: string;
+  private publicEndpoint?: string;
+  private expiresIn: number;
+  private credentials?: { accessKeyId: string; secretAccessKey: string };
 
   constructor(config: StorageConfig, client?: S3Client) {
     this.bucket = config.bucket;
+    this.region = config.region || 'us-east-1';
+    this.endpoint = config.endpoint;
+    if (config.publicEndpoint !== undefined && config.publicEndpoint !== '') {
+      const problem = httpEndpointProblem(config.publicEndpoint);
+      if (problem) throw new Error(`S3 storage publicEndpoint is invalid. ${problem}`);
+      this.publicEndpoint = normalizeHttpEndpoint(config.publicEndpoint);
+    }
+    this.expiresIn = coerceSignedUrlExpiresIn(config.signedUrlExpiresIn);
+    if (config.accessKeyId && config.secretAccessKey) {
+      this.credentials = { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey };
+    }
 
     // Test seam: an injected client (stub or preconfigured S3Client) is used
-    // as-is — no construction, no credential validation.
+    // as-is — no construction, no credential validation. getUrl still needs
+    // the keys above so it can sign without sending through this client.
     if (client) {
       this.client = client;
       return;
     }
 
-    const region = config.region || 'us-east-1';
-
-    if (!config.accessKeyId || !config.secretAccessKey) {
+    if (!this.credentials) {
       throw new Error('S3 storage requires accessKeyId and secretAccessKey in config');
     }
 
     this.client = new S3Client({
-      region,
-      ...(config.endpoint ? {
-        endpoint: config.endpoint,
+      region: this.region,
+      ...(this.endpoint ? {
+        endpoint: this.endpoint,
         forcePathStyle: true, // Required for R2, MinIO, and custom endpoints
       } : {}),
-      credentials: {
-        accessKeyId: config.accessKeyId,
-        secretAccessKey: config.secretAccessKey,
-      },
+      credentials: this.credentials,
     });
   }
 
@@ -169,16 +183,27 @@ export class S3Storage implements StorageBackend {
     return (res.Contents || []).map(obj => obj.Key!).filter(Boolean);
   }
 
+  /**
+   * Presigned GET for a private object. `publicEndpoint` is the signed host
+   * when set; otherwise the data-plane `endpoint` (virtual-hosted AWS when
+   * neither is set). The data-plane client is not used, and no ACL is changed.
+   * A loopback host logs a notice that omits the URL.
+   */
   async getUrl(path: string): Promise<string> {
-    // For custom endpoints (R2, MinIO), use the endpoint URL
-    const endpoint = (this.client.config as any).endpoint;
-    if (endpoint) {
-      const e = typeof endpoint === 'function' ? await endpoint() : endpoint;
-      const base = typeof e === 'string' ? e : e.url ? e.url.toString() : `${e.protocol}//${e.hostname}${e.port ? `:${e.port}` : ''}${e.path ?? ''}`;
-      return `${base.replace(/\/+$/, '')}/${this.bucket}/${path}`;
+    if (!this.credentials) {
+      throw new Error('S3 storage requires accessKeyId and secretAccessKey to sign a private-object URL');
     }
-    const region = await this.client.config.region();
-    return `https://${this.bucket}.s3.${region}.amazonaws.com/${path}`;
+    const url = await presignS3Get({
+      bucket: this.bucket,
+      key: path,
+      region: this.region,
+      endpoint: this.publicEndpoint ?? this.endpoint,
+      credentials: this.credentials,
+      expiresIn: this.expiresIn,
+    });
+    const notice = signedUrlLoopbackNotice(url);
+    if (notice) console.error(notice);
+    return url;
   }
 
   async getContentHash(path: string): Promise<string | null> {

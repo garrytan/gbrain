@@ -4487,8 +4487,10 @@
           "endpoint?: string | undefined",
           "localPath?: string | undefined",
           "prefix?: string | undefined",
+          "publicEndpoint?: string | undefined",
           "region?: string | undefined",
-          "secretAccessKey?: string | undefined"
+          "secretAccessKey?: string | undefined",
+          "signedUrlExpiresIn?: number | undefined"
         ],
         "name": "EngineStorageSettings"
       },
