@@ -362,8 +362,13 @@ export async function purgeDeletedPages(
           AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id = t.source_id AND m.sha256 = t.sha256)
           AND NOT ${trustedSql(stagingNeedsTextSql('t'))}`);
       // The retrieval logs name pages by slug with no FK to pages, so the cascade misses them.
+      // One bucket per source and a push per row, so a large purge stays linear.
       const bySource = new Map<string, string[]>();
-      for (const r of rows) bySource.set(r.source_id, [...bySource.get(r.source_id) ?? [], r.slug]);
+      for (const r of rows) {
+        let bucket = bySource.get(r.source_id);
+        if (!bucket) bySource.set(r.source_id, bucket = []);
+        bucket.push(r.slug);
+      }
       for (const [sourceId, purged] of bySource) await scrubPurgedSlugs(tx, sourceId, purged);
       const slugs = rows.map((r) => r.slug);
       return { slugs, count: slugs.length };

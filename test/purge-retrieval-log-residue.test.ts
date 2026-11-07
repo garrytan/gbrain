@@ -33,13 +33,13 @@ const op = (name: string) => operations.find(o => o.name === name)!;
 const SLUG = 'people/jane-roe-diagnosis';
 const KEEP = 'notes/zorblax-overview';
 
-function context(): OperationContext {
+function context(sourceId = 'default'): OperationContext {
   return { engine, config: { engine: 'pglite', embedding_disabled: true, eval: { capture: true },
     storage: { backend: 'local', bucket: 'b', localPath: storageDir } } as never,
-  logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: false, sourceId: 'default' };
+  logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: false, sourceId };
 }
-const call = (name: string, params: Record<string, unknown>) =>
-  withEnv({ GBRAIN_HOME: home }, () => op(name).handler(context(), params)) as Promise<Record<string, any>>;
+const call = (name: string, params: Record<string, unknown>, sourceId = 'default') =>
+  withEnv({ GBRAIN_HOME: home }, () => op(name).handler(context(sourceId), params)) as Promise<Record<string, any>>;
 
 /** Seeds both pages, then runs one search that logs both and rates the answer, plus a typed edge into the page. */
 async function seedRetrievalLogs() {
@@ -111,5 +111,47 @@ describe('page purge clears the purged slug from retrieval logs', () => {
     const purged = await withEnv({ GBRAIN_HOME: home }, () => purgeDeletedPagesCoordinated(engine, 72));
     expect(purged.slugs).toEqual([SLUG]);
     expect(await residue(SLUG)).toEqual(NONE);
+  }, 60_000);
+});
+
+describe('a multi-source brain scrubs a capture only of a result the purged source supplied', () => {
+  const SHARED = 'people/shared', OTHER = 'notes/other', SOLO = 'people/alpha-only', SOFT = 'people/soft';
+  const capture = async (slugs: string[], sources: string[]) => (await engine.executeRaw<{ id: number }>(
+    `INSERT INTO eval_candidates (tool_name, query, retrieved_slugs, source_ids, vector_enabled, expansion_applied, latency_ms, remote)
+     VALUES ('search', 'q', $1::text[], $2::text[], false, false, 1, false) RETURNING id`, [slugs, sources]))[0]!.id;
+  const slugsOf = async (id: number) =>
+    (await engine.executeRaw<{ slugs: string[] }>('SELECT retrieved_slugs AS slugs FROM eval_candidates WHERE id=$1', [id]))[0]!.slugs;
+  const purge = async (slug: string) => {
+    const snapshot = await engine.readPageSnapshot(slug, { sourceId: 'alpha', includeDeleted: true });
+    const result = await call('delete_page', { slug, purge: true, request_id: randomUUID(), expected_revision: snapshot!.revision }, 'alpha');
+    expect(result.status).toBe('purged');
+    return result.purge.removed.eval_candidates as number;
+  };
+
+  test('a slug another captured source still holds (live or soft-deleted) stays; one only the purged source held goes', async () => {
+    for (const id of ['alpha', 'beta']) await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [id]);
+    for (const [sourceId, slug] of [['alpha', SHARED], ['alpha', OTHER], ['alpha', SOLO], ['alpha', SOFT], ['beta', SHARED], ['beta', SOFT]]) {
+      await importFromContent(engine, slug!, `---\ntitle: ${slug}\n---\nBody of ${slug}.\n`, { noEmbed: true, sourceId: sourceId! });
+    }
+    await engine.executeRaw(`UPDATE pages SET deleted_at = now() WHERE source_id = 'beta' AND slug = $1`, [SOFT]);
+    const mixed = await capture([OTHER, SHARED], ['alpha', 'beta']);   // beta supplied SHARED
+    const alphaOnly = await capture([OTHER, SHARED], ['alpha']);
+    const betaOnly = await capture([SHARED], ['beta']);
+    const unsourced = await capture([SHARED], []);                     // no source recorded: only a 'default' purge matches
+    const solo = await capture([SOLO, SHARED], ['alpha', 'beta']);     // beta has no SOLO page
+    const soft = await capture([SOFT], ['alpha', 'beta']);              // beta's SOFT is soft-deleted, so restorable
+
+    expect(await purge(SHARED)).toBe(1);
+    expect(await slugsOf(mixed)).toEqual([OTHER, SHARED]);
+    expect(await slugsOf(alphaOnly)).toEqual([OTHER]);
+    expect(await slugsOf(betaOnly)).toEqual([SHARED]);
+    expect(await slugsOf(unsourced)).toEqual([SHARED]);
+    expect(await slugsOf(solo)).toEqual([SOLO, SHARED]);
+
+    expect(await purge(SOLO)).toBe(1);
+    expect(await slugsOf(solo)).toEqual([SHARED]);
+
+    expect(await purge(SOFT)).toBe(0);
+    expect(await slugsOf(soft)).toEqual([SOFT]);
   }, 60_000);
 });

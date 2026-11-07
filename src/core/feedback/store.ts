@@ -323,15 +323,22 @@ export async function scrubPurgedSlugs(
   const count = async (sql: string) =>
     Number((await engine.executeRaw<{ n: number | string }>(`WITH d AS (${sql} RETURNING 1) SELECT count(*)::int AS n FROM d`, [sourceId, slugs]))[0]?.n ?? 0);
   const edge = (col: string) => `(split_part(${col}, '|', 1) = ANY($2::text[]) OR split_part(${col}, '|', 3) = ANY($2::text[]))`;
+  // A capture keeps `retrieved_slugs` and `source_ids` as separate sets (eval-capture.ts buildEvalCandidateInput),
+  // so a slug is the purged page's only when no other source in the capture holds a page by that slug (a
+  // soft-deleted page counts: it can be restored). A capture with no source_ids predates sources ('default').
+  const scrubbable = `(s = ANY($2::text[]) AND NOT EXISTS (SELECT 1 FROM pages p
+    WHERE p.slug = s AND p.source_id <> $1 AND p.source_id = ANY(c.source_ids)))`;
   const element = `source_id = $1 AND ((element_kind = 'page' AND element_key = ANY($2::text[])) OR (element_kind = 'link' AND ${edge('element_key')}))`;
   return {
     retrieval_event_pages: await count('DELETE FROM retrieval_event_pages WHERE source_id = $1 AND slug = ANY($2::text[])'),
     retrieval_event_links: await count(`DELETE FROM retrieval_event_links WHERE source_id = $1 AND (to_slug = ANY($2::text[]) OR ${edge('edge_key')})`),
     retrieval_feedback: await count(`DELETE FROM retrieval_feedback WHERE ${element}`),
     retrieval_weights: await count(`DELETE FROM retrieval_weights WHERE ${element}`),
-    eval_candidates: await count(`UPDATE eval_candidates
-         SET retrieved_slugs = ARRAY(SELECT s FROM unnest(retrieved_slugs) AS s WHERE NOT (s = ANY($2::text[])))
-       WHERE retrieved_slugs && $2::text[] AND (cardinality(source_ids) = 0 OR $1 = ANY(source_ids))`),
+    eval_candidates: await count(`UPDATE eval_candidates c
+         SET retrieved_slugs = ARRAY(SELECT s FROM unnest(c.retrieved_slugs) AS s WHERE NOT ${scrubbable})
+       WHERE c.retrieved_slugs && $2::text[]
+         AND ($1 = ANY(c.source_ids) OR (cardinality(c.source_ids) = 0 AND $1 = 'default'))
+         AND EXISTS (SELECT 1 FROM unnest(c.retrieved_slugs) AS s WHERE ${scrubbable})`),
   };
 }
 
