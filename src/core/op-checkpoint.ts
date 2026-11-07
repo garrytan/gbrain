@@ -502,6 +502,8 @@ export function syncFingerprint(p: { sourceId?: string; lastCommit: string }): s
  * their tombstone, its purge or a rearm; an open #6729 rename-identity downgrade
  * record stays until its pair is settled or its old page is restored or purged, and a #7130 managed sync
  * deletion record while its tombstone (same page id and deleted_at) exists.
+ * Packaged skill setup pins stay for the source incarnation: even after commit,
+ * init must replay its original payload rather than adopt the current release.
  */
 export async function purgeStaleCheckpoints(
   engine: BrainEngine,
@@ -520,6 +522,9 @@ export async function purgeStaleCheckpoints(
            AND op<>'connector-db-cursor'
            AND op<>'stuck-recovery-resolution'
            AND op<>'sync-admission'
+           AND NOT (op='packaged-shared-skills' AND EXISTS (
+             SELECT 1 FROM sources s WHERE s.id=op_checkpoints.completed_keys->0->>'source_id'
+               AND s.incarnation::text=op_checkpoints.completed_keys->0->>'incarnation'))
            AND NOT (op='${SYNC_DELETE_TOMBSTONE_OP}' AND EXISTS (
              SELECT 1 FROM pages p WHERE p.id::text=op_checkpoints.fingerprint AND p.deleted_at=(op_checkpoints.completed_keys->0->>'deleted_at')::timestamptz))
            AND op<>'purge-deleted-park'

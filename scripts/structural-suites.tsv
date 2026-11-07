@@ -378,6 +378,7 @@ test/shared-skills-export.serial.test.ts	(file-level)	7	readFileSync
 test/shared-skills-init.serial.test.ts	real combined brain initialization	4	readFileSync
 test/shared-skills-migration-cli.serial.test.ts	(file-level)	1	readFileSync
 test/shared-skills-optimizer.serial.test.ts	(file-level)	15	readFileSync
+test/shared-skills-packaged-replay.serial.test.ts	(file-level)	8	readFileSync
 test/shared-skills-publication-sparse.test.ts	(file-level)	4	readFileSync
 test/shared-skills-setup.test.ts	packaged default skills	2	readFileSync
 test/shared-skills-setup.test.ts	shared-skills migration recovery (#5569, #5476, A-NEW-4)	4	readFileSync
