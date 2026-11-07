@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.598.0] - 2026-11-07
+## [Unreleased]
 
 **A segmented page that sync replaces on Postgres now publishes on the first try instead of being refused `body_staging_expired` ("does not cover its N-byte body") and blocking its source until the next sync.** The import ran its version write, which for a segmented page prunes old versions and sweeps their segment rows, at the same time as the flip that publishes the new body. On Postgres the two overlap on one connection, so the sweep could delete the freshly published tail row between the flip clearing its staging and bumping the page's generation. PGLite runs them in order, so only Postgres was affected. The refusal now records which staging was short, a retry inside the run really prepares the page again, and `gbrain sources writer failures` answers within its bound on a source full of large sync writes.
 
