@@ -671,6 +671,16 @@ test('GST-1674: a refresh killed at fenced after a commit gbrain did not make mo
   expect((await settle(f, deferred)).state).toBe('committed');
 }), 180_000);
 
+test('a refresh killed at fenced after a commit gbrain did not make moved HEAD before the merge aborts on the owner scan, without --resume', () => each(async f => {
+  const { deferred, landed } = await crashAtFenced(f, () => commitFile(f.root, 'alpha/outside.md', page('Outside', 'A commit made around gbrain.'), 'outside'));
+  await resumeWorktreeRefreshes(f.engine);
+  const [row] = await f.refreshRows();
+  expect(row.state).toBe('aborted');
+  expect((row.outcome.refusal as { code: string }).code).toBe('refresh_interrupted');
+  expect(f.head()).toBe(landed);
+  expect((await settle(f, deferred)).state).toBe('committed');
+}), 180_000);
+
 test('GST-1674: a refresh killed after its merge, with a commit landed on the target before bookkeeping, recovers on the owner scan and completes without --resume', () => each(async f => {
   const target = f.push('alpha/two.md', page('Alpha two', 'An upstream observation.'));
   let deferred!: WriteRequest; let landed!: string;

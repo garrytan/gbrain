@@ -229,13 +229,13 @@ every config killing the refresh at least once, and the workflow's path filter c
 | `claim-ignores-fence` | survivor | — | under the fence nothing is claimable at these bounds |
 | `claim-skips-protocol` | survivor | — | the drain count and the request-row lock already order a claim against the fence |
 | `replay-skips-reauth` | survivor | — | publication re-authorizes every write |
-| `hold-beside-held-off` | guard | `CommitsInAdmissionOrder` (Import) | #8705's compareFileTarget held-first read; model only until #8705 is on master |
-| `import-expiry-locks-source-first` | guard | `NoDeadlock` (Import) | #8705's import expiry; model only until #8705 is on master |
-| `import-expiry-skips-source-lock` | guard | `ExpiryOnlyWhileWaiting` (Import) | the same |
-| `resume-marks-unmerged-recovery` | guard | `RecoveryOnlyByPolicy` | `recoverOne` as #8682 coded it: a fenced orphan aborts only with HEAD at old_head (the finding below); model only until the fix is on master |
-| `resume-needs-exact-target` | guard | `RecoveryOnlyByPolicy` | `recoverOne` as #8682 coded it: bookkeeping only with HEAD exactly the target, so a commit between the merge and bookkeeping strands the row; the same |
+| `hold-beside-held-off` | guard | `CommitsInAdmissionOrder` (Import) | compareFileTarget's held-first read; the later write that must not pass a held one (import-write-barrier.test.ts) |
+| `import-expiry-locks-source-first` | guard | `NoDeadlock` (Import) | the import expiry's lock order; a Postgres expiry overlapping a fence (import-write-barrier.test.ts) |
+| `import-expiry-skips-source-lock` | guard | `ExpiryOnlyWhileWaiting` (Import) | the import expiry's `FOR SHARE OF s`; a Postgres import landing while the expiry waits (import-write-barrier.test.ts) |
+| `resume-marks-unmerged-recovery` | guard | `RecoveryOnlyByPolicy` | `movedBeforeMerge` (the finding below): the code edit aborts only a HEAD moved by gbrain's own commits; the refresh killed at fenced after a foreign commit, aborted by the owner scan |
+| `resume-needs-exact-target` | guard | `RecoveryOnlyByPolicy` | `recoverOne`'s bookkeeping branch: with HEAD only exactly at the target, a commit between the merge and bookkeeping strands the row; the refresh killed after its merge |
 
-#8705's and #8708's guards get code edits and tests (#8705's repro tests in test/import-write-barrier.test.ts) once their code is on master; until then they are checked in the model only.
+#8708's guards get code edits and tests once its code is on master; until then they are checked in the model only.
 
 ### Found in #8682: a refresh killed at fenced after HEAD moved
 

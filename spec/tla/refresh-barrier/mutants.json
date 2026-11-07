@@ -336,59 +336,136 @@
     {
       "id": "hold-beside-held-off",
       "kind": "guard",
-      "title": "a later write to a page with a write held for an import is not held beside it (#8705's first race, before 03b89121)",
+      "title": "a later write to a page with a write held for an import is not held beside it, so it can commit ahead of the held one",
       "expect": "CommitsInAdmissionOrder",
       "config": "RefreshBarrierImport.cfg",
       "spec": {
         "file": "RefreshBarrier.tla",
         "before": "     ELSE IF ImportHolds /\\ HoldBehindHeld /\\ HeldAhead(w) # {} THEN \"pending\"\n",
         "after": "     ELSE IF FALSE THEN \"pending\"\n"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/page-prepare.ts",
+            "before": "  if (heldFirst) throw pendingImportRefusal(",
+            "after": "  if (heldFirst && false) throw pendingImportRefusal("
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/import-write-barrier.test.ts",
+            "filter": "a write held for an import is never passed by a later write to the same page"
+          }
+        ]
       }
     },
     {
       "id": "import-expiry-locks-source-first",
       "kind": "guard",
-      "title": "#8705's import expiry locks the source row before it declares the protocol",
+      "title": "the import expiry locks the source row before it declares the protocol",
       "expect": "NoDeadlock",
       "config": "RefreshBarrierImport.cfg",
       "spec": {
         "file": "RefreshBarrier.tla",
         "before": "ImportExpiryLocks == <<L(BRAIN, \"S\"), L(SRC, \"S\")>>",
         "after": "ImportExpiryLocks == <<L(SRC, \"S\"), L(BRAIN, \"S\")>>"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/refresh-barrier.ts",
+            "before": "      await declarePersistenceProtocol(tx);\n      const [held] = await tx.executeRaw(`SELECT 1 FROM persistence_requests r JOIN sources s ON s.id=r.source_id\n        WHERE r.id=$1::uuid AND r.state='deferred' AND COALESCE(s.last_commit,'')=r.deferred_import_from FOR SHARE OF s`, [row.id]);\n",
+            "after": "      const [held] = await tx.executeRaw(`SELECT 1 FROM persistence_requests r JOIN sources s ON s.id=r.source_id\n        WHERE r.id=$1::uuid AND r.state='deferred' AND COALESCE(s.last_commit,'')=r.deferred_import_from FOR SHARE OF s`, [row.id]);\n      await declarePersistenceProtocol(tx);\n"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/import-write-barrier.test.ts",
+            "filter": "an import expiry that overlaps a fence waits on the brain row",
+            "postgres": true
+          }
+        ]
       }
     },
     {
       "id": "import-expiry-skips-source-lock",
       "kind": "guard",
-      "title": "#8705's import expiry re-checks last_commit without locking the source row (#8705's second race, before 03b89121)",
+      "title": "the import expiry re-checks last_commit without locking the source row",
       "expect": "ExpiryOnlyWhileWaiting",
       "config": "RefreshBarrierImport.cfg",
       "spec": {
         "file": "RefreshBarrier.tla",
         "before": "Need(EXP, IF ImportExpiryLocksSource THEN ImportExpiryLocks ELSE <<>>)",
         "after": "Need(EXP, <<>>)"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/refresh-barrier.ts",
+            "before": "=r.deferred_import_from FOR SHARE OF s`, [row.id]);",
+            "after": "=r.deferred_import_from`, [row.id]);"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/import-write-barrier.test.ts",
+            "filter": "a held write whose import lands while its expiry waits on the request lock is not expired",
+            "postgres": true
+          }
+        ]
       }
     },
     {
       "id": "resume-marks-unmerged-recovery",
       "kind": "guard",
-      "title": "recoverOne marks an orphaned fenced refresh recovery_required when HEAD moved past old_head before any merge (#8682 as coded)",
+      "title": "recovery marks an orphaned fenced refresh recovery_required when a commit gbrain did not make moved HEAD past old_head before any merge",
       "expect": "RecoveryOnlyByPolicy",
       "spec": {
         "file": "RefreshBarrier.tla",
         "before": "FencedAbortable(i) == ~rmstart[i]",
         "after": "FencedAbortable(i) == head = rhead[i]"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/worktree-refresh.ts",
+            "before": "    && !await memberOutsideHead(engine, git, root, row, head);\n}",
+            "after": "    && await ownCommits(git, root, row.old_head, head) && !await memberOutsideHead(engine, git, root, row, head);\n}"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/refresh-write-barrier.test.ts",
+            "filter": "a refresh killed at fenced after a commit gbrain did not make moved HEAD before the merge aborts on the owner scan"
+          }
+        ]
       }
     },
     {
       "id": "resume-needs-exact-target",
       "kind": "guard",
-      "title": "recoverOne runs bookkeeping for an orphaned fenced refresh only when HEAD is exactly the target, not a descendant (#8682 as coded)",
+      "title": "recovery runs bookkeeping for an orphaned fenced or merged refresh only when HEAD is exactly the target, not a descendant",
       "expect": "RecoveryOnlyByPolicy",
       "spec": {
         "file": "RefreshBarrier.tla",
         "before": "ResumeAtTarget(i) == HoldsTarget(i)",
         "after": "ResumeAtTarget(i) == rtgt[i] # 0 /\\ head = rtgt[i] /\\ ~lost[i]"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/worktree-refresh.ts",
+            "before": "&& head !== null && (head === row.target_head || await isAncestor(git, root, row.target_head, head))\n    && await isAncestor(git, root, row.old_head, row.target_head)",
+            "after": "&& head !== null && (head === row.target_head || (row.state === 'recovery_required' && await isAncestor(git, root, row.target_head, head)))\n    && await isAncestor(git, root, row.old_head, row.target_head)"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/refresh-write-barrier.test.ts",
+            "filter": "a refresh killed after its merge, with a commit landed on the target before bookkeeping, recovers on the owner scan"
+          }
+        ]
       }
     }
   ]

@@ -320,6 +320,44 @@ test('a write while a refresh is in recovery_required waits behind it and lands 
   expect(file(f, 'notes/during-recovery.md')).toContain('Accepted while the refresh awaited recovery.');
 }), 180_000);
 
+test.skipIf(!backends.includes('postgres'))('an import expiry that overlaps a fence waits on the brain row instead of deadlocking with it', () => each(async f => {
+  if (f.engine.kind !== 'postgres') return;
+  foreignCommit(f, 'one.md', page('Alpha one', IMPORTED));
+  const out = await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Held past its limit.') });
+  const held = await requestRow(f, out.receipt.request_id);
+  expect(held.state).toBe('deferred');
+  await disposePersistenceConsumer(f.engine);
+  await maxWait(f, 1);
+  try {
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const owner = await ownerHost(f);
+    let holding!: () => void; const held1 = new Promise<void>(resolve => { holding = resolve; });
+    let waiting!: () => void; const expiryWaits = new Promise<void>(resolve => { waiting = resolve; });
+    // fenceDraining's order (lockTopologyRows): the brain row FOR UPDATE, then the worktree, then the sources.
+    const fence = f.engine.transaction(async tx => {
+      await tx.executeRaw("SELECT set_config('lock_timeout','10s',true)");
+      await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+      holding();
+      await expiryWaits;
+      await tx.executeRaw('SELECT 1 FROM sources WHERE id=$1 FOR UPDATE', [f.alpha]);
+    });
+    await held1;
+    const expiry = expireDeferredWrites(f.engine, owner);
+    for (let i = 0; i < 400; i++) {
+      const [w] = await f.engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'");
+      if (Number(w!.n) > 0) break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    waiting();
+    const [fenced, expired] = await Promise.allSettled([fence, expiry]);
+    expect(fenced.status === 'rejected' ? String(fenced.reason) : 'fence committed').toBe('fence committed');
+    expect(expired.status === 'fulfilled' ? expired.value.map(row => row.id) : String(expired.reason)).toEqual([held.id]);
+  } finally {
+    await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
+  }
+  expect(await getWriteRequestById(f.engine, held.id)).toMatchObject({ state: 'failed', error_code: 'pending_import_expired' });
+}), 180_000);
+
 test('a write held for an import is never passed by a later write to the same page', () => each(async f => {
   await durable(f);
   const before = await f.lastCommit(f.alpha);
