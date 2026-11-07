@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.605.0] - 2026-11-07
+
+**Stable now moves forward by itself: a daily check promotes an important fix within a day and anything else within a week, and only after the soak passed on that exact release.** `.github/workflows/stable-daily.yml` runs at 05:17 and 13:17 UTC. It acts only when a merged PR labelled `stable:important` is released but not yet in stable, or stable is more than 7 days old. It promotes the newest release whose exact tree passed the production soak with every integrity gate clean, and otherwise dispatches one soak so a later run can promote. It never moves stable backward, pauses while stable is a rollback, and stops entirely with the repository variable `STABLE_AUTO_PROMOTE=off`.
+
+### Itemized changes
+
+- New `scripts/stable-daily.ts` and `.github/workflows/stable-daily.yml`: the reason (a released `stable:important` fix stable lacks, or the 7-day weekly floor), the candidate (newest release on master newer than stable with a successful full soak of its exact tree, both default cells for at least 2 hours on the requested 600,000-page fixture with privacy probes run and none erroring, and `privacy_leaks`, `read_errors`, `version_skew`, `residents_alive` and `session_refusals` passing in every cell; on the important-only path it must contain the fix), one soak dispatch when nothing qualifies (never while a soak runs, never after a soak on a newer release failed to qualify, with a warning once stable is past the weekly floor), the rollback pause and the kill switch. A manual dispatch defaults to a dry run, and `dry_run=false` needs an admin or maintainer before it writes anything.
+- `scripts/promote-stable.ts`: `scheduleAuthorized()` lets only a schedule event of `stable-daily.yml` on the default branch promote without the admin or maintain role; every other check is unchanged, and the record's `promoted_by` names the schedule. Manual dispatches keep the maintainer check.
+- `docs/RELEASING.md#daily-stable-check` documents the label, the schedule, the kill switch and the rollback.
+- `test/scripts/stable-daily.test.ts` covers the authorization, the integrity gates, each reason and no-op path, the soak dispatch rules, the dry run and the workflow shape.
+
 ## [0.60.604.0] - 2026-11-07
 
 **New installs now start on the stable channel: the soaked release, not every release.** The documented install (`bun install -g github:garrytan/gbrain#stable`) and the clone fallback (`git clone --branch stable`) follow the `stable` tag, which moves only to a published release whose exact tree passed the production soak, at least weekly. A fresh `gbrain init` (and so `gbrain setup claude-code` or `codex`) writes `self_upgrade.channel: stable`, so the update check and `gbrain upgrade` offer only stable releases. `#latest-stable` keeps working as the alpha line with every release. An existing brain is not changed, because a re-init never sets or alters its channel.
