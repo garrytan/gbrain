@@ -594,8 +594,9 @@ git push origin "+refs/tags/v<VERSION>^{commit}:refs/tags/latest-stable"
 The stable channel is a slower ref than `latest-stable`: a release reaches it
 only after the production-shaped soak passed on its exact git tree. A
 maintainer promotes with `.github/workflows/promote-stable.yml`
-(`scripts/promote-stable.ts`), weekly or whenever a soak passes; both go
-through the same dispatch:
+(`scripts/promote-stable.ts`), or the scheduled
+[daily stable check](#daily-stable-check) promotes by rule; manual promotions and
+rollbacks go through the same dispatch:
 
 ```bash
 gh workflow run promote-stable.yml -f version=<VERSION> \
