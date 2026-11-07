@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Security wave from a /cso audit: three remote-surface holes closed on `gbrain serve --http` and `gbrain mcp expose`.** A write-scoped token could replace, through `POST /ingest`, pages that every MCP write refuses it: another member's `readable_by` page, an owner `visibility: private` page, another member's fact page. A read-scoped caller could make `search_by_image` read a file on the brain host by passing a `file://` URI or an absolute path as `image_url`, which echoed the file's first bytes, sent server images to the embedding provider, or hung or exhausted the server. And an unsigned GitHub push webhook answered whether a repository was wired to the brain, its tracked branch and its source id before checking the signature. A default keyless install (stdio MCP, no HTTP surface) was not exposed to any of them.
+
+### Itemized changes
+
+- `src/commands/serve-http-webhooks.ts`, `src/core/minions/handlers/ingest-capture.ts`: `POST /ingest` stores the caller's token or OAuth client on the job. The route answers `404 page_not_found` for an `X-Gbrain-Slug` the caller cannot read and `403 permission_denied` for a member fact page or the scope page, and queues nothing. The job checks the same writer again right before it writes, so a page restricted after the 202 is still refused, and a queued webhook job with no stored writer is checked as a guest. Fresh slugs and pages the caller can read import as before.
+- `src/core/ops/image.ts`, `src/core/search/image-loader.ts`: `search_by_image` accepts only an http(s) `image_url` from any caller that is not the trusted local CLI, and refuses `image_path` unless the context says the caller is local. The loader reads local paths only when its caller opts in, and checks for a regular file and the size cap before it reads.
+- `src/commands/serve-http-webhooks.ts`: a push event is verified against the source's secret before anything about the repository is answered. An unknown repository, a source with no secret and a bad signature all get the same `401 signature_mismatch`; the missing-secret case is logged on the server with the command that sets it.
+- Tests: `test/serve-http-ingest-member-access.test.ts` (real token verifier and Express route, two members), `test/search-by-image-op.test.ts`, `test/cross-modal-phase2.test.ts` and `test/serve-http-github-push-webhook.test.ts`.
+
 ## [0.60.599.0] - 2026-11-07
 
 **A page write refused `source_changed` now says why in its receipt, and a source can opt in to having a `remember`, `capture` or `add_timeline_entry` adopt an uncommitted local edit instead of being refused.** Before, only `pending_import`, `sync_held` and `canonical_file_missing` refusals carried a cause, so a write lost to a hand edit, an occupied path or a file that moved mid-write looked the same in `gbrain write-request` and doctor. Every `source_changed` refusal now records `error_detail.origin`. With `persistence.adopt_local_edits.source.<id>` on (off by default), a one-sided local edit (Git `HEAD` still holds the database's copy, or any edit on a repo-less brain) is committed as its own write first, then the caller's write lands on top. Keep the flag off until the follow-ups in #8755 are done.
