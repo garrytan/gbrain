@@ -344,6 +344,31 @@ describe('live stall line during a pass (B6)', () => {
     } finally { err.restore(); }
   });
 
+  // The next night's owner-kill stall: between two queued heads the head was claimed (the consumer publishing the dead
+  // serve's writes) for two minutes. Claimed reads print the claim's own age and never moved the queued-head clock, so the
+  // next queued head counted from the last queued read and printed "stalled 150s on queued".
+  test('a claimed head between two queued heads is progress: the next queued head counts from the read before it', async () => {
+    const err = captureStderr();
+    try {
+      let now = 0, reads = 0;
+      const t0 = Date.now();
+      const publishing: DrainClaim = { phase: 'publishing', step: null, waiting_on: null, step_age_ms: 2_000, claim_age_ms: 2_000, lapsed: false,
+        owner_pid: null, owner_kind: null, owner_nonce: null, last_sql: null, allowance_ms: 150_000, ceiling_ms: 600_000 };
+      const head: StallProbe['head'] = async () => {
+        reads++; now += 10_000;
+        if (reads === 1) return { head_state: 'queued', claim: null, request_id: 'r1' };
+        if (reads <= 7) return { head_state: 'claimed', claim: publishing, request_id: `c${reads}` };
+        return { head_state: 'queued', claim: null, request_id: 'r2' };
+      };
+      await runDrain({ announce: true, progressMs: PROGRESS, governMs: 60_000, clock: () => now + (Date.now() - t0) / 10, probe: headProbe(head), pass: async () => {
+        expect(await until(() => err.stalled().length >= 9, 30 * PROGRESS)).toBe(true);
+        return done();
+      } });
+      const ages = err.stalled().slice(0, 9).map(line => Number(/stalled (\d+)s on (?:queued|publishing)/.exec(line)?.[1]));
+      expect(ages).toEqual([10, 2, 2, 2, 2, 2, 2, 10, 20]);
+    } finally { err.restore(); }
+  });
+
   test('a head read that rejects or hangs never escapes the ticker or stacks; announce off never reads', async () => {
     const err = captureStderr();
     try {

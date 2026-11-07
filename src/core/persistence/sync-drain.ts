@@ -370,20 +370,21 @@ function stallText(index: number, total: number | null, stalledMs: number, claim
     + `${seen.consumer ? ` · consumer=${seen.consumer}` : ''}${seen.blocked_by ? ` · blocked_by=${headBlockerText(seen.blocked_by)}` : ''}`;
 }
 
-/** Re-enter `pass` until the managed cursor is done, the caller stops it, or it is blocked. */
 /**
  * The in-pass line's age of an unclaimed head. A head that moved since the last read is the writer making progress (it
  * commits requests queued ahead of this pass, a dead owner's in-flight writes among them), so the age counts from that
- * read, never from before `floor` (the drain's own last commit).
+ * read, never from before `floor` (the drain's own last commit). Every head read feeds it, a claimed head's included,
+ * whose line keeps the claim's own step age when it has one.
  */
-function inPassHeadAge(): (requestId: string | null | undefined, at: number, floor: number) => number {
+function inPassHeadAge(): (requestId: string | null | undefined, at: number, floor: number, claimAgeMs?: number | null) => number {
   let seen: { id: string | null | undefined; at: number; since: number } | null = null;
-  return (id, at, floor) => {
+  return (id, at, floor, claimAgeMs) => {
     seen = { id, at, since: seen && seen.id !== id ? seen.at : seen?.since ?? floor };
-    return at - Math.max(floor, seen.since);
+    return claimAgeMs ?? at - Math.max(floor, seen.since);
   };
 }
 
+/** Re-enter `pass` until the managed cursor is done, the caller stops it, or it is blocked. */
 export async function runDrain(input: DrainInput): Promise<SyncResult> {
   const clock = input.clock ?? Date.now;
   const startedAt = clock(), headAge = inPassHeadAge();
@@ -422,7 +423,7 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
     Promise.resolve().then(() => probe.head!()).then(head => {
       if (!head || !inPass || stall || clock() - lastCommitAt < every || tickAt - lastLine < every) return;
       lastLine = tickAt;
-      serr(stallText(index, total, head.claim?.step_age_ms ?? headAge(head.request_id, clock(), lastCommitAt), head.claim, head.head_state, head));
+      serr(stallText(index, total, headAge(head.request_id, clock(), lastCommitAt, head.claim?.step_age_ms), head.claim, head.head_state, head));
     }).catch(() => undefined).finally(() => { readingHead = false; });
   }, every) : null;
   stallLine?.unref?.();
