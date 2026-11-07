@@ -187,7 +187,7 @@ async function handleGitHubItemEvent(
       [ref.repo],
     );
     const { verified, legacyMatched } = selectGitHubItemSources(rows, ref.repo, (cfg) =>
-      webhookSignatureMatches(cfg.webhook_secret, sigHeader, payload),
+      verifyWebhookSig(cfg.webhook_secret, sigHeader, payload),
     );
     if (verified.length > 1) {
       res.status(500).json({
@@ -265,7 +265,7 @@ const THROWAWAY_WEBHOOK_KEY = randomBytes(32);
  * signature "match", and the strict hex shape is checked first because a malformed 64-char signature makes
  * safeHexEqual throw (500 instead of 401).
  */
-function webhookSignatureMatches(secret: unknown, sigHeader: string, payload: Buffer): boolean {
+function verifyWebhookSig(secret: unknown, sigHeader: string, payload: Buffer): boolean {
   const keyed = typeof secret === 'string' && secret !== '';
   const computedHex = createHmac('sha256', keyed ? secret : THROWAWAY_WEBHOOK_KEY).update(payload).digest('hex');
   const matches = /^sha256=[0-9a-f]{64}$/.test(sigHeader) && safeHexEqual(sigHeader.slice('sha256='.length), computedHex);
@@ -742,7 +742,7 @@ function mountGitHubWebhook(app: Express, ctx: ServeHttpContext): void {
       // bad signature all get the same 401 after the same HMAC work, so an unsigned request cannot tell which
       // repositories this brain syncs.
       const secret = cfg.webhook_secret;
-      const verified = webhookSignatureMatches(secret, sigHeader, payload);
+      const verified = verifyWebhookSig(secret, sigHeader, payload);
       if (!source || !verified) {
         if (source && !(typeof secret === 'string' && secret)) console.error(`webhook: push for source ${source.id} refused: no webhook secret is set (run: gbrain sources webhook set ${source.id})`);
         res.status(401).json({ error: 'signature_mismatch' });
