@@ -138,7 +138,7 @@ describe('check-bootstrap-tag.sh', () => {
       (dir) => {
         const r = runGuard(TAG_GUARD, dir);
         expect(r.status).toBe(1);
-        expect(r.out).toContain("unsanctioned ref 'latest-stable'");
+        expect(r.out).toContain("unsanctioned ref 'latest-stable'"); // pregate-literal: SANCTIONED=latest-stable the refused alpha ref is this test's input
         expect(r.out).toContain("'#latest-stable'");
       },
     );
