@@ -148,6 +148,26 @@ export function scheduleAuthorized(env: NodeJS.ProcessEnv, repo: string): boolea
   return env.GITHUB_EVENT_NAME === 'schedule' && (env.GITHUB_WORKFLOW_REF ?? '').startsWith(`${repo}/${DAILY_WORKFLOW}@refs/heads/`);
 }
 
+/** The branch release.yml mints release tags from; a scheduled promotion only takes a release whose commit is on it. */
+export const RELEASE_BRANCH_REF = 'refs/remotes/origin/master';
+
+export async function onReleaseBranch(deps: PromoteDeps, commit: string): Promise<boolean> {
+  return (await deps.git(['merge-base', '--is-ancestor', commit, RELEASE_BRANCH_REF])).code === 0;
+}
+
+/** The scheduled daily check promotes by rule; everyone else needs the admin or maintain role. */
+export async function authorize(deps: PromoteDeps): Promise<void> {
+  if (deps.scheduled) {
+    deps.log(`[promote-stable] scheduled daily check (${DAILY_WORKFLOW} on the default branch): promoting by rule.`);
+    return;
+  }
+  // `permission` is the legacy base role (maintain reads as write); `role_name` names maintain.
+  const perm = await deps.ghApi(`repos/${deps.repo}/collaborators/${encodeURIComponent(deps.actor)}/permission`) as { permission?: string; role_name?: string };
+  const role = perm.role_name || perm.permission || 'none';
+  if (perm.permission !== 'admin' && !PROMOTER_ROLES.has(role)) throw new Refusal(`${deps.actor} has the ${role} role on ${deps.repo}; only admins and maintainers promote to stable, so ask one to dispatch this workflow.`);
+  deps.log(`[promote-stable] ${deps.actor} has the ${role} role: allowed to promote.`);
+}
+
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number);
   const pb = b.split('.').map(Number);
@@ -339,15 +359,7 @@ async function recordCurrentStable(deps: PromoteDeps, inputs: PromoteInputs, rel
 export async function promote(deps: PromoteDeps, inputs: PromoteInputs): Promise<Promotion> {
   const { version, rollback, reason } = inputs;
 
-  if (deps.scheduled) {
-    deps.log(`[promote-stable] scheduled daily check (${DAILY_WORKFLOW} on the default branch): promoting by rule.`);
-  } else {
-    // `permission` is the legacy base role (maintain reads as write); `role_name` names maintain.
-    const perm = await deps.ghApi(`repos/${deps.repo}/collaborators/${encodeURIComponent(deps.actor)}/permission`) as { permission?: string; role_name?: string };
-    const role = perm.role_name || perm.permission || 'none';
-    if (perm.permission !== 'admin' && !PROMOTER_ROLES.has(role)) throw new Refusal(`${deps.actor} has the ${role} role on ${deps.repo}; only admins and maintainers promote to stable, so ask one to dispatch this workflow.`);
-    deps.log(`[promote-stable] ${deps.actor} has the ${role} role: allowed to promote.`);
-  }
+  await authorize(deps);
 
   if (!VERSION_RE.test(version)) throw new Refusal(`version "${version}" is not a release version; pass the VERSION of a published release, like 0.60.361.0.`);
   if (rollback && !reason.trim()) throw new Refusal(ROLLBACK_NEEDS_REASON);
@@ -355,6 +367,7 @@ export async function promote(deps: PromoteDeps, inputs: PromoteInputs): Promise
   if (!(await refExists(deps, `${releaseRef}^{commit}`))) throw new Refusal(`There is no release tag v${version}; promote a version release.yml has already published.`);
   const commit = await gitOut(deps, ['rev-parse', `${releaseRef}^{commit}`], `Could not resolve ${releaseRef}; re-run this workflow.`);
   const tree = await gitOut(deps, ['rev-parse', `${releaseRef}^{tree}`], `Could not resolve the tree of ${releaseRef}; re-run this workflow.`);
+  if (deps.scheduled && !(await onReleaseBranch(deps, commit))) throw new Refusal(`v${version} (${commit}) is not on master; the scheduled check only promotes a release minted from master, so a maintainer decides on this one.`);
   const taggedVersion = (await deps.git(['show', `${releaseRef}:VERSION`])).stdout.trim();
   if (taggedVersion !== version) throw new Refusal(`v${version}'s VERSION file says "${taggedVersion || 'nothing'}"; promote a tag release.yml minted for its own VERSION.`);
   let release: { draft?: boolean };

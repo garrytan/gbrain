@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { load } from 'js-yaml';
 import { promote, renderTagMessage, scheduleAuthorized, Refusal, type GitResult } from '../../scripts/promote-stable.ts';
-import { daily, integrityFailures, parseRecord, type DailyDeps, type Scoreboard, type SoakRunRow } from '../../scripts/stable-daily.ts';
+import { daily, integrityFailures, parseRecord, shapeFailures, type DailyDeps, type Scoreboard, type SoakRunRow } from '../../scripts/stable-daily.ts';
 import { parseStableRecord } from '../../src/core/stable-channel.ts';
 
 const ROOT = join(import.meta.dir, '..', '..');
@@ -25,8 +25,9 @@ const REPO = 'garrytan/gbrain';
 const NOW = new Date('2026-11-10T13:17:00Z');
 const sha = (n: number) => String(n).padStart(40, 'c');
 const tree = (n: number) => String(n).padStart(40, 'e');
-const CLEAN: Scoreboard[] = ['rtt2', 'rtt65'].map(label => ({
-  label,
+const CLEAN: Scoreboard[] = [2, 65].map(rtt => ({
+  label: `rtt${rtt}`, rtt_ms: rtt, hours: 2, elapsed_s: 7204, privacy: { probes: 40, probe_errors: 0 },
+  brain: { fixture: { pages: 598_561, options: { pages: 600_000 } } },
   gates: ['privacy_leaks', 'read_errors', 'version_skew', 'residents_alive', 'session_refusals', 'freshness_p95'].map(id => ({ id, pass: id === 'freshness_p95' ? false : true })),
 }));
 const ok = (stdout = ''): GitResult => ({ code: 0, stdout: `${stdout}\n`, stderr: '' });
@@ -35,6 +36,8 @@ const fail: GitResult = { code: 1, stdout: '', stderr: 'fatal: bad revision' };
 interface World {
   /** Linear history: commit n is an ancestor of every commit >= n. */
   head: number;
+  /** origin/master's commit (default head); a release tag above it is off master. */
+  master?: number;
   releases: Record<string, number>;
   stable: { version: string; commit: number; message: string };
   importantPrs?: Array<{ number: number; merge: number }>;
@@ -60,6 +63,7 @@ function world(w: World) {
   };
   for (const [v, c] of Object.entries(w.releases)) tags[`v${v}`] = { commit: c, object: sha(c) };
   const commitOf = (spec: string): number | null => {
+    if (spec === 'refs/remotes/origin/master') return w.master ?? w.head;
     const name = spec.replace(/^refs\/tags\//, '');
     if (tags[name]) return tags[name]!.commit;
     const n = Number.parseInt(spec.replace(/^c+/, ''), 10);
@@ -188,6 +192,16 @@ describe('integrity gates', () => {
     expect(integrityFailures([{ label: 'rtt2', gates: [] }])).toHaveLength(5);
   });
 
+  test('a soak short of the full default shape is not promotable: a missing cell, a short run, a small requested fixture, no clean privacy probes', () => {
+    expect(shapeFailures(CLEAN)).toEqual([]);
+    const smoke: Scoreboard[] = [{ ...CLEAN[0]!, hours: 0.01, elapsed_s: 36, privacy: { probes: 0, probe_errors: 0 } }];
+    expect(shapeFailures(smoke)).toEqual(['no 65 ms cell', 'rtt2: ran 36 s of a 2 h soak', 'rtt2: no privacy probes ran']);
+    const small = CLEAN.map(b => ({ ...b, brain: { fixture: { pages: 1991, options: { pages: 2000 } } } }));
+    expect(shapeFailures(small)).toEqual(['rtt2: a 2000-page fixture, under 600000', 'rtt65: a 2000-page fixture, under 600000']);
+    const errored = CLEAN.map(b => ({ ...b, privacy: { probes: 40, probe_errors: 40 } }));
+    expect(shapeFailures(errored)).toEqual(['rtt2: 40 privacy probe errors', 'rtt65: 40 privacy probe errors']);
+  });
+
   test('parseRecord reads the key: value body of a stable tag', () => {
     expect(parseRecord(stableMessage('1.0.1', '2026-11-08T05:17:00Z', true))).toMatchObject({ version: '1.0.1', rollback: 'true', reason: 'sync regression' });
   });
@@ -293,6 +307,46 @@ describe('daily: weekly floor', () => {
     expect(await daily(none.deps)).toMatchObject({ action: 'dry_run', would: 'dispatch the soak on v1.0.4' });
     expect([...w.pushes, ...none.pushes]).toEqual([]);
     expect([...w.posts, ...none.posts]).toEqual([]);
+  });
+
+  test('a smoke-sized soak with every gate passing is not promoted', async () => {
+    const smoke: Scoreboard[] = [{ ...CLEAN[0]!, hours: 0.01, elapsed_s: 36 }];
+    const w = world(base({ stable: old, runs: [soak(9, 4, { boards: smoke })] }));
+    const r = await daily(w.deps);
+    expect(r.action).toBe('waiting');
+    expect(w.pushes).toEqual([]);
+    expect(w.logs.some(l => l.includes('no 65 ms cell'))).toBe(true);
+  });
+
+  test('a soak on a newer release that did not qualify stops new soak dispatches, with a warning past the weekly floor', async () => {
+    const w = world(base({ stable: old, runs: [soak(9, 3, { conclusion: 'failure' })] }));
+    const r = await daily(w.deps);
+    expect(r).toMatchObject({ action: 'waiting', version: '1.0.4' });
+    expect(r.why).toContain('v1.0.3 already had a soak');
+    expect(w.posts).toEqual([]);
+    expect(w.logs.some(l => l.startsWith('::warning::') && l.includes('past the 7-day floor'))).toBe(true);
+  });
+
+  test('a release tag whose commit is not on master is never soaked or promoted by the schedule', async () => {
+    const w = world(base({ stable: old, master: 3, runs: [soak(9, 3), soak(10, 4)] }));
+    const r = await daily(w.deps);
+    expect(r.action === 'promoted' && r.promotion.version).toBe('1.0.3');
+    expect(w.logs.some(l => l.includes('skipping v1.0.4'))).toBe(true);
+    const fresh = world(base({ stable: old, master: 3 }));
+    expect(await daily(fresh.deps)).toMatchObject({ action: 'soak_dispatched', version: '1.0.3' });
+    const direct = world(base({ master: 3, runs: [soak(10, 4)] }));
+    const error = await promote(direct.deps, { version: '1.0.4', soakRunUrl: `https://github.com/${REPO}/actions/runs/10`, scoreboardUrl: '', rollback: false, reason: '' }).then(() => null, e => e);
+    expect(error).toBeInstanceOf(Refusal);
+    expect((error as Error).message).toMatch(/not on master/);
+  });
+
+  test('a manual dispatch with dry_run=false needs the maintainer role before it dispatches anything', async () => {
+    const w = world(base({ stable: old, scheduled: false }));
+    const error = await daily(w.deps).then(() => null, e => e);
+    expect(error).toBeInstanceOf(Refusal);
+    expect((error as Error).message).toMatch(/has the none role/);
+    expect(w.posts).toEqual([]);
+    expect(w.pushes).toEqual([]);
   });
 
   test('never moves stable backward: only releases newer than stable are candidates', async () => {
