@@ -53,3 +53,15 @@ describe('the TLA+ workflow runs when anything a refresh-barrier mutant names ch
     expect(workflow).toContain('spec: [drain-lease, refresh-barrier]');
   });
 });
+
+describe('spec/tla/README.md documents the refresh-barrier mutants', () => {
+  test('its mutant table lists exactly the catalogued mutants, each with its kind and the invariant that catches it', () => {
+    const readme = readFileSync(join(ROOT, 'spec/tla/README.md'), 'utf8');
+    const section = readme.slice(readme.indexOf('## refresh-barrier:'));
+    const table = section.slice(section.indexOf('### Mutants'), section.indexOf('\n### ', section.indexOf('### Mutants') + 1));
+    const rows = [...table.matchAll(/^\| `([\w-]+)` \| (guard|survivor) \| ([^|]+) \|/gm)]
+      .map(m => ({ id: m[1]!, kind: m[2]!, caught: m[3]!.trim().split(' ')[0]! }));
+    const { mutants } = JSON.parse(read('mutants.json')) as { mutants: Array<{ id: string; kind: string; expect: string }> };
+    expect(rows).toEqual(mutants.map(m => ({ id: m.id, kind: m.kind, caught: m.kind === 'guard' ? '`' + m.expect + '`' : '—' })));
+  });
+});
