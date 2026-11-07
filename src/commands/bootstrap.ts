@@ -110,6 +110,7 @@ import {
 } from '../core/bootstrap/status.ts';
 import { verifyWorkspace, resolveVerifySourceId, deriveWorkspaceSourceId } from '../core/bootstrap/verify.ts';
 import { auditWritebackContract, repairWritebackContract } from '../core/bootstrap/contract.ts';
+import { INSTALL_PIN } from '../core/install-ref.ts';
 
 export const BOOTSTRAP_HELP = `gbrain bootstrap — paste-in agent install (Claude Code / Codex / opencode)
 
@@ -721,7 +722,7 @@ async function runStatus(ws: string, rest: string[], home: string): Promise<numb
   if (report.runbookSkew) {
     console.log(
       `\nWARNING: runbook stamp ${report.runbookSkew.runbookStamp} != installed binary ${report.runbookSkew.binaryVersion} — ` +
-        'prefer the binary; re-fetch the runbook from the latest-stable ref.',
+        'prefer the binary; re-fetch the runbook from the stable ref.',
     );
   }
   console.log('\nSupport (relay verbatim when something is broken):');
@@ -1127,7 +1128,7 @@ async function runHooks(
   if (!gbrainBin) {
     console.error(
       'cannot resolve an absolute gbrain binary path (GUI hosts inherit no PATH) — ' +
-        'install gbrain globally (`bun install -g github:garrytan/gbrain#latest-stable`) or pass --gbrain-bin <abs path>',
+        `install gbrain globally (\`bun install -g ${INSTALL_PIN}\`) or pass --gbrain-bin <abs path>`,
     );
     return 2;
   }

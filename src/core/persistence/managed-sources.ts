@@ -33,7 +33,7 @@ export function managedSourceAddInput(opts:AddSourceOpts):SourceLifecycleInput{
     throw new OperationError('invalid_params','force and federated must be boolean values.','Pass force and federated as true or false, or omit them.');
   let path=opts.localPath?resolve(msysToNativePath(opts.localPath)):undefined;
   let config:Record<string,unknown>=opts.federated==null?{}:{federated:opts.federated};
-  if(opts.remoteUrl){path=resolve(opts.cloneDir??defaultCloneDir(opts.id));config={...config,remote_url:opts.remoteUrl,managed_clone:true};}
+  if(opts.remoteUrl){path=resolve(opts.cloneDir??defaultCloneDir(opts.id));config={...config,remote_url:opts.remoteUrl,managed_clone:true,...(opts.addedByRemoteCaller?{added_by_remote_caller:true}:{})};}
   if(opts.github){
     const gh=opts.github;path=resolve(msysToNativePath(gh.dir));
     config={kind:'github',gh_token_env:gh.tokenEnv,gh_handle:gh.handle,gh_scope:gh.scope,gh_repos:gh.repos.join(','),gh_involvement:gh.involvement,

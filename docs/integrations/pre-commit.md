@@ -71,7 +71,11 @@ the generated shell script could not carry safely (`skipped, source path
 contains a line terminator; refusing to install hook`), or `.githooks/` /
 `.githooks/pre-commit` is a symlink (`Refusing to write through a symlink: …`
 — the installer never writes or removes through the link; the other sources
-still install).
+still install). A clone whose own (`--local`) config sets `core.hooksPath` to
+`/dev/null` (a URL source a remote caller added: hooks off on purpose) is also
+skipped (`skipped — hooks are off in this clone on purpose …`) with nothing
+written, `--force` included; a global or system `/dev/null` value does not
+count.
 
 ## Bypass
 

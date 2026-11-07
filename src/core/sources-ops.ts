@@ -155,6 +155,8 @@ export interface AddSourceOpts {
   expectedIncarnation?: string;
   localPath?: string | null;
   remoteUrl?: string;
+  /** The URL came from a remote caller: its clone and every later pull run without git-lfs downloads. */
+  addedByRemoteCaller?: boolean;
   federated?: boolean | null;
   /**
    * Override clone destination. Defaults to $GBRAIN_HOME/clones/<id>/.
@@ -559,7 +561,7 @@ export async function addSource(
     mkdirSync(dirname(tempDir), { recursive: true });
 
     try {
-      cloneRepo(parsedUrl.url, tempDir);
+      cloneRepo(parsedUrl.url, tempDir, { skipLfs: opts.addedByRemoteCaller === true });
     } catch (e) {
       // Clone failed before we've touched the DB. tempDir may or may not
       // exist; nuke it just in case.
@@ -574,10 +576,8 @@ export async function addSource(
     // recloneIfMissing to rm+replace this clone — gbrain created it, here or at
     // a --clone-dir path. A user-tree row (created by an external INSERT, no
     // --url) never carries this, so it can never be deleted by reclone.
-    const config: Record<string, unknown> = {
-      remote_url: parsedUrl.url,
-      managed_clone: true,
-    };
+    const config: Record<string, unknown> = { remote_url: parsedUrl.url, managed_clone: true };
+    if (opts.addedByRemoteCaller) config.added_by_remote_caller = true;
     if (opts.federated !== null && opts.federated !== undefined) {
       config.federated = opts.federated;
     }
@@ -1093,6 +1093,12 @@ export async function getSourceStatus(
 
 // ── recloneIfNeeded (used by sources.ts restore path) ──────────────────────
 
+/** A source a remote caller added by URL never downloads git-lfs objects: its repository names the LFS endpoint. */
+export function lfsDownloadsOff(config: unknown): boolean {
+  const parsed = typeof config === 'string' ? (() => { try { return JSON.parse(config) as unknown; } catch { return null; } })() : config;
+  return (parsed as Record<string, unknown> | null)?.added_by_remote_caller === true;
+}
+
 /**
  * Re-clone a source's remote_url into its local_path if the clone is
  * missing on disk. Used by `gbrain sources restore` after an operator
@@ -1148,7 +1154,7 @@ export async function recloneIfMissing(
   const rand = randomBytes(6).toString('hex');
   const tempDir = join(parent, `.gbrain-reclone-${basename(src.local_path)}-${rand}`);
   try {
-    cloneRepo(remoteUrl, tempDir);
+    cloneRepo(remoteUrl, tempDir, { skipLfs: lfsDownloadsOff(src.config) });
   } catch (e) {
     rmSync(tempDir, { recursive: true, force: true });
     if (e instanceof GitOperationError) {

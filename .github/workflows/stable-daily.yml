@@ -1,0 +1,67 @@
+name: Stable daily
+
+# The daily stable check (docs/RELEASING.md#daily-stable-check,
+# scripts/stable-daily.ts). Twice a day it promotes the newest release whose
+# exact tree passed the production soak with every integrity gate clean, but
+# only when a reason exists: a merged PR labelled stable:important that is
+# released but not yet in stable, or stable older than 7 days (the weekly
+# floor). With nothing to promote yet it dispatches one soak on the newest
+# release, and a later run promotes it. It never promotes without that soak,
+# never moves stable backward, pauses while stable is a rollback, and does
+# nothing while the STABLE_AUTO_PROMOTE repository variable is "off".
+# When the published stable.json is missing or names another commit than
+# stable, a run first writes the record for the current stable from its tag
+# message (no tag moves) and stops (GBRA-346).
+#
+# A schedule event runs only this file as merged on the default branch, so a
+# scheduled run promotes by rule without a maintainer
+# (scripts/promote-stable.ts scheduleAuthorized). A dispatch defaults to a
+# dry run; a dispatch with dry_run=false needs an admin or maintainer, exactly
+# like promote-stable.yml. Rollback stays a maintainer dispatch of
+# promote-stable.yml with rollback=true and a reason.
+#
+# Inputs reach the script through env only. No dependency install runs in
+# this job, so the checkout credentials that push the tags are only ever used
+# by git.
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+    - cron: '17 13 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Report what the check would do and change nothing
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write  # push the stable-v<version> and stable tags and the stable-record branch (stable.json)
+  actions: write   # read soak runs and their scoreboards; dispatch a soak
+
+concurrency:
+  group: promote-stable
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      - name: Daily stable check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STABLE_SOAK_WORKFLOW: ${{ vars.STABLE_SOAK_WORKFLOW }}
+          STABLE_AUTO_PROMOTE: ${{ vars.STABLE_AUTO_PROMOTE }}
+          DAILY_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          git config user.name "gbrain-release-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bun run scripts/stable-daily.ts

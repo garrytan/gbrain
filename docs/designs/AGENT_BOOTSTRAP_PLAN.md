@@ -459,7 +459,7 @@ ChatGPT-app user). CLIs come along via shared machinery.
 - [C1 = D6-A, decided by Garry] **Distribution ref: single `latest-stable` ref.** The
   release job force-updates `latest-stable` to the just-verified release commit as its
   FINAL step (after binary assets publish + provenance attestation). README paste
-  block, runbook URL, and `bun install -g github:garrytan/gbrain#latest-stable` all
+  block, runbook URL, and `bun install -g github:garrytan/gbrain#stable` all
   reference it permanently — no per-release tag pins, no 404 window, no per-ship
   README edits. The fetched runbook embeds the concrete VERSION it was cut from;
   `bootstrap status` compares that stamp to the installed binary (skew check intact).

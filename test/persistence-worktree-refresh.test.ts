@@ -44,6 +44,7 @@ import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { commitFile, git, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
@@ -1098,6 +1099,35 @@ test('13c. a committed write whose publisher still holds the worktree lock (reco
     await publisherFinishes;
     expect(result).toMatchObject({ status: 'completed', target_head: target });
   } finally { await clear(); }
+}), 120_000);
+
+test('13e. a write the consumer claimed and is still preparing holds the drain until it finishes', () => each(async f => {
+  f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  const requestId = randomUUID();
+  let reached!: () => void; const preparing = new Promise<void>(resolve => { reached = resolve; });
+  let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
+  installFaultHook(async (point, detail) => { if (point === 'consumer:preparing' && detail.requestId === requestId) { reached(); await held; } });
+  const points: string[] = [];
+  let write: Promise<unknown> | undefined;
+  let refresh: Promise<{ status: string }> | undefined;
+  try {
+    write = f.put(f.alpha, 'notes/preparing', page('Preparing', 'claimed before the refresh started'), requestId);
+    await preparing;
+    const [claimed] = await f.engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [requestId]);
+    expect(claimed!.state).toBe('running');
+    refresh = refreshWorktree(f.engine, f.alpha, { hooks: { boundary: async point => { points.push(point); } } });
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    expect(points).toEqual([]);
+    release();
+    await write;
+    expect((await refresh).status).toBe('completed');
+    expect(points[0]).toBe('drained');
+  } finally {
+    release();
+    installFaultHook(undefined);
+    await write?.catch(() => undefined);
+    await refresh?.catch(() => undefined);
+  }
 }), 120_000);
 
 test('13d. a publisher that clears its record and releases the lock between the precheck probe and its lock attempt is not refused', () => each(async f => {
