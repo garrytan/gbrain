@@ -61,7 +61,7 @@ const COMPLETIONS: Record<string, number> = {
 };
 /** An UPDATE of persistence_requests assigning `state` in its SET list, with the statement text up to the closing backtick. */
 const REQUEST_STATE = /UPDATE\s+persistence_requests\b(?:(?!\bWHERE\b)[^`;])*?\bSET\b(?:(?!\bWHERE\b)[^`;])*?(?<![.\w])state\s*=\s*([^,\n]+)[^`]*/g;
-const NON_TERMINAL = /^'(?:queued|running|recovering)'$/;
+const NON_TERMINAL = /^'(?:queued|deferred|running|recovering)'$/;
 /** A CASE that only keeps the current state or moves it to a non-terminal one. */
 const NON_TERMINAL_CASE = (statement: string) => [...statement.matchAll(/\bTHEN\s+('[a-z_]+'|state)\b/g)].every(m => m[1] === 'state' || NON_TERMINAL.test(m[1]!));
 
