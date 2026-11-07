@@ -49,6 +49,7 @@
  */
 
 import { splitProviderModelId } from '../model-id.ts';
+import { deepseek } from './recipes/deepseek.ts';
 
 export interface ThinkingOffControl {
   /** The provider-options namespace and the keys set there; absent when the route has no per-call option. */
@@ -109,10 +110,19 @@ function openaiControl(model: string): ThinkingOffControl | undefined {
 }
 
 /** The thinking-off capability of a route, or undefined when the table has no row for it. */
-export function thinkingOffControl(modelStr: string): ThinkingOffControl | undefined {
+export function thinkingOffControl(modelStr: string, baseURL?: string): ThinkingOffControl | undefined {
   const { provider, model: rawModel } = splitProviderModelId(modelStr);
   if (!provider) return undefined;
   const model = rawModel.trim().toLowerCase();
+  // A custom DeepSeek lane can serve any OpenAI-compatible API. Only the
+  // native origin supports this switch; paths on that origin remain native.
+  if (provider === 'deepseek' && baseURL !== undefined) {
+    try {
+      if (new URL(baseURL).origin !== new URL(deepseek.base_url_default!).origin) return undefined;
+    } catch {
+      return undefined;
+    }
+  }
   if (provider === 'anthropic' || provider === 'deepseek') return { set: { namespace: provider, options: THINKING_DISABLED }, disables: true };
   if (provider === 'openrouter') return model.startsWith('deepseek/') ? { set: { namespace: provider, options: THINKING_DISABLED }, disables: true } : undefined;
   if (provider === 'google') return googleControl(model);
@@ -124,8 +134,9 @@ export function thinkingOffControl(modelStr: string): ThinkingOffControl | undef
 export function applyThinkingOff(
   providerOptions: Record<string, any>,
   modelStr: string,
+  baseURL?: string,
 ): Record<string, any> {
-  const set = thinkingOffControl(modelStr)?.set;
+  const set = thinkingOffControl(modelStr, baseURL)?.set;
   if (!set) return providerOptions;
   providerOptions[set.namespace] = { ...(providerOptions[set.namespace] ?? {}), ...set.options };
   return providerOptions;
@@ -142,8 +153,9 @@ export function thinkingOffMaxOutputTokens(
   requested: number,
   thinkingByDefault: boolean,
   headroom: number,
+  baseURL?: string,
 ): number {
-  const control = thinkingOffControl(modelStr);
+  const control = thinkingOffControl(modelStr, baseURL);
   const keepsReasoning = control ? !control.disables : thinkingByDefault;
   return keepsReasoning ? Math.max(requested, headroom) : requested;
 }
