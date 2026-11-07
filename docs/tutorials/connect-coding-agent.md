@@ -37,7 +37,7 @@ here using the actual harness adapter.
 Install Bun if needed, then the canonical GBrain distribution:
 
 ```bash
-bun install -g github:garrytan/gbrain#latest-stable
+bun install -g github:garrytan/gbrain#stable
 gbrain engine status --json
 ```
 

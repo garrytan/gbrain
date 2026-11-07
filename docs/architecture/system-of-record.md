@@ -292,7 +292,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/persistence/derived-facts.ts` (1): the gated conversation fact insert (`insertDerivedFacts`) on unmanaged brains, in `writeDerivedFacts`' `maintenanceTransaction` at the page's derived tier.
 - `src/core/persistence/derived-retirement-hold.ts` (3): `retireDerivedPages` versions, soft-deletes and stamps retired derived pages (unmanaged extract_atoms stale atoms) in 500-page `maintenanceTransaction` chunks.
 - `src/core/persistence/facts-prepare.ts` (3): managed `extract_facts` request preparer.
-- `src/core/persistence/file-repair.ts` (2): `managed_file_repair` request preparer (#5988).
+- `src/core/persistence/file-repair.ts` (3): `managed_file_repair` request preparer (#5988); a GST-1601 adoption tags the page_versions rows its import wrote with `change_reason = 'adopted_local_edit'` inside the same coordinated publication, attributed to the adoption request.
 - `src/core/persistence/links-maintenance.ts` (1): coordinated maintenance.
 - `src/core/persistence/loop-fact-retirement.ts` (1): request preparer.
 - `src/core/persistence/forget-prepare.ts` (1): `forget` / `forget_fact` request preparer; the struck page files publish first, then the withdrawal's rows in the same publication.

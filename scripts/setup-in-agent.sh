@@ -56,7 +56,7 @@ fi
 if [[ -z "$gbrain_source_ref" ]]; then
   # Resolve the stable tag once; the installed receipt records this immutable
   # commit, so an ordinary repair never upgrades the software implicitly.
-  gbrain_refs=$(git ls-remote https://github.com/garrytan/gbrain.git 'refs/tags/latest-stable' 'refs/tags/latest-stable^{}')
+  gbrain_refs=$(git ls-remote https://github.com/garrytan/gbrain.git 'refs/tags/stable' 'refs/tags/stable^{}')
   gbrain_source_ref=$(printf '%s\n' "$gbrain_refs" | awk '/\^\{\}$/ {print $1; found=1} END {if (!found) exit 1}') || gbrain_source_ref=$(printf '%s\n' "$gbrain_refs" | awk 'NR==1 {print $1}')
 fi
 [[ "$gbrain_source_ref" =~ ^[a-f0-9]{40}$ ]] || { echo 'Could not resolve the GBrain package commit.' >&2; exit 1; }

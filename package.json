@@ -102,7 +102,7 @@
     "test:profile": "bash scripts/profile-tests.sh",
     "test:serial": "bash scripts/run-serial-tests.sh",
     "test:convergence": "GBRAIN_TEST_CONVERGENCE=1 bun --no-env-file test --timeout=3600000 test/sync-convergence.serial.test.ts",
-    "test:tla": "bash scripts/spec/tlc.sh && bun scripts/spec/mutants.ts",
+    "test:tla": "bash scripts/spec/tlc.sh && bun scripts/spec/mutants.ts drain-lease && bun scripts/spec/mutants.ts refresh-barrier",
     "ci:local": "bash scripts/ci-local.sh",
     "ci:local:diff": "bash scripts/ci-local.sh --diff",
     "ci:ubicloud": "bun run scripts/ci-ubicloud.ts",
@@ -251,7 +251,7 @@
     "bun": ">=1.4.4"
   },
   "license": "MIT",
-  "version": "0.60.593.0",
+  "version": "0.60.604.0",
   "overrides": {
     "@ai-sdk/provider-utils": "4.0.56",
     "@hono/node-server": "^2.0.5",

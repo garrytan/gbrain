@@ -315,7 +315,7 @@ with \`GBRAIN_SURFACE=full\` (the server honors it; new sessions pick it up).`}
 
 ## Requirements
 
-- gbrain CLI installed: \`bun install -g github:garrytan/gbrain#latest-stable\`
+- gbrain CLI installed: \`bun install -g github:garrytan/gbrain#stable\`
   (the npm package named \`gbrain\` is unrelated — never \`npm install -g gbrain\`).
 - A brain: \`gbrain init\` (the bundled \`setup\` skill walks the full path).
 `,

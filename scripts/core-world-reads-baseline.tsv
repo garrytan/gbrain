@@ -436,6 +436,10 @@ src/core/git-visible-files.ts	als_store	1	W2: engine scope (decision E) replaces
 src/core/git-visible-files.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/git-visible-files.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/git/commit-guard.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/git/commit-guard.ts	spawn_import	1	W7: process-wide effects move to src/cli; PR B owner-path guard reads git version and hook paths of the worktree it installs into
+src/core/git/commit-ledger.ts	fs_import	1	W7: filesystem boundary moves to the local app; PR B commit ledger appends to <git common dir>/gbrain/commit-ledger.jsonl
+src/core/git/commit-ledger.ts	module_collection	1	W6: per-engine state; PR B ledger location cache keyed by checkout root (git common dir never changes for a root)
+src/core/git/commit-ledger.ts	spawn_import	1	W7: process-wide effects move to src/cli; PR B ledger resolves the git common dir
 src/core/git/commit-push.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/git/commit-push.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/git/commit-push.ts	process_env	7	W6: settings plane out of the core
@@ -683,6 +687,7 @@ src/core/persistence/journal.ts	process_env	1	W6: settings plane out of the core
 src/core/persistence/large-file.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/links-preparation.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/persistence/local-client.ts	fs_import	1	W5: repo-less persistence for hosts
+src/core/persistence/local-edit-adoption.ts	fs_import	1	W5: repo-less persistence for hosts (reads the drifted canonical file it adopts)
 src/core/persistence/maintenance.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/native-file-target.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/native-lock.ts	fs_import	2	W5: repo-less persistence for hosts
@@ -719,6 +724,7 @@ src/core/persistence/reconcile-state.ts	load_config	1	W6: settings plane out of 
 src/core/persistence/reconcile-state.ts	process_env	1	W6: settings plane out of the core
 src/core/persistence/reconcile.ts	load_config	1	W6: settings plane out of the core
 src/core/persistence/recovery-resolve.ts	fs_import	1	W5: repo-less persistence for hosts
+src/core/persistence/refresh-barrier.ts	module_collection	1	W6: per-engine state; PR B bounded cache (32) of the paths each refresh changed, keyed by refresh id and root (an immutable git diff)
 src/core/persistence/resolve-paths.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/root-registry.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/root-registry.ts	spawn_import	1	W7: process-wide effects move to src/cli

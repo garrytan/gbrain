@@ -213,12 +213,17 @@ export interface ConsumerHeartbeat {
 }
 
 type DirectEngine = SqlEngine & Partial<Pick<BrainEngine, 'kind' | 'executeRawDirect'>>;
+/**
+ * What this binary's consumer can drain: `refresh_barrier_1` (v292) claims writes deferred behind a worktree refresh,
+ * `refresh_barrier_import_1` (v294) writes held for an import.
+ */
+export const CONSUMER_CAPABILITIES = ['refresh_barrier_1', 'refresh_barrier_import_1'] as const;
 const RENEW_SQL = `WITH purged AS (
     DELETE FROM persistence_consumers WHERE host_id=$1::uuid AND renewed_at < now() - ($14::integer * interval '1 millisecond') AND NOT (pid=$2::integer AND nonce=$3))
-  INSERT INTO persistence_consumers(host_id,pid,nonce,pid_ns,kind,mode,restart_required,root_barrier_age_ms,pool,host_json_path,persistence_home,minted_under,version,boot_id,process_start,segment_reader)
-  VALUES($1::uuid,$2::integer,$3,$4,$5,$6,$7::boolean,$8::integer,$9::text::jsonb,$10,$11,$12::text::jsonb,$13,$15,$16,true)
+  INSERT INTO persistence_consumers(host_id,pid,nonce,pid_ns,kind,mode,restart_required,root_barrier_age_ms,pool,host_json_path,persistence_home,minted_under,version,boot_id,process_start,segment_reader,capabilities)
+  VALUES($1::uuid,$2::integer,$3,$4,$5,$6,$7::boolean,$8::integer,$9::text::jsonb,$10,$11,$12::text::jsonb,$13,$15,$16,true,ARRAY['${CONSUMER_CAPABILITIES.join("','")}']::text[])
   ON CONFLICT (host_id,pid,nonce) DO UPDATE SET renewed_at=now(),mode=EXCLUDED.mode,restart_required=EXCLUDED.restart_required,
-    root_barrier_age_ms=EXCLUDED.root_barrier_age_ms,pool=EXCLUDED.pool,version=EXCLUDED.version,segment_reader=EXCLUDED.segment_reader`;
+    root_barrier_age_ms=EXCLUDED.root_barrier_age_ms,pool=EXCLUDED.pool,version=EXCLUDED.version,segment_reader=EXCLUDED.segment_reader,capabilities=EXCLUDED.capabilities`;
 
 /**
  * Starts this process's heartbeat row for `hostId` and renews it every
