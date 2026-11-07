@@ -248,6 +248,59 @@ describe('#6620: the facts guide documents CJK subject inference as it behaves',
   });
 });
 
+describe('capture-stream openers are no name evidence', () => {
+  // Capture tools (screen, meeting and media loggers) open facts with a log verb
+  // or label. Unresolved at sentence start, it must not veto the one real name.
+  const LINKS: Array<[string, string]> = [
+    ['Watched the launch demo with Alice Example', 'people/alice-example'],
+    ['Watching the Acme Example keynote', 'companies/acme-example'],
+    ['Watched Acme Example demo day', 'companies/acme-example'],
+    ['Captured notes from the Acme Example call', 'companies/acme-example'],
+    ['Capturing the Acme Example pricing page', 'companies/acme-example'],
+    ['Capture: Alice Example prefers async updates', 'people/alice-example'],
+    ['Captures from the Acme Example offsite', 'companies/acme-example'],
+    ['Notes from the Acme Example call', 'companies/acme-example'],
+    ['Reviewed the Acme Example contract', 'companies/acme-example'],
+    ['Reviewing the Acme Example contract', 'companies/acme-example'],
+    ['Review of the Acme Example contract', 'companies/acme-example'],
+    ['Logged a call with Alice Example', 'people/alice-example'],
+    ['Log: Alice Example prefers async updates', 'people/alice-example'],
+  ];
+
+  for (const mode of ['write', 'relink'] as const) {
+    test(`${mode}: a capture opener does not veto the single named entity`, async () => {
+      for (const [fact, slug] of LINKS) {
+        expect({ fact, result: await inferFactSubject(engine, 'default', { fact, mode }) })
+          .toEqual({ fact, result: { slug, via: 'mention' } });
+      }
+    });
+
+    test(`${mode}: competing names still veto after a capture opener`, async () => {
+      for (const fact of [
+        'Watched Northstar Example pitch Acme Example',
+        'Notes from the Alice Example and Charlie Example sync',
+        'Captured Bluebird Labs notes for Acme Example',
+      ]) {
+        expect({ fact, result: await inferFactSubject(engine, 'default', { fact, mode }) })
+          .toMatchObject({ fact, result: { slug: null, reason: 'ambiguous' } });
+      }
+    });
+  }
+
+  test('a name that starts with a label opener keeps it, and a real entity named like one competes', async () => {
+    await page('companies/notes-example', 'Notes Example', 'company');
+    await page('companies/capture', 'Capture', 'company');
+    try {
+      expect(await inferFactSubject(engine, 'default', { fact: 'Notes Example raised a seed round', mode: 'write' }))
+        .toEqual({ slug: 'companies/notes-example', via: 'mention' });
+      expect(await inferFactSubject(engine, 'default', { fact: 'Capture: Alice Example prefers async updates', mode: 'write' }))
+        .toMatchObject({ slug: null, reason: 'ambiguous' });
+    } finally {
+      await engine.executeRaw(`DELETE FROM pages WHERE slug IN ('companies/notes-example', 'companies/capture')`);
+    }
+  });
+});
+
 describe('inferFactSubject scope', () => {
   test('a remote caller never infers a private page', async () => {
     const r = await inferFactSubject(engine, 'default', { fact: 'Dana Private-Example is relocating', mode: 'write', excludePrivate: true });

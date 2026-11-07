@@ -105,13 +105,19 @@ const SENTENCE_OPENERS = new Set([
   'not', 'no', 'yes', 'after', 'before', 'during', 'since', 'until', 'while', 'per', 'via', 're', 'fyi', 'update', 'updated',
   'lunch', 'dinner', 'breakfast', 'coffee', 'drinks', 'call', 'sync', 'standup', 'interview', 'demo', 'pitch', 'board',
   'favorite', 'favourite', 'birthday', 'anniversary', 'allergic', 'vegetarian', 'vegan', 'lives', 'lived', 'works', 'worked',
+  // capture-stream log verbs ("Watched ... with Alice Example", "Captured notes from ...")
+  'captured', 'capturing', 'watched', 'watching', 'reviewed', 'reviewing', 'logged', 'logging',
 ]);
 
 /**
- * #7405: record-label openers ("Invoice total ...", "Work session ..."). Like SENTENCE_OPENERS they are no name evidence
- * when they open a sentence and resolve to no page, but they are never shed from a candidate, so "Work Example" stays a name.
+ * #7405: record-label openers ("Invoice total ...", "Work session ...", "Notes from ..."). Like SENTENCE_OPENERS they are no
+ * name evidence when they open a sentence and resolve to no page, but they are never shed from a candidate, so "Work Example"
+ * and "Notes Example" stay names.
  */
-const LABEL_OPENERS = new Set(['work', 'invoice', 'invoiced', 'billed', 'receipt', 'payment']);
+const LABEL_OPENERS = new Set([
+  'work', 'invoice', 'invoiced', 'billed', 'receipt', 'payment',
+  'capture', 'captures', 'notes', 'log', 'logs', 'watch', 'watches', 'review', 'reviews',
+]);
 
 /** #7405: ISO 4217 codes; one counts as a unit (not a name) only where every use sits next to an amount ("CHF 80", "80 CHF"). */
 const CURRENCY_CODES = new Set(Intl.supportedValuesOf('currency'));
