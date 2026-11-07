@@ -36,7 +36,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { OperationError, opError, type OperationContext } from '../ops/contract.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
-import { isSegmentedPage } from '../page-body/page-shape.ts';
+import { assertInlineBody, isSegmentedPage } from '../page-body/page-shape.ts';
 import { parseMarkdown } from '../markdown.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { gitBlobOid, sha256 } from './digest.ts';
@@ -50,7 +50,7 @@ import { declarePersistenceProtocol } from './protocol.ts';
 import type { WorktreeBinding } from './ownership.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { fileMatchesSnapshot, protectedLocalEdit } from './page-prepare.ts';
-import { blobText, headBlob, headCommit, landedCommit, mergeInProgress, unmergedPath } from './pending-import.ts';
+import { blobText, headBlob, headCommit, landedCommit, operationMarkerPaths, unmergedPath } from './pending-import.ts';
 import { claimOwner } from './claim-phase.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { GitCommitNote } from './effect-model.ts';
@@ -117,19 +117,25 @@ function fenceRows(...texts: Array<string | null | undefined>): Set<string> {
   return new Set(texts.flatMap(text => (text ?? '').split('\n')).map(line => line.trim()).filter(line => /^(- |\|)/.test(line) && !/^\|[\s:|-]*\|?$/.test(line)));
 }
 /**
- * #8755: a stale editor save: the file equals an earlier stored revision's body, or lacks a Facts or timeline row the last
- * revision added (rows the page holds that its newest archived version, the revision before, did not).
+ * #8755: a stale editor save: the file equals one of the last STALE_REVISIONS stored revisions' bodies (matched by hash in
+ * SQL, no version body is loaded), or lacks a Facts or timeline row the last revision added (rows the page holds that its
+ * newest archived version, the revision before, did not). Inline pages only: adoptionIntent refuses a segmented page first.
  */
 async function staleEditorSave(engine: BrainEngine, slug: string, text: string, snapshot: PageSnapshot, activePack: unknown): Promise<boolean> {
+  assertInlineBody(snapshot.page, 'staleEditorSave');
   const file = parseMarkdown(text, slug, { activePack } as never);
-  const body = (compiled: string | null | undefined, timeline: string | null | undefined) => `${(compiled ?? '').trim()}\0${(timeline ?? '').trim()}`;
-  const versions = await engine.executeRaw<{ compiled_truth: string | null; timeline: string | null }>(
-    'SELECT compiled_truth, timeline FROM page_versions WHERE page_id=$1 AND compiled_truth IS NOT NULL ORDER BY id DESC LIMIT $2', [snapshot.page.id, STALE_REVISIONS]);
-  const current = body(snapshot.page.compiled_truth, snapshot.page.timeline);
-  const mine = body(file.compiled_truth, file.timeline);
-  if (mine !== current && versions.some(version => body(version.compiled_truth, version.timeline) === mine)) return true;
-  if (!versions.length) return false;
-  const before = fenceRows(versions[0]!.compiled_truth, versions[0]!.timeline);
+  const [compiled, timeline] = [(file.compiled_truth ?? '').trim(), (file.timeline ?? '').trim()];
+  if (compiled !== (snapshot.page.compiled_truth ?? '').trim() || timeline !== (snapshot.page.timeline ?? '').trim()) {
+    const [earlier] = await engine.executeRaw<{ same: boolean }>(`SELECT EXISTS (SELECT 1 FROM (SELECT compiled_truth, timeline FROM page_versions
+        WHERE page_id=$1 AND compiled_truth IS NOT NULL ORDER BY id DESC LIMIT $2) v
+      WHERE md5(btrim(v.compiled_truth, E' \\t\\r\\n'))=md5($3) AND md5(btrim(COALESCE(v.timeline, ''), E' \\t\\r\\n'))=md5($4)) AS same`,
+    [snapshot.page.id, STALE_REVISIONS, compiled, timeline]);
+    if (earlier?.same) return true;
+  }
+  const [previous] = await engine.executeRaw<{ compiled_truth: string; timeline: string | null }>(
+    'SELECT compiled_truth, timeline FROM page_versions WHERE page_id=$1 AND compiled_truth IS NOT NULL ORDER BY id DESC LIMIT 1', [snapshot.page.id]);
+  if (!previous) return false;
+  const before = fenceRows(previous.compiled_truth, previous.timeline);
   const kept = fenceRows(file.compiled_truth, file.timeline);
   return [...fenceRows(snapshot.page.compiled_truth, snapshot.page.timeline)].some(line => !before.has(line) && !kept.has(line));
 }
@@ -150,7 +156,7 @@ async function adoptionIntent(engine: BrainEngine, row: WriteRequest, target: Lo
   const head = commit ? await headBlob(target.root, target.path) : undefined;
   if (head === null) return null;
   // Conflict markers from a merge, stash pop, cherry-pick or rebase are never adopted (`git add` would mark them resolved).
-  if (commit && (await unmergedPath(target.root, target.path) !== false || await mergeInProgress(target.root) !== false)) return null;
+  if (commit && (await unmergedPath(target.root, target.path) !== false || (await operationMarkerPaths(target.root))?.every(marker => !existsSync(marker)) !== true)) return null;
   const { prepareRepairPublication, repairScreenConfig } = await import('./file-repair.ts');
   const screen = await repairScreenConfig(engine, row.source_id);
   // A checkout whose HEAD holds the database's copy: only the worktree file moved. A repo-less brain has no HEAD to ask.

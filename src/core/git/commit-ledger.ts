@@ -168,6 +168,12 @@ export async function recordIntentAsync(root: string, intent: LedgerIntent): Pro
   await writeLockedAsync(root, loc => intentRecord(loc, intent));
 }
 
+/** One ledger file's text; null when it does not exist, and any other read error is thrown (GST-1623). */
+function readLedgerFile(file: string): string | null {
+  try { return readFileSync(file, 'utf8'); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
+}
+
 /**
  * The retained ledger lines, oldest first (the rotated file, then the current one); unparseable lines are skipped. Only a
  * missing file reads as empty: any other read error throws (GST-1623), so doctor never reads an unreadable ledger as
@@ -176,10 +182,8 @@ export async function recordIntentAsync(root: string, intent: LedgerIntent): Pro
 export function readLedger(common: string): LedgerRecord[] {
   const files = ledgerFiles(common);
   const out: LedgerRecord[] = [];
-  for (const file of [files.rotated, files.current]) {
-    let text: string;
-    try { text = readFileSync(file, 'utf8'); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
+  for (const text of [readLedgerFile(files.rotated), readLedgerFile(files.current)]) {
+    if (text === null) continue;
     for (const raw of text.split('\n')) {
       if (!raw) continue;
       try {

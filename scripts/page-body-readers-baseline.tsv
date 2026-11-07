@@ -459,6 +459,8 @@ src/core/persistence/large-page-guard.ts	assertLargePageAdmission	sql	META	store
 src/core/persistence/links-maintenance.ts	extractManagedStaleLinks	field	NONE	not the page body: result.timeline counter
 src/core/persistence/links-maintenance.ts	formatManagedStaleExtraction	field	NONE	not the page body: result.timeline counter
 src/core/persistence/links-preparation.ts	prepareAutomaticLinks	field	STREAM	reads the incoming parsed page, not a stored body
+src/core/persistence/local-edit-adoption.ts	staleEditorSave	field	INLINE	#8755 stale editor save: adoptionIntent refuses a segmented page before and assertInlineBody asserts it; the equality with earlier versions is an md5 match in SQL, and the row check needs the whole current body and the newest inline version (rows can sit anywhere, and inline versions carry no content_hash)
+src/core/persistence/local-edit-adoption.ts	staleEditorSave	sql	INLINE	#8755 stale editor save: adoptionIntent refuses a segmented page before and assertInlineBody asserts it; the equality with earlier versions is an md5 match in SQL, and the row check needs the whole current body and the newest inline version (rows can sit anywhere, and inline versions carry no content_hash)
 src/core/persistence/loop-fact-retirement.ts	prepareLoopFactRetirement	call:serializePageToMarkdown	SEGW	
 src/core/persistence/loop-fact-retirement.ts	prepareLoopFactRetirement	field	SEGW	
 src/core/persistence/manual-links.ts	prepareManualLinkMutation	call:serializePageToMarkdown	SEGW	wholeBodySnapshot first: a segmented page within 24 MiB is read back whole, a larger one refuses

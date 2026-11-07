@@ -17,7 +17,6 @@
  * is resubmitted by its caller after that sync.
  */
 import { spawn } from '../spawn.ts';
-import { existsSync } from 'node:fs';
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
@@ -127,11 +126,15 @@ export async function unmergedPath(root: string, path: string, signal?: AbortSig
     .then(out => out.length > 0, error => { if (signal?.aborted) throw error; return null; });
 }
 
-/** #8755: whether a merge, cherry-pick, revert or rebase is in progress in `root`'s checkout; null when Git cannot say. */
-export async function mergeInProgress(root: string, signal?: AbortSignal): Promise<boolean | null> {
+/**
+ * #8755: the absolute paths of the markers a merge, cherry-pick, revert or rebase in progress leaves in `root`'s git dir
+ * (MERGE_HEAD, CHERRY_PICK_HEAD, REVERT_HEAD, rebase-merge, rebase-apply); null when Git cannot name them. The caller
+ * checks which exist.
+ */
+export async function operationMarkerPaths(root: string, signal?: AbortSignal): Promise<string[] | null> {
   const markers = ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply'];
   return gitRead(root, ['rev-parse', '--path-format=absolute', ...markers.flatMap(marker => ['--git-path', marker])], signal)
-    .then(out => { const paths = out.split('\n').filter(Boolean); return paths.length === markers.length ? paths.some(path => existsSync(path)) : null; },
+    .then(out => { const paths = out.split('\n').filter(Boolean); return paths.length === markers.length ? paths : null; },
       error => { if (signal?.aborted) throw error; return null; });
 }
 
