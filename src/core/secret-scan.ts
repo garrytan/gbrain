@@ -202,10 +202,14 @@ const PROVIDER_KEYS_SINCE = '0.60.502.0';
  * holding such an escape, so every other line runs the old pattern list. A
  * backslash or `%` that does not start an escape is not a boundary.
  */
-const ESCAPE_BOUNDARY = '(?:\\\\(?:[bfnrt]|u[0-9A-Fa-f]{4})|%[0-9A-Fa-f]{2})';
-const ESCAPE_IN_LINE_RE = /\\[bfnrtu]|%[0-9A-Fa-f]{2}/;
+// #8266: serialized C/Python escapes, quoted-printable '=' and terminal SGR
+// sequences also end in word characters. Match their wire spelling, not decoded
+// text: every claim/fingerprint and splice must retain its original offsets.
+const SGR_BOUNDARY = '(?:\u001b|\\\\x1[bB]|\\\\u001[bB]|\\^\\[)\\[[0-9;:]{0,64}m';
+const ESCAPE_BOUNDARY = `(?:${SGR_BOUNDARY}|\\\\(?:[bfnrt0v]|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})|%[0-9A-Fa-f]{2}|=3[dD])`;
+const ESCAPE_IN_LINE_RE = /\\[bfnrtuxU0v]|%[0-9A-Fa-f]{2}|=3[dD]|\x1b\[|\^\[\[/;
 const JWT_VALUE = '(eyJ[A-Za-z0-9_-]{8,4096}\\.[A-Za-z0-9_-]{8,4096}\\.[A-Za-z0-9_-]{8,4096})';
-const BEARER_ANCHOR = '[Bb](?:earer|EARER)\\s+)([A-Za-z0-9._~+/=-]{20,})';
+const BEARER_ANCHOR = '[Bb](?:earer|EARER)(?:\\s|%20|\\+|\\\\u0020)+)((?:[A-Za-z0-9._~+/=-]|\\\\/){20,})';
 const BASIC_HEADER = 'authorization\\s{0,16}:\\s{0,16}basic\\s{1,16})([A-Za-z0-9+/=]{4,2048})(?![A-Za-z0-9+/=])';
 const BASIC_BARE = 'basic\\s{1,16})([A-Za-z0-9+/=]{16,2048})(?![A-Za-z0-9+/=])';
 
@@ -328,6 +332,9 @@ const CORE_PATTERNS: ReadonlyArray<CorePattern> = [
     prebuilt: true,
     escaped: `(${ESCAPE_BOUNDARY}${BEARER_ANCHOR}`,
     precheck: (line) => line.includes('earer') || line.includes('EARER'),
+    // A JSON/PHP escaped slash is one token character, not two. Reject short
+    // values without retrying from inside them (the usual validate contract).
+    validate: (value) => value.replaceAll('\\/', '/').length >= 20,
   },
   // Connection strings with inline credentials: the value is exactly the
   // scheme://user:pass@ span (an empty user is allowed — a redis URL whose
