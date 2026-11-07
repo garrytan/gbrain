@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.601.0] - 2026-11-07
 
 **Security wave from a /cso audit: four remote-surface holes closed on `gbrain serve --http` and `gbrain mcp expose`.** A write-scoped token could replace, through `POST /ingest`, pages that every MCP write refuses it: another member's `readable_by` page, an owner `visibility: private` page, another member's fact page. A read-scoped caller could make `search_by_image` read a file on the brain host by passing a `file://` URI or an absolute path as `image_url`, which echoed the file's first bytes, sent server images to the embedding provider, or hung or exhausted the server. And an unsigned GitHub push webhook answered whether a repository was wired to the brain, its tracked branch and its source id before checking the signature. A remote caller adding a source by URL could also make the brain host contact an address the cloned repository names for itself, which the URL check never sees. A default keyless install (stdio MCP, no HTTP surface) was not exposed to any of them.
 
