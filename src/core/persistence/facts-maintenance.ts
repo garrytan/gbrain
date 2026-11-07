@@ -89,7 +89,7 @@ export interface ManagedFactsSession {
   batchKey: string; inputDigest: string; origin: ManagedFactOrigin | null; originalRequestId: string | null;
   completionRequestId: string;
   embedding?: FactEmbeddingSignature | null;
-  /** #6048: the batch is keyed by its input alone and the caller asked to re-admit facts the canonical file check refused. */
+  /** #6048: the batch is keyed by its input alone and the caller asked to re-admit facts the canonical file check refused. #8526: also facts an embedding refusal kept. */
   fileRefusalRetry?: boolean;
   /** #6506: the batch is keyed by its input alone (no request id), so a stored withdrawal refusal would replay on every run. */
   inputKeyed?: boolean;
@@ -117,6 +117,11 @@ export interface ManagedFactsSession {
 
 /** #6048: follow-up batches one extraction may admit for each followed refusal walk (file check, withdrawal, #7602 moved entity). */
 export const MAX_FILE_REFUSAL_RETRIES = 3;
+/**
+ * #8526: the embedding walk gets two facts-absorb jobs of attempts. A store consumer with a stale config refuses each
+ * follow-up, and the worker admitting them cannot see that, so every attempt spends one before the store is repaired.
+ */
+const MAX_EMBEDDING_REFUSAL_RETRIES = 10;
 
 /**
  * #6898 follow-up: the most facts one entity request publishes. A publication holds the brain-wide
@@ -388,7 +393,7 @@ async function collectManagedFacts(engine: BrainEngine, session: ManagedFactsSes
 export async function resumeManagedFacts(engine: BrainEngine, session: ManagedFactsSession): Promise<ManagedFactsResult | null> {
   const stored = await storedBatch(engine, session);
   if (!stored) return null;
-  const files = session.fileRefusalRetry ? await followFileRefusals(engine, session, stored) : stored;
+  const files = session.fileRefusalRetry ? await followEmbeddingRefusals(engine, session, await followFileRefusals(engine, session, stored)) : stored;
   const rows = session.inputKeyed ? await followWithdrawalRefusals(engine, session, files) : files;
   return collectManagedFacts(engine, session, session.entityMoveRetry ? await followEntityMoves(engine, session, rows) : rows);
 }
@@ -422,6 +427,17 @@ const isEntityRequest = (row: WriteRequest) => (row.intent?.kind ?? row.outcome?
  */
 async function followFileRefusals(engine: BrainEngine, session: ManagedFactsSession, stored: WriteRequest[]): Promise<WriteRequest[]> {
   return followRefusals(engine, session, stored, 'file-refusal-retry', row => row.error_code === 'source_changed', readmitRefusedFacts);
+}
+
+/**
+ * #8526: the same walk for a batch the consumer refused because its embedding config did not match the retained vectors.
+ * That cause is often repairable (a store restarted with the right config), and the batch keeps a stored refusal that no
+ * retry could get past. Admission checks the retained signature against the current config, so only a repaired brain gets
+ * a follow-up; after a real model change it refuses again and nothing is admitted. No extraction runs again.
+ */
+async function followEmbeddingRefusals(engine: BrainEngine, session: ManagedFactsSession, stored: WriteRequest[]): Promise<WriteRequest[]> {
+  return followRefusals(engine, session, stored, 'embedding-retry', row => row.error_code === 'embedding_configuration', readmitRefusedFacts,
+    undefined, MAX_EMBEDDING_REFUSAL_RETRIES);
 }
 
 /**
@@ -464,7 +480,7 @@ function withdrawalRefusal(row: WriteRequest): boolean {
  * While every request of the latest batch is terminal and each uncommitted
  * entity request is a `refused` refusal that kept its facts for this input,
  * look for the next follow-up batch (`digest([batchKey, label, n])`), or admit
- * it through `readmit`, at most MAX_FILE_REFUSAL_RETRIES times. With `settle`
+ * it through `readmit`, at most `limit` times. With `settle`
  * (partial mode), only the matching refusals are followed, each admitted batch
  * is settled before the next look, and every other entity request of the batch,
  * and a matching one `readmit` left out, is carried as it stands.
@@ -472,10 +488,10 @@ function withdrawalRefusal(row: WriteRequest): boolean {
 async function followRefusals(engine: BrainEngine, session: ManagedFactsSession, stored: WriteRequest[], label: string,
   refused: (row: WriteRequest) => boolean,
   readmit: (engine: BrainEngine, followUp: ManagedFactsSession, refused: WriteRequest[]) => Promise<WriteRequest[] | null>,
-  settle?: (batch: WriteRequest[]) => Promise<WriteRequest[]>): Promise<WriteRequest[]> {
+  settle?: (batch: WriteRequest[]) => Promise<WriteRequest[]>, limit = MAX_FILE_REFUSAL_RETRIES): Promise<WriteRequest[]> {
   const carried: WriteRequest[] = [];
   let latest = stored;
-  for (let retry = 1; retry <= MAX_FILE_REFUSAL_RETRIES; retry++) {
+  for (let retry = 1; retry <= limit; retry++) {
     if (latest.some(row => !isTerminal(row))) break;
     const uncommitted = latest.filter(row => isEntityRequest(row) && row.state !== 'committed');
     const followed = uncommitted.filter(row => refused(row) && (row.intent as ManagedFactIntent | null)?.facts?.length
