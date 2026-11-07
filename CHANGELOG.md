@@ -21,7 +21,9 @@ identifiers and attribution are available in the pre-removal Git revision
 - `src/core/git/commit-guard.ts`: the owner-path hook exits 1 when `git rev-parse --absolute-git-dir` fails.
 - `src/core/persistence/local-edit-adoption.ts`, `file-repair.ts`, `coordinator.ts`, `pending-import.ts`: adoption refuses unmerged paths and in-progress merges, cherry-picks and rebases. It also refuses a file whose body equals one of the last 50 revisions or that drops rows the current revision added, and it stats the file before reading it. It caps the quiet wait at 30 s and records the caller's claim, so an orphaned adoption publishes nothing. It waits on an adoption another task is already publishing, retries a requeued publication against a HEAD that already holds the adopted blob, and never reports `released` for a lost claim. An empty `persistence.adopt_quiet_ms` reads as the 5000 default, and an admission failure logs a `phase=adoption` line.
 - `src/commands/doctor/checks/local-edit-adoptions.ts`: counts adoptions from `outcome.adopted_local_edit`, which receipt compaction keeps.
-- Tests: `test/doctor-foreign-writers.test.ts`, `test/commit-ledger.test.ts`, `test/sources-guard.test.ts`, `test/git-commit-push-not-a-source-8662.test.ts`, and `test/adopt-local-edit.test.ts` on PGLite and Postgres (GST-1623 items 4 and 6–9, #8755).
+- `src/core/persistence/refresh-barrier.ts`: with `persistence.refresh_barrier` on, a write waiting behind a refresh or an import now counts a later write to its page as a conflict unless managed sync's own import wrote it. Before, a caller could hide its write by passing a `managed_sync_` kind, and a compacted sync receipt counted as a later write.
+- `src/core/persistence/page-mutations.ts`: a page write that passes a `kind` starting with `managed_sync_` is refused with `invalid_params`.
+- Tests: `test/doctor-foreign-writers.test.ts`, `test/commit-ledger.test.ts`, `test/sources-guard.test.ts`, `test/git-commit-push-not-a-source-8662.test.ts`, `test/adopt-local-edit.test.ts`, `test/refresh-barrier-gst1623.test.ts` and `test/refresh-write-barrier.test.ts` on PGLite and Postgres (#8755).
 
 ## [0.60.609.0] - 2026-11-07
 
