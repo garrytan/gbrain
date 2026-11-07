@@ -26,6 +26,33 @@ identifiers and attribution are available in the pre-removal Git revision
 - `gbrain upgrade --check-downgrade` and the guide say a released deferred write publishes only when a process runs the write consumer on the owner host; polling `gbrain write-request` only reads the receipt.
 - Tests on PGLite and Postgres: `test/refresh-barrier-gst1623.test.ts` (GST-1623 items 1, 2, 3, 5, 13–22, #8759, and a commit landing right after or right before the refresh merge with the barrier off and on).
 
+## [0.60.607.0] - 2026-11-07
+
+**A long `gbrain sync` no longer prints a stall right after the writer was busy finishing a claimed request.**
+
+While a sync drains its write queue, gbrain prints a live line such as `stalled 45s on queued` when the request at the head of the queue stops moving. If the head was claimed for a while (for example while the process published the writes a killed server left behind) and a new queued request then reached the head, that line counted the new request's wait from before the claimed stretch. It reported a stall of a minute or more right after the writer had been working the whole time. Now every read of the head counts as progress, claimed or not, so the next queued head's age starts at the read before it. A claimed head still prints its own step age.
+
+### What you'd see
+
+| Head reads, ten seconds apart | Before | Now |
+|---|---|---|
+| a queued request, then a claimed one for 60 seconds, then a new queued request | `stalled 70s on queued` | `stalled 10s on queued` |
+| a claimed request that is publishing | the claim's step age | the claim's step age (unchanged) |
+
+### Things to watch
+
+Only the printed age changes. When a sync stops, escalates or reports blocked is unchanged, and nothing stored is touched.
+
+### Itemized changes
+
+#### Fixed
+
+- The in-pass stall line (`inPassHeadAge` in `src/core/persistence/sync-drain.ts`) records claimed head reads, so a queued head that follows a claimed one counts its age from the read before it.
+
+#### For contributors
+
+- `test/sync-drain-claims.test.ts` covers a claimed head between two queued heads. The convergence nightly's 70 s owner-kill stall bound now measures real stalls, not time the writer spent publishing a killed server's writes.
+
 ## [0.60.606.0] - 2026-11-07
 
 **Updates follow a stable channel by default; every release is one setting away on alpha.**
