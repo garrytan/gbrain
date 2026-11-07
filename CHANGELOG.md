@@ -12,7 +12,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [0.60.603.0] - 2026-11-07
 
-**A source that a remote caller adds by URL keeps its clone settings on a managed brain, both when it is first cloned and when it is recloned, and `gbrain frontmatter install-hook` leaves that clone's hooks off.** v0.60.603.0 wrote git-lfs downloads off and hooks off into such a clone's own git config, but on a managed brain the add path did not record the source as remote-added and `gbrain sources reclone` cloned it again without the settings. `install-hook` read the clone's hooks-off setting as a hooks directory someone else chose, wrote a hook it would never run, and told the operator how to turn hooks back on.
+**A source that a remote caller adds by URL keeps its clone settings on a managed brain, both when it is first cloned and when it is recloned, and `gbrain frontmatter install-hook` leaves that clone's hooks off.** v0.60.601.0 wrote git-lfs downloads off and hooks off into such a clone's own git config, but on a managed brain the add path did not record the source as remote-added and `gbrain sources reclone` cloned it again without the settings. `install-hook` read the clone's hooks-off setting as a hooks directory someone else chose, wrote a hook it would never run, and told the operator how to turn hooks back on.
 
 ### Itemized changes
 
