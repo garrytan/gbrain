@@ -136,7 +136,7 @@ effect:
 
 | Channel | What it offers | Read from |
 |---------|----------------|-----------|
-| `stable` (default) | Weekly releases a maintainer promoted after testing on that release's exact git tree. | The evidence record `stable.json` on the `stable-record` branch, checked against the `stable` tag. |
+| `stable` (default) | Releases promoted, by the [daily stable check](../RELEASING.md#daily-stable-check) or a maintainer, after the soak passed on that release's exact git tree. | The evidence record `stable.json` on the `stable-record` branch, checked against the `stable` tag. |
 | `alpha` | Every published release. | `VERSION` at the `latest-stable` tag, which release.yml moves on every publish. |
 
 `latest` is accepted everywhere as an alias for `alpha`. The channel comes

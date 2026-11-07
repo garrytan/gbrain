@@ -49,8 +49,10 @@ Total time: ~10 minutes for all four skills.
 A downstream agent whose brain is large or always on (an OpenClaw deployment, a
 team brain behind `gbrain serve --http`) should not track every PATCH release,
 and by default it doesn't: installs follow the **stable channel**, the newest
-release a maintainer promoted after the production-shaped soak passed on that
-release's exact git tree. Promotion is weekly or manual; `git show stable`
+release promoted after the production-shaped soak passed on that
+release's exact git tree. A twice-daily scheduled check promotes important
+fixes and keeps stable at most a week behind; maintainers can also promote
+by hand ([daily stable check](RELEASING.md#daily-stable-check)). `git show stable`
 prints the promoted version, the soak run and its scoreboard link.
 
 ```bash
