@@ -17,7 +17,7 @@ identifiers and attribution are available in the pre-removal Git revision
 ### Itemized changes
 
 - `src/core/persistence/managed-sources.ts`, `src/core/persistence/topology-filesystem.ts`, `src/core/persistence/topology-clone.ts`: a managed add by a remote caller records `added_by_remote_caller` on the source, and the managed clone of such a source, on add and on reclone, uses the same `git clone --config` settings as `cloneRepo`'s `skipLfs` (shared as `LFS_OFF_CLONE_CONFIG` in `src/core/git-remote.ts`).
-- `src/commands/frontmatter-install-hook.ts`: a checkout whose own (`--local`) `core.hooksPath` is `/dev/null` is skipped (`skipped_hooks_off`) with nothing written and no wiring advice, `--force` included, and doctor's `frontmatter_hook` check no longer asks to refresh a hook there. A machine-wide `core.hooksPath=/dev/null` keeps the earlier behaviour: the hook is written unwired, with the usual advice.
+- `src/commands/frontmatter-install-hook.ts`: a checkout whose own (`--local`) `core.hooksPath` is `/dev/null` is skipped (`skipped_hooks_off`) with nothing written and no wiring advice, `--force` included, and doctor's `frontmatter_hook` check no longer asks to refresh a hook there. A machine-wide `core.hooksPath=/dev/null` keeps the earlier behaviour, so the hook is written unwired with the usual advice.
 - Tests: `test/persistence-source-lifecycle.test.ts` (PGLite and Postgres), `test/sources-remote-lfs.test.ts`, `test/frontmatter-install-hook.test.ts`.
 
 ## [0.60.602.0] - 2026-11-07
