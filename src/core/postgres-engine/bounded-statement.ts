@@ -23,6 +23,7 @@ import type postgres from '#postgres';
 import { reserveWithCancellation } from './cancellation.ts';
 import { READ_WRITE_BEGIN } from './read-write-transactions.ts';
 import type { CheckoutGauge } from '../pool-gauge.ts';
+import { ReadDeadlineError } from '../read-deadline.ts';
 
 type Sql = ReturnType<typeof postgres>;
 export type RunStatement = <T>(conn: Sql, sql: string, params: unknown[] | undefined, opts: { signal?: AbortSignal; prepare?: boolean }) => Promise<T[]>;
@@ -62,21 +63,62 @@ export async function runBoundedStatement<T>(conn: Sql, sql: string, params: unk
  * (one simple statement), the read's own statements and `COMMIT`, pipelined: the server ends a read still waiting on
  * a lock at the deadline (57014), through a transaction-mode pooler, and the answer returns without waiting for
  * COMMIT's round trip. A failed read leaves the transaction aborted, and COMMIT then rolls it back.
+ * The absolute deadline also bounds pool acquisition and the entire read envelope. A socket still owned at the
+ * deadline (including a trailing COMMIT) is discarded, never returned to the pool with unfinished work.
  */
 // engine-sql-ok: transaction control around a caller's read (BEGIN READ ONLY / SET LOCAL statement_timeout / COMMIT), no storage-domain SQL
 export async function runDeadlineRead<T>(conn: Sql, deadlineAt: number, run: (tx: Sql) => Promise<T>, gauge: CheckoutGauge): Promise<T> {
+  if (Date.now() >= deadlineAt) throw new ReadDeadlineError();
+  const abort = new AbortController();
+  const error = new ReadDeadlineError();
+  let reserved: Awaited<ReturnType<Sql['reserve']>> | undefined;
+  let finished = false;
   gauge.acquire('reserved');
-  const reserved = await conn.reserve().catch(error => { gauge.release('reserved'); throw error; });
-  gauge.checkedOut();
-  const ms = Math.max(1, Math.ceil(deadlineAt - Date.now()));
-  const opened = reserved.unsafe(`BEGIN READ ONLY; SET LOCAL statement_timeout = ${ms}`).simple().execute().then(() => undefined, (error: unknown) => error);
+  const finish = (discard: boolean) => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timer);
+    try {
+      if (discard) reserved?.discard();
+      else reserved?.release();
+    } finally { gauge.release('reserved'); }
+  };
+  let timer: ReturnType<typeof setTimeout>;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      abort.abort();
+      try { finish(true); } finally { reject(error); }
+    }, Math.max(1, Math.ceil(deadlineAt - Date.now())));
+  });
+  // Acquisition has its own abort race; observe this rejection even before the read race is installed.
+  void expired.catch(() => {});
   try {
-    const result = await run(reserved as unknown as Sql);
-    const failed = await opened;
-    if (failed) throw failed;
-    return result;
+    reserved = await reserveWithCancellation(opts => conn.reserve(opts), abort.signal);
+    // A delayed event loop may resolve acquisition before delivering the deadline timer. No expired callback may start.
+    if (Date.now() >= deadlineAt) { finish(false); throw error; }
+    gauge.checkedOut();
+    if (Date.now() >= deadlineAt) { finish(false); throw error; }
+    const owner = reserved;
+    return await Promise.race([expired, (async () => {
+      const ms = Math.max(1, Math.ceil(deadlineAt - Date.now()));
+      const opened = owner.unsafe(`BEGIN READ ONLY; SET LOCAL statement_timeout = ${ms}`).simple().execute()
+        .then(() => undefined, (error: unknown) => error);
+      const result = await run(owner as unknown as Sql);
+      const failed = await opened;
+      if (failed) throw failed;
+      if (Date.now() >= deadlineAt) { finish(true); throw error; }
+      return result;
+    })()]);
+  } catch (caught) {
+    if (abort.signal.aborted) throw error;
+    throw caught;
   } finally {
-    void reserved.unsafe('COMMIT').execute().then(() => undefined, () => undefined).finally(() => { reserved.release(); gauge.release('reserved'); });
+    if (!reserved) finish(false);
+    else if (!finished) {
+      // Preserve the early answer, but keep the timer until COMMIT settles. A late settlement cannot release twice.
+      try { void reserved.unsafe('COMMIT').execute().then(() => finish(false), () => finish(true)); }
+      catch { finish(true); }
+    }
   }
 }
 

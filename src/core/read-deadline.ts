@@ -13,6 +13,15 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 const store = new AsyncLocalStorage<number | undefined>();
 
+/** A local deadline, distinct from a server SQLSTATE or an ordinary connection failure. */
+export class ReadDeadlineError extends Error {
+  readonly code = 'read_deadline';
+  constructor() {
+    super('The engine read reached its absolute deadline.');
+    this.name = 'ReadDeadlineError';
+  }
+}
+
 export function withReadDeadline<T>(deadlineAt: number, fn: () => T): T {
   return store.run(deadlineAt, fn);
 }
