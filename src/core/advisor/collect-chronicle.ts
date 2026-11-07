@@ -123,12 +123,15 @@ export const collectChronicle: AdvisorCollector = {
       // Ontology columns may be absent on a brain that hasn't migrated; ignore.
     }
 
-    // 2. Recent meetings not yet in the timeline (coverage gap).
+    // 2. Recent meetings not yet in the timeline (coverage gap). #7282: "recent" is the page's own
+    // date (an authored effective_date), as in chronicle/eligibility.ts; updated_at only when the page
+    // has none, so a bulk import or re-render of old chat history does not count as recent.
     try {
       const rows = await ctx.engine.executeRaw<{ n: number }>(
         `SELECT count(*)::int AS n FROM pages p
          WHERE p.type IN ('meeting','conversation','calendar-event') AND p.deleted_at IS NULL
-           AND p.updated_at > now() - interval '30 days'
+           AND COALESCE(CASE WHEN p.effective_date_source IS DISTINCT FROM 'fallback' THEN p.effective_date END, p.updated_at)
+               > now() - interval '30 days'
            AND NOT EXISTS (
              SELECT 1 FROM timeline_entries te
              WHERE te.page_id = p.id AND te.event_page_id IS NOT NULL
