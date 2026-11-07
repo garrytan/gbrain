@@ -28,6 +28,7 @@ import { NO_SOURCES } from '../core/source-id.ts';
 import { noSourceGrantError } from '../core/ops/context.ts';
 import { renderAction } from '../core/agent-output.ts';
 import { assertWebhookWriterMayReplace } from '../core/minions/handlers/ingest-capture.ts';
+import { validateSlug } from '../core/utils.ts';
 
 /**
  * v0.46: normalize the per-event GitHub webhook payload shape into
@@ -474,12 +475,17 @@ async function handleIngest(
   const writer = authInfo.principal ? { principal: { kind: authInfo.principal.kind, id: authInfo.principal.id } } : undefined;
   if (callerSlug) {
     try {
+      validateSlug(callerSlug);
+    } catch (err) {
+      res.status(400).json({ error: 'invalid_slug', message: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+    try {
       await assertWebhookWriterMayReplace(engine, writer, writeSourceId, callerSlug);
     } catch (err) {
-      if (err instanceof OperationError) {
-        res.status(err.code === 'page_not_found' ? 404 : 403).json({ error: err.code, message: err.message });
-        return;
-      }
+      if (!(err instanceof OperationError)) throw err;
+      res.status(err.code === 'page_not_found' ? 404 : 403).json({ error: err.code, message: err.message });
+      return;
     }
   }
 

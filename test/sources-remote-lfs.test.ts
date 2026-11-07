@@ -4,7 +4,7 @@
  * A repository's committed .lfsconfig names the LFS endpoint, and git-lfs contacts it outside the remote-URL gate.
  * On a host with git-lfs installed globally, a remote caller's sources_add could make the brain host send requests to
  * any HTTP endpoint the repository named, on the clone and on every later pull. Protects:
- * - cloneRepo / pullRepo with skipLfs leave pointer files and contact no LFS endpoint (real git and git-lfs);
+ * - a skipLfs clone, and every later pull, merge or push in it, leave pointer files and contact no LFS endpoint (real git and git-lfs);
  * - sources_add from a remote caller clones that way, records it on the source, and a re-clone follows the record;
  * - sources_add from the trusted local CLI keeps LFS downloads;
  * - a remote caller's failed clone gets a fixed message instead of git's own error.
@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { cloneRepo, pullRepo } from '../src/core/git-remote.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
-import { recloneIfMissing } from '../src/core/sources-ops.ts';
+import { lfsDownloadsOff, recloneIfMissing } from '../src/core/sources-ops.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const hasLfs = spawnSync('git', ['lfs', 'version']).status === 0 && process.platform !== 'win32';
@@ -80,7 +80,7 @@ console.log(git.port + ' ' + lfs.port);
     writeFileSync(authorConfig, '[user]\n\tname = example\n\temail = example@example.invalid\n');
     mkdirSync(work);
     git(work, 'init', '-q', '-b', 'main', '.');
-    writeFileSync(join(work, '.lfsconfig'), `[lfs]\n\turl = http://127.0.0.1:${lfsPort}/internal-lfs\n`);
+    writeFileSync(join(work, '.lfsconfig'), `[lfs]\n\turl = http://127.0.0.1:${lfsPort}/internal-lfs\n\tfetchinclude = *\n\tfetchexclude =\n`);
     writeFileSync(join(work, 'x.bin'), pointer);
     writeFileSync(join(work, 'note.md'), '# note\n');
     git(work, 'add', '-A');
@@ -101,7 +101,7 @@ console.log(git.port + ' ' + lfs.port);
     expect(hits().length).toBeGreaterThan(0);
   }, 90_000);
 
-  test('a skipLfs clone and a skipLfs pull leave pointers and contact no LFS endpoint', async () => {
+  test('a skipLfs clone, a later pull, a plain git merge and a push leave pointers and contact no LFS endpoint', async () => {
     const dest = join(ROOT, 'skipped');
     await withEnv(env(), async () => { cloneRepo(url, dest, { timeoutMs: 60_000, depth: 0, skipLfs: true }); });
     expect(readFileSync(join(dest, 'x.bin'), 'utf8')).toBe(pointer);
@@ -110,8 +110,22 @@ console.log(git.port + ' ' + lfs.port);
     git(work, 'commit', '-q', '-m', 'second pointer');
     git(work, 'push', '-q', bare, 'main');
     git(bare, 'update-server-info');
-    await withEnv(env(), async () => { await pullRepo(dest, { timeoutMs: 60_000, skipLfs: true }); });
+    await withEnv(env(), async () => { await pullRepo(dest, { timeoutMs: 60_000 }); });
     expect(readFileSync(join(dest, 'y.bin'), 'utf8')).toContain('size 6');
+    // Managed refresh and commit-push move the same checkout with their own plain git calls.
+    writeFileSync(join(work, 'z.bin'), pointer.replace('size 5', 'size 7'));
+    git(work, 'add', 'z.bin');
+    git(work, 'commit', '-q', '-m', 'third pointer');
+    git(work, 'push', '-q', bare, 'main');
+    git(bare, 'update-server-info');
+    const plain = { ...process.env, ...env() };
+    execFileSync('git', ['-C', dest, 'fetch', '-q', 'origin'], { env: plain, stdio: 'pipe' });
+    execFileSync('git', ['-C', dest, 'merge', '--ff-only', '-q', 'origin/main'], { env: plain, stdio: 'pipe' });
+    expect(readFileSync(join(dest, 'z.bin'), 'utf8')).toContain('size 7');
+    writeFileSync(join(dest, 'page.md'), '# page\n');
+    execFileSync('git', ['-C', dest, 'add', 'page.md'], { env: plain, stdio: 'pipe' });
+    execFileSync('git', ['-C', dest, '-c', 'user.name=example', '-c', 'user.email=example@example.invalid', 'commit', '-q', '-m', 'page'], { env: plain, stdio: 'pipe' });
+    execFileSync('git', ['-C', dest, 'push', '-q', bare, 'HEAD:refs/heads/from-brain'], { env: plain, stdio: 'pipe' });
     expect(hits()).toEqual([]);
   }, 90_000);
 });
@@ -129,7 +143,7 @@ describe('sources_add: a remote caller\'s URL source clones without LFS download
     writeFileSync(recorder, `
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 const args = process.argv.slice(2);
-appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, skip: process.env.GIT_LFS_SKIP_SMUDGE ?? null }) + '\\n');
+appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args }) + '\\n');
 if (readFileSync(${JSON.stringify(mode)}, 'utf8') === 'fail') { console.error('fatal: unable to access internal-detail-example: 502'); process.exit(128); }
 if (args.includes('clone')) mkdirSync(args[args.length - 1]!, { recursive: true });
 `);
@@ -144,7 +158,8 @@ if (args.includes('clone')) mkdirSync(args[args.length - 1]!, { recursive: true 
   beforeEach(() => { writeFileSync(log, ''); writeFileSync(mode, 'ok'); });
 
   const clones = () => readFileSync(log, 'utf8').trim().split('\n').filter(Boolean)
-    .map(line => JSON.parse(line) as { args: string[]; skip: string | null }).filter(call => call.args.includes('clone'));
+    .map(line => JSON.parse(line) as { args: string[] }).filter(call => call.args.includes('clone'))
+    .map(call => call.args.includes('lfs.fetchexclude=*'));
   const add = (remote: boolean, id: string) => withEnv({ PATH: `${fakeDir}:${process.env.PATH}`, GBRAIN_HOME: home }, () =>
     operationsByName.sources_add!.handler({ engine, remote, auth: remote ? { token: 't', clientId: 'c-admin', scopes: ['sources_admin'] } : undefined } as never,
       { id, url: `https://example.com/acme-example/${id}.git` }));
@@ -155,7 +170,7 @@ if (args.includes('clone')) mkdirSync(args[args.length - 1]!, { recursive: true 
 
   test('a remote caller\'s clone runs with LFS downloads off, and the source records it', async () => {
     await add(true, 'remote-added');
-    expect(clones().map(call => call.skip)).toEqual(['1']);
+    expect(clones()).toEqual([true]);
     expect((await config('remote-added')).added_by_remote_caller).toBe(true);
   });
 
@@ -163,12 +178,12 @@ if (args.includes('clone')) mkdirSync(args[args.length - 1]!, { recursive: true 
     const [row] = await engine.executeRaw<{ local_path: string }>("SELECT local_path FROM sources WHERE id = 'remote-added'");
     rmSync(row!.local_path, { recursive: true, force: true });
     await withEnv({ PATH: `${fakeDir}:${process.env.PATH}`, GBRAIN_HOME: home }, () => recloneIfMissing(engine, 'remote-added'));
-    expect(clones().map(call => call.skip)).toEqual(['1']);
+    expect(clones()).toEqual([true]);
   });
 
   test('the trusted local CLI keeps LFS downloads', async () => {
     await add(false, 'local-added');
-    expect(clones().map(call => call.skip)).toEqual([null]);
+    expect(clones()).toEqual([false]);
     expect((await config('local-added')).added_by_remote_caller).toBeUndefined();
   });
 
@@ -180,4 +195,12 @@ if (args.includes('clone')) mkdirSync(args[args.length - 1]!, { recursive: true 
     const local = await add(false, 'local-fails').catch((err: Error) => err);
     expect((local as Error).message).toContain('internal-detail-example');
   });
+});
+
+test('lfsDownloadsOff reads the record from an object or a JSON string and never throws', () => {
+  expect(lfsDownloadsOff({ added_by_remote_caller: true })).toBe(true);
+  expect(lfsDownloadsOff('{"added_by_remote_caller":true}')).toBe(true);
+  expect(lfsDownloadsOff('{not json')).toBe(false);
+  expect(lfsDownloadsOff(null)).toBe(false);
+  expect(lfsDownloadsOff({ added_by_remote_caller: 'true' })).toBe(false);
 });
