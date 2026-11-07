@@ -179,9 +179,10 @@ export interface KeywordPage {
  */
 export async function readKeywordPage(engine: BrainEngine, p: Record<string, unknown>, opts: SearchOpts, paging: SearchPaging, limit: number): Promise<KeywordPage> {
   const queryText = String(p.query);
+  const probePromise = engine.searchKeywordPages(queryText, opts, { limit: limit + 1, ...(paging.cursor ? { after: paging.cursor } : { offset: paging.offset }) });
   const [probe, count] = await Promise.all([
-    engine.searchKeywordPages(queryText, opts, { limit: limit + 1, ...(paging.cursor ? { after: paging.cursor } : { offset: paging.offset }) }),
-    countKeywordMatches(engine, queryText, opts),
+    probePromise,
+    countKeywordMatches(engine, queryText, opts, KEYWORD_COUNT_TIMEOUT_MS, probePromise),
   ]);
   const rows = probe.slice(0, limit);
   const start = paging.cursor ? paging.cursor.shown : paging.offset;
