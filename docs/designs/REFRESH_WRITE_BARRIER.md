@@ -172,7 +172,10 @@ released rows are claimed normally during the next refresh's `draining` and coun
 (the claim moves them to `running`), within the existing `--wait-drain` budget.
 
 **Capacity.** Deferred rows reserve the existing outstanding and intent-byte counters, which bound
-them like queued rows. GST-1582 removed the per-refresh cap (`persistence.refresh_barrier_max_deferred`):
+them like queued rows. GST-1623: a managed sync job (and a bulk sync group made only of them) is
+admitted as if deferred rows held no slot and no intent bytes, since they cannot settle before the
+import does; the held rows are read only when the plain check would refuse, so the importer can pass
+a cap by at most what they hold. Every other write still counts them. GST-1582 removed the per-refresh cap (`persistence.refresh_barrier_max_deferred`):
 a write past it queued as deferred instead of being refused, because a refusal there bounced exactly
 the writes the barrier exists to keep. The setting is no longer read.
 
@@ -200,13 +203,13 @@ barrier exists to keep, and with the flag on each now waits instead (with it off
   imported is never awaited), and the consumer moves its own claim back to `deferred` with
   `deferred_import_from` set to that commit (`''` when the source had never imported). The row is
   released when `sources.last_commit` differs from it (and any refresh it also names is released),
-  then claimed and prepared from scratch, as if it had queued behind the import: a `remember`,
-  `capture` or `add_timeline_entry` applies on top; a `put_page` with `expected_revision` meets the moved page and ends
-  `revision_conflict`; a blind (`force`) `put_page` lands. An import that lands without covering
+  then claimed and prepared from scratch, as if it had queued behind the import: a `remember` or
+  `add_timeline_entry` applies on top; a `put_page` with `expected_revision` meets the moved page and ends
+  `revision_conflict`; a blind (`force`) `put_page` or a `capture` lands over it. An import that lands without covering
   the file only re-arms the hold at the new commit. The receipt reads `queued` with
   `deferred: { pending_import: true }`, and the caller's wait returns pending at once.
 
-**What a blind write replaced.** A held `put_page` that replaces content an import brought in names
+**What a blind write replaced.** A held `put_page` or `capture` that replaces content an import brought in names
 it in three places, so the replacement is auditable and recoverable without digging: the receipt's
 `supersedes` (`slug`, `path`, the replaced `revision`, the imported `commit`: the newest commit
 after the held-at commit that touched the file), a `gbrain-supersedes: <path>: revision <id> from
