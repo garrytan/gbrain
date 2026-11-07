@@ -618,6 +618,12 @@ export async function verifyPagePurge(engine: BrainEngine, input: { sourceId: st
   await keyed('write_gate_holds', 'SELECT 1 FROM write_gate_holds WHERE source_id=$1 AND slug=$2', [src, slug]);
   if (!await relationExists(engine, 'query_cache')) stores.push(missingCache('query_cache'));
   else await keyed('query_cache', 'SELECT 1 FROM query_cache WHERE $1::text IS NOT NULL', [src]);
+  // The retrieval logs key the page by slug, an edge as `from|link_type|to` (feedback/store.ts scrubPurgedSlugs).
+  const edge = (col: string) => `(split_part(${col},'|',1)=$2 OR split_part(${col},'|',3)=$2)`;
+  await keyed('retrieval_event_pages', 'SELECT 1 FROM retrieval_event_pages WHERE source_id=$1 AND slug=$2', [src, slug]);
+  await keyed('retrieval_event_links', `SELECT 1 FROM retrieval_event_links WHERE source_id=$1 AND (to_slug=$2 OR ${edge('edge_key')})`, [src, slug]);
+  for (const table of ['retrieval_feedback', 'retrieval_weights']) await keyed(table, `SELECT 1 FROM ${table} WHERE source_id=$1
+    AND ((element_kind='page' AND element_key=$2) OR (element_kind='link' AND ${edge('element_key')}))`, [src, slug]);
   // The page's own segment texts, and unreferenced texts holding one of its claims (plain or as a fence cell stores it),
   // only: a text of another page holding the same words is that page's body, never a residue of this purge (an inline
   // page with no claims referenced none, so the inventory sweep below must not probe the table).

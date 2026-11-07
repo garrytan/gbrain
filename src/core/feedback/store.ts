@@ -307,6 +307,34 @@ export async function resetRetrievalWeights(
   return Number(rows[0]?.n ?? 0);
 }
 
+/**
+ * A page purge drops the purged slugs from the retrieval logs in the purge's transaction: recorded answers' page
+ * and edge rows, ratings and learned weights keyed by the page or an edge touching it, and the slug in captured
+ * eval candidates (removed from `retrieved_slugs`, so replay still compares the rest of each captured result; the
+ * query text stays a probed residual). An edge key is `from|link_type|to`. Answers the purge emptied stay rateable
+ * for their other elements and age out with retention.
+ */
+export async function scrubPurgedSlugs(
+  engine: { executeRaw<R>(sql: string, params?: unknown[]): Promise<R[]> },
+  sourceId: string,
+  slugs: string[],
+): Promise<Record<string, number>> {
+  if (slugs.length === 0) return {};
+  const count = async (sql: string) =>
+    Number((await engine.executeRaw<{ n: number | string }>(`WITH d AS (${sql} RETURNING 1) SELECT count(*)::int AS n FROM d`, [sourceId, slugs]))[0]?.n ?? 0);
+  const edge = (col: string) => `(split_part(${col}, '|', 1) = ANY($2::text[]) OR split_part(${col}, '|', 3) = ANY($2::text[]))`;
+  const element = `source_id = $1 AND ((element_kind = 'page' AND element_key = ANY($2::text[])) OR (element_kind = 'link' AND ${edge('element_key')}))`;
+  return {
+    retrieval_event_pages: await count('DELETE FROM retrieval_event_pages WHERE source_id = $1 AND slug = ANY($2::text[])'),
+    retrieval_event_links: await count(`DELETE FROM retrieval_event_links WHERE source_id = $1 AND (to_slug = ANY($2::text[]) OR ${edge('edge_key')})`),
+    retrieval_feedback: await count(`DELETE FROM retrieval_feedback WHERE ${element}`),
+    retrieval_weights: await count(`DELETE FROM retrieval_weights WHERE ${element}`),
+    eval_candidates: await count(`UPDATE eval_candidates
+         SET retrieved_slugs = ARRAY(SELECT s FROM unnest(retrieved_slugs) AS s WHERE NOT (s = ANY($2::text[])))
+       WHERE retrieved_slugs && $2::text[] AND (cardinality(source_ids) = 0 OR $1 = ANY(source_ids))`),
+  };
+}
+
 export interface FeedbackStatusRow {
   events: number;
   ratings_explicit: number;
