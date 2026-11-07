@@ -244,8 +244,15 @@ async function handleGitHubItemEvent(
   }
 }
 
-/** A longer slug cannot be stored under the page key index, so its capture would be accepted and never land. */
+/** Slugs near 2.7 KB exceed the page key index's row size, so a capture with one would be accepted and never land; 1024 bytes leaves a wide margin. */
 const MAX_INGEST_SLUG_BYTES = 1024;
+
+/** The normalized target slug for an X-Gbrain-Slug header; throws on an invalid slug or one over MAX_INGEST_SLUG_BYTES. */
+function ingestTargetSlug(callerSlug: string): string {
+  const bytes = Buffer.byteLength(callerSlug, 'utf8');
+  if (bytes > MAX_INGEST_SLUG_BYTES) throw new Error(`Invalid slug: X-Gbrain-Slug is ${bytes} bytes; the limit is ${MAX_INGEST_SLUG_BYTES}.`);
+  return validateSlug(callerSlug);
+}
 
 /** Stands in for a missing webhook secret; no source holds it and a match against it is still refused. */
 const THROWAWAY_WEBHOOK_KEY = randomBytes(32);
@@ -502,16 +509,8 @@ async function handleIngest(
   const writer = authInfo.principal ? { principal: { kind: authInfo.principal.kind, id: authInfo.principal.id } } : undefined;
   let targetSlug = '';
   if (callerSlug) {
-    const slugBytes = Buffer.byteLength(callerSlug, 'utf8');
-    if (slugBytes > MAX_INGEST_SLUG_BYTES) {
-      res.status(400).json({
-        error: 'invalid_slug',
-        message: `Invalid slug: X-Gbrain-Slug is ${slugBytes} bytes; the limit is ${MAX_INGEST_SLUG_BYTES}.`,
-      });
-      return;
-    }
     try {
-      targetSlug = validateSlug(callerSlug);
+      targetSlug = ingestTargetSlug(callerSlug);
     } catch (err) {
       res.status(400).json({ error: 'invalid_slug', message: err instanceof Error ? err.message : String(err) });
       return;
@@ -527,8 +526,7 @@ async function handleIngest(
 
   // The same body sent to two slugs is two writes, so the normalized target slug (empty when the job picks one) is part
   // of the key next to the write source; dropping it handed the second caller the first job, a 202 with nothing
-  // written to its slug (#8769). The slug goes in hashed: a caller's slug has no length limit, and a raw one past the
-  // key index's row size would turn the insert into a 500.
+  // written to its slug (#8769). The slug goes in hashed so the key stays well inside the key index's row size.
   const slugKey = targetSlug ? createHash('sha256').update(targetSlug).digest('hex') : '';
   const idempotencyKey = `ingest:webhook:${authInfo.clientId}:${writeSourceId}:${slugKey}:${contentHash}`;
   try {
