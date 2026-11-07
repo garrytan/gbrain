@@ -250,6 +250,7 @@
       "  [OK] person_title_duplicates: No title-prefixed person page pairs with an unprefixed page (0 titled page(s) examined).",
       "  [OK] db_ahead_of_git: Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 5 live page(s), 5 equal. Page detail: gbrain sources git-gap <source-id>.",
       "  [OK] git_index_lag: No source is strict (git-canonical), so no index trails a commit.",
+      "  [OK] local_edit_adoptions: No local edit was adopted in the last 24 h.",
       "  [OK] outside_content_fences: No fact, take or link is indexed from a fence on an imported email, calendar, GitHub or transcript page.",
       "  [OK] owner_host_stale: No managed write is waiting on an owner host.",
       "  [OK] embedding_plane_disagreement: The config file disables embeddings and the database holds no vectors.",
