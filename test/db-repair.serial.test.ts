@@ -13,9 +13,11 @@
  *   - rewrite tier: gating, candidate-probe-before-persist, undo file (0600),
  *     24h cooldown on applied rows only, --force bypass, --undo-last-rewrite
  *   - receipts cap + advisory lock liveness
+ *   - --json: a tier the run already went through is never its own fix (#7137)
  */
 
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import * as fs from 'node:fs';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -554,5 +556,53 @@ describe('db-repair docker arm + healthy-path bonus + rewrite restart note', () 
     expect(await runDbRepair(['--yes', '--apply-rewrites'], deps)).toBe(0);
     expect(String(readConfig().database_url)).toBe(`${PLAIN_PG_URL}?sslmode=require`);
     expect(logs.join('\n')).toContain('restart them to pick up the new URL');
+  });
+});
+
+describe('db-repair --yes never prescribes the tier it already ran (#7137)', () => {
+  async function runJson(args: string[], deps: DbRepairDeps) {
+    const fd1: string[] = [];
+    const realWriteSync = fs.writeSync;
+    const fdSpy = spyOn(fs, 'writeSync').mockImplementation(((fd: number, buf: Buffer, off = 0, len?: number) => {
+      if (fd !== 1) return (realWriteSync as (...a: unknown[]) => number)(fd, buf, off, len);
+      const end = len === undefined ? buf.length : off + len;
+      fd1.push(Buffer.from(buf).subarray(off, end).toString('utf8'));
+      return end - off;
+    }) as never);
+    try {
+      const code = await runDbRepair(args, deps);
+      return { code, env: JSON.parse(fd1.join('')) };
+    } finally {
+      fdSpy.mockRestore();
+    }
+  }
+
+  test('auto tier reports instead of repeating its bounded retry; diagnose-only still offers it', async () => {
+    writeConfig({ engine: 'postgres', database_url: PLAIN_PG_URL });
+    const retry = makeDeps({ access: [connRefusedDiag(), connRefusedDiag()] });
+    const result = await runJson(['--yes', '--json'], retry.deps);
+    expect(result.code).toBe(1);
+    expect(retry.accessCalls[1].attempts).toBe(3);
+    expect(result.env).toMatchObject({ code: 'database_error', reason: 'conn_refused', tier: 'auto', applied: [] });
+    expect(result.env.fix.argv).toBeUndefined();
+    expect(result.env.fix.next).toBe('report');
+    expect(result.env.fix.user_message).toBe(connRefusedDiag().remediation);
+
+    const diagnose = await runJson(['--json'], makeDeps({ access: [connRefusedDiag()] }).deps);
+    expect(diagnose.env.fix.argv.slice(0, 3)).toEqual(['gbrain', 'db-repair', '--yes']);
+    expect(diagnose.env.fix.next).toBe('run');
+  });
+
+  test('rewrite tier reports after its candidate fails; auto tier still escalates to rewrite', async () => {
+    writeConfig({ engine: 'postgres', database_url: POOLER_URL });
+    const rewrite = await runJson(['--yes', '--apply-rewrites', '--json'],
+      makeDeps({ access: [netUnreachDiag(), netUnreachDiag(SESSION_URL)] }).deps);
+    expect(rewrite.code).toBe(1);
+    expect(rewrite.env.tier).toBe('rewrite');
+    expect(rewrite.env.fix.argv).toBeUndefined();
+    expect(rewrite.env.fix.next).toBe('report');
+
+    const escalation = await runJson(['--yes', '--json'], makeDeps({ access: [netUnreachDiag()] }).deps);
+    expect(escalation.env.fix.argv.slice(0, 4)).toEqual(['gbrain', 'db-repair', '--yes', '--apply-rewrites']);
   });
 });
