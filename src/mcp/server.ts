@@ -15,7 +15,7 @@ import { clampSurface, createStdioSurfaceState, resolveAdvertisedSurface, stdioT
 import { noticeBlock, renderNotice, type Notice } from '../core/agent-output.ts';
 import { disabledOpsForPublishGates } from './publish-gates.ts';
 import { parseResultRowsMode, resolveResultRowsMode } from './result-rows.ts';
-import { loadConfig } from '../core/config.ts';
+import { loadConfig, type GBrainConfig } from '../core/config.ts';
 import { requestConfigRows, withRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { gcSessionContextState } from '../core/context/session-state.ts';
 import { installInstructionsResolver, MCP_SERVER_DESCRIPTION, readInstructionContent, resolveMcpInstructions } from './instructions.ts';
@@ -624,6 +624,40 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     process.stdin.on('close', () => shutdown('stdin close'));
   }
   // @ts-ignore — SDK exposes onclose on transport
+  transport.onclose = () => shutdown('transport close');
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGHUP', () => shutdown('SIGHUP'));
+}
+
+/** Engine-free stdio bridge for a native remote-MCP install. */
+export async function startRemoteMcpBridge(config: GBrainConfig) {
+  const server = new Server(
+    { name: 'gbrain', version: VERSION },
+    { capabilities: { tools: {} } },
+  );
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: buildToolDefs(OPERATION_MANIFEST.filter(op => !op.localOnly && !op.cliOnly)),
+  }));
+  server.setRequestHandler(CallToolRequestSchema, async (request: any): Promise<any> => {
+    const { name, arguments: params } = request.params;
+    const { callRemoteTool } = await import('../core/mcp-client.ts');
+    return await callRemoteTool(config, name, params ?? {});
+  });
+  const transport = mcpStdioTransport();
+  await server.connect(transport);
+
+  let shuttingDown = false;
+  const shutdown = (reason: string, code = 0) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    process.stderr.write(`[gbrain-remote-bridge] shutdown: ${reason}\n`);
+    process.exit(code);
+  };
+  if (process.env.MCP_STDIO !== '1') {
+    process.stdin.on('end', () => shutdown('stdin end'));
+    process.stdin.on('close', () => shutdown('stdin close'));
+  }
   transport.onclose = () => shutdown('transport close');
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
