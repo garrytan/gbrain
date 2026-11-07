@@ -292,6 +292,54 @@ describe('put_page provenance — CV12 COALESCE-preserve UPDATE', () => {
   });
 });
 
+describe('provenance — non-content remote writes keep the page record', () => {
+  const timeline = operations.find((o) => o.name === 'add_timeline_entry')!;
+  const addTimeline = (ctx: OperationContext, p: Record<string, unknown>) => withEnv({ GBRAIN_HOME: home }, () => timeline.handler(ctx, p));
+
+  test('remote add_timeline_entry and add_link do not overwrite source_kind, ingested_via or ingested_at', async () => {
+    await putPageOp.handler(makeCtx({ remote: false }), {
+      slug: 'wiki/p3a-timeline-keeps',
+      content: '---\ntype: note\ntitle: V1\n---\n\nbody',
+      source_kind: 'capture-cli',
+      ingested_via: 'put_page',
+    });
+    const first = await readProvenance('wiki/p3a-timeline-keeps');
+    expect(first.source_kind).toBe('capture-cli');
+
+    await new Promise((r) => setTimeout(r, 10));
+    await addTimeline(makeCtx({ remote: true }), { slug: 'wiki/p3a-timeline-keeps', date: '2026-01-02', summary: 'Follow-up call' });
+    const link = operations.find((o) => o.name === 'add_link')!;
+    await putPageOp.handler(makeCtx({ remote: false }), { slug: 'wiki/p3a-link-target', content: '---\ntype: note\ntitle: T\n---\n\nbody' });
+    await withEnv({ GBRAIN_HOME: home }, () => link.handler(makeCtx({ remote: true }), { from: 'wiki/p3a-timeline-keeps', to: 'wiki/p3a-link-target' }));
+
+    const after = await readProvenance('wiki/p3a-timeline-keeps');
+    expect(after.source_kind).toBe('capture-cli');
+    expect(after.ingested_via).toBe('put_page');
+    expect(after.ingested_at!.getTime()).toBe(first.ingested_at!.getTime());
+    const rows = await engine.executeRaw(
+      `SELECT count(*)::int AS n FROM timeline_entries t JOIN pages p ON p.id=t.page_id WHERE p.slug=$1`, ['wiki/p3a-timeline-keeps'],
+    ) as Array<{ n: number }>;
+    expect(rows[0].n).toBe(1);
+  });
+
+  test('a remote edit_page still records itself: content writes are ingestions', async () => {
+    const edit = operations.find((o) => o.name === 'edit_page')!;
+    await putPageOp.handler(makeCtx({ remote: false }), {
+      slug: 'wiki/p3a-edit-records',
+      content: '---\ntype: note\ntitle: V1\n---\n\nfirst body',
+      source_kind: 'capture-cli',
+      ingested_via: 'put_page',
+    });
+    const revision = (await engine.readPageSnapshot('wiki/p3a-edit-records', { sourceId: 'default' }))!.revision;
+    await withEnv({ GBRAIN_HOME: home }, () => edit.handler(makeCtx({ remote: true }), {
+      slug: 'wiki/p3a-edit-records', expected_revision: revision, edits: [{ old_text: 'first body', new_text: 'edited body' }],
+    }));
+    const after = await readProvenance('wiki/p3a-edit-records');
+    expect(after.source_kind).toBe('mcp:edit_page');
+    expect(after.ingested_via).toBe('mcp:edit_page');
+  });
+});
+
 describe('put_page provenance — T2 subagent namespace regression', () => {
   test('subagent with provenance params STILL gets wiki/agents/<id>/ rejection', async () => {
     // Adding provenance params to put_page must NOT bypass the

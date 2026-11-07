@@ -136,7 +136,7 @@ interface CanonicalProvenance { source_kind: string; ingested_via: string; inges
  * Writes whose caller supplies the page text, and so could supply provenance stamps in its frontmatter. Unlike
  * trust/page-write.ts CONTENT_OPERATIONS, revert_version and restore_page are absent: they replay a stored version.
  */
-const CALLER_CONTENT_OPERATIONS = ['put_page', 'edit_page', 'append_page', 'capture'];
+export const CALLER_CONTENT_OPERATIONS = ['put_page', 'edit_page', 'append_page', 'capture'];
 /**
  * Canonical stamps belong to the first write, never to a later preparation attempt. #7873: they are server-owned on
  * every caller-content write a remote caller makes, with or without a repository: the caller's values are dropped and
