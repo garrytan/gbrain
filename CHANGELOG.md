@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.599.0] - 2026-11-06
+## [0.60.599.0] - 2026-11-07
 
 **`gbrain transcripts ingest --facts --json` now says when the facts pass did not extract everything (#8722).** The `facts` object carried only `pages`, `pagesFailed` and `spentUsd`, so a pass that the budget cut short, that was refused for an unpriced model, or that skipped a page as too large or because another run held its lease looked the same as a complete one: exit 0, `pagesFailed: 0`. A caller that marks a session done on that result never retried it. The object now also carries `budget_exhausted`, `budget_reason` (`cost`, `runtime` or `no_pricing`, only when the budget halted the pass), `pages_skipped_too_large` and `pages_lock_skipped`, and the plain output prints a line for each that applies. Existing fields and the exit code are unchanged. Contributed by @harjothkhara.
 
