@@ -1,0 +1,11 @@
+// Routing eval fixtures for skills/draft-in-voice. Each positive intent
+// includes at least one trigger string as substring.
+{"intent":"Draft a tweet as alice-example announcing the acme-example launch","expected_skill":"draft-in-voice"}
+{"intent":"Make this sound like charlie-example before I send it","expected_skill":"draft-in-voice"}
+{"intent":"Ghostwrite a recruiting blurb in their voice for widget-co","expected_skill":"draft-in-voice"}
+{"intent":"Build a voice profile for alice-example from her posts over the last year","expected_skill":"draft-in-voice"}
+{"intent":"Turn this voice memo into a post in my voice about the launch","expected_skill":"draft-in-voice","ambiguous_with":["voice-note-ingest"]}
+{"intent":"Transcribe and file this voice note from my walk","expected_skill":"voice-note-ingest"}
+{"intent":"Save report: this week's pipeline numbers for the team","expected_skill":"reports"}
+// Negative: adjacent (editing prose) but out of scope — the user's own words, no voice profile involved.
+{"intent":"Fix the grammar and typos in this paragraph I wrote myself, keeping my wording","expected_skill":null}
