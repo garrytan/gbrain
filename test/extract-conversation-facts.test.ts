@@ -1663,6 +1663,25 @@ describe('runExtractConversationFactsCore', () => {
     expect(result).toMatchObject({ pages: 1, pagesFailed: 1 });
   });
 
+  test('transcript ingest reports an oversized page as skipped (#8722)', async () => {
+    const slug = 'conversations/oversized-ingest-example';
+    const turns = `${fmt('Alice Example', '2026-06-02', '9:00 AM', 'hello')}\n${fmt('Bob Example', '2026-06-02', '9:01 AM', 'hi')}\n`;
+    const body = turns + 'x'.repeat(MAX_PAGE_BODY_BYTES + 1 - Buffer.byteLength(turns));
+    await engine.putPage(slug, { type: 'meeting', title: 'Oversized transcript', compiled_truth: body, timeline: '', frontmatter: { date: '2026-06-02' } });
+    const result = await runIngestFacts(engine, { sourceId: 'default', slugs: [slug], quiet: true });
+    expect(result).toMatchObject({ pages: 1, pagesFailed: 0, budget_exhausted: false, pages_skipped_too_large: 1, pages_lock_skipped: 0 });
+    expect(result.budget_reason).toBeUndefined();
+  });
+
+  test('transcript ingest reports a budget stop with its reason (#8722)', async () => {
+    await engine.setConfig('conversation_parser.llm_fallback_enabled', 'true');
+    fallbackControlError = new BudgetExhausted('test budget stop', { reason: 'cost', spent: 1, cap: 1 });
+    await withEnv({ ANTHROPIC_API_KEY: 'sk-test' }, async () => {
+      const result = await runIngestFacts(engine, { sourceId: 'default', slugs: ['conversations/novel-format-example'], quiet: true });
+      expect(result).toMatchObject({ pages: 1, budget_exhausted: true, budget_reason: 'cost', pages_skipped_too_large: 0, pages_lock_skipped: 0 });
+    });
+  });
+
   test.each([
     { name: 'a failed page exits 1', malformed: true, exit: 1, failed: 1 },
     { name: 'no failed page exits 0', malformed: false, exit: 0, failed: 0 },
