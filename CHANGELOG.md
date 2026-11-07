@@ -25,11 +25,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## To take advantage of v0.60.599.0
 
-Nothing to migrate. Check the new fields:
-
-```bash
-gbrain transcripts ingest <session-files> --facts --json | jq .facts
-```
+Nothing to migrate. The new fields appear in the `facts` object of the `--json` output.
 
 ## [0.60.598.0] - 2026-11-07
 
