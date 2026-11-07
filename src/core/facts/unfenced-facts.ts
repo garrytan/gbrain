@@ -115,6 +115,8 @@ export interface UnfencedFactsOutcome {
   pages_touched: number;
   /** `<slug> (<reason>)` per page whose fence write failed; its rows stay unfenced. */
   failed_pages: string[];
+  /** Operationally failed pages, distinct from intentional codec holds in failed_pages. */
+  operational_failures: Array<{ source_id: string; slug: string }>;
   /** Slugs whose fence this run wrote. */
   fenced_slugs: string[];
   /** Unmanaged: `<slug> (<reason>)` per live page whose recorded canonical file is not on this host (counted in skipped_no_page). */
@@ -304,7 +306,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
   );
   const outcome: UnfencedFactsOutcome = {
     scanned: rows.length, fenced: 0, skipped_no_entity: 0, skipped_no_local_path: 0, skipped_no_page: 0,
-    skipped_archived: 0, skipped_url_clone: 0, pages_touched: 0, failed_pages: [], fenced_slugs: [], missing_files: [], unbound_refused: [], unadoptable_rows: [],
+    skipped_archived: 0, skipped_url_clone: 0, pages_touched: 0, failed_pages: [], operational_failures: [], fenced_slugs: [], missing_files: [], unbound_refused: [], unadoptable_rows: [],
   };
   const groups = new Map<string, UnfencedFactRow[]>();
   for (const row of rows) {
@@ -337,6 +339,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
     groups.delete(key);
     if (placement.kind === 'refused') { outcome.unbound_refused.push({ source_id: sourceId, slug: entitySlug, rows: group.length }); continue; }
     outcome.skipped_no_page += group.length;
+    outcome.operational_failures.push({ source_id: sourceId, slug: entitySlug });
     outcome.missing_files.push(`${entitySlug} (${target.ok ? `canonical file ${target.filePath} does not exist on this host; the page records it, so the cycle on the host that holds the file fences these rows` : `no canonical file: ${target.skipped}`})`);
   }
   return { managed, groups, filePaths, databaseOnly, localPathById, outcome };
@@ -451,6 +454,14 @@ function recordUnadoptable(outcome: UnfencedFactsOutcome, slug: string, records:
   outcome.failed_pages.push(unadoptableRowsToken(slug, records));
 }
 
+/** Keep diagnostics compatible without inferring health from their wording or counting codec holds as errors. */
+function recordOperationalFailure(outcome: UnfencedFactsOutcome, sourceId: string, slug: string, diagnostic: string): void {
+  outcome.failed_pages.push(diagnostic);
+  if (!outcome.operational_failures.some(page => page.source_id === sourceId && page.slug === slug)) {
+    outcome.operational_failures.push({ source_id: sourceId, slug });
+  }
+}
+
 /** One managed page, planned read-only: what the adoption would do with it right now. */
 type ManagedPagePlan =
   | { kind: 'no_page' }
@@ -514,11 +525,11 @@ async function fenceManaged(engine: BrainEngine, plan: UnfencedFactsPlan): Promi
       const authority = authorities.get(sourceId)!;
       const page = await planManagedPage(engine, authority, sourceId, entitySlug, group);
       if (page.kind === 'no_page') { outcome.skipped_no_page += group.length; continue; }
-      if (page.kind === 'warnings') { outcome.failed_pages.push(`${entitySlug} (${page.warnings.join('; ')})`); continue; }
+      if (page.kind === 'warnings') { recordOperationalFailure(outcome, sourceId, entitySlug, `${entitySlug} (${page.warnings.join('; ')})`); continue; }
       if (page.kind === 'unadoptable') { recordUnadoptable(outcome, entitySlug, page.records); continue; }
       const { snapshot, fence, request } = page;
       if (factsChangedSincePlanning(fence.body, fence.assignments, request.facts)) {
-        outcome.failed_pages.push(`${entitySlug} (a legacy fact changed after its fence row was planned; nothing was submitted and the next run replans it)`);
+        recordOperationalFailure(outcome, sourceId, entitySlug, `${entitySlug} (a legacy fact changed after its fence row was planned; nothing was submitted and the next run replans it)`);
         continue;
       }
       recordUnadoptable(outcome, entitySlug, fence.rejected);
@@ -529,7 +540,7 @@ async function fenceManaged(engine: BrainEngine, plan: UnfencedFactsPlan): Promi
       outcome.pages_touched += 1;
       outcome.fenced_slugs.push(entitySlug);
     } catch (err) {
-      outcome.failed_pages.push(`${entitySlug} (${err instanceof Error ? err.message : String(err)})`);
+      recordOperationalFailure(outcome, sourceId, entitySlug, `${entitySlug} (${err instanceof Error ? err.message : String(err)})`);
     }
   }
 }
@@ -546,7 +557,7 @@ async function fenceDatabaseOnlyPage(engine: BrainEngine, sourceId: string, enti
     const snapshot = await engine.readPageSnapshot(entitySlug, { sourceId });
     if (!snapshot) { outcome.skipped_no_page += group.length; return; }
     const fence = await planFence(engine, sourceId, entitySlug, serializePageToMarkdown(snapshot.page, snapshot.tags), group);
-    if ('warnings' in fence) { outcome.failed_pages.push(`${entitySlug} (${fence.warnings.join('; ')})`); return; }
+    if ('warnings' in fence) { recordOperationalFailure(outcome, sourceId, entitySlug, `${entitySlug} (${fence.warnings.join('; ')})`); return; }
     recordUnadoptable(outcome, entitySlug, fence.rejected);
     if (fence.assignments.length === 0) return;
     assertPersistenceAccepting(engine);
@@ -560,7 +571,7 @@ async function fenceDatabaseOnlyPage(engine: BrainEngine, sourceId: string, enti
     outcome.pages_touched += 1;
     outcome.fenced_slugs.push(entitySlug);
   } catch (err) {
-    outcome.failed_pages.push(`${entitySlug} (${err instanceof Error ? err.message : String(err)})`);
+    recordOperationalFailure(outcome, sourceId, entitySlug, `${entitySlug} (${err instanceof Error ? err.message : String(err)})`);
   }
 }
 
@@ -585,16 +596,16 @@ async function fenceFilePage(engine: BrainEngine, sourceId: string, entitySlug: 
     const stored = page && await readStoredBody(engine, sourceId, entitySlug);
     if (!page || !stored) { outcome.skipped_no_page += group.length; return; }
     if (bodyUnread(page)) {
-      outcome.failed_pages.push(`${entitySlug} (page_body_segmented: the page is stored in segments, so its file is not compared or rewritten here; its rows stay unfenced, active and searchable)`);
+      recordOperationalFailure(outcome, sourceId, entitySlug, `${entitySlug} (page_body_segmented: the page is stored in segments, so its file is not compared or rewritten here; its rows stay unfenced, active and searchable)`);
       return;
     }
     if (!fileBodyMatchesStored(bytes, entitySlug, stored)) {
-      outcome.failed_pages.push(fileDatabaseDriftToken(entitySlug, sourceId, 'before'));
+      recordOperationalFailure(outcome, sourceId, entitySlug, fileDatabaseDriftToken(entitySlug, sourceId, 'before'));
       return;
     }
     const fence = await planFence(engine, sourceId, entitySlug, bytes, group);
     if ('warnings' in fence) {
-      outcome.failed_pages.push(`${entitySlug} (${fence.warnings.join('; ')})`);
+      recordOperationalFailure(outcome, sourceId, entitySlug, `${entitySlug} (${fence.warnings.join('; ')})`);
       return;
     }
     recordUnadoptable(outcome, entitySlug, fence.rejected);
@@ -608,7 +619,7 @@ async function fenceFilePage(engine: BrainEngine, sourceId: string, entitySlug: 
     const parsed = parseFactsFence(tmpBody);
     if (parsed.warnings.length > 0) {
       // .tmp stays for inspection; the canonical file is untouched.
-      outcome.failed_pages.push(`${entitySlug} (${parsed.warnings.join('; ')})`);
+      recordOperationalFailure(outcome, sourceId, entitySlug, `${entitySlug} (${parsed.warnings.join('; ')})`);
       return;
     }
     // Mirror the file into pages so this run's reconcile and get_page read the
@@ -632,7 +643,7 @@ async function fenceFilePage(engine: BrainEngine, sourceId: string, entitySlug: 
     }).catch(error => { if (error instanceof FileChangedDuringFence) return false; throw error; });
     if (!written) {
       rmSync(tmpPath, { force: true });
-      outcome.failed_pages.push(fileDatabaseDriftToken(entitySlug, sourceId, 'during'));
+      recordOperationalFailure(outcome, sourceId, entitySlug, fileDatabaseDriftToken(entitySlug, sourceId, 'during'));
       return;
     }
     if (durable) await commitFactFenceFile(writeRoot, filePath, entitySlug, sourceId, prewrite);
@@ -643,7 +654,7 @@ async function fenceFilePage(engine: BrainEngine, sourceId: string, entitySlug: 
   try {
     await (hasSourceFilesystemLock(writeRoot) ? write() : withSourceFilesystemLock(engine, writeRoot, write));
   } catch (err) {
-    outcome.failed_pages.push(`${entitySlug} (${err instanceof Error ? err.message : String(err)})`);
+    recordOperationalFailure(outcome, sourceId, entitySlug, `${entitySlug} (${err instanceof Error ? err.message : String(err)})`);
   }
 }
 
