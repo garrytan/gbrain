@@ -12,7 +12,7 @@
  *
  * seed builds a managed Postgres brain whose default source holds --pages committed files written over --commits commits
  * (with renames and rewrites, then git gc), first-syncs it, makes --ahead of its pages database_ahead with no import
- * record (the row changes only type, frontmatter.legacy_type and frontmatter.subtype), adds --dbonly database-only pages,
+ * record (each archives its preimage, then the row changes only type, frontmatter.legacy_type and frontmatter.subtype), adds --dbonly database-only pages,
  * and keeps the result as a template database. run clones the template, resets the checkout to the seeded commit and runs
  * the conversion apply (convert) or a plain full sync (sync), sampling RSS and heap once a second.
  */
@@ -133,8 +133,13 @@ async function seed(): Promise<void> {
     const first = await performManagedSync(engine, { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true });
     console.error('first sync ' + first.status + ' in ' + Math.round((performance.now() - started) / 1000) + 's');
     await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], async () => {
+      const ahead = "SELECT id FROM pages WHERE source_id='default' ORDER BY slug LIMIT $1";
+      // Every real writer archives the preimage first, so the conversion's content evidence reads these pages as database-moved.
+      await tx.executeRaw("INSERT INTO page_versions (page_id,compiled_truth,frontmatter,knowledge_revision,timeline,title,type,tags,is_deleted,source_path) "
+        + "SELECT p.id,p.compiled_truth,p.frontmatter,p.knowledge_revision,p.timeline,p.title,p.type,(SELECT COALESCE(jsonb_agg(t.tag ORDER BY t.tag),'[]'::jsonb) FROM tags t WHERE t.page_id=p.id),false,p.source_path "
+        + "FROM pages p WHERE p.id IN (" + ahead + ") AND COALESCE(p.body_storage,'inline')='inline'", [AHEAD]);
       const ids = await tx.executeRaw<{ id: string }>("UPDATE pages SET type='concept', frontmatter=frontmatter || jsonb_build_object('type','concept','legacy_type',type,'subtype','imported'), "
-        + "knowledge_revision=gen_random_uuid(), revision_write_request_id=NULL WHERE source_id='default' AND id IN (SELECT id FROM pages WHERE source_id='default' ORDER BY slug LIMIT $1) RETURNING id::text", [AHEAD]);
+        + "knowledge_revision=gen_random_uuid(), revision_write_request_id=NULL WHERE source_id='default' AND id IN (" + ahead + ") RETURNING id::text", [AHEAD]);
       await tx.executeRaw("DELETE FROM op_checkpoints WHERE op='sync-import-provenance' AND split_part(fingerprint, ':', 3) = ANY($1::text[])", [ids.map(row => row.id)]);
       // Pages an older gbrain imported: equal to their files, with no import record.
       if (LEGACY) await tx.executeRaw("DELETE FROM op_checkpoints WHERE op='sync-import-provenance' AND split_part(fingerprint, ':', 3) IN (SELECT id::text FROM pages WHERE source_id='default' ORDER BY slug DESC LIMIT $1)", [LEGACY]);

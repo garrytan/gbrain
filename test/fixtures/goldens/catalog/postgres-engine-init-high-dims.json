@@ -552,6 +552,13 @@
       "trust_proposals.trust_proposals_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "trust_proposals.trust_proposals_status_check": "c CHECK ((status = ANY (ARRAY['pending'::text, 'accepted'::text, 'rejected'::text, 'undone'::text, 'superseded'::text])))",
       "trust_proposals.trust_proposals_target_table_check": "c CHECK ((target_table = ANY (ARRAY['facts'::text, 'takes'::text, 'timeline_entries'::text, 'pages'::text])))",
+      "wake_subscriptions.wake_subscriptions_event_check": "c CHECK ((event ~ '^gbrain\\.[a-z][a-z0-9._]{0,47}$'::text))",
+      "wake_subscriptions.wake_subscriptions_pkey": "p PRIMARY KEY (id)",
+      "wake_subscriptions.wake_subscriptions_principal_kind_check": "c CHECK ((principal_kind = ANY (ARRAY['oauth_client'::text, 'legacy_token'::text, 'local_stdio'::text])))",
+      "wake_subscriptions.wake_subscriptions_state_check": "c CHECK ((state = ANY (ARRAY['open'::text, 'delivered'::text, 'dead'::text, 'ended'::text])))",
+      "wake_subscriptions.wake_subscriptions_target_check": "c CHECK (((length(target) >= 1) AND (length(target) <= 128)))",
+      "wake_subscriptions.wake_subscriptions_wake_user_check": "c CHECK ((wake_user ~ '^[0-9a-f]{32}$'::text))",
+      "wake_subscriptions.wake_subscriptions_ws_subscription_id_check": "c CHECK (((length(ws_subscription_id) >= 1) AND (length(ws_subscription_id) <= 200)))",
       "wanted_links.wanted_links_origin_page_id_fkey": "f FOREIGN KEY (origin_page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "wanted_links.wanted_links_pkey": "p PRIMARY KEY (id)",
       "wanted_links.wanted_links_producer_check": "c CHECK ((producer = ANY (ARRAY['body'::text, 'frontmatter'::text])))",
@@ -1137,6 +1144,9 @@
       "trust_proposals": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "wake_subscriptions": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "wanted_links": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -1522,16 +1532,18 @@
       "persistence_local_writers_pkey": "CREATE UNIQUE INDEX persistence_local_writers_pkey ON public.persistence_local_writers USING btree (id)",
       "persistence_requests_compactable": "CREATE INDEX persistence_requests_compactable ON public.persistence_requests USING btree (completed_at) WHERE ((recovery IS NULL) AND (NOT compacted) AND (state = ANY (ARRAY['committed'::text, 'conflict'::text, 'failed'::text, 'cancelled'::text])))",
       "persistence_requests_database_pending": "CREATE INDEX persistence_requests_database_pending ON public.persistence_requests USING btree (source_incarnation, sequence) WHERE ((worktree_id IS NULL) AND (state = ANY (ARRAY['queued'::text, 'running'::text, 'recovering'::text])))",
-      "persistence_requests_deferred": "CREATE INDEX persistence_requests_deferred ON public.persistence_requests USING btree (worktree_id, sequence) WHERE (state = 'deferred'::text)",
       "persistence_requests_foreground_committed": "CREATE INDEX persistence_requests_foreground_committed ON public.persistence_requests USING btree (worktree_id, sequence) WHERE ((state = 'committed'::text) AND (NOT (COALESCE((intent ->> 'kind'::text), ''::text) ~~ 'managed_sync_%'::text)))",
+      "persistence_requests_open": "CREATE INDEX persistence_requests_open ON public.persistence_requests USING btree (worktree_id, sequence) WHERE (state = ANY (ARRAY['queued'::text, 'deferred'::text, 'running'::text, 'recovering'::text]))",
       "persistence_requests_pending": "CREATE INDEX persistence_requests_pending ON public.persistence_requests USING btree (worktree_id, sequence) WHERE (state = ANY (ARRAY['queued'::text, 'running'::text, 'recovering'::text]))",
       "persistence_requests_pkey": "CREATE UNIQUE INDEX persistence_requests_pkey ON public.persistence_requests USING btree (id)",
       "persistence_requests_principal": "CREATE INDEX persistence_requests_principal ON public.persistence_requests USING btree (principal_kind, principal_id, sequence DESC)",
       "persistence_requests_principal_kind_principal_id_request_id_key": "CREATE UNIQUE INDEX persistence_requests_principal_kind_principal_id_request_id_key ON public.persistence_requests USING btree (principal_kind, principal_id, request_id)",
       "persistence_requests_recovery": "CREATE INDEX persistence_requests_recovery ON public.persistence_requests USING btree (worktree_id, sequence) WHERE (recovery IS NOT NULL)",
+      "persistence_requests_replay_id": "CREATE INDEX persistence_requests_replay_id ON public.persistence_requests USING btree (request_id)",
       "persistence_requests_request_id": "CREATE INDEX persistence_requests_request_id ON public.persistence_requests USING btree (source_id, request_id)",
       "persistence_requests_sequence_key": "CREATE UNIQUE INDEX persistence_requests_sequence_key ON public.persistence_requests USING btree (sequence)",
       "persistence_requests_slug_intent": "CREATE INDEX persistence_requests_slug_intent ON public.persistence_requests USING btree (source_id, slug, sequence) WHERE ((intent IS NOT NULL) AND (NOT compacted))",
+      "persistence_requests_slug_sequence": "CREATE INDEX persistence_requests_slug_sequence ON public.persistence_requests USING btree (source_id, slug, sequence)",
       "persistence_requests_sync_run_committed": "CREATE INDEX persistence_requests_sync_run_committed ON public.persistence_requests USING btree (source_id, ((intent ->> 'runId'::text)), ((intent ->> 'index'::text))) WHERE ((state = 'committed'::text) AND (intent ? 'runId'::text))",
       "persistence_requests_sync_run_open": "CREATE INDEX persistence_requests_sync_run_open ON public.persistence_requests USING btree (worktree_id, ((intent ->> 'runId'::text))) WHERE ((state <> 'committed'::text) AND ((intent ->> 'kind'::text) = ANY (ARRAY['managed_sync_import'::text, 'managed_sync_delete'::text])))",
       "persistence_requests_sync_watermark": "CREATE INDEX persistence_requests_sync_watermark ON public.persistence_requests USING btree (worktree_id, source_incarnation, completed_at DESC) WHERE ((state = 'committed'::text) AND (COALESCE((intent ->> 'kind'::text), ''::text) ~~ 'managed_sync_%'::text))",
@@ -1637,6 +1649,10 @@
       "uniq_minion_attachments_job_filename": "CREATE UNIQUE INDEX uniq_minion_attachments_job_filename ON public.minion_attachments USING btree (job_id, filename)",
       "uniq_minion_jobs_idempotency": "CREATE UNIQUE INDEX uniq_minion_jobs_idempotency ON public.minion_jobs USING btree (idempotency_key) WHERE (idempotency_key IS NOT NULL)",
       "uniq_subagent_messages_idx": "CREATE UNIQUE INDEX uniq_subagent_messages_idx ON public.subagent_messages USING btree (job_id, message_idx)",
+      "wake_subscriptions_open_idx": "CREATE INDEX wake_subscriptions_open_idx ON public.wake_subscriptions USING btree (next_attempt_at) WHERE (state = 'open'::text)",
+      "wake_subscriptions_open_unique": "CREATE UNIQUE INDEX wake_subscriptions_open_unique ON public.wake_subscriptions USING btree (wake_user, ws_subscription_id) WHERE (state = 'open'::text)",
+      "wake_subscriptions_pkey": "CREATE UNIQUE INDEX wake_subscriptions_pkey ON public.wake_subscriptions USING btree (id)",
+      "wake_subscriptions_principal_idx": "CREATE INDEX wake_subscriptions_principal_idx ON public.wake_subscriptions USING btree (principal_kind, principal_id, created_at DESC)",
       "wanted_links_pkey": "CREATE UNIQUE INDEX wanted_links_pkey ON public.wanted_links USING btree (id)",
       "wanted_links_reference_unique": "CREATE UNIQUE INDEX wanted_links_reference_unique ON public.wanted_links USING btree (origin_page_id, producer, ref_kind, target_source_id, target_ref)",
       "wanted_links_source_idx": "CREATE INDEX wanted_links_source_idx ON public.wanted_links USING btree (source_id)",
@@ -1712,6 +1728,7 @@
       "timeline_entries_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=timeline_entries.id",
       "trust_allow_rules_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=trust_allow_rules.id",
       "trust_proposals_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=trust_proposals.id",
+      "wake_subscriptions_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=wake_subscriptions.id",
       "wanted_links_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=wanted_links.id",
       "write_gate_holds_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=write_gate_holds.id",
       "write_gate_receipts_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=write_gate_receipts.id"
@@ -4460,6 +4477,28 @@
           "17 decided_principal_id text/text NULL",
           "18 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "19 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "wake_subscriptions": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('wake_subscriptions_id_seq'::regclass)",
+          "2 event text/text NOT NULL",
+          "3 target text/text NOT NULL",
+          "4 principal_kind text/text NOT NULL",
+          "5 principal_id text/text NOT NULL",
+          "6 member_id text/text NULL",
+          "7 wake_user text/text NOT NULL",
+          "8 ws_subscription_id text/text NOT NULL",
+          "9 state text/text NOT NULL DEFAULT 'open'::text",
+          "10 delivered_marker text/text NULL",
+          "11 attempts integer/int4 NOT NULL DEFAULT 0",
+          "12 next_attempt_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "13 lease_until timestamp with time zone/timestamptz NULL",
+          "14 last_error text/text NULL",
+          "15 expires_at timestamp with time zone/timestamptz NOT NULL",
+          "16 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "17 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

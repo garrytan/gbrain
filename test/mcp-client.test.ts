@@ -26,6 +26,8 @@ import type { GBrainConfig } from '../src/core/config.ts';
 import { discoverOAuth, mintClientCredentialsToken } from '../src/core/remote-mcp-probe.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { VERSION } from '../src/version.ts';
+import { pendingReceiptOf, writeErrorExitCode } from '../src/core/persistence/write-wait.ts';
+import { PENDING_WRITE_EXIT_CODE } from '../src/core/exit-codes.ts';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 
 let server: ReturnType<typeof Bun.serve>;
@@ -508,6 +510,18 @@ describe('callRemoteTool — error surfaces', () => {
       } });
     expect(toolExecutions).toBe(1);
     expect(tokenMintCount).toBe(1);
+  });
+
+  test('a write deferred behind a refresh, answered as a pending success, reaches the CLI as a pending write (exit 10)', async () => {
+    const receipt = { request_id: 'd7599b95-65c2-4d54-aa4e-cb5745af90cf', state: 'queued', retry_after_ms: 1000 };
+    mcpResponseFor = () => ({ content: [{ type: 'text', text: JSON.stringify({ status: 'pending', request_id: receipt.request_id, receipt,
+      deferred: { refresh_id: 'c0ffee00-0000-4000-8000-000000000000' }, next: { tool: 'get_write_request', arguments: { request_id: receipt.request_id } } }) }] });
+    const error = await callRemoteTool(makeConfig(), 'put_page', { slug: 'notes/x', content: 'x', request_id: receipt.request_id }).then(() => null, e => e);
+    expect(error).toBeInstanceOf(RemoteMcpError);
+    expect(error).toMatchObject({ reason: 'tool_error', detail: { write_error: 'write_pending', write_request: receipt } });
+    expect(pendingReceiptOf(error)?.request_id).toBe(receipt.request_id);
+    expect(writeErrorExitCode(error, false)).toBe(PENDING_WRITE_EXIT_CODE);
+    expect(toolExecutions).toBe(1);
   });
 });
 

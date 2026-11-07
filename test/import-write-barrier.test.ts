@@ -11,6 +11,7 @@
  * lands ends `pending_import_expired`. With the barrier off the refusal is unchanged.
  * Seams: the real managed sync and refresh state machine; GBRAIN_REFRESH_BARRIER; the effect worker run in-process.
  */
+import postgres from '#postgres';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -38,6 +39,7 @@ import { commitFile, git, page, withRefreshFixture, type RefreshFixture } from '
 const backends = testBackends();
 const engines: BrainEngine[] = [];
 let closePostgres: (() => Promise<void>) | undefined;
+let postgresUrl: string | undefined;
 
 beforeAll(async () => {
   if (backends.includes('pglite')) {
@@ -46,7 +48,7 @@ beforeAll(async () => {
   }
   if (backends.includes('postgres')) {
     const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
-    engines.push(pg.engine); closePostgres = pg.close;
+    engines.push(pg.engine); closePostgres = pg.close; postgresUrl = pg.databaseUrl;
   }
 }, 120_000);
 afterAll(async () => {
@@ -231,3 +233,81 @@ test('a write while a refresh is in recovery_required waits behind it and lands 
   expect((await settle(f, held)).state).toBe('committed');
   expect(file(f, 'notes/during-recovery.md')).toContain('Accepted while the refresh awaited recovery.');
 }), 180_000);
+
+test('a write held for an import is never passed by a later write to the same page', () => each(async f => {
+  await durable(f);
+  const before = await f.lastCommit(f.alpha);
+  foreignCommit(f, 'one.md', page('Alpha one', IMPORTED));
+  foreignCommit(f, 'zz-later.md', page('Alpha later', 'A second file in the same import.'));
+  const first = await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Written first, while the import waited.') });
+  expect(first.pending).toBe(true);
+  const held = await requestRow(f, first.receipt.request_id);
+  expect(held).toMatchObject({ state: 'deferred', deferred_import_from: before });
+  // The window between managed sync's page import and its checkpoint, through the real path: a one-page slice imports
+  // one.md into the database and yields before the checkpoint, so sources.last_commit has not moved and the held write
+  // is still unreleased.
+  const sliced = await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true }, { maxPages: 1, maxMs: 60_000 });
+  expect(sliced.status).toBe('partial');
+  expect(await f.lastCommit(f.alpha)).toBe(before);
+  const imported = await f.engine.executeRaw<{ compiled_truth: string }>('SELECT compiled_truth FROM pages WHERE source_id=$1 AND slug=$2', [f.alpha, 'one']);
+  expect(imported[0]!.compiled_truth).toContain(IMPORTED);
+  expect((await requestRow(f, first.receipt.request_id)).state).toBe('deferred');
+  const second = await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Written second.') });
+  const later = await requestRow(f, second.receipt.request_id);
+  expect(later.sequence > held.sequence).toBe(true);
+  await importNow(f);
+  expect(await f.lastCommit(f.alpha)).not.toBe(before);
+  await settle(f, held);
+  if (second.pending) await settle(f, later);
+  // Writes to one page commit in admission order: the later write is the last to commit, so the earlier one never lands on top of it.
+  const versions = (await f.engine.executeRaw<{ body: string }>(
+    `SELECT compiled_truth AS body FROM (SELECT v.compiled_truth, v.id FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.source_id=$1 AND p.slug=$2
+      UNION ALL SELECT compiled_truth, NULL FROM pages WHERE source_id=$1 AND slug=$2) h ORDER BY h.id NULLS LAST`, [f.alpha, 'one'])).map(v => v.body ?? '');
+  const lastIndex = (text: string) => versions.findLastIndex(v => v.includes(text));
+  expect(lastIndex('Written second.')).toBeGreaterThan(lastIndex('Written first, while the import waited.'));
+  expect(file(f, 'one.md')).toContain('Written second.');
+}), 180_000);
+
+
+// PostgreSQL only: the race needs a second connection, and PGLite has one.
+test.skipIf(!backends.includes('postgres'))('a held write whose import lands while its expiry waits on the request lock is not expired', () => each(async f => {
+  if (f.engine.kind !== 'postgres') return;
+  const before = await f.lastCommit(f.alpha);
+  foreignCommit(f, 'one.md', page('Alpha one', IMPORTED));
+  foreignCommit(f, 'zz-later.md', page('Alpha later', 'A second file in the same import.'));
+  const out = await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Held, then released by the import.') });
+  const held = await requestRow(f, out.receipt.request_id);
+  expect(held).toMatchObject({ state: 'deferred', deferred_import_from: before });
+  // A one-page slice imports one.md and yields before its checkpoint, so the page rows hold the import and only
+  // sources.last_commit is left to move (below, the checkpoint's commit on another connection).
+  expect((await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true }, { maxPages: 1, maxMs: 60_000 })).status).toBe('partial');
+  expect(await f.lastCommit(f.alpha)).toBe(before);
+  await f.engine.executeRaw("INSERT INTO config(key,value) VALUES('persistence.refresh_barrier_max_wait_ms','1') ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value");
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const [{ owner }] = await f.engine.executeRaw<{ owner: string }>('SELECT owner_host_id::text AS owner FROM persistence_worktrees WHERE id=$1::uuid', [f.worktreeId]);
+  const other = postgres(postgresUrl!, { max: 1, prepare: false });
+  try {
+    // The import lands on another connection: last_commit moves to HEAD, uncommitted, and that transaction holds the
+    // request row, so the expiry reads the old last_commit and then waits on the row lock.
+    await other.unsafe('BEGIN');
+    const [{ pid }] = await other.unsafe<Array<{ pid: number }>>('SELECT pg_backend_pid() AS pid');
+    await other.unsafe("SELECT set_config('gbrain.write_sources',$1,true)", [JSON.stringify([f.alpha])]);
+    await other.unsafe('UPDATE sources SET last_commit=$1 WHERE id=$2', [f.head(), f.alpha]);
+    await other.unsafe('SELECT 1 FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [held.id]);
+    const expiry = expireDeferredWrites(f.engine, owner);
+    const deadline = Date.now() + 20_000;
+    while ((await f.engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND $1::int=ANY(pg_blocking_pids(pid))', [pid]))[0]!.n === 0) {
+      if (Date.now() > deadline) throw new Error('the expiry never waited on the landing import');
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    await other.unsafe('COMMIT');
+    expect((await expiry).map(row => row.id)).not.toContain(held.id);
+  } finally {
+    await other.end();
+    await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
+  }
+  expect(await getWriteRequestById(f.engine, held.id)).not.toMatchObject({ state: 'failed' });
+  expect((await settle(f, held)).state).toBe('committed');
+  expect(file(f, 'one.md')).toContain('Held, then released by the import.');
+}), 180_000);
+

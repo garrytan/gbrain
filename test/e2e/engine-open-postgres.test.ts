@@ -16,7 +16,8 @@ import { embeddedSettings, hostIdFor, openEngine, type EngineSettings } from '..
 import { createEngine } from '../../src/core/engine-factory.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
 import { startConsumerHeartbeat } from '../../src/core/persistence/consumer-heartbeat.ts';
-import { localHostId } from '../../src/core/persistence/identity.ts';
+import { localHostId, registerLocalWriterValue, revokeLocalWriter } from '../../src/core/persistence/identity.ts';
+import type { SqlEngine } from '../../src/core/persistence/model.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { EngineConfig } from '../../src/core/types.ts';
 import { sharedParameterTypes, type SharedParameterTypes } from '../../src/core/pg-type-cache.ts';
@@ -51,7 +52,7 @@ beforeAll(async () => {
   if (!DATABASE_URL) return;
   assertSafeE2eDatabaseUrl(DATABASE_URL);
   const admin = postgres(DATABASE_URL, { max: 1, prepare: false });
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 4; i++) {
     const name = `gbrain_test_engine_open_${randomUUID().replaceAll('-', '')}`;
     await admin.unsafe(`CREATE DATABASE ${name}`);
     const url = new URL(DATABASE_URL);
@@ -117,6 +118,54 @@ describeE2E('openEngine on Postgres', () => {
     expect(filesUnder(gbrainHome).filter(path => !/^\.gbrain\/audit\/connection-events-\d{4}-W\d{2}\.jsonl$/.test(path))).toEqual([]);
     expect(filesUnder(home)).toEqual([]);
   }, 300_000);
+
+  test('engines opened from one writer value all make their first write at once: one registration, no refusal', async () => {
+    const seed = await openEngine({ embedded_core: true, engine: 'postgres', database: { url: urls[3]! }, pool: { max: 2 }, host: { id: randomUUID() } });
+    try { await seed.initSchema(); } finally { await seed.disconnect(); }
+    // Each round is a fresh writer, so every round is that writer's first write; the race is between the
+    // registration read finding no row and the insert, so it takes a few rounds to land.
+    for (let round = 0; round < 12; round++) {
+      const settings = { embedded_core: true, engine: 'postgres', database: { url: urls[3]! }, pool: { max: 2 }, host: { id: randomUUID() }, writer: writerValue() } as EngineSettings;
+      const engines = await Promise.all([0, 1, 2, 3].map(() => openEngine({ ...settings, writer: { ...settings.writer! } })));
+      try {
+        const outcomes = await Promise.all(engines.map((engine, i) => codeOf(operationsByName.put_page.handler(hostCtx(engine),
+          { slug: `notes/first-write-${round}-${i}`, content: `---\ntitle: First write ${i}\n---\nRound ${round}, engine ${i}.\n` }))));
+        expect(outcomes).toEqual(['resolved', 'resolved', 'resolved', 'resolved']);
+        const rows = await engines[0]!.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM persistence_local_writers WHERE id=$1::uuid', [settings.writer!.id]);
+        expect(rows).toEqual([{ n: 1 }]);
+      } finally {
+        await Promise.all(engines.map(engine => engine.disconnect()));
+      }
+    }
+  }, 300_000);
+
+  test('on Postgres, a registration that lost its insert checks the row that won: another credential, lane or id, or a revoked row, refuses', async () => {
+    const engine = await openEngine({ embedded_core: true, engine: 'postgres', database: { url: urls[3]! }, pool: { max: 2 }, host: { id: randomUUID() } });
+    try {
+      await engine.initSchema();
+      const writer = writerValue();
+      await registerLocalWriterValue(engine, writer);
+      const raced = (): SqlEngine => {
+        let hidden = false;
+        return { executeRaw: (<T>(sql: string, params?: unknown[]) => {
+          if (!hidden && sql.startsWith('SELECT revoked_at,credential_hash,lane,grant_ceiling FROM persistence_local_writers')) { hidden = true; return Promise.resolve([] as T[]); }
+          return engine.executeRaw<T>(sql, params);
+        }) as SqlEngine['executeRaw'] };
+      };
+      const rows = (id: string) => engine.executeRaw<{ lane: string; revoked: boolean }>('SELECT lane, revoked_at IS NOT NULL AS revoked FROM persistence_local_writers WHERE id=$1::uuid', [id]);
+      expect(await codeOf(registerLocalWriterValue(raced(), writer))).toBe('resolved');
+      expect(await codeOf(registerLocalWriterValue(raced(), { ...writer, credential: randomBytes(32).toString('hex') }))).toBe('permission_denied');
+      expect(await codeOf(registerLocalWriterValue(raced(), { ...writer, lane: 'cli' }))).toBe('permission_denied');
+      const other = randomUUID();
+      expect(await codeOf(registerLocalWriterValue(raced(), { ...writer, id: other }))).toBe('permission_denied');
+      expect(await rows(other)).toEqual([]);
+      expect(await revokeLocalWriter(engine, writer.id)).toBe(true);
+      expect(await codeOf(registerLocalWriterValue(raced(), writer))).toBe('permission_denied');
+      expect(await rows(writer.id)).toEqual([{ lane: 'stdio', revoked: true }]);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 120_000);
 
   test('a disconnect during an in-flight reconnect leaves no live pool, drops the settings and refuses a later reconnect', async () => {
     const engine = await openEngine({ embedded_core: true, engine: 'postgres', database: { url: urls[0]! }, pool: { max: 2 }, host: { id: randomUUID() } });

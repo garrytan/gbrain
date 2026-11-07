@@ -83,7 +83,7 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
     const writeWaitMs = boundedWriteWaitMs(request.write_wait_ms);
     const result = await dispatchToolCall(engine, request.operation, params, {
       // #6696 (A5): a verified local registration is the user's CLI or agent, as on the in-process entry points.
-      admissionOrigin: 'interactive',
+      admissionOrigin: 'interactive', pendingAsError: true,
       config, remote: verified.remote, transport: verified.remote || localSkillAdministration || localCliLocalOnly ? 'stdio' : undefined, sourceId, auth,
       ...(writeWaitMs !== undefined ? { writeWaitMs } : {}),
       ...(unrestricted ? {} : { localFederatedSourceIds: verified.grant.sourceIds }),

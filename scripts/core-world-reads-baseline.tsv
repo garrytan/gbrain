@@ -1149,6 +1149,10 @@ src/core/uncommitted-deletions.ts	fs_import	1	W7: filesystem boundary moves to t
 src/core/url-clone.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/utils.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/verbs/usage-log.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/wakeshift/config.ts	fs_import	1	stays: the Wakeshift key and HMAC secret are host files (0600) by design, never engine settings (docs/guides/wakeshift.md#the-key)
+src/core/wakeshift/config.ts	load_config	1	stays: wakeshift.enabled is read from the host file plane only, so no DB-plane or remote writer can turn reporting back on
+src/core/wakeshift/config.ts	process_env	2	stays: an explicit env argument is compared with process.env to decide whether the key moves into env-key.ts
+src/core/wakeshift-env-key.ts	process_env	2	stays: WAKESHIFT_API_KEY is taken out of the process environment whenever config loads, so child processes do not inherit the signing key
 src/core/workspace-push.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/workspace-push.ts	process_env	2	W6: settings plane out of the core
 src/core/workspace-push.ts	spawn_import	1	W7: process-wide effects move to src/cli

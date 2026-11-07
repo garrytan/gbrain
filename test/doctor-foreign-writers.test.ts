@@ -316,3 +316,14 @@ test('repo-less: no source checkout is a Git repository, so the check is not app
   const check = await run();
   expect(check).toMatchObject({ status: 'ok', severity: 'info', readiness_state: 'not_applicable' });
 });
+
+test('the scan reads git without optional locks: a stat-dirty index is left as it was, so a concurrent commit never meets index.lock', async () => {
+  const { work } = checkout();
+  await register('locks', work);
+  const future = new Date(Date.now() + 3_600_000);
+  utimesSync(join(work, 'notes/seed.md'), future, future);
+  const before = readFileSync(join(work, '.git/index'));
+  await run();
+  expect(readFileSync(join(work, '.git/index')).equals(before)).toBe(true);
+});
+
