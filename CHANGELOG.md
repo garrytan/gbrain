@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.599.0] - 2026-11-07
 
 **A page write refused `source_changed` now says why in its receipt, and a source can opt in to having a `remember`, `capture` or `add_timeline_entry` adopt an uncommitted local edit instead of being refused.** Before, only `pending_import`, `sync_held` and `canonical_file_missing` refusals carried a cause, so a write lost to a hand edit, an occupied path or a file that moved mid-write looked the same in `gbrain write-request` and doctor. Every `source_changed` refusal now records `error_detail.origin`. With `persistence.adopt_local_edits.source.<id>` on (off by default), a one-sided local edit (Git `HEAD` still holds the database's copy, or any edit on a repo-less brain) is committed as its own write first, then the caller's write lands on top. Keep the flag off until the follow-ups in #8755 are done.
 
