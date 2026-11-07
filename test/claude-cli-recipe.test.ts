@@ -766,8 +766,7 @@ describe('claude-cli LanguageModel — context isolation', () => {
       const cwd = fs.readFileSync(cwdLog, 'utf8').trim();
 
       expect(argv).toContain('--print');
-      expect(argv).toContain('--output-format');
-      expect(argv).toContain('json');
+      expect(argv[argv.indexOf('--output-format') + 1]).toBe('stream-json');
       expect(argv).toContain('--disable-slash-commands');
       // Agent-isolation hardening: no built-in tools, no inherited MCP servers.
       expect(argv).toContain('--tools');

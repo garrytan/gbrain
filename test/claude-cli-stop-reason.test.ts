@@ -72,7 +72,8 @@ describe('claude-cli replays earlier tool calls with their arguments (#6236)', (
         ],
       } as LanguageModelV2CallOptions);
     });
-    const sent = readFileSync(stdinPath, 'utf8');
+    const sent = (JSON.parse(readFileSync(stdinPath, 'utf8')) as { message: { content: Array<{ text: string }> } })
+      .message.content.map(block => block.text).join('');
     expect(sent).toContain('[tool_use brain_get_page({"slug":"wiki/personal/patterns/x"})]');
     expect(sent).not.toContain('[object Object]');
   });
