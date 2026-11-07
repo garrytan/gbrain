@@ -26,6 +26,83 @@ identifiers and attribution are available in the pre-removal Git revision
 - `gbrain upgrade --check-downgrade` and the guide say a released deferred write publishes only when a process runs the write consumer on the owner host; polling `gbrain write-request` only reads the receipt.
 - Tests on PGLite and Postgres: `test/refresh-barrier-gst1623.test.ts` (GST-1623 items 1, 2, 3, 5, 13–22, #8759, and a commit landing right after or right before the refresh merge with the barrier off and on).
 
+## [0.60.606.0] - 2026-11-07
+
+**Updates follow a stable channel by default; every release is one setting away on alpha.**
+
+gbrain publishes a release for nearly every merged change, more than a hundred a week. Every install followed all of them, so an always-on brain upgraded several times a week onto releases no one had run on a production-shaped brain. Installs now follow the stable channel, which gets about one release a week, each promoted by a maintainer after the soak passed on that release's exact tree. The alpha channel (the old `latest`, which still works as an alias) keeps every release.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| A new or existing install with no channel set | offered every published release | offered the newest stable release; one notice on stderr says so, once per brain home |
+| Following every release | the default | `gbrain config set self_upgrade.channel alpha` (or `--channel alpha`, `GBRAIN_RELEASE_CHANNEL=alpha`) |
+| Which stable release is offered | `VERSION` at the `stable` tag | the published evidence record (`stable.json` on `stable-record`): version, commit, tree, soak run, withdrawn versions; a record without the evidence is never trusted |
+| Stable has no usable answer | `stable_channel_unresolved` on upgrade | `stable_missing`, `stable_invalid` or `stable_unreadable`; the background check only reports it, an explicit upgrade exits non-zero, neither falls back to alpha |
+| An install ahead of stable (it ran alpha) | — | offered nothing until stable passes it; never downgraded unless its version was withdrawn |
+| Update cache and snooze | one file for every channel; a snooze ended when a newer release shipped | one per channel, tagged with the evidence policy; a snooze holds its whole window (24 h, 48 h, 7 days); a stable rollback below it clears it |
+| `gbrain upgrade --dry-run` | refused without `--restart-only` | reports channel, its source, current and target version and the action, installing nothing |
+| doctor `self_upgrade_health` | — | names the channel and its source, warns on an invalid channel or a failed stable check |
+| `Promote stable` workflow | moved the `stable` tag | also commits the evidence record in the same atomic push; new `withdraw` input adds versions to `known_bad`; promoting the current stable again writes its record from the stable tag's message, moving no tag (the one-time backfill for releases promoted before the record existed; the daily stable check does it on its first scheduled run) |
+
+Install commands now name `stable` (`bun install -g github:garrytan/gbrain#stable`), so a new install starts on the channel it follows. Every install surface goes through one constant (`src/core/install-ref.ts`), checked by `bun run check:install-ref`; `latest-stable` still installs the newest release for anyone who pins it.
+
+## [0.60.605.0] - 2026-11-07
+
+**Stable now moves forward by itself: a daily check promotes an important fix within a day and anything else within a week, and only after the soak passed on that exact release.** `.github/workflows/stable-daily.yml` runs at 05:17 and 13:17 UTC. It acts only when a merged PR labelled `stable:important` is released but not yet in stable, or stable is more than 7 days old. It promotes the newest release whose exact tree passed the production soak with every integrity gate clean, and otherwise dispatches one soak so a later run can promote. It never moves stable backward, pauses while stable is a rollback, and stops entirely with the repository variable `STABLE_AUTO_PROMOTE=off`.
+
+### Itemized changes
+
+- New `scripts/stable-daily.ts` and `.github/workflows/stable-daily.yml`: the reason (a released `stable:important` fix stable lacks, or the 7-day weekly floor), the candidate (newest release on master newer than stable with a successful full soak of its exact tree, both default cells for at least 2 hours on the requested 600,000-page fixture with privacy probes run and none erroring, and `privacy_leaks`, `read_errors`, `version_skew`, `residents_alive` and `session_refusals` passing in every cell; on the important-only path it must contain the fix), one soak dispatch when nothing qualifies (never while a soak runs, never after a soak on a newer release failed to qualify, with a warning once stable is past the weekly floor), the rollback pause and the kill switch. A manual dispatch defaults to a dry run, and `dry_run=false` needs an admin or maintainer before it writes anything.
+- `scripts/promote-stable.ts`: `scheduleAuthorized()` lets only a schedule event of `stable-daily.yml` on the default branch promote without the admin or maintain role; every other check is unchanged, and the record's `promoted_by` names the schedule. Manual dispatches keep the maintainer check.
+- `docs/RELEASING.md#daily-stable-check` documents the label, the schedule, the kill switch and the rollback.
+- `test/scripts/stable-daily.test.ts` covers the authorization, the integrity gates, each reason and no-op path, the soak dispatch rules, the dry run and the workflow shape.
+
+## [0.60.604.0] - 2026-11-07
+
+**New installs now start on the stable channel: the soaked release, not every release.** The documented install (`bun install -g github:garrytan/gbrain#stable`) and the clone fallback (`git clone --branch stable`) follow the `stable` tag, which moves only to a published release whose exact tree passed the production soak, at least weekly. A fresh `gbrain init` (and so `gbrain setup claude-code` or `codex`) writes `self_upgrade.channel: stable`, so the update check and `gbrain upgrade` offer only stable releases. `#latest-stable` keeps working as the alpha line with every release. An existing brain is not changed, because a re-init never sets or alters its channel.
+
+### Itemized changes
+
+- Install pins move from `#latest-stable` to `#stable` in README, AGENTS.md, INSTALL_FOR_AGENTS.md, BOOTSTRAP_FOR_AGENTS.md, docs/INSTALL.md, the MCP, headless, in-agent and tutorial guides, the setup skills, the Codex plugin manifests and launcher, doctor's npm-squat fix, the bootstrap hints and the agent-workspace template. The bootstrap runbook fetch and the in-agent setup helper read the `stable` ref, and the in-agent helper pins the commit `refs/tags/stable` peels to. Until a release containing this change is promoted to `stable`, the runbook and helper served from that ref are the previous stable release's copies.
+- `scripts/check-bootstrap-tag.sh` sanctions `stable` as the one distribution ref and now refuses `#latest-stable` in the entry docs.
+- `src/commands/init.ts`: a fresh install (new content database, no prior config file) persists `self_upgrade.channel: stable` on PGLite and Postgres. A re-init keeps whatever the config says, including no channel. `test/init-stable-channel.test.ts` covers the fresh, re-init and explicit-channel cases, and `test/e2e/init-stable-channel-postgres.test.ts` the fresh and re-init cases on Postgres.
+- `docs/guides/upgrades-auto-update.md#stable-channel` describes stable as the default for new installs and `latest` as the alpha line.
+
+## [0.60.603.0] - 2026-11-07
+
+**A source that a remote caller adds by URL keeps its clone settings on a managed brain, both when it is first cloned and when it is recloned, and `gbrain frontmatter install-hook` leaves that clone's hooks off.** v0.60.601.0 wrote git-lfs downloads off and hooks off into such a clone's own git config, but on a managed brain the add path did not record the source as remote-added and `gbrain sources reclone` cloned it again without the settings. `install-hook` read the clone's hooks-off setting as a hooks directory someone else chose, wrote a hook it would never run, and told the operator how to turn hooks back on.
+
+### Itemized changes
+
+- `src/core/persistence/managed-sources.ts`, `src/core/persistence/topology-filesystem.ts`, `src/core/persistence/topology-clone.ts`: a managed add by a remote caller records `added_by_remote_caller` on the source, and the managed clone of such a source, on add and on reclone, uses the same `git clone --config` settings as `cloneRepo`'s `skipLfs` (shared as `LFS_OFF_CLONE_CONFIG` in `src/core/git-remote.ts`).
+- `src/commands/frontmatter-install-hook.ts`: a checkout whose own (`--local`) `core.hooksPath` is `/dev/null` is skipped (`skipped_hooks_off`) with nothing written and no wiring advice, `--force` included, and doctor's `frontmatter_hook` check no longer asks to refresh a hook there. A machine-wide `core.hooksPath=/dev/null` keeps the earlier behaviour, so the hook is written unwired with the usual advice.
+- Tests: `test/persistence-source-lifecycle.test.ts` (PGLite and Postgres), `test/sources-remote-lfs.test.ts`, `test/frontmatter-install-hook.test.ts`.
+
+## [0.60.602.0] - 2026-11-07
+
+**A TLA+ model of the refresh write barrier and its deferred-write queue now runs in CI. It checks that a refresh killed at any phase recovers without stranding the writes deferred behind it, that held writes commit in admission order, and that no lock order deadlocks.** Nothing changes at run time: this release adds a model, its CI job and tests.
+
+### Itemized changes
+
+- `spec/tla/refresh-barrier/`: `RefreshBarrier.tla` models write admission and deferral, the drain, the fence and the merge, a crash at each phase followed by recovery, ledger commits that move HEAD during the drain, writes held for an import, deferral behind `recovery_required`, and local-edit adoption. Four configs check every safety property and one checks liveness; two larger configs run nightly. The model reproduces the fenced-orphan recovery bug fixed in 0.60.596.0 and passes on the fix.
+- `spec/tla/refresh-barrier/mutants.json`: 19 mutants. Each removes one guard from the model, and TLC must report the named property. 15 make the same edit to the code, and a named PGLite or Postgres test must then fail on an assertion. Run them with `bun scripts/spec/mutants.ts refresh-barrier`.
+- `.github/workflows/tla-spec.yml`: TLC and the mutants run for both TLA+ specs, nightly and on pull requests and pushes that touch a spec, its runner, the code it models or a test a mutant names. Each spec uploads its own log artifact, `tla-spec-logs-<spec>`.
+- Tests: `test/spec-refresh-barrier.test.ts` keeps the configs, the workflow's path filter and the README's mutant table in step with the catalogue. New tests cover an import expiry overlapping a fence (Postgres), a claimed write that holds the drain, a token revoked after its write was claimed, and the owner scan aborting a refresh killed at the fence after an outside commit. The two Postgres race tests now fail if the operation they start never waits on the lock.
+
+## [0.60.601.0] - 2026-11-07
+
+**Security wave from a /cso audit: four remote-surface holes closed on `gbrain serve --http` and `gbrain mcp expose`.** A write-scoped token could replace, through `POST /ingest`, pages that every MCP write refuses it: another member's `readable_by` page, an owner `visibility: private` page, another member's fact page. A read-scoped caller could make `search_by_image` read a file on the brain host by passing a `file://` URI or an absolute path as `image_url`, which echoed the file's first bytes, sent server images to the embedding provider, or hung or exhausted the server. And an unsigned GitHub push webhook answered whether a repository was wired to the brain, its tracked branch and its source id before checking the signature. A remote caller adding a source by URL could also make the brain host contact an address the cloned repository names for itself, which the URL check never sees. A default keyless install (stdio MCP, no HTTP surface) was not exposed to any of them.
+
+### Itemized changes
+
+- `src/commands/serve-http-webhooks.ts`, `src/core/minions/handlers/ingest-capture.ts`: `POST /ingest` stores the caller's token or OAuth client on the job. The route answers `404 page_not_found` for an `X-Gbrain-Slug` the caller cannot read and `403 permission_denied` for a member fact page or the scope page, and queues nothing. An `X-Gbrain-Slug` that is not a valid slug gets `400 invalid_slug` instead of a queued job that fails later (#8763). The job checks the same writer again right before it writes, so a page restricted after the 202 is still refused, and a queued webhook job with no stored writer is checked as a guest. Fresh slugs and pages the caller can read import as before.
+- `src/core/ops/image.ts`, `src/core/search/image-loader.ts`: `search_by_image` accepts only an http(s) `image_url` from any caller that is not the trusted local CLI, and refuses `image_path` unless the context says the caller is local. The loader reads local paths only when its caller opts in, and checks for a regular file and the size cap before it reads.
+- `src/commands/serve-http-webhooks.ts`: a push event is verified against the source's secret before anything about the repository is answered. An unknown repository, a source with no secret and a bad signature all get the same `401 signature_mismatch`; the missing-secret case is logged on the server with the command that sets it.
+- `src/core/git-remote.ts`, `src/core/sources-ops.ts`, `src/core/ops/sources.ts`: a URL source a remote caller adds is cloned with git-lfs downloads off, written into the clone's own git config (`lfs.fetchexclude=*`, which outranks the repository's `.lfsconfig`, with hooks off so git-lfs's pre-push hook never runs), so every later pull, managed refresh and commit-push in that checkout keeps large files as pointer files and contacts no LFS endpoint. The source records `added_by_remote_caller: true` so a re-clone keeps it off. A URL source a remote caller added before this release carries no such record, so remove it and add it again (from the remote caller or with `gbrain sources add --url`, which keeps git-lfs) to choose its setting. A remote caller whose clone fails gets a fixed message; git's own error goes to the brain host's log. Sources added from the local CLI keep git-lfs.
+- Tests: `test/serve-http-ingest-member-access.test.ts` (real token verifier and Express route, two members), `test/search-by-image-op.test.ts`, `test/cross-modal-phase2.test.ts`, `test/serve-http-github-push-webhook.test.ts` and `test/sources-remote-lfs.test.ts` (real git-lfs against a local LFS endpoint).
+
 ## [0.60.600.0] - 2026-11-07
 
 **With the refresh write barrier on, writes waiting behind an import no longer use up the capacity the import itself needs, so a full cap no longer stalls managed sync until the waits expire.** The barrier is still off by default (`persistence.refresh_barrier`), and with it off nothing changes. Before, every held write kept its outstanding-request slot and intent bytes, so enough of them could leave a managed sync job, or a bulk import group, refused `queue_capacity`, and the writes it would have released waited out the limit and expired. A held `capture` that replaces an imported page now names what it replaced, as a blind `put_page` does, and the expiry pass no longer expires a hold that an import and a new deferral replaced while it ran.

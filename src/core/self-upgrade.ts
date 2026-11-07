@@ -9,8 +9,9 @@
  *
  * This module is the PURE + state foundation:
  *   - `decideSelfUpgrade()` — pure decision over already-resolved inputs.
- *   - cache helpers — atomic temp+rename writes, strict parse, mtime-TTL.
- *   - snooze helpers — escalating 24h/48h/7d, version-reset.
+ *   - cache helpers — one file per release channel stamped with its evidence
+ *     policy; atomic temp+rename writes, strict parse, mtime-TTL.
+ *   - snooze helpers — per channel, time-based, escalating 24h/48h/7d.
  *   - `formatMarker` / `parseMarker` — ONE marker grammar shared by the CLI
  *     emit, the MCP emit, and the agent skill (no drift; forged markers
  *     rejected via the version regex).
@@ -28,7 +29,7 @@
 
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { gbrainPath, isConfigTruthy } from './config.ts';
+import { gbrainPath, isConfigTruthy, loadConfigFileOnly } from './config.ts';
 import { isValidTimeZone } from './cycle/cycle-date.ts';
 import { isValidConfig as isValidQuietHoursWindow } from './minions/quiet-hours.ts';
 import { evaluateBunFloor, type HostBun, type TargetFloor } from './bun-floor.ts';
@@ -58,21 +59,81 @@ export const SNOOZE_DURATIONS_MS = [
 export type SelfUpgradeMode = 'auto' | 'notify' | 'off';
 
 /**
- * The release line an install follows. `latest` is every published release (the `latest-stable` tag release.yml
- * advances); `stable` is the newest release a maintainer promoted after the production-shaped soak passed on its
- * exact tree (the `stable` tag .github/workflows/promote-stable.yml advances). Set per brain home with
- * `gbrain config set self_upgrade.channel stable`; `gbrain upgrade --channel <name>` overrides it for one run.
+ * The release line an install follows (GBRA-224 W1). `stable` (the default) is the newest release a maintainer
+ * promoted after its gates passed on the exact tree, published with an evidence record (core/stable-channel.ts);
+ * `alpha` is every published release (the `latest-stable` tag release.yml advances). `latest` is accepted
+ * everywhere as an alias for alpha. Precedence: `--channel`, then GBRAIN_RELEASE_CHANNEL, then
+ * `self_upgrade.channel` (file plane), then stable.
  */
-export type ReleaseChannel = 'latest' | 'stable';
-export const RELEASE_CHANNELS: readonly ReleaseChannel[] = ['latest', 'stable'];
+export type ReleaseChannel = 'stable' | 'alpha';
+export const RELEASE_CHANNELS: readonly ReleaseChannel[] = ['stable', 'alpha'];
+export const DEFAULT_RELEASE_CHANNEL: ReleaseChannel = 'stable';
+export const RELEASE_CHANNEL_ENV = 'GBRAIN_RELEASE_CHANNEL';
+export const VALID_CHANNELS_TEXT = 'stable or alpha (latest is an alias for alpha)';
 
 export function normalizeChannel(raw: unknown): ReleaseChannel | null {
-  return raw === 'latest' || raw === 'stable' ? raw : null;
+  if (typeof raw !== 'string') return null;
+  if (raw === 'stable') return 'stable';
+  return raw === 'alpha' || raw === 'latest' ? 'alpha' : null;
 }
 
-/** The configured channel (file plane), else `latest`. */
-export function resolveReleaseChannel(cfg: { self_upgrade?: { channel?: string } } | null | undefined): ReleaseChannel {
-  return normalizeChannel(cfg?.self_upgrade?.channel) ?? 'latest';
+export type ChannelSource = 'flag' | 'env' | 'config' | 'default';
+export type ChannelResolution =
+  | { ok: true; channel: ReleaseChannel; source: ChannelSource }
+  | { ok: false; source: Exclude<ChannelSource, 'default'>; raw: string };
+
+/**
+ * The effective channel and where it came from. `flag` is the raw `--channel` value (null when absent, '' when the
+ * flag had no value). The first source present decides; an invalid value there is an error, never a fallthrough.
+ */
+export function resolveReleaseChannel(
+  cfg: { self_upgrade?: { channel?: string } } | null | undefined,
+  flag: string | null = null,
+  env: string | undefined = process.env[RELEASE_CHANNEL_ENV],
+): ChannelResolution {
+  const sources: Array<[Exclude<ChannelSource, 'default'>, string | null | undefined]> = [
+    ['flag', flag],
+    ['env', env === '' ? undefined : env],
+    ['config', cfg?.self_upgrade?.channel],
+  ];
+  for (const [source, raw] of sources) {
+    if (raw === null || raw === undefined) continue;
+    const channel = normalizeChannel(raw);
+    return channel ? { ok: true, channel, source } : { ok: false, source, raw: String(raw) };
+  }
+  return { ok: true, channel: DEFAULT_RELEASE_CHANNEL, source: 'default' };
+}
+
+/** The hot-path channel (env and file-plane config, no flag); null when the value there is invalid. */
+export function currentReleaseChannel(): ReleaseChannel | null {
+  const res = resolveReleaseChannel(loadConfigFileOnly());
+  return res.ok ? res.channel : null;
+}
+
+/** The command that moves this install to `target`, rendered against what currently decides the channel. */
+export function channelSwitchCommand(target: ReleaseChannel, res: ChannelResolution): string {
+  if (res.source === 'flag') return `gbrain upgrade --channel ${target}`;
+  if (res.source === 'env') return `${RELEASE_CHANNEL_ENV}=${target} (it overrides self_upgrade.channel), or unset ${RELEASE_CHANNEL_ENV} and run gbrain config set self_upgrade.channel ${target}`;
+  return `gbrain config set self_upgrade.channel ${target}`;
+}
+
+/** A usage-error sentence for an invalid channel value. */
+export function invalidChannelMessage(res: Extract<ChannelResolution, { ok: false }>): string {
+  const where = res.source === 'flag' ? '--channel' : res.source === 'env' ? RELEASE_CHANNEL_ENV : 'self_upgrade.channel';
+  return `${where} is '${res.raw}', which is not a release channel; use ${VALID_CHANNELS_TEXT}.`;
+}
+
+/**
+ * The evidence policy a cached stable answer was validated under. A record whose version is at or above
+ * MATRIX_REQUIRED_FROM must carry `matrix_run` as well as `soak_run`; null until the upgrade matrix (W2) ships, so
+ * every generation-1 record (soak evidence only) stays valid. Changing either changes the policy id, which
+ * invalidates cached stable answers.
+ */
+export const MATRIX_REQUIRED_FROM: string | null = null;
+export const STABLE_EVIDENCE_POLICY = `stable-record-v1;matrix-from=${MATRIX_REQUIRED_FROM ?? 'none'}`;
+export const ALPHA_EVIDENCE_POLICY = 'alpha-version-file-v1';
+export function evidencePolicyFor(channel: ReleaseChannel): string {
+  return channel === 'stable' ? STABLE_EVIDENCE_POLICY : ALPHA_EVIDENCE_POLICY;
 }
 
 export type SelfUpgradeChannel = 'invocation' | 'autopilot';
@@ -135,6 +196,8 @@ export interface SnoozeRecord {
   level: number;
   /** Epoch ms when the snooze was written. */
   ts: number;
+  /** Epoch ms when it ends. */
+  until: number;
 }
 
 // ── Pure decision ───────────────────────────────────────────────────────────
@@ -286,12 +349,18 @@ export function parseMarker(line: string): UpdateMarker | null {
 
 // ── State file paths ────────────────────────────────────────────────────────
 
-export function updateCachePath(): string {
-  return gbrainPath('last-update-check');
+/** Files from before the cache was partitioned by channel (GBRA-224): never read, removed on clear. */
+const LEGACY_CACHE_FILE = 'last-update-check';
+const LEGACY_SNOOZE_FILE = 'update-snoozed';
+
+/** The update-check cache for one channel (default: the hot-path channel; stable when that is invalid). */
+export function updateCachePath(channel: ReleaseChannel = currentReleaseChannel() ?? DEFAULT_RELEASE_CHANNEL): string {
+  return gbrainPath(`update-check.${channel}.json`);
 }
 
-export function snoozePath(): string {
-  return gbrainPath('update-snoozed');
+/** The "Not now" snooze for one channel. */
+export function snoozePath(channel: ReleaseChannel = currentReleaseChannel() ?? DEFAULT_RELEASE_CHANNEL): string {
+  return gbrainPath(`update-snoozed.${channel}.json`);
 }
 
 export function justUpgradedPath(): string {
@@ -319,10 +388,40 @@ export function locksDir(): string {
 
 // ── Cache (untrusted local state: atomic write, strict parse, mtime-TTL) ─────
 
-export interface CacheEntry {
-  marker: UpdateMarker;
-  mtimeMs: number;
+/** A stable lookup that failed, kept so doctor and --check-only can report it without a network call. */
+export interface StableLookupError {
+  code: 'stable_missing' | 'stable_invalid' | 'stable_unreadable';
+  cause: string;
 }
+
+/**
+ * One channel's cached answer. Partitioned by channel (one file each) and stamped with the evidence policy it was
+ * validated under, so a channel switch, a default flip or a policy change never reads another partition's answer.
+ * `latest` is the channel's release (on stable, the evidence record's version, which can be below the running build);
+ * `knownBad` is the record's withdrawn list; `error` is set when the last stable lookup failed.
+ */
+export interface CacheEntry {
+  marker: UpdateMarker | null;
+  mtimeMs: number;
+  channel: ReleaseChannel;
+  policy: string;
+  checkedAt: number;
+  latest: string | null;
+  knownBad: string[];
+  error: StableLookupError | null;
+}
+
+export interface CacheWriteOptions {
+  channel?: ReleaseChannel;
+  /** The channel's release when it differs from the marker's (a stable record below the running build). */
+  latest?: string | null;
+  knownBad?: readonly string[];
+  error?: StableLookupError | null;
+  /** When the refresh that produced this answer started; an older answer never overwrites a newer one. */
+  checkedAt?: number;
+}
+
+const STABLE_CODES = new Set(['stable_missing', 'stable_invalid', 'stable_unreadable']);
 
 let _tmpCounter = 0;
 function atomicWrite(path: string, content: string): void {
@@ -338,46 +437,91 @@ function atomicWrite(path: string, content: string): void {
   renameSync(tmp, path);
 }
 
-/** Read + strict-parse the cache. Returns null on missing / corrupt. */
-export function readUpdateCache(): CacheEntry | null {
-  const path = updateCachePath();
-  let content: string;
-  let mtimeMs: number;
+function unlinkQuiet(path: string): void {
   try {
-    content = readFileSync(path, 'utf8');
-    mtimeMs = statSync(path).mtimeMs;
-  } catch {
-    return null;
-  }
-  const marker = parseMarker(content);
-  if (!marker) return null;
-  return { marker, mtimeMs };
-}
-
-/** Atomically write the cache (marker line, 0600). Best-effort: throws only on
- * truly unexpected fs errors (callers in the detached refresh swallow). */
-export function writeUpdateCache(marker: UpdateMarker): void {
-  atomicWrite(updateCachePath(), formatMarker(marker) + '\n');
-}
-
-/** Clear the cache (e.g. after a successful upgrade) so the next run re-checks. */
-export function clearUpdateCache(): void {
-  try {
-    unlinkSync(updateCachePath());
+    unlinkSync(path);
   } catch {
     /* already gone */
   }
 }
 
+/**
+ * Read + strict-parse one channel's cache. Null on missing, corrupt, another channel's or another evidence policy's
+ * entry (a legacy unpartitioned file is never read).
+ */
+export function readUpdateCache(channel: ReleaseChannel | null = currentReleaseChannel()): CacheEntry | null {
+  if (!channel) return null;
+  const path = updateCachePath(channel);
+  let raw: Record<string, unknown>;
+  let mtimeMs: number;
+  try {
+    raw = JSON.parse(readFileSync(path, 'utf8'));
+    mtimeMs = statSync(path).mtimeMs;
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== 'object' || raw.schema !== 2) return null;
+  if (raw.channel !== channel || raw.policy !== evidencePolicyFor(channel)) return null;
+  const marker = raw.marker === null ? null : parseMarker(String(raw.marker ?? ''));
+  if (raw.marker !== null && !marker) return null;
+  const latest = typeof raw.latest === 'string' && isValidVersionString(raw.latest) ? raw.latest : null;
+  const knownBad = Array.isArray(raw.known_bad) ? raw.known_bad.filter((v): v is string => typeof v === 'string' && isValidVersionString(v)) : [];
+  const e = raw.error as { code?: unknown; cause?: unknown } | null | undefined;
+  const error = e && typeof e === 'object' && typeof e.code === 'string' && STABLE_CODES.has(e.code)
+    ? { code: e.code as StableLookupError['code'], cause: typeof e.cause === 'string' ? e.cause.slice(0, 300) : '' }
+    : null;
+  if (!marker && !error) return null;
+  const checkedAt = typeof raw.checked_at === 'number' && Number.isFinite(raw.checked_at) ? raw.checked_at : mtimeMs;
+  return { marker, mtimeMs, channel, policy: raw.policy as string, checkedAt, latest: latest ?? marker?.latest ?? null, knownBad, error };
+}
+
+/**
+ * Atomically write one channel's cache (0600). A refresh that started before the stored answer's refresh never
+ * overwrites it (reversed completion). Best-effort: throws only on truly unexpected fs errors.
+ */
+export function writeUpdateCache(marker: UpdateMarker | null, opts: CacheWriteOptions = {}): void {
+  const channel = opts.channel ?? currentReleaseChannel() ?? DEFAULT_RELEASE_CHANNEL;
+  const checkedAt = opts.checkedAt ?? Date.now();
+  const prior = readUpdateCache(channel);
+  if (prior && prior.checkedAt > checkedAt) return;
+  atomicWrite(updateCachePath(channel), JSON.stringify({
+    schema: 2,
+    channel,
+    policy: evidencePolicyFor(channel),
+    checked_at: checkedAt,
+    marker: marker ? formatMarker(marker) : null,
+    latest: opts.latest === undefined ? marker?.latest ?? null : opts.latest,
+    known_bad: [...(opts.knownBad ?? [])],
+    error: opts.error ?? null,
+  }) + '\n');
+  unlinkQuiet(gbrainPath(LEGACY_CACHE_FILE));
+}
+
+/** Clear every channel's cache (e.g. after a successful upgrade) so the next run re-checks. */
+export function clearUpdateCache(): void {
+  for (const channel of RELEASE_CHANNELS) unlinkQuiet(updateCachePath(channel));
+  unlinkQuiet(gbrainPath(LEGACY_CACHE_FILE));
+}
+
 export function isCacheFresh(entry: CacheEntry, now: number): boolean {
-  const ttl = entry.marker.kind === 'upgrade_available' ? CACHE_TTL_UPGRADE_AVAILABLE_MS : CACHE_TTL_UP_TO_DATE_MS;
+  const ttl = entry.marker?.kind === 'upgrade_available' && !entry.error ? CACHE_TTL_UPGRADE_AVAILABLE_MS : CACHE_TTL_UP_TO_DATE_MS;
   return now - entry.mtimeMs < ttl;
 }
 
 /**
+ * The release a channel offers this build: its release when strictly newer, or, on stable, the current stable when
+ * the running version is on the record's known_bad list (the one move below the running build the channel makes,
+ * because the record says so). Null otherwise. Pure.
+ */
+export function offeredVersion(runningVersion: string, latest: string | null, knownBad: readonly string[]): string | null {
+  if (!latest || !isValidVersionString(latest)) return null;
+  if (isNewerVersion(runningVersion, latest)) return latest;
+  return knownBad.includes(runningVersion) && latest !== runningVersion ? latest : null;
+}
+
+/**
  * The one shared "is an upgrade actually pending for THIS binary?" predicate.
- * Returns the latest version string when the cache is present, fresh, marks an
- * upgrade, AND that upgrade is strictly newer than the RUNNING binary — else
+ * Returns the offered version (offeredVersion) when the effective channel's cache is present and fresh — else
  * null. The running-version comparison is the load-bearing part: the cache
  * records the version of whatever binary WROTE it (an older gbrain on PATH can
  * write it via the detached refresh), so consumers must never trust
@@ -385,13 +529,12 @@ export function isCacheFresh(entry: CacheEntry, now: number): boolean {
  * startup marker, doctor, advisor, get_brain_identity) routes through here so
  * the suppression rule cannot drift per-surface. Never throws.
  */
-export function pendingUpgradeVersion(runningVersion: string, now: number = Date.now()): string | null {
+export function pendingUpgradeVersion(runningVersion: string, now: number = Date.now(), channel: ReleaseChannel | null = currentReleaseChannel()): string | null {
   try {
-    const entry = readUpdateCache();
+    const entry = readUpdateCache(channel);
     if (!entry || !isCacheFresh(entry, now)) return null;
-    if (entry.marker.kind !== 'upgrade_available' || !entry.marker.latest) return null;
-    if (!isNewerVersion(runningVersion, entry.marker.latest)) return null;
-    return entry.marker.latest;
+    if (entry.error?.code === 'stable_missing' || entry.error?.code === 'stable_invalid') return null;
+    return offeredVersion(runningVersion, entry.latest, entry.knownBad);
   } catch {
     return null;
   }
@@ -399,22 +542,21 @@ export function pendingUpgradeVersion(runningVersion: string, now: number = Date
 
 // ── Snooze (interactive prompting only; never overrides mode=off) ────────────
 
-export function readSnooze(): SnoozeRecord | null {
-  let content: string;
+/**
+ * Read one channel's snooze. A snooze is time-based: "Not now" holds until `until` whatever the channel ships
+ * meanwhile; `version` is what was offered when it was written (a rollback below it ends the snooze).
+ */
+export function readSnooze(channel: ReleaseChannel = currentReleaseChannel() ?? DEFAULT_RELEASE_CHANNEL): SnoozeRecord | null {
+  let raw: Record<string, unknown>;
   try {
-    content = readFileSync(snoozePath(), 'utf8');
+    raw = JSON.parse(readFileSync(snoozePath(channel), 'utf8'));
   } catch {
     return null;
   }
-  const parts = content.trim().split(/\s+/);
-  if (parts.length !== 3) return null;
-  const version = parts[0];
-  const level = Number(parts[1]);
-  const ts = Number(parts[2]);
-  if (!isValidVersionString(version) || !Number.isInteger(level) || level < 1 || !Number.isFinite(ts)) {
-    return null;
-  }
-  return { version, level, ts };
+  const { version, level, ts, until } = raw ?? {};
+  if (typeof version !== 'string' || !isValidVersionString(version)) return null;
+  if (!Number.isInteger(level) || (level as number) < 1 || !Number.isFinite(ts) || !Number.isFinite(until)) return null;
+  return { version, level: level as number, ts: ts as number, until: until as number };
 }
 
 /** Snooze duration for a level (1-indexed; >=3 caps at 7d). */
@@ -423,35 +565,44 @@ export function snoozeDurationMs(level: number): number {
   return SNOOZE_DURATIONS_MS[idx];
 }
 
-/** True iff an unexpired snooze covers `latestVersion`. A snooze for a
- * different (older) version never suppresses a newer one (version-reset). */
-export function isSnoozeActive(snooze: SnoozeRecord | null, latestVersion: string, now: number): boolean {
-  if (!snooze) return false;
-  if (snooze.version !== latestVersion) return false;
-  return now - snooze.ts < snoozeDurationMs(snooze.level);
+/**
+ * True iff an unexpired snooze covers an offer of `offered`. Newer releases never end it (it is time-based); an
+ * offer below the snoozed version (a stable rollback) does.
+ */
+export function isSnoozeActive(snooze: SnoozeRecord | null, offered: string, now: number): boolean {
+  if (!snooze || now >= snooze.until) return false;
+  return !isNewerVersion(offered, snooze.version);
 }
 
 /**
- * Record (or escalate) a snooze for `latestVersion`. If the existing snooze is
- * for the same version, escalate its level (capped); otherwise start at level 1.
- * Returns the new level.
+ * Whether the channel's snooze holds back an offer of `offered`. A snooze the offer rolled back below is cleared,
+ * so the rolled-back release is offered at once.
  */
-export function writeSnooze(latestVersion: string, now: number): number {
-  const existing = readSnooze();
-  let level = 1;
-  if (existing && existing.version === latestVersion) {
-    level = Math.min(existing.level + 1, SNOOZE_DURATIONS_MS.length);
+export function snoozeHolds(offered: string, now: number, channel: ReleaseChannel = currentReleaseChannel() ?? DEFAULT_RELEASE_CHANNEL): boolean {
+  const snooze = readSnooze(channel);
+  if (snooze && isNewerVersion(offered, snooze.version)) {
+    clearSnooze(channel);
+    return false;
   }
-  atomicWrite(snoozePath(), `${latestVersion} ${level} ${now}\n`);
-  return level;
+  return isSnoozeActive(snooze, offered, now);
 }
 
-export function clearSnooze(): void {
-  try {
-    unlinkSync(snoozePath());
-  } catch {
-    /* already gone */
-  }
+/**
+ * Record (or escalate) "Not now" on a channel: level 1 (24 h), then 48 h, then 7 d for each later "Not now" until an
+ * upgrade clears it. Written atomically. Returns the new record.
+ */
+export function writeSnooze(offered: string, now: number, channel: ReleaseChannel = currentReleaseChannel() ?? DEFAULT_RELEASE_CHANNEL): SnoozeRecord {
+  const existing = readSnooze(channel);
+  const level = existing ? Math.min(existing.level + 1, SNOOZE_DURATIONS_MS.length) : 1;
+  const record = { version: offered, level, ts: now, until: now + snoozeDurationMs(level) };
+  atomicWrite(snoozePath(channel), JSON.stringify(record) + '\n');
+  return record;
+}
+
+/** Clear one channel's snooze, or every channel's (after an upgrade). */
+export function clearSnooze(channel?: ReleaseChannel): void {
+  for (const c of channel ? [channel] : RELEASE_CHANNELS) unlinkQuiet(snoozePath(c));
+  if (!channel) unlinkQuiet(gbrainPath(LEGACY_SNOOZE_FILE));
 }
 
 // ── Refresh single-flight (anti-stampede) ────────────────────────────────────
@@ -462,9 +613,9 @@ export function clearSnooze(): void {
  * success (caller must release it), or null if another process holds it.
  * Separate from the upgrade mutex.
  */
-export function tryAcquireRefreshLock(opts?: Pick<PackLockOpts, 'now' | 'isPidAlive'>): string | null {
+export function tryAcquireRefreshLock(opts?: Pick<PackLockOpts, 'now' | 'isPidAlive'>, channel: ReleaseChannel = currentReleaseChannel() ?? DEFAULT_RELEASE_CHANNEL): string | null {
   try {
-    const { lockPath } = acquirePackLock('update-refresh', {
+    const { lockPath } = acquirePackLock(`update-refresh-${channel}`, {
       lockDir: locksDir(),
       ttlMs: 30_000,
       ...opts,
@@ -535,7 +686,8 @@ export function readSwapReceipt(path: string): SwapReceipt | null {
 /** The mutable slice of `config.self_upgrade` the autopilot channel manages. */
 export interface SelfUpgradeState {
   mode?: SelfUpgradeMode;
-  channel?: ReleaseChannel;
+  /** Stored as written; `latest` (the pre-alpha name) reads as alpha. */
+  channel?: ReleaseChannel | 'latest';
   mode_prompted?: boolean;
   quiet_hours?: { start?: number; end?: number; tz?: string };
   failed_versions?: string[];
@@ -758,8 +910,8 @@ export function parseSelfUpgradeConfigValue(leaf: SelfUpgradeConfigLeaf, raw: st
       return mode ? { ok: true, value: mode } : { ok: false, error: `must be auto, notify or off (got '${raw}')` };
     }
     case 'channel': {
-      const channel = normalizeChannel(raw.trim());
-      return channel ? { ok: true, value: channel } : { ok: false, error: `must be latest or stable (got '${raw}')` };
+      const value = raw.trim();
+      return normalizeChannel(value) ? { ok: true, value } : { ok: false, error: `must be ${VALID_CHANNELS_TEXT} (got '${raw}')` };
     }
     case 'mode_prompted': {
       if (isConfigTruthy(raw)) return { ok: true, value: true };

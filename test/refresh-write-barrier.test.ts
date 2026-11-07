@@ -11,6 +11,7 @@
  * Seams: the real refresh state machine paused at its drained boundary (`hooks.boundary`); GBRAIN_REFRESH_BARRIER.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, spyOn, test } from 'bun:test';
+import postgres from '#postgres';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -35,6 +36,7 @@ import { _setRefreshFenceWaitForTests } from '../src/core/persistence/admission-
 import { _resetRefreshBarrierCacheForTests, deferredBacklog, expireDeferredWrites } from '../src/core/persistence/refresh-barrier.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { quarantineSharedSkillRestore } from '../src/core/shared-skills/restore.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -43,6 +45,7 @@ import { commitFile, git, page, withRefreshFixture, type RefreshFixture } from '
 const backends = testBackends();
 const engines: BrainEngine[] = [];
 let closePostgres: (() => Promise<void>) | undefined;
+let postgresUrl: string | undefined;
 
 beforeAll(async () => {
   if (backends.includes('pglite')) {
@@ -51,7 +54,7 @@ beforeAll(async () => {
   }
   if (backends.includes('postgres')) {
     const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
-    engines.push(pg.engine); closePostgres = pg.close;
+    engines.push(pg.engine); closePostgres = pg.close; postgresUrl = pg.databaseUrl;
   }
 }, 120_000);
 afterAll(async () => {
@@ -92,6 +95,33 @@ async function requestRow(f: RefreshFixture, requestId: string): Promise<WriteRe
 /** Drives this process's consumer until the released deferred row settles. */
 async function settle(f: RefreshFixture, row: WriteRequest): Promise<WriteRequest> {
   return waitForWrite(f.engine, (await getWriteRequestById(f.engine, row.id))!, { engine: f.engine.kind } as never, 30_000);
+}
+
+/**
+ * Postgres only: on a separate connection, moves refresh `refreshId` to aborted and keeps that transaction open while `start`
+ * runs, until `start` waits on that connection's lock (or settles), then commits and returns what `start` returns and
+ * whether it waited on that lock (a race test that never waited proves nothing).
+ */
+async function endRefreshDuring<T>(f: RefreshFixture, refreshId: string, start: () => Promise<T>): Promise<{ value: T; blocked: boolean }> {
+  const sql = postgres(postgresUrl!, { max: 1, prepare: false });
+  try {
+    const conn = await sql.reserve();
+    try {
+      await conn.unsafe('BEGIN');
+      const [{ pid }] = await conn.unsafe<Array<{ pid: number }>>('SELECT pg_backend_pid() AS pid');
+      await conn.unsafe("UPDATE persistence_worktree_refreshes SET state='aborted',completed_at=now(),updated_at=now() WHERE id=$1::uuid", [refreshId]);
+      let settled = false; let blocked = false;
+      const running = start().finally(() => { settled = true; });
+      running.catch(() => undefined);
+      for (let i = 0; i < 800 && !settled; i++) {
+        const [waiting] = await f.engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))', [pid]);
+        if (Number(waiting!.n) > 0) { blocked = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      await conn.unsafe('COMMIT');
+      return { value: await running, blocked };
+    } finally { conn.release(); }
+  } finally { await sql.end(); }
 }
 
 async function outstanding(f: RefreshFixture): Promise<number> {
@@ -198,6 +228,43 @@ test('a deferred write past the wait limit ends refresh_barrier_expired and rele
     }
   });
   expect((await refresh).status).toBe('completed');
+}), 180_000);
+
+test('an expiry racing the end of its refresh leaves the write deferred, and it commits after the release (Postgres)', () => each(async f => {
+  if (f.engine.kind !== 'postgres') return;
+  let deferred!: WriteRequest;
+  await duringRefresh(f, async () => {
+    const out = await call(f, 'put_page', { slug: 'notes/expiry-race', content: page('Expiry race', 'body') });
+    deferred = await requestRow(f, out.body.request_id);
+    expect(deferred.state).toBe('deferred');
+    await disposePersistenceConsumer(f.engine);
+    await f.engine.executeRaw("INSERT INTO config(key,value) VALUES('persistence.refresh_barrier_max_wait_ms','1') ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value");
+    try {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const [{ owner }] = await f.engine.executeRaw<{ owner: string }>('SELECT owner_host_id::text AS owner FROM persistence_worktrees WHERE id=$1::uuid', [f.worktreeId]);
+      const { value: expired, blocked } = await endRefreshDuring(f, deferred.deferred_refresh_id!, () => expireDeferredWrites(f.engine, owner));
+      expect(expired.map(row => row.id)).toEqual([]);
+      expect((await getWriteRequestById(f.engine, deferred.id))!.state).toBe('deferred');
+      expect(blocked).toBe(true);
+    } finally {
+      await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
+    }
+  }).catch(error => { if (!(error instanceof OperationError)) throw error; });
+  expect((await settle(f, deferred)).state).toBe('committed');
+}), 180_000);
+
+test('a write admitted while its refresh ends is never deferred to the released refresh (Postgres)', () => each(async f => {
+  if (f.engine.kind !== 'postgres') return;
+  let row!: WriteRequest;
+  await duringRefresh(f, async () => {
+    const active = (await f.refreshRows()).find(r => r.state === 'draining')!;
+    const { value: out, blocked } = await endRefreshDuring(f, active.id, () => call(f, 'put_page', { slug: 'notes/admission-race', content: page('Admission race', 'body') }));
+    row = await requestRow(f, out.body.request_id);
+    expect(row.deferred_refresh_id).toBeNull();
+    expect(row.state).not.toBe('deferred');
+    expect(blocked).toBe(true);
+  }).catch(error => { if (!(error instanceof OperationError)) throw error; });
+  expect((await settle(f, row)).state).toBe('committed');
 }), 180_000);
 
 test('a shared-skill restore cancels a deferred write too and releases its counters (restore is PGLite-only)', () => each(async f => {
@@ -350,6 +417,24 @@ test('a deferred write whose token is revoked while it waits ends permission_den
   expect((await refresh).status).toBe('completed');
   expect(await settle(f, deferred)).toMatchObject({ state: 'failed', error_code: 'permission_denied' });
   const [{ n }] = await f.engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND slug=$2', [f.alpha, 'notes/revoked']);
+  expect(Number(n)).toBe(0);
+}), 180_000);
+
+test('a queued write whose token is revoked after it was claimed ends permission_denied with nothing applied', () => each(async f => {
+  const minted = await mintLegacyToken(f.engine, { name: `token-${randomUUID()}`, scopes: ['read', 'write'], sourceGrant: [f.alpha], takesHolders: ['world'] });
+  const requestId = randomUUID();
+  installFaultHook(async (point, detail) => {
+    if (point === 'consumer:preparing' && detail.requestId === requestId) await f.engine.executeRaw('UPDATE access_tokens SET revoked_at=now() WHERE id=$1', [minted.id]);
+  });
+  try {
+    await dispatchToolCall(f.engine, 'put_page', { slug: 'notes/revoked-queued', content: page('Revoked queued', 'never applied'), request_id: requestId }, { remote: true, transport: 'http',
+      sourceId: f.alpha, admissionOrigin: 'interactive', takesHoldersAllowList: ['world'],
+      auth: { token: '', clientId: minted.id, principal: { kind: 'legacy_token', id: minted.id }, sourceId: f.alpha, allowedSources: [f.alpha], scopes: ['read', 'write'] } } as never);
+  } finally { installFaultHook(undefined); }
+  const row = await requestRow(f, requestId);
+  expect(row.deferred_refresh_id).toBeNull();
+  expect(await settle(f, row)).toMatchObject({ state: 'failed', error_code: 'permission_denied' });
+  const [{ n }] = await f.engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND slug=$2', [f.alpha, 'notes/revoked-queued']);
   expect(Number(n)).toBe(0);
 }), 180_000);
 
@@ -582,6 +667,16 @@ test('GST-1674: a refresh killed at fenced after a commit gbrain did not make mo
   const { deferred, landed } = await crashAtFenced(f, () => commitFile(f.root, 'alpha/outside.md', page('Outside', 'A commit made around gbrain.'), 'outside'));
   const resumed = await refreshWorktree(f.engine, f.alpha, { resume: true });
   expect(resumed.status).toBe('abandoned');
+  const [row] = await f.refreshRows();
+  expect(row.state).toBe('aborted');
+  expect((row.outcome.refusal as { code: string }).code).toBe('refresh_interrupted');
+  expect(f.head()).toBe(landed);
+  expect((await settle(f, deferred)).state).toBe('committed');
+}), 180_000);
+
+test('a refresh killed at fenced after a commit gbrain did not make moved HEAD before the merge aborts on the owner scan, without --resume', () => each(async f => {
+  const { deferred, landed } = await crashAtFenced(f, () => commitFile(f.root, 'alpha/outside.md', page('Outside', 'A commit made around gbrain.'), 'outside'));
+  await resumeWorktreeRefreshes(f.engine);
   const [row] = await f.refreshRows();
   expect(row.state).toBe('aborted');
   expect((row.outcome.refusal as { code: string }).code).toBe('refresh_interrupted');

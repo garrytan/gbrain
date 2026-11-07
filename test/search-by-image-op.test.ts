@@ -199,3 +199,60 @@ describe('search_by_image op — D23-#6 spend cap', () => {
     expect(Array.isArray(results)).toBe(true);
   });
 });
+
+describe('search_by_image op — image_url never reads server files for remote callers (CSO A-1)', () => {
+  const remoteCtx = () => ({ engine, remote: true, auth: { token: 't', clientId: 'c-files', scopes: ['read'] } }) as any;
+  let providerCalls = 0;
+  beforeEach(() => {
+    providerCalls = 0;
+    const answer = fetchHandler!;
+    fetchHandler = async (url, init) => { providerCalls++; return answer(url, init); };
+  });
+
+  for (const shape of ['file:// URI', 'bare absolute path'] as const) {
+    test(`image_url as a ${shape} naming a server file is refused before any read, and its bytes never reach the caller`, async () => {
+      const path = join(tmpRoot, 'note.txt');
+      writeFileSync(path, 'sk-example-not-a-real-key');
+      const err = await op().handler(remoteCtx(), { image_url: shape === 'file:// URI' ? `file://${path}` : path })
+        .catch((e: unknown) => e as { code?: string; message?: string });
+      expect((err as { code?: string }).code).toBe('permission_denied');
+      expect(String((err as { message?: string }).message)).not.toContain(Buffer.from('sk-example-n').toString('hex'));
+      expect(String((err as { message?: string }).message)).not.toContain(path);
+    });
+
+    test(`image_url as a ${shape} naming a server image is refused and never sent to the provider`, async () => {
+      const path = join(tmpRoot, 'server-only.png');
+      writeFileSync(path, PNG_BYTES);
+      const err = await op().handler(remoteCtx(), { image_url: shape === 'file:// URI' ? `file://${path}` : path })
+        .catch((e: unknown) => e as { code?: string });
+      expect((err as { code?: string }).code).toBe('permission_denied');
+      expect(providerCalls).toBe(0);
+    });
+  }
+
+  test('image_path is refused when the context does not say it is local (fail closed)', async () => {
+    const path = join(tmpRoot, 'unset.png');
+    writeFileSync(path, PNG_BYTES);
+    const err = await op().handler({ engine } as any, { image_path: path }).catch((e: unknown) => e as { code?: string });
+    expect((err as { code?: string }).code).toBe('permission_denied');
+    expect(providerCalls).toBe(0);
+  });
+
+  test('a local image_path that is not a regular file is refused without reading it', async () => {
+    const err = await op().handler({ engine, remote: false } as any, { image_path: tmpRoot }).catch((e: unknown) => e as Error);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain('regular file');
+    expect(providerCalls).toBe(0);
+  });
+
+  test('a local image_path over the size cap is refused before it is read', async () => {
+    await engine.setConfig('search.image_query.max_bytes', '64');
+    const path = join(tmpRoot, 'big.png');
+    writeFileSync(path, Buffer.concat([PNG_BYTES, Buffer.alloc(4096)]));
+    const err = await op().handler({ engine, remote: false } as any, { image_path: path }).catch((e: unknown) => e as Error);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/cap is 64/);
+    expect(providerCalls).toBe(0);
+  });
+});
+
