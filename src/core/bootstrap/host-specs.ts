@@ -388,10 +388,13 @@ export function codexConfigPath(): string {
   return join(codexHome(), 'config.toml');
 }
 
-/** THE one CODEX_HOME resolution (env override, else ~/.codex) — every codex
- * path below joins onto it so the discipline can never drift per-path. */
+/** THE one CODEX_HOME resolution (env override, else $HOME/.codex, else
+ * homedir()/.codex) — every codex path below joins onto it so the discipline
+ * can never drift per-path. HOME before homedir() for the same reason as
+ * claudeConfigBase: on Windows homedir() reads USERPROFILE, so a test that
+ * remaps HOME would otherwise read and write the operator's real ~/.codex. */
 function codexHome(): string {
-  return process.env.CODEX_HOME?.trim() || join(homedir(), '.codex');
+  return process.env.CODEX_HOME?.trim() || join(process.env.HOME?.trim() || homedir(), '.codex');
 }
 
 /**
