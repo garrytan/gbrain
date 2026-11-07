@@ -70,6 +70,41 @@ async function managed<T>(engine: BrainEngine, fn: () => Promise<T>): Promise<T>
 }
 
 describe('#5974 database refusal diagnostics', () => {
+  test('#7777 a nested protocol refusal rolls back the page and survives receipt delivery and compaction', async () => {
+    for (const engine of engines) await managed(engine, async () => {
+      const slug = `protocol-${engine.kind}`;
+      await admitWrite(engine, await admission(engine, slug));
+      const row = (await claimNextWrite(engine, hostId))!;
+      const done = await publishMutation(engine, row, { observedRevision: null, apply: async tx => {
+        await tx.putPage(slug, input('must roll back'), { sourceId });
+        await tx.executeRaw("SELECT set_config('gbrain.persistence_protocol','',true)");
+        // The request guard calls gbrain_require_persistence_protocol: the inner raiser must be retained.
+        await tx.executeRaw('UPDATE persistence_requests SET protocol_version=2 WHERE id=$1::uuid', [row.id]);
+        return {};
+      } }, hostId);
+      expect(done.state).toBe('failed');
+      expect(done.error_code).toBe('writer_upgrade_required');
+      expect(done.error_detail).toMatchObject({ origin: 'database_guard', sqlstate: '42501',
+        raiser: 'gbrain_require_persistence_protocol', stage: 'publication', attempt: { consumer_version: VERSION } });
+      expect(await engine.readPageSnapshot(slug, { sourceId })).toBeNull();
+      expect(receiptFor(done)).toMatchObject({ write_error: 'writer_upgrade_required',
+        write_error_detail: { sqlstate: '42501', raiser: 'gbrain_require_persistence_protocol', stage: 'publication' } });
+      expect(JSON.stringify(receiptFor(done))).not.toContain('consumer_version');
+      try { writeResponse(done); throw new Error('expected protocol refusal'); }
+      catch (error) {
+        expect(error).toMatchObject({ code: 'writer_upgrade_required', detail: 'database_guard' });
+        expect((error as { suggestion: string }).suggestion).toContain('Never lower');
+      }
+      const diagnostics = await readWriterDiagnostics(engine);
+      expect(diagnostics.recent_failures.find(f => f.request_id === done.request_id)?.next_action).toContain('upgrade');
+      await engine.executeRaw("UPDATE persistence_requests SET completed_at=now()-interval '400 days' WHERE id=$1::uuid", [done.id]);
+      await compactWriteReceipts(engine, 1);
+      const [compacted] = await engine.executeRaw<{ error_code: string; error_detail: unknown; compacted: boolean }>(
+        'SELECT error_code,error_detail,compacted FROM persistence_requests WHERE id=$1::uuid', [done.id]);
+      expect(compacted).toMatchObject({ compacted: true, error_code: 'writer_upgrade_required',
+        error_detail: { sqlstate: '42501', raiser: 'gbrain_require_persistence_protocol' } });
+    });
+  });
   test('a cross-source write inside publication fails with a structured, redacted diagnostic', async () => {
     for (const engine of engines) await managed(engine, async () => {
       const slug = `cross-${engine.kind}`;
