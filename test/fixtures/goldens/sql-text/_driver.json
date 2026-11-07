@@ -2910,27 +2910,9 @@
               "simple": false
             },
             "via": "unsafe"
-          },
-          {
-            "paramCount": 4,
-            "unsafeOptions": {
-              "cancelFence": false,
-              "prepare": true,
-              "simple": false
-            },
-            "via": "unsafe"
           }
         ],
         "totals": [
-          {
-            "paramCount": 0,
-            "unsafeOptions": {
-              "cancelFence": false,
-              "prepare": true,
-              "simple": false
-            },
-            "via": "unsafe"
-          },
           {
             "paramCount": 0,
             "unsafeOptions": {
