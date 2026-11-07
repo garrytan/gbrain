@@ -111,7 +111,27 @@ describe('test:stress runner', () => {
     });
     const r = stress(root, 'test/script-pooled.test.ts', '--iterations', '2');
     expect(r.code, r.out).toBe(0);
-    expect(r.manifest.files[0]).toMatchObject({ status: 'not-stressed', reason: expect.stringContaining('owning pooled job in scripts/run-e2e.sh') });
+    expect(r.manifest.files[0]).toMatchObject({ status: 'not-stressed', reason: expect.stringContaining('owning pooled runner scripts/run-e2e.sh') });
+  });
+
+  test('the pooled owner must name the file in the step or statement that requires the pooler, not anywhere in the same file (#8702)', () => {
+    const body = "import { test } from 'bun:test';\nconst pooled = process.env.GBRAIN_PGBOUNCER_URL;\ntest.skipIf(!pooled)('pooled', () => {});\n";
+    const root = tree({
+      'test/other-step.test.ts': body,
+      'test/far-script.test.ts': body,
+      '.github/workflows/e2e.yml': "jobs:\n  matrix:\n    steps:\n      - name: pooled matrix\n        env:\n          GBRAIN_CI_REQUIRE_PGBOUNCER: '1'\n        run: bash scripts/run-e2e.sh\n  graduation:\n    steps:\n      - name: graduation\n        run: bun test test/other-step.test.ts\n",
+      'scripts/run-e2e.sh': 'if [ "${GBRAIN_CI_REQUIRE_PGBOUNCER:-0}" = "1" ]; then echo pooled; fi\n' + '#\n'.repeat(10) + 'for f in test/far-script.test.ts; do bun test "$f"; done\n',
+    });
+    const r = stress(root, 'test/other-step.test.ts', 'test/far-script.test.ts', '--iterations', '2');
+    const byFile = Object.fromEntries(r.manifest.files.map((f: { file: string }) => [f.file, f]));
+    expect(byFile['test/other-step.test.ts']).toMatchObject({ status: 'fail' });
+    expect(byFile['test/far-script.test.ts']).toMatchObject({ status: 'fail' });
+    expect(r.code, r.out).toBe(1);
+  });
+
+  test('test/e2e/graduation-cli-topologies.test.ts is not pooler-owned: the job that runs it does not require the pooler (#8702)', async () => {
+    const reason = await withEnv({ GBRAIN_PGBOUNCER_URL: undefined }, () => skipReason('test/e2e/graduation-cli-topologies.test.ts'));
+    expect(reason).toBeNull();
   });
 
   test('test/e2e/pgbouncer-teardown.test.ts is pooler-owned in this repository', async () => {
