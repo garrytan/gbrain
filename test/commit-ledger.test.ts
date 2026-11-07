@@ -96,3 +96,12 @@ test('messageDigest applies git whitespace cleanup', () => {
   expect(messageDigest('subject  \n\n\n\nbody\n\n')).toBe(messageDigest('subject\n\nbody'));
   expect(messageDigest('a')).not.toBe(messageDigest('b'));
 });
+
+test('GST-1623: a ledger that exists but cannot be read throws instead of reading as empty; a missing one is empty', () => {
+  const root = repo();
+  expect(readLedger(join(root, '.git'))).toEqual([]);
+  const files = ledgerFiles(join(root, '.git'));
+  mkdirSync(files.current, { recursive: true });
+  expect(() => readLedger(join(root, '.git'))).toThrow();
+});
+

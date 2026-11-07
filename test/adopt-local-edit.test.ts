@@ -16,8 +16,9 @@
  * worker run in-process, `localEditAdoptionSeams.beforePublish`.
  */
 import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { acquireWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -399,3 +400,139 @@ test('a repo-less brain adopts the edit into the database alone', async () => {
     expect(versions.some(v => v.change_reason === 'adopted_local_edit')).toBe(true);
   }, backend === 'postgres' ? { databaseUrl: process.env.DATABASE_URL } : {});
 }, 180_000);
+
+// ── #8755 hardening ─────────────────────────────────────────────────────────
+
+test('#8755 a: a write to another page on the same worktree is not held for the full quiet bound behind an adoption whose file never settles', () => each(async f => {
+  const { localEditAdoptionSeams } = await import('../src/core/persistence/local-edit-adoption.ts');
+  localEditAdoptionSeams.maxWaitMs = 1500;
+  let n = 0;
+  const touch = () => writeFileSync(join(f.root, 'alpha', 'one.md'), page('Alpha one', `The first alpha observation.\n\n${LOCAL} ${n++}`));
+  touch();
+  const timer = setInterval(touch, 100);
+  try {
+    const pending = timeline(f)().catch(() => undefined);
+    for (let i = 0; i < 100 && !(await f.engine.executeRaw("SELECT 1 FROM persistence_requests WHERE operation='add_timeline_entry' AND source_id=$1 AND state='running'", [f.alpha])).length; i++) await new Promise(resolve => setTimeout(resolve, 50));
+    const started = Date.now();
+    const other = await local(f, 'put_page', { slug: 'two', content: page('Alpha two', 'Another page on the same worktree.') });
+    let row: WriteRequest | undefined;
+    for (let i = 0; i < 150; i++) {
+      [row] = await f.engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE request_id=$1::uuid", [other.request_id]);
+      if (row && isTerminal(row)) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    expect(row?.state).toBe('committed');
+    expect(Date.now() - started).toBeLessThan(15_000);
+    await pending;
+  } finally { clearInterval(timer); localEditAdoptionSeams.maxWaitMs = undefined; }
+  expect((await adoptionRows(f)).filter(r => r.state === 'committed')).toEqual([]);
+}, { quietMs: 60_000 }), 180_000);
+
+test('#8755 b: a publication that fails after the adoption\'s commit is recovered: the adoption commits once and the caller lands', () => each(async f => {
+  const { installFaultHook } = await import('../src/core/persistence/fault-points.ts');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  const blob = blobOf(f, 'one.md'), replaced = await revision(f, 'one');
+  let fired = 0;
+  installFaultHook((point, detail) => {
+    if (point === 'publication:before_commit' && detail.operation === 'put_page' && detail.sourceId === f.alpha && fired++ === 0) {
+      throw Object.assign(new Error('could not serialize access due to concurrent update'), { code: '40001' });
+    }
+  });
+  try { await timeline(f)().catch(() => undefined); } finally { installFaultHook(undefined); }
+  expect(fired).toBeGreaterThan(0);
+  const done = await settled(f.engine, await lastRow(f, 'add_timeline_entry'));
+  await expectAdopted(f, done, 'one.md', 'one', blob, replaced, 'Must not land.');
+  expect(git(f.root, 'log', '--format=%s', '--', 'alpha/one.md').split('\n').filter(s => s.includes('adopt local edit'))).toHaveLength(1);
+  const [adoption] = await adoptionRows(f);
+  expect((adoption!.outcome as { persistence?: { git_commit?: string } }).persistence?.git_commit).toBeTruthy();
+}), 180_000);
+
+test('#8755 c: conflict markers keep the refusal: an unmerged path, and a merge in progress', () => each(async f => {
+  const MARKERS = page('Alpha one', `The first alpha observation.\n\n<<<<<<< HEAD\nours\n=======\n${LOCAL}\n>>>>>>> side`);
+  const base = git(f.root, 'rev-parse', 'HEAD:alpha/one.md');
+  writeFileSync(join(f.root, 'theirs.tmp'), page('Alpha one', `The first alpha observation.\n\n${LOCAL}`));
+  const theirs = git(f.root, 'hash-object', '-w', 'theirs.tmp');
+  git(f.root, 'update-index', '--force-remove', 'alpha/one.md');
+  execFileSync('git', ['-C', f.root, 'update-index', '--index-info'], { input: `100644 ${base} 1\talpha/one.md\n100644 ${base} 2\talpha/one.md\n100644 ${theirs} 3\talpha/one.md\n` });
+  await expectRefused(f, MARKERS, timeline(f), 'add_timeline_entry');
+  git(f.root, 'update-index', '--add', '--cacheinfo', `100644,${base},alpha/one.md`);
+  writeFileSync(join(f.root, '.git', 'MERGE_HEAD'), `${head(f)}\n`);
+  try { await expectRefused(f, EDITED, timeline(f), 'add_timeline_entry'); } finally { rmSync(join(f.root, '.git', 'MERGE_HEAD'), { force: true }); }
+}), 180_000);
+
+test('#8755 d: a stale editor save keeps the refusal: the earlier revision as it was, and one missing the row gbrain added', () => each(async f => {
+  const before = file(f, 'one.md');
+  const out = await call(f, 'add_timeline_entry', { slug: 'one', date: '2026-11-06', summary: 'Entry gbrain added.' });
+  expect(out.isError).toBe(false);
+  const added = await settled(f.engine, await lastRow(f, 'add_timeline_entry'));
+  expect(added.state).toBe('committed');
+  await gitEffectDone(f, added.id);
+  expect(git(f.root, 'show', 'HEAD:alpha/one.md')).toContain('Entry gbrain added.');
+  await expectRefused(f, before, timeline(f), 'add_timeline_entry');
+  await expectRefused(f, before.replace('The first alpha observation.', `The first alpha observation.\n\n${LOCAL}`), timeline(f), 'add_timeline_entry');
+}), 180_000);
+
+test('#8755 e: a file over the page size limit keeps the refusal', () => each(async f => {
+  const { PAGE_MAX_BYTES } = await import('../src/core/page-size-policy.ts');
+  await expectRefused(f, page('Alpha one', `The first alpha observation.\n\n${'x'.repeat(PAGE_MAX_BYTES + 1)}`), timeline(f), 'add_timeline_entry');
+}), 180_000);
+
+test('#8755 j: an empty persistence.adopt_quiet_ms reads as the default window, not as no wait', () => each(async f => {
+  await setConfig(f.engine, 'persistence.adopt_quiet_ms', '');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  const written = Date.now();
+  await call(f, 'add_timeline_entry', { slug: 'one', date: '2026-11-06', summary: 'Entry after the default window.' });
+  const done = await settled(f.engine, await lastRow(f, 'add_timeline_entry'));
+  expect(done.state).toBe('committed');
+  const [adoption] = await adoptionRows(f);
+  expect(new Date(adoption!.created_at as unknown as string).getTime() - written).toBeGreaterThanOrEqual(4_000);
+}), 180_000);
+
+test('#8755 l: doctor local_edit_adoptions still counts an adoption whose receipt was compacted', () => each(async f => {
+  const { localEditAdoptionsEntry } = await import('../src/commands/doctor/checks/local-edit-adoptions.ts');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  await call(f, 'add_timeline_entry', { slug: 'one', date: '2026-11-06', summary: 'Entry for the doctor.' });
+  expect((await settled(f.engine, await lastRow(f, 'add_timeline_entry'))).state).toBe('committed');
+  const [adoption] = await adoptionRows(f);
+  await f.engine.transaction(async tx => {
+    await tx.executeRaw("SELECT set_config('gbrain.persistence_protocol','2',true)");
+    await tx.executeRaw('UPDATE persistence_requests SET intent=NULL,compacted=true WHERE id=$1::uuid', [adoption!.id]);
+  });
+  const check = (await localEditAdoptionsEntry.run({ engine: f.engine, progress: { heartbeat() {} } } as never) as Array<{ details?: any }>)[0]!;
+  expect(check.details.sources.filter((s: { source_id: string }) => s.source_id === f.alpha)).toEqual([{ source_id: f.alpha, adoptions: 1, paths: ['one.md'] }]);
+}), 180_000);
+
+test('#8755 k: a repo-less-looking source inside an enclosing repository whose HEAD git cannot read keeps the refusal', async () => {
+  for (const backend of backends) await managedBrain(async ({ engine, ctx, root }) => {
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug: SLUG, request_id: randomUUID(), content: '---\ntype: person\ntitle: Owner\n---\n\nBody.\n' } });
+    await setConfig(engine, 'persistence.adopt_local_edits.source.default', 'true');
+    await setConfig(engine, 'persistence.adopt_quiet_ms', '0');
+    const path = join(root, `${SLUG}.md`);
+    const edited = readFileSync(path, 'utf8').replace('Body.', `Body.\n\n${LOCAL}`);
+    execFileSync('git', ['init', '-q', '-b', 'main', join(root, '..')]);
+    writeFileSync(path, edited);
+    const before = (await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!.revision;
+    await submitRememberMutation(ctx, { fact: 'Owner prefers async updates', entity: SLUG, provenance: 'test', visibility: 'world' }).catch(() => undefined);
+    const done = await settled(engine, await lastRow({ engine }, 'remember'));
+    expect(done.state).not.toBe('committed');
+    expect(readFileSync(path, 'utf8')).toBe(edited);
+    expect((await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!.revision).toBe(before);
+    expect((await adoptionRows({ engine })).filter(r => r.state === 'committed')).toEqual([]);
+  }, backend === 'postgres' ? { databaseUrl: process.env.DATABASE_URL } : {});
+}, 180_000);
+
+
+test('#8755 h: an adoption names its caller\'s claim, and one whose caller no longer holds it publishes nothing', () => each(async f => {
+  const { assertAdoptionCaller } = await import('../src/core/persistence/local-edit-adoption.ts');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  await timeline(f)().catch(() => undefined);
+  const done = await settled(f.engine, await lastRow(f, 'add_timeline_entry'));
+  expect(done.state).toBe('committed');
+  const [adoption] = await adoptionRows(f);
+  const caller = (adoption!.intent as { adoptLocalEdit?: { caller?: { id: string; token: string } } }).adoptLocalEdit?.caller;
+  expect(caller?.id).toBe(done.id);
+  expect(caller?.token).toBeTruthy();
+  const refused = await assertAdoptionCaller(f.engine, adoption!, caller).then(() => null, (e: { code?: string }) => e);
+  expect(refused?.code).toBe('write_claim_lost');
+}), 180_000);
+
