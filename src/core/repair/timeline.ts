@@ -44,15 +44,27 @@ async function classifyTimelinePage(engine: BrainEngine, page: TimelinePage, sto
   return pendingTimelineRows(engine, { ...page, timeline: page.timeline ?? '' }, await removedRowIds(engine, page, storedRows));
 }
 
-/** Current counts for specific pages (doctor rechecks pages an earlier run of a multi-run pass found). */
-export async function recountTimelinePages(engine: BrainEngine, sourceIds: string[], ids: number[]) {
-  if (ids.length === 0) return [];
+/**
+ * Current counts for specific pages (doctor rechecks pages an earlier run of a
+ * multi-run pass found). With a `deadline`, pages not reached in time are
+ * returned in `unreached` instead of being classified, so the caller can carry
+ * them to its next run.
+ */
+export async function recountTimelinePages(engine: BrainEngine, sourceIds: string[], ids: number[],
+  budget: { deadline?: number } = {}) {
+  const counted: Array<{ id: number; materializable: number; unrenderable: number }> = [];
+  const unreached: number[] = [];
+  if (ids.length === 0) return { counted, unreached };
   const pages = await engine.executeRaw<TimelinePage>(`SELECT p.id,p.source_id,p.slug,p.compiled_truth,p.timeline FROM pages p
     WHERE p.id = ANY($1::bigint[]) AND p.source_id=ANY($2::text[]) AND p.deleted_at IS NULL AND p.body_storage='inline'`, [ids, sourceIds]);
   const stored = await storedRowsByPage(engine, pages);
-  const counted = [];
-  for (const page of pages) counted.push({ id: page.id, ...await classifyTimelinePage(engine, page, stored.get(Number(page.id))) });
-  return counted;
+  // Keep the caller's order, so a caller that rotates its list makes progress across runs.
+  const byId = new Map(pages.map(page => [Number(page.id), page]));
+  for (const page of ids.map(id => byId.get(Number(id))).filter((p): p is TimelinePage => p !== undefined)) {
+    if (budget.deadline !== undefined && Date.now() > budget.deadline) { unreached.push(Number(page.id)); continue; }
+    counted.push({ id: Number(page.id), ...await classifyTimelinePage(engine, page, stored.get(Number(page.id))) });
+  }
+  return { counted, unreached };
 }
 
 /**

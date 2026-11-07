@@ -5,7 +5,8 @@
  * kept by every writer and reported as informational.
  *
  * Bounded: pages carrying non-event timeline rows are classified in id order
- * up to PAGE_CAP pages or TIME_BUDGET_MS per run. A run that stops early keeps
+ * up to PAGE_CAP pages or TIME_BUDGET_MS per run; the recount of pages earlier
+ * runs found shares that budget and runs first. A run that stops early keeps
  * its cursor in the config row `doctor.timeline_history.scan:<scope>` (#5821),
  * so successive doctor runs cover the whole scope. The ids of pages earlier
  * runs of the pass found are kept and recounted on every run, so a repair
@@ -30,8 +31,14 @@ const FOUND_CAP = 10_000;
 interface PassTotals { materializable: number; unrenderable: number; affected: number; inspected: number; runs: number }
 interface ScanState extends PassTotals {
   cursor: number;
-  /** Pages earlier runs of this pass found with rows to report (capped). */
+  /** Pages earlier runs of this pass found with rows to report (capped), in recount order. */
   found?: number[];
+  /** Latest [materializable, unrenderable] counts per found page id. */
+  found_counts?: Record<string, [number, number]>;
+  /** The forward scan reached the end; only the recount of `pending` remains. */
+  scan_done?: boolean;
+  /** Found pages not yet recounted since the scan reached the end. */
+  pending?: number[];
   /** Highest timeline row id when the pass started; rows above it may be unscanned. */
   started_max_entry: number;
   last?: PassTotals & { max_entry: number; completed_at: string };
@@ -53,7 +60,7 @@ async function saveState(engine: BrainEngine, key: string, state: ScanState): Pr
   try { await engine.setConfig(key, JSON.stringify(state)); } catch { /* best effort: the next run rescans from the start */ }
 }
 
-export async function timelineHistoryCheck(engine: BrainEngine, sourceId?: string, opts: { pageCap?: number } = {}): Promise<Check> {
+export async function timelineHistoryCheck(engine: BrainEngine, sourceId?: string, opts: { pageCap?: number; timeBudgetMs?: number } = {}): Promise<Check> {
   const name = 'timeline_history';
   try {
     const sources = sourceId ? [sourceId] : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE')).map(r => r.id);
@@ -62,13 +69,40 @@ export async function timelineHistoryCheck(engine: BrainEngine, sourceId?: strin
     const maxEntry = Number(max_entry);
     const prior = await loadState(engine, key);
     const state: ScanState = prior ?? { ...emptyTotals(), cursor: 0, started_max_entry: maxEntry };
-    const scan = await scanTimelineHistory(engine, sources, state.cursor, { pages: opts.pageCap ?? PAGE_CAP, deadline: Date.now() + TIME_BUDGET_MS });
-    const counted = [...await recountTimelinePages(engine, sources, state.found ?? []), ...scan.pages]
-      .filter(p => p.materializable || p.unrenderable);
+    const budgetMs = opts.timeBudgetMs ?? TIME_BUDGET_MS;
+    const start = Date.now();
+    const deadline = start + budgetMs;
+    // The recount shares the run's budget. While the scan is still moving it gets
+    // at most half, so the cursor always advances; pages it does not reach go to
+    // the front of `found` for the next run. A pass completes only when the scan
+    // has finished AND every found page has current counts.
+    const found = state.found ?? [];
+    const counts: Record<string, [number, number]> = { ...(state.found_counts ?? {}) };
+    const scanDone = state.scan_done === true;
+    const toRecount = scanDone ? (state.pending ?? found) : found;
+    const recount = await recountTimelinePages(engine, sources, toRecount, { deadline: scanDone ? deadline : start + budgetMs / 2 });
+    const reachable = new Set([...recount.counted.map(p => p.id), ...recount.unreached]);
+    for (const id of toRecount) if (!reachable.has(Number(id))) delete counts[String(id)];
+    for (const p of recount.counted) counts[String(p.id)] = [p.materializable, p.unrenderable];
+    const scan = scanDone
+      ? { pages: [], inspected: 0, truncated: false, cursor: state.cursor }
+      : await scanTimelineHistory(engine, sources, state.cursor, { pages: opts.pageCap ?? PAGE_CAP, deadline });
+    for (const p of scan.pages) counts[String(p.id)] = [p.materializable, p.unrenderable];
+    const unreached = new Set(recount.unreached);
+    const ordered = [...recount.unreached, ...found.map(Number).filter(id => !unreached.has(id)), ...scan.pages.map(p => Number(p.id))];
+    // Unreached ids stay in `found` even without counts (state from older versions
+    // has none), so a page is never dropped before it has been recounted.
+    const nextFound = [...new Set(ordered)]
+      .filter(id => { if (unreached.has(id)) return true; const c = counts[String(id)]; return c !== undefined && (c[0] > 0 || c[1] > 0); })
+      .slice(0, FOUND_CAP);
+    const keep = new Set(nextFound.map(String));
+    for (const id of Object.keys(counts)) if (!keep.has(id)) delete counts[id];
+    const complete = !scan.truncated && recount.unreached.length === 0;
+    const totals = nextFound.flatMap(id => counts[String(id)] ? [counts[String(id)]!] : []);
     const pass: PassTotals = {
-      materializable: counted.reduce((n, p) => n + p.materializable, 0),
-      unrenderable: counted.reduce((n, p) => n + p.unrenderable, 0),
-      affected: counted.filter(p => p.materializable).length,
+      materializable: totals.reduce((n, c) => n + c[0], 0),
+      unrenderable: totals.reduce((n, c) => n + c[1], 0),
+      affected: totals.filter(c => c[0]).length,
       inspected: state.inspected + scan.inspected,
       runs: state.runs + 1,
     };
@@ -77,7 +111,7 @@ export async function timelineHistoryCheck(engine: BrainEngine, sourceId?: strin
     const segmentedDetails = segmented.pages ? { segmented_pages: segmented.pages, segmented_rows: segmented.rows, segmented_sample: segmented.sample } : {};
     const segmentedNote = segmented.pages ? ` Also: ${segmentedTimelineNote(segmented)}` : '';
 
-    if (!scan.truncated) {
+    if (complete) {
       if (prior) {
         await saveState(engine, key, { ...emptyTotals(), cursor: 0, started_max_entry: maxEntry,
           last: { ...pass, max_entry: state.started_max_entry, completed_at: new Date().toISOString() } });
@@ -95,7 +129,9 @@ export async function timelineHistoryCheck(engine: BrainEngine, sourceId?: strin
           : `Every timeline row has a bullet in its page (${pass.inspected} page(s) inspected${multiRun ? ` across ${pass.runs} doctor runs` : ''}).`) + segmentedNote };
     }
 
-    await saveState(engine, key, { ...state, ...pass, cursor: scan.cursor, found: counted.map(p => p.id).slice(0, FOUND_CAP) });
+    const nowDone = scanDone || !scan.truncated;
+    await saveState(engine, key, { ...state, ...pass, cursor: scan.cursor, found: nextFound, found_counts: counts, scan_done: nowDone,
+      pending: nowDone ? recount.unreached.filter(id => nextFound.includes(id)) : undefined });
     const details = { materializable_rows: pass.materializable, kept_unrenderable_rows: pass.unrenderable, pages_affected: pass.affected,
       pages_inspected: pass.inspected, count: 'lower_bound', truncated: true, repair: 'timeline', pass_runs: pass.runs, resumes_after_page_id: scan.cursor, ...segmentedDetails };
     const coverage = ` (this pass has inspected ${pass.inspected} page(s) over ${pass.runs} run(s) and resumes on the next doctor run; counts are a lower bound)`;
