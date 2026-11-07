@@ -20,6 +20,17 @@ identifiers and attribution are available in the pre-removal Git revision
 - `src/commands/frontmatter-install-hook.ts`: a checkout whose `core.hooksPath` is `/dev/null` is skipped (`skipped_hooks_off`) with nothing written and no wiring advice, `--force` included.
 - Tests: `test/persistence-source-lifecycle.test.ts` (PGLite and Postgres), `test/sources-remote-lfs.test.ts`, `test/frontmatter-install-hook.test.ts`.
 
+## [0.60.602.0] - 2026-11-07
+
+**A TLA+ model of the refresh write barrier and its deferred-write queue now runs in CI. It checks that a refresh killed at any phase recovers without stranding the writes deferred behind it, that held writes commit in admission order, and that no lock order deadlocks.** Nothing changes at run time: this release adds a model, its CI job and tests.
+
+### Itemized changes
+
+- `spec/tla/refresh-barrier/`: `RefreshBarrier.tla` models write admission and deferral, the drain, the fence and the merge, a crash at each phase followed by recovery, ledger commits that move HEAD during the drain, writes held for an import, deferral behind `recovery_required`, and local-edit adoption. Four configs check every safety property and one checks liveness; two larger configs run nightly. The model reproduces the fenced-orphan recovery bug fixed in 0.60.596.0 and passes on the fix.
+- `spec/tla/refresh-barrier/mutants.json`: 19 mutants. Each removes one guard from the model, and TLC must report the named property. 15 make the same edit to the code, and a named PGLite or Postgres test must then fail on an assertion. Run them with `bun scripts/spec/mutants.ts refresh-barrier`.
+- `.github/workflows/tla-spec.yml`: TLC and the mutants run for both TLA+ specs, nightly and on pull requests and pushes that touch a spec, its runner, the code it models or a test a mutant names. Each spec uploads its own log artifact, `tla-spec-logs-<spec>`.
+- Tests: `test/spec-refresh-barrier.test.ts` keeps the configs, the workflow's path filter and the README's mutant table in step with the catalogue. New tests cover an import expiry overlapping a fence (Postgres), a claimed write that holds the drain, a token revoked after its write was claimed, and the owner scan aborting a refresh killed at the fence after an outside commit. The two Postgres race tests now fail if the operation they start never waits on the lock.
+
 ## [0.60.601.0] - 2026-11-07
 
 **Security wave from a /cso audit: four remote-surface holes closed on `gbrain serve --http` and `gbrain mcp expose`.** A write-scoped token could replace, through `POST /ingest`, pages that every MCP write refuses it: another member's `readable_by` page, an owner `visibility: private` page, another member's fact page. A read-scoped caller could make `search_by_image` read a file on the brain host by passing a `file://` URI or an absolute path as `image_url`, which echoed the file's first bytes, sent server images to the embedding provider, or hung or exhausted the server. And an unsigned GitHub push webhook answered whether a repository was wired to the brain, its tracked branch and its source id before checking the signature. A remote caller adding a source by URL could also make the brain host contact an address the cloned repository names for itself, which the URL check never sees. A default keyless install (stdio MCP, no HTTP surface) was not exposed to any of them.
