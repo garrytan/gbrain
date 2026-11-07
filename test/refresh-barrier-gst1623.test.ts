@@ -15,7 +15,7 @@
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -316,6 +316,46 @@ test('item 18: a refresh whose row recovery moved off fenced before the merge me
   expect(result).toBeInstanceOf(OperationError);
   expect((result as OperationError).code).toBe('refresh_source_changed');
   expect(f.head()).toBe(old);
+}), 180_000);
+
+/** Runs `fn` with a `git` on PATH that, once armed, runs `after` in the checkout right after the refresh's own `git merge --ff-only` succeeds. */
+async function afterMerge(f: RefreshFixture, after: string, fn: () => Promise<void>) {
+  const bin = join(f.dir, 'merge-race-bin'), armed = join(f.dir, 'merge-race-armed'), script = join(f.dir, 'merge-race.sh');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(script, `cd '${f.root}' || exit 1\n${after}\n`);
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\nPATH='${process.env.PATH}' git "$@"\ncode=$?\ncase " $* " in *" merge --ff-only "*) if [ $code -eq 0 ] && [ -f '${armed}' ]; then rm -f '${armed}'; PATH='${process.env.PATH}' sh '${script}' >/dev/null 2>&1; fi;; esac\nexit $code\n`, { mode: 0o755 });
+  writeFileSync(armed, '');
+  await withEnv({ PATH: `${bin}:${process.env.PATH}` }, fn);
+}
+const FOREIGN_ON_TOP = "mkdir -p alpha && printf -- '---\\ntitle: Foreign\\ntype: note\\n---\\nPlain git.\\n' > alpha/foreign.md && git add alpha/foreign.md && git -c user.name=Example -c user.email=example@example.invalid -c commit.gpgsign=false commit -qm foreign";
+const bothArms = (fn: (f: RefreshFixture) => Promise<void>) => (async () => {
+  for (const arm of ['0', '1']) await withEnv({ GBRAIN_REFRESH_BARRIER: arm }, async () => {
+    resetWriteSwitches();
+    for (const engine of engines) await withRefreshFixture(engine, fn);
+  });
+})();
+
+test('seed 355: a plain-git commit landing on the target right after the merge is recorded and synced, not recovery_required', () => bothArms(async f => {
+  const target = f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  let result: unknown;
+  await afterMerge(f, FOREIGN_ON_TOP, async () => { result = await refreshWorktree(f.engine, f.alpha).catch(error => error); });
+  expect(result).not.toBeInstanceOf(OperationError);
+  expect((result as { status: string }).status).toBe('completed');
+  const head = f.head();
+  expect(head).not.toBe(target);
+  expect(git(f.root, 'rev-parse', 'HEAD~1')).toBe(target);
+  for (const source of [f.alpha, f.beta]) expect(await f.lastCommit(source)).toBe(head);
+  expect((await f.refreshRows()).at(-1)!.state).toBe('completed');
+}), 180_000);
+
+test('seed 355 policy: a reset to the pre-refresh commit plus an unrelated commit right after the merge still needs the operator', () => bothArms(async f => {
+  const old = f.head();
+  f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  let result: unknown;
+  await afterMerge(f, `git reset -q --hard ${old} && ${FOREIGN_ON_TOP}`, async () => { result = await refreshWorktree(f.engine, f.alpha).catch(error => error); });
+  expect(result).toBeInstanceOf(OperationError);
+  expect((result as OperationError).code).toBe('refresh_recovery_required');
+  expect((await f.refreshRows()).at(-1)!.state).toBe('recovery_required');
 }), 180_000);
 
 test('item 22: the drain never sleeps a refresh retry hint past its refresh budget', () => {

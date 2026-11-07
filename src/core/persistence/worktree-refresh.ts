@@ -914,7 +914,10 @@ async function fenceAndMerge(engine: BrainEngine, git: Git, sourceId: string, pl
           if (after === row.old_head) await abort(engine, current, ['fenced'], refusal('refresh_dirty',
             `git merge --ff-only refused (${refused}); HEAD is unchanged at ${row.old_head}.`,
             `Commit or discard the paths git names (check gbrain sources writer status ${sourceId} --json for pending git effects), then retry gbrain sources refresh ${sourceId}.`));
-          throw await markRecoveryRequired(engine, current, after, plan.root);
+          // GBEV-44 seed 355: a plain-git commit can land on the target between the merge and this read; the merge happened, so record it.
+          const landedOnTarget = merge.code === 0 && after !== null && await ancestry(git, plan.root, row.target_head, after) === true
+            && !await memberOutsideHead(engine, git, plan.root, current, after);
+          if (!landedOnTarget) throw await markRecoveryRequired(engine, current, after, plan.root);
         }
       } finally { await commitLock.release(); }
       await hooks?.boundary?.('merged', current);
