@@ -559,7 +559,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
           (factsSummary.spentUsd !== undefined ? `, ~$${factsSummary.spentUsd.toFixed(2)} spent` : '') +
           (factsSummary.pagesFailed > 0 ? ' (failed pages stay unfinished; stderr names each retry command)' : ''),
       );
-      if (factsSummary.budget_exhausted) console.log(`facts: stopped early, budget ${factsSummary.budget_reason ?? 'exhausted'}; unprocessed pages have no facts yet`);
+      if (factsSummary.budget_exhausted) console.log(`facts: budget ${factsSummary.budget_reason ?? 'exhausted'} reached; some pages may have no facts yet`);
       if (factsSummary.pages_skipped_too_large) console.log(`facts: ${factsSummary.pages_skipped_too_large} page(s) skipped as too large`);
       if (factsSummary.pages_lock_skipped) console.log(`facts: ${factsSummary.pages_lock_skipped} page(s) skipped, held by another run`);
     }

@@ -30,7 +30,7 @@ export interface IngestFactsResult {
   pagesFailed: number;
   spentUsd?: number;
   skippedDisabled?: boolean;
-  /** True when the cost cap or a missing price halted the pass; unprocessed pages keep no facts. */
+  /** True when the pass reached its budget (cap or missing price). Pages may remain unextracted; a final-call overage can also set it after the last page succeeded. */
   budget_exhausted?: boolean;
   /** Why the budget halted the pass (`cost`, `runtime` or `no_pricing`). Absent when it did not halt. */
   budget_reason?: BudgetReason;
