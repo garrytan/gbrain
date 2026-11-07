@@ -9,8 +9,8 @@ import type { Migration } from './types.ts';
 // original seven, fresh installs get it from this migration (not src/schema.sql),
 // so fresh and upgraded brains share column ordinals. The number is restamped at
 // the merge slot.
-export const v294: Migration = {
-  version: 294,
+export const v295: Migration = {
+  version: 295,
   name: 'access_token_metadata',
   idempotent: true,
   sql: `

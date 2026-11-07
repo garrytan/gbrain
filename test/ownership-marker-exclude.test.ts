@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
-  OWNERSHIP_MARKER_GLOBS, adoptTransferredRootStamp, physicalRootReservationPath, reservePhysicalRootRecord, writePhysicalRootStamp,
+  OWNERSHIP_MARKER_GLOBS, adoptTransferredRootStamp, assertPhysicalRoot, physicalRootReservationPath, reservePhysicalRootRecord, writePhysicalRootStamp,
 } from '../src/core/persistence/physical-root-record.ts';
 
 let dir: string;
@@ -106,4 +106,19 @@ test('a root outside any checkout stamps as before and writes no exclude file', 
   expect(existsSync(join(root, '.gbrain-owner.json'))).toBe(true);
   expect(existsSync(join(root, '.git'))).toBe(false);
   expect(existsSync(join(dir, '.git'))).toBe(false);
+});
+
+test('a repo-less root that becomes a Git checkout after its stamp gets the exclude at its next verification, so git add -A leaves the stamp out (#8713)', () => {
+  const root = join(dir, 'converted');
+  mkdirSync(root);
+  const reservation = reservePhysicalRootRecord(root, identity());
+  writePhysicalRootStamp(root, reservation);
+  git(root, 'init', '-q', '-b', 'main');
+  writeFileSync(join(root, 'page.md'), 'a page\n');
+  assertPhysicalRoot(root, { worktreeId: reservation.worktreeId, coordinationPath: reservation.coordinationPath });
+
+  const body = readFileSync(excludeFile(root), 'utf-8');
+  for (const glob of OWNERSHIP_MARKER_GLOBS) expect(countLines(body, glob)).toBe(1);
+  git(root, 'add', '-A');
+  expect(git(root, 'ls-files').split('\n')).toEqual(['page.md']);
 });
