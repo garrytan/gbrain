@@ -89,11 +89,12 @@ describe('embedding_signature stale semantics', () => {
         const invalidated = guarded
           ? await invalidateStaleSignatureEmbeddingsGuarded(engine, opts)
           : await engine.invalidateStaleSignatureEmbeddings(opts);
-        expect(invalidated).toBe(4);
+        expect(invalidated).toBe(3);
         const rows = await engine.executeRaw<{ chunk_index: number }>(
           `SELECT chunk_index FROM content_chunks WHERE embedding IS NOT NULL ORDER BY chunk_index`,
         );
-        expect(rows.map((row) => row.chunk_index)).toEqual([0]);
+        // A pre-prefix label retains the same model tail, including its version tag.
+        expect(rows.map((row) => row.chunk_index)).toEqual([0, 2]);
       });
     }
   }

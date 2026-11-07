@@ -44,9 +44,14 @@ export function splitEmbeddingSignature(signature: string): { model: string; dim
   return { model: signature.slice(0, separator), dims };
 }
 
+/** Exact labels or the historical provider-less tail; never equate two explicit providers. SQL expressions only. */
+export function embeddingModelLabelPredicate(stored: string, target: string): string {
+  return `(${stored} IS NOT DISTINCT FROM ${target} OR COALESCE(${stored} = substr(${target}, strpos(${target}, ':') + 1), false))`;
+}
+
 export function currentSpaceChunkPredicate(colId: string, modelParam: number, dimsParam: number, alias = 'cc'): string {
   return `COALESCE(${alias}.${colId} IS NOT NULL
-              AND ${alias}.model = $${modelParam}
+              AND ${embeddingModelLabelPredicate(`${alias}.model`, `$${modelParam}`)}
               AND ${alias}.embedded_text_hash = md5(${alias}.chunk_text)
               AND vector_dims(${alias}.${colId}) = $${dimsParam}::int, false)`;
 }
@@ -96,8 +101,7 @@ export function falseStampPageWhere(colId: string, signatureParam = 1, modelPara
         AND EXISTS (
           SELECT 1 FROM content_chunks c
            WHERE c.page_id = p.id AND c.${colId} IS NOT NULL
-             AND c.model IS NOT NULL AND c.model <> $${modelParam}
-             AND c.model <> substr($${modelParam}, strpos($${modelParam}, ':') + 1)
+             AND c.model IS NOT NULL AND NOT ${embeddingModelLabelPredicate('c.model', `$${modelParam}`)}
         )`;
 }
 
