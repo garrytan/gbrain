@@ -25,7 +25,7 @@ const NOW = new Date('2026-11-10T13:17:00Z');
 const sha = (n: number) => String(n).padStart(40, 'c');
 const tree = (n: number) => String(n).padStart(40, 'e');
 const CLEAN: Scoreboard[] = [2, 65].map(rtt => ({
-  label: `rtt${rtt}`, rtt_ms: rtt, hours: 2, elapsed_s: 7204, privacy: { probes: 40 },
+  label: `rtt${rtt}`, rtt_ms: rtt, hours: 2, elapsed_s: 7204, privacy: { probes: 40 }, brain: { fixture: { pages: 600_000 } },
   gates: ['privacy_leaks', 'read_errors', 'version_skew', 'residents_alive', 'session_refusals', 'freshness_p95'].map(id => ({ id, pass: id === 'freshness_p95' ? false : true })),
 }));
 const ok = (stdout = ''): GitResult => ({ code: 0, stdout: `${stdout}\n`, stderr: '' });
@@ -173,10 +173,12 @@ describe('integrity gates', () => {
     expect(integrityFailures([{ label: 'rtt2', gates: [] }])).toHaveLength(5);
   });
 
-  test('a soak short of the full default shape is not promotable: a missing cell, a short run, no privacy probes', () => {
+  test('a soak short of the full default shape is not promotable: a missing cell, a short run, a small fixture, no privacy probes', () => {
     expect(shapeFailures(CLEAN)).toEqual([]);
     const smoke: Scoreboard[] = [{ ...CLEAN[0]!, hours: 0.01, elapsed_s: 36, privacy: { probes: 0 } }];
     expect(shapeFailures(smoke)).toEqual(['no 65 ms cell', 'rtt2: ran 36 s of a 2 h soak', 'rtt2: no privacy probes ran']);
+    const small = CLEAN.map(b => ({ ...b, brain: { fixture: { pages: 2000 } } }));
+    expect(shapeFailures(small)).toEqual(['rtt2: 2000 fixture pages, under 600000', 'rtt65: 2000 fixture pages, under 600000']);
   });
 
   test('parseRecord reads the key: value body of a stable tag', () => {

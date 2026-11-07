@@ -662,7 +662,8 @@ and keeps stable between one day and one week behind what matters:
   `read_errors`, `version_skew`, `residents_alive`, `session_refusals`)
   passing in every cell; the latency gates stay record-only. The soak must be
   the full default one: both the 65 ms and 2 ms cells, at least 2 hours each,
-  with privacy probes run, so a short smoke dispatch never qualifies. On the important-only path the candidate must contain the fix.
+  on the 600,000-page fixture, with privacy probes run, so a smaller smoke
+  dispatch never qualifies. On the important-only path the candidate must contain the fix.
   It is promoted through the same `promote()` as a manual promotion, so every
   check above still applies and the record's `promoted_by` is
   `schedule (.github/workflows/stable-daily.yml)` with the reason in `reason`.

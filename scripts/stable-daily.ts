@@ -38,14 +38,15 @@ export const IMPORTANT_LABEL = 'stable:important';
 export const WEEKLY_FLOOR_DAYS = 7;
 /** The soak gates a scheduled promotion requires (pass === true in every cell); the latency gates stay record-only. */
 export const INTEGRITY_GATES = ['privacy_leaks', 'read_errors', 'version_skew', 'residents_alive', 'session_refusals'] as const;
-/** The full soak a scheduled promotion requires: production-soak.yml's default cells and hours, with privacy probes run. */
-export const SOAK_SHAPE = { rtts: [65, 2], hours: 2 } as const;
+/** The full soak a scheduled promotion requires: production-soak.yml's default cells, hours and fixture pages, with privacy probes run. */
+export const SOAK_SHAPE = { rtts: [65, 2], hours: 2, pages: 600_000 } as const;
 const DAY_MS = 86_400_000;
 const VERSION_RE = /^\d+\.\d+\.\d+(\.\d+)?$/;
 
 export interface SoakRunRow { id: number; status: string | null; conclusion: string | null; head_sha: string; html_url: string }
 export interface Scoreboard {
   label?: string; rtt_ms?: number | null; hours?: number | null; elapsed_s?: number | null; privacy?: { probes?: number };
+  brain?: { fixture?: { pages?: number } } | null;
   gates?: Array<{ id: string; pass: boolean | null }>;
 }
 
@@ -84,12 +85,13 @@ export function integrityFailures(boards: Scoreboard[]): string[] {
   return failures;
 }
 
-/** Ways a soak falls short of the full default soak (SOAK_SHAPE): a missing cell, a short run, no privacy probes. */
+/** Ways a soak falls short of the full default soak (SOAK_SHAPE): a missing cell, a short run, a small fixture, no privacy probes. */
 export function shapeFailures(boards: Scoreboard[]): string[] {
   const failures = SOAK_SHAPE.rtts.filter(rtt => !boards.some(b => b.rtt_ms === rtt)).map(rtt => `no ${rtt} ms cell`);
   for (const b of boards) {
     const cell = b.label ?? 'cell';
     if ((b.hours ?? 0) < SOAK_SHAPE.hours || (b.elapsed_s ?? 0) < SOAK_SHAPE.hours * 3600) failures.push(`${cell}: ran ${b.elapsed_s ?? 0} s of a ${SOAK_SHAPE.hours} h soak`);
+    if ((b.brain?.fixture?.pages ?? 0) < SOAK_SHAPE.pages) failures.push(`${cell}: ${b.brain?.fixture?.pages ?? 0} fixture pages, under ${SOAK_SHAPE.pages}`);
     if (!((b.privacy?.probes ?? 0) > 0)) failures.push(`${cell}: no privacy probes ran`);
   }
   return failures;
