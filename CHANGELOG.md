@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.608.0] - 2026-11-07
 
 **With the refresh write barrier on, a write that waited behind a refresh or an import can no longer land on top of a later write to the same page, and most of the barrier's remaining review follow-ups (GST-1623) are closed.** The barrier is still off by default (`persistence.refresh_barrier`); with it off, only the receipt health, the recovery-time replay order, the refresh merge check, the drain sleep and the new index change. A consumer from an older release that claims a later write first now makes the waiting write end `revision_conflict` instead of overwriting it. A write held again and again behind imports now expires at a ceiling counted from its admission. Waiting writes count toward their source's fair share of the local CLI cap. A refresh whose record recovery moved before the merge merges nothing. With the barrier on or off, a plain-git commit that lands on the upstream commit right after a refresh's merge no longer leaves the checkout `recovery_required` with writes refused until someone runs `--resume`: the refresh records the merge and syncs the new HEAD. One that lands on the start commit right before the merge no longer does either: git refuses the fast-forward, and the refresh ends `refresh_source_changed` with the fence lifted, nothing merged and the commit kept, so the next refresh can run.
 
