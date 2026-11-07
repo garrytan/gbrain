@@ -142,7 +142,7 @@ function queryCacheTag(settings: EngineSettings): string {
 export function releaseEngineGatewayState(engine: object): void {
   const settings = embeddedSettingsRecord(engine);
   const state = settings && states.get(settings);
-  if (state && !settings.cache_namespace) dropQueryEmbeddingsTagged(state.cacheTag);
+  if (state && !settings.cache_namespace) dropQueryEmbeddingsTagged(state.cacheTag, state);
 }
 
 /** Provider keys of a disconnected engine in scope, as env entries, so a call still in flight scrubs them from its error. */

@@ -1875,20 +1875,20 @@ export async function embedQuery(
   const cfg = requireConfig();
   const { recipe, modelId } = await resolveEmbeddingProvider(opts?.embeddingModel ?? getEmbeddingModel());
   const dims = opts?.dimensions ?? cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
-  const key = queryEmbedCacheKey(recipe.id, modelId, gw().cacheTag + (cfg.base_urls?.[recipe.id] ?? ''), dims, input);
+  const owner = gw();
+  const key = queryEmbedCacheKey(recipe.id, modelId, owner.cacheTag + (cfg.base_urls?.[recipe.id] ?? ''), dims, input);
   const cached = hasAIInvocationGuard() ? undefined : cachedQueryEmbedding(key);
   if (cached) return cached;
-  const generation = queryEmbedGeneration();
+  const generation = queryEmbedGeneration(owner);
   const [v] = await embed([input], {
     inputType: 'query',
     embeddingModel: opts?.embeddingModel,
     dimensions: opts?.dimensions,
-    // v0.42.20.0 (Fix 3) — forward a caller deadline so the query-time embed
-    // can be bounded BELOW the CLI force-exit; composes with the gateway embed
-    // default via withDefaultTimeout (shorter wins).
+    // Bound the query-time embed below the CLI force-exit; withDefaultTimeout
+    // composes the caller deadline with the gateway default (shorter wins).
     abortSignal: opts?.abortSignal,
   });
-  if (v) storeQueryEmbedding(key, v, generation);
+  if (v) storeQueryEmbedding(key, v, generation, owner);
   return v;
 }
 

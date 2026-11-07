@@ -59,7 +59,7 @@ src/core/ai/providers/claude-cli-language-model.ts	fs_import	1	W7: filesystem bo
 src/core/ai/providers/claude-cli-language-model.ts	process_env	3	W3: AI settings arrive on the engine
 src/core/ai/providers/claude-cli-language-model.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/ai/providers/claude-cli-scratch.ts	fs_import	1	W7: filesystem boundary moves to the local app
-src/core/ai/query-embed-cache.ts	module_collection	1	W3: per-engine gateway state
+src/core/ai/query-embed-cache.ts	module_collection	2	W3: per-engine gateway state; #8605 weak owner-keyed invalidation stamps retain no engine and read no ambient settings
 src/core/ai/recipes/azure-openai.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/ai/recipes/llama-server.ts	process_env	1	W3: AI settings arrive on the engine
 src/core/ai/recipes/lmstudio.ts	process_env	1	W3: AI settings arrive on the engine

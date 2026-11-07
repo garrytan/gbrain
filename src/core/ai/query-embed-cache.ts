@@ -9,15 +9,19 @@
  * an in-flight promise, so one caller's abort or failure cannot reach another
  * caller; reads and writes copy, so a caller mutating its vector cannot change
  * the cache. The gateway clears it with its model cache whenever the config or
- * env that built the provider client changes; the generation counter keeps an
- * embed that started before a clear from storing its vector after it.
+ * env that built the provider client changes; generation stamps keep an
+ * embed that started before a clear from storing its vector after it. An
+ * engine close invalidates only that gateway owner's stamp; weak ownership
+ * avoids retaining every engine opened by a long-running host.
  */
 
 const MAX_ENTRIES = 512;
 const TTL_MS = 10 * 60_000;
 
 const entries = new Map<string, { vector: Float32Array; expiresAt: number }>();
-let generation = 0;
+let nextGeneration = 0;
+let generation = nextGeneration++;
+let ownerGenerations = new WeakMap<object, number>();
 
 export function queryEmbedCacheKey(recipeId: string, modelId: string, baseUrl: string, dims: number, input: string): string {
   return JSON.stringify([recipeId, modelId, baseUrl, dims, 'query', input]);
@@ -33,21 +37,27 @@ export function cachedQueryEmbedding(key: string): Float32Array | null {
   return new Float32Array(entry.vector);
 }
 
-export function queryEmbedGeneration(): number {
-  return generation;
+export function queryEmbedGeneration(owner?: object): number {
+  if (!owner) return generation;
+  let stamp = ownerGenerations.get(owner);
+  if (stamp === undefined) {
+    stamp = nextGeneration++;
+    ownerGenerations.set(owner, stamp);
+  }
+  return stamp;
 }
 
 /** Store `vector` unless the cache was cleared since `startedAt` (a queryEmbedGeneration() value). */
-export function storeQueryEmbedding(key: string, vector: Float32Array, startedAt: number): void {
-  if (startedAt !== generation) return;
+export function storeQueryEmbedding(key: string, vector: Float32Array, startedAt: number, owner?: object): void {
+  if (startedAt !== queryEmbedGeneration(owner)) return;
   entries.set(key, { vector: new Float32Array(vector), expiresAt: Date.now() + TTL_MS });
   if (entries.size > MAX_ENTRIES) entries.delete(entries.keys().next().value!);
 }
 
 /** Drop every entry an engine cached under `tag` (its unique cache tag, engine-gateway.ts) when it closes; an embed still in flight then stores nothing. */
-export function dropQueryEmbeddingsTagged(tag: string): void {
+export function dropQueryEmbeddingsTagged(tag: string, owner: object): void {
   for (const key of entries.keys()) if (key.includes(tag)) entries.delete(key);
-  generation++;
+  ownerGenerations.delete(owner);
 }
 
 /** @internal exported for tests: the cache keys, oldest first. */
@@ -57,5 +67,6 @@ export function __queryEmbedCacheKeysForTests(): string[] {
 
 export function clearQueryEmbedCache(): void {
   entries.clear();
-  generation++;
+  generation = nextGeneration++;
+  ownerGenerations = new WeakMap();
 }

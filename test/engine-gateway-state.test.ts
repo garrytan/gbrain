@@ -13,7 +13,7 @@ import {
   __getShrinkStateForTests, __setEmbedTransportForTests, __setGenerateObjectTransportForTests, __setGenerateTextTransportForTests,
   configureGateway, embed, embedQuery, expand, rerank, resetGateway,
 } from '../src/core/ai/gateway.ts';
-import { __queryEmbedCacheKeysForTests } from '../src/core/ai/query-embed-cache.ts';
+import { __queryEmbedCacheKeysForTests, clearQueryEmbedCache } from '../src/core/ai/query-embed-cache.ts';
 import { readRecentRerankFailures } from '../src/core/rerank-audit.ts';
 import { openEngine, withEngineScope, withLocalScope, type EngineSettings } from '../src/core/engine-open.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -34,6 +34,75 @@ afterEach(() => {
 });
 
 describe('per-engine adaptive gateway state', () => {
+  test('closing one engine preserves another engine and the local gateway in-flight query cache stores', async () => {
+    configureGateway({ embedding_model: 'voyage:voyage-3-large', embedding_dimensions: 1024, env: { VOYAGE_API_KEY: key('process') } });
+    const a = await open({ providers: { voyage: { apiKey: key('a') } } });
+    const b = await open({ providers: { voyage: { apiKey: key('b') } } });
+    const entered = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    const calls: string[] = [];
+    __setEmbedTransportForTests((async ({ values }: { values: string[] }) => {
+      calls.push(...values);
+      if (calls.length === 3) entered.resolve();
+      if (values[0] !== 'prime a') await gate.promise;
+      return vectors(values, 1024);
+    }) as any);
+    let pending: Promise<Float32Array>[] = [];
+    try {
+      // Initialize a's state so disconnect really exercises its cache release.
+      await withEngineScope(a, () => embedQuery('prime a'));
+      pending = [withEngineScope(b, () => embedQuery('b question')), withLocalScope(() => embedQuery('local question'))];
+      await entered.promise;
+      await a.disconnect();
+      gate.resolve();
+      const first = await Promise.all(pending);
+      const again = [await withEngineScope(b, () => embedQuery('b question')), await withLocalScope(() => embedQuery('local question'))];
+      expect(calls).toEqual(['prime a', 'b question', 'local question']);
+      for (let i = 0; i < first.length; i++) {
+        expect(again[i]).toEqual(first[i]);
+        expect(again[i]).not.toBe(first[i]);
+      }
+      expect(__queryEmbedCacheKeysForTests()).toHaveLength(2);
+    } finally {
+      gate.resolve();
+      await Promise.allSettled(pending);
+      await closeAll(a, b);
+    }
+  }, 60_000);
+
+  test.each(['disconnect', 'global clear'] as const)('%s still prevents an in-flight engine query from repopulating the cache', async (action) => {
+    const engine = await open({ providers: { voyage: { apiKey: key('a') } } });
+    const entered = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    let calls = 0;
+    __setEmbedTransportForTests((async ({ values }: { values: string[] }) => {
+      calls++;
+      entered.resolve();
+      await gate.promise;
+      return vectors(values, 1024);
+    }) as any);
+    let pending: Promise<Float32Array> | undefined;
+    try {
+      pending = withEngineScope(engine, () => embedQuery('pending question'));
+      await entered.promise;
+      if (action === 'disconnect') await engine.disconnect();
+      else clearQueryEmbedCache();
+      gate.resolve();
+      expect((await pending).length).toBe(1024);
+      expect(__queryEmbedCacheKeysForTests()).toEqual([]);
+      if (action === 'global clear') {
+        await withEngineScope(engine, () => embedQuery('pending question'));
+        await withEngineScope(engine, () => embedQuery('pending question'));
+        expect(calls).toBe(2);
+        expect(__queryEmbedCacheKeysForTests()).toHaveLength(1);
+      }
+    } finally {
+      gate.resolve();
+      await pending?.catch(() => {});
+      await engine.disconnect();
+    }
+  }, 60_000);
+
   test('a batch shrink learned in one engine\'s scope stays with that engine', async () => {
     __setEmbedTransportForTests((async ({ values }: { values: string[] }) => {
       if (values.length === 4) throw TOKEN_LIMIT;
