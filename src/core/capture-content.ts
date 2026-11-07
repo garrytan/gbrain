@@ -202,7 +202,7 @@ export function buildEventBlock(opts: CaptureFrontmatterOpts): Record<string, un
  * the body's existing frontmatter. Returns undefined when neither is
  * present (the default-'note' path — deliberately NOT a vocabulary-check
  * target, so bare `gbrain capture` can never start failing under a pack
- * that omits 'note') and when the frontmatter is malformed
+ * that omits 'note'; #8507 warns instead) and when the frontmatter is malformed
  * (`mergeCaptureFrontmatter` surfaces that error downstream unchanged).
  */
 export function explicitCaptureType(rawBody: string, explicit?: string): string | undefined {

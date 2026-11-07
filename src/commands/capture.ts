@@ -234,6 +234,7 @@ interface CaptureResult {
   captured_at: string;
   revision?: string;
   write_request?: WriteReceipt;
+  type_warning?: unknown;
 }
 
 function printReceipt(result: CaptureResult, quiet: boolean, json: boolean): void {
@@ -471,6 +472,7 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
       captured_at: receipt?.created_at ?? capturedAt,
       ...(receipt ? { write_request: receipt } : {}),
       ...(typeof result.revision === 'string' ? { revision: result.revision } : {}),
+      ...(result.type_warning ? { type_warning: result.type_warning } : {}),
     }, parsed.quiet ?? false, parsed.json ?? false);
   } catch (error) {
     if (await reportPersistenceCliError(error, parsed.json ?? false)) return;

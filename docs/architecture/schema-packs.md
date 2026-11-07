@@ -125,9 +125,11 @@ classification as `schema lint --with-db`'s `stored_type_undeclared`:
 
 - `put_page` (MCP, `gbrain put`, `gbrain call put_page`) commits the page and
   returns `type_warning` with `code: page_type_undeclared`, the cause, the fix
-  and this anchor. It warns rather than rejects; `capture` still rejects an
-  undeclared explicit type, and dream subagent writes still normalize it to
-  `note` with `legacy_type`.
+  and this anchor. It warns rather than rejects. `capture` rejects an
+  undeclared explicit type, but a capture with no type always succeeds: if the
+  pack does not cover `note`, it stores `note` and returns the same warning.
+  Dream subagent writes still normalize an undeclared type to `note` with
+  `legacy_type`.
 - `gbrain lint <dir>` flags it as `type-undeclared` on the `type:` line.
 - `gbrain schema review-orphans` / MCP `schema_review_orphans` list untyped
   AND undeclared-type pages (`reason`, `undeclared_types`, a true

@@ -12,7 +12,7 @@
 //   - The DEFAULT 'note' path is never checked through these helpers —
 //     callers only validate EXPLICIT names (flag / param / frontmatter),
 //     so bare `gbrain capture` keeps working even under a pack that does
-//     not declare 'note'.
+//     not declare 'note'. It warns instead (#8507).
 
 import type { BrainEngine } from '../engine.ts';
 import { loadActivePackForEngine } from './engine-resolution.ts';
