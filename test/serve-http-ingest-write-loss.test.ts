@@ -115,11 +115,28 @@ describe('POST /ingest idempotency includes the target slug', () => {
     expect(await ingest(body, 'notes/inbox-copy')).not.toBe(inbox);
   });
 
-  test('a valid slug of about 3 KB is queued rather than failing the key index, and its retry collapses', async () => {
-    const body = note('Long-slug capture');
-    const slug = `notes/${Array.from({ length: 47 }, (_, i) => createHash('sha256').update(String(i)).digest('hex')).join('')}`;
-    const first = await ingest(body, slug);
-    expect(await ingest(body, slug)).toBe(first);
+  const entropy = Array.from({ length: 47 }, (_, i) => createHash('sha256').update(String(i)).digest('hex')).join('');
+  const queuedWith = async (marker: string) =>
+    (await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM minion_jobs WHERE data::text LIKE $1', [`%${marker}%`]))[0]!.n;
+
+  test('a slug of about 3 KB, which no page can be stored under, is refused with 400 invalid_slug and nothing queued', async () => {
+    const res = await post(note('Long-slug capture'), `notes/${entropy}`);
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toBe('invalid_slug');
+    expect(await queuedWith('Long-slug capture')).toBe(0);
+  });
+
+  test('a slug of exactly 1024 bytes is queued, and its retry collapses; 1025 bytes is refused', async () => {
+    const atLimit = `notes/${entropy.slice(0, 1024 - 'notes/'.length)}`;
+    expect(Buffer.byteLength(atLimit, 'utf8')).toBe(1024);
+    const body = note('Slug at the limit');
+    const first = await ingest(body, atLimit);
+    expect(await ingest(body, atLimit)).toBe(first);
+
+    const over = await post(note('Slug over the limit'), `${atLimit}b`);
+    expect(over.status).toBe(400);
+    expect((await over.json() as { error: string }).error).toBe('invalid_slug');
+    expect(await queuedWith('Slug over the limit')).toBe(0);
   });
 });
 

@@ -244,6 +244,9 @@ async function handleGitHubItemEvent(
   }
 }
 
+/** A longer slug cannot be stored under the page key index, so its capture would be accepted and never land. */
+const MAX_INGEST_SLUG_BYTES = 1024;
+
 /** Stands in for a missing webhook secret; no source holds it and a match against it is still refused. */
 const THROWAWAY_WEBHOOK_KEY = randomBytes(32);
 
@@ -499,6 +502,14 @@ async function handleIngest(
   const writer = authInfo.principal ? { principal: { kind: authInfo.principal.kind, id: authInfo.principal.id } } : undefined;
   let targetSlug = '';
   if (callerSlug) {
+    const slugBytes = Buffer.byteLength(callerSlug, 'utf8');
+    if (slugBytes > MAX_INGEST_SLUG_BYTES) {
+      res.status(400).json({
+        error: 'invalid_slug',
+        message: `Invalid slug: X-Gbrain-Slug is ${slugBytes} bytes; the limit is ${MAX_INGEST_SLUG_BYTES}.`,
+      });
+      return;
+    }
     try {
       targetSlug = validateSlug(callerSlug);
     } catch (err) {
