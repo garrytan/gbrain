@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.610.0] - 2026-11-07
 
 **Doctor `foreign_writers` no longer reads an unreadable ledger or a skipped repository as clean, the owner-path commit guard fails closed, and the opt-in local-edit adoption (`persistence.adopt_local_edits`, off by default) gets the hardening it needed before any source turns it on.** `foreign_writers` now marks a scan partial when a root's Git probe fails, when roots pass the 50-root cap, or when the commit ledger exists but cannot be read. It names a foreign commit that carries a `gbrain-` trailer as possibly an older gbrain without the ledger, and still fails it. `gbrain git commit-push` refuses a repository that only encloses a registered checkout. Adoption keeps its refusal for a conflicted path or a merge in progress, a stale editor save, a segmented or oversized page, and a caller whose claim is gone. Its quiet wait is capped at the foreground budget, and an adoption whose publication failed after its commit is retried instead of left orphaned.
 
