@@ -9,7 +9,7 @@
  * queue retried the same capped call three times and the job died.
  *
  * The provider now maps that envelope (anchored prefix, `is_error: true`, no
- * `api_error_status`, any cap, any exit code) to `length` with empty text and
+ * `api_error_status` (absent or JSON null, #7273), any cap, any exit code) to `length` with empty text and
  * the usage as reported. Every other error envelope stays a typed failure.
  *
  * A POSIX shell stub at GBRAIN_CLAUDE_CLI_BIN plays the CLI; it records the
@@ -107,6 +107,10 @@ describe('claude-cli output-cap envelope finishes as length (#6523)', () => {
     ['no forwarded cap (the default cap was hit)', envelope(capMessage(32000)), 1, undefined],
     ['reported cap differs from the forwarded cap', envelope(capMessage(8192)), 1, 2048],
     ['changed trailing wording after the anchored prefix', envelope("API Error: Claude's response exceeded the 2048 output token maximum. Raise the limit in settings."), 1, 2048],
+    // #7273: Claude Code 2.1.305 sends the key as JSON null, not absent.
+    ['api_error_status null as Claude Code 2.1.305 reports it', envelope(capMessage(2048), { subtype: 'success', stop_reason: 'stop_sequence', api_error_status: null }), 1, 2048],
+    ['api_error_status null, exit 0', envelope(capMessage(2048), { api_error_status: null }), 0, 2048],
+    ['api_error_status null, verbose event-array form', [{ type: 'system', subtype: 'init' }, envelope(capMessage(2048), { api_error_status: null })], 1, 2048],
   ];
   for (const [label, body, exit, cap] of positives) {
     test(`${label} → length, empty text, usage as reported`, async () => {
@@ -145,6 +149,23 @@ describe('claude-cli output-cap envelope finishes as length (#6523)', () => {
           const error = await rejection(generate);
           expect(error, `${label} (exit ${exit})`).toBeInstanceOf(ClaudeCliProcessError);
           expect((error as ClaudeCliProcessError).apiErrorStatus, label).toBe(body.api_error_status as number | undefined);
+          expect((error as ClaudeCliProcessError).exitCode, label).toBe(exit);
+        });
+      }
+    }
+  });
+
+  test('a null api_error_status on text that is not the cap stays a typed failure without a status (#7273)', async () => {
+    const negatives: Array<[string, Record<string, unknown>]> = [
+      ['server error with a null status', envelope('API Error: transient server error', { api_error_status: null })],
+      ['cap text quoted mid-answer with a null status', envelope(`Quoted provider documentation: ${capMessage(2048)}`, { api_error_status: null })],
+    ];
+    for (const [label, body] of negatives) {
+      for (const exit of [0, 1]) {
+        await withCli({ '*': { body, exit } }, async () => {
+          const error = await rejection(generate);
+          expect(error, `${label} (exit ${exit})`).toBeInstanceOf(ClaudeCliProcessError);
+          expect((error as ClaudeCliProcessError).apiErrorStatus, label).toBeUndefined();
           expect((error as ClaudeCliProcessError).exitCode, label).toBe(exit);
         });
       }

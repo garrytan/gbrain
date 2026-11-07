@@ -116,8 +116,8 @@ interface ClaudeJsonResult {
   stop_reason: string | null;
   session_id: string;
   num_turns: number;
-  /** HTTP status of the underlying API failure (e.g. 429 on a spend/rate limit). */
-  api_error_status?: number;
+  /** HTTP status of the underlying API failure (e.g. 429 on a spend/rate limit); newer CLIs send null when there is none (#7273). */
+  api_error_status?: number | null;
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
@@ -204,14 +204,15 @@ function parseResultEnvelope(stdout: string): EnvelopeParse {
  * prefix only: the trailing advice has already changed wording once, the
  * reported cap may be the default rather than the forwarded one, and the exit
  * code varies by CLI version. A quoted prefix mid-answer, a success envelope,
- * a non-string result or an envelope carrying an API status never match.
+ * a non-string result or an envelope carrying an API status never match; an
+ * absent or null `api_error_status` is no status (#7273).
  */
 const OUTPUT_CAP_RE = /^API Error: Claude's response exceeded the \d+ output token maximum\b/;
 
 function isOutputCapEnvelope(envelope: ClaudeJsonResult): boolean {
   return envelope.type === 'result'
     && envelope.is_error === true
-    && envelope.api_error_status === undefined
+    && envelope.api_error_status == null
     && typeof envelope.result === 'string'
     && OUTPUT_CAP_RE.test(envelope.result);
 }
