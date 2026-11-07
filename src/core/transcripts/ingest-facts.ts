@@ -32,7 +32,7 @@ export interface IngestFactsResult {
   skippedDisabled?: boolean;
   /** True when the pass reached its budget (cap or missing price). Pages may remain unextracted; a final-call overage can also set it after the last page succeeded. */
   budget_exhausted?: boolean;
-  /** Why the budget halted the pass (`cost`, `runtime` or `no_pricing`). Absent when it did not halt. */
+  /** Which budget was reached (`cost`, `runtime` or `no_pricing`). Absent when the budget was not reached. */
   budget_reason?: BudgetReason;
   /** Pages skipped because a window batch would pass the request limit. */
   pages_skipped_too_large?: number;
