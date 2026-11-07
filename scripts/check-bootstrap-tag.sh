@@ -5,7 +5,7 @@
 # "Release mechanics") is a SINGLE maintainer-controlled ref: `stable`, moved by
 # .github/workflows/promote-stable.yml only to a published release whose exact
 # tree passed the production soak (docs/RELEASING.md#stable-channel-promotion).
-# `latest-stable` (every release, the alpha line) is refused here: new users
+# The latest-stable ref (every release, the alpha line) is refused here: new users
 # start on stable. Paste blocks copied into the wild never
 # rot and never point at an unreviewed branch head. This guard keeps the two
 # public entry documents on that contract:

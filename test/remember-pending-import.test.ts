@@ -11,6 +11,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { performSync } from '../src/commands/sync.ts';
 import { parseFactsFence } from '../src/core/facts-fence.ts';
+import { readWriterDiagnostics } from '../src/core/persistence/diagnostics.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { submitRememberMutation } from '../src/core/persistence/memory-mutations.ts';
 import { lostCallerWrites, replayImportedRemembers } from '../src/core/repair/failed-writes.ts';
@@ -111,10 +112,29 @@ describe('#6693 remember onto a page whose file awaits import', () => {
     expect(error.code).toBe('source_changed');
     expect(error.reason).toBeUndefined();
     expect(error.message).toBe('The canonical file contains an uncoordinated local edit.');
-    expect((await lastReceipt(engine, 'remember')).error_detail).toBeNull();
+    expect((await lastReceipt(engine, 'remember')).error_detail?.origin).toBe('file_database_drift');
     git(root, 'add', '--', `${slug}.md`); git(root, 'commit', '-q', '-m', 'commit the hand edit later');
     expect((await sync(engine, root)).replayedRemembers).toBeUndefined();
     expect(await claims(engine)).toEqual([]);
+  }, { setup }), 120_000);
+
+  test('GST-1601: a put_page onto an uncoordinated local edit, or onto a path an unindexed file occupies, records the cause on its receipt', () => managedBrain(async ({ engine, ctx, root }) => {
+    await seed(ctx);
+    edit(root, 'A hand edit nobody committed.');
+    const revision = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!.revision;
+    const drift = await refused(() => submitPageMutation(ctx, { operation: 'put_page', params: { slug, request_id: randomUUID(), expected_revision: revision,
+      content: '---\ntype: person\ntitle: Owner\n---\n\nReplaced body.\n' } }));
+    expect(drift.code).toBe('source_changed');
+    expect((await lastReceipt(engine, 'put_page')).error_detail?.origin).toBe('file_database_drift');
+    writeFileSync(join(root, 'people', 'unindexed-example.md'), '---\ntype: person\ntitle: Unindexed\n---\n\nNever imported.\n');
+    const occupied = await refused(() => submitPageMutation(ctx, { operation: 'put_page', params: { slug: 'people/unindexed-example', request_id: randomUUID(),
+      content: '---\ntype: person\ntitle: Unindexed\n---\n\nNew page.\n' } }));
+    expect(occupied.code).toBe('source_changed');
+    expect((await lastReceipt(engine, 'put_page')).error_detail?.origin).toBe('canonical_path_occupied');
+    expect(readFileSync(file(root), 'utf8')).toContain('A hand edit nobody committed.');
+    expect(readFileSync(join(root, 'people', 'unindexed-example.md'), 'utf8')).toContain('Never imported.');
+    // Routine drift refusals keep out of writer status's recent database refusals.
+    expect((await readWriterDiagnostics(engine)).recent_failures.map(row => row.error_detail?.origin)).not.toContain('file_database_drift');
   }, { setup }), 120_000);
 
   test('a put_page refused the same way is classified but not replayed', () => managedBrain(async ({ engine, ctx, root }) => {

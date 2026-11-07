@@ -56,7 +56,7 @@ describe('loadImageInput — local path', () => {
   test('loads a PNG file and sniffs MIME', async () => {
     const path = join(tmpRoot, 'test.png');
     writeFileSync(path, PNG_BYTES);
-    const result = await loadImageInput(path);
+    const result = await loadImageInput(path, { allowLocalPath: true });
     expect(result.contentType).toBe('image/png');
     expect(result.bytes.length).toBe(PNG_BYTES.length);
     expect(result.base64).toBe(PNG_BYTES.toString('base64'));
@@ -65,21 +65,21 @@ describe('loadImageInput — local path', () => {
   test('loads a JPEG file and sniffs MIME', async () => {
     const path = join(tmpRoot, 'test.jpg');
     writeFileSync(path, JPEG_BYTES);
-    const result = await loadImageInput(path);
+    const result = await loadImageInput(path, { allowLocalPath: true });
     expect(result.contentType).toBe('image/jpeg');
   });
 
   test('loads a WebP file and sniffs MIME', async () => {
     const path = join(tmpRoot, 'test.webp');
     writeFileSync(path, WEBP_BYTES);
-    const result = await loadImageInput(path);
+    const result = await loadImageInput(path, { allowLocalPath: true });
     expect(result.contentType).toBe('image/webp');
   });
 
   test('rejects unsupported format (GIF)', async () => {
     const path = join(tmpRoot, 'test.gif');
     writeFileSync(path, Buffer.from('GIF89a' + 'x'.repeat(100)));
-    const err = await loadImageInput(path).catch(e => e);
+    const err = await loadImageInput(path, { allowLocalPath: true }).catch(e => e);
     expect(err).toBeInstanceOf(ImageLoadError);
     expect(err.code).toBe('INVALID_FORMAT');
   });
@@ -88,7 +88,7 @@ describe('loadImageInput — local path', () => {
     const path = join(tmpRoot, 'huge.png');
     // 11MB file with PNG magic bytes
     writeFileSync(path, Buffer.concat([PNG_BYTES, Buffer.alloc(11 * 1024 * 1024)]));
-    const err = await loadImageInput(path).catch(e => e);
+    const err = await loadImageInput(path, { allowLocalPath: true }).catch(e => e);
     expect(err).toBeInstanceOf(ImageLoadError);
     expect(err.code).toBe('OVERSIZED');
   });
@@ -96,15 +96,26 @@ describe('loadImageInput — local path', () => {
   test('rejects file via custom (tighter) maxBytes', async () => {
     const path = join(tmpRoot, 'medium.png');
     writeFileSync(path, Buffer.concat([PNG_BYTES, Buffer.alloc(1024 * 1024)])); // 1MB
-    const err = await loadImageInput(path, { maxBytes: 500 * 1024 }).catch(e => e);
+    const err = await loadImageInput(path, { maxBytes: 500 * 1024, allowLocalPath: true }).catch(e => e);
     expect(err).toBeInstanceOf(ImageLoadError);
     expect(err.code).toBe('OVERSIZED');
   });
 
   test('NOT_FOUND on nonexistent path', async () => {
-    const err = await loadImageInput(join(tmpRoot, 'missing.png')).catch(e => e);
+    const err = await loadImageInput(join(tmpRoot, 'missing.png'), { allowLocalPath: true }).catch(e => e);
     expect(err).toBeInstanceOf(ImageLoadError);
     expect(err.code).toBe('NOT_FOUND');
+  });
+
+  test('refuses file:// URIs and absolute paths unless the caller opts in', async () => {
+    const path = join(tmpRoot, 'default-off.png');
+    writeFileSync(path, PNG_BYTES);
+    for (const input of [path, `file://${path}`]) {
+      const err = await loadImageInput(input).catch(e => e);
+      expect(err).toBeInstanceOf(ImageLoadError);
+      expect(err.code).toBe('INVALID_URL');
+      expect(err.message).not.toContain(path);
+    }
   });
 });
 

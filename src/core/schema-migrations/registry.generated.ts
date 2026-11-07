@@ -292,6 +292,9 @@ import { v288 } from './v288-decide-proposals-claim-pair-index.ts';
 import { v289 } from './v289-page-change-reasons.ts';
 import { v290 } from './v290-wake-subscriptions.ts';
 import { v291 } from './v291-persistence-request-replay-indexes.ts';
+import { v292 } from './v292-refresh-write-barrier.ts';
+import { v293 } from './v293-qm-attest-sources.ts';
+import { v294 } from './v294-refresh-barrier-import-deferral.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -582,4 +585,7 @@ export const MIGRATIONS: Migration[] = [
   v289,
   v290,
   v291,
+  v292,
+  v293,
+  v294,
 ];

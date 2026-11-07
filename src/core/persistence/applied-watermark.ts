@@ -88,7 +88,7 @@ export async function readWriteWatermark(engine: Pick<BrainEngine, 'executeRaw'>
   const [row] = await engine.executeRaw<{ last_commit: string | null; last_sync_at: unknown; pending_min: number | string | null;
     pending_count: number | string; pending_since: unknown }>(`SELECT s.last_commit, s.last_sync_at, p.pending_min, p.pending_count, p.pending_since
     FROM sources s LEFT JOIN LATERAL (SELECT min(r.sequence) AS pending_min, count(*) AS pending_count, min(r.created_at) AS pending_since FROM persistence_requests r
-      WHERE r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.state IN ('queued','running','recovering')) p ON true WHERE s.id=$1`, [sourceId]);
+      WHERE r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.state IN ('queued','deferred','running','recovering')) p ON true WHERE s.id=$1`, [sourceId]);
   const [newest] = row?.pending_min == null ? await engine.executeRaw<{ sequence: number | string | null }>('SELECT max(sequence) AS sequence FROM persistence_requests') : [];
   const through = row?.pending_min != null ? Number(row.pending_min) - 1 : newest?.sequence == null ? null : Number(newest.sequence);
   return {

@@ -1,5 +1,9 @@
 # TODOS
 
+## Local edit adoption follow-ups (filed 2026-11-07, GBRA-341, #8755)
+
+- [ ] **P2 — Harden `adopt_local_edits` before any source turns it on (#8755).** **What:** the adoption can import merge-conflict markers, adopt an editor's stale save over gbrain's committed write, read a huge file whole, hold the worktree queue through its quiet window, leave its Git commit behind when the publication transaction rolls back, and treat a nested checkout's unreadable `HEAD` as repo-less. **Fix:** per item in #8755. **Effort:** M. **Priority:** P2.
+
 ## Memory train follow-ups (filed 2026-11-04, GBRA-286, #8481)
 
 - [ ] **P3 — `extraction_pending`'s local relink argv can carry fenced fact text (#8597).** **What:** running the owner's relink action stores the quote fence as fact text. **Fix:** unquote before building the argv. **Effort:** S. **Priority:** P3.

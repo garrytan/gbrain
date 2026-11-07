@@ -48,7 +48,6 @@ import {
   findInvalidParam,
   schemaInvalidParams,
   findUnknownParams,
-  buildUnknownParamWarnBlock,
   resolveStrictParamsMode,
 } from './validate-params.ts';
 import { backupCheckDisabled, backupNagGate, backupNoticeText, loadBackupStatus } from '../core/backup/status-file.ts';
@@ -58,7 +57,7 @@ import { enforceReadTrustFloor } from '../core/eligibility/registry.ts';
 import { invalidateHotMemoryForEngine } from '../core/facts/meta-hook.ts';
 import { withSearchConnectionBudget } from '../core/search/connection-budget.ts';
 import { isEngineDegraded } from '../core/degraded-marker.ts';
-import { admittedPendingReceipt, type WriteReceipt } from '../core/persistence/types.ts';
+import { admittedPendingReceipt, isWriteReceipt, publicWriteReceipt, type WriteReceipt } from '../core/persistence/types.ts';
 import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, withRequestIdentityMemo, withVerifiedLocalRegistration } from '../core/persistence/identity.ts';
 import { frameOverCap, resultTooLargeError } from '../core/egress-budget.ts';
 import { isAIInvocationPolicyError } from '../core/ai/invocation-guard.ts';
@@ -318,6 +317,8 @@ export interface DispatchOpts {
   isListed?: (op: OperationMeta) => Promise<boolean>;
   /** #5232: commit wait for coordinated writes (OperationContext.writeWaitMs); unset = agent default. */
   writeWaitMs?: number;
+  /** PR B: the owner socket answers a write deferred behind a refresh as the write_pending error, so its CLI exits 10 and polls. */
+  pendingAsError?: boolean;
   /** Large pages: the caller sent X-Gbrain-Client (OperationContext.thinClient). Shape only, never authority. */
   thinClient?: boolean;
   /** C1: search/query row shape chosen by the transport (OperationContext.resultRows); unset = lean for remote callers. */
@@ -547,9 +548,30 @@ export type RequestLogStatus = 'success' | 'success_with_warnings' | 'accepted_p
 
 /** #5249: the receipt of a write the dispatcher returned as accepted but not yet committed. */
 export function acceptedPendingReceipt(result: ToolResult): WriteReceipt | null {
-  if (!result.isError) return null;
-  try { return admittedPendingReceipt(JSON.parse(result.content[0]?.text ?? '{}')); }
-  catch { return null; }
+  const text = result.content[0]?.text ?? '{}';
+  if (!result.isError && !/^\s*\{\s*"status"\s*:\s*"pending"/.test(text.slice(0, 64))) return null;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return result.isError ? admittedPendingReceipt(parsed) : deferredPendingReceipt(parsed);
+  } catch { return null; }
+}
+
+/** PR B: the receipt of a successful `status: "pending"` result, a write deferred behind a refresh. */
+function deferredPendingReceipt(parsed: unknown): WriteReceipt | null {
+  const body = parsed as { status?: unknown; receipt?: unknown } | null;
+  return body?.status === 'pending' && isWriteReceipt(body.receipt) ? body.receipt : null;
+}
+
+/**
+ * PR B (docs/designs/REFRESH_WRITE_BARRIER.md): a write deferred behind a worktree refresh was accepted and publishes after
+ * it, so MCP answers it as a pending success instead of an error. Any other `write_pending` stays an error.
+ */
+export function deferredWriteResult(e: unknown, notices: Notice[], opts: DispatchOpts): ToolResult | null {
+  if (opts.pendingAsError || !(e instanceof OperationError) || (e.code !== 'write_pending' && e.writeError !== 'write_pending') || !e.writeRequest?.deferred) return null;
+  const receipt = publicWriteReceipt(e.writeRequest);
+  return toolResultWithNotices({ status: 'pending', request_id: receipt.request_id, receipt, deferred: e.writeRequest.deferred,
+    next: { tool: 'get_write_request', arguments: { request_id: receipt.request_id }, cli: `gbrain write-request ${receipt.request_id}`, retry_after_ms: receipt.retry_after_ms } },
+  admitNotices(notices, opts), dispatchRenderContext(opts));
 }
 
 /**
@@ -575,6 +597,7 @@ export function requestLogStatusForResult(result: ToolResult): RequestLogStatus 
     } catch { /* unparseable error content stays plain 'error' */ }
     return 'error';
   }
+  if (acceptedPendingReceipt(result)) return 'accepted_pending';
   const warnings = result._meta?.warnings;
   return Array.isArray(warnings) && warnings.length > 0 ? 'success_with_warnings' : 'success';
 }
@@ -974,7 +997,7 @@ export async function dispatchToolCall(
     const header = opts.actor?.header ?? undefined;
     const actorNamed = header !== undefined || opts.actor?.audience != null || (!!args && Object.prototype.hasOwnProperty.call(args, ACTOR_ARGUMENT));
     const assertion = (outcome: AudienceAuditEvent['outcome'], reason?: string) => logAudienceAssertion({ outcome, op: name,
-      audience: [...(attested?.access.audience ?? audience ?? [])], transport: opts.transport ?? 'unknown',
+      audience: [...(attested?.access?.audience ?? audience ?? [])], transport: opts.transport ?? 'unknown',
       principal: opts.auth?.principal ? `${opts.auth.principal.kind}:${opts.auth.principal.id}` : opts.transport === 'stdio' ? 'local_stdio' : 'unknown',
       ...(actorNamed ? { actor: { system: 'qm', ...(header && EXTERNAL_ID_RE.test(header) ? { external_id: header } : {}), ...(reason ? { reason } : {}) } } : {}) });
     try {
@@ -982,7 +1005,7 @@ export async function dispatchToolCall(
       audience = parseAudience(opts.onBehalfOf);
       attested = await resolveAttestedActor(engine, { channels: opts.actor, params: args, op: name, opShape: op,
         auth: opts.auth, transport: opts.transport, audienceAsserted: audience !== null });
-      access = attested ? attested.access : await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience);
+      access = attested?.access ?? await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience);
     } catch (e) {
       // GST-359: a call that names a person gets every failure here (a lock timeout reading its link included) in the
       // envelope QM reads, never a thrown call; anything else keeps the caller's own error path.
@@ -993,7 +1016,7 @@ export async function dispatchToolCall(
       assertion(e.code as AudienceAuditEvent['outcome'], e.reason);
       return qmMemoryToolResult(name, actorNamed ? actorRefusal(e, opts, name, header, args) : errorResult(e, opts, { op: name }));
     }
-    if (audience || attested) assertion('accepted');
+    if (audience || attested?.actor) assertion('accepted');
     const callParams = attested ? attested.params : args;
     return withCallerAccess(access, async () => {
       const out = await withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, callParams, resolved));
@@ -1022,11 +1045,11 @@ function actorRefusal(e: OperationError, opts: DispatchOpts, op: string, header:
   return withStructuredError(errorResult(e, opts, { op }));
 }
 
-/** An error result with its JSON envelope's code, message, reason and fix also in `structuredContent.error`, which QM reads. */
+/** An error result with its JSON envelope's code, message, reason, detail and fix also in `structuredContent.error`, which QM reads. */
 function withStructuredError(out: ToolResult): ToolResult {
   try {
     const env = JSON.parse(out.content[0]!.text) as Record<string, unknown>;
-    out.structuredContent = { error: { code: env.code, message: env.message, ...(env.reason ? { reason: env.reason } : {}), ...(env.fix ? { fix: env.fix } : {}) } };
+    out.structuredContent = { error: { code: env.code, message: env.message, ...(env.reason ? { reason: env.reason } : {}), ...(env.detail ? { detail: env.detail } : {}), ...(env.fix ? { fix: env.fix } : {}) } };
   } catch { /* the text block still carries the code */ }
   return out;
 }
@@ -1288,12 +1311,6 @@ async function dispatchResolvedCall(
     // Cat 40 (#5932) evidence blocks (type-filter notice, other names, saved facts) are retrieval
     // data, not advice: they stay plain extra text blocks right after content[0], as measured.
     const evidenceBlocks = retrievalNoticeBlocks(result, responseMeta.retrieval).slice(emptyBlock ? 1 : 0);
-    // WP3/D8: warn-mode unknown-param notices ride the same channel, so the
-    // grace period actually corrects clients (old thin-clients read content[0]
-    // only — skew-safe). One notice per ignored parameter.
-    for (const w of unknownParamWarnings) {
-      notices.push({ code: 'unknown_param', kind: 'info', why: buildUnknownParamWarnBlock([w]) });
-    }
     // Lane F (F3): degraded recall and a source binding that narrowed an empty read.
     const rerankDegradedCalls = recordRerankDegradation(responseMeta, opts);
     notices.push(...recallInteropNotices(name, result, responseMeta, safeParams,
@@ -1352,6 +1369,6 @@ async function dispatchResolvedCall(
     // never tells a mutating op with an unknown outcome to retry.
     notices.push(...await sessionSafetyNotices(engine, opts, ctx.config));
     notices.push(...await grantBlockedNotices(engine, opts, refusedByGrant(e)));
-    return errorResult(e, opts, { op: name, mutating: op.mutating === true, idempotent: op.idempotent === true, notices: admitNotices(notices, opts) });
+    return deferredWriteResult(e, notices, opts) ?? errorResult(e, opts, { op: name, mutating: op.mutating === true, idempotent: op.idempotent === true, notices: admitNotices(notices, opts) });
   }
 }

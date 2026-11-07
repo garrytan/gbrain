@@ -229,6 +229,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'dirty_age',
   'commits_outside_source_root',
   'quarantined_changes',
+  // PR B: commits in a source checkout that gbrain's commit ledger does not name, and page files left uncommitted (doctor/checks/foreign-writers.ts).
+  'foreign_writers',
   'takes_count',
   'takes_weight_grid',
   // #5836: active facts with no entity (invisible to entity recall and the conflict sweep).
@@ -239,6 +241,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'db_ahead_of_git',
   // Git-canonical G3: how far each strict source's index trails HEAD (doctor/checks/git-index-lag.ts).
   'git_index_lag',
+  // GST-1601: local edits adopted in the last 24 h per source (doctor/checks/local-edit-adoptions.ts).
+  'local_edit_adoptions',
   'edge_validity',
   'text_projection_readiness',
   'timeline_coverage',

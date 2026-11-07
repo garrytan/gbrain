@@ -753,7 +753,7 @@ except the notices that describe one call's result. HTTP is stateless, so
 dedupe is per authenticated client and session, and `degraded` and `safety`
 notices ride every affected call. At most 2 `coaching` notices per session.
 Notices that describe one call's result (`degraded_recall`, `empty_retrieval`,
-`unknown_param`, `listing_truncated`, `delta_incomplete`, `facts_unembedded`)
+`listing_truncated`, `delta_incomplete`, `facts_unembedded`)
 are never deduped on any transport, with one exception: a `degraded_recall`
 whose only stages come from the brain's configuration (`embed_unavailable` on
 a keyless brain, which degrades every search the same way) shows once per

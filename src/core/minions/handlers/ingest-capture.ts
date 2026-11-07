@@ -43,6 +43,10 @@ import { privateRequestRefusal } from '../../persistence/visibility-request.ts';
 import { parseMarkdown } from '../../markdown.ts';
 import { OperationError, type OperationContext } from '../../ops/contract.ts';
 import { submitPageMutation } from '../../persistence/page-mutations.ts';
+import { authorizePageVisibility, excludesPrivateWrites } from '../../persistence/page-visibility.ts';
+import type { Principal, WriteAuthority } from '../../persistence/model.ts';
+import { assertMemberPageWriter, assertScopePageWriter } from '../../access/member-facts.ts';
+import { validateSlug } from '../../utils.ts';
 
 export interface IngestCaptureResult {
   slug: string;
@@ -67,9 +71,29 @@ export function defaultSlugForEvent(event: IngestionEvent, now: Date = new Date(
   return `inbox/${y}-${m}-${d}-${hashPrefix}`;
 }
 
+/** The token or OAuth client the POST /ingest route stored on the job, or undefined (checked as a guest). */
+function webhookPrincipal(writer: unknown): Principal | undefined {
+  const principal = (writer as { principal?: { kind?: unknown; id?: unknown } } | null | undefined)?.principal;
+  if (!principal || typeof principal.id !== 'string' || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return undefined;
+  return { kind: principal.kind, id: principal.id } as Principal;
+}
+
+/**
+ * A webhook capture replaces a page only where its writer's own remote write could: never a member fact page or the
+ * scope page, and never a page the writer cannot read (another member's readable_by page, a private page). A job with
+ * no stored writer is checked as a guest, which reads no restricted page.
+ */
+export async function assertWebhookWriterMayReplace(engine: BrainEngine, writer: unknown, sourceId: string, slug: string): Promise<void> {
+  const target = validateSlug(slug);
+  assertMemberPageWriter({ remote: true }, target, 'ingest_capture');
+  assertScopePageWriter({ remote: true }, target, 'ingest_capture');
+  await authorizePageVisibility(engine, { version: 1, principal: webhookPrincipal(writer), remote: true, sourceId, sourceIncarnation: '',
+    scopes: [], operations: null, slugPrefixes: null, excludePrivate: await excludesPrivateWrites(engine, true) } as WriteAuthority, target);
+}
+
 export function makeIngestCaptureHandler(engine: BrainEngine) {
   return async function ingestCaptureHandler(job: MinionJobContext): Promise<IngestCaptureResult> {
-    const data = job.data as { event?: unknown; slug?: unknown; sourceId?: unknown };
+    const data = job.data as { event?: unknown; slug?: unknown; sourceId?: unknown; writer?: unknown };
     const event = data.event as IngestionEvent | undefined;
     if (!event) {
       throw new Error('ingest_capture: job.data.event is required');
@@ -205,6 +229,10 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       if (rows.length > 0) sourceId = event.source_id;
     }
 
+    const webhookWrite = untrustedPayload && event.source_kind === 'webhook' && !isTombstone;
+    const checkWriter = (sid: string) => webhookWrite ? assertWebhookWriterMayReplace(engine, data.writer, sid, slug) : Promise.resolve();
+    await checkWriter(sourceId ?? 'default');
+
     // G6: a managed brain refuses direct writes, so its captures and tombstones go through the door (put_page /
     // delete_page), which publishes the file before the row.
     const managed = await managedPersistenceEnabled(engine);
@@ -277,6 +305,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
           ? await engine.executeRaw<{ archived: boolean | null }>('SELECT archived FROM sources WHERE id = $1', [sourceId]) : null;
         if (!vanished || (vanished.length > 0 && vanished[0]?.archived !== true)) throw err;
         sourceFallback = { requested: sourceId!, effective: 'default', reason: vanished.length ? 'archived' : 'fk_violation' };
+        await checkWriter('default');
         response = await put('default');
       }
       if (sourceFallback) {
@@ -327,6 +356,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       const isSourceFk = fkErr?.code === '23503' && namesPagesSourceFk;
       if (sourceId !== undefined && isSourceFk) {
         sourceFallback = { requested: sourceId, effective: 'default', reason: 'fk_violation' };
+        await checkWriter('default');
         result = await importFromContent(engine, slug, event.content, { ...importOpts, sourceId: undefined });
       } else {
         throw err;

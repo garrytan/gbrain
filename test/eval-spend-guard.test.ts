@@ -273,6 +273,17 @@ describe('eval-spend-guard.sh', () => {
     expect(n.stderr).not.toContain('in-flight');
   });
 
+  test('no command substitution is parsed between arming the signal traps and waiting on the command (#8717)', () => {
+    // A TERM that lands while bash 5.2 parses a top-level $(...) runs the trap inside that parse, where it fails and the
+    // signal is lost: the guard then waits out its command and exits 0 instead of 143.
+    const text = readFileSync(SCRIPT, 'utf-8');
+    const start = text.indexOf("\ntrap 'on_signal 2' INT\n");
+    const armed = text.slice(start, text.indexOf('\nwait "$CHILD"\n', start));
+    expect(armed.length).toBeGreaterThan(0);
+    const code = armed.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+    expect(code.match(/\$\((?!\()|`/g) ?? []).toEqual([]);
+  });
+
   test('a SIGTERMed guard stops the command and reconciles at the estimate (exit 143)', async () => {
     const g = start(['10', '4', '--', 'sleep', '30']);
     // Deterministic: the `reserved $` line is printed AFTER the reservation

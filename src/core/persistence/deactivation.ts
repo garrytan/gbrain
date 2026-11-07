@@ -107,7 +107,7 @@ export async function deactivationBlockers(engine: BrainEngine): Promise<Deactiv
     exit: 'gbrain sources writer unlock' });
   const requests = await engine.executeRaw<{ request_id: string; source_id: string; slug: string; operation: string; state: string; recovering: boolean }>(
     `SELECT request_id::text AS request_id, source_id, slug, operation, state, recovery IS NOT NULL AS recovering FROM persistence_requests
-     WHERE state IN ('queued','running','recovering') OR recovery IS NOT NULL ORDER BY sequence LIMIT 50`);
+     WHERE state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL ORDER BY sequence LIMIT 50`);
   for (const r of requests) {
     blockers.push({ kind: 'request', id: r.request_id, source_id: r.source_id, detail: `${r.operation} ${r.state}${r.recovering ? ', recovering' : ''} (${r.source_id}:${r.slug})`,
       exit: r.state === 'queued' && !r.recovering ? `gbrain cancel-write-request ${r.request_id} (MCP: cancel_write_request), or wait for the owner to publish it`
