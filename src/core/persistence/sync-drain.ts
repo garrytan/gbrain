@@ -260,7 +260,8 @@ function transientDelay(error: unknown, attempt: number, refreshWaitedMs: number
   if (error instanceof OperationError && error.code === 'worktree_refreshing') {
     if (refreshWaitedMs >= REFRESH_WAIT_MS) return null;
     const hinted = Number(/retry_after_ms=(\d+)/.exec(String(error.detail ?? ''))?.[1]);
-    return Number.isFinite(hinted) && hinted > 0 ? hinted : 1000;
+    // GST-1623: never past the drain's refresh budget, so a long hint ends the wait on time instead of oversleeping it.
+    return Math.min(Number.isFinite(hinted) && hinted > 0 ? hinted : 1000, REFRESH_WAIT_MS - refreshWaitedMs);
   }
   // Admission gave up on lock contention (a concurrent publication holds the shared counters); the frozen request ID is kept.
   if (error instanceof OperationError && error.detail === 'database_contention') return refreshWaitedMs >= REFRESH_WAIT_MS ? null : 1000;
@@ -269,6 +270,9 @@ function transientDelay(error: unknown, attempt: number, refreshWaitedMs: number
   if (!contention && !isRetryableConnError(error) && !isStatementTimeoutError(error) && getCode(error) !== '57014') return null;
   return baseMs * 4 ** (attempt - 1);
 }
+
+/** Test seam: the drain's retry delay for one failed pass. */
+export const _transientDelayForTests = transientDelay;
 
 /** The error's message (or code), with anything that looks like a connection URL removed. */
 function errorText(error: unknown): string {

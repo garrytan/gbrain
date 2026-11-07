@@ -12,9 +12,11 @@
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { PreparedMutation } from './coordinator.ts';
-import { deferralRoom, IMPORT_HOLD_CAPABILITY, publicationGroupKey, REFRESH_BARRIER_CLAIM_PREDICATE } from './journal.ts';
+import { completeWrite, deferralRoom, IMPORT_HOLD_CAPABILITY, publicationGroupKey, REFRESH_BARRIER_CLAIM_PREDICATE } from './journal.ts';
+import { deferredReplayRefusal } from './refresh-barrier.ts';
 import type { WriteRequest } from './model.ts';
-import { landedCommit } from './pending-import.ts';
+import { fileAtCommit, landedCommit } from './pending-import.ts';
+import { sha256 } from './digest.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { writeSwitchOn } from './switches.ts';
 
@@ -27,13 +29,23 @@ export const SUPERSEDES_TRAILER_KEY = 'gbrain-supersedes';
  * A claimed write whose preparation was refused `pending_import` (`importFrom`: the last imported commit the check saw),
  * moved back to `deferred` behind that import; null when it keeps the refusal (barrier off, another operation, a batch, a
  * live consumer on the owner host that cannot claim a held write).
+ * GST-1623: a write that waited behind a refresh is checked against that refresh first, on the file the refusal compared
+ * (`importFile`): a refresh that changed it, or a later write that committed first, ends the write here as its replay would
+ * have. Otherwise the hold drops the released `deferred_refresh_id`, so a consumer older than the import hold, which claims a
+ * deferred row once its refresh is released, never claims a row whose import is still pending (the v294 guard refuses it).
  */
 export async function holdForImport(engine: BrainEngine, row: WriteRequest, error: unknown): Promise<WriteRequest | null> {
   const from = (error as { importFrom?: unknown } | null)?.importFrom;
   if (typeof from !== 'string' || !IMPORT_HELD_OPERATIONS.includes(row.operation) || (row.target_kind ?? 'page') !== 'page' || !row.worktree_id
     || publicationGroupKey(row) !== null || !await writeSwitchOn(engine, 'refresh_barrier').catch(() => false)
     || !await deferralRoom(engine, row.worktree_id, IMPORT_HOLD_CAPABILITY)) return null;
-  const [held] = await engine.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state='deferred',deferred_import_from=$3,execution_token=NULL,
+  if (row.deferred_refresh_id) {
+    const file = (error as { importFile?: { root: string; path: string } }).importFile;
+    if (!file) return null;
+    const refusal = await deferredReplayRefusal(engine, row, [file]);
+    if (refusal) return engine.transaction(tx => completeWrite(tx, row, refusal.state, {}, refusal.failure));
+  }
+  const [held] = await engine.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state='deferred',deferred_import_from=$3,deferred_refresh_id=NULL,execution_token=NULL,
     claim_expires_at=NULL,blocked_reason=NULL,claim_phase=NULL,updated_at=now()
     WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND recovery IS NULL AND publication_started=false
       AND ${PERSISTENCE_PROTOCOL_PREDICATE} AND ${REFRESH_BARRIER_CLAIM_PREDICATE} RETURNING *`, [row.id, row.execution_token, from]);
@@ -51,13 +63,19 @@ export function supersededBy(trailers: Iterable<string>): string[] {
 
 /**
  * A put_page or capture that was held for an import and replaces the page the import wrote: its outcome carries `supersedes`
- * (slug, path, the replaced revision, the imported commit) and its commit the matching trailer.
+ * (slug, path, the replaced revision, the imported commit) and its commit the matching trailer. #8759: a capture of an
+ * in-source file whose import brought in that very file (the captured bytes) replaced nothing of anyone else's, so it names none.
  */
 export async function withSupersedes(row: WriteRequest, prepared: PreparedMutation): Promise<PreparedMutation> {
   if (row.deferred_import_from == null || !REPLACING_OPERATIONS.includes(row.operation) || !prepared.file || prepared.noop || !prepared.observedRevision) return prepared;
   const { root, path } = prepared.file;
   const commit = await landedCommit(root, row.deferred_import_from || null, path);
   if (!commit) return prepared;
+  const captured = row.operation === 'capture' ? row.intent?.capture_file_hash : undefined;
+  if (typeof captured === 'string') {
+    const imported = await fileAtCommit(root, commit, path);
+    if (imported !== null && sha256(imported) === captured) return prepared;
+  }
   const rel = relative(root, path).split(sep).join('/');
   const supersedes = { slug: row.slug, path: rel, revision: prepared.observedRevision, commit };
   const trailer = `${SUPERSEDES_TRAILER_KEY}: ${supersedesNote(rel, prepared.observedRevision, commit)}`;
