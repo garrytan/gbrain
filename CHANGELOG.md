@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.604.0] - 2026-11-07
+
+**New installs now start on the stable channel: the soaked release, not every release.** The documented install (`bun install -g github:garrytan/gbrain#stable`) and the clone fallback (`git clone --branch stable`) follow the `stable` tag, which moves only to a published release whose exact tree passed the production soak, at least weekly. A fresh `gbrain init` (and so `gbrain setup claude-code` or `codex`) writes `self_upgrade.channel: stable`, so the update check and `gbrain upgrade` offer only stable releases. `#latest-stable` keeps working as the alpha line with every release. An existing brain is not changed, because a re-init never sets or alters its channel.
+
+### Itemized changes
+
+- Install pins move from `#latest-stable` to `#stable` in README, AGENTS.md, INSTALL_FOR_AGENTS.md, BOOTSTRAP_FOR_AGENTS.md, docs/INSTALL.md, the MCP, headless, in-agent and tutorial guides, the setup skills, the Codex plugin manifests and launcher, doctor's npm-squat fix, the bootstrap hints and the agent-workspace template. The bootstrap runbook fetch and the in-agent setup helper read the `stable` ref, and the in-agent helper pins the commit `refs/tags/stable` peels to. Until a release containing this change is promoted to `stable`, the runbook and helper served from that ref are the previous stable release's copies.
+- `scripts/check-bootstrap-tag.sh` sanctions `stable` as the one distribution ref and now refuses `#latest-stable` in the entry docs.
+- `src/commands/init.ts`: a fresh install (new content database, no prior config file) persists `self_upgrade.channel: stable` on PGLite and Postgres. A re-init keeps whatever the config says, including no channel. `test/init-stable-channel.test.ts` covers the fresh, re-init and explicit-channel cases, and `test/e2e/init-stable-channel-postgres.test.ts` the fresh and re-init cases on Postgres.
+- `docs/guides/upgrades-auto-update.md#stable-channel` describes stable as the default for new installs and `latest` as the alpha line.
+
 ## [0.60.603.0] - 2026-11-07
 
 **A source that a remote caller adds by URL keeps its clone settings on a managed brain, both when it is first cloned and when it is recloned, and `gbrain frontmatter install-hook` leaves that clone's hooks off.** v0.60.601.0 wrote git-lfs downloads off and hooks off into such a clone's own git config, but on a managed brain the add path did not record the source as remote-added and `gbrain sources reclone` cloned it again without the settings. `install-hook` read the clone's hooks-off setting as a hooks directory someone else chose, wrote a hook it would never run, and told the operator how to turn hooks back on.

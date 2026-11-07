@@ -1,4 +1,4 @@
-<!-- gbrain-plugin-tree-stamp: 0.60.603.0 -->
+<!-- gbrain-plugin-tree-stamp: 0.60.604.0 -->
 # gbrain plugin skill tree (generated — do not hand-edit)
 
 This tree is the curated skill set for the gbrain Codex and Claude Code
@@ -18,6 +18,6 @@ narrowed list leaves out.
 
 ## Requirements
 
-- gbrain CLI installed: `bun install -g github:garrytan/gbrain#latest-stable`
+- gbrain CLI installed: `bun install -g github:garrytan/gbrain#stable`
   (the npm package named `gbrain` is unrelated — never `npm install -g gbrain`).
 - A brain: `gbrain init` (the bundled `setup` skill walks the full path).

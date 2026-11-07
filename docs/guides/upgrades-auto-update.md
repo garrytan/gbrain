@@ -130,25 +130,29 @@ them in order and stop if the tag check fails.
 
 Every update surface (the startup marker, `gbrain check-update`,
 `gbrain self-upgrade`, doctor's `self_upgrade_health` and the `auto` channel)
-reads the `VERSION` file at the `latest-stable` tag: the release the canonical
-install (`github:garrytan/gbrain#latest-stable`) gets from `bun update`, moved
-only after the release checks pass and the assets publish. Master's `VERSION`
-is never offered: the next PR stamps it before release.yml tags it, and a
-superseded version never gets a tag (#6718, #6828).
+reads the `VERSION` file at the ref of the brain's release channel
+(`self_upgrade.channel`): the `stable` tag on the stable channel, the
+`latest-stable` tag on `latest`. Master's `VERSION` is never offered: the
+next PR stamps it before release.yml tags it, and a superseded version never
+gets a tag (#6718, #6828).
 
 <a id="stable-channel"></a>
-**The stable channel.** A large or production brain can follow a slower line:
-the newest release a maintainer promoted after the production-shaped soak
-passed on that release's exact git tree. Promotion is weekly or manual, through
-the maintainer-only `Promote stable` workflow
-([RELEASING.md](../RELEASING.md#stable-channel-promotion)), which moves the
-`stable` tag to the release commit and records the soak scoreboard link in the
-tag message (`git show stable`).
+**The stable channel.** New installs follow it: the documented install
+(`github:garrytan/gbrain#stable`, or `git clone --branch stable`) starts on
+it, and a fresh `gbrain init` writes `self_upgrade.channel: stable`. It is the
+newest release a maintainer promoted after the production-shaped soak passed on
+that release's exact git tree, at least weekly, through the `Promote stable`
+workflow ([RELEASING.md](../RELEASING.md#stable-channel-promotion)), which moves
+the `stable` tag to the release commit and records the soak scoreboard link in
+the tag message (`git show stable`). `latest` is the alpha line: every
+published release, the `latest-stable` tag that release.yml moves once a
+release's checks pass and its assets publish. A brain created before this
+default, with no channel set, stays on `latest` until you choose.
 
 ```bash
 gbrain upgrade --channel stable                 # one run on the stable channel
 gbrain config set self_upgrade.channel stable   # make stable the default for this brain home
-gbrain config set self_upgrade.channel latest   # back to every published release
+gbrain config set self_upgrade.channel latest   # every published release (alpha)
 ```
 
 With `self_upgrade.channel stable`, every update surface above reads `VERSION`
