@@ -166,7 +166,7 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
           await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
           await tx.executeRaw("UPDATE persistence_topology_changes SET recovery=$2::text::jsonb,updated_at=now() WHERE id=$1::uuid AND state='recovering'",[accepted!.id,JSON.stringify(recovery)]);
         });
-        await (hooks.clone??cloneTopologyCheckout)(url,recovery.stage,recovery.cloneBudget,{skipLfs:lfsDownloadsOff(source?.config)});
+        await (hooks.clone??cloneTopologyCheckout)(url,recovery.stage,recovery.cloneBudget,{skipLfs:lfsDownloadsOff(source?.config??input.config)});
         const stageBytes=await topologyDirectoryBytes(recovery.stage,recovery.cloneBudget);
         const candidate=worktreeManifest(recovery.stage,{progress:humanManifestProgress(),scope:recovery.hashScope});
         if(recovery.manifest&&candidate.digest!==recovery.manifest.digest)throw opError('writer_manifest_mismatch','The cloned checkout differs from the verified canonical manifest, including deletions.',

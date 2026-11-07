@@ -12,12 +12,12 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**A source that a remote caller added by URL keeps its clone settings when a managed brain reclones it, and `gbrain frontmatter install-hook` leaves that clone's hooks off.** v0.60.601.0 wrote git-lfs downloads off and hooks off into such a clone's own git config, but `gbrain sources reclone` on a managed brain cloned it again without them. `install-hook` read the clone's hooks-off setting as a hooks directory someone else chose, wrote a hook it would never run, and told the operator how to turn hooks back on.
+**A source that a remote caller adds by URL keeps its clone settings on a managed brain, both when it is first cloned and when it is recloned, and `gbrain frontmatter install-hook` leaves that clone's hooks off.** v0.60.601.0 wrote git-lfs downloads off and hooks off into such a clone's own git config, but on a managed brain the add path did not record the source as remote-added and `gbrain sources reclone` cloned it again without the settings. `install-hook` read the clone's hooks-off setting as a hooks directory someone else chose, wrote a hook it would never run, and told the operator how to turn hooks back on.
 
 ### Itemized changes
 
-- `src/core/persistence/topology-filesystem.ts`, `src/core/persistence/topology-clone.ts`: the managed reclone of a source recorded `added_by_remote_caller` clones with the same `git clone --config` settings as `cloneRepo`'s `skipLfs` (shared as `LFS_OFF_CLONE_CONFIG` in `src/core/git-remote.ts`).
-- `src/commands/frontmatter-install-hook.ts`: a checkout whose `core.hooksPath` is `/dev/null` is skipped (`skipped_hooks_off`) with nothing written and no wiring advice, `--force` included.
+- `src/core/persistence/managed-sources.ts`, `src/core/persistence/topology-filesystem.ts`, `src/core/persistence/topology-clone.ts`: a managed add by a remote caller records `added_by_remote_caller` on the source, and the managed clone of such a source, on add and on reclone, uses the same `git clone --config` settings as `cloneRepo`'s `skipLfs` (shared as `LFS_OFF_CLONE_CONFIG` in `src/core/git-remote.ts`).
+- `src/commands/frontmatter-install-hook.ts`: a checkout whose own (`--local`) `core.hooksPath` is `/dev/null` is skipped (`skipped_hooks_off`) with nothing written and no wiring advice, `--force` included, and doctor's `frontmatter_hook` check no longer asks to refresh a hook there. A machine-wide `core.hooksPath=/dev/null` keeps the earlier behaviour: the hook is written unwired, with the usual advice.
 - Tests: `test/persistence-source-lifecycle.test.ts` (PGLite and Postgres), `test/sources-remote-lfs.test.ts`, `test/frontmatter-install-hook.test.ts`.
 
 ## [0.60.602.0] - 2026-11-07

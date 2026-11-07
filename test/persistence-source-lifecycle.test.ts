@@ -15,7 +15,8 @@ import { admitWrite, claimNextWrite } from '../src/core/persistence/journal.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { runManagedSourceClone } from '../src/core/persistence/topology-clone.ts';
-import { addSource, removeSource } from '../src/core/sources-ops.ts';
+import { addSource, lfsDownloadsOff, removeSource } from '../src/core/sources-ops.ts';
+import { managedSourceAddInput } from '../src/core/persistence/managed-sources.ts';
 import { softDeleteSource, restoreSource } from '../src/core/destructive-guard.ts';
 import { topologyDirectoryBytes } from '../src/core/persistence/topology-filesystem.ts';
 import { topologyPrincipal } from '../src/core/persistence/topology-locks.ts';
@@ -377,6 +378,20 @@ test('a reclone of a source a remote caller added by URL clones with git-lfs dow
       clone:async(_url,stage,_budget,options)=>{seen.push(options);cpSync(root,stage,{recursive:true,filter:path=>!isPhysicalRootMetadata(basename(path))});},
     });
     expect(result).toMatchObject({state:'committed'});
+  }
+  expect(seen.map(options=>options?.skipLfs===true)).toEqual([true,false]);
+}),60_000);
+
+test('a managed add by a remote caller clones with git-lfs downloads and hooks off and records it for later reclones',()=>fixture(async(_home,_source,root)=>{
+  const seen:Array<{skipLfs?:boolean}|undefined>=[];
+  for(const [id,addedByRemoteCaller] of [['remote-a',true],['local-a',false]] as const){
+    const input={...managedSourceAddInput({id,remoteUrl:'https://example.invalid/brain.git',addedByRemoteCaller}),requestId:randomUUID()};
+    const result=await runManagedSourceClone(engine,input,await topologyPrincipal(engine),input.requestId,{...input,requestId:undefined,dryRun:undefined},{
+      clone:async(_url,stage,_budget,options)=>{seen.push(options);cpSync(root,stage,{recursive:true,filter:path=>!isPhysicalRootMetadata(basename(path))});},
+    });
+    expect(result).toMatchObject({state:'committed'});
+    const [row]=await engine.executeRaw<{config:unknown}>('SELECT config FROM sources WHERE id=$1',[id]);
+    expect(lfsDownloadsOff(row!.config)).toBe(addedByRemoteCaller);
   }
   expect(seen.map(options=>options?.skipLfs===true)).toEqual([true,false]);
 }),60_000);
