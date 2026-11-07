@@ -30,6 +30,7 @@ import { mayReprepare } from './semantic.ts';
 import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
 import { queuePublicationEffects } from './effect-journal.ts';
 import { deferredReplayRefusal } from './refresh-barrier.ts';
+import { holdForImport } from './import-deferral.ts';
 import { timePublicationStep } from './publication-timing.ts';
 import type { AppendedRange, GitCommitNote } from './effect-model.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
@@ -388,6 +389,9 @@ export async function finishUnpublishedFailure(engine: BrainEngine, row: WriteRe
   const charged = await releaseChargedInterruption(engine, row, error, stage);
   if (charged) return charged;
   const failure = withAttempt(requestError(error), stage, engine);
+  // GST-1582: with the refresh barrier on, a write refused because its file awaits an import waits for that import instead.
+  const held = failure.code === 'source_changed' ? await holdForImport(engine, row, error) : null;
+  if (held) return held;
   if (mayReprepare(row, failure) || transientDatabaseFailure(error)) {
     await releaseUnpublishedClaim(engine, row, transientDatabaseFailure(error) ? 'database_contention' : 'revision_changed_repreparing');
     return (await getWriteRequestById(engine, row.id))!;

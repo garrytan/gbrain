@@ -390,7 +390,9 @@ export async function restoreSource(
     const result=await runManagedSourceLifecycle(engine,{operation:'restore',sourceId,refederate});return !result.noop;
   }
   await assertUnmanagedCanonicalWriter(engine, 'sources restore');
-  const federatedPatch = refederate ? '{"federated": true}' : '{"federated": false}';
+  // GST-1113: a scope source is never federated, so restore leaves it unfederated.
+  const federate = refederate && !(await (await import('./access/attest-sources.ts')).markedScopeSources(engine, [sourceId])).size;
+  const federatedPatch = federate ? '{"federated": true}' : '{"federated": false}';
   const rows = await engine.executeRaw<{ id: string }>(
     `UPDATE sources
      SET archived = false,

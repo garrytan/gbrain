@@ -597,9 +597,9 @@ Properties:
   invalidate the fixture; coverage instrumentation does not change the hash.
   `test/snapshot-inputs-closure.test.ts` checks that list against an
   independent TS-AST closure, requires every literal dynamic import in the
-  closure to be classified, and discovers all 13 `pglite-snapshot-*` CI cache
+  closure to be classified, and discovers all 15 `pglite-snapshot-*` CI cache
   keys: identical `hashFiles` inputs covering every hash input, each profile
-  restoring its own tar. A failure names the missing file and both workflow
+  restoring its own tar. A failure names the missing file and the workflow
   files to edit.
 - **Concurrency-safe.** Each profile has its own lock with a PID/token owner
   and host/process-namespace identity. Only a confirmed dead local owner using
