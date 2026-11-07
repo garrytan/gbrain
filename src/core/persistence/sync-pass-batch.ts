@@ -66,11 +66,11 @@ export async function passBatchHead(tx: Pick<BrainEngine, 'executeRaw'>, key: st
 const NS_SYNC_PASS = Buffer.from('5f0c6712b4a84e0b9d1a2c3e4f5a6712', 'hex');
 /**
  * `request_id = uuidv5(NS_SYNC_PASS, passId‖path‖level)` (design v3.2 §3.1): a same-pass replay reads the existing receipt.
- * #8729: `retry` (the entry's in-place re-freezes after a failed receipt) names a new request, so a retry prepares the
- * entry again instead of reading the failed receipt back; the first freeze keeps the v1 id.
+ * #8729: `retryOf` (the failed request an in-place re-freeze replaces) names a new request, unique per failed receipt, so
+ * a retry prepares the entry again instead of reading a failed receipt back; the first freeze keeps the v1 id.
  */
-export function passRequestId(passId: string, path: string, level: string | null, retry = 0): string {
-  const hash = createHash('sha1').update(NS_SYNC_PASS).update(`sync_pass:v1:${passId.toLowerCase()}\0${path}\0${level ?? ''}${retry > 0 ? `\0retry:${retry}` : ''}`).digest();
+export function passRequestId(passId: string, path: string, level: string | null, retryOf?: string): string {
+  const hash = createHash('sha1').update(NS_SYNC_PASS).update(`sync_pass:v1:${passId.toLowerCase()}\0${path}\0${level ?? ''}${retryOf ? `\0retry:${retryOf.toLowerCase()}` : ''}`).digest();
   hash[6] = (hash[6]! & 0x0f) | 0x50;
   hash[8] = (hash[8]! & 0x3f) | 0x80;
   const hex = hash.subarray(0, 16).toString('hex');

@@ -718,7 +718,7 @@ async function refreezeInPlace(engine: BrainEngine, input: SettleInput): Promise
     const held = await holdUnderGate(engine, { cursor, key, pending, hold: fresh.hold, assertActive, observedAt, waitMs: input.waitMs, base });
     return held === 'pending' ? null : held;
   }
-  return saveCursor(engine, key, cursor, { ...base, convertedFromFailed: converted, pending: { ...fresh, stops: (pending.stops ?? 0) + 1, requestId: cursor.passId ? passRequestId(cursor.passId, entry.path, (entry as PassEntry).level ?? null, (pending.stops ?? 0) + 1) : fresh.requestId } }, false, assertActive,
+  return saveCursor(engine, key, cursor, { ...base, convertedFromFailed: converted, pending: { ...fresh, stops: (pending.stops ?? 0) + 1, requestId: cursor.passId ? passRequestId(cursor.passId, entry.path, (entry as PassEntry).level ?? null, pending.requestId) : fresh.requestId } }, false, assertActive,
     tx => recordSyncConversion(tx, cursor.sourceId, cursor.incarnation, { request_id: pending.requestId, path: pending.intent.path ?? null, slug: pending.slug, run_id: cursor.runId, outcome: 'refrozen' }));
 }
 
