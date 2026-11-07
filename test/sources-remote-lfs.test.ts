@@ -18,6 +18,7 @@ import { cloneRepo, pullRepo } from '../src/core/git-remote.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { lfsDownloadsOff, recloneIfMissing } from '../src/core/sources-ops.ts';
+import { cloneTopologyCheckout } from '../src/core/persistence/topology-filesystem.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const hasLfs = spawnSync('git', ['lfs', 'version']).status === 0 && process.platform !== 'win32';
@@ -194,6 +195,40 @@ if (args.includes('clone')) mkdirSync(args[args.length - 1]!, { recursive: true 
     expect((remote as Error).message).toContain('git clone failed');
     const local = await add(false, 'local-fails').catch((err: Error) => err);
     expect((local as Error).message).toContain('internal-detail-example');
+  });
+});
+
+describe('cloneTopologyCheckout: the managed reclone writes the same lock-down into the clone', () => {
+  const fakeDir = join(ROOT, 'fake-topology-git');
+  const log = join(fakeDir, 'calls.log');
+  const home = join(ROOT, 'topology-home');
+  beforeAll(() => {
+    mkdirSync(fakeDir, { recursive: true });
+    const recorder = join(fakeDir, 'record.ts');
+    writeFileSync(recorder, `import { appendFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');\n`);
+    writeFileSync(join(fakeDir, 'git'), `#!/bin/sh\nexec '${process.execPath}' --no-env-file '${recorder}' "$@"\n`);
+    chmodSync(join(fakeDir, 'git'), 0o755);
+  });
+  beforeEach(() => { writeFileSync(log, ''); });
+  const cloneArgs = () => readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as string[]);
+  const run = (destination: string, skipLfs: boolean) => withEnv({ PATH: `${fakeDir}:${process.env.PATH}`, GBRAIN_HOME: home }, async () => {
+    mkdirSync(destination, { recursive: true });
+    await cloneTopologyCheckout('https://example.com/acme-example/brain.git', destination, 1 << 20, { skipLfs });
+  });
+
+  test('skipLfs puts lfs.fetchexclude=*, core.hooksPath=/dev/null and lfs.locksverify=false in the clone config', async () => {
+    await run(join(ROOT, 'topology-skip'), true);
+    const [args] = cloneArgs();
+    const after = args!.slice(args!.indexOf('clone'));
+    for (const setting of ['lfs.fetchexclude=*', 'core.hooksPath=/dev/null', 'lfs.locksverify=false'])
+      expect(after[after.indexOf(setting) - 1]).toBe('--config');
+  });
+
+  test('without skipLfs the clone config is left alone', async () => {
+    await run(join(ROOT, 'topology-plain'), false);
+    const [args] = cloneArgs();
+    expect(args!.includes('lfs.fetchexclude=*')).toBe(false);
+    expect(args!.includes('--config')).toBe(false);
   });
 });
 
