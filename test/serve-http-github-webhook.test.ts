@@ -116,6 +116,16 @@ describe('selectGitHubItemSources', () => {
     expect(calls).toBe(unknown);
   });
 
+  test('a repo with two legacy push sources costs as many signature checks as an unknown repo (#8768)', () => {
+    let calls = 0;
+    const counting = (cfg: Record<string, unknown>) => { calls++; return verify(cfg); };
+    selectGitHubItemSources([ghRow('gh', 'bad')], 'acme/unknown', counting);
+    const unknown = calls;
+    calls = 0;
+    selectGitHubItemSources([ghRow('gh', 'bad'), legacyRow('old1', 'bad'), legacyRow('old2', 'bad')], 'acme/app', counting);
+    expect(calls).toBe(unknown);
+  });
+
   test('out-of-scope github-kind source neither verifies nor flags legacy', () => {
     const { verified, legacyMatched } = selectGitHubItemSources([ghRow('gh', 'good')], 'other/repo', verify);
     expect(verified).toEqual([]);

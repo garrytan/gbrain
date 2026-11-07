@@ -103,20 +103,23 @@ export function selectGitHubItemSources<Row extends { local_path: string | null;
 ): { verified: Row[]; legacyMatched: boolean } {
   const verified: Row[] = [];
   let legacyMatched = false;
-  let legacyRows = 0;
-  // Every row is checked before scope decides anything, and a repo with no legacy row pays for one throwaway check, so
-  // the work done for an unsigned request is the same whether a source covers the repository or not (#8768).
+  let legacyChecked = false;
+  // Every github-kind row is checked before scope decides anything, and the legacy rows share exactly one check (a
+  // throwaway one when the repo has none), so the work done for an unsigned request does not depend on whether or how
+  // many sources name the repository (#8768). Like the push route, only the first legacy row's secret is tried.
   for (const row of rows) {
     const cfg = (typeof row.config === 'string' ? JSON.parse(row.config) : (row.config ?? {})) as Record<string, unknown>;
+    const legacy = !(cfg.kind === 'github' && cfg.webhook_secret != null);
+    if (legacy && legacyChecked) continue;
+    legacyChecked ||= legacy;
     const signed = verify(cfg);
-    if (!(cfg.kind === 'github' && cfg.webhook_secret != null)) legacyRows++;
     if (cfg.kind === 'github' && githubKindCoversRepo(cfg, row.local_path, repo) && signed) {
       verified.push(row);
       continue;
     }
     if (cfg.github_repo === repo && signed) legacyMatched = true;
   }
-  if (legacyRows === 0) verify({});
+  if (!legacyChecked) verify({});
   return { verified, legacyMatched };
 }
 
