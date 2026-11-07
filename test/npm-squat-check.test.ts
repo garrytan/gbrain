@@ -234,7 +234,7 @@ describe('global installs (npm root -g, Bun global dir)', () => {
     expect(a.status).toBe('warn');
     expect(a.message).toContain('installed globally');
     expect(a.message).toContain('no real gbrain is on PATH');
-    expect(a.message).toContain('bun install -g github:garrytan/gbrain#latest-stable');
+    expect(a.message).toContain('bun install -g github:garrytan/gbrain#stable');
     expect(a.message).toContain('#218');
     expect(a.message).toContain('gbrain apply-migrations --yes --no-autopilot-install');
     expect(a.fix).toMatchObject({
@@ -242,7 +242,7 @@ describe('global installs (npm root -g, Bun global dir)', () => {
       ask_user: true,
       verify: { argv: ['gbrain', 'doctor', '--only', 'npm_squat', '--json'] },
     });
-    expect(a.fix!.then!.argv).toEqual(['bun', 'install', '-g', 'github:garrytan/gbrain#latest-stable']);
+    expect(a.fix!.then!.argv).toEqual(['bun', 'install', '-g', 'github:garrytan/gbrain#stable']);
     expect(a.fix!.then!.then!.argv).toEqual(['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install']);
   });
 
@@ -261,7 +261,7 @@ describe('global installs (npm root -g, Bun global dir)', () => {
   test('only foreign on PATH → fix removes it and reinstalls', () => {
     const a = assessGbrainBinaries([foreignLink], { npmRoot: join(root, 'global', 'node_modules') });
     expect(a.fix!.argv).toEqual(['npm', 'uninstall', '-g', 'gbrain']);
-    expect(a.fix!.then!.argv).toEqual(['bun', 'install', '-g', 'github:garrytan/gbrain#latest-stable']);
+    expect(a.fix!.then!.argv).toEqual(['bun', 'install', '-g', 'github:garrytan/gbrain#stable']);
   });
 
   test('a global package PATH already reaches is listed once', () => {

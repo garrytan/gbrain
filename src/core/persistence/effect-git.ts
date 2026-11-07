@@ -5,7 +5,7 @@ import { gitDurabilityPolicy } from './git-durability-policy.ts';
 import type { WorktreeBinding } from './ownership.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import type { GitCommitNote } from './effect-model.ts';
+import { adoptedBy, type GitCommitNote } from './effect-model.ts';
 import { persistenceHome } from './identity.ts';
 import { nativeFileTarget } from './native-file-target.ts';
 import { gitChildEnv, literalPathspecs } from '../git-env.ts';
@@ -378,8 +378,9 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
     } finally { if (messageDir) rmSync(messageDir, { recursive: true, force: true }); }
     if (result.code === 0) {
       const head = await git(session, ['rev-parse', 'HEAD']);
-      const supersedes = supersededBy([...noted.values()].flatMap(note => note.trailers ?? []));
-      if (head.code === 0) await recordCommitAsync(root, { sha: head.stdout.trim(), writer: 'effect', ...(supersedes.length ? { supersedes } : {}) });
+      const trailers = [...noted.values()].flatMap(note => note.trailers ?? []);
+      const supersedes = supersededBy(trailers), adopted = adoptedBy(trailers);
+      if (head.code === 0) await recordCommitAsync(root, { sha: head.stdout.trim(), writer: 'effect', ...(supersedes.length ? { supersedes } : {}), ...(adopted.length ? { adopted } : {}) });
     }
     const outcome = result.code === 0 ? { git: 'committed' } : gitFailure('Cannot commit the canonical Git target.',
       `git commit failed for ${commitPaths.length} file(s); a missing Git identity (user.name, user.email) in that checkout is one cause to check.`);

@@ -291,7 +291,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "mode=notify",
+            "message": "mode=notify; channel=stable (config)",
             "name": "self_upgrade_health",
             "status": "ok"
           },
@@ -4093,6 +4093,17 @@
           {
             "category": "brain",
             "details": {
+              "docs": "docs/guides/write-refusals.md#file_database_drift",
+              "sources": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No local edit was adopted in the last 24 h.",
+            "name": "local_edit_adoptions",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "docs": "docs/guides/repair.md#outside-content-fences",
               "items": [],
               "pages": 0
@@ -5350,7 +5361,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "mode=notify",
+            "message": "mode=notify; channel=stable (config)",
             "name": "self_upgrade_health",
             "status": "ok"
           },
@@ -9159,6 +9170,17 @@
             "elapsed_ms": "<volatile>",
             "message": "No source is strict (git-canonical), so no index trails a commit.",
             "name": "git_index_lag",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "docs": "docs/guides/write-refusals.md#file_database_drift",
+              "sources": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No local edit was adopted in the last 24 h.",
+            "name": "local_edit_adoptions",
             "status": "ok"
           },
           {

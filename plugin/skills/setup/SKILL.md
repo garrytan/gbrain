@@ -74,7 +74,7 @@ For other local installations, resolve conflicting routing before following
 the canonical distribution and keyless initialization:
 
 ```bash
-bun install -g github:garrytan/gbrain#latest-stable
+bun install -g github:garrytan/gbrain#stable
 gbrain init --pglite --no-embedding
 ```
 

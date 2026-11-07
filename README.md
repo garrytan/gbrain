@@ -99,7 +99,7 @@ This is the difference between a search engine and a brain. Search finds the pag
 > gbrainio workspace new         # pick a plan in the browser
 > curl -fsSL https://bun.sh/install | bash   # skip if Bun 1.4.4+ is installed
 > export PATH="$HOME/.bun/bin:$PATH"
-> bun install -g github:garrytan/gbrain#latest-stable   # the gbrain CLI only; no local brain
+> bun install -g github:garrytan/gbrain#stable   # the gbrain CLI only; no local brain
 > # Claude Code (an existing gbrain entry is kept):
 > (claude mcp get gbrain >/dev/null 2>&1 || claude mcp add --transport http --scope user gbrain https://gbrain.io/mcp) && gbrain setup claude-code --instructions-only
 > # Codex (an existing gbrain entry is kept):
@@ -117,13 +117,14 @@ GBrain is MIT-licensed and free to self-host. It needs **Bun 1.4.4 or newer**; e
 > [!WARNING]
 > **GBrain is NOT distributed on npm.** The npm `gbrain` package is unrelated and
 > can shadow the real binary, so never run `npm install -g gbrain` or
-> `bun add -g gbrain`. Install only via `bun install -g github:garrytan/gbrain#latest-stable`
-> or `git clone` + `bun install && bun link`. Installed by mistake? `gbrain doctor` gives the fix.
+> `bun add -g gbrain`. Install only via `bun install -g github:garrytan/gbrain#stable`
+> (the soaked stable channel; `#latest-stable` is the alpha line with every release)
+> or `git clone --branch stable` + `bun install && bun link`. Installed by mistake? `gbrain doctor` gives the fix.
 > Schema not migrated ([#218](https://github.com/garrytan/gbrain/issues/218))? Run
 > `gbrain apply-migrations --yes --no-autopilot-install`; if it exits 1, run `gbrain doctor --json`, not another `--yes` (`wedged`: relay its fix).
 
 ```bash
-bun install -g github:garrytan/gbrain#latest-stable
+bun install -g github:garrytan/gbrain#stable
 gbrain setup claude-code              # or: gbrain setup codex
 gbrain init --pglite --no-embedding   # any other harness, or no agent
 ```
@@ -154,7 +155,7 @@ To have GBrain create a **new persistent personal agent** with identity files an
 
 ```
 Read and follow every step of:
-https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/BOOTSTRAP_FOR_AGENTS.md
+https://raw.githubusercontent.com/garrytan/gbrain/stable/BOOTSTRAP_FOR_AGENTS.md
 Goal: set yourself up as my persistent personal agent in this folder, with gbrain
 as your memory. Interview me before writing any identity file — never invent
 answers. Ask before anything destructive. You are not done until
