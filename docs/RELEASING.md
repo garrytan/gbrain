@@ -572,12 +572,13 @@ succeed on the release commit.
 
 The **final step of the release job** force-advances the `latest-stable` tag to
 the gated release commit (`git push origin "+${RELEASE_SHA}:refs/tags/latest-stable"`).
-`latest-stable` is the single sanctioned distribution ref: the README paste
+`latest-stable` is the alpha line (every published release) that the `latest`
+update channel reads. New users start on the `stable` tag instead
+([Stable channel promotion](#stable-channel-promotion)): the README paste
 block, the `BOOTSTRAP_FOR_AGENTS.md` fetch URL, and
-`bun install -g github:garrytan/gbrain#latest-stable` all reference it
-permanently, so paste blocks copied into the wild never rot and there is no 404
-window between VERSION landing and assets publishing.
-`scripts/check-bootstrap-tag.sh` keeps the entry docs pinned to this ref.
+`bun install -g github:garrytan/gbrain#stable` all reference it, and
+`scripts/check-bootstrap-tag.sh` keeps the entry docs pinned to `stable` and
+refuses `latest-stable` there.
 
 Because it moves ONLY after binaries + provenance attestation have fully
 published, a half-built release never advances it. If the tag-advance step
