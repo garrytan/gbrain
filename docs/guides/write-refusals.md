@@ -634,9 +634,9 @@ syncing it is accepted and waits for the refresh instead of being refused `workt
   lists it for a person to replay. A write keeps the refusal when a live consumer on the owner host runs a release
   that cannot claim a held write.
 - A write that waited behind a refresh or for an import ends `revision_conflict`, nothing applied, when a
-  later write to the same page (anything but `remember` or `add_timeline_entry`) committed before it,
-  which a consumer from an older release can cause by claiming the later write first. Read the page
-  again and submit the change with a new request ID.
+  later write to the same page committed before it, which a consumer from an older release can cause by
+  claiming the later write first. Read the page again and submit the change with a new request ID. A
+  waiting `remember` or `add_timeline_entry` is the exception: it still applies on top.
 - Still refused as before: batches (`put_pages`, `remember` with `items`), jobs, skill bundles,
   and any brain where a live consumer on the owner host runs a release without the barrier.
   Repo-less brains and database-only sources never wait.

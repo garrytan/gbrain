@@ -370,6 +370,7 @@ test('GST-1674: a plain-git commit landing on the pre-refresh commit right befor
   expect(git(f.root, 'rev-parse', 'HEAD~1')).toBe(old);
   expect(git(f.root, 'log', '-1', '--format=%s')).toBe('foreign');
   expect((await f.refreshRows()).map(row => row.state)).toEqual(['aborted']);
+  git(f.root, 'config', 'user.name', 'Example'); git(f.root, 'config', 'user.email', 'example@example.invalid');
   commitAndPush({ repo: f.root, cwd: f.root, pushOnly: true, keepCheckout: true });
   const done = await refreshWorktree(f.engine, f.alpha);
   expect(done.status).toBe('completed');
