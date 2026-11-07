@@ -13,9 +13,9 @@
  *    regression, data-loss or blocking fix, set by the merge lane) that is in a
  *    published release but not in stable, or stable older than 7 days with a
  *    newer release (the weekly floor). No reason: nothing happens.
- * 3. The candidate is the newest release newer than stable whose exact git tree
- *    passed a successful run of the STABLE_SOAK_WORKFLOW soak with every
- *    integrity gate (INTEGRITY_GATES) passing in every cell; on the
+ * 3. The candidate is the newest release on master newer than stable whose exact
+ *    git tree passed a full (SOAK_SHAPE) successful run of the STABLE_SOAK_WORKFLOW
+ *    soak with every integrity gate (INTEGRITY_GATES) passing in every cell; on the
  *    important-only path it must contain one of the important fixes. It is
  *    promoted through scripts/promote-stable.ts promote(), so every promotion
  *    check (published release, exact tree, never older) still applies.
@@ -30,7 +30,7 @@ import { appendFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  compareVersions, currentStable, processDeps, promote, Refusal, requireSoakWorkflow, scheduleAuthorized, STABLE_REF,
+  authorize, compareVersions, currentStable, onReleaseBranch, processDeps, promote, Refusal, requireSoakWorkflow, scheduleAuthorized, STABLE_REF,
   type PromoteDeps, type Promotion,
 } from './promote-stable.ts';
 
@@ -38,11 +38,16 @@ export const IMPORTANT_LABEL = 'stable:important';
 export const WEEKLY_FLOOR_DAYS = 7;
 /** The soak gates a scheduled promotion requires (pass === true in every cell); the latency gates stay record-only. */
 export const INTEGRITY_GATES = ['privacy_leaks', 'read_errors', 'version_skew', 'residents_alive', 'session_refusals'] as const;
+/** The full soak a scheduled promotion requires: production-soak.yml's default cells and hours, with privacy probes run. */
+export const SOAK_SHAPE = { rtts: [65, 2], hours: 2 } as const;
 const DAY_MS = 86_400_000;
 const VERSION_RE = /^\d+\.\d+\.\d+(\.\d+)?$/;
 
 export interface SoakRunRow { id: number; status: string | null; conclusion: string | null; head_sha: string; html_url: string }
-export interface Scoreboard { label?: string; gates?: Array<{ id: string; pass: boolean | null }> }
+export interface Scoreboard {
+  label?: string; rtt_ms?: number | null; hours?: number | null; elapsed_s?: number | null; privacy?: { probes?: number };
+  gates?: Array<{ id: string; pass: boolean | null }>;
+}
 
 export interface DailyDeps extends PromoteDeps {
   ghPost(path: string, body: unknown): Promise<void>;
@@ -79,6 +84,17 @@ export function integrityFailures(boards: Scoreboard[]): string[] {
   return failures;
 }
 
+/** Ways a soak falls short of the full default soak (SOAK_SHAPE): a missing cell, a short run, no privacy probes. */
+export function shapeFailures(boards: Scoreboard[]): string[] {
+  const failures = SOAK_SHAPE.rtts.filter(rtt => !boards.some(b => b.rtt_ms === rtt)).map(rtt => `no ${rtt} ms cell`);
+  for (const b of boards) {
+    const cell = b.label ?? 'cell';
+    if ((b.hours ?? 0) < SOAK_SHAPE.hours || (b.elapsed_s ?? 0) < SOAK_SHAPE.hours * 3600) failures.push(`${cell}: ran ${b.elapsed_s ?? 0} s of a ${SOAK_SHAPE.hours} h soak`);
+    if (!((b.privacy?.probes ?? 0) > 0)) failures.push(`${cell}: no privacy probes ran`);
+  }
+  return failures;
+}
+
 async function ok(deps: PromoteDeps, args: string[]): Promise<string> {
   const r = await deps.git(args);
   if (r.code !== 0) throw new Refusal(`git ${args.join(' ')} failed${r.stderr.trim() ? `: ${r.stderr.trim().split('\n').at(-1)}` : ''}; re-run the daily check.`);
@@ -96,6 +112,7 @@ async function treeOf(deps: PromoteDeps, commit: string): Promise<string | null>
 export async function daily(deps: DailyDeps): Promise<DailyResult> {
   if (deps.autoPromote.trim().toLowerCase() === 'off') return { action: 'off', why: 'STABLE_AUTO_PROMOTE is off; the daily check changes nothing.' };
   const soakPath = requireSoakWorkflow(deps.soakWorkflow);
+  if (!deps.dryRun) await authorize(deps);
 
   const current = await currentStable(deps);
   if (!current) throw new Refusal('There is no stable release yet; promote the first one by hand with promote-stable.yml.');
@@ -111,7 +128,9 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
   for (const tag of (await ok(deps, ['tag', '--list', 'v*'])).split('\n').map(t => t.trim())) {
     const version = tag.replace(/^v/, '');
     if (!VERSION_RE.test(version) || compareVersions(version, current.version) <= 0) continue;
-    releases.push({ version, commit: await ok(deps, ['rev-parse', `refs/tags/${tag}^{commit}`]) });
+    const commit = await ok(deps, ['rev-parse', `refs/tags/${tag}^{commit}`]);
+    if (!(await onReleaseBranch(deps, commit))) { deps.log(`[stable-daily] skipping ${tag}: ${commit} is not on master.`); continue; }
+    releases.push({ version, commit });
   }
   releases.sort((a, b) => compareVersions(b.version, a.version));
   if (releases.length === 0) return { action: 'none', why: `no release is newer than stable v${current.version}.` };
@@ -153,7 +172,8 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
     const passed = (runsByTree.get(tree ?? '') ?? []).filter(r => r.status === 'completed' && r.conclusion === 'success');
     let chosen: SoakRunRow | null = null;
     for (const run of passed) {
-      const failures = integrityFailures(await deps.scoreboards(run.id));
+      const boards = await deps.scoreboards(run.id);
+      const failures = [...integrityFailures(boards), ...shapeFailures(boards)];
       if (failures.length === 0) { chosen = run; break; }
       deps.log(`[stable-daily] not promotable: v${rel.version} soak ${run.html_url}: ${failures.join(', ')}.`);
     }

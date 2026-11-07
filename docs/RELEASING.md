@@ -657,10 +657,12 @@ and keeps stable between one day and one week behind what matters:
   fix, or a fix for something that blocks a crew or a user (on a train PR,
   the train carries it); a label added after the merge counts too.
 - **Soak first.** The candidate is the newest release newer than stable whose
-  exact tree passed a successful `STABLE_SOAK_WORKFLOW` run with the integrity
-  gates (`privacy_leaks`, `read_errors`, `version_skew`, `residents_alive`,
-  `session_refusals`) passing in every cell; the latency gates stay
-  record-only. On the important-only path the candidate must contain the fix.
+  commit is on master and whose exact tree passed a successful
+  `STABLE_SOAK_WORKFLOW` run with the integrity gates (`privacy_leaks`,
+  `read_errors`, `version_skew`, `residents_alive`, `session_refusals`)
+  passing in every cell; the latency gates stay record-only. The soak must be
+  the full default one: both the 65 ms and 2 ms cells, at least 2 hours each,
+  with privacy probes run, so a short smoke dispatch never qualifies. On the important-only path the candidate must contain the fix.
   It is promoted through the same `promote()` as a manual promotion, so every
   check above still applies and the record's `promoted_by` is
   `schedule (.github/workflows/stable-daily.yml)` with the reason in `reason`.
@@ -670,7 +672,7 @@ and keeps stable between one day and one week behind what matters:
 - **Who.** A schedule event runs only the workflow file as merged on the
   default branch, so a scheduled run promotes by rule without a maintainer. A
   manual dispatch defaults to `dry_run` (report only); `dry_run=false` needs an
-  admin or maintainer. It shares the `promote-stable` concurrency group, so it
+  admin or maintainer before it dispatches a soak or promotes. It shares the `promote-stable` concurrency group, so it
   never races a manual promotion.
 - **Stop it.** Set the repository variable `STABLE_AUTO_PROMOTE=off` (Settings →
   Secrets and variables → Actions → Variables). It also pauses by itself while
