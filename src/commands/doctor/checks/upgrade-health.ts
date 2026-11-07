@@ -93,10 +93,32 @@ export function checkSelfUpgradeHealth(): Check {
       };
     }
 
+    // GBRA-224: the effective release channel and where it came from (env > self_upgrade.channel > default stable).
+    const { resolveReleaseChannel, invalidChannelMessage, readUpdateCache } = require('../../../core/self-upgrade.ts');
+    const resolution = resolveReleaseChannel(cfg);
+    if (!resolution.ok) {
+      return {
+        name: 'self_upgrade_health',
+        status: 'warn',
+        message: `${invalidChannelMessage(resolution)} Update checks are off until it is fixed (mode=${mode}).`,
+        fix: agentFix(['gbrain', 'config', 'get', 'self_upgrade.channel'], 'Read-only: shows the configured channel; set stable or alpha with gbrain config set self_upgrade.channel <name>.', 'self_upgrade_health'),
+      };
+    }
     const parts: string[] = [`mode=${mode}`];
+    if (resolution.source !== 'default') parts.push(`channel=${resolution.channel} (${resolution.source})`);
     // Shared stale/foreign-cache guard: only report an upgrade strictly newer
     // than the RUNNING binary (pendingUpgradeVersion owns the rule).
-    const pendingLatest = pendingUpgradeVersion(GBRAIN_BINARY_VERSION, Date.now());
+    const pendingLatest = pendingUpgradeVersion(GBRAIN_BINARY_VERSION, Date.now(), resolution.channel);
+    const stableError = readUpdateCache(resolution.channel)?.error;
+    if (stableError) {
+      const { stableFailureMessage, stableFailureFix } = require('../../../core/stable-channel.ts');
+      return {
+        name: 'self_upgrade_health',
+        status: 'warn',
+        message: `${stableError.code}: ${stableFailureMessage(stableError)} ${stableFailureFix(stableError, resolution)} (${parts.join('; ')}).`,
+        fix: agentFix(['gbrain', 'self-upgrade', '--check-only', '--json'], 'Read-only: looks up the stable channel again and reports the channel, its source and any error code.', 'self_upgrade_health', { docs: 'docs/guides/upgrades-auto-update.md#stable-channel-errors' }),
+      };
+    }
     if (pendingLatest) {
       parts.push(`update available: ${GBRAIN_BINARY_VERSION} -> ${pendingLatest} (run: gbrain self-upgrade)`);
     }

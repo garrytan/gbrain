@@ -893,10 +893,12 @@ async function fenceAndMerge(engine: BrainEngine, git: Git, sourceId: string, pl
         }
         const dirt = await dirtyOverlap(git, plan.root, row.old_head, row.target_head);
         if (dirt.overlap.length) await abort(engine, current, ['fenced'], dirtyRefusal(sourceId, dirt.overlap));
-        await engine.transaction(async tx => {
+        // GST-1623: the merge runs only when this marked the row; a row recovery moved off `fenced` meanwhile is not merged over.
+        const marked = await engine.transaction(async tx => {
           await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-          await tx.executeRaw(`UPDATE persistence_worktree_refreshes SET outcome=outcome||'{"merge_started":true}'::jsonb,updated_at=now() WHERE id=$1::uuid AND state='fenced'`, [row.id]);
+          return tx.executeRaw(`UPDATE persistence_worktree_refreshes SET outcome=outcome||'{"merge_started":true}'::jsonb,updated_at=now() WHERE id=$1::uuid AND state='fenced' RETURNING id`, [row.id]);
         });
+        if (!marked.length) throw refusal('refresh_source_changed', 'The refresh record was moved by recovery before the merge; nothing was merged.', `gbrain sources refresh ${sourceId} --resume`, row.id);
         let merge = await git(['-C', plan.root, 'merge', '--ff-only', '--no-edit', '--quiet', row.target_head], 120_000);
         let after = await headOf(git, plan.root);
         for (let attempt = 1; attempt < INDEX_LOCK_ATTEMPTS && merge.code !== 0 && after === row.old_head && INDEX_LOCKED.test(merge.stderr); attempt++) {
@@ -912,7 +914,17 @@ async function fenceAndMerge(engine: BrainEngine, git: Git, sourceId: string, pl
           if (after === row.old_head) await abort(engine, current, ['fenced'], refusal('refresh_dirty',
             `git merge --ff-only refused (${refused}); HEAD is unchanged at ${row.old_head}.`,
             `Commit or discard the paths git names (check gbrain sources writer status ${sourceId} --json for pending git effects), then retry gbrain sources refresh ${sourceId}.`));
-          throw await markRecoveryRequired(engine, current, after, plan.root);
+          // GST-1674: a plain-git commit (which takes no commit lock) can land on old_head between the HEAD check and the merge; git
+          // then refuses the fast-forward and HEAD holds only that commit, so nothing was merged and the refresh aborts and retries.
+          if (merge.code !== 0 && after !== null && await ancestry(git, plan.root, row.old_head, after) === true
+            && await ancestry(git, plan.root, row.target_head, after) === false) {
+            await abort(engine, current, ['fenced'], retryInTick(refusal('refresh_source_changed',
+              `The checkout HEAD moved from ${row.old_head} to ${after} right before the merge (${await ownCommits(git, plan.root, row.old_head, after) ? OWN_COMMITS : 'a commit gbrain did not make'}); git refused the fast-forward and nothing was merged.`, `Retry gbrain sources refresh ${sourceId}`)));
+          }
+          // GBEV-44 seed 355: a plain-git commit can land on the target between the merge and this read; the merge happened, so record it.
+          const landedOnTarget = merge.code === 0 && after !== null && await ancestry(git, plan.root, row.target_head, after) === true
+            && !await memberOutsideHead(engine, git, plan.root, current, after);
+          if (!landedOnTarget) throw await markRecoveryRequired(engine, current, after, plan.root);
         }
       } finally { await commitLock.release(); }
       await hooks?.boundary?.('merged', current);

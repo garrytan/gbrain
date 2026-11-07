@@ -120,6 +120,11 @@ export async function landedCommit(root: string, from: string | null, path: stri
   return quiet(gitRead(root, ['rev-list', '-1', from ? `${from}..HEAD` : 'HEAD', '--', `:(literal)${relative(root, path).split(sep).join('/')}`]));
 }
 
+/** #8759: the text of `path` as `commit` holds it, or null when Git cannot read it there. */
+export async function fileAtCommit(root: string, commit: string, path: string): Promise<string | null> {
+  return gitRead(root, ['show', `${commit}:./${relative(root, path).split(sep).join('/')}`]).catch(() => null);
+}
+
 /** The commit HEAD names in `root`, or null on an unborn branch or when Git cannot read it. */
 export async function headCommit(root: string, signal?: AbortSignal): Promise<string | null> {
   return quiet(gitRead(root, ['rev-parse', '--verify', '--quiet', 'HEAD'], signal), signal);
@@ -133,7 +138,8 @@ function quiet(read: Promise<string>, signal?: AbortSignal): Promise<string | nu
  * The refusal: nothing was overwritten; a remember waits for its replay, any other write is resubmitted after the next sync.
  * GBRA-133: neither fix starts a sync; both read the status, so no caller puts a second sync owner beside a running one.
  */
-export function pendingImportRefusal(row: { source_id: string; slug: string; operation?: string }, remote: boolean, importFrom?: string): OperationError {
+export function pendingImportRefusal(row: { source_id: string; slug: string; operation?: string }, remote: boolean, importFrom?: string,
+  importFile?: { root: string; path: string }): OperationError {
   const status = ['gbrain', 'sync', 'status', '--source', row.source_id, '--json'];
   const remember = row.operation === 'remember';
   const fix: Action = remember
@@ -148,6 +154,7 @@ export function pendingImportRefusal(row: { source_id: string; slug: string; ope
     + (remember ? 'so this remember was refused and kept: the first sync that imports the file makes one replay attempt, with its original date and authority.'
       : 'so this write was refused rather than replacing those bytes: after the next sync imports them, read the page again and resubmit with a new request_id.'),
     { detail: 'file_database_drift', reason: PENDING_IMPORT, fix });
-  // GST-1582: the last imported commit the check compared against, so a refresh-barrier consumer can hold the write for the import.
-  return importFrom === undefined ? refusal : Object.assign(refusal, { importFrom });
+  // GST-1582: the last imported commit the check compared against, so a refresh-barrier consumer can hold the write for the import;
+  // GST-1623: and the file it compared, so a write deferred behind a refresh is checked against that refresh before it is held.
+  return importFrom === undefined ? refusal : Object.assign(refusal, { importFrom, ...(importFile ? { importFile } : {}) });
 }

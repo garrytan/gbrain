@@ -572,12 +572,15 @@ succeed on the release commit.
 
 The **final step of the release job** force-advances the `latest-stable` tag to
 the gated release commit (`git push origin "+${RELEASE_SHA}:refs/tags/latest-stable"`).
-`latest-stable` is the single sanctioned distribution ref: the README paste
-block, the `BOOTSTRAP_FOR_AGENTS.md` fetch URL, and
-`bun install -g github:garrytan/gbrain#latest-stable` all reference it
-permanently, so paste blocks copied into the wild never rot and there is no 404
-window between VERSION landing and assets publishing.
-`scripts/check-bootstrap-tag.sh` keeps the entry docs pinned to this ref.
+`latest-stable` is the alpha channel's ref: the alpha update check follows it,
+and so does anyone who pins it by hand. New users start on the `stable` tag
+instead ([Stable channel promotion](#stable-channel-promotion)): the README paste
+block, the `BOOTSTRAP_FOR_AGENTS.md` fetch URL and
+`bun install -g github:garrytan/gbrain#stable` name it (`INSTALL_REF` in
+`src/core/install-ref.ts`), and only the stable promotion moves it. Both refs
+move only to a release whose assets already published, so neither has a 404
+window. `scripts/check-bootstrap-tag.sh` and `bun run check:install-ref` keep the
+entry docs pinned to `INSTALL_REF` and refuse `latest-stable` there.
 
 Because it moves ONLY after binaries + provenance attestation have fully
 published, a half-built release never advances it. If the tag-advance step
@@ -590,11 +593,13 @@ git push origin "+refs/tags/v<VERSION>^{commit}:refs/tags/latest-stable"
 
 ### Stable channel promotion
 
-The stable channel is a slower ref than `latest-stable`: a release reaches it
-only after the production-shaped soak passed on its exact git tree. A
+The stable channel, the clients' default since GBRA-224, is a slower ref than
+`latest-stable` (the alpha channel): a release reaches it only after the
+production-shaped soak passed on its exact git tree. A
 maintainer promotes with `.github/workflows/promote-stable.yml`
-(`scripts/promote-stable.ts`), weekly or whenever a soak passes; both go
-through the same dispatch:
+(`scripts/promote-stable.ts`), or the scheduled
+[daily stable check](#daily-stable-check) promotes by rule; manual promotions and
+rollbacks go through the same dispatch:
 
 ```bash
 gh workflow run promote-stable.yml -f version=<VERSION> \
@@ -603,8 +608,10 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
 
 - **Refs.** `refs/tags/stable` is an annotated tag on the promoted release
   commit, moved only by this workflow. Clients peel it (`refs/tags/stable^{}`)
-  and take the `v<VERSION>` tag on that commit; the update check reads
-  `https://raw.githubusercontent.com/<owner>/<repo>/stable/VERSION`.
+  and take the `v<VERSION>` tag on that commit. The same push commits the
+  evidence record `stable.json` (the tag fields plus `known_bad`) to the
+  `stable-record` branch; clients read only that file and refuse a record
+  without its evidence (`stable_invalid`, `src/core/stable-channel.ts`).
   `refs/tags/stable-v<VERSION>` is an immutable annotated record created on a
   version's first promotion and never moved or deleted. Both carry the same
   message: a title line (`gbrain`, then `stable channel: v<VERSION>`), then one
@@ -615,9 +622,11 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
 - **Inputs.** `version` (an existing `v<VERSION>` release tag),
   `soak_run_url` (the soak's Actions run URL, optionally
   `/attempts/<n>`), `scoreboard_url` (optional, defaults to the run URL),
-  `rollback` (default false) and `reason` (required with rollback).
+  `rollback` (default false), `reason` (required with rollback) and
+  `withdraw` (versions added to the carried-forward `known_bad` list;
+  clients on one are offered the current stable, even when older).
 - **Who.** Only an actor with the admin or maintain role; anyone else is
-  refused.
+  refused. The one exception is the scheduled daily check below.
 - **Soak run.** The run must belong to this repository, be completed with
   conclusion `success`, and run the workflow file named by the
   `STABLE_SOAK_WORKFLOW` repository variable (Settings → Secrets and
@@ -632,16 +641,96 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   run's head commit, even when the version string matches; soak the release
   itself, then promote that run.
 - **Ordering and rollback.** The version must be newer than the current
-  stable (numeric 3- or 4-part comparison); promoting the current stable is a
-  no-op refusal. `rollback=true` with a `reason` moves stable to an older
+  stable (numeric 3- or 4-part comparison). Promoting the current stable
+  again moves no tag: it writes `stable.json` when the published record does
+  not already name that release (see the backfill below), and is a no-op
+  refusal otherwise. `rollback=true` with a `reason` moves stable to an older
   release, or back to one promoted before (its record tag already exists and
   is kept; without rollback an existing record tag is refused).
-- **One atomic push.** The record tag and `stable` land together or not at
-  all, `stable` leased on the value the run read, so a concurrent move fails
+- **One atomic push.** The record tag, `stable` and the `stable-record`
+  branch land together or not at all, `stable` and `stable-record` leased on
+  the values the run read, so a concurrent move fails
   the run instead of being overwritten and a failed push leaves nothing to
   clean up before the re-run. The `promote-stable` concurrency group runs one promotion at a
   time. The run's step summary lists the version, commit, tree, soak run,
   scoreboard, previous stable and rollback reason.
+- **Record backfill (one time, GBRA-346).** Promotions made before this
+  script wrote the evidence record moved `stable` with no `stable.json`,
+  and a client that has the stable channel reads only the record, so it
+  would report `stable_missing`. The backfill is automatic on the first
+  scheduled run of the [daily stable check](#daily-stable-check) after the
+  channel client lands: when `stable.json` is missing or names another
+  commit than `stable`, that run writes the record for the current stable
+  and stops. The manual dispatch still works, for example to write the
+  record before the first release with the channel client publishes:
+
+  ```bash
+  git fetch --tags --force origin
+  git for-each-ref --format='%(contents)' refs/tags/stable   # version: and soak_run: lines
+  gh workflow run promote-stable.yml [--ref <branch with this script>] \
+    -f version=<that version> -f soak_run_url=<that soak_run>
+  ```
+
+  The run re-checks the release and the soak run, requires the tag message to
+  name the same release, tree and soak run, writes `stable.json` from it
+  (`known_bad` carried forward, `withdraw` accepted) and pushes only the
+  record branch, leasing `stable` unchanged. Running it from a branch before
+  the client merges is safe: older clients never read the record. A record
+  that already names the current stable makes the run a no-op refusal.
+  Every later promotion, manual or scheduled, writes the record itself.
+
+<a id="daily-stable-check"></a>
+### Daily stable check
+
+`.github/workflows/stable-daily.yml` (`scripts/stable-daily.ts`) runs at 05:17 and 13:17 UTC
+and keeps stable between one day and one week behind what matters:
+
+- **Reason first.** It acts only when a merged PR labelled `stable:important` is in a
+  published release but not in stable, or stable is more than 7 days old and
+  a newer release exists (the weekly floor). Otherwise it does nothing. The
+  merge lane sets the label at merge on a security, regression or data-loss
+  fix, or a fix for something that blocks a crew or a user (on a train PR,
+  the train carries it); a label added after the merge counts too.
+- **Soak first.** The candidate is the newest release newer than stable whose
+  commit is on master and whose exact tree passed a successful
+  `STABLE_SOAK_WORKFLOW` run with the integrity gates (`privacy_leaks`,
+  `read_errors`, `version_skew`, `residents_alive`, `session_refusals`)
+  passing in every cell; the latency gates stay record-only. The soak must be
+  the full default one: both the 65 ms and 2 ms cells, at least 2 hours each,
+  on the requested 600,000-page fixture, with privacy probes run and none
+  erroring, so a smaller smoke dispatch never qualifies. On the important-only path the candidate must contain the fix.
+  It is promoted through the same `promote()` as a manual promotion, so every
+  check above still applies and the record's `promoted_by` is
+  `schedule (.github/workflows/stable-daily.yml)` with the reason in `reason`.
+  With no qualifying soak it dispatches one soak on the newest release's tag
+  (never while another soak runs, and never after a soak on any newer release
+  failed to qualify: then a maintainer decides, and the check warns once stable
+  is past the weekly floor), and a later run promotes it.
+- **Who.** A schedule event runs only the workflow file as merged on the
+  default branch, so a scheduled run promotes by rule without a maintainer. A
+  manual dispatch defaults to `dry_run` (report only); `dry_run=false` needs an
+  admin or maintainer before it dispatches a soak or promotes. It shares the `promote-stable` concurrency group, so it
+  never races a manual promotion.
+- **Record first.** Before the reason check, when `stable.json` is missing or
+  names another commit than `stable`, it writes the record for the current
+  stable from the stable tag's message through the same re-promotion path as
+  the manual backfill (no tag moves; release, exact tree, soak run and leases
+  checked; `known_bad` carried forward) and stops; a dry run reports
+  `would: backfill the record for v<version>`. A record that already names
+  stable changes nothing. The kill switch and a rollback pause skip it.
+- **Stop it.** Set the repository variable `STABLE_AUTO_PROMOTE=off` (Settings →
+  Secrets and variables → Actions → Variables). It also pauses by itself while
+  the current stable record says `rollback: true`, until a maintainer promotes by
+  hand.
+- **Roll back.** Dispatch `promote-stable.yml` as a maintainer with `version` set to the
+  previous stable (`git tag --list 'stable-v*' --sort=-creatordate`, or the
+  record's `previous` field: `git show stable --no-patch`), `soak_run_url` set to the
+  soak run in that version's record tag, `rollback=true`, a `reason` and `withdraw`
+  set to the version you are rolling back from. `withdraw` puts it on the record's
+  `known_bad` list, so clients that already installed it are offered the previous
+  stable. Without it they stay on the bad release, because clients on stable never
+  downgrade on their own. The daily check stays paused until the next manual
+  promotion.
 
 ### The `publish-template` job
 

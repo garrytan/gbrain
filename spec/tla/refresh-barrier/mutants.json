@@ -1,0 +1,472 @@
+{
+  "$comment": "Each mutant removes one guard of the refresh write barrier (kind guard) or a guard that is defense in depth at these bounds (kind survivor, expect survives). spec edits a copy of the model and TLC must report expect; code makes the same edit to the implementation, and each named test must fail under it and pass without it. Run: bun scripts/spec/mutants.ts refresh-barrier [--spec-only|--code-only] [--only <id>]. See spec/tla/README.md.",
+  "module": "RefreshBarrier",
+  "config": "RefreshBarrier.cfg",
+  "mutants": [
+    {
+      "id": "expiry-locks-refresh-first",
+      "kind": "guard",
+      "title": "the refresh-barrier expiry locks the refresh row before it declares the protocol (finding D reverted)",
+      "expect": "NoDeadlock",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "ExpiryLocks(i, w) == <<L(BRAIN, \"S\"), L(REF(i), \"NKU\"), L(CTR, \"U\"), L(REQ(w), \"U\")>>",
+        "after": "ExpiryLocks(i, w) == <<L(REF(i), \"NKU\"), L(BRAIN, \"S\"), L(CTR, \"U\"), L(REQ(w), \"U\")>>"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/refresh-barrier.ts",
+            "before": "      await declarePersistenceProtocol(tx);\n      const [held] = await tx.executeRaw('SELECT 1 FROM persistence_worktree_refreshes WHERE id=$1::uuid AND released_at IS NULL FOR NO KEY UPDATE', [row.deferred_refresh_id]);\n",
+            "after": "      const [held] = await tx.executeRaw('SELECT 1 FROM persistence_worktree_refreshes WHERE id=$1::uuid AND released_at IS NULL FOR NO KEY UPDATE', [row.deferred_refresh_id]);\n      await declarePersistenceProtocol(tx);\n"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/refresh-write-barrier.test.ts",
+            "filter": "an expiry that overlaps a fence waits on the brain row",
+            "postgres": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "restore-keeps-deferred",
+      "kind": "guard",
+      "title": "a shared-skill restore leaves deferred writes open (finding C reverted)",
+      "expect": "RestoreLeavesNoOpenWrite",
+      "config": "RefreshBarrierEnv.cfg",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "RestoreCancels == {\"queued\", \"deferred\", \"running\"}",
+        "after": "RestoreCancels == {\"queued\", \"running\"}"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/shared-skills/restore.ts",
+            "before": "state IN ('queued','deferred','running') ORDER BY sequence FOR UPDATE",
+            "after": "state IN ('queued','running') ORDER BY sequence FOR UPDATE"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/refresh-write-barrier.test.ts",
+            "filter": "a shared-skill restore cancels a deferred write too"
+          }
+        ]
+      }
+    },
+    {
+      "id": "replay-ignores-refresh-change",
+      "kind": "guard",
+      "title": "a deferred write's replay ignores what its refresh changed",
+      "expect": "RefreshChangeNeverOverwritten",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "ReplayDiff(i) == rmoved[i]",
+        "after": "ReplayDiff(i) == FALSE"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/refresh-barrier.ts",
+            "before": "if (changes === null || changes.paths.has(changes.fold ? target.toLowerCase() : target)) touched.push(target);",
+            "after": "if (changes === null) touched.push(target);"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/refresh-write-barrier.test.ts",
+            "filter": "a deferred blind write to a page the refresh changed ends revision_conflict"
+          }
+        ]
+      }
+    },
+    {
+      "id": "release-only-on-completed",
+      "kind": "guard",
+      "title": "the release trigger stamps released_at only when a refresh completes, not when it aborts",
+      "expect": "ReleasedWhenEnded",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "ReleaseOn(s) == s \\in {\"completed\", \"aborted\"}",
+        "after": "ReleaseOn(s) == s = \"completed\""
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/schema-migrations/v292-refresh-write-barrier.ts",
+            "before": "    END $$;\n    ALTER TABLE persistence_consumers ADD COLUMN IF NOT EXISTS capabilities text[] NOT NULL DEFAULT '{}';\n    CREATE OR REPLACE FUNCTION gbrain_release_refresh_barrier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$\n    BEGIN\n      NEW.released_at := COALESCE(NEW.released_at, now());\n      RETURN NEW;\n    END $$;\n    DROP TRIGGER IF EXISTS gbrain_refresh_release ON persistence_worktree_refreshes;\n    CREATE TRIGGER gbrain_refresh_release BEFORE UPDATE OF state ON persistence_worktree_refreshes FOR EACH ROW\n      WHEN (NEW.state IN ('completed','aborted') AND OLD.state NOT IN ('completed','aborted'))",
+            "after": "    END $$;\n    ALTER TABLE persistence_consumers ADD COLUMN IF NOT EXISTS capabilities text[] NOT NULL DEFAULT '{}';\n    CREATE OR REPLACE FUNCTION gbrain_release_refresh_barrier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$\n    BEGIN\n      NEW.released_at := COALESCE(NEW.released_at, now());\n      RETURN NEW;\n    END $$;\n    DROP TRIGGER IF EXISTS gbrain_refresh_release ON persistence_worktree_refreshes;\n    CREATE TRIGGER gbrain_refresh_release BEFORE UPDATE OF state ON persistence_worktree_refreshes FOR EACH ROW\n      WHEN (NEW.state='completed' AND OLD.state NOT IN ('completed','aborted'))"
+          },
+          {
+            "file": "src/core/schema-migrations/v292-refresh-write-barrier.ts",
+            "before": "    ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS deferred_refresh_id uuid REFERENCES persistence_worktree_refreshes(id);\n    ALTER TABLE persistence_consumers ADD COLUMN IF NOT EXISTS capabilities text[] NOT NULL DEFAULT '{}';\n    CREATE OR REPLACE FUNCTION gbrain_release_refresh_barrier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$\n    BEGIN\n      NEW.released_at := COALESCE(NEW.released_at, now());\n      RETURN NEW;\n    END $$;\n    DROP TRIGGER IF EXISTS gbrain_refresh_release ON persistence_worktree_refreshes;\n    CREATE TRIGGER gbrain_refresh_release BEFORE UPDATE OF state ON persistence_worktree_refreshes FOR EACH ROW\n      WHEN (NEW.state IN ('completed','aborted') AND OLD.state NOT IN ('completed','aborted'))",
+            "after": "    ALTER TABLE persistence_requests ADD COLUMN IF NOT EXISTS deferred_refresh_id uuid REFERENCES persistence_worktree_refreshes(id);\n    ALTER TABLE persistence_consumers ADD COLUMN IF NOT EXISTS capabilities text[] NOT NULL DEFAULT '{}';\n    CREATE OR REPLACE FUNCTION gbrain_release_refresh_barrier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$\n    BEGIN\n      NEW.released_at := COALESCE(NEW.released_at, now());\n      RETURN NEW;\n    END $$;\n    DROP TRIGGER IF EXISTS gbrain_refresh_release ON persistence_worktree_refreshes;\n    CREATE TRIGGER gbrain_refresh_release BEFORE UPDATE OF state ON persistence_worktree_refreshes FOR EACH ROW\n      WHEN (NEW.state='completed' AND OLD.state NOT IN ('completed','aborted'))"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/refresh-write-barrier.test.ts",
+            "filter": "a write deferred behind a refresh that aborts commits once the refresh is released"
+          }
+        ]
+      }
+    },
+    {
+      "id": "expiry-skips-release-recheck",
+      "kind": "guard",
+      "title": "the refresh-barrier expiry does not re-read released_at under the refresh row lock",
+      "expect": "ExpiryOnlyWhileWaiting",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "ExpiryRecheck(i) == ~rel[i]",
+        "after": "ExpiryRecheck(i) == TRUE"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/refresh-barrier.ts",
+            "before": "'SELECT 1 FROM persistence_worktree_refreshes WHERE id=$1::uuid AND released_at IS NULL FOR NO KEY UPDATE'",
+            "after": "'SELECT 1 FROM persistence_worktree_refreshes WHERE id=$1::uuid FOR NO KEY UPDATE'"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/refresh-write-barrier.test.ts",
+            "filter": "racing the end",
+            "postgres": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "admission-skips-refresh-lock",
+      "kind": "guard",
+      "title": "admission reads the active refresh without locking its row",
+      "expect": "NoDeferToReleased",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "AdmRefLock(i) == <<L(REF(i), \"NKU\")>>",
+        "after": "AdmRefLock(i) == <<>>"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/journal.ts",
+            "before": "LIMIT 1${barrier ? ' FOR NO KEY UPDATE' : ''}) f) AS refresh",
+            "after": "LIMIT 1) f) AS refresh"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/refresh-write-barrier.test.ts",
+            "filter": "while its refresh ends",
+            "postgres": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "publication-skips-reauth",
+      "kind": "guard",
+      "title": "publication does not re-authorize the stored request",
+      "expect": "NoApplyAfterRevoke",
+      "config": "RefreshBarrierEnv.cfg",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "PublishAuth == TRUE",
+        "after": "PublishAuth == FALSE"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/coordinator.ts",
+            "before": "await authorizeStoredRequest(tx, row, true, { pageVisibility: skill });",
+            "after": "if (skill) await authorizeStoredRequest(tx, row, true, { pageVisibility: skill });"
+          },
+          {
+            "file": "src/core/persistence/group-publish.ts",
+            "before": "() => authorizeStoredRequest(tx, rows[i]!, true, { pageVisibility: false }),",
+            "after": "async () => undefined,"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/refresh-write-barrier.test.ts",
+            "filter": "revoked after it was claimed"
+          }
+        ]
+      }
+    },
+    {
+      "id": "preparation-ignores-drift",
+      "kind": "guard",
+      "title": "preparation writes over a file that differs from the page",
+      "expect": "ImportedRevisionNeverHidden",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "PrepRefusesDrift == TRUE",
+        "after": "PrepRefusesDrift == FALSE"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/page-prepare.ts",
+            "before": "if (!matches && !staleCache) {",
+            "after": "if (!matches && !staleCache && false) {"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/pending-import-async-git-7436.test.ts",
+            "filter": "keeps the event loop running"
+          }
+        ]
+      }
+    },
+    {
+      "id": "drain-ignores-running",
+      "kind": "guard",
+      "title": "the drain count leaves out claimed (running) writes",
+      "expect": "FenceNeverMidPrepare",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "DrainCounts(w) == st[w] \\in {\"queued\", \"running\"}",
+        "after": "DrainCounts(w) == st[w] = \"queued\""
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/worktree-refresh.ts",
+            "before": "r.state IN ('queued','running','recovering')",
+            "after": "r.state IN ('queued','recovering')"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/persistence-worktree-refresh.test.ts",
+            "filter": "13e."
+          }
+        ]
+      }
+    },
+    {
+      "id": "trigger-allows-unreleased",
+      "kind": "survivor",
+      "title": "the v292 guard trigger lets any claim move a deferred row",
+      "expect": "survives",
+      "reason": "defense in depth in the model, whose only consumer claims through claimableWriteSql; the trigger stops an older binary's claim, which the model leaves out, and the named test pins it",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "TriggerAllows(w) == st[w] # \"deferred\" \\/ Released(w)",
+        "after": "TriggerAllows(w) == TRUE"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/schema-migrations/v292-refresh-write-barrier.ts",
+            "before": "WHEN (OLD.state='deferred' OR NEW.state='deferred')\n      EXECUTE FUNCTION gbrain_guard_deferred_request();\n    ALTER TABLE persistence_requests DROP CONSTRAINT IF EXISTS persistence_requests_state_check;\n    ALTER TABLE persistence_requests ADD CONSTRAINT persistence_requests_state_check\n      CHECK (state IN ('queued','deferred','running','recovering','committed','conflict','failed','cancelled')) NOT VALID;",
+            "after": "WHEN (false)\n      EXECUTE FUNCTION gbrain_guard_deferred_request();\n    ALTER TABLE persistence_requests DROP CONSTRAINT IF EXISTS persistence_requests_state_check;\n    ALTER TABLE persistence_requests ADD CONSTRAINT persistence_requests_state_check\n      CHECK (state IN ('queued','deferred','running','recovering','committed','conflict','failed','cancelled')) NOT VALID;"
+          },
+          {
+            "file": "src/core/schema-migrations/v292-refresh-write-barrier.ts",
+            "before": "WHEN (OLD.state='deferred' OR NEW.state='deferred')\n      EXECUTE FUNCTION gbrain_guard_deferred_request();\n    ALTER TABLE persistence_requests DROP CONSTRAINT IF EXISTS persistence_requests_state_check;\n    ALTER TABLE persistence_requests ADD CONSTRAINT persistence_requests_state_check\n      CHECK (state IN ('queued','deferred','running','recovering','committed','conflict','failed','cancelled'));",
+            "after": "WHEN (false)\n      EXECUTE FUNCTION gbrain_guard_deferred_request();\n    ALTER TABLE persistence_requests DROP CONSTRAINT IF EXISTS persistence_requests_state_check;\n    ALTER TABLE persistence_requests ADD CONSTRAINT persistence_requests_state_check\n      CHECK (state IN ('queued','deferred','running','recovering','committed','conflict','failed','cancelled'));"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/refresh-write-barrier.test.ts",
+            "filter": "a claim without the barrier declaration cannot move a deferred row"
+          }
+        ]
+      }
+    },
+    {
+      "id": "fence-skips-recount",
+      "kind": "survivor",
+      "title": "fenceAndMerge does not re-count the drain under its locks",
+      "expect": "survives",
+      "reason": "defense in depth at these bounds: every admission after the refresh row exists is deferred, so no queued work can appear between the drain poll and the fence",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "FenceRecount == TRUE",
+        "after": "FenceRecount == FALSE"
+      }
+    },
+    {
+      "id": "claim-ignores-fence",
+      "kind": "survivor",
+      "title": "a claim ignores the refresh fence",
+      "expect": "survives",
+      "reason": "defense in depth at these bounds: under the fence every queued row has drained and every new admission is deferred to the unreleased refresh, so nothing is claimable",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "FenceClear == ~RefIs({\"fenced\", \"merged\", \"recovery\"})",
+        "after": "FenceClear == TRUE"
+      }
+    },
+    {
+      "id": "claim-skips-protocol",
+      "kind": "survivor",
+      "title": "a claim does not declare the protocol (brain row FOR SHARE)",
+      "expect": "survives",
+      "reason": "defense in depth at these bounds: the fence's drain count and the claim's own request-row lock already order a claim against the fence",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "ClaimLocks == <<L(BRAIN, \"S\")>>",
+        "after": "ClaimLocks == <<>>"
+      }
+    },
+    {
+      "id": "replay-skips-reauth",
+      "kind": "survivor",
+      "title": "a deferred write's replay does not re-authorize it",
+      "expect": "survives",
+      "reason": "defense in depth: publication re-authorizes every write (publication-skips-reauth)",
+      "config": "RefreshBarrierEnv.cfg",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "ReplayAuth == TRUE",
+        "after": "ReplayAuth == FALSE"
+      }
+    },
+    {
+      "id": "hold-beside-held-off",
+      "kind": "guard",
+      "title": "a later write to a page with a write held for an import is not held beside it, so it can commit ahead of the held one",
+      "expect": "CommitsInAdmissionOrder",
+      "config": "RefreshBarrierImport.cfg",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "     ELSE IF ImportHolds /\\ HoldBehindHeld /\\ HeldAhead(w) # {} THEN \"pending\"\n",
+        "after": "     ELSE IF FALSE THEN \"pending\"\n"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/page-prepare.ts",
+            "before": "  if (heldFirst) throw pendingImportRefusal(",
+            "after": "  if (heldFirst && false) throw pendingImportRefusal("
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/import-write-barrier.test.ts",
+            "filter": "a write held for an import is never passed by a later write to the same page"
+          }
+        ]
+      }
+    },
+    {
+      "id": "import-expiry-locks-source-first",
+      "kind": "guard",
+      "title": "the import expiry locks the source row before it declares the protocol",
+      "expect": "NoDeadlock",
+      "config": "RefreshBarrierImport.cfg",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "ImportExpiryLocks == <<L(BRAIN, \"S\"), L(SRC, \"S\")>>",
+        "after": "ImportExpiryLocks == <<L(SRC, \"S\"), L(BRAIN, \"S\")>>"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/refresh-barrier.ts",
+            "before": "      await declarePersistenceProtocol(tx);\n      const [held] = await tx.executeRaw(`SELECT 1 FROM persistence_requests r JOIN sources s ON s.id=r.source_id\n        WHERE r.id=$1::uuid AND r.state='deferred' AND r.deferred_import_from=$2 AND COALESCE(s.last_commit,'')=r.deferred_import_from\n          AND ${holdOverdue('$3::double precision')} FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);\n",
+            "after": "      const [held] = await tx.executeRaw(`SELECT 1 FROM persistence_requests r JOIN sources s ON s.id=r.source_id\n        WHERE r.id=$1::uuid AND r.state='deferred' AND r.deferred_import_from=$2 AND COALESCE(s.last_commit,'')=r.deferred_import_from\n          AND ${holdOverdue('$3::double precision')} FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);\n      await declarePersistenceProtocol(tx);\n"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/import-write-barrier.test.ts",
+            "filter": "an import expiry that overlaps a fence waits on the brain row",
+            "postgres": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "import-expiry-skips-source-lock",
+      "kind": "guard",
+      "title": "the import expiry re-checks last_commit without locking the source row",
+      "expect": "ExpiryOnlyWhileWaiting",
+      "config": "RefreshBarrierImport.cfg",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "Need(EXP, IF ImportExpiryLocksSource THEN ImportExpiryLocks ELSE <<>>)",
+        "after": "Need(EXP, <<>>)"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/refresh-barrier.ts",
+            "before": "${holdOverdue('$3::double precision')} FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);",
+            "after": "${holdOverdue('$3::double precision')}`, [row.id, row.deferred_import_from, maxWaitMs]);"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/import-write-barrier.test.ts",
+            "filter": "a held write whose import lands while its expiry waits on the request lock is not expired",
+            "postgres": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "resume-marks-unmerged-recovery",
+      "kind": "guard",
+      "title": "recovery marks an orphaned fenced refresh recovery_required when a commit gbrain did not make moved HEAD past old_head before any merge",
+      "expect": "RecoveryOnlyByPolicy",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "FencedAbortable(i) == ~rmstart[i]",
+        "after": "FencedAbortable(i) == head = rhead[i]"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/worktree-refresh.ts",
+            "before": "    && !await memberOutsideHead(engine, git, root, row, head);\n}",
+            "after": "    && await ownCommits(git, root, row.old_head, head) && !await memberOutsideHead(engine, git, root, row, head);\n}"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/refresh-write-barrier.test.ts",
+            "filter": "a refresh killed at fenced after a commit gbrain did not make moved HEAD before the merge aborts on the owner scan"
+          }
+        ]
+      }
+    },
+    {
+      "id": "resume-needs-exact-target",
+      "kind": "guard",
+      "title": "recovery runs bookkeeping for an orphaned fenced or merged refresh only when HEAD is exactly the target, not a descendant",
+      "expect": "RecoveryOnlyByPolicy",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "ResumeAtTarget(i) == HoldsTarget(i)",
+        "after": "ResumeAtTarget(i) == rtgt[i] # 0 /\\ head = rtgt[i] /\\ ~lost[i]"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/worktree-refresh.ts",
+            "before": "&& head !== null && (head === row.target_head || await isAncestor(git, root, row.target_head, head))\n    && await isAncestor(git, root, row.old_head, row.target_head)",
+            "after": "&& head !== null && (head === row.target_head || (row.state === 'recovery_required' && await isAncestor(git, root, row.target_head, head)))\n    && await isAncestor(git, root, row.old_head, row.target_head)"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/refresh-write-barrier.test.ts",
+            "filter": "a refresh killed after its merge, with a commit landed on the target before bookkeeping, recovers on the owner scan"
+          }
+        ]
+      }
+    }
+  ]
+}

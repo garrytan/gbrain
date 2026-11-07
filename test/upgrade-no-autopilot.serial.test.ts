@@ -23,7 +23,7 @@ describe('upgrade autopilot opt-out propagation', () => {
       writeFileSync(join(bin, 'gbrain'), `#!/bin/sh\nprintf 'gbrain:%s:no-autopilot=%s\\n' "$*" "$GBRAIN_NO_AUTOPILOT_INSTALL" >> "$HOME/calls.log"\nif [ "$1" = '--version' ]; then echo 'gbrain ${VERSION}'; fi\n`, { mode: 0o755 });
       const result = spawnSync(process.execPath, ['--no-env-file', driver], {
         cwd: home,
-        env: { HOME: home, GBRAIN_HOME: home, BUN_INSTALL: join(home, '.bun'), PATH: `${bin}:/usr/bin:/bin` },
+        env: { HOME: home, GBRAIN_HOME: home, BUN_INSTALL: join(home, '.bun'), PATH: `${bin}:/usr/bin:/bin`, GBRAIN_RELEASE_CHANNEL: 'alpha' },
         encoding: 'utf8', timeout: 30_000,
       });
       expect(result.status, result.stderr + result.stdout).toBe(0);

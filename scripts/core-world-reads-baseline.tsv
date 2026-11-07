@@ -855,6 +855,7 @@ src/core/readiness.ts	process_env	1	W6: settings plane out of the core
 src/core/reason-trailers.ts	fs_import	1	W7: filesystem boundary moves to the local app (realpath of the source and Git roots for the gbrain-reason trailer scan; #7798 in the memory train #8481)
 src/core/reason-trailers.ts	module_collection	1	W6: per-engine state (short-lived trailer-scan cache keyed by source root; #7798 in the memory train #8481)
 src/core/recall-cursor-state.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/release-channel-notice.ts	fs_import	1	W7: filesystem boundary moves to the local app (GBRA-224: the once-per-GBRAIN_HOME channel notice marker file)
 src/core/remediation-checkpoint.ts	fs_import	2	W7: filesystem boundary moves to the local app
 src/core/remediation/context.ts	process_env	1	W6: settings plane out of the core
 src/core/remote-token-cache.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -952,7 +953,7 @@ src/core/self-upgrade-swap.ts	load_config	4	W6: settings plane out of the core
 src/core/self-upgrade-swap.ts	process_env	1	W6: settings plane out of the core
 src/core/self-upgrade-swap.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/self-upgrade.ts	fs_import	1	W7: filesystem boundary moves to the local app
-src/core/self-upgrade.ts	process_env	2	W6: settings plane out of the core
+src/core/self-upgrade.ts	process_env	3	W6: settings plane out of the core (+1 GBRA-224: resolveReleaseChannel defaults its env argument to GBRAIN_RELEASE_CHANNEL)
 src/core/serve-behavior-notice.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/serve-fail-fast.ts	process_env	1	W6: settings plane out of the core
 src/core/serve-http-status-marker.ts	fs_import	1	W7: filesystem boundary moves to the local app

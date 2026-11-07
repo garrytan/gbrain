@@ -328,7 +328,7 @@ async function segmentedFileMatches(engine: BrainEngine, slug: string, bytes: By
   const prefix = await inferredHeadPrefix(bytes.subarray(skip, skip + FRONTMATTER_HEAD_MAX_BYTES), await sourcePath());
   return !!prefix?.length && await matches({ prefix, skip }, true) === true;
 }
-export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'> & { operation?: string }, snapshot: PageSnapshot | null,
+export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'> & Partial<Pick<WriteRequest, 'sequence'>> & { operation?: string }, snapshot: PageSnapshot | null,
   content: string | Uint8Array | StreamedFileContent | null, hostId?: string, options: { allowMissing?: boolean; deleting?: boolean; capture?: { path: string; hash: string }; activePack?: ParseOpts['activePack']; remote?: boolean;
     /** #6368: a tombstone purge whose file matches these sync.exclude globs (relative to the source root) owns no file. */
     excludeTombstone?: { patterns: string[]; onExcluded: (path: string) => void };
@@ -416,16 +416,18 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
 }
 
 /** prepareFileTarget's comparison of the file at `path` (`before`, its bytes or a piecewise reading) with the snapshot. */
-async function compareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'>, snapshot: PageSnapshot | null,
+async function compareFileTarget(engine: BrainEngine, row: Parameters<typeof prepareFileTarget>[1], snapshot: PageSnapshot | null,
   content: string | Uint8Array | StreamedFileContent | null, options: Parameters<typeof prepareFileTarget>[5] & object,
   target: { root: string; path: string; mode: Awaited<ReturnType<typeof scannerSlugRootMode>> | undefined; capturedPath: string | null | undefined; before: Buffer | FileBytes | null }): Promise<PreparedMutation['file']> {
   const { root, path, mode, capturedPath, before } = target;
   // GST-1582: an earlier write to this page held for an import that has not landed goes first, so this one is held behind the
   // same import (holdForImport) and both are released, in admission order, at its checkpoint; it never commits before the held one.
-  const [heldFirst] = await engine.executeRaw<{ deferred_import_from: string }>(`SELECT r.deferred_import_from FROM persistence_requests r
-    JOIN sources s ON s.id=r.source_id WHERE r.source_id=$1 AND r.slug=$2 AND r.state='deferred' AND r.deferred_import_from IS NOT NULL
-      AND COALESCE(s.last_commit,'')=r.deferred_import_from ORDER BY r.sequence LIMIT 1`, [row.source_id, row.slug]);
-  if (heldFirst) throw pendingImportRefusal(row, options.remote === true, heldFirst.deferred_import_from);
+  // GST-1623: only a journaled request (one with a sequence) waits, and only on a write admitted before it; an effect or a
+  // maintenance read of the file (Git and withdrawal-mirror effects, lint, drift checks) is never refused by another request's hold.
+  const [heldFirst] = row.sequence == null ? [] : await engine.executeRaw<{ deferred_import_from: string }>(`SELECT r.deferred_import_from FROM persistence_requests r
+    JOIN sources s ON s.id=r.source_id WHERE r.source_id=$1 AND r.slug=$2 AND r.sequence<$3 AND r.state='deferred' AND r.deferred_import_from IS NOT NULL
+      AND COALESCE(s.last_commit,'')=r.deferred_import_from ORDER BY r.sequence LIMIT 1`, [row.source_id, row.slug, String(row.sequence)]);
+  if (heldFirst) throw pendingImportRefusal(row, options.remote === true, heldFirst.deferred_import_from, { root, path });
   const beforeHash = () => before instanceof FileBytes ? before.hash() : sha256(before!);
   if (options.deleting === true && options.sharedOrigin && snapshot && before) {
     const target: FileClaimTarget = { sourceId: row.source_id, slug: row.slug, pageId: snapshot.page.id, root, path, canonicalPath: realpathSync(path),
@@ -480,7 +482,7 @@ async function compareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 's
       if (!adopt.length) {
         // GST-1582: read before the check, so a write held for the import never waits on a commit the check already saw imported.
         const [source] = await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [row.source_id]);
-        if (await waitingOnWhile(options.clock, 'git', () => committedPendingImport(engine, row.source_id, root, path, options.clock?.signal))) throw pendingImportRefusal(row, options.remote === true, source?.last_commit ?? '');
+        if (await waitingOnWhile(options.clock, 'git', () => committedPendingImport(engine, row.source_id, root, path, options.clock?.signal))) throw pendingImportRefusal(row, options.remote === true, source?.last_commit ?? '', { root, path });
       }
       // #8109: drift confined to ordinary frontmatter keys never blocks a write that leaves the frontmatter alone.
       const spliced = !adopt.length && options.deleting !== true && typeof content === 'string' && before instanceof Buffer && !bodyUnread(snapshot.page) && before.length <= PUSH_SCAN_MAX_FILE_BYTES

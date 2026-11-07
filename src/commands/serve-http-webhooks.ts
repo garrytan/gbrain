@@ -27,6 +27,8 @@ import type { ServeHttpContext } from './serve-http.ts';
 import { NO_SOURCES } from '../core/source-id.ts';
 import { noSourceGrantError } from '../core/ops/context.ts';
 import { renderAction } from '../core/agent-output.ts';
+import { assertWebhookWriterMayReplace } from '../core/minions/handlers/ingest-capture.ts';
+import { validateSlug } from '../core/utils.ts';
 
 /**
  * v0.46: normalize the per-event GitHub webhook payload shape into
@@ -468,14 +470,33 @@ async function handleIngest(
     return;
   }
 
+  // The job re-checks this writer at write time; refusing here answers the caller before anything is queued.
+  const writeSourceId = authInfo.sourceId ?? 'default';
+  const writer = authInfo.principal ? { principal: { kind: authInfo.principal.kind, id: authInfo.principal.id } } : undefined;
+  if (callerSlug) {
+    try {
+      validateSlug(callerSlug);
+    } catch (err) {
+      res.status(400).json({ error: 'invalid_slug', message: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+    try {
+      await assertWebhookWriterMayReplace(engine, writer, writeSourceId, callerSlug);
+    } catch (err) {
+      if (!(err instanceof OperationError)) throw err;
+      res.status(err.code === 'page_not_found' ? 404 : 403).json({ error: err.code, message: err.message });
+      return;
+    }
+  }
+
   try {
-    const writeSourceId = authInfo.sourceId ?? 'default';
     const job = await ingestQueue.add(
       'ingest_capture',
       {
         event,
         ...(callerSlug ? { slug: callerSlug } : {}),
         sourceId: writeSourceId,
+        ...(writer ? { writer } : {}),
       },
       {
         // Idempotency: same content from the same client within the
@@ -662,15 +683,23 @@ function mountGitHubWebhook(app: Express, ctx: ServeHttpContext): void {
         res.status(500).json({ error: 'lookup_failed' });
         return;
       }
-      if (!source) {
-        res.status(404).json({ error: 'unknown_repo', repo: fullName });
-        return;
-      }
-
-      const cfg = (typeof source.config === 'string' ? JSON.parse(source.config) : source.config) as {
+      const cfg = (source ? (typeof source.config === 'string' ? JSON.parse(source.config) : source.config) : {}) as {
         webhook_secret?: string;
         tracked_branch?: string;
       };
+
+      // HMAC verify before anything about the repository is answered: an unknown repo, a source with no secret and a
+      // bad signature all get the same 401, so an unsigned request cannot tell which repositories this brain syncs.
+      // GitHub sends "sha256=<hex>" — strip the prefix BEFORE safeHexEqual because Buffer.from('sha256=...', 'hex')
+      // silently truncates at the first non-hex char (the 's'), leaving both operands as 0-byte buffers and making
+      // every signature "match". Strict hex shape first: a malformed 64-char signature would make safeHexEqual throw.
+      const secret = cfg.webhook_secret;
+      const computedHex = typeof secret === 'string' && secret ? createHmac('sha256', secret).update(payload).digest('hex') : null;
+      if (!source || !computedHex || !/^sha256=[0-9a-f]{64}$/.test(sigHeader) || !safeHexEqual(sigHeader.slice('sha256='.length), computedHex)) {
+        if (source && !computedHex) console.error(`webhook: push for source ${source.id} refused: no webhook secret is set (run: gbrain sources webhook set ${source.id})`);
+        res.status(401).json({ error: 'signature_mismatch' });
+        return;
+      }
 
       // D5: ref must match the configured tracked branch (default 'main').
       const trackedBranch = cfg.tracked_branch ?? 'main';
@@ -682,30 +711,6 @@ function mountGitHubWebhook(app: Express, ctx: ServeHttpContext): void {
           received_ref: ref,
           tracked_branch: trackedBranch,
         });
-        return;
-      }
-
-      const secret = cfg.webhook_secret;
-      if (!secret || typeof secret !== 'string') {
-        res.status(401).json({ error: 'webhook_not_configured', message: 'Run: gbrain sources webhook set ' + source.id });
-        return;
-      }
-
-      // HMAC verify. GitHub sends "sha256=<hex>" — strip the prefix BEFORE
-      // safeHexEqual because Buffer.from('sha256=...', 'hex') silently
-      // truncates at the first non-hex char (the 's'), leaving both
-      // operands as 0-byte buffers and making every signature "match".
-      // Strict hex shape first: a malformed 64-char signature would make
-      // safeHexEqual throw (500 instead of 401), codex LOW.
-      const { createHmac } = await import('node:crypto');
-      const computedHex = createHmac('sha256', secret).update(payload).digest('hex');
-      const prefix = 'sha256=';
-      if (!/^sha256=[0-9a-f]{64}$/.test(sigHeader)) {
-        res.status(401).json({ error: 'signature_mismatch', message: 'expected sha256=<64 hex> signature' });
-        return;
-      }
-      if (!safeHexEqual(sigHeader.slice(prefix.length), computedHex)) {
-        res.status(401).json({ error: 'signature_mismatch' });
         return;
       }
 
