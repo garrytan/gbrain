@@ -503,10 +503,18 @@ export async function getChunkPage(
  * too (provider-migration paths). Shared by countStaleChunks +
  * sumStaleChunkChars so they can't drift.
  */
-function staleChunkWhere(column: string, opts?: StaleChunkOpts): SqlFragment {
+function staleChunkWhere(column: string, opts?: StaleChunkOpts, arm?: 'null' | 'drift'): SqlFragment {
   const staleColRef = trustedSql(`cc.${quoteIdentifier(column)}`);
   const conds: SqlFragment[] = [sqlFragment`p.deleted_at IS NULL`, sqlFragment`${trustedSql(chunkGenerationFilter('p', 'cc'))}`];
-  if (opts?.signature !== undefined) {
+  if (arm === 'null') {
+    conds.push(sqlFragment`${staleColRef} IS NULL`);
+  } else if (arm === 'drift' && opts?.signature !== undefined) {
+    conds.push(
+      opts.includeNullSignature
+        ? sqlFragment`${staleColRef} IS NOT NULL AND (p.embedding_signature IS NULL OR p.embedding_signature <> ${opts.signature})`
+        : sqlFragment`${staleColRef} IS NOT NULL AND p.embedding_signature IS NOT NULL AND p.embedding_signature <> ${opts.signature}`,
+    );
+  } else if (opts?.signature !== undefined) {
     conds.push(
       opts.includeNullSignature
         ? sqlFragment`(${staleColRef} IS NULL OR p.embedding_signature IS NULL OR p.embedding_signature <> ${opts.signature})`
@@ -538,7 +546,16 @@ export async function countStaleChunks(exec: ScopedRead, column: string, opts?: 
 export async function sumStaleChunkChars(exec: LegacyUnscopedRead, column: string, opts?: StaleChunkOpts): Promise<number> {
     // Sibling of countStaleChunks: same stale predicate, summing chunk_text
     // length for the sync cost preview. ::bigint guards int4 overflow.
-    const { text, params } = renderFragment(sqlFragment`SELECT COALESCE(SUM(LENGTH(cc.chunk_text)), 0)::bigint AS chars
+    // With a signature the OR spans two tables and forces a full scan of
+    // content_chunks; two disjoint arms (NULL embedding / drifted signature)
+    // let each use its own access path. Same total.
+    const arm = (a: 'null' | 'drift') => sqlFragment`SELECT LENGTH(cc.chunk_text) AS n
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+        WHERE ${staleChunkWhere(column, opts, a)}`;
+    const { text, params } = renderFragment(opts?.signature !== undefined
+      ? sqlFragment`SELECT COALESCE(SUM(n), 0)::bigint AS chars FROM (${arm('null')} UNION ALL ${arm('drift')}) stale`
+      : sqlFragment`SELECT COALESCE(SUM(LENGTH(cc.chunk_text)), 0)::bigint AS chars
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
         WHERE ${staleChunkWhere(column, opts)}`);
