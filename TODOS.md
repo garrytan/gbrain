@@ -2345,7 +2345,7 @@ deferred M-effort issues above are NOT repeated here.
 - [ ] **P3 — Integrity for the from-source / `latest-stable` install paths.** **What:** the
   compiled-binary self-update now verifies the GitHub build-provenance attestation before
   installing (`src/core/binary-self-update.ts`), but the primary documented install
-  (`bun install -g github:garrytan/gbrain#latest-stable`, a force-moved tag) and the
+  (`bun install -g github:garrytan/gbrain#stable`, a force-moved tag) and the
   force-published `codex-plugin` branch / template repo remain TLS+GitHub trust-on-first-use.
   **Why:** those paths are how most users actually install; a compromised GitHub account could
   serve an unverified tree. **Context:** documented as a residual in SECURITY.md

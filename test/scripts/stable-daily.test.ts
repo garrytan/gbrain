@@ -16,8 +16,9 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { load } from 'js-yaml';
-import { promote, scheduleAuthorized, Refusal, type GitResult } from '../../scripts/promote-stable.ts';
+import { promote, renderTagMessage, scheduleAuthorized, Refusal, type GitResult } from '../../scripts/promote-stable.ts';
 import { daily, integrityFailures, parseRecord, shapeFailures, type DailyDeps, type Scoreboard, type SoakRunRow } from '../../scripts/stable-daily.ts';
+import { parseStableRecord } from '../../src/core/stable-channel.ts';
 
 const ROOT = join(import.meta.dir, '..', '..');
 const REPO = 'garrytan/gbrain';
@@ -44,6 +45,8 @@ interface World {
   autoPromote?: string;
   dryRun?: boolean;
   scheduled?: boolean;
+  /** The published stable.json; default: a record naming the current stable. null: none published yet. */
+  published?: string | null;
 }
 
 const stableMessage = (version: string, promotedAt: string, rollback = false) =>
@@ -66,8 +69,18 @@ function world(w: World) {
     const n = Number.parseInt(spec.replace(/^c+/, ''), 10);
     return /^c*\d+$/.test(spec) && spec.length === 40 && n <= w.head ? n : null;
   };
-  const git = async (args: string[]): Promise<GitResult> => {
+  /** The evidence record promote() commits (GBRA-224 W1): blob, tree and commit objects, and the pushed stable-record head. */
+  const objects: Record<string, string> = {};
+  const record: { head?: string } = {};
+  const published = w.published === undefined ? JSON.stringify({ schema: 1, version: w.stable.version, commit: sha(w.stable.commit), known_bad: [] }) : w.published;
+  if (published !== null) { objects['rec-published'] = published; record.head = 'rec-published'; }
+  const git = async (args: string[], input?: string): Promise<GitResult> => {
     const [cmd, ...rest] = args;
+    if (cmd === 'hash-object') { const id = `blob-${Object.keys(objects).length}`; objects[id] = input ?? ''; return ok(id); }
+    if (cmd === 'mktree') { const id = `tree-${Object.keys(objects).length}`; objects[id] = objects[/blob (\S+)\tstable\.json/.exec(input ?? '')![1]!]!; return ok(id); }
+    if (cmd === 'commit-tree') { const id = `rec-${Object.keys(objects).length}`; objects[id] = objects[rest[0]!]!; return ok(id); }
+    if (cmd === 'show' && rest[0]!.endsWith(':stable.json')) { const body = objects[rest[0]!.replace(/:stable\.json$/, '')]; return body === undefined ? fail : ok(body); }
+    if (cmd === 'rev-parse' && rest.at(-1) === 'refs/remotes/origin/stable-record^{commit}') return record.head ? ok(record.head) : fail;
     if (cmd === 'rev-parse') {
       const spec = rest.at(-1)!;
       const m = /^(.*?)(\^\{(commit|tree)\})?$/.exec(spec)!;
@@ -94,7 +107,12 @@ function world(w: World) {
       const a = commitOf(rest[1]!); const b = commitOf(rest[2]!);
       return a !== null && b !== null && a <= b ? ok() : fail;
     }
-    if (cmd === 'push') { pushes.push(rest.join(' ')); return ok(); }
+    if (cmd === 'push') {
+      pushes.push(rest.join(' '));
+      const head = rest.find(a => a.endsWith(':refs/heads/stable-record'));
+      if (head) record.head = head.split(':')[0];
+      return ok();
+    }
     if (cmd === 'fetch') return ok();
     return fail;
   };
@@ -127,7 +145,7 @@ function world(w: World) {
     async ghPost(path, body) { posts.push({ path, body }); },
     async scoreboards(id) { return runs.find(r => r.id === id)?.boards ?? CLEAN; },
   };
-  return { deps, posts, pushes, api, logs, tags };
+  return { deps, posts, pushes, api, logs, tags, record: () => (record.head ? objects[record.head] : undefined) };
 }
 
 const soak = (id: number, commit: number, over: Partial<SoakRunRow> & { boards?: Scoreboard[] } = {}) =>
@@ -232,6 +250,16 @@ describe('daily: important fixes', () => {
     expect(w.pushes).toHaveLength(1);
   });
 
+  test('a scheduled promotion writes stable.json in the same atomic push as the tags, so stable clients read it', async () => {
+    const w = world(base({ importantPrs: [{ number: 30, merge: 3 }], runs: [soak(9, 3)] }));
+    const r = await daily(w.deps);
+    expect(r.action).toBe('promoted');
+    expect(w.pushes).toHaveLength(1);
+    expect(w.pushes[0]).toMatch(/^--atomic .*--force-with-lease=refs\/heads\/stable-record:rec-published origin .*refs\/tags\/stable:refs\/tags\/stable rec-\d+:refs\/heads\/stable-record$/);
+    expect(parseStableRecord(w.record()!)).toMatchObject({ ok: true, record: { version: '1.0.3', commit: sha(3), tree: tree(3), soak_run: `https://github.com/${REPO}/actions/runs/9`, previous: '1.0.1', rollback: false, known_bad: [] } });
+    expect(JSON.parse(w.record()!)).toMatchObject({ promoted_by: 'schedule (.github/workflows/stable-daily.yml)' });
+  });
+
   test('a soaked release without the fix is not promoted on the important path; the newest release gets one soak instead', async () => {
     const w = world(base({ importantPrs: [{ number: 30, merge: 3 }], runs: [soak(8, 2)] }));
     const r = await daily(w.deps);
@@ -324,6 +352,71 @@ describe('daily: weekly floor', () => {
   test('never moves stable backward: only releases newer than stable are candidates', async () => {
     const w = world(base({ stable: { ...old, version: '1.0.4', commit: 4, message: stableMessage('1.0.4', '2026-11-02T05:17:00Z') }, runs: [soak(9, 3)] }));
     expect((await daily(w.deps)).action).toBe('none');
+  });
+});
+
+describe('daily: stable.json backfill (GBRA-346)', () => {
+  const SOAK_7 = `https://github.com/${REPO}/actions/runs/7`;
+  const tagged = (version: string, commit: number, rollback = false) => renderTagMessage({
+    version, commit: sha(commit), tree: tree(commit), soakRun: SOAK_7, scoreboard: SOAK_7, promotedBy: 'alice-example',
+    promotedAt: '2026-11-08T05:17:00Z', previous: null, rollback, reason: rollback ? 'sync regression' : '',
+  });
+  const unrecorded = (over: Partial<World> = {}) => base({ stable: { version: '1.0.1', commit: 1, message: tagged('1.0.1', 1) }, runs: [soak(7, 1)], published: null, ...over });
+
+  test('a scheduled run writes the missing record for the current stable from its tag message, moving no tag, and stops', async () => {
+    const w = world(unrecorded({ importantPrs: [{ number: 30, merge: 3 }], runs: [soak(7, 1), soak(9, 3)] }));
+    const r = await daily(w.deps);
+    expect(r).toMatchObject({ action: 'backfilled', why: 'stable.json is not published, not stable v1.0.1' });
+    expect(w.pushes).toHaveLength(1);
+    expect(w.pushes[0]).toBe('--atomic --force-with-lease=refs/tags/stable:tagobj-stable --force-with-lease=refs/heads/stable-record: origin refs/tags/stable:refs/tags/stable ' + w.pushes[0]!.split(' ').at(-1));
+    expect(w.pushes[0]!.split(' ').at(-1)).toMatch(/^rec-.*:refs.heads.stable-record$/);
+    expect(parseStableRecord(w.record()!)).toMatchObject({ ok: true, record: { version: '1.0.1', commit: sha(1), tree: tree(1), soak_run: SOAK_7, previous: null, known_bad: [] } });
+    expect(w.tags.stable!.message).toBe(tagged('1.0.1', 1));
+    expect(w.api.some(a => a.startsWith('search/issues'))).toBe(false);
+
+    const stale = world(unrecorded({ published: JSON.stringify({ schema: 1, version: '1.0.0', commit: sha(0), known_bad: ['0.9.0'] }) }));
+    expect((await daily(stale.deps)).why).toBe('stable.json names v1.0.0, not stable v1.0.1');
+    expect(JSON.parse(stale.record()!)).toMatchObject({ version: '1.0.1', commit: sha(1), known_bad: ['0.9.0'] });
+    expect(stale.pushes[0]).toContain('--force-with-lease=refs/heads/stable-record:rec-published');
+  });
+
+  test('a dry run reports the backfill and writes nothing', async () => {
+    const w = world(unrecorded({ dryRun: true }));
+    expect(await daily(w.deps)).toMatchObject({ action: 'dry_run', would: 'backfill the record for v1.0.1' });
+    expect(w.pushes).toEqual([]);
+    expect(w.posts).toEqual([]);
+  });
+
+  test('a record that already names stable is a no-op, and the run goes on to the reason check', async () => {
+    const quiet = world(base({ runs: [soak(9, 4)] }));
+    expect((await daily(quiet.deps)).action).toBe('none');
+    expect(quiet.api.some(a => a.startsWith('search/issues'))).toBe(true);
+    expect(quiet.pushes).toEqual([]);
+    const important = world(base({ importantPrs: [{ number: 30, merge: 3 }], runs: [soak(9, 3)] }));
+    expect((await daily(important.deps)).action).toBe('promoted');
+  });
+
+  test('the kill switch and a rollback pause both win over the backfill; a tag message with no soak run refuses', async () => {
+    const off = world(unrecorded({ autoPromote: 'off' }));
+    expect((await daily(off.deps)).action).toBe('off');
+    const paused = world(unrecorded({ stable: { version: '1.0.1', commit: 1, message: tagged('1.0.1', 1, true) } }));
+    expect((await daily(paused.deps)).action).toBe('paused');
+    expect([...off.pushes, ...paused.pushes]).toEqual([]);
+    const bare = world(unrecorded({ stable: { version: '1.0.1', commit: 1, message: stableMessage('1.0.1', '2026-11-08T05:17:00Z') } }));
+    const error = await daily(bare.deps).then(() => null, e => e);
+    expect(error).toBeInstanceOf(Refusal);
+    expect((error as Error).message).toContain('names no soak_run, so its stable.json cannot be written from it');
+    expect(bare.pushes).toEqual([]);
+  });
+
+  test('a maintainer dispatch with dry_run=false backfills; anyone else is refused by the role check', async () => {
+    const maintainer = world(unrecorded({ scheduled: false }));
+    const ghApi = maintainer.deps.ghApi;
+    maintainer.deps.ghApi = async path => (path.endsWith('/permission') ? { permission: 'write', role_name: 'maintain' } : ghApi(path));
+    expect((await daily(maintainer.deps)).action).toBe('backfilled');
+    const other = world(unrecorded({ scheduled: false }));
+    await expect(daily(other.deps)).rejects.toThrow(/has the none role/);
+    expect(other.pushes).toEqual([]);
   });
 });
 

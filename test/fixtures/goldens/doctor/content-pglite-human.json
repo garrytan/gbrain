@@ -36,7 +36,7 @@
       "  [OK] connectors: No chat connectors configured (optional).",
       "  [OK] dream_paid_loop: No dream key died 3+ times in 24h",
       "  [INFO] minions_migration: 5 setup migration(s) not run yet on this new brain (pending_fresh_install: 0.11.0, 0.14.0, 0.22.4, 0.28.0, 0.53.0). Expected after gbrain init, not a failed upgrade.",
-      "  [OK] self_upgrade_health: mode=notify",
+      "  [OK] self_upgrade_health: mode=notify; channel=stable (config)",
       "  [OK] bun_runtime: Bun <bun-version> (minimum 1.4.4)",
       "  [OK] nightly_quality_probe_health: disabled (opt-in). Enable with: gbrain config set autopilot.nightly_quality_probe.enabled true",
       "  [OK] extract_health: no extractions in last 7 days",
