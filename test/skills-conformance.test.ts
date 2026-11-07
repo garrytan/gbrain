@@ -99,6 +99,17 @@ describe("skills conformance", () => {
     });
   }
 
+  test("daily-task-manager page tool calls name the slug ops/tasks", () => {
+    // #7932: the page ops look slugs up literally, so `get_page("ops/tasks.md")`
+    // misses the task page `ops/tasks` (file `ops/tasks.md` on disk).
+    const content = readFileSync(join(SKILLS_DIR, "daily-task-manager", "SKILL.md"), "utf-8");
+    const slugs = [
+      ...content.matchAll(/\b(?:get_page|put_page|edit_page|append_page|delete_page)\(\s*["'`]([^"'`]+)["'`]/g),
+    ].map((m) => m[1]);
+    expect(slugs.length).toBeGreaterThan(0);
+    expect(new Set(slugs)).toEqual(new Set(["ops/tasks"]));
+  });
+
   test("RESOLVER.md has no generator placeholder Uncategorized section", () => {
     const resolver = readFileSync(join(SKILLS_DIR, "RESOLVER.md"), "utf-8");
     expect(resolver).not.toMatch(/^## Uncategorized\s*$/m);

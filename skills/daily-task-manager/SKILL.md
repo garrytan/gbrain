@@ -25,7 +25,7 @@ upstream: daily-task-manager@fc834ee
 ## Contract
 
 This skill guarantees:
-- Tasks stored as a brain page (`ops/tasks.md`) with structured format and a stable `id` per task
+- Tasks stored as a brain page (slug `ops/tasks`; its file on disk is `ops/tasks.md`) with structured format and a stable `id` per task
 - Task lifecycle: add → in-progress → complete | defer | remove
 - Priority levels: P0 (urgent), P1 (today), P2 (this week), P3 (backlog)
 - Completed tasks archived with completion date; deferred tasks carry a target date + reason
@@ -37,14 +37,14 @@ This skill guarantees:
 After every action, report a structured result so callers (including sub-agents) can chain reliably:
 
 ```
-{action, task_id, status: ok|not_found|ambiguous|needs_confirmation, priority, date, page: "ops/tasks.md", saved: true|false}
+{action, task_id, status: ok|not_found|ambiguous|needs_confirmation, priority, date, page: "ops/tasks", saved: true|false}
 ```
 
 For `review`, return the grouped active-task list instead of a single task_id. When invoked with the trigger "task list json", return a JSON array of task objects `{id, description, priority, due, status}` instead of markdown.
 
 ## Tool Interface
 
-Use ONLY the declared tools. `get_page("ops/tasks.md")` to read, `put_page("ops/tasks.md", …)` to write, `add_timeline_entry` for the audit trail, `search` for cross-referencing. Do not shell out to `gbrain` CLI verbs from this skill; the tools are the interface. (When the user runs this manually outside an agent, the CLI equivalents are `gbrain get ops/tasks` / `gbrain put ops/tasks` — equivalents only, not the skill's interface.)
+Use ONLY the declared tools. `get_page("ops/tasks")` to read, `put_page("ops/tasks", …)` to write, `add_timeline_entry` for the audit trail, `search` for cross-referencing. Do not shell out to `gbrain` CLI verbs from this skill; the tools are the interface. (When the user runs this manually outside an agent, the CLI equivalents are `gbrain get ops/tasks` / `gbrain put ops/tasks` — equivalents only, not the skill's interface.)
 
 ## Action Routing
 
@@ -57,7 +57,7 @@ Map user intent deterministically before touching state:
 
 ## Phases
 
-1. **Load.** `get_page("ops/tasks.md")`. **First run:** if the page does not exist, create it from the Output Format template, then proceed.
+1. **Load.** `get_page("ops/tasks")`. **First run:** if the page does not exist, create it from the Output Format template, then proceed.
 2. **Validate.** Determine the action via Action Routing. If required fields are missing (see per-action rules), ask ONE concise clarification before mutating state. Never fabricate priorities, due dates, or defer reasons.
 3. **Identify the target task** (complete/defer/remove): match by `id` when given; otherwise fuzzy-match description against ACTIVE tasks only. Zero matches → return `not_found`, do not mutate. Multiple matches → list candidates with IDs, return `ambiguous`, do not mutate.
 4. **Execute:**
@@ -66,16 +66,16 @@ Map user intent deterministically before touching state:
    - **Defer:** Require a target date/timeframe AND a reason; ask if missing. Move to Deferred preserving original text, ID, and priority unless the user changes them.
    - **Remove:** Destructive — require explicit confirmation unless the user's message already contains it. Prefer suggesting complete or defer.
    - **Review:** Read-only. Never mutates. Active tasks grouped by priority, IDs shown.
-5. **Save.** `put_page("ops/tasks.md")` after any mutation. Diff-mindset: touch only the affected lines; preserve all other content, including sections this skill doesn't recognize.
+5. **Save.** `put_page("ops/tasks")` after any mutation. Diff-mindset: touch only the affected lines; preserve all other content, including sections this skill doesn't recognize.
 
 ## Edge Cases
 
 - **First run:** page missing → create from template before acting; `status: ok`, note "initialized".
-- **Malformed page:** if `ops/tasks.md` exists but doesn't match the schema, do NOT rewrite it wholesale. Append/edit within it minimally, preserve unknown content verbatim, and flag the malformation in the reply.
+- **Malformed page:** if `ops/tasks` exists but doesn't match the schema, do NOT rewrite it wholesale. Append/edit within it minimally, preserve unknown content verbatim, and flag the malformation in the reply.
 - **Retry/duplicate add:** if an identical description already exists in active tasks, do not add a duplicate — report the existing task ID instead.
 - **Dates:** ISO 8601 (`YYYY-MM-DD`) everywhere. Compute "today"/"next week" with code/clock, never guess.
-- **Page identifier:** always `ops/tasks.md` (with extension) in tool calls; this is the single canonical location.
-- **Single-writer assumption (concurrency limitation).** The task cycle is read-modify-write: `get_page("ops/tasks.md")` → edit → `put_page("ops/tasks.md")`. `put_page` replaces the WHOLE page and has no compare-and-swap, so two mutations that interleave are last-writer-wins: the second `put_page` overwrites the first's change (a completed task reappears, an added task vanishes), and the `t-YYYYMMDD-NN` minting can hand the same ordinal to two concurrent adds (duplicate IDs). Serialize task edits — never run parallel task mutations (multiple subagents, concurrent chat turns) against `ops/tasks.md`. If a mutation might race, re-`get_page` immediately before `put_page` and re-derive the next free ordinal from the freshly-read page.
+- **Page identifier:** always the slug `ops/tasks` (no `.md` extension) in tool calls; this is the single canonical location. `ops/tasks.md` is a different slug and does not resolve to this page.
+- **Single-writer assumption (concurrency limitation).** The task cycle is read-modify-write: `get_page("ops/tasks")` → edit → `put_page("ops/tasks")`. `put_page` replaces the WHOLE page and has no compare-and-swap, so two mutations that interleave are last-writer-wins: the second `put_page` overwrites the first's change (a completed task reappears, an added task vanishes), and the `t-YYYYMMDD-NN` minting can hand the same ordinal to two concurrent adds (duplicate IDs). Serialize task edits — never run parallel task mutations (multiple subagents, concurrent chat turns) against `ops/tasks`. If a mutation might race, re-`get_page` immediately before `put_page` and re-derive the next free ordinal from the freshly-read page.
 
 ## Output Format
 
@@ -113,7 +113,7 @@ After a mutation: one concise line — action, task ID, priority/status, relevan
 
 Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- The tasks page update returns `revision_conflict`: re-read `ops/tasks.md`, re-apply the one task change, and save; never overwrite the whole list from an old read.
+- The tasks page update returns `revision_conflict`: re-read `ops/tasks`, re-apply the one task change, and save; never overwrite the whole list from an old read.
 - `write_pending` (exit 10): report `saved: false` with the pending receipt and poll `gbrain write-request <request_id>`; do not tell the user the task is recorded yet.
 - Ambiguous or missing task id: return `ambiguous` / `not_found` and ask which task; never mutate the closest match.
 
@@ -129,12 +129,12 @@ Each with its corrective action:
 - Using undeclared tools or CLI verbs → `get_page`/`put_page`/`search`/`add_timeline_entry` only.
 - Fabricating due dates, priorities, or reasons → never invent required fields; ask.
 - Unbounded list growth → when Backlog exceeds ~20 items, prompt a weekly review.
-- Storing tasks outside the brain page → everything lives in `ops/tasks.md` (searchable).
-- Running parallel task mutations against `ops/tasks.md` → last-writer-wins whole-page `put_page` silently loses updates and mints duplicate IDs; serialize edits, re-read immediately before writing.
+- Storing tasks outside the brain page → everything lives in `ops/tasks` (searchable).
+- Running parallel task mutations against `ops/tasks` → last-writer-wins whole-page `put_page` silently loses updates and mints duplicate IDs; serialize edits, re-read immediately before writing.
 
 ## Design Rationale (failure modes this version closes)
 
 - **Interface drift:** an earlier version declared `get_page`/`put_page` as tools but instructed CLI verbs in the body — models picked one at random. The declared tools are now the interface; CLI is relegated to a human-equivalent note.
 - **Unmatchable tasks:** without task IDs, "complete the deploy task" against two similar tasks silently mutated the wrong one. Stable `t-YYYYMMDD-NN` IDs + fail-closed ambiguity handling fix this.
-- **First-run crash:** assuming `ops/tasks.md` exists made a missing page undefined behavior. Create-from-template on first run fixes this.
+- **First-run crash:** assuming `ops/tasks` exists made a missing page undefined behavior. Create-from-template on first run fixes this.
 - **Wholesale overwrite risk:** "write updated task list" invited full-page rewrites that drop concurrent edits. Minimal-diff mandate + preserve-unknown-content rule fix this.
