@@ -9,6 +9,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { CredentialError } from '../src/core/creds/errors.ts';
+import { GOOGLE_SERVICE_SCOPES } from '../src/core/creds/providers/google.ts';
 import { cliRenderContext, renderAction } from '../src/core/agent-output.ts';
 import { CalendarClient, GmailClient, GoogleApiDisabledError, PeopleClient, calendarUnreadableStatus, type FetchImpl } from '../src/core/google/google-clients.ts';
 import { probeGoogleApiAccess, type GoogleIdentityClients } from '../src/core/google/api-access.ts';
@@ -47,6 +48,7 @@ function clientsFor(routes: Routes): { clients: GoogleIdentityClients; calls: st
     const path = new URL(url).pathname;
     if (path.endsWith('/users/me/profile')) return routes.gmail?.() ?? json({ emailAddress: OWNER, historyId: '1' });
     if (path.endsWith('/calendars/primary')) return routes.calendar?.() ?? json({ id: OWNER });
+    if (path.endsWith('/people/me/connections')) return routes.people?.() ?? json({ connections: [] });
     if (path.endsWith('/people/me')) return routes.people?.() ?? json({ emailAddresses: [{ value: OWNER, metadata: { primary: true } }] });
     if (path.endsWith('/userinfo')) return routes.userinfo?.() ?? json({ email: OWNER });
     throw new Error(`unexpected route ${url}`);
@@ -123,6 +125,39 @@ describe('#7073 resolveGoogleAccount falls back to userinfo', () => {
 });
 
 describe('#7073 one probe names every disabled API and missing scope', () => {
+  // Protect Contacts status with the existing grant: the old profile probe gets
+  // a scope refusal. Earlier fixtures allowed profile reads unconditionally.
+  // Use the existing injected fetch seam; include empty and populated contacts.
+  test('contacts readonly access succeeds without profile access and never identifies the account from a contact', async () => {
+    for (const connections of [[], [{ emailAddresses: [{ value: OWNER, metadata: { primary: true } }] }]]) {
+      const calls: URL[] = [];
+      const fetchImpl: FetchImpl = async (url) => {
+        const request = new URL(url);
+        calls.push(request);
+        if (request.pathname.endsWith('/people/me')) return insufficientScopes();
+        if (request.pathname.endsWith('/people/me/connections')) return json({ connections });
+        throw new Error('unexpected probe request');
+      };
+      let userinfoCalls = 0;
+      const { clients } = clientsFor({});
+      const report = await probeGoogleApiAccess({
+        ...clients,
+        people: new PeopleClient(tokens, fetchImpl, () => {}, CLIENT_ID),
+        userinfo: async () => { userinfoCalls++; return undefined; },
+      }, '', ['contacts'], [GOOGLE_SERVICE_SCOPES.contacts]);
+      expect(report.services).toEqual({ contacts: { status: 'ok' } });
+      expect(report.problems).toEqual([]);
+      expect(report.fix).toBeUndefined();
+      expect(report.resolved_account).toBeNull();
+      expect(report.resolved_via).toBeNull();
+      expect(userinfoCalls).toBe(1);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].pathname.endsWith('/people/me/connections')).toBe(true);
+      expect(calls[0].searchParams.get('pageSize')).toBe('1');
+      expect(calls[0].searchParams.get('personFields')).toBe('emailAddresses');
+    }
+  });
+
   test('Gmail and People disabled plus an ungranted Calendar scope: three problems, one ask_user fix with every link', async () => {
     const { clients, calls } = clientsFor({
       gmail: () => serviceDisabled('gmail.googleapis.com', 'Gmail API'),
