@@ -6,7 +6,7 @@ import { flushDirectory, flushFile } from '../fs-durable.ts';
 import type { Action } from '../agent-output.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { durableSsrfFlags, GIT_ENV, GIT_SSRF_SUBCOMMAND_FLAGS, parseRemoteUrl } from '../git-remote.ts';
+import { durableSsrfFlags, GIT_ENV, GIT_SSRF_SUBCOMMAND_FLAGS, LFS_OFF_CLONE_CONFIG, parseRemoteUrl } from '../git-remote.ts';
 import { persistenceHome } from './identity.ts';
 import { gitChildEnv } from '../git-env.ts';
 
@@ -62,8 +62,8 @@ export function flushTopologyTree(root:string):void{
   visit(root);
 }
 
-/** Reserved staging, no DB checkout; kill only this owned Git child on overflow. */
-export async function cloneTopologyCheckout(url:string,destination:string,maxBytes:number,timeoutMs=600_000):Promise<void>{
+/** Reserved staging, no DB checkout; kill only this owned Git child on overflow. skipLfs: the clone keeps git-lfs downloads and hooks off, as cloneRepo does. */
+export async function cloneTopologyCheckout(url:string,destination:string,maxBytes:number,{skipLfs=false,timeoutMs=600_000}:{skipLfs?:boolean;timeoutMs?:number}={}):Promise<void>{
   parseRemoteUrl(url);
   if(!existsSync(destination)||!lstatSync(destination).isDirectory()||lstatSync(destination).isSymbolicLink()||readdirSync(destination).length)
     throw opError('recovery_required','The reserved clone staging directory must remain empty before cloning.',
@@ -71,7 +71,7 @@ export async function cloneTopologyCheckout(url:string,destination:string,maxByt
       {fix:recoveryFix('Shows pending lifecycle requests and their recovery records, read-only.')});
   const base=join(persistenceHome(),'empty-hooks');mkdirSync(base,{recursive:true,mode:0o700});
   const hooks=mkdtempSync(join(base,'clone-'));
-  const child=spawn('git',[...durableSsrfFlags(),'-c',`core.hooksPath=${hooks}`, 'clone',...GIT_SSRF_SUBCOMMAND_FLAGS,'--depth=1','--',url,destination],
+  const child=spawn('git',[...durableSsrfFlags(),'-c',`core.hooksPath=${hooks}`, 'clone',...GIT_SSRF_SUBCOMMAND_FLAGS,...(skipLfs?LFS_OFF_CLONE_CONFIG:[]),'--depth=1','--',url,destination],
     {stdio:['ignore','ignore','ignore'],detached:process.platform!=='win32',env:gitChildEnv({ ...GIT_ENV })});
   let failure:unknown,check:Promise<void>|undefined,stopping:Promise<void>|undefined,abandon=()=>{};
   const stop=(error:unknown)=>{
