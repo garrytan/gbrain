@@ -10,11 +10,11 @@
  * A handle is a hyphenated slug-leaf token with a letter in it (`dan-example`,
  * `acme-example-2`), bare or quoted on its own; each quoted handle of an OR is
  * resolved on its own. A query with a negation (`-dan-example`, `-draft`) or
- * a longer quoted phrase resolves no handle, so a handle never returns a page
- * the query excludes or a phrase it does not hold, and a strict keyword match
- * (`match: "keyword"` and its count) resolves handles only when every term is
- * one (a standalone handle or an OR list of them), so it keeps the AND of the
- * query's other words. Resolution is an exact match of the
+ * a longer quoted phrase in the same OR alternative resolves no handle, so a
+ * handle never returns a page the query excludes or a phrase it does not hold.
+ * A strict keyword match (`match: "keyword"` and its count) resolves handles
+ * only from alternatives whose every term is a handle, so it keeps the AND of
+ * that alternative's other words. Resolution is an exact match of the
  * slug's basename (the part after the last `/`, the whole slug for a root
  * page), served by idx_pages_slug_basename like `whois`. The match is a second
  * arm of the keyword statement (search/keyword-statement.ts) under the same
@@ -32,19 +32,35 @@ export const MAX_SLUG_HANDLES = 16;
 const isHandle = (token: string): boolean => token.length <= 128 && HANDLE_RE.test(token) && /[a-z]/.test(token);
 
 /**
- * The query's slug handles, lowercased, or null when it has none. With `standalone`, only when every term is a handle
- * or OR (the strict keyword match). A negation or a quoted phrase that is not a handle resolves none.
+ * The query's slug handles, lowercased, or null when it has none. With `standalone`, only from OR alternatives whose
+ * every term is a handle (the strict keyword match). A non-handle phrase constrains its own alternative; a negation
+ * still disables resolution for the whole query.
  */
 export function slugHandles(query: string, standalone = false): string[] | null {
   const handles = new Set<string>();
-  for (const m of query.normalize('NFKC').matchAll(/"([^"]*)"|(\S+)/g)) {
+  let alternative = new Set<string>();
+  let constrained = false;
+  const finishAlternative = () => {
+    if (!constrained) for (const handle of alternative) {
+      if (handles.size < MAX_SLUG_HANDLES) handles.add(handle);
+    }
+    alternative = new Set();
+    constrained = false;
+  };
+  // Like websearch, an opening quote runs to the next quote or end of input;
+  // an OR inside that phrase must never become a basename admission arm.
+  // Recognize syntax before compatibility normalization: fullwidth OR is a
+  // text term to SQL, not an alternative separator.
+  for (const m of query.matchAll(/"([^"]*)(?:"|$)|([^\s"]+)/g)) {
     const bare = m[2];
     if (bare?.startsWith('-')) return null;
-    const token = (bare === undefined ? m[1]!.trim() : bare.replace(EDGE_PUNCTUATION, '')).toLowerCase();
+    if (bare?.toLowerCase() === 'or') { finishAlternative(); continue; }
+    const token = (bare === undefined ? m[1]!.trim() : bare.replace(EDGE_PUNCTUATION, '')).normalize('NFKC').toLowerCase();
     if (isHandle(token)) {
-      if (handles.size < MAX_SLUG_HANDLES) handles.add(token);
-    } else if (bare === undefined || (standalone && token !== 'or')) return null;
+      if (alternative.size < MAX_SLUG_HANDLES) alternative.add(token);
+    } else if (bare === undefined || standalone) constrained = true;
   }
+  finishAlternative();
   return handles.size ? [...handles] : null;
 }
 

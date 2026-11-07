@@ -6,6 +6,13 @@ import { buildKeywordCountStatement, buildKeywordPagesStatement } from '../../sr
 import type { SearchResult } from '../../src/core/types.ts';
 
 describe('slugHandles', () => {
+  test('an OR alternative is not an AND constraint on a handle (#8618)', () => {
+    for (const query of ['"dan-example" OR "Dan Example"', 'dan-example OR quokka', '"missing phrase" OR dan-example']) {
+      expect(slugHandles(query, true)).toEqual(['dan-example']);
+      expect(slugHandles(query)).toEqual(['dan-example']);
+    }
+  });
+
   test('quoted handles of an OR are each resolved, bare ones too, lowercased', () => {
     expect(slugHandles('"dan-example" OR "erin-example"')).toEqual(['dan-example', 'erin-example']);
     expect(slugHandles('what did Dan-Example say about acme-example-2?')).toEqual(['dan-example', 'acme-example-2']);
@@ -36,6 +43,41 @@ describe('slugHandles', () => {
   test('at most MAX_SLUG_HANDLES handles', () => {
     const q = Array.from({ length: 40 }, (_, i) => 'p-' + i + 'x').join(' ');
     expect(slugHandles(q)).toHaveLength(MAX_SLUG_HANDLES);
+    expect(slugHandles(Array(20).fill('dan-example').join(' ') + ' erin-example')).toEqual(['dan-example', 'erin-example']);
+    expect(slugHandles(q.replaceAll(' ', ' OR '), true)).toHaveLength(MAX_SLUG_HANDLES);
+  });
+
+  test('AND constraints stay with their alternative; quoted OR is not an operator', () => {
+    for (const strict of [false, true]) {
+      expect(slugHandles('dan-example "missing phrase" OR erin-example', strict)).toEqual(['erin-example']);
+      expect(slugHandles('dan-example OR erin-example "missing phrase"', strict)).toEqual(['dan-example']);
+      expect(slugHandles('dan-example "OR" quokka', strict)).toBeNull();
+      expect(slugHandles('dan-example OR "missing -phrase"', strict)).toEqual(['dan-example']);
+      expect(slugHandles('dan-example OR quokka -draft', strict)).toBeNull();
+      expect(slugHandles('dan-example OR -"missing phrase"', strict)).toBeNull();
+    }
+    expect(slugHandles('dan-example quokka OR erin-example', true)).toEqual(['erin-example']);
+    expect(slugHandles('dan-example OR erin-example quokka', true)).toEqual(['dan-example']);
+    expect(slugHandles('dan-example or "Dan Example"', true)).toEqual(['dan-example']);
+    expect(slugHandles('dan-example OR dan-example OR erin-example', true)).toEqual(['dan-example', 'erin-example']);
+  });
+
+  test('an unclosed quote keeps OR inside the phrase; quote boundaries separate tokens', () => {
+    for (const strict of [false, true]) {
+      expect(slugHandles('"missing phrase OR dan-example', strict)).toBeNull();
+      expect(slugHandles('"missing phrase OR dan-example OR erin-example', strict)).toBeNull();
+      expect(slugHandles('dan-example OR"missing phrase"', strict)).toEqual(['dan-example']);
+      expect(slugHandles('"dan-example"OR"missing phrase"', strict)).toEqual(['dan-example']);
+      expect(slugHandles('dan-example"missing phrase"', strict)).toBeNull();
+    }
+  });
+});
+
+describe('raw websearch operators', () => {
+  test('compatibility normalization does not turn text into an OR operator', () => {
+    expect(slugHandles('dan-example ＯＲ quokka', true)).toBeNull();
+    expect(slugHandles('dan-example ＯＲ "missing phrase"')).toBeNull();
+    expect(slugHandles('"dan-example" OR "Ｄａｎ Ｅｘａｍｐｌｅ"', true)).toEqual(['dan-example']);
   });
 });
 
