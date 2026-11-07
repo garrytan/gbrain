@@ -627,9 +627,12 @@ async function reclassifyByOrigin(gitRoot: string, tips: Array<string | null | u
   return true;
 }
 
-/** GBRA-133: the deleted-side `file_drift` holds whose file is gone (`gone`, on the Git path); the stamp releases those whose page is no longer live. */
+/**
+ * GBRA-133: the deleted-side `file_drift` holds whose file is gone (`gone`, on the Git path); the stamp releases those whose page is no longer live.
+ * #8751: so does a `concurrent_write` hold, whose page and file both ended deleted: the two versions agree and nothing is overwritten.
+ */
 function deletionCandidates(holds: readonly GitHoldRecord[], gone: (path: string) => boolean, toGit: (path: string) => string): DeletionCandidate[] {
-  return holds.filter(hold => hold.code === 'file_drift' && fileDriftSide(hold.meta) === 'deleted' && gone(toGit(hold.path)))
+  return holds.filter(hold => (hold.code === 'concurrent_write' || hold.code === 'file_drift' && fileDriftSide(hold.meta) === 'deleted') && gone(toGit(hold.path)))
     .map(hold => ({ path: hold.path, page_id: hold.page_id ?? null, slug: hold.slug ?? null }));
 }
 
