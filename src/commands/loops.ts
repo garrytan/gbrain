@@ -96,6 +96,8 @@ interface WaitingResult {
   withheld_noise?: { loop_count: number; sender_count: number; senders: Array<{ email: string; open_loops: number; preview_command: string }> } | null;
   count: number;
   stale: boolean;
+  /** Null when the source census failed: absence and sync ages are unknown. */
+  no_google_sources?: boolean | null;
   sources: Array<{ id: string; last_sync_at: string | null; stale: boolean }>;
   /** Fix wave 4: `partial` when a held Gmail thread falls inside the window (listed in `held`). */
   completeness?: 'complete' | 'partial';
@@ -134,6 +136,15 @@ export async function runWaiting(engine: BrainEngine, args: string[]): Promise<v
 
   if (result.stale && !staleOk) {
     const staleSrc = result.sources.filter((s) => s.stale);
+    if (result.no_google_sources === null) {
+      if (json) process.stdout.write(JSON.stringify({ ok: false, status: 'source_read_failed', stale: true,
+        completeness: 'partial', no_google_sources: null, sources: result.sources,
+        fix: { argv: ['gbrain', 'waiting', '--json'], actor: 'agent', consent: [], requires_exclusive: false,
+          why: 'Retry the source freshness read; source presence and sync ages are unknown.' } }, null, 2) + '\n');
+      else process.stderr.write('Refusing to answer: source freshness could not be read. Source presence, sync ages and held-item coverage are unknown. Retry gbrain waiting; this is not a complete inbox assessment.\n');
+      setCliExitVerdict(1);
+      return;
+    }
     const lines = [
       'Refusing to answer from stale data — every google source is out of date:',
       ...staleSrc.map(

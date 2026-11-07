@@ -342,19 +342,21 @@ function renderNoCounterparty(lines: string[], none: NoCounterpartyLoops | null,
   if (none.loops_omitted > 0) lines.push(`+${none.loops_omitted} more`);
 }
 
-function renderText(groups: CounterpartyGroup[], none: NoCounterpartyLoops | null, stale: boolean, noGoogleSources: boolean,
+function renderText(groups: CounterpartyGroup[], none: NoCounterpartyLoops | null, stale: boolean, noGoogleSources: boolean | null,
   coverage: { completeness: 'complete' | 'partial'; held: HeldItemView[] }, nowMs: number,
   partialStaleSources: string[]): string {
   const lines: string[] = [];
   const { held } = coverage;
-  if (stale) lines.push('⚠ google sources have not synced recently — this may be out of date.');
+  if (noGoogleSources === null) lines.push('⚠ source freshness could not be read — source presence and sync ages are unknown. Retry the read before treating this as a complete answer.');
+  else if (stale) lines.push('⚠ google sources have not synced recently — this may be out of date.');
   else if (partialStaleSources.length > 0) {
     lines.push(
       `⚠ some google sources have not synced recently — this may be out of date: ${partialStaleSources.join(', ')}.`,
     );
   }
   const partial = coverage.completeness === 'partial';
-  const what = held.length ? `${held.length} held item(s) could not be imported:` : 'the held-item state could not be read.';
+  const what = noGoogleSources === null ? 'source freshness could not be read, so held-item coverage is unknown.'
+    : held.length ? `${held.length} held item(s) could not be imported:` : 'the held-item state could not be read.';
   if (partial && groups.length === 0 && !none) {
     lines.push(`No open loops found, but coverage is partial: ${what}`, ...partialLines(held));
     return lines.join('\n');
@@ -484,10 +486,13 @@ const open_loops: Operation = {
       limit: 500,
     });
     const freshness = await googleSourceFreshness(ctx, scope);
-    const noGoogleSources = freshness.sources.length === 0;
+    // A failed census proves neither absence nor complete held-item coverage.
+    const noGoogleSources = freshness.failed ? null : freshness.sources.length === 0;
+    if (freshness.failed) ctx.emitNotice?.({ code: 'loops_source_read_failed', kind: 'degraded',
+      why: 'Source freshness could not be read. Source presence, sync ages and held-item coverage are unknown; this is not a complete inbox assessment. Retry open_loops before relying on an empty answer.' });
     if (!trusted && noGoogleSources && !freshness.failed && loops.length === 0) ctx.emitNotice?.(noGoogleInScopeNotice(scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : [])));
     const partialStaleSources = freshness.stale ? [] : freshness.staleSources;
-    const coverage = await heldCoverage(ctx, freshness.sources, trusted);
+    const coverage = freshness.failed ? { completeness: 'partial' as const, held: [] } : await heldCoverage(ctx, freshness.sources, trusted);
     const deepLinks = trusted ? await deepLinksFor(ctx, loops) : new Map<string, string>();
 
     const truncated = loops.length >= 500;
