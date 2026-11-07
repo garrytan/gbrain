@@ -277,7 +277,7 @@ test/import-write-barrier.test.ts. The mutants below put each one back.
 
 ### Not modelled
 
-The deferred-write cap (`persistence.refresh_barrier_max_deferred`), consumers without the capability, repo-less
+The removed deferred-write cap (`persistence.refresh_barrier_max_deferred`, no longer read since GST-1582), consumers without the capability, repo-less
 sources, `gbrain upgrade --check-downgrade`, edit_page and forget replays, and source lifecycle changes, each covered
 by test/refresh-write-barrier.test.ts; more than one worktree, page or refresh at a time; older binaries' claims
 (the v292 guard trigger, pinned by its test); effects other than page writes; side effects outside the database.
