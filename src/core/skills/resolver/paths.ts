@@ -47,13 +47,13 @@ export function assertCatalogName(name: unknown): string {
   if (validCatalogName(name)) return name;
   throw new ResolverError('skill_catalog_unknown',
     `Catalog names are 1-64 characters of a-z, 0-9, _ and -, starting with a letter or digit (and not "sessions" or "logs").`,
-    { hint: 'Pass --catalog with a name such as claude-user or openclaw-main.', argv: ['gbrain', 'skills', 'index', 'status', '--json'] });
+    { suggestion: 'Pass --catalog with a name such as claude-user or openclaw-main.', argv: ['gbrain', 'skills', 'index', 'status', '--json'] });
 }
 
 export function catalogDir(home: string, name: string): string {
   const root = skillIndexRoot(home);
   const dir = resolve(root, assertCatalogName(name));
-  if (!dir.startsWith(root + sep)) throw new ResolverError('skill_catalog_unknown', 'The catalog path resolves outside the skill-index directory.', { hint: 'Use a plain catalog name.' });
+  if (!dir.startsWith(root + sep)) throw new ResolverError('skill_catalog_unknown', 'The catalog path resolves outside the skill-index directory.', { suggestion: 'Use a plain catalog name.' });
   return dir;
 }
 

@@ -54,8 +54,8 @@ export interface TurnInput {
   reset_session?: boolean;
 }
 
-export interface Suggestion { id: string; name: string; score: number; hint: string; reason: string; path?: string; catalog: string }
-export interface TurnError { code: string; message: string; fix: { hint: string; command?: string } }
+export interface Suggestion { id: string; name: string; score: number; summary: string; reason: string; path?: string; catalog: string }
+export interface TurnError { code: string; message: string; fix: { suggestion: string; command?: string } }
 export interface TurnOutput {
   schema_version: 1;
   gbrain_version: string;
@@ -117,8 +117,8 @@ export interface ResolveResult {
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const round4 = (x: number) => Math.round(x * 1e4) / 1e4;
 
-function invalid(message: string, hint: string): ResolverError {
-  return new ResolverError('skill_resolve_invalid_input', message, { hint });
+function invalid(message: string, suggestion: string): ResolverError {
+  return new ResolverError('skill_resolve_invalid_input', message, { suggestion });
 }
 
 function capUtf8(s: string, max: number): string {
@@ -159,20 +159,20 @@ interface Loaded { name: string; receipt: BuildReceipt; ix: IndexReader; stale: 
 function defaultCatalogs(home: string): string[] {
   const all = listCatalogs(home);
   if (all.length === 1) return all;
-  if (all.length === 0) throw new ResolverError('skill_index_missing', 'No skill catalog has been built yet.', { hint: 'Build one: gbrain skills index build --catalog <name> --dir <skills dir> (or --bundled, or --from-json <file>).', argv: ['gbrain', 'skills', 'index', 'build', '--help'] });
-  throw new ResolverError('skill_catalog_unknown', `Several catalogs exist (${all.join(', ')}); pick one with --catalog.`, { hint: `Pass --catalog with one of: ${all.join(', ')}.` }, { catalogs: all.join(',') });
+  if (all.length === 0) throw new ResolverError('skill_index_missing', 'No skill catalog has been built yet.', { suggestion: 'Build one: gbrain skills index build --catalog <name> --dir <skills dir> (or --bundled, or --from-json <file>).', argv: ['gbrain', 'skills', 'index', 'build', '--help'] });
+  throw new ResolverError('skill_catalog_unknown', `Several catalogs exist (${all.join(', ')}); pick one with --catalog.`, { suggestion: `Pass --catalog with one of: ${all.join(', ')}.` }, { catalogs: all.join(',') });
 }
 
 function loadCatalog(home: string, name: string, now: number, autoRebuild: boolean): Loaded {
   let receipt = readReceipt(home, name);
   if (!receipt) {
-    if (existsSync(catalogFile(home, name, 'index.bin'))) throw new ResolverError('skill_index_incompatible', `The catalog "${name}" has an index but no readable receipt.`, { hint: 'Rebuild it with gbrain skills index build.' }, { catalog: name });
-    throw new ResolverError('skill_index_missing', `The catalog "${name}" has not been built.`, { hint: `Build it: gbrain skills index build --catalog ${name} --dir <skills dir> (or --bundled, or --from-json <file>).` }, { catalog: name });
+    if (existsSync(catalogFile(home, name, 'index.bin'))) throw new ResolverError('skill_index_incompatible', `The catalog "${name}" has an index but no readable receipt.`, { suggestion: 'Rebuild it with gbrain skills index build.' }, { catalog: name });
+    throw new ResolverError('skill_index_missing', `The catalog "${name}" has not been built.`, { suggestion: `Build it: gbrain skills index build --catalog ${name} --dir <skills dir> (or --bundled, or --from-json <file>).` }, { catalog: name });
   }
-  const fix = receipt.build?.fix_argv ?? undefined;
+  const fix = receipt.build?.rebuild_argv ?? undefined;
   if (receipt.schema_version !== 1 || receipt.ranker?.id !== RANKER_ID || receipt.ranker?.version !== RANKER_VERSION) {
     throw new ResolverError('skill_index_incompatible', `The catalog "${name}" was built by an incompatible gbrain (receipt schema ${receipt.schema_version}, ranker ${receipt.ranker?.id} v${receipt.ranker?.version}).`,
-      fix ? { hint: 'Rebuild it with the command it was built with.', argv: fix } : { hint: 'The adapter that owns this catalog rebuilds it by passing a new snapshot to gbrain skills index build --from-json -.' }, { catalog: name });
+      fix ? { suggestion: 'Rebuild it with the command it was built with.', argv: fix } : { suggestion: 'The adapter that owns this catalog rebuilds it by passing a new snapshot to gbrain skills index build --from-json -.' }, { catalog: name });
   }
   const ix = IndexReader.open(catalogFile(home, name, 'index.bin'), fix);
   let stale: string | null = null;
@@ -228,11 +228,11 @@ export async function resolveSkills(rawInput: TurnInput | unknown, opts: Resolve
   const t0 = performance.now();
   const input = normalizeTurnInput(rawInput);
   let home: string;
-  try { home = opts.home ?? resolverHome(opts.env); } catch (e) { throw new ResolverError('skill_resolver_config_invalid', (e as Error).message, { hint: 'Set GBRAIN_HOME to an absolute path without .. segments, or unset it.' }); }
+  try { home = opts.home ?? resolverHome(opts.env); } catch (e) { throw new ResolverError('skill_resolver_config_invalid', (e as Error).message, { suggestion: 'Set GBRAIN_HOME to an absolute path without .. segments, or unset it.' }); }
   try {
     return await resolveInner(input, opts, home, t0);
   } catch (e) {
-    const err = e instanceof ResolverError ? e : new ResolverError('skill_resolver_internal', 'The skill resolver failed unexpectedly; a scrubbed trace was written under skill-index/logs/.', { hint: 'Run gbrain skills index status and report the trace if it repeats.', argv: ['gbrain', 'skills', 'index', 'status', '--json'] });
+    const err = e instanceof ResolverError ? e : new ResolverError('skill_resolver_internal', 'The skill resolver failed unexpectedly; a scrubbed trace was written under skill-index/logs/.', { suggestion: 'Run gbrain skills index status and report the trace if it repeats.', argv: ['gbrain', 'skills', 'index', 'status', '--json'] });
     if (!(e instanceof ResolverError)) logUnexpected(home, e);
     if (!opts.failOpen || err.usage) throw err;
     const output = errorTurnOutput(err, { shadow: input.shadow, catalog: opts.catalogs?.length === 1 ? opts.catalogs[0]! : null });
@@ -244,7 +244,7 @@ export async function resolveSkills(rawInput: TurnInput | unknown, opts: Resolve
 async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: ResolveOptions, home: string, t0: number): Promise<ResolveResult> {
   const now = (opts.now ?? Date.now)();
   const check = opts.deadlineMs === undefined ? () => {} : () => {
-    if (performance.now() - t0 > opts.deadlineMs!) throw new ResolverError('skill_resolve_timeout', `The resolver ran past its ${opts.deadlineMs} ms deadline; nothing was committed.`, { hint: 'The turn proceeds without a block; check the index size with gbrain skills index status.' });
+    if (performance.now() - t0 > opts.deadlineMs!) throw new ResolverError('skill_resolve_timeout', `The resolver ran past its ${opts.deadlineMs} ms deadline; nothing was committed.`, { suggestion: 'The turn proceeds without a block; check the index size with gbrain skills index status.' });
   };
   const settings = readResolverSettings(home, opts.env);
   const budget = opts.sessionTokenBudget === undefined ? settings.sessionTokenBudget : validateSessionTokenBudget(opts.sessionTokenBudget, 'sessionTokenBudget');
@@ -259,7 +259,7 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
     const variant = loaded.map(l => l.receipt.ranker.variant).join('+');
     if (input.expected_catalog_hash !== undefined && input.expected_catalog_hash !== catalogHash) {
       throw new ResolverError('skill_catalog_mismatch', `The catalog "${catalog}" was built from a different skill list than the caller expects (expected ${input.expected_catalog_hash.slice(0, 12)}, index has ${catalogHash.slice(0, 12)}).`,
-        { hint: 'Rebuild the catalog from the current skill list (an adapter passes its new snapshot to gbrain skills index build --from-json -), then retry.' }, { catalog });
+        { suggestion: 'Rebuild the catalog from the current skill list (an adapter passes its new snapshot to gbrain skills index build --from-json -), then retry.' }, { catalog });
     }
     const oldest = Math.min(...loaded.map(l => Date.parse(l.receipt.build.built_at)));
     const meta = { timing_ms: 0, index_age_s: Number.isFinite(oldest) ? Math.max(0, Math.floor((now - oldest) / 1000)) : null, index_stale: loaded.some(l => l.stale !== null) };
@@ -333,7 +333,7 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
     const remaining = Math.max(0, budget - state.spent);
     const lines: BlockLine[] = picked.map(x => {
       const m = metaOf(x.c, x.doc);
-      return { id: m.id, name: m.name, hint: m.hint, ...(m.path ? { path: m.path } : {}), namesOnly: Boolean(opts.namesOnly) || loaded[x.c]!.receipt.catalog.hints === 'names_only' };
+      return { id: m.id, name: m.name, summary: m.summary, ...(m.path ? { path: m.path } : {}), namesOnly: Boolean(opts.namesOnly) || loaded[x.c]!.receipt.catalog.hints === 'names_only' };
     });
     const r = renderBlock(lines, { harness: input.harness, loadHint: opts.loadHint, cap: Math.min(BLOCK_TOKEN_CAP, remaining) });
     const kept = picked.slice(0, r.kept);
@@ -341,7 +341,7 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
     const suggestions: Suggestion[] = kept.map(x => {
       const m = metaOf(x.c, x.doc);
       const namesOnly = lines.find(l => l.id === m.id)!.namesOnly;
-      return { id: m.id, name: m.name, score: round4(x.score), hint: namesOnly ? '' : m.hint, reason: x.explicit ? `named in the turn; ${reasonText(ranks[x.c]!.matchedFields(x.doc).fields)}` : reasonText(ranks[x.c]!.matchedFields(x.doc).fields), ...(m.path ? { path: m.path } : {}), catalog: loaded[x.c]!.name };
+      return { id: m.id, name: m.name, score: round4(x.score), summary: namesOnly ? '' : m.summary, reason: x.explicit ? `named in the turn; ${reasonText(ranks[x.c]!.matchedFields(x.doc).fields)}` : reasonText(ranks[x.c]!.matchedFields(x.doc).fields), ...(m.path ? { path: m.path } : {}), catalog: loaded[x.c]!.name };
     });
     const out: TurnOutput = { ...base, budget_exhausted: exhausted, suggestions, block: r.block, block_tokens: r.tokens, deduped };
     let explain: Explain | undefined;

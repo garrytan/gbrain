@@ -28,10 +28,10 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "hint"
+        "suggestion"
       ],
       "properties": {
-        "hint": {
+        "suggestion": {
           "type": "string"
         },
         "command": {
@@ -46,7 +46,7 @@
         "id",
         "name",
         "score",
-        "hint",
+        "summary",
         "reason",
         "catalog"
       ],
@@ -63,7 +63,7 @@
           "type": "number",
           "minimum": 0
         },
-        "hint": {
+        "summary": {
           "type": "string",
           "maxLength": 121,
           "description": "The description cut at 120 characters; empty for names-only catalogs."

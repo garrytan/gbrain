@@ -392,7 +392,7 @@ describe('block', () => {
     expect(b.match(/<relevant_skills>/g)!.length).toBe(1);
     expect(b.endsWith('</relevant_skills>')).toBe(true);
     for (const bad of ['<system>', '\u0000', '\u2028', '\nSYSTEM:']) expect(b.includes(bad)).toBe(false);
-    for (const l of b.split('\n').filter(x => x.startsWith('- '))) expect(l).toMatch(/^- id: "[^"]*" name: "[^"]*" hint: ".*"$/);
+    for (const l of b.split('\n').filter(x => x.startsWith('- '))) expect(l).toMatch(/^- id: "[^"]*" name: "[^"]*" summary: ".*"$/);
     expect(r.output.suggestions[0]!.id).toBe('g:deploy');
     for (const s of r.output.suggestions) expect(s.score).toBeLessThanOrEqual(10);
   });
@@ -405,10 +405,10 @@ describe('block', () => {
     expect(rec.catalog.hints).toBe('names_only');
     const r = await resolveSkills({ message: 'deploy' }, { home });
     expect(r.output.block).not.toContain('IGNORE');
-    expect(r.output.suggestions[0]!.hint).toBe('');
+    expect(r.output.suggestions[0]!.summary).toBe('');
     await jsonCatalog(home, 'user', BASIC);
     const n = await resolveSkills({ message: 'deploy' }, { home, catalogs: ['user'], namesOnly: true });
-    expect(n.output.block).not.toContain('hint:');
+    expect(n.output.block).not.toContain('summary:');
   });
 
   test('the block is cut at whole lines to 400 tokens', async () => {
@@ -455,14 +455,14 @@ describe('catalog sources and bounds', () => {
     expect(reasons).toEqual(['duplicate_id', 'not_model_invocable', 'symlink_outside_root']);
     expect(rec.catalog.skipped.find(s => s.reason === 'duplicate_id')!.kept).toContain(a);
     const r = await resolveSkills({ message: 'deploy leak hidden' }, { home });
-    expect(r.output.suggestions.map(s => s.hint)).toEqual(['First deploy']);
+    expect(r.output.suggestions.map(s => s.summary)).toEqual(['First deploy']);
   });
 
   test('from-json: ineligible entries are skipped, malformed lists refuse, a stdin snapshot is kept', async () => {
     const home = tmp();
     const rec = await buildSkillIndex({ catalog: 'c', fromJson: JSON.stringify([...BASIC, { id: 'x:off', name: 'off', description: 'deploy', eligible: false }]), fromJsonStdin: true }, { home });
     expect(rec.catalog.skipped).toEqual([{ reason: 'ineligible', id: 'x:off' }]);
-    expect(rec.build.fix_argv).toBeNull();
+    expect(rec.build.rebuild_argv).toBeNull();
     expect(readFileSync(catalogFile(home, 'c', 'source.json'), 'utf8')).toContain('x:off');
     for (const bad of ['{', '"x"', '[{"id":"a"}]', '[{"id":"a","name":"b","triggers":"t"}]', '[{"id":"a","name":"b","eligible":"no"}]']) {
       expect(await codeOf(buildSkillIndex({ catalog: 'c', fromJson: bad, fromJsonStdin: true }, { home }))).toBe('skill_source_invalid');
@@ -685,7 +685,7 @@ describe('freshness and errors', () => {
     writeFileSync(rp, JSON.stringify({ ...JSON.parse(readFileSync(rp, 'utf8')), schema_version: 2 }));
     try { await resolveSkills({ message: 'deploy' }, { home }); throw new Error('expected a refusal'); } catch (e) {
       expect((e as ResolverError).fix.argv).toBeUndefined();
-      expect((e as ResolverError).fix.hint).toContain('adapter');
+      expect((e as ResolverError).fix.suggestion).toContain('adapter');
     }
     writeFileSync(rp, JSON.stringify({ ...JSON.parse(readFileSync(rp, 'utf8')), schema_version: 1 }));
     const ok = await resolveSkills({ message: 'deploy', session_id: 'h', expected_catalog_hash: rec.catalog.catalog_hash }, { home });
@@ -700,7 +700,7 @@ describe('freshness and errors', () => {
     const home = tmp();
     const r = await resolveSkills({ message: 'deploy' }, { home, failOpen: true, catalogs: ['nope'] });
     expect([r.output.error!.code, r.output.block, r.output.no_skill, r.failOpen]).toEqual(['skill_index_missing', '', false, true]);
-    expect(r.output.error!.fix.hint).toContain('gbrain skills index build');
+    expect(r.output.error!.fix.suggestion).toContain('gbrain skills index build');
     expect(await codeOf(resolveSkills({ message: 'deploy' }, { home, catalogs: ['nope'] }))).toBe('skill_index_missing');
     expect(await codeOf(resolveSkills({ message: 'x', top_k: 99 }, { home, failOpen: true }))).toBe('skill_resolve_invalid_input');
   });

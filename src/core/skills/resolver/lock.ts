@@ -76,7 +76,7 @@ export async function acquireLease(path: string, opts: LeaseOpts & { retries?: n
       const h = r.held;
       throw new ResolverError('skill_index_locked',
         h === 'unparsable' ? 'Another process holds this skill-index lock.' : `Another process holds this skill-index lock (${h.purpose} on ${h.host}, pid ${h.pid}); its lease expires in ${Math.max(0, Math.ceil((h.expires_ms - (opts.now ?? Date.now)()) / 1000))} s.`,
-        { hint: 'Retry after the holder finishes or its lease expires; a crashed holder is reclaimed when its lease runs out.' },
+        { suggestion: 'Retry after the holder finishes or its lease expires; a crashed holder is reclaimed when its lease runs out.' },
         h === 'unparsable' ? {} : { holder_purpose: h.purpose, holder_host: h.host, holder_pid: h.pid });
     }
     await sleep((opts.waitMs ?? 50) * 2 ** attempt);

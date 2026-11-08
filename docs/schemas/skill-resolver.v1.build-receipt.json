@@ -336,7 +336,7 @@
       "additionalProperties": false,
       "required": [
         "args",
-        "fix_argv",
+        "rebuild_argv",
         "ms",
         "built_at",
         "generation"
@@ -348,7 +348,7 @@
             "type": "string"
           }
         },
-        "fix_argv": {
+        "rebuild_argv": {
           "type": [
             "array",
             "null"

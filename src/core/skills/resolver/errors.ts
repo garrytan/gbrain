@@ -1,6 +1,6 @@
 /**
  * The resolver's one error type. Engine-free: it carries a stable code, a
- * message without turn text, safe context and a recovery (a hint and, when
+ * message without turn text, safe context and a recovery (a suggestion and, when
  * one exists, the exact command). The CLI maps it onto the agent-operator
  * envelope (src/commands/skill-resolver.ts); every code has a row in
  * src/core/error-registry.ts and a section in docs/guides/skill-resolver.md.
@@ -26,7 +26,7 @@ export const USAGE_CODES: ReadonlySet<ResolverErrorCode> = new Set(['skill_catal
 
 export interface ResolverFix {
   /** What to do, one sentence. */
-  hint: string;
+  suggestion: string;
   /** The exact command, when one exists. */
   argv?: string[];
 }
@@ -44,8 +44,8 @@ export class ResolverError extends Error {
   }
   get usage(): boolean { return USAGE_CODES.has(this.code); }
   /** The `error` object of the turn output contract. */
-  toJSON(): { code: ResolverErrorCode; message: string; fix: { hint: string; command?: string } } {
-    return { code: this.code, message: this.message, fix: { hint: this.fix.hint, ...(this.fix.argv ? { command: this.fix.argv.map(shellQuote).join(' ') } : {}) } };
+  toJSON(): { code: ResolverErrorCode; message: string; fix: { suggestion: string; command?: string } } {
+    return { code: this.code, message: this.message, fix: { suggestion: this.fix.suggestion, ...(this.fix.argv ? { command: this.fix.argv.map(shellQuote).join(' ') } : {}) } };
   }
 }
 

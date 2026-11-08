@@ -61,11 +61,11 @@ const cut = (s: string, n: number) => (s.length <= n ? s : s.slice(0, n));
 const boundTriggers = (t: string[]) => t.slice(0, MAX_TRIGGERS).map(x => cut(x, MAX_TRIGGER_CHARS));
 
 function unreadable(dir: string, why: string): ResolverError {
-  return new ResolverError('skill_source_unreadable', `The skill directory ${dir} cannot be read (${why}).`, { hint: 'Pass an existing directory you can read with --dir.' });
+  return new ResolverError('skill_source_unreadable', `The skill directory ${dir} cannot be read (${why}).`, { suggestion: 'Pass an existing directory you can read with --dir.' });
 }
 
 function tooLarge(what: string): ResolverError {
-  return new ResolverError('skill_catalog_too_large', `The catalog is over its bound: ${what}.`, { hint: `Index at most ${MAX_SKILLS.toLocaleString('en-US')} skills per catalog; split the source into several catalogs.` });
+  return new ResolverError('skill_catalog_too_large', `The catalog is over its bound: ${what}.`, { suggestion: `Index at most ${MAX_SKILLS.toLocaleString('en-US')} skills per catalog; split the source into several catalogs.` });
 }
 
 function pluginNamespace(skillDir: string, root: string, cache: Map<string, string | null>): string | undefined {
@@ -174,7 +174,7 @@ export async function readBundledSource(): Promise<SourceRead> {
 }
 
 function invalid(message: string): ResolverError {
-  return new ResolverError('skill_source_invalid', message, { hint: 'Pass a JSON array of {id, name, description, triggers?, routing?, body?, path?, eligible?} objects (at most 10,000 entries, 8 MB).' });
+  return new ResolverError('skill_source_invalid', message, { suggestion: 'Pass a JSON array of {id, name, description, triggers?, routing?, body?, path?, eligible?} objects (at most 10,000 entries, 8 MB).' });
 }
 
 const optStr = (v: unknown) => v === undefined || typeof v === 'string';
@@ -215,7 +215,7 @@ export function applyRouting(skills: SkillRecord[], path: string): { rows: numbe
   let real: string;
   try { real = realpathSync(path); } catch (e) { throw unreadable(path, (e as NodeJS.ErrnoException).code ?? 'unreadable'); }
   const b = readBounded(real, ROUTING_FILE_CAP_BYTES);
-  if (b === 'too_large') throw new ResolverError('skill_source_invalid', 'The routing file is over 1 MB.', { hint: 'Pass one RESOLVER-style routing table of at most 1 MB with --routing.' });
+  if (b === 'too_large') throw new ResolverError('skill_source_invalid', 'The routing file is over 1 MB.', { suggestion: 'Pass one RESOLVER-style routing table of at most 1 MB with --routing.' });
   const st = statSync(real);
   const rows = parseRoutingTable(b.toString('utf8'));
   const byName = new Map<string, SkillRecord>();

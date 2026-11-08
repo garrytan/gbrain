@@ -64,7 +64,7 @@ export interface BuildReceipt {
   ranker: { id: string; version: number; variant: Variant; params: (typeof VARIANT_PARAMS)[Variant]; calibration_split_sha256: string; tokenizer: string; k: number; hint_chars: number; trigger_share: number };
   index: { file: 'index.bin'; index_hash: string; size: number; n_terms: number; n_postings: number; truncated_skills: number };
   block: { token_cap: number; tokenizer: string };
-  build: { args: string[]; fix_argv: string[] | null; ms: number; built_at: string; generation: number };
+  build: { args: string[]; rebuild_argv: string[] | null; ms: number; built_at: string; generation: number };
 }
 
 function gbrainCommit(): string | null {
@@ -124,11 +124,11 @@ export function buildArgs(input: BuildInput): { args: string[]; fix: string[] | 
 function validateBuild(input: BuildInput): void {
   assertCatalogName(input.catalog);
   const kinds = [input.dirs?.length ? 1 : 0, input.bundled ? 1 : 0, input.fromJson !== undefined ? 1 : 0].reduce((a, b) => a + b, 0);
-  if (kinds !== 1) throw new ResolverError('skill_resolve_invalid_input', 'Pass exactly one source: --dir <d> (repeatable), --bundled or --from-json <file|->.', { hint: 'Example: gbrain skills index build --catalog claude-user --dir ~/.claude/skills' });
+  if (kinds !== 1) throw new ResolverError('skill_resolve_invalid_input', 'Pass exactly one source: --dir <d> (repeatable), --bundled or --from-json <file|->.', { suggestion: 'Example: gbrain skills index build --catalog claude-user --dir ~/.claude/skills' });
   if (input.harness !== undefined && !(HARNESSES as readonly string[]).includes(input.harness)) {
-    throw new ResolverError('skill_resolve_invalid_input', `Unknown harness "${input.harness}".`, { hint: `Use one of: ${HARNESSES.join(', ')}.` });
+    throw new ResolverError('skill_resolve_invalid_input', `Unknown harness "${input.harness}".`, { suggestion: `Use one of: ${HARNESSES.join(', ')}.` });
   }
-  if (input.scope !== undefined && input.scope !== 'user' && input.scope !== 'project') throw new ResolverError('skill_resolve_invalid_input', 'The scope is user or project.', { hint: 'Pass --scope user (the default) or --scope project.' });
+  if (input.scope !== undefined && input.scope !== 'user' && input.scope !== 'project') throw new ResolverError('skill_resolve_invalid_input', 'The scope is user or project.', { suggestion: 'Pass --scope user (the default) or --scope project.' });
 }
 
 async function readSource(input: BuildInput): Promise<SourceRead> {
@@ -136,7 +136,7 @@ async function readSource(input: BuildInput): Promise<SourceRead> {
   if (input.bundled) return readBundledSource();
   const text = input.fromJsonStdin ? input.fromJson! : (() => {
     const b = readBounded(input.fromJson!, 8 * 1024 * 1024);
-    if (b === 'too_large') throw new ResolverError('skill_source_invalid', 'The JSON catalog is over 8 MB.', { hint: 'Pass at most 10,000 skills in at most 8 MB.' });
+    if (b === 'too_large') throw new ResolverError('skill_source_invalid', 'The JSON catalog is over 8 MB.', { suggestion: 'Pass at most 10,000 skills in at most 8 MB.' });
     return b.toString('utf8');
   })();
   return readJsonSource(text);
@@ -156,7 +156,7 @@ async function prepare(input: BuildInput): Promise<Prepared> {
   };
 }
 
-const removedError = () => new ResolverError('skill_index_removed', 'The catalog was removed while this build ran, so nothing was published.', { hint: 'Run the build again if the catalog should exist.' });
+const removedError = () => new ResolverError('skill_index_removed', 'The catalog was removed while this build ran, so nothing was published.', { suggestion: 'Run the build again if the catalog should exist.' });
 
 export async function buildSkillIndex(input: BuildInput, opts: { home?: string; now?: () => number } = {}): Promise<BuildReceipt> {
   const started = performance.now();
@@ -186,7 +186,7 @@ export async function buildSkillIndex(input: BuildInput, opts: { home?: string; 
       ranker: { id: RANKER_ID, version: RANKER_VERSION, variant, params: VARIANT_PARAMS[variant], calibration_split_sha256: CALIBRATION_SPLIT_SHA256, tokenizer: TOKENIZER_ID, k: 5, hint_chars: HINT_CHARS, trigger_share: share },
       index: { file: 'index.bin', index_hash: sha(bytes), size: bytes.length, n_terms: header.n_terms, n_postings: header.n_postings, truncated_skills: truncatedSkills },
       block: { token_cap: BLOCK_TOKEN_CAP, tokenizer: BLOCK_TOKENIZER },
-      build: { args, fix_argv: fix, ms: 0, built_at: new Date((opts.now ?? Date.now)()).toISOString(), generation: lease.record.generation },
+      build: { args, rebuild_argv: fix, ms: 0, built_at: new Date((opts.now ?? Date.now)()).toISOString(), generation: lease.record.generation },
     };
     if (!holdsLease(lease) || !existsSync(dir)) throw removedError();
     try {
@@ -234,7 +234,7 @@ export interface CatalogStatus {
   fresh: boolean | null;
   stale_reason: string | null;
   index_verified: boolean;
-  receipt: Pick<BuildReceipt, 'gbrain_version'> & { catalog_hash: string; index_hash: string; skill_count: number; skipped: number; variant: Variant; source: BuildReceipt['catalog']['source']; built_at: string; generation: number; fix_argv: string[] | null } | null;
+  receipt: Pick<BuildReceipt, 'gbrain_version'> & { catalog_hash: string; index_hash: string; skill_count: number; skipped: number; variant: Variant; source: BuildReceipt['catalog']['source']; built_at: string; generation: number; rebuild_argv: string[] | null } | null;
   rebuild: { running: boolean; holder: string | null; stale_stamp: boolean; last_error: { code: string; message: string; at: string } | null; log_path: string | null };
 }
 
@@ -270,7 +270,7 @@ export async function catalogStatus(name: string, opts: { home?: string } = {}):
   gcSessions(home);
   return {
     catalog: name, present: true, fresh: staleReason === null, stale_reason: staleReason, index_verified: indexVerified,
-    receipt: { gbrain_version: r.gbrain_version, catalog_hash: r.catalog.catalog_hash, index_hash: r.index.index_hash, skill_count: r.catalog.skill_count, skipped: r.catalog.skipped.length, variant: r.ranker.variant, source: r.catalog.source, built_at: r.build.built_at, generation: r.build.generation, fix_argv: r.build.fix_argv },
+    receipt: { gbrain_version: r.gbrain_version, catalog_hash: r.catalog.catalog_hash, index_hash: r.index.index_hash, skill_count: r.catalog.skill_count, skipped: r.catalog.skipped.length, variant: r.ranker.variant, source: r.catalog.source, built_at: r.build.built_at, generation: r.build.generation, rebuild_argv: r.build.rebuild_argv },
     rebuild,
   };
 }

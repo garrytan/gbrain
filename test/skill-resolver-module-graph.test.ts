@@ -25,7 +25,7 @@ function loadedBy(script: string): string[] {
   return (JSON.parse(r.stdout.toString().trim().split('\n').pop()!) as string[]).map(f => f.slice(REPO_ROOT.length + 1)).sort();
 }
 
-const LEAF = new Set(['src/core/cjk.ts', 'src/version.ts', 'package.json', 'src/core/skill-description.ts', 'node_modules/js-yaml/dist/js-yaml.mjs']);
+const LEAF = new Set(['src/core/cjk.ts', 'src/core/fs-durable.ts', 'src/version.ts', 'package.json', 'src/core/skill-description.ts', 'node_modules/js-yaml/dist/js-yaml.mjs']);
 const BUNDLED = new Set(['src/core/skills/bundled.ts', 'src/core/skills/bundled-skills.generated.ts', 'src/core/skill-frontmatter.ts', 'src/core/data-frontmatter.ts', 'src/core/effective-date.ts']);
 const FORBIDDEN = /^(src\/core\/(operations\.ts|engine\.ts|engine-(factory|open|connect|construct)\.ts|pglite-engine|postgres-engine\.ts|skill-catalog\.ts|ai\/)|node_modules\/(@electric-sql|postgres|openai|@anthropic-ai))/;
 

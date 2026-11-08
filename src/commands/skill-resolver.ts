@@ -14,6 +14,7 @@
  */
 import { appendFileSync } from 'node:fs';
 import { exitCliError, usageError, writeCliError } from '../cli/cli-error.ts';
+import { readStdinBounded } from '../core/interaction.ts';
 import { opError } from '../core/ops/contract.ts';
 import type { RegistryCode } from '../core/error-registry.ts';
 import {
@@ -74,8 +75,8 @@ const CMD = 'skills';
 
 function toOpError(e: ResolverError) {
   const command = e.toJSON().fix.command;
-  return opError(e.code as RegistryCode, e.message, command ? `${e.fix.hint} Run: ${command}` : e.fix.hint,
-    e.fix.argv ? { fix: { argv: e.fix.argv, consent: [], actor: 'agent', why: e.fix.hint, requires_exclusive: false } } : {});
+  return opError(e.code as RegistryCode, e.message, command ? `${e.fix.suggestion} Run: ${command}` : e.fix.suggestion,
+    e.fix.argv ? { fix: { argv: e.fix.argv, consent: [], actor: 'agent', why: e.fix.suggestion, requires_exclusive: false } } : {});
 }
 
 function usage(message: string, suggestion: string): never {
@@ -106,15 +107,10 @@ const one = (p: Parsed, f: string) => { const v = p.flags.get(f); if (v && v.len
 
 async function readStdinCapped(max: number): Promise<string | null> {
   if (process.stdin.isTTY) return null;
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const c of process.stdin) {
-    const b = Buffer.isBuffer(c) ? c : Buffer.from(c as string);
-    size += b.length;
-    if (size > max) usage(`stdin is over ${max} bytes.`, 'Send one turn (or one catalog of at most 8 MB) on stdin.');
-    chunks.push(b);
-  }
-  return Buffer.concat(chunks).toString('utf8');
+  const r = await readStdinBounded({ maxBytes: max });
+  if (r.kind === 'data') return r.text;
+  if (r.kind === 'empty') return '';
+  usage(r.kind === 'timeout' ? 'stdin sent no data before the read timed out.' : 'stdin could not be read: ' + (r.kind === 'error' ? r.error.message : 'cancelled') + '.', 'Send one turn (or one catalog of at most 8 MB) on stdin and close it.');
 }
 
 function write(text: string): Promise<boolean> {
@@ -149,7 +145,7 @@ async function runIndex(args: string[]): Promise<void> {
         ...(one(p, '--scope') ? { scope: one(p, '--scope') as 'user' | 'project' } : {}) };
       if (fromJson === '-') {
         const text = await readStdinCapped(8 * 1024 * 1024);
-        if (!text) exitCliError(toOpError(new ResolverError('skill_resolve_no_input', 'No catalog JSON arrived on stdin.', { hint: 'Pipe the skill list: <adapter> | gbrain skills index build --catalog <name> --from-json -' })), CMD);
+        if (!text) exitCliError(toOpError(new ResolverError('skill_resolve_no_input', 'No catalog JSON arrived on stdin.', { suggestion: 'Pipe the skill list: <adapter> | gbrain skills index build --catalog <name> --from-json -' })), CMD);
         input.fromJson = text!;
         input.fromJsonStdin = true;
       } else if (fromJson !== undefined) input.fromJson = fromJson;
@@ -199,22 +195,22 @@ async function runResolve(args: string[]): Promise<void> {
   try {
     if (inputJson === '-') {
       const raw = await readStdinCapped(1024 * 1024);
-      if (raw === null || !raw.trim()) throw new ResolverError('skill_resolve_no_input', raw === null ? 'stdin is a terminal, so no turn JSON arrived.' : 'stdin was empty, so no turn JSON arrived.', { hint: 'Pipe the turn JSON: echo \'{"message":"..."}\' | gbrain skills resolve --input-json -' });
-      try { input = JSON.parse(raw) as Record<string, unknown>; } catch { throw new ResolverError('skill_resolve_invalid_input', 'The turn input on stdin is not valid JSON.', { hint: 'Send one JSON object such as {"message": "..."}.' }); }
-      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new ResolverError('skill_resolve_invalid_input', 'The turn input must be a JSON object.', { hint: 'Send one JSON object such as {"message": "..."}.' });
+      if (raw === null || !raw.trim()) throw new ResolverError('skill_resolve_no_input', raw === null ? 'stdin is a terminal, so no turn JSON arrived.' : 'stdin was empty, so no turn JSON arrived.', { suggestion: 'Pipe the turn JSON: echo \'{"message":"..."}\' | gbrain skills resolve --input-json -' });
+      try { input = JSON.parse(raw) as Record<string, unknown>; } catch { throw new ResolverError('skill_resolve_invalid_input', 'The turn input on stdin is not valid JSON.', { suggestion: 'Send one JSON object such as {"message": "..."}.' }); }
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new ResolverError('skill_resolve_invalid_input', 'The turn input must be a JSON object.', { suggestion: 'Send one JSON object such as {"message": "..."}.' });
     } else if (text !== undefined) input = { message: text };
-    else throw new ResolverError('skill_resolve_no_input', 'No message: pass --text "<message>" or --input-json -.', { hint: 'Example: gbrain skills resolve --text "summarize my meeting notes"' });
+    else throw new ResolverError('skill_resolve_no_input', 'No message: pass --text "<message>" or --input-json -.', { suggestion: 'Example: gbrain skills resolve --text "summarize my meeting notes"' });
     const prev = one(p, '--previous');
     if (prev !== undefined) input.previous_user_message = prev;
     const session = one(p, '--session'); if (session !== undefined) input.session_id = session;
     const harness = one(p, '--harness'); if (harness !== undefined) input.harness = harness;
     const exclude = one(p, '--exclude'); if (exclude !== undefined) input.exclude = exclude.split(',').map(s => s.trim()).filter(Boolean);
     const topK = one(p, '--top-k');
-    if (topK !== undefined) { if (!/^\d+$/.test(topK)) throw new ResolverError('skill_resolve_invalid_input', '--top-k takes an integer from 1 to 8.', { hint: 'Example: --top-k 3' }); input.top_k = Number(topK); }
+    if (topK !== undefined) { if (!/^\d+$/.test(topK)) throw new ResolverError('skill_resolve_invalid_input', '--top-k takes an integer from 1 to 8.', { suggestion: 'Example: --top-k 3' }); input.top_k = Number(topK); }
     if (p.bools.has('--shadow')) input.shadow = true;
     if (p.bools.has('--reset-session')) input.reset_session = true;
     const expect = one(p, '--expect-catalog'); if (expect !== undefined) input.expected_catalog_hash = expect;
-    if (harness !== undefined && !(HARNESSES as readonly string[]).includes(harness)) throw new ResolverError('skill_resolve_invalid_input', `Unknown harness "${harness}".`, { hint: `Use one of: ${HARNESSES.join(', ')}.` });
+    if (harness !== undefined && !(HARNESSES as readonly string[]).includes(harness)) throw new ResolverError('skill_resolve_invalid_input', `Unknown harness "${harness}".`, { suggestion: `Use one of: ${HARNESSES.join(', ')}.` });
   } catch (e) {
     if (e instanceof ResolverError) exitCliError(toOpError(e), CMD);
     throw e;
@@ -234,7 +230,7 @@ async function runResolve(args: string[]): Promise<void> {
     process.exit(1);
   }
   const out = result.output;
-  if (out.error) writeCliError(toOpError(new ResolverError(out.error.code as never, out.error.message, { hint: out.error.fix.hint })), CMD, { json: false });
+  if (out.error) writeCliError(toOpError(new ResolverError(out.error.code as never, out.error.message, { suggestion: out.error.fix.suggestion })), CMD, { json: false });
   const shadowLog = one(p, '--shadow-log');
   if (shadowLog && result.shadowOutput) {
     try { appendFileSync(shadowLog, `${JSON.stringify(result.shadowOutput)}\n`, { mode: 0o600 }); } catch { /* the log is best effort; the turn is unaffected */ }

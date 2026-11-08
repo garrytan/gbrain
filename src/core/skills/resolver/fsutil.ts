@@ -8,6 +8,7 @@
 import { closeSync, fsyncSync, mkdirSync, openSync, readSync, renameSync, statSync, unlinkSync, writeSync, fstatSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
+import { flushDirectory } from '../../fs-durable.ts';
 
 export function ensureDir(dir: string): void {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -34,7 +35,7 @@ export function writeFileDurable(path: string, data: string | Uint8Array, mode =
     try { unlinkSync(tmp); } catch { /* gone */ }
     throw e;
   }
-  try { const d = openSync(dir, 'r'); try { fsyncSync(d); } finally { closeSync(d); } } catch { /* platform without directory fsync */ }
+  flushDirectory(dir, { bestEffort: true });
 }
 
 /** The first `max` bytes of a file, plus its full size. */

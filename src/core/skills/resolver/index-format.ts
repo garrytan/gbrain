@@ -16,7 +16,7 @@
  *       postTf   u16 x postings x 5 term frequency per field
  *       metaOff  u32 x (n + 1)      offsets into the meta blob
  *       terms    utf-8              terms joined by "\n", sorted by JS string order
- *       meta     utf-8              one JSON object per skill: {id, name, hint, path?, ns?, t}
+ *       meta     utf-8              one JSON object per skill: {id, name, summary, path?, ns?, t}
  *
  * The same records, variant and parameters always give the same bytes: no
  * clock, generation or path of the index itself goes in. The build receipt
@@ -52,7 +52,7 @@ export const MAX_TERMS_PER_SKILL = 4096;
 const MAGIC = 'GBSKIDX1';
 const PREFIX = 44;
 
-export function hint(description: string): string {
+export function summaryOf(description: string): string {
   if (description.length <= HINT_CHARS) return description;
   const c = description.slice(0, HINT_CHARS);
   const sp = c.lastIndexOf(' ');
@@ -67,7 +67,7 @@ export function fieldText(s: SkillRecord, f: Field, variant: Variant): string {
   return s.body;
 }
 
-export interface SkillMeta { id: string; name: string; hint: string; path?: string; ns?: string; t: 0 | 1 }
+export interface SkillMeta { id: string; name: string; summary: string; path?: string; ns?: string; t: 0 | 1 }
 export interface IndexHeader {
   format: number; endian: 'le'; ranker: { id: string; version: number; variant: Variant; params: Bm25Params }; tokenizer: string;
   n_skills: number; n_terms: number; n_postings: number; truncated_skills: number;
@@ -133,7 +133,7 @@ export function encodeIndex(records: readonly SkillRecord[], variant: Variant): 
       for (let f = 0; f < 5; f++) postTf[k * 5 + f] = tfs[j * 5 + f]!;
     }
   }
-  const metaLines = records.map(s => JSON.stringify({ id: s.id, name: s.name, hint: hint(s.description), ...(s.path ? { path: s.path } : {}), ...(s.namespace ? { ns: s.namespace } : {}), t: s.triggers.length || s.routing.length ? 1 : 0 }));
+  const metaLines = records.map(s => JSON.stringify({ id: s.id, name: s.name, summary: summaryOf(s.description), ...(s.path ? { path: s.path } : {}), ...(s.namespace ? { ns: s.namespace } : {}), t: s.triggers.length || s.routing.length ? 1 : 0 }));
   const enc = new TextEncoder();
   const metaParts = metaLines.map(l => enc.encode(l));
   const metaOff = new Uint32Array(n + 1);
@@ -175,7 +175,7 @@ export function encodeIndex(records: readonly SkillRecord[], variant: Variant): 
 }
 
 function incompatible(why: string, fixArgv?: string[]): ResolverError {
-  return new ResolverError('skill_index_incompatible', `The skill index cannot be read by this gbrain (${why}).`, { hint: 'Rebuild the index with the command it was built with.', ...(fixArgv ? { argv: fixArgv } : {}) });
+  return new ResolverError('skill_index_incompatible', `The skill index cannot be read by this gbrain (${why}).`, { suggestion: 'Rebuild the index with the command it was built with.', ...(fixArgv ? { argv: fixArgv } : {}) });
 }
 
 /** A lazily read index: the dictionary and lengths up front, postings and meta per request. */
@@ -207,7 +207,7 @@ export class IndexReader {
   static open(path: string, fixArgv?: string[]): IndexReader {
     let fd: number;
     try { fd = openSync(path, 'r'); } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw new ResolverError('skill_index_missing', 'The skill index file is missing.', { hint: 'Build it with gbrain skills index build.', ...(fixArgv ? { argv: fixArgv } : {}) });
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw new ResolverError('skill_index_missing', 'The skill index file is missing.', { suggestion: 'Build it with gbrain skills index build.', ...(fixArgv ? { argv: fixArgv } : {}) });
       throw e;
     }
     try {

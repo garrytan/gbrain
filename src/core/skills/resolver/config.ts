@@ -30,7 +30,7 @@ export function validateSessionTokenBudget(v: unknown, where: string): number {
   if (typeof v === 'number' && Number.isInteger(v) && v >= MIN_SESSION_TOKEN_BUDGET && v <= MAX_SESSION_TOKEN_BUDGET) return v;
   throw new ResolverError('skill_resolver_config_invalid',
     `${where} must be 0 (resolver silent) or an integer from ${MIN_SESSION_TOKEN_BUDGET} to ${MAX_SESSION_TOKEN_BUDGET}.`,
-    { hint: `Set ${where} to 0 or a value from ${MIN_SESSION_TOKEN_BUDGET} to ${MAX_SESSION_TOKEN_BUDGET} (default ${DEFAULT_SESSION_TOKEN_BUDGET}).` });
+    { suggestion: `Set ${where} to 0 or a value from ${MIN_SESSION_TOKEN_BUDGET} to ${MAX_SESSION_TOKEN_BUDGET} (default ${DEFAULT_SESSION_TOKEN_BUDGET}).` });
 }
 
 export function readResolverSettings(home: string, env: NodeJS.ProcessEnv = process.env): ResolverSettings {

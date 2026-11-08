@@ -48,7 +48,7 @@ One catalog per skill set. Names are 1-64 characters of `a-z`, `0-9`, `_` and
 - `--routing <file>` adds the rows of one RESOLVER-style routing table to
   the skills they name.
 - `--scope project` marks a cloned repository's skills: their blocks show ids
-  and names only, never hints, because the text came from someone else.
+  and names only, never their summaries, because the text came from someone else.
 - Bounds: 10,000 skills per catalog, 64 KB per SKILL.md, 8 MB of JSON.
 - Several catalogs merge on one turn: `--catalog user --catalog project`.
   Each ranks with its own variant; the session's no-repeat set and budget are
@@ -155,7 +155,8 @@ Nothing leaves the machine. Everything lives under `$GBRAIN_HOME/.gbrain/skill-i
 | `sessions/<key>.json` | skill ids and turn counters; never turn text |
 | `logs/resolver.log` | scrubbed stack traces of unexpected failures; never turn text |
 
-The block never echoes the user's text. Hints are catalog text, so they are
+The block never echoes the user's text. Summaries (each skill's description
+cut at 120 characters, the `summary` field) are catalog text, so they are
 JSON-quoted inside a block that labels them data, with `<`, `>` and `&`
 escaped.
 
