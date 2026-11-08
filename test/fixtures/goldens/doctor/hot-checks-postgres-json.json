@@ -4173,6 +4173,18 @@
           {
             "category": "brain",
             "details": {
+              "docs": "docs/guides/storage-manifest.md#doctor"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No storage shelf and no interim storage records on this brain.",
+            "name": "storage_manifest",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "auto_repair": {
                 "active": false,
                 "enabled": true,
@@ -4466,18 +4478,6 @@
             "message": "5 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 1 unsynced file(s) (by tier: deterministic 2, llm 1, manual 1); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 1 need the manual edit the preview names. None of them blocks a sync. Preview: gbrain repair fences --source notes; gbrain repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
             "name": "fence_integrity",
             "status": "warn"
-          },
-          {
-            "category": "brain",
-            "details": {
-              "docs": "docs/guides/storage-manifest.md#doctor"
-            },
-            "elapsed_ms": "<volatile>",
-            "message": "No storage shelf and no interim storage records on this brain.",
-            "name": "storage_manifest",
-            "readiness_state": "not_applicable",
-            "severity": "info",
-            "status": "ok"
           },
           {
             "category": "ops",
@@ -9296,6 +9296,18 @@
           {
             "category": "brain",
             "details": {
+              "docs": "docs/guides/storage-manifest.md#doctor"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No storage shelf and no interim storage records on this brain.",
+            "name": "storage_manifest",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "auto_repair": {
                 "active": false,
                 "enabled": true,
@@ -9589,18 +9601,6 @@
             "message": "5 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 1 unsynced file(s) (by tier: deterministic 1, llm 1, manual 2); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 2 need the manual edit the preview names. None of them blocks a sync. Preview: gbrain repair fences --source notes; gbrain repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
             "name": "fence_integrity",
             "status": "warn"
-          },
-          {
-            "category": "brain",
-            "details": {
-              "docs": "docs/guides/storage-manifest.md#doctor"
-            },
-            "elapsed_ms": "<volatile>",
-            "message": "No storage shelf and no interim storage records on this brain.",
-            "name": "storage_manifest",
-            "readiness_state": "not_applicable",
-            "severity": "info",
-            "status": "ok"
           },
           {
             "category": "ops",

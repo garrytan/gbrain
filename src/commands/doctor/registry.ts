@@ -327,9 +327,9 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   // GBRA-248 W0: writes waiting on a long-quiet owner host, and a file plane that disables embeddings over a database with vectors.
   ownerHostStaleEntry,
   embeddingPlaneDisagreementEntry,
-  fenceIntegrityEntry,
   // GST-1943: the storage shelf: cards failing the card schema, interim records not adopted, a hosted shelf directory gone.
   storageManifestEntry,
+  fenceIntegrityEntry,
   searchModeEntry,
 ];
 

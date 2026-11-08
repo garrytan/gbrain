@@ -4708,7 +4708,7 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Interim storage records carry fields a card refuses (a command, an unknown field, or a field gbrain stamps), and the adopt apply did not name each one with --drop-field; nothing was written. | Adopting leaves those fields out of the card, so the user decides; the original pages keep them until finalize soft-deletes the originals. | Show the user the refused fields the adopt preview lists; with their agreement, run the apply the refusal names, which drops each with --drop-field. | user | `repeat the read that failed` | 1 | no |
+| Interim storage records carry fields a card refuses (a command, an unknown field, or a field stamped by gbrain), and the adopt apply did not name each one with --drop-field; nothing was written. | Adopting leaves those fields out of the card, so the user decides; the original pages keep them until finalize soft-deletes the originals. | Show the user the refused fields the adopt preview lists; with their agreement, run the apply the refusal names, which drops each with --drop-field. | user | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
 

@@ -1095,11 +1095,11 @@
       },
       {
         "category": "brain",
-        "name": "fence_integrity"
+        "name": "storage_manifest"
       },
       {
         "category": "brain",
-        "name": "storage_manifest"
+        "name": "fence_integrity"
       },
       {
         "category": "ops",
