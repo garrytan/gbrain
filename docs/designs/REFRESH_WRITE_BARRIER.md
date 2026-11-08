@@ -40,6 +40,11 @@ decision with stated preconditions, below), and the soak cell (lane L5).
   (`refreshFenceClear`); `draining` and `syncing` keep claiming so queued work drains.
 - `fenceAndMerge` refuses `refresh_source_changed` when any request, checkout effect or recovery
   record reached the worktree after the drain check.
+- #8828: HEAD that moved past `old_head` under the fence only by gbrain's own commits (every sha in
+  `old_head..HEAD` is in the commit ledger) and that the upstream ref the precheck recorded (still the checkout's `@{upstream}`) holds is the drained writes
+  the writer pushed: the fenced row takes HEAD as `old_head` and the upstream ref as `target_head`
+  (it must hold the precheck's target) before `merge_started`, and the merge goes on. Any other HEAD
+  move refuses `refresh_source_changed`.
 
 ### The barrier sequence
 

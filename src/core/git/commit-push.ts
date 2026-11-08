@@ -81,6 +81,12 @@ export interface CommitPushResult {
   no_remote?: true;
   /** Conflicted files where the remote held a version this checkout had already replaced: this checkout's version was published. */
   superseded_remote_paths?: string[];
+  /** A managed canonical worktree: the named paths were committed (or had no change) and nothing was pushed. */
+  managed?: true;
+  /** Managed only: commits on the branch its upstream lacks as last fetched; null when no fetched upstream can be read. */
+  unpublished?: number | null;
+  /** Managed only: the branch's configured upstream (`origin/main`); null when it names none. */
+  upstream?: string | null;
 }
 
 export interface PullResult {
@@ -1117,7 +1123,10 @@ function commitManagedPaths(root: string, opts: CommitPushOptions, managed: Mana
     throw opError('commit_paths_invalid', `${where}: commit-push there only commits the paths you name.`,
       `Run gbrain git commit-push with only -m and the page paths after --; gbrain sources refresh${managed.sourceId ? ` ${managed.sourceId}` : ''} brings remote commits in.`);
   }
-  return commitPathsOnly(root, opts, where, configuredSourceRoots(root), 'Leave the checkout to its owner; gbrain sources writer status names its state.');
+  const result = commitPathsOnly(root, opts, where, configuredSourceRoots(root), 'Leave the checkout to its owner; gbrain sources writer status names its state.');
+  const counted = git(root, ['rev-list', '--count', '@{upstream}..HEAD']);
+  const upstream = git(root, ['for-each-ref', '--format=%(upstream:short)', `refs/heads/${result.branch}`]).stdout.trim();
+  return { ...result, managed: true, unpublished: counted.code === 0 ? Number(counted.stdout.trim()) : null, upstream: upstream || null };
 }
 
 /** A checkout with no Git remote at all: no remote is configured and the branch names none (a named but missing remote is refused by resolveCtx). A git command that fails is not proof of "no remote". */
