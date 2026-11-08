@@ -242,8 +242,12 @@ export async function runGit(args: string[]): Promise<number> {
         : `nothing to commit; not pushed: ${repo} has no Git remote`);
       return 0;
     }
-    if (result.outcome === 'committed_local') {
-      emit(json, { ...result, repo }, `committed ${result.sha!.slice(0, 7)} on ${result.branch}; not pushed: this is a managed checkout, so the owner's next Git publish pushes it (or gbrain git commit-push --push-only --keep-checkout)`);
+    if (result.managed) {
+      const upstream = result.upstream;
+      const state = !upstream ? `${result.branch} has no upstream`
+        : result.unpublished === 0 ? `${result.branch} is on ${upstream} as last fetched`
+        : `${result.unpublished ?? 'an unknown number of'} commit(s) on ${result.branch} ${result.unpublished === null ? 'may not be' : 'are not'} on ${upstream} as last fetched; a managed checkout publishes through its owner (gbrain git commit-push --push-only --keep-checkout --path ${repo} publishes them)`;
+      emit(json, { ...result, repo }, `${result.committed ? `committed ${result.committed.slice(0, 7)} on ${result.branch}` : 'nothing to commit'}; not pushed: ${state}`);
       return 0;
     }
     appendPushLog(result.outcome === 'nothing_to_commit' || result.confirmed === 'remote' ? 'nothing' : result.integrated ? 'ok-after-merge' : 'ok',

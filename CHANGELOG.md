@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.619.0] - 2026-11-08
+
+**`gbrain git commit-push` on a managed checkout no longer reports commits the remote lacks as already pushed.** On a managed canonical worktree, commit-push commits only the named paths and leaves publishing to the persistence owner. When the commit already existed (a script's bare commit, or one an earlier call made), it printed `nothing to commit; origin/main at -`, exited 0 and logged `[push] ok-already-on-remote`, which the push-log reader behind `put_page`'s `lastPushStatus` and doctor counts as a push that landed, while the branch sat ahead of (or diverged from) its upstream. It now says nothing was pushed, reports how many commits the upstream lacks as last fetched (`unpublished` in `--json`), names the command that publishes them, and writes no push-log line. Nothing is pushed or moved; exit codes are unchanged.
+
+### Itemized changes
+
+- `src/core/git/commit-push.ts`: `commitManagedPaths` marks its result `managed: true`, counts `unpublished` (`@{upstream}..HEAD`; `null` when no fetched upstream can be read) and names the branch's configured `upstream` (`null` when it names none); both are in `--json`.
+- `src/commands/git.ts`: a managed result reports `committed <sha>` or `nothing to commit`, then `not pushed:` with the unpublished count against the configured upstream (or "is on <upstream> as last fetched", "may not be on <upstream>" when its fetched ref can't be read, or "has no upstream"), and returns before the push log is written.
+- Docs: `docs/guides/shared-checkout-git.md` (managed worktree paragraph and the `nothing_to_commit` / `committed_local` rows).
+- Tests: `test/git-commit-push-managed-unpublished.test.ts` (the real CLI against a bare remote, a sibling clone and a managed-root registry: an existing commit with a moved remote, a fresh commit, a checkout on its upstream, a branch with no upstream, an upstream whose fetched ref is missing, an upstream with a different branch name; no push-log line in any case).
+
 ## [0.60.618.0] - 2026-11-08
 
 **A refresh no longer loses its tick when gbrain's own writes land while it drains.** `gbrain sources refresh` waits for writes admitted before its fence, and finishing them commits on the checkout and pushes, so HEAD moved past the commit the refresh started from and the run refused `refresh_source_changed`, twice when its same-run retry met the next writes. When every commit since that start is in gbrain's commit ledger and the upstream branch the refresh started with holds them, the refresh now takes HEAD as its start under the fence and fast-forwards to that upstream; any other HEAD move, one commit another agent made among them or an upstream changed under the fence included, still refuses as before.
