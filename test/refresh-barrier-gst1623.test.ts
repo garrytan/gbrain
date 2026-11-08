@@ -222,6 +222,60 @@ test('item 1: a deferred write never lands on top of a later write to its page t
   expect(await deferredReplayRefusal(f.engine, { ...imported, operation: 'remember' } as WriteRequest, [])).toBeNull();
 }), 180_000);
 
+test('#8765 outside voice: a later write counts unless managed sync wrote it (submit_job), its receipt compacted or not; capture refuses a managed_sync_ kind', () => each(async f => {
+  let deferred!: WriteRequest;
+  const refresh = await duringRefresh(f, async () => {
+    const out = await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Deferred, accepted first.') });
+    deferred = await requestRow(f, out.receipt.request_id);
+    expect(deferred.state).toBe('deferred');
+    await disposePersistenceConsumer(f.engine);
+  });
+  expect((await refresh).status).toBe('completed');
+  const later = await requestRow(f, (await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Accepted second.') })).receipt.request_id);
+  expect(later.state).toBe('committed');
+  const held = { ...deferred, deferred_refresh_id: null, deferred_import_from: '' } as WriteRequest;
+  const refusal = () => deferredReplayRefusal(f.engine, held, []);
+  // A foreground row whose stored intent names a managed_sync_ kind (a caller-chosen value) is still a later write.
+  await f.engine.executeRaw(`UPDATE persistence_requests SET intent=intent||'{"kind":"managed_sync_import"}'::jsonb WHERE id=$1::uuid`, [later.id]);
+  expect(await refusal()).toMatchObject({ state: 'conflict', failure: { code: 'revision_conflict' } });
+  // Managed sync's own import is not, before or after receipt compaction drops its intent.
+  await f.engine.executeRaw(`UPDATE persistence_requests SET operation='submit_job', outcome=COALESCE(outcome,'{}'::jsonb)||'{"imported_file":true}'::jsonb WHERE id=$1::uuid`, [later.id]);
+  expect(await refusal()).toBeNull();
+  await f.engine.executeRaw('UPDATE persistence_requests SET intent=NULL, compacted=true WHERE id=$1::uuid', [later.id]);
+  expect(await refusal()).toBeNull();
+  // A compacted foreground write still counts.
+  await f.engine.executeRaw(`UPDATE persistence_requests SET operation='put_page', outcome=outcome-'imported_file' WHERE id=$1::uuid`, [later.id]);
+  expect(await refusal()).toMatchObject({ state: 'conflict', failure: { code: 'revision_conflict' } });
+  // So does a compacted submit_job that imported no file (maintenance work), whose outcome has no imported_file at all.
+  await f.engine.executeRaw(`UPDATE persistence_requests SET operation='submit_job' WHERE id=$1::uuid`, [later.id]);
+  expect(await refusal()).toMatchObject({ state: 'conflict', failure: { code: 'revision_conflict' } });
+  const before = (await f.engine.readPageSnapshot('two', { sourceId: f.alpha }))?.revision;
+  const captured = await local(f, 'capture', { slug: 'two', content: 'An event.', kind: 'managed_sync_import' }).catch(error => error);
+  expect(captured).toBeInstanceOf(OperationError);
+  expect((captured as OperationError).code).toBe('invalid_params');
+  expect((await f.engine.readPageSnapshot('two', { sourceId: f.alpha }))?.revision).toBe(before);
+}), 180_000);
+
+test('#8765 review: a connector import stays a later write after compaction drops its intent, as overwritten-edits counts it', () => each(async f => {
+  let deferred!: WriteRequest;
+  const refresh = await duringRefresh(f, async () => {
+    const out = await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Deferred, accepted first.') });
+    deferred = await requestRow(f, out.receipt.request_id);
+    expect(deferred.state).toBe('deferred');
+    await disposePersistenceConsumer(f.engine);
+  });
+  expect((await refresh).status).toBe('completed');
+  const later = await requestRow(f, (await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Accepted second.') })).receipt.request_id);
+  expect(later.state).toBe('committed');
+  const held = { ...deferred, deferred_refresh_id: null, deferred_import_from: '' } as WriteRequest;
+  // connector-sync.ts records every connector import with imported_file and connector_database (false on a bound source).
+  for (const connectorDatabase of [true, false]) {
+    await f.engine.executeRaw(`UPDATE persistence_requests SET operation='submit_job', intent=NULL, compacted=true,
+      outcome=COALESCE(outcome,'{}'::jsonb)||jsonb_build_object('imported_file',true,'connector_database',$2::boolean) WHERE id=$1::uuid`, [later.id, connectorDatabase]);
+    expect(await deferredReplayRefusal(f.engine, held, [])).toMatchObject({ state: 'conflict', failure: { code: 'revision_conflict' } });
+  }
+}), 180_000);
+
 test('item 16: a write deferred behind a refresh is held for an import without its released refresh, unless the refresh changed its file', () => each(async f => {
   f.push('alpha/three.md', page('Alpha three', 'Before the refresh.'));
   expect((await refreshWorktree(f.engine, f.alpha)).status).toBe('completed');

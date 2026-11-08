@@ -59,7 +59,7 @@ export async function exerciseFactsWorkerConfig(engine: BrainEngine): Promise<vo
       await registerBuiltinHandlers(worker, engine, { quiet: true });
       await disposePersistenceConsumer(engine);
       expect(persistenceConsumerStatus(engine).state).toBe('not_running');
-      const job: MinionJobContext = { id: Number(queued.id), name: 'facts-absorb', data: { ...queued.data, config: { embedding_disabled: false } }, attempts_made: 0,
+      const job: MinionJobContext = { id: Number(queued.id), name: 'facts-absorb', data: { ...queued.data, config: { embedding_disabled: false } }, attempts_made: 0, idempotency_key: null,
         signal: new AbortController().signal, deadlineAtMs: null, shutdownSignal: new AbortController().signal,
         updateProgress: async () => {}, updateTokens: async () => {}, log: async () => {}, isActive: async () => true, readInbox: async () => [] };
       expect(await worker.getHandler('facts-absorb')!(job)).toMatchObject({ inserted: 1 });
