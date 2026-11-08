@@ -197,11 +197,13 @@ test('GST-1853: a refusal of the run\'s own arguments runs no owed sync', () => 
 test('GST-1853: an owed sync that fails is logged with connection details redacted, and the refusal still stands', () => each(async f => {
   await abortedByScan(f);
   const secret = 'pw-example-not-real';
-  const executeRaw = f.engine.executeRaw.bind(f.engine);
+  const executeRaw = f.engine.executeRaw;
   const logged: string[] = [];
   const error = spyOn(console, 'error').mockImplementation((...args: unknown[]) => { logged.push(args.map(String).join(' ')); });
-  (f.engine as { executeRaw: unknown }).executeRaw = (sql: string, ...rest: unknown[]) => sql.startsWith('SELECT state,source_ids FROM persistence_worktree_refreshes')
-    ? Promise.reject(new Error(`connect failed: postgresql://owner:${secret}@db.example.invalid:5432/brain`)) : executeRaw(sql, ...(rest as [never]));
+  (f.engine as { executeRaw: unknown }).executeRaw = function (this: BrainEngine, sql: string, ...rest: unknown[]) {
+    return sql.startsWith('SELECT state,source_ids FROM persistence_worktree_refreshes')
+      ? Promise.reject(new Error(`connect failed: postgresql://owner:${secret}@db.example.invalid:5432/brain`)) : executeRaw.call(this, sql, ...(rest as [never]));
+  };
   try {
     await expect(refreshWorktree(f.engine, f.alpha)).rejects.toMatchObject({ code: 'refresh_diverged' });
   } finally {
