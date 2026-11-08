@@ -13,7 +13,8 @@
  *   - register and update refuse remote callers; the shelf is not federated, so a remote connection reads cards only
  *     when its grant names the storage source (an ungranted bound client and an unbound stdio connection are refused);
  *   - derived writers skip the shelf: a dream cycle scoped to the storage source runs no phase, and enrichment
- *     considers no card there (no model call, no page write).
+ *     considers no card there (no model call, no page write);
+ *   - a hosted shelf never becomes the sole non-default source that bare writes route to.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -27,6 +28,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runCycle } from '../src/core/cycle.ts';
 import { runEnrichCore } from '../src/commands/enrich.ts';
+import { resolveSourceWithTier } from '../src/core/source-resolver.ts';
 
 let engine: PGLiteEngine;
 let home: string;
@@ -193,6 +195,14 @@ describe('storage shelf on a repo-less brain', () => {
     expect(enriched).toMatchObject({ candidates_considered: 0, pages_enriched: 0, pages_failed: 0 });
     expect(modelCalls).toBe(0);
     expect(await engine.executeRaw("SELECT updated_at::text AS revision FROM pages WHERE source_id='storage'")).toEqual(before);
+  }, 30_000);
+
+  test('a hosted shelf is never the sole non-default source bare commands route to', async () => {
+    await engine.executeRaw("INSERT INTO sources (id, name, local_path, config) VALUES ('storage', 'storage', $1, $2::jsonb)",
+      [join(home, 'shelf'), JSON.stringify({ role: 'storage_manifest', federated: false })]);
+    expect(await resolveSourceWithTier(engine, null, tmpdir())).toMatchObject({ source_id: 'default', tier: 'seed_default' });
+    await engine.executeRaw("INSERT INTO sources (id, name, local_path, config) VALUES ('vault-a', 'vault-a', $1, '{}'::jsonb)", [join(home, 'vault-a')]);
+    expect(await resolveSourceWithTier(engine, null, tmpdir())).toMatchObject({ source_id: 'vault-a', tier: 'sole_non_default' });
   }, 30_000);
 
   test('a brain with a Git checkout needs storage init first, and init needs managed persistence', async () => {
