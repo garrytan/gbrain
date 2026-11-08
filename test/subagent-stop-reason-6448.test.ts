@@ -82,7 +82,7 @@ class FakeMessagesClient implements MessagesClient {
 async function makeCtx(input: Record<string, unknown>): Promise<MinionJobContext> {
   const job = await queue.add('subagent', input, {}, { allowProtectedSubmit: true });
   return {
-    id: job.id, name: job.name, data: input, attempts_made: 0,
+    id: job.id, name: job.name, data: input, attempts_made: 0, idempotency_key: null,
     signal: new AbortController().signal, deadlineAtMs: null, shutdownSignal: new AbortController().signal,
     async updateProgress() {}, async updateTokens() {}, async log() {},
     async isActive() { return true; }, async readInbox() { return []; },

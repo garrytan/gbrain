@@ -72,7 +72,7 @@ const ingest = async (body: string, slug?: string) => {
   expect(res.status).toBe(202);
   return (await res.json() as { job_id: number }).job_id;
 };
-const jobCtx = (id: number, data: Record<string, unknown>): MinionJobContext => ({ id, name: 'ingest_capture', data, attempts_made: 0,
+const jobCtx = (id: number, data: Record<string, unknown>): MinionJobContext => ({ id, name: 'ingest_capture', data, attempts_made: 0, idempotency_key: null,
   signal: new AbortController().signal, deadlineAtMs: null, shutdownSignal: new AbortController().signal, updateProgress: async () => {},
   updateTokens: async () => {}, log: async () => {}, isActive: async () => true, readInbox: async () => [] });
 const runJob = async (id: number) => {

@@ -615,6 +615,10 @@
       },
       {
         "category": "brain",
+        "name": "unwithdrawn_facts"
+      },
+      {
+        "category": "brain",
         "name": "conversation_label_facts"
       },
       {

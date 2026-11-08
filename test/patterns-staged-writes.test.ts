@@ -58,7 +58,7 @@ function oneWrite(input: Record<string, unknown>): void {
 }
 
 function jobContext(job: { id: number; name: string; data: Record<string, unknown> }): MinionJobContext {
-  return { id: job.id, name: job.name, data: job.data, attempts_made: 0, signal: new AbortController().signal, shutdownSignal: new AbortController().signal,
+  return { id: job.id, name: job.name, data: job.data, attempts_made: 0, idempotency_key: null, signal: new AbortController().signal, shutdownSignal: new AbortController().signal,
     deadlineAtMs: null, async updateProgress() {}, async updateTokens() {}, async log() {}, async isActive() { return true; }, async readInbox() { return []; } };
 }
 

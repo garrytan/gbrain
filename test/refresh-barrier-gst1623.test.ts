@@ -29,7 +29,7 @@ import { _resetRefreshBarrierCacheForTests, deferredReplayRefusal, expireDeferre
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { prepareFileTarget } from '../src/core/persistence/page-prepare.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
-import { refreshWorktree, resumeWorktreeRefreshes } from '../src/core/persistence/worktree-refresh.ts';
+import { refreshWorktree, resumeWorktreeRefreshes, type RefreshBoundary } from '../src/core/persistence/worktree-refresh.ts';
 import { _transientDelayForTests } from '../src/core/persistence/sync-drain.ts';
 import { deleteSourceRow } from '../src/core/source-delete.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
@@ -100,12 +100,13 @@ const ownerHost = async (f: RefreshFixture) => (await f.engine.executeRaw<{ owne
 /** Drives this process's consumer on `row` for up to `ms`: until it settles, or (a write held again) until the wait ends. */
 const drive = async (f: RefreshFixture, row: WriteRequest, ms = 5_000) => waitForWrite(f.engine, (await getWriteRequestById(f.engine, row.id))!, { engine: f.engine.kind } as never, ms);
 
-/** Runs `fn` while a real refresh of the checkout is paused at its drained boundary; the refresh changes alpha/two.md by default. */
-async function duringRefresh(f: RefreshFixture, fn: () => Promise<void>, change: [string, string] = ['alpha/two.md', page('Alpha two', 'An upstream observation.')]) {
+/** Runs `fn` while a real refresh of the checkout is paused at its drained boundary; the refresh changes alpha/two.md by default. `at` runs at every later boundary. */
+async function duringRefresh(f: RefreshFixture, fn: () => Promise<void>, change: [string, string] = ['alpha/two.md', page('Alpha two', 'An upstream observation.')],
+  at?: (point: RefreshBoundary) => Promise<void>) {
   f.push(...change);
   let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
   let reached!: () => void; const drained = new Promise<void>(resolve => { reached = resolve; });
-  const refresh = refreshWorktree(f.engine, f.alpha, { hooks: { boundary: async point => { if (point === 'drained') { reached(); await gate; } } } });
+  const refresh = refreshWorktree(f.engine, f.alpha, { hooks: { boundary: async point => { if (point === 'drained') { reached(); await gate; } else await at?.(point); } } });
   await drained;
   try { await fn(); } catch (error) { release(); await refresh.catch(() => undefined); throw error; }
   release();
@@ -476,6 +477,8 @@ test('item 2 (confirmation): polling a receipt never publishes a released deferr
   const refresh = await duringRefresh(f, async () => {
     deferred = await requestRow(f, (await call(f, 'put_page', { slug: 'notes/polled', content: page('Polled', 'deferred') })).body.request_id);
     await disposePersistenceConsumer(f.engine);
+  }, undefined, async point => {
+    if (point === 'synced') await disposePersistenceConsumer(f.engine);
   });
   expect((await refresh).status).toBe('completed');
   for (let i = 0; i < 3; i++) await call(f, 'get_write_request', { request_id: deferred.request_id });

@@ -81,6 +81,7 @@ async function makeCtx(data: SubagentHandlerData, deadlineAtMs: number | null): 
     name: 'subagent',
     data: data as unknown as Record<string, unknown>,
     attempts_made: 0,
+    idempotency_key: null,
     signal: new AbortController().signal,
     deadlineAtMs,
     shutdownSignal: new AbortController().signal,

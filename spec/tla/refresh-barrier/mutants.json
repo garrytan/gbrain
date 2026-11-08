@@ -443,6 +443,32 @@
       }
     },
     {
+      "id": "resume-marks-refused-merge-recovery",
+      "kind": "guard",
+      "title": "recovery marks an orphaned fenced refresh recovery_required when git refused its fast-forward (a plain-git commit on old_head) and the process died before the abort (GST-1674 reverted)",
+      "expect": "RecoveryOnlyByPolicy",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "RefusedAbortable(i) == rmstart[i] /\\ rtgt[i] = 0",
+        "after": "RefusedAbortable(i) == FALSE"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/worktree-refresh.ts",
+            "before": "  const startedAt = row.outcome.merge_started_at;\n  return row.state === 'fenced'",
+            "after": "  const startedAt = row.outcome.merge_started_at;\n  return false && row.state === 'fenced'"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/persistence-worktree-refresh-restart.test.ts",
+            "filter": "a refresh killed after git refused its fast-forward recovers by aborting"
+          }
+        ]
+      }
+    },
+    {
       "id": "resume-needs-exact-target",
       "kind": "guard",
       "title": "recovery runs bookkeeping for an orphaned fenced or merged refresh only when HEAD is exactly the target, not a descendant",
@@ -464,6 +490,34 @@
           {
             "test": "test/refresh-write-barrier.test.ts",
             "filter": "a refresh killed after its merge, with a commit landed on the target before bookkeeping, recovers on the owner scan"
+          }
+        ]
+      }
+    },
+    {
+      "id": "abort-skips-owed-sync",
+      "kind": "guard",
+      "title": "a refresh run never syncs the members an aborted refresh left behind HEAD (GST-1853 reverted)",
+      "expect": "DeferredLeaves",
+      "config": "RefreshBarrierAbortLiveness.cfg",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "OwedSyncBegin ==\n  /\\ pc[RFR] = \"idle\"",
+        "after": "OwedSyncBegin ==\n  /\\ FALSE /\\ pc[RFR] = \"idle\""
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/worktree-refresh.ts",
+            "before": "  if (newest?.state !== 'aborted') return NO_OWED_SYNC;\n",
+            "after": "  if (newest?.state !== 'aborted' || newest) return NO_OWED_SYNC;\n"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/refresh-barrier-held-after-abort.test.ts",
+            "filter": "GST-1853",
+            "postgres": true
           }
         ]
       }

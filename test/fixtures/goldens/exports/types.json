@@ -6401,6 +6401,7 @@
           "data: Record<string, unknown>",
           "deadlineAtMs: number | null",
           "id: number",
+          "idempotency_key: string | null",
           "isActive: () => Promise<boolean>",
           "log: (message: string | TranscriptEntry) => Promise<void>",
           "name: string",

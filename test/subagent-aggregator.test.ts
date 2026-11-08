@@ -39,6 +39,7 @@ function ctxWithInbox(
     name: 'subagent_aggregator',
     data,
     attempts_made: 0,
+    idempotency_key: null,
     signal: new AbortController().signal,
     deadlineAtMs: null,
     shutdownSignal: new AbortController().signal,

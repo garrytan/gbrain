@@ -700,6 +700,7 @@ src/core/persistence/ownership.ts	process_env	2	W6: settings plane out of the co
 src/core/persistence/page-mutations.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/page-prepare.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/page-purge.ts	module_collection	3	W6: per-engine state, or mark as a constant table
+src/core/persistence/pending-import.ts	fs_import	1	W5: repo-less persistence for hosts (#8826: operationMarkerPaths stats the git dir Git names before it trusts the marker paths)
 src/core/persistence/pending-import.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/persistence/physical-root-record.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/physical-root-record.ts	spawn_import	1	W7: process-wide effects move to src/cli
@@ -798,7 +799,7 @@ src/core/persistence/worktree-lease.ts	module_collection	6	W6: per-engine state,
 src/core/persistence/worktree-link.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/worktree-manifest.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/worktree-refresh.ts	fs_import	1	W5: repo-less persistence for hosts
-src/core/persistence/worktree-refresh.ts	load_config	2	W6: settings plane out of the core
+src/core/persistence/worktree-refresh.ts	load_config	1	W6: settings plane out of the core
 src/core/persistence/worktree-refresh.ts	module_collection	2	W6: per-engine state, or mark as a constant table; +1 #7731: the owner scan's unreadable-HEAD log throttle, keyed by refresh id and pruned each scan like laggingSyncing
 src/core/persistence/worktree-refresh.ts	process_env	7	W6: settings plane out of the core
 src/core/persistence/write-wait.ts	load_config	2	W6: settings plane out of the core

@@ -100,6 +100,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   // GBRA-231: shared agents (doctor/checks/shared-agent-access.ts).
   'access_may_act_for_wildcard',
   'extractor_facts_expired',
+  'unwithdrawn_facts',
   'loop_facts_drift',
   'ontology_facts_fenced',
   'orphan_persistence_bindings',
