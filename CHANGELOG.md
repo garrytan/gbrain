@@ -10,6 +10,15 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.610.0] - 2026-11-08
+
+**A client that retries a `POST /ingest` capture accepted before v0.60.609.0 no longer queues a second job that writes the old body over the page's newer edit.** v0.60.609.0 added the target slug to the capture's queue key, and nothing looked up the old key form, so a retry of a capture that had already landed was taken as a new one. The route now also looks up a capture's pre-v0.60.609.0 key and answers 202 with that job when it was queued for the same target slug, so the retry is the same request again and nothing is queued.
+
+### Itemized changes
+
+- `src/commands/serve-http-webhooks.ts` (`POST /ingest`): before queueing, the route looks up the capture's legacy key (client, write source and content hash, no slug part). A row queued for the same normalized target slug (or with no slug, for a slug-less capture) answers the request; a row for another slug never does, so one body sent to two slugs still queues two captures. A dead or cancelled legacy row frees its key, as under the current key. A legacy row still waiting or running with no recorded submitter (left by an upgrade across v0.50) answers 409 `legacy_job_authority` with its recovery hint instead of queueing a second job. The 429 at the waiting cap, the 400 for slugs over 1024 bytes and the webhook HMAC are unchanged.
+- Tests: `test/serve-http-ingest-legacy-key-retry.test.ts` (PGLite) and `test/e2e/serve-http-ingest-legacy-key-retry-postgres.test.ts` (Postgres) drive the real route: a retry of a completed legacy capture gets its job back, queues nothing and leaves the newer edit in place, and a legacy row with no recorded submitter gets its job back when completed or a 409 while still waiting.
+
 ## [0.60.609.0] - 2026-11-07
 
 **`POST /ingest` no longer answers 202 for a capture it drops, and an unsigned GitHub webhook can no longer tell from response time which repositories a brain syncs.** The same body sent to two slugs now queues two captures, where the second caller used to get the first job back and nothing written to its slug. A capture over the 50-capture waiting cap now gets 429 `ingest_backlog_full` with `Retry-After: 30` and nothing queued, where it used to get another capture's job id. A slug over 1024 bytes gets 400 `invalid_slug` before anything is queued, well short of the roughly 2.7 KB where no page can be stored under it. Every webhook request now computes the HMAC over its body, whether the repository is unknown, has no secret or is covered by a source, so a 401 takes the same work either way.
