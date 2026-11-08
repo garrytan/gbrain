@@ -613,3 +613,13 @@ test('#8755 o: an adoption whose caller names no claim token ends write_claim_lo
   expect(await revision(f, 'one')).toBe(before.revision);
 }), 180_000);
 
+test('#8755 p: a stale editor save matches an earlier revision whose edges hold whitespace beyond space, tab and newline', () => each(async f => {
+  const { localEditAdoptionSeams } = await import('../src/core/persistence/local-edit-adoption.ts');
+  let published = 0;
+  localEditAdoptionSeams.beforePublish = () => { published++; };
+  const EARLIER = 'An earlier body a stale editor buffer still held.';
+  await f.engine.executeRaw(`INSERT INTO page_versions (page_id, compiled_truth, timeline, frontmatter)
+    SELECT id, $1, timeline, frontmatter FROM pages WHERE source_id=$2 AND slug='one'`, [`\u00a0\ufeff${EARLIER}\u3000\u2028`, f.alpha]);
+  await expectRefused(f, page('Alpha one', EARLIER), timeline(f), 'add_timeline_entry');
+  expect(published).toBe(0);
+}), 180_000);
