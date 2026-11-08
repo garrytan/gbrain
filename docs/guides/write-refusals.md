@@ -1077,7 +1077,10 @@ Links and the right live in the database, so they are the same on a repo-less br
 ## Storage manifest refusals
 
 The storage shelf (source `storage`) holds one validated card per item an agent archived to object storage.
-Only `gbrain storage-register` and `gbrain storage-update` write it, from the trusted local CLI.
+Only the storage verbs write it (`gbrain storage-register`, `gbrain storage-update`, and `gbrain storage adopt` and
+`gbrain storage import`, which register through the same path), from the trusted local CLI. Guide: [storage manifest](storage-manifest.md).
+An adopt or import apply whose plan changed since its preview refuses `preview_changed`; `storage_record_invalid` and
+`storage_record_secret` there name the interim page or JSONL line instead of a field you sent.
 
 | Code | What happened | What to do |
 |---|---|---|
@@ -1087,6 +1090,8 @@ Only `gbrain storage-register` and `gbrain storage-update` write it, from the tr
 | `storage_card_exists` | A card with that id is already registered. | Update it with the revision `storage_get` returns, or use another id. |
 | `storage_revision_conflict` | The card changed since its revision was read; `detail` holds the current revision. | Read it again, apply the change, update once. |
 | `storage_manifest_missing` | No shelf yet on a brain with a Git checkout, or the `storage` source ID belongs to another source. | Preview `gbrain storage init --dir <path> --dry-run` and apply it after the user agrees (it needs managed persistence). |
+| `storage_adopt_field_refused` | `gbrain storage adopt --apply` found interim records with fields a card refuses (a command, an unknown field, a stamped field) that it was not told to drop. | Show the user the fields the preview lists; with their agreement, run the apply the refusal names (one `--drop-field` per field). The original pages keep them until finalize. |
+| `storage_adopt_unverified` | `gbrain storage adopt --finalize` found an adopted original whose card is missing or differs from its record. Nothing was deleted. | Compare the original with its card (`gbrain storage-get`), fix one of them, and preview finalize again. |
 
 ## Related
 

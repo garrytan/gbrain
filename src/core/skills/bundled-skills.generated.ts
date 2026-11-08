@@ -84,10 +84,11 @@ import f81 from '../../../skills/skill-optimizer/skillopt-benchmark.jsonl' with 
 import f82 from '../../../skills/skillpack-check/SKILL.md' with { type: 'text' };
 import f83 from '../../../skills/smoke-test/SKILL.md' with { type: 'text' };
 import f84 from '../../../skills/soul-audit/SKILL.md' with { type: 'text' };
-import f85 from '../../../skills/strategic-reading/SKILL.md' with { type: 'text' };
-import f86 from '../../../skills/two-tier-extraction/SKILL.md' with { type: 'text' };
-import f87 from '../../../skills/voice-note-ingest/SKILL.md' with { type: 'text' };
-import f88 from '../../../skills/webhook-transforms/SKILL.md' with { type: 'text' };
+import f85 from '../../../skills/storage-manifest/SKILL.md' with { type: 'text' };
+import f86 from '../../../skills/strategic-reading/SKILL.md' with { type: 'text' };
+import f87 from '../../../skills/two-tier-extraction/SKILL.md' with { type: 'text' };
+import f88 from '../../../skills/voice-note-ingest/SKILL.md' with { type: 'text' };
+import f89 from '../../../skills/webhook-transforms/SKILL.md' with { type: 'text' };
 
 export interface BundledSkillMeta { name: string; audience: 'owner' | 'downstream'; assets: string[] }
 
@@ -721,6 +722,14 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     ]
   },
   {
+    "name": "storage-manifest",
+    "audience": "downstream",
+    "assets": [
+      "conventions/agent-operator-protocol.md",
+      "conventions/brain-first.md"
+    ]
+  },
+  {
     "name": "strategic-reading",
     "audience": "downstream",
     "assets": [
@@ -851,8 +860,9 @@ export const BUNDLED_SKILL_FILES: Readonly<Record<string, string>> = {
   "skillpack-check/SKILL.md": f82,
   "smoke-test/SKILL.md": f83,
   "soul-audit/SKILL.md": f84,
-  "strategic-reading/SKILL.md": f85,
-  "two-tier-extraction/SKILL.md": f86,
-  "voice-note-ingest/SKILL.md": f87,
-  "webhook-transforms/SKILL.md": f88,
+  "storage-manifest/SKILL.md": f85,
+  "strategic-reading/SKILL.md": f86,
+  "two-tier-extraction/SKILL.md": f87,
+  "voice-note-ingest/SKILL.md": f88,
+  "webhook-transforms/SKILL.md": f89,
 };

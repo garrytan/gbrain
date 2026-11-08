@@ -4702,6 +4702,26 @@ More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### storage_adopt_field_refused
+
+<a id="storage_adopt_field_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Interim storage records carry fields a card refuses (a command, an unknown field, or a field gbrain stamps), and the adopt apply did not name each one with --drop-field; nothing was written. | Adopting leaves those fields out of the card, so the user decides; the original pages keep them until finalize soft-deletes the originals. | Show the user the refused fields the adopt preview lists; with their agreement, run the apply the refusal names, which drops each with --drop-field. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
+
+### storage_adopt_unverified
+
+<a id="storage_adopt_unverified"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An adopted interim original has no card on the storage shelf that matches its record, so finalize deleted nothing. | Finalize soft-deletes an original only when its card holds everything the record mapped to, so no archive record is lost. | Compare the original with its card (gbrain storage-get), fix the card or the record, then preview gbrain storage adopt --finalize again. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
+
 ### storage_card_exists
 
 <a id="storage_card_exists"></a>
@@ -4742,7 +4762,7 @@ More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guide
 |---|---|---|---|---|---|---|
 | A storage card failed validation (a missing or malformed field, a command field, or a field gbrain stamps itself); nothing was written. | Every card must say where the item is, how big it is and how to restore it, and carries no commands, so a card is complete and safe to act on when it is found months later. | Fix the field the message names and send the card again; gbrain storage-register --help lists the card fields. | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `schema`, `command_field`, `stamped_field`, `not_json`, `not_object`, `too_large`, `id_change`.
+Reasons: `schema`, `command_field`, `stamped_field`, `not_json`, `not_object`, `too_large`, `id_change`, `no_record`, `duplicate_id`.
 
 More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
 

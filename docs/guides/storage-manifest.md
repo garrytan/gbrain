@@ -1,0 +1,84 @@
+# Storage manifest
+
+The storage manifest is a shelf of cards, one per item an agent archived to object storage (B2, Supabase Storage,
+S3, R2, GCS). A card says what the item is, where every copy lives (store, bucket, path, restic repository and
+snapshot, size, file count, hash and its kind, when it was verified), where it came from, why it was archived, and
+which skill restores it. Months later an agent finds the card from a plain phrase and restores the item through its
+own restore skill.
+
+**Say to your agent:** *"Bring back the October mail dataset."*
+
+**Say to your agent:** *"Where did the old research runs go?"*
+
+**Say to your agent:** *"What's in B2?"*
+
+The skill behind these is `skills/storage-manifest/SKILL.md`.
+
+## The verbs
+
+| Step | CLI | MCP tool |
+|---|---|---|
+| Find a card from a phrase (closest cards on a miss) | `gbrain storage-find "<phrase>"` | `storage_find` |
+| Read one card, its restore form and revision | `gbrain storage-get <id>` | `storage_get` |
+| List cards by store, status or source machine | `gbrain storage-list [--store b2] [--status archived]` | `storage_list` |
+| Register a card after a verified archive | `gbrain storage-register --card '<json>'` (or stdin) | local CLI only |
+| Change a card, or record a restore | `gbrain storage-update <id> --expected-revision <rev> [--patch '<json>'] [--restored-to <path> --restored-verified]` | local CLI only |
+
+A restore runs through the agent's own restore skill: the card's `restore.skill` with `restore.args`. Cards never
+carry commands or credentials, and gbrain never contacts a store. After the restore, `storage-update` with
+`--restored-to` records where it landed (newest first); pass `--restored-verified` only when the checksums matched.
+
+## Repo-less brains and brains with a Git checkout
+
+On a repo-less brain the database is the record: the first `storage-register` (or `gbrain storage init`) creates the
+`storage` source, database-only and not federated, and every verb works there.
+
+On a brain with a Git checkout, Git stays the parent. `gbrain storage init --dir <absolute path> --dry-run` previews a
+hosted Git repository for the shelf, and the printed `--expect <plan_hash>` command creates it after the user agrees
+(it needs managed persistence). Every card is then a commit before the database indexes it. Until init has run,
+register, adopt and import refuse `storage_manifest_missing` with that preview as the fix.
+
+## Adopt interim records
+
+Agents that archived before the shelf existed often kept interim pages: `type: stored-object` pages under
+`storage-manifest/`, each with its record as JSON in a fenced `json` block under a `## Record` heading.
+`gbrain storage adopt` moves them onto the shelf in three preview-first steps:
+
+1. `gbrain storage adopt [--source <id>] [--from-prefix <prefix>]` previews: per page, the card it maps to and each
+   field a card refuses with its reason (`command_field` such as `restore.command`, `unknown_field`,
+   `stamped_field`). It writes nothing and prints a `plan_hash`. The index page (`<prefix>index`) is skipped.
+2. The printed apply, `--apply --expect <plan_hash>` with one `--drop-field <dotted.name>` per refused field, runs
+   after the user agrees to leave those fields out. It registers each card with `origin: adopt` through the same
+   path `storage-register` uses, then tags the original `storage-manifest-adopted`. It deletes nothing. A
+   credential-shaped value (a secret, an environment assignment, a credential variable, a URL password, a signed URL)
+   always refuses, whatever is dropped: fix the source page first.
+3. `gbrain storage adopt --finalize` previews soft-deleting the tagged originals; its `--expect <plan_hash>` run deletes
+   them (restorable for 72 hours with `gbrain restore`), only when every adopted card is on the shelf and matches its
+   original's mapped card.
+
+A rerun skips cards already on the shelf that match and originals already tagged. A card on the shelf that differs is
+a conflict: it is reported and never overwritten, and its original stays untagged. Every apply reports
+`side_effects: none | partial | complete`; a run that stopped part way prints the command that finishes it.
+
+## Export and import (JSONL)
+
+`gbrain storage export --jsonl [--out <new file>]` writes every card as one JSON line, sorted by id, with the fields
+gbrain stamps (`registered_by`, `origin`). `gbrain storage import --jsonl <file>` previews each line as
+`create`, `identical`, `conflict` or `invalid` with a `plan_hash`; `--apply --expect <plan_hash>` registers the
+missing cards with `origin: import` (gbrain stamps both fields again), never overwrites a differing card, and skips
+invalid lines without showing their values. Export from one brain and import into an empty one reproduces every card.
+
+## Doctor
+
+`gbrain doctor --only storage_manifest` (read-only) warns about cards that fail the current card schema, interim
+records under `storage-manifest/` that are not adopted yet, and a hosted shelf whose directory is gone. It reports
+not applicable on a brain with no shelf and no interim record.
+
+## Privacy
+
+Cards hold paths, sizes, hashes and restore forms, never file contents or credentials; the restore skill reads
+credentials from its own environment. The `storage` source is not federated: ordinary search does not return cards,
+and a remote connection reads them only when its grant names `storage`. Register and update run only from the trusted
+local CLI, and only the storage verbs write the shelf.
+
+Refusals and their fixes: [write refusals](write-refusals.md#storage-manifest-refusals).

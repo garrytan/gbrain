@@ -9,7 +9,7 @@ import { pageReadFilter } from '../search/read-policy-sql.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
 import { STORAGE_SOURCE_ID } from './door.ts';
-import { STORED_OBJECT_TYPE } from './schema.ts';
+import { cardFromPage, STORED_OBJECT_TYPE, type Card } from './schema.ts';
 
 const STOPWORDS = new Set(['a', 'an', 'and', 'the', 'of', 'to', 'in', 'on', 'for', 'from', 'my', 'our', 'it', 'that', 'this', 'back', 'bring', 'restore', 'find', 'where', 'is', 'was', 'what', 'did', 'go', 'with', 'please']);
 const CLOSEST_FLOOR = 0.1;
@@ -78,4 +78,14 @@ export async function listCards(engine: BrainEngine, opts: { limit: number; offs
   params.push(opts.limit, opts.offset);
   const cards = await engine.executeRaw<CardRow>(`SELECT ${CARD_COLUMNS} FROM pages p WHERE ${where} ORDER BY p.slug LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
   return { cards: cards.map((c) => ({ ...c, stores: c.stores ?? [] })), total: Number(n) };
+}
+
+/** Every live page on the shelf, sorted by id, with the card it stores (null when its page holds none). Trusted local readers only. */
+export async function readShelfCards(engine: BrainEngine): Promise<Array<{ id: string; card: Card | null }>> {
+  const rows = await engine.executeRaw<{ slug: string; title: string; type: string | null; frontmatter: unknown }>(
+    'SELECT p.slug, p.title, p.type, p.frontmatter FROM pages p WHERE p.source_id = $1 AND p.deleted_at IS NULL ORDER BY p.slug', [STORAGE_SOURCE_ID]);
+  return rows.map((row) => {
+    const frontmatter = typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) as Record<string, unknown> : (row.frontmatter ?? {}) as Record<string, unknown>;
+    return { id: row.slug, card: row.type === STORED_OBJECT_TYPE ? cardFromPage({ slug: row.slug, title: row.title, frontmatter }) : null };
+  });
 }

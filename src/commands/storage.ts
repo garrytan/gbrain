@@ -10,7 +10,9 @@ import { shellQuote } from '../core/shell-quote.ts';
 import { scannerSlugRootMode } from '../core/write-through.ts';
 import type { SlugRootMode } from '../core/sync-anchor.ts';
 import { nativeFileTarget } from '../core/persistence/native-file-target.ts';
-import { OperationError } from '../core/ops/contract.ts';
+import { opError, OperationError, type OperationContext } from '../core/ops/contract.ts';
+import { readFix } from '../core/ops/op-fix.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
 /**
  * Distinct nominal types for the two tier-keyed numeric maps. Both shapes
@@ -54,6 +56,10 @@ const STORAGE_HELP = `gbrain storage — storage tiers of the brain repo, and th
 USAGE
   gbrain storage [status] [--repo <path>] [--json]
   gbrain storage init [--dir <path>] [--push-remote <url>] [--dry-run | --expect <plan_hash>] [--json]
+  gbrain storage adopt [--source <id>] [--from-prefix <prefix>] [--drop-field <dotted.name>]...
+                       [--apply --expect <plan_hash> | --finalize [--expect <plan_hash>]] [--json]
+  gbrain storage export --jsonl [--out <file>]
+  gbrain storage import --jsonl <file> [--apply --expect <plan_hash>] [--json]
 
 SUBCOMMANDS
   status            (default) Report page counts and disk usage per storage
@@ -66,6 +72,22 @@ SUBCOMMANDS
                     Git checkout gets a hosted git-canonical repository under
                     --dir, which needs managed persistence; preview first and
                     apply the printed command after the user agrees.
+  adopt             Move interim records (type stored-object pages under
+                    --from-prefix, default storage-manifest/, in --source,
+                    default default; each with a json block under ## Record)
+                    onto the shelf. Preview by default; --apply --expect
+                    registers each card (origin adopt) and tags the original
+                    storage-manifest-adopted, deleting nothing. Fields a card
+                    refuses are left out only when named with --drop-field;
+                    a credential-shaped value always refuses. --finalize
+                    previews soft-deleting the adopted originals (72 h
+                    restore window); with --expect it deletes them, only when
+                    every card matches its original.
+  export            Write every card as one JSON line, sorted by id, to --out
+                    (a new file) or stdout.
+  import            Preview a JSONL export line by line (create, identical,
+                    conflict, invalid); --apply --expect registers the missing
+                    cards (origin import) and never overwrites a differing one.
 
 THE STORAGE SHELF (separate commands)
   gbrain storage-find "<phrase>"     Find a card; closest cards when none match
@@ -97,12 +119,20 @@ export async function runStorage(engine: BrainEngine, args: string[]): Promise<v
     await runStorageInit(engine, args.slice(1));
     return;
   }
+  if (subcommand === 'adopt') {
+    await runStorageAdopt(engine, args.slice(1));
+    return;
+  }
+  if (subcommand === 'export' || subcommand === 'import') {
+    await runStorageJsonl(engine, subcommand, args.slice(1));
+    return;
+  }
   if (['find', 'get', 'list', 'register', 'update'].includes(subcommand)) {
     console.error(`The storage manifest verbs are their own commands: run gbrain storage-${subcommand} (see gbrain storage-${subcommand} --help).`);
     process.exit(1);
   }
   console.error(`Unknown storage subcommand: ${subcommand}`);
-  console.error('Available subcommands: status, init');
+  console.error('Available subcommands: status, init, adopt, export, import');
   process.exit(1);
 }
 
@@ -454,6 +484,129 @@ async function runStorageInit(engine: BrainEngine, args: string[]): Promise<void
     if (!(error instanceof OperationError)) throw error;
     console.log(json ? JSON.stringify({ error: error.code, message: error.message, suggestion: error.suggestion }) : `Refused (${error.code}): ${error.message}
 Fix: ${error.suggestion ?? ''}`);
-    process.exitCode = error.code === 'invalid_params' ? 2 : 1;
+    setCliExitVerdict(error.code === 'invalid_params' ? 2 : 1);
+  }
+}
+
+// ── storage adopt / export / import (GST-1943) ─────────────
+
+function flagValue(args: string[], flag: string): string | undefined {
+  const i = args.indexOf(flag);
+  return i >= 0 ? args[i + 1] : undefined;
+}
+
+async function shelfCliContext(engine: BrainEngine, sourceId: string): Promise<OperationContext> {
+  const { loadConfig } = await import('../core/config.ts');
+  const { resolveCliWriteWaitMs } = await import('../core/persistence/write-wait.ts');
+  const config = loadConfig() ?? { engine: engine.kind };
+  return { engine, config, remote: false, dryRun: false, sourceId, writeWaitMs: resolveCliWriteWaitMs({ config }),
+    logger: { info: () => {}, warn: (m: string) => console.error(m), error: (m: string) => console.error(m) } } as unknown as OperationContext;
+}
+
+async function shelfRefusal(error: unknown, json: boolean): Promise<void> {
+  if (!(error instanceof OperationError)) throw error;
+  const { writeCliError } = await import('../cli/cli-error.ts');
+  setCliExitVerdict(writeCliError(error, 'storage', { json }));
+}
+
+const argvText = (argv: string[]) => argv.map(shellQuote).join(' ');
+
+function printOutcome(result: { side_effects: string; failure?: { item: string; code: string; message: string }; rerun?: string[] }): void {
+  console.log(`Side effects: ${result.side_effects}.`);
+  if (!result.failure) return;
+  console.log(`Stopped at ${result.failure.item} (${result.failure.code}): ${result.failure.message}`);
+  if (result.rerun) console.log(`Rerun after fixing it: ${argvText(result.rerun)}`);
+}
+
+async function runStorageAdopt(engine: BrainEngine, args: string[]): Promise<void> {
+  const json = args.includes('--json');
+  const adopt = await import('../core/storage-manifest/adopt.ts');
+  const rawPrefix = (flagValue(args, '--from-prefix') ?? adopt.ADOPT_DEFAULT_PREFIX).trim().toLowerCase();
+  const opts = { sourceId: flagValue(args, '--source') ?? adopt.ADOPT_DEFAULT_SOURCE, prefix: rawPrefix.endsWith('/') ? rawPrefix : `${rawPrefix}/` };
+  const expect = flagValue(args, '--expect');
+  const finalize = args.includes('--finalize');
+  const apply = args.includes('--apply');
+  const dropFields = args.flatMap((arg, i) => arg === '--drop-field' && args[i + 1] ? [args[i + 1]!] : []);
+  try {
+    const preview = [...adopt.adoptArgv(opts), ...(finalize ? ['--finalize'] : [])];
+    if (opts.prefix === '/') throw opError('invalid_params', '--from-prefix needs a slug prefix such as storage-manifest/.', 'Pass the folder the interim pages live under, or omit --from-prefix for storage-manifest/.');
+    if (apply && finalize) throw opError('invalid_params', '--apply and --finalize are separate steps.', 'Apply the adopt first; finalize afterwards with gbrain storage adopt --finalize, then its --expect value.');
+    if ((apply && !expect) || (expect && !apply && !finalize)) {
+      throw opError('invalid_params', 'An apply needs both --apply and the --expect value its preview printed.', 'Preview without --apply, then run the apply command the preview prints after the user agrees.',
+        { fix: readFix('Prints the plan and its plan_hash; changes nothing.', { argv: [...preview, '--json'] }) });
+    }
+    const ctx = await shelfCliContext(engine, opts.sourceId);
+    const result = finalize
+      ? expect ? await adopt.applyFinalize(ctx, { ...opts, expect }) : await adopt.previewFinalize(ctx, opts)
+      : expect ? await adopt.applyAdopt(ctx, { ...opts, expect, dropFields }) : await adopt.previewAdopt(ctx, opts);
+    if (!result.dry_run && (result.failure || (result.action === 'adopt' && result.conflicts.length))) setCliExitVerdict(1);
+    if (json) { console.log(JSON.stringify(result)); return; }
+    if (result.dry_run) {
+      for (const line of result.summary) console.log(line);
+      for (const entry of result.entries) {
+        const extra = 'refused' in entry ? [...entry.refused.map((f) => `${f.field} refused (${f.reason})`), ...(entry.problem ? [entry.problem.message] : [])] : [];
+        console.log(`  ${entry.state.padEnd(11)} ${entry.slug}${entry.card_id ? ` -> ${entry.card_id}` : ''}${extra.length ? `: ${extra.join('; ')}` : ''}`);
+      }
+      console.log(`plan_hash: ${result.plan_hash}`);
+      if (result.apply) console.log(`Apply (after the user agrees): ${argvText(result.apply)}`);
+      return;
+    }
+    if (result.action === 'adopt') {
+      for (const row of result.results) console.log(`  ${row.outcome.padEnd(10)} ${row.slug}${row.card_id ? ` -> ${row.card_id}` : ''}`);
+      if (result.conflicts.length) console.log(`Conflicts (a different card with that id is on the shelf; nothing was overwritten): ${result.conflicts.join(', ')}`);
+      printOutcome(result);
+      if (result.finalize) console.log(`Originals are kept. Preview deleting them: ${argvText(result.finalize)}`);
+      return;
+    }
+    console.log(`Soft-deleted ${result.deleted.length} original(s) (restorable for 72 hours with gbrain restore).`);
+    printOutcome(result);
+  } catch (error) {
+    await shelfRefusal(error, json);
+  }
+}
+
+async function runStorageJsonl(engine: BrainEngine, subcommand: 'export' | 'import', args: string[]): Promise<void> {
+  const json = args.includes('--json');
+  const jsonl = await import('../core/storage-manifest/jsonl.ts');
+  const { readFileSync, writeFileSync } = await import('fs');
+  try {
+    if (!args.includes('--jsonl')) throw opError('invalid_params', `gbrain storage ${subcommand} reads and writes JSONL only, so it needs --jsonl.`,
+      subcommand === 'export' ? 'Run gbrain storage export --jsonl, adding --out with a new file path to write a file.' : 'Run gbrain storage import --jsonl with the path of an export file.');
+    if (subcommand === 'export') {
+      const out = flagValue(args, '--out');
+      if (out && existsSync(out)) throw opError('invalid_params', `${out} already exists; export never overwrites a file.`, 'Pass --out with a path that does not exist yet, or omit --out to write to stdout.');
+      const { lines, skipped } = await jsonl.exportShelfJsonl(engine);
+      const text = lines.length ? `${lines.join('\n')}\n` : '';
+      if (!out) { process.stdout.write(text); }
+      else { writeFileSync(out, text, { flag: 'wx' }); console.error(`Wrote ${lines.length} card(s) to ${out}.`); }
+      if (skipped.length) console.error(`Skipped ${skipped.length} page(s) on the shelf that hold no card: ${skipped.join(', ')}`);
+      return;
+    }
+    const file = flagValue(args, '--jsonl');
+    if (!file || file.startsWith('--')) throw opError('invalid_params', 'gbrain storage import needs the JSONL file after --jsonl.', 'Run gbrain storage import --jsonl with the path of a file gbrain storage export wrote.');
+    if (!existsSync(file)) throw opError('invalid_params', `No file at ${file}.`, 'Pass --jsonl with the path of a file gbrain storage export wrote.');
+    const text = readFileSync(file, 'utf8');
+    const expect = flagValue(args, '--expect');
+    if (args.includes('--apply') !== (expect !== undefined)) throw opError('invalid_params', 'An import apply needs both --apply and the --expect value its preview printed.',
+      'Preview without --apply, then run the apply command the preview prints after the user agrees.',
+      { fix: readFix('Prints the import plan and its plan_hash; writes nothing.', { argv: ['gbrain', 'storage', 'import', '--jsonl', file, '--json'] }) });
+    if (expect !== undefined) {
+      const result = await jsonl.applyImport(await shelfCliContext(engine, 'default'), file, text, expect);
+      if (result.failure || result.conflicts.length || result.invalid.length) setCliExitVerdict(1);
+      if (json) { console.log(JSON.stringify(result)); return; }
+      console.log(`Created ${result.created.length} card(s); ${result.identical.length} already on the shelf.`);
+      if (result.conflicts.length) console.log(`Conflicts (a different card with that id is on the shelf; nothing was overwritten): ${result.conflicts.join(', ')}`);
+      if (result.invalid.length) console.log(`Invalid lines skipped: ${result.invalid.join(', ')}`);
+      printOutcome(result);
+      return;
+    }
+    const { cards: _cards, ...plan } = await jsonl.previewImport(engine, file, text);
+    if (json) { console.log(JSON.stringify(plan)); return; }
+    for (const line of plan.summary) console.log(line);
+    for (const line of plan.lines) console.log(`  line ${String(line.line).padEnd(5)} ${line.action.padEnd(9)} ${line.id ?? ''}${line.message ? `: ${line.message}` : ''}`);
+    console.log(`plan_hash: ${plan.plan_hash}`);
+    if (plan.apply) console.log(`Apply (after the user agrees): ${argvText(plan.apply)}`);
+  } catch (error) {
+    await shelfRefusal(error, json);
   }
 }

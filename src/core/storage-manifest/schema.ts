@@ -9,8 +9,9 @@
  * contacts a store.
  */
 import { z } from 'zod';
-import { opError, type OperationError } from '../ops/contract.ts';
+import { opError, OperationError } from '../ops/contract.ts';
 import { scanTextSpans } from '../secret-scan.ts';
+import { canonicalJson } from '../remediation-step.ts';
 
 export const STORED_OBJECT_TYPE = 'stored-object';
 export const CARD_ID_RE = /^[a-z0-9][a-z0-9-]{1,79}$/;
@@ -73,11 +74,19 @@ export const CardInputSchema = z.object({
   details: z.record(z.string(), z.unknown()).nullish(),
 }).strict();
 
+/** The keys each object in a card takes, by dotted path with `*` for a list index (adopt maps draft records onto them). */
+export const CARD_KEYS: Readonly<Record<string, ReadonlySet<string>>> = {
+  '': new Set(Object.keys(CardInputSchema.shape)),
+  'locations.*': new Set(Object.keys(LocationSchema.shape)),
+  restore: new Set(Object.keys(RestoreSchema.shape)),
+  'restores.*': new Set(Object.keys(RestoreEventSchema.shape)),
+};
+
 export type CardInput = z.infer<typeof CardInputSchema>;
 export type Card = CardInput & { registered_by: string; origin: (typeof ORIGINS)[number] };
 
 const COMMAND_KEYS = new Set(['command', 'cmd', 'script', 'exec', 'shell', 'instructions']);
-const STAMPED_KEYS = ['registered_by', 'origin'] as const;
+export const STAMPED_KEYS = ['registered_by', 'origin'] as const;
 const CREDENTIAL_NAME = /(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|PASS|CRED|AUTH)/i;
 const ENV_ASSIGNMENT = /(?:^|[\s;&|(])[A-Za-z_][A-Za-z0-9_]{1,}=\S/;
 const VAR_REFERENCE = /\$\{?([A-Za-z_][A-Za-z0-9_]*)/g;
@@ -96,23 +105,36 @@ function walk(value: unknown, path: string, visit: (path: string, text: string) 
   if (value && typeof value === 'object') {
     for (const [key, item] of Object.entries(value)) {
       const at = path ? `${path}.${key}` : key;
-      if (COMMAND_KEYS.has(key.toLowerCase())) throw invalid(at, 'a card carries no commands; restore runs through restore.skill and restore.args', 'command_field');
+      if (isCommandKey(key)) throw invalid(at, 'a card carries no commands; restore runs through restore.skill and restore.args', 'command_field');
       walk(item, at, visit);
     }
   }
 }
 
-/** The credential-shape rules over one string. Throws without echoing the value. */
+export type CredentialShape = 'secret_scanner' | 'env_assignment' | 'url_userinfo' | 'presigned_url' | 'credential_variable';
+
+/** The credential-shape rules over one string: the shape it has, or null. */
+export function credentialShape(value: string): CredentialShape | null {
+  if (scanTextSpans(value).some((span) => span.finding !== null)) return 'secret_scanner';
+  return ENV_ASSIGNMENT.test(value) ? 'env_assignment'
+    : URL_USERINFO.test(value) ? 'url_userinfo'
+    : PRESIGNED.test(value) ? 'presigned_url'
+    : [...value.matchAll(VAR_REFERENCE)].some((m) => CREDENTIAL_NAME.test(m[1]!)) ? 'credential_variable' : null;
+}
+
+/** Keys a card refuses wherever they appear: a card carries no commands. */
+export function isCommandKey(key: string): boolean {
+  return COMMAND_KEYS.has(key.toLowerCase());
+}
+
+/** Throws storage_record_secret without echoing the value. */
 function assertNoCredential(path: string, value: string): void {
-  if (scanTextSpans(value).some((span) => span.finding !== null)) {
+  const shape = credentialShape(value);
+  if (shape === 'secret_scanner') {
     throw opError('storage_record_secret', `Storage card field ${path} looks like it holds a secret; nothing was written.`,
       'Remove the secret from that field. Cards name where an item is and how to restore it; credentials stay in the environment of the skill that restores it.',
       { reason: 'secret_scanner' });
   }
-  const shape = ENV_ASSIGNMENT.test(value) ? 'env_assignment'
-    : URL_USERINFO.test(value) ? 'url_userinfo'
-    : PRESIGNED.test(value) ? 'presigned_url'
-    : [...value.matchAll(VAR_REFERENCE)].some((m) => CREDENTIAL_NAME.test(m[1]!)) ? 'credential_variable' : null;
   if (shape) {
     throw opError('storage_record_secret', `Storage card field ${path} has a credential shape (${shape}); nothing was written.`,
       'Drop the environment assignment, credential variable, URL password or signed-URL parameter from that field; the restore skill reads credentials from its own environment.',
@@ -169,6 +191,23 @@ function summary(card: Card): string {
   if (card.archived_at) lines.push(`Archived: ${card.archived_at}${card.archived_by ? ` by ${card.archived_by}` : ''}`);
   lines.push(`Restore: ${card.restore.skill}${card.restore.args ? ` with ${Object.entries(card.restore.args).map(([k, v]) => `${k}=${String(v)}`).join(', ')}` : ''}`);
   return lines.join('\n') + '\n';
+}
+
+/** A card without the fields gbrain stamps, validated again: what two copies of one card compare on. Null when it fails the schema. */
+export function cardContent(card: Record<string, unknown>): CardInput | null {
+  const { registered_by: _by, origin: _origin, ...content } = card;
+  try { return parseCardInput(content); } catch (error) { if (error instanceof OperationError) return null; throw error; }
+}
+
+function withoutEmpty(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutEmpty);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== null && item !== undefined).map(([key, item]) => [key, withoutEmpty(item)]));
+}
+
+/** Stable text of a card's content (null and absent fields are the same), for comparing and hashing. */
+export function cardDigest(card: CardInput): string {
+  return canonicalJson(withoutEmpty(card));
 }
 
 /** Frontmatter and body for a card's page. */

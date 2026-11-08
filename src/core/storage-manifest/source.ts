@@ -49,17 +49,24 @@ async function markRole(engine: BrainEngine): Promise<void> {
 }
 
 /**
- * The shelf a storage write lands in. A repo-less brain gets its database-only source on first use; a repo brain
- * must run `gbrain storage init` first. A `storage` source that exists without the role is someone else's, refused.
+ * Whether a storage write can land: throws the refusal it would get, and says whether the first write creates the
+ * database-only shelf (a repo-less brain). A repo brain must run `gbrain storage init` first; a `storage` source that
+ * exists without the role is someone else's, refused. Writes nothing.
  */
-export async function ensureStorageSource(engine: BrainEngine): Promise<void> {
+export async function shelfWritable(engine: BrainEngine): Promise<{ creates: boolean }> {
   const state = await storageSourceState(engine);
-  if (state.exists && state.role) return;
+  if (state.exists && state.role) return { creates: false };
   if (state.exists) throw opError('storage_manifest_missing', `Source ${STORAGE_SOURCE_ID} exists but is not a storage manifest; nothing was written.`,
     `The storage shelf needs the source ID ${STORAGE_SOURCE_ID}. Rename or remove the existing source (gbrain sources list shows it), then register again.`);
   if (state.repoBrain) throw opError('storage_manifest_missing', 'This brain keeps its pages in Git, so the storage shelf is a hosted Git repository that gbrain storage init creates; nothing was written.',
     'Preview it with gbrain storage init --dir <absolute path> --dry-run, and apply the command it prints after the user agrees. It needs managed persistence (gbrain sources writer activate).',
     { fix: initFix() });
+  return { creates: true };
+}
+
+/** The shelf a storage write lands in: a repo-less brain gets its database-only source on first use (see shelfWritable). */
+export async function ensureStorageSource(engine: BrainEngine): Promise<void> {
+  if (!(await shelfWritable(engine)).creates) return;
   await addSource(engine, { id: STORAGE_SOURCE_ID, name: 'Storage manifest', federated: false });
   await markRole(engine);
 }

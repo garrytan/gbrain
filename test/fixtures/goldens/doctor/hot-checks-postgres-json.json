@@ -146,6 +146,7 @@
                 "skillpack-check",
                 "skillpack-harvest",
                 "soul-audit",
+                "storage-manifest",
                 "strategic-reading",
                 "testing",
                 "two-tier-extraction",
@@ -155,7 +156,7 @@
             },
             "elapsed_ms": "<volatile>",
             "fix_unavailable_reason": "unstructured",
-            "message": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
+            "message": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `gbrain skillpack sync`.",
             "name": "skill_currency",
             "status": "warn"
           },
@@ -4467,6 +4468,18 @@
             "status": "warn"
           },
           {
+            "category": "brain",
+            "details": {
+              "docs": "docs/guides/storage-manifest.md#doctor"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No storage shelf and no interim storage records on this brain.",
+            "name": "storage_manifest",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "ops",
             "elapsed_ms": "<volatile>",
             "message": "Mode: conservative (no per-key overrides — mode bundle is canonical).",
@@ -5007,7 +5020,7 @@
             "tier": "symptom"
           },
           {
-            "fix": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
+            "fix": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `gbrain skillpack sync`.",
             "name": "skill_currency",
             "status": "warn",
             "tier": "symptom"
@@ -5244,6 +5257,7 @@
                 "skillpack-check",
                 "skillpack-harvest",
                 "soul-audit",
+                "storage-manifest",
                 "strategic-reading",
                 "testing",
                 "two-tier-extraction",
@@ -5253,7 +5267,7 @@
             },
             "elapsed_ms": "<volatile>",
             "fix_unavailable_reason": "unstructured",
-            "message": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
+            "message": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `gbrain skillpack sync`.",
             "name": "skill_currency",
             "status": "warn"
           },
@@ -9577,6 +9591,18 @@
             "status": "warn"
           },
           {
+            "category": "brain",
+            "details": {
+              "docs": "docs/guides/storage-manifest.md#doctor"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No storage shelf and no interim storage records on this brain.",
+            "name": "storage_manifest",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "ops",
             "elapsed_ms": "<volatile>",
             "message": "Mode: conservative (no per-key overrides — mode bundle is canonical).",
@@ -10117,7 +10143,7 @@
             "tier": "symptom"
           },
           {
-            "fix": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
+            "fix": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `gbrain skillpack sync`.",
             "name": "skill_currency",
             "status": "warn",
             "tier": "symptom"

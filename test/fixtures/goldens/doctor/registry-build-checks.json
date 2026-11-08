@@ -1098,6 +1098,10 @@
         "name": "fence_integrity"
       },
       {
+        "category": "brain",
+        "name": "storage_manifest"
+      },
+      {
         "category": "ops",
         "name": "search_mode"
       },

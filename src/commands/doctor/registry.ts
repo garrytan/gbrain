@@ -130,6 +130,7 @@ import { chatFallbackChainEntry } from './checks/chat-fallback.ts';
 import { providerConsentEntry } from './checks/provider-consent.ts';
 import { behaviorChangesEntry } from './checks/behavior-changes.ts';
 import { fenceIntegrityEntry } from './checks/fence-integrity.ts';
+import { storageManifestEntry } from './checks/storage-manifest.ts';
 import { outsideContentFencesEntry } from './checks/outside-content-fences.ts';
 import { dbAheadOfGitEntry } from './checks/db-ahead-of-git.ts';
 import { gitIndexLagEntry } from './checks/git-index-lag.ts';
@@ -327,6 +328,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   ownerHostStaleEntry,
   embeddingPlaneDisagreementEntry,
   fenceIntegrityEntry,
+  // GST-1943: the storage shelf: cards failing the card schema, interim records not adopted, a hosted shelf directory gone.
+  storageManifestEntry,
   searchModeEntry,
 ];
 
