@@ -229,12 +229,15 @@ it, so a write released from it and then held for that import would wait for som
 while the checkout stays diverged. GST-1853: while the worktree's newest refresh is `aborted`, every refresh run on the
 owner host (a tick, `--resume`, `--abandon`, even one its precheck refuses `refresh_diverged`) ends, after its own
 locks are released, by running the managed `--no-pull` sync of each member whose `last_commit` is not the checkout
-HEAD, within `sources.refresh_sync_budget_ms` (`syncAfterUnfinishedRefresh`; the run lists them in `synced`, and a
-refusal's message names them). The held writes are then prepared again against the checkout as it is, as above: an
+HEAD and that the run did not already sync, within `sources.refresh_sync_budget_ms` (`syncAfterUnfinishedRefresh`;
+the run lists them in `synced` once each, and a refusal's message names them). A refusal of the run's own arguments,
+`refresh_in_progress` and an unexpected failure skip it. The held writes are then prepared again against the checkout as it is, as above: an
 `expected_revision` put ends `revision_conflict`, a blind put or capture lands and names what it replaced, an append
 applies on top. Releasing them this way, instead of refusing them, gives the caller an answer within the run, and a
 refusal would only be held again on retry while the import stays pending. A member this sync cannot bring to HEAD (its
-drain blocked) waits for the next run or sync, and its held writes stay bound by the wait limit below.
+drain blocked or out of budget) is named with `gbrain sync --source <id> --no-pull` in `next` (a blocked one also in
+`sync_blocked`) or the refusal's message, and waits for the next run or sync; its held writes stay bound by the wait
+limit below.
 
 **What a blind write replaced.** A held `put_page` or `capture` that replaces content an import brought in names
 it in three places, so the replacement is auditable and recoverable without digging: the receipt's

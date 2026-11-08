@@ -26,7 +26,7 @@ import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { commitFile, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
+import { commitFile, git, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
@@ -156,4 +156,39 @@ test('GST-1853: when the owner scan aborts the killed refresh, the next refresh 
   expect(rows.map(r => r.state)).toEqual(['aborted']);
   await expect(refreshWorktree(f.engine, f.alpha)).rejects.toMatchObject({ code: 'refresh_diverged' });
   await expectDecided(f, ids);
+}), 180_000);
+
+/** The killed refresh aborted by the owner scan, its held writes still pending and the checkout diverged. */
+async function abortedByScan(f: RefreshFixture): Promise<void> {
+  await killedAtFenced(f);
+  await resumeWorktreeRefreshes(f.engine);
+  expect((await f.refreshRows()).map(r => r.state)).toEqual(['aborted']);
+}
+
+test('GST-1853: a refresh run that already synced the members runs no second owed sync and lists each member once', () => each(async f => {
+  await abortedByScan(f);
+  git(f.root, 'push', '-q', '-f', 'origin', 'HEAD:main');
+  const result = await refreshWorktree(f.engine, f.alpha, { syncBudgetMs: 0 });
+  expect(result.status).toBe('sync_deferred');
+  expect(result.synced.map(member => member.source_id).sort()).toEqual([f.alpha, f.beta].sort());
+}), 180_000);
+
+test('GST-1853: a member the owed sync leaves behind HEAD is named with its resume command, on success and on refusal', () => each(async f => {
+  await abortedByScan(f);
+  const resume = `gbrain sync --source ${f.alpha} --no-pull`;
+  const refused = await refreshWorktree(f.engine, f.alpha, { syncBudgetMs: 0 }).then(() => null, thrown => thrown as { code?: string; message: string });
+  expect(refused?.code).toBe('refresh_diverged');
+  expect(refused?.message).toContain(resume);
+  const resumed = await refreshWorktree(f.engine, f.alpha, { resume: true, syncBudgetMs: 0 });
+  expect(resumed.synced.map(member => member.source_id)).toContain(f.alpha);
+  expect(resumed.next ?? '').toContain(resume);
+}), 180_000);
+
+test('GST-1853: a refusal of the run\'s own arguments runs no owed sync', () => each(async f => {
+  await abortedByScan(f);
+  const before = await f.lastCommit(f.alpha);
+  const refused = await refreshWorktree(f.engine, f.alpha, { waitDrainMs: -1 }).then(() => null, thrown => thrown as { code?: string; message: string });
+  expect(refused?.code).toBe('invalid_params');
+  expect(refused?.message).not.toContain('ended without completing');
+  expect(await f.lastCommit(f.alpha)).toBe(before);
 }), 180_000);
