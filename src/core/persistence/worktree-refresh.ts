@@ -185,8 +185,9 @@ const REFLOG_SLACK_MS = 5_000;
 const REFLOG_TAIL_BYTES = 1024 ** 2;
 /**
  * GST-1674: whether the reflogs of HEAD and the branch it names record a move to the target at or after `sinceMs` (less REFLOG_SLACK_MS).
- * Each reflog file's last REFLOG_TAIL_BYTES are read raw and walked newest first; every entry's new value must equal the next entry's old
- * value, back to an entry older than the window or to the log's first entry (a creation from zeros). It answers true or false only then,
+ * Each reflog file's last REFLOG_TAIL_BYTES are read raw. Any entry in that tail that moved the ref to the target inside the window answers
+ * true, wherever it sits (a later entry may carry an older date). Otherwise the tail is walked newest first; every entry's new value must
+ * equal the next entry's old value, back to an entry older than the window or to the log's first entry (a creation from zeros). It answers false only then,
  * and null on any doubt: no readable log (core.logAllRefUpdates off, a deleted log, reftable), a log that does not end at `head`, a gap in
  * the chain (entries expired out of the middle), or a tail that ends inside the window. A git call that does not finish within its bound or
  * cannot start throws git_unavailable instead, so the row stays and a later run retries it.
@@ -215,14 +216,14 @@ async function reachedTargetSince(git: Git, root: string, row: WorktreeRefreshRo
     } catch { return null; }
     const lines = text.split('\n');
     if (!whole) lines.shift();
-    const entries = lines.filter(Boolean).map(line => /^([0-9a-f]{40,64}) ([0-9a-f]{40,64}) .*> (\d+) [+-]\d{4}(?:\t|$)/.exec(line));
+    const entries = lines.filter(Boolean).map(line => /^([0-9a-f]{40,64}) ([0-9a-f]{40,64}) [^\t]*> (\d+) [+-]\d{4}(?:\t|$)/.exec(line));
     if (!entries.length || entries.some(entry => !entry) || entries.at(-1)![2] !== head) return null;
+    if (entries.some(entry => entry![2] === row.target_head && Number(entry![3]) * 1000 >= sinceMs - REFLOG_SLACK_MS)) return true;
     let complete = false;
     for (let i = entries.length - 1; i >= 0 && !complete; i--) {
       const [, old, now, at] = entries[i]!;
       if (i < entries.length - 1 && now !== entries[i + 1]![1]) return null;
       if (Number(at) * 1000 < sinceMs - REFLOG_SLACK_MS) complete = true;
-      else if (now === row.target_head) return true;
       else if (i === 0 && whole && /^0+$/.test(old!)) complete = true;
     }
     if (!complete) return null;

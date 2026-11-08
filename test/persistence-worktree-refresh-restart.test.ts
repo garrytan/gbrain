@@ -184,15 +184,21 @@ function backfillHeadReflog(f: RefreshFixture, at: number): void {
   writeFileSync(log, `${'0'.repeat(first.length)} ${first} Example <example@example.invalid> ${at} +0000\tbackfill\n${line.repeat(Math.ceil(33 * 1024 ** 2 / line.length))}${real.join('\n')}\n`);
 }
 
-test('GST-1674: the same crash stays recovery_required when the reflog is gone, the row predates merge_started_at, HEAD reached the target and was reset (also onto another commit with those entries expired), or the reflog tail holds no entry from before the merge', async () => {
-  for (const doubt of ['reflog', 'started_at', 'reset', 'expired', 'recent'] as const) for (const index of cases.keys()) await withRefusedMergeKill(index, async ({ f, old, target, foreign, orphan }) => {
-    if (doubt === 'recent') {
+test('GST-1674: the same crash stays recovery_required when the reflog is gone, the row predates merge_started_at, HEAD reached the target and was reset (also onto another commit with those entries expired, or under a later entry with a backdated or misleading line), or the reflog tail holds no entry from before the merge', async () => {
+  for (const doubt of ['reflog', 'started_at', 'reset', 'expired', 'recent', 'subject', 'backdated'] as const) for (const index of cases.keys()) await withRefusedMergeKill(index, async ({ f, old, target, foreign, orphan }) => {
+    const commit = (message: string) => git(f.root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', message);
+    if (doubt === 'subject' || doubt === 'backdated') {
+      git(f.root, 'reset', '-q', '--hard', target);
+      git(f.root, 'reset', '-q', '--hard', old);
+      if (doubt === 'subject') commit('fix> 1 +0000');
+      else await withEnv({ GIT_COMMITTER_DATE: '2001-01-01T00:00:00Z' }, async () => { commit('backdated'); });
+    } else if (doubt === 'recent') {
       backfillHeadReflog(f, Math.floor(orphan.outcome.merge_started_at / 1000));
     } else if (doubt === 'expired') {
       git(f.root, 'branch', 'keep-foreign', foreign);
       git(f.root, 'reset', '-q', '--hard', target);
       git(f.root, 'reset', '-q', '--hard', old);
-      git(f.root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'after reset');
+      commit('after reset');
       for (const ref of git(f.root, 'for-each-ref', '--format=%(refname)', 'refs/remotes').split('\n').filter(Boolean)) git(f.root, 'update-ref', '-d', ref);
       git(f.root, 'reflog', 'expire', '--expire-unreachable=all', '--all');
       expect(git(f.root, 'log', '-g', '--format=%H', 'HEAD', '--').split('\n')).not.toContain(target);
@@ -207,7 +213,7 @@ test('GST-1674: the same crash stays recovery_required when the reflog is gone, 
     }
     await resumeWorktreeRefreshes(f.engine);
     const [row] = await f.refreshRows() as Row[];
-    const head = doubt === 'expired' ? f.head() : foreign;
+    const head = ['expired', 'subject', 'backdated'].includes(doubt) ? f.head() : foreign;
     expect([doubt, row!.state]).toEqual([doubt, 'recovery_required']);
     expect(row!.outcome.observed_head).toBe(head);
     expect(f.head()).toBe(head);
