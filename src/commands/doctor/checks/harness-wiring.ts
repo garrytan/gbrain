@@ -668,16 +668,26 @@ async function registrationCheck(opts: { smoke: boolean }, regs: HarnessRegistra
 
 async function runHarnessWiring(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
+  const { describeSkillResolver, skillResolverCheck, skillResolverView } = await import('./skill-resolver.ts');
+  let resolver: Awaited<ReturnType<typeof skillResolverView>> = null;
   try {
-    checks.push(await harnessWiringCheck({ smoke: !!ctx.only?.has('harness_wiring') }));
+    resolver = await skillResolverView();
+  } catch (e) {
+    checks.push(checkError('skill_resolver', 'read the skill resolver state', e));
+  }
+  try {
+    const check = await harnessWiringCheck({ smoke: !!ctx.only?.has('harness_wiring') });
+    checks.push(resolver ? { ...check, message: `${check.message} ${describeSkillResolver(resolver)}`, details: { ...(check.details ?? {}), skill_resolver: resolver } } : check);
   } catch (e) {
     checks.push(checkError('harness_wiring', 'read the harness registrations', e));
   }
+  const own = skillResolverCheck(resolver);
+  if (own) checks.push(own);
   return checks;
 }
 
 export const harnessWiringDoctorEntry: DoctorEntry = {
   name: 'harness_wiring',
-  emits: ['harness_wiring'],
+  emits: ['harness_wiring', 'skill_resolver'],
   run: runHarnessWiring,
 };
