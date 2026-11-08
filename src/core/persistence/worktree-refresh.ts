@@ -153,13 +153,18 @@ async function memberOutsideHead(engine: BrainEngine, git: Git, root: string, ro
   }
   return false;
 }
-/** GBEV-44: true when gbrain's commit ledger names every commit in from..to (writes admitted before the fence that landed while the refresh drained). */
+/**
+ * GBEV-44: true when gbrain's commit ledger names every commit in from..to (writes admitted before the fence that landed while the refresh drained).
+ * Only the wording of a refusal depends on it, so a ledger that cannot be read proves nothing and the commits read as not gbrain's own.
+ */
 async function ownCommits(git: Git, root: string, from: string, to: string): Promise<boolean> {
   const location = ledgerLocation(root);
   const listed = await git(['-C', root, 'rev-list', `${from}..${to}`]);
   const shas = listed.code === 0 ? listed.stdout.split('\n').map(sha => sha.trim()).filter(Boolean) : [];
   if (!location || !shas.length) return false;
-  const ledgered = new Set(readLedger(location.common).flatMap(record => record.e === 'commit' ? [record.sha] : []));
+  let records: ReturnType<typeof readLedger>;
+  try { records = readLedger(location.common); } catch { return false; }
+  const ledgered = new Set(records.flatMap(record => record.e === 'commit' ? [record.sha] : []));
   return shas.every(sha => ledgered.has(sha));
 }
 const OWN_COMMITS = "gbrain's own commits: writes admitted before the fence that landed while the refresh drained";

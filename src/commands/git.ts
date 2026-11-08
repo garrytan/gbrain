@@ -12,7 +12,7 @@
  *   gbrain git guard [--install | --uninstall] [--path <dir>] [--json]
  */
 import { existsSync, realpathSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { commitAndPush, checkoutRoot, pullShared, scopePaths, COMMIT_LOCK_NAME, SOURCE_ROOT_CONFIG, type Resolution } from '../core/git/commit-push.ts';
 import { guardStatus, installGuard, uninstallGuard } from '../core/git/commit-guard.ts';
 import { appendPushLog } from '../core/brain-repo-durability.ts';
@@ -22,8 +22,8 @@ import { writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { execFileSync } from '../core/spawn.ts';
 import { gitChildEnv } from '../core/git-env.ts';
 import { GIT_ENV } from '../core/git-transport.ts';
-import { managedFilesystemRootFor } from '../core/persistence/filesystem-guard.ts';
-import { registeredManagedRootRecords } from '../core/persistence/root-registry.ts';
+import { staleEnclosingMarker } from '../core/persistence/filesystem-guard.ts';
+import { canonicalFilesystemPath, checkoutGitMetadata, managedRootMarkerFor, registeredManagedRootRecords } from '../core/persistence/root-registry.ts';
 
 const HELP = `Usage: gbrain git commit-push [--path <dir>] -m <msg> [--json] [--] <paths...>
        gbrain git commit-push --push-only [--path <dir>] [--branch <b>]
@@ -142,11 +142,19 @@ function parseResolutions(specs: string[]): Map<string, Resolution> {
  * them and carries no mark of a gbrain brain checkout is refused before anything is staged (a wrapper that changed into
  * another repository). A legacy source is not in that record, so `gbrain sources harden`'s marks admit it: a
  * gbrain.sourceRoot or gbrain.cliPath entry, or the committed scripts/brain-commit-push.sh (whose own calls pass no --path).
- * An explicit --path names its checkout and is not checked here.
+ * An explicit --path names its checkout and is not checked here. GST-1623: a registered checkout must contain the resolved
+ * one, or be a directory of it that its HEAD tracks; a repository that only encloses a registered checkout (a nested clone)
+ * is not a source checkout, even with the stale marker an older gbrain wrote in its git dir (#7988).
  */
 function assertSourceCheckout(repo: string): void {
   const registered = registeredManagedRootRecords();
-  if (!registered.length || managedFilesystemRootFor(repo)) return;
+  if (!registered.length) return;
+  const marker = managedRootMarkerFor(repo);
+  if (marker && !staleEnclosingMarker({ root: marker.root, evidence: marker.marker })) return;
+  const top = canonicalFilesystemPath(repo);
+  const within = (root: string, path: string) => { const rel = relative(root, path); return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`); };
+  const metadata = checkoutGitMetadata(top);
+  if (registered.some(record => within(record.root, top) || (within(top, record.root) && metadata !== null && existsSync(record.root) && checkoutGitMetadata(record.root) === metadata))) return;
   if (existsSync(join(repo, 'scripts', 'brain-commit-push.sh'))) return;
   try {
     execFileSync('git', ['-C', repo, 'config', '--local', '--get-regexp', `^(${SOURCE_ROOT_CONFIG}|gbrain.clipath)$`.replace(/\./g, '\\.').toLowerCase()], { env: gitChildEnv({ ...GIT_ENV }), stdio: ['ignore', 'pipe', 'ignore'] });
