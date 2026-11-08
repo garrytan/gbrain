@@ -168,7 +168,7 @@ invariant. Behind constants it also models the stacked follow-ups: writes held f
 
 Every config kills the refreshing process once (`MaxCrashes = 1`), at any step, after which `recoverOne` resumes the
 refresh row it left. A refresh that finds HEAD moved at the merge aborts and the tick retries, as `fenceAndMerge` does,
-so `recovery_required` is reached only through recovery; a refused merge aborts too (GST-1674). `RefreshBarrier.cfg` also lets
+unless every commit in old_head..HEAD is gbrain's own: then HEAD becomes old_head and the merge goes on (#8828). So `recovery_required` is reached only through recovery; a refused merge aborts too (GST-1674). `RefreshBarrier.cfg` also lets
 someone reset the checkout to old_head after the merge (`MayReset`).
 
 `test/spec-refresh-barrier.test.ts` keeps the default config on #8682 alone, every safety config on every invariant,
@@ -190,6 +190,7 @@ every config killing the refresh at least once, and the workflow's path filter c
 | `RestoreLeavesNoOpenWrite` | a restore leaves no write admitted before it open (finding C) |
 | `NoApplyAfterRevoke` | no write commits after its credential was revoked |
 | `CommitsInAdmissionOrder` | writes to one page commit in admission order |
+| `ReplanOnlyOwnCommits` | a refresh takes a HEAD that moved under its fence as its start only when no commit another agent made since its old_head is in it (#8828) |
 | `DeferredLeaves`, `EveryWriteEnds` | liveness under `Fairness`: a deferred write leaves deferral; an admitted write ends |
 
 ### Actions and code
@@ -208,6 +209,7 @@ every config killing the refresh at least once, and the workflow's path filter c
 | `ExpRefBegin`, `ExpRefCommit` | `expireDeferredWrites`: the protocol, the refresh row re-read `released_at IS NULL FOR NO KEY UPDATE`, `completeWrite` |
 | `ExpImpBegin`, `ExpImpRecheck`, `ExpImpCommit` | #8705's import expiry in `expireDeferredWrites` |
 | `SyncBegin` … `SyncStamp` | a managed sync pass, whose rows go through the claim like writes: no write passes the queued row importing its page or a running sync row, and a sync row waits behind earlier writes and is never claimed while a write runs; the page row, then its checkpoint row's `UPDATE sources SET last_commit` (sync-prepare.ts) |
+| `RefMerge` | the HEAD check under the commit lock in `fenceAndMerge`: HEAD at old_head goes on; #8828 `replanOnOwnCommits` takes a HEAD moved only by gbrain's ledgered commits as old_head (`OwnSince`, the code's `ownCommits`); any other move aborts |
 | `OwedSyncBegin` | GST-1853 `syncAfterUnfinishedRefresh` (worktree-refresh.ts): while the worktree's newest refresh is aborted and a member's `last_commit` is not HEAD, a refresh run ends by running that member's managed `--no-pull` sync |
 | `Foreign`, `LocalEdit`, `Age`, `Revoke`, `Restore` | the environment: another agent's plain-git commit, an uncommitted edit, the wait limit passing, a revoked token, `quarantineSharedSkillRestore` (PGLite-only, one transaction, no worker) |
 
@@ -238,6 +240,7 @@ every config killing the refresh at least once, and the workflow's path filter c
 | `resume-marks-refused-merge-recovery` | guard | `RecoveryOnlyByPolicy` | `refusedBeforeAbort` (GST-1674): a refresh killed after git refused its fast-forward, before the abort, is marked `recovery_required`; the refresh SIGKILLed right after the refused merge (persistence-worktree-refresh-restart.test.ts), aborted by the owner scan |
 | `resume-needs-exact-target` | guard | `RecoveryOnlyByPolicy` | `recoverOne`'s bookkeeping branch: with HEAD only exactly at the target, a commit between the merge and bookkeeping strands the row; the refresh killed after its merge |
 | `abort-skips-owed-sync` | guard | `DeferredLeaves` (AbortLiveness) | `syncAfterUnfinishedRefresh`: no refresh run syncs the members an aborted refresh left behind HEAD; the three GST-1853 tests (aborted then diverged, killed at fenced then `--resume`, owner-scan abort then a diverged tick) |
+| `replan-over-foreign-commit` | guard | `ReplanOnlyOwnCommits` | `replanOnOwnCommits`'s ledger check (`ownCommits`): the refresh takes a HEAD with another agent's commit in it as its start; the #8828 test with one foreign commit among gbrain's own published commits |
 
 #8708's local-edit adoption has no guard mutant of its own: `RefreshBarrierAdopt.cfg` checks it against every safety property.
 

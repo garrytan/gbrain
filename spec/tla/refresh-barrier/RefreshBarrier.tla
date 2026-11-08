@@ -123,7 +123,8 @@ VARIABLES
   hist,        \* every version that was ever a revision of the page (page history)
   lastCommit,  \* sources.last_commit: the commit managed sync last imported
   local,       \* an uncommitted edit of F in the worktree (None = clean)
-  nver, nforeign, nlocal,
+  nver, nlocal,
+  fgn,         \* the commits another agent made with plain git (their count is bounded by MaxForeign)
   \* environment
   restored, revoked, preRestore,
   ncrash,      \* times the refreshing process was killed
@@ -133,6 +134,7 @@ VARIABLES
   badRelease,  \* a deferred write committed before its refresh was released
   badDefer,    \* a write was deferred to a refresh that was already released
   badRevoke,   \* a write committed after its credential was revoked
+  badReplan,   \* a refresh took as its start a HEAD that holds a commit another agent made after its old_head
   \* locks
   held, want,
   \* process locals
@@ -141,9 +143,9 @@ VARIABLES
 
 reqv   == <<st, code, seq, nseq, dref, dimp, applied, cpos, ncommit, expRev, overdue, adopted>>
 refv   == <<rstate, rel, rchg, rhead, rmoved, rtgt, rmstart, lost, rwhy, cur, nref>>
-gitv   == <<head, verAt, fileV, dbV, hist, lastCommit, local, nver, nforeign, nlocal>>
+gitv   == <<head, verAt, fileV, dbV, hist, lastCommit, local, nver, fgn, nlocal>>
 envv   == <<restored, revoked, preRestore, ncrash>>
-ghostv == <<hidden, badExpiry, badRelease, badDefer, badRevoke>>
+ghostv == <<hidden, badExpiry, badRelease, badDefer, badRevoke, badReplan>>
 lockv  == <<held, want>>
 procv  == <<pc, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 vars   == <<reqv, refv, gitv, envv, ghostv, lockv, procv>>
@@ -272,7 +274,7 @@ Init ==
   /\ lastCommit = 1
   /\ local = None
   /\ nver = 1
-  /\ nforeign = 0
+  /\ fgn = {}
   /\ nlocal = 0
   /\ restored = FALSE
   /\ revoked = FALSE
@@ -283,6 +285,7 @@ Init ==
   /\ badRelease = FALSE
   /\ badDefer = FALSE
   /\ badRevoke = FALSE
+  /\ badReplan = FALSE
   /\ held = [p \in Procs |-> NoLocks]
   /\ want = [p \in Procs |-> <<>>]
   /\ pc = [p \in Procs |-> "idle"]
@@ -364,7 +367,7 @@ AdmCommit(w) ==
   /\ Commit(ADM(w)) /\ Go(ADM(w), "idle") /\ Need(ADM(w), <<>>)
   /\ aref' = [aref EXCEPT ![w] = None] /\ aread' = [aread EXCEPT ![w] = "none"]
   /\ UNCHANGED <<code, dimp, applied, cpos, ncommit, expRev, overdue, adopted, rchg, rhead, rmoved, rtgt, rmstart, lost, rwhy, nref, gitv, envv,
-                 hidden, badExpiry, badRelease, badRevoke, cw, cprep, cfin, ew, passHead, sseq>>
+                 hidden, badExpiry, badRelease, badRevoke, badReplan, cw, cprep, cfin, ew, passHead, sseq>>
 
 \* -------------------------------- consumer --------------------------------
 \* claimNextWrite: the protocol declaration and the head read, SELECT ... ORDER BY sequence LIMIT 1 FOR UPDATE SKIP
@@ -449,7 +452,7 @@ ConsPub ==
              /\ code' = [code EXCEPT ![cw] = IF mine /\ denied THEN "permission_denied" ELSE @]
              /\ UNCHANGED <<head, verAt, fileV, nver, dbV, hist, local, applied, ncommit, cpos, hidden, badRelease, badRevoke>>
   /\ Commit(CONS) /\ ConsIdle
-  /\ UNCHANGED <<seq, nseq, dref, dimp, expRev, overdue, adopted, refv, lastCommit, nforeign, nlocal, envv, badExpiry, badDefer,
+  /\ UNCHANGED <<seq, nseq, dref, dimp, expRev, overdue, adopted, refv, lastCommit, fgn, nlocal, envv, badExpiry, badDefer, badReplan,
                  want, ew, aref, aread, passHead, sseq>>
 
 \* holdForImport: UPDATE ... SET state='deferred', deferred_import_from=<last_commit read before the check>
@@ -471,8 +474,8 @@ ConsAdopt ==
   /\ NewCommit(local) /\ dbV' = local /\ hist' = hist \cup {local} /\ local' = None
   /\ adopted' = [adopted EXCEPT ![cw] = TRUE]
   /\ Need(CONS, <<L(REQ(cw), "U")>>) /\ Go(CONS, "c_release")
-  /\ UNCHANGED <<st, code, seq, nseq, dref, dimp, applied, cpos, ncommit, expRev, overdue, refv, lastCommit, nver, nforeign,
-                 nlocal, envv, badExpiry, badRelease, badDefer, badRevoke, held, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
+  /\ UNCHANGED <<st, code, seq, nseq, dref, dimp, applied, cpos, ncommit, expRev, overdue, refv, lastCommit, nver, fgn,
+                 nlocal, envv, badExpiry, badRelease, badDefer, badRevoke, badReplan, held, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 \* releaseUnpublishedClaim: back to queued, prepared again by the next claim.
 ConsRelease ==
@@ -539,14 +542,25 @@ AbortCommit ==
   /\ Commit(RFR) /\ Go(RFR, "idle")
   /\ UNCHANGED <<reqv, rchg, rhead, rmoved, rtgt, rmstart, lost, rwhy, nref, gitv, envv, ghostv, want, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
-\* Under the commit lock: HEAD must still be old_head. A HEAD that moved (a drained write's ledger commit, or another
-\* agent's plain-git commit) aborts the refresh, refresh_source_changed, and the tick retries. Otherwise the
-\* merge_started marker commits (synchronous_commit on), then the ff-only merge.
+\* A commit another agent made in old_head..HEAD (HEAD only moves forward before a merge).
+ForeignSince(i) == fgn \cap ((rhead[i] + 1)..head) # {}
+\* #8828 replanOnOwnCommits: every commit in old_head..HEAD is in gbrain's commit ledger (ownCommits). The code also asks that
+\* the upstream ref hold HEAD (the writer pushed those commits); the model has no upstream, so the refresh's target is past HEAD.
+OwnSince(i) == ~ForeignSince(i)
+
+\* Under the commit lock: HEAD must still be old_head. #8828: a HEAD that moved past old_head only by gbrain's own commits
+\* (drained writes' ledger commits) becomes old_head in one UPDATE of the fenced row, before merge_started, and the merge goes
+\* on. A move with another agent's plain-git commit in it aborts the refresh, refresh_source_changed, and the tick retries.
+\* Otherwise the merge_started marker commits (synchronous_commit on), then the ff-only merge.
 RefMerge ==
   /\ Ready(RFR, "r_merge")
   /\ Need(RFR, <<L(REF(nref), "NKU")>>)
-  /\ Go(RFR, IF head # rhead[nref] THEN "r_abort" ELSE "r_mstart")
-  /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
+  /\ IF head # rhead[nref] /\ ~OwnSince(nref)
+     THEN Go(RFR, "r_abort") /\ UNCHANGED <<rhead, badReplan>>
+     ELSE /\ Go(RFR, "r_mstart") /\ rhead' = [rhead EXCEPT ![nref] = head]
+          /\ badReplan' = (badReplan \/ ForeignSince(nref))
+  /\ UNCHANGED <<reqv, rstate, rel, rchg, rmoved, rtgt, rmstart, lost, rwhy, cur, nref, gitv, envv,
+                 hidden, badExpiry, badRelease, badDefer, badRevoke, held, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 MergeStartCommit ==
   /\ Ready(RFR, "r_mstart")
@@ -566,7 +580,7 @@ FfMerge ==
           /\ rtgt' = [rtgt EXCEPT ![nref] = head + 1]
           /\ Need(RFR, <<L(REF(nref), "NKU"), L(SRC, "NKU")>>) /\ Go(RFR, "r_bk")
      ELSE /\ Need(RFR, <<L(REF(nref), "NKU")>>) /\ Go(RFR, "r_abort") /\ UNCHANGED <<head, verAt, fileV, nver, rmoved, rtgt>>
-  /\ UNCHANGED <<reqv, rstate, rel, rchg, rhead, rmstart, lost, rwhy, cur, nref, dbV, hist, lastCommit, local, nforeign, nlocal,
+  /\ UNCHANGED <<reqv, rstate, rel, rchg, rhead, rmstart, lost, rwhy, cur, nref, dbV, hist, lastCommit, local, fgn, nlocal,
                  envv, ghostv, held, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 MarkCommit ==
@@ -581,7 +595,7 @@ PersonAbandon ==
   /\ pc[RFR] = "r_recovery"
   /\ head' = rhead[nref] /\ fileV' = verAt[rhead[nref]] /\ local' = None
   /\ Need(RFR, <<L(REF(nref), "NKU")>>) /\ Go(RFR, "r_abort")
-  /\ UNCHANGED <<reqv, refv, verAt, dbV, hist, lastCommit, nver, nforeign, nlocal, envv, ghostv, held,
+  /\ UNCHANGED <<reqv, refv, verAt, dbV, hist, lastCommit, nver, fgn, nlocal, envv, ghostv, held,
                  cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 PersonResume ==
@@ -594,7 +608,7 @@ PersonResume ==
         /\ rtgt' = [rtgt EXCEPT ![nref] = base + 1] /\ lost' = [lost EXCEPT ![nref] = FALSE]
   /\ local' = None
   /\ Need(RFR, <<L(REF(nref), "NKU"), L(SRC, "NKU")>>) /\ Go(RFR, "r_bk")
-  /\ UNCHANGED <<reqv, rstate, rel, rchg, rhead, rmstart, rwhy, cur, nref, dbV, hist, lastCommit, nforeign, nlocal, envv, ghostv, held,
+  /\ UNCHANGED <<reqv, rstate, rel, rchg, rhead, rmstart, rwhy, cur, nref, dbV, hist, lastCommit, fgn, nlocal, envv, ghostv, held,
                  cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 \* bookkeeping: transition to merged (the refresh row), the sources' upstream observation, then syncing.
@@ -674,7 +688,7 @@ ExpRefCommit ==
         /\ badExpiry' = (badExpiry \/ (fire /\ ~(st[ew] = "deferred" /\ ~rel[dref[ew]])))
   /\ Commit(EXP) /\ Go(EXP, "idle") /\ ew' = 0
   /\ UNCHANGED <<seq, nseq, dref, dimp, applied, cpos, ncommit, expRev, overdue, adopted, refv, gitv, envv,
-                 hidden, badRelease, badDefer, badRevoke, want, cw, cprep, cfin, aref, aread, passHead, sseq>>
+                 hidden, badRelease, badDefer, badRevoke, badReplan, want, cw, cprep, cfin, aref, aread, passHead, sseq>>
 
 \* #8705: a write held for an import that has not landed past the limit ends pending_import_expired.
 ExpImpBegin(w) ==
@@ -703,7 +717,7 @@ ExpImpCommit ==
         /\ badExpiry' = (badExpiry \/ (fire /\ ~(st[ew] = "deferred" /\ dimp[ew] # None /\ lastCommit = dimp[ew])))
   /\ Commit(EXP) /\ Go(EXP, "idle") /\ ew' = 0
   /\ UNCHANGED <<seq, nseq, dref, dimp, applied, cpos, ncommit, expRev, overdue, adopted, refv, gitv, envv,
-                 hidden, badRelease, badDefer, badRevoke, want, cw, cprep, cfin, aref, aread, passHead, sseq>>
+                 hidden, badRelease, badDefer, badRevoke, badReplan, want, cw, cprep, cfin, aref, aread, passHead, sseq>>
 
 \* ------------------------------ managed sync ------------------------------
 \* A pass starts only with no refresh, or as the refresh's own member sync (assertManagedSyncAllowed). It imports F's
@@ -740,7 +754,7 @@ SyncImport ==
      THEN dbV' = fileV /\ hist' = hist \cup {fileV}
      ELSE UNCHANGED <<dbV, hist>>   \* nothing to import, or a dirty file sync holds
   /\ Commit(SYN) /\ Go(SYN, "s_ckpt")
-  /\ UNCHANGED <<reqv, refv, head, verAt, fileV, lastCommit, local, nver, nforeign, nlocal, envv, ghostv,
+  /\ UNCHANGED <<reqv, refv, head, verAt, fileV, lastCommit, local, nver, fgn, nlocal, envv, ghostv,
                  want, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 \* The checkpoint row is claimed once no earlier write is ahead of it; the pass stamp moves last_commit (UPDATE sources).
@@ -753,27 +767,27 @@ SyncStamp ==
   /\ Ready(SYN, "s_stamp")
   /\ lastCommit' = passHead
   /\ Commit(SYN) /\ Go(SYN, "idle") /\ passHead' = 0 /\ sseq' = 0
-  /\ UNCHANGED <<reqv, refv, head, verAt, fileV, dbV, hist, local, nver, nforeign, nlocal, envv, ghostv,
+  /\ UNCHANGED <<reqv, refv, head, verAt, fileV, dbV, hist, local, nver, fgn, nlocal, envv, ghostv,
                  want, cw, cprep, cfin, ew, aref, aread>>
 
 \* ------------------------------- environment -------------------------------
 Foreign ==
-  /\ nforeign < MaxForeign /\ local = None
+  /\ Cardinality(fgn) < MaxForeign /\ local = None
   /\ IF OutsideHelp THEN TRUE ELSE RefIs({"draining"})
-  /\ NewCommit(nver + 1) /\ nver' = nver + 1 /\ nforeign' = nforeign + 1
+  /\ NewCommit(nver + 1) /\ nver' = nver + 1 /\ fgn' = fgn \cup {head + 1}
   /\ UNCHANGED <<reqv, refv, dbV, hist, lastCommit, local, nlocal, envv, ghostv, lockv, procv>>
 
 LocalEdit ==
   /\ nlocal < MaxLocalEdits /\ local = None /\ cur = None
   /\ local' = nver + 1 /\ nver' = nver + 1 /\ nlocal' = nlocal + 1
-  /\ UNCHANGED <<reqv, refv, head, verAt, fileV, dbV, hist, lastCommit, nforeign, envv, ghostv, lockv, procv>>
+  /\ UNCHANGED <<reqv, refv, head, verAt, fileV, dbV, hist, lastCommit, fgn, envv, ghostv, lockv, procv>>
 
 \* After the merge, someone resets the checkout to old_head with plain git (git reset --hard), before bookkeeping.
 ResetAfterMerge ==
   /\ MayReset /\ cur # None /\ RefIs({"fenced"}) /\ HoldsTarget(cur)
   /\ head' = rhead[cur] /\ fileV' = verAt[rhead[cur]] /\ local' = None /\ lost' = [lost EXCEPT ![cur] = TRUE]
   /\ UNCHANGED <<reqv, rstate, rel, rchg, rhead, rmoved, rtgt, rmstart, rwhy, cur, nref, verAt, dbV, hist, lastCommit, nver,
-                 nforeign, nlocal, envv, ghostv, lockv, procv>>
+                 fgn, nlocal, envv, ghostv, lockv, procv>>
 
 \* created_at passes the limit; only a deferred row's age is ever read.
 Age(w) ==
@@ -858,6 +872,8 @@ ExpiryOnlyWhileWaiting == ~badExpiry
 RestoreLeavesNoOpenWrite == restored => \A w \in preRestore : st[w] \in Terminal
 \* No write commits after its credential was revoked.
 NoApplyAfterRevoke == ~badRevoke
+\* #8828: a refresh never takes as its start a HEAD holding another agent's commit made after its old_head.
+ReplanOnlyOwnCommits == ~badReplan
 \* Writes to one page commit in admission order: a write never lands on top of a later one.
 CommitsInAdmissionOrder == \A a, b \in Writes :
   (st[a] = "committed" /\ st[b] = "committed" /\ seq[a] < seq[b]) => cpos[a] < cpos[b]

@@ -28,6 +28,16 @@ The shelf is written only through the storage verbs. `put_page`, `remember` and 
 - `src/commands/storage.ts`: `gbrain storage init`; the help separates the tiers report (`status`) from the shelf verbs.
 - Goldens: `test/fixtures/goldens/cli/tools-json.json` gains the three read tools; `test/fixtures/goldens/exports/types.json` gains the new error codes in the `canonical` union and lists `ThinkSynthesisStatus` in a new order (the new schema module declares the `not_json` literal first; the type is unchanged).
 - Tests: `test/storage-manifest.test.ts` (PGLite, repo-less) and `test/storage-manifest-hosted.serial.test.ts` (managed PGLite with a Git checkout).
+## [0.60.618.0] - 2026-11-08
+
+**A refresh no longer loses its tick when gbrain's own writes land while it drains.** `gbrain sources refresh` waits for writes admitted before its fence, and finishing them commits on the checkout and pushes, so HEAD moved past the commit the refresh started from and the run refused `refresh_source_changed`, twice when its same-run retry met the next writes. When every commit since that start is in gbrain's commit ledger and the upstream branch the refresh started with holds them, the refresh now takes HEAD as its start under the fence and fast-forwards to that upstream; any other HEAD move, one commit another agent made among them or an upstream changed under the fence included, still refuses as before.
+
+### Itemized changes
+
+- `src/core/persistence/worktree-refresh.ts`: `replanOnOwnCommits`, under the commit lock in `fenceAndMerge`: HEAD descends from `old_head`, every sha in `old_head..HEAD` is in the commit ledger (`ownCommits`), and `@{upstream}` is still the `upstream_ref` the precheck recorded and holds HEAD and the precheck's target; one UPDATE of the fenced row with no merge started sets `old_head` to HEAD and `target_head` to the upstream. Nothing is fetched under the lock.
+- `spec/tla/refresh-barrier/RefreshBarrier.tla`: `RefMerge` models the re-plan (`OwnSince` for the ledger check, foreign commits as a set `fgn`), new invariant `ReplanOnlyOwnCommits` in every safety config, guard mutant `replan-over-foreign-commit` (spec and code arms).
+- Docs: `docs/designs/REFRESH_WRITE_BARRIER.md`, the `refresh_source_changed` row in `docs/guides/write-refusals.md`, `spec/tla/README.md`.
+- Tests: `test/refresh-own-commits-replan-8828.test.ts` on PGLite and Postgres (own published commits fast-forward; a ledgered commit not pushed yet still refuses; one foreign commit among gbrain's own still refuses and merges nothing; own published commits under an upstream changed under the fence still refuse and merge nothing).
 
 ## [0.60.617.0] - 2026-11-08
 
