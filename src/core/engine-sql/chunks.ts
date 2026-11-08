@@ -24,6 +24,9 @@ import type { EmbeddingState, EmbeddingStateCounts, EmbeddingStateRow } from '..
 import type { Chunk, ChunkInput, ChunklessPageRow, ResolvedColumn, StaleChunkRow } from '../types.ts';
 import { rowToChunk, validateSlug } from '../utils.ts';
 import { createHash } from 'node:crypto';
+import { identityDowngradePurgeHold } from '../sync-identity-downgrades.ts';
+import { atomRetirementPurgeHold } from '../persistence/atom-retirement-hold.ts';
+import { derivedRetirementPurgeHold } from '../persistence/derived-retirement-hold.ts';
 import { jsonRowBatches, sanitizeText } from '../batch-rows.ts';
 import {
   normalizeEngineColumn,
@@ -925,7 +928,8 @@ export async function readEmbeddingStateCounts(exec: ScopedRead, column: string,
   }
   const counts: Partial<Record<EmbeddingState, number>> = {};
   const add = (state: EmbeddingState, n: number) => { counts[state] = (counts[state] ?? 0) + n; };
-  const overdue = sqlFragment`(p.deleted_at < now() - make_interval(hours => ${opts.purgeWindowHours}::int))`;
+  // Overdue = what `pages purge-deleted` would select: past the window AND not inside a purge hold.
+  const overdue = sqlFragment`(p.deleted_at < now() - make_interval(hours => ${opts.purgeWindowHours}::int) AND ${trustedSql(identityDowngradePurgeHold('p'))} AND ${trustedSql(atomRetirementPurgeHold('p'))} AND ${trustedSql(derivedRetirementPurgeHold('p'))})`;
   const aggregate = (where: SqlFragment) => exec.run(sqlFragment`
       SELECT s.state, count(*)::bigint AS n, count(*) FILTER (WHERE s.eligible)::bigint AS eligible,
              count(*) FILTER (WHERE s.overdue)::bigint AS overdue,
