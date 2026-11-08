@@ -94,6 +94,7 @@ async function makeFakeJob(opts: FakeJobOpts): Promise<{ jobId: number; ctx: Min
     name: 'subagent',
     data: { prompt: opts.prompt, model: opts.model, allowed_tools: opts.allowed_tools, mode: opts.mode },
     attempts_made: 0,
+    idempotency_key: null,
     signal: abortCtrl.signal,
     deadlineAtMs: null,
     shutdownSignal: shutdownCtrl.signal,

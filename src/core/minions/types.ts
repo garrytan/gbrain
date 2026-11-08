@@ -283,6 +283,8 @@ export interface MinionJobContext {
   /** Set by runWithJobSpend for a spend-authorized job: its group record and meter key. */
   spend?: JobSpendContext;
   attempts_made: number;
+  /** The job row's idempotency key (null when it was queued without one); ingest_capture records an applied capture under it (GST-1856). */
+  idempotency_key: string | null;
   /** AbortSignal for cooperative cancellation (fires on timeout, cancel, pause, or lock loss). */
   signal: AbortSignal;
   /** Absolute wall-clock deadline (epoch ms) from the claim-time `timeout_at` stamp,

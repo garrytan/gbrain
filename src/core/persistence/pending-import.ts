@@ -17,7 +17,7 @@
  * is resubmitted by its caller after that sync.
  */
 import { spawn } from '../spawn.ts';
-import { relative, sep } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import { gitChildEnv } from '../git-env.ts';
@@ -118,6 +118,25 @@ export async function committedBlob(root: string, path: string, signal?: AbortSi
  */
 export async function landedCommit(root: string, from: string | null, path: string): Promise<string | null> {
   return quiet(gitRead(root, ['rev-list', '-1', from ? `${from}..HEAD` : 'HEAD', '--', `:(literal)${relative(root, path).split(sep).join('/')}`]));
+}
+
+/** #8755: whether the index holds unmerged stages for `path` (a conflict); null when Git cannot read it. */
+export async function unmergedPath(root: string, path: string, signal?: AbortSignal): Promise<boolean | null> {
+  return gitRead(root, ['ls-files', '-u', '-z', '--', `:(literal)${relative(root, path).split(sep).join('/')}`], signal)
+    .then(out => out.length > 0, error => { if (signal?.aborted) throw error; return null; });
+}
+
+/**
+ * #8755: the absolute paths of the markers a merge, cherry-pick, revert or rebase in progress leaves in `root`'s git dir
+ * (MERGE_HEAD, CHERRY_PICK_HEAD, REVERT_HEAD, sequencer, rebase-merge, rebase-apply); null when Git cannot name them. The
+ * caller checks which exist. All of them live in the per-worktree git dir, which Git prints absolute and symlink-resolved,
+ * so a root reached through a symlink still names the real markers. Output that is not exactly one line answers null.
+ */
+export async function operationMarkerPaths(root: string, signal?: AbortSignal): Promise<string[] | null> {
+  const markers = ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'sequencer', 'rebase-merge', 'rebase-apply'];
+  return gitRead(root, ['rev-parse', '--absolute-git-dir'], signal)
+    .then(out => { const lines = out.split('\n'); return lines.length === 2 && lines[0] && !lines[1] ? markers.map(marker => join(lines[0], marker)) : null; },
+      error => { if (signal?.aborted) throw error; return null; });
 }
 
 /** #8759: the text of `path` as `commit` holds it, or null when Git cannot read it there. */

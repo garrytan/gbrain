@@ -3,7 +3,8 @@
  * owner adopted in the last 24 hours (a remember, capture or add_timeline_entry whose page file someone edited outside
  * gbrain, adopted in its own commit before the write applied). Informational and always ok: adoption is opt-in per
  * source (`persistence.adopt_local_edits.source.<id>`), and an edit someone keeps making by hand is worth knowing about.
- * Paths are source-relative; no page text.
+ * Paths are source-relative; no page text. #8755: read from the receipt's `outcome.adopted_local_edit`, which compaction
+ * keeps (it drops the intent), so a compacted adoption is still counted.
  */
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
@@ -19,8 +20,8 @@ async function runLocalEditAdoptions(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
   try {
     const rows = await engine.executeRaw<{ source_id: string; adoptions: number | string; paths: string[] }>(
-      `SELECT source_id, count(*)::int AS adoptions, array_agg(DISTINCT intent->>'path' ORDER BY intent->>'path') AS paths FROM persistence_requests
-       WHERE state='committed' AND operation='put_page' AND intent->>'kind'='managed_file_repair' AND intent ? 'adoptLocalEdit'
+      `SELECT source_id, count(*)::int AS adoptions, array_agg(DISTINCT outcome->'adopted_local_edit'->>'path' ORDER BY outcome->'adopted_local_edit'->>'path') AS paths
+       FROM persistence_requests WHERE state='committed' AND operation='put_page' AND outcome ? 'adopted_local_edit'
          AND completed_at > now() - interval '24 hours' GROUP BY source_id ORDER BY source_id`);
     const sources: SourceAdoptions[] = rows.map(row => ({ source_id: row.source_id, adoptions: Number(row.adoptions), paths: row.paths.slice(0, MAX_PATHS) }));
     if (!sources.length) {

@@ -49,7 +49,7 @@ beforeEach(async () => { await engine.executeRaw('DELETE FROM minion_jobs'); });
 function post(content: string) {
   return fetch(`${base}/ingest`, { method: 'POST', headers: { authorization: 'Bearer test-only', 'content-type': 'text/markdown' }, body: content });
 }
-const keyFor = (content: string) => `ingest:webhook:${CLIENT}:default:${computeContentHash(content)}`;
+const keyFor = (content: string) => `ingest:webhook:${CLIENT}:default::${computeContentHash(content)}`;
 
 /** A job holding the capture's exact key, rewritten to a pre-cutover row. */
 async function legacyRow(content: string, status: string, authority: string | null = null): Promise<number> {

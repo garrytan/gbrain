@@ -1194,7 +1194,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 173/173 public tables",
+            "message": "RLS enabled on 174/174 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -1222,7 +1222,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 173 table(s) the applied migrations create exist.",
+            "message": "All 174 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -2073,6 +2073,20 @@
             "elapsed_ms": "<volatile>",
             "message": "No conversation-extractor fact is left expired by the pre-v0.60.11.0 projection.",
             "name": "extractor_facts_expired",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "ambiguous": 0,
+              "docs": "docs/guides/repair.md#unwithdrawn-facts",
+              "evidenced": 0,
+              "excluded": 0,
+              "repair": "unwithdrawn-facts"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No fact is left retired by a facts-fence generation that no fence withdrew.",
+            "name": "unwithdrawn_facts",
             "status": "ok"
           },
           {
@@ -3017,6 +3031,7 @@
               "dirty_warn_after_minutes": 30,
               "foreign": [],
               "partial": false,
+              "partial_reasons": [],
               "unconfirmed": [],
               "unknown": [],
               "window": [
@@ -6265,7 +6280,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 173/173 public tables",
+            "message": "RLS enabled on 174/174 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -6293,7 +6308,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 173 table(s) the applied migrations create exist.",
+            "message": "All 174 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -7144,6 +7159,20 @@
             "elapsed_ms": "<volatile>",
             "message": "No conversation-extractor fact is left expired by the pre-v0.60.11.0 projection.",
             "name": "extractor_facts_expired",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "ambiguous": 0,
+              "docs": "docs/guides/repair.md#unwithdrawn-facts",
+              "evidenced": 0,
+              "excluded": 0,
+              "repair": "unwithdrawn-facts"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No fact is left retired by a facts-fence generation that no fence withdrew.",
+            "name": "unwithdrawn_facts",
             "status": "ok"
           },
           {
@@ -8100,6 +8129,7 @@
               "dirty_warn_after_minutes": 30,
               "foreign": [],
               "partial": false,
+              "partial_reasons": [],
               "unconfirmed": [],
               "unknown": [],
               "window": [

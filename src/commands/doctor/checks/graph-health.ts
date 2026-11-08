@@ -391,6 +391,7 @@ export const timelineHistoryEntry: DoctorEntry = {
     'generation_held',
     'generation_pending',
     'extractor_facts_expired',
+    'unwithdrawn_facts',
     'conversation_label_facts',
     'conversation_outcomes_stale',
     'captured_facts_active',

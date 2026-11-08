@@ -268,6 +268,7 @@ async function drainLoop(
         name: job.name,
         data: job.data,
         attempts_made: job.attempts_made,
+        idempotency_key: job.idempotency_key,
         // #4077: fold the phase's cancellation into the per-job signal so an
         // in-flight handler (mid-LLM-call) stops without waiting for its own
         // timeout; `abort` stays the loop-local source for timedOut below.

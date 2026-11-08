@@ -13,7 +13,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, spyOn, test } from 'bun:test';
 import postgres from '#postgres';
 import { randomUUID } from 'node:crypto';
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { run as runUpgradeCommand } from '../src/cli/commands/upgrade.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
@@ -28,7 +28,7 @@ import { pendingReceiptOf, writeErrorExitCode } from '../src/core/persistence/wr
 import { PENDING_WRITE_EXIT_CODE } from '../src/core/exit-codes.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { refreshWorktree, resumeWorktreeRefreshes } from '../src/core/persistence/worktree-refresh.ts';
-import { recordCommit } from '../src/core/git/commit-ledger.ts';
+import { ledgerFiles, ledgerLocation, recordCommit } from '../src/core/git/commit-ledger.ts';
 import { getWriteRequestById } from '../src/core/persistence/journal.ts';
 import { readWriteWatermark } from '../src/core/persistence/applied-watermark.ts';
 import { resetWriteSwitches } from '../src/core/persistence/switches.ts';
@@ -644,6 +644,23 @@ test('GBEV-44: a refresh killed at fenced after its drain landed a gbrain commit
   expect((row.outcome.refusal as { cause: string }).cause).toContain("gbrain's own commits");
   expect(f.head()).toBe(landed);
   expect((await settle(f, deferred)).state).toBe('committed');
+}), 180_000);
+
+test('#8766 review: a refresh killed at fenced after HEAD moved still aborts on resume when the commit ledger cannot be read', () => each(async f => {
+  const { landed } = await crashAtFenced(f, () => commitFile(f.root, 'alpha/foreign.md', page('Foreign', 'A commit gbrain did not make.'), 'foreign commit'));
+  const { current } = ledgerFiles(ledgerLocation(f.root)!.common);
+  rmSync(current, { force: true });
+  mkdirSync(current, { recursive: true });
+  try {
+    const resumed = await refreshWorktree(f.engine, f.alpha, { resume: true });
+    expect(resumed.status).toBe('abandoned');
+    const [row] = await f.refreshRows();
+    expect(row.state).toBe('aborted');
+    expect((row.outcome.refusal as { cause: string }).cause).toContain('a commit or checkout gbrain did not make');
+    expect(f.head()).toBe(landed);
+  } finally {
+    rmSync(current, { recursive: true, force: true });
+  }
 }), 180_000);
 
 test('GBEV-44: the owner scan aborts an orphaned fenced row whose HEAD moved only through gbrain commits before the merge', () => each(async f => {
