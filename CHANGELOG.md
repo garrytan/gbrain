@@ -10,6 +10,13 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Held pages that only changed in Git import on the next sync.** A Git edit to a page with no import record is held `file_drift` unless sync can show only the file moved. An earlier release could show that only by comparing the page with its file at the last synced commit; a later one also compares the path's earlier committed versions, but did not screen the holds the first rule had already written. Those holds are now screened once more: a page that still holds an earlier committed version of its file imports the Git edit and its hold clears; a page the database also changed stays held, and is not screened again.
+
+- `src/core/persistence/sync-holds.ts`: `FILE_DRIFT_VERSION` 2, so an unknown-side `file_drift` hold stamped 1 is re-screened once with the earlier committed versions.
+- Tests: `test/sync-unknown-drift-history-rescreen.test.ts` (a hold stamped 1 whose page holds an older committed version imports the Git edit; one whose page the database changed stays held at 2 and is not screened again); the existing rescreen and #7931 tests name the current screen version instead of the literal 1.
+
 ## [0.60.616.0] - 2026-11-08
 
 **Opt-in local-edit adoption (`persistence.adopt_local_edits`, off by default) no longer leaves an adoption commit unrecorded when the write it was made for ends early, names that commit on a failed adoption's receipt, and refuses during a bisect or an uncommitted squash merge.** An adoption whose `gbrain: adopt local edit` commit landed before its publication failed used to end `write_claim_lost` (or be cancelled) once its caller's claim ended, so the commit was never recorded and later writes to the page refused `file_database_drift` until a sync. It is now published on its replay with its receipt naming the landed commit. An adoption that ends without committing after its commit landed names that commit too (`outcome.persistence.git_commit`, `landed_before_row: true`), so `gbrain write-request` and `gbrain sources writer failures` tie the commit to the adoption. Adoption now also keeps its refusal while a `git bisect` or an uncommitted `git merge --squash` is in progress, and when Git names the checkout's git dir with anything but one absolute, existing directory in valid UTF-8.
