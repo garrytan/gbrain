@@ -4819,8 +4819,8 @@
         "idempotent": true,
         "name": "ingest_applied_captures",
         "sql": {
-          "length": 556,
-          "sha256": "685b94ce31a5399b6fa9e456a3280a52a33b5d2f87d60b958f946df5b255144d"
+          "length": 1228,
+          "sha256": "71295828e31d9b61202fc5e8b05d78f25041b7509c65bef1aeed7e046e761e4c"
         },
         "sqlFor": "absent",
         "transaction": "absent",

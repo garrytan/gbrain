@@ -32,6 +32,7 @@
  * pages to canonical homes later.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { MinionJobContext } from '../types.ts';
 import type { BrainEngine } from '../../engine.ts';
 import type { IngestionEvent } from '../../ingestion/types.ts';
@@ -266,8 +267,8 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     // nothing, so it never reverts a newer edit. Tombstones and jobs queued without a key keep their old behavior.
     const appliedKey = !isTombstone && job.idempotency_key ? job.idempotency_key : null;
     const managedOutcome = (outcome: { noop?: boolean; chunks?: number }) => captured(outcome.noop ? 'skipped' : 'imported', Number(outcome.chunks ?? 0));
-    const applied = appliedKey ? await readAppliedCapture<IngestCaptureResult>(engine, appliedKey,
-      managed ? { sourceIds: [...new Set([sourceId ?? 'default', 'default'])], slug: slug.toLowerCase(), result: managedOutcome } : undefined) : null;
+    const journal = managed ? { sourceIds: [...new Set([sourceId ?? 'default', 'default'])], slug: slug.toLowerCase(), result: managedOutcome } : undefined;
+    const applied = appliedKey ? await readAppliedCapture<IngestCaptureResult>(engine, appliedKey, journal) : null;
     if (applied) return applied;
 
     const webhookWrite = untrustedPayload && event.source_kind === 'webhook' && !isTombstone;
@@ -336,23 +337,32 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
           // #2044/#4548: as `remote: untrustedPayload` does unmanaged, an untrusted body keeps the non-world facts rows and takes rows its sender could not see.
           ...(untrustedPayload ? { keep_hidden_rows: true } : {}) });
       };
+      // A stall re-run keeps attempts_made and `gbrain jobs retry` resets it, so this run's id can name an earlier write of
+      // this capture that never committed (idempotency_conflict). Unless a run of the key committed since the check above,
+      // this run's write goes out under a fresh id with the same prefix.
+      let appliedSince = null as IngestCaptureResult | null;
+      const submit = async (sid: string, request: string | undefined) => {
+        try {
+          return await put(sid, request);
+        } catch (err) {
+          if (!request || !(err instanceof OperationError) || err.code !== 'idempotency_conflict') throw err;
+          appliedSince = await readAppliedCapture<IngestCaptureResult>(engine, appliedKey!, journal);
+          return appliedSince ? {} : put(sid, `${request}:${randomUUID()}`);
+        }
+      };
       let response: Record<string, unknown>;
       try {
-        response = await put(sourceId ?? 'default', requestId);
+        response = await submit(sourceId ?? 'default', requestId);
       } catch (err) {
-        // A re-run of the same attempt whose earlier request did not commit and read another revision: retry it as a new
-        // attempt (a new request_id) instead of letting the deterministic id end the job as a refusal.
-        if (requestId && err instanceof OperationError && err.code === 'idempotency_conflict') {
-          throw new Error(`ingest_capture: attempt ${job.attempts_made} of this capture was already submitted for an older revision; the next attempt retries it`);
-        }
         // The door refuses a source that vanished or was archived after the pre-check (the managed form of the FK retry).
         const vanished = sourceId !== undefined && err instanceof OperationError && err.code === 'source_changed'
           ? await engine.executeRaw<{ archived: boolean | null }>('SELECT archived FROM sources WHERE id = $1', [sourceId]) : null;
         if (!vanished || (vanished.length > 0 && vanished[0]?.archived !== true)) throw err;
         sourceFallback = { requested: sourceId!, effective: 'default', reason: vanished.length ? 'archived' : 'fk_violation' };
         await checkWriter('default');
-        response = await put('default', requestId && `${requestId}:default`);
+        response = await submit('default', requestId && `${requestId}:default`);
       }
+      if (appliedSince) return appliedSince;
       if (sourceFallback) {
         console.error(
           `[WARN] ingest_capture: requested source '${sourceFallback.requested}' unavailable ` +

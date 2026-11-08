@@ -24,7 +24,8 @@ import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { computeContentHash } from '../src/core/ingestion/types.ts';
-import { purgeStaleAppliedCaptures } from '../src/core/ingestion/applied-captures.ts';
+import { appliedCaptureRequestPrefix, purgeStaleAppliedCaptures } from '../src/core/ingestion/applied-captures.ts';
+import { MIGRATIONS, runMigrationSQL } from '../src/core/migrate.ts';
 import { makeIngestCaptureHandler } from '../src/core/minions/handlers/ingest-capture.ts';
 import type { MinionJobContext } from '../src/core/minions/types.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
@@ -133,6 +134,25 @@ for (const backend of backends) {
       expect(await runJob(replay)).toEqual(firstResult);
       expect(await pageText(slug)).toContain('Newer edit after the capture.');
       expect(await pageText(slug)).not.toContain('Body from the integration.');
+    });
+
+    test('a capture completed before the upgrade keeps the newer edit when its POST is replayed after the job row is pruned', async () => {
+      const slug = `notes/pre-upgrade-${backend}`;
+      const body = note('Pre-upgrade capture', 'Body captured before the upgrade.');
+      const first = await ingest(body, slug);
+      const firstResult = await runJob(first);
+      await brain().engine.executeRaw("UPDATE minion_jobs SET status = 'completed', finished_at = now(), result = $2::text::jsonb WHERE id = $1", [first, JSON.stringify(firstResult)]);
+      // Before the upgrade nothing recorded the capture: the migration records it from the completed job.
+      await brain().engine.executeRaw('DELETE FROM ingest_applied_captures WHERE slug = $1', [slug]);
+      const migration = MIGRATIONS.find(m => m.name === 'ingest_applied_captures')!;
+      await runMigrationSQL(brain().engine, migration, migration.sql!);
+      await importFromContent(brain().engine, slug, note('Pre-upgrade capture', 'Newer edit after the upgrade.'), { sourceId: SRC, noEmbed: true });
+      await brain().engine.executeRaw('DELETE FROM minion_jobs WHERE id = $1', [first]);
+
+      const replay = await ingest(body, slug);
+      expect(await runJob(replay)).toEqual(firstResult);
+      expect(await pageText(slug)).toContain('Newer edit after the upgrade.');
+      expect(await pageText(slug)).not.toContain('Body captured before the upgrade.');
     });
 
     test('two captures with different content to one slug land in order, and a re-run of the first keeps the second', async () => {
@@ -255,6 +275,25 @@ for (const backend of backends) {
       expect(await run(jobCtx(3, data, key, 1))).toEqual(first);
       expect(await pageText()).toContain('Managed newer edit.');
       expect(await pageText()).not.toContain('Managed captured body.');
+    }, { databaseUrl }), 120_000);
+
+    test('a capture whose attempt id already names a refused write of it still lands (jobs retry resets attempts_made)', () => managedBrain(async ({ engine, ctx }) => {
+      const slug = 'notes/managed-retried';
+      const data = captureData(note('Managed retried', 'Managed retried body.'), slug, 'default');
+      const key = 'ingest:webhook:client-example:default:managed-retried';
+      const pageText = async () => (await engine.readPageSnapshot(slug, { sourceId: 'default' }))?.page.compiled_truth ?? '';
+      await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content: note('Managed retried', 'Page before the capture.') } });
+      const stale = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+      await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content: note('Managed retried', 'Edit before the capture.'), expected_revision: stale!.revision } });
+      // Attempt 0 reached the door for the revision before that edit and was refused; `gbrain jobs retry` reset attempts_made to 0.
+      await expect(submitPageMutation(ctx, { operation: 'put_page', params: { slug, content: data.event.content, content_origin: 'tool_output',
+        expected_revision: stale!.revision, request_id: `${appliedCaptureRequestPrefix(key)}0` } })).rejects.toThrow();
+
+      const run = makeIngestCaptureHandler(engine);
+      const result = await run(jobCtx(5, data, key));
+      expect(result.status).toBe('imported');
+      expect(await pageText()).toContain('Managed retried body.');
+      expect(await run(jobCtx(5, data, key))).toEqual(result);
     }, { databaseUrl }), 120_000);
   });
 }
