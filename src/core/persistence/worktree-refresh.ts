@@ -56,7 +56,7 @@ export interface WorktreeRefreshRow {
   topology_generation: string | number; state: WorktreeRefreshState; old_head: string; target_head: string; upstream_ref: string;
   preserved_uncommitted: string[]; outcome: Record<string, unknown>; created_at: string | Date; updated_at: string | Date; completed_at: string | Date | null;
 }
-export type RefreshBoundary = 'drained' | 'fenced' | 'merged' | 'syncing';
+export type RefreshBoundary = 'drained' | 'fenced' | 'merged' | 'syncing' | 'synced';
 export interface RefreshHooks { boundary?: (point: RefreshBoundary, row: WorktreeRefreshRow) => Promise<void> | void }
 export interface RefreshOptions {
   dryRun?: boolean; resume?: boolean; abandon?: boolean;
@@ -597,7 +597,7 @@ async function reachedTarget(git: Git, root: string, row: WorktreeRefreshRow, co
 }
 
 /** Steps 6-7: the managed `--no-pull` sync per member, then completion when every member reached target_head (or a descendant). */
-async function syncMembers(engine: BrainEngine, git: Git, row: WorktreeRefreshRow, root: string, budgetMs: number): Promise<{ synced: RefreshMemberSync[]; blocked: RefreshSyncBlocked[]; atTarget: boolean }> {
+async function syncMembers(engine: BrainEngine, git: Git, row: WorktreeRefreshRow, root: string, budgetMs: number, hooks?: RefreshHooks): Promise<{ synced: RefreshMemberSync[]; blocked: RefreshSyncBlocked[]; atTarget: boolean }> {
   const sync = await boundedMemberSync(budgetMs);
   const synced: RefreshMemberSync[] = [], blocked: RefreshSyncBlocked[] = [];
   for (const [index, sourceId] of row.source_ids.entries()) {
@@ -627,6 +627,7 @@ async function syncMembers(engine: BrainEngine, git: Git, row: WorktreeRefreshRo
   // #8072: a deferred member completes the refresh too: the checkout is at the target and the member's next sync resumes from
   // its last_commit, while a row left syncing would refuse every other write to the worktree until then.
   const deferred = synced.filter(member => member.status === 'deferred').map(member => member.source_id);
+  await hooks?.boundary?.('synced', row);
   if (atTarget || blocked.length || deferred.length) await engine.transaction(tx => transition(tx, row, ['syncing'], 'completed',
     { synced, ...(blocked.length ? { sync_blocked: blocked } : {}), ...(deferred.length ? { sync_deferred: deferred } : {}) }));
   return { synced, blocked, atTarget };
@@ -837,7 +838,7 @@ async function refreshOnce(engine: BrainEngine, sourceId: string, opts: RefreshO
       await opts.hooks?.boundary?.('drained', row);
       const merged = await fenceAndMerge(engine, git, sourceId, plan, row, opts.hooks);
       await opts.hooks?.boundary?.('syncing', merged);
-      const sync = await syncMembers(engine, git, merged, plan.root, syncBudgetMs);
+      const sync = await syncMembers(engine, git, merged, plan.root, syncBudgetMs, opts.hooks);
       const result = finished(await readRefresh(engine, row.id), sync, plan.preserved);
       return plan.published ? { ...result, published: plan.published } : result;
     } finally { await refreshLock.release(); }
