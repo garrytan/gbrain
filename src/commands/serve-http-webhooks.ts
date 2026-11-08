@@ -110,17 +110,9 @@ export function selectGitHubItemSources<Row extends { local_path: string | null;
     row,
     cfg: (typeof row.config === 'string' ? JSON.parse(row.config) : (row.config ?? {})) as Record<string, unknown>,
   }));
-  const isLegacy = (cfg: Record<string, unknown>) => !(cfg.kind === 'github' && cfg.webhook_secret != null);
-  // Every github-kind row is checked before scope decides anything, and the legacy rows share exactly one check (a
-  // throwaway one when the repo has none), so the work done for an unsigned request does not depend on whether or how
-  // many sources name the repository (#8768). The check goes to the lowest-id legacy row that has a secret, so a second
-  // legacy source with a different secret is not tried.
-  const legacyPick =
-    candidates.find((c) => isLegacy(c.cfg) && typeof c.cfg.webhook_secret === 'string' && c.cfg.webhook_secret !== '') ??
-    candidates.find((c) => isLegacy(c.cfg));
-  for (const candidate of candidates) {
-    const { row, cfg } = candidate;
-    if (isLegacy(cfg) && candidate !== legacyPick) continue;
+  // The lookup supplies the same complete candidate census for every repo. Check every secret before scope
+  // selection, including every legacy secret, so neither ordering nor repo-dependent HMAC work changes routing.
+  for (const { row, cfg } of candidates) {
     const signed = verify(cfg);
     if (cfg.kind === 'github' && githubKindCoversRepo(cfg, row.local_path, repo) && signed) {
       verified.push(row);
@@ -128,7 +120,7 @@ export function selectGitHubItemSources<Row extends { local_path: string | null;
     }
     if (cfg.github_repo === repo && signed) legacyMatched = true;
   }
-  if (!legacyPick) verify({});
+  if (candidates.length === 0) verify({});
   return { verified, legacyMatched };
 }
 
@@ -174,7 +166,7 @@ async function handleGitHubItemEvent(
     return;
   }
 
-  // Collect ALL candidate sources: exact github_repo matches (legacy
+  // Collect ALL candidate sources: legacy github_repo rows
   // webhook config) and github-kind sources with a webhook secret, then
   // verify HMAC per candidate. Only github-kind sources may enqueue a
   // github_item refresh; two verifying github-kind sources mean ambiguous
@@ -184,10 +176,10 @@ async function handleGitHubItemEvent(
     const rows = await engine.executeRaw<{ id: string; local_path: string | null; config: unknown }>(
       `SELECT id, local_path, config FROM sources
          WHERE archived = false
-           AND ((config->>'github_repo' = $1)
+           AND ((config->>'github_repo' IS NOT NULL)
              OR (config->>'kind' = 'github' AND config->>'webhook_secret' IS NOT NULL))
          ORDER BY id`,
-      [ref.repo],
+      [],
     );
     const { verified, legacyMatched } = selectGitHubItemSources(rows, ref.repo, (cfg) =>
       verifyWebhookSig(cfg.webhook_secret, sigHeader, payload),
@@ -220,6 +212,8 @@ async function handleGitHubItemEvent(
 
   try {
     const queue = new MinionQueue(engine);
+    const deleted = eventName === 'issues' && parsed.action === 'deleted';
+    const idempotencyKey = `webhook:item:${source.id}:${ref.repo}:${ref.number}:${ref.kind}:${deleted ? 'delete' : 'refresh'}:${Math.floor(Date.now() / 30_000)}`;
     const job = await queue.add(
       'sync',
       {
@@ -229,16 +223,23 @@ async function handleGitHubItemEvent(
           repo: ref.repo,
           number: ref.number,
           kind: ref.kind,
-          ...(eventName === 'issues' && parsed.action === 'deleted' ? { deleted: true } : {}),
+          ...(deleted ? { deleted: true } : {}),
         },
         embed_reason: 'webhook',
       },
       {
         priority: -10,
-        idempotency_key: `webhook:item:${source.id}:${ref.repo}:${ref.number}:${Math.floor(Date.now() / 30_000)}`,
-        maxWaiting: 1,
+        idempotency_key: idempotencyKey,
+        // A source-wide single-flight cap silently swallowed different items. Keep bounded backpressure,
+        // but never acknowledge a cap-hit coalesce as this event's job: the delivery must be retried instead.
+        maxWaiting: 50,
       },
     );
+    if (job.idempotency_key !== idempotencyKey) {
+      res.setHeader('Retry-After', '30');
+      res.status(429).json({ error: 'webhook_backlog_full', message: 'GitHub item backlog is full for this source; retry after it drains.' });
+      return;
+    }
     res.status(202).json({ job_id: job.id, source_id: source.id, item: ref });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

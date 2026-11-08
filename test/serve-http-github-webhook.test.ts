@@ -109,20 +109,24 @@ describe('selectGitHubItemSources', () => {
   test('a repo with a legacy push source costs as many signature checks as an unknown repo (#8768)', () => {
     let calls = 0;
     const counting = (cfg: Record<string, unknown>) => { calls++; return verify(cfg); };
-    selectGitHubItemSources([ghRow('gh', 'bad')], 'acme/unknown', counting);
+    const rows = [ghRow('gh', 'bad'), legacyRow('old', 'bad')];
+    selectGitHubItemSources(rows, 'acme/unknown', counting);
     const unknown = calls;
     calls = 0;
-    selectGitHubItemSources([ghRow('gh', 'bad'), legacyRow('old', 'bad')], 'acme/app', counting);
+    selectGitHubItemSources(rows, 'acme/app', counting);
+    expect(calls).toBe(rows.length);
     expect(calls).toBe(unknown);
   });
 
   test('a repo with two legacy push sources costs as many signature checks as an unknown repo (#8768)', () => {
     let calls = 0;
     const counting = (cfg: Record<string, unknown>) => { calls++; return verify(cfg); };
-    selectGitHubItemSources([ghRow('gh', 'bad')], 'acme/unknown', counting);
+    const rows = [ghRow('gh', 'bad'), legacyRow('old1', 'bad'), legacyRow('old2', 'bad')];
+    selectGitHubItemSources(rows, 'acme/unknown', counting);
     const unknown = calls;
     calls = 0;
-    selectGitHubItemSources([ghRow('gh', 'bad'), legacyRow('old1', 'bad'), legacyRow('old2', 'bad')], 'acme/app', counting);
+    selectGitHubItemSources(rows, 'acme/app', counting);
+    expect(calls).toBe(rows.length);
     expect(calls).toBe(unknown);
   });
 
