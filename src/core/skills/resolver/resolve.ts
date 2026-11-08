@@ -23,7 +23,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { VERSION } from '../../../version.ts';
 import { BLOCK_TOKEN_CAP, BLOCK_TOKENIZER, HARNESSES, renderBlock, type BlockLine } from './block.ts';
-import { dirFingerprintChanged, listCatalogs, readReceipt, type BuildReceipt } from './build.ts';
+import { dirFingerprintSlice, listCatalogs, readReceipt, type BuildReceipt } from './build.ts';
 import { readResolverSettings, validateSessionTokenBudget } from './config.ts';
 import { ResolverError } from './errors.ts';
 import { ensureDir, writeFileDurable } from './fsutil.ts';
@@ -39,6 +39,8 @@ export const TOP_K_MAX = 8;
 export const EXCLUDE_MAX = 64;
 export const RESUGGEST_AFTER_TURNS = 10;
 export const STAT_CHECK_INTERVAL_MS = 60_000;
+/** Stat calls one turn may spend on the freshness sweep; a larger catalog is swept over several turns. */
+export const STAT_CHECK_SLICE = 1024;
 
 export interface TurnInput {
   message: string;
@@ -182,12 +184,14 @@ function loadCatalog(home: string, name: string, now: number, autoRebuild: boole
   if (!stale && receipt.gbrain_version !== VERSION) stale = 'gbrain_version_changed';
   if (!stale && receipt.catalog.source.kind === 'dir') {
     const stamp = catalogFile(home, name, 'stat-check');
-    let cached: string | null = null;
-    try { if (now - statSync(stamp).mtimeMs < STAT_CHECK_INTERVAL_MS) cached = readFileSync(stamp, 'utf8'); } catch { /* none */ }
-    if (cached === 'fresh' || cached === 'stale') stale = cached === 'stale' ? 'source_changed' : null;
-    else {
-      stale = dirFingerprintChanged(home, name) ? 'source_changed' : null;
-      try { writeFileDurable(stamp, stale ? 'stale' : 'fresh'); } catch { /* read-only home: check again next turn */ }
+    let last: { verdict: 'fresh' | 'stale'; cursor: number } | null = null;
+    let age = Infinity;
+    try { age = now - statSync(stamp).mtimeMs; last = JSON.parse(readFileSync(stamp, 'utf8')); } catch { /* none or unreadable: sweep from the start */ }
+    if (last?.verdict === 'stale') stale = 'source_changed';
+    else if (!(last?.verdict === 'fresh' && last.cursor === 0 && age < STAT_CHECK_INTERVAL_MS)) {
+      const slice = dirFingerprintSlice(home, name, last?.verdict === 'fresh' ? last.cursor : 0, STAT_CHECK_SLICE);
+      stale = slice.changed ? 'source_changed' : null;
+      try { writeFileDurable(stamp, JSON.stringify({ verdict: slice.changed ? 'stale' : 'fresh', cursor: slice.changed ? 0 : slice.next })); } catch { /* read-only home: check again next turn */ }
     }
   }
   if (stale && autoRebuild) { try { writeFileDurable(catalogFile(home, name, 'stale.stamp'), `${JSON.stringify({ reason: stale })}\n`); } catch { /* best effort */ } }

@@ -28,6 +28,7 @@ import { estimateTokens } from '../src/core/skills/resolver/block.ts';
 import { acquireLease, holdsLease, releaseLease, tryAcquireLease } from '../src/core/skills/resolver/lock.ts';
 import { commitSession, gcSessions, loadSession, sessionKey } from '../src/core/skills/resolver/session.ts';
 import { catalogFile } from '../src/core/skills/resolver/paths.ts';
+import { STAT_CHECK_SLICE } from '../src/core/skills/resolver/resolve.ts';
 
 const scratch: string[] = [];
 afterAll(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
@@ -622,6 +623,25 @@ describe('freshness and errors', () => {
     expect(await turn()).toBe(false);
     writeFileSync(p, readFileSync(p, 'utf8').replace('Ship it', 'Ship it now'));
     t += 61_000;
+    expect(await turn()).toBe(true);
+  });
+
+  test('a large dir catalog is swept over several turns, at most STAT_CHECK_SLICE stats each, and an edit near the end is still caught', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    let last = '';
+    for (let i = 0; i < 700; i++) last = skillDir(root, 's' + String(i).padStart(4, '0'), { name: 's' + i, description: 'Synthetic skill' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const fp = JSON.parse(readFileSync(catalogFile(home, 'c', 'fingerprint.json'), 'utf8')) as { fingerprint: { dirs: unknown[]; files: unknown[] } };
+    const entries = fp.fingerprint.dirs.length + fp.fingerprint.files.length;
+    expect(entries).toBeGreaterThan(STAT_CHECK_SLICE);
+    const t = Date.now();
+    const turn = async () => (await resolveSkills({ message: 'synthetic' }, { home, now: () => t })).output.meta.index_stale;
+    writeFileSync(last, readFileSync(last, 'utf8').replace('Synthetic skill', 'Synthetic skill, edited'));
+    const verdicts: boolean[] = [];
+    for (let i = 0; i < Math.ceil(entries / STAT_CHECK_SLICE); i++) verdicts.push(await turn());
+    expect(verdicts.at(-1)).toBe(true);
+    expect(verdicts[0]).toBe(false);
     expect(await turn()).toBe(true);
   });
 

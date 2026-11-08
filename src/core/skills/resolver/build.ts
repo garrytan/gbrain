@@ -283,10 +283,19 @@ export function sessionStatus(sessionId: string, opts: { home?: string; harness?
   return { session_id: sessionId, harness: opts.harness ?? null, shadow: Boolean(opts.shadow), turn: s.turn, spent: s.spent, budget, remaining: Math.max(0, budget - s.spent), suggested: Object.keys(s.last).length, reset: 'Only a compaction (or reset_session / --reset-session on the next turn) resets a session.' };
 }
 
-/** The stat-tier check a turn runs (at most once per interval). */
-export function dirFingerprintChanged(home: string, name: string): boolean {
+/**
+ * The stat-tier check a turn runs: up to `limit` of the fingerprint's
+ * directory and file entries from `cursor` (the routing file every time).
+ * `next` is 0 once the sweep has covered every entry.
+ */
+export function dirFingerprintSlice(home: string, name: string, cursor: number, limit: number): { changed: boolean; next: number } {
   try {
     const f = JSON.parse(readFileSync(catalogFile(home, name, 'fingerprint.json'), 'utf8')) as { fingerprint: DirFingerprint; routing: [string, number, number] | null };
-    return fingerprintChanged(f.fingerprint, f.routing ?? undefined);
-  } catch { return true; }
+    const { dirs, files } = f.fingerprint;
+    const total = dirs.length + files.length;
+    const from = cursor > 0 && cursor < total ? cursor : 0;
+    const to = Math.min(total, from + limit);
+    const part: DirFingerprint = { dirs: dirs.slice(Math.min(from, dirs.length), Math.min(to, dirs.length)), files: files.slice(Math.max(0, from - dirs.length), Math.max(0, to - dirs.length)) };
+    return { changed: fingerprintChanged(part, f.routing ?? undefined), next: to >= total ? 0 : to };
+  } catch { return { changed: true, next: 0 }; }
 }
