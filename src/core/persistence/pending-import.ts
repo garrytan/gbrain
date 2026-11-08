@@ -17,7 +17,7 @@
  * is resubmitted by its caller after that sync.
  */
 import { spawn } from '../spawn.ts';
-import { relative, resolve, sep } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import { gitChildEnv } from '../git-env.ts';
@@ -129,12 +129,13 @@ export async function unmergedPath(root: string, path: string, signal?: AbortSig
 /**
  * #8755: the absolute paths of the markers a merge, cherry-pick, revert or rebase in progress leaves in `root`'s git dir
  * (MERGE_HEAD, CHERRY_PICK_HEAD, REVERT_HEAD, rebase-merge, rebase-apply); null when Git cannot name them. The caller
- * checks which exist.
+ * checks which exist. All five live in the per-worktree git dir, which Git prints absolute and symlink-resolved, so a root
+ * reached through a symlink still names the real markers.
  */
 export async function operationMarkerPaths(root: string, signal?: AbortSignal): Promise<string[] | null> {
   const markers = ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply'];
-  return gitRead(root, ['rev-parse', ...markers.flatMap(marker => ['--git-path', marker])], signal)
-    .then(out => { const paths = out.split('\n').filter(Boolean).map(path => resolve(root, path)); return paths.length === markers.length ? paths : null; },
+  return gitRead(root, ['rev-parse', '--absolute-git-dir'], signal)
+    .then(out => { const [gitDir] = out.split('\n'); return gitDir ? markers.map(marker => join(gitDir, marker)) : null; },
       error => { if (signal?.aborted) throw error; return null; });
 }
 
