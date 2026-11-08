@@ -51,7 +51,9 @@ CONSTANTS
   MayRestore,       \* a shared-skill restore may run once
   MayRevoke,        \* the writers' credential may be revoked once
   MaxCrashes,       \* times the refreshing process may be killed; the owner's topology scan or --resume then recovers it
-  MayReset          \* someone may reset the checkout to old_head after a merge, before bookkeeping
+  MayReset,         \* someone may reset the checkout to old_head after a merge, before bookkeeping
+  OutsideHelp       \* time passes the wait limit and an outside scheduled sync runs, eventually; FALSE (GST-1853): neither
+                    \* is forced, and another agent commits only while a refresh drains (the commit its fence keeps sync from importing)
 
 Writes == 1..NW
 Refs   == 1..MaxRefreshes
@@ -152,8 +154,9 @@ RefIs(S) == cur # None /\ rstate[cur] \in S
 Worktree == IF local # None THEN local ELSE fileV
 \* HEAD holds refresh i's target: its merge ran and HEAD is the target or a descendant (history is one line until a reset).
 HoldsTarget(i) == rtgt[i] # 0 /\ head >= rtgt[i] /\ ~lost[i]
-\* markRecoveryRequired's case: a merge that started on a HEAD that no longer holds the target is policy; anything else is not.
-Why(i) == IF rmstart[i] /\ ~HoldsTarget(i) THEN "merge_started_off_target" ELSE "unexplained"
+\* markRecoveryRequired's case: a merge that ran (HEAD reached the target) on a HEAD that no longer holds it is policy;
+\* anything else is not. GST-1674: a merge that started but never reached the target (git refused it) is not policy.
+Why(i) == IF rmstart[i] /\ rtgt[i] # 0 /\ ~HoldsTarget(i) THEN "merge_started_off_target" ELSE "unexplained"
 Free(p, r, m) == \A q \in Procs \ {p} : ~Conflict(m, held[q][r])
 L(r, m) == <<r, m>>
 
@@ -210,6 +213,10 @@ AdoptOneSided == fileV = dbV
 \* HEAD descends from old_head and the target is not in it, whoever made the commits. memberOutsideHead is FALSE here: no
 \* member syncs past HEAD.
 FencedAbortable(i) == ~rmstart[i]
+\* GST-1674: recoverOne also aborts one whose merge started but whose HEAD never reached the target since (the reflogs of HEAD
+\* and its branch show no move to target_head after outcome.merge_started_at): git refused the fast-forward, the process died
+\* before the abort. Without a readable reflog the code keeps recovery_required; the model assumes the reflog is kept.
+RefusedAbortable(i) == rmstart[i] /\ rtgt[i] = 0
 \* recoverOne runs bookkeeping for an orphaned fenced refresh whose HEAD holds the target (the target or a strict descendant).
 ResumeAtTarget(i) == HoldsTarget(i)
 
@@ -549,7 +556,7 @@ MergeStartCommit ==
                  cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 \* Plain git can still commit between the HEAD check and the merge (only gbrain's commits take the commit lock): the ff-only
-\* merge then refuses with HEAD neither old_head nor the target, and the live tick marks recovery_required.
+\* merge then refuses with HEAD on that commit, and the live tick aborts refresh_source_changed and retries (GST-1674, #8765).
 FfMerge ==
   /\ pc[RFR] = "r_ff"
   /\ IF head = rhead[nref]
@@ -558,7 +565,7 @@ FfMerge ==
              ELSE NewCommit(fileV) /\ UNCHANGED <<nver, rmoved>>
           /\ rtgt' = [rtgt EXCEPT ![nref] = head + 1]
           /\ Need(RFR, <<L(REF(nref), "NKU"), L(SRC, "NKU")>>) /\ Go(RFR, "r_bk")
-     ELSE /\ Need(RFR, <<L(REF(nref), "NKU")>>) /\ Go(RFR, "r_mark") /\ UNCHANGED <<head, verAt, fileV, nver, rmoved, rtgt>>
+     ELSE /\ Need(RFR, <<L(REF(nref), "NKU")>>) /\ Go(RFR, "r_abort") /\ UNCHANGED <<head, verAt, fileV, nver, rmoved, rtgt>>
   /\ UNCHANGED <<reqv, rstate, rel, rchg, rhead, rmstart, lost, rwhy, cur, nref, dbV, hist, lastCommit, local, nforeign, nlocal,
                  envv, ghostv, held, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
@@ -600,6 +607,7 @@ BkCommit ==
 \* syncMembers ends: completed once members reach the target, or (#8072) when a member's sync is blocked or deferred.
 RefComplete ==
   /\ pc[RFR] = "r_syncing"
+  /\ IF OutsideHelp THEN TRUE ELSE lastCommit = head   \* without outside help, the refresh's own member sync is what imports
   /\ Need(RFR, <<L(REF(nref), "NKU")>>) /\ Go(RFR, "r_complete")
   /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
@@ -632,7 +640,7 @@ RecoverCommit ==
   /\ LET s == rstate[nref]
      IN CASE s \notin RefActive ->   \* another process finished it (the admission that completes a synced refresh)
                /\ UNCHANGED <<rstate, rel, rwhy, cur>> /\ Go(RFR, "idle") /\ Need(RFR, <<>>)
-          [] s = "draining" \/ (s = "fenced" /\ (head = rhead[nref] \/ FencedAbortable(nref))) ->
+          [] s = "draining" \/ (s = "fenced" /\ (head = rhead[nref] \/ FencedAbortable(nref) \/ RefusedAbortable(nref))) ->
                /\ rstate' = [rstate EXCEPT ![nref] = "aborted"] /\ rel' = [rel EXCEPT ![nref] = ReleaseOn("aborted")]
                /\ cur' = None /\ Go(RFR, "idle") /\ Need(RFR, <<>>) /\ UNCHANGED rwhy
           [] s = "fenced" /\ ResumeAtTarget(nref) ->   \* bookkeeping
@@ -708,6 +716,18 @@ SyncBegin ==
   /\ UNCHANGED <<st, code, seq, dref, dimp, applied, cpos, ncommit, expRev, overdue, adopted, refv, gitv, envv, ghostv,
                  lockv, cw, cprep, cfin, ew, aref, aread>>
 
+\* GST-1853 (syncAfterUnfinishedRefresh): a refresh that ended aborted never ran the member sync its fence refused, so while
+\* the newest refresh is aborted and last_commit is not HEAD, a refresh run ends by running that sync: the tick that aborted
+\* it, --resume or --abandon, or the next tick after the owner scan aborted it (even one its precheck refuses).
+OwedSyncBegin ==
+  /\ pc[RFR] = "idle" /\ cur = None /\ nref > 0 /\ rstate[nref] = "aborted"
+  /\ pc[SYN] = "idle" /\ lastCommit # head
+  /\ passHead' = head
+  /\ sseq' = nseq + 1 /\ nseq' = nseq + 1
+  /\ Go(SYN, "s_queued")
+  /\ UNCHANGED <<st, code, seq, dref, dimp, applied, cpos, ncommit, expRev, overdue, adopted, refv, gitv, envv, ghostv,
+                 lockv, cw, cprep, cfin, ew, aref, aread>>
+
 \* The page row is claimed once no earlier write is ahead of it (EARLIER_HEAD), then imported.
 SyncImportBegin ==
   /\ pc[SYN] = "s_queued" /\ ~SyncBehind
@@ -739,6 +759,7 @@ SyncStamp ==
 \* ------------------------------- environment -------------------------------
 Foreign ==
   /\ nforeign < MaxForeign /\ local = None
+  /\ IF OutsideHelp THEN TRUE ELSE RefIs({"draining"})
   /\ NewCommit(nver + 1) /\ nver' = nver + 1 /\ nforeign' = nforeign + 1
   /\ UNCHANGED <<reqv, refv, dbV, hist, lastCommit, local, nlocal, envv, ghostv, lockv, procv>>
 
@@ -781,7 +802,8 @@ ConsStep == ConsBegin \/ ConsSelect \/ ConsClaim \/ ConsPrep \/ ConsPub \/ ConsH
 RefStep  == FdCommit \/ RefDrained \/ RefDrainTimeout \/ FmCommit \/ AbortCommit \/ RefMerge \/ MergeStartCommit \/ FfMerge
             \/ MarkCommit \/ BkCommit \/ RefComplete \/ CompleteCommit \/ RecoverBegin \/ RecoverCommit
 ExpStep  == (\E w \in Writes : ExpRefBegin(w) \/ ExpImpBegin(w)) \/ ExpRefCommit \/ ExpImpRecheck \/ ExpImpCommit
-SyncStep == SyncBegin \/ SyncImportBegin \/ SyncImport \/ SyncStampBegin \/ SyncStamp
+SyncPass == SyncImportBegin \/ SyncImport \/ SyncStampBegin \/ SyncStamp
+SyncStep == SyncBegin \/ OwedSyncBegin \/ SyncPass
 AdmStep(w) == AdmRef(w) \/ AdmRead(w) \/ AdmCommit(w)
 
 Next ==
@@ -791,13 +813,15 @@ Next ==
   \/ Foreign \/ LocalEdit \/ Revoke \/ Restore \/ Crash \/ ResetAfterMerge
 
 \* Every process that has started runs; a waiting lock request is eventually granted once it can be (Postgres queues
-\* lock waiters); a person eventually resolves recovery_required; time passes. Producers, other agents' commits,
-\* local edits, refreshes starting, revocation and restore are never forced.
+\* lock waiters); a person eventually resolves recovery_required; a refresh run ends with the sync an aborted refresh
+\* owes; with OutsideHelp, time passes and a scheduled sync runs. Producers, other agents' commits, local edits,
+\* refreshes starting, revocation and restore are never forced.
 Fairness ==
   /\ \A p \in Procs : SF_vars(Acquire(p))
-  /\ \A w \in Writes : WF_vars(AdmStep(w)) /\ WF_vars(Age(w))
+  /\ \A w \in Writes : WF_vars(AdmStep(w)) /\ (IF OutsideHelp THEN WF_vars(Age(w)) ELSE TRUE)
   /\ WF_vars(ConsStep) /\ WF_vars(RefStep) /\ WF_vars(PersonAbandon \/ PersonResume)
-  /\ WF_vars(ExpStep) /\ WF_vars(SyncStep)
+  /\ WF_vars(ExpStep) /\ WF_vars(OwedSyncBegin \/ SyncPass) /\ WF_vars(SyncBegin /\ RefIs({"syncing"}))
+  /\ IF OutsideHelp THEN WF_vars(SyncBegin) ELSE TRUE
 
 Spec == Init /\ [][Next]_vars
 FairSpec == Spec /\ Fairness

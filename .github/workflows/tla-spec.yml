@@ -41,6 +41,7 @@ on:
       - 'test/spec-refresh-barrier.test.ts'
       - 'test/refresh-write-barrier.test.ts'
       - 'test/import-write-barrier.test.ts'
+      - 'test/refresh-barrier-held-after-abort.test.ts'
       - 'src/core/persistence/coordinator.ts'
       - 'src/core/persistence/group-publish.ts'
       - 'src/core/persistence/page-prepare.ts'
@@ -49,6 +50,7 @@ on:
       - 'src/core/persistence/import-deferral.ts'
       - 'src/core/persistence/local-edit-adoption.ts'
       - 'test/persistence-worktree-refresh.test.ts'
+      - 'test/persistence-worktree-refresh-restart.test.ts'
       - 'test/pending-import-async-git-7436.test.ts'
   push:
     branches: [master]
@@ -85,6 +87,7 @@ on:
       - 'test/spec-refresh-barrier.test.ts'
       - 'test/refresh-write-barrier.test.ts'
       - 'test/import-write-barrier.test.ts'
+      - 'test/refresh-barrier-held-after-abort.test.ts'
       - 'src/core/persistence/coordinator.ts'
       - 'src/core/persistence/group-publish.ts'
       - 'src/core/persistence/page-prepare.ts'
@@ -93,6 +96,7 @@ on:
       - 'src/core/persistence/import-deferral.ts'
       - 'src/core/persistence/local-edit-adoption.ts'
       - 'test/persistence-worktree-refresh.test.ts'
+      - 'test/persistence-worktree-refresh-restart.test.ts'
       - 'test/pending-import-async-git-7436.test.ts'
   schedule:
     - cron: '40 9 * * *'  # nightly, 09:40 UTC
