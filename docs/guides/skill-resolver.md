@@ -8,7 +8,9 @@ five suggestions, at most 400 tokens) for the harness to put in front of the
 model.
 
 - **Off by default.** Nothing changes until you build a catalog and wire a
-  harness to call `gbrain skills resolve`. Setup writes nothing for it.
+  harness to call `gbrain skills resolve`, or turn on the hook lane with
+  `gbrain setup <claude-code|codex> --skill-loading resolve`. Setup writes
+  nothing for it otherwise.
 - **Local and deterministic.** Word matching (BM25F) over the catalog's names,
   descriptions, triggers, routing rows and the first 4 KB of each body. No
   network, no model, no clock, no randomness on the turn path.
@@ -60,6 +62,57 @@ weighted 3) when at least 25% of skills carry triggers or routing rows, else
 drops below 20%. The constants were frozen on the Step 1 offline eval
 (gbrain-evals `docs/benchmarks/2026-11-07-skill-ranker-offline`) and are
 recorded in the receipt.
+
+## Hook lane: Claude Code and Codex
+
+`gbrain setup claude-code --skill-loading resolve` (or `codex`) turns on a
+per-turn hook that puts the block in front of the model on every prompt:
+
+1. It builds the user catalog `claude-code-user` from `~/.claude/skills`
+   (Codex: `codex-user` from `~/.agents/skills` and `$CODEX_HOME/skills`).
+   With no skill found it stops with `skill_resolver_setup_incomplete` and
+   writes nothing else.
+2. It sets `skills.resolver.enabled` and `skills.resolver.harnesses` in
+   `~/.gbrain/config.json`. A brainless install stays brainless: the file
+   holds no engine, so nothing reads it as a brain.
+3. It adds the lane's own hook: Claude Code gets UserPromptSubmit and
+   SessionStart entries marked `skill-resolver-v1` in `~/.claude/settings.json`;
+   Codex gets a UserPromptSubmit group in `hooks.json` (`--harness codex`),
+   trusted in `config.toml`. Both run through the existing hook launcher.
+4. It prints a sample block and `skill resolver: on; N skills; fresh`.
+
+`--dry-run` lists every write, and re-running changes nothing. A bare
+`gbrain setup <harness>` refreshes a lane that is on.
+
+The lane runs the resolver in the hook process (never through `gbrain serve`),
+so it works with serve down and with no brain. Each block names the skill ids
+and gives the harness's own load line; Codex lines also carry the SKILL.md path.
+The lane always exits 0 and prints nothing when it cannot deliver:
+
+- **Deadline:** 50 ms from lane start. Ranking runs in a worker thread; at the
+  deadline the process prints nothing, exits and commits no session state.
+- **Payload:** at most `skills.resolver.lane_payload_chars` characters of hook
+  output (default 4000, 500 to 10,000); a larger block is dropped whole and
+  counted as `payload_dropped`.
+- **One owner:** when several settings files wire the lane, only the first
+  entry whose home has the lane on delivers.
+- **Project skills (Claude Code):** a project's `.claude/skills` gets its own
+  catalog, `claude-code-project-<hash of the root>`, built in the background
+  the first time the project is seen and merged by name only. Stale catalogs
+  rebuild the same way, at most once a minute;
+  `skills.resolver.auto_rebuild false` or `GBRAIN_SKILLS_NO_AUTOREBUILD=1`
+  stops both.
+- **Compaction:** a SessionStart with `source: compact` resets the session, so
+  skills can be offered again.
+
+Each turn appends one line (outcome, error code, duration; never turn text)
+to `skill-index/logs/lane.jsonl`. `gbrain doctor` (`skill_resolver`, and
+`harness_wiring`'s details) reports the hook, each catalog's freshness and
+the recent error codes; it says nothing while the resolver is off.
+
+Compiled binaries carry the lane's worker as a second entrypoint
+(`bun build --compile src/cli.ts src/core/skills/resolver/hook-worker.ts`); a
+binary built without it delivers nothing and logs `skill_resolver_internal`.
 
 ## The contract (schema_version 1)
 
@@ -163,7 +216,10 @@ escaped.
 ## Turning it off
 
 Stop calling `gbrain skills resolve` from the harness, or set
-`skills.resolver.session_token_budget` to 0. `gbrain skills index remove --catalog <name>`
+`skills.resolver.session_token_budget` to 0. For the hook lane,
+`gbrain setup <harness> --skill-loading off` (or `setup --remove`) removes the
+hook, the config keys, that harness's catalogs and, once no harness is left,
+the session state and the lane log. `gbrain skills index remove --catalog <name>`
 deletes a catalog; deleting `skill-index/` removes everything.
 
 ## Latency
@@ -240,6 +296,21 @@ The `--from-json` catalog or routing file is malformed or over its size bound
 
 `skills.resolver.session_token_budget` is not 0 or 100-50,000, or GBRAIN_HOME
 is not an absolute path.
+
+### skill_resolver_config_unreadable
+
+`~/.gbrain/config.json` exists but is not a JSON object gbrain can read (or is
+over 1 MB). Setup refuses and writes nothing, the hook lane prints nothing,
+and `gbrain config set skills.resolver.*` refuses; gbrain never rewrites the
+file. Fix or move it, then run `gbrain setup <harness> --skill-loading resolve`.
+
+### skill_resolver_setup_incomplete
+
+`gbrain setup <harness> --skill-loading resolve` found no model-invocable
+skill in the directories it scanned (named in the message), the catalog build
+failed, or no absolute gbrain binary was found for the hook. Nothing was
+written (an empty catalog is removed). Add a skill there, or pass
+`--gbrain-bin`, and run setup again; `--dry-run` shows what it would scan.
 
 ### skill_resolver_internal
 

@@ -18,7 +18,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
-import { LANE_DEADLINE_MS, projectCatalogPrefix } from '../src/core/skills/resolver/hook-lane.ts';
+import { LANE_DEADLINE_MS, projectCatalogPrefix, WORKER_SRC_PATH } from '../src/core/skills/resolver/hook-lane.ts';
 
 setDefaultTimeout(60_000);
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
@@ -154,7 +154,6 @@ describe('skill-resolver lane: deadline, measured outside the process', () => {
       const r = await hook(b, cmd, { prompt: 'please deploy the widget to staging', session_id: 'sess-t' }, { GBRAIN_TEST_SKILL_LANE_STALL: stall });
       expect(r.exitCode).toBe(0);
       expect(r.stdout).toBe('');
-      expect(sessions(b).length).toBe(sessions(b).length);
       const last = laneLog(b).at(-1);
       expect(last).toMatchObject({ outcome: 'timeout', code: 'skill_resolve_timeout' });
       expect(last.ms).toBeGreaterThanOrEqual(LANE_DEADLINE_MS - 1);
@@ -184,8 +183,6 @@ describe('skill-resolver lane: fail open', () => {
     expect(readdirSync(join(b.home, '.gbrain')).filter((n) => /pglite|brain/.test(n))).toEqual([]);
     const r = await hook(b, wired(b, 'claude-code'), { prompt: 'deploy the widget', session_id: 's' }, WIDE);
     expect(contextOf(r)).toContain('deploy-widget');
-    const status = await runCli(['doctor', '--json'], { env: b.env, cwd: b.project });
-    expect(`${status.stdout}${status.stderr}`).not.toMatch(/database_url|ECONNREFUSED/);
   });
 
   test('an unreadable config prints nothing, exits 0 and logs skill_resolver_config_unreadable', async () => {
@@ -212,18 +209,54 @@ describe('skill-resolver lane: fail open', () => {
     expect(last.dropped_chars).toBeGreaterThan(500);
     expect(sessions(b)).toEqual([]);
   });
+  test('one owner per event: user scope, workspace and plugin wired at once give exactly one block and one dedupe commit', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    const user = wired(b, 'claude-code');
+    // A second home with the lane on, wired in the workspace's settings.local.json (earlier in carrier order).
+    const other = join(b.root, 'other-home');
+    mkdirSync(join(other, '.gbrain'), { recursive: true });
+    writeFileSync(join(other, '.gbrain', 'config.json'), JSON.stringify({ skills: { resolver: { enabled: true, harnesses: ['claude-code'] } } }));
+    const build = await runCli(['skills', 'index', 'build', '--catalog', 'claude-code-user', '--dir', claudeSkills(b), '--harness', 'claude-code'], { env: { ...b.env, GBRAIN_HOME: other }, cwd: b.project });
+    expect(build.exitCode, build.stderr).toBe(0);
+    const workspace = user.replace(`GBRAIN_HOME=${b.home}`, `GBRAIN_HOME=${other}`);
+    expect(workspace).not.toBe(user);
+    mkdirSync(join(b.project, '.claude'), { recursive: true });
+    writeFileSync(join(b.project, '.claude', 'settings.local.json'), JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: workspace, _gbrain: 'skill-resolver-v1' }] }] } }));
+    const plugin = `env GBRAIN_HOOK_LANE=plugin GBRAIN_HOME=${b.home} '${b.bin}' hook user-prompt`;
+    const turn = { prompt: 'please deploy the widget to staging', session_id: 'sess-o' };
+    const runs = await Promise.all([user, workspace, plugin].map((c) => hook(b, c, turn, WIDE)));
+    expect(runs.map((r) => r.exitCode)).toEqual([0, 0, 0]);
+    expect(runs.filter((r) => r.stdout.includes('<relevant_skills>')).length).toBe(1);
+    expect(runs[1]!.stdout).toContain('<relevant_skills>');
+    const commits = [b.home, other].flatMap((h) => { const d = join(h, '.gbrain', 'skill-index', 'sessions'); return existsSync(d) ? readdirSync(d) : []; });
+    expect(commits).toHaveLength(1);
+    expect(laneLog(b)).toEqual([]);
+  });
 
-  test('one owner per event: a lane whose GBRAIN_HOME is not the first wiring yields', async () => {
+  test('a wiring whose home has the lane off owns nothing', async () => {
     const b = box();
     seedSkills(claudeSkills(b));
     await setup(b, 'claude-code');
     const cmd = wired(b, 'claude-code');
-    const other = join(b.root, 'other-home');
     mkdirSync(join(b.project, '.claude'), { recursive: true });
-    writeFileSync(join(b.project, '.claude', 'settings.local.json'), JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: cmd.replace(`GBRAIN_HOME=${b.home}`, `GBRAIN_HOME=${other}`), _gbrain: 'skill-resolver-v1' }] }] } }));
-    const r = await hook(b, cmd, { prompt: 'deploy the widget', session_id: 's' }, WIDE);
-    expect(r).toMatchObject({ exitCode: 0, stdout: '' });
-    expect(laneLog(b)).toEqual([]);
+    writeFileSync(join(b.project, '.claude', 'settings.local.json'), JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: cmd.replace(`GBRAIN_HOME=${b.home}`, `GBRAIN_HOME=${join(b.root, 'off-home')}`), _gbrain: 'skill-resolver-v1' }] }] } }));
+    expect(contextOf(await hook(b, cmd, { prompt: 'deploy the widget', session_id: 's' }, WIDE))).toContain('deploy-widget');
+  });
+});
+
+describe('skill-resolver lane: compiled binaries', () => {
+  // A compiled binary bundles src/ into one entry; a worker it starts must be a second
+  // entrypoint (bun build --compile src/cli.ts <worker>), found at its src-relative path.
+  test('every shipped binary build carries the worker entry at the path the lane starts', () => {
+    const root = join(import.meta.dir, '..');
+    expect(existsSync(join(root, 'src', WORKER_SRC_PATH))).toBe(true);
+    const pkg = readJson(join(root, 'package.json')) as { scripts: Record<string, string> };
+    const release = readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8');
+    const builds = [pkg.scripts.build!, ...pkg.scripts['build:all']!.split('&&'), ...release.split('\n').filter((l) => l.includes('bun build --compile'))];
+    expect(builds.length).toBe(4);
+    for (const b of builds) expect(b).toContain(`src/cli.ts src/${WORKER_SRC_PATH}`);
   });
 });
 

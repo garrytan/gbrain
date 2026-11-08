@@ -22,8 +22,9 @@
  * the carriers the harness merges (Claude Code: managed settings, the
  * workspace's settings.local.json and settings.json, the user settings;
  * Codex: CODEX_HOME/hooks.json) and runs only when the first skill-resolver
- * entry there names its own GBRAIN_HOME, so two wirings never deliver two
- * blocks. (Identical commands are deduplicated by the harness itself.)
+ * entry there whose home has the lane on names its own GBRAIN_HOME, so two
+ * wirings of different homes never deliver two blocks. (Identical commands
+ * are deduplicated by the harness itself.)
  *
  * Catalogs: <harness>-user (built by setup) and, for Claude Code, a second
  * catalog for the project's .claude/skills, keyed by a hash of the project
@@ -70,7 +71,7 @@ const COMMIT_RESERVE_MS = 10;
  * entrypoint at its src-relative path (every release build passes it); the
  * bundle's own import.meta.url is the binary, so the path is taken from there.
  */
-const WORKER_SRC_PATH = 'core/skills/resolver/hook-worker.ts';
+export const WORKER_SRC_PATH = 'core/skills/resolver/hook-worker.ts';
 const workerEntry = (): string | URL => (/[\\/](\$bunfs|~BUN)[\\/]/.test(import.meta.url) ? Bun.main.replace(/[^\\/]*$/, '') + WORKER_SRC_PATH : new URL('./hook-worker.ts', import.meta.url));
 
 export type LaneHarness = 'claude-code' | 'codex';
@@ -89,9 +90,10 @@ async function readJsonFile(path: string, cap = CONFIG_CAP_BYTES): Promise<unkno
 }
 
 /**
- * The GBRAIN_HOME of the skill-resolver wiring that owns this event, or
- * undefined when no carrier holds one (a manual run). Async reads only;
- * an unreadable carrier is skipped.
+ * The GBRAIN_HOME of the skill-resolver wiring that owns this event: the
+ * first lane entry, in carrier order, whose home has the lane on for this
+ * harness. Undefined when none does (a manual run, or every wiring off).
+ * Async reads only; an unreadable carrier or home is skipped.
  */
 export async function skillResolverOwner(harness: LaneHarness, event: 'user-prompt' | 'session-start', cwd: string, managedDir?: string): Promise<string | undefined> {
   const eventKey = event === 'user-prompt' ? 'UserPromptSubmit' : 'SessionStart';
@@ -105,8 +107,15 @@ export async function skillResolverOwner(harness: LaneHarness, event: 'user-prom
     for (const g of groups) {
       const entries = (g as { hooks?: unknown })?.hooks;
       if (!Array.isArray(entries)) continue;
-      const hit = entries.find(e => (harness === 'codex' ? isSkillResolverCommand((e as { command?: unknown })?.command) : isSkillResolverEntry(e)) && typeof (e as { command?: unknown }).command === 'string');
-      if (hit) return commandHome((hit as { command: string }).command);
+      for (const e of entries) {
+        const command = (e as { command?: unknown } | null)?.command;
+        if (typeof command !== 'string' || !(harness === 'codex' ? isSkillResolverCommand(command) : isSkillResolverEntry(e))) continue;
+        const home = commandHome(command);
+        try {
+          const s = await readLaneSettings(resolverHome(home ? { GBRAIN_HOME: home } : {}), {});
+          if (s.enabled && s.harnesses.includes(harness)) return home;
+        } catch { /* a home gbrain cannot use owns nothing */ }
+      }
     }
   }
   return undefined;

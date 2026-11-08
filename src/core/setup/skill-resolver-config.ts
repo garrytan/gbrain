@@ -17,6 +17,7 @@
 import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
+import { setCliExitVerdict } from '../cli-force-exit.ts';
 import { validateSessionTokenBudget } from '../skills/resolver/config.ts';
 
 const CONFIG_CAP_BYTES = 1024 * 1024;
@@ -107,7 +108,7 @@ export function runSkillResolverConfigKey(args: string[], home: string): boolean
   const [action, key, ...rest] = args;
   if (!key?.startsWith(SKILL_RESOLVER_KEY_PREFIX) || !['set', 'unset', 'get'].includes(action ?? '')) return false;
   const leaf = key.slice(SKILL_RESOLVER_KEY_PREFIX.length);
-  const fail = (msg: string): true => { console.error(`[config] ${msg}`); process.exitCode = 1; return true; };
+  const fail = (msg: string): true => { console.error(`[config] ${msg}`); setCliExitVerdict(1); return true; };
   if (leaf === 'harnesses') return fail(`${key} is written by gbrain setup <claude-code|codex> --skill-loading resolve (and removed by --skill-loading off); nothing was written.`);
   if (!(SKILL_RESOLVER_CONFIG_LEAVES as readonly string[]).includes(leaf)) return fail(`Unknown config key "${key}". skills.resolver keys: ${SKILL_RESOLVER_CONFIG_LEAVES.join(', ')}. Nothing was written.`);
   const read = readResolverConfig(home);
@@ -132,7 +133,8 @@ export function runSkillResolverConfigKey(args: string[], home: string): boolean
   const skills = (doc.skills && typeof doc.skills === 'object' && !Array.isArray(doc.skills) ? doc.skills : {}) as Record<string, unknown>;
   if (Object.keys(section).length) skills.resolver = section; else delete skills.resolver;
   if (Object.keys(skills).length) doc.skills = skills; else delete doc.skills;
-  atomicWriteTextFile(read.path, `${JSON.stringify(doc, null, 2)}\n`, { freshMode: 0o600 });
+  if (Object.keys(doc).length === 0) unlinkSync(read.path);
+  else atomicWriteTextFile(read.path, `${JSON.stringify(doc, null, 2)}\n`, { freshMode: 0o600 });
   console.log(action === 'set' ? `Set ${key} = ${JSON.stringify(section[leaf])} (file plane: ${read.path})` : `Unset ${key} (file plane)`);
   return true;
 }

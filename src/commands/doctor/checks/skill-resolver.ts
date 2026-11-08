@@ -21,7 +21,7 @@ import { LANE_LOG_FILE, projectCatalogPrefix, userCatalogName, type LaneHarness 
 import { readResolverConfig, resolverHarnesses } from '../../../core/setup/skill-resolver-config.ts';
 import { inspectSkillResolverHook } from '../../../core/setup/skill-resolver-hook.ts';
 
-const NAME = 'skill_resolver';
+const name = 'skill_resolver';
 const HARNESSES: LaneHarness[] = ['claude-code', 'codex'];
 /** Lane-log lines doctor reads (the newest), and the tail it reads them from. */
 const RECENT_LINES = 200;
@@ -99,17 +99,17 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
   if (!v) return null;
   const details = { ...v };
   if (v.config === 'unreadable') {
-    return { name: NAME, status: 'warn', message: `${describeSkillResolver(v)} The hook lane prints nothing until it can read it.`, details: { ...details, code: 'skill_resolver_config_unreadable' },
-      fix: { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME), docs: 'docs/guides/skill-resolver.md#skill_resolver_config_unreadable',
+    return { name, status: 'warn', message: `${describeSkillResolver(v)} The hook lane prints nothing until it can read it.`, details: { ...details, code: 'skill_resolver_config_unreadable' },
+      fix: { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(name), docs: 'docs/guides/skill-resolver.md#skill_resolver_config_unreadable',
         why: 'gbrain never rewrites a config file it cannot parse; the lane and setup leave it alone.',
         user_message: `gbrain's config file (${join(configDir(), 'config.json')}) is not valid JSON, so the skill resolver is paused. Fix or move it, then run: gbrain setup <claude-code|codex> --skill-loading resolve` } };
   }
   const broken = v.harnesses.find((h) => h.on && (h.hook !== 'wired' || !h.catalogs.some((c) => c.name === userCatalogName(h.harness))));
   if (broken) {
     const what = broken.hook === 'untrusted' ? 'its Codex hook is not trusted' : broken.hook === 'absent' ? 'its hook entry is missing' : 'its user catalog is missing';
-    return { name: NAME, status: 'warn', message: `${describeSkillResolver(v)} ${broken.harness}: the resolver is on but ${what}, so no skills block is added.`, details,
-      fix: { argv: setupArgv(broken.harness), consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(NAME),
+    return { name, status: 'warn', message: `${describeSkillResolver(v)} ${broken.harness}: the resolver is on but ${what}, so no skills block is added.`, details,
+      fix: { argv: setupArgv(broken.harness), consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name),
         why: `Rebuilds the ${broken.harness} user catalog and rewrites only the skill-resolver hook entry; --skill-loading off removes it instead.` } };
   }
-  return { name: NAME, status: 'ok', message: describeSkillResolver(v), details };
+  return { name, status: 'ok', message: describeSkillResolver(v), details };
 }
