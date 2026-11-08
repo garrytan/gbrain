@@ -4702,6 +4702,16 @@ More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### storage_card_exists
+
+<a id="storage_card_exists"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A storage card with this id is already on the storage shelf; nothing was written. | Registering never overwrites a card, so two archives cannot silently share one id; a change to an existing card names the revision it read. | Change the card with gbrain storage-update <id> --expected-revision <revision from storage_get>, or register the new item under another id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
+
 ### storage_error
 
 <a id="storage_error"></a>
@@ -4713,6 +4723,60 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 Reasons: `database_contention`.
 
 Override: reason `database_contention`: retryable, exit 1, retryable.
+
+### storage_manifest_missing
+
+<a id="storage_manifest_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| This brain has no storage shelf to write to (or the storage source ID belongs to another source); nothing was written. | On a brain with a Git checkout the shelf is a hosted git-canonical repository, created only after the user previews it, and hosting needs managed persistence. A repo-less brain gets its database-only shelf on the first register. | Preview gbrain storage init --dir <absolute path> --dry-run and apply the command it prints after the user agrees. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
+
+### storage_record_invalid
+
+<a id="storage_record_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A storage card failed validation (a missing or malformed field, a command field, or a field gbrain stamps itself); nothing was written. | Every card must say where the item is, how big it is and how to restore it, and carries no commands, so a card is complete and safe to act on when it is found months later. | Fix the field the message names and send the card again; gbrain storage-register --help lists the card fields. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `schema`, `command_field`, `stamped_field`, `not_json`, `not_object`, `too_large`, `id_change`.
+
+More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
+
+### storage_record_secret
+
+<a id="storage_record_secret"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A storage card field looks like a secret or has a credential shape; nothing was written and the value is not echoed. | Cards are read by agents and copied into the stores; credentials stay in the environment of the skill that restores an item. | Remove the secret, environment assignment, credential variable, URL password or signed-URL parameter from the named field. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `secret_scanner`, `env_assignment`, `credential_variable`, `url_userinfo`, `presigned_url`.
+
+More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
+
+### storage_revision_conflict
+
+<a id="storage_revision_conflict"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A storage card changed since the revision the update named was read; nothing was written. | Updates bind to the revision they read, so two writers never silently overwrite each other; the refusal carries the current revision in detail. | Read the card again with storage_get, apply the change to what it says now, and update once with its revision. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
+
+### storage_source_managed
+
+<a id="storage_source_managed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A page write targeted the storage shelf outside the storage verbs; nothing was written. | The storage source holds only validated cards, so put_page, remember and the other page writers are refused there. | Register cards with gbrain storage-register and change them with gbrain storage-update. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
 
 ### store_unavailable
 

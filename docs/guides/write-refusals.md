@@ -1074,6 +1074,20 @@ Links and the right live in the database, so they are the same on a repo-less br
 | <a id="source_not_attested"></a>`permission_denied` reason `source_not_attested` / `scope_page_not_shared`, `invalid_params` reason `source_is_member_source` | A scope `memory_write` (`source_id`, contract v2) named a source that is not in the credential's `--attest-sources` or not a marked scope source (also when a queued write publishes after the source was dropped), or its own write source; or the scope's `memory/scope` page names readers, is private or sits under a folder rule. Nothing was written. | The operator lists the source with `gbrain auth rescope --client <id> --attest-sources <list>`, or removes `readable_by` / `visibility: private` / the folder rule from `memory/scope`. For the person's own page, leave `source_id` out. See [shared scopes](qm.md#shared-scopes-projects-channels-teams). |
 | <a id="actor_unlinked"></a>`actor_unlinked` | The id is not linked to an enabled member: never linked, unlinked, or the member is disabled or removed. Ids compare exactly, with no case folding. Nothing was read or written. A queued write or agent job made for the person is refused the same way when its link is gone or now names another member. `memory_recall` answers it as an empty success instead (`structuredContent: {facts: [], truncated: false, code: "actor_unlinked"}`), so a person not yet linked reads nothing. | The brain operator links it: `gbrain access member link <member> --qm <id>` (or `gbrain access member enable <member>`). |
 
+## Storage manifest refusals
+
+The storage shelf (source `storage`) holds one validated card per item an agent archived to object storage.
+Only `gbrain storage-register` and `gbrain storage-update` write it, from the trusted local CLI.
+
+| Code | What happened | What to do |
+|---|---|---|
+| `storage_source_managed` | `put_page`, `remember` or another page writer targeted the shelf. | Register with `gbrain storage-register`, change with `gbrain storage-update`. |
+| `storage_record_invalid` | A card field is missing or malformed, names a command (`command`, `script`, `exec` and similar), or is one gbrain sets itself (`registered_by`, `origin`). | Fix the field the message names. Restore runs through `restore.skill` and `restore.args`. |
+| `storage_record_secret` | A field looks like a secret or has a credential shape: an environment assignment, a credential-named variable, a URL password or a signed-URL parameter. The value is not echoed. | Remove it; the restore skill reads credentials from its own environment. |
+| `storage_card_exists` | A card with that id is already registered. | Update it with the revision `storage_get` returns, or use another id. |
+| `storage_revision_conflict` | The card changed since its revision was read; `detail` holds the current revision. | Read it again, apply the change, update once. |
+| `storage_manifest_missing` | No shelf yet on a brain with a Git checkout, or the `storage` source ID belongs to another source. | Preview `gbrain storage init --dir <path> --dry-run` and apply it after the user agrees (it needs managed persistence). |
+
 ## Related
 
 - [Concurrent writes and durable receipts](concurrent-writes.md) — receipt states, retries, capacity limits

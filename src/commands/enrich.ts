@@ -512,6 +512,7 @@ export async function runEnrichCore(
     pages_failed: 0,
   };
 
+  if (await (await import('../core/storage-manifest/door.ts')).isStorageManifestSource(engine, opts.sourceId)) return result;
   const sourceId = opts.sourceId;
   const types = opts.types && opts.types.length > 0 ? opts.types : DEFAULT_TYPES;
   const order: EnrichOrder = ENRICH_ORDERS.includes(opts.order as EnrichOrder)

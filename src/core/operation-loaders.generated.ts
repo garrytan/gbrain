@@ -50,6 +50,7 @@ const load_search = () => import('./ops/search.ts') as Promise<Record<string, un
 const load_skillopt = () => import('./ops/skillopt.ts') as Promise<Record<string, unknown>>;
 const load_skills_catalog = () => import('./ops/skills-catalog.ts') as Promise<Record<string, unknown>>;
 const load_sources = () => import('./ops/sources.ts') as Promise<Record<string, unknown>>;
+const load_storage_manifest = () => import('./ops/storage-manifest.ts') as Promise<Record<string, unknown>>;
 const load_sync_status = () => import('./ops/sync-status.ts') as Promise<Record<string, unknown>>;
 const load_tags = () => import('./ops/tags.ts') as Promise<Record<string, unknown>>;
 const load_takes = () => import('./ops/takes.ts') as Promise<Record<string, unknown>>;
@@ -150,6 +151,11 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "file_url": [load_files, "filesOperations"],
   "file_register": [load_files, "filesOperations"],
   "file_verify": [load_files, "filesOperations"],
+  "storage_find": [load_storage_manifest, "storageManifestOperations"],
+  "storage_get": [load_storage_manifest, "storageManifestOperations"],
+  "storage_list": [load_storage_manifest, "storageManifestOperations"],
+  "storage_register": [load_storage_manifest, "storageManifestOperations"],
+  "storage_update": [load_storage_manifest, "storageManifestOperations"],
   "submit_job": [load_jobs, "jobsOperations"],
   "get_job": [load_jobs, "jobsOperations"],
   "wait_job": [load_jobs, "jobsOperations"],

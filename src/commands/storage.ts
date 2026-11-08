@@ -49,15 +49,30 @@ export interface StorageStatusResult {
 
 // #3686: real usage, reachable via `gbrain storage --help` (the generic
 // one-line CLI_ONLY stub used to shadow this surface entirely).
-const STORAGE_HELP = `gbrain storage — storage-tier status for the brain repo
+const STORAGE_HELP = `gbrain storage — storage tiers of the brain repo, and the storage shelf
 
 USAGE
   gbrain storage [status] [--repo <path>] [--json]
+  gbrain storage init [--dir <path>] [--push-remote <url>] [--dry-run | --expect <plan_hash>] [--json]
 
 SUBCOMMANDS
   status            (default) Report page counts and disk usage per storage
                     tier, list DB pages whose repo file is missing, and
                     validate the storage config.
+  init              Create the storage shelf: the source that holds one card
+                    per item archived to object storage (B2, Supabase Storage,
+                    S3). A repo-less brain gets a database-only source (the
+                    first storage-register also creates it). A brain with a
+                    Git checkout gets a hosted git-canonical repository under
+                    --dir, which needs managed persistence; preview first and
+                    apply the printed command after the user agrees.
+
+THE STORAGE SHELF (separate commands)
+  gbrain storage-find "<phrase>"     Find a card; closest cards when none match
+  gbrain storage-get <id>            One card: copies, restore form, revision
+  gbrain storage-list                Cards, filtered by --store / --status
+  gbrain storage-register --card <json>        Register a verified archive (local only)
+  gbrain storage-update <id> --expected-revision <rev> [--patch <json>] [--restored-to <path>]
 
 OPTIONS
   --repo <path>     Brain repo to walk (default: resolved from the storage
@@ -78,8 +93,16 @@ export async function runStorage(engine: BrainEngine, args: string[]): Promise<v
     await runStorageStatus(engine, args.slice(1));
     return;
   }
+  if (subcommand === 'init') {
+    await runStorageInit(engine, args.slice(1));
+    return;
+  }
+  if (['find', 'get', 'list', 'register', 'update'].includes(subcommand)) {
+    console.error(`The storage manifest verbs are their own commands: run gbrain storage-${subcommand} (see gbrain storage-${subcommand} --help).`);
+    process.exit(1);
+  }
   console.error(`Unknown storage subcommand: ${subcommand}`);
-  console.error('Available subcommands: status');
+  console.error('Available subcommands: status, init');
   process.exit(1);
 }
 
@@ -412,4 +435,25 @@ function formatBytes(bytes: number): string {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+// ── storage init (GST-1943) ───────────────────────────────
+
+async function runStorageInit(engine: BrainEngine, args: string[]): Promise<void> {
+  const json = args.includes('--json');
+  const value = (flag: string): string | undefined => { const i = args.indexOf(flag); return i >= 0 ? args[i + 1] : undefined; };
+  const { initStorageSource } = await import('../core/storage-manifest/source.ts');
+  try {
+    const expect = value('--expect');
+    const result = await initStorageSource(engine, { dir: value('--dir'), pushRemote: value('--push-remote'), dryRun: args.includes('--dry-run') || expect === undefined && args.includes('--dir'), expect });
+    if (json) { console.log(JSON.stringify(result)); return; }
+    for (const line of result.summary) console.log(line);
+    if (result.dry_run && result.apply) console.log(`Apply (after the user agrees): ${result.apply.join(' ')}`);
+    else if (!result.dry_run && result.action !== 'none') console.log('Done: the storage shelf exists.');
+  } catch (error) {
+    if (!(error instanceof OperationError)) throw error;
+    console.log(json ? JSON.stringify({ error: error.code, message: error.message, suggestion: error.suggestion }) : `Refused (${error.code}): ${error.message}
+Fix: ${error.suggestion ?? ''}`);
+    process.exitCode = error.code === 'invalid_params' ? 2 : 1;
+  }
 }

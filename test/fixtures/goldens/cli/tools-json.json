@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 282967,
-    "stdoutSha256": "73f135de04ba7cceced4d9fd952b23aaefd7fb4cad5ebdf3dce1aca953c70f84",
+    "stdoutBytes": 289409,
+    "stdoutSha256": "7f40980027920edb253fe8d06964fd3ecbc425575357839782668fd67d6198ea",
     "toolNames": [
       "remember",
       "entity",
@@ -93,6 +93,11 @@
       "file_url",
       "file_register",
       "file_verify",
+      "storage_find",
+      "storage_get",
+      "storage_list",
+      "storage_register",
+      "storage_update",
       "submit_job",
       "get_job",
       "wait_job",
@@ -4484,6 +4489,208 @@
           "type": "object"
         },
         "scope": "admin"
+      },
+      {
+        "description": "Find archived items on the storage shelf (files moved to B2, Supabase Storage, S3 and similar) by a plain phrase, such as \"the October Gmail dataset\". Ranks exact id, then exact alias, then cards matching most of the phrase's words in title, aliases and description. When nothing matches, not_found is true and closest lists the nearest cards. Then call storage_get with the id for where it is stored and how to restore it.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "storage_find",
+        "parameters": {
+          "limit": "number?",
+          "query": "string",
+          "status": "string?",
+          "store": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "limit": {
+              "description": "Max hits (default 10, max 50).",
+              "type": "number"
+            },
+            "query": {
+              "description": "The phrase, id or alias.",
+              "type": "string"
+            },
+            "status": {
+              "description": "Only cards with this status.",
+              "enum": [
+                "archived",
+                "restored",
+                "missing",
+                "retired"
+              ],
+              "type": "string"
+            },
+            "store": {
+              "description": "Only cards with a copy in this store.",
+              "enum": [
+                "b2",
+                "supabase",
+                "s3",
+                "r2",
+                "gcs",
+                "other"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Read one card from the storage shelf by id: what the item is, every stored copy (store, bucket, path, restic repository and snapshot, size, hash, when verified), the original path, why it was archived, the restore form (restore.skill and restore.args, run by the agent's own restore skill; cards carry no commands or credentials), past restores, who registered it, and its revision.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "storage_get",
+        "parameters": {
+          "id": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "id": {
+              "description": "Card id (storage_find returns it).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "List cards on the storage shelf, sorted by id, optionally filtered by store, status or whether a copy is still on the source machine. Returns id, title, status, kind, stores and original path per card, and total.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "storage_list",
+        "parameters": {
+          "limit": "number?",
+          "offset": "number?",
+          "on_source_machine": "boolean?",
+          "status": "string?",
+          "store": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "limit": {
+              "description": "Max rows (default 50; max 500, remote 100).",
+              "type": "number"
+            },
+            "offset": {
+              "description": "Rows to skip, for paging.",
+              "type": "number"
+            },
+            "on_source_machine": {
+              "description": "Only cards whose item is (true) or is not (false) still on the machine it came from.",
+              "type": "boolean"
+            },
+            "status": {
+              "description": "Only cards with this status.",
+              "enum": [
+                "archived",
+                "restored",
+                "missing",
+                "retired"
+              ],
+              "type": "string"
+            },
+            "store": {
+              "description": "Only cards with a copy in this store.",
+              "enum": [
+                "b2",
+                "supabase",
+                "s3",
+                "r2",
+                "gcs",
+                "other"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Register a new card on the storage shelf after an archive is verified. card is a JSON object: id, title, aliases, description, kind, status, locations (store, bucket, path, tool, repository, snapshot, size_bytes, file_count, sha256, hash_kind, verified_at), original_path, on_source_machine, source_machine, archived_at, archived_by, reason, restore {skill, args}, restores, details. Credentials, credential-shaped values and command fields are refused. Trusted local CLI only.",
+        "idempotent": false,
+        "local_only": true,
+        "mutating": true,
+        "name": "storage_register",
+        "parameters": {
+          "card": "object"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "card": {
+              "description": "The card (JSON).",
+              "type": "object"
+            }
+          },
+          "required": [
+            "card"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Change a card on the storage shelf: patch replaces the named top-level fields (validated like a new card), and restored_to records a restore (newest first; status becomes restored). expected_revision is the revision storage_get returned; a stale one is refused storage_revision_conflict with the current revision. Trusted local CLI only.",
+        "idempotent": false,
+        "local_only": true,
+        "mutating": true,
+        "name": "storage_update",
+        "parameters": {
+          "expected_revision": "string",
+          "id": "string",
+          "patch": "object?",
+          "restored_to": "string?",
+          "restored_verified": "boolean?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "expected_revision": {
+              "description": "The revision storage_get returned.",
+              "type": "string"
+            },
+            "id": {
+              "description": "Card id.",
+              "type": "string"
+            },
+            "patch": {
+              "description": "Top-level fields to replace (JSON).",
+              "type": "object"
+            },
+            "restored_to": {
+              "description": "Path the item was restored to; adds a restores entry.",
+              "type": "string"
+            },
+            "restored_verified": {
+              "description": "With restored_to: the checksums matched.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "expected_revision"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
       },
       {
         "description": "Submit a background job. Remote callers may submit sync, import, lint or lint-fix for their authenticated filesystem source. Other kinds require local CLI or a dedicated operation.",
