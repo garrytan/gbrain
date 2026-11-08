@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.619.0] - 2026-11-08
 
 **`gbrain git commit-push` on a managed checkout no longer reports commits the remote lacks as already pushed.** On a managed canonical worktree, commit-push commits only the named paths and leaves publishing to the persistence owner. When the commit already existed (a script's bare commit, or one an earlier call made), it printed `nothing to commit; origin/main at -`, exited 0 and logged `[push] ok-already-on-remote`, which the push-log reader behind `put_page`'s `lastPushStatus` and doctor counts as a push that landed, while the branch sat ahead of (or diverged from) its upstream. It now says nothing was pushed, reports how many commits the upstream lacks as last fetched (`unpublished` in `--json`), names the command that publishes them, and writes no push-log line. Nothing is pushed or moved; exit codes are unchanged.
 
