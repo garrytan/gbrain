@@ -132,7 +132,8 @@ under the checkout's commit lock and reports `committed_local` (or
 moves the checkout, and refuses `--pending`, `--branch`, `--resolve` and
 `--allow-outside-source-root` there (`commit_paths_invalid`). Its
 `unpublished` field counts the commits the upstream lacks as last fetched
-(`null` without an upstream), and it writes no push-log line. Commits wait for
+(`null` when no fetched upstream can be read), `upstream` names the branch's
+configured upstream (`null` when it has none), and it writes no push-log line. Commits wait for
 the owner's next Git publish; `gbrain git commit-push --push-only --keep-checkout`
 publishes them now. `--push-only` without `--keep-checkout` is still refused with
 `writer_coordinator_required`.

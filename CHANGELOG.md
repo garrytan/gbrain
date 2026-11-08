@@ -16,10 +16,10 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ### Itemized changes
 
-- `src/core/git/commit-push.ts`: `commitManagedPaths` marks its result `managed: true` and counts `unpublished` (`@{upstream}..HEAD`; `null` when no upstream can be read).
-- `src/commands/git.ts`: a managed result reports `committed <sha>` or `nothing to commit`, then `not pushed:` with the unpublished count (or "on <remote>/<branch> as last fetched", or "no upstream"), and returns before the push log is written.
+- `src/core/git/commit-push.ts`: `commitManagedPaths` marks its result `managed: true`, counts `unpublished` (`@{upstream}..HEAD`; `null` when no fetched upstream can be read) and names the branch's configured `upstream` (`null` when it names none); both are in `--json`.
+- `src/commands/git.ts`: a managed result reports `committed <sha>` or `nothing to commit`, then `not pushed:` with the unpublished count against the configured upstream (or "is on <upstream> as last fetched", "may not be on <upstream>" when its fetched ref can't be read, or "has no upstream"), and returns before the push log is written.
 - Docs: `docs/guides/shared-checkout-git.md` (managed worktree paragraph and the `nothing_to_commit` / `committed_local` rows).
-- Tests: `test/git-commit-push-managed-unpublished.test.ts` (the real CLI against a bare remote, a sibling clone and a managed-root registry: an existing commit with a moved remote, a fresh commit, a checkout on its upstream, a branch with no upstream; no push-log line in any case).
+- Tests: `test/git-commit-push-managed-unpublished.test.ts` (the real CLI against a bare remote, a sibling clone and a managed-root registry: an existing commit with a moved remote, a fresh commit, a checkout on its upstream, a branch with no upstream, an upstream whose fetched ref is missing, an upstream with a different branch name; no push-log line in any case).
 
 ## [0.60.618.0] - 2026-11-08
 
