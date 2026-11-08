@@ -398,6 +398,7 @@ export async function finishUnpublishedFailure(engine: BrainEngine, row: WriteRe
   // GST-1601: with persistence.adopt_local_edits on for the source, a one-sided local edit is adopted and the write prepared again.
   const adoption = await adoptLocalEdit(engine, row, error);
   if (adoption && 'released' in adoption) return adoption.released;
+  if (adoption && 'claimLost' in adoption) return adoption.claimLost;
   const failure = withAttempt(requestError(adoption?.error ?? error), stage, engine);
   // GST-1582: with the refresh barrier on, a write refused because its file awaits an import waits for that import instead.
   const held = failure.code === 'source_changed' ? await holdForImport(engine, row, error) : null;

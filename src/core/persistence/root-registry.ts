@@ -180,7 +180,13 @@ export function registeredManagedRootRecords(): Array<{ root: string; source_id?
   const directory = registryDirectory();
   let files: string[];
   try { files = readdirSync(directory); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return [];
+    // GST-1623: an unlistable registry is a typed refusal, never a raw error.
+    throw opError('writer_coordinator_required', 'Managed-root ownership records cannot be listed.',
+      `gbrain could not read ${directory} (${code ?? 'unknown error'}), so it cannot tell which checkouts this brain manages and refuses the command. Fix the path's permissions for this user (or move aside a file standing where that directory belongs), then run the command again.`);
+  }
   const records: Array<{ root: string; source_id?: string }> = [];
   for (const file of files.filter(file => file.endsWith('.json'))) {
     try {

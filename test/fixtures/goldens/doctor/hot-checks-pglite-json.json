@@ -3027,6 +3027,7 @@
               "dirty_warn_after_minutes": 30,
               "foreign": [],
               "partial": false,
+              "partial_reasons": [],
               "unconfirmed": [],
               "unknown": [],
               "window": [
@@ -8123,6 +8124,7 @@
               "dirty_warn_after_minutes": 30,
               "foreign": [],
               "partial": false,
+              "partial_reasons": [],
               "unconfirmed": [],
               "unknown": [],
               "window": [
