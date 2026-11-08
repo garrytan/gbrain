@@ -200,8 +200,8 @@ test('GST-1853: an owed sync that fails is logged with connection details redact
   const executeRaw = f.engine.executeRaw.bind(f.engine);
   const logged: string[] = [];
   const error = spyOn(console, 'error').mockImplementation((...args: unknown[]) => { logged.push(args.map(String).join(' ')); });
-  (f.engine as { executeRaw: unknown }).executeRaw = (sql: string, params?: unknown[]) => sql.startsWith('SELECT state,source_ids FROM persistence_worktree_refreshes')
-    ? Promise.reject(new Error(`connect failed: postgresql://owner:${secret}@db.example.invalid:5432/brain`)) : executeRaw(sql, params as never);
+  (f.engine as { executeRaw: unknown }).executeRaw = (sql: string, ...rest: unknown[]) => sql.startsWith('SELECT state,source_ids FROM persistence_worktree_refreshes')
+    ? Promise.reject(new Error(`connect failed: postgresql://owner:${secret}@db.example.invalid:5432/brain`)) : executeRaw(sql, ...(rest as [never]));
   try {
     await expect(refreshWorktree(f.engine, f.alpha)).rejects.toMatchObject({ code: 'refresh_diverged' });
   } finally {

@@ -483,8 +483,8 @@
         "edits": [
           {
             "file": "src/core/persistence/worktree-refresh.ts",
-            "before": "  if (newest?.state !== 'aborted') return [];\n",
-            "after": "  if (newest?.state !== 'aborted' || newest) return [];\n"
+            "before": "  if (newest?.state !== 'aborted') return NO_OWED_SYNC;\n",
+            "after": "  if (newest?.state !== 'aborted' || newest) return NO_OWED_SYNC;\n"
           }
         ],
         "tests": [
