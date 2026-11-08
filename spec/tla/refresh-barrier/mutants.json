@@ -521,6 +521,33 @@
           }
         ]
       }
+    },
+    {
+      "id": "replan-over-foreign-commit",
+      "kind": "guard",
+      "title": "a refresh takes a HEAD moved under its fence as its start even when another agent's commit is in it (#8828's ledger check removed)",
+      "expect": "ReplanOnlyOwnCommits",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "OwnSince(i) == ~ForeignSince(i)",
+        "after": "OwnSince(i) == TRUE"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/worktree-refresh.ts",
+            "before": "  if (await ancestry(git, root, row.old_head, head) !== true || !await ownCommits(git, root, row.old_head, head)) return null;\n",
+            "after": "  if (await ancestry(git, root, row.old_head, head) !== true) return null;\n"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/refresh-own-commits-replan-8828.test.ts",
+            "filter": "one foreign commit",
+            "postgres": true
+          }
+        ]
+      }
     }
   ]
 }

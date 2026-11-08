@@ -169,6 +169,27 @@ async function ownCommits(git: Git, root: string, from: string, to: string): Pro
 }
 const OWN_COMMITS = "gbrain's own commits: writes admitted before the fence that landed while the refresh drained";
 /**
+ * #8828: the drain waits for the writes admitted before the fence, and their commits move HEAD past the precheck's old_head. When
+ * HEAD descends from old_head, every commit in old_head..HEAD is in gbrain's commit ledger, and the upstream ref (which the writer's
+ * push moves, and which must still be the upstream_ref the precheck recorded) holds HEAD and the verified target, the fenced refresh
+ * takes HEAD as its start and that upstream as its target instead
+ * of refusing: the fence defers new writes and the caller's commit lock keeps gbrain's commits out. The row changes only while it is
+ * fenced with no merge started. Null otherwise, and the caller refuses refresh_source_changed as before.
+ */
+async function replanOnOwnCommits(engine: BrainEngine, git: Git, root: string, row: WorktreeRefreshRow, head: string): Promise<WorktreeRefreshRow | null> {
+  if (await ancestry(git, root, row.old_head, head) !== true || !await ownCommits(git, root, row.old_head, head)) return null;
+  const upstream = await git(['-C', root, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']);
+  if (upstream.code !== 0 || upstream.stdout.trim() !== row.upstream_ref) return null;
+  const target = await revParse(git, root, '@{upstream}');
+  if (!target || (target !== head && !await isAncestor(git, root, head, target)) || !await isAncestor(git, root, row.target_head, target)) return null;
+  const [replanned] = await engine.transaction(async tx => {
+    await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+    return tx.executeRaw<WorktreeRefreshRow>(`UPDATE persistence_worktree_refreshes SET old_head=$2,target_head=$3,updated_at=now()
+      WHERE id=$1::uuid AND state='fenced' AND (outcome->>'merge_started') IS DISTINCT FROM 'true' RETURNING *`, [row.id, head, target]);
+  });
+  return replanned ?? null;
+}
+/**
  * GBEV-44, GST-1674: a `fenced` row whose merge never started (`outcome.merge_started` is still false; it turns true, durably, just before
  * `git merge --ff-only`) and whose HEAD moved past old_head on its own line, by gbrain's commits or anyone's, with no member synced off it.
  * The live refresh aborts this case before merging, so recovery aborts it too instead of holding the fence. A row whose merge started
@@ -1013,7 +1034,7 @@ async function fenceAndMerge(engine: BrainEngine, git: Git, sourceId: string, pl
           `Retry gbrain sources refresh ${sourceId}`, row.id));
         if (!await transition(tx, row, ['draining'], 'fenced', { merge_started: false })) throw refusal('refresh_source_changed', 'The refresh record was moved by recovery while draining.', `gbrain sources refresh ${sourceId} --resume`, row.id);
       }).catch(error => { throw (error as { code?: string }).code === LOCK_NOT_AVAILABLE ? new FenceLockTimeout() : error; });
-      const current = await readRefresh(engine, row.id);
+      let current = await readRefresh(engine, row.id);
       await hooks?.boundary?.('fenced', current);
       // #8117: `gbrain git commit-push` serializes on the checkout's commit lock, not on the refresh fence, so the HEAD check
       // through the merge runs under that lock too: a door commit can neither move HEAD nor hold .git/index.lock in between.
@@ -1022,6 +1043,8 @@ async function fenceAndMerge(engine: BrainEngine, git: Git, sourceId: string, pl
         : opError('commit_lock_busy', `The checkout's commit lock could not be taken (${error instanceof Error ? error.message : String(error)}); nothing moved.`, `Retry gbrain sources refresh ${sourceId}.`, { retryable: true })));
       try {
         const head = await headOf(git, plan.root);
+        const replanned = head !== row.old_head && head !== null ? await replanOnOwnCommits(engine, git, plan.root, current, head) : null;
+        if (replanned) row = current = replanned;
         if (head !== row.old_head) {
           if (head === null) throw await markRecoveryRequired(engine, current, head, plan.root);
           await abort(engine, current, ['fenced'], retryInTick(refusal('refresh_source_changed',

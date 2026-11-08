@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.618.0] - 2026-11-08
+
+**A refresh no longer loses its tick when gbrain's own writes land while it drains.** `gbrain sources refresh` waits for writes admitted before its fence, and finishing them commits on the checkout and pushes, so HEAD moved past the commit the refresh started from and the run refused `refresh_source_changed`, twice when its same-run retry met the next writes. When every commit since that start is in gbrain's commit ledger and the upstream branch the refresh started with holds them, the refresh now takes HEAD as its start under the fence and fast-forwards to that upstream; any other HEAD move, one commit another agent made among them or an upstream changed under the fence included, still refuses as before.
+
+### Itemized changes
+
+- `src/core/persistence/worktree-refresh.ts`: `replanOnOwnCommits`, under the commit lock in `fenceAndMerge`: HEAD descends from `old_head`, every sha in `old_head..HEAD` is in the commit ledger (`ownCommits`), and `@{upstream}` is still the `upstream_ref` the precheck recorded and holds HEAD and the precheck's target; one UPDATE of the fenced row with no merge started sets `old_head` to HEAD and `target_head` to the upstream. Nothing is fetched under the lock.
+- `spec/tla/refresh-barrier/RefreshBarrier.tla`: `RefMerge` models the re-plan (`OwnSince` for the ledger check, foreign commits as a set `fgn`), new invariant `ReplanOnlyOwnCommits` in every safety config, guard mutant `replan-over-foreign-commit` (spec and code arms).
+- Docs: `docs/designs/REFRESH_WRITE_BARRIER.md`, the `refresh_source_changed` row in `docs/guides/write-refusals.md`, `spec/tla/README.md`.
+- Tests: `test/refresh-own-commits-replan-8828.test.ts` on PGLite and Postgres (own published commits fast-forward; a ledgered commit not pushed yet still refuses; one foreign commit among gbrain's own still refuses and merges nothing; own published commits under an upstream changed under the fence still refuse and merge nothing).
+
 ## [0.60.617.0] - 2026-11-08
 
 **Older URL sources can get the same reclone settings as new ones remote callers add.** URL sources added before gbrain recorded who added them carry no record, and nothing stored tells a remote caller's add from the local operator's, so their reclones used the clone settings of a local add. The new doctor check `url_source_origin` lists them and asks the user who added each one. `gbrain sources record-origin <id>... --remote|--local` records that answer, as a preview until `--apply`. A URL source the local operator adds from now on records that it was a local add, so doctor never asks about it. With `--remote`, every later reclone of the source clones with git-lfs downloads and hooks off, like a source a remote caller adds today. A checkout that tracks git-lfs files is refused, because changing its settings would make the next reclone fail to match its canonical content. Nothing changes on upgrade.
