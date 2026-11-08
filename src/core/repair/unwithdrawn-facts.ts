@@ -40,7 +40,7 @@ import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persis
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { FACT_FENCE_KIND } from '../generations/fence.ts';
-import { factsFenceHeld } from '../generations/fence-evidence.ts';
+import { factsFenceHeld, pageFenceRowKeys } from '../generations/fence-evidence.ts';
 import type { FactPreimage } from '../generations/adapters/fact-rows.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 
@@ -122,9 +122,11 @@ export async function classifyUnwithdrawnFacts(db: BrainEngine, sourceIds: strin
     const key = `${row.source_id}\u0000${row.slug}`;
     if (evidence.has(key) || row.page_id === null) continue;
     const page = rows.filter(other => other.source_id === row.source_id && other.slug === row.slug);
-    const current = await db.executeRaw<{ compiled_truth: string | null; timeline: string | null; body_storage: string | null }>(
-      'SELECT compiled_truth, timeline, body_storage FROM pages WHERE id = $1', [row.page_id]);
-    evidence.set(key, await factsFenceHeld(db, { sourceId: row.source_id, slug: row.slug, prior: current[0] ?? null,
+    const [current] = await db.executeRaw<{ id: number; compiled_truth: string | null; timeline: string | null; body_storage: string | null }>(
+      `SELECT id, CASE WHEN body_storage = 'segmented' THEN NULL ELSE compiled_truth END AS compiled_truth,
+        CASE WHEN body_storage = 'segmented' THEN NULL ELSE timeline END AS timeline, body_storage FROM pages WHERE id = $1`, [row.page_id]);
+    evidence.set(key, await factsFenceHeld(db, { sourceId: row.source_id, slug: row.slug,
+      prior: current ? await pageFenceRowKeys(db, current, row.slug, row.source_id) : null,
       rows: page.map(other => ({ id: Number(other.id), row_num: Number(other.preimage.row_num), fact: other.preimage.fact, visibility: other.preimage.visibility })) }));
   }
   const base = rows.map(row => classify(row, evidence.get(`${row.source_id}\u0000${row.slug}`)));

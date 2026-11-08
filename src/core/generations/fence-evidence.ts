@@ -9,9 +9,11 @@ import type { BrainEngine } from '../engine.ts';
 import { scanCanonicalFences } from '../fence-repair/refusal.ts';
 import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
 import { factRowIdentity, fenceOwnerKey, fenceRowKey, FACT_FENCE_KIND } from './fence.ts';
+import { isSegmentedPage } from '../page-body/page-shape.ts';
+import { segmentedFactsFenceView } from '../page-body/segment-facts.ts';
 
 export interface FenceRowRef { id: number; row_num: number | null; fact: string; visibility: string }
-export interface FenceBody { compiled_truth: string | null; timeline?: string | null; body_storage?: string | null }
+export interface FenceBody { id?: number | string | null; compiled_truth?: string | null; timeline?: string | null; body_storage?: string | null }
 
 /** Stored versions read per batch, and at most in all, newest first. */
 const VERSION_BATCH = 50;
@@ -21,16 +23,24 @@ const rowKey = (row: { row_num: number | null; fact: string; visibility?: string
 
 /** The (row number, claim, visibility) of every row a body's facts fence holds; nothing for a body that was not read whole. */
 export function fenceRowKeys(body: FenceBody, slug: string, sourceId: string): Set<string> {
-  if (body.body_storage === 'segmented' || body.compiled_truth == null) return new Set();
+  if (isSegmentedPage(body as { body_storage?: 'segmented' | null }) || body.compiled_truth == null) return new Set();
   const scan = scanCanonicalFences({ compiled_truth: body.compiled_truth, timeline: body.timeline ?? '' });
   return new Set(extractFactsFromFenceText(scan.facts, slug, sourceId).map(rowKey));
 }
 
+/** fenceRowKeys of a stored page, a segmented one read from the runs that hold its fence markers. */
+export async function pageFenceRowKeys(db: BrainEngine, page: FenceBody, slug: string, sourceId: string): Promise<Set<string>> {
+  if (!isSegmentedPage(page as { body_storage?: 'segmented' | null })) return fenceRowKeys(page, slug, sourceId);
+  const view = await segmentedFactsFenceView(db, { id: Number(page.id), slug, source_id: sourceId });
+  return new Set(extractFactsFromFenceText([...view.body.facts, ...view.timeline.facts], slug, sourceId).map(rowKey));
+}
+
 /**
  * The ids of `rows` some fence of the page held (see the module comment). `complete` is false when stored versions were
- * left unread (more than VERSIONS_MAX), so a row outside `held` was only not found, not proven absent.
+ * left unread (more than VERSIONS_MAX, or a version stored without a body, as a segmented page's are), so a row outside
+ * `held` was only not found, not proven absent. `prior` is pageFenceRowKeys of the body the writer replaces.
  */
-export async function factsFenceHeld(db: BrainEngine, input: { sourceId: string; slug: string; rows: readonly FenceRowRef[]; prior?: FenceBody | null }):
+export async function factsFenceHeld(db: BrainEngine, input: { sourceId: string; slug: string; rows: readonly FenceRowRef[]; prior?: ReadonlySet<string> | null }):
   Promise<{ held: Set<number>; complete: boolean }> {
   const { sourceId, slug } = input;
   const held = new Set<number>();
@@ -43,9 +53,10 @@ export async function factsFenceHeld(db: BrainEngine, input: { sourceId: string;
   [sourceId, FACT_FENCE_KIND, fenceOwnerKey(slug), open().map(keyOf)])).map(row => row.item_key));
   for (const row of open()) if (recorded.has(keyOf(row))) held.add(Number(row.id));
   const markHeld = (keys: Set<string>) => { for (const row of open()) if (keys.has(rowKey(row))) held.add(Number(row.id)); };
-  if (input.prior) markHeld(fenceRowKeys(input.prior, slug, sourceId));
+  if (input.prior) markHeld(new Set(input.prior));
   let before: number | null = null;
-  let complete = true;
+  let complete = !open().length || !(await db.executeRaw(`SELECT 1 FROM page_versions v JOIN pages p ON p.id = v.page_id
+      WHERE p.source_id = $1 AND p.slug = $2 AND v.compiled_truth IS NULL LIMIT 1`, [sourceId, slug])).length;
   for (let read = 0; open().length; read += VERSION_BATCH) {
     if (read >= VERSIONS_MAX) { complete = false; break; }
     const versions: Array<{ id: number; compiled_truth: string; timeline: string | null }> = await db.executeRaw(`SELECT v.id, v.compiled_truth, v.timeline FROM page_versions v

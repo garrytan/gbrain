@@ -19,7 +19,7 @@ import { readGenerationsConfig } from '../config.ts';
 import type { GenerationAdapter, GenerationKey, ItemRow } from '../contract.ts';
 import { factRowIdentity, fenceRowKey, FACT_FENCE_KIND, publishFenceGeneration, type FenceGenerationOutcome, type FenceItem, type FenceRead } from '../fence.ts';
 import { activateGeneration, generationKeyLock, itemSetHash, readLiveGeneration, recordHeld } from '../publish.ts';
-import { factsFenceHeld, type FenceBody } from '../fence-evidence.ts';
+import { factsFenceHeld } from '../fence-evidence.ts';
 
 export const CONSOLIDATION_KIND = 'consolidation';
 
@@ -64,7 +64,7 @@ export async function factPreimages(db: BrainEngine, sourceId: string, ids: read
  * Held: the caller expires nothing.
  */
 export async function projectFactFenceGeneration(tx: BrainEngine, input: { sourceId: string; slug: string; read: FenceRead; incoming: string;
-  rows: ReadonlyArray<{ row_num: number; fact: string; visibility?: string | null }>; writer: string; prior?: FenceBody | null }):
+  rows: ReadonlyArray<{ row_num: number; fact: string; visibility?: string | null }>; writer: string; prior?: ReadonlySet<string> | null }):
   Promise<FenceGenerationOutcome & { retiring: number; retireIds: number[]; kept: number[] }> {
   const candidates = (await tx.executeRaw<{ preimage: FactPreimage }>(`SELECT ${FACT_PREIMAGE_SQL} AS preimage FROM facts f
       WHERE f.source_id=$1 AND f.source_markdown_slug=$2 AND f.row_num IS NOT NULL

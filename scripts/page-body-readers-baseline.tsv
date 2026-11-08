@@ -304,6 +304,9 @@ src/core/generations/adapters/single-page.ts	publishSinglePage	field	NONE	hashes
 src/core/generations/adapters/single-page.ts	singlePageAdapter	field	NONE	restoreItem reads the body field of a ledger preimage JSON copy; segmented and oversize pages have no preimage
 src/core/generations/adapters/single-page.ts	writePage	call:putPage	SEGW	writes a single-item derived page (dream summary, think synthesis, drift report) from the writer's proposed content or a ledger preimage; a segmented live page is held segmented_unsupported by the generation before any write
 src/core/generations/adapters/single-page.ts	writePage	field	INLINE	passes the proposed content's compiled_truth to putPage; no stored page body is read (the prior page is versioned by createVersion)
+src/core/generations/fence-evidence.ts	factsFenceHeld	sql	INLINE	page_versions rows that hold a body copy (compiled_truth IS NOT NULL); a segmented version has none, is not read, and marks the evidence incomplete
+src/core/generations/fence-evidence.ts	fenceRowKeys	field	INLINE	inline arm only: a segmented body yields no rows here (pageFenceRowKeys reads it from its marker segments)
+src/core/generations/fence-evidence.ts	pageFenceRowKeys	field	INLINE	inline arm; a segmented page reads its fence from its marker segments (segmentedFactsFenceView)
 src/core/generations/fence-restore.ts	planFenceRestore	call:serializePageToMarkdown	INLINE	a segmented page is refused segmented_unsupported before the page is serialized for the guarded restore write
 src/core/generations/fence-restore.ts	planFenceRestore	field	INLINE	a segmented page is refused segmented_unsupported before its fence blocks are read
 src/core/generations/fence.ts	fenceInput	field	NONE	reads the fence block strings of a FenceRead (already parsed), never a stored page body
@@ -597,6 +600,7 @@ src/core/repair/timeline.ts	removedRowIds	field	STREAM
 src/core/repair/timeline.ts	scanTimelineHistory	sql	STREAM	
 src/core/repair/timeline.ts	timelineRepair	call:serializePageToMarkdown	SEGW	
 src/core/repair/timeline.ts	timelineRepair	field	STREAM	
+src/core/repair/unwithdrawn-facts.ts	classifyUnwithdrawnFacts	sql	INLINE	reads compiled_truth and timeline of inline pages only (NULL for a segmented page, whose fence pageFenceRowKeys reads from its segments)
 src/core/repair/visibility.ts	applyFactItem	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read and its fenced fact is left for the owner
 src/core/repair/visibility.ts	applyFactItem	field	INLINE	inline pages only: a segmented page returns before the read and its fenced fact is left for the owner
 src/core/repair/visibility.ts	planAliases	sql	META	

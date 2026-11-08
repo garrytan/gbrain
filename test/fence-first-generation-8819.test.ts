@@ -6,11 +6,15 @@
  * Seeds write the page without a projection, so the managed write under test publishes generation 1 with no predecessor.
  * PGLite; Postgres when DATABASE_URL is set.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { pathologicalArms } from './pathological/harness.ts';
 import { FACTS_FENCE, managedSource, PERSON, type ManagedSource } from './pathological/managed-fixture.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { importFromContent } from '../src/core/import-file.ts';
+import { fenceRowKeys, pageFenceRowKeys } from '../src/core/generations/fence-evidence.ts';
+import { conversationBody } from './helpers/conversation-page.ts';
 
 const SLUG = 'people/alice-example';
 const ROW = (n: number, claim: string) => `| ${n} | ${claim} | fact | 1.0 | private | medium | 2020-01-01 |  | chat |  |`;
@@ -119,4 +123,29 @@ describe('#8819 first managed facts-fence generation', () => {
       });
     }, 120_000);
   }
+});
+
+describe('#8819 fence evidence of a segmented page', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  test('a segmented prior body yields its fence rows from its segments, so a removed row still counts as fence-held', async () => {
+    await engine.setConfig('pages.segmented_storage', 'on');
+    const body = `${conversationBody(800_000, { seed: 1 })}\n\n${FACTS_FENCE([FOUNDED, CHESS].join('\n'))}\n\n${conversationBody(800_000, { seed: 2 })}\n`;
+    expect(await importFromContent(engine, SLUG, PERSON('Alice Example', body), { sourceId: 'default', noEmbed: true })).toMatchObject({ status: 'imported' });
+    const page = (await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!.page;
+    expect(page.body_storage).toBe('segmented');
+    expect(fenceRowKeys(page, SLUG, 'default').size).toBe(0);
+    expect([...await pageFenceRowKeys(engine, page, SLUG, 'default')].map(key => key.split('\u0000').slice(0, 2)))
+      .toEqual([['1', 'Alice founded acme-example'], ['2', 'Alice plays chess']]);
+  }, 120_000);
 });

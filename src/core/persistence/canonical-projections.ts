@@ -29,7 +29,7 @@ import { propagateFactLowering } from '../trust/propagation.ts';
 import { loadWriteGateConfig } from '../trust/gate-outcomes.ts';
 import { fenceOwnerKey, readFenceBlocks, TAKE_FENCE_KIND } from '../generations/fence.ts';
 import { projectFactFenceGeneration } from '../generations/adapters/fact-rows.ts';
-import { moveKeptRows } from '../generations/fence-evidence.ts';
+import { moveKeptRows, pageFenceRowKeys } from '../generations/fence-evidence.ts';
 import { projectTakeFenceGeneration } from '../generations/adapters/take-rows.ts';
 import { linksFenceProjectionRows, projectLinksFence } from '../links-fence-projection.ts';
 
@@ -676,6 +676,10 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
   const fenceLinks = projectFences && !bodyUnread(page) ? await linksFenceProjectionRows(engine, sourceId, page) : null;
   const storedRows = prior ? await storedTimeline(engine, prior.page.id) : [];
   const prior_ = prior ? await priorView(engine, prior.page, slug, storedRows) : null;
+  // #8819: the fence rows of the body this write replaces, read at the observed revision, for the fact generation's evidence.
+  const priorFenceKeys = prior && projectFences && (await engine.executeRaw(`SELECT 1 FROM facts WHERE source_id=$1 AND source_markdown_slug=$2
+      AND row_num IS NOT NULL AND COALESCE(source,'') NOT LIKE 'cli:extract-conversation-facts%' LIMIT 1`, [sourceId, slug])).length
+    ? await pageFenceRowKeys(engine, prior.page, slug, sourceId) : null;
   const { timeline, exactIncoming, pinned } = classifyTimeline(storedRows, page, prior_?.rows ?? null, slug, writer, policy);
   const deletionRows = pinned.filter(row => row.action === 'delete')
     .map(({ id, date, source, summary, detail, state }) => ({ id, date, source, summary, detail, removed: state === 'removed' || state === 'removed_marked' }));
@@ -806,7 +810,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
       // GBRA-161 PR 2: the fact and take generations decide first. A held one (its fence absent from this body) retires and
       // overwrites nothing, so its rows stay as they are; every row a published one retires is recorded with its before-state.
       const factGeneration = await step('fact_generation', () => projectFactFenceGeneration(tx, { sourceId, slug, read: fenceReads.facts, incoming, rows: factRows,
-        writer: 'projection', prior: prior?.page ?? null }));
+        writer: 'projection', prior: priorFenceKeys }));
       const factsHeld = factGeneration.state === 'held';
       // #8819: a row the fence never held stays active; a fence row claiming its number takes it, and the row moves past the page's rows.
       const kept = factsHeld ? [] : factGeneration.kept;

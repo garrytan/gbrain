@@ -117,4 +117,24 @@ describe('gbrain repair unwithdrawn-facts (#8819)', () => {
       } finally { await close(); }
     }, 120_000);
   }
+
+  for (const { backend, databaseUrl } of pathologicalArms()) {
+    test(`[${backend}] a stored version kept without a body (a segmented snapshot) leaves the row ambiguous, never restored by default`, async () => {
+      const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
+      try {
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+        const sourceId = 'default';
+        await engine.putPage(SLUG, { type: 'person', title: 'Alice Example', compiled_truth: FACTS_FENCE(FOUNDED) }, { sourceId });
+        await engine.executeRaw(`INSERT INTO page_versions (page_id, compiled_truth, timeline, body_storage, body_generation)
+          SELECT id, NULL, NULL, 'segmented', 1 FROM pages WHERE source_id=$1 AND slug=$2`, [sourceId, SLUG]);
+        await factRow(engine, sourceId, 1, 'Alice founded acme-example', 'chat');
+        const chess = await factRow(engine, sourceId, 2, 'Alice plays chess');
+        await prefixRetire(engine, sourceId, [chess]);
+        const preview = await repair(engine, sourceId);
+        expect(preview.listing!.map(row => row.class)).toEqual(['ambiguous']);
+        expect((await unwithdrawnFactsCheck(engine, [sourceId])).details).toMatchObject({ evidenced: 0, ambiguous: 1 });
+        expect(await state(engine, [chess])).toEqual([[chess, null, false]]);
+      } finally { await close(); }
+    }, 120_000);
+  }
 });
