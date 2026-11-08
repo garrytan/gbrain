@@ -16,8 +16,8 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ### Itemized changes
 
-- `src/commands/serve-http-webhooks.ts` (`POST /ingest`): before queueing, the route looks up the capture's legacy key (client, write source and content hash, no slug part). A row queued for the same normalized target slug (or with no slug, for a slug-less capture) answers the request; a row for another slug never does, so one body sent to two slugs still queues two captures. A dead or cancelled legacy row frees its key, as under the current key. The 429 at the waiting cap, the 400 for slugs over 1024 bytes and the webhook HMAC are unchanged.
-- Tests: `test/serve-http-ingest-legacy-key-retry.test.ts` (PGLite) and `test/e2e/serve-http-ingest-legacy-key-retry-postgres.test.ts` (Postgres) drive the real route: a retry of a completed legacy capture gets its job back, queues nothing and leaves the newer edit in place.
+- `src/commands/serve-http-webhooks.ts` (`POST /ingest`): before queueing, the route looks up the capture's legacy key (client, write source and content hash, no slug part). A row queued for the same normalized target slug (or with no slug, for a slug-less capture) answers the request; a row for another slug never does, so one body sent to two slugs still queues two captures. A dead or cancelled legacy row frees its key, as under the current key. A legacy row still waiting or running with no recorded submitter (left by an upgrade across v0.50) answers 409 `legacy_job_authority` with its recovery hint instead of queueing a second job. The 429 at the waiting cap, the 400 for slugs over 1024 bytes and the webhook HMAC are unchanged.
+- Tests: `test/serve-http-ingest-legacy-key-retry.test.ts` (PGLite) and `test/e2e/serve-http-ingest-legacy-key-retry-postgres.test.ts` (Postgres) drive the real route: a retry of a completed legacy capture gets its job back, queues nothing and leaves the newer edit in place, and a legacy row with no recorded submitter gets its job back when completed or a 409 while still waiting.
 
 ## [0.60.609.0] - 2026-11-07
 
