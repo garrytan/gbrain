@@ -97,6 +97,9 @@ export interface GoogleSourceState {
    */
   gmail_backfill_floor_ms: number | null;
   gmail_backfill_done: boolean;
+  /** Body normalization revision whose bounded backfill is in progress or complete.
+   * Missing on legacy cursors: unchanged threads need one re-render (#8719). */
+  gmail_body_render_version?: number;
   /**
    * #5438 (adopted from #5581): lower bound (epoch ms) the completed backfill
    * actually covered. A later, WIDER g_history_days reopens the backfill below

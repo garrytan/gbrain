@@ -172,14 +172,17 @@ export function htmlToText(html: string): string {
  * Trim quoted-reply tails: trailing '>'-quoted runs and the "On ... wrote:"
  * marker line and everything after it. Conservative — only the TAIL is cut,
  * inline quotes mid-message survive.
+ * An explicit forward before any reply boundary owns its entire nested chain:
+ * it is new source material, not a duplicate tail of this Gmail thread.
  */
 export function trimQuotedReply(text: string): string {
   const lines = text.split('\n');
-  // Find the "On <date>, <name> wrote:" marker (also matches forwarded-message separators).
+  // Stop at the first semantic boundary: forward content must survive intact.
   let cut = lines.length;
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i].trim();
-    if (/^On .{4,80} wrote:$/.test(l) || /^-{2,}\s*Original Message\s*-{2,}$/i.test(l) || /^-{2,}\s*Forwarded message\s*-{2,}$/i.test(l)) {
+    if (/^-{2,}\s*Forwarded message\s*-{2,}$/i.test(l) || /^Begin forwarded message:$/i.test(l)) return text.trim();
+    if (/^On .{4,80} wrote:$/.test(l) || /^-{2,}\s*Original Message\s*-{2,}$/i.test(l)) {
       cut = i;
       break;
     }

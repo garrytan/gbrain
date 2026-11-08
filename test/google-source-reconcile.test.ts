@@ -388,6 +388,7 @@ function writeBackfilledState(dir: string): void {
       gmail_history_id: '1000',
       gmail_backfill_floor_ms: null,
       gmail_backfill_done: true,
+      gmail_body_render_version: 1,
       gmail_newest_ms: daysAgoMs(1),
       calendar_sync_token: null,
       contacts_sync_token: null,

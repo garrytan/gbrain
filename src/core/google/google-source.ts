@@ -378,6 +378,18 @@ async function sweepGmail(g: GmailSweep, onCurrent?: () => Promise<void>): Promi
   const { deps, gmail, state } = g;
   const cutoffMs = Date.now() - deps.cfg.historyDays * 86_400_000;
 
+  // #8719: history.list never revisits unchanged threads whose forwarded body
+  // an older normalizer discarded. Reopen the existing bounded floor walk once,
+  // including already-visited pages of an incomplete backfill. Persist the
+  // revision WITH the reset, not at completion: interrupted refreshes resume
+  // their committed floor instead of starting over. The delta/gap lanes stay.
+  if ((state.gmail_body_render_version ?? 0) < 1) {
+    state.gmail_body_render_version = 1;
+    state.gmail_backfill_done = false;
+    state.gmail_backfill_floor_ms = null;
+    await saveGoogleState(deps, state);
+  }
+
   // #5438: a completed backfill whose covered bound is above a now-WIDER
   // window reopens strictly below that bound (the floor's own `before:`).
   const covered = state.gmail_backfill_cutoff_ms;
