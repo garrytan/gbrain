@@ -2171,7 +2171,7 @@ facts are left to [Extractor facts](#extractor-facts).
 | --- | --- | --- |
 | `evidenced` | No fence of the page ever held the fact: no facts-fence generation recorded it, and neither the page nor any stored version of it carries it at the same row number, claim and visibility. | By `--apply --expect <hash>` |
 | `ambiguous` | The page's version history has a gap (pruned versions, or an import that consumed several commits), or it has more stored versions than one preview reads, so an earlier fence holding the fact cannot be ruled out. | Only with `--include-ambiguous` and that preview's hash |
-| `excluded:<reason>` | Page missing or deleted, superseded, withdrawn (`forget`), changed since the retirement, held by a fence (`fence_held`: an edit of the fence removed it, a genuine withdrawal), an active fact with the same text and entity already on the page at any visibility, an earlier candidate with the same text and entity, or an unmanaged brain (`unmanaged_reconcile`). | Never |
+| `excluded:<reason>` | Page missing or deleted, superseded, withdrawn (`forget`, including a forget on the member or scope memory page it sits on), changed since the retirement, held by a fence (`fence_held`: an edit of the fence removed it, a genuine withdrawal), a claim the page's fence states (`fence_states_claim`), an active fact with the same text and entity already on the page at any visibility, another candidate with the same text and entity at the same or a narrower visibility (`duplicate_candidate`; a private copy comes back before a world one), or an unmanaged brain (`unmanaged_reconcile`). | Never |
 
 The preview binds each page's revision. If the page was written after the
 preview, the apply restores nothing for it and reports

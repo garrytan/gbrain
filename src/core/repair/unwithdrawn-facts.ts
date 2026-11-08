@@ -12,9 +12,11 @@
  * retirement left it: expired at that generation's instant, row number cleared, same claim and visibility, not
  * superseded, and not a conversation-extractor row (`repair extractor-facts` owns those). Each is classified:
  *   - excluded (listed, never restored): the page is missing or deleted; the fact was superseded or withdrawn
- *     (`fact_withdrawals`); a fence held it (a fact_fence generation recorded it, or the page or a stored version of it
- *     carries it at the same row number, claim and visibility: a genuine withdrawal); an active fact with the same
- *     text and entity is on the page, at any visibility; another candidate with the same text is restored instead; or
+ *     (`fact_withdrawals`, for its entity, every subject or the owned memory page it sits on); a fence held it (a
+ *     fact_fence generation recorded it, or the page or a stored version of it carries it at the same row number, claim
+ *     and visibility: a genuine withdrawal); the page's fence states the claim; an active fact with the same text and
+ *     entity is on the page, at any visibility; another candidate with the same text and entity, at the same or a
+ *     narrower visibility, is restored instead; or
  *     the brain is unmanaged, whose extract_facts reconcile retires a row its fence lacks as drift and would retire a
  *     restored row again.
  *   - ambiguous (restored only with `--include-ambiguous` and that preview's hash): the page's version history has a
@@ -43,6 +45,7 @@ import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, sa
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { FACT_FENCE_KIND } from '../generations/fence.ts';
 import { factsFenceHeld, pageFenceRowKeys } from '../generations/fence-evidence.ts';
+import { withdrawalCoversFactSql } from '../access/member-facts.ts';
 import type { FactPreimage } from '../generations/adapters/fact-rows.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 
@@ -108,7 +111,7 @@ export async function classifyUnwithdrawnFacts(db: BrainEngine, sourceIds: strin
            p.id AS page_id, p.deleted_at IS NOT NULL AS page_deleted, p.version_history_gap_at IS NOT NULL AS history_gap,
            EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
              AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))
-             AND (w.subject = '*' OR w.subject = f.entity_slug)) AS withdrawn,
+             AND ${withdrawalCoversFactSql('w', 'f')}) AS withdrawn,
            EXISTS (SELECT 1 FROM facts a WHERE a.source_id = f.source_id AND a.source_markdown_slug = r.slug
              AND a.expired_at IS NULL AND gbrain_fact_fingerprint(a.fact) = gbrain_fact_fingerprint(f.fact)
              AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug) AS active_duplicate
@@ -119,7 +122,7 @@ export async function classifyUnwithdrawnFacts(db: BrainEngine, sourceIds: strin
        AND COALESCE(f.source, '') NOT LIKE 'cli:extract-conversation-facts%'
      ORDER BY r.source_id, r.slug, f.id`, [sourceIds, opts.slug ?? null, FACT_FENCE_KIND]);
   // A fence that held the row (a generation, the page, a stored version) means the row was withdrawn by an edit of it.
-  const evidence = new Map<string, { held: Set<number>; complete: boolean }>();
+  const evidence = new Map<string, { held: Set<number>; complete: boolean; claims: Set<string> }>();
   for (const row of rows) {
     const key = `${row.source_id}\u0000${row.slug}`;
     if (evidence.has(key) || row.page_id === null) continue;
@@ -127,15 +130,22 @@ export async function classifyUnwithdrawnFacts(db: BrainEngine, sourceIds: strin
     const [current] = await db.executeRaw<{ id: number; compiled_truth: string | null; timeline: string | null; body_storage: string | null }>(
       `SELECT id, CASE WHEN body_storage = 'segmented' THEN NULL ELSE compiled_truth END AS compiled_truth,
         CASE WHEN body_storage = 'segmented' THEN NULL ELSE timeline END AS timeline, body_storage FROM pages WHERE id = $1`, [row.page_id]);
-    evidence.set(key, await factsFenceHeld(db, { sourceId: row.source_id, slug: row.slug,
-      prior: current ? await pageFenceRowKeys(db, current, row.slug, row.source_id) : null,
-      rows: page.map(other => ({ id: Number(other.id), row_num: Number(other.preimage.row_num), fact: other.preimage.fact, visibility: other.preimage.visibility })) }));
+    const prior = current ? await pageFenceRowKeys(db, current, row.slug, row.source_id) : null;
+    const held = await factsFenceHeld(db, { sourceId: row.source_id, slug: row.slug, prior,
+      rows: page.map(other => ({ id: Number(other.id), row_num: Number(other.preimage.row_num), fact: other.preimage.fact, visibility: other.preimage.visibility })) });
+    evidence.set(key, { ...held, claims: new Set([...(prior ?? [])].map(rowKey => rowKey.split('\u0000')[1]!)) });
   }
   const managed = await managedPersistenceEnabled(db);
   const base = rows.map(row => classify(row, evidence.get(`${row.source_id}\u0000${row.slug}`), managed));
-  const key = (row: CandidateRow) => JSON.stringify([row.source_id, row.slug, row.visibility, row.entity_slug, row.fingerprint]);
+  // One copy of a claim comes back per page and entity, the narrowest visibility first, so no wider copy returns beside it.
+  const key = (row: CandidateRow) => JSON.stringify([row.source_id, row.slug, row.entity_slug, row.fingerprint]);
+  const rank = (i: number) => (rows[i]!.visibility === 'world' ? 2 : 0) + (base[i]![0] === 'evidenced' ? 0 : 1);
   const representative = new Map<string, number>();
-  for (const klass of ['evidenced', 'ambiguous'] as const) rows.forEach((row, i) => { if (base[i]![0] === klass && !representative.has(key(row))) representative.set(key(row), i); });
+  rows.forEach((row, i) => {
+    if (base[i]![0] === 'excluded') return;
+    const current = representative.get(key(row));
+    if (current === undefined || rank(i) < rank(current)) representative.set(key(row), i);
+  });
   return rows.map((row, i) => {
     const duplicate = base[i]![0] !== 'excluded' && representative.get(key(row)) !== i;
     const [klass, reason] = duplicate ? ['excluded' as const, 'duplicate_candidate'] : base[i]!;
@@ -144,12 +154,13 @@ export async function classifyUnwithdrawnFacts(db: BrainEngine, sourceIds: strin
   });
 }
 
-function classify(row: CandidateRow, evidence: { held: Set<number>; complete: boolean } | undefined, managed: boolean): [UnwithdrawnFactClass, string] {
+function classify(row: CandidateRow, evidence: { held: Set<number>; complete: boolean; claims: Set<string> } | undefined, managed: boolean): [UnwithdrawnFactClass, string] {
   if (row.page_id === null || row.page_deleted || !evidence) return ['excluded', 'page_missing'];
   if (row.superseded) return ['excluded', 'superseded'];
   if (row.withdrawn) return ['excluded', 'withdrawn'];
   if (row.expired_at !== row.retired_at) return ['excluded', 'changed_since_retirement'];
   if (evidence.held.has(Number(row.id))) return ['excluded', 'fence_held'];
+  if (evidence.claims.has(row.fact)) return ['excluded', 'fence_states_claim'];
   if (row.active_duplicate) return ['excluded', 'active_duplicate'];
   if (!managed) return ['excluded', 'unmanaged_reconcile'];
   if (row.history_gap) return ['ambiguous', 'version_history_gap'];
@@ -163,6 +174,7 @@ const DETAILS: Record<string, string> = {
   withdrawn: 'its claim was withdrawn (forget)',
   changed_since_retirement: 'it changed after the generation retired it',
   fence_held: 'a fence of the page held it, so an edit of the fence withdrew it',
+  fence_states_claim: "the page's fence states this claim, so its next write would retire a restored copy again",
   active_duplicate: 'an active fact with the same text and entity is already on the page',
   duplicate_candidate: 'another candidate of the page with the same text and entity is restored instead',
   unmanaged_reconcile: "this brain is unmanaged: its extract_facts reconcile treats a numbered row the page's fence lacks as drift and would retire a restored row again",

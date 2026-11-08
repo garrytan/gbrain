@@ -34,17 +34,17 @@ async function repair(engine: BrainEngine, sourceId: string, opts: { expect?: st
 }
 const hashOf = (result: RepairResult) => result.apply_command.match(/--expect ([0-9a-f]+)/)![1]!;
 
-async function factRow(engine: BrainEngine, sourceId: string, rowNum: number, fact: string, source = 'mcp:put_page'): Promise<number> {
+async function factRow(engine: BrainEngine, sourceId: string, rowNum: number, fact: string, source = 'mcp:put_page', page = SLUG): Promise<number> {
   const [row] = await engine.executeRaw<{ id: number }>(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, row_num, source_markdown_slug)
-    VALUES ($1, $2, $3, 'fact', 'private', $4, $5, $2) RETURNING id`, [sourceId, SLUG, fact, source, rowNum]);
+    VALUES ($1, $2, $3, 'fact', 'private', $4, $5, $6) RETURNING id`, [sourceId, SLUG, fact, source, rowNum, page]);
   return Number(row!.id);
 }
 
 /** What the pre-fix projection did on a page's first fact generation: record it, retiring `ids` with their before-states, and expire them. */
-async function prefixRetire(engine: BrainEngine, sourceId: string, ids: number[]): Promise<void> {
+async function prefixRetire(engine: BrainEngine, sourceId: string, ids: number[], slug = SLUG): Promise<void> {
   await engine.transaction(async tx => {
-    const page = (await tx.readPageSnapshot(SLUG, { sourceId }))!.page;
-    await publishFenceGeneration(tx, { kind: FACT_FENCE_KIND, sourceId, slug: SLUG, read: readFenceBlocks(page, 'facts'),
+    const page = (await tx.readPageSnapshot(slug, { sourceId }))!.page;
+    await publishFenceGeneration(tx, { kind: FACT_FENCE_KIND, sourceId, slug, read: readFenceBlocks(page, 'facts'),
       items: factFenceItems([{ row_num: 1, fact: 'Alice founded acme-example', visibility: 'private' }]),
       retire: (await factPreimages(tx, sourceId, ids)).map(factRetireItem), writer: 'projection' });
     await tx.executeRaw('UPDATE facts SET expired_at=now(), row_num=NULL WHERE source_id=$1 AND id=ANY($2::bigint[])', [sourceId, ids]);
@@ -76,10 +76,10 @@ async function seed(s: ManagedSource): Promise<{ chess: number; lisbon: number; 
  * `run` gets what it returned.
  */
 async function managedPage<T>(databaseUrl: string | undefined, seed: (engine: BrainEngine, sourceId: string) => Promise<T>,
-  run: (engine: BrainEngine, sourceId: string, seeded: T) => Promise<void>, segmented = false): Promise<void> {
+  run: (engine: BrainEngine, sourceId: string, seeded: T) => Promise<void>, segmented = false, fence = FOUNDED): Promise<void> {
   let seeded: T;
   await managedSource(databaseUrl, async s => {
-    await s.put(SLUG, PERSON('Alice Example', FACTS_FENCE(FOUNDED)));
+    await s.put(SLUG, PERSON('Alice Example', FACTS_FENCE(fence)));
     await s.engine.executeRaw("DELETE FROM derived_generations WHERE source_id=$1 AND kind='fact_fence'", [s.sourceId]);
     await s.engine.executeRaw('DELETE FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [s.sourceId, SLUG]);
     if (segmented) await s.engine.executeRaw(`INSERT INTO page_versions (page_id, compiled_truth, timeline, body_storage, body_generation)
@@ -270,6 +270,57 @@ describe('gbrain repair unwithdrawn-facts (#8819) coverage pass', () => {
           expect(await state(engine, [chess])).toEqual([[chess, null, false]]);
         });
       }
+    }, 120_000);
+  }
+
+  for (const { backend, databaseUrl } of pathologicalArms()) {
+    test(`[${backend}] a fact forgotten on its owned memory page stays retired`, async () => {
+      const MEMBER = 'memory/members/alice-example';
+      let ids: { chess: number; lisbon: number };
+      await managedSource(databaseUrl, async s => {
+        await s.put(MEMBER, PERSON('Alice Example', FACTS_FENCE(FOUNDED)));
+        await s.engine.executeRaw("DELETE FROM derived_generations WHERE source_id=$1 AND kind='fact_fence'", [s.sourceId]);
+        await s.engine.executeRaw('DELETE FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [s.sourceId, MEMBER]);
+        await factRow(s.engine, s.sourceId, 1, 'Alice founded acme-example', 'chat', MEMBER);
+        ids = { chess: await factRow(s.engine, s.sourceId, 2, 'Alice plays chess', 'mcp:put_page', MEMBER),
+          lisbon: await factRow(s.engine, s.sourceId, 3, 'Alice lives in Lisbon', 'mcp:put_page', MEMBER) };
+        await prefixRetire(s.engine, s.sourceId, [ids.chess, ids.lisbon], MEMBER);
+        await s.engine.executeRaw(`INSERT INTO fact_withdrawals (source_id, visibility, subject, fact_hash)
+          SELECT source_id, visibility, source_markdown_slug, gbrain_fact_fingerprint(fact) FROM facts WHERE id=$1`, [ids.chess]);
+      }, async ({ engine, sourceId }) => {
+        const preview = await repair(engine, sourceId);
+        expect(preview.listing!.map(row => [row.item, row.class])).toEqual([
+          [`${sourceId}:${MEMBER}#${ids.chess}`, 'excluded:withdrawn'], [`${sourceId}:${MEMBER}#${ids.lisbon}`, 'evidenced']]);
+        expect((await repair(engine, sourceId, { expect: hashOf(preview) })).applied).toBe(1);
+        expect(await state(engine, [ids.chess, ids.lisbon])).toEqual([[ids.chess, null, false], [ids.lisbon, 3, true]]);
+      });
+    }, 120_000);
+  }
+
+  for (const { backend, databaseUrl } of pathologicalArms()) {
+    test(`[${backend}] private and world copies of one claim: only the private copy is restored`, async () => {
+      await managedPage(databaseUrl, async (engine, sourceId) => {
+        const ids = { world: await factRow(engine, sourceId, 2, 'Alice plays chess'), priv: await factRow(engine, sourceId, 3, 'Alice plays chess') };
+        await engine.executeRaw("UPDATE facts SET visibility='world' WHERE id=$1", [ids.world]);
+        await prefixRetire(engine, sourceId, [ids.world, ids.priv]);
+        return ids;
+      }, async (engine, sourceId, { world, priv }) => {
+        const preview = await repair(engine, sourceId);
+        expect(preview.listing!.map(row => [row.item, row.class])).toEqual([
+          [`${sourceId}:${SLUG}#${world}`, 'excluded:duplicate_candidate'], [`${sourceId}:${SLUG}#${priv}`, 'evidenced']]);
+        expect((await repair(engine, sourceId, { expect: hashOf(preview) })).applied).toBe(1);
+        expect(await state(engine, [world, priv])).toEqual([[world, null, false], [priv, 3, true]]);
+      });
+    }, 120_000);
+  }
+
+  for (const { backend, databaseUrl } of pathologicalArms()) {
+    test(`[${backend}] a claim the page's fence states at another row is not restored, since the next write would retire it again`, async () => {
+      await managedPage(databaseUrl, retiredChess, async (engine, sourceId, chess) => {
+        const preview = await repair(engine, sourceId);
+        expect(preview.listing!.map(row => row.class)).toEqual(['excluded:fence_states_claim']);
+        expect(await state(engine, [chess])).toEqual([[chess, null, false]]);
+      }, false, [FOUNDED, ROW(4, 'Alice plays chess')].join('\n'));
     }, 120_000);
   }
 });
