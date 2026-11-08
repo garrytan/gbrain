@@ -80,8 +80,10 @@ export interface CommitPushResult {
   no_remote?: true;
   /** Conflicted files where the remote held a version this checkout had already replaced: this checkout's version was published. */
   superseded_remote_paths?: string[];
-  /** A managed canonical worktree: only the named paths were committed; `upstreamLacksHead` says whether HEAD still needs the keep-checkout publish. */
+  /** A managed canonical worktree: the named paths were committed (or had no change) and nothing was pushed. */
   managed?: true;
+  /** Managed only: commits on the branch its upstream lacks as last fetched; null when no fetched upstream can be read. */
+  unpublished?: number | null;
 }
 
 export interface PullResult {
@@ -1088,8 +1090,8 @@ function defaultPublishWaitMs(): number {
 /**
  * Q1: on a managed canonical worktree commit-push commits only the paths the caller names (pages written outside gbrain,
  * which would otherwise land as bare commits), under the commit lock, and nothing more: no fetch, merge, push or checkout
- * move, so the owner stays the only process that moves the checkout. The CLI then publishes HEAD with the keep-checkout
- * merge when `upstreamLacksHead` (GST-1923); in-process callers leave it to the owner's next Git publish.
+ * move, so the owner stays the only publisher. The commit reaches the remote on the owner's next Git publish, or with
+ * `gbrain git commit-push --push-only --keep-checkout`.
  */
 function commitManagedPaths(root: string, opts: CommitPushOptions, managed: ManagedFilesystemRoot): CommitPushResult {
   const where = `${root} is the managed canonical worktree${managed.sourceId ? ` of source ${managed.sourceId}` : ''}`;
@@ -1097,14 +1099,9 @@ function commitManagedPaths(root: string, opts: CommitPushOptions, managed: Mana
     throw opError('commit_paths_invalid', `${where}: commit-push there only commits the paths you name.`,
       `Run gbrain git commit-push with only -m and the page paths after --; gbrain sources refresh${managed.sourceId ? ` ${managed.sourceId}` : ''} brings remote commits in.`);
   }
-  return { ...commitPathsOnly(root, opts, where, configuredSourceRoots(root), 'Leave the checkout to its owner; gbrain sources writer status names its state.'), managed: true };
-}
-
-/** True when the branch has an upstream (as last fetched) that does not contain HEAD: local commits are waiting to be published. */
-export function upstreamLacksHead(repo: string): boolean {
-  const root = checkoutRoot(repo);
-  const upstream = git(root, ['rev-parse', '--verify', '--quiet', '@{upstream}']).stdout.trim();
-  return !!upstream && !isAncestor(root, 'HEAD', upstream);
+  const result = commitPathsOnly(root, opts, where, configuredSourceRoots(root), 'Leave the checkout to its owner; gbrain sources writer status names its state.');
+  const counted = git(root, ['rev-list', '--count', '@{upstream}..HEAD']);
+  return { ...result, managed: true, unpublished: counted.code === 0 ? Number(counted.stdout.trim()) : null };
 }
 
 /** A checkout with no Git remote at all: no remote is configured and the branch names none (a named but missing remote is refused by resolveCtx). A git command that fails is not proof of "no remote". */

@@ -124,7 +124,7 @@ test('GST-1623: a repository that only encloses a registered checkout is refused
   writeFileSync(join(tracked, 'notes', 'a.md'), 'an edited page\n');
   const admitted = await commitPush(tracked, subHome, '--', 'notes/a.md');
   expect(admitted.exitCode).toBe(0);
-  expect(JSON.parse(admitted.stdout)).toMatchObject({ outcome: 'pushed', managed: true, checkout: 'unchanged', paths: ['notes/a.md'] });
+  expect(JSON.parse(admitted.stdout)).toMatchObject({ outcome: 'committed_local', paths: ['notes/a.md'] });
 }, 60_000);
 
 test('GST-1623: a stale gbrain-managed.json an older gbrain left in the enclosing repository does not admit it', async () => {

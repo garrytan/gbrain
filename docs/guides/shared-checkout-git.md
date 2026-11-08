@@ -127,16 +127,15 @@ persistence owner is the only Git publisher. Save pages with `put_page`,
 `edit_page`, `remember` or `capture`. For files written there outside gbrain
 (see [files that are not pages](../architecture/topologies.md#files-that-are-not-pages)),
 `gbrain git commit-push -m "<msg>" -- <paths>` commits only the named paths
-under the checkout's commit lock, then publishes every commit the upstream
-lacks the way `--push-only --keep-checkout` does: remote commits are merged in
-memory, a conflicting file refuses `integrate_conflict` with nothing pushed, and
-the checkout never moves. It reports `pushed` with `checkout: unchanged`, or
-`nothing_to_commit` when the paths had no change and the upstream (as last
-fetched) already holds HEAD; a commit an earlier call or a script made is
-published either way. It reports `committed_local` only when the branch has no
-upstream. It refuses `--pending`, `--branch`, `--resolve` and
-`--allow-outside-source-root` there (`commit_paths_invalid`). `--push-only`
-without `--keep-checkout` is still refused with `writer_coordinator_required`.
+under the checkout's commit lock and reports `committed_local` (or
+`nothing_to_commit`) with `managed: true`: it never fetches, merges, pushes or
+moves the checkout, and refuses `--pending`, `--branch`, `--resolve` and
+`--allow-outside-source-root` there (`commit_paths_invalid`). Its
+`unpublished` field counts the commits the upstream lacks as last fetched
+(`null` without an upstream), and it writes no push-log line. Commits wait for
+the owner's next Git publish; `gbrain git commit-push --push-only --keep-checkout`
+publishes them now. `--push-only` without `--keep-checkout` is still refused with
+`writer_coordinator_required`.
 
 A checkout with no Git remote at all (`git remote` prints nothing and the
 branch names none) has nothing to publish to: `gbrain git commit-push -m "<msg>" -- <paths>`
@@ -173,8 +172,8 @@ Follow the error's `fix.next` as the
 | --- | --- | --- |
 | `pushed` | 0 | Done. Report the commit; a hosted link to the file works now. |
 | `push_deferred` | 0 | Only with `--require-clean` (the post-commit hook): another push was running in this checkout and was asked to publish HEAD too when it finishes. Nothing to do. |
-| `nothing_to_commit` | 0 | The paths had no change. Any earlier local commit on the branch was still pushed (on a managed worktree, published with the checkout kept), so nothing is waiting (with `no_remote: true`, nothing is pushed). |
-| `committed_local` | 0 | A checkout with no Git remote (`no_remote: true`), or a managed canonical worktree whose branch has no upstream: the paths were committed locally and nothing was pushed. Report the commit; it reaches a remote after a remote is added and `--push-only` runs. |
+| `nothing_to_commit` | 0 | The paths had no change. Any earlier local commit on the branch was still pushed, so nothing is waiting (with `no_remote: true` or `managed: true`, nothing is pushed; a managed checkout's `unpublished` counts the commits still waiting). |
+| `committed_local` | 0 | A managed canonical worktree, or a checkout with no Git remote (`no_remote: true`): the paths were committed locally and nothing was pushed (a managed result's `unpublished` counts the commits waiting). Report the commit; it reaches a remote on the owner's next publish, or after a remote is added and `--push-only` runs. |
 | `pushed_checkout_lagging` | 0 | The push landed but this checkout was not advanced; a `[gbrain notice]` names the files that blocked it. Change nothing: the next commit-push or `--pull` catches the checkout up. Never stash or reset to "fix" it. |
 | `commit_lock_busy` | 1 | Another writer held the lock for the whole wait; nothing was committed. Retry once. If it is still busy, tell the user which checkout and lock path the message names and stop. |
 | <a id="checkout_not_a_source"></a>`checkout_not_a_source` | 1 | The checkout commit-push resolved from the working directory (no `--path`) is not one of the brain's source checkouts on this host, typically a wrapper that changed into another repository; nothing was staged. The message lists the brain's checkouts. Tell the user to make the script pass `--path` with the absolute brain checkout. A repository that only encloses a source checkout (a brain cloned inside another repository) is not one; a source registered at a subdirectory its checkout tracks is. A host whose brain records no source checkout, or a checkout with `gbrain.sourceRoot` set, is never refused this way. |
@@ -275,8 +274,8 @@ commits come in. Four rules keep that checkout able to move:
    changes nothing. Commit the files a script wrote with
    `gbrain git commit-push --path <absolute checkout> -m "<msg>" -- <paths>`
    (run from another repository without `--path`, it refuses `checkout_not_a_source`): on a managed worktree it
-   commits only those paths under the commit lock and publishes them merged
-   with the upstream without moving the checkout (`pushed`). Pages can also go through
+   commits only those paths under the commit lock (`committed_local`) and the
+   owner publishes them on its next Git publish. Pages can also go through
    `put_page`, `edit_page`, `remember` or `capture`. CLI calls go through
    the [one wrapper](cron-schedule.md#calling-gbrain-unattended).
 2. **Refresh on a schedule.** `gbrain sources refresh <id>` drains queued
