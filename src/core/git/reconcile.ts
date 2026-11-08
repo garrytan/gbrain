@@ -2,15 +2,17 @@
  * One checkout brought level with its upstream, the engine-free half of `gbrain sources git-reconcile` (the managed half
  * runs `gbrain sources refresh`). Idempotent: a checkout already level costs one fetch and reports in_sync. Behind:
  * the shared pull (fast-forward, never a rebase). Ahead or diverged: the upstream-rewrite check, then the shared
- * publish with the secret gate (merged in memory, never a rebase or force-push, refusing on a conflict). Concurrent
- * callers serialize on the checkout's commit and publish locks and end level with the same upstream.
+ * publish with the secret gate (merged in memory, never a rebase or force-push, refusing on a conflict), bound with
+ * --expect-remote to the upstream the rewrite check read, so a force-push after the check refuses instead of being
+ * merged back. The pull and the publish run as bounded `gbrain git commit-push` children (their Git work is synchronous),
+ * so a caller's event loop (the autopilot daemon's) never blocks. Concurrent callers take turns on the reconcile lock.
  */
 import { execFileBounded } from '../bounded-child-exec.ts';
 import { classifyGitCheckout } from '../git-checkout.ts';
 import { gitChildEnv } from '../git-env.ts';
-import { opError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
 import { acquireNativeLock } from '../persistence/native-lock.ts';
-import { commitAndPush, pullShared } from './commit-push.ts';
+import { CHILD_ENV, resolveChildCliInvocation } from '../minions/job-isolation.ts';
 import { upstreamBeforeFetch, upstreamRewriteReason, type GitRead } from './upstream-history.ts';
 
 export type CheckoutReconcileStatus = 'in_sync' | 'published' | 'fast_forwarded' | 'lagging' | 'unpublished' | 'no_repo' | 'no_upstream';
@@ -68,9 +70,35 @@ export async function withReconcileLock<T>(root: string, waitMs: number, fn: () 
 }
 
 export interface ReconcileCheckoutOptions {
-  fetchTimeoutMs?: number; dryRun?: boolean; waitMs?: number;
+  fetchTimeoutMs?: number; dryRun?: boolean; waitMs?: number; childTimeoutMs?: number;
   /** False leaves local commits where they are and reports them unpublished (the user turned automatic publishing off); behind still fast-forwards. */
   publish?: boolean;
+  /** Why local commits were left, when `publish` is false. */
+  unpublishedReason?: string;
+}
+
+/** A remote that moves between the rewrite check and the push is fetched and checked again, this many times in all. */
+const MOVED_REMOTE_ATTEMPTS = 4;
+
+/** The bound on one `gbrain git commit-push` child (a fetch, an in-memory merge and a push, repeated while the remote keeps moving). */
+export const COMMIT_PUSH_CHILD_TIMEOUT_MS = 600_000;
+
+/** Run `gbrain git commit-push <args> --path <root> --json` in a bounded child; its JSON document, or its refusal rethrown. */
+export async function commitPushChild(root: string, args: string[], timeoutMs = COMMIT_PUSH_CHILD_TIMEOUT_MS): Promise<Record<string, unknown>> {
+  const cli = resolveChildCliInvocation(process.env, process.execPath, process.argv[1], () => null);
+  if (!cli) throw opError('git_push_unavailable', `This process could not locate its own CLI executable to reconcile ${root}; nothing changed.`,
+    `Set ${CHILD_ENV.childCliOverride} to the path of the CLI executable and retry.`);
+  const child = await execFileBounded(cli.cmd, [...cli.argsPrefix, 'git', 'commit-push', ...args, '--path', root, '--json'],
+    { timeout: timeoutMs, termGraceMs: 10_000, maxBuffer: 1024 * 1024, env: process.env });
+  let doc: Record<string, unknown> | null = null;
+  try { doc = JSON.parse(String(child.stdout).trim()); } catch { /* reported below */ }
+  if (!child.error && doc && typeof doc.code !== 'string') return doc;
+  if (doc && typeof doc.code === 'string' && typeof doc.message === 'string') {
+    throw opError(doc.code as Parameters<typeof opError>[0], doc.message, typeof doc.suggestion === 'string' ? doc.suggestion : '',
+      { ...(typeof doc.detail === 'string' ? { detail: doc.detail } : {}), retryable: doc.retryable === true });
+  }
+  throw opError('push_unconfirmed', `gbrain git commit-push ${args[0]} in ${root} did not report a result (${child.error ? `exit ${String(child.error.code ?? child.error.signal ?? 'unknown')}` : 'unreadable output'}: ${String(child.stderr).trim().slice(0, 300) || 'no detail'}); the remote may already hold the push.`,
+    'Retry: a reconcile of a level checkout reports in_sync.', { retryable: true });
 }
 
 export async function reconcileCheckout(root: string, opts: ReconcileCheckoutOptions = {}): Promise<CheckoutReconcile> {
@@ -82,22 +110,28 @@ async function reconcileLocked(root: string, opts: ReconcileCheckoutOptions): Pr
   const read = gitReader(root);
   const hasUpstream = (await read(['rev-parse', '--verify', '-q', '@{upstream}'], 1, 128)).stdout.trim();
   if (!hasUpstream) return { root, status: 'no_upstream', ahead: 0, behind: 0 };
-  const before = await upstreamBeforeFetch(read);
-  const level = await fetchLevel(root, read, opts.fetchTimeoutMs);
-  if (!level) return { root, status: 'no_upstream', ahead: 0, behind: 0 };
-  const { ahead, behind, target, head, upstream } = level;
-  if (!ahead && !behind) return { root, status: 'in_sync', ahead, behind, sha: target };
-  if (ahead && opts.publish === false) return { root, status: 'unpublished', ahead, behind, sha: target, reason: 'automatic publishing is off (sources.refresh_publish_diverged false)' };
-  if (opts.dryRun) return { root, status: ahead ? 'published' : 'fast_forwarded', ahead, behind, sha: target, reason: 'dry run: nothing changed' };
-  if (!ahead) {
-    const pulled = pullShared(root);
-    return pulled.status === 'lagging' ? { root, status: 'lagging', ahead, behind, sha: target, ...(pulled.reason ? { reason: pulled.reason } : {}) }
-      : { root, status: 'fast_forwarded', ahead, behind, sha: pulled.to ?? target };
+  for (let attempt = 1; ; attempt++) {
+    const before = await upstreamBeforeFetch(read);
+    const level = await fetchLevel(root, read, opts.fetchTimeoutMs);
+    if (!level) return { root, status: 'no_upstream', ahead: 0, behind: 0 };
+    const { ahead, behind, target, head, upstream } = level;
+    if (!ahead && !behind) return { root, status: 'in_sync', ahead, behind, sha: target };
+    if (ahead && opts.publish === false) return { root, status: 'unpublished', ahead, behind, sha: target, reason: opts.unpublishedReason ?? 'automatic publishing is off (sources.refresh_publish_diverged false)' };
+    if (opts.dryRun) return { root, status: ahead ? 'published' : 'fast_forwarded', ahead, behind, sha: target, reason: 'dry run: nothing changed' };
+    if (!ahead) {
+      const pulled = await commitPushChild(root, ['--pull'], opts.childTimeoutMs);
+      if (pulled.status === 'lagging') return { root, status: 'lagging', ahead, behind, sha: target, ...(typeof pulled.reason === 'string' ? { reason: pulled.reason } : {}) };
+      return { root, status: pulled.status === 'advanced' ? 'fast_forwarded' : 'in_sync', ahead, behind, sha: typeof pulled.to === 'string' ? pulled.to : target };
+    }
+    const rewrite = await upstreamRewriteReason(read, before, upstream, target, head);
+    if (rewrite) throw opError('upstream_rewritten', `${rewrite} Nothing was pushed from ${root}.`,
+      `Ask the user: git -C ${root} log --stat ${upstream}..HEAD lists the local commits; publishing them anyway is gbrain git commit-push --push-only --scan-secrets --path ${root}.`);
+    try {
+      const pushed = await commitPushChild(root, ['--push-only', '--scan-secrets', '--expect-remote', target], opts.childTimeoutMs);
+      return { root, status: pushed.checkout === 'lagging' ? 'lagging' : 'published', ahead, behind, ...(typeof pushed.sha === 'string' ? { sha: pushed.sha } : {}),
+        integrated: Number(pushed.integrated) || 0, ...(typeof pushed.lagging_reason === 'string' ? { reason: pushed.lagging_reason } : {}) };
+    } catch (error) {
+      if (attempt >= MOVED_REMOTE_ATTEMPTS || !(error instanceof OperationError) || error.code !== 'push_unconfirmed' || !/after --expect-remote/.test(error.message)) throw error;
+    }
   }
-  const rewrite = await upstreamRewriteReason(read, before, upstream, target, head);
-  if (rewrite) throw opError('upstream_rewritten', `${rewrite} Nothing was pushed from ${root}.`,
-    `Ask the user: git -C ${root} log --stat ${upstream}..HEAD lists the local commits; publishing them anyway is gbrain git commit-push --push-only --scan-secrets --path ${root}.`);
-  const pushed = commitAndPush({ repo: root, cwd: root, paths: [], pushOnly: true, scanSecrets: true });
-  return { root, status: pushed.checkout === 'lagging' ? 'lagging' : 'published', ahead, behind, sha: pushed.sha ?? undefined, integrated: pushed.integrated,
-    ...(pushed.lagging_reason ? { reason: pushed.lagging_reason } : {}) };
 }

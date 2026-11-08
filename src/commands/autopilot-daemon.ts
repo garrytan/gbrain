@@ -331,7 +331,7 @@ export async function runAutopilotDaemon(engine: BrainEngine, args: string[]): P
     if (noWorker && useMinionsDispatch) await probeNoWorkerPeer(engine, state, baseInterval);
 
     if (!(await (await import('../core/persistence/automatic-sync-policy.ts')).automaticGitPullDisabled(engine))) {
-      const reconciled = await (await import('./autopilot-git-reconcile.ts')).reconcileGitInChild();
+      const reconciled = await (await import('./autopilot-git-reconcile.ts')).autopilotReconcile(engine);
       for (const line of reconciled.lines) (reconciled.ok ? console.log : console.error)(`[autopilot] git-reconcile: ${line}`);
       if (configurationBlocked()) continue;
     }

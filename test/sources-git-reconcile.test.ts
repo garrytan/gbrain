@@ -64,10 +64,13 @@ const commit = (root: string, file: string, content: string) => {
   return git(root, 'rev-parse', 'HEAD');
 };
 const siblingPush = (r: Repo, file: string, content: string) => { git(r.sibling, 'pull', '-q', '--no-rebase', 'origin', 'main'); const sha = commit(r.sibling, file, content); git(r.sibling, 'push', '-q', 'origin', 'main'); return sha; };
+const onRemoteSha = (root: string, sha: string) => { try { git(root, 'fetch', '-q', 'origin'); git(root, 'merge-base', '--is-ancestor', sha, 'origin/main'); return true; } catch { return false; } };
 const tip = (r: Repo) => git(r.remote, 'rev-parse', 'refs/heads/main');
 const onRemote = (r: Repo, sha: string) => { try { git(r.remote, 'merge-base', '--is-ancestor', sha, 'refs/heads/main'); return true; } catch { return false; } };
 const refusal = async (p: Promise<unknown>) => p.then(() => { throw new Error('expected a refusal'); }, e => e as { code: string; message: string });
-const reconcile = (root: string) => withEnv(identity, () => reconcileCheckout(root));
+const childEnv = { ...identity, GBRAIN_JOB_CHILD_CLI: childCli };
+const reconcile = (root: string) => withEnv(childEnv, () => reconcileCheckout(root));
+const reconcileAll = (engine: BrainEngine, ids?: string[]) => withEnv(childEnv, () => reconcileSources(engine, ids ? { sourceIds: ids } : {}));
 
 test('no Git checkout and no upstream report themselves and change nothing', async () => {
   const plain = join(dir, 'plain'); mkdirSync(plain);
@@ -124,6 +127,27 @@ test('a secret in the local commits and a rewritten upstream each refuse with no
   expect(tip(w)).toBe(rewritten);
 }, 60_000);
 
+test('a force-push between the rewrite check and the push is not merged back: the publish is bound to the checked upstream', async () => {
+  const w = repo('race');
+  const purged = commit(w.root, 'notes/purge-me.md', 'published, then purged\n');
+  git(w.root, 'push', '-q', 'origin', 'main');
+  commit(w.root, 'notes/local.md', 'local\n');
+  const mark = join(dir, 'race.mark'), racer = join(dir, 'bin', 'racer');
+  writeFileSync(racer, `#!/bin/sh
+case " $* " in *" --push-only "*) if [ ! -f '${mark}' ]; then touch '${mark}'
+  git -C '${w.sibling}' fetch -q origin && git -C '${w.sibling}' reset -q --hard '${purged}~1'
+  echo rewritten > '${join(w.sibling, 'notes', 'other.md')}' 2>/dev/null || { mkdir -p '${join(w.sibling, 'notes')}'; echo rewritten > '${join(w.sibling, 'notes', 'other.md')}'; }
+  git -C '${w.sibling}' add -A && git -C '${w.sibling}' -c user.name=Example -c user.email=example@example.invalid commit -qm rewrite && git -C '${w.sibling}' push -q --force origin main
+fi;; esac
+exec '${childCli}' "$@"
+`);
+  chmodSync(racer, 0o755);
+  const error = await refusal(withEnv({ ...identity, GBRAIN_JOB_CHILD_CLI: racer }, () => reconcileCheckout(w.root)));
+  expect(error.code).toBe('upstream_rewritten');
+  expect(error.message).toContain(purged);
+  expect(onRemote(w, purged)).toBe(false);
+}, 120_000);
+
 test('eight concurrent callers while another clone pushes mid-run: all succeed, no commit is lost, and a ninth call is in_sync', async () => {
   const r = repo('concurrent');
   const start = tip(r);
@@ -132,7 +156,7 @@ test('eight concurrent callers while another clone pushes mid-run: all succeed, 
   writeFileSync(script, `import { reconcileCheckout } from '${join(import.meta.dir, '..', 'src', 'core', 'git', 'reconcile.ts')}';\n`
     + `try { console.log(JSON.stringify(await reconcileCheckout(process.argv[2]))); } catch (e) { console.log(JSON.stringify({ code: (e as { code?: string }).code, message: String((e as Error).message) })); process.exit(1); }\n`);
   const run = () => new Promise<{ code: number | null; out: string }>(resolve => {
-    const child = spawn(process.execPath, [script, r.root], { env: { ...process.env, ...identity }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [script, r.root], { env: { ...process.env, ...childEnv }, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = ''; child.stdout.on('data', d => { out += d; });
     child.on('close', code => resolve({ code, out }));
   });
@@ -167,6 +191,10 @@ test('managed worktree: Git durability on publishes through refresh and a repeat
         git(f.root, 'merge-base', '--is-ancestor', local, 'HEAD');
         expect(f.head()).toBe(git(f.root, 'ls-remote', 'origin', 'refs/heads/main').split('\t')[0]);
         expect(await reconcileSources(engine, { sourceIds: [f.alpha, f.beta] })).toMatchObject([{ status: 'in_sync' }]);
+        await engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, 'false');
+        const unpushed = commit(f.root, 'beta/later.md', page('Later', 'Another local commit.'));
+        expect(await reconcileSources(engine, { sourceIds: [f.alpha, f.beta] })).toMatchObject([{ managed: true, status: 'unpublished', ahead: 1 }]);
+        expect(onRemoteSha(f.root, unpushed)).toBe(false);
       } finally {
         await engine.executeRaw(`UPDATE persistence_host_bindings SET git_durability=NULL WHERE local_path LIKE $1`, [`${f.root}%`]);
         await engine.unsetConfig(REFRESH_PUBLISH_DIVERGED_KEY);
@@ -197,16 +225,39 @@ test('with automatic publishing turned off, local commits stay unpublished while
   await engine.connect({}); await engine.initSchema();
   try {
     const r = repo('optout');
-    await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', ['optout-source', r.root]);
+    await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::jsonb)', ['optout-source', r.root, JSON.stringify({ remote_url: r.remote })]);
     await engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, 'false');
     const theirs = siblingPush(r, 'notes/theirs.md', 'from the sibling\n');
-    expect(await withEnv(identity, () => reconcileSources(engine))).toMatchObject([{ sources: ['optout-source'], status: 'fast_forwarded', behind: 1 }]);
+    expect(await reconcileAll(engine)).toMatchObject([{ sources: ['optout-source'], status: 'fast_forwarded', behind: 1 }]);
     expect(git(r.root, 'rev-parse', 'HEAD')).toBe(theirs);
     const local = commit(r.root, 'notes/mine.md', 'mine\n');
-    expect(await withEnv(identity, () => reconcileSources(engine))).toMatchObject([{ sources: ['optout-source'], status: 'unpublished', ahead: 1, behind: 0 }]);
+    expect(await reconcileAll(engine)).toMatchObject([{ sources: ['optout-source'], status: 'unpublished', ahead: 1, behind: 0 }]);
     expect(tip(r)).toBe(theirs);
     await engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, '');
-    expect(await withEnv(identity, () => reconcileSources(engine))).toMatchObject([{ sources: ['optout-source'], status: 'published', ahead: 1 }]);
+    expect(await reconcileAll(engine)).toMatchObject([{ sources: ['optout-source'], status: 'published', ahead: 1 }]);
     expect(tip(r)).toBe(local);
   } finally { await engine.disconnect(); }
-}, 60_000);
+}, 120_000);
+
+test('a checkout gbrain did not clone for the source is never published by default; a sync-disabled or missing source is skipped', async () => {
+  const engine = new PGLiteEngine();
+  await engine.connect({}); await engine.initSchema();
+  try {
+    const r = repo('foreign');
+    mkdirSync(join(r.root, 'notes'), { recursive: true });
+    await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', ['inside-a-repo', join(r.root, 'notes')]);
+    const before = tip(r);
+    commit(r.root, 'notes/unpushed.md', 'someone else\'s commit\n');
+    const [held] = await reconcileAll(engine);
+    expect(held).toMatchObject({ sources: ['inside-a-repo'], status: 'unpublished', ahead: 1 });
+    expect(held.reason).toContain('did not clone');
+    expect(tip(r)).toBe(before);
+    await engine.executeRaw(`UPDATE sources SET config = '{"syncEnabled": false}'::jsonb WHERE id = 'inside-a-repo'`);
+    await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', ['moved-away', join(dir, 'no-such-folder')]);
+    expect(await reconcileAll(engine)).toEqual([{ sources: [], root: '', managed: false, status: 'no_repo', ahead: 0, behind: 0 }]);
+    expect(await reconcileAll(engine, ['inside-a-repo'])).toMatchObject([{ status: 'unpublished' }]);
+    await engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, 'true');
+    expect(await reconcileAll(engine, ['inside-a-repo'])).toMatchObject([{ status: 'published', ahead: 1 }]);
+    expect(tip(r)).not.toBe(before);
+  } finally { await engine.disconnect(); }
+}, 120_000);
