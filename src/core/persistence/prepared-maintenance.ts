@@ -580,6 +580,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   if (row.authority.remote) throw trustedCliRequired('Remote maintenance publication is not supported.');
   enterClaimStep(clock, 'maintenance_dispatch');
   if (row.intent?.kind === 'managed_maintenance_restore_extractor_facts') return (await import('../repair/extractor-facts.ts')).prepareExtractorFactsRestore(engine, row);
+  if (row.intent?.kind === 'managed_maintenance_restore_unwithdrawn_facts') return (await import('../repair/unwithdrawn-facts.ts')).prepareUnwithdrawnFactsRestore(engine, row);
   if (row.intent?.kind === 'managed_maintenance_expire_captured_facts') return (await import('../repair/captured-facts.ts')).prepareCapturedFactsExpiry(engine, row);
   if (row.intent?.kind === 'managed_maintenance_agent_session_facts') return (await import('../repair/agent-session-facts.ts')).prepareAgentSessionFactsWrite(engine, row);
   if (row.intent?.kind === 'managed_maintenance_restore_redacted_facts') return (await import('../repair/redacted-facts.ts')).prepareRedactedFactsRestore(engine, row);

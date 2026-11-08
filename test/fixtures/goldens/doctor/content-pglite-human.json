@@ -141,6 +141,7 @@
       "  [OK] generation_held: No derived generation is held.",
       "  [OK] generation_pending: No activated generation waits on a member request, and no orphan candidate exists.",
       "  [OK] extractor_facts_expired: No conversation-extractor fact is left expired by the pre-v0.60.11.0 projection.",
+      "  [OK] unwithdrawn_facts: No fact is left retired by a facts-fence generation that no fence withdrew.",
       "  [OK] conversation_label_facts: No conversation fact carries the pre-fix meeting-label signature (a 1970-01-01 segment on a label page).",
       "  [OK] conversation_outcomes_stale: No conversation extraction outcome predates extractor version 1.",
       "  [OK] captured_facts_active: No active fact from a gbrain self-capture or paste candidate remains. This counts facts in the database; the self_capture check counts corpus files.",
