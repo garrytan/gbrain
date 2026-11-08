@@ -92,5 +92,29 @@ test('a branch with no upstream reports no upstream instead of a count', async (
   writeFileSync(join(f.brain, 'people', 'dave-example.md'), page('Dave', 'New page.'));
   const result = await commitPush(f, true, 'people/dave-example.md');
   expect(result.exitCode).toBe(0);
-  expect(JSON.parse(result.stdout)).toMatchObject({ outcome: 'committed_local', managed: true, unpublished: null });
+  expect(JSON.parse(result.stdout)).toMatchObject({ outcome: 'committed_local', managed: true, unpublished: null, upstream: null });
+  const text = await commitPush(f, false, 'people/dave-example.md');
+  expect(text.stdout).toContain('nothing to commit; not pushed: main has no upstream');
+  expect(text.stdout).not.toContain('origin/main');
+}, 60_000);
+
+test('an upstream whose fetched ref cannot be read reports an unknown count, never a number', async () => {
+  const f = fixture('unread');
+  git(f.brain, 'update-ref', '-d', 'refs/remotes/origin/main');
+  const result = await commitPush(f, true, 'people/alice-example.md');
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({ outcome: 'nothing_to_commit', managed: true, unpublished: null, upstream: 'origin/main' });
+  const text = await commitPush(f, false, 'people/alice-example.md');
+  expect(text.stdout).toContain('nothing to commit; not pushed: an unknown number of commit(s) on main may not be on origin/main as last fetched');
+  expect(pushLog(f)).toBe('');
+}, 60_000);
+
+test('the message names the upstream the count used when it differs from the branch name', async () => {
+  const f = fixture('renamed');
+  git(f.brain, 'push', '-q', 'origin', 'main:trunk');
+  git(f.brain, 'fetch', '-q', 'origin');
+  git(f.brain, 'branch', '-q', '--set-upstream-to', 'origin/trunk');
+  const insync = await commitPush(f, false, 'people/alice-example.md');
+  expect(insync.exitCode).toBe(0);
+  expect(insync.stdout).toContain('nothing to commit; not pushed: main is on origin/trunk as last fetched');
 }, 60_000);

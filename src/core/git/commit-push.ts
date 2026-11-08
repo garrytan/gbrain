@@ -84,6 +84,8 @@ export interface CommitPushResult {
   managed?: true;
   /** Managed only: commits on the branch its upstream lacks as last fetched; null when no fetched upstream can be read. */
   unpublished?: number | null;
+  /** Managed only: the branch's configured upstream (`origin/main`); null when it names none. */
+  upstream?: string | null;
 }
 
 export interface PullResult {
@@ -1101,7 +1103,8 @@ function commitManagedPaths(root: string, opts: CommitPushOptions, managed: Mana
   }
   const result = commitPathsOnly(root, opts, where, configuredSourceRoots(root), 'Leave the checkout to its owner; gbrain sources writer status names its state.');
   const counted = git(root, ['rev-list', '--count', '@{upstream}..HEAD']);
-  return { ...result, managed: true, unpublished: counted.code === 0 ? Number(counted.stdout.trim()) : null };
+  const upstream = git(root, ['for-each-ref', '--format=%(upstream:short)', `refs/heads/${result.branch}`]).stdout.trim();
+  return { ...result, managed: true, unpublished: counted.code === 0 ? Number(counted.stdout.trim()) : null, upstream: upstream || null };
 }
 
 /** A checkout with no Git remote at all: no remote is configured and the branch names none (a named but missing remote is refused by resolveCtx). A git command that fails is not proof of "no remote". */
