@@ -387,6 +387,7 @@ test/shared-skills-writer-boundary.test.ts	(file-level)	7	readFileSync
 test/skill-resolver-hook-lane.test.ts	skill-resolver lane: compiled binaries	1	readFileSync
 test/skill-resolver-hook-lane.test.ts	skill-resolver lane: delivery per harness	3	readFileSync
 test/skill-resolver-hook-lane.test.ts	skill-resolver lane: fail open	6	readFileSync
+test/skill-resolver-off-pin.test.ts	(file-level)	1	readFileSync
 test/skill-resolver-packaging.test.ts	skill resolver packaging	1	bun-file
 test/skillify-scaffold.test.ts	11-item scaffold contract (T9 + Phase 3 cross-modal eval)	1	readFileSync
 test/skillify-scaffold.test.ts	applyScaffold	3	readFileSync
