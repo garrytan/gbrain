@@ -55,8 +55,8 @@ import { declarePersistenceProtocol } from './protocol.ts';
 import type { WorktreeBinding } from './ownership.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { fileMatchesSnapshot, protectedLocalEdit } from './page-prepare.ts';
-import { blobAt, blobText, commitMessage, headBlob, headCommit, landedCommit, operationMarkerPaths, unmergedPath } from './pending-import.ts';
-import { ledgerLocation, readLedger } from '../git/commit-ledger.ts';
+import { blobAt, blobText, commitMessage, commitParent, headBlob, headCommit, landedCommit, operationMarkerPaths, unmergedPath } from './pending-import.ts';
+import { ledgerLocation, messageDigest, readLedger } from '../git/commit-ledger.ts';
 import { adoptedBy, localEditAdoptionCommit, type GitCommitNote } from './effect-model.ts';
 import { claimOwner } from './claim-phase.ts';
 import type { PreparedMutation } from './coordinator.ts';
@@ -226,7 +226,9 @@ export async function assertAdoptionCaller(engine: BrainEngine, row: WriteReques
 /**
  * #8824: the commit of this adoption when HEAD already holds it: the newest commit on the path is `gbrain: adopt local edit
  * to <path>` carrying this adoption's `gbrain-adopted:` trailer and commit-ledger line, its parent held the pre-adoption
- * blob, and HEAD holds the adopted blob. Null otherwise, on a repo-less brain, or when Git or the ledger cannot be read.
+ * blob, and HEAD holds the adopted blob. The ledger's commit line is best-effort (written after `git commit`), so the
+ * intent line written before it also proves the commit when its `head_before` is the commit's parent and its message
+ * digest is the commit's. Null otherwise, on a repo-less brain, or when Git or the ledger cannot be read.
  * A replay that finds it publishes whatever became of its caller (the commit is durable), and its receipt names it.
  */
 export async function landedAdoptionCommit(root: string, target: string, adopted: { path: string; blob: string; replaced_revision: string; head: string | null }): Promise<string | null> {
@@ -234,13 +236,16 @@ export async function landedAdoptionCommit(root: string, target: string, adopted
   const commit = await landedCommit(root, null, target);
   if (!commit || await blobAt(root, `${commit}^`, target) !== adopted.head) return null;
   const note = localEditAdoptionCommit(adopted.path, adopted.blob, adopted.replaced_revision);
-  const lines = (await commitMessage(root, commit))?.split('\n') ?? [];
+  const message = await commitMessage(root, commit);
+  const lines = message?.split('\n') ?? [];
   if (lines[0] !== note.subject || !note.trailers?.every(trailer => lines.includes(trailer))) return null;
   const [trailer] = adoptedBy(note.trailers);
   const location = ledgerLocation(root);
-  try {
-    return location && readLedger(location.common).some(record => record.e === 'commit' && record.sha === commit && record.adopted?.includes(trailer!)) ? commit : null;
-  } catch { return null; }
+  let records: ReturnType<typeof readLedger>;
+  try { records = location ? readLedger(location.common) : []; } catch { return null; }
+  if (records.some(record => record.e === 'commit' && record.sha === commit && record.adopted?.includes(trailer!))) return commit;
+  const parent = await commitParent(root, commit), digest = messageDigest(message!);
+  return parent && records.some(record => record.e === 'intent' && record.head_before === parent && record.msg_sha256 === digest) ? commit : null;
 }
 
 /** #8824/#8767: `landedAdoptionCommit` for an adoption request `row` (any other request answers null), read on `binding`'s checkout. */

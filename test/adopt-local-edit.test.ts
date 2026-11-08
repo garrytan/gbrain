@@ -32,7 +32,7 @@ import { submitRememberMutation } from '../src/core/persistence/memory-mutations
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
-import { readLedger } from '../src/core/git/commit-ledger.ts';
+import { ledgerFiles, readLedger, recordIntent } from '../src/core/git/commit-ledger.ts';
 import { isTerminal, requestPrincipal, type WriteRequest } from '../src/core/persistence/model.ts';
 import { cancelWriteRequest } from '../src/core/persistence/control.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -631,6 +631,14 @@ test('#8755 p: a stale editor save matches an earlier revision whose edges hold 
 const adoptCommit = (f: RefreshFixture, rel: string) => git(f.root, 'log', '--format=%H %s', '--', `alpha/${rel}`).split('\n')
   .filter(line => line.includes(`gbrain: adopt local edit to ${rel}`)).map(line => line.split(' ')[0]!);
 const statementCancel = () => Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+/** Drops the commit-ledger lines naming `shas` (a busy ledger lock or a crash after `git commit`); intent lines stay. */
+function dropCommitLines(f: RefreshFixture, shas: string[]): number {
+  const ledger = ledgerFiles(join(f.root, '.git')).current;
+  const lines = readFileSync(ledger, 'utf8').split('\n');
+  const kept = lines.filter(line => { try { const r = JSON.parse(line); return !(r.e === 'commit' && shas.includes(r.sha)); } catch { return true; } });
+  writeFileSync(ledger, kept.join('\n'));
+  return lines.length - kept.length;
+}
 
 test('#8824: an adoption whose commit landed before its caller\'s claim ended is published by the consumer, naming that commit', () => each(async f => {
   const { installFaultHook } = await import('../src/core/persistence/fault-points.ts');
@@ -694,6 +702,61 @@ test('#8767: a terminal failure after the adoption\'s commit leaves a receipt na
   const listing = await readTerminalFailures(f.engine, { sourceId: f.alpha, state: 'all' });
   expect(listing.status).toBe('ok');
   expect((listing as { rows?: Array<{ request_id: string }> }).rows?.map(row => row.request_id)).toContain(done.request_id);
+}), 180_000);
+
+test('#8824: an adoption whose commit line never reached the ledger is still published, proved by its intent line', () => each(async f => {
+  const { installFaultHook } = await import('../src/core/persistence/fault-points.ts');
+  const rel = 'people/alice-example.md', slug = 'people/alice-example';
+  commitFile(f.root, `alpha/${rel}`, PERSON, 'person page');
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  writeFileSync(join(f.root, 'alpha', rel), PERSON.replace('Alice is a person.', `Alice is a person.\n\n${LOCAL}`));
+  const blob = blobOf(f, rel), replaced = await revision(f, slug);
+  let fired = 0, dropped = 0, cancelled: string | undefined;
+  installFaultHook(async (point, detail) => {
+    if (detail.operation !== 'put_page' || detail.sourceId !== f.alpha) return;
+    if (point === 'publication:before_commit' && fired++ === 0) { dropped = dropCommitLines(f, adoptCommit(f, rel)); throw statementCancel(); }
+    if (point === 'persistence:recovery_interruption_charged' && cancelled === undefined) {
+      const [caller] = await f.engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE operation='add_timeline_entry' AND source_id=$1 AND state='running' ORDER BY sequence DESC LIMIT 1", [f.alpha]);
+      cancelled = (await cancelWriteRequest(f.engine, requestPrincipal(caller!), caller!.request_id))?.state;
+    }
+  });
+  try { await call(f, 'add_timeline_entry', { slug, date: '2026-11-06', summary: 'Entry whose claim ends.' }).catch(() => undefined); } finally { installFaultHook(undefined); }
+  expect(fired).toBeGreaterThan(0);
+  expect(dropped).toBe(1);
+  expect(cancelled).toBe('cancelled');
+  const landed = adoptCommit(f, rel);
+  expect(landed).toHaveLength(1);
+  expect(readLedger(join(f.root, '.git')).some(r => r.e === 'commit' && r.sha === landed[0])).toBe(false);
+  const [adoption] = await adoptionRows(f);
+  const done = await settled(f.engine, adoption!);
+  expect(done).toMatchObject({ state: 'committed' });
+  expect((done.outcome as { persistence?: unknown }).persistence).toMatchObject({ git_state: 'committed', git_commit: landed[0], landed_before_row: true });
+  expect((done.outcome as { adopted_local_edit?: unknown }).adopted_local_edit).toEqual({ path: rel, blob, replaced_revision: replaced });
+  expect((await f.engine.readPageSnapshot(slug, { sourceId: f.alpha }))!.page.compiled_truth).toContain(LOCAL);
+}), 180_000);
+
+test('#8824: an intent line proves no landed adoption without its commit, or on another parent, or with another message', () => each(async f => {
+  const { landedAdoptionCommit } = await import('../src/core/persistence/local-edit-adoption.ts');
+  const { localEditAdoptionCommit } = await import('../src/core/persistence/effect-model.ts');
+  const root = join(f.root, 'alpha'), target = join(root, 'one.md'), ledger = ledgerFiles(join(f.root, '.git')).current;
+  const parent = head(f), headBlob = git(f.root, 'rev-parse', 'HEAD:alpha/one.md');
+  writeFileSync(target, EDITED);
+  const blob = blobOf(f, 'one.md'), replaced = await revision(f, 'one');
+  const note = localEditAdoptionCommit('one.md', blob, replaced);
+  const message = `${note.subject}\n\n${note.trailers!.join('\n')}`;
+  const adopted = { path: 'one.md', blob, replaced_revision: replaced, head: headBlob };
+  const intent = (headBefore: string, text: string) => recordIntent(f.root, { writer: 'effect', head_before: headBefore, message: text });
+  intent(parent, message);
+  expect(await landedAdoptionCommit(root, target, adopted)).toBeNull();
+  writeFileSync(ledger, '');
+  intent(git(f.root, 'rev-parse', 'HEAD~1'), message);
+  intent(parent, `${note.subject}\n\nA message that differs.\n\n${note.trailers!.join('\n')}`);
+  git(f.root, 'commit', '-q', '-m', note.subject, '-m', note.trailers!.join('\n'), '--', 'alpha/one.md');
+  const landed = head(f);
+  expect(git(f.root, 'rev-parse', `${landed}^`)).toBe(parent);
+  expect(await landedAdoptionCommit(root, target, adopted)).toBeNull();
+  intent(parent, message);
+  expect(await landedAdoptionCommit(root, target, adopted)).toBe(landed);
 }), 180_000);
 
 test('#8826: a cherry-pick -n of another path leaves no marker, and neither the adoption nor its caller commits the picked path', () => each(async f => {

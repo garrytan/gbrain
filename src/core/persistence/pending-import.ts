@@ -157,6 +157,11 @@ export async function commitMessage(root: string, commit: string): Promise<strin
   return gitRead(root, ['log', '-1', '--format=%B', commit]).catch(() => null);
 }
 
+/** #8824: the first parent of `commit` in `root`'s repository, or null when it has none or Git cannot read it. */
+export async function commitParent(root: string, commit: string): Promise<string | null> {
+  return quiet(gitRead(root, ['rev-parse', '--verify', '--quiet', `${commit}^`]));
+}
+
 /** #8824: the blob id `rev` holds at `path` (inside `root`), or null when it has no entry there or Git cannot read it. */
 export async function blobAt(root: string, rev: string, path: string): Promise<string | null> {
   return quiet(gitRead(root, ['rev-parse', '--verify', '--quiet', `${rev}:./${relative(root, path).split(sep).join('/')}`]));
