@@ -463,6 +463,7 @@ test/receipt-compaction-newest-sync-gbra130.test.ts
 test/reconcile-clears-stalled-hold-7364.test.ts
 test/refresh-barrier-gst1623.test.ts
 test/refresh-barrier-held-after-abort.test.ts
+test/refresh-own-commits-replan-8828.test.ts
 test/refresh-retry-hint-gst1582.test.ts
 test/refresh-write-barrier.test.ts
 test/remediation-manual-only.test.ts
@@ -592,6 +593,7 @@ test/trust-owner-actions.test.ts
 test/unbound-source-6536.test.ts
 test/unindexed-files-convergence-7149.test.ts
 test/unindexed-files.test.ts
+test/url-source-origin.test.ts
 test/v273-validate-timeouts.test.ts
 test/valid-time-gbra217.test.ts
 test/vector-manifest-probe-bound.test.ts

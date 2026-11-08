@@ -577,7 +577,7 @@ export async function addSource(
     // a --clone-dir path. A user-tree row (created by an external INSERT, no
     // --url) never carries this, so it can never be deleted by reclone.
     const config: Record<string, unknown> = { remote_url: parsedUrl.url, managed_clone: true };
-    if (opts.addedByRemoteCaller) config.added_by_remote_caller = true;
+    config.added_by_remote_caller = opts.addedByRemoteCaller === true;
     if (opts.federated !== null && opts.federated !== undefined) {
       config.federated = opts.federated;
     }
