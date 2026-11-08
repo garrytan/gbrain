@@ -2815,7 +2815,8 @@ remediation plan, the maintenance cycle or an upgrade.
 
 A URL source a remote caller (an MCP client) adds records that on its row, and
 every later reclone of it, managed or not, clones with git-lfs downloads and
-hooks off. URL sources added before that record existed carry none, and nothing
+hooks off; a URL source the local operator adds records that too, so doctor
+never asks about it. URL sources added before that record existed carry none, and nothing
 stored tells a remote caller's add from the local operator's: both wrote the
 same row and cloned into the default clone directory (`$GBRAIN_HOME/clones/<id>`).
 Their reclones use the clone settings of a local add. Doctor
@@ -2843,7 +2844,9 @@ stored writer manifest needs no change and the reclone verifies as before.
 `--remote` refuses, writing nothing:
 
 - `lfs_tracked`: the checkout tracks files with git-lfs (any tracked path with
-  `filter=lfs`). A clone with git-lfs downloads off holds pointer files where
+  `filter=lfs`, or a committed `.gitattributes` that names `filter=lfs`; a
+  reclone gets only the committed attributes, so clone-local ones do not count).
+  An apply inspects the checkout again under the row lock before it writes. A clone with git-lfs downloads off holds pointer files where
   this checkout holds their content, so its next reclone would stop at
   `writer_manifest_mismatch`, and converting the checkout rewrites its files,
   which this command does not do. If the source should not keep those files,

@@ -19,6 +19,7 @@ import { lfsDownloadsOff } from '../src/core/sources-ops.ts';
 import { defaultCloneDir } from '../src/core/url-clone.ts';
 import { operations } from '../src/core/operations.ts';
 import { recordSourceOrigin } from '../src/core/url-source-origin.ts';
+import { managedSourceAddInput } from '../src/core/persistence/managed-sources.ts';
 import { urlSourceOriginCheck } from '../src/commands/doctor/checks/url-source-origin.ts';
 import { runRecordOrigin } from '../src/commands/sources-record-origin.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
@@ -201,5 +202,53 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
       expect(currentExitCode()).toBe(1);
       expect(await config('source-a')).toEqual({ ...URL_CONFIG, added_by_remote_caller: false });
     } finally { exit.mockRestore(); errors.mockRestore(); logs.mockRestore(); _resetCliExitVerdictForTests(); }
+  }), 60_000);
+
+  test('--remote refuses a checkout whose clone-local attributes hide its git-lfs files, and writes nothing', () => brain(async home => {
+    const { source, root } = await managedUrlSource(home, true);
+    mkdirSync(join(root, '.git', 'info'), { recursive: true });
+    writeFileSync(join(root, '.git', 'info', 'attributes'), '*.bin -filter\n');
+    for (const apply of [false, true])
+      expect((await recordSourceOrigin(engine, [source], { origin: 'remote', apply, remote: false })).results[0]).toMatchObject({ status: 'refused', code: 'lfs_tracked' });
+    expect(await config(source)).toEqual(URL_CONFIG);
+  }), 120_000);
+
+  test('--remote --apply inspects the checkout again under the row lock, so git-lfs files that arrive after the first check are refused', () => brain(async home => {
+    const { source, root } = await managedUrlSource(home, false);
+    const transaction = engine.transaction.bind(engine);
+    const patched = spyOn(engine, 'transaction').mockImplementation(async fn => {
+      writeFileSync(join(root, '.gitattributes'), '*.bin filter=lfs diff=lfs merge=lfs -text\n');
+      writeFileSync(join(root, 'blob.bin'), 'binary-example');
+      git(['-C', root, 'add', '-A']);
+      git(['-C', root, 'commit', '-q', '-m', 'lfs']);
+      return transaction(fn);
+    });
+    try {
+      expect((await recordSourceOrigin(engine, [source], { origin: 'remote', apply: true, remote: false })).results[0]).toMatchObject({ status: 'refused', code: 'lfs_tracked' });
+    } finally { patched.mockRestore(); }
+    expect(await config(source)).toEqual(URL_CONFIG);
+  }), 120_000);
+
+  test('doctor lists a URL clone at the default clone directory that has no ownership marker, and record-origin accepts it', () => brain(async home => {
+    const unmarked = { remote_url: URL_CONFIG.remote_url };
+    await insert('source-a', defaultCloneDir('source-a'), unmarked);
+    await insert('source-c', join(home, 'elsewhere', 'source-c'), unmarked);
+    expect(((await check()).details as { sources: Array<{ id: string }> }).sources.map(source => source.id)).toEqual(['source-a']);
+    expect((await recordSourceOrigin(engine, ['source-a', 'source-c'], { origin: 'local', apply: true, remote: false })).results.map(result => result.code ?? result.status))
+      .toEqual(['recorded', 'not_url_clone']);
+    expect(await config('source-a')).toEqual({ ...unmarked, added_by_remote_caller: false });
+    expect(await config('source-c')).toEqual(unmarked);
+    expect((await check()).status).toBe('ok');
+  }), 60_000);
+
+  test('a local URL add records the local operator; a row with no record stays unknown and never reads as added by a remote caller', () => brain(async () => {
+    expect(managedSourceAddInput({ id: 'source-a', remoteUrl: URL_CONFIG.remote_url }).config).toMatchObject({ added_by_remote_caller: false });
+    expect(managedSourceAddInput({ id: 'source-b', remoteUrl: URL_CONFIG.remote_url, addedByRemoteCaller: true }).config).toMatchObject({ added_by_remote_caller: true });
+    await insert('source-a', defaultCloneDir('source-a'), URL_CONFIG);
+    expect(lfsDownloadsOff(await config('source-a'))).toBe(false);
+    const found = await check();
+    expect(found.status).toBe('warn');
+    expect((found.details as { sources: Array<{ id: string }> }).sources.map(source => source.id)).toEqual(['source-a']);
+    expect((await recordSourceOrigin(engine, ['source-a'], { origin: 'local', apply: false, remote: false })).results[0]).toMatchObject({ status: 'would_record' });
   }), 60_000);
 });
