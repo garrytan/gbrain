@@ -79,3 +79,48 @@ test('a plain checkout mid-rebase sees rebase-merge', async () => {
   git(root, 'rebase', '--abort');
   expect(await present(root)).toEqual([]);
 });
+
+async function readsClean(root: string): Promise<boolean> {
+  return (await operationMarkerPaths(root))?.every(marker => !existsSync(marker)) === true;
+}
+
+test('a checkout whose path holds a newline never reads as clean mid-merge', async () => {
+  const root = join(base, 'line\nbreak');
+  mkdirSync(join(root, 'notes'), { recursive: true });
+  git(root, 'init', '-q');
+  writeFileSync(join(root, 'notes', 'page.md'), 'one\n');
+  git(root, 'add', '.');
+  git(root, 'commit', '-qm', 'one');
+  git(root, 'checkout', '-qb', 'side');
+  writeFileSync(join(root, 'notes', 'page.md'), 'side\n');
+  git(root, 'commit', '-qam', 'side');
+  git(root, 'checkout', '-q', 'main');
+  writeFileSync(join(root, 'notes', 'page.md'), 'main\n');
+  git(root, 'commit', '-qam', 'main');
+  expect(() => git(root, 'merge', 'side')).toThrow();
+  expect(existsSync(join(root, '.git', 'MERGE_HEAD'))).toBe(true);
+  expect(await readsClean(root)).toBe(false);
+  symlinkSync(root, join(base, 'newline-link'));
+  expect(await readsClean(join(base, 'newline-link', 'notes'))).toBe(false);
+});
+
+test('a cherry-pick range stopped between picks, after the first conflict was committed, is still in progress', async () => {
+  const root = repo('sequencer');
+  git(root, 'checkout', '-qb', 'topic');
+  writeFileSync(join(root, 'notes', 'deep', 'page.md'), 'topic\n');
+  git(root, 'commit', '-qam', 'topic one');
+  writeFileSync(join(root, 'notes', 'other.md'), 'two\n');
+  git(root, 'add', '.');
+  git(root, 'commit', '-qm', 'topic two');
+  git(root, 'checkout', '-q', 'main');
+  writeFileSync(join(root, 'notes', 'deep', 'page.md'), 'main\n');
+  git(root, 'commit', '-qam', 'main');
+  expect(() => git(root, 'cherry-pick', 'main..topic')).toThrow();
+  writeFileSync(join(root, 'notes', 'deep', 'page.md'), 'resolved\n');
+  git(root, 'add', '.');
+  git(root, 'commit', '-q', '--no-edit');
+  expect(existsSync(join(root, '.git', 'CHERRY_PICK_HEAD'))).toBe(false);
+  expect(await present(root)).toEqual([join(root, '.git', 'sequencer')]);
+  git(root, 'cherry-pick', '--quit');
+  expect(await present(root)).toEqual([]);
+});

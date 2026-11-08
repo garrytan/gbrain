@@ -128,14 +128,14 @@ export async function unmergedPath(root: string, path: string, signal?: AbortSig
 
 /**
  * #8755: the absolute paths of the markers a merge, cherry-pick, revert or rebase in progress leaves in `root`'s git dir
- * (MERGE_HEAD, CHERRY_PICK_HEAD, REVERT_HEAD, rebase-merge, rebase-apply); null when Git cannot name them. The caller
- * checks which exist. All five live in the per-worktree git dir, which Git prints absolute and symlink-resolved, so a root
- * reached through a symlink still names the real markers.
+ * (MERGE_HEAD, CHERRY_PICK_HEAD, REVERT_HEAD, sequencer, rebase-merge, rebase-apply); null when Git cannot name them. The
+ * caller checks which exist. All of them live in the per-worktree git dir, which Git prints absolute and symlink-resolved,
+ * so a root reached through a symlink still names the real markers. Output that is not exactly one line answers null.
  */
 export async function operationMarkerPaths(root: string, signal?: AbortSignal): Promise<string[] | null> {
-  const markers = ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply'];
+  const markers = ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'sequencer', 'rebase-merge', 'rebase-apply'];
   return gitRead(root, ['rev-parse', '--absolute-git-dir'], signal)
-    .then(out => { const [gitDir] = out.split('\n'); return gitDir ? markers.map(marker => join(gitDir, marker)) : null; },
+    .then(out => { const lines = out.split('\n'); return lines.length === 2 && lines[0] && !lines[1] ? markers.map(marker => join(lines[0], marker)) : null; },
       error => { if (signal?.aborted) throw error; return null; });
 }
 
