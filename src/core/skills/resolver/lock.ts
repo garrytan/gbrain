@@ -8,8 +8,8 @@
  * publication re-read the file and act only while it still carries the
  * caller's token, so a stale owner cannot act on its successor's lease.
  */
-import { closeSync, fsyncSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
-import { open as openAsync, readFile as readFileAsync, unlink as unlinkAsync } from 'node:fs/promises';
+import { closeSync, fsyncSync, openSync, promises, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
+const { open: openAsync, readFile: readFileAsync, unlink: unlinkAsync } = promises;
 import { randomBytes } from 'node:crypto';
 import { hostname } from 'node:os';
 import { ResolverError } from './errors.ts';

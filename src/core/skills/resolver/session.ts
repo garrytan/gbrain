@@ -13,8 +13,8 @@
  * a lost commit only means a skill may be suggested again.
  */
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
-import { mkdir, open, readdir, readFile, rename, stat, unlink } from 'node:fs/promises';
+import { promises, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
+const { mkdir, open, readdir, readFile, rename, stat, unlink } = promises;
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { ensureDir, writeFileDurable } from './fsutil.ts';

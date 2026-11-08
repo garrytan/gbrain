@@ -124,7 +124,6 @@ import { HOOK_SUBCOMMANDS as HOOK_EVENTS, ROUTERS, subcommandHelpRequested } fro
 import { isManagedFilesystemPath } from '../core/persistence/filesystem-guard.ts';
 import { brainFirstTurnRule } from '../core/setup/brain-first.ts';
 import { TURN_RULE_LANE, turnRuleHookYields } from '../core/setup/turn-hook.ts';
-import { SKILL_RESOLVER_LANE } from '../core/setup/skill-resolver-lane.ts';
 import { captureHookSessionCwd, hookSessionCwd } from '../core/setup/hook-launcher.ts';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
@@ -306,12 +305,7 @@ export async function runHook(args: string[], io: HookIo = {}): Promise<number> 
   // for silence, and a disabled hook writing telemetry would be a lie).
   if (process.env.GBRAIN_HOOKS === '0') return 0;
 
-  // Skill-resolver lane (src/core/skills/resolver/hook-lane.ts): its own entry, its own output (only the skills block), its own yield rule.
-  if (process.env.GBRAIN_HOOK_LANE === SKILL_RESOLVER_LANE) {
-    const { runSkillResolverLane } = await import('../core/skills/resolver/hook-lane.ts');
-    return runSkillResolverLane(event, io.harness === 'codex' ? 'codex' : 'claude-code', io.cwd ? { cwd: io.cwd } : {});
-  }
-
+  if (process.env.GBRAIN_HOOK_LANE === 'skill-resolver') return (await import('../core/skills/resolver/hook-lane.ts')).runSkillResolverLane(event, io.harness === 'codex' ? 'codex' : 'claude-code', io.cwd ? { cwd: io.cwd } : {});
   // #4043 harness-lane defer guard: Claude Code MERGES user- and
   // project-scope hook settings, so a machine wired by `bootstrap harness`
   // (user scope) plus a real workspace bootstrap install (settings.local.json,

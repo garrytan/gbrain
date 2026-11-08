@@ -41,18 +41,19 @@
  * past the on/off check (outcome, error code, duration; never turn text),
  * capped at 256 KB; doctor's skill_resolver check reads it.
  */
-import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFile, mkdir, readFile, realpath, stat, truncate, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
+import { spawn } from '../../spawn.ts';
 import { claudeManagedSettingsPaths, claudeUserSettingsPath, codexHooksPath } from '../../bootstrap/host-specs.ts';
 import { shellWords } from '../../setup/hook-launcher.ts';
 import { isSkillResolverCommand, isSkillResolverEntry } from '../../setup/skill-resolver-lane.ts';
 import { assertCatalogName, catalogFile, logsDir, resolverHome } from './paths.ts';
 import { commitSessionAsync, sessionKey, type TurnDelta } from './session.ts';
 import type { TurnOutput } from './resolve.ts';
+import type { LaneWorkerData } from './hook-worker.ts';
 
 export const LANE_DEADLINE_MS = 50;
 export const LANE_STDIN_CAP_BYTES = 256 * 1024;
@@ -273,7 +274,7 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
 
   const posted = await new Promise<{ output?: TurnOutput; pending?: { key: string; delta: TurnDelta } | null; error?: { code: string } }>((resolve) => {
     const worker = new Worker(workerEntry(), {
-      workerData: { input: { message: prompt, harness, ...(sessionId ? { session_id: sessionId } : {}) }, home, catalogs, deadlineMs: Math.max(1, deadlineMs - elapsed() - COMMIT_RESERVE_MS), stall: env.GBRAIN_TEST_SKILL_LANE_STALL },
+      workerData: { input: { message: prompt, harness, ...(sessionId ? { session_id: sessionId } : {}) }, home, catalogs, deadlineMs: Math.max(1, deadlineMs - elapsed() - COMMIT_RESERVE_MS), stall: env.GBRAIN_TEST_SKILL_LANE_STALL } satisfies LaneWorkerData,
     });
     ctl.worker = worker;
     worker.unref();

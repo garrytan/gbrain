@@ -730,10 +730,7 @@ export function loadConfig(): GBrainConfig | null {
   const dbUrl = effectiveEnvDatabaseUrl();
 
   if (!fileConfig && !dbUrl) return null;
-  // GBRA-377: a config.json that holds only file-plane settings (a brainless
-  // install's skills.resolver keys) configures no brain. A brain is an engine,
-  // a database or a remote endpoint, never the file existing, so such a file
-  // must not be read as an implicit Postgres brain.
+  // GBRA-377: a brain is an engine, a database or a remote endpoint; a file of file-plane settings alone (skills.resolver) is none.
   if (!dbUrl && fileConfig && !fileConfig.engine && !fileConfig.database_url && !fileConfig.database_path && !fileConfig.remote_mcp) return null;
 
   // Infer engine type. A DATABASE_URL-style env var is always a Postgres

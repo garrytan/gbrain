@@ -13,7 +13,9 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { resolveSkills } from './resolve.ts';
 
-const { input, home, catalogs, deadlineMs, stall } = workerData as { input: unknown; home: string; catalogs: string[]; deadlineMs: number; stall?: string };
+export interface LaneWorkerData { input: unknown; home: string; catalogs: string[]; deadlineMs: number; stall?: string }
+
+const { input, home, catalogs, deadlineMs, stall } = workerData as LaneWorkerData;
 
 if (stall === 'block') { const end = Date.now() + 10_000; while (Date.now() < end) { /* forced synchronous stall */ } }
 if (stall === 'hang') await new Promise(() => {});
