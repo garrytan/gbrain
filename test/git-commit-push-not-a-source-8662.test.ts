@@ -127,6 +127,24 @@ test('GST-1623: a repository that only encloses a registered checkout is refused
   expect(JSON.parse(admitted.stdout)).toMatchObject({ outcome: 'committed_local', paths: ['notes/a.md'] });
 }, 60_000);
 
+test('GST-1623: a stale gbrain-managed.json an older gbrain left in the enclosing repository does not admit it', async () => {
+  const outer = otherRepo('stale-marker-code');
+  const home = join(dir, 'stale-marker-home'), brain = join(outer, 'brain');
+  mkdirSync(join(brain, 'people'), { recursive: true });
+  execFileSync('git', ['init', '-q', '-b', 'main', brain]);
+  writeFileSync(join(brain, 'README.md'), 'brain\n');
+  git(brain, 'add', 'README.md'); git(brain, 'commit', '-qm', 'init');
+  withEnv({ GBRAIN_HOME: home }, () => { recordManagedRoots('00000000-0000-4000-8000-000000001625', [{ local_path: brain, source_id: 'source-a' }]); });
+  // The marker gbrain before #7988 wrote into an enclosing repository for a root it does not track (filesystem-guard.ts: stale).
+  writeFileSync(join(outer, '.git', 'gbrain-managed.json'), JSON.stringify({ root: canonicalFilesystemPath(brain) }));
+  const before = git(outer, 'rev-parse', 'HEAD');
+  const refused = await commitPush(outer, home, '--', 'notes/a.md');
+  expect(refused.exitCode).toBe(1);
+  expect((JSON.parse(refused.stdout) as { code: string }).code).toBe('checkout_not_a_source');
+  expect(git(outer, 'rev-parse', 'HEAD')).toBe(before);
+  expect(git(outer, 'diff', '--cached', '--name-only')).toBe('');
+}, 60_000);
+
 test('GST-1623: a managed-root registry that cannot be listed is refused with a typed error, not a raw one', async () => {
   const other = otherRepo('registry-unreadable');
   const home = join(dir, 'registry-unreadable-home');

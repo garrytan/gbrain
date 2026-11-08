@@ -22,6 +22,7 @@ import { writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { execFileSync } from '../core/spawn.ts';
 import { gitChildEnv } from '../core/git-env.ts';
 import { GIT_ENV } from '../core/git-transport.ts';
+import { staleEnclosingMarker } from '../core/persistence/filesystem-guard.ts';
 import { canonicalFilesystemPath, checkoutGitMetadata, managedRootMarkerFor, registeredManagedRootRecords } from '../core/persistence/root-registry.ts';
 
 const HELP = `Usage: gbrain git commit-push [--path <dir>] -m <msg> [--json] [--] <paths...>
@@ -143,11 +144,12 @@ function parseResolutions(specs: string[]): Map<string, Resolution> {
  * gbrain.sourceRoot or gbrain.cliPath entry, or the committed scripts/brain-commit-push.sh (whose own calls pass no --path).
  * An explicit --path names its checkout and is not checked here. GST-1623: a registered checkout must contain the resolved
  * one, or be a directory of it that its HEAD tracks; a repository that only encloses a registered checkout (a nested clone)
- * is not a source checkout.
+ * is not a source checkout, even with the stale marker an older gbrain wrote in its git dir (#7988).
  */
 function assertSourceCheckout(repo: string): void {
   const registered = registeredManagedRootRecords();
-  if (!registered.length || managedRootMarkerFor(repo)) return;
+  const marker = managedRootMarkerFor(repo);
+  if (!registered.length || (marker && !staleEnclosingMarker({ root: marker.root, evidence: marker.marker }))) return;
   const top = canonicalFilesystemPath(repo);
   const within = (root: string, path: string) => { const rel = relative(root, path); return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`); };
   const metadata = checkoutGitMetadata(top);
