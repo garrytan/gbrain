@@ -700,6 +700,7 @@ src/core/persistence/ownership.ts	process_env	2	W6: settings plane out of the co
 src/core/persistence/page-mutations.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/page-prepare.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/page-purge.ts	module_collection	3	W6: per-engine state, or mark as a constant table
+src/core/persistence/pending-import.ts	fs_import	1	W5: repo-less persistence for hosts (#8826: operationMarkerPaths stats the git dir Git names before it trusts the marker paths)
 src/core/persistence/pending-import.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/persistence/physical-root-record.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/physical-root-record.ts	spawn_import	1	W7: process-wide effects move to src/cli
