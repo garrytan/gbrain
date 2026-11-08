@@ -546,3 +546,51 @@ test('#8755 h: an adoption names its caller\'s claim, and one whose caller no lo
   expect(refused?.code).toBe('write_claim_lost');
 }), 180_000);
 
+
+test('#8755 m: a caller cancelled after its adoption prepared has nothing adopted', () => each(async f => {
+  const { localEditAdoptionSeams } = await import('../src/core/persistence/local-edit-adoption.ts');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  const before = { head: head(f), revision: await revision(f, 'one') };
+  let cancelled: string | undefined;
+  localEditAdoptionSeams.beforePublish = async () => {
+    const [caller] = await f.engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE operation='add_timeline_entry' AND source_id=$1 AND state='running' ORDER BY sequence DESC LIMIT 1", [f.alpha]);
+    cancelled = (await cancelWriteRequest(f.engine, requestPrincipal(caller!), caller!.request_id))?.state;
+  };
+  await timeline(f)().catch(() => undefined);
+  expect(cancelled).toBe('cancelled');
+  const [adoption] = await adoptionRows(f);
+  expect(adoption).toMatchObject({ state: 'failed', error_code: 'write_claim_lost' });
+  expect(file(f, 'one.md')).toBe(EDITED);
+  expect(head(f)).toBe(before.head);
+  expect(await revision(f, 'one')).toBe(before.revision);
+}), 180_000);
+
+test('#8755 n: a conflict or a merge that starts after the adoption prepared keeps the refusal and the index', () => each(async f => {
+  const { localEditAdoptionSeams } = await import('../src/core/persistence/local-edit-adoption.ts');
+  const base = git(f.root, 'rev-parse', 'HEAD:alpha/one.md');
+  writeFileSync(join(f.root, 'theirs.tmp'), EDITED);
+  const theirs = git(f.root, 'hash-object', '-w', 'theirs.tmp');
+  const stages = `100644 ${base} 1\talpha/one.md\n100644 ${base} 2\talpha/one.md\n100644 ${theirs} 3\talpha/one.md\n`;
+  const refused = async () => {
+    const before = { head: head(f), revision: await revision(f, 'one') };
+    await timeline(f)().catch(() => undefined);
+    const row = await settled(f.engine, await lastRow(f, 'add_timeline_entry'));
+    expect(row).toMatchObject({ state: 'conflict', error_code: 'source_changed' });
+    expect((await adoptionRows(f)).filter(r => r.state === 'committed')).toEqual([]);
+    expect(file(f, 'one.md')).toBe(EDITED);
+    expect(head(f)).toBe(before.head);
+    expect(await revision(f, 'one')).toBe(before.revision);
+  };
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  localEditAdoptionSeams.beforePublish = () => {
+    git(f.root, 'update-index', '--force-remove', 'alpha/one.md');
+    execFileSync('git', ['-C', f.root, 'update-index', '--index-info'], { input: stages });
+  };
+  await refused();
+  expect(git(f.root, 'ls-files', '-u', '--', 'alpha/one.md').split('\n')).toHaveLength(3);
+  git(f.root, 'update-index', '--force-remove', 'alpha/one.md');
+  git(f.root, 'update-index', '--add', '--cacheinfo', `100644,${base},alpha/one.md`);
+  localEditAdoptionSeams.beforePublish = () => { writeFileSync(join(f.root, '.git', 'MERGE_HEAD'), `${head(f)}\n`); };
+  try { await refused(); } finally { rmSync(join(f.root, '.git', 'MERGE_HEAD'), { force: true }); }
+}), 180_000);
+

@@ -71,7 +71,7 @@ const STALE_REVISIONS = 50;
 const ADOPTING_OPERATIONS: readonly string[] = ['remember', 'capture', 'add_timeline_entry'];
 
 /** Test seams: `beforePublish` runs between the adoption's preparation and its publication, with the file's path; `maxWaitMs` lowers the quiet-wait cap. */
-export const localEditAdoptionSeams: { beforePublish?: (path: string) => void; maxWaitMs?: number } = {};
+export const localEditAdoptionSeams: { beforePublish?: (path: string) => void | Promise<void>; maxWaitMs?: number } = {};
 
 /** The drifted file a `file_database_drift` refusal carries (page-prepare.ts compareFileTarget). */
 interface LocalEditTarget { root: string; path: string }
@@ -155,8 +155,7 @@ async function adoptionIntent(engine: BrainEngine, row: WriteRequest, target: Lo
   if (!commit && insideGitCheckout(binding.local_path!)) return null;
   const head = commit ? await headBlob(target.root, target.path) : undefined;
   if (head === null) return null;
-  // Conflict markers from a merge, stash pop, cherry-pick or rebase are never adopted (`git add` would mark them resolved).
-  if (commit && (await unmergedPath(target.root, target.path) !== false || (await operationMarkerPaths(target.root))?.every(marker => !existsSync(marker)) !== true)) return null;
+  if (commit && await conflictOrOperation(target.root, target.path)) return null;
   const { prepareRepairPublication, repairScreenConfig } = await import('./file-repair.ts');
   const screen = await repairScreenConfig(engine, row.source_id);
   // A checkout whose HEAD holds the database's copy: only the worktree file moved. A repo-less brain has no HEAD to ask.
@@ -173,6 +172,15 @@ async function adoptionIntent(engine: BrainEngine, row: WriteRequest, target: Lo
     resultDigest: publication.digest, ownerEpoch: String(binding.owner_epoch), expected_revision: snapshot.revision, noEmbed: true,
     adoptLocalEdit: { blob: adopted.blob, replaced_revision: adopted.replaced_revision, head: head ?? null, caller: { id: row.id, token: row.execution_token } },
     source_id: row.source_id, request_id: adoptionRequestId(row) } };
+}
+
+/**
+ * Conflict markers from a merge, stash pop, cherry-pick or rebase are never adopted (`git add` would mark them resolved):
+ * true when `path` has unmerged stages or an operation is in progress, or when git cannot tell. Checked at admission and
+ * again in the publication transaction, since either can start in between.
+ */
+export async function conflictOrOperation(root: string, path: string): Promise<boolean> {
+  return await unmergedPath(root, path) !== false || (await operationMarkerPaths(root))?.every(marker => !existsSync(marker)) !== true;
 }
 
 /** Whether the caller still holds the claim its refusal is being answered under (a cancelled caller adopts nothing). */
@@ -195,11 +203,12 @@ export async function adoptedHeadHolds(binding: WorktreeBinding, root: string, p
 /**
  * #8755: the claim an adoption is made under (`adoptLocalEdit.caller`) still holds, checked as the adoption prepares: an
  * adoption whose caller is gone (cancelled, finished, or reclaimed after a crash between admission and settling)
- * publishes nothing.
+ * publishes nothing. In the publication transaction (`lock`) the caller row is held FOR SHARE, so a cancel waits until it ends.
  */
-export async function assertAdoptionCaller(engine: BrainEngine, row: WriteRequest, caller: { id?: unknown; token?: unknown } | undefined): Promise<void> {
+export async function assertAdoptionCaller(engine: BrainEngine, row: WriteRequest, caller: { id?: unknown; token?: unknown } | undefined, lock = false): Promise<void> {
   if (!caller) return;
-  const [held] = await engine.executeRaw(`SELECT 1 FROM persistence_requests WHERE id=$1::uuid AND state='running' AND execution_token=$2::uuid`, [String(caller.id), String(caller.token)]);
+  const [held] = await engine.executeRaw(`SELECT 1 FROM persistence_requests WHERE id=$1::uuid AND state='running' AND execution_token=$2::uuid${lock ? ' FOR SHARE' : ''}`,
+    [String(caller.id), String(caller.token)]);
   if (held) return;
   throw opError('write_claim_lost', 'The write this local edit adoption was made for no longer waits on it.',
     `Adoption request ${row.request_id} in source ${row.source_id} belongs to a write whose claim ended (it was cancelled, finished, or reclaimed after its process stopped), so the local edit was not adopted and nothing was written.`);
@@ -222,7 +231,7 @@ async function publishAdoption(engine: BrainEngine, caller: WriteRequest, admitt
     if (!claimed) return (await getWriteRequestById(engine, row.id))!;
     try {
       const prepared = await prepareManagedFileRepairMutation(engine, claimed, { engine: engine.kind } as GBrainConfig);
-      localEditAdoptionSeams.beforePublish?.(path);
+      await localEditAdoptionSeams.beforePublish?.(path);
       row = await publishMutation(engine, claimed, prepared);
     } catch (error) { row = await finishUnpublishedFailure(engine, claimed, error, 'preparation'); }
     // #8755: any release is retried, a publication recovery requeued after the adoption's commit landed included.

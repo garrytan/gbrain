@@ -75,7 +75,7 @@ import type { SyncRename } from './sync-discovery.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import { contentRepairCommit, fenceRepairCommit, localEditAdoptionCommit } from './effect-model.ts';
-import { ADOPTED_CHANGE_REASON, adoptedHeadHolds, assertAdoptionCaller, commitAdoptedLocalEdit } from './local-edit-adoption.ts';
+import { ADOPTED_CHANGE_REASON, adoptedHeadHolds, assertAdoptionCaller, commitAdoptedLocalEdit, conflictOrOperation } from './local-edit-adoption.ts';
 import { recordSlugLineAlias } from '../page-state/rename-alias.ts';
 import type { WriteRequest } from './model.ts';
 import { bindOrigin } from './origin-guard.ts';
@@ -396,6 +396,9 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
         { fix: ownerStatusFix(row.source_id) });
       checkFile();
       if (adopted && !await adoptedHeadHolds(binding, root, target, adopted.head, adopted.blob)) throw changedSincePreview(row.source_id, p.path, 'git HEAD moved after its local edit was read', kind);
+      // #8755: the caller's claim and the index are read again here, where the adoption commits: a cancel or a conflict may come after preparation.
+      if (adopted) await assertAdoptionCaller(tx, row, adopted.caller, true);
+      if (adopted && adopted.head !== null && await conflictOrOperation(root, target)) throw changedSincePreview(row.source_id, p.path, 'a merge, rebase or conflicted path appeared after its local edit was read', kind);
       if (contentRepair?.declared_alias) await assertDeclaredSlugAbsent(tx, row.source_id, root, p, contentRepair.declared_alias, row.slug, kind);
       await assertRenameSource(tx);
       await ready.validate(tx);
