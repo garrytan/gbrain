@@ -296,8 +296,12 @@ Deferred rows are durable rows; nothing about them lives in process memory.
   - Killed after the merge started but before HEAD reached the target (a commit landed on `old_head`
     right before the merge, so git refused the fast-forward): the row also records
     `outcome.merge_started_at`, and when the reflogs of HEAD and its branch show no move to the target
-    since then, recovery aborts the row the same way and keeps that commit (GST-1674). Without a
-    readable reflog, or on a row an older version wrote, it stays `recovery_required`.
+    since then, recovery aborts the row the same way and keeps that commit (GST-1674). It reads the
+    last 1 MiB of each reflog file and needs an unbroken old-to-new chain from HEAD back past the merge
+    start (or to the log's first entry). Without a readable reflog, with a gap in the chain, with a
+    tail that ends inside that window, or on a row an older version wrote, it stays `recovery_required`.
+    A reflog read git cannot finish leaves the row `fenced` for the next scan. Refresh git calls
+    drop `GIT_COMMITTER_DATE`, so the merge's reflog entry carries the clock recovery compares with.
   - Killed after the merge, with HEAD at the target or a commit on top of it and no member synced off
     it: recovery records the merge and the next refresh finishes the member syncs, with no `--resume`.
   - A merge that ran and a HEAD that no longer holds the target (a reset and an unrelated commit)

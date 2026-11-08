@@ -181,10 +181,15 @@ async function movedBeforeMerge(engine: BrainEngine, git: Git, root: string, row
 }
 /** Reflog timestamps have one-second resolution, so an entry written just after merge_started_at can read up to a second before it. */
 const REFLOG_SLACK_MS = 5_000;
+/** The most of each reflog file recovery reads: its newest entries, which a recent merge start falls inside. */
+const REFLOG_TAIL_BYTES = 1024 ** 2;
 /**
- * GST-1674: whether the reflogs of HEAD and the branch it names record a move to the target at or after `sinceMs` (less REFLOG_SLACK_MS):
- * true or false, or null when git fails or either reflog is missing, empty or does not end at `head` (core.logAllRefUpdates off, a deleted log).
- * A git call that does not finish within its bound or cannot start throws git_unavailable instead, so the row stays and a later run retries it.
+ * GST-1674: whether the reflogs of HEAD and the branch it names record a move to the target at or after `sinceMs` (less REFLOG_SLACK_MS).
+ * Each reflog file's last REFLOG_TAIL_BYTES are read raw and walked newest first; every entry's new value must equal the next entry's old
+ * value, back to an entry older than the window or to the log's first entry (a creation from zeros). It answers true or false only then,
+ * and null on any doubt: no readable log (core.logAllRefUpdates off, a deleted log, reftable), a log that does not end at `head`, a gap in
+ * the chain (entries expired out of the middle), or a tail that ends inside the window. A git call that does not finish within its bound or
+ * cannot start throws git_unavailable instead, so the row stays and a later run retries it.
  */
 async function reachedTargetSince(git: Git, root: string, row: WorktreeRefreshRow, head: string, sinceMs: number): Promise<boolean | null> {
   const read = async (args: string[]) => {
@@ -197,11 +202,30 @@ async function reachedTargetSince(git: Git, root: string, row: WorktreeRefreshRo
   const branch = await read(['symbolic-ref', '-q', 'HEAD']);
   if (branch.code !== 0 && branch.code !== 1) return null;
   for (const ref of ['HEAD', ...(branch.code === 0 ? [branch.stdout.trim()] : [])]) {
-    const out = await read(['log', '-g', '--format=%H %gd', '--date=unix', ref, '--']);
-    if (out.code !== 0) return null;
-    const entries = out.stdout.split('\n').filter(Boolean).map(line => /^([0-9a-f]{40,64}) \S*@\{(\d+)\}$/.exec(line));
-    if (!entries.length || entries.some(entry => !entry) || entries[0]![1] !== head) return null;
-    if (entries.some(entry => entry![1] === row.target_head && Number(entry![2]) * 1000 >= sinceMs - REFLOG_SLACK_MS)) return true;
+    const path = await read(['rev-parse', '--path-format=absolute', '--git-path', `logs/${ref}`]);
+    if (path.code !== 0) return null;
+    let text: string, whole: boolean;
+    try {
+      const fd = openSync(path.stdout.trim(), 'r');
+      try {
+        const size = fstatSync(fd).size, tail = Buffer.alloc(Math.min(size, REFLOG_TAIL_BYTES));
+        readSync(fd, tail, 0, tail.length, size - tail.length);
+        text = tail.toString('utf8'); whole = tail.length === size;
+      } finally { closeSync(fd); }
+    } catch { return null; }
+    const lines = text.split('\n');
+    if (!whole) lines.shift();
+    const entries = lines.filter(Boolean).map(line => /^([0-9a-f]{40,64}) ([0-9a-f]{40,64}) .*> (\d+) [+-]\d{4}(?:\t|$)/.exec(line));
+    if (!entries.length || entries.some(entry => !entry) || entries.at(-1)![2] !== head) return null;
+    let complete = false;
+    for (let i = entries.length - 1; i >= 0 && !complete; i--) {
+      const [, old, now, at] = entries[i]!;
+      if (i < entries.length - 1 && now !== entries[i + 1]![1]) return null;
+      if (Number(at) * 1000 < sinceMs - REFLOG_SLACK_MS) complete = true;
+      else if (now === row.target_head) return true;
+      else if (i === 0 && whole && /^0+$/.test(old!)) complete = true;
+    }
+    if (!complete) return null;
   }
   return false;
 }
@@ -257,7 +281,10 @@ function inProgress(cause: string, sourceId: string, refreshId?: string): Operat
 }
 const q = (value: string) => /^[A-Za-z0-9_./:@%+=,-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
 
-/** Hardened git: no prompts, no user hooks, untranslated output, bounded. */
+/**
+ * Hardened git: no prompts, no user hooks, untranslated output, bounded. GST-1674: no inherited GIT_COMMITTER_DATE, so the reflog entries
+ * the refresh writes carry the clock recovery compares merge_started_at with.
+ */
 async function withGit<T>(run: (git: (args: string[], timeoutMs?: number) => Promise<{ stdout: string; stderr: string; code: number; timedOut: boolean }>) => Promise<T>): Promise<T> {
   const base = join(persistenceHome(), 'empty-hooks');
   mkdirSync(base, { recursive: true, mode: 0o700 });
@@ -265,7 +292,7 @@ async function withGit<T>(run: (git: (args: string[], timeoutMs?: number) => Pro
   try {
     return await run(async (args, timeoutMs = 30_000) => {
       const { error, stdout, stderr } = await execFileBounded('git', ['-c', 'core.quotepath=false', '-c', `core.hooksPath=${hooks}`, ...args],
-        { timeout: timeoutMs, maxBuffer: 32 * 1024 ** 2, env: gitChildEnv(GIT_ENV) });
+        { timeout: timeoutMs, maxBuffer: 32 * 1024 ** 2, env: { ...gitChildEnv(GIT_ENV), GIT_COMMITTER_DATE: undefined } });
       const timedOut = !!error && (error.killed || typeof error.code !== 'number');
       return { stdout, stderr, code: error ? (typeof error.code === 'number' ? error.code : -1) : 0, timedOut };
     });

@@ -19,7 +19,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -171,9 +171,32 @@ test('GST-1674: a refresh killed after git refused its fast-forward recovers by 
   });
 }, 300_000);
 
-test('GST-1674: the same crash stays recovery_required when the reflog is gone, the row predates merge_started_at, or HEAD reached the target and was reset', async () => {
-  for (const doubt of ['reflog', 'started_at', 'reset'] as const) for (const index of cases.keys()) await withRefusedMergeKill(index, async ({ f, target, foreign }) => {
-    if (doubt === 'reflog') {
+/**
+ * Rewrites the HEAD reflog to hold over 32 MiB of earlier entries dated `at` (epoch seconds), chained into
+ * the real ones: the log's creation entry now starts from the first commit, which a backfilled creation entry from zeros makes first.
+ */
+function backfillHeadReflog(f: RefreshFixture, at: number): void {
+  const log = join(f.root, '.git', 'logs', 'HEAD');
+  const real = readFileSync(log, 'utf8').split('\n').filter(Boolean);
+  const first = real[0]!.split(' ')[1]!;
+  real[0] = `${first} ${real[0]!.slice(real[0]!.indexOf(' ') + 1)}`;
+  const line = `${first} ${first} Example <example@example.invalid> ${at} +0000\tbackfill\n`;
+  writeFileSync(log, `${'0'.repeat(first.length)} ${first} Example <example@example.invalid> ${at} +0000\tbackfill\n${line.repeat(Math.ceil(33 * 1024 ** 2 / line.length))}${real.join('\n')}\n`);
+}
+
+test('GST-1674: the same crash stays recovery_required when the reflog is gone, the row predates merge_started_at, HEAD reached the target and was reset (also onto another commit with those entries expired), or the reflog tail holds no entry from before the merge', async () => {
+  for (const doubt of ['reflog', 'started_at', 'reset', 'expired', 'recent'] as const) for (const index of cases.keys()) await withRefusedMergeKill(index, async ({ f, old, target, foreign, orphan }) => {
+    if (doubt === 'recent') {
+      backfillHeadReflog(f, Math.floor(orphan.outcome.merge_started_at / 1000));
+    } else if (doubt === 'expired') {
+      git(f.root, 'branch', 'keep-foreign', foreign);
+      git(f.root, 'reset', '-q', '--hard', target);
+      git(f.root, 'reset', '-q', '--hard', old);
+      git(f.root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'after reset');
+      for (const ref of git(f.root, 'for-each-ref', '--format=%(refname)', 'refs/remotes').split('\n').filter(Boolean)) git(f.root, 'update-ref', '-d', ref);
+      git(f.root, 'reflog', 'expire', '--expire-unreachable=all', '--all');
+      expect(git(f.root, 'log', '-g', '--format=%H', 'HEAD', '--').split('\n')).not.toContain(target);
+    } else if (doubt === 'reflog') {
       git(f.root, 'config', 'core.logAllRefUpdates', 'false');
       rmSync(join(f.root, '.git', 'logs'), { recursive: true, force: true });
     } else if (doubt === 'reset') {
@@ -184,9 +207,19 @@ test('GST-1674: the same crash stays recovery_required when the reflog is gone, 
     }
     await resumeWorktreeRefreshes(f.engine);
     const [row] = await f.refreshRows() as Row[];
+    const head = doubt === 'expired' ? f.head() : foreign;
     expect([doubt, row!.state]).toEqual([doubt, 'recovery_required']);
-    expect(row!.outcome.observed_head).toBe(foreign);
-    expect(f.head()).toBe(foreign);
+    expect(row!.outcome.observed_head).toBe(head);
+    expect(f.head()).toBe(head);
+  });
+}, 300_000);
+
+test('GST-1674: a HEAD reflog file over 32 MiB still lets recovery abort the crash, reading only its newest entries', async () => {
+  for (const index of cases.keys()) await withRefusedMergeKill(index, async ({ f, foreign, orphan }) => {
+    backfillHeadReflog(f, Math.floor(orphan.outcome.merge_started_at / 1000) - 3600);
+    await resumeWorktreeRefreshes(f.engine);
+    const [row] = await f.refreshRows() as Row[];
+    expect([row!.state, row!.outcome.observed_head]).toEqual(['aborted', foreign]);
   });
 }, 300_000);
 
@@ -194,7 +227,7 @@ test('GST-1674: a reflog read that git cannot finish leaves the crash fenced for
   for (const index of cases.keys()) await withRefusedMergeKill(index, async ({ f, foreign }) => {
     const bin = join(f.root, '..', 'wedged-git');
     mkdirSync(bin, { recursive: true });
-    writeFileSync(join(bin, 'git'), `#!/bin/sh\nfor a in "$@"; do if [ "$a" = "-g" ]; then kill -9 $$; fi; done\nPATH='${process.env.PATH}' exec git "$@"\n`, { mode: 0o755 });
+    writeFileSync(join(bin, 'git'), `#!/bin/sh\nfor a in "$@"; do if [ "$a" = "--git-path" ]; then kill -9 $$; fi; done\nPATH='${process.env.PATH}' exec git "$@"\n`, { mode: 0o755 });
     const errors: string[] = [];
     const consoleError = console.error;
     console.error = (...args: unknown[]) => { errors.push(args.join(' ')); };
