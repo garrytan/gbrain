@@ -48,7 +48,10 @@ export interface InlineCitationTimelineCandidate {
 }
 
 interface CitationParagraph {
+  /** Code-masked text: used only to find citations. */
   text: string;
+  /** The same lines from the original content: the summary source. */
+  raw: string;
 }
 
 /** #6184: HTML comments (section markers, materialized-row markers) are markup, never summary text. */
@@ -90,15 +93,24 @@ function citationParagraphs(
 ): CitationParagraph[] {
   const paragraphs: CitationParagraph[] = [];
   let lines: string[] = [];
+  let rawLines: string[] = [];
   let skippedBlock = false;
 
   const flush = () => {
     if (lines.length === 0) return;
-    paragraphs.push({ text: lines.map((line) => line.trim()).join(' ') });
+    paragraphs.push({
+      text: lines.map((line) => line.trim()).join(' '),
+      raw: rawLines.map((line) => line.trim()).join(' '),
+    });
     lines = [];
+    rawLines = [];
   };
 
-  for (const line of stripCodeBlocks(content).split(/\r?\n/)) {
+  // stripCodeBlocks is length- and newline-preserving, so the lines align.
+  const originalLines = content.split(/\r?\n/);
+  const maskedLines = stripCodeBlocks(content).split(/\r?\n/);
+  for (let idx = 0; idx < maskedLines.length; idx++) {
+    const line = maskedLines[idx];
     if (line.trim().length === 0 || isCommentOnlyLine(line)) {
       flush();
       continue;
@@ -113,6 +125,7 @@ function citationParagraphs(
     skippedBlock = false;
     if (lines.length > 0 && startsMarkdownBlock(line)) flush();
     lines.push(line);
+    rawLines.push(originalLines[idx] ?? line);
   }
   flush();
 
@@ -127,9 +140,11 @@ function readCitations(content: string, opts: CitationOpts, legacy: boolean): In
   for (const paragraph of citationParagraphs(content, opts)) {
     const matches = [...paragraph.text.matchAll(CITATION_TIMELINE_RE)];
     if (matches.length === 0) continue;
-    const text = stripHtmlComments(paragraph.text)
+    // Inline code is real summary text (filenames, IDs); only its backtick markers go.
+    const text = stripHtmlComments(paragraph.raw)
       .replace(/\[Source:[^\]]*\](?:\((?:[^()]|\([^()]*\))*\))?/g, '');
     const summary = (legacy ? text : unwrapEmphasis(text))
+      .replace(/`+/g, '')
       .replace(/^[-*>#\s]+/, '')
       .replace(/\s+/g, ' ')
       .trim()
