@@ -2810,6 +2810,57 @@ since the preview. Preview again and approve the new hash. Undo by copying the b
 the file. It is explicit-only and never runs from `--all`, doctor's
 remediation plan, the maintenance cycle or an upgrade.
 
+<a id="url-source-origin"></a>
+### URL source origin
+
+A URL source a remote caller (an MCP client) adds records that on its row, and
+every later reclone of it, managed or not, clones with git-lfs downloads and
+hooks off; a URL source the local operator adds records that too, so doctor
+never asks about it. URL sources added before that record existed carry none, and nothing
+stored tells a remote caller's add from the local operator's: both wrote the
+same row and cloned into the default clone directory (`$GBRAIN_HOME/clones/<id>`).
+Their reclones use the clone settings of a local add. Doctor
+`url_source_origin` (read-only, `warn`) lists them and says it cannot tell who
+added them. A clone outside the default directory is not listed: only the local
+CLI can choose that directory. A brain with no URL sources, such as a fresh
+keyless brain, has nothing to list.
+
+**Say to your agent:** *"Show me the URL sources gbrain can't place, and record
+the ones I say a remote caller added."*
+
+```bash
+gbrain doctor --only url_source_origin --json                  # lists the sources, asks who added them
+gbrain sources record-origin <id>... --remote                   # preview: would_record / refused, writes nothing
+gbrain sources record-origin <id>... --remote --apply           # records the ids the user named
+gbrain sources record-origin <id>... --local --apply            # records the rest as local adds
+```
+
+`--remote` writes the same record a remote add writes, so the next reclone
+clones with git-lfs downloads and hooks off; `--local` records a local add, and
+doctor stops listing either. Each apply re-reads the source inside one
+transaction and refuses `source_changed` if it moved since the check. Without
+git-lfs files a clone with these settings holds the same tracked bytes, so the
+stored writer manifest needs no change and the reclone verifies as before.
+`--remote` refuses, writing nothing:
+
+- `lfs_tracked`: the checkout tracks files with git-lfs (any tracked path with
+  `filter=lfs`, or a committed `.gitattributes` that names `filter=lfs`; a
+  reclone gets only the committed attributes, so clone-local ones do not count).
+  An apply inspects the checkout again under the row lock before it writes. A clone with git-lfs downloads off holds pointer files where
+  this checkout holds their content, so its next reclone would stop at
+  `writer_manifest_mismatch`, and converting the checkout rewrites its files,
+  which this command does not do. If the source should not keep those files,
+  check that nothing in its checkout is unpushed or only local, then remove it
+  with `gbrain sources remove <id> --confirm-destructive`.
+- `lfs_unknown`: the checkout is missing or Git cannot list it, so gbrain
+  cannot confirm it has no git-lfs files. Restore the checkout and run it again.
+- `custom_clone_dir`: the clone sits where only the local CLI can clone.
+- `recorded_remote` (`--local`): the source is already recorded as a remote
+  add; this command never removes that record.
+
+It runs only from the trusted local CLI on the brain host; no MCP operation
+reaches it, and nothing records an origin on upgrade.
+
 <a id="file-drift"></a>
 ### File drift
 
