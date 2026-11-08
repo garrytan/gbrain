@@ -187,12 +187,22 @@ test('GST-1674: the same crash stays recovery_required when the reflog is gone o
   });
 }, 300_000);
 
-test('GST-1674: --abandon on a refresh killed after git refused its fast-forward abandons it with the commit kept, not recovery_required', async () => {
-  for (const index of cases.keys()) await withRefusedMergeKill(index, async ({ f, foreign }) => {
+test('GST-1674: --abandon on a refresh killed after git refused its fast-forward abandons it with the commit kept, not recovery_required, and its owed sync releases the held write', async () => {
+  for (const index of cases.keys()) await withRefusedMergeKill(index, async ({ f, foreign, orphan }) => {
+    const requestId = randomUUID();
+    const pending = await f.put(f.alpha, 'notes/held', page('Held', 'Written while the refresh was fenced.'), requestId).then(() => null, error => error as { code?: string });
+    expect(pending?.code).toBe('write_pending');
+    const [held] = await f.engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id=$1::uuid', [requestId]);
+    expect([held!.state, held!.deferred_refresh_id]).toEqual(['deferred', orphan.id]);
+
     const result = await refreshWorktree(f.engine, f.alpha, { abandon: true });
     expect(result.status).toBe('abandoned');
     const [row] = await f.refreshRows() as Row[];
     expect([row!.state, row!.outcome.refusal?.code]).toEqual(['aborted', 'refresh_abandoned']);
     expect(f.head()).toBe(foreign);
+    expect(result.synced.map(member => member.source_id).sort()).toEqual([f.alpha, f.beta].sort());
+    for (const source of [f.alpha, f.beta]) expect(await f.lastCommit(source)).toBe(foreign);
+    const done = await waitForWrite(f.engine, (await getWriteRequestById(f.engine, held!.id))!, { engine: f.engine.kind } as never, 30_000);
+    expect(done.state).toBe('committed');
   });
 }, 300_000);
