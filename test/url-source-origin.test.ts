@@ -202,7 +202,7 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
       await runRecordOrigin(engine, ['source-a', 'nope', '--local', '--apply']);
       expect(currentExitCode()).toBe(1);
       expect(await config('source-a')).toEqual({ ...URL_CONFIG, added_by_remote_caller: false });
-    } finally { exit.mockRestore(); errors.mockRestore(); logs.mockRestore(); _resetCliExitVerdictForTests(); process.exitCode = priorExitCode; }
+    } finally { exit.mockRestore(); errors.mockRestore(); logs.mockRestore(); _resetCliExitVerdictForTests(); process.exitCode = priorExitCode ?? 0; }
   }), 60_000);
 
   test('--remote refuses a checkout whose clone-local attributes hide its git-lfs files, and writes nothing', () => brain(async home => {
