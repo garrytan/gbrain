@@ -133,7 +133,7 @@ function runtimeFailure(e: ResolverError, json: boolean): never {
 async function runIndex(args: string[]): Promise<void> {
   const sub = args[0];
   if (sub !== 'build' && sub !== 'status' && sub !== 'remove') {
-    if (sub === undefined || sub === 'help') { process.stdout.write(HELP_INDEX); return; }
+    if (sub === undefined || sub === 'help' || sub === '--help' || sub === '-h') { process.stdout.write(HELP_INDEX); return; }
     usage(`Unknown subcommand "skills index ${sub}".`, 'Use gbrain skills index build, status or remove.');
   }
   const p = parseFlags(args.slice(1), ['--catalog', '--dir', '--from-json', '--routing', '--harness', '--scope', '--session'], ['--bundled', '--json', '--shadow'], HELP_INDEX);
