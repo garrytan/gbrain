@@ -13,7 +13,7 @@
  */
 import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
-import { commitAndPush, checkoutRoot, pullShared, scopePaths, COMMIT_LOCK_NAME, SOURCE_ROOT_CONFIG, type Resolution } from '../core/git/commit-push.ts';
+import { commitAndPush, checkoutRoot, pullShared, scopePaths, upstreamLacksHead, COMMIT_LOCK_NAME, SOURCE_ROOT_CONFIG, type Resolution } from '../core/git/commit-push.ts';
 import { guardStatus, installGuard, uninstallGuard } from '../core/git/commit-guard.ts';
 import { appendPushLog } from '../core/brain-repo-durability.ts';
 import { opError } from '../core/ops/contract.ts';
@@ -35,9 +35,11 @@ const HELP = `Usage: gbrain git commit-push [--path <dir>] -m <msg> [--json] [--
 Commit only the named paths and push them, safely, in a checkout other agents
 share: a short commit lock and a separate push lock per checkout, no
 rebase/stash/reset of the working tree, remote commits merged in memory, and the
-checkout advanced fast-forward only. In a managed canonical worktree it only
-commits the named paths (committed_local): no fetch, merge, push or checkout
-move; the owner's next Git publish, or --push-only --keep-checkout, pushes it.
+checkout advanced fast-forward only. In a managed canonical worktree it commits
+the named paths, then publishes any commits the upstream lacks the way
+--push-only --keep-checkout does (remote commits merged in memory, a conflict
+refused, the checkout never moved); committed_local only when the branch has
+no upstream.
 In a checkout with no Git remote it also only commits the named paths
 (committed_local, no_remote); the publishing modes are refused there.
 
@@ -222,7 +224,7 @@ export async function runGit(args: string[]): Promise<number> {
       return 0;
     }
 
-    const result = commitAndPush({
+    let result = commitAndPush({
       repo, cwd, paths: p.paths, pushOnly: p.pushOnly, advanceOnlyWhenClean: p.requireClean,
       message: p.pending ? p.message ?? 'gbrain: commit pending write-through files' : p.message,
       ...(p.pending ? { pending: true } : {}),
@@ -233,6 +235,15 @@ export async function runGit(args: string[]): Promise<number> {
       ...(p.expectRemote ? { expectRemote: p.expectRemote } : {}),
       ...(bases.size ? { bases } : {}),
     });
+    if (result.managed && upstreamLacksHead(repo)) {
+      const local = result;
+      try {
+        result = { ...commitAndPush({ repo, cwd, pushOnly: true, keepCheckout: true }), committed: local.committed, paths: local.paths, managed: true };
+      } catch (e) {
+        if (local.committed && e instanceof Error) e.message = `Committed ${local.committed.slice(0, 7)} locally; publishing it did not finish. ${e.message}`;
+        throw e;
+      }
+    }
     if (result.outcome === 'push_deferred') {
       emit(json, { ...result, repo }, `push deferred: another push is running in ${repo} and will publish HEAD too`);
       return 0;
@@ -243,7 +254,7 @@ export async function runGit(args: string[]): Promise<number> {
       return 0;
     }
     if (result.outcome === 'committed_local') {
-      emit(json, { ...result, repo }, `committed ${result.sha!.slice(0, 7)} on ${result.branch}; not pushed: this is a managed checkout, so the owner's next Git publish pushes it (or gbrain git commit-push --push-only --keep-checkout)`);
+      emit(json, { ...result, repo }, `committed ${result.sha!.slice(0, 7)} on ${result.branch}; not pushed: ${result.branch} has no upstream branch to publish to`);
       return 0;
     }
     appendPushLog(result.outcome === 'nothing_to_commit' || result.confirmed === 'remote' ? 'nothing' : result.integrated ? 'ok-after-merge' : 'ok',

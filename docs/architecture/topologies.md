@@ -834,10 +834,11 @@ Git effect commits only the page paths it wrote (`git commit --only`) and then
 pushes HEAD. Everything else in the checkout (`MEMORY.md`, daily notes,
 `AGENTS.md`, scripts) is the operator's: commit it with
 `gbrain git commit-push -m "<msg>" -- <paths>`, which commits only those paths
-under the checkout's commit lock (`committed_local`) and never fetches, pushes
-or moves the checkout. Those commits reach the remote on the owner's next
-push, because the owner pushes HEAD, or sooner with
-`gbrain git commit-push --push-only --keep-checkout` from the checkout; `gbrain sources push` refuses on a managed root and its secret scan
+under the checkout's commit lock, then publishes HEAD merged with the upstream
+the way `gbrain git commit-push --push-only --keep-checkout` does, never moving
+the checkout (`pushed`). Commits that are already there, such as a script's
+bare commit, go out on the same call, or on the owner's next push, because the
+owner pushes HEAD; `gbrain sources push` refuses on a managed root and its secret scan
 does not run on a hand push. A hand push and the owner's push race only by
 ordinary Git semantics (both push the same HEAD; a push the remote rejects is
 retried by the owner and, after repeated failures, parked, which
