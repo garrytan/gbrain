@@ -24,6 +24,7 @@ import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { makeIngestCaptureHandler } from '../src/core/minions/handlers/ingest-capture.ts';
+import { ERROR_CATALOGUE } from '../src/core/error-catalogue.ts';
 import type { MinionJobContext } from '../src/core/minions/types.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -157,6 +158,32 @@ for (const backend of backends) {
       expect(retried).not.toBe(first);
       expect((await runJob(retried)).status).toBe('imported');
       expect(await pageText(slug)).toContain(`Dead body ${backend}.`);
+    });
+
+    test('a completed legacy row with SQL NULL authority still answers the retry', async () => {
+      const slug = `notes/legacy-null-done-${backend}`;
+      const body = note('Null authority completed', `Null done body ${backend}.`);
+      const first = await ingest(body, slug);
+      await recordUnderLegacyKey(first, 'completed');
+      await brain().engine.executeRaw('UPDATE minion_jobs SET submission_authority = NULL WHERE id = $1', [first]);
+      expect(await ingest(body, slug)).toBe(first);
+      expect(await captureJobs(`Null done body ${backend}.`)).toBe(1);
+    });
+
+    test('a waiting legacy row with SQL NULL authority answers 409 and queues nothing', async () => {
+      const slug = `notes/legacy-null-waiting-${backend}`;
+      const body = note('Null authority waiting', `Null waiting body ${backend}.`);
+      const first = await ingest(body, slug);
+      await recordUnderLegacyKey(first, 'waiting');
+      await brain().engine.executeRaw('UPDATE minion_jobs SET submission_authority = NULL, finished_at = NULL WHERE id = $1', [first]);
+      try {
+        const res = await post(body, slug);
+        expect(res.status).toBe(409);
+        expect((await res.json() as { docs_url: string }).docs_url).toBe(ERROR_CATALOGUE.legacy_job_authority.docs);
+        expect(await captureJobs(`Null waiting body ${backend}.`)).toBe(1);
+      } finally {
+        await brain().engine.executeRaw('DELETE FROM minion_jobs WHERE id = $1', [first]);
+      }
     });
   });
 }
