@@ -155,7 +155,7 @@ async function memberOutsideHead(engine: BrainEngine, git: Git, root: string, ro
 }
 /**
  * GBEV-44: true when gbrain's commit ledger names every commit in from..to (writes admitted before the fence that landed while the refresh drained).
- * Only the wording of a refusal depends on it, so a ledger that cannot be read proves nothing and the commits read as not gbrain's own.
+ * A ledger that cannot be read proves nothing: these commits cannot authorize post-drain replanning and read as not gbrain's own.
  */
 async function ownCommits(git: Git, root: string, from: string, to: string): Promise<boolean> {
   const location = ledgerLocation(root);
@@ -333,7 +333,8 @@ interface Plan {
 export const REFRESH_PUBLISH_DIVERGED_KEY = 'sources.refresh_publish_diverged';
 
 /** Steps 1.3/1: refusals before any database state; fetch moves only remote-tracking refs. */
-async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTimeoutMs: number, publishDiverged = false): Promise<Plan> {
+async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTimeoutMs: number, publishDiverged = false,
+  draining?: { row: WorktreeRefreshRow; head: string; root: string }): Promise<Plan> {
   if (!await managedPersistenceEnabled(engine)) throw refusal('refresh_not_managed',
     'This brain is not managed, so gbrain sync pulls the checkout itself; there is no worktree fence to coordinate.', `gbrain sync --source ${sourceId}`);
   const binding = await getWorktreeBinding(engine, sourceId, existingHostIdFor(engine));
@@ -342,6 +343,10 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
   assertRefreshOwner(engine, binding, sourceId, 'move its checkout');
   const root = binding.local_path;
   const active = await readActiveRefresh(engine, binding.worktree_id);
+  if (draining && (active?.id !== draining.row.id || active.state !== 'draining' || root !== draining.root
+    || String(binding.owner_epoch) !== String(draining.row.owner_epoch) || String(binding.topology_generation) !== String(draining.row.topology_generation))) {
+    throw refusal('refresh_source_changed', 'The worktree ownership or refresh record changed while draining; nothing was merged.', `Retry gbrain sources refresh ${sourceId}`);
+  }
   if (active?.state === 'recovery_required') {
     const stored = (active.outcome.refusal ?? {}) as { cause?: string; fix?: string };
     throw refusal('refresh_recovery_required', stored.cause ?? `Refresh ${active.id} could not verify the checkout HEAD, so no refresh recovers it on its own.`,
@@ -350,11 +355,13 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
   if (binding.state !== 'active' || await worktreeRecoveryPending(engine, binding)) throw refusal('refresh_recovery_required',
     'Publication or topology recovery is pending on this worktree; the checkout must not move until it is recovered.',
     `gbrain sources writer status ${sourceId}, let the owner finish recovery, then gbrain sources refresh ${sourceId}`);
-  if (active) throw inProgress(`Refresh ${active.id} of this worktree is ${active.state}, held by ${describeHolder(holderOf(active))}; only one refresh per worktree runs at a time.`,
+  if (active && !draining) throw inProgress(`Refresh ${active.id} of this worktree is ${active.state}, held by ${describeHolder(holderOf(active))}; only one refresh per worktree runs at a time.`,
     sourceId, active.id);
   const members = (await engine.executeRaw<{ source_id: string }>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id',
     [binding.worktree_id])).map(row => row.source_id);
   await assertNoUnfinishedSync(engine, members);
+  if (draining && members.join(',') !== draining.row.source_ids.join(',')) throw refusal('refresh_source_changed',
+    'The worktree source membership changed while draining; nothing was merged.', `Retry gbrain sources refresh ${sourceId}`);
   if (classifyGitCheckout(root) === 'not_git') throw refusal('refresh_no_upstream',
     `The checkout ${root} is not a Git checkout, so there is no upstream to fast-forward to; gbrain never initializes Git on its own.`,
     'Nothing to refresh: only a Git checkout whose branch tracks an upstream can be fast-forwarded, and turning this directory into one is the user\'s call.');
@@ -374,6 +381,8 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
       branch ? `git -C ${q(root)} branch --set-upstream-to ${remote}/${branch}` : `git -C ${q(root)} switch <branch>, then git -C ${q(root)} branch --set-upstream-to ${remote}/<branch>`);
   }
   const upstreamRef = upstream.stdout.trim();
+  if (draining && upstreamRef !== draining.row.upstream_ref) throw refusal('refresh_source_changed',
+    'The checkout upstream changed while draining; nothing was merged.', `Retry gbrain sources refresh ${sourceId}`);
   const remote = (await read(['config', '--get', `branch.${branch}.remote`], 1)).stdout.trim();
   const merge = (await read(['config', '--get', `branch.${branch}.merge`], 1)).stdout.trim();
   const heldUpstream = new Set<string>();
@@ -413,6 +422,8 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
   const targetHead = await revParse(git, root, '@{upstream}');
   if (!oldHead || !targetHead) throw refusal('refresh_no_upstream', `The checkout HEAD or its upstream ${upstreamRef} does not resolve to a commit.`,
     `git -C ${q(root)} fetch ${remote || 'origin'}, then gbrain sources refresh ${sourceId}`);
+  if (draining && oldHead !== draining.head) throw retryInTick(refusal('refresh_source_changed',
+    'The checkout HEAD moved again during the post-drain precheck; nothing was merged.', `Retry gbrain sources refresh ${sourceId}`));
   if (oldHead !== targetHead && !await isAncestor(git, root, oldHead, targetHead)) {
     if (!publishDiverged) throw await divergedRefusal(git, root, sourceId, upstreamRef, oldHead, targetHead);
     const tips = [...heldUpstream].filter(sha => sha !== targetHead);
@@ -428,7 +439,7 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
     const pushed = await publishInChild(root, sourceId, targetHead);
     const published = { sha: pushed.sha ?? targetHead, local_commits: localCommits, integrated: pushed.integrated,
       ...(pushed.quarantined ? { quarantined: pushed.quarantined } : {}), ...(pushed.superseded_remote_paths ? { superseded_remote_paths: pushed.superseded_remote_paths } : {}) };
-    const plan = await precheck(engine, git, sourceId, fetchTimeoutMs).catch(error => { throw notePublished(error, published); });
+    const plan = await precheck(engine, git, sourceId, fetchTimeoutMs, false, draining).catch(error => { throw notePublished(error, published); });
     return { ...plan, published: { ...published, sha: pushed.sha ?? plan.targetHead } };
   }
   const dirt = await dirtyOverlap(git, root, oldHead, targetHead);
@@ -756,7 +767,7 @@ async function refreshOnce(engine: BrainEngine, sourceId: string, opts: RefreshO
   let published: WorktreeRefreshResult['published'];
   return withGit<WorktreeRefreshResult>(async git => {
     const publishDiverged = !opts.dryRun && isTruthy(await engine.getConfig(REFRESH_PUBLISH_DIVERGED_KEY));
-    const plan = await precheck(engine, git, sourceId, fetchTimeoutMs, publishDiverged);
+    let plan = await precheck(engine, git, sourceId, fetchTimeoutMs, publishDiverged);
     published = plan.published;
     const base = { refresh_id: null, worktree_id: plan.binding.worktree_id, source_ids: plan.members, old_head: plan.oldHead,
       target_head: plan.targetHead, upstream_ref: plan.upstreamRef, preserved_uncommitted: plan.preserved, incoming_files: plan.incoming,
@@ -788,7 +799,7 @@ async function refreshOnce(engine: BrainEngine, sourceId: string, opts: RefreshO
     if (!refreshLock) throw inProgress('Another process is refreshing this worktree right now.', sourceId);
     try {
       const principal = await topologyPrincipal(engine);
-      const row = await fenceDraining(engine, sourceId, plan, principal);
+      let row = await fenceDraining(engine, sourceId, plan, principal);
       const config = loadConfig() ?? { engine: engine.kind };
       // The owner keeps claiming what is already queued; this process may be that owner.
       startPersistenceConsumer(engine, config);
@@ -804,11 +815,23 @@ async function refreshOnce(engine: BrainEngine, sourceId: string, opts: RefreshO
         await new Promise(resolve => setTimeout(resolve, DRAIN_POLL_MS));
       }
       await opts.hooks?.boundary?.('drained', row);
+      // #8828: finishing the writes admitted before the barrier can itself move HEAD.
+      // Re-fetch/re-plan without topology or commit locks; the fenced transaction below
+      // revalidates ownership and drain counts and persists the new recovery base.
+      const head = await headOf(git, plan.root);
+      if (head && head !== row.old_head && await isAncestor(git, plan.root, row.old_head, head)
+        && await ownCommits(git, plan.root, row.old_head, head)) {
+        const next = await precheck(engine, git, sourceId, fetchTimeoutMs, publishDiverged, { row, head, root: plan.root })
+          .catch(error => abort(engine, row, ['draining'], error));
+        plan = next;
+        published = next.published ?? published;
+        row = { ...row, old_head: next.oldHead, target_head: next.targetHead, preserved_uncommitted: next.preserved };
+      }
       const merged = await fenceAndMerge(engine, git, sourceId, plan, row, opts.hooks);
       await opts.hooks?.boundary?.('syncing', merged);
       const sync = await syncMembers(engine, git, merged, plan.root, syncBudgetMs);
       const result = finished(await readRefresh(engine, row.id), sync, plan.preserved);
-      return plan.published ? { ...result, published: plan.published } : result;
+      return published ? { ...result, published } : result;
     } finally { await refreshLock.release(); }
   }).catch(error => { throw notePublished(error, published); });
 }
@@ -880,6 +903,8 @@ async function fenceAndMerge(engine: BrainEngine, git: Git, sourceId: string, pl
         if (counts.requests + counts.effects + counts.recovery > 0) throw retryInTick(refusal('refresh_source_changed',
           `Work reached the worktree after the drain check (${counts.requests} request(s), ${counts.effects} checkout effect(s), ${counts.recovery} recovery record(s)); nothing moved.`,
           `Retry gbrain sources refresh ${sourceId}`, row.id));
+        await tx.executeRaw(`UPDATE persistence_worktree_refreshes SET old_head=$2,target_head=$3,preserved_uncommitted=$4::text[]
+          WHERE id=$1::uuid AND state='draining'`, [row.id, row.old_head, row.target_head, row.preserved_uncommitted]);
         if (!await transition(tx, row, ['draining'], 'fenced', { merge_started: false })) throw refusal('refresh_source_changed', 'The refresh record was moved by recovery while draining.', `gbrain sources refresh ${sourceId} --resume`, row.id);
       }).catch(error => { throw (error as { code?: string }).code === LOCK_NOT_AVAILABLE ? new FenceLockTimeout() : error; });
       const current = await readRefresh(engine, row.id);

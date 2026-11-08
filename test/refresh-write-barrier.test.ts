@@ -614,7 +614,9 @@ test('a receipt poll reads the open-request index, never the permanent receipt h
   }
 }), 180_000);
 
-/** A refresh whose drain let a write land a commit past old_head, then died at `fenced` before merging; `moveHead` makes that commit. */
+/** Reproduce a legacy fenced checkpoint whose HEAD moved past old_head before its merge.
+ * Move at `fenced` so #8828's live post-drain replan cannot repair the checkpoint before the simulated crash.
+ */
 async function crashAtFenced(f: RefreshFixture, moveHead: () => string): Promise<{ deferred: WriteRequest; landed: string }> {
   f.push('alpha/two.md', page('Alpha two', 'An upstream observation.'));
   let deferred!: WriteRequest; let landed!: string;
@@ -622,9 +624,8 @@ async function crashAtFenced(f: RefreshFixture, moveHead: () => string): Promise
     if (point === 'drained') {
       const out = await call(f, 'put_page', { slug: 'notes/held-at-crash', content: page('Held at crash', 'body') });
       deferred = await requestRow(f, out.body.request_id);
-      landed = moveHead();
     }
-    if (point === 'fenced') throw new Error('simulated crash at fenced');
+    if (point === 'fenced') { landed = moveHead(); throw new Error('simulated crash at fenced'); }
   } } })).rejects.toThrow('simulated crash');
   expect(deferred.state).toBe('deferred');
   expect((await f.refreshRows()).map(r => r.state)).toEqual(['fenced']);
