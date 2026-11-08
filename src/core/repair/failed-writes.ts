@@ -166,6 +166,7 @@ function producerCommand(producer: string, sourceId: string): string {
   if (parts.includes('managed_maintenance_expire_captured_facts')) return `gbrain repair captured-facts --source ${sourceId}`;
   if (parts.includes('managed_maintenance_agent_session_facts')) return `gbrain repair agent-session-facts --source ${sourceId}`;
   if (parts.includes('managed_maintenance_restore_extractor_facts')) return `gbrain repair extractor-facts --source ${sourceId}`;
+  if (parts.includes('managed_maintenance_restore_unwithdrawn_facts')) return `gbrain repair unwithdrawn-facts --source ${sourceId}`;
   if (parts.includes('managed_maintenance_restore_redacted_facts')) return `gbrain repair redacted-facts --source ${sourceId}`;
   if (parts.includes('managed_maintenance_conversation_facts')) return `gbrain extract-conversation-facts --source-id ${sourceId} --dry-run`;
   return 'the next `gbrain dream` cycle (or autopilot) produces it again';
