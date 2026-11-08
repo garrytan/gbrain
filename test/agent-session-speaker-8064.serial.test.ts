@@ -86,6 +86,33 @@ describe('resolveSessionSpeaker', () => {
   });
 });
 
+describe('detection under a Remote Control server (#8080)', () => {
+  const HOST = { pid: 20, args: ['claude', 'remote-control', '--name', 'repo', '--spawn=worktree'] };
+  const SESSION = { pid: 21, args: ['/opt/claude/bin/claude.exe', '--print', '--sdk-url', 'https://example.invalid/s', '--input-format', 'stream-json'] };
+
+  test("the server's own session is the owner's: native binary, node entry and aliases", () => {
+    expect(detectAgentLaunched([SESSION, HOST])).toBe(false);
+    expect(detectAgentLaunched([SESSION, { pid: 22, args: ['/opt/claude/bin/claude.exe', 'remote-control'] }])).toBe(false);
+    expect(detectAgentLaunched([SESSION, { pid: 23, args: ['node', '/x/node_modules/@anthropic-ai/claude-code/cli.js', 'remote-control'] }])).toBe(false);
+    for (const alias of ['rc', 'remote', 'sync', 'bridge']) {
+      expect(detectAgentLaunched([SESSION, { pid: 27, args: ['claude', alias] }])).toBe(false);
+    }
+    expect(resolveSessionSpeaker({ env: {}, ancestry: () => [SESSION, HOST] })).toEqual({ kind: 'owner' });
+  });
+
+  test('a worker that session starts is still agent-launched', () => {
+    expect(detectAgentLaunched([WORKER, SHELL, SESSION, HOST])).toBe(true);
+    expect(detectAgentLaunched([{ pid: 4, args: ['/opt/codex', 'exec', 'task'] }, SESSION, HOST])).toBe(true);
+  });
+
+  test('only the subcommand makes a host: a prompt or a flag does not', () => {
+    expect(detectAgentLaunched([WORKER, { pid: 24, args: ['claude', '-p', 'remote-control'] }])).toBe(true);
+    expect(detectAgentLaunched([WORKER, { pid: 25, args: ['claude', '--remote-control'] }])).toBe(true);
+    expect(detectAgentLaunched([WORKER, { pid: 26, args: ['/opt/codex', 'remote-control'] }])).toBe(true);
+    expect(detectAgentLaunched([WORKER, { pid: 28, args: ['claude', '--verbose', 'remote-control'] }])).toBe(true);
+  });
+});
+
 describe('hook banking with a session speaker', () => {
   test('stop: an agent session banks its turn with the speaker sidecar beside it', async () => {
     writeConfig();

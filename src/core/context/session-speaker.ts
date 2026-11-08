@@ -17,7 +17,8 @@
  * Unset: detection (`detectAgentLaunched`) — a headless harness process
  * (claude `-p`/`--print`, codex `exec`) with a claude or codex process
  * among its ancestors. Headless alone is not enough: the owner scripting
- * `claude -p` is still the owner.
+ * `claude -p` is still the owner. A `claude remote-control` server is not such
+ * an ancestor: it hosts sessions a person types in, so the check stops at it.
  *
  * Sidecar `<sessionId>.speaker.json` (0600, tmp+rename) beside the corpus
  * files, written BEFORE any corpus file of the session; the first record is
@@ -73,16 +74,27 @@ function headless(harness: 'claude' | 'codex', args: readonly string[]): boolean
   return args.slice(1).some((a) => a === 'exec' || a === 'e');
 }
 
+/** `claude remote-control` and its aliases: the subcommand follows the native binary, or the entry script under node. */
+const SESSION_HOST_SUBCOMMANDS = new Set(['remote-control', 'rc', 'remote', 'sync', 'bridge']);
+
+function isSessionHost(args: readonly string[]): boolean {
+  if (harnessOfArgs(args) !== 'claude') return false;
+  const entry = harnessOfArgs(args.slice(0, 1)) === 'claude' ? 0 : 1;
+  return SESSION_HOST_SUBCOMMANDS.has(args[entry + 1] ?? '');
+}
+
 /**
  * True when the nearest harness process in `ancestry` (nearest first) runs
- * headless and another claude or codex process sits above it.
+ * headless and another claude or codex process sits above it, unless the nearest
+ * such process is a session host.
  */
 export function detectAgentLaunched(ancestry: readonly AncestorProcess[]): boolean {
   const at = ancestry.findIndex((p) => harnessOfArgs(p.args) !== null);
   if (at < 0) return false;
   const harness = harnessOfArgs(ancestry[at].args)!;
   if (!headless(harness, ancestry[at].args)) return false;
-  return ancestry.slice(at + 1).some((p) => harnessOfArgs(p.args) !== null);
+  const launcher = ancestry.slice(at + 1).find((p) => harnessOfArgs(p.args) !== null);
+  return launcher !== undefined && !isSessionHost(launcher.args);
 }
 
 function linuxParent(pid: number): AncestorProcess & { ppid: number } | null {
