@@ -50,6 +50,8 @@ import { classifyPgAccessError } from '../pg-access-classify.ts';
 import { classifyOriginUniqueViolation } from './origin-guard.ts';
 import { refreshProgress, refreshRetryHint, seconds } from './refresh-retry-hint.ts';
 import { ledgerLocation, readLedger } from '../git/commit-ledger.ts';
+import { scanCommitRange } from '../git/range-secret-scan.ts';
+import { gitDurabilityPolicy } from './git-durability-policy.ts';
 
 export interface WorktreeRefreshRow {
   id: string; worktree_id: string; source_ids: string[]; principal_id: string; owner_epoch: string | number;
@@ -396,11 +398,11 @@ interface Plan {
   overlap: string[]; preserved: string[]; incoming: number; published?: WorktreeRefreshResult['published'];
 }
 
-/** #7686: standing consent, default off, to publish a diverged checkout's local commits before the fast-forward. */
+/** #7686: publish a diverged checkout's local commits before the fast-forward. Unset means on when the worktree's Git durability is on; false turns it off; true publishes even with durability off. */
 export const REFRESH_PUBLISH_DIVERGED_KEY = 'sources.refresh_publish_diverged';
 
 /** Steps 1.3/1: refusals before any database state; fetch moves only remote-tracking refs. */
-async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTimeoutMs: number, publishDiverged = false): Promise<Plan> {
+async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTimeoutMs: number, publishDiverged: false | 'default' | 'explicit' = false): Promise<Plan> {
   if (!await managedPersistenceEnabled(engine)) throw refusal('refresh_not_managed',
     'This brain is not managed, so gbrain sync pulls the checkout itself; there is no worktree fence to coordinate.', `gbrain sync --source ${sourceId}`);
   const binding = await getWorktreeBinding(engine, sourceId, existingHostIdFor(engine));
@@ -491,6 +493,13 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
     const base = (await read(['merge-base', oldHead, targetHead], 1)).stdout.trim() || oldHead;
     const incoming = await dirtyOverlap(git, root, base, targetHead);
     if (incoming.overlap.length) throw dirtyRefusal(sourceId, incoming.overlap);
+    if (publishDiverged === 'default' && !(await gitDurabilityPolicy(binding, root)).durable) throw await divergedRefusal(git, root, sourceId, upstreamRef, oldHead, targetHead,
+      'Git durability is not on for this worktree, so nothing leaves it through Git on its own.',
+      ` To let every refresh publish it on its own, the user can turn Git durability on (gbrain sources writer git-durability ${sourceId} --enable) or run gbrain config set ${REFRESH_PUBLISH_DIVERGED_KEY} true.`);
+    const secrets = await scanCommitRange(root, targetHead, oldHead);
+    if (!secrets || secrets.length) throw await divergedRefusal(git, root, sourceId, upstreamRef, oldHead, targetHead, !secrets
+      ? `gbrain could not read the local commits to scan them for secrets (git log or git cat-file failed).`
+      : `Its local commits hold ${secrets.length} value(s) that look like secrets: ${secrets.slice(0, 10).map(s => `${s.path}:${s.line} (${s.pattern}, ${s.commit.slice(0, 7)})`).join(', ')}${secrets.length > 10 ? ', ...' : ''}. Remove them from those commits, or allowlist a false positive by its fingerprint in .gbrain-scan-allow.`);
     const localCommits = Number((await read(['rev-list', '--count', `${targetHead}..${oldHead}`])).stdout.trim()) || 0;
     const pushed = await publishInChild(root, sourceId, targetHead);
     const published = { sha: pushed.sha ?? targetHead, local_commits: localCommits, integrated: pushed.integrated,
@@ -535,13 +544,13 @@ async function publishInChild(root: string, sourceId: string, checkedUpstream: s
  * upstream into HEAD in memory and pushes the merge (refusing on a conflict, never touching the checkout), after which HEAD
  * is an ancestor of the upstream and the refresh fast-forwards. It publishes the local commits, so the user decides.
  */
-async function divergedRefusal(git: Git, root: string, sourceId: string, upstreamRef: string, oldHead: string, targetHead: string, rewrite?: string): Promise<OperationError> {
+async function divergedRefusal(git: Git, root: string, sourceId: string, upstreamRef: string, oldHead: string, targetHead: string, rewrite?: string, hint?: string): Promise<OperationError> {
   const count = Number((await git(['-C', root, 'rev-list', '--count', `${targetHead}..${oldHead}`])).stdout.trim()) || 0;
   const local = count ? `${count} local commit(s)` : 'the local commits';
   const argv = ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', root, '--json'];
   const error = refusal('refresh_diverged',
     `The checkout HEAD ${oldHead} is not an ancestor of ${upstreamRef} (${targetHead}); a fast-forward is impossible and nothing changed.${rewrite ? ` ${rewrite} ${REFRESH_PUBLISH_DIVERGED_KEY} does not publish it on its own.` : ''}`,
-    `Publish ${local} merged with ${upstreamRef}: ${argv.map(q).join(' ')} (it merges in memory, refuses on a conflict and never moves the checkout), then retry gbrain sources refresh ${sourceId}. Ask the user first, because it pushes those commits (git -C ${q(root)} log --stat ${upstreamRef}..HEAD lists them). gbrain sources reclone ${sourceId} replaces the checkout instead and drops them.${rewrite ? '' : ` To let every refresh publish a diverged checkout this way on its own, the user can run gbrain config set ${REFRESH_PUBLISH_DIVERGED_KEY} true.`}`);
+    `Publish ${local} merged with ${upstreamRef}: ${argv.map(q).join(' ')} (it merges in memory, refuses on a conflict and never moves the checkout), then retry gbrain sources refresh ${sourceId}. Ask the user first, because it pushes those commits (git -C ${q(root)} log --stat ${upstreamRef}..HEAD lists them). gbrain sources reclone ${sourceId} replaces the checkout instead and drops them.${hint ?? (rewrite ? '' : ` To let every refresh publish a diverged checkout this way on its own, the user can run gbrain config set ${REFRESH_PUBLISH_DIVERGED_KEY} true.`)}`);
   error.fix = { argv, consent: [], actor: 'user', ask_user: true, requires_exclusive: false,
     why: `HEAD has ${local} that ${upstreamRef} lacks while ${upstreamRef} moved on; pushing HEAD merged with it makes HEAD an ancestor of the upstream, so the refresh can fast-forward.`,
     user_message: rewrite ? `The checkout of source ${sourceId} cannot be published on its own: ${rewrite} Push this checkout's history merged with the remote anyway, or replace the checkout with gbrain sources reclone ${sourceId}?`
@@ -886,7 +895,8 @@ async function runRefresh(engine: BrainEngine, sourceId: string, opts: RefreshOp
 async function refreshOnce(engine: BrainEngine, sourceId: string, opts: RefreshOptions, fetchTimeoutMs: number, waitDrainMs: number, syncBudgetMs: number): Promise<WorktreeRefreshResult> {
   let published: WorktreeRefreshResult['published'];
   return withGit<WorktreeRefreshResult>(async git => {
-    const publishDiverged = !opts.dryRun && isTruthy(await engine.getConfig(REFRESH_PUBLISH_DIVERGED_KEY));
+    const configured = opts.dryRun ? 'false' : await engine.getConfig(REFRESH_PUBLISH_DIVERGED_KEY);
+    const publishDiverged = configured === null || configured === undefined || configured.trim() === '' ? 'default' : isTruthy(configured) ? 'explicit' : false;
     const plan = await precheck(engine, git, sourceId, fetchTimeoutMs, publishDiverged);
     published = plan.published;
     const base = { refresh_id: null, worktree_id: plan.binding.worktree_id, source_ids: plan.members, old_head: plan.oldHead,

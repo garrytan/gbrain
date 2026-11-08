@@ -938,7 +938,7 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
     if (attempt) Atomics.wait(sleeper, 0, 0, Math.min(2000, 50 * 2 ** attempt) + Math.floor(Math.random() * 100));
     let remoteTip = bound && !isAncestor(ctx.root, bound, candidate) ? bound : null;
     if (!remoteTip) {
-      const push = remoteGit(ctx.root, 'push', [...(ctx.keepCheckout ? ['--no-verify'] : []), ...(bound ? [`--force-with-lease=${ctx.mergeRef}:${bound}`] : []), '--', ctx.remote, `${candidate}:${ctx.mergeRef}`]);
+      const push = remoteGit(ctx.root, 'push', [...(ctx.keepCheckout && candidate !== start ? ['--no-verify'] : []), ...(bound ? [`--force-with-lease=${ctx.mergeRef}:${bound}`] : []), '--', ctx.remote, `${candidate}:${ctx.mergeRef}`]);
       if (push.code === 0) return { sha: candidate, integrated, confirmed: 'push', ...notes() };
       lastError = push.stderr.trim();
       if (remoteContains(ctx, candidate)) return onRemote();
