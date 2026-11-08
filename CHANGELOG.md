@@ -10,9 +10,9 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.610.0] - 2026-11-08
 
-**A client that retries a `POST /ingest` capture accepted before v0.60.609.0 no longer queues a second job that writes the old body over the page's newer edit.** v0.60.609.0 added the target slug to the capture's queue key, and nothing looked up the old key form, so a retry of a capture that had already landed was taken as a new one. The route now also looks up a capture's pre-v0.60.609.0 key and answers 202 with that job when it was queued for the same target slug, so the retry is the same request again and nothing is queued.
+**A client that retries a `POST /ingest` capture accepted before v0.60.610.0 no longer queues a second job that writes the old body over the page's newer edit.** v0.60.610.0 added the target slug to the capture's queue key, and nothing looked up the old key form, so a retry of a capture that had already landed was taken as a new one. The route now also looks up a capture's pre-v0.60.610.0 key and answers 202 with that job when it was queued for the same target slug, so the retry is the same request again and nothing is queued.
 
 ### Itemized changes
 
