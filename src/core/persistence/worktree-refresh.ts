@@ -701,7 +701,7 @@ async function syncAfterUnfinishedRefresh(engine: BrainEngine, sourceId: string,
   const lagging: string[] = [];
   for (const member of newest.source_ids) if (await lastCommit(engine, member) !== head) lagging.push(member);
   if (!lagging.length) return [];
-  startPersistenceConsumer(engine, loadConfig() ?? { engine: engine.kind });
+  startPersistenceConsumer(engine, consumerConfig(engine));
   const sync = await boundedMemberSync(await configuredMs(engine, opts.syncBudgetMs, 'GBRAIN_REFRESH_SYNC_BUDGET_MS', 'sources.refresh_sync_budget_ms', SYNC_BUDGET_MS));
   const synced: RefreshMemberSync[] = [];
   for (const [index, member] of lagging.entries()) {
@@ -710,6 +710,7 @@ async function syncAfterUnfinishedRefresh(engine: BrainEngine, sourceId: string,
   }
   return synced;
 }
+const consumerConfig = (engine: BrainEngine) => loadConfig() ?? { engine: engine.kind };
 const owedSyncNote = (synced: RefreshMemberSync[]) => `The worktree's last refresh ended without completing, so this run then ran the managed sync of ${synced
   .map(member => `${member.source_id} (${member.status})`).join(', ')} at the checkout HEAD, for writes held for that import.`;
 
@@ -826,7 +827,7 @@ async function refreshOnce(engine: BrainEngine, sourceId: string, opts: RefreshO
     try {
       const principal = await topologyPrincipal(engine);
       const row = await fenceDraining(engine, sourceId, plan, principal);
-      const config = loadConfig() ?? { engine: engine.kind };
+      const config = consumerConfig(engine);
       // The owner keeps claiming what is already queued; this process may be that owner.
       startPersistenceConsumer(engine, config);
       const deadline = performance.now() + waitDrainMs;
@@ -1180,7 +1181,7 @@ async function resumeHeld(engine: BrainEngine, git: Git, sourceId: string, refre
   if (row.state !== 'syncing') return { ...empty, status: 'abandoned', refresh_id: row.id, source_ids: row.source_ids, old_head: row.old_head,
     target_head: row.target_head, upstream_ref: row.upstream_ref, next: `The interrupted refresh was rolled back without moving HEAD; start again with gbrain sources refresh ${sourceId}`,
     recovered: { ...recovered, status: 'abandoned' } };
-  startPersistenceConsumer(engine, loadConfig() ?? { engine: engine.kind });
+  startPersistenceConsumer(engine, consumerConfig(engine));
   const sync = await syncMembers(engine, git, row, root, syncBudgetMs);
   row = await readRefresh(engine, row.id);
   const result = finished(row, sync);
