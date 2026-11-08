@@ -11,6 +11,7 @@ import { scannerSlugRootMode } from '../core/write-through.ts';
 import type { SlugRootMode } from '../core/sync-anchor.ts';
 import { nativeFileTarget } from '../core/persistence/native-file-target.ts';
 import { OperationError } from '../core/ops/contract.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
 /**
  * Distinct nominal types for the two tier-keyed numeric maps. Both shapes
@@ -454,6 +455,6 @@ async function runStorageInit(engine: BrainEngine, args: string[]): Promise<void
     if (!(error instanceof OperationError)) throw error;
     console.log(json ? JSON.stringify({ error: error.code, message: error.message, suggestion: error.suggestion }) : `Refused (${error.code}): ${error.message}
 Fix: ${error.suggestion ?? ''}`);
-    process.exitCode = error.code === 'invalid_params' ? 2 : 1;
+    setCliExitVerdict(error.code === 'invalid_params' ? 2 : 1);
   }
 }
