@@ -2150,7 +2150,10 @@ fence could expire them (`expired_at` set, `row_num` cleared, no
 `gbrain repair generations --kind fact_fence` has no earlier generation to
 return to. `gbrain repair unwithdrawn-facts` restores these rows from the
 before-state the generation ledger recorded. It is explicit-only and
-preview-bound, and it works on a brain with or without a repository.
+preview-bound. On an unmanaged brain, with or without a repository, the
+`extract_facts` reconcile still treats a numbered row its fence lacks as drift
+and would retire a restored row again, so the preview lists those candidates
+as `excluded:unmanaged_reconcile` and restores none.
 
 ```bash
 gbrain doctor                                   # unwithdrawn_facts
@@ -2168,7 +2171,7 @@ facts are left to [Extractor facts](#extractor-facts).
 | --- | --- | --- |
 | `evidenced` | No fence of the page ever held the fact: no facts-fence generation recorded it, and neither the page nor any stored version of it carries it at the same row number, claim and visibility. | By `--apply --expect <hash>` |
 | `ambiguous` | The page's version history has a gap (pruned versions, or an import that consumed several commits), or it has more stored versions than one preview reads, so an earlier fence holding the fact cannot be ruled out. | Only with `--include-ambiguous` and that preview's hash |
-| `excluded:<reason>` | Page missing or deleted, superseded, withdrawn (`forget`), changed since the retirement, held by a fence (`fence_held`: an edit of the fence removed it, a genuine withdrawal), an active fact with the same text and entity already on the page, or an earlier candidate with the same text and entity. | Never |
+| `excluded:<reason>` | Page missing or deleted, superseded, withdrawn (`forget`), changed since the retirement, held by a fence (`fence_held`: an edit of the fence removed it, a genuine withdrawal), an active fact with the same text and entity already on the page at any visibility, an earlier candidate with the same text and entity, or an unmanaged brain (`unmanaged_reconcile`). | Never |
 
 The preview binds each page's revision. If the page was written after the
 preview, the apply restores nothing for it and reports
@@ -2177,10 +2180,10 @@ reports `changed_since_preview` and stays expired. A restored fact keeps its id
 and gets back its recorded `expired_at` (cleared), `valid_until`,
 `superseded_by` and consolidation marks, at its recorded row number, or at a
 fresh number above the page's rows when a fence row has taken it. No page or
-file is written. On a managed brain each page publishes one database-only
-`managed_maintenance_restore_unwithdrawn_facts` request; an unmanaged brain
-writes under the page lock. Page writes and managed `extract_facts` runs from
-this release on keep these rows active.
+file is written. Each page publishes one database-only
+`managed_maintenance_restore_unwithdrawn_facts` request. Page writes and
+managed `extract_facts` runs from this release on keep these rows active,
+except a row whose claim the page's fence now states, which still retires.
 
 <a id="conversation-labels"></a>
 ### Conversation labels

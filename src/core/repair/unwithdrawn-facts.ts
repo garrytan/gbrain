@@ -14,7 +14,9 @@
  *   - excluded (listed, never restored): the page is missing or deleted; the fact was superseded or withdrawn
  *     (`fact_withdrawals`); a fence held it (a fact_fence generation recorded it, or the page or a stored version of it
  *     carries it at the same row number, claim and visibility: a genuine withdrawal); an active fact with the same
- *     text, visibility and entity is on the page; or another candidate with the same text is restored instead.
+ *     text and entity is on the page, at any visibility; another candidate with the same text is restored instead; or
+ *     the brain is unmanaged, whose extract_facts reconcile retires a row its fence lacks as drift and would retire a
+ *     restored row again.
  *   - ambiguous (restored only with `--include-ambiguous` and that preview's hash): the page's version history has a
  *     gap (pruned, or an import that consumed several commits) or was not read whole, so an earlier fence holding the
  *     row cannot be ruled out.
@@ -22,8 +24,8 @@
  *
  * The preview binds each page's revision. The apply restores exactly the approved set under the page key: a managed
  * brain publishes one database-only `managed_maintenance_restore_unwithdrawn_facts` request per page bound to the
- * previewed revision; an unmanaged (or repo-less) brain checks the revision and writes in one page-locked maintenance
- * transaction. A changed page refuses whole (`changed_since_preview`); each fact is reclassified and restored only when
+ * previewed revision; on an unmanaged (or repo-less) brain, where nothing is restorable, an approved set from a preview
+ * taken while it was managed is reclassified in one page-locked maintenance transaction after the revision check. A changed page refuses whole (`changed_since_preview`); each fact is reclassified and restored only when
  * its class and evidence are unchanged. A restored fact keeps its id and gets back its recorded lifecycle (`expired_at`,
  * `valid_until`, `superseded_by`, consolidation marks) and its row number, or a fresh number above the page's rows
  * when a fence row took it. No page is rewritten; the fix keeps restored rows active on later writes.
@@ -107,7 +109,7 @@ export async function classifyUnwithdrawnFacts(db: BrainEngine, sourceIds: strin
            EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
              AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))
              AND (w.subject = '*' OR w.subject = f.entity_slug)) AS withdrawn,
-           EXISTS (SELECT 1 FROM facts a WHERE a.source_id = f.source_id AND a.visibility = f.visibility AND a.source_markdown_slug = r.slug
+           EXISTS (SELECT 1 FROM facts a WHERE a.source_id = f.source_id AND a.source_markdown_slug = r.slug
              AND a.expired_at IS NULL AND gbrain_fact_fingerprint(a.fact) = gbrain_fact_fingerprint(f.fact)
              AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug) AS active_duplicate
       FROM retired r
@@ -129,7 +131,8 @@ export async function classifyUnwithdrawnFacts(db: BrainEngine, sourceIds: strin
       prior: current ? await pageFenceRowKeys(db, current, row.slug, row.source_id) : null,
       rows: page.map(other => ({ id: Number(other.id), row_num: Number(other.preimage.row_num), fact: other.preimage.fact, visibility: other.preimage.visibility })) }));
   }
-  const base = rows.map(row => classify(row, evidence.get(`${row.source_id}\u0000${row.slug}`)));
+  const managed = await managedPersistenceEnabled(db);
+  const base = rows.map(row => classify(row, evidence.get(`${row.source_id}\u0000${row.slug}`), managed));
   const key = (row: CandidateRow) => JSON.stringify([row.source_id, row.slug, row.visibility, row.entity_slug, row.fingerprint]);
   const representative = new Map<string, number>();
   for (const klass of ['evidenced', 'ambiguous'] as const) rows.forEach((row, i) => { if (base[i]![0] === klass && !representative.has(key(row))) representative.set(key(row), i); });
@@ -141,13 +144,14 @@ export async function classifyUnwithdrawnFacts(db: BrainEngine, sourceIds: strin
   });
 }
 
-function classify(row: CandidateRow, evidence: { held: Set<number>; complete: boolean } | undefined): [UnwithdrawnFactClass, string] {
+function classify(row: CandidateRow, evidence: { held: Set<number>; complete: boolean } | undefined, managed: boolean): [UnwithdrawnFactClass, string] {
   if (row.page_id === null || row.page_deleted || !evidence) return ['excluded', 'page_missing'];
   if (row.superseded) return ['excluded', 'superseded'];
   if (row.withdrawn) return ['excluded', 'withdrawn'];
   if (row.expired_at !== row.retired_at) return ['excluded', 'changed_since_retirement'];
   if (evidence.held.has(Number(row.id))) return ['excluded', 'fence_held'];
   if (row.active_duplicate) return ['excluded', 'active_duplicate'];
+  if (!managed) return ['excluded', 'unmanaged_reconcile'];
   if (row.history_gap) return ['ambiguous', 'version_history_gap'];
   if (!evidence.complete) return ['ambiguous', 'version_history_unread'];
   return ['evidenced', 'never_in_fence'];
@@ -161,6 +165,7 @@ const DETAILS: Record<string, string> = {
   fence_held: 'a fence of the page held it, so an edit of the fence withdrew it',
   active_duplicate: 'an active fact with the same text and entity is already on the page',
   duplicate_candidate: 'another candidate of the page with the same text and entity is restored instead',
+  unmanaged_reconcile: "this brain is unmanaged: its extract_facts reconcile treats a numbered row the page's fence lacks as drift and would retire a restored row again",
   version_history_gap: "the page's version history has a gap, so an earlier fence holding it cannot be ruled out",
   version_history_unread: "the page has more stored versions than one preview reads, so an earlier fence holding it cannot be ruled out",
 };

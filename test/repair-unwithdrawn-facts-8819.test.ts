@@ -4,8 +4,9 @@
  * Protects: facts a facts-fence generation retired although no fence of their page held them come back with their
  * original ids and lifecycle, also when that generation was the page's first (no predecessor to restore); a row a
  * stored version's fence held (a genuine withdrawal) is never restored; the apply restores exactly the previewed set,
- * bound to the page revision the preview saw, so a page written since restores nothing; a managed brain and an
- * unmanaged brain with a database-only page (no repository) both restore; doctor names the lane and clears after it.
+ * bound to the page revision the preview saw, so a page written since restores nothing; an unmanaged brain (a
+ * database-only page, no repository) lists nothing restorable, since its extract_facts reconcile would retire a restored
+ * row again; doctor names the lane and clears after it.
  * Seam: the pre-fix projection's retirement is reproduced by its effect, as it ran: a fact_fence generation recorded
  * through publishFenceGeneration with each row's before-state, and the rows expired and detached in that transaction.
  */
@@ -19,6 +20,7 @@ import { publishFenceGeneration, readFenceBlocks, FACT_FENCE_KIND } from '../src
 import { factFenceItems, factPreimages, factRetireItem } from '../src/core/generations/adapters/fact-rows.ts';
 import { unwithdrawnFactsCheck } from '../src/commands/doctor/checks/unwithdrawn-facts.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
+import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 
 const SLUG = 'people/alice-example';
 const ROW = (n: number, claim: string) => `| ${n} | ${claim} | fact | 1.0 | private | medium | 2020-01-01 |  | chat |  |`;
@@ -68,6 +70,32 @@ async function seed(s: ManagedSource): Promise<{ chess: number; lisbon: number; 
   return ids;
 }
 
+/**
+ * A managed brain's page whose fence holds row 1, its fact ledger cleared and row 1 attached; a segmented one also has a
+ * body-less stored version. `seed` writes its rows before the brain turns managed (raw fact writes are refused after);
+ * `run` gets what it returned.
+ */
+async function managedPage<T>(databaseUrl: string | undefined, seed: (engine: BrainEngine, sourceId: string) => Promise<T>,
+  run: (engine: BrainEngine, sourceId: string, seeded: T) => Promise<void>, segmented = false): Promise<void> {
+  let seeded: T;
+  await managedSource(databaseUrl, async s => {
+    await s.put(SLUG, PERSON('Alice Example', FACTS_FENCE(FOUNDED)));
+    await s.engine.executeRaw("DELETE FROM derived_generations WHERE source_id=$1 AND kind='fact_fence'", [s.sourceId]);
+    await s.engine.executeRaw('DELETE FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [s.sourceId, SLUG]);
+    if (segmented) await s.engine.executeRaw(`INSERT INTO page_versions (page_id, compiled_truth, timeline, body_storage, body_generation)
+      SELECT id, NULL, NULL, 'segmented', 1 FROM pages WHERE source_id=$1 AND slug=$2`, [s.sourceId, SLUG]);
+    await factRow(s.engine, s.sourceId, 1, 'Alice founded acme-example', 'chat');
+    seeded = await seed(s.engine, s.sourceId);
+  }, ({ engine, sourceId }) => run(engine, sourceId, seeded));
+}
+
+/** Seeds one retired put_page row, 'Alice plays chess' at row 2. */
+async function retiredChess(engine: BrainEngine, sourceId: string): Promise<number> {
+  const chess = await factRow(engine, sourceId, 2, 'Alice plays chess');
+  await prefixRetire(engine, sourceId, [chess]);
+  return chess;
+}
+
 describe('gbrain repair unwithdrawn-facts (#8819)', () => {
   for (const { backend, databaseUrl } of pathologicalArms()) {
     test(`[${backend}] managed: restores first-generation retirements no fence withdrew, never a withdrawn one, bound to the previewed revision`, async () => {
@@ -101,7 +129,7 @@ describe('gbrain repair unwithdrawn-facts (#8819)', () => {
   }
 
   for (const { backend, databaseUrl } of pathologicalArms()) {
-    test(`[${backend}] unmanaged brain, database-only page: the same restore with no repository`, async () => {
+    test(`[${backend}] unmanaged brain, database-only page: nothing is restorable, since its reconcile would retire a restored row again`, async () => {
       const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
       try {
         await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
@@ -111,30 +139,23 @@ describe('gbrain repair unwithdrawn-facts (#8819)', () => {
         const chess = await factRow(engine, sourceId, 2, 'Alice plays chess');
         await prefixRetire(engine, sourceId, [chess]);
         const preview = await repair(engine, sourceId);
-        expect(preview.listing!.map(row => row.class)).toEqual(['evidenced']);
-        expect((await repair(engine, sourceId, { expect: hashOf(preview) })).applied).toBe(1);
-        expect(await state(engine, [chess])).toEqual([[chess, 2, true]]);
+        expect(preview.listing!.map(row => row.class)).toEqual(['excluded:unmanaged_reconcile']);
+        expect((await unwithdrawnFactsCheck(engine, [sourceId])).status).toBe('ok');
+        await runExtractFacts(engine, { sourceId, slugs: [SLUG] });
+        expect(await state(engine, [chess])).toEqual([[chess, null, false]]);
+        expect((await unwithdrawnFactsCheck(engine, [sourceId])).status).toBe('ok');
       } finally { await close(); }
     }, 120_000);
   }
 
   for (const { backend, databaseUrl } of pathologicalArms()) {
     test(`[${backend}] a stored version kept without a body (a segmented snapshot) leaves the row ambiguous, never restored by default`, async () => {
-      const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
-      try {
-        await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-        const sourceId = 'default';
-        await engine.putPage(SLUG, { type: 'person', title: 'Alice Example', compiled_truth: FACTS_FENCE(FOUNDED) }, { sourceId });
-        await engine.executeRaw(`INSERT INTO page_versions (page_id, compiled_truth, timeline, body_storage, body_generation)
-          SELECT id, NULL, NULL, 'segmented', 1 FROM pages WHERE source_id=$1 AND slug=$2`, [sourceId, SLUG]);
-        await factRow(engine, sourceId, 1, 'Alice founded acme-example', 'chat');
-        const chess = await factRow(engine, sourceId, 2, 'Alice plays chess');
-        await prefixRetire(engine, sourceId, [chess]);
+      await managedPage(databaseUrl, retiredChess, async (engine, sourceId, chess) => {
         const preview = await repair(engine, sourceId);
         expect(preview.listing!.map(row => row.class)).toEqual(['ambiguous']);
         expect((await unwithdrawnFactsCheck(engine, [sourceId])).details).toMatchObject({ evidenced: 0, ambiguous: 1 });
         expect(await state(engine, [chess])).toEqual([[chess, null, false]]);
-      } finally { await close(); }
+      }, true);
     }, 120_000);
   }
 });
@@ -142,24 +163,12 @@ describe('gbrain repair unwithdrawn-facts (#8819)', () => {
 /*
  * Coverage pass (/ship 8830 Step 7), generated by Capy.
  * Value: protects=classify never restores superseded, withdrawn, changed_since_retirement, active_duplicate or duplicate_candidate rows; fails_when=a classify guard is dropped or reordered; why_new=existing tests only reach fence_held and ambiguous; seam=none; no_claim=page_missing (needs a second page's generation; not seeded here)
- * Value: protects=--apply without --expect is invalid_params, an include_ambiguous mismatch is preview_changed, a taken row_num moves to max+1; fails_when=the expect guard, mismatch check or row_num CASE regresses; why_new=no test applies ambiguous rows or a taken row_num; seam=none; no_claim=managed-brain path of these branches (unmanaged PGLite/Postgres only)
+ * Value: protects=--apply without --expect is invalid_params, an include_ambiguous mismatch is preview_changed, a taken row_num moves to max+1; fails_when=the expect guard, mismatch check or row_num CASE regresses; why_new=no test applies ambiguous rows or a taken row_num; seam=none; no_claim=unmanaged brains, where nothing is restorable (the unmanaged test above)
  */
 describe('gbrain repair unwithdrawn-facts (#8819) coverage pass', () => {
-  async function unmanagedPage(databaseUrl: string | undefined, segmented = false) {
-    const handle = await isolatedSharedSkillsEngine(databaseUrl);
-    await handle.engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-    await handle.engine.putPage(SLUG, { type: 'person', title: 'Alice Example', compiled_truth: FACTS_FENCE(FOUNDED) }, { sourceId: 'default' });
-    if (segmented) await handle.engine.executeRaw(`INSERT INTO page_versions (page_id, compiled_truth, timeline, body_storage, body_generation)
-      SELECT id, NULL, NULL, 'segmented', 1 FROM pages WHERE source_id='default' AND slug=$1`, [SLUG]);
-    await factRow(handle.engine, 'default', 1, 'Alice founded acme-example', 'chat');
-    return handle;
-  }
-
   for (const { backend, databaseUrl } of pathologicalArms()) {
     test(`[${backend}] exclusions: superseded, withdrawn, changed, active duplicate and duplicate candidate are listed, never restored`, async () => {
-      const { engine, close } = await unmanagedPage(databaseUrl);
-      try {
-        const s = 'default';
+      await managedPage(databaseUrl, async (engine, s) => {
         const ids = { chess: await factRow(engine, s, 2, 'Alice plays chess'), sailsA: await factRow(engine, s, 3, 'Alice sails'), sailsB: await factRow(engine, s, 4, 'Alice sails'),
           superseded: await factRow(engine, s, 5, 'Alice owns a boat'), withdrawn: await factRow(engine, s, 6, 'Alice likes jazz'),
           changed: await factRow(engine, s, 7, 'Alice speaks French'), activeDup: await factRow(engine, s, 8, 'Alice runs') };
@@ -168,6 +177,8 @@ describe('gbrain repair unwithdrawn-facts (#8819) coverage pass', () => {
         await engine.executeRaw('UPDATE facts SET superseded_by=$2 WHERE id=$1', [ids.superseded, ids.chess]);
         await engine.executeRaw("INSERT INTO fact_withdrawals (source_id, visibility, fact_hash) SELECT source_id, visibility, gbrain_fact_fingerprint(fact) FROM facts WHERE id=$1", [ids.withdrawn]);
         await engine.executeRaw("UPDATE facts SET expired_at = expired_at + interval '1 second' WHERE id=$1", [ids.changed]);
+        return ids;
+      }, async (engine, s, ids) => {
         const preview = await repair(engine, s);
         expect(preview.listing!.map(row => [row.item, row.class])).toEqual([
           [`${s}:${SLUG}#${ids.chess}`, 'evidenced'], [`${s}:${SLUG}#${ids.sailsA}`, 'evidenced'], [`${s}:${SLUG}#${ids.sailsB}`, 'excluded:duplicate_candidate'],
@@ -176,42 +187,70 @@ describe('gbrain repair unwithdrawn-facts (#8819) coverage pass', () => {
         expect((await repair(engine, s, { expect: hashOf(preview) })).applied).toBe(1);
         const active = (await state(engine, Object.values(ids))).filter(([, , on]) => on).map(([id]) => id);
         expect(active).toEqual([ids.chess, ids.sailsA]);
-      } finally { await close(); }
+      });
     }, 120_000);
   }
 
   for (const { backend, databaseUrl } of pathologicalArms()) {
     test(`[${backend}] --apply needs --expect; a taken row number moves the restored row to max+1`, async () => {
-      const { engine, close } = await unmanagedPage(databaseUrl);
-      try {
-        const chess = await factRow(engine, 'default', 2, 'Alice plays chess');
-        await prefixRetire(engine, 'default', [chess]);
-        await factRow(engine, 'default', 2, 'Alice paints');
-        const scope = await resolveRepairScope(engine, 'default');
-        await expect((await repairRunner(engine, { apply: true, noEmbed: true, logger: quiet })).run('unwithdrawn-facts', scope, { explicit: true, sourceFlag: 'default' }))
+      await managedPage(databaseUrl, async (engine, sourceId) => {
+        const chess = await retiredChess(engine, sourceId);
+        await factRow(engine, sourceId, 2, 'Alice paints');
+        return chess;
+      }, async (engine, sourceId, chess) => {
+        const scope = await resolveRepairScope(engine, sourceId);
+        await expect((await repairRunner(engine, { apply: true, noEmbed: true, logger: quiet })).run('unwithdrawn-facts', scope, { explicit: true, sourceFlag: sourceId }))
           .rejects.toMatchObject({ code: 'invalid_params' });
-        const preview = await repair(engine, 'default');
-        expect((await repair(engine, 'default', { expect: hashOf(preview) })).applied).toBe(1);
+        const preview = await repair(engine, sourceId);
+        expect((await repair(engine, sourceId, { expect: hashOf(preview) })).applied).toBe(1);
         expect(await state(engine, [chess])).toEqual([[chess, 3, true]]);
-        const [{ n }] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM facts WHERE source_id='default' AND source_markdown_slug=$1 AND expired_at IS NULL AND row_num=2", [SLUG]);
+        const [{ n }] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM facts WHERE source_id=$2 AND source_markdown_slug=$1 AND expired_at IS NULL AND row_num=2", [SLUG, sourceId]);
         expect(Number(n)).toBe(1);
-      } finally { await close(); }
+      });
     }, 120_000);
   }
 
   for (const { backend, databaseUrl } of pathologicalArms()) {
     test(`[${backend}] --include-ambiguous restores ambiguous rows only under the matching flag`, async () => {
-      const { engine, close } = await unmanagedPage(databaseUrl, true);
-      try {
-        const chess = await factRow(engine, 'default', 2, 'Alice plays chess');
-        await prefixRetire(engine, 'default', [chess]);
-        const preview = await repair(engine, 'default', { includeAmbiguous: true });
+      await managedPage(databaseUrl, retiredChess, async (engine, sourceId, chess) => {
+        const preview = await repair(engine, sourceId, { includeAmbiguous: true });
         expect(preview.listing!.map(row => row.class)).toEqual(['ambiguous']);
-        await expect(repair(engine, 'default', { expect: hashOf(preview) })).rejects.toMatchObject({ code: 'preview_changed' });
+        await expect(repair(engine, sourceId, { expect: hashOf(preview) })).rejects.toMatchObject({ code: 'preview_changed' });
         expect(await state(engine, [chess])).toEqual([[chess, null, false]]);
-        expect((await repair(engine, 'default', { expect: hashOf(preview), includeAmbiguous: true })).applied).toBe(1);
+        expect((await repair(engine, sourceId, { expect: hashOf(preview), includeAmbiguous: true })).applied).toBe(1);
         expect(await state(engine, [chess])).toEqual([[chess, 2, true]]);
-      } finally { await close(); }
+      }, true);
+    }, 120_000);
+  }
+  for (const { backend, databaseUrl } of pathologicalArms()) {
+    test(`[${backend}] a fact withdrawn after the preview stays retired; the rest of the page is restored`, async () => {
+      await managedPage(databaseUrl, async (engine, sourceId) => {
+        const ids = { chess: await factRow(engine, sourceId, 2, 'Alice plays chess'), lisbon: await factRow(engine, sourceId, 3, 'Alice lives in Lisbon') };
+        await prefixRetire(engine, sourceId, [ids.chess, ids.lisbon]);
+        return ids;
+      }, async (engine, sourceId, { chess, lisbon }) => {
+        const preview = await repair(engine, sourceId);
+        expect(preview.listing!.map(row => row.class)).toEqual(['evidenced', 'evidenced']);
+        await engine.executeRaw("INSERT INTO fact_withdrawals (source_id, visibility, fact_hash) SELECT source_id, visibility, gbrain_fact_fingerprint(fact) FROM facts WHERE id=$1", [chess]);
+        expect((await repair(engine, sourceId, { expect: hashOf(preview) })).applied).toBe(1);
+        expect(await state(engine, [chess, lisbon])).toEqual([[chess, null, false], [lisbon, 3, true]]);
+      });
+    }, 120_000);
+  }
+
+  for (const { backend, databaseUrl } of pathologicalArms()) {
+    test(`[${backend}] a retired row whose claim is active on the page at another visibility is excluded as an active duplicate`, async () => {
+      await managedPage(databaseUrl, async (engine, sourceId) => {
+        const chess = await factRow(engine, sourceId, 2, 'Alice plays chess');
+        await engine.executeRaw("UPDATE facts SET visibility='world' WHERE id=$1", [chess]);
+        await prefixRetire(engine, sourceId, [chess]);
+        await factRow(engine, sourceId, 2, 'Alice plays chess');
+        return chess;
+      }, async (engine, sourceId, chess) => {
+        const preview = await repair(engine, sourceId);
+        expect(preview.listing!.map(row => row.class)).toEqual(['excluded:active_duplicate']);
+        expect(await state(engine, [chess])).toEqual([[chess, null, false]]);
+      });
     }, 120_000);
   }
   /*
@@ -221,15 +260,15 @@ describe('gbrain repair unwithdrawn-facts (#8819) coverage pass', () => {
   for (const { backend, databaseUrl } of pathologicalArms()) {
     test(`[${backend}] a deleted page excludes its retirements; a version-history gap makes them ambiguous`, async () => {
       for (const [column, klass] of [['deleted_at', 'excluded:page_missing'], ['version_history_gap_at', 'ambiguous']] as const) {
-        const { engine, close } = await unmanagedPage(databaseUrl);
-        try {
-          const chess = await factRow(engine, 'default', 2, 'Alice plays chess');
-          await prefixRetire(engine, 'default', [chess]);
-          await engine.executeRaw(`UPDATE pages SET ${column}=now() WHERE source_id='default' AND slug=$1`, [SLUG]);
-          const preview = await repair(engine, 'default');
+        await managedPage(databaseUrl, async (engine, sourceId) => {
+          const chess = await retiredChess(engine, sourceId);
+          await engine.executeRaw(`UPDATE pages SET ${column}=now() WHERE source_id=$2 AND slug=$1`, [SLUG, sourceId]);
+          return chess;
+        }, async (engine, sourceId, chess) => {
+          const preview = await repair(engine, sourceId);
           expect(preview.listing!.map(row => row.class)).toEqual([klass]);
           expect(await state(engine, [chess])).toEqual([[chess, null, false]]);
-        } finally { await close(); }
+        });
       }
     }, 120_000);
   }

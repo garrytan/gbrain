@@ -60,7 +60,8 @@ export async function factPreimages(db: BrainEngine, sourceId: string, ids: read
  * The page publication's fence projection (persistence/canonical-projections.ts): the rows it would expire and detach
  * are those attached to the page that the incoming fence no longer holds at the same number and claim (conversation
  * extractor rows only when a fence row claims their number, #5731). #8819: of the others, only a row some fence of the
- * page held retires (fence-evidence.ts); a row the fence never held is `kept` active, since no fence edit withdrew it.
+ * page held, or whose claim the incoming fence states, retires (fence-evidence.ts); a row the fence never held is `kept`
+ * active, since no fence edit withdrew it.
  * Held: the caller expires nothing.
  */
 export async function projectFactFenceGeneration(tx: BrainEngine, input: { sourceId: string; slug: string; read: FenceRead; incoming: string;
@@ -75,7 +76,8 @@ export async function projectFactFenceGeneration(tx: BrainEngine, input: { sourc
       ORDER BY f.row_num, f.id`, [input.sourceId, input.slug, input.incoming])).map(row => row.preimage);
   const extractor = (row: FactPreimage) => (row.source ?? '').startsWith('cli:extract-conversation-facts');
   const { held } = await factsFenceHeld(tx, { sourceId: input.sourceId, slug: input.slug, rows: candidates.filter(row => !extractor(row)), prior: input.prior });
-  const retire = candidates.filter(row => extractor(row) || held.has(Number(row.id)));
+  const claims = new Set(input.rows.map(row => row.fact));
+  const retire = candidates.filter(row => extractor(row) || held.has(Number(row.id)) || claims.has(row.fact));
   const outcome = await publishFenceGeneration(tx, { kind: FACT_FENCE_KIND, sourceId: input.sourceId, slug: input.slug, read: input.read,
     items: factFenceItems(input.rows), retire: retire.map(factRetireItem), writer: input.writer });
   return { ...outcome, retiring: retire.length, retireIds: retire.map(row => Number(row.id)),

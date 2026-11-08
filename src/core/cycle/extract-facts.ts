@@ -464,8 +464,10 @@ async function planFenceReconcile(db: BrainEngine, page: PageFenceInput, slug: s
   });
   const toInsert = extracted.filter(f => !matched.has(f.row_num));
   // #8819: on a managed brain, a stale row whose number and claim no fence of the page ever held was never in the fence,
-  // so no edit of it withdrew the row: it stays active, and a new fence row claiming its number takes that position.
-  const positioned = managed ? stale.filter(fact => fact.row_num != null)
+  // so no edit of it withdrew the row: it stays active, and a new fence row claiming its number takes that position. A
+  // row whose claim the fence states, at any number or visibility, still retires, so no wider copy of it stays active.
+  const claims = new Set(extracted.map(f => f.fact));
+  const positioned = managed ? stale.filter(fact => fact.row_num != null && !claims.has(fact.fact))
     .map(fact => ({ id: Number(fact.id), row_num: Number(fact.row_num), fact: fact.fact, visibility: fact.visibility })) : [];
   const { held } = await factsFenceHeld(db, { sourceId, slug, rows: positioned });
   const kept = positioned.filter(row => !held.has(row.id)).map(row => row.id);

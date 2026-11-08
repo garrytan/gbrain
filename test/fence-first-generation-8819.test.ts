@@ -123,6 +123,31 @@ describe('#8819 first managed facts-fence generation', () => {
       });
     }, 120_000);
 
+    test(`[${backend}] a fence row restating a kept row's claim at another visibility retires the kept row, so no wider copy stays active`, async () => {
+      await managedSource(databaseUrl, async s => {
+        await seedPage(s, FACTS_FENCE(FOUNDED), [[1, 'Alice founded acme-example', 'chat']]);
+        await s.engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, row_num, source_markdown_slug)
+          VALUES ($1, $2, 'Alice plays chess', 'fact', 'world', 'mcp:put_page', 2, $2)`, [s.sourceId, SLUG]);
+      }, async ({ engine, sourceId, put }) => {
+        await put(SLUG, PERSON('Alice Example', FACTS_FENCE([FOUNDED, CHESS].join('\n'))));
+        expect(await engine.executeRaw('SELECT visibility FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND fact=$3 AND expired_at IS NULL',
+          [sourceId, SLUG, 'Alice plays chess'])).toEqual([{ visibility: 'private' }]);
+      });
+    }, 120_000);
+
+    test(`[${backend}] the extract_facts reconcile retires a never-held row whose claim the fence restates at another number`, async () => {
+      await managedSource(databaseUrl, async s => {
+        await s.put(SLUG, PERSON('Alice Example', FACTS_FENCE([FOUNDED, ROW(4, 'Alice plays chess')].join('\n'))));
+        await seedPage(s, FACTS_FENCE([FOUNDED, ROW(4, 'Alice plays chess')].join('\n')), [[1, 'Alice founded acme-example', 'chat'], [4, 'Alice plays chess', 'chat']]);
+        await s.engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, row_num, source_markdown_slug)
+          VALUES ($1, $2, 'Alice plays chess', 'fact', 'world', 'mcp:put_page', 2, $2)`, [s.sourceId, SLUG]);
+      }, async ({ engine, sourceId }) => {
+        await runExtractFacts(engine, { sourceId });
+        expect(await engine.executeRaw('SELECT visibility, row_num FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND fact=$3 AND expired_at IS NULL',
+          [sourceId, SLUG, 'Alice plays chess'])).toEqual([{ visibility: 'private', row_num: 4 }]);
+      });
+    }, 120_000);
+
     test(`[${backend}] the extract_facts reconcile keeps rows the fence never held and still retires a withdrawn one`, async () => {
       await managedSource(databaseUrl, async s => {
         await s.put(SLUG, PERSON('Alice Example', FACTS_FENCE([FOUNDED, CHESS, ROW(5, 'Alice ran a marathon')].join('\n'))));
