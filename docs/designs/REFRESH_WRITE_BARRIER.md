@@ -276,9 +276,14 @@ Deferred rows are durable rows; nothing about them lives in process memory.
   - Killed while `fenced`, before the merge started, with HEAD moved past `old_head` on its own line
     (writes that landed while it drained, or a commit gbrain did not make): recovery aborts the row,
     as the live tick would, and its deferred writes commit (GBEV-44, GST-1674).
+  - Killed after the merge started but before HEAD reached the target (a commit landed on `old_head`
+    right before the merge, so git refused the fast-forward): the row also records
+    `outcome.merge_started_at`, and when the reflogs of HEAD and its branch show no move to the target
+    since then, recovery aborts the row the same way and keeps that commit (GST-1674). Without a
+    readable reflog, or on a row an older version wrote, it stays `recovery_required`.
   - Killed after the merge, with HEAD at the target or a commit on top of it and no member synced off
     it: recovery records the merge and the next refresh finishes the member syncs, with no `--resume`.
-  - A merge that started and a HEAD that no longer holds the target (a reset and an unrelated commit)
+  - A merge that ran and a HEAD that no longer holds the target (a reset and an unrelated commit)
     stays `recovery_required` for the operator.
   - The merge runs only when the update that records `merge_started` matched the `fenced` row; a row
     recovery moved meanwhile ends the refresh `refresh_source_changed` with nothing merged (GST-1623).
