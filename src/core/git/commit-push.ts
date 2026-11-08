@@ -1033,8 +1033,9 @@ function assertLocalCommitsInsideRoots(ctx: Ctx, target: string, roots: string[]
 function assertNoSecretsInRange(ctx: Ctx, target: string): void {
   const log = git(ctx.root, rangeScanArgs(ctx.trackingRef, target), { timeoutMs: 300_000, maxBuffer: 1024 * 1024 * 1024 });
   const scan = log.code === 0 ? findingsInLog(ctx.root, log.stdout) : null;
-  if (scan && !scan.findings.length && !scan.unscanned.length) return;
-  const named = scan ? [...scan.findings.map(f => `${f.path}:${f.line} (${f.pattern}, ${f.commit.slice(0, 7)})`), ...scan.unscanned.map(u => `${u.path} (too large to scan, ${u.commit.slice(0, 7)})`)] : [];
+  if (scan && !scan.findings.length && !scan.unscanned.length && !scan.gate_changes.length) return;
+  const named = scan ? [...scan.findings.map(f => `${f.path}:${f.line} (${f.pattern}, ${f.commit.slice(0, 7)})`), ...scan.unscanned.map(u => `${u.path} (too large to scan, ${u.commit.slice(0, 7)})`),
+    ...scan.gate_changes.map(g => `${g.path} (changes what the scan sees, ${g.commit.slice(0, 7)})`)] : [];
   throw opError('publish_secret_found', scan
     ? `${named.length} item(s) in the local commits ${ctx.trackingRef}..${target.slice(0, 12)} look like secrets or could not be scanned: ${named.slice(0, 10).join(', ')}${named.length > 10 ? ', ...' : ''}. Nothing was pushed.`
     : `git could not list the local commits ${ctx.trackingRef}..${target.slice(0, 12)} to scan them for secrets (${log.stderr.trim().slice(0, 200) || `exit ${log.code}`}). Nothing was pushed.`,

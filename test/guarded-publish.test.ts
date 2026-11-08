@@ -3,8 +3,10 @@
  * `gbrain sources refresh` runs in its child): it scans, under the publish lock, what the commits it is about to push add.
  * Protects: a value that looks like a secret is found in an added line even when a later commit removed it, in a
  * commit message, and in a merge commit's conflict resolution, named by path, line, rule and commit but never by
- * value, and nothing is pushed; a fingerprint in .gbrain-scan-allow and a binary file are skipped; a clean range
- * publishes; without scanSecrets nothing changes.
+ * value, and nothing is pushed; an added line whose text starts with `++` (printed `+++`, like a file header) is
+ * still scanned; added text over the scan cap, and a commit in the range that changes .gbrain-scan-allow or a
+ * .gitattributes, refuse; a fingerprint in the working tree's .gbrain-scan-allow and a binary file are skipped; a clean
+ * range publishes; without scanSecrets nothing changes.
  * Seams: none; real repositories and a bare remote.
  */
 import { afterAll, expect, test } from 'bun:test';
@@ -13,6 +15,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { commitAndPush } from '../src/core/git/commit-push.ts';
+import { SCAN_MAX_FILE_BYTES } from '../src/core/secret-scan.ts';
 
 const dir = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-guarded-publish-')));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -88,4 +91,40 @@ test('an allowlisted fingerprint and a binary file are skipped and the clean ran
   const plain = repo('plain');
   commit(plain.root, 'notes.md', `Deploy token ${token}\n`);
   expect(publish(plain.root, false)).toMatchObject({ outcome: 'pushed' });
+});
+
+
+test('an added line whose text starts with ++ is scanned, not read as a file header', () => {
+  const r = repo('plusplus');
+  commit(r.root, 'notes.md', `intro\n++ ${token}\nafter\n`);
+  const error = refused(() => publish(r.root));
+  expect(error.code).toBe('publish_secret_found');
+  expect(error.message).toContain('notes.md:2 (');
+  expect(remoteTip(r)).toBe(r.base);
+});
+
+test('added text over the scan cap refuses as unscanned', () => {
+  const r = repo('big');
+  commit(r.root, 'big.md', `${'x'.repeat(SCAN_MAX_FILE_BYTES + 10)}\n`);
+  const error = refused(() => publish(r.root));
+  expect(error.code).toBe('publish_secret_found');
+  expect(error.message).toContain('big.md (too large to scan, ');
+  expect(remoteTip(r)).toBe(r.base);
+});
+
+test('an unpublished commit that widens .gbrain-scan-allow or turns a file binary with .gitattributes refuses', () => {
+  const r = repo('gate');
+  commit(r.root, '.gbrain-scan-allow', '**\n');
+  commit(r.root, 'notes.md', `Deploy token ${token}\n`);
+  const allow = refused(() => publish(r.root));
+  expect(allow.code).toBe('publish_secret_found');
+  expect(allow.message).toContain('.gbrain-scan-allow (changes what the scan sees, ');
+  expect(remoteTip(r)).toBe(r.base);
+
+  const attrs = repo('attrs');
+  commit(attrs.root, '.gitattributes', '* -diff\n');
+  commit(attrs.root, 'notes.md', `Deploy token ${token}\n`);
+  const hidden = refused(() => publish(attrs.root));
+  expect(hidden.message).toContain('.gitattributes (changes what the scan sees, ');
+  expect(remoteTip(attrs)).toBe(attrs.base);
 });
