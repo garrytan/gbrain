@@ -362,4 +362,21 @@ describe('gbrain repair unwithdrawn-facts (#8819) coverage pass', () => {
       });
     }, 120_000);
   }
+
+  for (const { backend, databaseUrl } of pathologicalArms()) {
+    test(`[${backend}] of two copies of one claim, the still valid copy is restored, not the one whose validity had lapsed`, async () => {
+      await managedPage(databaseUrl, async (engine, sourceId) => {
+        const ids = { lapsed: await factRow(engine, sourceId, 2, 'Alice plays chess'), valid: await factRow(engine, sourceId, 3, 'Alice plays chess') };
+        await engine.executeRaw("UPDATE facts SET valid_until='2020-01-01' WHERE id=$1", [ids.lapsed]);
+        await prefixRetire(engine, sourceId, [ids.lapsed, ids.valid]);
+        return ids;
+      }, async (engine, sourceId, { lapsed, valid }) => {
+        const preview = await repair(engine, sourceId);
+        expect(preview.listing!.map(row => [row.item, row.class])).toEqual([
+          [`${sourceId}:${SLUG}#${lapsed}`, 'excluded:duplicate_candidate'], [`${sourceId}:${SLUG}#${valid}`, 'evidenced']]);
+        expect((await repair(engine, sourceId, { expect: hashOf(preview) })).applied).toBe(1);
+        expect(await state(engine, [lapsed, valid])).toEqual([[lapsed, null, false], [valid, 3, true]]);
+      });
+    }, 120_000);
+  }
 });

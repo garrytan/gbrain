@@ -141,10 +141,12 @@ export async function classifyUnwithdrawnFacts(db: BrainEngine, sourceIds: strin
   }
   const managed = await managedPersistenceEnabled(db);
   const base = rows.map(row => classify(row, evidence.get(`${row.source_id}\u0000${row.slug}`), managed));
-  // One copy of a claim comes back per page, entity and speaker, the narrowest visibility first, so no wider copy returns
-  // beside it; copies from different known speakers are not duplicates (facts/attribution.ts), so each comes back.
+  // One copy of a claim comes back per page, entity and speaker, the narrowest visibility first, then a still valid copy
+  // before one whose validity had lapsed, so no wider copy returns beside it; copies from different known speakers are
+  // not duplicates (facts/attribution.ts), so each comes back.
   const key = (row: CandidateRow) => JSON.stringify([row.source_id, row.slug, row.entity_slug, row.fingerprint]);
-  const rank = (i: number) => (rows[i]!.visibility === 'world' ? 2 : 0) + (base[i]![0] === 'evidenced' ? 0 : 1);
+  const lapsed = (i: number) => rows[i]!.preimage.valid_until != null && Date.parse(rows[i]!.preimage.valid_until!) <= Date.now();
+  const rank = (i: number) => (rows[i]!.visibility === 'world' ? 4 : 0) + (lapsed(i) ? 2 : 0) + (base[i]![0] === 'evidenced' ? 0 : 1);
   const chosen = new Map<string, number[]>();
   const order = rows.map((_, i) => i).filter(i => base[i]![0] !== 'excluded').sort((a, b) => rank(a) - rank(b) || a - b);
   const restored = new Set<number>();
