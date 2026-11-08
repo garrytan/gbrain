@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "channel": "stable",
+  "version": "0.60.593.0",
+  "commit": "27f8b9d6287c2ba635532c7d3bc015c50e1d769b",
+  "tree": "8f49a894c9df915707098dd0922ffd5d41ee3ab1",
+  "soak_run": "https://github.com/garrytan/gbrain/actions/runs/42243028586",
+  "scoreboard": "https://github.com/garrytan/gbrain/actions/runs/42243028586",
+  "promoted_by": "garrytan",
+  "promoted_at": "2026-11-06T20:40:18Z",
+  "previous": "0.60.474.0",
+  "rollback": false,
+  "reason": "",
+  "known_bad": []
+}
