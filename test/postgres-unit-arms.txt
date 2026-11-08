@@ -462,6 +462,7 @@ test/recall-page-fill.test.ts
 test/receipt-compaction-newest-sync-gbra130.test.ts
 test/reconcile-clears-stalled-hold-7364.test.ts
 test/refresh-barrier-gst1623.test.ts
+test/refresh-barrier-held-after-abort.test.ts
 test/refresh-retry-hint-gst1582.test.ts
 test/refresh-write-barrier.test.ts
 test/remediation-manual-only.test.ts

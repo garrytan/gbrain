@@ -633,6 +633,11 @@ syncing it is accepted and waits for the refresh instead of being refused `workt
   first sync that imports the file replays it; otherwise `gbrain repair failed-writes --source <source>`
   lists it for a person to replay. A write keeps the refusal when a live consumer on the owner host runs a release
   that cannot claim a held write.
+- A refresh that ends without completing (aborted, abandoned, or rolled back after its process died) never imports
+  the commit its fence kept sync from importing, so the next `gbrain sources refresh` run on the owner host (the
+  same run, `--resume` or `--abandon`, or the next tick, even one refused `refresh_diverged`) ends by running the
+  managed `--no-pull` sync of each member behind the checkout HEAD. A write held for that import is then prepared
+  again as above in that run, instead of waiting for a later refresh.
 - A write that waited behind a refresh or for an import ends `revision_conflict`, nothing applied, when a
   later write to the same page committed before it, which a consumer from an older release can cause by
   claiming the later write first. Read the page again and submit the change with a new request ID. A

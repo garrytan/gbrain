@@ -164,6 +164,7 @@ invariant. Behind constants it also models the stacked follow-ups: writes held f
 | `RefreshBarrierLiveness.cfg` | `FairSpec`, one write: every deferred write leaves deferral and every admitted write ends. `RefreshBarrierLivenessNightly.cfg` checks two writes (nightly). |
 | `RefreshBarrierAdopt.cfg` | #8708 on #8705 with its fixes: an uncommitted local edit adopted by a drift refusal, no foreign commit. `RefreshBarrierAdoptNightly.cfg` adds the foreign commit (nightly). |
 | `RefreshBarrierImport.cfg` | #8705 with its fixes (03b89121): writes held for an import, a later write held beside them, the import expiry, deferral behind `recovery_required`: every property. |
+| `RefreshBarrierAbortLiveness.cfg` | `FairSpec` without outside help (`OutsideHelp = FALSE`): no scheduled sync runs and time never forces the wait limit, and the foreign commit lands while a refresh drains, so the refresh aborts and a write deferred behind it is held for that import. Every deferred write still leaves deferral and every write ends, through the sync a refresh run owes after an aborted refresh (GST-1853). |
 
 Every config kills the refreshing process once (`MaxCrashes = 1`), at any step, after which `recoverOne` resumes the
 refresh row it left. A refresh that finds HEAD moved at the merge aborts and the tick retries, as `fenceAndMerge` does,
@@ -207,6 +208,7 @@ every config killing the refresh at least once, and the workflow's path filter c
 | `ExpRefBegin`, `ExpRefCommit` | `expireDeferredWrites`: the protocol, the refresh row re-read `released_at IS NULL FOR NO KEY UPDATE`, `completeWrite` |
 | `ExpImpBegin`, `ExpImpRecheck`, `ExpImpCommit` | #8705's import expiry in `expireDeferredWrites` |
 | `SyncBegin` … `SyncStamp` | a managed sync pass, whose rows go through the claim like writes: no write passes the queued row importing its page or a running sync row, and a sync row waits behind earlier writes and is never claimed while a write runs; the page row, then its checkpoint row's `UPDATE sources SET last_commit` (sync-prepare.ts) |
+| `OwedSyncBegin` | GST-1853 `syncAfterUnfinishedRefresh` (worktree-refresh.ts): while the worktree's newest refresh is aborted and a member's `last_commit` is not HEAD, a refresh run ends by running that member's managed `--no-pull` sync |
 | `Foreign`, `LocalEdit`, `Age`, `Revoke`, `Restore` | the environment: another agent's plain-git commit, an uncommitted edit, the wait limit passing, a revoked token, `quarantineSharedSkillRestore` (PGLite-only, one transaction, no worker) |
 
 ### Mutants
@@ -234,6 +236,7 @@ every config killing the refresh at least once, and the workflow's path filter c
 | `import-expiry-skips-source-lock` | guard | `ExpiryOnlyWhileWaiting` (Import) | the import expiry's `FOR SHARE OF s`; a Postgres import landing while the expiry waits (import-write-barrier.test.ts) |
 | `resume-marks-unmerged-recovery` | guard | `RecoveryOnlyByPolicy` | `movedBeforeMerge` (the finding below): the code edit aborts only a HEAD moved by gbrain's own commits; the refresh killed at fenced after a foreign commit, aborted by the owner scan |
 | `resume-needs-exact-target` | guard | `RecoveryOnlyByPolicy` | `recoverOne`'s bookkeeping branch: with HEAD only exactly at the target, a commit between the merge and bookkeeping strands the row; the refresh killed after its merge |
+| `abort-skips-owed-sync` | guard | `DeferredLeaves` (AbortLiveness) | `syncAfterUnfinishedRefresh`: no refresh run syncs the members an aborted refresh left behind HEAD; the three GST-1853 tests (aborted then diverged, killed at fenced then `--resume`, owner-scan abort then a diverged tick) |
 
 #8708's local-edit adoption has no guard mutant of its own: `RefreshBarrierAdopt.cfg` checks it against every safety property.
 
@@ -274,6 +277,17 @@ test/import-write-barrier.test.ts. The mutants below put each one back.
   checkpoint that committed between it and `completeWrite` left the write `pending_import_expired`. The fix declares the
   protocol and then reads the source row `FOR SHARE` (`ImportExpiryLocksSource`); taking the source row first deadlocks
   with `fenceDraining`'s brain, worktree, source order (`import-expiry-locks-source-first`).
+
+### Found in GST-1853: writes held behind an aborted refresh
+
+A flag-on eval found it, and `RefreshBarrierAbortLiveness.cfg` reproduces it (`abort-skips-owed-sync`, `DeferredLeaves`).
+Another agent commits F with plain git while a refresh drains, so the fence keeps managed sync from importing it and
+the moved HEAD aborts the refresh. The abort releases the write deferred behind it; preparing it meets the unimported
+commit (`pending_import`) and holds it for the import. Only a refresh's own member sync imports while sync is fenced,
+and an aborted refresh never runs one, so the write waited for some later sync or refresh (indefinitely while the
+checkout stayed diverged) or the wait limit. The other configs never saw it because their fairness lets a scheduled sync
+run and time pass the wait limit; this one forces neither. The fix: a refresh run that finds the worktree's newest
+refresh aborted runs the members' managed `--no-pull` sync on its way out (`OwedSyncBegin`).
 
 ### Not modelled
 
