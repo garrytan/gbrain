@@ -17,7 +17,7 @@
  * is resubmitted by its caller after that sync.
  */
 import { spawn } from '../spawn.ts';
-import { relative, sep } from 'node:path';
+import { relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import { gitChildEnv } from '../git-env.ts';
@@ -133,8 +133,8 @@ export async function unmergedPath(root: string, path: string, signal?: AbortSig
  */
 export async function operationMarkerPaths(root: string, signal?: AbortSignal): Promise<string[] | null> {
   const markers = ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply'];
-  return gitRead(root, ['rev-parse', '--path-format=absolute', ...markers.flatMap(marker => ['--git-path', marker])], signal)
-    .then(out => { const paths = out.split('\n').filter(Boolean); return paths.length === markers.length ? paths : null; },
+  return gitRead(root, ['rev-parse', ...markers.flatMap(marker => ['--git-path', marker])], signal)
+    .then(out => { const paths = out.split('\n').filter(Boolean).map(path => resolve(root, path)); return paths.length === markers.length ? paths : null; },
       error => { if (signal?.aborted) throw error; return null; });
 }
 
