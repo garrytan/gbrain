@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.614.0] - 2026-11-08
 
 **With the refresh write barrier on, a write held behind a refresh that ends without completing is now decided in the run that ends it, instead of waiting for a later refresh.** A refresh's fence keeps managed sync from importing another writer's commit while it runs, and only the refresh's own sync imports in its place. When the refresh was aborted, abandoned or rolled back after its process died, nothing imported that commit, so a write to that file stayed pending until some later refresh or sync, indefinitely while the checkout stayed diverged (up to the 15-minute wait limit). Now, while a checkout's last refresh ended aborted, every `gbrain sources refresh` run on the owner host ends by running the managed `--no-pull` sync of each source behind the checkout HEAD, including a run that refuses `refresh_diverged`. The waiting write is then prepared again against the checkout as it is: a `put_page` with `expected_revision` ends `revision_conflict`, a blind one lands and names what it replaced in `supersedes`, and a `remember` or `add_timeline_entry` applies on top. The barrier is still off by default (`persistence.refresh_barrier`); with it off, the only change is that such a run also syncs sources behind HEAD.
 
