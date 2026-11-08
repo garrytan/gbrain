@@ -171,11 +171,14 @@ test('GST-1674: a refresh killed after git refused its fast-forward recovers by 
   });
 }, 300_000);
 
-test('GST-1674: the same crash stays recovery_required when the reflog is gone or the row predates merge_started_at', async () => {
-  for (const doubt of ['reflog', 'started_at'] as const) for (const index of cases.keys()) await withRefusedMergeKill(index, async ({ f, foreign }) => {
+test('GST-1674: the same crash stays recovery_required when the reflog is gone, the row predates merge_started_at, or HEAD reached the target and was reset', async () => {
+  for (const doubt of ['reflog', 'started_at', 'reset'] as const) for (const index of cases.keys()) await withRefusedMergeKill(index, async ({ f, target, foreign }) => {
     if (doubt === 'reflog') {
       git(f.root, 'config', 'core.logAllRefUpdates', 'false');
       rmSync(join(f.root, '.git', 'logs'), { recursive: true, force: true });
+    } else if (doubt === 'reset') {
+      git(f.root, 'reset', '-q', '--hard', target);
+      git(f.root, 'reset', '-q', '--hard', foreign);
     } else {
       await f.engine.executeRaw("UPDATE persistence_worktree_refreshes SET outcome=outcome-'merge_started_at' WHERE worktree_id=$1::uuid", [f.worktreeId]);
     }
@@ -184,6 +187,23 @@ test('GST-1674: the same crash stays recovery_required when the reflog is gone o
     expect([doubt, row!.state]).toEqual([doubt, 'recovery_required']);
     expect(row!.outcome.observed_head).toBe(foreign);
     expect(f.head()).toBe(foreign);
+  });
+}, 300_000);
+
+test('GST-1674: a reflog read that git cannot finish leaves the crash fenced for the next owner scan, which then aborts it', async () => {
+  for (const index of cases.keys()) await withRefusedMergeKill(index, async ({ f, foreign }) => {
+    const bin = join(f.root, '..', 'wedged-git');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, 'git'), `#!/bin/sh\nfor a in "$@"; do if [ "$a" = "-g" ]; then kill -9 $$; fi; done\nPATH='${process.env.PATH}' exec git "$@"\n`, { mode: 0o755 });
+    const errors: string[] = [];
+    const consoleError = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args.join(' ')); };
+    try { await withEnv({ PATH: `${bin}:${process.env.PATH}` }, () => resumeWorktreeRefreshes(f.engine)); } finally { console.error = consoleError; }
+    expect(((await f.refreshRows()) as Row[]).map(row => row.state)).toEqual(['fenced']);
+    expect(errors.join('\n')).toContain('git_unavailable');
+    await resumeWorktreeRefreshes(f.engine);
+    const [row] = await f.refreshRows() as Row[];
+    expect([row!.state, row!.outcome.observed_head]).toEqual(['aborted', foreign]);
   });
 }, 300_000);
 

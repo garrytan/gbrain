@@ -184,12 +184,20 @@ const REFLOG_SLACK_MS = 5_000;
 /**
  * GST-1674: whether the reflogs of HEAD and the branch it names record a move to the target at or after `sinceMs` (less REFLOG_SLACK_MS):
  * true or false, or null when git fails or either reflog is missing, empty or does not end at `head` (core.logAllRefUpdates off, a deleted log).
+ * A git call that does not finish within its bound or cannot start throws git_unavailable instead, so the row stays and a later run retries it.
  */
 async function reachedTargetSince(git: Git, root: string, row: WorktreeRefreshRow, head: string, sinceMs: number): Promise<boolean | null> {
-  const branch = await git(['-C', root, 'symbolic-ref', '-q', 'HEAD']);
+  const read = async (args: string[]) => {
+    const out = await git(['-C', root, ...args]);
+    if (out.timedOut) throw opError('git_unavailable', `git ${args.join(' ')} did not finish within its bound or could not start, so whether refresh ${row.id} merged is unknown; it stays ${row.state} and nothing changed.`,
+      `Check that git works in the checkout (git -C ${q(root)} status), then retry gbrain sources refresh ${row.source_ids[0]} --resume.`,
+      { fix: readFix('Git prints why it cannot read this checkout; read-only.', { argv: ['git', '-C', root, 'status'] }) });
+    return out;
+  };
+  const branch = await read(['symbolic-ref', '-q', 'HEAD']);
   if (branch.code !== 0 && branch.code !== 1) return null;
   for (const ref of ['HEAD', ...(branch.code === 0 ? [branch.stdout.trim()] : [])]) {
-    const out = await git(['-C', root, 'log', '-g', '--format=%H %gd', '--date=unix', ref, '--']);
+    const out = await read(['log', '-g', '--format=%H %gd', '--date=unix', ref, '--']);
     if (out.code !== 0) return null;
     const entries = out.stdout.split('\n').filter(Boolean).map(line => /^([0-9a-f]{40,64}) \S*@\{(\d+)\}$/.exec(line));
     if (!entries.length || entries.some(entry => !entry) || entries[0]![1] !== head) return null;
@@ -202,7 +210,7 @@ async function reachedTargetSince(git: Git, root: string, row: WorktreeRefreshRo
  * old_head right before the merge, git refused the fast-forward, and the process was killed before the live refresh aborted. HEAD descends
  * from old_head without the target, no member synced off it, and the reflogs show HEAD never reached the target since the merge started.
  * Any doubt (no merge_started_at on an older row, no readable reflog) leaves the row to markRecoveryRequired, as does a merge that ran and
- * was then reset (test 7).
+ * was then reset (the reflog shows the target).
  */
 async function refusedBeforeAbort(engine: BrainEngine, git: Git, root: string, row: WorktreeRefreshRow, head: string | null): Promise<boolean> {
   const startedAt = row.outcome.merge_started_at;
