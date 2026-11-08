@@ -594,3 +594,22 @@ test('#8755 n: a conflict or a merge that starts after the adoption prepared kee
   try { await refused(); } finally { rmSync(join(f.root, '.git', 'MERGE_HEAD'), { force: true }); }
 }), 180_000);
 
+test('#8755 o: an adoption whose caller names no claim token ends write_claim_lost, not a database error', () => each(async f => {
+  const { localEditAdoptionSeams } = await import('../src/core/persistence/local-edit-adoption.ts');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  const before = { head: head(f), revision: await revision(f, 'one') };
+  let calls = 0;
+  localEditAdoptionSeams.beforePublish = async () => {
+    if (calls++) return;
+    await f.engine.executeRaw("UPDATE persistence_requests SET intent=jsonb_set(intent, '{adoptLocalEdit,caller,token}', 'null'::jsonb) WHERE source_id=$1 AND intent ? 'adoptLocalEdit'", [f.alpha]);
+    throw Object.assign(new Error('could not serialize access due to concurrent update'), { code: '40001' });
+  };
+  await timeline(f)().catch(() => undefined);
+  expect(calls).toBe(1);
+  const [adoption] = await adoptionRows(f);
+  expect(adoption).toMatchObject({ state: 'failed', error_code: 'write_claim_lost' });
+  expect(file(f, 'one.md')).toBe(EDITED);
+  expect(head(f)).toBe(before.head);
+  expect(await revision(f, 'one')).toBe(before.revision);
+}), 180_000);
+

@@ -207,8 +207,8 @@ export async function adoptedHeadHolds(binding: WorktreeBinding, root: string, p
  */
 export async function assertAdoptionCaller(engine: BrainEngine, row: WriteRequest, caller: { id?: unknown; token?: unknown } | undefined, lock = false): Promise<void> {
   if (!caller) return;
-  const [held] = await engine.executeRaw(`SELECT 1 FROM persistence_requests WHERE id=$1::uuid AND state='running' AND execution_token=$2::uuid${lock ? ' FOR SHARE' : ''}`,
-    [String(caller.id), String(caller.token)]);
+  const [held] = typeof caller.id === 'string' && typeof caller.token === 'string' ? await engine.executeRaw(
+    `SELECT 1 FROM persistence_requests WHERE id=$1::uuid AND state='running' AND execution_token=$2::uuid${lock ? ' FOR SHARE' : ''}`, [caller.id, caller.token]) : [];
   if (held) return;
   throw opError('write_claim_lost', 'The write this local edit adoption was made for no longer waits on it.',
     `Adoption request ${row.request_id} in source ${row.source_id} belongs to a write whose claim ended (it was cancelled, finished, or reclaimed after its process stopped), so the local edit was not adopted and nothing was written.`);
