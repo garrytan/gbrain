@@ -8,7 +8,7 @@
  * names the imported revision it replaced, an add_timeline_entry applies on top.
  * Seams: the real refresh state machine and managed sync; GBRAIN_REFRESH_BARRIER; PGLite, and Postgres when DATABASE_URL is set.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -181,6 +181,7 @@ test('GST-1853: a member the owed sync leaves behind HEAD is named with its resu
   expect(refused?.message).toContain(resume);
   const resumed = await refreshWorktree(f.engine, f.alpha, { resume: true, syncBudgetMs: 0 });
   expect(resumed.synced.map(member => member.source_id)).toContain(f.alpha);
+  expect(['sync_blocked', 'sync_deferred']).toContain(resumed.status);
   expect(resumed.next ?? '').toContain(resume);
 }), 180_000);
 
@@ -191,4 +192,23 @@ test('GST-1853: a refusal of the run\'s own arguments runs no owed sync', () => 
   expect(refused?.code).toBe('invalid_params');
   expect(refused?.message).not.toContain('ended without completing');
   expect(await f.lastCommit(f.alpha)).toBe(before);
+}), 180_000);
+
+test('GST-1853: an owed sync that fails is logged with connection details redacted, and the refusal still stands', () => each(async f => {
+  await abortedByScan(f);
+  const secret = 'pw-example-not-real';
+  const executeRaw = f.engine.executeRaw.bind(f.engine);
+  const logged: string[] = [];
+  const error = spyOn(console, 'error').mockImplementation((...args: unknown[]) => { logged.push(args.map(String).join(' ')); });
+  (f.engine as { executeRaw: unknown }).executeRaw = (sql: string, params?: unknown[]) => sql.startsWith('SELECT state,source_ids FROM persistence_worktree_refreshes')
+    ? Promise.reject(new Error(`connect failed: postgresql://owner:${secret}@db.example.invalid:5432/brain`)) : executeRaw(sql, params as never);
+  try {
+    await expect(refreshWorktree(f.engine, f.alpha)).rejects.toMatchObject({ code: 'refresh_diverged' });
+  } finally {
+    delete (f.engine as { executeRaw?: unknown }).executeRaw;
+    error.mockRestore();
+  }
+  const owed = logged.filter(line => line.includes('the sync owed after an unfinished refresh'));
+  expect(owed).toHaveLength(1);
+  expect(owed[0]).not.toContain(secret);
 }), 180_000);

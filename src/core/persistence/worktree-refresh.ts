@@ -680,11 +680,13 @@ export async function refreshWorktree(engine: BrainEngine, sourceId: string, opt
     throw failure;
   }
   if (opts.dryRun) return result;
-  const owed = await syncAfterUnfinishedRefresh(engine, sourceId, opts, new Set(result.synced.map(member => member.source_id))).catch(owedSyncFailed(sourceId));
+  const done = new Set([...result.synced, ...(result.sync_blocked ?? [])].map(member => member.source_id));
+  const owed = await syncAfterUnfinishedRefresh(engine, sourceId, opts, done).catch(owedSyncFailed(sourceId));
   if (!owed.synced.length) return result;
   const blocked = [...(result.sync_blocked ?? []), ...owed.blocked];
   const next = [result.next, ...owed.resume].filter(Boolean).join(' ; ');
-  return { ...result, synced: [...result.synced, ...owed.synced], ...(blocked.length ? { sync_blocked: blocked } : {}), ...(next ? { next } : {}) };
+  return { ...result, status: blocked.length ? 'sync_blocked' : owed.resume.length ? 'sync_deferred' : result.status,
+    synced: [...result.synced, ...owed.synced], ...(blocked.length ? { sync_blocked: blocked } : {}), ...(next ? { next } : {}) };
 }
 
 /**
@@ -717,7 +719,7 @@ async function syncAfterUnfinishedRefresh(engine: BrainEngine, sourceId: string,
   for (const [index, member] of lagging.entries()) {
     const resume = `gbrain sync --source ${member} --no-pull`;
     const result = await sync.member(engine, member, lagging.length - index).catch((error): MemberSync => ({ status: 'blocked', blocked: { source_id: member,
-      code: error instanceof OperationError ? error.code : 'storage_error', message: error instanceof Error ? error.message : String(error), resume } }));
+      code: error instanceof OperationError ? error.code : 'storage_error', message: redact(error instanceof Error ? error.message : String(error)), resume } }));
     const commit = await lastCommit(engine, member);
     owed.synced.push({ source_id: member, status: result.status, last_commit: commit });
     if (result.blocked) owed.blocked.push(result.blocked);
@@ -729,7 +731,7 @@ type OwedSync = { synced: RefreshMemberSync[]; blocked: RefreshSyncBlocked[]; re
 const NO_OWED_SYNC: OwedSync = { synced: [], blocked: [], resume: [] };
 const NO_OWED_SYNC_AFTER = new Set(['invalid_params', 'refresh_in_progress', 'internal_error']);
 const owedSyncFailed = (sourceId: string) => (error: unknown): OwedSync => {
-  console.error(`[gbrain] the sync owed after an unfinished refresh of ${sourceId} failed (${error instanceof Error ? error.message : String(error)}); its members' next sync or refresh run retries it.`);
+  console.error(redact(`[gbrain] the sync owed after an unfinished refresh of ${sourceId} failed (${error instanceof Error ? error.message : String(error)}); its members' next sync or refresh run retries it.`));
   return NO_OWED_SYNC;
 };
 const consumerConfig = (engine: BrainEngine) => loadConfig() ?? { engine: engine.kind };
