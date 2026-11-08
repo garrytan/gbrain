@@ -267,8 +267,8 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     // nothing, so it never reverts a newer edit. Tombstones and jobs queued without a key keep their old behavior.
     const appliedKey = !isTombstone && job.idempotency_key ? job.idempotency_key : null;
     const managedOutcome = (outcome: { noop?: boolean; chunks?: number }) => captured(outcome.noop ? 'skipped' : 'imported', Number(outcome.chunks ?? 0));
-    const applied = appliedKey ? await readAppliedCapture<IngestCaptureResult>(engine, appliedKey,
-      managed ? { sourceIds: [...new Set([sourceId ?? 'default', 'default'])], slug: slug.toLowerCase(), result: managedOutcome } : undefined) : null;
+    const journal = managed ? { sourceIds: [...new Set([sourceId ?? 'default', 'default'])], slug: slug.toLowerCase(), result: managedOutcome } : undefined;
+    const applied = appliedKey ? await readAppliedCapture<IngestCaptureResult>(engine, appliedKey, journal) : null;
     if (applied) return applied;
 
     const webhookWrite = untrustedPayload && event.source_kind === 'webhook' && !isTombstone;
@@ -330,10 +330,15 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       // GST-1856: each run of a keyed capture sends a new request_id under the capture's prefix, so the applied check above
       // finds a committed run in the door's journal even when the worker died before recording it. The id is new per run
       // because a stall re-run keeps attempts_made and `gbrain jobs retry` resets it: an id reused for an earlier request
-      // that failed would replay that failure instead of writing.
+      // that failed would replay that failure instead of writing. Another run of the key can commit after the check above
+      // (a stalled original resuming after its re-run), so the check repeats after the snapshot read: any edit that
+      // snapshot holds then post-dates a committed run, and expected_revision refuses a run committing after it.
       const requestId = appliedKey ? `${appliedCaptureRequestPrefix(appliedKey)}${job.attempts_made}:${randomUUID()}` : undefined;
+      let appliedSince: IngestCaptureResult | null = null;
       const put = async (sid: string, request?: string) => {
         const snapshot = await engine.readPageSnapshot(slug, { sourceId: sid, includeDeleted: true });
+        appliedSince = appliedKey ? await readAppliedCapture<IngestCaptureResult>(engine, appliedKey, journal) : null;
+        if (appliedSince) return {};
         return door('put_page', sid, { content: event.content, content_origin: 'tool_output', source_kind: event.source_kind, source_uri: event.source_uri,
           ingested_via: 'ingest_capture', ...(snapshot ? { expected_revision: snapshot.revision } : {}), ...(request ? { request_id: request } : {}),
           // #2044/#4548: as `remote: untrustedPayload` does unmanaged, an untrusted body keeps the non-world facts rows and takes rows its sender could not see.
@@ -351,6 +356,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
         await checkWriter('default');
         response = await put('default', requestId && `${requestId}:default`);
       }
+      if (appliedSince) return appliedSince;
       if (sourceFallback) {
         console.error(
           `[WARN] ingest_capture: requested source '${sourceFallback.requested}' unavailable ` +

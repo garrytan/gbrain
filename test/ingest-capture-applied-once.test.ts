@@ -81,6 +81,18 @@ const asWriter = (engine: BrainEngine, sql: string, params: unknown[]) => engine
   await tx.executeRaw("SELECT set_config('gbrain.persistence_protocol', '2', true)");
   await tx.executeRaw(sql, params);
 });
+type CaptureResult = Awaited<ReturnType<ReturnType<typeof makeIngestCaptureHandler>>>;
+/** `engine` whose first readPageSnapshot (a managed capture's read just before its put) runs `meanwhile` first: the run stalls there. */
+const stallBeforeSnapshot = (engine: BrainEngine, meanwhile: () => Promise<unknown>) => {
+  let stalled = false;
+  return new Proxy(engine, { get(target, prop) {
+    const value = Reflect.get(target, prop, target);
+    if (typeof value !== 'function') return value;
+    if (prop !== 'readPageSnapshot' || stalled) return value.bind(target);
+    stalled = true;
+    return async (...args: unknown[]) => { await meanwhile(); return value.apply(target, args); };
+  } });
+};
 const jsonData = (data: unknown) => (typeof data === 'string' ? JSON.parse(data) : data) as Record<string, unknown>;
 const note = (title: string, line: string) => `---\ntype: note\ntitle: ${title}\n---\n# ${title}\n\n${line}\n`;
 /** The data a webhook capture job carries for `content` sent to `slug` in `sourceId`. */
@@ -337,6 +349,37 @@ for (const backend of backends) {
       expect(await pageText()).toContain('Managed real capture.');
       const own = await engine.executeRaw<{ principal_kind: string }>("SELECT principal_kind FROM persistence_requests WHERE client_request_id LIKE $1 AND client_request_id <> $2", [`${prefix}%`, `${prefix}0:forged`]);
       expect(own.map(r => r.principal_kind)).toEqual(['local_cli']);
+    }, { databaseUrl }), 120_000);
+
+    test('an original run that stalled before its put and resumes after the re-run committed and a newer edit landed keeps the newer edit', () => managedBrain(async ({ engine, ctx }) => {
+      const slug = 'notes/managed-stalled';
+      const data = captureData(note('Managed stalled', 'Managed stalled capture.'), slug, 'default');
+      const key = 'ingest:webhook:client-example:default:managed-stalled';
+      const pageText = async () => (await engine.readPageSnapshot(slug, { sourceId: 'default' }))?.page.compiled_truth ?? '';
+      let rerun: CaptureResult | undefined;
+      // The original passed the applied check and stalled; its lock expired, the stall re-run (same attempts_made)
+      // committed the capture, and a newer edit landed before the original went on.
+      const original = await makeIngestCaptureHandler(stallBeforeSnapshot(engine, async () => {
+        rerun = await makeIngestCaptureHandler(engine)(jobCtx(8, data, key));
+        const snapshot = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+        await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content: note('Managed stalled', 'Managed newer edit.'), expected_revision: snapshot!.revision } });
+      }))(jobCtx(8, data, key));
+      expect(rerun!.status).toBe('imported');
+      expect(original).toEqual(rerun!);
+      expect(await pageText()).toContain('Managed newer edit.');
+      expect(await pageText()).not.toContain('Managed stalled capture.');
+    }, { databaseUrl }), 120_000);
+
+    test('a re-run that the original run commits ahead of, after its applied check, returns the original result', () => managedBrain(async ({ engine }) => {
+      const slug = 'notes/managed-overtaken';
+      const data = captureData(note('Managed overtaken', 'Managed overtaken capture.'), slug, 'default');
+      const key = 'ingest:webhook:client-example:default:managed-overtaken';
+      let original: CaptureResult | undefined;
+      const rerun = await makeIngestCaptureHandler(stallBeforeSnapshot(engine, async () => {
+        original = await makeIngestCaptureHandler(engine)(jobCtx(9, data, key));
+      }))(jobCtx(9, data, key));
+      expect(original!.status).toBe('imported');
+      expect(rerun).toEqual(original!);
     }, { databaseUrl }), 120_000);
   });
 }
