@@ -171,12 +171,15 @@ const OWN_COMMITS = "gbrain's own commits: writes admitted before the fence that
 /**
  * #8828: the drain waits for the writes admitted before the fence, and their commits move HEAD past the precheck's old_head. When
  * HEAD descends from old_head, every commit in old_head..HEAD is in gbrain's commit ledger, and the upstream ref (which the writer's
- * push moves) holds HEAD and the verified target, the fenced refresh takes HEAD as its start and that upstream as its target instead
+ * push moves, and which must still be the upstream_ref the precheck recorded) holds HEAD and the verified target, the fenced refresh
+ * takes HEAD as its start and that upstream as its target instead
  * of refusing: the fence defers new writes and the caller's commit lock keeps gbrain's commits out. The row changes only while it is
  * fenced with no merge started. Null otherwise, and the caller refuses refresh_source_changed as before.
  */
 async function replanOnOwnCommits(engine: BrainEngine, git: Git, root: string, row: WorktreeRefreshRow, head: string): Promise<WorktreeRefreshRow | null> {
   if (await ancestry(git, root, row.old_head, head) !== true || !await ownCommits(git, root, row.old_head, head)) return null;
+  const upstream = await git(['-C', root, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']);
+  if (upstream.code !== 0 || upstream.stdout.trim() !== row.upstream_ref) return null;
   const target = await revParse(git, root, '@{upstream}');
   if (!target || (target !== head && !await isAncestor(git, root, head, target)) || !await isAncestor(git, root, row.target_head, target)) return null;
   const [replanned] = await engine.transaction(async tx => {

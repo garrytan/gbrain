@@ -105,3 +105,20 @@ test('#8828: one foreign commit among gbrain\'s own published commits still refu
   expect(rows).toHaveLength(2);
   for (const row of rows) expect(row.state).toBe('aborted');
 }), 180_000);
+
+test('#8828: own published commits under an upstream other than the one the precheck recorded still refuse refresh_source_changed and merge nothing', () => each(async f => {
+  f.push('alpha/two.md', page('Alpha two', 'An upstream observation.'));
+  const landed: Array<{ own: string; published: string }> = [];
+  const refused = await refreshWorktree(f.engine, f.alpha, { hooks: { boundary: async point => {
+    if (point !== 'drained') return;
+    const n = landed.length + 1;
+    landed.push(ownCommitPublished(f, n));
+    git(f.root, 'push', '-q', 'origin', `${landed[n - 1]!.published}:refs/heads/other-${n}`);
+    git(f.root, 'fetch', '-q', 'origin');
+    git(f.root, 'branch', '-q', `--set-upstream-to=origin/other-${n}`);
+  } } }).then(() => null, thrown => thrown as { code?: string; message: string });
+  expect(refused?.code).toBe('refresh_source_changed');
+  expect(landed.length).toBeGreaterThan(0);
+  expect(f.head()).toBe(landed[landed.length - 1]!.own);
+  for (const row of await f.refreshRows()) expect(row.state).toBe('aborted');
+}), 180_000);
