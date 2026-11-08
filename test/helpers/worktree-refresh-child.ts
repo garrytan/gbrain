@@ -6,6 +6,8 @@
  * then `--resume` it and report the final state as one JSON line.
  * `kill-syncing` (#7679): start a refresh and SIGKILL this process once the row
  * is `syncing` (merged, member syncs not yet run), printing its pid first.
+ * `kill-refused-merge` (GST-1674): start a refresh; the caller's `git` on PATH
+ * SIGKILLs this process once git refused the fast-forward.
  */
 import { randomUUID } from 'node:crypto';
 import { writeSync } from 'node:fs';
@@ -18,7 +20,7 @@ import { disposePersistenceConsumer, startPersistenceConsumer } from '../../src/
 import { refreshWorktree } from '../../src/core/persistence/worktree-refresh.ts';
 import { assertSafeE2eDatabaseUrl } from './db-guard.ts';
 
-const input = JSON.parse(process.env.GBRAIN_TEST_REFRESH_CHILD!) as { database: GBrainConfig; sourceId: string; worktreeId: string; mode: 'crash' | 'restart' | 'kill-syncing' };
+const input = JSON.parse(process.env.GBRAIN_TEST_REFRESH_CHILD!) as { database: GBrainConfig; sourceId: string; worktreeId: string; mode: 'crash' | 'restart' | 'kill-syncing' | 'kill-refused-merge' };
 if (input.database.database_url) assertSafeE2eDatabaseUrl(input.database.database_url);
 const engine: BrainEngine = input.database.engine === 'pglite' ? new PGLiteEngine() : new PostgresEngine();
 await engine.connect(input.database);
@@ -31,6 +33,9 @@ if (input.mode === 'kill-syncing') {
     writeSync(1, `REFRESH_KILLED_IN_SYNCING ${process.pid}\n`);
     process.kill(process.pid, 'SIGKILL');
   } } });
+  process.stdout.write('REFRESH_UNEXPECTED_FINISH\n');
+} else if (input.mode === 'kill-refused-merge') {
+  await refreshWorktree(engine, input.sourceId).catch(error => process.stdout.write(`REFRESH_REFUSED ${(error as { code?: string }).code}\n`));
   process.stdout.write('REFRESH_UNEXPECTED_FINISH\n');
 } else if (input.mode === 'crash') {
   const requestId = randomUUID();

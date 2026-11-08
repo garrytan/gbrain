@@ -443,6 +443,32 @@
       }
     },
     {
+      "id": "resume-marks-refused-merge-recovery",
+      "kind": "guard",
+      "title": "recovery marks an orphaned fenced refresh recovery_required when git refused its fast-forward (a plain-git commit on old_head) and the process died before the abort (GST-1674 reverted)",
+      "expect": "RecoveryOnlyByPolicy",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "RefusedAbortable(i) == rmstart[i] /\\ rtgt[i] = 0",
+        "after": "RefusedAbortable(i) == FALSE"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/worktree-refresh.ts",
+            "before": "  const startedAt = row.outcome.merge_started_at;\n  return row.state === 'fenced'",
+            "after": "  const startedAt = row.outcome.merge_started_at;\n  return false && row.state === 'fenced'"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/persistence-worktree-refresh-restart.test.ts",
+            "filter": "a refresh killed after git refused its fast-forward recovers by aborting"
+          }
+        ]
+      }
+    },
+    {
       "id": "resume-needs-exact-target",
       "kind": "guard",
       "title": "recovery runs bookkeeping for an orphaned fenced or merged refresh only when HEAD is exactly the target, not a descendant",

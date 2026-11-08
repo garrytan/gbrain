@@ -154,8 +154,9 @@ RefIs(S) == cur # None /\ rstate[cur] \in S
 Worktree == IF local # None THEN local ELSE fileV
 \* HEAD holds refresh i's target: its merge ran and HEAD is the target or a descendant (history is one line until a reset).
 HoldsTarget(i) == rtgt[i] # 0 /\ head >= rtgt[i] /\ ~lost[i]
-\* markRecoveryRequired's case: a merge that started on a HEAD that no longer holds the target is policy; anything else is not.
-Why(i) == IF rmstart[i] /\ ~HoldsTarget(i) THEN "merge_started_off_target" ELSE "unexplained"
+\* markRecoveryRequired's case: a merge that ran (HEAD reached the target) on a HEAD that no longer holds it is policy;
+\* anything else is not. GST-1674: a merge that started but never reached the target (git refused it) is not policy.
+Why(i) == IF rmstart[i] /\ rtgt[i] # 0 /\ ~HoldsTarget(i) THEN "merge_started_off_target" ELSE "unexplained"
 Free(p, r, m) == \A q \in Procs \ {p} : ~Conflict(m, held[q][r])
 L(r, m) == <<r, m>>
 
@@ -212,6 +213,10 @@ AdoptOneSided == fileV = dbV
 \* HEAD descends from old_head and the target is not in it, whoever made the commits. memberOutsideHead is FALSE here: no
 \* member syncs past HEAD.
 FencedAbortable(i) == ~rmstart[i]
+\* GST-1674: recoverOne also aborts one whose merge started but whose HEAD never reached the target since (the reflogs of HEAD
+\* and its branch show no move to target_head after outcome.merge_started_at): git refused the fast-forward, the process died
+\* before the abort. Without a readable reflog the code keeps recovery_required; the model assumes the reflog is kept.
+RefusedAbortable(i) == rmstart[i] /\ rtgt[i] = 0
 \* recoverOne runs bookkeeping for an orphaned fenced refresh whose HEAD holds the target (the target or a strict descendant).
 ResumeAtTarget(i) == HoldsTarget(i)
 
@@ -551,7 +556,7 @@ MergeStartCommit ==
                  cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
 \* Plain git can still commit between the HEAD check and the merge (only gbrain's commits take the commit lock): the ff-only
-\* merge then refuses with HEAD neither old_head nor the target, and the live tick marks recovery_required.
+\* merge then refuses with HEAD on that commit, and the live tick aborts refresh_source_changed and retries (GST-1674, #8765).
 FfMerge ==
   /\ pc[RFR] = "r_ff"
   /\ IF head = rhead[nref]
@@ -560,7 +565,7 @@ FfMerge ==
              ELSE NewCommit(fileV) /\ UNCHANGED <<nver, rmoved>>
           /\ rtgt' = [rtgt EXCEPT ![nref] = head + 1]
           /\ Need(RFR, <<L(REF(nref), "NKU"), L(SRC, "NKU")>>) /\ Go(RFR, "r_bk")
-     ELSE /\ Need(RFR, <<L(REF(nref), "NKU")>>) /\ Go(RFR, "r_mark") /\ UNCHANGED <<head, verAt, fileV, nver, rmoved, rtgt>>
+     ELSE /\ Need(RFR, <<L(REF(nref), "NKU")>>) /\ Go(RFR, "r_abort") /\ UNCHANGED <<head, verAt, fileV, nver, rmoved, rtgt>>
   /\ UNCHANGED <<reqv, rstate, rel, rchg, rhead, rmstart, lost, rwhy, cur, nref, dbV, hist, lastCommit, local, nforeign, nlocal,
                  envv, ghostv, held, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
@@ -635,7 +640,7 @@ RecoverCommit ==
   /\ LET s == rstate[nref]
      IN CASE s \notin RefActive ->   \* another process finished it (the admission that completes a synced refresh)
                /\ UNCHANGED <<rstate, rel, rwhy, cur>> /\ Go(RFR, "idle") /\ Need(RFR, <<>>)
-          [] s = "draining" \/ (s = "fenced" /\ (head = rhead[nref] \/ FencedAbortable(nref))) ->
+          [] s = "draining" \/ (s = "fenced" /\ (head = rhead[nref] \/ FencedAbortable(nref) \/ RefusedAbortable(nref))) ->
                /\ rstate' = [rstate EXCEPT ![nref] = "aborted"] /\ rel' = [rel EXCEPT ![nref] = ReleaseOn("aborted")]
                /\ cur' = None /\ Go(RFR, "idle") /\ Need(RFR, <<>>) /\ UNCHANGED rwhy
           [] s = "fenced" /\ ResumeAtTarget(nref) ->   \* bookkeeping
