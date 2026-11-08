@@ -14,9 +14,10 @@
  *   - excluded (listed, never restored): the page is missing or deleted; the fact was superseded or withdrawn
  *     (`fact_withdrawals`, for its entity, every subject or the owned memory page it sits on); a fence held it (a
  *     fact_fence generation recorded it, or the page or a stored version of it carries it at the same row number, claim
- *     and visibility: a genuine withdrawal); the page's fence states the claim; an active fact with the same text and
- *     entity is on the page, at any visibility; another candidate with the same text and entity, at the same or a
- *     narrower visibility, is restored instead; or
+ *     and visibility: a genuine withdrawal); the page's fence states the claim; an active, still valid fact with the
+ *     same text, entity and a compatible speaker (facts/attribution.ts) is on the page, at any visibility; another
+ *     candidate with the same text, entity and a compatible speaker, at the same or a narrower visibility, is restored
+ *     instead; or
  *     the brain is unmanaged, whose extract_facts reconcile retires a row its fence lacks as drift and would retire a
  *     restored row again.
  *   - ambiguous (restored only with `--include-ambiguous` and that preview's hash): the page's version history has a
@@ -46,6 +47,8 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { FACT_FENCE_KIND } from '../generations/fence.ts';
 import { factsFenceHeld, pageFenceRowKeys } from '../generations/fence-evidence.ts';
 import { withdrawalCoversFactSql } from '../access/member-facts.ts';
+import { attributionCompatible } from '../facts/attribution.ts';
+import type { FactAttribution } from '../engine.ts';
 import type { FactPreimage } from '../generations/adapters/fact-rows.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 
@@ -89,7 +92,7 @@ export interface UnwithdrawnFactsPage {
 interface PageItem extends RepairItem { page: UnwithdrawnFactsPage; hash: string; last: boolean }
 
 interface CandidateRow {
-  id: number | string; source_id: string; slug: string; fact: string; visibility: string; entity_slug: string | null; superseded: boolean;
+  id: number | string; source_id: string; slug: string; fact: string; visibility: string; entity_slug: string | null; attributed_to: FactAttribution | null; superseded: boolean;
   generation_id: number | string; generation: number | string; retired_at: string; expired_at: string; preimage: FactPreimage;
   page_id: number | string | null; page_deleted: boolean | null; history_gap: boolean | null; withdrawn: boolean; active_duplicate: boolean; fingerprint: string;
 }
@@ -106,15 +109,16 @@ export async function classifyUnwithdrawnFacts(db: BrainEngine, sourceIds: strin
          AND ($2::text IS NULL OR g.owner_key = 'page:' || $2::text)
        ORDER BY (i.preimage->>'id')::bigint, g.id DESC
     )
-    SELECT f.id, r.source_id, r.slug, f.fact, f.visibility, f.entity_slug, f.superseded_by IS NOT NULL AS superseded, r.generation_id, r.generation,
+    SELECT f.id, r.source_id, r.slug, f.fact, f.visibility, f.entity_slug, f.attributed_to, f.superseded_by IS NOT NULL AS superseded, r.generation_id, r.generation,
            r.retired_at, ${INSTANT('f.expired_at')} AS expired_at, r.preimage, gbrain_fact_fingerprint(f.fact) AS fingerprint,
            p.id AS page_id, p.deleted_at IS NOT NULL AS page_deleted, p.version_history_gap_at IS NOT NULL AS history_gap,
            EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
              AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))
              AND ${withdrawalCoversFactSql('w', 'f')}) AS withdrawn,
            EXISTS (SELECT 1 FROM facts a WHERE a.source_id = f.source_id AND a.source_markdown_slug = r.slug
-             AND a.expired_at IS NULL AND gbrain_fact_fingerprint(a.fact) = gbrain_fact_fingerprint(f.fact)
-             AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug) AS active_duplicate
+             AND a.expired_at IS NULL AND (a.valid_until IS NULL OR a.valid_until > now())
+             AND gbrain_fact_fingerprint(a.fact) = gbrain_fact_fingerprint(f.fact) AND a.entity_slug IS NOT DISTINCT FROM f.entity_slug
+             AND (a.attributed_to IS NULL OR f.attributed_to IS NULL OR a.attributed_to = f.attributed_to)) AS active_duplicate
       FROM retired r
       JOIN facts f ON f.id = r.fact_id AND f.source_id = r.source_id
       LEFT JOIN pages p ON p.source_id = r.source_id AND p.slug = r.slug
@@ -137,17 +141,21 @@ export async function classifyUnwithdrawnFacts(db: BrainEngine, sourceIds: strin
   }
   const managed = await managedPersistenceEnabled(db);
   const base = rows.map(row => classify(row, evidence.get(`${row.source_id}\u0000${row.slug}`), managed));
-  // One copy of a claim comes back per page and entity, the narrowest visibility first, so no wider copy returns beside it.
+  // One copy of a claim comes back per page, entity and speaker, the narrowest visibility first, so no wider copy returns
+  // beside it; copies from different known speakers are not duplicates (facts/attribution.ts), so each comes back.
   const key = (row: CandidateRow) => JSON.stringify([row.source_id, row.slug, row.entity_slug, row.fingerprint]);
   const rank = (i: number) => (rows[i]!.visibility === 'world' ? 2 : 0) + (base[i]![0] === 'evidenced' ? 0 : 1);
-  const representative = new Map<string, number>();
-  rows.forEach((row, i) => {
-    if (base[i]![0] === 'excluded') return;
-    const current = representative.get(key(row));
-    if (current === undefined || rank(i) < rank(current)) representative.set(key(row), i);
-  });
+  const chosen = new Map<string, number[]>();
+  const order = rows.map((_, i) => i).filter(i => base[i]![0] !== 'excluded').sort((a, b) => rank(a) - rank(b) || a - b);
+  const restored = new Set<number>();
+  for (const i of order) {
+    const group = chosen.get(key(rows[i]!)) ?? [];
+    if (group.some(j => attributionCompatible(rows[j]!.attributed_to, rows[i]!.attributed_to))) continue;
+    chosen.set(key(rows[i]!), [...group, i]);
+    restored.add(i);
+  }
   return rows.map((row, i) => {
-    const duplicate = base[i]![0] !== 'excluded' && representative.get(key(row)) !== i;
+    const duplicate = base[i]![0] !== 'excluded' && !restored.has(i);
     const [klass, reason] = duplicate ? ['excluded' as const, 'duplicate_candidate'] : base[i]!;
     return { id: Number(row.id), source_id: row.source_id, slug: row.slug, class: klass, reason, generation_id: Number(row.generation_id),
       generation: Number(row.generation), retired_at: row.retired_at, fact_hash: digest([row.fact, row.visibility, row.entity_slug]), preimage: row.preimage };
@@ -175,8 +183,8 @@ const DETAILS: Record<string, string> = {
   changed_since_retirement: 'it changed after the generation retired it',
   fence_held: 'a fence of the page held it, so an edit of the fence withdrew it',
   fence_states_claim: "the page's fence states this claim, so its next write would retire a restored copy again",
-  active_duplicate: 'an active fact with the same text and entity is already on the page',
-  duplicate_candidate: 'another candidate of the page with the same text and entity is restored instead',
+  active_duplicate: 'an active fact with the same text, entity and speaker is already on the page',
+  duplicate_candidate: 'another candidate of the page with the same text, entity and speaker is restored instead',
   unmanaged_reconcile: "this brain is unmanaged: its extract_facts reconcile treats a numbered row the page's fence lacks as drift and would retire a restored row again",
   version_history_gap: "the page's version history has a gap, so an earlier fence holding it cannot be ruled out",
   version_history_unread: "the page has more stored versions than one preview reads, so an earlier fence holding it cannot be ruled out",

@@ -323,4 +323,43 @@ describe('gbrain repair unwithdrawn-facts (#8819) coverage pass', () => {
       }, false, [FOUNDED, ROW(4, 'Alice plays chess')].join('\n'));
     }, 120_000);
   }
+
+  for (const { backend, databaseUrl } of pathologicalArms()) {
+    test(`[${backend}] one claim asserted by two speakers: each speaker's copy is restored`, async () => {
+      await managedPage(databaseUrl, async (engine, sourceId) => {
+        const ids = { user: await factRow(engine, sourceId, 2, 'Alice plays chess'), other: await factRow(engine, sourceId, 3, 'Alice plays chess') };
+        await engine.executeRaw("UPDATE facts SET attributed_to=CASE WHEN id=$1 THEN 'user' ELSE 'other' END WHERE id=ANY($2::bigint[])", [ids.user, [ids.user, ids.other]]);
+        await prefixRetire(engine, sourceId, [ids.user, ids.other]);
+        return ids;
+      }, async (engine, sourceId, { user, other }) => {
+        const preview = await repair(engine, sourceId);
+        expect(preview.listing!.map(row => [row.item, row.class])).toEqual([
+          [`${sourceId}:${SLUG}#${user}`, 'evidenced'], [`${sourceId}:${SLUG}#${other}`, 'evidenced']]);
+        expect((await repair(engine, sourceId, { expect: hashOf(preview) })).applied).toBe(1);
+        expect(await state(engine, [user, other])).toEqual([[user, 2, true], [other, 3, true]]);
+      });
+    }, 120_000);
+  }
+
+  for (const { backend, databaseUrl } of pathologicalArms()) {
+    test(`[${backend}] an active copy whose validity has lapsed, or another speaker's, does not block a restore`, async () => {
+      await managedPage(databaseUrl, async (engine, sourceId) => {
+        const chess = await factRow(engine, sourceId, 2, 'Alice plays chess');
+        const lisbon = await factRow(engine, sourceId, 3, 'Alice lives in Lisbon');
+        await engine.executeRaw("UPDATE facts SET attributed_to='user' WHERE id=$1", [lisbon]);
+        await prefixRetire(engine, sourceId, [chess, lisbon]);
+        const lapsed = await factRow(engine, sourceId, 4, 'Alice plays chess');
+        await engine.executeRaw("UPDATE facts SET valid_until='2020-01-01' WHERE id=$1", [lapsed]);
+        const assistant = await factRow(engine, sourceId, 5, 'Alice lives in Lisbon');
+        await engine.executeRaw("UPDATE facts SET attributed_to='assistant' WHERE id=$1", [assistant]);
+        return { chess, lisbon };
+      }, async (engine, sourceId, { chess, lisbon }) => {
+        const preview = await repair(engine, sourceId);
+        expect(preview.listing!.map(row => [row.item, row.class])).toEqual([
+          [`${sourceId}:${SLUG}#${chess}`, 'evidenced'], [`${sourceId}:${SLUG}#${lisbon}`, 'evidenced']]);
+        expect((await repair(engine, sourceId, { expect: hashOf(preview) })).applied).toBe(1);
+        expect(await state(engine, [chess, lisbon])).toEqual([[chess, 2, true], [lisbon, 3, true]]);
+      });
+    }, 120_000);
+  }
 });
