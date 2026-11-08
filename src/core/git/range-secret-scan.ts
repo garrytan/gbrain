@@ -4,8 +4,9 @@
  * commit it pushes, what each commit in `base..head` adds: its message, the lines it adds file by file (a value a later
  * commit removed is still in the pushed history), and for a merge commit the lines it adds that neither parent has
  * (a conflict resolution). The workspace allowlist (`.gbrain-scan-allow`: path globs and fingerprints) applies.
- * Findings carry the path, line, rule, fingerprint and commit, never the matched value. Binary changes carry no lines;
- * a file whose added text is over the scan cap cannot be scanned and is reported as such, so callers refuse. A commit
+ * Findings carry the path, line, rule, fingerprint and commit, never the matched value. The diff is forced to text and
+ * its prefixes and size threshold are pinned, so no attribute or user setting decides what is scanned; added text that
+ * holds a NUL byte is binary by content and carries no lines. A file whose added text is over the scan cap cannot be scanned and is reported as such, so callers refuse. A commit
  * in the range that changes a file deciding what the scan sees (`.gbrain-scan-allow`, a `.gitattributes`) is reported
  * too, so callers refuse rather than let the published commits widen their own gate.
  */
@@ -17,8 +18,8 @@ export interface RangeScan { findings: RangeSecretFinding[]; unscanned: Array<{ 
 
 /** The `git log` arguments whose output findingsInLog reads. */
 export function rangeScanArgs(base: string, head: string): string[] {
-  return ['-c', 'core.quotePath=false', '-c', 'core.attributesFile=/dev/null', 'log', '--no-renames', '--no-ext-diff', '--no-textconv', '--no-color', '--diff-merges=dense-combined',
-    '--unified=0', '-p', '--format=commit %H%n%B%n%x00', `${base}..${head}`, '--'];
+  return ['-c', 'core.quotePath=false', '-c', 'core.attributesFile=/dev/null', '-c', 'core.bigFileThreshold=2g', 'log', '--no-renames', '--no-ext-diff', '--no-textconv', '--no-color',
+    '--diff-merges=dense-combined', '--text', '--src-prefix=a/', '--dst-prefix=b/', '--unified=0', '-p', '--format=commit %H%n%B%n%x00', `${base}..${head}`, '--'];
 }
 
 /** The commit message as `path` in a finding. */
@@ -32,7 +33,8 @@ export function findingsInLog(root: string, log: string): RangeScan {
   const flush = () => {
     if (path && added.length && (path === MESSAGE_PATH || !pathAllowlisted(path, allowlist))) {
       const text = added.join('\n');
-      if (Buffer.byteLength(text) > SCAN_MAX_FILE_BYTES) scan.unscanned.push({ path, commit });
+      if (path !== MESSAGE_PATH && text.includes('\0')) { /* binary by content */ }
+      else if (Buffer.byteLength(text) > SCAN_MAX_FILE_BYTES) scan.unscanned.push({ path, commit });
       else for (const f of scanText(text, { allowlist })) scan.findings.push({ path, commit, line: at[f.line - 1] ?? f.line, pattern: f.pattern, fingerprint: f.fingerprint });
     }
     added = []; at = [];

@@ -128,3 +128,20 @@ test('an unpublished commit that widens .gbrain-scan-allow or turns a file binar
   expect(hidden.message).toContain('.gitattributes (changes what the scan sees, ');
   expect(remoteTip(attrs)).toBe(attrs.base);
 });
+
+test('attributes outside the range and diff settings never hide a secret or a gate change', () => {
+  const worktree = repo('wt-attrs');
+  commit(worktree.root, 'notes.md', `Deploy token ${token}\n`);
+  writeFileSync(join(worktree.root, '.gitattributes'), '* -diff\n');
+  writeFileSync(join(worktree.root, '.git', 'info', 'attributes'), '* binary\n');
+  expect(refused(() => publish(worktree.root)).message).toContain('notes.md:1 (');
+  expect(remoteTip(worktree)).toBe(worktree.base);
+
+  const noprefix = repo('noprefix');
+  git(noprefix.root, 'config', 'diff.noprefix', 'true');
+  git(noprefix.root, 'config', 'core.bigFileThreshold', '1');
+  commit(noprefix.root, '.gbrain-scan-allow', '**\n');
+  const widened = refused(() => publish(noprefix.root));
+  expect(widened.message).toContain('.gbrain-scan-allow (changes what the scan sees, ');
+  expect(remoteTip(noprefix)).toBe(noprefix.base);
+});
