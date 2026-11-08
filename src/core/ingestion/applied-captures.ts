@@ -6,8 +6,9 @@
  * stalled attempt re-run after its write landed, a POST /ingest replayed after `gbrain jobs prune` removed the job
  * row) returns the stored result and writes nothing, so it cannot revert a newer edit. Each capture has its own key, so
  * ordered captures to one slug all apply. A managed write's door request carries a client request_id under
- * `appliedCaptureRequestPrefix(key)`, so a committed request found without its row (the worker died between the commit
- * and the insert) counts as applied and backfills the row. Rows live 90 days, at least as long as the job rows the
+ * `appliedCaptureRequestPrefix(key)`, so a committed request the handler sent as the local writer, found without its row
+ * (the worker died between the commit and the insert), counts as applied and backfills the row; a remote writer's request
+ * under the same prefix never counts. Rows live 90 days, at least as long as the job rows the
  * queue-level dedupe relied on (`gbrain jobs prune` defaults to 30 days).
  */
 
@@ -36,7 +37,7 @@ export async function readAppliedCapture<T>(engine: Exec, key: string,
   if (!journal) return null;
   const [request] = await engine.executeRaw<{ source_id: string; outcome: unknown }>(
     `SELECT source_id, outcome FROM persistence_requests
-      WHERE source_id = ANY($1::text[]) AND slug = $2 AND state = 'committed' AND client_request_id LIKE $3
+      WHERE source_id = ANY($1::text[]) AND slug = $2 AND state = 'committed' AND principal_kind = 'local_cli' AND client_request_id LIKE $3
       ORDER BY sequence LIMIT 1`,
     [journal.sourceIds, journal.slug, `${appliedCaptureRequestPrefix(key)}%`]);
   if (!request) return null;

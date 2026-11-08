@@ -29,6 +29,7 @@ import { MIGRATIONS, runMigrationSQL } from '../src/core/migrate.ts';
 import { makeIngestCaptureHandler } from '../src/core/minions/handlers/ingest-capture.ts';
 import type { MinionJobContext } from '../src/core/minions/types.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { acquireWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -75,6 +76,11 @@ afterAll(async () => { for (const brain of brains.values()) await brain.close();
 const jobCtx = (id: number, data: Record<string, unknown>, key: string | null, attempts = 0): MinionJobContext => ({ id, name: 'ingest_capture', data,
   attempts_made: attempts, idempotency_key: key, signal: new AbortController().signal, deadlineAtMs: null, shutdownSignal: new AbortController().signal,
   updateProgress: async () => {}, updateTokens: async () => {}, log: async () => {}, isActive: async () => true, readInbox: async () => [] });
+/** Runs `sql` as a protocol-2 writer, which the writer fence requires of direct writes to journal and page rows. */
+const asWriter = (engine: BrainEngine, sql: string, params: unknown[]) => engine.transaction(async tx => {
+  await tx.executeRaw("SELECT set_config('gbrain.persistence_protocol', '2', true)");
+  await tx.executeRaw(sql, params);
+});
 const jsonData = (data: unknown) => (typeof data === 'string' ? JSON.parse(data) : data) as Record<string, unknown>;
 const note = (title: string, line: string) => `---\ntype: note\ntitle: ${title}\n---\n# ${title}\n\n${line}\n`;
 /** The data a webhook capture job carries for `content` sent to `slug` in `sourceId`. */
@@ -294,6 +300,43 @@ for (const backend of backends) {
       expect(result.status).toBe('imported');
       expect(await pageText()).toContain('Managed retried body.');
       expect(await run(jobCtx(5, data, key))).toEqual(result);
+    }, { databaseUrl }), 120_000);
+
+    test('a retried capture whose attempt id names a failed write of the same request still lands', () => managedBrain(async ({ engine, ctx }) => {
+      const slug = 'notes/managed-failed';
+      const data = captureData(note('Managed failed', 'Managed body after a failed write.'), slug, 'default');
+      const key = 'ingest:webhook:client-example:default:managed-failed';
+      const pageText = async () => (await engine.readPageSnapshot(slug, { sourceId: 'default' }))?.page.compiled_truth ?? '';
+      // Attempt 0 sent the capture's request (the page did not exist yet) and the write ended failed without landing.
+      const lock = (await acquireWorktree((await getWorktreeBinding(engine, 'default'))!))!;
+      try {
+        await expect(submitPageMutation({ ...ctx, writeWaitMs: 200 }, { operation: 'put_page', params: { slug, source_id: 'default', content: data.event.content,
+          content_origin: 'tool_output', source_kind: 'webhook', source_uri: data.event.source_uri, ingested_via: 'ingest_capture',
+          request_id: `${appliedCaptureRequestPrefix(key)}0`, keep_hidden_rows: true } })).rejects.toThrow(/pending/);
+        await asWriter(engine, "UPDATE persistence_requests SET state = 'failed', error_code = 'storage_error' WHERE client_request_id = $1", [`${appliedCaptureRequestPrefix(key)}0`]);
+      } finally { await lock.release(); }
+      expect(await pageText()).toBe('');
+
+      // `gbrain jobs retry` reset attempts_made to 0, so the run sends the same request again.
+      const result = await makeIngestCaptureHandler(engine)(jobCtx(6, data, key));
+      expect(result.status).toBe('imported');
+      expect(await pageText()).toContain('Managed body after a failed write.');
+    }, { databaseUrl }), 120_000);
+
+    test('a committed request another principal sent under the capture prefix does not count as applied', () => managedBrain(async ({ engine, ctx }) => {
+      const slug = 'notes/managed-forged';
+      const data = captureData(note('Managed forged', 'Managed real capture.'), slug, 'default');
+      const key = 'ingest:webhook:client-example:default:managed-forged';
+      const prefix = appliedCaptureRequestPrefix(key);
+      const pageText = async () => (await engine.readPageSnapshot(slug, { sourceId: 'default' }))?.page.compiled_truth ?? '';
+      // A remote writer that predicted the key committed its own write under the capture's request_id prefix.
+      await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content: note('Managed forged', 'Forged write.'), request_id: `${prefix}0:forged` } });
+      await asWriter(engine, "UPDATE persistence_requests SET principal_kind = 'oauth_client', principal_id = 'client-forger' WHERE client_request_id = $1", [`${prefix}0:forged`]);
+
+      expect((await makeIngestCaptureHandler(engine)(jobCtx(7, data, key))).status).toBe('imported');
+      expect(await pageText()).toContain('Managed real capture.');
+      const own = await engine.executeRaw<{ principal_kind: string }>("SELECT principal_kind FROM persistence_requests WHERE client_request_id LIKE $1 AND client_request_id <> $2", [`${prefix}%`, `${prefix}0:forged`]);
+      expect(own.map(r => r.principal_kind)).toEqual(['local_cli']);
     }, { databaseUrl }), 120_000);
   });
 }

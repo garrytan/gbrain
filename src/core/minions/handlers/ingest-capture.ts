@@ -267,8 +267,8 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     // nothing, so it never reverts a newer edit. Tombstones and jobs queued without a key keep their old behavior.
     const appliedKey = !isTombstone && job.idempotency_key ? job.idempotency_key : null;
     const managedOutcome = (outcome: { noop?: boolean; chunks?: number }) => captured(outcome.noop ? 'skipped' : 'imported', Number(outcome.chunks ?? 0));
-    const journal = managed ? { sourceIds: [...new Set([sourceId ?? 'default', 'default'])], slug: slug.toLowerCase(), result: managedOutcome } : undefined;
-    const applied = appliedKey ? await readAppliedCapture<IngestCaptureResult>(engine, appliedKey, journal) : null;
+    const applied = appliedKey ? await readAppliedCapture<IngestCaptureResult>(engine, appliedKey,
+      managed ? { sourceIds: [...new Set([sourceId ?? 'default', 'default'])], slug: slug.toLowerCase(), result: managedOutcome } : undefined) : null;
     if (applied) return applied;
 
     const webhookWrite = untrustedPayload && event.source_kind === 'webhook' && !isTombstone;
@@ -327,9 +327,11 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       // tool_output stores and gates the capture external_untrusted (#5575 A3), as importOpts does unmanaged.
       // A capture replaces the page as it stands, so it binds to the revision read just before (the door requires one to
       // replace an existing page); a write landing in between refuses revision_conflict and the job retries.
-      // GST-1856: each attempt of a keyed capture sends its own request_id under the capture's prefix, so the applied check
-      // above finds a committed attempt in the door's journal even when the worker died before recording it.
-      const requestId = appliedKey ? `${appliedCaptureRequestPrefix(appliedKey)}${job.attempts_made}` : undefined;
+      // GST-1856: each run of a keyed capture sends a new request_id under the capture's prefix, so the applied check above
+      // finds a committed run in the door's journal even when the worker died before recording it. The id is new per run
+      // because a stall re-run keeps attempts_made and `gbrain jobs retry` resets it: an id reused for an earlier request
+      // that failed would replay that failure instead of writing.
+      const requestId = appliedKey ? `${appliedCaptureRequestPrefix(appliedKey)}${job.attempts_made}:${randomUUID()}` : undefined;
       const put = async (sid: string, request?: string) => {
         const snapshot = await engine.readPageSnapshot(slug, { sourceId: sid, includeDeleted: true });
         return door('put_page', sid, { content: event.content, content_origin: 'tool_output', source_kind: event.source_kind, source_uri: event.source_uri,
@@ -337,22 +339,9 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
           // #2044/#4548: as `remote: untrustedPayload` does unmanaged, an untrusted body keeps the non-world facts rows and takes rows its sender could not see.
           ...(untrustedPayload ? { keep_hidden_rows: true } : {}) });
       };
-      // A stall re-run keeps attempts_made and `gbrain jobs retry` resets it, so this run's id can name an earlier write of
-      // this capture that never committed (idempotency_conflict). Unless a run of the key committed since the check above,
-      // this run's write goes out under a fresh id with the same prefix.
-      let appliedSince = null as IngestCaptureResult | null;
-      const submit = async (sid: string, request: string | undefined) => {
-        try {
-          return await put(sid, request);
-        } catch (err) {
-          if (!request || !(err instanceof OperationError) || err.code !== 'idempotency_conflict') throw err;
-          appliedSince = await readAppliedCapture<IngestCaptureResult>(engine, appliedKey!, journal);
-          return appliedSince ? {} : put(sid, `${request}:${randomUUID()}`);
-        }
-      };
       let response: Record<string, unknown>;
       try {
-        response = await submit(sourceId ?? 'default', requestId);
+        response = await put(sourceId ?? 'default', requestId);
       } catch (err) {
         // The door refuses a source that vanished or was archived after the pre-check (the managed form of the FK retry).
         const vanished = sourceId !== undefined && err instanceof OperationError && err.code === 'source_changed'
@@ -360,9 +349,8 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
         if (!vanished || (vanished.length > 0 && vanished[0]?.archived !== true)) throw err;
         sourceFallback = { requested: sourceId!, effective: 'default', reason: vanished.length ? 'archived' : 'fk_violation' };
         await checkWriter('default');
-        response = await submit('default', requestId && `${requestId}:default`);
+        response = await put('default', requestId && `${requestId}:default`);
       }
-      if (appliedSince) return appliedSince;
       if (sourceFallback) {
         console.error(
           `[WARN] ingest_capture: requested source '${sourceFallback.requested}' unavailable ` +
