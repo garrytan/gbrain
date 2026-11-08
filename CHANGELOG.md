@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.613.0] - 2026-11-08
 
 **A `POST /ingest` capture that runs again after its write landed no longer reverts a newer edit to the page.** A worker that died or lost its lock after the write committed, but before the job was marked complete, handed the job to another attempt, which wrote the captured body over any edit made in between. A client replaying the same POST after `gbrain jobs prune` removed the finished job got a fresh job that did the same. Each capture is now recorded under its job's idempotency key in the same transaction as the page write, and any later run of that key writes nothing and returns the first run's result. The record lasts 90 days, even after the job row is pruned. The upgrade records the captures whose completed jobs are still in the queue, so replaying one of those after its job row is pruned writes nothing either. Separate captures to one page still land in order, because each has its own key.
 
