@@ -39,6 +39,18 @@ const commandIn = (interior: string | undefined): string | null => {
   return quoted ? (JSON.parse(quoted) as string) : null;
 };
 
+/** True only for the exact shape hermesTurnHookCommand emits: `/bin/echo '{"context":"<rule>"}'` with nothing else in the JSON or after it. */
+function isGbrainRuleCommand(c: string): boolean {
+  const m = /^\/bin\/echo '([^']*)'$/.exec(c);
+  if (!m) return false;
+  try {
+    const o = JSON.parse(m[1]!) as Record<string, unknown>;
+    const keys = o && typeof o === 'object' ? Object.keys(o) : [];
+    const ctx = o.context;
+    return keys.length === 1 && typeof ctx === 'string' && ctx.startsWith('GBrain: before answering this turn, check GBrain first') && ctx.endsWith('Then answer and finish the task.') && c === `/bin/echo '${JSON.stringify(o).replace(/'/g, '\\u0027')}'`;
+  } catch { return false; }
+}
+
 function hookYaml(command: string): string {
   return `hooks:\n  ${EVENT}:\n    - command: ${JSON.stringify(command)}\n      timeout: 10\n`;
 }
@@ -149,8 +161,18 @@ export function removeHermesTurnHook(opts: { hermesHome: string; dryRun: boolean
 export function inspectHermesTurnHook(hermesHome: string): { state: 'absent' | 'unapproved' | 'approved'; path: string; command?: string } {
   const path = join(hermesHome, 'config.yaml');
   try {
-    const probe = probeBlock(MARKERS, existsSync(path) ? readFileSync(path, 'utf8') : '');
-    const command = probe.state === 'present' ? commandIn(probe.interior) : null;
+    const text = existsSync(path) ? readFileSync(path, 'utf8') : '';
+    const probe = probeBlock(MARKERS, text);
+    let command = probe.state === 'present' ? commandIn(probe.interior) : null;
+    if (probe.state === 'absent') {
+      // A hook added by hand into an existing hooks: section (setup prints it, never edits that section).
+      const hooks = (loadBoundedYaml(text) as { hooks?: Record<string, unknown> } | null)?.hooks?.[EVENT];
+      const entries = Array.isArray(hooks) ? hooks : [];
+      for (const e of entries) {
+        const c = e && typeof e === 'object' ? (e as { command?: unknown }).command : undefined;
+        if (typeof c === 'string' && isGbrainRuleCommand(c)) { command = c; break; }
+      }
+    }
     if (!command) return { state: 'absent', path };
     return { state: readAllowlist(join(hermesHome, ALLOWLIST)).approvals.some((e) => approves(e, command)) ? 'approved' : 'unapproved', path, command };
   } catch {
