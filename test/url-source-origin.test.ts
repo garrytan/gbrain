@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -20,6 +20,8 @@ import { defaultCloneDir } from '../src/core/url-clone.ts';
 import { operations } from '../src/core/operations.ts';
 import { recordSourceOrigin } from '../src/core/url-source-origin.ts';
 import { urlSourceOriginCheck } from '../src/commands/doctor/checks/url-source-origin.ts';
+import { runRecordOrigin } from '../src/commands/sources-record-origin.ts';
+import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 
 const URL_CONFIG = { managed_clone: true, remote_url: 'https://example.invalid/source-a.git' };
 const git = (args: string[]) => execFileSync('git', ['-c', 'user.email=alice-example@example.invalid', '-c', 'user.name=alice-example', '-c', 'commit.gpgsign=false', ...args],
@@ -140,5 +142,64 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
       await expect(recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: true, remote })).rejects.toMatchObject({ canonical: 'trusted_local_only' });
     expect(await config('source-a')).toEqual(URL_CONFIG);
     expect(operations.filter(op => /record.?origin/.test(op.name) || 'added_by_remote_caller' in (op.params ?? {})).map(op => op.name)).toEqual([]);
+  }), 60_000);
+  test('--remote refuses a clone directory that is not its own repository, even inside an enclosing one, and writes nothing', () => brain(async home => {
+    git(['init', '-q', home]);
+    mkdirSync(defaultCloneDir('source-a'), { recursive: true });
+    await insert('source-a', defaultCloneDir('source-a'), URL_CONFIG);
+    for (const apply of [false, true])
+      expect((await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply, remote: false })).results[0]).toMatchObject({ status: 'refused', code: 'lfs_unknown' });
+    expect(await config('source-a')).toEqual(URL_CONFIG);
+  }), 60_000);
+
+  test('missing, archived and non-URL sources are refused with their own codes, a repeated id is checked once, and nothing is written', () => brain(async home => {
+    await insert('source-a', defaultCloneDir('source-a'), URL_CONFIG);
+    await insert('source-b', defaultCloneDir('source-b'), URL_CONFIG);
+    await engine.executeRaw('UPDATE sources SET archived=true WHERE id=$1', ['source-b']);
+    await insert('source-e', join(home, 'notes'), {});
+    const preview = await recordSourceOrigin(engine, ['nope', 'source-b', 'source-e', 'source-a', 'source-a'], { origin: 'local', apply: false, remote: false });
+    expect(preview.results.map(result => [result.source_id, result.code ?? result.status])).toEqual([['nope', 'not_found'], ['source-b', 'archived'], ['source-e', 'not_url_clone'], ['source-a', 'would_record']]);
+    for (const apply of [false, true]) {
+      const refused = await recordSourceOrigin(engine, ['nope', 'source-b', 'source-e'], { origin: 'remote', apply, remote: false });
+      expect(refused.results.map(result => result.code)).toEqual(['not_found', 'archived', 'not_url_clone']);
+    }
+    expect(await config('source-a')).toEqual(URL_CONFIG);
+    expect(await config('source-b')).toEqual(URL_CONFIG);
+    expect(await config('source-e')).toEqual({});
+  }), 60_000);
+
+  test('apply refuses source_changed when the row moves between its check and its locked re-read, and leaves the row as it found it', () => brain(async () => {
+    await insert('source-a', defaultCloneDir('source-a'), URL_CONFIG);
+    const moved = { ...URL_CONFIG, remote_url: 'https://example.invalid/source-other.git' };
+    const transaction = engine.transaction.bind(engine);
+    const patched = spyOn(engine, 'transaction').mockImplementation(async fn => {
+      await engine.executeRaw('UPDATE sources SET config=$2::text::jsonb WHERE id=$1', ['source-a', JSON.stringify(moved)]);
+      return transaction(fn);
+    });
+    try {
+      expect((await recordSourceOrigin(engine, ['source-a'], { origin: 'local', apply: true, remote: false })).results[0]).toMatchObject({ status: 'refused', code: 'source_changed' });
+    } finally { patched.mockRestore(); }
+    expect(await config('source-a')).toEqual(moved);
+  }), 60_000);
+
+  test('the CLI exits 2 on a usage error before reading anything, and sets exit 1 when any id is refused', () => brain(async () => {
+    await insert('source-a', defaultCloneDir('source-a'), URL_CONFIG);
+    const exit = spyOn(process, 'exit').mockImplementation(code => { throw new Error(`EXIT ${code}`); });
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
+    const logs = spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      for (const args of [['source-a', '--remote', '--local'], ['source-a'], ['--remote'], ['source-a', '--remote', '--force']])
+        await expect(runRecordOrigin(engine, args)).rejects.toThrow('EXIT 2');
+      expect(errors.mock.calls.flat().join('\n')).toContain('Usage: gbrain sources record-origin');
+      expect(await config('source-a')).toEqual(URL_CONFIG);
+
+      _resetCliExitVerdictForTests();
+      await runRecordOrigin(engine, ['source-a', '--local']);
+      expect(currentExitCode()).toBe(0);
+      expect(logs.mock.calls.flat().join('\n')).toContain('Apply with: gbrain sources record-origin source-a --local --apply');
+      await runRecordOrigin(engine, ['source-a', 'nope', '--local', '--apply']);
+      expect(currentExitCode()).toBe(1);
+      expect(await config('source-a')).toEqual({ ...URL_CONFIG, added_by_remote_caller: false });
+    } finally { exit.mockRestore(); errors.mockRestore(); logs.mockRestore(); _resetCliExitVerdictForTests(); }
   }), 60_000);
 });

@@ -15,6 +15,7 @@
  * converting the checkout rewrites its files, which this does not do. Without git-lfs files a clone with these
  * settings has the same tracked bytes, so the stored manifest needs no change.
  */
+import { realpathSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import type { BrainEngine } from './engine.ts';
 import { opError } from './ops/contract.ts';
@@ -50,8 +51,13 @@ export async function urlSourcesWithoutOrigin(engine: BrainEngine): Promise<Arra
   return rows.filter(row => originState(row) === 'unknown').map(row => ({ id: row.id, local_path: row.local_path! }));
 }
 
-/** `none` only when Git lists the checkout and no tracked path has `filter=lfs`; a missing or unreadable checkout is not known to be free of git-lfs. */
+/**
+ * `none` only when the checkout is its own repository's top level, Git lists it and no tracked path has `filter=lfs`. A
+ * missing or unreadable checkout, or a directory Git resolves to an enclosing repository, is not known to be free of git-lfs.
+ */
 function lfsTracked(root: string): 'none' | 'tracked' | 'unknown' {
+  const top = hardenedGitSync(root, ['rev-parse', '--show-toplevel'], { timeoutMs: 30_000, maxBytes: 1024 * 1024 });
+  if (!top.ok || top.stdout.toString('utf8').trim() !== realpathSync(root)) return 'unknown';
   const listed = hardenedGitSync(root, ['ls-files', '-z', '--cached', '--', ':(attr:filter=lfs)'], { timeoutMs: 30_000, maxBytes: 64 * 1024 * 1024 });
   if (!listed.ok) return 'unknown';
   return listed.stdout.length ? 'tracked' : 'none';
