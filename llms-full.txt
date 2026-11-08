@@ -7,6 +7,39 @@ For the link-only index, see `llms.txt`. Source of truth: https://github.com/gar
 
 # Choose your agent setup
 
+## docs/guides/private-unix-http.md
+
+Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/private-unix-http.md
+
+# Private local HTTP transport
+
+On Unix, `GBRAIN_HTTP_UNIX_SOCKET=/absolute/protected/path/gbrain.sock`
+optionally exposes the existing HTTP application on a Unix-domain socket.
+It uses the same engine, OAuth checks, scopes, and routes as the regular HTTP
+listener. It does not create a second writer or disable the normal TCP listener.
+This is intended for an already-authorized local reverse proxy or private tunnel;
+GBrain does not provision that proxy, publish a URL, or grant it credentials.
+
+The final parent directory must already exist, be owned by the process user,
+and have no group/other permissions (for example mode 0700). Ancestors must be
+root- or user-owned and not writable by group/other; a root-owned sticky directory
+is allowed only immediately above a user-owned private directory. Symlinks and
+pre-existing socket paths are refused rather than removed. The socket is mode
+0600. Use canonical absolute paths, not symlinked temporary-directory aliases.
+The operating-system account can reach the transport, but requests still need
+the existing application authorization. All socket peers share one loopback
+rate-limit bucket; forwarded headers do not create separate identities.
+
+Shutdown closes the optional listener before the resident engine disconnects.
+A cleanup error is reported without skipping the remaining resident cleanup.
+The transport is opt-in; unset the variable to keep the existing behavior.
+Windows named pipes are not supported by this option. No client-device installation
+or cross-device transport is included by this setting alone.
+
+**Say to your agent:** *"Check whether my existing authorized local proxy can use GBrain’s protected Unix socket while keeping the same brain and application permissions. Explain any remaining proxy or client setup before changing it."*
+
+---
+
 ## docs/guides/remote-mcp.md
 
 Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/remote-mcp.md
@@ -5492,6 +5525,7 @@ Start with `gbrain doctor`. For database access failures, use `gbrain engine sta
 - [`docs/integrations/`](docs/integrations/) — connecting external data sources (voice, email, calendar, embedding providers)
 - [MCP task guide](docs/mcp/README.md) — deployment and per-client setup (Claude Desktop, Code, Cursor, ChatGPT, Perplexity, Cowork)
 - [MCP administration](docs/mcp/ADMIN.md) — owner dashboard access, client registration, OAuth, permissions, and token recovery
+- [Private local HTTP transport](docs/guides/private-unix-http.md) — opt-in Unix socket access for an existing local proxy, with unchanged OAuth checks
 - [Evals](docs/eval/) and [research](docs/research/) — methods and results
 - [`docs/ethos/`](docs/ethos/) — philosophy (thin harness, fat skills, markdown as recipes, origin story)
 - [`AGENTS.md`](AGENTS.md) — entry point for non-Claude agents

@@ -22,3 +22,5 @@ A cleanup error is reported without skipping the remaining resident cleanup.
 The transport is opt-in; unset the variable to keep the existing behavior.
 Windows named pipes are not supported by this option. No client-device installation
 or cross-device transport is included by this setting alone.
+
+**Say to your agent:** *"Check whether my existing authorized local proxy can use GBrain’s protected Unix socket while keeping the same brain and application permissions. Explain any remaining proxy or client setup before changing it."*

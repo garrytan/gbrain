@@ -6,6 +6,7 @@ Repo: https://github.com/garrytan/gbrain
 
 ## Choose your agent setup
 
+- [Private local HTTP transport](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/private-unix-http.md): Optional protected Unix-domain socket for an existing authorized local proxy: same HTTP application, OAuth and engine; path permissions, shutdown and limits. Does not provision a tunnel or client connection.
 - [Use your brain from anywhere over MCP](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/remote-mcp.md): `gbrain mcp expose`: publish serve --http on your Tailscale tailnet (Funnel explicit for cloud agents), user service, admin token file, grant/connect/verify hand-off, --status/--remove, troubleshooting, security posture, ngrok and cloud-host alternatives.
 - [Grok Bot](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/grok-bot.md): Recommended: keep the brain on your computer, publish it with `gbrain mcp expose --funnel`, grant the Bot a client and install the thin CLI; local in-Bot memory as the no-host alternative. Native skill activation, shared-computer trust and dated evidence.
 - [Muse personal agent](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/muse.md): Verify durable storage first; connect Muse to your published brain (`gbrain mcp expose --funnel` + thin CLI) or add local explicit memory with provenance alongside Muse's native memory; distinguish Muse Code and unverified native MCP.

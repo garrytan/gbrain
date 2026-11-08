@@ -38,6 +38,7 @@ export const SECTIONS: DocSection[] = [
   {
     heading: "Choose your agent setup",
     entries: [
+      { title: "Private local HTTP transport", path: "docs/guides/private-unix-http.md", description: "Optional protected Unix-domain socket for an existing authorized local proxy: same HTTP application, OAuth and engine; path permissions, shutdown and limits. Does not provision a tunnel or client connection." },
       { title: "Use your brain from anywhere over MCP", path: "docs/guides/remote-mcp.md", description: "`gbrain mcp expose`: publish serve --http on your Tailscale tailnet (Funnel explicit for cloud agents), user service, admin token file, grant/connect/verify hand-off, --status/--remove, troubleshooting, security posture, ngrok and cloud-host alternatives." },
       { title: "Grok Bot", path: "docs/guides/grok-bot.md", description: "Recommended: keep the brain on your computer, publish it with `gbrain mcp expose --funnel`, grant the Bot a client and install the thin CLI; local in-Bot memory as the no-host alternative. Native skill activation, shared-computer trust and dated evidence." },
       { title: "Muse personal agent", path: "docs/guides/muse.md", description: "Verify durable storage first; connect Muse to your published brain (`gbrain mcp expose --funnel` + thin CLI) or add local explicit memory with provenance alongside Muse's native memory; distinguish Muse Code and unverified native MCP." },
