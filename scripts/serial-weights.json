@@ -415,6 +415,7 @@
   "test/stdio-stderr-redirect.serial.test.ts": 0,
   "test/subagent-put-page-rejection.serial.test.ts": 3,
   "test/sync-convergence.serial.test.ts": 3,
+  "test/busy-agent-soak.serial.test.ts": 1,
   "test/sync-cost-gate.serial.test.ts": 18,
   "test/sync-default-write-guard.serial.test.ts": 4,
   "test/sync-delegated-options-6696.serial.test.ts": 11,

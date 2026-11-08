@@ -102,6 +102,7 @@
     "test:profile": "bash scripts/profile-tests.sh",
     "test:serial": "bash scripts/run-serial-tests.sh",
     "test:convergence": "GBRAIN_TEST_CONVERGENCE=1 bun --no-env-file test --timeout=3600000 test/sync-convergence.serial.test.ts",
+    "test:busy-agent": "GBRAIN_TEST_BUSY_AGENT=1 bun --no-env-file test --timeout=3600000 test/busy-agent-soak.serial.test.ts",
     "test:tla": "bash scripts/spec/tlc.sh && bun scripts/spec/mutants.ts drain-lease && bun scripts/spec/mutants.ts refresh-barrier",
     "ci:local": "bash scripts/ci-local.sh",
     "ci:local:diff": "bash scripts/ci-local.sh --diff",

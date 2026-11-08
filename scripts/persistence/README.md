@@ -659,6 +659,49 @@ summary (every failing test with its seed, fault plan, fired faults and repro
 line) and the upload of `LOG_DIR` still run. The nightly watcher
 (`nightly-watch.yml`) files its failures like every other scheduled workflow.
 
+### Busy-agent soak cell
+
+`test/busy-agent-soak.serial.test.ts` (L5) runs the convergence gate's
+real-process brain (`test/helpers/convergence-brain.ts`, shared with
+`test/sync-convergence.serial.test.ts`: Postgres behind transaction-mode
+PgBouncer through latency proxies, real `src/cli.ts` processes, a resident
+serve, the fault seam, the acknowledged-write ledger and the oracle) under the
+workload a busy personal agent puts on one managed checkout. Its counts and
+cadences come from a profile: the committed generic one,
+`test/fixtures/busy-agent-profile.json`, unless
+`GBRAIN_TEST_BUSY_AGENT_PROFILE` names another (a profile derived from a real
+deployment stays private). A profile holds exactly the test's `PROFILE_SHAPE`
+keys, each a positive integer, plus an optional `description`; it never holds
+content.
+
+| Mode | What happens | Expected end state |
+| --- | --- | --- |
+| (h) refresh ticks | With `persistence.refresh_barrier` on, scheduled `sources refresh` ticks pull upstream commits while foreground `put`s land inside the fence, some on notes the tick changes, and an agent writes across every tick | every tick's refresh completes and releases its fence; every write that reached the refreshing checkout is answered pending with a receipt naming the refresh, never refused, and commits after it, or ends `revision_conflict` with nothing applied when the refresh changed its file |
+| (i) foreign writers | Plain-git committers and an uncommitted-file writer beside gbrain | `doctor` `foreign_writers` names every commit gbrain did not make and none it made, and the aged uncommitted files |
+| (j) legacy rows | Rows with no import record in every content-evidence direction | `sources git-gap` classifies each by its direction evidence; `both_moved` and `no_evidence` rows end held `file_drift` |
+| (k) strict conversion | `sources canonical --to git` over several adopt groups, stalled after the first (`conversion:group_committed`) while another clone pushes, door writes land and a refresh runs | the conversion ends `converted`, strict, with nothing left to plan; every door write and refresh is accepted or refused with a registered code; the other agent's commit reaches HEAD |
+| (l) segmented staging | A segmented write whose staging expires or is aborted at `segmented:manifest_staged` | the write refuses `body_staging_expired`, the page keeps its body, a resend commits and the sweep leaves no live staging |
+| (m) lost update | A file-writing cron (`git commit-push --base`) and an MCP `edit_page` writer race on one page | `edit_page` refuses `revision_conflict`, `commit-push --base` refuses `commit_base_moved`, and no acknowledged write is silently reverted |
+
+Every scenario then gets the convergence gate's oracle (above). It skips
+unless `GBRAIN_TEST_BUSY_AGENT=1`; with the Postgres and PgBouncer of the
+gate above:
+
+```bash
+GBRAIN_TEST_BUSY_AGENT_LATENCY_MS=0 bun run test:busy-agent      # every mode, fast local loop
+GBRAIN_TEST_BUSY_AGENT_MODES=k bun run test:busy-agent           # one mode
+```
+
+Knobs (`GBRAIN_TEST_BUSY_AGENT_*`): `SEED` (default 8800), `MODES`,
+`PROFILE`, `LATENCY_MS` (default 50), `SYNC_TIMEOUT_MS` (default 900000),
+`SCENARIO_TIMEOUT_MS` (default 3600000) and `LOG_DIR`.
+
+CI: the `busy-agent` job of `.github/workflows/convergence-nightly.yml`, on
+the same runner class, at 50 ms with the run id as the seed. It is
+informational (`continue-on-error`) for its first seven nights; after that a
+release touching persistence, sync or Git needs it green on the release's
+exact sha.
+
 ## Engine graduation tests
 
 Graduation (`gbrain migrate --to postgres`) is tested against two fixtures.
