@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.615.0] - 2026-11-08
 
 **A refresh killed after git refused its fast-forward no longer leaves the checkout fenced until a person acts.** When another agent commits on the start commit with plain git right before a refresh merges, git refuses the fast-forward and the refresh aborts, keeping that commit. If the refresh process died between the refused merge and that abort, recovery used to mark the refresh `recovery_required`, so writes to the checkout stayed fenced (or deferred, with the refresh write barrier on) until someone reset the checkout. Recovery (the owner's scan or `gbrain sources refresh --resume`) now aborts it the same way, with the fence lifted and the commit kept, and the next refresh completes. It tells this case from a merge that ran and was then reset by reading the reflog of HEAD and its branch since the merge started; without a reflog, or for a refresh an earlier version started, it still marks `recovery_required`.
 
