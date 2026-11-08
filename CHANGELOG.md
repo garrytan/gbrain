@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.612.0] - 2026-11-08
 
 **A page write or a managed `extract_facts` run no longer retires facts that the page's `## Facts` fence never held, and `gbrain repair unwithdrawn-facts` restores the ones earlier releases retired.** A fact a `put_page` writer attached to a page with a row number, but that was never in the page's fence, used to be expired by any later write that projected the fence. That included a write that changed nothing in the fence, often the page's first facts-fence generation, which `gbrain repair generations` cannot undo because it has no earlier generation. Now a row retires only when a fence held it (a facts-fence generation recorded it, the page as the writer read it carried it, or a stored version of the page did) or when the incoming fence states its claim. Every other row stays active with its id. Removing a row from the fence still retires it, as before. Doctor `unwithdrawn_facts` counts the facts that were already retired and points to the new repair, which previews first and restores the original fact ids and lifecycle from the generation ledger.
 
