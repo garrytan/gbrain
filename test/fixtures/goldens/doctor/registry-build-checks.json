@@ -538,6 +538,10 @@
         "name": "frontmatter_hook"
       },
       {
+        "category": "ops",
+        "name": "url_source_origin"
+      },
+      {
         "category": "brain",
         "name": "orphan_persistence_bindings"
       },

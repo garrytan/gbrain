@@ -1924,6 +1924,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'federate':   return runFederate(engine, rest, true);
     case 'unfederate': return runFederate(engine, rest, false);
     case 'mirror-readonly': case 'mirror-writable': return (await import('./sources-mirror.ts')).runMirrorMode(engine, rest, sub === 'mirror-readonly');
+    case 'record-origin': return (await import('./sources-record-origin.ts')).runRecordOrigin(engine, rest);
     case 'set-strategy': return (await import('./sources-strategy.ts')).runSetStrategy(engine, rest);
     case 'set-pull-strategy': return (await import('./sources-pull-strategy.ts')).runSetPullStrategy(engine, rest);
     case 'set-sync':   return (await import('./sources-sync-enabled.ts')).runSetSync(engine, rest);
@@ -2030,6 +2031,8 @@ Subcommands:
   unfederate <id>                   Isolate source from default search.
   mirror-readonly <id> [--dry-run]  Read-only mirror (#5409): managed writes never touch its checkout.
   mirror-writable <id> [--dry-run]  Undo mirror-readonly. --dry-run previews either and writes nothing.
+  record-origin <id>... --remote|--local [--apply] [--json]
+                                    Record who added older URL sources (doctor url_source_origin); preview unless --apply.
   set-strategy <id> <markdown|code|auto>  Persist the sync strategy every sync of the source uses (PR #5955).
   set-pull-strategy <id> <rebase|merge>   How pulls reconcile local commits with origin (#5429); default rebase.
   set-sync <id> <on|off> [--dry-run] [--expect <on|off>]   Include or exclude the source from automatic sync (config.syncEnabled).
