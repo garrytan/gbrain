@@ -4616,6 +4616,16 @@ More: [docs/guides/skill-resolver.md#skill_resolve_timeout](../../docs/guides/sk
 
 More: [docs/guides/skill-resolver.md#skill_resolver_config_invalid](../../docs/guides/skill-resolver.md#skill_resolver_config_invalid)
 
+### skill_resolver_config_unreadable
+
+<a id="skill_resolver_config_unreadable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| config.json exists but cannot be read or parsed, so the skill resolver lane stays silent and setup writes none of its keys (the file is never rewritten). | The request itself was wrong or no longer matches the brain; nothing was changed. | Fix or move <gbrain home>/config.json (it must be a JSON object), then run gbrain doctor --only skill_resolver. Run: gbrain doctor --only skill_resolver --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_config_unreadable](../../docs/guides/skill-resolver.md#skill_resolver_config_unreadable)
+
 ### skill_resolver_internal
 
 <a id="skill_resolver_internal"></a>
@@ -4625,6 +4635,16 @@ More: [docs/guides/skill-resolver.md#skill_resolver_config_invalid](../../docs/g
 | The skill resolver failed unexpectedly; a scrubbed trace (no turn text) was written under skill-index/logs/. | The server failed; this is not a caller mistake. | Run gbrain skills index status and report the trace if it repeats. Run: gbrain skills index status --json | agent | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_resolver_internal](../../docs/guides/skill-resolver.md#skill_resolver_internal)
+
+### skill_resolver_setup_incomplete
+
+<a id="skill_resolver_setup_incomplete"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup --skill-loading resolve found no skill to index (or could not build the catalog or wire the hook), so it wrote no config keys and no hook. | The request itself was wrong or no longer matches the brain; nothing was changed. | Add a skill to one of the scanned directories (the message names them), then run setup again. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_setup_incomplete](../../docs/guides/skill-resolver.md#skill_resolver_setup_incomplete)
 
 ### skill_retention_capacity
 

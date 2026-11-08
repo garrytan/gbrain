@@ -1171,3 +1171,11 @@ src/core/write-through.ts	fs_import	1	W7: filesystem boundary moves to the local
 src/core/write-through.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/wsl-paths.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/zombie-reap.ts	process_global	1	W7: process-wide effects move to src/cli
+src/core/setup/skill-resolver-config.ts	fs_import	1	GBRA-377 PR B skill-resolver lane: setup writes and reads harness settings files, GBRAIN_HOME/config.json and the skill index directly (no brain or engine is opened); stays
+src/core/setup/skill-resolver-hook.ts	fs_import	1	GBRA-377 PR B skill-resolver lane: setup writes and reads harness settings files, GBRAIN_HOME/config.json and the skill index directly (no brain or engine is opened); stays
+src/core/setup/skill-resolver-setup.ts	fs_import	1	GBRA-377 PR B skill-resolver lane: setup writes and reads harness settings files, GBRAIN_HOME/config.json and the skill index directly (no brain or engine is opened); stays
+src/core/setup/skill-resolver-setup.ts	process_env	1	GBRA-377 PR B skill-resolver lane: setup writes and reads harness settings files, GBRAIN_HOME/config.json and the skill index directly (no brain or engine is opened); stays
+src/core/skills/resolver/hook-lane.ts	fs_import	1	GBRA-377 PR B skill-resolver hook lane: runs in the hook process with no brain or engine, reading config.json, harness settings and the skill index; env carries GBRAIN_HOME and its test seams; it spawns the detached catalog build; stays
+src/core/skills/resolver/hook-lane.ts	process_env	2	GBRA-377 PR B skill-resolver hook lane: runs in the hook process with no brain or engine, reading config.json, harness settings and the skill index; env carries GBRAIN_HOME and its test seams; it spawns the detached catalog build; stays
+src/core/skills/resolver/hook-lane.ts	spawn_import	1	GBRA-377 PR B skill-resolver hook lane: runs in the hook process with no brain or engine, reading config.json, harness settings and the skill index; env carries GBRAIN_HOME and its test seams; it spawns the detached catalog build; stays
+src/core/skills/resolver/hook-lane.ts	process_global	1	GBRA-377 PR B skill-resolver hook lane: at its 50 ms deadline the hook process exits at once without waiting on the abandoned worker (the lane is the whole process); stays

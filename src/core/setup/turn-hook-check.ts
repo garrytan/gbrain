@@ -26,6 +26,7 @@ import { enabledPluginLanes } from '../bootstrap/plugin-lanes.ts';
 import { brainFirstTarget, openclawConfigPath, parseJson5ish } from './brain-first.ts';
 import { inspectHermesTurnHook } from './hermes-turn-hook.ts';
 import { OPENCLAW_TURN_PLUGIN_ID, openclawTurnPluginDir } from './openclaw-turn-plugin.ts';
+import { isSkillResolverEntry } from './skill-resolver-lane.ts';
 import { isOtherGbrainEntry, isTurnRuleEntry, isTurnRuleHarness, removeTurnRuleHook, syncTurnRuleHook, type TurnHookOutcome, type TurnHookPaths } from './turn-hook.ts';
 
 export const TURN_HOOK_NATIVE_INSPECT: Record<string, string> = {
@@ -62,7 +63,7 @@ function claudeEntries(path: string): Array<Record<string, unknown>> {
 }
 
 const isGbrainPromptEntry = (e: Record<string, unknown>) =>
-  isTurnRuleEntry(e) || typeof e[GBRAIN_HOOK_MARKER_KEY] === 'string' || !!classifyHarnessHook(e, 'UserPromptSubmit', 'any');
+  !isSkillResolverEntry(e) && (isTurnRuleEntry(e) || typeof e[GBRAIN_HOOK_MARKER_KEY] === 'string' || !!classifyHarnessHook(e, 'UserPromptSubmit', 'any'));
 
 /** Files only, no process run. `projectDir`: a project-scope Claude Code install's directory; `managedDir`: Claude Code's managed-settings directory (default: the system one). */
 export function inspectTurnHook(harness: string, opts: { projectDir?: string; managedDir?: string } = {}): TurnHookState {

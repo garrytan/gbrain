@@ -30,7 +30,7 @@ import { ensureDir, writeFileDurable } from './fsutil.ts';
 import { IndexReader, RANKER_ID, RANKER_VERSION } from './index-format.ts';
 import { assertCatalogName, catalogFile, logsDir, resolverHome } from './paths.ts';
 import { isAcknowledgement, mentionsSkill, rankIndex, reasonText, type RankResult } from './rank.ts';
-import { commitSession, freshState, loadSession, sessionKey, type SessionState } from './session.ts';
+import { commitSession, freshState, loadSession, sessionKey, type SessionState, type TurnDelta } from './session.ts';
 
 export const SCHEMA_VERSION = 1;
 export const MESSAGE_CAP_BYTES = 8192;
@@ -112,6 +112,8 @@ export interface ResolveResult {
   failOpen?: boolean;
   /** Commit this turn's session state; call only after the block was delivered. */
   commit(): Promise<boolean>;
+  /** What commit() would apply, for a caller that commits on another thread (the hook lane): null when there is no session to commit. */
+  pending?: { key: string; delta: TurnDelta } | null;
 }
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -275,10 +277,11 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
     };
     const finish = (out: TurnOutput, delta: { tokens: number; suggested: string[]; resuggested: string[] }, explain?: Explain): ResolveResult => {
       out.meta.timing_ms = round4(performance.now() - t0);
-      const commit = async () => (key ? commitSession(home, key, { ...delta, reset: input.reset_session }) : false);
-      if (!input.shadow) return { output: out, ...(explain ? { explain } : {}), commit };
+      const pending = key ? { key, delta: { ...delta, reset: input.reset_session } } : null;
+      const commit = async () => (pending ? commitSession(home, pending.key, pending.delta) : false);
+      if (!input.shadow) return { output: out, ...(explain ? { explain } : {}), commit, pending };
       const quiet: TurnOutput = { ...out, suggestions: [], block: '', block_tokens: 0, deduped: [], shadow: true };
-      return { output: quiet, shadowOutput: { ...out, shadow: true }, ...(explain ? { explain } : {}), commit };
+      return { output: quiet, shadowOutput: { ...out, shadow: true }, ...(explain ? { explain } : {}), commit, pending };
     };
 
     if (isAcknowledgement(input.message)) return finish({ ...base, no_skill: true, no_skill_reason: 'ack' }, { tokens: 0, suggested: [], resuggested: [] });

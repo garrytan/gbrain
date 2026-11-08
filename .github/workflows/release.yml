@@ -152,7 +152,7 @@ jobs:
       # release runner is a flakier duplicate gate — it blocked the first
       # release on ambient-env tests (run 30698650484). The build job's gate
       # is the artifact itself: compile, then smoke-test the binary.
-      - run: bun build --compile --no-compile-autoload-bunfig --target=${{ matrix.target }} --outfile bin/${{ matrix.artifact }} src/cli.ts
+      - run: bun build --compile --no-compile-autoload-bunfig --target=${{ matrix.target }} --outfile bin/${{ matrix.artifact }} src/cli.ts src/core/skills/resolver/hook-worker.ts
       - name: Verify Darwin executable signature before execution
         if: runner.os == 'macOS'
         run: codesign --verify --strict --verbose=2 "bin/${{ matrix.artifact }}"

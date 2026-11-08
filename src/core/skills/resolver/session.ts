@@ -13,10 +13,12 @@
  * a lost commit only means a skill may be suggested again.
  */
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
+import { promises, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
+const { mkdir, open, readdir, readFile, rename, stat, unlink } = promises;
+import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { ensureDir, writeFileDurable } from './fsutil.ts';
-import { acquireLease, releaseLease } from './lock.ts';
+import { acquireLease, releaseLease, releaseLeaseAsync, tryAcquireLeaseAsync } from './lock.ts';
 import { sessionsDir } from './paths.ts';
 
 export const MAX_SESSION_FILES = 10_000;
@@ -70,20 +72,66 @@ export async function commitSession(home: string, key: string, delta: TurnDelta)
   let lease;
   try { lease = await acquireLease(`${p}.lock`, { purpose: 'session-commit', leaseMs: 2000, retries: 3, waitMs: 5 }); } catch { return false; }
   try {
-    const s = delta.reset ? freshState() : loadSession(home, key);
-    s.turn += 1;
-    s.spent += delta.tokens;
-    for (const id of delta.resuggested) s.again[id] = 1;
-    for (const id of delta.suggested) if (id in s.last || Object.keys(s.last).length < MAX_SESSION_IDS) s.last[id] = s.turn;
-    writeFileDurable(p, JSON.stringify(s));
+    writeFileDurable(p, JSON.stringify(applyDelta(delta.reset ? freshState() : loadSession(home, key), delta)));
     return true;
   } finally {
     releaseLease(lease);
   }
 }
 
+function applyDelta(s: SessionState, delta: TurnDelta): SessionState {
+  s.turn += 1;
+  s.spent += delta.tokens;
+  for (const id of delta.resuggested) s.again[id] = 1;
+  for (const id of delta.suggested) if (id in s.last || Object.keys(s.last).length < MAX_SESSION_IDS) s.last[id] = s.turn;
+  return s;
+}
+
+/**
+ * commitSession with async I/O only (no sync file call), for the hook lane,
+ * whose event loop owns its deadline. Same file, lease and rules; a busy
+ * lease is retried a few times over at most ~15 ms, then the commit is
+ * skipped (a skipped commit only means a repeat).
+ */
+export async function commitSessionAsync(home: string, key: string, delta: TurnDelta): Promise<boolean> {
+  const dir = sessionsDir(home);
+  const p = statePath(home, key);
+  try {
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    let exists = true;
+    try { await stat(p); } catch { exists = false; }
+    if (!exists && (await readdir(dir)).length >= MAX_SESSION_FILES) return false;
+    let lease = null;
+    for (let attempt = 0; attempt < 4 && !lease; attempt++) {
+      lease = await tryAcquireLeaseAsync(`${p}.lock`, { purpose: 'session-commit', leaseMs: 2000 });
+      if (!lease && attempt < 3) await new Promise(r => setTimeout(r, 2 ** attempt * 2));
+    }
+    if (!lease) return false;
+    try {
+      let s = freshState();
+      if (!delta.reset) {
+        try {
+          if ((await stat(p)).size <= STATE_CAP_BYTES) {
+            const raw = JSON.parse(await readFile(p, 'utf8')) as SessionState;
+            if (raw?.v === 1 && typeof raw.turn === 'number' && typeof raw.spent === 'number' && raw.last && typeof raw.last === 'object') s = { v: 1, turn: raw.turn, spent: raw.spent, last: raw.last, again: raw.again && typeof raw.again === 'object' ? raw.again : {} };
+          }
+        } catch { /* none or unreadable: fresh */ }
+      }
+      const tmp = join(dir, `.${key}.json.tmp-${randomBytes(6).toString('hex')}`);
+      const fh = await open(tmp, 'wx', 0o600);
+      try { await fh.writeFile(JSON.stringify(applyDelta(s, delta))); await fh.sync(); } finally { await fh.close(); }
+      try { await rename(tmp, p); } catch (e) { await unlink(tmp).catch(() => {}); throw e; }
+      return true;
+    } finally {
+      await releaseLeaseAsync(lease);
+    }
+  } catch {
+    return false;
+  }
+}
+
 export async function resetSession(home: string, key: string): Promise<void> {
-  try { unlinkSync(statePath(home, key)); } catch { /* none */ }
+  try { await unlink(statePath(home, key)); } catch { /* none */ }
 }
 
 /** Delete session files idle for 7 days, examining at most GC_WORK_BOUND files per run. */
