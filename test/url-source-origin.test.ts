@@ -185,6 +185,7 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
 
   test('the CLI exits 2 on a usage error before reading anything, and sets exit 1 when any id is refused', () => brain(async () => {
     await insert('source-a', defaultCloneDir('source-a'), URL_CONFIG);
+    const priorExitCode = process.exitCode;
     const exit = spyOn(process, 'exit').mockImplementation(code => { throw new Error(`EXIT ${code}`); });
     const errors = spyOn(console, 'error').mockImplementation(() => {});
     const logs = spyOn(console, 'log').mockImplementation(() => {});
@@ -201,7 +202,7 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
       await runRecordOrigin(engine, ['source-a', 'nope', '--local', '--apply']);
       expect(currentExitCode()).toBe(1);
       expect(await config('source-a')).toEqual({ ...URL_CONFIG, added_by_remote_caller: false });
-    } finally { exit.mockRestore(); errors.mockRestore(); logs.mockRestore(); _resetCliExitVerdictForTests(); }
+    } finally { exit.mockRestore(); errors.mockRestore(); logs.mockRestore(); _resetCliExitVerdictForTests(); process.exitCode = priorExitCode; }
   }), 60_000);
 
   test('--remote refuses a checkout whose clone-local attributes hide its git-lfs files, and writes nothing', () => brain(async home => {
