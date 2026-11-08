@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.610.0] - 2026-11-07
+## [0.60.611.0] - 2026-11-08
 
 **Doctor `foreign_writers` no longer reads an unreadable ledger or a skipped repository as clean, the owner-path commit guard fails closed, and the opt-in local-edit adoption (`persistence.adopt_local_edits`, off by default) gets the hardening it needed before any source turns it on.** `foreign_writers` now marks a scan partial when a root's Git probe fails, when roots pass the 50-root cap, or when the commit ledger exists but cannot be read. It names a foreign commit that carries a `gbrain-` trailer as possibly an older gbrain without the ledger, and still fails it. `gbrain git commit-push` refuses a repository that only encloses a registered checkout, even when an older gbrain left a stale marker in it. Adoption keeps its refusal for a conflicted path or a merge in progress, a stale editor save, a segmented or oversized page, and a caller whose claim is gone, and checks the claim, the conflict and the merge again in the transaction that publishes its commit. Its quiet wait is capped at the foreground budget, and an adoption whose publication failed after its commit is retried instead of left orphaned.
 
@@ -24,6 +24,15 @@ identifiers and attribution are available in the pre-removal Git revision
 - `src/core/persistence/refresh-barrier.ts`: with `persistence.refresh_barrier` on, a write waiting behind a refresh or an import now counts a later write to its page as a conflict unless managed sync's own import wrote it. Before, a caller could hide its write by passing a `managed_sync_` kind, and a compacted sync receipt counted as a later write. A connector import still counts as a later write after its receipt is compacted.
 - `src/core/persistence/page-mutations.ts`: a page write that passes a `kind` starting with `managed_sync_` is refused with `invalid_params`.
 - Tests: `test/doctor-foreign-writers.test.ts`, `test/commit-ledger.test.ts`, `test/sources-guard.test.ts`, `test/git-commit-push-not-a-source-8662.test.ts`, `test/adopt-local-edit.test.ts`, `test/refresh-barrier-gst1623.test.ts` and `test/refresh-write-barrier.test.ts` on PGLite and Postgres (#8755).
+
+## [0.60.610.0] - 2026-11-08
+
+**A client that retries a `POST /ingest` capture accepted before v0.60.609.0 no longer queues a second job that writes the old body over the page's newer edit.** v0.60.609.0 added the target slug to the capture's queue key, and nothing looked up the old key form, so a retry of a capture that had already landed was taken as a new one. The route now also looks up a capture's pre-v0.60.609.0 key and answers 202 with that job when it was queued for the same target slug, so the retry is the same request again and nothing is queued.
+
+### Itemized changes
+
+- `src/commands/serve-http-webhooks.ts` (`POST /ingest`): before queueing, the route looks up the capture's legacy key (client, write source and content hash, no slug part). A row queued for the same normalized target slug (or with no slug, for a slug-less capture) answers the request; a row for another slug never does, so one body sent to two slugs still queues two captures. A dead or cancelled legacy row frees its key, as under the current key. A legacy row still waiting or running with no recorded submitter (left by an upgrade across v0.50) answers 409 `legacy_job_authority` with its recovery hint instead of queueing a second job. The 429 at the waiting cap, the 400 for slugs over 1024 bytes and the webhook HMAC are unchanged.
+- Tests: `test/serve-http-ingest-legacy-key-retry.test.ts` (PGLite) and `test/e2e/serve-http-ingest-legacy-key-retry-postgres.test.ts` (Postgres) drive the real route: a retry of a completed legacy capture gets its job back, queues nothing and leaves the newer edit in place, and a legacy row with no recorded submitter gets its job back when completed or a 409 while still waiting.
 
 ## [0.60.609.0] - 2026-11-07
 
