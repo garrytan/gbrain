@@ -51,7 +51,9 @@ CONSTANTS
   MayRestore,       \* a shared-skill restore may run once
   MayRevoke,        \* the writers' credential may be revoked once
   MaxCrashes,       \* times the refreshing process may be killed; the owner's topology scan or --resume then recovers it
-  MayReset          \* someone may reset the checkout to old_head after a merge, before bookkeeping
+  MayReset,         \* someone may reset the checkout to old_head after a merge, before bookkeeping
+  OutsideHelp       \* time passes the wait limit and an outside scheduled sync runs, eventually; FALSE (GST-1853): neither
+                    \* is forced, and another agent commits only while a refresh drains (the commit its fence keeps sync from importing)
 
 Writes == 1..NW
 Refs   == 1..MaxRefreshes
@@ -605,6 +607,7 @@ BkCommit ==
 \* syncMembers ends: completed once members reach the target, or (#8072) when a member's sync is blocked or deferred.
 RefComplete ==
   /\ pc[RFR] = "r_syncing"
+  /\ IF OutsideHelp THEN TRUE ELSE lastCommit = head   \* without outside help, the refresh's own member sync is what imports
   /\ Need(RFR, <<L(REF(nref), "NKU")>>) /\ Go(RFR, "r_complete")
   /\ UNCHANGED <<reqv, refv, gitv, envv, ghostv, held, cw, cprep, cfin, ew, aref, aread, passHead, sseq>>
 
@@ -713,6 +716,18 @@ SyncBegin ==
   /\ UNCHANGED <<st, code, seq, dref, dimp, applied, cpos, ncommit, expRev, overdue, adopted, refv, gitv, envv, ghostv,
                  lockv, cw, cprep, cfin, ew, aref, aread>>
 
+\* GST-1853 (syncAfterUnfinishedRefresh): a refresh that ended aborted never ran the member sync its fence refused, so while
+\* the newest refresh is aborted and last_commit is not HEAD, a refresh run ends by running that sync: the tick that aborted
+\* it, --resume or --abandon, or the next tick after the owner scan aborted it (even one its precheck refuses).
+OwedSyncBegin ==
+  /\ pc[RFR] = "idle" /\ cur = None /\ nref > 0 /\ rstate[nref] = "aborted"
+  /\ pc[SYN] = "idle" /\ lastCommit # head
+  /\ passHead' = head
+  /\ sseq' = nseq + 1 /\ nseq' = nseq + 1
+  /\ Go(SYN, "s_queued")
+  /\ UNCHANGED <<st, code, seq, dref, dimp, applied, cpos, ncommit, expRev, overdue, adopted, refv, gitv, envv, ghostv,
+                 lockv, cw, cprep, cfin, ew, aref, aread>>
+
 \* The page row is claimed once no earlier write is ahead of it (EARLIER_HEAD), then imported.
 SyncImportBegin ==
   /\ pc[SYN] = "s_queued" /\ ~SyncBehind
@@ -744,6 +759,7 @@ SyncStamp ==
 \* ------------------------------- environment -------------------------------
 Foreign ==
   /\ nforeign < MaxForeign /\ local = None
+  /\ IF OutsideHelp THEN TRUE ELSE RefIs({"draining"})
   /\ NewCommit(nver + 1) /\ nver' = nver + 1 /\ nforeign' = nforeign + 1
   /\ UNCHANGED <<reqv, refv, dbV, hist, lastCommit, local, nlocal, envv, ghostv, lockv, procv>>
 
@@ -786,7 +802,8 @@ ConsStep == ConsBegin \/ ConsSelect \/ ConsClaim \/ ConsPrep \/ ConsPub \/ ConsH
 RefStep  == FdCommit \/ RefDrained \/ RefDrainTimeout \/ FmCommit \/ AbortCommit \/ RefMerge \/ MergeStartCommit \/ FfMerge
             \/ MarkCommit \/ BkCommit \/ RefComplete \/ CompleteCommit \/ RecoverBegin \/ RecoverCommit
 ExpStep  == (\E w \in Writes : ExpRefBegin(w) \/ ExpImpBegin(w)) \/ ExpRefCommit \/ ExpImpRecheck \/ ExpImpCommit
-SyncStep == SyncBegin \/ SyncImportBegin \/ SyncImport \/ SyncStampBegin \/ SyncStamp
+SyncPass == SyncImportBegin \/ SyncImport \/ SyncStampBegin \/ SyncStamp
+SyncStep == SyncBegin \/ OwedSyncBegin \/ SyncPass
 AdmStep(w) == AdmRef(w) \/ AdmRead(w) \/ AdmCommit(w)
 
 Next ==
@@ -796,13 +813,15 @@ Next ==
   \/ Foreign \/ LocalEdit \/ Revoke \/ Restore \/ Crash \/ ResetAfterMerge
 
 \* Every process that has started runs; a waiting lock request is eventually granted once it can be (Postgres queues
-\* lock waiters); a person eventually resolves recovery_required; time passes. Producers, other agents' commits,
-\* local edits, refreshes starting, revocation and restore are never forced.
+\* lock waiters); a person eventually resolves recovery_required; a refresh run ends with the sync an aborted refresh
+\* owes; with OutsideHelp, time passes and a scheduled sync runs. Producers, other agents' commits, local edits,
+\* refreshes starting, revocation and restore are never forced.
 Fairness ==
   /\ \A p \in Procs : SF_vars(Acquire(p))
-  /\ \A w \in Writes : WF_vars(AdmStep(w)) /\ WF_vars(Age(w))
+  /\ \A w \in Writes : WF_vars(AdmStep(w)) /\ (IF OutsideHelp THEN WF_vars(Age(w)) ELSE TRUE)
   /\ WF_vars(ConsStep) /\ WF_vars(RefStep) /\ WF_vars(PersonAbandon \/ PersonResume)
-  /\ WF_vars(ExpStep) /\ WF_vars(SyncStep)
+  /\ WF_vars(ExpStep) /\ WF_vars(OwedSyncBegin \/ SyncPass) /\ WF_vars(SyncBegin /\ RefIs({"syncing"}))
+  /\ IF OutsideHelp THEN WF_vars(SyncBegin) ELSE TRUE
 
 Spec == Init /\ [][Next]_vars
 FairSpec == Spec /\ Fairness

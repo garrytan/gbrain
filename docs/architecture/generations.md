@@ -70,6 +70,16 @@ ledger. A fence restore (`fence-restore.ts`) writes the earlier generation's fen
 through a guarded `put_page` bound to its revision, leaving the body, timeline, tags and the other fence alone, and
 refuses a fence edited since (`edited_since`, `section_moved`).
 
+#8819: a published fact generation retires only rows a fence of the page held at the same row number, claim and
+visibility (`generations/fence-evidence.ts`): a `fact_fence` generation recorded it, the body the writer replaced carried
+it, or a stored version of the page did. A row the fence never held (a fact a `put_page` writer attached to the page)
+stays active, and an incoming fence row that claims its number takes it while the row moves above the page's rows. A
+row whose claim the incoming fence states, at any number or visibility, still retires, so no wider copy of a claim the
+fence narrowed stays readable. The managed `extract_facts` reconcile applies the same rule; an unmanaged brain's
+reconcile still treats rows its fence lacks as drift. Rows an earlier release retired this way on a managed brain are
+restored by `gbrain repair unwithdrawn-facts`; on an unmanaged brain it lists them as `excluded:unmanaged_reconcile`,
+since the next reconcile would retire a restored row again.
+
 The dream consolidate phase records each cluster (`consolidation`, key `entity:<slug>:cluster:<ids>`,
 `adapters/fact-rows.ts`): a strict chain records each member's `valid_until`, `consolidated_at` and
 `consolidated_into` before it closes them (unmanaged and managed), a same-instant tie (#6023) is held `tie` with nothing

@@ -222,6 +222,23 @@ barrier exists to keep, and with the flag on each now waits instead (with it off
   `deferred_refresh_id`, so a consumer from before v294 never claims a row whose import is pending. The receipt reads `queued` with
   `deferred: { pending_import: true }`, and the caller's wait returns pending at once.
 
+**After a refresh that did not complete.** While a refresh runs, its fence refuses the managed sync that would import
+another writer's commit, and only the refresh's own member sync imports in its place. A refresh that ends `aborted`
+(in its own run, by `--abandon`, or rolled back by `--resume` or the owner's scan after its process died) never runs
+it, so a write released from it and then held for that import would wait for some later sync or refresh, indefinitely
+while the checkout stays diverged. GST-1853: while the worktree's newest refresh is `aborted`, every refresh run on the
+owner host (a tick, `--resume`, `--abandon`, even one its precheck refuses `refresh_diverged`) ends, after its own
+locks are released, by running the managed `--no-pull` sync of each member whose `last_commit` is not the checkout
+HEAD and that the run did not already sync, within `sources.refresh_sync_budget_ms` (`syncAfterUnfinishedRefresh`;
+the run lists them in `synced` once each, and a refusal's message names them). A refusal of the run's own arguments,
+`refresh_in_progress` and an unexpected failure skip it. The held writes are then prepared again against the checkout as it is, as above: an
+`expected_revision` put ends `revision_conflict`, a blind put or capture lands and names what it replaced, an append
+applies on top. Releasing them this way, instead of refusing them, gives the caller an answer within the run, and a
+refusal would only be held again on retry while the import stays pending. A member this sync cannot bring to HEAD (its
+drain blocked or out of budget) is named with `gbrain sync --source <id> --no-pull` in `next` (a blocked one also in
+`sync_blocked`) or the refusal's message, and waits for the next run or sync; its held writes stay bound by the wait
+limit below.
+
 **What a blind write replaced.** A held `put_page` or `capture` that replaces content an import brought in names
 it in three places, so the replacement is auditable and recoverable without digging: the receipt's
 `supersedes` (`slug`, `path`, the replaced `revision`, the imported `commit`: the newest commit

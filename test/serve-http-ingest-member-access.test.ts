@@ -81,7 +81,7 @@ const ingest = (slug: string, body = takeover) => fetch(`${base}/ingest`, {
   headers: { authorization: `Bearer ${bobToken}`, 'content-type': 'text/markdown', 'x-gbrain-slug': slug },
   body,
 });
-const jobCtx = (data: Record<string, unknown>): MinionJobContext => ({ id: 1, name: 'ingest_capture', data, attempts_made: 0,
+const jobCtx = (data: Record<string, unknown>): MinionJobContext => ({ id: 1, name: 'ingest_capture', data, attempts_made: 0, idempotency_key: null,
   signal: new AbortController().signal, deadlineAtMs: null, shutdownSignal: new AbortController().signal, updateProgress: async () => {},
   updateTokens: async () => {}, log: async () => {}, isActive: async () => true, readInbox: async () => [] });
 const webhookEvent = (content: string): IngestionEvent => ({ source_id: 'webhook-client-example', source_kind: 'webhook',

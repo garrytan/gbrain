@@ -701,12 +701,75 @@ function finished(row: WorktreeRefreshRow, sync: { synced: RefreshMemberSync[]; 
  * host only; refusals throw catalogue errors (`code`, cause, literal fix, docs).
  */
 export async function refreshWorktree(engine: BrainEngine, sourceId: string, opts: RefreshOptions = {}): Promise<WorktreeRefreshResult> {
-  try { return await runRefresh(engine, sourceId, opts); }
+  let result: WorktreeRefreshResult;
+  try { result = await runRefresh(engine, sourceId, opts); }
   catch (error) {
-    if (error instanceof OperationError || classifyPgAccessError(error).reason !== 'unknown') throw error;
-    throw await unexpectedRefreshFailure(engine, sourceId, opts, error);
+    if (!(error instanceof OperationError) && classifyPgAccessError(error).reason !== 'unknown') throw error;
+    const failure = error instanceof OperationError ? error : await unexpectedRefreshFailure(engine, sourceId, opts, error);
+    const owed = opts.dryRun || NO_OWED_SYNC_AFTER.has(failure.code) ? NO_OWED_SYNC
+      : await syncAfterUnfinishedRefresh(engine, sourceId, opts, new Set()).catch(owedSyncFailed(sourceId));
+    if (owed.synced.length) failure.message += ` ${owedSyncNote(owed)}`;
+    throw failure;
   }
+  if (opts.dryRun) return result;
+  const done = new Set([...result.synced, ...(result.sync_blocked ?? [])].map(member => member.source_id));
+  const owed = await syncAfterUnfinishedRefresh(engine, sourceId, opts, done).catch(owedSyncFailed(sourceId));
+  if (!owed.synced.length) return result;
+  const blocked = [...(result.sync_blocked ?? []), ...owed.blocked];
+  const next = [result.next, ...owed.resume].filter(Boolean).join(' ; ');
+  return { ...result, status: blocked.length ? 'sync_blocked' : owed.resume.length ? 'sync_deferred' : result.status,
+    synced: [...result.synced, ...owed.synced], ...(blocked.length ? { sync_blocked: blocked } : {}), ...(next ? { next } : {}) };
 }
+
+/**
+ * GST-1853: a refresh that ended without completing (aborted in its run, abandoned, or rolled back by recovery) never ran
+ * the member syncs its fence refused, so a write held for an import on a member (import-deferral.ts) would wait for some
+ * later sync, indefinitely while the checkout stays diverged. While the worktree's newest refresh is `aborted`, every
+ * refresh run on the owner host therefore ends, after its own locks are released, by running the managed `--no-pull`
+ * sync of each member whose last_commit is not the checkout HEAD and that the run did not sync itself (`done`), within the
+ * sync budget, so those writes are prepared again against the checkout as it is. A refusal of the run's own arguments, a
+ * live refresh or an unexpected failure skips it. Best effort: a member it leaves behind HEAD is named with its resume
+ * command and waits for the next run or sync, and its held writes stay bound by the wait limit (`pending_import_expired`).
+ */
+async function syncAfterUnfinishedRefresh(engine: BrainEngine, sourceId: string, opts: RefreshOptions, done: ReadonlySet<string>): Promise<OwedSync> {
+  const hostId = existingHostIdFor(engine);
+  if (!hostId || !await managedPersistenceEnabled(engine)) return NO_OWED_SYNC;
+  const binding = await getWorktreeBinding(engine, sourceId, hostId);
+  if (!binding || binding.owner_host_id !== hostId || !binding.local_path) return NO_OWED_SYNC;
+  const root = binding.local_path;
+  const [newest] = await engine.executeRaw<Pick<WorktreeRefreshRow, 'state' | 'source_ids'>>(
+    'SELECT state,source_ids FROM persistence_worktree_refreshes WHERE worktree_id=$1::uuid ORDER BY created_at DESC LIMIT 1', [binding.worktree_id]);
+  if (newest?.state !== 'aborted') return NO_OWED_SYNC;
+  const head = await withGit(git => headOf(git, root));
+  if (!head) return NO_OWED_SYNC;
+  const lagging: string[] = [];
+  for (const member of newest.source_ids) if (!done.has(member) && await lastCommit(engine, member) !== head) lagging.push(member);
+  if (!lagging.length) return NO_OWED_SYNC;
+  startPersistenceConsumer(engine, consumerConfig(engine));
+  const sync = await boundedMemberSync(await configuredMs(engine, opts.syncBudgetMs, 'GBRAIN_REFRESH_SYNC_BUDGET_MS', 'sources.refresh_sync_budget_ms', SYNC_BUDGET_MS));
+  const owed: OwedSync = { synced: [], blocked: [], resume: [] };
+  for (const [index, member] of lagging.entries()) {
+    const resume = `gbrain sync --source ${member} --no-pull`;
+    const result = await sync.member(engine, member, lagging.length - index).catch((error): MemberSync => ({ status: 'blocked', blocked: { source_id: member,
+      code: error instanceof OperationError ? error.code : 'storage_error', message: redact(error instanceof Error ? error.message : String(error)), resume } }));
+    const commit = await lastCommit(engine, member);
+    owed.synced.push({ source_id: member, status: result.status, last_commit: commit });
+    if (result.blocked) owed.blocked.push(result.blocked);
+    if (commit !== head) owed.resume.push(resume);
+  }
+  return owed;
+}
+type OwedSync = { synced: RefreshMemberSync[]; blocked: RefreshSyncBlocked[]; resume: string[] };
+const NO_OWED_SYNC: OwedSync = { synced: [], blocked: [], resume: [] };
+const NO_OWED_SYNC_AFTER = new Set(['invalid_params', 'refresh_in_progress', 'internal_error']);
+const owedSyncFailed = (sourceId: string) => (error: unknown): OwedSync => {
+  console.error(redact(`[gbrain] the sync owed after an unfinished refresh of ${sourceId} failed (${error instanceof Error ? error.message : String(error)}); its members' next sync or refresh run retries it.`));
+  return NO_OWED_SYNC;
+};
+const consumerConfig = (engine: BrainEngine) => loadConfig() ?? { engine: engine.kind };
+const owedSyncNote = (owed: OwedSync) => `The worktree's last refresh ended without completing, so this run then ran the managed sync of ${owed.synced
+  .map(member => `${member.source_id} (${member.status})`).join(', ')} at the checkout HEAD, for writes held for that import.${owed.resume.length
+  ? ` To finish it, run ${owed.resume.join(' ; ')}.` : ''}`;
 
 const redact = (text: string) => {
   const home = homedir();
@@ -821,7 +884,7 @@ async function refreshOnce(engine: BrainEngine, sourceId: string, opts: RefreshO
     try {
       const principal = await topologyPrincipal(engine);
       const row = await fenceDraining(engine, sourceId, plan, principal);
-      const config = loadConfig() ?? { engine: engine.kind };
+      const config = consumerConfig(engine);
       // The owner keeps claiming what is already queued; this process may be that owner.
       startPersistenceConsumer(engine, config);
       const deadline = performance.now() + waitDrainMs;
@@ -1179,7 +1242,7 @@ async function resumeHeld(engine: BrainEngine, git: Git, sourceId: string, refre
   if (row.state !== 'syncing') return { ...empty, status: 'abandoned', refresh_id: row.id, source_ids: row.source_ids, old_head: row.old_head,
     target_head: row.target_head, upstream_ref: row.upstream_ref, next: `The interrupted refresh was rolled back without moving HEAD; start again with gbrain sources refresh ${sourceId}`,
     recovered: { ...recovered, status: 'abandoned' } };
-  startPersistenceConsumer(engine, loadConfig() ?? { engine: engine.kind });
+  startPersistenceConsumer(engine, consumerConfig(engine));
   const sync = await syncMembers(engine, git, row, root, syncBudgetMs);
   row = await readRefresh(engine, row.id);
   const result = finished(row, sync);

@@ -59,6 +59,8 @@ const EXEMPT: Record<string, string> = {
   'src/core/generations/adapters/fact-rows.ts': 'generation restore puts back a fact row\'s own recorded before-state (lifecycle); no new text',
   'src/core/repair/fact-claim-dates.ts': 'owner repair moving the valid_from of existing database-only facts to the date their claim states (lifecycle)',
   'src/core/repair/extractor-facts.ts': 'owner repair of existing rows',
+  'src/core/repair/unwithdrawn-facts.ts': 'owner repair behind a preview hash: puts back an existing fact row\'s own ledger before-state (lifecycle and row number); no new text',
+  'src/core/generations/fence-evidence.ts': 'renumbers a kept existing fact row inside the gated fence projection or reconcile; no new text',
   'src/core/repair/secret-spans.ts': 'owner repair behind a preview hash: replaces only the credential spans the secret scanner finds in a page\'s stored copies with <REDACTED:rule> markers (no new text)',
   'src/core/repair/redacted-facts.ts': 'owner repair behind a preview hash: puts back into existing fact rows the words a stored source page proves; fenced rows publish through put_page, which runs the gate',
   'src/core/repair/facts-rehome.ts': 'owner repair moving existing facts onto their entity page (placement)',
