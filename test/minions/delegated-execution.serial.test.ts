@@ -49,7 +49,7 @@ async function ownedJob(budget: number | null = null, extra: Record<string, unkn
     allowed_tools: snapshot.tools, allowed_slug_prefixes: snapshot.slugPrefixes, source_id: snapshot.sourceId,
     ...extra, __owner_client_id: 'owner', __delegation_grant: snapshot };
   const job = await new MinionQueue(engine).add('subagent', data, {}, { allowProtectedSubmit: true, delegatedClientId: 'owner' });
-  return { id: job.id, name: job.name, data, attempts_made: 0,
+  return { id: job.id, name: job.name, data, attempts_made: 0, idempotency_key: null,
     signal: new AbortController().signal, shutdownSignal: new AbortController().signal, deadlineAtMs: null,
     async updateProgress() {}, async updateTokens() {}, async log() {}, async isActive() { return true; }, async readInbox() { return []; } };
 }

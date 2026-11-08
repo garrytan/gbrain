@@ -567,10 +567,12 @@ async function handleIngest(
         ...(writer ? { writer } : {}),
       },
       {
-        // Idempotency: same content from the same client within the
-        // queue's lifetime is a single job. Different content gets
-        // different jobs. Daemon-side dedup catches the 24h window;
-        // the queue-level idempotency catches simultaneous retries.
+        // Idempotency: the same content from the same client to the same
+        // slug is one capture. While its job row exists the queue hands
+        // back that job; the ingest_capture handler applies a capture once
+        // per key for 90 days, even after `gbrain jobs prune` removed its
+        // job row (GST-1856), so a replay never rewrites the page. Different
+        // content gets different jobs. Daemon-side dedup catches the 24h window.
         // The effective write source is part of the key: a client rescoped
         // from source X to Y must land a NEW capture in Y rather than being
         // deduped against its old X-bound job.
