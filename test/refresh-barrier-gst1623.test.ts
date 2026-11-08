@@ -256,6 +256,26 @@ test('#8765 outside voice: a later write counts unless managed sync wrote it (su
   expect((await f.engine.readPageSnapshot('two', { sourceId: f.alpha }))?.revision).toBe(before);
 }), 180_000);
 
+test('#8765 review: a connector import stays a later write after compaction drops its intent, as overwritten-edits counts it', () => each(async f => {
+  let deferred!: WriteRequest;
+  const refresh = await duringRefresh(f, async () => {
+    const out = await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Deferred, accepted first.') });
+    deferred = await requestRow(f, out.receipt.request_id);
+    expect(deferred.state).toBe('deferred');
+    await disposePersistenceConsumer(f.engine);
+  });
+  expect((await refresh).status).toBe('completed');
+  const later = await requestRow(f, (await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Accepted second.') })).receipt.request_id);
+  expect(later.state).toBe('committed');
+  const held = { ...deferred, deferred_refresh_id: null, deferred_import_from: '' } as WriteRequest;
+  // connector-sync.ts records every connector import with imported_file and connector_database (false on a bound source).
+  for (const connectorDatabase of [true, false]) {
+    await f.engine.executeRaw(`UPDATE persistence_requests SET operation='submit_job', intent=NULL, compacted=true,
+      outcome=COALESCE(outcome,'{}'::jsonb)||jsonb_build_object('imported_file',true,'connector_database',$2::boolean) WHERE id=$1::uuid`, [later.id, connectorDatabase]);
+    expect(await deferredReplayRefusal(f.engine, held, [])).toMatchObject({ state: 'conflict', failure: { code: 'revision_conflict' } });
+  }
+}), 180_000);
+
 test('item 16: a write deferred behind a refresh is held for an import without its released refresh, unless the refresh changed its file', () => each(async f => {
   f.push('alpha/three.md', page('Alpha three', 'Before the refresh.'));
   expect((await refreshWorktree(f.engine, f.alpha)).status).toBe('completed');
