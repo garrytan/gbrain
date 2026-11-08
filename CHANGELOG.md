@@ -10,6 +10,12 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+### Added
+
+- `gbrain skills index build|status|remove` and `gbrain skills resolve`: an engine-free skill resolver that ranks a harness's skill catalog against one user turn and prints a short `<relevant_skills>` block (at most 5 suggestions, at most 400 tokens), so an agent with hundreds of skills sees the few that fit. Off by default; nothing changes until you build a catalog and call it. Works with no brain, on thin clients and while `gbrain serve` holds the PGLite lock. Word matching only (the BM25F ranker frozen by the Step 1 offline eval); nothing leaves the machine. Sessions never repeat a suggestion and share a 2,000-token budget (`skills.resolver.session_token_budget`). JSON contract in `docs/schemas/skill-resolver.v1.*.json`; library as `gbrain/skill-resolver` and, for Node, the `gbrain-skill-resolver.mjs` release asset. Guide: `docs/guides/skill-resolver.md`.
+
 ## [0.60.611.0] - 2026-11-08
 
 **Doctor `foreign_writers` no longer reads an unreadable ledger or a skipped repository as clean, the owner-path commit guard fails closed, and the opt-in local-edit adoption (`persistence.adopt_local_edits`, off by default) gets the hardening it needed before any source turns it on.** `foreign_writers` now marks a scan partial when a root's Git probe fails, when roots pass the 50-root cap, or when the commit ledger exists but cannot be read. It names a foreign commit that carries a `gbrain-` trailer as possibly an older gbrain without the ledger, and still fails it. `gbrain git commit-push` refuses a repository that only encloses a registered checkout, even when an older gbrain left a stale marker in it. Adoption keeps its refusal for a conflicted path or a merge in progress, a stale editor save, a segmented or oversized page, and a caller whose claim is gone, and checks the claim, the conflict and the merge again in the transaction that publishes its commit. Its quiet wait is capped at the foreground budget, and an adoption whose publication failed after its commit is retried instead of left orphaned.
