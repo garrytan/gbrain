@@ -467,6 +467,34 @@
           }
         ]
       }
+    },
+    {
+      "id": "abort-skips-owed-sync",
+      "kind": "guard",
+      "title": "a refresh run never syncs the members an aborted refresh left behind HEAD (GST-1853 reverted)",
+      "expect": "DeferredLeaves",
+      "config": "RefreshBarrierAbortLiveness.cfg",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "OwedSyncBegin ==\n  /\\ pc[RFR] = \"idle\"",
+        "after": "OwedSyncBegin ==\n  /\\ FALSE /\\ pc[RFR] = \"idle\""
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/worktree-refresh.ts",
+            "before": "  if (newest?.state !== 'aborted') return [];\n",
+            "after": "  if (newest?.state !== 'aborted' || newest) return [];\n"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/refresh-barrier-held-after-abort.test.ts",
+            "filter": "GST-1853",
+            "postgres": true
+          }
+        ]
+      }
     }
   ]
 }

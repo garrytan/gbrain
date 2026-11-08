@@ -664,12 +664,54 @@ function finished(row: WorktreeRefreshRow, sync: { synced: RefreshMemberSync[]; 
  * host only; refusals throw catalogue errors (`code`, cause, literal fix, docs).
  */
 export async function refreshWorktree(engine: BrainEngine, sourceId: string, opts: RefreshOptions = {}): Promise<WorktreeRefreshResult> {
-  try { return await runRefresh(engine, sourceId, opts); }
+  let result: WorktreeRefreshResult;
+  try { result = await runRefresh(engine, sourceId, opts); }
   catch (error) {
-    if (error instanceof OperationError || classifyPgAccessError(error).reason !== 'unknown') throw error;
-    throw await unexpectedRefreshFailure(engine, sourceId, opts, error);
+    if (!(error instanceof OperationError) && classifyPgAccessError(error).reason !== 'unknown') throw error;
+    const failure = error instanceof OperationError ? error : await unexpectedRefreshFailure(engine, sourceId, opts, error);
+    const owed = opts.dryRun ? [] : await syncAfterUnfinishedRefresh(engine, sourceId, opts).catch(() => []);
+    if (owed.length) failure.message += ` ${owedSyncNote(owed)}`;
+    throw failure;
   }
+  if (opts.dryRun) return result;
+  const owed = await syncAfterUnfinishedRefresh(engine, sourceId, opts).catch(() => []);
+  return owed.length ? { ...result, synced: [...result.synced, ...owed] } : result;
 }
+
+/**
+ * GST-1853: a refresh that ended without completing (aborted in its run, abandoned, or rolled back by recovery) never ran
+ * the member syncs its fence refused, so a write held for an import on a member (import-deferral.ts) would wait for some
+ * later sync, indefinitely while the checkout stays diverged. While the worktree's newest refresh is `aborted`, every
+ * refresh run on the owner host therefore ends, after its own locks are released, by running the managed `--no-pull`
+ * sync of each member whose last_commit is not the checkout HEAD, within the sync budget, so those writes are prepared
+ * again against the checkout as it is. Best effort: a member it cannot sync waits for the next run or sync, and its held
+ * writes stay bound by the wait limit (`pending_import_expired`).
+ */
+async function syncAfterUnfinishedRefresh(engine: BrainEngine, sourceId: string, opts: RefreshOptions): Promise<RefreshMemberSync[]> {
+  const hostId = existingHostIdFor(engine);
+  if (!hostId || !await managedPersistenceEnabled(engine)) return [];
+  const binding = await getWorktreeBinding(engine, sourceId, hostId);
+  if (!binding || binding.owner_host_id !== hostId || !binding.local_path) return [];
+  const root = binding.local_path;
+  const [newest] = await engine.executeRaw<Pick<WorktreeRefreshRow, 'state' | 'source_ids'>>(
+    'SELECT state,source_ids FROM persistence_worktree_refreshes WHERE worktree_id=$1::uuid ORDER BY created_at DESC LIMIT 1', [binding.worktree_id]);
+  if (newest?.state !== 'aborted') return [];
+  const head = await withGit(git => headOf(git, root));
+  if (!head) return [];
+  const lagging: string[] = [];
+  for (const member of newest.source_ids) if (await lastCommit(engine, member) !== head) lagging.push(member);
+  if (!lagging.length) return [];
+  startPersistenceConsumer(engine, loadConfig() ?? { engine: engine.kind });
+  const sync = await boundedMemberSync(await configuredMs(engine, opts.syncBudgetMs, 'GBRAIN_REFRESH_SYNC_BUDGET_MS', 'sources.refresh_sync_budget_ms', SYNC_BUDGET_MS));
+  const synced: RefreshMemberSync[] = [];
+  for (const [index, member] of lagging.entries()) {
+    const status = await sync.member(engine, member, lagging.length - index).then(result => result.status, () => 'blocked');
+    synced.push({ source_id: member, status, last_commit: await lastCommit(engine, member) });
+  }
+  return synced;
+}
+const owedSyncNote = (synced: RefreshMemberSync[]) => `The worktree's last refresh ended without completing, so this run then ran the managed sync of ${synced
+  .map(member => `${member.source_id} (${member.status})`).join(', ')} at the checkout HEAD, for writes held for that import.`;
 
 const redact = (text: string) => {
   const home = homedir();
