@@ -148,8 +148,9 @@ function parseResolutions(specs: string[]): Map<string, Resolution> {
  */
 function assertSourceCheckout(repo: string): void {
   const registered = registeredManagedRootRecords();
+  if (!registered.length) return;
   const marker = managedRootMarkerFor(repo);
-  if (!registered.length || (marker && !staleEnclosingMarker({ root: marker.root, evidence: marker.marker }))) return;
+  if (marker && !staleEnclosingMarker({ root: marker.root, evidence: marker.marker })) return;
   const top = canonicalFilesystemPath(repo);
   const within = (root: string, path: string) => { const rel = relative(root, path); return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`); };
   const metadata = checkoutGitMetadata(top);
