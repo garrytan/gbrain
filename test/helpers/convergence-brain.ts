@@ -334,7 +334,7 @@ export class Brain {
     this.note(`phase 0: fault-free import in ${(this.elapsed.baseline_import_ms / 1000).toFixed(1)}s; oracle calibration problems: ${this.calibration.length}`);
   }
 
-  /** A fresh resident serve and at most MAX_RECOVERY_RUNS plain syncs, no operator step. */
+  /** A fresh resident serve and at most MAX_RECOVERY_RUNS plain syncs, no operator step; a synced run that reports commits landed behind it (a queued write's Git commit) is followed by the next. */
   async recover(): Promise<void> {
     const started = performance.now();
     const serve = new StdioServe(this);
@@ -344,8 +344,9 @@ export class Brain {
       const envelope = lastJson(r.out);
       this.recoveryRuns.push({ ...r, envelope });
       this.keepLog(`recovery-${run}-client.log`, `${r.out}\n${r.err}`);
-      this.note(`recovery run ${run}: exit ${r.code} in ${(r.ms / 1000).toFixed(1)}s outcome=${String(envelope?.outcome ?? envelope?.sync_status ?? envelope?.error ?? 'none')}`);
-      if (r.code === 0 && envelope?.outcome === 'synced') break;
+      const behind = ((envelope?.watermark as { pending?: { commits_behind?: { count?: number } } } | undefined)?.pending?.commits_behind?.count) ?? 0;
+      this.note(`recovery run ${run}: exit ${r.code} in ${(r.ms / 1000).toFixed(1)}s outcome=${String(envelope?.outcome ?? envelope?.sync_status ?? envelope?.error ?? 'none')}${behind ? `, ${behind} commit(s) landed behind it` : ''}`);
+      if (r.code === 0 && envelope?.outcome === 'synced' && behind === 0) break;
     }
     this.elapsed.recovery_ms = performance.now() - started;
     this.keepLog('recovery-serve.log', serve.stderr);

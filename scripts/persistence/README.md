@@ -579,7 +579,9 @@ anyway, which is how the PR that fixes it turns it on.
 
 After the chaos every scenario gets a fresh serve (what a supervisor restarts)
 and at most two plain `gbrain sync --no-pull` runs, with no operator step; only
-exit 0 with outcome `synced` counts. Then the oracle, each check its own test
+exit 0 with outcome `synced` counts, and a synced run whose
+receipt reports commits landed behind it (`watermark.pending.commits_behind`, a
+queued write's Git commit) is followed by the second. Then the oracle, each check its own test
 named by this gate's violation class: disk == database both ways (except the
 pages the mode's end state names), no request queued, running, recovering or
 holding a recovery record, every non-committed terminal request superseded or
