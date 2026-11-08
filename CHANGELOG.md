@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.617.0] - 2026-11-08
 
 **Older URL sources can get the same reclone settings as new ones remote callers add.** URL sources added before gbrain recorded who added them carry no record, and nothing stored tells a remote caller's add from the local operator's, so their reclones used the clone settings of a local add. The new doctor check `url_source_origin` lists them and asks the user who added each one. `gbrain sources record-origin <id>... --remote|--local` records that answer, as a preview until `--apply`. With `--remote`, every later reclone of the source clones with git-lfs downloads and hooks off, like a source a remote caller adds today. A checkout that tracks git-lfs files is refused, because changing its settings would make the next reclone fail to match its canonical content. Nothing changes on upgrade.
 
