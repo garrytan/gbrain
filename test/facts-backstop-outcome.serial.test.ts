@@ -301,7 +301,7 @@ describe('put_page never fails on extraction errors (E1 invariant)', () => {
     const handlers = new Map<string, MinionHandler>();
     await registerBuiltinHandlers({ register: (name: string, handler: MinionHandler) => handlers.set(name, handler) } as never, engine, { quiet: true });
     await expect(handlers.get('facts-absorb')!({
-      ...jobs[0], name: 'facts-absorb', attempts_made: 0, signal: new AbortController().signal,
+      ...jobs[0], name: 'facts-absorb', attempts_made: 0, idempotency_key: null, signal: new AbortController().signal,
       deadlineAtMs: null, shutdownSignal: new AbortController().signal, updateProgress: async () => {},
       updateTokens: async () => {}, log: async () => {}, isActive: async () => true, readInbox: async () => [],
     })).rejects.toBeInstanceOf(FactsExtractionError);

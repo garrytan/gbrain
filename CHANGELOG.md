@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A `POST /ingest` capture that runs again after its write landed no longer reverts a newer edit to the page.** A worker that died or lost its lock after the write committed, but before the job was marked complete, handed the job to another attempt, which wrote the captured body over any edit made in between. A client replaying the same POST after `gbrain jobs prune` removed the finished job got a fresh job that did the same. Each capture is now recorded under its job's idempotency key in the same transaction as the page write, and any later run of that key writes nothing and returns the first run's result. The record lasts 90 days, even after the job row is pruned. Separate captures to one page still land in order, because each has its own key.
+
+### Itemized changes
+
+- `src/core/minions/handlers/ingest-capture.ts` + `src/core/ingestion/applied-captures.ts`: a keyed capture checks `ingest_applied_captures` (new migration v296) before writing. On an unmanaged brain the row is inserted inside the page write's transaction, and a run that finds the row already there rolls its write back. On a managed brain each attempt sends the door a `request_id` derived from the key and the attempt number, the row is inserted once the door reports the write committed, and a committed request found without its row counts as applied and fills the row in. Tombstones and jobs queued without a key behave as before.
+- `src/core/minions/types.ts`: handlers see the job's `idempotency_key` on their context; jobs already waiting when you upgrade carry it from their row.
+- `src/core/cycle.ts`: the dream cycle's purge phase drops applied-capture records older than 90 days.
+- Tests: `test/ingest-capture-applied-once.test.ts` (PGLite) and `test/e2e/ingest-capture-applied-once-postgres.test.ts` (Postgres): a re-run after a newer edit, a replay after the job row is pruned (through the real route), two ordered captures to one slug, and the re-run on a managed brain.
+
 ## [0.60.610.0] - 2026-11-08
 
 **A client that retries a `POST /ingest` capture accepted before v0.60.609.0 no longer queues a second job that writes the old body over the page's newer edit.** v0.60.609.0 added the target slug to the capture's queue key, and nothing looked up the old key form, so a retry of a capture that had already landed was taken as a new one. The route now also looks up a capture's pre-v0.60.609.0 key and answers 202 with that job when it was queued for the same target slug, so the retry is the same request again and nothing is queued.
