@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.618.0] - 2026-11-08
 
 **A refresh no longer loses its tick when gbrain's own writes land while it drains.** `gbrain sources refresh` waits for writes admitted before its fence, and finishing them commits on the checkout and pushes, so HEAD moved past the commit the refresh started from and the run refused `refresh_source_changed`, twice when its same-run retry met the next writes. When every commit since that start is in gbrain's commit ledger and the upstream branch the refresh started with holds them, the refresh now takes HEAD as its start under the fence and fast-forwards to that upstream; any other HEAD move, one commit another agent made among them or an upstream changed under the fence included, still refuses as before.
 
