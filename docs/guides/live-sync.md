@@ -683,13 +683,14 @@ vars — incident-time escape hatches, not everyday knobs.
    ([scripts and the managed checkout](shared-checkout-git.md#scripts-and-the-managed-checkout)).
    When the worktree's Git durability is on, a diverged refresh publishes the
    local commits itself (`sources.refresh_publish_diverged` unset; `false` turns it
-   off, `true` publishes even with durability off): it scans every blob those
-   commits added for values that look like secrets and refuses
-   `refresh_diverged` naming the file, line and rule when it finds one, then pushes
+   off, `true` publishes even with durability off): under its publish lock it scans
+   what those commits add (messages, added lines, merge resolutions) and refuses
+   `publish_secret_found` naming the file, line and rule when one looks like a
+   secret, otherwise it pushes
    the local commits merged with the upstream in memory, the same publish as
    `gbrain git commit-push --push-only --keep-checkout` run as a child process
-   (the checkout's pre-push hook runs when the push is a fast-forward of HEAD),
-   and fast-forwards to the merge. It never moves the checkout to merge, a conflicting file refuses
+   with `--scan-secrets` (it skips the checkout's pre-push hook), and fast-forwards
+   to the merge. It never moves the checkout to merge, a conflicting file refuses
    `integrate_conflict` naming it with nothing pushed (with `gbrain.quarantine`
    on, the remote's version is published, this machine's is kept under
    `refs/gbrain/quarantine/`, and the refresh says so), an uncommitted edit to a

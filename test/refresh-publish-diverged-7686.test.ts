@@ -8,7 +8,7 @@
  * which never moves the checkout), then fast-forwards, keeping the local commits;
  * with the setting false, or unset while Git durability is not on, it refuses
  * `refresh_diverged`; local commits holding a value that looks like a secret refuse
- * before anything is pushed; a conflicting path
+ * `publish_secret_found` in the publish child, before anything is pushed; a conflicting path
  * refuses `integrate_conflict` naming the path and changes nothing; an uncommitted
  * edit on an incoming path refuses `refresh_dirty` before anything is pushed; a dry
  * run never publishes; with gbrain.quarantine on, the refresh names the parked
@@ -149,14 +149,14 @@ test('setting unset with Git durability on: a diverged refresh publishes the loc
   }
 }), 120_000);
 
-test('setting on: local commits holding a value that looks like a secret refuse refresh_diverged naming the file and rule, never the value, and nothing is pushed', () => each(async f => {
+test('setting on: local commits holding a value that looks like a secret refuse publish_secret_found naming the file and rule, never the value, and nothing is pushed', () => each(async f => {
   const token = 'ghp_' + 'Zt4q'.repeat(9);
   const local = diverge(f, { path: 'beta/local.md', content: page('Local', `Deploy token ${token}`) });
   git(f.root, 'rm', '-q', 'beta/local.md'); git(f.root, 'commit', '-qm', 'remove it again');
   const remote = remoteHead(f);
   await f.engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, 'true');
-  const error = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_diverged');
-  expect(error.message).toContain('look like secrets: beta/local.md:');
+  const error = await refusedWith(refreshWorktree(f.engine, f.alpha), 'publish_secret_found');
+  expect(error.message).toContain('look like secrets or could not be scanned: beta/local.md:');
   expect(error.message).toContain(local.slice(0, 7));
   expect(`${error.message}${error.suggestion}`).not.toContain(token);
   expect(remoteHead(f)).toBe(remote);

@@ -1,19 +1,18 @@
 /**
- * Guards on an automatic publish of commits gbrain did not write: the commit-range secret scan
- * (scanCommitRange) and the pre-push hook on a keep-checkout publish that is a plain fast-forward.
- * Protects: a value that looks like a secret in any blob a local commit added is found even when a later
- * commit removed it, with the path, line and rule but never the value; a fingerprint in .gbrain-scan-allow
- * and binary blobs are skipped; a keep-checkout publish of HEAD itself runs the checkout's pre-push hook, so
- * a refusing hook stops the push.
+ * The secret gate on automatic publishes (`commitAndPush({ pushOnly, keepCheckout, scanSecrets })`, the publish
+ * `gbrain sources refresh` runs in its child): it scans, under the publish lock, what the commits it is about to push add.
+ * Protects: a value that looks like a secret is found in an added line even when a later commit removed it, in a
+ * commit message, and in a merge commit's conflict resolution, named by path, line, rule and commit but never by
+ * value, and nothing is pushed; a fingerprint in .gbrain-scan-allow and a binary file are skipped; a clean range
+ * publishes; without scanSecrets nothing changes.
  * Seams: none; real repositories and a bare remote.
  */
 import { afterAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { commitAndPush } from '../src/core/git/commit-push.ts';
-import { scanCommitRange } from '../src/core/git/range-secret-scan.ts';
 
 const dir = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-guarded-publish-')));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -30,44 +29,63 @@ function repo(name: string): { remote: string; root: string; base: string } {
   git(root, 'add', '.'); git(root, 'commit', '-qm', 'init'); git(root, 'push', '-q', '-u', 'origin', 'main');
   return { remote, root, base: git(root, 'rev-parse', 'HEAD') };
 }
-const commit = (root: string, file: string, content: string | Buffer) => {
-  writeFileSync(join(root, file), content); git(root, 'add', file); git(root, 'commit', '-qm', `edit ${file}`);
+const commit = (root: string, file: string, content: string | Buffer, message = `edit ${file}`) => {
+  writeFileSync(join(root, file), content); git(root, 'add', file); git(root, 'commit', '-qm', message);
   return git(root, 'rev-parse', 'HEAD');
 };
+const publish = (root: string, scanSecrets = true) => commitAndPush({ repo: root, cwd: root, paths: [], pushOnly: true, keepCheckout: true, ...(scanSecrets ? { scanSecrets: true } : {}) });
+const refused = (fn: () => unknown) => {
+  try { fn(); } catch (e) { return e as { code: string; message: string; detail?: string; fix?: { user_message?: string } }; }
+  throw new Error('expected publish_secret_found');
+};
+const remoteTip = (r: { remote: string }) => git(r.remote, 'rev-parse', 'refs/heads/main');
 
-test('a secret a local commit added is found even after a later commit removed it, without its value', async () => {
-  const r = repo('scan');
+test('a secret an unpushed commit added is refused even after a later commit removed it, named without its value', () => {
+  const r = repo('removed');
   const added = commit(r.root, 'notes.md', `line one\nDeploy token ${token}\n`);
   commit(r.root, 'notes.md', 'line one\nredacted\n');
-  commit(r.root, 'clean.md', 'nothing here\n');
-  const findings = await scanCommitRange(r.root, r.base, 'HEAD');
-  expect(findings).toHaveLength(1);
-  expect(findings![0]).toMatchObject({ path: 'notes.md', commit: added, line: 2 });
-  expect(JSON.stringify(findings)).not.toContain(token);
-  expect(await scanCommitRange(r.root, 'HEAD', 'HEAD')).toEqual([]);
+  const error = refused(() => publish(r.root));
+  expect(error.code).toBe('publish_secret_found');
+  expect(error.message).toContain(`notes.md:2 (`);
+  expect(error.message).toContain(added.slice(0, 7));
+  expect(JSON.stringify(error)).not.toContain(token);
+  expect(remoteTip(r)).toBe(r.base);
 });
 
-test('a fingerprint in .gbrain-scan-allow and a binary blob are skipped; an unreadable range is null', async () => {
+test('a secret in a commit message is refused', () => {
+  const r = repo('message');
+  commit(r.root, 'page.md', 'a page\n', `rotate ${token}`);
+  const error = refused(() => publish(r.root));
+  expect(error.message).toContain('(commit message):1 (');
+  expect(remoteTip(r)).toBe(r.base);
+});
+
+test('a secret typed into a merge commit\'s conflict resolution is refused', () => {
+  const r = repo('merge');
+  git(r.root, 'checkout', '-q', '-b', 'side');
+  commit(r.root, 'readme.md', 'side version\n');
+  git(r.root, 'checkout', '-q', 'main');
+  commit(r.root, 'readme.md', 'main version\n');
+  try { git(r.root, 'merge', '-q', 'side'); } catch { /* conflict expected */ }
+  writeFileSync(join(r.root, 'readme.md'), `resolved with ${token}\n`);
+  git(r.root, 'add', 'readme.md'); git(r.root, 'commit', '-qm', 'merge side');
+  const error = refused(() => publish(r.root));
+  expect(error.message).toContain('readme.md:1 (');
+  expect(remoteTip(r)).toBe(r.base);
+});
+
+test('an allowlisted fingerprint and a binary file are skipped and the clean range publishes; without scanSecrets nothing is scanned', () => {
   const r = repo('allow');
   commit(r.root, 'data.bin', Buffer.concat([Buffer.from([0, 1, 2]), Buffer.from(token)]));
   commit(r.root, 'notes.md', `Deploy token ${token}\n`);
-  const [finding] = (await scanCommitRange(r.root, r.base, 'HEAD'))!;
-  expect(finding.path).toBe('notes.md');
-  writeFileSync(join(r.root, '.gbrain-scan-allow'), `${finding.fingerprint}\n`);
-  expect(await scanCommitRange(r.root, r.base, 'HEAD')).toEqual([]);
-  expect(await scanCommitRange(r.root, r.base, 'no-such-ref')).toBeNull();
-});
+  const error = refused(() => publish(r.root));
+  const fingerprint = (JSON.parse(error.detail!) as { findings: Array<{ path: string; fingerprint: string }> }).findings.find(f => f.path === 'notes.md')!.fingerprint;
+  expect((JSON.parse(error.detail!) as { findings: unknown[] }).findings).toHaveLength(1);
+  writeFileSync(join(r.root, '.gbrain-scan-allow'), `${fingerprint}\n`);
+  expect(publish(r.root)).toMatchObject({ outcome: 'pushed', checkout: 'unchanged' });
+  expect(remoteTip(r)).toBe(git(r.root, 'rev-parse', 'HEAD'));
 
-test('a keep-checkout publish of HEAD runs the pre-push hook, and a refusing hook stops the push', () => {
-  const r = repo('hook');
-  const marker = join(dir, 'hook-ran');
-  const hook = join(r.root, '.git', 'hooks', 'pre-push');
-  writeFileSync(hook, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`); chmodSync(hook, 0o755);
-  commit(r.root, 'page.md', 'a page\n');
-  expect(() => commitAndPush({ repo: r.root, cwd: r.root, paths: [], pushOnly: true, keepCheckout: true })).toThrow(/no push to origin\/main was confirmed/);
-  expect(existsSync(marker)).toBe(true);
-  expect(git(r.remote, 'rev-parse', 'refs/heads/main')).toBe(r.base);
-  writeFileSync(hook, '#!/bin/sh\nexit 0\n');
-  expect(commitAndPush({ repo: r.root, cwd: r.root, paths: [], pushOnly: true, keepCheckout: true })).toMatchObject({ outcome: 'pushed', checkout: 'unchanged' });
-  expect(git(r.remote, 'rev-parse', 'refs/heads/main')).toBe(git(r.root, 'rev-parse', 'HEAD'));
+  const plain = repo('plain');
+  commit(plain.root, 'notes.md', `Deploy token ${token}\n`);
+  expect(publish(plain.root, false)).toMatchObject({ outcome: 'pushed' });
 });

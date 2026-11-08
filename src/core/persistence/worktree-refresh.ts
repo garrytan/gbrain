@@ -50,7 +50,6 @@ import { classifyPgAccessError } from '../pg-access-classify.ts';
 import { classifyOriginUniqueViolation } from './origin-guard.ts';
 import { refreshProgress, refreshRetryHint, seconds } from './refresh-retry-hint.ts';
 import { ledgerLocation, readLedger } from '../git/commit-ledger.ts';
-import { scanCommitRange } from '../git/range-secret-scan.ts';
 import { gitDurabilityPolicy } from './git-durability-policy.ts';
 
 export interface WorktreeRefreshRow {
@@ -496,10 +495,6 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
     if (publishDiverged === 'default' && !(await gitDurabilityPolicy(binding, root)).durable) throw await divergedRefusal(git, root, sourceId, upstreamRef, oldHead, targetHead,
       'Git durability is not on for this worktree, so nothing leaves it through Git on its own.',
       ` To let every refresh publish it on its own, the user can turn Git durability on (gbrain sources writer git-durability ${sourceId} --enable) or run gbrain config set ${REFRESH_PUBLISH_DIVERGED_KEY} true.`);
-    const secrets = await scanCommitRange(root, targetHead, oldHead);
-    if (!secrets || secrets.length) throw await divergedRefusal(git, root, sourceId, upstreamRef, oldHead, targetHead, !secrets
-      ? `gbrain could not read the local commits to scan them for secrets (git log or git cat-file failed).`
-      : `Its local commits hold ${secrets.length} value(s) that look like secrets: ${secrets.slice(0, 10).map(s => `${s.path}:${s.line} (${s.pattern}, ${s.commit.slice(0, 7)})`).join(', ')}${secrets.length > 10 ? ', ...' : ''}. Remove them from those commits, or allowlist a false positive by its fingerprint in .gbrain-scan-allow.`);
     const localCommits = Number((await read(['rev-list', '--count', `${targetHead}..${oldHead}`])).stdout.trim()) || 0;
     const pushed = await publishInChild(root, sourceId, targetHead);
     const published = { sha: pushed.sha ?? targetHead, local_commits: localCommits, integrated: pushed.integrated,
@@ -525,7 +520,7 @@ async function publishInChild(root: string, sourceId: string, checkedUpstream: s
   const cli = resolveChildCliInvocation(process.env, process.execPath, process.argv[1], () => null);
   if (!cli) throw opError('git_push_unavailable', `This process could not locate its own CLI executable to publish the diverged checkout ${root}; nothing was pushed.`,
     `Set ${CHILD_ENV.childCliOverride} to the path of the CLI executable and retry gbrain sources refresh ${sourceId}, or publish by hand: gbrain git commit-push --push-only --keep-checkout --path ${q(root)}.`);
-  const child = await execFileBounded(cli.cmd, [...cli.argsPrefix, 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', root, '--expect-remote', checkedUpstream, '--json'], {
+  const child = await execFileBounded(cli.cmd, [...cli.argsPrefix, 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', root, '--expect-remote', checkedUpstream, '--json'], {
     timeout: PUBLISH_TIMEOUT_MS, termGraceMs: 10_000, maxBuffer: 1024 * 1024,
     env: { ...process.env, GBRAIN_PUBLISH_LOCK_WAIT_SECONDS: '0', GBRAIN_PUSH_LOCK_WAIT_SECONDS: '0' },
   });
