@@ -359,6 +359,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async (engine, scope) => (await import('./checks/extractor-facts.ts')).extractorFactsCheck(engine, scope.sourceIds),
   },
   {
+    id: 'unwithdrawn_facts', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Restoring facts a facts-fence generation retired without a withdrawal is a host-side, explicit-only repair.',
+    count: d => Number(d.evidenced ?? 0) + Number(d.ambiguous ?? 0),
+    impact: 'Some facts were retired by a facts-fence generation although no fence of their page held them, and recall no longer returns them',
+    run: async (engine, scope) => (await import('./checks/unwithdrawn-facts.ts')).unwithdrawnFactsCheck(engine, scope.sourceIds),
+  },
+  {
     id: 'conversation_label_facts', resolution: 'repair', registration: 'wave',
     hostOnly: 'Retiring label-misattributed conversation facts is a host-side, explicit-only repair.',
     count: d => Number(d.evidenced ?? 0),

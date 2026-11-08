@@ -44,7 +44,8 @@ export interface FenceGuard<T extends FenceFact> {
  * not supersede. `expired()` runs the caller's expiry; then guarded renumbers
  * move and new rows are gated.
  */
-export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input: { sourceId: string; slug: string; incoming: string; rows: T[]; cfg: (db: BrainEngine) => Promise<WriteGateConfig> },
+export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input: { sourceId: string; slug: string; incoming: string; rows: T[]; cfg: (db: BrainEngine) => Promise<WriteGateConfig>;
+  /** #8819: rows the fence never held, which this write keeps as they are. */ kept?: readonly number[] },
   expire: () => Promise<unknown>): Promise<FenceGuard<T>> {
   const { sourceId, slug, incoming } = input;
   const guarded = await tx.executeRaw<{ id: number; row_num: number; fact: string; visibility: string; trust_tier: string }>(
@@ -54,8 +55,8 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
           OR EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS c(row_num integer) WHERE c.row_num = f.row_num))
         AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS n(row_num integer, fact text, visibility text)
           WHERE n.row_num = f.row_num AND n.fact = f.fact AND n.visibility = f.visibility)
-        AND ${trustRankSql('f.trust_tier')} > ${WRITER_RANK}
-      ORDER BY f.row_num FOR UPDATE`, [sourceId, slug, incoming]);
+        AND ${trustRankSql('f.trust_tier')} > ${WRITER_RANK} AND NOT (f.id = ANY($4::bigint[]))
+      ORDER BY f.row_num FOR UPDATE`, [sourceId, slug, incoming, [...(input.kept ?? [])]]);
   if (guarded.length) await tx.executeRaw('UPDATE facts SET row_num = NULL WHERE id = ANY($1::bigint[])', [guarded.map(g => Number(g.id))]);
   await expire();
   // A fence with no rows and nothing guarded has nothing to place or gate (#6007: no reads on a fence-free publish).

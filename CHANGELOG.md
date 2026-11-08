@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A page write or a managed `extract_facts` run no longer retires facts that the page's `## Facts` fence never held, and `gbrain repair unwithdrawn-facts` restores the ones earlier releases retired.** A fact a `put_page` writer attached to a page with a row number, but that was never in the page's fence, used to be expired by any later write that projected the fence. That included a write that changed nothing in the fence, often the page's first facts-fence generation, which `gbrain repair generations` cannot undo because it has no earlier generation. Now a row retires only when a fence held it: a facts-fence generation recorded it, the page as the writer read it carried it, or a stored version of the page did. Every other row stays active with its id. Removing a row from the fence still retires it, as before. Doctor `unwithdrawn_facts` counts the facts that were already retired and points to the new repair, which previews first and restores the original fact ids and lifecycle from the generation ledger. It works on brains with and without a repository.
+
+### Itemized changes
+
+- `src/core/generations/fence-evidence.ts` (new): `factsFenceHeld` decides whether a fence ever held a fact row, from the facts-fence ledger, the replaced body and the page's stored versions. `moveKeptRows` moves a kept row whose number an incoming fence row claims above the page's rows.
+- `src/core/generations/adapters/fact-rows.ts`, `src/core/persistence/canonical-projections.ts`, `src/core/trust/fence-guard.ts`: the page projection's fact generation retires only held rows. Conversation-extractor rows still give up a number a fence row claims. Its expire statement and the trust guard leave kept rows alone.
+- `src/core/cycle/extract-facts.ts`: on a managed brain the reconcile keeps stale rows no fence held, and moves one whose number a new fence row needs. An unmanaged brain's reconcile is unchanged.
+- `src/core/repair/unwithdrawn-facts.ts` and `src/commands/doctor/checks/unwithdrawn-facts.ts` (new): `gbrain repair unwithdrawn-facts [--include-ambiguous] [--apply --expect <hash>]`, bound to each page's revision at preview. Managed brains apply it through a database-only `managed_maintenance_restore_unwithdrawn_facts` request; unmanaged brains apply it under the page lock. A fact a fence held, a withdrawn, superseded or duplicated fact, and a page written since the preview are refused. Doctor check `unwithdrawn_facts`.
+- Tests: `test/fence-first-generation-8819.test.ts` and `test/repair-unwithdrawn-facts-8819.test.ts`, on PGLite and Postgres.
+
 ## [0.60.609.0] - 2026-11-07
 
 **`POST /ingest` no longer answers 202 for a capture it drops, and an unsigned GitHub webhook can no longer tell from response time which repositories a brain syncs.** The same body sent to two slugs now queues two captures, where the second caller used to get the first job back and nothing written to its slug. A capture over the 50-capture waiting cap now gets 429 `ingest_backlog_full` with `Retry-After: 30` and nothing queued, where it used to get another capture's job id. A slug over 1024 bytes gets 400 `invalid_slug` before anything is queued, well short of the roughly 2.7 KB where no page can be stored under it. Every webhook request now computes the HMAC over its body, whether the repository is unknown, has no secret or is covered by a source, so a 401 takes the same work either way.
