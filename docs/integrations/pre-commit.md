@@ -73,9 +73,10 @@ contains a line terminator; refusing to install hook`), or `.githooks/` /
 — the installer never writes or removes through the link; the other sources
 still install). A clone whose own (`--local`) config sets `core.hooksPath` to
 `/dev/null` (a URL source a remote caller added: hooks off on purpose) is also
-skipped (`skipped — hooks are off in this clone on purpose …`) with nothing
+skipped (`skipped — hooks are off in this clone's own config …`) with nothing
 written, `--force` included; a global or system `/dev/null` value does not
-count.
+count, and neither do inherited `GIT_DIR`, `GIT_WORK_TREE` or `GIT_CONFIG*`
+variables.
 
 ## Bypass
 

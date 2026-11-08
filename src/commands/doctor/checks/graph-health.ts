@@ -373,6 +373,7 @@ export const timelineHistoryEntry: DoctorEntry = {
     'connector_held_items',
     'git_held_files',
     'frontmatter_hook',
+    'url_source_origin',
     'orphan_persistence_bindings',
     'foreign_ownership_marker',
     'coordination_lock_location',

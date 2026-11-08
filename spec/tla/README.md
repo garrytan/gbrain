@@ -168,7 +168,7 @@ invariant. Behind constants it also models the stacked follow-ups: writes held f
 
 Every config kills the refreshing process once (`MaxCrashes = 1`), at any step, after which `recoverOne` resumes the
 refresh row it left. A refresh that finds HEAD moved at the merge aborts and the tick retries, as `fenceAndMerge` does,
-unless every commit in old_head..HEAD is gbrain's own: then HEAD becomes old_head and the merge goes on (#8828). So `recovery_required` is reached only through recovery or a refused merge. `RefreshBarrier.cfg` also lets
+unless every commit in old_head..HEAD is gbrain's own: then HEAD becomes old_head and the merge goes on (#8828). So `recovery_required` is reached only through recovery; a refused merge aborts too (GST-1674). `RefreshBarrier.cfg` also lets
 someone reset the checkout to old_head after the merge (`MayReset`).
 
 `test/spec-refresh-barrier.test.ts` keeps the default config on #8682 alone, every safety config on every invariant,
@@ -185,7 +185,7 @@ every config killing the refresh at least once, and the workflow's path filter c
 | `FenceNeverMidPrepare` | the fence never comes up, and the checkout never moves, while a write is claimed |
 | `DeferredWaitsForRelease`, `RefreshChangeNeverOverwritten` | a deferred write commits only after its refresh is released, and never over a file that refresh changed |
 | `NoDeferToReleased`, `ReleasedWhenEnded` | admission never defers to a released refresh; a completed or aborted refresh is released |
-| `RecoveryOnlyByPolicy` | a refresh goes `recovery_required` (a person must act while every write deferred to it waits) only in the policy case recorded in `rwhy`: its merge started and HEAD no longer holds the target (`merge_started_off_target`: a reset plus an unrelated commit, or a plain-git commit that made the ff-only merge refuse); never for a merge that never started, nor with HEAD at or past the target |
+| `RecoveryOnlyByPolicy` | a refresh goes `recovery_required` (a person must act while every write deferred to it waits) only in the policy case recorded in `rwhy`: its merge ran and HEAD no longer holds the target (`merge_started_off_target`: a reset plus an unrelated commit); never for a merge that never started or that git refused, nor with HEAD at or past the target |
 | `ExpiryOnlyWhileWaiting` | an expiry ends only a write that still waits (its refresh unreleased, or its import not landed) |
 | `RestoreLeavesNoOpenWrite` | a restore leaves no write admitted before it open (finding C) |
 | `NoApplyAfterRevoke` | no write commits after its credential was revoked |
@@ -205,7 +205,7 @@ every config killing the refresh at least once, and the workflow's path filter c
 | `ConsAdopt`, `ConsRelease` | #8708 `adoptLocalEdit`, then the claim's release |
 | `ConsDone` | `completeWrite` of a refusal |
 | `RefBegin` … `CompleteCommit` | worktree-refresh.ts: `fenceDraining`, the drain poll, `fenceAndMerge` (re-counts under `lockTopologyRows`), the ff-only merge under the commit lock, `bookkeeping`, `syncMembers`, `resumeOrAbandon`, and the v292 release trigger on completed or aborted |
-| `Crash`, `RecoverBegin`, `RecoverCommit` | the refreshing process killed (its open transaction rolls back), then `recoverOne` from the owner's topology scan or `--resume`: draining aborts; fenced with HEAD at old_head aborts, and so does a fenced row whose merge never started (`outcome.merge_started` false: `rmstart`), whoever moved HEAD; fenced with HEAD holding the target (the target or a strict descendant) runs `bookkeeping`; syncing with HEAD at or past the target stays syncing; a `recovery_required` row whose HEAD holds the target runs `bookkeeping`, and otherwise stays; anything else is `markRecoveryRequired` |
+| `Crash`, `RecoverBegin`, `RecoverCommit` | the refreshing process killed (its open transaction rolls back), then `recoverOne` from the owner's topology scan or `--resume`: draining aborts; fenced with HEAD at old_head aborts, and so does a fenced row whose merge never started (`outcome.merge_started` false: `rmstart`), whoever moved HEAD, and one whose merge started but never reached the target (`rmstart` with `rtgt` 0; the code reads the reflogs of HEAD and its branch since `outcome.merge_started_at`, and keeps `recovery_required` when it cannot); fenced with HEAD holding the target (the target or a strict descendant) runs `bookkeeping`; syncing with HEAD at or past the target stays syncing; a `recovery_required` row whose HEAD holds the target runs `bookkeeping`, and otherwise stays; anything else is `markRecoveryRequired` |
 | `ExpRefBegin`, `ExpRefCommit` | `expireDeferredWrites`: the protocol, the refresh row re-read `released_at IS NULL FOR NO KEY UPDATE`, `completeWrite` |
 | `ExpImpBegin`, `ExpImpRecheck`, `ExpImpCommit` | #8705's import expiry in `expireDeferredWrites` |
 | `SyncBegin` … `SyncStamp` | a managed sync pass, whose rows go through the claim like writes: no write passes the queued row importing its page or a running sync row, and a sync row waits behind earlier writes and is never claimed while a write runs; the page row, then its checkpoint row's `UPDATE sources SET last_commit` (sync-prepare.ts) |
@@ -237,6 +237,7 @@ every config killing the refresh at least once, and the workflow's path filter c
 | `import-expiry-locks-source-first` | guard | `NoDeadlock` (Import) | the import expiry's lock order; a Postgres expiry overlapping a fence (import-write-barrier.test.ts) |
 | `import-expiry-skips-source-lock` | guard | `ExpiryOnlyWhileWaiting` (Import) | the import expiry's `FOR SHARE OF s`; a Postgres import landing while the expiry waits (import-write-barrier.test.ts) |
 | `resume-marks-unmerged-recovery` | guard | `RecoveryOnlyByPolicy` | `movedBeforeMerge` (the finding below): the code edit aborts only a HEAD moved by gbrain's own commits; the refresh killed at fenced after a foreign commit, aborted by the owner scan |
+| `resume-marks-refused-merge-recovery` | guard | `RecoveryOnlyByPolicy` | `refusedBeforeAbort` (GST-1674): a refresh killed after git refused its fast-forward, before the abort, is marked `recovery_required`; the refresh SIGKILLed right after the refused merge (persistence-worktree-refresh-restart.test.ts), aborted by the owner scan |
 | `resume-needs-exact-target` | guard | `RecoveryOnlyByPolicy` | `recoverOne`'s bookkeeping branch: with HEAD only exactly at the target, a commit between the merge and bookkeeping strands the row; the refresh killed after its merge |
 | `abort-skips-owed-sync` | guard | `DeferredLeaves` (AbortLiveness) | `syncAfterUnfinishedRefresh`: no refresh run syncs the members an aborted refresh left behind HEAD; the three GST-1853 tests (aborted then diverged, killed at fenced then `--resume`, owner-scan abort then a diverged tick) |
 | `replan-over-foreign-commit` | guard | `ReplanOnlyOwnCommits` | `replanOnOwnCommits`'s ledger check (`ownCommits`): the refresh takes a HEAD with another agent's commit in it as its start; the #8828 test with one foreign commit among gbrain's own published commits |
@@ -256,10 +257,15 @@ strands the row the same way (`resume-needs-exact-target`), since recovery wante
 
 The fix (#8705) records `outcome.merge_started`, false at the fence and set in its own transaction just before
 `git merge --ff-only`. Recovery aborts a fenced row whose merge never started, and runs `bookkeeping` for one whose HEAD
-is the target or a strict descendant of it. `recovery_required` remains only for a merge that started on a HEAD that no
+is the target or a strict descendant of it. `recovery_required` remains only for a merge that ran on a HEAD that no
 longer holds the target (`merge_started_off_target`): a reset plus an unrelated commit (test 7 in
-test/persistence-worktree-refresh.test.ts), or a plain-git commit between the HEAD check and the merge, which makes the
-ff-only merge refuse. Every config passes with the fix, and that policy case stays reachable.
+test/persistence-worktree-refresh.test.ts). Every config passes with the fix, and that policy case stays reachable.
+
+GST-1674 closed the last other case: a plain-git commit between the HEAD check and the merge makes the ff-only merge
+refuse. The live tick aborts it (#8765), and a process killed between the refused merge and that abort is aborted by
+recovery when the reflogs of HEAD and its branch show HEAD never reached the target since `outcome.merge_started_at`
+(`RefusedAbortable`, `resume-marks-refused-merge-recovery`). The model reads that fact from `rtgt` and assumes the
+reflog is kept; without one the code keeps `recovery_required`, which leaves the row for a person, as before.
 
 ### Races found in #8705
 

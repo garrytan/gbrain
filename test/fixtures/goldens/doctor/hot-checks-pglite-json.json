@@ -1807,6 +1807,18 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "details": {
+              "count": 0,
+              "docs": "docs/guides/repair.md#url-source-origin",
+              "sources": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every URL source clone records who added it, or was cloned where only the local CLI can clone.",
+            "name": "url_source_origin",
+            "status": "ok"
+          },
+          {
             "category": "brain",
             "details": {
               "bindings": [],
@@ -6889,6 +6901,18 @@
             "elapsed_ms": "<volatile>",
             "message": "No outdated gbrain frontmatter pre-commit hook is installed.",
             "name": "frontmatter_hook",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "count": 0,
+              "docs": "docs/guides/repair.md#url-source-origin",
+              "sources": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every URL source clone records who added it, or was cloned where only the local CLI can clone.",
+            "name": "url_source_origin",
             "status": "ok"
           },
           {

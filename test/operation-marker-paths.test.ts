@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { operationMarkerPaths } from '../src/core/persistence/pending-import.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-op-markers-')));
 afterAll(() => rmSync(base, { recursive: true, force: true }));
@@ -124,3 +125,79 @@ test('a cherry-pick range stopped between picks, after the first conflict was co
   git(root, 'cherry-pick', '--quit');
   expect(await present(root)).toEqual([]);
 });
+
+
+// ── #8826 ───────────────────────────────────────────────────────────────────
+
+/** A repository at `root` (reached by whatever path) whose page has diverging commits on main and side. */
+function diverged(root: string): void {
+  git(root, 'init', '-q');
+  mkdirSync(join(root, 'notes'), { recursive: true });
+  writeFileSync(join(root, 'notes', 'page.md'), 'one\n');
+  writeFileSync(join(root, 'notes', 'other.md'), 'other\n');
+  git(root, 'add', '.');
+  git(root, 'commit', '-qm', 'one');
+  git(root, 'checkout', '-qb', 'side');
+  writeFileSync(join(root, 'notes', 'page.md'), 'side\n');
+  git(root, 'commit', '-qam', 'side');
+  git(root, 'checkout', '-q', 'main');
+  writeFileSync(join(root, 'notes', 'page.md'), 'main\n');
+  git(root, 'commit', '-qam', 'main');
+}
+
+test('a git dir whose path is not valid UTF-8, reached through a clean symlink, never reads as clean mid-cherry-pick', async () => {
+  const real = Buffer.concat([Buffer.from(join(base, 'bytes-')), Buffer.from([0xff, 0xfe])]);
+  mkdirSync(real);
+  const link = join(base, 'bytes-link');
+  symlinkSync(real, link);
+  diverged(link);
+  expect(() => git(link, 'cherry-pick', 'side')).toThrow();
+  expect(existsSync(join(link, '.git', 'CHERRY_PICK_HEAD'))).toBe(true);
+  expect(await readsClean(link)).toBe(false);
+  expect(await operationMarkerPaths(link)).toBeNull();
+});
+
+test('a squash merge stopped on a conflict leaves no MERGE_HEAD but SQUASH_MSG, which is in progress until reset', async () => {
+  const root = join(base, 'squash');
+  mkdirSync(root);
+  diverged(root);
+  expect(() => git(root, 'merge', '--squash', 'side')).toThrow();
+  expect(existsSync(join(root, '.git', 'MERGE_HEAD'))).toBe(false);
+  expect(await present(join(root, 'notes'))).toEqual([join(root, '.git', 'SQUASH_MSG')]);
+  git(root, 'reset', '-q', '--hard');
+  expect(await present(root)).toEqual([]);
+});
+
+test('a bisect in progress sees BISECT_LOG until it is reset', async () => {
+  const root = repo('bisecting');
+  for (const n of ['two', 'three']) {
+    writeFileSync(join(root, 'notes', 'deep', 'page.md'), `${n}\n`);
+    git(root, 'commit', '-qam', n);
+  }
+  git(root, 'bisect', 'start');
+  git(root, 'bisect', 'bad');
+  git(root, 'bisect', 'good', 'HEAD~2');
+  expect(await present(root)).toEqual([join(root, '.git', 'BISECT_LOG')]);
+  git(root, 'bisect', 'reset');
+  expect(await present(root)).toEqual([]);
+});
+
+/** Runs `operationMarkerPaths` against a shim git whose `rev-parse --absolute-git-dir` prints `output`; every other command is real git. */
+async function withShimGitDir(root: string, output: string): Promise<string[] | null> {
+  const shim = mkdtempSync(join(base, 'shim-'));
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { env }).toString().trim();
+  writeFileSync(join(shim, 'out'), output);
+  writeFileSync(join(shim, 'git'), `#!/bin/sh\nfor a in "$@"; do [ "$a" = --absolute-git-dir ] && { cat "${shim}/out"; exit 0; }; done\nexec "${realGit}" "$@"\n`, { mode: 0o755 });
+  return withEnv({ PATH: `${shim}:${process.env.PATH}` }, () => operationMarkerPaths(root));
+}
+
+test('a git dir answer that is not one absolute, existing directory line reads as unknown (CRLF, trailing space, relative, missing, a file)', async () => {
+  const root = repo('shimmed');
+  const gitDir = join(root, '.git');
+  writeFileSync(join(gitDir, 'MERGE_HEAD'), `${git(root, 'rev-parse', 'HEAD').trim()}\n`);
+  expect(await withShimGitDir(root, `${gitDir}\n`)).toContain(join(gitDir, 'MERGE_HEAD'));
+  for (const output of [`${gitDir}\r\n`, `${gitDir} \n`, '.git\n', `${join(base, 'missing-dir')}\n`, `${join(gitDir, 'MERGE_HEAD')}\n`, `${gitDir}`]) {
+    expect(await withShimGitDir(root, output)).toBeNull();
+  }
+});
+

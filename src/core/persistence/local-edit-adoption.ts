@@ -28,6 +28,11 @@
  * publishing is waited on, never left to commit after its caller was refused. The adoption names its caller's claim and
  * publishes nothing once that claim is gone (a crash between admission and settling); its own claim carries the owner
  * stamp like any other. A caller whose claim was lost meanwhile is reported as such, never as released.
+ *
+ * #8824/#8767: the caller check runs only until the adoption's own commit lands. A replay that finds HEAD holding it
+ * (`landedAdoptionCommit`) publishes it whatever became of the caller, a requeued one is never cancelled, and recovery
+ * names the commit on the receipt (`landed_before_row`) whether the adoption then commits or ends without committing.
+ * #8826: a bisect or an uncommitted squash merge also keeps the refusal (`operationMarkerPaths`).
  */
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -50,10 +55,11 @@ import { declarePersistenceProtocol } from './protocol.ts';
 import type { WorktreeBinding } from './ownership.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { fileMatchesSnapshot, protectedLocalEdit } from './page-prepare.ts';
-import { blobText, headBlob, headCommit, landedCommit, operationMarkerPaths, unmergedPath } from './pending-import.ts';
+import { blobAt, blobText, commitMessage, commitParent, headBlob, headCommit, landedCommit, operationMarkerPaths, unmergedPath } from './pending-import.ts';
+import { ledgerLocation, messageDigest, readLedger } from '../git/commit-ledger.ts';
+import { adoptedBy, localEditAdoptionCommit, type GitCommitNote } from './effect-model.ts';
 import { claimOwner } from './claim-phase.ts';
 import type { PreparedMutation } from './coordinator.ts';
-import type { GitCommitNote } from './effect-model.ts';
 
 export const ADOPTED_CHANGE_REASON = 'adopted_local_edit';
 export const ADOPT_QUIET_KEY = 'persistence.adopt_quiet_ms';
@@ -217,6 +223,43 @@ export async function assertAdoptionCaller(engine: BrainEngine, row: WriteReques
     `Adoption request ${row.request_id} in source ${row.source_id} belongs to a write whose claim ended (it was cancelled, finished, or reclaimed after its process stopped), so the local edit was not adopted and nothing was written.`);
 }
 
+/**
+ * #8824: the commit of this adoption when HEAD already holds it: the newest commit on the path is `gbrain: adopt local edit
+ * to <path>` carrying this adoption's `gbrain-adopted:` trailer and commit-ledger line, its parent held the pre-adoption
+ * blob, and HEAD holds the adopted blob. The ledger's commit line is best-effort (written after `git commit`), so the
+ * intent line written before it also proves the commit when its `head_before` is the commit's parent and its message
+ * digest is the commit's. Null otherwise, on a repo-less brain, or when Git or the ledger cannot be read.
+ * A replay that finds it publishes whatever became of its caller (the commit is durable), and its receipt names it.
+ */
+export async function landedAdoptionCommit(root: string, target: string, adopted: { path: string; blob: string; replaced_revision: string; head: string | null }): Promise<string | null> {
+  if (adopted.head === null || await headBlob(root, target) !== adopted.blob) return null;
+  const commit = await landedCommit(root, null, target);
+  if (!commit || await blobAt(root, `${commit}^`, target) !== adopted.head) return null;
+  const note = localEditAdoptionCommit(adopted.path, adopted.blob, adopted.replaced_revision);
+  const message = await commitMessage(root, commit);
+  const lines = message?.split('\n') ?? [];
+  if (lines[0] !== note.subject || !note.trailers?.every(trailer => lines.includes(trailer))) return null;
+  const [trailer] = adoptedBy(note.trailers);
+  const location = ledgerLocation(root);
+  let records: ReturnType<typeof readLedger>;
+  try { records = location ? readLedger(location.common) : []; } catch { return null; }
+  if (records.some(record => record.e === 'commit' && record.sha === commit && record.adopted?.includes(trailer!))) return commit;
+  const parent = await commitParent(root, commit), digest = messageDigest(message!);
+  return parent && records.some(record => record.e === 'intent' && record.head_before === parent && record.msg_sha256 === digest) ? commit : null;
+}
+
+/** #8824/#8767: `landedAdoptionCommit` for an adoption request `row` (any other request answers null), read on `binding`'s checkout. */
+export async function adoptionCommitLanded(engine: BrainEngine, row: WriteRequest, binding?: WorktreeBinding | null): Promise<string | null> {
+  const intent = row.intent as { kind?: unknown; path?: unknown; adoptLocalEdit?: { blob?: unknown; replaced_revision?: unknown; head?: unknown } } | null;
+  const adopted = intent?.adoptLocalEdit;
+  if (intent?.kind !== 'managed_file_repair' || typeof intent.path !== 'string' || typeof adopted?.blob !== 'string'
+    || typeof adopted.replaced_revision !== 'string' || typeof adopted.head !== 'string') return null;
+  const bound = binding === undefined ? await getWorktreeBinding(engine, row.source_id) : binding;
+  if (!bound?.local_path) return null;
+  const root = join(bound.local_path, bound.relative_path);
+  return landedAdoptionCommit(root, join(root, intent.path), { path: intent.path, blob: adopted.blob, replaced_revision: adopted.replaced_revision, head: adopted.head });
+}
+
 /** Claims, prepares and publishes the admitted adoption, retrying while another owner task holds the worktree lock. */
 async function publishAdoption(engine: BrainEngine, caller: WriteRequest, admitted: WriteRequest, path: string): Promise<WriteRequest> {
   const { finishUnpublishedFailure, publishMutation } = await import('./coordinator.ts');
@@ -254,6 +297,10 @@ async function settleAdoption(engine: BrainEngine, row: WriteRequest): Promise<W
   const { cancelWriteRequest } = await import('./control.ts');
   const deadline = Date.now() + LOCK_RETRY_MS;
   for (;;) {
+    // #8824: a requeued adoption whose commit already landed is left for the consumer, which publishes it naming that
+    // commit; cancelling it would orphan the commit.
+    const latest = (await getWriteRequestById(engine, row.id)) ?? row;
+    if (latest.state === 'queued' && await adoptionCommitLanded(engine, latest)) return latest;
     const current = await cancelWriteRequest(engine, requestPrincipal(row), row.request_id) ?? row;
     if (isTerminal(current)) return current;
     const publishing = current.publication_started || current.recovery != null;
