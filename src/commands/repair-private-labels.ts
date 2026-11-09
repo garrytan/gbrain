@@ -8,15 +8,15 @@
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { gbrainPath } from '../core/config.ts';
-import type { PrivateLabelsLedger, PrivateLabelsLedgerLine } from '../core/repair/private-labels.ts';
+import type { PrivateLabelsLedger } from '../core/repair/private-labels.ts';
 
 export function privateLabelsLedger(brainId: string): PrivateLabelsLedger {
   const path = gbrainPath('repair', 'private-labels', `${brainId.replace(/[^A-Za-z0-9._-]/g, '_')}.jsonl`);
-  const lines: PrivateLabelsLedgerLine[] = [];
+  const lines: unknown[] = [];
   let unreadable = 0;
   for (const text of existsSync(path) ? readFileSync(path, 'utf8').split('\n') : []) {
     if (!text.trim()) continue;
-    try { lines.push(JSON.parse(text) as PrivateLabelsLedgerLine); } catch { unreadable++; }
+    try { lines.push(JSON.parse(text)); } catch { unreadable++; }
   }
   return { path, lines, unreadable, record(line) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });

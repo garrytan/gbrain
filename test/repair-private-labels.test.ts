@@ -36,6 +36,8 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
+import { privateLabelsLedger } from '../src/commands/repair-private-labels.ts';
+import type { PrivateLabelsLedgerLine } from '../src/core/repair/private-labels.ts';
 
 let engine: PGLiteEngine;
 const dir = mkdtempSync(join(tmpdir(), 'gbrain-private-labels-'));
@@ -203,7 +205,7 @@ describe('repair private-labels', () => {
     const ledger = ledgerPath(brainId);
     expect(statSync(ledger).mode & 0o777).toBe(0o600);
     expect(statSync(dirname(ledger)).mode & 0o777).toBe(0o700);
-    const lines = ledgerLines(brainId);
+    const lines = ledgerLines(brainId).filter(l => l.phase === 'committed');
     expect(lines.map(l => [l.slug, l.removed])).toEqual([
       ['notes/alias', { access: 'private' }],
       ['notes/alias-vis', { access: 'Private', visibility: 'private' }],
@@ -211,6 +213,11 @@ describe('repair private-labels', () => {
     expect(lines[0]).toMatchObject({ brain_id: brainId, source_id: 'default', page_id: aliasBefore.page_id, revision_before: aliasBefore.revision });
     expect(lines[0].request_id).toMatch(/^[0-9a-f-]{36}$/);
     expect(typeof lines[0].at).toBe('string');
+    // GST-2092: each committed line follows its write-ahead intent line (same request) and names the revision it wrote.
+    const intents = ledgerLines(brainId).filter(l => l.phase === 'intent');
+    expect(intents.map(l => [l.slug, l.removed, l.request_id])).toEqual(lines.map(l => [l.slug, l.removed, l.request_id]));
+    expect(lines[0].revision_after).toBe(alias.revision);
+    expect(lines[1].revision_after).toBe(vis.revision);
   });
 
   test('a second preview lists the skipped page; once applied, the clear counts are 0 and readers are kept', async () => {
@@ -233,8 +240,8 @@ describe('repair private-labels', () => {
     const slugs = ['notes/alias', 'notes/alias-vis', 'notes/readers'];
     const cleared = Object.fromEntries(await Promise.all(slugs.map(async slug => [slug, await row(slug)] as const)));
     const preview = await json(['private-labels', '--class', 'restore']);
-    expect(preview.details.counts.before).toEqual({ restorable: 3, already_restored: 0, page_gone: 0 });
-    expect(preview.details.counts.after).toEqual({ restorable: 0, already_restored: 3, page_gone: 0 });
+    expect(preview.details.counts.before).toEqual({ restorable: 3, already_restored: 0, page_gone: 0, removed_after_restore: 0 });
+    expect(preview.details.counts.after).toEqual({ restorable: 0, already_restored: 3, page_gone: 0, removed_after_restore: 0 });
     expect(preview.listing).toEqual([
       { item: 'default:notes/alias', class: 'restore', detail: 're-add access: private' },
       { item: 'default:notes/readers', class: 'restore', detail: 're-add access: private' },
@@ -246,11 +253,11 @@ describe('repair private-labels', () => {
     expect((await row('notes/alias-vis')).frontmatter).toEqual({ ...cleared['notes/alias-vis']!.frontmatter, access: 'Private', visibility: 'private' });
     expect((await row('notes/readers')).frontmatter).toEqual({ ...cleared['notes/readers']!.frontmatter, access: 'private' });
     for (const slug of slugs) expect((await row(slug)).compiled_truth).toBe(cleared[slug]!.compiled_truth);
-    expect(ledgerLines(brainId).filter(l => l.restored).map(l => [l.slug, l.restored])).toEqual([
+    expect(ledgerLines(brainId).filter(l => l.restored && l.phase === 'committed').map(l => [l.slug, l.restored])).toEqual([
       ['notes/alias', { access: 'private' }], ['notes/readers', { access: 'private' }], ['notes/alias-vis', { access: 'Private', visibility: 'private' }],
     ]);
     const again = await json(['private-labels', '--class', 'restore']);
-    expect(again.details.counts.before).toEqual({ restorable: 0, already_restored: 3, page_gone: 0 });
+    expect(again.details.counts.before).toEqual({ restorable: 0, already_restored: 3, page_gone: 0, removed_after_restore: 0 });
     const relisted = await json(['private-labels']);
     expect(relisted.details.counts.before.alias).toBe(2);
     expect(relisted.details.counts.before['alias-and-visibility']).toBe(1);
@@ -267,7 +274,8 @@ describe('repair private-labels', () => {
     expect(applied.skipped).toBe(1);
     expect((await row('notes/alias')).frontmatter.access).toBe('restricted');
     expect((await row('notes/readers')).frontmatter.access).toBe('private');
-    expect(ledgerLines(brainId).filter(l => l.restored && l.slug === 'notes/alias')).toHaveLength(1);
+    expect(ledgerLines(brainId).filter(l => l.restored && l.slug === 'notes/alias' && l.phase === 'committed')).toHaveLength(1);
+    expect(ledgerLines(brainId).filter(l => l.restored && l.slug === 'notes/alias' && l.phase === 'intent')).toHaveLength(1);
   });
 
   test('a restore recorded while its write was only accepted, whose write then failed, stays restorable', async () => {
@@ -400,7 +408,7 @@ describe('repair private-labels --class git-publish on a git-canonical source', 
         expect(readFileSync(file, 'utf8')).not.toMatch(/^access:/m);
         expect(execFileSync('git', ['log', '--format=%H', '--', 'notes/g.md'], { cwd: root, encoding: 'utf8' }).trim()).not.toBe('');
         const brain = preview.scope.brain_id;
-        expect(ledgerLines(brain).filter(l => l.source_id === source).map(l => [l.slug, l.removed])).toEqual([['notes/g', { access: 'private' }]]);
+        expect(ledgerLines(brain).filter(l => l.source_id === source && l.phase === 'committed').map(l => [l.slug, l.removed])).toEqual([['notes/g', { access: 'private' }]]);
 
         const restorePreview = await json(['private-labels', '--source', source, '--class', 'restore']);
         expect(restorePreview.listing).toEqual([{ item: source + ':notes/g', class: 'restore', detail: 're-add access: private' }]);
@@ -417,28 +425,39 @@ describe('repair private-labels --class git-publish on a git-canonical source', 
 });
 
 describe('repair private-labels when the undo ledger cannot record', () => {
-  test('a clear whose ledger line fails to save still reports the page as applied and names the removed values; restore then says where to run', async () => {
+  test('the intent line is written before the page: a ledger that cannot record refuses the clear and leaves the label; the same --expect resumes once it can (GST-2092, GST-2128 item 7)', async () => {
     const source = 'source-h';
     const home = mkdtempSync(join(tmpdir(), 'gbrain-private-labels-ledger-'));
     mkdirSync(join(home, '.gbrain', 'repair'), { recursive: true });
     writeFileSync(join(home, '.gbrain', 'repair', 'private-labels'), 'a file where the ledger directory belongs');
-    const runIn = async (argv: string[]) => {
-      const out = JSON.parse(await withEnv({ GBRAIN_HOME: home, GBRAIN_INTERACTIVE: '0', CI: '1' }, () => capture(() => runRepairCommand(engine, [...argv, '--json'])))).results[0];
-      _resetCliExitVerdictForTests();
-      return out;
-    };
+    const inHome = (argv: string[]) => withEnv({ GBRAIN_HOME: home, GBRAIN_INTERACTIVE: '0', CI: '1' }, () => capture(() => runRepairCommand(engine, [...argv, '--json'])));
+    const runIn = async (argv: string[]) => { const out = JSON.parse(await inHome(argv)).results[0]; _resetCliExitVerdictForTests(); return out; };
     try {
       await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [source]);
       await seed('notes/h', 'note', { access: 'private' }, source);
       const preview = await runIn(['private-labels', '--source', source]);
+      const refused = await refusal(() => inHome(['private-labels', '--source', source, '--apply', '--expect', preview.preview_hash]));
+      _resetCliExitVerdictForTests();
+      expect(refused.code).toBe('storage_error');
+      expect(refused.message).toContain('ledger');
+      expect((await row('notes/h', source)).frontmatter.access).toBe('private');
+      rmSync(join(home, '.gbrain', 'repair', 'private-labels'));
       const applied = await runIn(['private-labels', '--source', source, '--apply', '--expect', preview.preview_hash]);
       expect(applied.failed).toEqual([]);
       expect(applied.applied).toBe(1);
-      expect(JSON.stringify(applied)).toContain('access: private');
       expect('access' in (await row('notes/h', source)).frontmatter).toBe(false);
       const restore = await runIn(['private-labels', '--source', source, '--class', 'restore']);
-      expect(restore.listing ?? []).toEqual([]);
-      expect(restore.warnings.some((w: string) => w.includes('has no line for brain') && w.includes(restore.details.ledger))).toBe(true);
+      expect(restore.listing).toEqual([{ item: source + ':notes/h', class: 'restore', detail: 're-add access: private' }]);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  test('restore in a home whose ledger has no line for the brain says where to run it', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-private-labels-empty-'));
+    try {
+      const out = JSON.parse(await withEnv({ GBRAIN_HOME: home, GBRAIN_INTERACTIVE: '0', CI: '1' }, () => capture(() => runRepairCommand(engine, ['private-labels', '--source', 'source-h', '--class', 'restore', '--json'])))).results[0];
+      _resetCliExitVerdictForTests();
+      expect(out.listing ?? []).toEqual([]);
+      expect(out.warnings.some((w: string) => w.includes('has no line for brain') && w.includes(out.details.ledger))).toBe(true);
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 });
@@ -452,4 +471,130 @@ test('a page with declared lineage keeps its label whatever its type, so its ori
   ];
   for (const frontmatter of lineage) expect(classifyPrivateLabel({ type: 'note', frontmatter, git: false })).toEqual({ keep: 'derived' });
   expect(classifyPrivateLabel({ type: 'note', frontmatter: { access: 'private' }, git: false })).toEqual({ clear: 'alias', removed: { access: 'private' } });
+});
+
+/**
+ * GST-2092: the undo ledger is write-ahead. A crash between the page write and the line that confirms it (forced here:
+ * the commit append throws, as a process that died there would leave the file) still leaves the intent line, so
+ * --class restore finds the page and puts the label back.
+ */
+describe('repair private-labels write-ahead ledger', () => {
+  test('a crash after the page write and before its commit line leaves the intent line, and restore puts the label back', async () => {
+    const source = 'source-w';
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [source]);
+    await seed('notes/w', 'note', { access: 'private', topic: 'kept' }, source);
+    const before = await row('notes/w', source);
+    const preview = await json(['private-labels', '--source', source]);
+    expect(preview.listing).toEqual([{ item: source + ':notes/w', class: 'alias', detail: 'remove access: private' }]);
+    const brain = preview.scope.brain_id;
+    const scope = await resolveRepairScope(engine, source);
+    const logger = { info() {}, warn() {}, error() {} };
+    const applied = await withEnv({ GBRAIN_HOME: dir }, async () => {
+      const real = privateLabelsLedger(brain);
+      const crashing = { ...real, record(line: PrivateLabelsLedgerLine) {
+        if (line.phase !== 'intent') throw new Error('forced crash after the page write');
+        real.record(line);
+      } };
+      return (await repairRunner(engine, { apply: true, logger })).run('private-labels', scope, { explicit: true, expect: preview.preview_hash, privateLabelsLedger: crashing });
+    });
+    expect(applied.failed).toEqual([]);
+    expect('access' in (await row('notes/w', source)).frontmatter).toBe(false);
+    const lines = ledgerLines(brain).filter(l => l.source_id === source);
+    expect(lines.map(l => [l.slug, l.phase, l.removed])).toEqual([['notes/w', 'intent', { access: 'private' }]]);
+    const restorePreview = await json(['private-labels', '--source', source, '--class', 'restore']);
+    expect(restorePreview.listing).toEqual([{ item: source + ':notes/w', class: 'restore', detail: 're-add access: private' }]);
+    const restored = await json(['private-labels', '--source', source, '--class', 'restore', '--apply', '--expect', restorePreview.preview_hash]);
+    expect(restored.applied).toBe(1);
+    expect((await row('notes/w', source)).frontmatter).toEqual(before.frontmatter);
+    expect(ledgerLines(brain).filter(l => l.source_id === source).map(l => [l.phase, l.restored ?? null])).toEqual([
+      ['intent', null], ['intent', { access: 'private' }], ['committed', { access: 'private' }],
+    ]);
+  });
+});
+
+/**
+ * GST-2128 item 4: restore reads ledger lines as untrusted input. Only access and visibility (visibility only as
+ * private) with string values are re-added; any other line, and one whose page id is not an integer, is counted
+ * unreadable instead of failing the preview or reaching a page.
+ */
+describe('repair private-labels restore reads only well-formed ledger lines', () => {
+  test('a line with another key, a non-string value, a widening visibility or a non-integer page id is unreadable, and the rest restores', async () => {
+    const source = 'source-r';
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [source]);
+    await seed('notes/r1', 'note', { access: 'private' }, source);
+    await seed('notes/r2', 'note', { topic: 'plain' }, source);
+    const clear = await json(['private-labels', '--source', source]);
+    expect((await json(['private-labels', '--source', source, '--apply', '--expect', clear.preview_hash])).applied).toBe(1);
+    const brain = clear.scope.brain_id;
+    const r2 = await row('notes/r2', source);
+    const base = { at: new Date().toISOString(), brain_id: brain, source_id: source, slug: 'notes/r2', page_id: r2.page_id, revision_before: r2.revision, request_id: crypto.randomUUID() };
+    for (const line of [
+      { ...base, removed: { access: 'private', owner: 'mallory-example' } },
+      { ...base, removed: { access: 7 } },
+      { ...base, removed: { visibility: 'world' } },
+      { ...base, page_id: 'not-a-page', removed: { access: 'private' } },
+    ]) appendFileSync(ledgerPath(brain), JSON.stringify(line) + NL);
+    const preview = await json(['private-labels', '--source', source, '--class', 'restore']);
+    expect(preview.listing).toEqual([{ item: source + ':notes/r1', class: 'restore', detail: 're-add access: private' }]);
+    expect(preview.details.counts.before.restorable).toBe(1);
+    expect(preview.warnings.some((w: string) => w.startsWith('4 ledger line(s) could not be read'))).toBe(true);
+    const restored = await json(['private-labels', '--source', source, '--class', 'restore', '--apply', '--expect', preview.preview_hash]);
+    expect(restored.applied).toBe(1);
+    expect((await row('notes/r1', source)).frontmatter.access).toBe('private');
+    expect((await row('notes/r2', source)).frontmatter).toEqual(r2.frontmatter);
+  });
+});
+
+/**
+ * GST-2128 item 9: a restore whose write landed is recorded with the revision it wrote. A page whose label was removed
+ * by hand after that is not listed again: the preview counts it as removed_after_restore and says so.
+ */
+describe('repair private-labels restore after a landed restore', () => {
+  test('a label removed by hand after a landed restore is counted and not listed', async () => {
+    const source = 'source-m';
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [source]);
+    await seed('notes/m', 'note', { access: 'private' }, source);
+    const clear = await json(['private-labels', '--source', source]);
+    expect((await json(['private-labels', '--source', source, '--apply', '--expect', clear.preview_hash])).applied).toBe(1);
+    const restore = await json(['private-labels', '--source', source, '--class', 'restore']);
+    expect((await json(['private-labels', '--source', source, '--class', 'restore', '--apply', '--expect', restore.preview_hash])).applied).toBe(1);
+    expect((await row('notes/m', source)).frontmatter.access).toBe('private');
+    await seed('notes/m', 'note', { topic: 'edited by hand' }, source);
+    const again = await json(['private-labels', '--source', source, '--class', 'restore']);
+    expect(again.listing ?? []).toEqual([]);
+    expect(again.details.counts.before).toEqual({ restorable: 0, already_restored: 0, page_gone: 0, removed_after_restore: 1 });
+    expect(again.warnings.some((w: string) => w.includes('removed after a restore landed'))).toBe(true);
+  });
+});
+
+/**
+ * GST-2128 item 7: an apply whose last item fails keeps the approved set, so the same --expect resumes once the cause is gone.
+ */
+describe('repair private-labels resumes the same --expect after the last item failed', () => {
+  test('a forced failure on the last item, then the same apply command applies it', async () => {
+    const source = 'source-k';
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [source]);
+    await seed('notes/k1', 'note', { access: 'private' }, source);
+    await seed('notes/k2', 'note', { access: 'private' }, source);
+    const preview = await json(['private-labels', '--source', source]);
+    expect(preview.listing.map((l: { item: string }) => l.item)).toEqual([source + ':notes/k1', source + ':notes/k2']);
+    await engine.executeRaw(`CREATE OR REPLACE FUNCTION test_refuse_k2() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.source_id = 'source-k' AND NEW.slug = 'notes/k2' THEN RAISE EXCEPTION 'forced failure for notes/k2'; END IF; RETURN NEW; END $$`);
+    await engine.executeRaw('CREATE TRIGGER test_refuse_k2 BEFORE UPDATE ON pages FOR EACH ROW EXECUTE FUNCTION test_refuse_k2()');
+    let failed: unknown = null;
+    try {
+      failed = await run(['private-labels', '--source', source, '--apply', '--expect', preview.preview_hash, '--json'])
+        .then(out => JSON.parse(out).results[0].failed.length ? 'item failed' : null, (error: unknown) => error);
+    } finally {
+      _resetCliExitVerdictForTests();
+      await engine.executeRaw('DROP TRIGGER test_refuse_k2 ON pages');
+      await engine.executeRaw('DROP FUNCTION test_refuse_k2()');
+    }
+    expect(failed).not.toBeNull();
+    expect((await row('notes/k2', source)).frontmatter.access).toBe('private');
+    const retried = await json(['private-labels', '--source', source, '--apply', '--expect', preview.preview_hash]);
+    expect(retried.failed).toEqual([]);
+    expect('access' in (await row('notes/k1', source)).frontmatter).toBe(false);
+    expect('access' in (await row('notes/k2', source)).frontmatter).toBe(false);
+  });
 });
