@@ -8,7 +8,7 @@
  * one (the tracking ref still names it) is not re-published; a remote without the branch refuses
  * instead of scanning nothing; a clean ahead checkout still pushes. Through the effect worker, the page write's Git
  * effect holds on `publish_secret_found` (the remote keeps its tip), `gbrain sync status` names the user's fix, and an
- * allowlisted false positive releases it.
+ * allowlisted false positive releases it; commits the scan cannot read in full hold it as `publish_scan_unreadable`.
  * Seams: real repositories and a bare remote; the keep-checkout publish runs this checkout's own CLI
  * (GBRAIN_JOB_CHILD_CLI points at src/cli.ts); PGLite for the effect worker.
  */
@@ -17,6 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import { pushGitRoot } from '../src/core/persistence/effect-git.ts';
@@ -130,9 +131,23 @@ describe('#8896 pushGitRoot scans the commits it publishes', () => {
     scriptCommit(c.root, 'notes/page.md', 'A clean page\n');
     git(c.remote, 'update-ref', '-d', 'refs/heads/main');
     const error = await withEnv(childEnv(c), () => refusal(pushGitRoot(c.root)));
-    expect(error.code).toBe('publish_secret_found');
+    expect(error.code).toBe('publish_scan_unreadable');
     expect(error.message).toContain('origin has no branch main');
     expect(() => git(c.remote, 'rev-parse', '--verify', 'refs/heads/main')).toThrow();
+  }, 60_000);
+
+  test('commits the scan cannot read in full hold the push as publish_scan_unreadable, nothing pushed', async () => {
+    const c = checkout();
+    const before = remoteTip(c);
+    scriptCommit(c.root, 'notes/page.md', 'plain text\n');
+    const blob = git(c.root, 'rev-parse', 'HEAD:notes/page.md').trim();
+    git(c.root, 'rm', '-q', 'notes/page.md'); git(c.root, 'commit', '-q', '-m', 'drop page');
+    rmSync(join(c.root, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
+    const error = await withEnv(childEnv(c), () => refusal(pushGitRoot(c.root)));
+    expect(error.code).toBe('publish_scan_unreadable');
+    expect(error.message).not.toContain('look like secrets');
+    expect(error.fix?.user_message).toContain('held');
+    expect(remoteTip(c)).toBe(before);
   }, 60_000);
 
   test('a clean ahead checkout still pushes', async () => {
@@ -143,56 +158,82 @@ describe('#8896 pushGitRoot scans the commits it publishes', () => {
   }, 60_000);
 });
 
-describe('#8896 through the effect worker', () => {
-  test('a page write\'s Git effect holds on publish_secret_found, sync status names the fix, and an allowlisted false positive releases it', async () => {
-    const c = checkout();
-    await withEnv({ ...childEnv(c), GBRAIN_AUDIT_DIR: join(c.home, 'audit'), GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined }, async () => {
-      const { engine, close } = await isolatedSharedSkillsEngine(undefined);
-      try {
-        await registerLocalWriter(engine, 'cli');
-        const sourceId = `s8896-${randomUUID().slice(0, 8)}`;
-        await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, c.root]);
-        const claimed = await claimWorktree(engine, sourceId, c.root, localHostId());
-        await engine.executeRaw("UPDATE persistence_host_bindings SET git_durability='enabled' WHERE worktree_id=$1::uuid", [claimed.worktree_id]);
-        const before = remoteTip(c);
-        scriptCommit(c.root, 'scripts-out/deploy.md', `Deploy token ${token}\n`);
+interface ManagedWrite { engine: BrainEngine; sourceId: string; runEffects: () => Promise<void>; effect: () => Promise<{ state: string; error_code: string | null }> }
 
-        const slug = 'notes/acme-example';
-        const page = (body: string) => ({ type: 'note', title: 'Acme example', compiled_truth: body, timeline: '', frontmatter: {} });
-        const bound = (await getWorktreeBinding(engine, sourceId, localHostId()))!;
-        await engine.putPage(slug, page('Before'), { sourceId });
-        const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
-        const file = join(c.root, `${slug}.md`);
-        writeFileSync(file, serializePageToMarkdown(snapshot.page, snapshot.tags));
-        const ctx: OperationContext = { engine, config, remote: false, dryRun: false, sourceId, logger: { info() {}, warn() {}, error() {} } };
-        const authority = await submissionAuthority(ctx, 'put_page', sourceId, bound.source_incarnation, slug);
-        await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId,
-          sourceIncarnation: bound.source_incarnation, slug, pageId: snapshot.page.id, requestId: randomUUID(),
-          callerIntent: { content: 'After' }, intent: { content: 'After' }, worktreeId: bound.worktree_id, topologyGeneration: bound.topology_generation });
-        const row = (await claimNextWrite(engine, localHostId()))!;
-        const result = await publishMutation(engine, row, { observedRevision: snapshot.revision, file: { path: file, root: c.root, content: 'After' },
-          apply: async tx => { await tx.putPage(slug, page('After'), { sourceId }); return {}; } }, localHostId());
-        expect(result.state).toBe('committed');
+/** A managed source on the checkout with git durability on; `script` commits into the checkout before one page write whose Git effect is queued. */
+async function managedWrite(c: Checkout, script: () => void, run: (w: ManagedWrite) => Promise<void>): Promise<void> {
+  await withEnv({ ...childEnv(c), GBRAIN_AUDIT_DIR: join(c.home, 'audit'), GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined }, async () => {
+    const { engine, close } = await isolatedSharedSkillsEngine(undefined);
+    try {
+      await registerLocalWriter(engine, 'cli');
+      const sourceId = `s8896-${randomUUID().slice(0, 8)}`;
+      await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, c.root]);
+      const claimed = await claimWorktree(engine, sourceId, c.root, localHostId());
+      await engine.executeRaw("UPDATE persistence_host_bindings SET git_durability='enabled' WHERE worktree_id=$1::uuid", [claimed.worktree_id]);
+      script();
 
-        const runEffects = async () => {
+      const slug = 'notes/acme-example';
+      const page = (body: string) => ({ type: 'note', title: 'Acme example', compiled_truth: body, timeline: '', frontmatter: {} });
+      const bound = (await getWorktreeBinding(engine, sourceId, localHostId()))!;
+      await engine.putPage(slug, page('Before'), { sourceId });
+      const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+      const file = join(c.root, `${slug}.md`);
+      writeFileSync(file, serializePageToMarkdown(snapshot.page, snapshot.tags));
+      const ctx: OperationContext = { engine, config, remote: false, dryRun: false, sourceId, logger: { info() {}, warn() {}, error() {} } };
+      const authority = await submissionAuthority(ctx, 'put_page', sourceId, bound.source_incarnation, slug);
+      await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId,
+        sourceIncarnation: bound.source_incarnation, slug, pageId: snapshot.page.id, requestId: randomUUID(),
+        callerIntent: { content: 'After' }, intent: { content: 'After' }, worktreeId: bound.worktree_id, topologyGeneration: bound.topology_generation });
+      const row = (await claimNextWrite(engine, localHostId()))!;
+      const result = await publishMutation(engine, row, { observedRevision: snapshot.revision, file: { path: file, root: c.root, content: 'After' },
+        apply: async tx => { await tx.putPage(slug, page('After'), { sourceId }); return {}; } }, localHostId());
+      expect(result.state).toBe('committed');
+      await run({ engine, sourceId,
+        runEffects: async () => {
           await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now() WHERE kind='git'");
           await runPersistenceEffects(engine, config, { hostId: localHostId(), limit: 10 });
-        };
-        const effect = async () => (await engine.executeRaw<{ state: string; error_code: string | null }>(
-          "SELECT state,error_code FROM persistence_effects WHERE request_id=$1::uuid AND kind='git'", [row.id]))[0]!;
-        await runEffects();
-        expect(await effect()).toMatchObject({ state: 'queued', error_code: 'publish_secret_found' });
-        expect(remoteTip(c)).toBe(before);
-        const hold = (await readSyncStatus(engine, sourceId)).git_push_holds[0]!;
-        expect(hold).toMatchObject({ retrying: 1, parked: 0, codes: ['publish_secret_found'] });
-        expect(hold.fix).toMatchObject({ ask_user: true, actor: 'user' });
-        expect(hold.fix.user_message).toContain('look like secrets');
+        },
+        effect: async () => (await engine.executeRaw<{ state: string; error_code: string | null }>(
+          "SELECT state,error_code FROM persistence_effects WHERE request_id=$1::uuid AND kind='git'", [row.id]))[0]! });
+    } finally { await disposePersistenceConsumer(engine); await close(); }
+  });
+}
 
-        writeFileSync(join(c.root, '.gbrain-scan-allow'), `${scanText(`Deploy token ${token}\n`)[0]!.fingerprint}\n`);
-        await runEffects();
-        expect(await effect()).toMatchObject({ state: 'committed', error_code: null });
-        expect(remoteTip(c)).toBe(git(c.root, 'rev-parse', 'HEAD').trim());
-      } finally { await disposePersistenceConsumer(engine); await close(); }
+describe('#8896 through the effect worker', () => {
+  test("a page write's Git effect holds on publish_secret_found, sync status names the fix, and an allowlisted false positive releases it", async () => {
+    const c = checkout();
+    const before = remoteTip(c);
+    await managedWrite(c, () => scriptCommit(c.root, 'scripts-out/deploy.md', `Deploy token ${token}\n`), async w => {
+      await w.runEffects();
+      expect(await w.effect()).toMatchObject({ state: 'queued', error_code: 'publish_secret_found' });
+      expect(remoteTip(c)).toBe(before);
+      const hold = (await readSyncStatus(w.engine, w.sourceId)).git_push_holds[0]!;
+      expect(hold).toMatchObject({ retrying: 1, parked: 0, codes: ['publish_secret_found'] });
+      expect(hold.fix).toMatchObject({ ask_user: true, actor: 'user' });
+      expect(hold.fix.user_message).toContain('look like secrets');
+
+      writeFileSync(join(c.root, '.gbrain-scan-allow'), `${scanText(`Deploy token ${token}\n`)[0]!.fingerprint}\n`);
+      await w.runEffects();
+      expect(await w.effect()).toMatchObject({ state: 'committed', error_code: null });
+      expect(remoteTip(c)).toBe(git(c.root, 'rev-parse', 'HEAD').trim());
+    });
+  }, 180_000);
+
+  test('commits the scan cannot read hold the Git effect as publish_scan_unreadable, and sync status names git fsck', async () => {
+    const c = checkout();
+    const before = remoteTip(c);
+    await managedWrite(c, () => {
+      scriptCommit(c.root, 'scripts-out/report.md', 'plain text\n');
+      const blob = git(c.root, 'rev-parse', 'HEAD:scripts-out/report.md').trim();
+      git(c.root, 'rm', '-q', 'scripts-out/report.md'); git(c.root, 'commit', '-q', '-m', 'drop report');
+      rmSync(join(c.root, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
+    }, async w => {
+      await w.runEffects();
+      expect(await w.effect()).toMatchObject({ state: 'queued', error_code: 'publish_scan_unreadable' });
+      expect(remoteTip(c)).toBe(before);
+      const hold = (await readSyncStatus(w.engine, w.sourceId)).git_push_holds[0]!;
+      expect(hold).toMatchObject({ retrying: 1, parked: 0, codes: ['publish_scan_unreadable'] });
+      expect(hold.fix).toMatchObject({ ask_user: true, actor: 'user', argv: ['git', '-C', c.root, 'fsck'] });
     });
   }, 180_000);
 });

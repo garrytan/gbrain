@@ -14,7 +14,7 @@ import type { NativeLockHandle } from './native-lock.ts';
 import { proveIndexLockAbandoned, reclaimIndexLock, type IndexLockReclaim } from './index-lock-reclaim.ts';
 import { recordCommitAsync, recordIntentAsync } from '../git/commit-ledger.ts';
 import { supersededBy } from './import-deferral.ts';
-import { findingsInLog, rangeScanArgs, rangeSecretRefusal } from '../git/range-secret-scan.ts';
+import { rangeSecretRefusal, scanRange } from '../git/range-secret-scan.ts';
 
 /** An index lock younger than this is contention; an older one is reported as stale. */
 const INDEX_LOCK_GRACE_MS = 10 * 60 * 1000;
@@ -438,14 +438,12 @@ export async function pushGitRoot(root: string, signal?: AbortSignal): Promise<{
     const listed = await git(session, ['ls-remote', '--', remote.stdout.trim(), ref]);
     if (listed.code !== 0) throw unavailable();
     const tip = listed.stdout.split('\n').map(line => line.split('\t')).find(([, name]) => name === ref)?.[0] ?? '';
-    if (!tip) throw heldSecret(root, rangeSecretRefusal(root, `refs/remotes/${remote.stdout.trim()}/${short}`, sha, null, `${remote.stdout.trim()} has no branch ${short} to compare against`)!);
+    if (!tip) throw heldSecret(root, rangeSecretRefusal(root, `refs/remotes/${remote.stdout.trim()}/${short}`, sha,
+      { findings: [], unscanned: [], gate_changes: [], unreadable: `${remote.stdout.trim()} has no branch ${short} to compare against` })!);
     if ((await git(session, ['merge-base', '--is-ancestor', tip, sha])).code === 0) {
-      const scan = await execFileBounded('git', gitArgs(session, rangeScanArgs(tip, sha)),
-        { ...gitOptions(session), timeout: SECRET_SCAN_TIMEOUT_MS, maxBuffer: 1024 * 1024 * 1024, env: gitChildEnv(sessionEnv(session)) });
-      signal?.throwIfAborted();
-      const refusal = rangeSecretRefusal(root, tip, sha, scan.error ? null : findingsInLog(root, scan.stdout),
-        scan.stderr.trim().slice(0, 200) || `exit ${String(scan.error?.code ?? scan.error?.signal ?? 'unknown')}`);
+      const refusal = rangeSecretRefusal(root, tip, sha, scanRange(root, tip, sha));
       if (refusal) throw heldSecret(root, refusal);
+      signal?.throwIfAborted();
       const push = await git(session, ['push', `--force-with-lease=${ref}:${tip}`, '--', remote.stdout.trim(), `${sha}:${ref}`]);
       if (push.code === 0) return { push: 'committed' } as const;
       if (!NON_FAST_FORWARD.test(push.stderr) && !STALE_LEASE.test(push.stderr)) throw unavailable();
@@ -454,9 +452,6 @@ export async function pushGitRoot(root: string, signal?: AbortSignal): Promise<{
     return publishKeepingCheckout(root, signal);
   });
 }
-
-/** #8896: the bound on the secret scan of the commits a plain push publishes (the shared publish allows the same). */
-const SECRET_SCAN_TIMEOUT_MS = 300_000;
 
 /** #7010: the bound on one keep-checkout publish (a fetch, an in-memory merge and a push, repeated while the remote keeps moving). */
 const KEEP_CHECKOUT_PUBLISH_TIMEOUT_MS = 600_000;
@@ -484,7 +479,7 @@ async function publishKeepingCheckout(root: string, signal?: AbortSignal): Promi
   if (doc && typeof doc.code === 'string' && typeof doc.message === 'string') {
     const error = opError(doc.code as Parameters<typeof opError>[0], doc.message, typeof doc.suggestion === 'string' ? doc.suggestion : '',
       { ...(typeof doc.detail === 'string' ? { detail: doc.detail } : {}), ...(doc.fix ? { fix: doc.fix as Action } : {}), retryable: doc.retryable === true });
-    throw error.code === 'integrate_conflict' ? heldConflict(root, error) : error.code === 'publish_secret_found' ? heldSecret(root, error) : error;
+    throw error.code === 'integrate_conflict' ? heldConflict(root, error) : error.code === 'publish_secret_found' || error.code === 'publish_scan_unreadable' ? heldSecret(root, error) : error;
   }
   throw opError('push_unconfirmed', 'The canonical commit is durable locally; its push will retry.',
     `The remote branch moved and the keep-checkout publish did not report a push (${child.error ? `exit ${String(child.error.code ?? child.error.signal ?? 'unknown')}` : `outcome ${String(doc?.outcome ?? 'unreadable')}`}: ${child.stderr.trim().slice(0, 300) || 'no detail'}). Nothing is lost locally; the worker pushes again on a later pass.`,
@@ -508,16 +503,17 @@ function heldConflict(root: string, error: OperationError): OperationError {
 }
 
 /**
- * #8896: values that look like secrets in the unpublished commits hold the checkout's Git effects (they retry, then
- * park): no retry can succeed until the user removes them from those commits or allowlists a false positive.
+ * #8896: a secret scan that refuses the unpublished commits (`publish_secret_found`) or cannot read them all
+ * (`publish_scan_unreadable`) holds the checkout's Git effects (they retry, then park): no retry can succeed until the
+ * user removes the values or allowlists a false positive, or repairs what kept the scan from reading the commits.
  */
 function heldSecret(root: string, error: OperationError): OperationError {
   const fix = error.fix as Action | undefined;
-  return opError('publish_secret_found', `Git backups of canonical page writes are held: ${error.message}`,
-    `${error.suggestion ?? ''} The page writes themselves are committed in the database and in local commits; nothing is lost, and nothing is pushed from ${root} while those commits hold the values. Afterwards, gbrain sources writer retry-effects with --parked-pushes for the source this checkout backs (gbrain sources writer status names it) retries the Git effects that parked meanwhile.`,
+  return opError(error.code as 'publish_secret_found' | 'publish_scan_unreadable', `Git backups of canonical page writes are held: ${error.message}`,
+    `${error.suggestion ?? ''} The page writes themselves are committed in the database and in local commits; nothing is lost, and nothing is pushed from ${root} until the scan passes. Afterwards, gbrain sources writer retry-effects with --parked-pushes for the source this checkout backs (gbrain sources writer status names it) retries the Git effects that parked meanwhile.`,
     { ...(error.detail ? { detail: error.detail } : {}), fix: { ...(fix ?? { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
-      why: 'Rewriting unpublished commits or allowlisting a value is the user\'s call.' }),
-    user_message: `${fix?.user_message ?? `Unpublished commits in ${root} hold values that look like secrets.`} Until they are removed or allowlisted, Git backups of new page writes from ${root} are held (nothing is lost; the database has every write).`,
+      why: 'Rewriting unpublished commits, allowlisting a value or repairing the checkout is the user\'s call.' }),
+    user_message: `${fix?.user_message ?? `The secret scan refused the unpublished commits in ${root}.`} Until then, Git backups of new page writes from ${root} are held (nothing is lost; the database has every write).`,
     verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--json'] } } });
 }
 

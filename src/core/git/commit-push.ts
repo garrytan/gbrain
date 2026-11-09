@@ -27,7 +27,7 @@
  */
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { findingsInLog, rangeScanArgs, rangeSecretRefusal } from './range-secret-scan.ts';
+import { rangeSecretRefusal, scanRange } from './range-secret-scan.ts';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { execFileSync } from '../spawn.ts';
 import { gitChildEnv, literalPathspecs } from '../git-env.ts';
@@ -1038,8 +1038,7 @@ function assertLocalCommitsInsideRoots(ctx: Ctx, target: string, roots: string[]
 
 /** The automatic-publish secret gate: scan what the commits in trackingRef..target add (publish passes the base it leases its push on, under its lock). */
 function assertNoSecretsInRange(ctx: Ctx, target: string): void {
-  const log = git(ctx.root, rangeScanArgs(ctx.trackingRef, target), { timeoutMs: 300_000, maxBuffer: 1024 * 1024 * 1024 });
-  const refusal = rangeSecretRefusal(ctx.root, ctx.trackingRef, target, log.code === 0 ? findingsInLog(ctx.root, log.stdout) : null, log.stderr.trim().slice(0, 200) || `exit ${log.code}`);
+  const refusal = rangeSecretRefusal(ctx.root, ctx.trackingRef, target, scanRange(ctx.root, ctx.trackingRef, target));
   if (refusal) throw refusal;
 }
 
