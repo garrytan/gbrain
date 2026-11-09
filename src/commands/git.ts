@@ -273,6 +273,13 @@ export async function runGit(args: string[]): Promise<number> {
     return 0;
   } catch (e) {
     const code = (e as { code?: string }).code;
+    if (code === 'commit_paths_skipped' || code === 'writer_coordinator_required') {
+      // GST-2116: the other named paths may have been pushed before the run failed; the push log records that push.
+      try {
+        const d = JSON.parse(String((e as { detail?: string }).detail ?? '{}')) as { pushed?: string; branch?: string };
+        if (d.pushed && d.branch) appendPushLog('ok', d.branch, d.pushed);
+      } catch { /* best-effort */ }
+    }
     if (code === 'push_unconfirmed' || code === 'integrate_conflict' || code === 'commit_outside_source_root') {
       try {
         const bi = args.indexOf('--branch');
