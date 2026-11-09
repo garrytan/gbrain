@@ -108,6 +108,11 @@ function reconciledBucketFailures(deferral: DreamWriteDeferralPass | null, failu
   return failed.length;
 }
 
+/** Samples a failed bucket into `details.bucket_failures`, at most BUCKET_FAILURE_SAMPLES of them. */
+function sampleBucketFailure(failures: BucketFailure[], failure: BucketFailure): void {
+  if (failures.length < BUCKET_FAILURE_SAMPLES) failures.push(failure);
+}
+
 export const CLUSTER_THRESHOLD_KEY = 'cycle.consolidate.cluster_threshold';
 export const DEFAULT_CLUSTER_THRESHOLD = 0.85;
 
@@ -428,9 +433,7 @@ export async function runPhaseConsolidate(
       if (classifyItemFailure(error).scope === 'pending') { if (maintenance && await deferral?.defer(error, { sourceId: b.source_id, subject: `${b.source_id}/${b.entity_slug}`, principal: maintenance.writer.principal })) continue; throw error; }
       const failure = run.fail(`${b.source_id}:${b.entity_slug}`, error);
       bucketsFailed += 1;
-      if (bucketFailures.length < BUCKET_FAILURE_SAMPLES) {
-        bucketFailures.push({ source_id: b.source_id, entity_slug: b.entity_slug, code: failure.code, message: failure.message.slice(0, 300), fix: rerunFix(b.source_id) });
-      }
+      sampleBucketFailure(bucketFailures, { source_id: b.source_id, entity_slug: b.entity_slug, code: failure.code, message: failure.message.slice(0, 300), fix: rerunFix(b.source_id) });
     }
   }
 

@@ -27,7 +27,7 @@ link it here; never raise the cap.
 | [Company-brain ingestion](key-files/company-brain.md) | Inspection, admission, receipts, derived relationships and schema; [operator guide](../guides/company-brain-ingestion.md) |
 | [Agent operator contract](key-files/agent-contract.md) | `agent-output.ts`, error registry + docs, notice ledger, `isCallable`, `--json` guard, contract scanner |
 | [Commands (1/6)](key-files/commands-1.md) | `agent-logs.ts` to `db-repair.ts` |
-| [Commands (2/6)](key-files/commands-2.md) | `src/commands/doctor.ts` and `src/commands/doctor/`; [alert](key-files/doctor-alert.md) |
+| [Commands (2/6)](key-files/commands-2.md) | `doctor.ts`, `doctor/`; [alert](key-files/doctor-alert.md) |
 | [Commands (2/6, continued)](key-files/commands-2-continued.md) | `doctor/checks/routing-federation.ts`, `git-convergence.ts`, `keyword-plan.ts`, `dream-retriage.ts` to `embed.ts` |
 | [Commands (3/6)](key-files/commands-3.md) | `src/commands/engine-status.ts` through `extract.ts` |
 | [Commands (3/6, continued)](key-files/commands-3-continued.md) | `src/commands/extract-timeline-db.ts` through `frontmatter-install-hook.ts` |
