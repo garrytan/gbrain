@@ -488,13 +488,16 @@ function unindexedFiles(root: string, rel: string[], listed: string[]): string[]
  * rest, so a write is never reported as saved when it is not. In a managed canonical worktree a skipped page is the
  * owner's to save (`writer_coordinator_required`); anything else is `commit_paths_skipped`.
  */
-function skippedPathsError(root: string, skipped: SkippedPath[], result: CommitPushResult, managed?: ManagedFilesystemRoot): OperationError {
+function skippedPathsError(root: string, skipped: SkippedPath[], result: CommitPushResult, managed?: ManagedFilesystemRoot, publish?: unknown): OperationError {
   const list = `${skipped.slice(0, 20).map(s => `${s.path} (${s.reason})`).join(', ')}${skipped.length > 20 ? ', ...' : ''}`;
   const pushed = !!result.committed && (result.outcome === 'pushed' || result.outcome === 'pushed_checkout_lagging');
-  const rest = result.committed
+  const done = result.committed
     ? `The other named paths were committed as ${result.committed.slice(0, 7)}${pushed ? ` and pushed to ${result.remote}/${result.branch}` : ', not pushed'}.`
     : 'Nothing was committed.';
-  const detail = JSON.stringify({ skipped, committed: result.committed, ...(pushed ? { pushed: result.sha } : {}), branch: result.branch });
+  const failed = publish as { code?: string; message?: string; detail?: string } | undefined;
+  const rest = `${done}${failed ? ` The push failed too (${failed.code ?? 'error'}): ${failed.message ?? String(publish)}` : ''}`;
+  const detail = JSON.stringify({ skipped, committed: result.committed, ...(pushed ? { pushed: result.sha } : {}), branch: result.branch,
+    ...(failed ? { publish: { code: failed.code ?? null, detail: failed.detail ?? null } } : {}) });
   const docs = 'docs/guides/shared-checkout-git.md#outcomes';
   const flagged = skipped.filter(s => s.reason !== 'not_staged');
   // One update-index call per flag: given both, git clears only the first.
@@ -1338,15 +1341,18 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
     writeFileSync(requestPath, `${process.pid}\n`);
     pub = acquireNativeLockSync(publishLockPath, { timeoutMs: 0 });
   }
+  const unpublished: CommitPushResult = { outcome: 'committed_local', sha: null, committed, branch: ctx.branch, remote: ctx.remote, paths: rel, integrated: 0, checkout: 'unchanged' };
   if (!pub) {
     if (unattended) {
-      const deferred: CommitPushResult = { outcome: 'push_deferred', sha: null, committed, branch: ctx.branch, remote: ctx.remote, paths: rel, integrated: 0, checkout: 'unchanged' };
+      const deferred: CommitPushResult = { ...unpublished, outcome: 'push_deferred' };
       if (skipped.length) throw skippedPathsError(root, skipped, deferred);
       return deferred;
     }
-    throw opError('push_unconfirmed', `${committed ? 'The commit is durable locally, but another' : 'Another'} publish held this checkout's push lock for ${Math.round(waitMs / 1000)}s.`,
+    const busy = opError('push_unconfirmed', `${committed ? 'The commit is durable locally, but another' : 'Another'} publish held this checkout's push lock for ${Math.round(waitMs / 1000)}s.`,
       `The running publish was asked to push HEAD too once it finishes. Rerun gbrain git commit-push --push-only to confirm; never git pull --rebase in this checkout.`,
       { detail: committed ?? '', retryable: true });
+    if (skipped.length) throw skippedPathsError(root, skipped, unpublished, undefined, busy);
+    throw busy;
   }
 
   const cycle = (onlyWhenClean: boolean, start: string | null, resolutions?: Map<string, Resolution>, expectRemote?: string) => {
@@ -1371,6 +1377,9 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
   let first: ReturnType<typeof cycle>;
   try {
     first = cycle(unattended, committed, opts.resolutions, opts.expectRemote);
+  } catch (e) {
+    if (skipped.length) throw skippedPathsError(root, skipped, unpublished, undefined, e);
+    throw e;
   } finally {
     pub.release();
   }

@@ -287,3 +287,22 @@ test('write-through: commitPathsLocked fails commit_paths_skipped for a nested-r
   expect(failure?.message).toContain('not pushed');
   expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');
 }, 60_000);
+
+test('classic: a skipped path still fails commit_paths_skipped when the push fails, and the push log records the local-only commit', async () => {
+  const f = fixture('classic-skip-pushfail', 'classic');
+  writeFileSync(join(f.brain, 'people', 'bob-example.md'), page('Bob', 'Second version.'));
+  const nested = nestedPage(f, 'carol-example.md');
+  git(f.brain, 'remote', 'set-url', 'origin', join(dir, 'missing.git'));
+  const r = await commitPush(f, 'people/bob-example.md', nested);
+  expect(r.exitCode).not.toBe(0);
+  const e = envelope(r.stdout);
+  expect(e.code).toBe('commit_paths_skipped');
+  expect(e.message).toContain(nested);
+  expect(e.message).toContain('not pushed');
+  const detail = JSON.parse(e.detail!) as { committed: string; pushed?: string; publish?: { code: string } };
+  expect(detail.committed).toBe(head(f));
+  expect(detail.pushed).toBeUndefined();
+  expect(detail.publish?.code).toBe('push_unconfirmed');
+  expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');
+  expect(readFileSync(join(f.home, '.gbrain', 'brain-push.log'), 'utf8')).toContain('LOCAL-ONLY, NEEDS ATTENTION: main');
+}, 60_000);
