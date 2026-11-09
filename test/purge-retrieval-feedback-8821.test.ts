@@ -25,7 +25,8 @@ import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 import { purgeDeletedPagesCoordinated } from '../src/core/persistence/purge-deleted.ts';
 import { applyRatings, insertRetrievalEvents } from '../src/core/feedback/store.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { beliefBrain, beliefPage } from './helpers/belief-ledger.ts';
+import { beliefBrain, beliefPage, openFileBeliefBrain, withFileBeliefBrain } from './helpers/belief-ledger.ts';
+import { createPgliteBackup, restorePgliteBackup } from '../src/core/backup/snapshot.ts';
 
 let engine: PGLiteEngine;
 const home = mkdtempSync(join(tmpdir(), 'gbrain-purge-feedback-'));
@@ -151,3 +152,33 @@ test('#8821 a recorded tombstone the belief ledger expires scrubs the same rows'
     expect(await b.engine.executeRaw(`SELECT 1 FROM ${table} WHERE source_id = $1`, [b.sourceId])).toHaveLength(0);
   }
 }), 120_000);
+
+
+test('#8821 a restore that replays a page purge scrubs the same rows from the restored brain', () => withFileBeliefBrain('restore-8821', async fb => {
+  const src = 'restore-8821';
+  await fb.open(async b => {
+    await b.put(SLUG, beliefPage({ title: 'Alice', prose: 'Body of the page.' }));
+    await b.put(OTHER, beliefPage({ title: 'Acme', prose: 'Body of the other page.' }));
+    await insertRetrievalEvents(b.engine, [{ id: 'event-r', client_id: 'local', op: 'query', links: [{ source_id: src, edge_key: EDGE, to_slug: OTHER }],
+      pages: [{ source_id: src, slug: SLUG, content_hash: null, rank: 1, cited: true }] }]);
+    await applyRatings(b.engine, { eventId: 'event-r', clientId: 'local', signal: 'explicit', alpha: 0.2,
+      targets: [{ kind: 'page', source_id: src, key: SLUG, rating: 5, content_hash: null }] });
+  });
+  const archive = join(fb.home, 'archive.gbrain-backup');
+  await createPgliteBackup({ root: fb.home, output: archive });
+  await fb.open(async b => {
+    const snapshot = await b.engine.readPageSnapshot(SLUG, { sourceId: src });
+    await operations.find(o => o.name === 'delete_page')!.handler(b.ctx, { slug: SLUG, purge: true, expected_revision: snapshot!.revision, request_id: randomUUID() });
+  });
+  const into = join(fb.home, 'restored');
+  const result = await restorePgliteBackup({ archive, into });
+  expect(result.purge_replay.replays.map(x => x.scope)).toEqual(['page']);
+  const { brain, close } = await openFileBeliefBrain(join(into, '.gbrain', 'brain.pglite'), src, join(into, 'content'));
+  try {
+    expect((await brain.engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id = $1 ORDER BY slug', [src])).map(p => p.slug)).toEqual([OTHER]);
+    for (const table of ['retrieval_event_pages', 'retrieval_event_links', 'retrieval_feedback', 'retrieval_weights']) {
+      expect({ table, rows: await brain.engine.executeRaw(`SELECT 1 FROM ${table} WHERE source_id = $1`, [src]) }).toEqual({ table, rows: [] });
+    }
+  } finally { await close(); }
+}), 300_000);
+
