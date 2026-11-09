@@ -27,6 +27,7 @@ import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { mountWebhooks } from '../src/commands/serve-http-webhooks.ts';
+import { assertWebhookWriterMayReplace } from '../src/core/minions/handlers/ingest-capture.ts';
 import type { ServeHttpContext } from '../src/commands/serve-http.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
@@ -46,6 +47,7 @@ for (const kind of testBackends()) {
     let engine: BrainEngine;
     let close: () => Promise<void>;
     const tokens: Record<string, string> = {};
+    const tokenIds: Record<string, string> = {};
     const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
 
     async function call(who: string, op: string, params: Record<string, unknown>) {
@@ -90,6 +92,7 @@ for (const kind of testBackends()) {
         ['bob', 'bob-example', undefined], ['public', null, undefined]] as const) {
         const minted = await mintLegacyToken(engine, { name, scopes: ['read', 'write'], takesHolders: ['world'], ...(sourceGrant ? { sourceGrant: [...sourceGrant] } : {}) });
         tokens[name] = minted.token;
+        tokenIds[name] = minted.id;
         if (member) await engine.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id = $1::uuid', [minted.id, member]);
       }
     }, 240_000);
@@ -231,5 +234,14 @@ for (const kind of testBackends()) {
         await new Promise<void>(resolve => server.close(() => resolve()));
       }
     }, 240_000);
+
+    test('an ingest_capture job it queued earlier is refused at write time and stores nothing', async () => {
+      const slug = 'notes/alice-queued-' + marker('queued');
+      const writer = { principal: { kind: 'legacy_token', id: tokenIds['alice-a'] } };
+      await expect(assertWebhookWriterMayReplace(engine, writer, FEDERATED, slug, note('Alice queued', 'Queued.')))
+        .rejects.toMatchObject({ code: 'permission_denied', message: expect.stringContaining('write source is ' + FEDERATED) });
+      expect(await stored(slug, FEDERATED)).toBeUndefined();
+      expect(await assertWebhookWriterMayReplace(engine, { principal: { kind: 'legacy_token', id: tokenIds['alice-b'] } }, ISOLATED, slug, note('Alice queued', 'Queued.'))).toBeNull();
+    }, 60_000);
   });
 }
