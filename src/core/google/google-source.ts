@@ -819,8 +819,12 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
     if (activeServices.includes('contacts')) {
       const stop = startHeartbeat(progress, 'contacts sweep');
       try {
+        const tokenBefore = state.contacts_sync_token;
         await sweepContacts(deps, people, state, activePack, summary, countedSlugs, holds);
         reached.add('contacts');
+        // A long re-list after an expired token must not be lost to a later
+        // wall-clock abort in calendar/gmail: bank the new token now.
+        if (state.contacts_sync_token !== tokenBefore && !opts.signal?.aborted) await saveGoogleState(deps, state);
       } catch (e) {
         if (managed) rethrowConnectorWriteError(e);
         serviceFailed('contacts', e);
