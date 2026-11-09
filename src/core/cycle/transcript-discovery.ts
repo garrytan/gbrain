@@ -80,7 +80,7 @@ const DATE_RE = /^(\d{4}-\d{2}-\d{2})/;
 const WORD_BOUNDARY_HEURISTIC = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 
 /** A transcript's frontmatter; none, or unreadable, is `{}` (a plain-text header is not an error). */
-function transcriptFrontmatter(content: string): Record<string, unknown> {
+export function transcriptFrontmatter(content: string): Record<string, unknown> {
   try {
     return parseDataFrontmatter(content).data;
   } catch {
