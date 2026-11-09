@@ -700,6 +700,7 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   if (sub !== '--from-pages') {
     process.stderr.write(
       'Usage: gbrain takes extract --from-pages [--yes] [--dry-run] [--json] [--source-id <id>] [--max-pages N (clamped to 1000)] [--before <updated_at>,<id>] [--include-covered] [--holder <name>]\n' +
+      '--dry-run scans candidate metadata with zero model calls and zero extraction writes.\n' +
       'Runs progress: pages that already hold takes are skipped, so repeat runs sweep a large corpus in slices. Pass a run\'s next_before to --before to continue past pages that yielded no claims. --include-covered rescans everything (refresh).\n',
     );
     process.exit(1);
@@ -775,6 +776,12 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return;
   }
+  // Quoted: the cursor's timestamp contains a space.
+  const next = result.next_before ? `next: --before '${result.next_before}'\n` : '';
+  if (result.dry_run) {
+    process.stdout.write(`takes extract preview: ${result.pages_scanned} candidate page(s), zero model calls and extraction writes.\n${next}`);
+    return;
+  }
   // #4473: takes are markdown-canonical — pages the fence writer refused are
   // skipped (never written DB-only). Say so instead of silently undercounting.
   const unlocatable = result.skipped.filter((s) => !s.reason.startsWith('llm_error:'));
@@ -801,11 +808,8 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
     process.stderr.write(`[takes extract] ${result.duplicates_skipped} claim(s) already in the page's takes fence were not re-added.\n`);
   }
   process.stdout.write(
-    `takes extract --from-pages: ${result.claims_extracted} claim(s) from ${result.pages_scanned} page(s)` +
-    (dryRun ? ' (dry-run)' : '') + '\n',
+    `takes extract --from-pages: ${result.claims_extracted} claim(s) from ${result.pages_scanned} page(s)\n${next}`,
   );
-  // Quoted: the cursor's timestamp contains a space.
-  if (result.next_before) process.stdout.write(`next: --before '${result.next_before}'\n`);
 }
 
 const BEFORE_CURSOR_RE = /^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}(?::?\d{2})?)?),([1-9]\d{0,15})$/;

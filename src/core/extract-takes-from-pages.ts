@@ -58,7 +58,7 @@ Max 15 claims per page; output [] if no gradeable claims are present.`;
 export interface ExtractTakesFromPagesOpts {
   /** Required: must be true for any work to happen (A12). */
   bootstrapEnabled: boolean;
-  /** Dry-run: classify but don't write to takes table. */
+  /** Dry-run: count candidates with zero model calls or extraction writes. */
   dryRun?: boolean;
   /** Scope to a single source. */
   sourceIdFilter?: string;
@@ -107,6 +107,8 @@ export interface ExtractTakesFromPagesResult {
   consent_gate_blocked: boolean;
   /** True if chat gateway is unavailable (no LLM call possible). */
   llm_unavailable: boolean;
+  /** A metadata-only candidate scan with zero model calls. */
+  dry_run?: true;
   /**
    * #4473 — pages the md-first writer refused (takes are markdown-canonical;
    * a page with no locatable .md file is skipped BEFORE the LLM call, never
@@ -202,7 +204,8 @@ export async function extractTakesFromPages(
     };
   }
 
-  if (!isAvailable('chat')) {
+  const dryRun = opts.dryRun ?? false;
+  if (!dryRun && !isAvailable('chat')) {
     return {
       pages_scanned: 0,
       claims_extracted: 0,
@@ -212,8 +215,7 @@ export async function extractTakesFromPages(
     };
   }
 
-  const dryRun = opts.dryRun ?? false;
-  const managedJournalWrites = await managedPersistenceEnabled(engine);
+  const managedJournalWrites = !dryRun && await managedPersistenceEnabled(engine);
   const maxPages = opts.maxPages ?? 50;
   const holder = opts.holder ?? 'system';
   const params: unknown[] = [];
@@ -238,7 +240,7 @@ export async function extractTakesFromPages(
     ? ''
     : `AND NOT EXISTS (SELECT 1 FROM takes t WHERE t.page_id = pages.id)`;
   const pages = await engine.executeRaw<PageRow>(
-    `SELECT id, slug, source_id, type, compiled_truth, updated_at, updated_at::text || ',' || id AS resume_at
+    `SELECT id, slug, source_id, type, ${dryRun ? 'NULL::text AS compiled_truth' : 'compiled_truth'}, updated_at, updated_at::text || ',' || id AS resume_at
        FROM pages
       WHERE type IN (${typesList})
         AND deleted_at IS NULL
@@ -249,6 +251,19 @@ export async function extractTakesFromPages(
       LIMIT ${maxPages}`,
     params,
   );
+
+  if (dryRun) {
+    if (pages.length > 0) opts.onProgress?.(pages.length, pages.length, 0);
+    return {
+      ...emptyTail,
+      dry_run: true,
+      pages_scanned: pages.length,
+      claims_extracted: 0,
+      next_before: pages.at(-1)?.resume_at ?? null,
+      consent_gate_blocked: false,
+      llm_unavailable: false,
+    };
+  }
 
   let pagesScanned = 0;
   let claimsExtracted = 0;
@@ -286,15 +301,15 @@ export async function extractTakesFromPages(
     // with a canonical owner (bound before the run, or by this run's first
     // put_page) fences the md-first writer, so its file-backed pages publish
     // through put_page too.
-    const databaseOnly = !dryRun && await databaseOnlyPage(engine, page.slug, page.source_id);
-    const ownedFileBacked = !dryRun && !managedJournalWrites && !databaseOnly && await getWorktreeBinding(engine, page.source_id) !== null;
+    const databaseOnly = await databaseOnlyPage(engine, page.slug, page.source_id);
+    const ownedFileBacked = !managedJournalWrites && !databaseOnly && await getWorktreeBinding(engine, page.source_id) !== null;
     const fromDatabase = managedJournalWrites || databaseOnly || ownedFileBacked;
 
     // #4473: locate a file-backed page's markdown home BEFORE the LLM call — a
     // page the fence writer would refuse must not burn classifier budget
     // (skipped pages hold no takes, so every future run would re-classify them).
     let mdPath: string | null = null;
-    if (!dryRun && (!fromDatabase || ownedFileBacked)) {
+    if (!fromDatabase || ownedFileBacked) {
       try {
         const { path } = await resolveTakesWritePath(engine, repoDir, page.slug, page.source_id);
         if (existsSync(path)) mdPath = path;
@@ -309,9 +324,9 @@ export async function extractTakesFromPages(
 
     // Pin the selected page before spending time on extraction. A publication
     // with a newer revision must skip the whole page atomically.
-    const managedSnapshot = fromDatabase && !dryRun
+    const managedSnapshot = fromDatabase
       ? await engine.readPageSnapshot(page.slug, { sourceId: page.source_id }) : null;
-    if (fromDatabase && !dryRun && (!managedSnapshot || managedSnapshot.page.id !== page.id)) {
+    if (fromDatabase && (!managedSnapshot || managedSnapshot.page.id !== page.id)) {
       skipPage(page.slug, 'page_identity_changed');
       continue;
     }
@@ -360,11 +375,6 @@ export async function extractTakesFromPages(
 
     const claims = parseClaimsJson(response.text);
     if (claims.length === 0) continue;
-
-    if (dryRun) {
-      claimsExtracted += claims.length;
-      continue;
-    }
 
     // #4473: md-first write through the fence pipeline (row numbers derive
     // from the fence — max existing + 1 — so the historical row_num=1

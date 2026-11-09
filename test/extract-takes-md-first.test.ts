@@ -12,7 +12,7 @@
  *   2. a page with no locatable .md file is SKIPPED (reason
  *      mirror_unavailable) — no DB-only row is minted, and the skip happens
  *      BEFORE the LLM call (no classifier budget burned);
- *   3. dry-run counts claims without touching disk or DB;
+ *   3. dry-run scans candidates with zero model calls or writes;
  *   4. row numbers derive from the fence (existing fence rows are extended,
  *      not collided with at row_num=1).
  */
@@ -121,14 +121,17 @@ describe('extractTakesFromPages — md-first (#4473)', () => {
     expect(existsSync(join(repo, `${slug}.md`))).toBe(false);
   });
 
-  test('dry-run counts claims without touching disk or DB', async () => {
+  test('dry-run counts candidates without calling a model or writing', async () => {
     const slug = 'concepts/md-first-dry';
     await engine.putPage(slug, { type: 'concept', title: 'Dry', compiled_truth: BODY, frontmatter: {} });
     writeFileSync(join(repo, `${slug}.md`), `# Dry\n\n${BODY}\n`, 'utf-8');
 
+    const callsBefore = chatCalls.length;
     const r = await extractTakesFromPages(engine, { bootstrapEnabled: true, maxPages: 50, dryRun: true });
-    // Dry-run rescans BOTH uncovered pages (db-born included — no file gate on dry-run).
-    expect(r.claims_extracted).toBeGreaterThanOrEqual(1);
+    expect(r.dry_run).toBe(true);
+    expect(r.pages_scanned).toBeGreaterThanOrEqual(1);
+    expect(r.claims_extracted).toBe(0);
+    expect(chatCalls).toHaveLength(callsBefore);
     const md = readFileSync(join(repo, `${slug}.md`), 'utf-8');
     expect(md).not.toContain('gbrain:takes');
     const rows = await engine.executeRaw<{ n: number }>(

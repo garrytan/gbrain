@@ -53,6 +53,7 @@ describe('gbrain takes extract --from-pages --json (#3962)', () => {
       runTakes(engine, ['extract', '--from-pages', '--dry-run', '--json']));
 
     expect(JSON.parse(stdout)).toEqual({
+      dry_run: true,
       pages_scanned: 0,
       claims_extracted: 0,
       next_before: null,
