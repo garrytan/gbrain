@@ -17,6 +17,7 @@ identifiers and attribution are available in the pre-removal Git revision
 ### Itemized changes
 
 - `timeline_history`: on a brain with more than 10,000 pages carrying database-only timeline rows, a pass keeps only the first 10,000 for its final recount. It used to report that recount as exact, and a pass whose kept pages had been repaired was recorded as clean while the rest still held database-only rows. Such a pass now reports its counts as a lower bound ("at least"), keeps warning, and is never trusted as clean. Reported by @Masashi-Ono0611 (#8511).
+- `conversation_format_coverage`: the sample now includes pages stored under the granular conversation types the extractor already reads (`slack-thread`, `slack-dm-day`, `email-digest`), so unparseable transcripts on a brain that never ran the type-consolidation pack are reported instead of silently skipped. Reported by @Masashi-Ono0611 (#8519).
 
 ## [0.60.620.0] - 2026-11-09
 
