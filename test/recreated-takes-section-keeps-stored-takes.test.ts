@@ -76,6 +76,15 @@ const qualitylessResolution = async (engine: BrainEngine, managed = false) => {
   const write = (tx: BrainEngine) => tx.executeRaw("UPDATE takes SET resolved_at=now(), resolved_outcome=true, resolved_quality=NULL, resolved_by='system' WHERE page_id=$1 AND row_num=1", [id]);
   await (managed ? withManagedFixtureWrite(engine, ['default'], write) : write(engine));
 };
+/** Evidence holding the literal text `<br>`, which a takes section cell reads back as a line break. */
+const LOSSY_EVIDENCE = 'Evidence says use <br> tags';
+const lossyResolution = async (engine: BrainEngine, managed = false) => {
+  const id = await pageId(engine);
+  const write = (tx: BrainEngine) => tx.executeRaw("UPDATE takes SET resolved_at=now(), resolved_outcome=true, resolved_quality='correct', resolved_source=$2, resolved_by='system' WHERE page_id=$1 AND row_num=1", [id, LOSSY_EVIDENCE]);
+  await (managed ? withManagedFixtureWrite(engine, ['default'], write) : write(engine));
+};
+const storedEvidence = (engine: BrainEngine) => engine.executeRaw<{ row_num: number; resolved_source: string | null }>(
+  "SELECT t.row_num, t.resolved_source FROM takes t JOIN pages p ON p.id=t.page_id WHERE p.source_id='default' AND p.slug=$1 ORDER BY t.row_num", [SLUG]);
 
 type Storage = 'directory' | 'git' | 'repo-less';
 const gitRepo = (root: string) => { writeFileSync(join(root, '.gitignore'), '\n'); durableGitRepo(root, ['.gitignore']); };
@@ -191,6 +200,19 @@ for (const backend of testBackends()) {
         expect(await storedResolution(engine)).toEqual(stored);
         expect(readFileSync(path, 'utf8')).toBe(rewritten);
       }), 180_000);
+
+      test('think --take refuses, and keeps the stored take, when a stored cell would not read back unchanged', () => unmanagedBrain(databaseUrl, storage, async ({ engine, path, sync }) => {
+        await sync(PAGE(FENCE(ROW_A)));
+        await lossyResolution(engine);
+        const rewritten = PAGE('Rewritten without the takes section.\n');
+        await sync(rewritten);
+        expect(await storedEvidence(engine)).toEqual([{ row_num: 1, resolved_source: LOSSY_EVIDENCE }]);
+        const result = await persistTakeFromSynthesis(engine, { answer: THINK_CLAIM, synthesisOk: true } as never, { anchor: SLUG, sourceId: 'default' });
+        expect(result.take_row).toBeNull();
+        expect(result.warnings).toEqual([expect.stringContaining('TAKE_WRITE_FAILED: invalid_input')]);
+        expect(await storedEvidence(engine)).toEqual([{ row_num: 1, resolved_source: LOSSY_EVIDENCE }]);
+        expect(readFileSync(path, 'utf8')).toBe(rewritten);
+      }), 180_000);
     });
   }
 
@@ -252,6 +274,17 @@ for (const backend of testBackends()) {
         expect(await extractFromPages(engine)).toMatchObject({ claims_extracted: 0, pages_skipped: 1, skipped: [{ slug: SLUG, reason: 'invalid_input' }] });
         await op(ctx, 'add_tag', { slug: SLUG, tag: 'example' });
         expect(await storedResolution(engine)).toEqual(stored);
+      }, opts), 180_000);
+
+      test('a stored cell that would not read back unchanged skips the page instead of being rewritten', () => managedBrain(async ({ engine, ctx }) => {
+        await put(ctx, PAGE('First version.\n'));
+        await op(ctx, 'takes_add', { slug: SLUG, claim: TAKE_A, kind: 'bet', holder: 'world' });
+        await lossyResolution(engine, true);
+        await put(ctx, PAGE('Rewritten without the takes section.\n'));
+        expect(await storedEvidence(engine)).toEqual([{ row_num: 1, resolved_source: LOSSY_EVIDENCE }]);
+        expect(await extractFromPages(engine)).toMatchObject({ claims_extracted: 0, pages_skipped: 1, skipped: [{ slug: SLUG, reason: 'invalid_input' }] });
+        await op(ctx, 'add_tag', { slug: SLUG, tag: 'example' });
+        expect(await storedEvidence(engine)).toEqual([{ row_num: 1, resolved_source: LOSSY_EVIDENCE }]);
       }, opts), 180_000);
     });
   }

@@ -533,7 +533,8 @@ async function storedTakeRows(engine: BrainEngine, pageId: number): Promise<Pars
  * the managed `takes extract --from-pages` put) go through this, so their own rows number after the stored ones:
  * otherwise they number from 1, overwrite stored takes in place, and the next projection deletes the rest. A body with
  * a near-miss marker (`<!-- gbrain:takes:begin -->`) refuses `fence_unparsed`, as each writer refuses it without
- * stored takes, and a render that would not read back row for row refuses (`invalid_input`) instead of dropping a take.
+ * stored takes, and a render that would not read back row for row, every stored cell unchanged, refuses (`invalid_input`)
+ * instead of dropping or changing a take.
  */
 export async function withStoredTakesFence(engine: BrainEngine, pageId: number, body: string): Promise<string> {
   const { beginIdx, endIdx } = locateOutsideCode(body, TAKES_FENCE_BEGIN, TAKES_FENCE_END);
@@ -550,6 +551,13 @@ export async function withStoredTakesFence(engine: BrainEngine, pageId: number, 
   const reparsed = parseTakesFence(next);
   assertFenceRoundTrips(reparsed);
   if (reparsed.takes.length !== rows.length) throw new TakesWriteError('invalid_input', 'The takes fence lost rows while carrying the stored takes of the page.');
+  const cell = (value: unknown) => (value === '' || value === null ? undefined : value);
+  const fields = ['claim', 'kind', 'holder', 'sinceDate', 'untilDate', 'source', 'active', 'resolvedQuality', 'resolvedEvidence', 'resolvedValue', 'resolvedUnit', 'resolvedBy'] as const;
+  const changed = rows.find(row => {
+    const back = reparsed.takes.find(take => take.rowNum === row.rowNum);
+    return !back || fields.some(field => cell(back[field]) !== cell(row[field]));
+  });
+  if (changed) throw new TakesWriteError('invalid_input', `Take row #${changed.rowNum} would not read back unchanged from the takes fence, so re-creating the section would change it.`);
   return next;
 }
 
