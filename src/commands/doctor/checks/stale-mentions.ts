@@ -51,7 +51,7 @@ export async function staleMentionsCheck(engine: BrainEngine): Promise<Check> {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([k, n]) => `${n} ${k}`)
       .join(', ');
-    const eg = res.examples.map(e => `${e.from} -> ${e.to}`).join(', ');
+    const eg = res.examples.map(e => `${e.from} -> ${e.to}: gbrain unlink ${e.from} ${e.to} --link-type ${e.link_type} --link-source mentions`).join('; ');
     // An empty gazetteer makes EVERY mentions row unreproducible, which is
     // a different diagnosis from ordinary drift — name it, or the operator
     // reads "everything is stale" and starts deleting real links.
@@ -64,8 +64,7 @@ export async function staleMentionsCheck(engine: BrainEngine): Promise<Check> {
       message:
         `${res.staleLinks} of ${res.linksScanned} by-mention link(s) no longer follow from the current gazetteer${coverage} (${kinds}). ` +
         `${why}Re-running the scan will NOT remove them — the write path is additive. ` +
-        `Remove individually with: gbrain unlink <from> <to> --link-type mentions --link-source mentions. ` +
-        `e.g. ${eg}`,
+        `Remove each one with its own command, which names the link type it is stored under (typed links use a verb): ${eg}`,
     };
   } catch (e) {
     return {
