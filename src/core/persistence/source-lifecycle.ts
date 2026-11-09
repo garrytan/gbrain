@@ -189,8 +189,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     // hits the statement bound is retried at half the size, so heavy pages still fit.
     let retiredPages=0;
     try{
-    if(['remove','purge'].includes(input.operation)&&input.confirmDestructive&&!missingCheckout&&!admission)
-      for(let limit=SOURCE_RETIRE_BATCH_PAGES,deleted=limit;deleted===limit;) try{ deleted=await topologyTransaction(engine,async tx=>{
+    const retireBatch=async(limit:number):Promise<number|null>=>{ try{ return await topologyTransaction(engine,async tx=>{
         await assertWriterAdminState(tx,input.expectedAdminState);
         const sources=await lockTopologyRows(tx,input.sourceId,bindings);
         const [source]=await tx.executeRaw<{incarnation:string;archived:boolean;due:boolean}>(
@@ -207,8 +206,13 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         retiredPages+=gone.length;
         return gone.length;
       }); }catch(error){
-        if(!(error instanceof OperationError&&error.code==='write_pending'&&limit>1)) throw error;
-        deleted=limit=Math.ceil(limit/2);
+        if(error instanceof OperationError&&error.code==='write_pending'&&limit>1) return null;
+        throw error;
+      } };
+    if(['remove','purge'].includes(input.operation)&&input.confirmDestructive&&!missingCheckout&&!admission)
+      for(let limit=SOURCE_RETIRE_BATCH_PAGES,deleted=limit;deleted===limit;){
+        const n=await retireBatch(limit);
+        if(n===null)deleted=limit=Math.ceil(limit/2);else deleted=n;
       }
     return await topologyTransaction(engine,async tx=>{
     await assertWriterAdminState(tx,input.expectedAdminState);
