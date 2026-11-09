@@ -229,6 +229,29 @@ for (const backend of testBackends()) {
   });
 
   describe(`${backend}: the retention purge never removes a file that is committed`, () => {
+    test("an older version purged the page and committed the file's removal; a revert of that commit imports the file as a new page", () => managedBrain(async ({ engine, root }) => {
+      await sync(engine);
+      const before = await page(engine, A);
+      await removeAndSync(engine, root, [A]);
+      // What an older version did: the file came back, sync left the page deleted beside it, and the purge removed the page row
+      // and the file, committing the removal. Here the file's return and the purge's removal commit land before any sync reads
+      // them, and the purge runs on the tombstone with the file gone, as the older version's purge saw it after its write-through.
+      git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'revert', '--no-edit', 'HEAD');
+      git(root, 'rm', '-q', `${A}.md`); commit(root, 'purge removes doc-a');
+      await sync(engine);
+      await age(engine, 100);
+      await purge(engine, root, 'CLI purge-deleted');
+      expect(await page(engine, A)).toBeUndefined();
+      git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'revert', '--no-edit', 'HEAD');
+      await sync(engine);
+      const after = await page(engine, A);
+      expect(after?.deleted_at).toBeNull();
+      expect(String(after?.id)).not.toBe(String(before?.id));
+      expect(after?.compiled_truth).toContain('topic a');
+      fileKept(root, A);
+      expect(await status(engine)).toEqual({ state: 'synced', reason: 'nothing_pending' });
+    }, { setup, databaseUrl }), 300_000);
+
     for (const how of PURGES) {
       test(`${how}: a person's delete undone in Git is purged database-only and the file stays`, () => managedBrain(async ({ engine, ctx, root }) => {
         await sync(engine);
