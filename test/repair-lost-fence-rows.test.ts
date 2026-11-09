@@ -15,8 +15,8 @@ import type { OperationContext } from '../src/core/ops/contract.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { renderTakesFence } from '../src/core/takes-fence.ts';
 import { emptyFenceBlock } from '../src/core/generations/fence.ts';
-import { resolveRepairScope, type RepairResult } from '../src/core/repair/core.ts';
-import { repairRunner } from '../src/core/repair/registry.ts';
+import { resolveRepairScope, runRepair, type RepairResult } from '../src/core/repair/core.ts';
+import { repairRunner, repairSpec } from '../src/core/repair/registry.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { durableGitRepo } from './helpers/git-publication.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -49,7 +49,7 @@ const tierOf = async (engine: BrainEngine, table: 'facts' | 'takes', claim: stri
 async function repair(engine: BrainEngine, expectHash?: string): Promise<RepairResult> {
   const scope = await resolveRepairScope(engine, 'default');
   return (await repairRunner(engine, { apply: expectHash !== undefined, noEmbed: true, logger: { info() {}, warn() {}, error() {} } })).run('lost-fence-rows', scope,
-    { explicit: true, sourceFlag: 'default', ...(expectHash ? { expect: expectHash } : {}) });
+    { explicit: true, sourceFlag: 'default', ...(expectHash ? { expect: expectHash } : {}), });
 }
 /** The section with the rows, a rewrite without it (held), then a section holding only a new row: the rows are retired. */
 async function loseRows(ctx: OperationContext) {
@@ -171,6 +171,19 @@ for (const backend of testBackends()) {
         if (first.stopped?.reason === 'write_pending') await repair(engine, preview.preview_hash);
         expect(await tierOf(engine, 'takes', TA)).toBe('external_untrusted');
         expect(first.stopped?.reason).toBe('write_pending');
+      }, opts), 180_000);
+
+      test('an apply whose pending page write publishes while the run waits still lowers the restored tiers', () => managedBrain(async ({ engine, ctx }) => {
+        await loseRows(ctx);
+        const preview = await repair(engine);
+        const scope = await resolveRepairScope(engine, 'default');
+        const { handler } = repairSpec('lost-fence-rows');
+        const result = await runRepair({ ...ctx, remote: false, dryRun: false, writeWaitMs: 5_000 } as OperationContext,
+          { ...handler, apply: (itemCtx, item, opts) => handler.apply({ ...itemCtx, writeWaitMs: 0 }, item, opts) }, scope,
+          { apply: true, explicit: true, sourceFlag: 'default', expect: preview.preview_hash, spec: repairSpec('lost-fence-rows'),
+            publicationOwner: async () => { await settleManagedGitEffects(engine); return { alive: true, owner: 'test publisher' }; } });
+        if (result.stopped?.reason === 'write_pending') await repair(engine, preview.preview_hash);
+        expect(await tierOf(engine, 'takes', TA)).toBe('external_untrusted');
       }, opts), 180_000);
 
       test('an apply after the page changed restores nothing and asks for a new preview', () => managedBrain(async ({ engine, ctx }) => {

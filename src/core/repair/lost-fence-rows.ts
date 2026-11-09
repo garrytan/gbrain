@@ -245,28 +245,30 @@ export const lostFenceRowsRepair: RepairHandler = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { page, hash, last } = entry as LostRowsItem;
-    let pending = false;
     const detail = { facts: page.rows.filter(r => r.kind === 'fact').length, takes: page.rows.filter(r => r.kind === 'take').length };
+    // The approved set is retired only when the last page ends without an error, so a stopped run's rerun can still lower the tiers.
+    const done = async (outcome: RepairItemOutcome): Promise<RepairItemOutcome> => {
+      if (last) await clearApprovedSet(ctx.engine, { command: 'lost-fence-rows', hash });
+      return outcome;
+    };
+    // A rerun after this repair's own page write was left pending finds the rows live at their numbers: it only lowers their tiers.
+    if (await lowerRestoredTiers(ctx.engine, page, true)) return done({ applied: true, outcome: 'restored', detail });
+    const changed = (reason: string) => done({ applied: false, outcome: 'changed_since_preview', reason: `${page.slug}: ${reason}; run ${COMMAND} again for a new preview.` });
+    const [now] = (await scanLostFenceRows(ctx.engine, [page.source_id], page)).pages;
+    if (!now || now.revision !== page.revision || stableJson(now.rows) !== stableJson(page.rows)) return changed('the page or its lost rows changed since the preview');
+    const planned = await plannedPage(ctx.engine, page);
+    if (typeof planned === 'string') return changed(planned);
     try {
-      // A rerun after this repair's own page write was left pending finds the rows live at their numbers: it only lowers their tiers.
-      if (await lowerRestoredTiers(ctx.engine, page, true)) return { applied: true, outcome: 'restored', detail };
-      const changed = (reason: string): RepairItemOutcome => ({ applied: false, outcome: 'changed_since_preview', reason: `${page.slug}: ${reason}; run ${COMMAND} again for a new preview.` });
-      const [now] = (await scanLostFenceRows(ctx.engine, [page.source_id], page)).pages;
-      if (!now || now.revision !== page.revision || stableJson(now.rows) !== stableJson(page.rows)) return changed('the page or its lost rows changed since the preview');
-      const planned = await plannedPage(ctx.engine, page);
-      if (typeof planned === 'string') return changed(planned);
-      try {
-        await submitPageMutation(ctx, { operation: 'put_page', params: { slug: page.slug, source_id: page.source_id, content: planned.content, expected_revision: page.revision,
-          request_id: await repairRequestId(ctx, 'lost-fence-rows', entry, page.revision) } });
-      } catch (error) {
-        pending = error instanceof OperationError && error.code === 'write_pending';
-        throw error;
-      }
-      await lowerRestoredTiers(ctx.engine, page, false);
-      return { applied: true, outcome: 'restored', detail };
-    } finally {
-      if (last && !pending) await clearApprovedSet(ctx.engine, { command: 'lost-fence-rows', hash });
+      await submitPageMutation(ctx, { operation: 'put_page', params: { slug: page.slug, source_id: page.source_id, content: planned.content, expected_revision: page.revision,
+        request_id: await repairRequestId(ctx, 'lost-fence-rows', entry, page.revision) } });
+    } catch (error) {
+      // Without its receipt a pending write stops the run here, before the cursor passes this page: the runner would otherwise settle
+      // the write on its own later and never come back to lower the restored tiers. The rerun replays the same request, then lowers them.
+      if (error instanceof OperationError && error.code === 'write_pending') error.writeRequest = undefined;
+      throw error;
     }
+    await lowerRestoredTiers(ctx.engine, page, false);
+    return done({ applied: true, outcome: 'restored', detail });
   },
   render(details) {
     return [`  each page: republished with the rows page history last held, through a revision-bound put_page; guide: ${details.docs}`];
