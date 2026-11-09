@@ -35,7 +35,8 @@ export async function write(engine: BrainEngine, ctx: OperationContext, slug: st
   const deadline = performance.now() + testWaitMs(60_000);
   for (;;) {
     const [row] = await engine.executeRaw<{ state: string; outcome: Record<string, any> | null; id: string }>(
-      `SELECT state, outcome, id::text AS id FROM persistence_requests WHERE slug = $1 AND operation IN ('put_page') ORDER BY created_at DESC LIMIT 1`, [slug]);
+      `SELECT state, outcome, id::text AS id FROM persistence_requests WHERE slug = $1 AND operation IN ('put_page')
+        ORDER BY (request_id::text = $2) DESC, (intent->>'kind' IS DISTINCT FROM 'managed_file_import') DESC, created_at DESC LIMIT 1`, [slug, requestId]);
     if (!['queued', 'running'].includes(row!.state) || performance.now() > deadline) return { ...row!, error };
     await Bun.sleep(100);
   }

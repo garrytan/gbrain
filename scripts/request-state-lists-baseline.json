@@ -54,7 +54,6 @@
   "src/core/persistence/orphan-bindings.ts": 2,
   "src/core/persistence/owner-activity.ts": 1,
   "src/core/persistence/ownership.ts": 2,
-  "src/core/persistence/page-batch.ts": 1,
   "src/core/persistence/page-upload.ts": 2,
   "src/core/persistence/put-page-screen.ts": 1,
   "src/core/persistence/receipt-true-up.ts": 2,

@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { claimPersistenceEffect } from '../../src/core/persistence/effect-journal.ts';
 import { _resetGitFirstGateForTests, _unregisterIndexSplitPageConsumerForTests, gitFirstStrictActive, gitFirstWriterBlockers,
-  registerIndexSplitPageConsumer } from '../../src/core/persistence/git-first-gate.ts';
+  _resetIndexSplitPageConsumerForTests, registerIndexSplitPageConsumer } from '../../src/core/persistence/git-first-gate.ts';
 import { localHostId } from '../../src/core/persistence/identity.ts';
 import { declarePersistenceProtocol } from '../../src/core/persistence/protocol.ts';
 import { durableGitRepo } from '../helpers/git-publication.ts';
@@ -26,7 +26,7 @@ const olderWriter = (engine: BrainEngine, daysAgo: number) => engine.executeRaw(
 for (const backend of testBackends()) describe(`[${backend}] git-first activation barrier`, () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
   beforeEach(() => { _resetGitFirstGateForTests(); registerIndexSplitPageConsumer({ run: async () => undefined }); });
-  afterEach(() => { _unregisterIndexSplitPageConsumerForTests(); _resetGitFirstGateForTests(); });
+  afterEach(() => { _resetIndexSplitPageConsumerForTests(); _resetGitFirstGateForTests(); });
 
   test('a writer below the floor in the last 7 days keeps the path off; a strict 2 MiB put takes today\'s path', () => managedBrain(async ({ engine, ctx }) => {
     await strict(engine);

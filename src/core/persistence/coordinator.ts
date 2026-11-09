@@ -60,7 +60,20 @@ import { classifyPgAccessError } from '../pg-access-classify.ts';
 import { commitThroughDoor, doorCommitLanded, doorMarker, prehashDoorFile, replayAfterDoorCommit, sourceCanonicalGit, strictChanged, type PrehashedBlob } from './git-door.ts';
 import { assertNoPrivateCommit, assertStrictFileTarget, declareStrictPublication, strictTargetRefuses } from './git-declared.ts';
 import { gitFirstStrictActive } from './git-first-gate.ts';
-import { clearPendingHeads, indexPendingError, queueIndexFromGit, readPendingHead, type IndexFromGit } from './git-first.ts';
+import './index-split-page.ts';
+import { assertNoPendingIndex, clearPublishedPendingHeads, queueIndexFromGit, type IndexFromGit } from './git-first.ts';
+
+/** How long a publication transaction may stay open across its door commit (GBRA-108, eng-r3-outside-1 for mixed groups). */
+export const PUBLICATION_DOOR_BOUND_MS = 120_000;
+/**
+ * The door deadline of a publication transaction opened at `openedAt`: a door past it refuses with `git_door_timeout` before it
+ * moves the branch (git-door.ts), so the rows the transaction holds roll back and its locks are released.
+ * GBRAIN_PUBLICATION_DOOR_BOUND_MS overrides the bound.
+ */
+export function publicationDoorDeadline(openedAt: number): number {
+  const configured = Number(process.env.GBRAIN_PUBLICATION_DOOR_BOUND_MS);
+  return openedAt + (Number.isFinite(configured) && configured > 0 ? configured : PUBLICATION_DOOR_BOUND_MS);
+}
 
 interface PreparedMutationBase {
   sourceExclusive?: boolean;
@@ -105,6 +118,8 @@ interface PreparedMutationBase {
    * Git effect (a writeback import's folded pass stamp, sync-pass-fold.ts); it may add to the outcome. Absent for every other write.
    */
   afterEffects?(tx: BrainEngine, outcome: Record<string, unknown>): Promise<void>;
+  /** The upload session this publication consumes (page-upload.ts withStagedUpload); a git-first publication settles it around its door commit. */
+  stagedBody?: import('./page-upload.ts').StagedBodySettlement;
   /** #5575: the tier and origin of the rows apply writes; absent: the request's channel tier (trust/channel.ts). */
   trust?: WriteTrust;
   /**
@@ -500,6 +515,50 @@ function largeRecoveryRecord(row: WriteRequest, file: PageMutationFile, binding:
   return { record, bytes: Buffer.byteLength(JSON.stringify(record)) + prior.bytes + nextBytes + 4096 };
 }
 
+/**
+ * Wave C (spec §3.5): a strict file publication stores its blob before it takes the writer lock; the door rechecks
+ * the plan and the path's attributes under the lock and hashes in place only when they changed (git-door.ts).
+ */
+async function prehashStrictFile(engine: BrainEngine, row: WriteRequest, prepared: PreparedMutation, binding: WorktreeBinding): Promise<PrehashedBlob | null> {
+  const content = prepared.file?.content;
+  if (prepared.target === 'skill_bundle' || binding.canonical_git !== true || prepared.noop || !(typeof content === 'string' || content instanceof Uint8Array)) return null;
+  if (!isWriteTargetContained(prepared.file!.path, prepared.file!.root) || await strictTargetRefuses(engine, row, content, binding)) return null;
+  return prehashDoorFile(binding.local_path!, prepared.file!.path, content);
+}
+/**
+ * Wave C (eng-r3-outside-1): with the git-first path on, a strict file publication commits through the door before any
+ * content row is written; its target is judged on the incoming head first (git-first-gate.ts). A file ahead of its rows
+ * refuses here the way preparation refuses it (ceo-r3-outside-1, page-prepare.ts).
+ */
+async function gitFirstDoorCommit(tx: BrainEngine, row: WriteRequest, prepared: PreparedMutation, at: { doorFiles: FileRecoveryRecord[]; companions: number;
+  snapshot: PageSnapshot | null; binding: WorktreeBinding | null; lock: NativeLockHandle | null; prehashed: PrehashedBlob | null; doorBy: number }): Promise<{ gitFirst: boolean; commit?: string | null; restored?: string[] }> {
+  const door = at.doorFiles[0]?.door ?? null;
+  const gitFirst = prepared.target !== 'skill_bundle' && !!door && at.doorFiles.length === 1 && !at.companions && !!prepared.file && prepared.file.content !== null
+    && await gitFirstStrictActive(tx, row.source_id, { strict: true });
+  if (prepared.indexFromGit && !gitFirst) throw strictChanged(row.source_id);
+  if (door) await assertNoPendingIndex(tx, row, prepared.supersedesPending, prepared.file?.content === null);
+  if (!gitFirst) return { gitFirst };
+  await assertStrictFileTarget(tx, row, prepared, at.snapshot, at.binding);
+  await prepared.stagedBody?.hold(tx);
+  await doorProbe?.(tx, row);
+  let restored: string[] | undefined;
+  const commit = await commitThroughDoor(door!.root, [{ path: at.doorFiles[0]!.path, planned: at.doorFiles[0]!.afterHash, note: prepared.file?.commit, prehashed: at.prehashed }],
+    at.lock ?? undefined, paths => { restored = paths; }, at.doorBy);
+  return { gitFirst, commit, restored };
+}
+/** Wave C (spec §3.1 step 7): a git-first segmented write changes no page metadata before the index flip; the request is indexing. */
+async function completeIndexFromGit(tx: BrainEngine, row: WriteRequest, current: WriteRequest, prepared: PreparedMutation, snapshot: PageSnapshot | null, fileCount: number,
+  doorFile: FileRecoveryRecord, git: { commit: string; restored?: string[] }, hooks: PublicationHooks): Promise<WriteRequest> {
+  const outcome: Record<string, unknown> = { status: 'created_or_updated', slug: row.slug, source_id: row.source_id, searchable: 'pending', ...prepared.indexFromGit!.outcome };
+  decoratePublicationOutcome(row, prepared, outcome, null, fileCount, false);
+  Object.assign(outcome.persistence as object, { git_state: 'committed', git_commit: git.commit, ...(git.restored ? { git_index_restored: git.restored } : {}) });
+  outcome.index = await queueIndexFromGit(tx, row, prepared.indexFromGit!, String(prepared.file!.content), snapshot, git.commit, doorFile.door!.root, doorFile.path);
+  await prepared.stagedBody?.commit(tx);
+  await queuePublicationEffects(tx, row, null, outcome, prepared, { pushOnly: true });
+  await hooks.boundary?.('before_commit', row);
+  return completeWrite(tx, current, 'indexing', outcome, undefined, current);
+}
+
 export async function publishMutation(engine: BrainEngine, row: WriteRequest, prepared: PreparedMutation,
   hostId = hostIdFor(engine), callerHooks: PublicationHooks = {}): Promise<WriteRequest> {
   const hooks = withFaultPoints(callerHooks);
@@ -535,11 +594,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         await releaseUnpublishedClaim(engine, row, 'owner_unavailable');
         return (await getWriteRequestById(engine, row.id))!;
       }
-      // Wave C (spec §3.5): a strict file publication stores its blob before it takes the writer lock; the door rechecks
-      // the plan and the path's attributes under the lock and hashes in place only when they changed (git-door.ts).
-      const content = prepared.file?.content;
-      if (!skill && binding.canonical_git === true && !prepared.noop && (typeof content === 'string' || content instanceof Uint8Array)
-        && isWriteTargetContained(prepared.file!.path, prepared.file!.root) && !await strictTargetRefuses(engine, row, content, binding)) prehashed = await prehashDoorFile(binding.local_path, prepared.file!.path, content);
+      prehashed = await prehashStrictFile(engine, row, prepared, binding);
       try { lock = await acquireWorktree(binding, 0, undefined, engine, { yieldLanes: true }); }
       catch (error) {
         // #6305: this process cannot open the lock file (sandbox, unwritable lock directory): like a busy lock, publish nothing.
@@ -627,6 +682,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       await hooks.boundary?.('prepared', row);
     }
     const done = await publicationTransaction(engine, async tx => {
+      const doorBy = publicationDoorDeadline(Date.now());
       await declarePublication(tx);
       const liveBinding = await guardOwnership(tx, row, hostId);
       if (prepared.sourceExclusive && !prepared.exclusiveSources?.length) await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [row.source_id]);
@@ -703,37 +759,13 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         });
         await hooks.boundary?.('after_publication', row);
       }
-      // Wave C (eng-r3-outside-1): with the git-first path on, a strict file publication commits through the door before any
-      // content row is written; its target is judged on the incoming head first (git-first-gate.ts).
-      const gitFirst = !skill && !!door && doorFiles.length === 1 && !companions.length && !!prepared.file && prepared.file.content !== null
-        && await gitFirstStrictActive(tx, row.source_id, { strict: true });
-      let gitCommit: string | null | undefined;
-      let gitIndexRestored: string[] | undefined;
-      if (prepared.indexFromGit && !gitFirst) throw strictChanged(row.source_id);
-      // Wave C (ceo-r3-outside-1): while another write's committed head waits for its index, the page's rows describe the
-      // generation before it, so a write prepared from them would drop the committed write from Git. It refuses (retryable)
-      // until the flip; preparation refuses the same way when it sees the file ahead of the rows (page-prepare.ts).
-      if (door) {
-        const pending = await readPendingHead(tx, row.source_id, row.slug);
-        if (pending && pending.request_id !== row.id && pending.request_id !== prepared.supersedesPending) throw indexPendingError(row.slug, pending.request_id);
-      }
-      if (gitFirst) {
-        await assertStrictFileTarget(tx, row, prepared, snapshot, binding);
-        await doorProbe?.(tx, row);
-        gitCommit = await commitThroughDoor(door!.root, [{ path: doorFiles[0]!.path, planned: doorFiles[0]!.afterHash, note: prepared.file?.commit, prehashed }], lock ?? undefined, paths => { gitIndexRestored = paths; });
-      }
+      const first = await gitFirstDoorCommit(tx, row, prepared, { doorFiles, companions: companions.length, snapshot, binding, lock, prehashed, doorBy });
+      let gitIndexRestored = first.restored;
       // A door publication that is not itself indexed (an inline write, a delete, a private transition, a rename) replaces
-      // or removes the page's pending head, so an older index job finds its token gone and ends superseded (git-first.ts).
-      if (door && !prepared.indexFromGit) await clearPendingHeads(tx, row.source_id, [row.slug, ...(prepared.additionalPageKeys ?? []).filter(key => key.sourceId === row.source_id).map(key => key.slug), ...companions.map(companion => companion.slug)]);
-      if (prepared.indexFromGit && gitCommit) {
-        // Wave C (spec §3.1 step 7): no page metadata changes before the index flip; the request is indexing.
-        const outcome: Record<string, unknown> = { status: 'created_or_updated', slug: row.slug, source_id: row.source_id, searchable: 'pending', ...prepared.indexFromGit.outcome };
-        decoratePublicationOutcome(row, prepared, outcome, null, files.length, false);
-        Object.assign(outcome.persistence as object, { git_state: 'committed', git_commit: gitCommit, ...(gitIndexRestored ? { git_index_restored: gitIndexRestored } : {}) });
-        outcome.index = await queueIndexFromGit(tx, row, prepared.indexFromGit, String(prepared.file!.content), snapshot, gitCommit, door!.root, doorFiles[0]!.path);
-        await queuePublicationEffects(tx, row, null, outcome, prepared, { pushOnly: true });
-        await hooks.boundary?.('before_commit', row);
-        const indexing = await completeWrite(tx, current, 'indexing', outcome, undefined, current);
+      // or removes the page's pending head (the index step's own import of the committed file leaves it to the flip), so an older index job finds its token gone and ends superseded (git-first.ts).
+      if (door && !prepared.indexFromGit) await clearPublishedPendingHeads(tx, row, [...(prepared.additionalPageKeys ?? []), ...companions.map(companion => ({ sourceId: row.source_id, slug: companion.slug }))]);
+      if (prepared.indexFromGit && first.commit) {
+        const indexing = await completeIndexFromGit(tx, row, current, prepared, snapshot, files.length, doorFiles[0]!, { commit: first.commit, restored: first.restored }, hooks);
         transactionBodyCompleted = true;
         return indexing;
       }
@@ -755,10 +787,10 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       decoratePublicationOutcome(row, prepared, outcome, final, files.length, skill);
       await recordPublicationFenceTrend(tx, row, outcome);
       // G2: a strict source's file is committed before its row; its Git effect only pushes.
-      if (door && !gitFirst) await doorProbe?.(tx, row);
-      if (door) Object.assign(outcome.persistence as object, { git_state: 'committed', git_commit: gitFirst ? gitCommit : await commitThroughDoor(door.root,
+      if (door && !first.gitFirst) await doorProbe?.(tx, row);
+      if (door) Object.assign(outcome.persistence as object, { git_state: 'committed', git_commit: first.gitFirst ? first.commit : await commitThroughDoor(door.root,
         doorFiles.map((record, index) => ({ path: record.path, planned: record.afterHash, note: (files[index] as PageMutationFile | undefined)?.commit, ...(doorFiles.length === 1 ? { prehashed } : {}) })), lock ?? undefined,
-        paths => { gitIndexRestored = paths; }), ...(gitIndexRestored ? { git_index_restored: gitIndexRestored } : {}) });
+        paths => { gitIndexRestored = paths; }, doorBy), ...(gitIndexRestored ? { git_index_restored: gitIndexRestored } : {}) });
       // D2: a multi-page publication's Git and embedding effects walk every page it wrote (effect-targets.ts targets).
       let pageTargets: { slug: string; page_id: number; revision: string }[] | undefined;
       if (companions.length) {

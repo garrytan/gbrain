@@ -11,7 +11,7 @@ import { existsSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { operations } from '../../src/core/operations.ts';
-import { _resetGitFirstGateForTests, _unregisterIndexSplitPageConsumerForTests, registerIndexSplitPageConsumer } from '../../src/core/persistence/git-first-gate.ts';
+import { _resetGitFirstGateForTests, _resetIndexSplitPageConsumerForTests, _unregisterIndexSplitPageConsumerForTests, registerIndexSplitPageConsumer } from '../../src/core/persistence/git-first-gate.ts';
 import { sweepSegmentStorage } from '../../src/core/persistence/journal.ts';
 import { purgeSegmentStorage, stagingsHoldingClaim } from '../../src/core/facts/purge.ts';
 import { uploadSpoolDir, uploadSpoolPath } from '../../src/core/persistence/upload-spool.ts';
@@ -29,7 +29,7 @@ const reserved = async (engine: BrainEngine, id: string) => (await engine.execut
 for (const backend of testBackends()) describe(`[${backend}] upload spool lifecycle (ceo-r3-native-4)`, () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
   beforeEach(() => { _resetGitFirstGateForTests(); registerIndexSplitPageConsumer({ run: async () => undefined }); });
-  afterEach(() => { _unregisterIndexSplitPageConsumerForTests(); _resetGitFirstGateForTests(); });
+  afterEach(() => { _resetIndexSplitPageConsumerForTests(); _resetGitFirstGateForTests(); });
 
   const begin = async (ctx: Parameters<ReturnType<typeof op>['handler']>[0], slug: string) => {
     const text = pageBody(300 * 1024, `MARKER${randomUUID().replace(/-/g, '')}`);

@@ -11,7 +11,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { operations, type OperationContext } from '../../src/core/operations.ts';
-import { _resetGitFirstGateForTests, _unregisterIndexSplitPageConsumerForTests, registerIndexSplitPageConsumer } from '../../src/core/persistence/git-first-gate.ts';
+import { _resetGitFirstGateForTests, _resetIndexSplitPageConsumerForTests, _unregisterIndexSplitPageConsumerForTests, registerIndexSplitPageConsumer } from '../../src/core/persistence/git-first-gate.ts';
 import { durableGitRepo, git } from '../helpers/git-publication.ts';
 import { managedBrain } from '../helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from '../helpers/test-backends.ts';
@@ -25,7 +25,7 @@ const setup = ({ root }: { root: string }) => { writeFileSync(join(root, '.gitig
 for (const backend of testBackends()) describe(`[${backend}] git-first strict segmented writes (1H-a)`, () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
   beforeEach(() => { _resetGitFirstGateForTests(); registerIndexSplitPageConsumer({ run: async () => undefined }); });
-  afterEach(() => { _unregisterIndexSplitPageConsumerForTests(); _resetGitFirstGateForTests(); });
+  afterEach(() => { _resetIndexSplitPageConsumerForTests(); _resetGitFirstGateForTests(); });
 
   for (const [bytes, how] of [[2 * MiB, 'put'], [20 * MiB, 'upload'], [24 * MiB - 4096, 'upload']] as const) {
     test(`a ${Math.round(bytes / MiB)} MiB ${how}: no page bytes before the door, then indexing with a pending head`, () => managedBrain(async ({ engine, ctx, root }) => {
@@ -99,7 +99,7 @@ for (const backend of testBackends()) describe(`[${backend}] without an index co
 for (const backend of testBackends()) describe(`[${backend}] git-first stays off on a non-strict source`, () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
   beforeEach(() => { _resetGitFirstGateForTests(); registerIndexSplitPageConsumer({ run: async () => undefined }); });
-  afterEach(() => { _unregisterIndexSplitPageConsumerForTests(); _resetGitFirstGateForTests(); });
+  afterEach(() => { _resetIndexSplitPageConsumerForTests(); _resetGitFirstGateForTests(); });
 
   test('a 2 MiB put on a non-strict source commits as today', () => managedBrain(async ({ engine, ctx }) => {
     const row = await write(engine, ctx, 'notes/nonstrict', pageBody(2 * MiB, 'MARKERNONSTRICT'), 'put');

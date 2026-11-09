@@ -64,12 +64,12 @@ export interface PageWriteCaller {
 export function pageWriteCaller(connect: () => Promise<BrainEngine>, source: string | null, opts: { teardown?: boolean } = {}): PageWriteCaller {
   const cfg = loadConfig();
   const cli = getCliOptions();
-  const writeWaitMs = currentCliWriteWait().waitMs;
+  const { waitMs: writeWaitMs, waitIndexedMs } = currentCliWriteWait();
   if (isThinClient(cfg)) {
     return {
       thin: true,
       call: async (tool, args) => {
-        const raw = await callRemoteTool(cfg!, tool, { ...args, ...(source ? { source_id: source } : {}) }, { timeoutMs: cli.timeoutMs ?? 120_000, writeWaitMs });
+        const raw = await callRemoteTool(cfg!, tool, { ...args, ...(source ? { source_id: source } : {}) }, { timeoutMs: cli.timeoutMs ?? 120_000, writeWaitMs, waitIndexedMs });
         return unpackToolResult<Record<string, unknown>>(raw);
       },
       transient: error => error instanceof RemoteMcpError && error.reason === 'network' && error.detail?.kind !== 'aborted',
@@ -90,7 +90,7 @@ export function pageWriteCaller(connect: () => Promise<BrainEngine>, source: str
         sourceId = (await resolveSourceWithTier(engine, source)).source_id;
       }
       const { handleToolCall } = await import('../../mcp/server.ts');
-      return await handleToolCall(engine, tool, wire, { sourceId, writeWaitMs }) as Record<string, unknown>;
+      return await handleToolCall(engine, tool, wire, { sourceId, writeWaitMs, waitIndexedMs }) as Record<string, unknown>;
     },
     transient: () => false,
     close: async () => { if (engine && opts.teardown !== false) await finishCliTeardown({ engine, drainTimeoutMs: 1000 }); },

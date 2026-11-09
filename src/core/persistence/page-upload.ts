@@ -336,6 +336,9 @@ export async function stagedUploadText(engine: SqlEngine, ref: StagingBodyRef): 
 
 interface Publishable { apply(tx: BrainEngine, preimage?: never): Promise<Record<string, unknown>> }
 
+/** The upload session a publication consumes: `hold` re-checks it is still sealed under its row lock, `commit` marks it committed and releases its reservation. */
+export interface StagedBodySettlement { hold(tx: BrainEngine): Promise<void>; commit(tx: BrainEngine): Promise<void> }
+
 /**
  * A write whose intent names a sealed upload session (put_page, or append_page with mode append): the session must
  * still be the sealed upload of the request's principal, source and slug, matching the reference. `prepare` builds the
@@ -352,13 +355,22 @@ export async function withStagedUpload<T extends Publishable>(engine: BrainEngin
   if (staging.state !== 'sealed') throw bodyStagingGoneError(row.slug, ref.staging_id, staging.state);
   const prepared = await prepare(ref);
   const apply = prepared.apply.bind(prepared);
+  const stagedBody: StagedBodySettlement = {
+    async hold(tx) {
+      const [held] = await tx.executeRaw<{ state: string }>('SELECT state FROM page_body_stagings WHERE id = $1::uuid FOR UPDATE', [ref.staging_id]);
+      if (held?.state !== 'sealed') throw bodyStagingGoneError(row.slug, ref.staging_id, held?.state ?? null);
+    },
+    async commit(tx) { await transitionUploads(tx, 'committed', 's.id = $1::uuid', [ref.staging_id], { commitRequestId: row.id }); },
+  };
   prepared.apply = async (tx, preimage) => {
-    const [held] = await tx.executeRaw<{ state: string }>('SELECT state FROM page_body_stagings WHERE id = $1::uuid FOR UPDATE', [ref.staging_id]);
-    if (held?.state !== 'sealed') throw bodyStagingGoneError(row.slug, ref.staging_id, held?.state ?? null);
+    await stagedBody.hold(tx);
     const outcome = await apply(tx, preimage);
-    await transitionUploads(tx, 'committed', 's.id = $1::uuid', [ref.staging_id], { commitRequestId: row.id });
+    await stagedBody.commit(tx);
     return outcome;
   };
+  // Wave C: a git-first publication holds the session before its door commit and, when the index step derives the rows
+  // (it never calls apply), marks it committed in the same transaction (coordinator.ts).
+  (prepared as T & { stagedBody?: StagedBodySettlement }).stagedBody = stagedBody;
   // A spooled session's file goes once its publication committed (the owner sweep removes it if this step is lost).
   const withAfterCommit = prepared as T & { afterCommit?: (engine: BrainEngine) => Promise<void> };
   const after = withAfterCommit.afterCommit;

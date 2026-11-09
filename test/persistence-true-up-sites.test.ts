@@ -28,7 +28,7 @@ const SITES: Record<string, string> = {
 };
 /** Files that may call the effect-journal settle helpers: the runner and the handlers it dispatches. */
 const RUNNER_FILES = new Set(['src/core/persistence/effects.ts', 'src/core/persistence/effect-facts.ts', 'src/core/persistence/effect-links.ts',
-  'src/core/persistence/effect-journal.ts']);
+  'src/core/persistence/effect-journal.ts', 'src/core/persistence/index-split-page.ts']);
 
 function files(dir: string): string[] {
   return readdirSync(dir).flatMap(name => {
@@ -59,6 +59,15 @@ const COMPLETIONS: Record<string, number> = {
   'src/core/persistence/journal.ts': 1, // completeWrite: committed, conflict, failed, cancelled
   'src/core/persistence/group-publish.ts': 1, // completeGroup: committed
 };
+/**
+ * Wave C 1I-a: statements that flip an `indexing` request to `committed` once its page is indexed. completeWrite already
+ * completed it (counters released, reservation trued up while no effect is unfinished); the effect runner trues it up
+ * again when the index effect settles. Each is guarded by `state = 'indexing'` in its WHERE.
+ */
+const INDEX_FLIPS: Record<string, number> = {
+  'src/core/persistence/index-split-page.ts': 1, // the index-split-page effect's flip
+  'src/commands/pages-from-git.ts': 1, // gbrain pages reindex --from-git --apply
+};
 /** An UPDATE of persistence_requests assigning `state` in its SET list, with the statement text up to the closing backtick. */
 const REQUEST_STATE = /UPDATE\s+persistence_requests\b(?:(?!\bWHERE\b)[^`;])*?\bSET\b(?:(?!\bWHERE\b)[^`;])*?(?<![.\w])state\s*=\s*([^,\n]+)[^`]*/g;
 const NON_TERMINAL = /^'(?:queued|deferred|running|recovering)'$/;
@@ -67,15 +76,21 @@ const NON_TERMINAL_CASE = (statement: string) => [...statement.matchAll(/\bTHEN\
 
 test('every statement that completes a request is a listed completion and trues up its reservation', () => {
   const found: Record<string, number> = {};
+  const flips: Record<string, number> = {};
   const missing: string[] = [];
   for (const file of sources) {
     for (const match of file.text.matchAll(REQUEST_STATE)) {
       const value = match[1]!.trim();
       if (NON_TERMINAL.test(value) || (value.startsWith('CASE') && NON_TERMINAL_CASE(match[0]))) continue;
+      if (file.path in INDEX_FLIPS && value === "'committed'" && /\bWHERE\b[\s\S]*\bstate\s*=\s*'indexing'/.test(match[0])) {
+        flips[file.path] = (flips[file.path] ?? 0) + 1;
+        continue;
+      }
       found[file.path] = (found[file.path] ?? 0) + 1;
       if (!/terminal_reservation\s*=\s*CASE\s+WHEN\b[\s\S]*?\bunfinished\b[\s\S]*?\bLEAST\(/.test(match[0])) missing.push(file.path);
     }
   }
   expect(found).toEqual(COMPLETIONS);
+  expect(flips).toEqual(INDEX_FLIPS);
   expect(missing).toEqual([]);
 });

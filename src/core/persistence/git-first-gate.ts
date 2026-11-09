@@ -34,11 +34,16 @@ export interface IndexSplitPageConsumer {
 }
 
 let consumer: IndexSplitPageConsumer | null = null;
+let builtIn: IndexSplitPageConsumer | null = null;
 
 /** Registers the process's index consumer; the git-first path and index effect claims stay off without one. */
 export function registerIndexSplitPageConsumer(next: IndexSplitPageConsumer): void { consumer = next; }
+/** The consumer this build ships (index-split-page.ts registers it when loaded). */
+export function registerBuiltInIndexSplitPageConsumer(next: IndexSplitPageConsumer): void { builtIn = next; consumer = next; }
 /** Test seam: forget the registered consumer. */
 export function _unregisterIndexSplitPageConsumerForTests(): void { consumer = null; }
+/** Test seam: back to the consumer this build ships (none in a standalone 1H tree). */
+export function _resetIndexSplitPageConsumerForTests(): void { consumer = builtIn; }
 export function indexSplitPageConsumer(): IndexSplitPageConsumer | null { return consumer; }
 
 /** The effect kinds this process claims: the built-in ones, plus `index-split-page` once a consumer is registered. */

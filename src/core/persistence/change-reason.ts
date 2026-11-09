@@ -111,6 +111,9 @@ export interface ReasonRecorded { reason: string; version: boolean; version_why?
 export function withChangeReason(row: WriteRequest, prepared: PreparedMutation): PreparedMutation {
   const reason = CHANGE_REASON_OPERATIONS.includes(row.operation) ? canonicalChangeReason(row.intent?.reason) : null;
   if (!reason) return prepared;
+  // Wave C: a git-first strict publication commits its file before apply runs, so the note carries the trailer from the
+  // start; apply drops it again when the page that results is not world-visible (a commit after apply then leaves it out).
+  if (prepared.file && !prepared.noop) prepared.file.commit = withReasonNote(relative(prepared.file.root, prepared.file.path).split(sep).join('/'), reason, prepared.file.commit);
   const apply = prepared.apply.bind(prepared);
   prepared.apply = async (tx, preimage) => {
     const pageId = preimage?.page.id ?? null;
@@ -122,11 +125,10 @@ export function withChangeReason(row: WriteRequest, prepared: PreparedMutation):
     let git: ReasonGit;
     if (!prepared.file) git = row.authority.databaseOnlyReason === 'no_repo_configured' ? 'no_repository' : world ? 'not_file_backed' : 'private';
     else if (prepared.noop) git = 'none';
-    else if (!world) git = 'private';
-    else {
-      prepared.file.commit = withReasonNote(relative(prepared.file.root, prepared.file.path).split(sep).join('/'), reason, prepared.file.commit);
-      git = await sourceCanonicalGit(tx, row.source_id) ? 'committed' : 'queued';
-    }
+    else if (!world) {
+      prepared.file.commit = prepared.file.commit && withoutReasonNote(prepared.file.commit);
+      git = 'private';
+    } else git = await sourceCanonicalGit(tx, row.source_id) ? 'committed' : 'queued';
     const recorded: ReasonRecorded = { reason, version: stamped.length > 0, git,
       ...(stamped.length ? {} : { version_why: prepared.observedRevision === null ? 'page_created' : 'no_change' }) };
     return { ...outcome, reason_recorded: recorded };

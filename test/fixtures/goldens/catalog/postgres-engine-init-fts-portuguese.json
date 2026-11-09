@@ -312,6 +312,13 @@
       "page_mention_state.page_mention_state_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "page_mention_state.page_mention_state_pkey": "p PRIMARY KEY (page_id)",
       "page_mention_state.page_mention_state_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "page_pending_heads.page_pending_heads_access_state_check": "c CHECK ((access_state = ANY (ARRAY['world'::text, 'private'::text])))",
+      "page_pending_heads.page_pending_heads_body_bytes_check": "c CHECK ((body_bytes >= 0))",
+      "page_pending_heads.page_pending_heads_body_sha256_check": "c CHECK ((octet_length(body_sha256) = 32))",
+      "page_pending_heads.page_pending_heads_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
+      "page_pending_heads.page_pending_heads_pkey": "p PRIMARY KEY (source_id, slug)",
+      "page_pending_heads.page_pending_heads_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "page_pending_heads.page_pending_heads_tail_sha256_check": "c CHECK (((tail_sha256 IS NULL) OR (octet_length(tail_sha256) = 32)))",
       "page_projection_jobs.page_projection_jobs_pkey": "p PRIMARY KEY (source_incarnation, slug)",
       "page_projection_jobs.page_projection_jobs_source_incarnation_fkey": "f FOREIGN KEY (source_incarnation) REFERENCES sources(incarnation) ON DELETE CASCADE",
       "page_purges.page_purges_pkey": "p PRIMARY KEY (source_id, content_hash)",
@@ -338,6 +345,14 @@
       "page_segment_texts.page_segment_texts_pkey": "p PRIMARY KEY (source_id, sha256)",
       "page_segment_texts.page_segment_texts_sha256_check": "c CHECK ((octet_length(sha256) = 32))",
       "page_segment_texts.page_segment_texts_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "page_upload_spool_parts.page_upload_spool_parts_byte_len_check": "c CHECK (((byte_len >= 1) AND (byte_len <= 4194304)))",
+      "page_upload_spool_parts.page_upload_spool_parts_byte_start_check": "c CHECK ((byte_start >= 0))",
+      "page_upload_spool_parts.page_upload_spool_parts_part_no_check": "c CHECK ((part_no >= 0))",
+      "page_upload_spool_parts.page_upload_spool_parts_pkey": "p PRIMARY KEY (staging_id, part_no)",
+      "page_upload_spool_parts.page_upload_spool_parts_sha256_check": "c CHECK ((octet_length(sha256) = 32))",
+      "page_upload_spool_parts.page_upload_spool_parts_staging_id_fkey": "f FOREIGN KEY (staging_id) REFERENCES page_upload_spools(staging_id) ON DELETE CASCADE",
+      "page_upload_spools.page_upload_spools_pkey": "p PRIMARY KEY (staging_id)",
+      "page_upload_spools.page_upload_spools_staging_id_fkey": "f FOREIGN KEY (staging_id) REFERENCES page_body_stagings(id) ON DELETE CASCADE",
       "page_versions.page_versions_body_chk": "c CHECK ((((body_storage = 'inline'::text) AND (compiled_truth IS NOT NULL)) OR ((body_storage = 'segmented'::text) AND (compiled_truth IS NULL) AND (timeline IS NULL) AND (body_generation IS NOT NULL))))",
       "page_versions.page_versions_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "page_versions.page_versions_pkey": "p PRIMARY KEY (id)",
@@ -394,7 +409,7 @@
       "persistence_requests.persistence_requests_principal_kind_principal_id_request_id_key": "u UNIQUE (principal_kind, principal_id, request_id)",
       "persistence_requests.persistence_requests_protocol_version_check": "c CHECK ((protocol_version = ANY (ARRAY[1, 2])))",
       "persistence_requests.persistence_requests_sequence_key": "u UNIQUE (sequence)",
-      "persistence_requests.persistence_requests_state_check": "c CHECK ((state = ANY (ARRAY['queued'::text, 'deferred'::text, 'running'::text, 'recovering'::text, 'committed'::text, 'conflict'::text, 'failed'::text, 'cancelled'::text])))",
+      "persistence_requests.persistence_requests_state_check": "c CHECK ((state = ANY (ARRAY['queued'::text, 'deferred'::text, 'running'::text, 'recovering'::text, 'indexing'::text, 'committed'::text, 'conflict'::text, 'failed'::text, 'cancelled'::text])))",
       "persistence_requests.persistence_requests_target_kind_check": "c CHECK ((target_kind = ANY (ARRAY['page'::text, 'skill_bundle'::text])))",
       "persistence_requests.persistence_requests_worktree_id_fkey": "f FOREIGN KEY (worktree_id) REFERENCES persistence_worktrees(id)",
       "persistence_source_bindings.persistence_source_bindings_pkey": "p PRIMARY KEY (source_id)",
@@ -613,6 +628,7 @@
       "gbrain_guard_protocol_activation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=bb477ec66ecac06e6edba773a94a2834ef4286a0b9e5cfa8b9b8646e003b0b9e",
       "gbrain_guard_request_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=2709686143e064b577e2b3c8e3e2b1009d52a836a2bc709f5f003a251eb004d2",
       "gbrain_guard_skill_publication()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=e854c0d058e75a65c3a90127c5c417380975100e83fc34288f6085e786df10a9",
+      "gbrain_index_effect_barrier()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=729018586c268bb55b9b6670620df67c26a7316bc4d4f252c58f40a6eb466d83",
       "gbrain_lease_shared_skill_delivery()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=5e493c1ac8dce8cb025a736629e563437c4b214744137c302c532c20bf7e7acf",
       "gbrain_mark_derivation_scope_entry()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=72ac0027fd37ecc4c72ad2e294ae3a98564736339b9ac917ea5d4112ec3cd35f",
       "gbrain_preserve_fact_withdrawal()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=9beb118551a08451a228146373f50f2aa2ce0cfe89937e937d361b33224aa0aa",
@@ -941,6 +957,9 @@
       "page_mention_state": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "page_pending_heads": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "page_projection_jobs": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -960,6 +979,12 @@
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "page_segment_texts": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "page_upload_spool_parts": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "page_upload_spools": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "page_versions": [
@@ -1498,6 +1523,8 @@
       "page_generation_clock_pkey": "CREATE UNIQUE INDEX page_generation_clock_pkey ON public.page_generation_clock USING btree (id)",
       "page_mention_state_pkey": "CREATE UNIQUE INDEX page_mention_state_pkey ON public.page_mention_state USING btree (page_id)",
       "page_mention_state_source_idx": "CREATE INDEX page_mention_state_source_idx ON public.page_mention_state USING btree (source_id, mention_version)",
+      "page_pending_heads_pkey": "CREATE UNIQUE INDEX page_pending_heads_pkey ON public.page_pending_heads USING btree (source_id, slug)",
+      "page_pending_heads_request": "CREATE INDEX page_pending_heads_request ON public.page_pending_heads USING btree (request_id)",
       "page_projection_jobs_pkey": "CREATE UNIQUE INDEX page_projection_jobs_pkey ON public.page_projection_jobs USING btree (source_incarnation, slug)",
       "page_purges_pkey": "CREATE UNIQUE INDEX page_purges_pkey ON public.page_purges USING btree (source_id, content_hash)",
       "page_retrievals_pkey": "CREATE UNIQUE INDEX page_retrievals_pkey ON public.page_retrievals USING btree (page_id)",
@@ -1507,6 +1534,9 @@
       "page_segment_derivations_pkey": "CREATE UNIQUE INDEX page_segment_derivations_pkey ON public.page_segment_derivations USING btree (page_id, pipeline, occurrence_id)",
       "page_segment_derivations_unsettled": "CREATE INDEX page_segment_derivations_unsettled ON public.page_segment_derivations USING btree (pipeline, page_id) WHERE (state = ANY (ARRAY['partial'::text, 'failed'::text]))",
       "page_segment_texts_pkey": "CREATE UNIQUE INDEX page_segment_texts_pkey ON public.page_segment_texts USING btree (source_id, sha256)",
+      "page_upload_spool_parts_pkey": "CREATE UNIQUE INDEX page_upload_spool_parts_pkey ON public.page_upload_spool_parts USING btree (staging_id, part_no)",
+      "page_upload_spools_pkey": "CREATE UNIQUE INDEX page_upload_spools_pkey ON public.page_upload_spools USING btree (staging_id)",
+      "page_upload_spools_present": "CREATE INDEX page_upload_spools_present ON public.page_upload_spools USING btree (host_id) WHERE (removed_at IS NULL)",
       "page_versions_pkey": "CREATE UNIQUE INDEX page_versions_pkey ON public.page_versions USING btree (id)",
       "page_view_digests_pkey": "CREATE UNIQUE INDEX page_view_digests_pkey ON public.page_view_digests USING btree (page_id, revision, view, audience)",
       "page_write_guards_pkey": "CREATE UNIQUE INDEX page_write_guards_pkey ON public.page_write_guards USING btree (source_incarnation, slug)",
@@ -3361,6 +3391,29 @@
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
+      "page_pending_heads": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 slug text/text NOT NULL",
+          "3 page_id integer/int4 NULL",
+          "4 request_id uuid/uuid NOT NULL",
+          "5 commit_oid text/text NOT NULL",
+          "6 head_oid text/text NOT NULL",
+          "7 path text/text NOT NULL",
+          "8 revision uuid/uuid NOT NULL",
+          "9 body_bytes bigint/int8 NOT NULL",
+          "10 body_sha256 bytea/bytea NOT NULL",
+          "11 tail_sha256 bytea/bytea NULL",
+          "12 title text/text NULL",
+          "13 type text/text NULL",
+          "14 frontmatter jsonb/jsonb NULL",
+          "15 lead_text text/text NULL",
+          "16 access_state text/text NOT NULL DEFAULT 'world'::text",
+          "17 hold_code text/text NULL",
+          "18 queued_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
       "page_projection_jobs": {
         "columns": [
           "1 source_incarnation uuid/uuid NOT NULL",
@@ -3440,6 +3493,25 @@
           "4 line_count integer/int4 NOT NULL",
           "5 body bytea/bytea NOT NULL",
           "6 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "page_upload_spool_parts": {
+        "columns": [
+          "1 staging_id uuid/uuid NOT NULL",
+          "2 part_no integer/int4 NOT NULL",
+          "3 byte_start bigint/int8 NOT NULL",
+          "4 byte_len integer/int4 NOT NULL",
+          "5 sha256 bytea/bytea NOT NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "page_upload_spools": {
+        "columns": [
+          "1 staging_id uuid/uuid NOT NULL",
+          "2 host_id uuid/uuid NOT NULL",
+          "3 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "4 removed_at timestamp with time zone/timestamptz NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -3552,7 +3624,8 @@
           "54 withheld_source_path text/text NULL",
           "55 page_readers ARRAY/_text NULL",
           "56 folder_rule_ids ARRAY/_text NULL",
-          "57 version_history_gap_at timestamp with time zone/timestamptz NULL"
+          "57 version_history_gap_at timestamp with time zone/timestamptz NULL",
+          "58 indexed_commit text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -4636,6 +4709,7 @@
       "pages.trust_tier_stamp": "CREATE TRIGGER trust_tier_stamp BEFORE INSERT OR UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_stamp_trust_tier()",
       "persistence_brain.gbrain_protocol_activation": "CREATE TRIGGER gbrain_protocol_activation BEFORE UPDATE ON public.persistence_brain FOR EACH ROW EXECUTE FUNCTION gbrain_guard_protocol_activation()",
       "persistence_effects.gbrain_effect_protocol": "CREATE TRIGGER gbrain_effect_protocol BEFORE INSERT OR DELETE OR UPDATE ON public.persistence_effects FOR EACH ROW EXECUTE FUNCTION gbrain_guard_effect_protocol()",
+      "persistence_effects.persistence_effects_index_barrier": "CREATE TRIGGER persistence_effects_index_barrier BEFORE INSERT OR UPDATE OF next_attempt_at ON public.persistence_effects FOR EACH ROW WHEN ((new.kind = 'index-split-page'::text)) EXECUTE FUNCTION gbrain_index_effect_barrier()",
       "persistence_requests.gbrain_request_deferred": "CREATE TRIGGER gbrain_request_deferred BEFORE UPDATE OF state ON public.persistence_requests FOR EACH ROW WHEN (((old.state = 'deferred'::text) OR (new.state = 'deferred'::text))) EXECUTE FUNCTION gbrain_guard_deferred_request()",
       "persistence_requests.gbrain_request_protocol": "CREATE TRIGGER gbrain_request_protocol BEFORE INSERT OR DELETE OR UPDATE ON public.persistence_requests FOR EACH ROW EXECUTE FUNCTION gbrain_guard_request_protocol()",
       "persistence_worktree_refreshes.gbrain_refresh_release": "CREATE TRIGGER gbrain_refresh_release BEFORE UPDATE OF state ON public.persistence_worktree_refreshes FOR EACH ROW WHEN (((new.state = ANY (ARRAY['completed'::text, 'aborted'::text])) AND (old.state <> ALL (ARRAY['completed'::text, 'aborted'::text])))) EXECUTE FUNCTION gbrain_release_refresh_barrier()",

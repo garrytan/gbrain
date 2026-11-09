@@ -15,6 +15,7 @@ import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
+import { storedPageTier } from '../trust/page-write.ts';
 import { INDEX_SPLIT_PAGE_EFFECT } from './git-first-gate.ts';
 import type { WriteRequest } from './model.ts';
 import { headBlob } from './pending-import.ts';
@@ -45,6 +46,8 @@ export interface IndexReceipt {
   revision?: string;
   hold_code?: string;
   superseded_by?: string;
+  /** A later commit of the page's path replaced the committed bytes before they were indexed (index-split-page.ts). */
+  superseded_by_commit?: string;
 }
 
 /**
@@ -67,9 +70,13 @@ export async function queueIndexFromGit(tx: BrainEngine, row: WriteRequest, inde
       hold_code = NULL, queued_at = now()`,
   [row.source_id, row.slug, snapshot?.page.id ?? null, row.id, commit, headOid, rel, revision, bytes.byteLength,
     createHash('sha256').update(bytes).digest('hex'), index.title, index.type, JSON.stringify(index.frontmatter), pendingLead(content)]);
+  // 1I review M3: the page's tier and revision before this write, so the flip files the lower_page proposal the write's own
+  // apply would have filed (recordAgentPageLowering, CEO-12) when the committed head lowers the page.
+  const priorTier = snapshot && !snapshot.page.deleted_at ? await storedPageTier(tx, row.source_id, row.slug) : null;
+  const lowering = priorTier ? { operation: row.operation, tier: priorTier, revision: snapshot!.revision } : undefined;
   await tx.executeRaw(`INSERT INTO persistence_effects (request_id, kind, revision, data, source_id, source_incarnation, worktree_id)
     VALUES ($1::uuid, $2, NULL, $3::text::jsonb, $4, $5::uuid, $6::uuid) ON CONFLICT (request_id, kind) DO NOTHING`,
-  [row.id, INDEX_SPLIT_PAGE_EFFECT, JSON.stringify({ slug: row.slug, commit, head_oid: headOid, path: rel, pending_revision: revision }),
+  [row.id, INDEX_SPLIT_PAGE_EFFECT, JSON.stringify({ slug: row.slug, commit, head_oid: headOid, path: rel, pending_revision: revision, ...(lowering ? { lowering } : {}) }),
     row.source_id, row.source_incarnation, row.worktree_id]);
   return { state: 'pending', commit, revision };
 }
@@ -95,13 +102,51 @@ export async function clearPendingHeads(tx: Pick<BrainEngine, 'executeRaw'>, sou
 
 /**
  * `index_pending`: the page's newest committed head is not indexed yet, so the database still shows the generation before
- * it. Retryable: the index step flips it shortly, and the committed write's receipt shows when.
+ * it. Retryable: the index step flips it shortly, and the committed write's receipt shows when. A head the index step
+ * held (a content cause) does not flip by waiting: that refusal is `index_held`, not retryable, with the rebuild preview.
  */
-export function indexPendingError(slug: string, requestId: string): OperationError {
+export function indexPendingError(slug: string, pending: Pick<PendingHead, 'request_id' | 'source_id' | 'hold_code'>): OperationError {
+  const requestId = pending.request_id;
+  if (pending.hold_code) {
+    return opError('index_held', `Page ${slug} has a committed write (request ${requestId}) whose index step held on ${pending.hold_code}, so its rows show the generation before it and this write was not applied to them; nothing was written.`,
+      `Rebuild the page from its committed head first: gbrain pages reindex ${slug} --source ${pending.source_id} --from-git --dry-run, then --apply --expect <hash>; then read the page again and submit the write with a new request_id.`,
+      { fix: { argv: ['gbrain', 'pages', 'reindex', slug, '--source', pending.source_id, '--from-git', '--dry-run', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
+        why: 'Read-only: compares the database with the committed head and prints the --expect hash the rebuild binds to.' } });
+  }
   return opError('index_pending', `Page ${slug} has a committed write (request ${requestId}) that is not indexed yet, so this write was not applied to stale rows; nothing was written.`,
     'Wait a few seconds for the index step, then read the page again and submit the write with a new request_id.',
     { fix: { argv: ['gbrain', 'write-request', '--', requestId], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Read-only: the committed write\'s receipt says when its index step has flipped the page.' } });
+}
+
+/**
+ * Wave C 1I-a: a managed import of the page's canonical file as Git holds it (its input is the file itself), which is
+ * how the index step derives the rows; it is not refused while the page's index is pending.
+ */
+export function importsCommittedFile(row: { intent?: Record<string, unknown> | null }): boolean {
+  const intent = row.intent;
+  return intent?.kind === 'managed_file_import' && typeof intent.inputHash === 'string' && intent.inputHash === intent.targetHash;
+}
+
+/**
+ * Wave C (ceo-r3-outside-1): while another write's committed head waits for its index, the page's rows describe the
+ * generation before it, so a write prepared from them would drop the committed write from Git; it refuses index_pending
+ * (retryable) until the flip. A delete removes access rather than adding content (spec §3.1 step 7) and applies, the
+ * index step's own import of the committed file is never refused, and neither is a write prepared against that head
+ * (`supersedes`, page-prepare.ts supersedesPending).
+ */
+export async function assertNoPendingIndex(tx: Pick<BrainEngine, 'executeRaw'>, row: Pick<WriteRequest, 'id' | 'source_id' | 'slug' | 'operation' | 'intent'>,
+  supersedes?: string, removesFile = false): Promise<void> {
+  if (row.operation === 'delete_page' || removesFile || importsCommittedFile(row)) return;
+  const pending = await readPendingHead(tx, row.source_id, row.slug);
+  if (pending && pending.request_id !== row.id && pending.request_id !== supersedes) throw indexPendingError(row.slug, pending);
+}
+
+/** After a door publication that is not itself indexed: the pages it replaced or removed lose their pending heads. */
+export async function clearPublishedPendingHeads(tx: Pick<BrainEngine, 'executeRaw'>, row: Pick<WriteRequest, 'source_id' | 'slug' | 'intent'>,
+  additional: readonly { sourceId: string; slug: string }[] = []): Promise<void> {
+  if (importsCommittedFile(row)) return;
+  await clearPendingHeads(tx, row.source_id, [row.slug, ...additional.filter(key => key.sourceId === row.source_id).map(key => key.slug)]);
 }
 
 /**
@@ -112,6 +157,6 @@ export function indexPendingError(slug: string, requestId: string): OperationErr
  */
 export function pendingPrecondition(slug: string, pending: PendingHead, rowsRevision: string | null | undefined, expected: unknown): string {
   const named = typeof expected === 'string' ? expected.toLowerCase() : null;
-  if (named !== null && named === rowsRevision && named !== pending.revision) throw indexPendingError(slug, pending.request_id);
+  if (named !== null && named === rowsRevision && named !== pending.revision) throw indexPendingError(slug, pending);
   return pending.revision;
 }
