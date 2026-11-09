@@ -31,63 +31,64 @@ import f28 from '../../../skills/conventions/cron-via-minions.md' with { type: '
 import f29 from '../../../skills/conventions/cross-modal.yaml' with { type: 'text' };
 import f30 from '../../../skills/conventions/exec-output.md' with { type: 'text' };
 import f31 from '../../../skills/conventions/model-routing.md' with { type: 'text' };
-import f32 from '../../../skills/conventions/quality.md' with { type: 'text' };
-import f33 from '../../../skills/conventions/regex-discipline.md' with { type: 'text' };
-import f34 from '../../../skills/conventions/schema-evolution.md' with { type: 'text' };
-import f35 from '../../../skills/conventions/subagent-routing.md' with { type: 'text' };
-import f36 from '../../../skills/conventions/test-before-bulk.md' with { type: 'text' };
-import f37 from '../../../skills/conventions/untrusted-content.md' with { type: 'text' };
-import f38 from '../../../skills/conversation-archive/SKILL.md' with { type: 'text' };
-import f39 from '../../../skills/correction-pipeline/SKILL.md' with { type: 'text' };
-import f40 from '../../../skills/cron-scheduler/SKILL.md' with { type: 'text' };
-import f41 from '../../../skills/cross-modal-review/SKILL.md' with { type: 'text' };
-import f42 from '../../../skills/daily-task-manager/SKILL.md' with { type: 'text' };
-import f43 from '../../../skills/daily-task-prep/SKILL.md' with { type: 'text' };
-import f44 from '../../../skills/data-loss-gate/SKILL.md' with { type: 'text' };
-import f45 from '../../../skills/data-research/SKILL.md' with { type: 'text' };
-import f46 from '../../../skills/db-repair/SKILL.md' with { type: 'text' };
-import f47 from '../../../skills/draft-in-voice/SKILL.md' with { type: 'text' };
-import f48 from '../../../skills/eiirp/SKILL.md' with { type: 'text' };
-import f49 from '../../../skills/enrich/SKILL.md' with { type: 'text' };
-import f50 from '../../../skills/fact-check/SKILL.md' with { type: 'text' };
-import f51 from '../../../skills/frontmatter-guard/SKILL.md' with { type: 'text' };
-import f52 from '../../../skills/functional-area-resolver/SKILL.md' with { type: 'text' };
-import f53 from '../../../skills/gbrain-advisor/SKILL.md' with { type: 'text' };
-import f54 from '../../../skills/gbrain-upgrade/SKILL.md' with { type: 'text' };
-import f55 from '../../../skills/google-loops/SKILL.md' with { type: 'text' };
-import f56 from '../../../skills/idea-ingest/SKILL.md' with { type: 'text' };
-import f57 from '../../../skills/idea-lineage/SKILL.md' with { type: 'text' };
-import f58 from '../../../skills/ingest/SKILL.md' with { type: 'text' };
-import f59 from '../../../skills/maintain/SKILL.md' with { type: 'text' };
-import f60 from '../../../skills/mcp-access/SKILL.md' with { type: 'text' };
-import f61 from '../../../skills/measure-before-you-fix/SKILL.md' with { type: 'text' };
-import f62 from '../../../skills/media-ingest/SKILL.md' with { type: 'text' };
-import f63 from '../../../skills/meeting-ingestion/SKILL.md' with { type: 'text' };
-import f64 from '../../../skills/migrate/SKILL.md' with { type: 'text' };
-import f65 from '../../../skills/minion-orchestrator/SKILL.md' with { type: 'text' };
-import f66 from '../../../skills/perplexity-research/SKILL.md' with { type: 'text' };
-import f67 from '../../../skills/postgres-adopt/SKILL.md' with { type: 'text' };
-import f68 from '../../../skills/publish/SKILL.md' with { type: 'text' };
-import f69 from '../../../skills/query/SKILL.md' with { type: 'text' };
-import f70 from '../../../skills/remote-mcp/SKILL.md' with { type: 'text' };
-import f71 from '../../../skills/repo-architecture/SKILL.md' with { type: 'text' };
-import f72 from '../../../skills/reports/SKILL.md' with { type: 'text' };
-import f73 from '../../../skills/research-compendium/SKILL.md' with { type: 'text' };
-import f74 from '../../../skills/resolve-before-asking/SKILL.md' with { type: 'text' };
-import f75 from '../../../skills/schema-author/SKILL.md' with { type: 'text' };
-import f76 from '../../../skills/schema-unify/SKILL.md' with { type: 'text' };
-import f77 from '../../../skills/setup/SKILL.md' with { type: 'text' };
-import f78 from '../../../skills/signal-detector/SKILL.md' with { type: 'text' };
-import f79 from '../../../skills/skill-creator/SKILL.md' with { type: 'text' };
-import f80 from '../../../skills/skill-optimizer/SKILL.md' with { type: 'text' };
-import f81 from '../../../skills/skill-optimizer/skillopt-benchmark.jsonl' with { type: 'text' };
-import f82 from '../../../skills/skillpack-check/SKILL.md' with { type: 'text' };
-import f83 from '../../../skills/smoke-test/SKILL.md' with { type: 'text' };
-import f84 from '../../../skills/soul-audit/SKILL.md' with { type: 'text' };
-import f85 from '../../../skills/strategic-reading/SKILL.md' with { type: 'text' };
-import f86 from '../../../skills/two-tier-extraction/SKILL.md' with { type: 'text' };
-import f87 from '../../../skills/voice-note-ingest/SKILL.md' with { type: 'text' };
-import f88 from '../../../skills/webhook-transforms/SKILL.md' with { type: 'text' };
+import f32 from '../../../skills/conventions/page-privacy.md' with { type: 'text' };
+import f33 from '../../../skills/conventions/quality.md' with { type: 'text' };
+import f34 from '../../../skills/conventions/regex-discipline.md' with { type: 'text' };
+import f35 from '../../../skills/conventions/schema-evolution.md' with { type: 'text' };
+import f36 from '../../../skills/conventions/subagent-routing.md' with { type: 'text' };
+import f37 from '../../../skills/conventions/test-before-bulk.md' with { type: 'text' };
+import f38 from '../../../skills/conventions/untrusted-content.md' with { type: 'text' };
+import f39 from '../../../skills/conversation-archive/SKILL.md' with { type: 'text' };
+import f40 from '../../../skills/correction-pipeline/SKILL.md' with { type: 'text' };
+import f41 from '../../../skills/cron-scheduler/SKILL.md' with { type: 'text' };
+import f42 from '../../../skills/cross-modal-review/SKILL.md' with { type: 'text' };
+import f43 from '../../../skills/daily-task-manager/SKILL.md' with { type: 'text' };
+import f44 from '../../../skills/daily-task-prep/SKILL.md' with { type: 'text' };
+import f45 from '../../../skills/data-loss-gate/SKILL.md' with { type: 'text' };
+import f46 from '../../../skills/data-research/SKILL.md' with { type: 'text' };
+import f47 from '../../../skills/db-repair/SKILL.md' with { type: 'text' };
+import f48 from '../../../skills/draft-in-voice/SKILL.md' with { type: 'text' };
+import f49 from '../../../skills/eiirp/SKILL.md' with { type: 'text' };
+import f50 from '../../../skills/enrich/SKILL.md' with { type: 'text' };
+import f51 from '../../../skills/fact-check/SKILL.md' with { type: 'text' };
+import f52 from '../../../skills/frontmatter-guard/SKILL.md' with { type: 'text' };
+import f53 from '../../../skills/functional-area-resolver/SKILL.md' with { type: 'text' };
+import f54 from '../../../skills/gbrain-advisor/SKILL.md' with { type: 'text' };
+import f55 from '../../../skills/gbrain-upgrade/SKILL.md' with { type: 'text' };
+import f56 from '../../../skills/google-loops/SKILL.md' with { type: 'text' };
+import f57 from '../../../skills/idea-ingest/SKILL.md' with { type: 'text' };
+import f58 from '../../../skills/idea-lineage/SKILL.md' with { type: 'text' };
+import f59 from '../../../skills/ingest/SKILL.md' with { type: 'text' };
+import f60 from '../../../skills/maintain/SKILL.md' with { type: 'text' };
+import f61 from '../../../skills/mcp-access/SKILL.md' with { type: 'text' };
+import f62 from '../../../skills/measure-before-you-fix/SKILL.md' with { type: 'text' };
+import f63 from '../../../skills/media-ingest/SKILL.md' with { type: 'text' };
+import f64 from '../../../skills/meeting-ingestion/SKILL.md' with { type: 'text' };
+import f65 from '../../../skills/migrate/SKILL.md' with { type: 'text' };
+import f66 from '../../../skills/minion-orchestrator/SKILL.md' with { type: 'text' };
+import f67 from '../../../skills/perplexity-research/SKILL.md' with { type: 'text' };
+import f68 from '../../../skills/postgres-adopt/SKILL.md' with { type: 'text' };
+import f69 from '../../../skills/publish/SKILL.md' with { type: 'text' };
+import f70 from '../../../skills/query/SKILL.md' with { type: 'text' };
+import f71 from '../../../skills/remote-mcp/SKILL.md' with { type: 'text' };
+import f72 from '../../../skills/repo-architecture/SKILL.md' with { type: 'text' };
+import f73 from '../../../skills/reports/SKILL.md' with { type: 'text' };
+import f74 from '../../../skills/research-compendium/SKILL.md' with { type: 'text' };
+import f75 from '../../../skills/resolve-before-asking/SKILL.md' with { type: 'text' };
+import f76 from '../../../skills/schema-author/SKILL.md' with { type: 'text' };
+import f77 from '../../../skills/schema-unify/SKILL.md' with { type: 'text' };
+import f78 from '../../../skills/setup/SKILL.md' with { type: 'text' };
+import f79 from '../../../skills/signal-detector/SKILL.md' with { type: 'text' };
+import f80 from '../../../skills/skill-creator/SKILL.md' with { type: 'text' };
+import f81 from '../../../skills/skill-optimizer/SKILL.md' with { type: 'text' };
+import f82 from '../../../skills/skill-optimizer/skillopt-benchmark.jsonl' with { type: 'text' };
+import f83 from '../../../skills/skillpack-check/SKILL.md' with { type: 'text' };
+import f84 from '../../../skills/smoke-test/SKILL.md' with { type: 'text' };
+import f85 from '../../../skills/soul-audit/SKILL.md' with { type: 'text' };
+import f86 from '../../../skills/strategic-reading/SKILL.md' with { type: 'text' };
+import f87 from '../../../skills/two-tier-extraction/SKILL.md' with { type: 'text' };
+import f88 from '../../../skills/voice-note-ingest/SKILL.md' with { type: 'text' };
+import f89 from '../../../skills/webhook-transforms/SKILL.md' with { type: 'text' };
 
 export interface BundledSkillMeta { name: string; audience: 'owner' | 'downstream'; assets: string[] }
 
@@ -227,6 +228,7 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
       "conventions/cron-via-minions.md",
+      "conventions/page-privacy.md",
       "conventions/quality.md",
       "conventions/subagent-routing.md",
       "conventions/test-before-bulk.md",
@@ -444,6 +446,7 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "owner",
     "assets": [
       "conventions/agent-operator-protocol.md",
+      "conventions/page-privacy.md",
       "conventions/quality.md"
     ]
   },
@@ -798,61 +801,62 @@ export const BUNDLED_SKILL_FILES: Readonly<Record<string, string>> = {
   "conventions/cross-modal.yaml": f29,
   "conventions/exec-output.md": f30,
   "conventions/model-routing.md": f31,
-  "conventions/quality.md": f32,
-  "conventions/regex-discipline.md": f33,
-  "conventions/schema-evolution.md": f34,
-  "conventions/subagent-routing.md": f35,
-  "conventions/test-before-bulk.md": f36,
-  "conventions/untrusted-content.md": f37,
-  "conversation-archive/SKILL.md": f38,
-  "correction-pipeline/SKILL.md": f39,
-  "cron-scheduler/SKILL.md": f40,
-  "cross-modal-review/SKILL.md": f41,
-  "daily-task-manager/SKILL.md": f42,
-  "daily-task-prep/SKILL.md": f43,
-  "data-loss-gate/SKILL.md": f44,
-  "data-research/SKILL.md": f45,
-  "db-repair/SKILL.md": f46,
-  "draft-in-voice/SKILL.md": f47,
-  "eiirp/SKILL.md": f48,
-  "enrich/SKILL.md": f49,
-  "fact-check/SKILL.md": f50,
-  "frontmatter-guard/SKILL.md": f51,
-  "functional-area-resolver/SKILL.md": f52,
-  "gbrain-advisor/SKILL.md": f53,
-  "gbrain-upgrade/SKILL.md": f54,
-  "google-loops/SKILL.md": f55,
-  "idea-ingest/SKILL.md": f56,
-  "idea-lineage/SKILL.md": f57,
-  "ingest/SKILL.md": f58,
-  "maintain/SKILL.md": f59,
-  "mcp-access/SKILL.md": f60,
-  "measure-before-you-fix/SKILL.md": f61,
-  "media-ingest/SKILL.md": f62,
-  "meeting-ingestion/SKILL.md": f63,
-  "migrate/SKILL.md": f64,
-  "minion-orchestrator/SKILL.md": f65,
-  "perplexity-research/SKILL.md": f66,
-  "postgres-adopt/SKILL.md": f67,
-  "publish/SKILL.md": f68,
-  "query/SKILL.md": f69,
-  "remote-mcp/SKILL.md": f70,
-  "repo-architecture/SKILL.md": f71,
-  "reports/SKILL.md": f72,
-  "research-compendium/SKILL.md": f73,
-  "resolve-before-asking/SKILL.md": f74,
-  "schema-author/SKILL.md": f75,
-  "schema-unify/SKILL.md": f76,
-  "setup/SKILL.md": f77,
-  "signal-detector/SKILL.md": f78,
-  "skill-creator/SKILL.md": f79,
-  "skill-optimizer/SKILL.md": f80,
-  "skill-optimizer/skillopt-benchmark.jsonl": f81,
-  "skillpack-check/SKILL.md": f82,
-  "smoke-test/SKILL.md": f83,
-  "soul-audit/SKILL.md": f84,
-  "strategic-reading/SKILL.md": f85,
-  "two-tier-extraction/SKILL.md": f86,
-  "voice-note-ingest/SKILL.md": f87,
-  "webhook-transforms/SKILL.md": f88,
+  "conventions/page-privacy.md": f32,
+  "conventions/quality.md": f33,
+  "conventions/regex-discipline.md": f34,
+  "conventions/schema-evolution.md": f35,
+  "conventions/subagent-routing.md": f36,
+  "conventions/test-before-bulk.md": f37,
+  "conventions/untrusted-content.md": f38,
+  "conversation-archive/SKILL.md": f39,
+  "correction-pipeline/SKILL.md": f40,
+  "cron-scheduler/SKILL.md": f41,
+  "cross-modal-review/SKILL.md": f42,
+  "daily-task-manager/SKILL.md": f43,
+  "daily-task-prep/SKILL.md": f44,
+  "data-loss-gate/SKILL.md": f45,
+  "data-research/SKILL.md": f46,
+  "db-repair/SKILL.md": f47,
+  "draft-in-voice/SKILL.md": f48,
+  "eiirp/SKILL.md": f49,
+  "enrich/SKILL.md": f50,
+  "fact-check/SKILL.md": f51,
+  "frontmatter-guard/SKILL.md": f52,
+  "functional-area-resolver/SKILL.md": f53,
+  "gbrain-advisor/SKILL.md": f54,
+  "gbrain-upgrade/SKILL.md": f55,
+  "google-loops/SKILL.md": f56,
+  "idea-ingest/SKILL.md": f57,
+  "idea-lineage/SKILL.md": f58,
+  "ingest/SKILL.md": f59,
+  "maintain/SKILL.md": f60,
+  "mcp-access/SKILL.md": f61,
+  "measure-before-you-fix/SKILL.md": f62,
+  "media-ingest/SKILL.md": f63,
+  "meeting-ingestion/SKILL.md": f64,
+  "migrate/SKILL.md": f65,
+  "minion-orchestrator/SKILL.md": f66,
+  "perplexity-research/SKILL.md": f67,
+  "postgres-adopt/SKILL.md": f68,
+  "publish/SKILL.md": f69,
+  "query/SKILL.md": f70,
+  "remote-mcp/SKILL.md": f71,
+  "repo-architecture/SKILL.md": f72,
+  "reports/SKILL.md": f73,
+  "research-compendium/SKILL.md": f74,
+  "resolve-before-asking/SKILL.md": f75,
+  "schema-author/SKILL.md": f76,
+  "schema-unify/SKILL.md": f77,
+  "setup/SKILL.md": f78,
+  "signal-detector/SKILL.md": f79,
+  "skill-creator/SKILL.md": f80,
+  "skill-optimizer/SKILL.md": f81,
+  "skill-optimizer/skillopt-benchmark.jsonl": f82,
+  "skillpack-check/SKILL.md": f83,
+  "smoke-test/SKILL.md": f84,
+  "soul-audit/SKILL.md": f85,
+  "strategic-reading/SKILL.md": f86,
+  "two-tier-extraction/SKILL.md": f87,
+  "voice-note-ingest/SKILL.md": f88,
+  "webhook-transforms/SKILL.md": f89,
 };

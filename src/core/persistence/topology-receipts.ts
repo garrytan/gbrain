@@ -35,19 +35,11 @@ export async function recordTopologyChange(tx:BrainEngine, input:{principal:stri
   for(const counter of counters){
     const brain=counter.key==='brain';
     if(!counter.key.startsWith('worktree:')){
+      await assertQuota(tx,counter,limits,terminalBytes,input);
       if(recovery && (Number(counter.outstanding_count)+1>(brain?limits.brainOutstanding:limits.principalOutstanding)
         ||Number(counter.intent_bytes)+intentBytes>(brain?limits.brainIntentBytes:limits.principalIntentBytes)))
         throw opError('queue_capacity','Pending lifecycle work exceeds available brain/principal request or intent capacity.',
           `Too much lifecycle work is still pending, so the ${input.operation} of source ${input.sourceId} was not accepted. Let the pending work settle, then submit it again; raising ${journalLimitKey(brain?'brainOutstanding':'principalOutstanding')} is the user's call.`, { fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', input.sourceId, '--json'], consent: [], actor: 'agent', why: 'Shows the pending lifecycle and recovery work that holds this capacity.', requires_exclusive: false } });
-      if(Number(counter.lifetime_ids)+1>(brain?limits.brainLifetimeIds:limits.principalLifetimeIds)
-        ||Number(counter.terminal_bytes)+terminalBytes>(brain?limits.brainTerminalBytes:limits.principalTerminalBytes))
-      {
-        const ids=Number(counter.lifetime_ids)+1>(brain?limits.brainLifetimeIds:limits.principalLifetimeIds);
-        const setting=`${brain?'brain':'principal'}${ids?'LifetimeIds':'TerminalBytes'}` as const;
-        const used=Number(ids?counter.lifetime_ids:counter.terminal_bytes);
-        throw quotaExhausted(`${brain?'brain':'principal'} ${ids?'permanent request IDs':'reserved receipt bytes'} (lifecycle ${input.operation} of source ${input.sourceId})`,
-          journalLimitKey(setting),await oneYearCapacity(tx,counter.key,ids?'LifetimeIds':'TerminalBytes',used,limits[setting]),used,limits[setting],ids?'lifetime_ids':'terminal_bytes');
-      }
     }
     if(recoveryBytes && counter.key!==key && Number(counter.recovery_bytes)+recoveryBytes>(brain?limits.brainRecoveryBytes:limits.worktreeRecoveryBytes))
       throw opError('queue_capacity','The lifecycle recovery exceeds available brain/worktree capacity.',
@@ -64,6 +56,23 @@ export async function recordTopologyChange(tx:BrainEngine, input:{principal:stri
     if(recoveryBytes && counter.key!==key) await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes+$2 WHERE key=$1',[counter.key,recoveryBytes]);
   }
   return row;
+}
+type JournalLimits=Awaited<ReturnType<typeof readJournalLimits>>;
+type Counter=Awaited<ReturnType<typeof lockCounters>>[number];
+async function assertQuota(tx:BrainEngine,counter:Counter,limits:JournalLimits,terminalBytes:number,input:{operation:string;sourceId:string}):Promise<void>{
+  const brain=counter.key==='brain';
+  const ids=Number(counter.lifetime_ids)+1>(brain?limits.brainLifetimeIds:limits.principalLifetimeIds);
+  if(!ids&&Number(counter.terminal_bytes)+terminalBytes<=(brain?limits.brainTerminalBytes:limits.principalTerminalBytes)) return;
+  const setting=`${brain?'brain':'principal'}${ids?'LifetimeIds':'TerminalBytes'}` as const;
+  const used=Number(ids?counter.lifetime_ids:counter.terminal_bytes);
+  throw quotaExhausted(`${brain?'brain':'principal'} ${ids?'permanent request IDs':'reserved receipt bytes'} (lifecycle ${input.operation} of source ${input.sourceId})`,
+    journalLimitKey(setting),await oneYearCapacity(tx,counter.key,ids?'LifetimeIds':'TerminalBytes',used,limits[setting]),used,limits[setting],ids?'lifetime_ids':'terminal_bytes');
+}
+/** #7702/#8905: the lifetime-ID and receipt-byte quotas recordTopologyChange enforces, at the largest receipt it can record, so a retire refuses before it deletes anything. */
+export async function assertTopologyChangeCapacity(tx:BrainEngine,input:{principal:string;operation:string;sourceId:string}):Promise<void>{
+  const limits=await readJournalLimits(tx);
+  for(const counter of await lockCounters(tx,['brain',principalKey({kind:'local_cli',id:input.principal})]))
+    await assertQuota(tx,counter,limits,receiptReservation({}),input);
 }
 /** Caller retains owner/source guards and completes final state in this same transaction. */
 export async function releaseTopologyReservation(tx:BrainEngine,row:TopologyChange):Promise<boolean>{

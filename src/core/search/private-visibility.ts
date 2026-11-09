@@ -31,6 +31,13 @@ import { validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
 /**
+ * GST-2059: the member who owns this brain (`gbrain access owner set <member>`). A remote credential or stdio server
+ * bound to that live member reads as the owner: its privacy is relaxed in every source its grant reads (CallerAccess.owner).
+ * Written only by the trusted local CLI, like mcp.stdio_member; unset, ill-formed or unreadable names no owner.
+ */
+export const OWNER_MEMBER_KEY = 'access.owner_member';
+
+/**
  * #5525 — extracted atoms and synthesized concept pages are derived from
  * other pages or from private transcripts, so a missing `visibility` field on
  * them means "origin unknown", not "world". Pinned-question pages (`type:
@@ -188,7 +195,14 @@ export function privatePagesFilterFragmentFast(pageAlias: string): string {
  *    no-grant floor, federation, an OAuth client's bound source or a request's
  *    `source_ids`); empty for writes;
  *  - hidePrivate: false only when an operator relaxed privacy for remote reads
- *    (GBRAIN_REMOTE_PRIVATE_PAGES=1 or search.remote_private_pages=visible);
+ *    (GBRAIN_REMOTE_PRIVATE_PAGES=1 or search.remote_private_pages=visible),
+ *    or the caller is the brain owner (owner);
+ *  - owner: GST-2059, the caller's credential (or stdio server) is bound to the
+ *    live member config access.owner_member names, and it asserts no audience
+ *    other than that member; never an attested actor. The owner sees
+ *    visibility: private pages, privacy aliases, derived and pinned-question
+ *    pages and private facts in every source its grant reads; member access
+ *    (readable_by, folder rules) stays mandatory;
  *  - restricted: false only inside a remote request on a brain whose config
  *    access.restrictions_present was unset when the request began. Then no
  *    page named readers at that moment and none predates the migration (v282
@@ -225,6 +239,7 @@ export interface CallerAccess {
   folderCoverage: readonly FolderCoverage[];
   privateReadableSources: readonly string[];
   hidePrivate: boolean;
+  owner: boolean;
   applyRemoteReadPolicy: boolean;
   restricted: boolean;
   /** The fresh remote policy (readRemotePolicyNow) a remote request read when it started; null outside one. */
@@ -235,7 +250,7 @@ const callerAccessStore = new AsyncLocalStorage<CallerAccess>();
 
 /** The current read's caller-access record (see CallerAccess). */
 export function currentCallerAccess(): CallerAccess {
-  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
+  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), owner: false, applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
 }
 
 /** Runs `fn` under `access` merged over the current record; an invalid identity or source id empties that set (fail closed). */
@@ -259,7 +274,8 @@ export function withCallerAccess<T>(access: Partial<CallerAccess>, fn: () => T):
     satisfiedRuleIds: satisfied.length && satisfied.every(validQualifiedRuleId) ? Object.freeze([...new Set(satisfied)].sort()) : Object.freeze([]),
     folderCoverage: Object.freeze([...(access.folderCoverage ?? base.folderCoverage)].map(c => Object.freeze({ source_id: c.source_id, prefix: c.prefix }))),
     privateReadableSources: sources.length && sources.every(isValidSourceId) ? Object.freeze([...new Set(sources)]) : Object.freeze([]),
-    hidePrivate: access.hidePrivate ?? base.hidePrivate,
+    hidePrivate: access.hidePrivate ?? (fresh ? true : base.hidePrivate),
+    owner: access.owner ?? (fresh ? false : base.owner),
     applyRemoteReadPolicy: access.applyRemoteReadPolicy ?? base.applyRemoteReadPolicy,
     restricted: access.restricted ?? base.restricted,
     remotePolicy: access.remotePolicy ?? base.remotePolicy,
@@ -279,6 +295,11 @@ export function withPrivateReadableSources<T>(sourceIds: readonly string[] | und
 /** The private-readable set of the current read; empty outside a granted remote read. */
 export function privateReadableSources(): readonly string[] {
   return currentCallerAccess().privateReadableSources;
+}
+
+/** GST-2059: is the current caller the brain owner (CallerAccess.owner)? False outside a remote record or a local --as of the owner. */
+export function callerIsOwner(): boolean {
+  return currentCallerAccess().owner;
 }
 
 /** The current caller's member identity; empty outside a bound remote read or a local --as, and for an audience of several entries (see callerIdentities). */
@@ -793,7 +814,7 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
   return expose;
 }
 
-export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean }
+export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean; ownerMember?: string | null }
 
 /**
  * The remote read policy read fresh, for publication: whether an operator
@@ -804,10 +825,10 @@ export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean }
  */
 export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<RemotePolicy> {
   try {
-    const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY]]);
+    const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY, OWNER_MEMBER_KEY]]);
     return remotePolicyFrom(Object.fromEntries(rows.map(r => [r.key, r.value])));
   } catch {
-    return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true };
+    return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true, ownerMember: null };
   }
 }
 
@@ -823,7 +844,9 @@ export async function requestRemotePolicy(engine: BrainEngine): Promise<RemotePo
 
 function remotePolicyFrom(config: Record<string, string>): RemotePolicy {
   const hatch = process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1';
-  return { privacyRelaxed: hatch || ['visible', 'true', '1'].includes(config[REMOTE_PRIVATE_PAGES_KEY] ?? ''), restricted: config[ACCESS_RESTRICTIONS_KEY] === '1' };
+  const owner = config[OWNER_MEMBER_KEY]?.trim();
+  return { privacyRelaxed: hatch || ['visible', 'true', '1'].includes(config[REMOTE_PRIVATE_PAGES_KEY] ?? ''), restricted: config[ACCESS_RESTRICTIONS_KEY] === '1',
+    ownerMember: owner && ACCESS_ID_RE.test(owner) ? owner : null };
 }
 
 /** GBRA-218: does this brain hold member-access restrictions? Read live (the request snapshot answers it inside a read); unreadable counts as yes. */

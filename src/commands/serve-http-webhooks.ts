@@ -563,7 +563,7 @@ async function handleIngest(
       return;
     }
     try {
-      await assertWebhookWriterMayReplace(engine, writer, writeSourceId, callerSlug);
+      await assertWebhookWriterMayReplace(engine, writer, writeSourceId, callerSlug, content);
     } catch (err) {
       if (!(err instanceof OperationError)) throw err;
       res.status(err.code === 'page_not_found' ? 404 : 403).json({ error: err.code, message: err.message });

@@ -118,8 +118,8 @@ export function rawPackageUrlForSpec(spec: string): string | null {
 
 /**
  * A package install's upgrade target: `package.json` at the ref its spec
- * installs (the default branch when unpinned). A null spec (a clawhub
- * install) reads the canonical repository's default branch.
+ * installs (the default branch when unpinned). A null spec reads the
+ * canonical repository's default branch.
  */
 export async function readPackageTarget(spec: string | null): Promise<TargetFloor> {
   const url = rawPackageUrlForSpec(spec ?? 'github:garrytan/gbrain');

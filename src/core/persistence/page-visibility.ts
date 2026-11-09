@@ -1,10 +1,10 @@
 import { opError } from '../ops/contract.ts';
-import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, readPolicyFragment, readRemotePolicyNow, withCallerAccess } from '../search/private-visibility.ts';
+import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, OWNER_MEMBER_KEY, readPolicyFragment, readRemotePolicyNow, withCallerAccess } from '../search/private-visibility.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { folderAccessForAll, memberIdentityFor, resolveAudienceIdentities } from '../access/caller.ts';
 import type { AudiencePrincipal } from '../access/audience.ts';
 import { parseStoredActor, storedActorIdentity } from '../access/actor.ts';
-import { hasReaders, normalizePrincipal, normalizeReaders, readersAllow, NOBODY } from '../access/principals.ts';
+import { ACCESS_ID_RE, hasReaders, normalizePrincipal, normalizeReaders, readersAllow, NOBODY } from '../access/principals.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import type { SqlEngine, WriteAuthority } from './model.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -162,15 +162,29 @@ export async function defaultSourceMemberWriter(engine: BrainEngine, authority: 
 }
 
 /**
- * GST-2051: the readers a page written by a default-source member writer (defaultSourceMemberWriter) keeps when its content
- * names none: the stored page's readers when it has them, else the writer alone for a page this write creates. An
- * existing page with no readers stays as it is. Only ever narrows: a page naming readers is left to the caller.
+ * GST-2059: whether a default-source member writer is the brain owner (config access.owner_member, an enabled member),
+ * whose new pages stay shared. A disabled or removed owner member is not the owner here, so its pages keep the stamp.
  */
-export function defaultSourceWriterReaders(writer: string | null, frontmatter: Record<string, unknown>, stored: { frontmatter?: unknown; deleted_at?: unknown } | null | undefined): void {
+export async function defaultSourceWriterIsOwner(engine: SqlEngine, writer: string | null): Promise<boolean> {
+  if (!writer) return false;
+  const [row] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [OWNER_MEMBER_KEY]);
+  const owner = row?.value?.trim();
+  if (!owner || !ACCESS_ID_RE.test(owner) || writer !== `member:${owner}`) return false;
+  const [live] = await engine.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE id = $1 AND disabled_at IS NULL AND tombstoned_at IS NULL', [owner]);
+  return !!live;
+}
+
+/**
+ * GST-2051: the readers a page written by a default-source member writer (defaultSourceMemberWriter) keeps when its content
+ * names none: the stored page's readers when it has them, else the writer alone for a page this write creates, unless
+ * the writer is the brain owner (GST-2059), whose new pages stay shared. An existing page with no readers stays as it
+ * is. Only ever narrows: a page naming readers is left to the caller.
+ */
+export function defaultSourceWriterReaders(writer: string | null, frontmatter: Record<string, unknown>, stored: { frontmatter?: unknown; deleted_at?: unknown } | null | undefined, owner = false): void {
   if (!writer || hasReaders(frontmatter)) return;
   const live = stored && stored.deleted_at == null ? stored : null;
   if (live && hasReaders(live.frontmatter)) frontmatter.readable_by = (live.frontmatter as Record<string, unknown>).readable_by;
-  else if (!live) frontmatter.readable_by = [writer];
+  else if (!live && !owner) frontmatter.readable_by = [writer];
 }
 
 /** The one refusal a remote writer gets for a target it may not see; other visibility refusals reuse it verbatim. */

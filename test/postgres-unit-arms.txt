@@ -22,6 +22,8 @@ test/access-member-facts.test.ts
 test/access-member-sweep.test.ts
 test/access-members.test.ts
 test/access-on-behalf-of.test.ts
+test/access-owner-default-writes.test.ts
+test/access-owner-reads.test.ts
 test/access-page-indexes-online.test.ts
 test/access-qm-actor.test.ts
 test/access-ungranted-member-writes.test.ts
@@ -143,6 +145,7 @@ test/import-frontmatter-key-order-5158.test.ts
 test/import-inline-chunk-keep.test.ts
 test/import-revision-concurrency.test.ts
 test/import-write-barrier.test.ts
+test/ingest-capture-keeps-readers.test.ts
 test/init-cold-home-embedding.test.ts
 test/keyword-statement-timeout-knob-6495.test.ts
 test/keyword-timeout-negative-cache-6495.test.ts

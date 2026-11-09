@@ -16,8 +16,8 @@ import { isInsideGitRepo, hasTrackedContent } from '../git-remote.ts';
 import { containsPath, getWorktreeBinding, humanManifestProgress, type WorktreeBinding, type WorktreeManifest, worktreeManifest } from './ownership.ts';
 import { manifestDifferences, storedManifestScope, type WorktreeManifestScope } from './worktree-manifest.ts';
 import { hostIdFor } from './identity.ts';
-import { advanceTopology, inspectTopologyPhysicalRoot, lockTopologyPrincipal, lockTopologyRows, settleTopologyRequests, topologyCanonicalStamp, topologyPrincipal, withTopologyLocks } from './topology-locks.ts';
-import { priorTopologyChange, recordTopologyChange, topologyReceipt } from './topology-receipts.ts';
+import { advanceTopology, assertTopologyRequestsSettled, inspectTopologyPhysicalRoot, lockTopologyPrincipal, lockTopologyRows, settleTopologyRequests, topologyCanonicalStamp, topologyPrincipal, withTopologyLocks } from './topology-locks.ts';
+import { assertTopologyChangeCapacity, priorTopologyChange, recordTopologyChange, topologyReceipt } from './topology-receipts.ts';
 import { isWriteRequestId } from './types.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { principalAttribution } from './attribution.ts';
@@ -42,6 +42,8 @@ export interface SourceLifecycleInput {
   expectedAdminState?:string;
   automaticClaim?:boolean;
 }
+/** #7702/#8905: pages one retire batch deletes; each batch (with its cascaded chunks, links and versions) stays far under the 5 s topology statement bound. */
+export const SOURCE_RETIRE_BATCH_PAGES=500;
 interface SourceState {id:string;incarnation:string;archived:boolean;local_path:string|null;config:Record<string,unknown>;name:string;last_commit:string|null;}
 
 function sourcesListFix():Action{
@@ -181,7 +183,43 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     if(input.operation==='rebind'&&root&&currentRoot&&currentRoot!==root.worktree&&manifests.has(currentRoot)&&manifests.has(root.worktree)
       &&storedManifestScope(manifests.get(currentRoot))!==storedManifestScope(manifests.get(root.worktree)))
       manifests.set(root.worktree,worktreeManifest(root.worktree,{progress:humanManifestProgress(),scope:storedManifestScope(manifests.get(currentRoot))}));
-    return topologyTransaction(engine,async tx=>{
+    // #7702/#8905: a remove or purge first deletes the source's pages in bounded batches, each its own transaction behind
+    // the final transaction's preconditions; any precondition that would refuse or replay stops batching and the final
+    // transaction reports it. Committed batches are durable, so a retry with the same request_id resumes. A batch
+    // whose DELETE hits the statement bound is retried at half the size, so heavy pages still fit; any other bounded wait
+    // (a lock wait, a busy writer, a slow precondition or commit) stops the run with write_pending, and the retry resumes at
+    // full size. Only committed batches count toward the pages the run reports.
+    let retiredPages=0;
+    try{
+    let deleting=false;
+    const retireBatch=async(limit:number):Promise<number|null>=>{ deleting=false; try{ const n=await topologyTransaction(engine,async tx=>{
+        await assertWriterAdminState(tx,input.expectedAdminState);
+        const sources=await lockTopologyRows(tx,input.sourceId,bindings);
+        const [source]=await tx.executeRaw<{incarnation:string;archived:boolean;due:boolean}>(
+          `SELECT incarnation,archived,${input.expiredOnly?EXPIRED_ARCHIVE_SQL:'true'} AS due FROM sources WHERE id=$1`,[input.sourceId]);
+        if(source?.incarnation!==before!.incarnation||!source.due||input.operation==='purge'&&!input.expiredOnly&&!source.archived
+          ||await priorTopologyChange(tx,principal,requestId,intent)
+          ||(await tx.executeRaw('SELECT client_id FROM oauth_clients WHERE source_id=$1 LIMIT 1',[input.sourceId])).length) return 0;
+        await assertTopologyRequestsSettled(tx,sources,bindings.map(binding=>binding.worktree_id));
+        await lockTopologyPrincipal(tx,principal);
+        await assertTopologyChangeCapacity(tx,{principal,operation:input.operation,sourceId:input.sourceId});
+        const gone=await withCoordinatedWrite(tx,sources,async()=>{
+          deleting=true;
+          const rows=await tx.executeRaw('DELETE FROM pages WHERE id IN (SELECT id FROM pages WHERE source_id=$1 LIMIT $2) RETURNING id',[input.sourceId,limit]);
+          deleting=false;
+          return rows;
+        },principalAttribution({kind:'local_cli',id:principal}));
+        return gone.length;
+      }); retiredPages+=n; return n; }catch(error){
+        if(deleting&&error instanceof OperationError&&error.code==='write_pending'&&error.reason==='statement_timeout'&&limit>1) return null;
+        throw error;
+      } };
+    if(['remove','purge'].includes(input.operation)&&input.confirmDestructive&&!missingCheckout&&!admission)
+      for(let limit=SOURCE_RETIRE_BATCH_PAGES,deleted=limit;deleted===limit;){
+        const n=await retireBatch(limit);
+        if(n===null)deleted=limit=Math.ceil(limit/2);else deleted=n;
+      }
+    return await topologyTransaction(engine,async tx=>{
     await assertWriterAdminState(tx,input.expectedAdminState);
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
     const sources=await lockTopologyRows(tx,input.sourceId,bindings);
@@ -248,7 +286,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     await tx.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");
     const result=await withCoordinatedWrite(tx,sources,async()=>{
       let incarnation=source?.incarnation??randomUUID();
-      let pagesDeleted=0;
+      let pagesDeleted=retiredPages;
       if(input.operation==='add'||input.operation==='claim'){
         if(root&&input.createDirectory&&!existsSync(root.source)){mkdirSync(root.source,{recursive:true});flushTopologyDirectory(dirname(root.source));}
         if(source) await tx.executeRaw("UPDATE sources SET local_path=$2,name=COALESCE($3,name),config=$4::text::jsonb WHERE id=$1",
@@ -275,10 +313,10 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
       }else{
         const refs=await tx.executeRaw<{client_id:string}>('SELECT client_id FROM oauth_clients WHERE source_id=$1 LIMIT 1',[input.sourceId]);
         if(refs.length) throw opError('source_referenced','OAuth clients still reference this source. Revoke and remove those registrations first.',
-          `Nothing was removed. OAuth client ${refs[0].client_id} (and possibly others) is bound to '${input.sourceId}'; list them with the command in fix and ask the user before revoking any, since revoking disconnects that client.`,
+          `${retiredPages?`Only the ${retiredPages} page(s) this run already deleted were removed.`:'Nothing was removed.'} OAuth client ${refs[0].client_id} (and possibly others) is bound to '${input.sourceId}'; list them with the command in fix and ask the user before revoking any, since revoking disconnects that client.`,
           {fix:readFix('Lists OAuth clients with the source each is bound to.',{argv:['gbrain','auth','clients','--json']})});
         const [impact]=await tx.executeRaw<{count:string}>('SELECT count(*)::text AS count FROM pages WHERE source_id=$1',[input.sourceId]);
-        pagesDeleted=Number(impact.count);
+        pagesDeleted+=Number(impact.count);
         await tx.executeRaw('DELETE FROM sources WHERE id=$1 AND incarnation=$2::uuid',[input.sourceId,incarnation]);
         await tx.executeRaw('DELETE FROM persistence_source_bindings WHERE source_id=$1 AND source_incarnation=$2::uuid',[input.sourceId,incarnation]);
       }
@@ -301,6 +339,11 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     const row=await recordTopologyChange(tx,{principal,requestId,intent,operation:input.operation,sourceId:input.sourceId,incarnation:source?.incarnation??String(result.source_incarnation),worktrees},result);
     return topologyReceipt(row);
     });
+    }catch(error){
+      if(retiredPages&&error instanceof OperationError&&!error.suggestion?.startsWith('Only the'))
+        error.suggestion=`This run had already deleted ${retiredPages} page(s) of source '${input.sourceId}' in committed batches before it stopped; the source and its remaining pages are still registered. ${error.suggestion??''}`.trim();
+      throw error;
+    }
   },root?.worktree,5000,{relocation:input.operation==='rebind'});
 }
 

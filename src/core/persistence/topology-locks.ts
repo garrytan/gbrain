@@ -147,8 +147,8 @@ export async function topologyCanonicalStamp(tx:BrainEngine,worktreeId:string):P
   return row.stamp;
 }
 
-/** No provider or filesystem wait occurs while these database guards are held. */
-export async function settleTopologyRequests(tx: BrainEngine, sources: string[], worktrees: string[], principal: string): Promise<number> {
+/** Read-only half of settleTopologyRequests: refuses while a publication, recovery or blocking effect is unfinished. */
+export async function assertTopologyRequestsSettled(tx: BrainEngine, sources: string[], worktrees: string[]): Promise<WriteRequest[]> {
   const requests = await tx.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests
     WHERE (source_id=ANY($1::text[]) OR worktree_id=ANY($2::uuid[]))
       AND (state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL) ORDER BY sequence`, [sources,worktrees]);
@@ -167,6 +167,12 @@ export async function settleTopologyRequests(tx: BrainEngine, sources: string[],
       `Effect ${blocked.id} on source ${source} (a queued withdrawal mirror, a running effect or one holding a recovery record) has not finished, so the lifecycle change rolled back and nothing changed. The owner's effect worker settles it; check it with the command in fix, which lists it with its page and request. Then run the same lifecycle command again with the same request_id.`,
       {fix:ownerStatusFix(source)});
   }
+  return requests;
+}
+
+/** No provider or filesystem wait occurs while these database guards are held. */
+export async function settleTopologyRequests(tx: BrainEngine, sources: string[], worktrees: string[], principal: string): Promise<number> {
+  const requests = await assertTopologyRequestsSettled(tx, sources, worktrees);
   const pending = requests.filter(row => row.state === 'queued' || row.state === 'deferred');
   // Revocation and publication use the same principal rows. Administrative
   // invalidation may terminate revoked work but still respects guard ordering.
