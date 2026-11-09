@@ -244,7 +244,9 @@ who may read it, before any member's bot connects:
   ```
 
   The first id is the token's write source, so a member's saved memories land
-  in their own private source. Keep that source unfederated.
+  in their own private source. Keep that source unfederated: federating it
+  later makes the pages already written there readable by every credential
+  without a source grant, since they carry no `readable_by`.
 
   A credential bound to a member (`--member`) whose write source is `default`
   (a token with no `--sources` or with `--sources default`, or an OAuth client
