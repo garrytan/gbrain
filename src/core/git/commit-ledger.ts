@@ -43,7 +43,9 @@ export type LedgerRecord =
 interface Location { common: string; gitDir: string; worktree: string | null }
 const locations = new Map<string, Location | null>();
 
-/** The repository's common dir, this checkout's git dir and toplevel (null for a bare repository); null outside git. */
+/** The repository's common dir, this checkout's git dir and toplevel (null for a bare repository); null outside git.
+ * Only successes are cached: a failed lookup is retried on the next call instead of pinning the ledger as missing
+ * for the life of the process. */
 export function ledgerLocation(root: string): Location | null {
   let key = resolve(root);
   try { key = realpathSync(key); } catch { /* resolved below */ }
@@ -59,7 +61,7 @@ export function ledgerLocation(root: string): Location | null {
       found = { gitDir, common, worktree };
     }
   } catch { found = null; }
-  locations.set(key, found);
+  if (found) locations.set(key, found);
   return found;
 }
 
