@@ -690,6 +690,21 @@ describe('repair private-labels dependents follow the remote privacy rules and b
     for (const slug of dependents) expect(await remoteGetIn(source, slug)).toContain('canary');
   });
 
+  test('a chronicle event whose origin is private only through derived_from on the cleared page is counted', async () => {
+    const source = 'source-z';
+    __resetPrivateVisibilityCacheForTests();
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [source]);
+    await seed('notes/origin-z', 'note', { access: 'private', visibility: 'private' }, source);
+    await seed('notes/summary-z', 'note', { derived_from: 'notes/origin-z' }, source, 'canarysummaryz lineage page.');
+    await seed('events/e-z', 'event', { captured_via: 'life-chronicle:test', event: { depth: 'notes/summary-z' } }, source, 'canaryeventz chronicle event.');
+    for (const slug of ['notes/summary-z', 'events/e-z']) expect(await remoteGetIn(source, slug)).not.toContain('canary');
+    const preview = await json(['private-labels', '--source', source]);
+    expect(preview.details.dependents).toEqual({ derived_from: 1, atom: 0, concept: 0, life_chronicle: 1 });
+    expect((await json(['private-labels', '--source', source, '--apply', '--expect', preview.preview_hash])).applied).toBe(1);
+    __resetPrivateVisibilityCacheForTests();
+    for (const slug of ['notes/summary-z', 'events/e-z']) expect(await remoteGetIn(source, slug)).toContain('canary');
+  });
+
   test('a dependent added after the preview refuses the old --expect; a fresh preview counts it and applies', async () => {
     const source = 'source-y';
     await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [source]);

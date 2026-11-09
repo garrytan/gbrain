@@ -221,7 +221,7 @@ type Dependents = { derived_from: number; atom: number; concept: number; life_ch
  * GST-2093: the pages a window's clears expose besides themselves, by category, judged by the remote privacy rules
  * (privacyPartSql) on each page as it is now and as it would be once the window applies. A candidate is a live page of
  * the same source tied to a cleared page the way those rules follow privacy: `derived_from`, an atom's `source_slug`, a
- * life-chronicle event's `event.depth`, or a concept-provenance link to a cleared atom or to an atom of a cleared origin.
+ * life-chronicle event's `event.depth` (or the `derived_from` of the page it names), or a concept-provenance link to a cleared atom or to an atom of a cleared origin.
  * The postimage is the pages table shadowed with the window's keys removed. Also returned, per cleared page id, the
  * exposed page ids tied to it: the preview hash binds them, and apply refuses a window that would expose a page outside them.
  */
@@ -239,6 +239,10 @@ async function windowDependents(engine: BrainEngine, window: Approved[]): Promis
         OR (jsonb_typeof(p.frontmatter->'derived_from') IN ('array', 'string') AND c.slug = ANY(ARRAY(SELECT regexp_replace(declared.slug, '\\.md$', '')
           FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(p.frontmatter->'derived_from') = 'array' THEN p.frontmatter->'derived_from'
             ELSE jsonb_build_array(p.frontmatter->'derived_from') END) AS declared(slug))))
+        OR EXISTS (SELECT 1 FROM pages o WHERE o.source_id = c.source_id AND o.slug = p.frontmatter->'event'->>'depth'
+          AND jsonb_typeof(o.frontmatter->'derived_from') IN ('array', 'string') AND c.slug = ANY(ARRAY(SELECT regexp_replace(declared.slug, '\\.md$', '')
+            FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(o.frontmatter->'derived_from') = 'array' THEN o.frontmatter->'derived_from'
+              ELSE jsonb_build_array(o.frontmatter->'derived_from') END) AS declared(slug))))
         OR EXISTS (SELECT 1 FROM links l JOIN pages a ON a.id = l.to_page_id WHERE l.from_page_id = p.id AND l.link_source = 'concept-provenance'
           AND l.link_type = 'synthesized_from' AND (a.id = c.id OR (a.source_id = c.source_id AND a.frontmatter->>'source_slug' = c.slug)))))
     SELECT cand.id, cand.cleared_id, CASE WHEN p.type = 'event' AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%' THEN 'life_chronicle'
