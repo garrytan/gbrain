@@ -9,6 +9,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { staleMentionsCheck } from '../src/commands/doctor/checks/stale-mentions.ts';
 import { operationsByName } from '../src/core/operations.ts';
+import { shellQuote } from '../src/core/agent-output.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 
 let engine: PGLiteEngine;
@@ -35,4 +36,22 @@ test('the suggested unlink removes a stale typed_ner link', async () => {
   expect(removed).toMatchObject({ removed: 1 });
   expect(check.message).toContain('gbrain unlink notes/meeting companies/acme-example --link-type founded --link-source mentions');
   expect(await engine.executeRaw("SELECT 1 FROM links WHERE link_source = 'mentions'")).toHaveLength(0);
+});
+
+test('the suggested unlink is shell-quoted: metacharacters reach gbrain as plain words', async () => {
+  await engine.executeRaw("DELETE FROM links");
+  const from = "notes/o'brien-$(printf x)";
+  const linkType = "founded$(printf x)'s";
+  await engine.putPage(from, { type: 'note', title: 'Quoted', compiled_truth: 'Quiet day.', timeline: '', frontmatter: {} });
+  await engine.addLinksBatch([{ from_slug: from, to_slug: 'companies/acme-example', link_type: linkType, link_source: 'mentions', link_kind: 'typed_ner' }]);
+
+  const check = await staleMentionsCheck(engine);
+  expect(check.status).toBe('warn');
+  const argv = ['gbrain', 'unlink', from, 'companies/acme-example', '--link-type', linkType, '--link-source', 'mentions'];
+  const command = shellQuote(argv);
+  const run = Bun.spawnSync(['bash', '-c', `gbrain() { printf '%s\\0' "$@"; }; ${command}`]);
+  expect(run.exitCode).toBe(0);
+  expect(run.stdout.toString().split('\0').slice(0, -1)).toEqual(argv.slice(1));
+  expect(check.message).toContain(command);
+  expect(check.details?.unlink).toEqual([{ argv, command }]);
 });
