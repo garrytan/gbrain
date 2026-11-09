@@ -301,6 +301,7 @@ src/core/cycle/budget-meter.ts	module_collection	1	W6: per-engine state, or mark
 src/core/cycle/calibration-profile.ts	load_config	1	W6: settings plane out of the core
 src/core/cycle/decide-datasets.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/cycle/derived-write-through.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/cycle/derived-write-through.ts	process_env	1	W7: the commit-lock marker a parent git commit-push exports to its child (COMMIT_LOCK_ENV) is process state; it moves with the filesystem boundary
 src/core/cycle/derived-write-through.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/cycle/edge-contradictions.ts	process_env	1	W6: settings plane out of the core
 src/core/cycle/extract-atoms-generation.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -1148,6 +1149,7 @@ src/core/transcripts/hermes.ts	fs_import	1	W7: filesystem boundary moves to the 
 src/core/transcripts/openclaw.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/transcripts/recover.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/trust/marker-repair.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/trust/page-handlers.ts	fs_import	1	W7: filesystem boundary moves to the local app (#7960 restores the page file a failed owner repair wrote)
 src/core/trust/proposals.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/uncommitted-deletions.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/url-clone.ts	spawn_import	1	W7: process-wide effects move to src/cli

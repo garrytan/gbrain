@@ -103,8 +103,8 @@ test/forecast-journal.test.ts
 test/frontmatter-reserved-keys-6454.test.ts
 test/g4-forget-fence-edit.test.ts
 test/get-chunks-paging.test.ts
-test/git-canonical-conversion-evidence-d4.test.ts
 test/ghost-pages-git-canonical-7967.test.ts
+test/git-canonical-conversion-evidence-d4.test.ts
 test/git-canonical-conversion-g8a.test.ts
 test/git-canonical-conversion-live-writer.test.ts
 test/git-canonical-conversion-no-checkout-7885.test.ts
@@ -295,8 +295,8 @@ test/migration-0-53-host-move-7900.test.ts
 test/migration-persistence-foreground-committed-index.test.ts
 test/migration-persistence-request-id-index.test.ts
 test/migration-persistence-request-slug-index.test.ts
-test/notifier-passed-freshness-marker-7941.test.ts
 test/mirror-readonly-write-through-7098.test.ts
+test/notifier-passed-freshness-marker-7941.test.ts
 test/on-commit-embedding.serial.test.ts
 test/oneshot-consumer-direct-route.test.ts
 test/oneshot-housekeeping-cli.test.ts
