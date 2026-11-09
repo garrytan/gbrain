@@ -228,9 +228,9 @@ for (const kind of testBackends()) {
       expect((await call('wide', 'get_page', { slug: PAGE_B, source_id: DM_B }, null)).text).toContain('canarydmbobpage');
     }, 120_000);
 
-    test('an agent job submitted for an attested person reads the same way: its own personal source, never another member\'s', async () => {
+    test('an agent job submitted for an attested person on a person-read credential reads the same way: its own personal source, never another member\'s', async () => {
       const { clientId } = await provider().registerClientManual('personal-agent-' + randomUUID().slice(0, 8), ['client_credentials'], 'read', [], SRC);
-      await bindCredential(engine, { kind: 'client', id: clientId }, { attestActor: 'qm', attestOps: ['get_page', 'query'] });
+      await bindCredential(engine, { kind: 'client', id: clientId }, { attestActor: 'qm', attestOps: ['get_page', 'query'], attestRead: 'person' });
       await engine.executeRaw("UPDATE oauth_clients SET scope = 'read agent', bound_tools = ARRAY['get_page','query'], bound_source_id = source_id, federated_read = $2::text[], delegated_namespace = 'job', delegated_slug_prefixes = NULL, bound_max_concurrent = 1 WHERE client_id = $1", [clientId, [SRC, DM_A, DM_B]]);
       const actor = { system: 'qm', external_id: ALICE_ID, member: 'alice-example' };
       const agentAuth = { token: 'x', clientId, scopes: ['read', 'agent'], sourceId: SRC, allowedSources: [SRC, DM_A, DM_B], principal: { kind: 'oauth_client', id: clientId } } as unknown as AuthInfo;

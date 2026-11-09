@@ -388,7 +388,7 @@ const memory_propose: Operation = {
     const { requestPrincipalForContext, pageMutationSource } = await import('../persistence/page-mutations.ts');
     const digest = proposalDigest(sent);
     const principal = await requestPrincipalForContext(ctx);
-    const requestId = proposalRequestId(actor.member, p.idempotency_key);
+    const requestId = proposalRequestId(principal, actor.member, p.idempotency_key);
     const replay = (row: { payload_digest: string; state: string; request_id: string; kind: string; slug: string; expires_at: string }) => {
       if (row.payload_digest !== digest) {
         throw opError('idempotency_conflict', 'This idempotency_key was used for a different proposal; send a new key.',

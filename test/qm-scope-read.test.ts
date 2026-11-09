@@ -32,7 +32,11 @@ import { addMember, bindCredential } from '../src/core/access/members.ts';
 import { attestRightOf, linkMember } from '../src/core/access/actor.ts';
 import { takeBindingFlags, bindingLine } from '../src/commands/auth-binding.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import type { AuthInfo } from '../src/core/ops/contract.ts';
+import type { AuthInfo, OperationContext } from '../src/core/ops/contract.ts';
+import { attestedCallerAccess } from '../src/core/access/actor.ts';
+import { withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { buildBrainTools } from '../src/core/minions/tools/brain-allowlist.ts';
+import { prepareRemoteAgent, withSubmissionAuthority, type RemoteAgentAuthority } from '../src/core/minions/submission-authority.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
@@ -210,7 +214,49 @@ for (const kind of testBackends()) {
         hidden(out);
         await refused(call(client, 'get_backlinks', { slug: ACME, source_id: OTHER }), 'permission_denied');
         await refused(call(client, 'get_backlinks', { slug: ACME, source_id: SRC, all_sources: true }), 'invalid_params');
+        await refused(call(client, 'get_backlinks', { slug: ACME, all_sources: true }), 'invalid_params');
       }
+      expect((await call('person', 'get_backlinks', { slug: ACME, all_sources: true })).text).toContain('zephyr-restricted-example');
+    }, 120_000);
+
+    test('context_pack that names sources is refused on a scope credential, never read as the person; unnamed and person credentials are unchanged', async () => {
+      const c = await provider().registerClientManual('scope-ctx-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);
+      await provider().rescopeClient(c.clientId, { federatedRead: [SRC, ROOM] });
+      await bindCredential(engine, { kind: 'client', id: c.clientId }, { attestActor: 'qm', attestOps: [...SCOPE_OPS, 'context_pack'] });
+      clients.ctx = { id: c.clientId, secret: c.clientSecret ?? '', token: (await provider().exchangeClientCredentials(c.clientId, c.clientSecret ?? '')).access_token };
+      for (const params of [{ source_id: SRC }, { all_sources: true }, { entity_refs: [{ source_id: SRC, slug: RESTRICTED }] }]) {
+        const out = await refused(call('ctx', 'context_pack', { counterparty: 'Zephyr Restricted Example', ...params }), 'invalid_params');
+        expect(out.all).toContain('context_pack: a call that names sources');
+      }
+      expect((await call('ctx', 'context_pack', { counterparty: 'Zephyr Restricted Example' })).all).not.toContain('context_pack: a call that names sources');
+    }, 120_000);
+
+    test('an agent job submitted for the person reads named sources as the scope too, exactly like the direct call', async () => {
+      const job = async (read?: 'person') => {
+        const c = await provider().registerClientManual('scope-agent-' + randomUUID().slice(0, 8), ['client_credentials'], 'read', [], SRC);
+        await bindCredential(engine, { kind: 'client', id: c.clientId }, { attestActor: 'qm', attestOps: ['get_page', 'query'], ...(read ? { attestRead: read } : {}) });
+        await engine.executeRaw("UPDATE oauth_clients SET scope = 'read agent', bound_tools = ARRAY['get_page','query'], bound_source_id = source_id, federated_read = $2::text[], delegated_namespace = 'job', delegated_slug_prefixes = NULL, bound_max_concurrent = 1 WHERE client_id = $1", [c.clientId, [SRC, ROOM]]);
+        const actor = { system: 'qm', external_id: ALICE_ID, member: 'alice-example' };
+        const agentAuth = { token: 'x', clientId: c.clientId, scopes: ['read', 'agent'], sourceId: SRC, allowedSources: [SRC, ROOM], principal: { kind: 'oauth_client', id: c.clientId } } as unknown as AuthInfo;
+        const submitted = await withCallerAccess(await attestedCallerAccess(engine, actor, ['member:alice-example']),
+          () => prepareRemoteAgent({ engine, auth: agentAuth, remote: true } as unknown as OperationContext, { source_id: SRC, allowed_tools: ['get_page', 'query'], allowed_slug_prefixes: [] }));
+        const tools = buildBrainTools({ subagentId: 13, engine, config: { engine: 'pglite' } as never, sourceId: SRC,
+          delegatedAuth: { clientId: c.clientId, scopes: ['read', 'agent'], sourceId: SRC, allowedSources: [SRC, ROOM] } });
+        const authority: RemoteAgentAuthority = { ...submitted, payloadHash: '0'.repeat(64) };
+        return async (tool: string, input: Record<string, unknown>) => {
+          try { return JSON.stringify(await withSubmissionAuthority(authority, () => tools.find(t => t.name === tool)!.execute(input, { engine, jobId: 1, remote: true } as never))); }
+          catch (e) { return 'ERR ' + String((e as Error).message); }
+        };
+      };
+      const scoped = await job();
+      expect(await scoped('brain_get_page', { slug: RESTRICTED })).toContain('canaryrestrictedbody');
+      expect(await scoped('brain_get_page', { slug: RESTRICTED, source_id: SRC })).not.toContain('canaryrestrictedbody');
+      expect(await scoped('brain_get_page', { slug: MEMBER_PAGE, source_id: SRC })).not.toContain('Memory of alice-example');
+      const found = await scoped('brain_query', { query: 'harbor ledger tariffs', limit: 20, source_ids: [SRC] });
+      expect(found).toContain('canaryworldacme');
+      for (const c of CANARIES) expect(found).not.toContain(c);
+      expect(await scoped('brain_get_page', { slug: RESTRICTED, all_sources: true })).not.toContain('canaryrestrictedbody');
+      expect(await (await job('person'))('brain_get_page', { slug: RESTRICTED, source_id: SRC })).toContain('canaryrestrictedbody');
     }, 120_000);
 
     test('get_timeline narrows to source_id/source_ids inside the grant and, named, reads as the scope', async () => {

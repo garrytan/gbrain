@@ -132,7 +132,7 @@ for (const kind of testBackends()) {
       const held = await timeline(alice, 'Acme signed the harbor lease canaryapprove', {}, key);
       expect(held.isError).toBe(false);
       const id = held.structured!.request_id as string;
-      expect(id).toBe(proposalRequestId('alice-example', key));
+      expect(id).toBe(proposalRequestId({ kind: 'oauth_client', id: qmClient }, 'alice-example', key));
       expect(held.structured).toMatchObject({ status: 'awaiting_owner', request_id: id, kind: 'timeline', target: ACME, expires_at: expect.any(String) });
       expect(await timelineRows('canaryapprove')).toHaveLength(0);
       expect(await journalRows(id)).toHaveLength(0);
@@ -158,16 +158,65 @@ for (const kind of testBackends()) {
       expect((await proposalRow(id))!.decided_by).toBe('cli:test');
     }, 90_000);
 
-    test('the request id is uuidv5 of the member and key, apart from memory_write ids and other members', async () => {
+    test('the request id is uuidv5 of the credential, member and key, apart from memory_write ids and other members', async () => {
       const key = 'same-key-' + randomUUID();
       const a = await timeline(alice, 'Key derivation canarykeyid a', {}, key);
       const b = await timeline(bob, 'Key derivation canarykeyid a', {}, key);
-      expect(a.structured!.request_id).toBe(proposalRequestId('alice-example', key));
-      expect(b.structured!.request_id).toBe(proposalRequestId('bob-example', key));
+      const qm = { kind: 'oauth_client', id: qmClient } as const;
+      expect(a.structured!.request_id).toBe(proposalRequestId(qm, 'alice-example', key));
+      expect(b.structured!.request_id).toBe(proposalRequestId(qm, 'bob-example', key));
       expect(a.structured!.request_id).not.toBe(b.structured!.request_id);
       const { memoryWriteRequestId } = await import('../src/core/ops/qm-memory.ts');
       expect(await memoryWriteRequestId('alice-example', key, 0)).not.toBe(a.structured!.request_id);
     }, 60_000);
+
+    test('two credentials proposing for one member with one key get two request ids, and the owner decides each', async () => {
+      const c = await provider().registerClientManual('p-qm2-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);
+      await bindCredential(engine, { kind: 'client', id: c.clientId }, { attestActor: 'qm', attestOps: ATTEST_OPS });
+      tokens.qm2 = (await provider().exchangeClientCredentials(c.clientId, c.clientSecret ?? '')).access_token;
+      const key = 'shared-key-' + randomUUID();
+      const a = (await timeline(alice, 'Two credentials canarytwocreds one', {}, key)).structured!.request_id as string;
+      const b = (await timeline({ token: 'qm2', actor: ALICE_ID }, 'Two credentials canarytwocreds two', {}, key)).structured!.request_id as string;
+      expect(a).not.toBe(b);
+      expect(b).toBe(proposalRequestId({ kind: 'oauth_client', id: c.clientId }, 'alice-example', key));
+      expect(await approve(a)).toMatchObject({ status: 'approved', write_request: { state: 'committed' } });
+      expect(await denyMemoryProposal(owner(), b, 'Duplicate', { decidedBy: 'cli:test' })).toMatchObject({ status: 'denied' });
+      expect((await timelineRows('canarytwocreds')).map(r => r.summary)).toEqual(['Two credentials canarytwocreds one']);
+    }, 90_000);
+
+    test('link deny, expiry and cancel close the proposal and write no link and no journal row', async () => {
+      const links = async () => engine.executeRaw('SELECT 1 FROM links l JOIN pages f ON f.id = l.from_page_id JOIN pages t ON t.id = l.to_page_id WHERE f.slug = $1 AND t.slug = $2 AND f.source_id = $3 AND l.context LIKE $4',
+        [GLOBEX, INITECH, SRC, '%canarylinkclose%']);
+      const link = async () => (await propose(alice, { kind: 'link', target: GLOBEX, to: INITECH, context: 'canarylinkclose' })).structured!.request_id as string;
+      const denied = await link();
+      expect(await denyMemoryProposal(owner(), denied, 'no', { decidedBy: 'cli:test' })).toMatchObject({ status: 'denied' });
+      const expired = await link();
+      await engine.executeRaw("UPDATE memory_proposals SET expires_at = now() - interval '1 minute' WHERE request_id = $1::uuid", [expired]);
+      await runMemoryProposalUpkeep(engine);
+      const cancelled = await link();
+      expect((await call(alice, 'cancel_write_request', { request_id: cancelled })).json).toMatchObject({ state: 'cancelled' });
+      for (const [id, state] of [[denied, 'denied'], [expired, 'expired'], [cancelled, 'cancelled']] as const) {
+        expect((await proposalRow(id))!.state).toBe(state);
+        expect(await journalRows(id)).toHaveLength(0);
+      }
+      expect(await links()).toHaveLength(0);
+    }, 90_000);
+
+    test('link approval carries the proposal revision to publication: a page moved after the yes is a conflict, never a silent upsert', async () => {
+      const id = (await propose(alice, { kind: 'link', target: ACME, to: INITECH, context: 'canarylinkpin' })).structured!.request_id as string;
+      const held = (await proposalRow(id))!;
+      expect(typeof held.expected_revision).toBe('string');
+      const from = (await engine.getPage(ACME, { sourceId: SRC }))!;
+      const row = { request_id: id, operation: 'add_link', source_id: SRC, slug: ACME, page_id: from.id,
+        intent: { to: INITECH, link_type: '', link_source: 'qm-proposal', context: 'canarylinkpin', expected_revision: 'not-the-revision' }, authority: { ...held.authority, attestedOp: 'memory_propose' } };
+      const { prepareManualLinkMutation } = await import('../src/core/persistence/manual-links.ts');
+      await expect(prepareManualLinkMutation(engine, row as never, { engine: engine.kind } as never)).rejects.toMatchObject({ code: 'revision_conflict' });
+      const current = await prepareManualLinkMutation(engine, { ...row, intent: { ...row.intent, expected_revision: held.expected_revision } } as never, { engine: engine.kind } as never)
+        .then(() => 'prepared', (e: { code?: string }) => e.code);
+      expect(current).not.toBe('revision_conflict');
+      expect(await approve(id)).toMatchObject({ status: 'approved', write_request: { state: 'committed' } });
+      expect((await journalRows(id))[0]!.intent).toMatchObject({ expected_revision: held.expected_revision });
+    }, 90_000);
 
     test('deny: the receipt says denied with the reason, the page is unchanged, approve afterwards is proposal_closed', async () => {
       const held = await timeline(alice, 'Acme moved offices canarydeny');

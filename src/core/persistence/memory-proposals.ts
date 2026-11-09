@@ -69,9 +69,9 @@ function normalize(row: Record<string, unknown>): MemoryProposal {
     decided_at: iso(row.decided_at), created_at: iso(row.created_at)!, updated_at: iso(row.updated_at)!, expires_at: iso(row.expires_at)! } as MemoryProposal;
 }
 
-/** The request id of a proposal: uuidv5 of the key under the member's own proposal namespace, so a key never crosses members or collides with a memory_write. */
-export function proposalRequestId(member: string, idempotencyKey: string): string {
-  return uuidV5(uuidV5(QM_PROPOSE_REQUEST_NAMESPACE, `member:${member}`), idempotencyKey);
+/** The request id of a proposal: uuidv5 of the key under the credential's and member's own proposal namespace, so a key never crosses credentials or members, or collides with a memory_write. */
+export function proposalRequestId(principal: Principal, member: string, idempotencyKey: string): string {
+  return uuidV5(uuidV5(QM_PROPOSE_REQUEST_NAMESPACE, `${principalKey(principal)}:member:${member}`), idempotencyKey);
 }
 
 /** Replay identity: only the fields the caller sent. */
@@ -88,7 +88,7 @@ export async function getProposal(engine: SqlEngine, principal: Principal, reque
 const proposalNotFound = (requestId: string) => opError('not_found', `No memory proposal has request id ${requestId}.`,
   'List the proposals awaiting a decision with gbrain memory-proposals list, and pass one of their request ids.');
 
-/** The proposal an owner names by request id. Two credentials could only share one by colliding uuidv5 namespaces; that is refused, never guessed. */
+/** The proposal an owner names by request id. The namespace holds the credential, so two credentials share one only by a uuidv5 collision; that is refused, never guessed. */
 export async function ownerProposal(engine: SqlEngine, requestId: string): Promise<MemoryProposal> {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)) throw proposalNotFound(requestId);
   const rows = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM memory_proposals WHERE request_id=$1::uuid LIMIT 2', [requestId]);
@@ -260,7 +260,7 @@ async function prepareApproval(ctx: OperationContext, row: MemoryProposal): Prom
     try {
       const { preparePageAdmission } = await import('./page-mutations.ts');
       const params: Record<string, unknown> = { ...row.payload, request_id: row.request_id,
-        ...(row.kind === 'timeline' && row.expected_revision ? { expected_revision: row.expected_revision } : {}) };
+        ...(row.expected_revision ? { expected_revision: row.expected_revision } : {}) };
       const prepared = await preparePageAdmission(lane, { operation: row.operation, params });
       return prepared.prior ? { prior: prepared.prior } : { admission: prepared.admission! };
     } catch (error) { return refusal(error); }

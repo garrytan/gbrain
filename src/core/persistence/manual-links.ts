@@ -46,6 +46,11 @@ export async function prepareManualLinkMutation(engine: BrainEngine, row: WriteR
     throw opError('page_not_found', `The link target ${to} was removed or is no longer readable by the person this link was proposed for.`,
       `Request ${row.request_id} for ${row.slug} in source ${row.source_id} changed nothing; a new proposal is needed if the link is still wanted.`);
   }
+  // A proposed link carries the revision the owner approved against; a page that moved since then is a conflict, never a silent upsert.
+  if (row.authority?.attestedOp === 'memory_propose' && typeof p.expected_revision === 'string' && stored.revision !== p.expected_revision) {
+    throw opError('revision_conflict', `${row.slug} changed after the proposal was approved, so the proposed link was not written.`,
+      `Request ${row.request_id} for ${row.slug} in source ${row.source_id} changed nothing; a new proposal is needed if the link is still wanted.`);
+  }
   const linkType = optional(p.link_type), linkSource = optional(p.link_source);
   const validFrom = optional(p.valid_from), validUntil = optional(p.valid_until);
   let body: string;

@@ -60,9 +60,11 @@ An attested call to `get_page`, `entity`, `whois`, `get_backlinks`, `get_timelin
 or `source_ids` reads those sources as their audience, never as the person: the
 person's restricted pages and their member page read as missing, a source outside
 the grant is refused, and `__all__` or `all_sources` is refused (`invalid_params`).
-`volunteer_context` refuses `stats: true` there. List the ops a client needs with
-`--attest-ops`. `context_pack` is not a scope read yet, so keep it off a client that
-serves shared turns.
+`volunteer_context` refuses `stats: true` there. An agent job submitted for the
+person reads the same way. List the ops a client needs with `--attest-ops`.
+`context_pack` is not a scope read yet: on a client that reads named sources as the
+scope it is refused (`invalid_params`) when it names `source_id`, `source_ids`,
+`all_sources` or `entity_refs`, so keep it off a client that serves shared turns.
 
 Set how each client reads named sources with `--attest-read`:
 
@@ -114,7 +116,7 @@ the person it serves. Nothing is written until the brain owner says yes. Grant i
   `link_type?`, `context?`, `valid_from?` and `valid_until?`. A field of the other kind is
   refused (`invalid_params`, reason `proposal_kind_field`). The person must be able to read the
   target (and a link's `to` page). The answer is `{status: "awaiting_owner", request_id, kind,
-  target, expires_at}`; the same key from the same person returns that proposal's current
+  target, expires_at}`; the same key from the same person and client returns that proposal's current
   status, and the same key with other fields is `idempotency_conflict`.
 - `get_write_request {request_id}` reads the proposal: `awaiting_owner`, then `approved`
   (with the write's own receipt), `denied` (with the owner's reason), `expired`, `cancelled`,
