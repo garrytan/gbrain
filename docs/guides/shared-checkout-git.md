@@ -185,6 +185,8 @@ Follow the error's `fix.next` as the
 | `git_index_stale` | 1 | An `index.lock` older than 10 minutes blocks the checkout. Check that no git command is running there, tell the user, and remove the named lock file only with their agreement. |
 | `git_operation_in_progress` | 1 | A rebase, merge, cherry-pick or revert is unfinished in the checkout. gbrain never aborts it for you. Follow [stuck rebase](#stuck-rebase). |
 | `git_detached_head` | 1 | The checkout is on a detached HEAD or an unborn branch. Check out the branch the remote tracks (`git switch <branch>`), or make the first commit, then rerun. |
+| <a id="publish_secret_found"></a>`publish_secret_found` | 1 | Only with `--scan-secrets` (the publish `gbrain sources refresh` runs on its own): a commit about to be pushed adds a value that looks like a secret, in its message, an added line (even one a later commit removed) or a merge resolution, adds text too large to scan, or changes `.gbrain-scan-allow` or a `.gitattributes` (files that decide what the scan sees); nothing was pushed. The message names each file, line, rule and commit, never the value. Ask the user: remove the value from those unpushed commits, or add a false positive's fingerprint to `.gbrain-scan-allow`, then retry. Never publish them with a command that skips the scan. |
+| <a id="publish_scan_unreadable"></a>`publish_scan_unreadable` | 1 | Only with `--scan-secrets`: the scan could not read the commits about to be pushed in full (a missing or corrupt object, git output it does not recognise, or its 300 s budget), so it reported no secret and nothing was pushed. Run `git fsck` in the checkout, fix what it names, then retry. Never publish with a command that skips the scan. |
 | `integrate_conflict` | 1 | Local and remote commits changed the same file; nothing was merged and the checkout is unchanged. Stop, relay the question to the user, then [resolve](#conflicts). |
 | `push_unconfirmed` | 4 | The commit is durable locally but no push destination confirmed it (network, credentials, branch protection, a remote that kept moving, or another push that held the push lock for the whole wait). Fix what the message names, then run `gbrain git commit-push --push-only`. Never force-push. |
 | `writer_coordinator_required` | 1 | This is a managed worktree. Stop using git for pages; save them through `put_page` and the other gbrain write tools. |
@@ -292,8 +294,9 @@ commits come in. Four rules keep that checkout able to move:
    and retry the refresh, as the [refusal](write-refusals.md#refresh_diverged)
    says. Never force the checkout. When local commits there are expected
    (automations committing alongside a sibling checkout that pushes the same
-   branch), the user can turn on `sources.refresh_publish_diverged` (default
-   off) so each refresh runs that publish itself
+   branch), each refresh runs that publish itself when the worktree's Git durability is
+   on (`sources.refresh_publish_diverged` unset; `false` turns it off, `true` publishes
+   with durability off too), after scanning the local commits for secrets
    ([live sync](live-sync.md)); it never publishes over a rewritten upstream.
 3. **Stop syncing a source before rewriting its history.** Before a
    force-push or `git filter-repo`, run `gbrain sources set-sync <id> off`
