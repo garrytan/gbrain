@@ -209,3 +209,127 @@ test('a judge that keeps failing on an unchanged window is paid at most the atte
     expect(await liveEvents(engine)).toHaveLength(4);
   }), 180_000);
 });
+
+describe('#8972 fix round: what counts as judged, and what exhausts a page', () => {
+  /** A judge whose proposals come from `events(n)` on its n-th call (1-based). */
+  function scriptedJudge(events: (n: number) => Array<{ when: string; what: string }>) {
+    let calls = 0;
+    const judge: ChronicleJudge = async () => {
+      calls++;
+      return { events: events(calls).map((e) => ({ when: e.when, who: ['people/alice-example'], what: e.what, kind: 'decision' as const })) };
+    };
+    return Object.assign(judge, { calls: () => calls });
+  }
+  const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+
+  test('runs on an unconfigured provider never exhaust the page', () => brain(async ({ engine, ctx }) => {
+    let body = messages(1, JUDGE_BODY_CHARS + 1_000);
+    await put(ctx, conversation(body));
+    let unavailable = 0;
+    const noProvider: ChronicleJudge = async () => { unavailable++; return { events: [], failure: 'llm_unavailable' }; };
+    await run(engine, noProvider);
+    for (const n of [1, 2, 3, 4, 5]) {
+      body += `\nbob-example: tail message ${n}.`;
+      await put(ctx, conversation(body));
+      await run(engine, noProvider);
+    }
+    expect(unavailable).toBe(6);
+    const judge = rewordingJudge();
+    body += '\nbob-example: the provider is configured now.';
+    await put(ctx, conversation(body));
+    const r = await run(engine, judge);
+    expect(judge.inputs).toHaveLength(1);
+    expect(r.details).toMatchObject({ judged: 1, events_written: 2 });
+    expect((await ledger(engine)).at(-1)).toEqual(['extracted', null]);
+  }), 180_000);
+
+  test('judged runs a newer revision superseded while they ran never exhaust the page', () => brain(async ({ engine, ctx }) => {
+    let body = messages(1, JUDGE_BODY_CHARS + 1_000);
+    await put(ctx, conversation(body));
+    let racing = 0;
+    const judge = rewordingJudge();
+    const raced: ChronicleJudge = async (input) => {
+      racing++;
+      body += `\nbob-example: tail message ${racing}, written while the judge ran.`;
+      await put(ctx, conversation(body));
+      return judge(input);
+    };
+    for (let n = 0; n < 6; n++) await run(engine, raced);
+    expect(racing).toBe(6);
+    expect((await ledger(engine)).filter(([, reason]) => reason === 'superseded').length).toBeGreaterThanOrEqual(5);
+    expect((await ledger(engine)).filter(([, reason]) => reason === 'judge_input_failed')).toEqual([]);
+    const r = await run(engine, judge);
+    expect(r.details).toMatchObject({ judged: 1 });
+    expect((await ledger(engine)).at(-1)).toEqual(['extracted', null]);
+  }), 180_000);
+
+  test('an over_cap generation stays cached at the same cap and is judged again when the cap is raised', () => brain(async ({ engine, ctx }) => {
+    await engine.setConfig('chronicle.max_events_per_page', '2');
+    let body = messages(1, JUDGE_BODY_CHARS + 1_000);
+    await put(ctx, conversation(body));
+    const judge = scriptedJudge((n) => [1, 2, 3].map((i) => ({ when: today, what: `Decision ${i} (wording ${n})` })));
+    await run(engine, judge);
+    expect(await liveEvents(engine)).toHaveLength(2);
+    body += '\nbob-example: tail message 1.';
+    await put(ctx, conversation(body));
+    const same = await run(engine, judge);
+    expect(same.details).toMatchObject({ judged: 0, reasons: { judge_input_unchanged: 1 } });
+    expect(judge.calls()).toBe(1);
+    await engine.setConfig('chronicle.max_events_per_page', '5');
+    body += '\nbob-example: tail message 2.';
+    await put(ctx, conversation(body));
+    const raised = await run(engine, judge);
+    expect(judge.calls()).toBe(2);
+    expect(raised.details).toMatchObject({ judged: 1, events_written: 3 });
+  }), 180_000);
+
+  test('a generation that dropped future-dated proposals is judged again once when the cutoff day moves', () => brain(async ({ engine, ctx }) => {
+    const yesterday = day(-1);
+    const page = (body: string, end: string) => `---\ntype: conversation\ntitle: Launch thread\ndate: ${yesterday}\nend: ${end}\n---\n\n${body}`;
+    let body = messages(1, JUDGE_BODY_CHARS + 1_000);
+    await put(ctx, page(body, yesterday));
+    const judge = scriptedJudge((n) => [{ when: yesterday, what: `Kickoff (wording ${n})` }, { when: today, what: `Launch (wording ${n})` }]);
+    const first = await run(engine, judge);
+    expect(first.details).toMatchObject({ judged: 1, events_written: 1 });
+    body += '\nbob-example: tail message 1.';
+    await put(ctx, page(body, yesterday));
+    await run(engine, judge);
+    expect(judge.calls()).toBe(1);
+    // The conversation now runs into today: the judge reads the same text, but today's proposal is no longer future-dated.
+    for (const n of [2, 3]) {
+      body += `\nbob-example: tail message ${n}.`;
+      await put(ctx, page(body, today));
+      await run(engine, judge);
+    }
+    expect(judge.calls()).toBe(2);
+    expect(await liveEvents(engine)).toEqual(['Kickoff (wording 2)', 'Launch (wording 2)']);
+  }), 180_000);
+
+  test('a held result after a failed attempt does not stand for the judged input', () => brain(async ({ engine, ctx }) => {
+    let body = messages(1, JUDGE_BODY_CHARS + 1_000);
+    await put(ctx, conversation(body));
+    const four = [1, 2, 3, 4];
+    let calls = 0;
+    const judge: ChronicleJudge = async () => {
+      calls++;
+      if (calls === 2) return { events: [], failure: 'truncated' };
+      const kept = calls === 1 ? four : [1];
+      return { events: kept.map((i) => ({ when: today, who: ['people/alice-example'], what: `Decision ${i} (wording ${calls})`, kind: 'decision' as const })) };
+    };
+    await run(engine, judge);
+    await put(ctx, conversation(`${body}\nbob-example: renamed.`, 'Launch thread (renamed)'));
+    await run(engine, judge);
+    expect((await ledger(engine)).at(-1)).toEqual(['failed', 'judge_truncated']);
+    await engine.executeRaw("UPDATE chronicle_page_state SET next_attempt_at=now()-interval '1 second' WHERE state='failed'");
+    await run(engine, judge); // the retry shrinks four events to one: held, nothing published
+    expect(calls).toBe(3);
+    expect(await liveEvents(engine)).toHaveLength(4);
+    expect((await engine.executeRaw<{ h: string | null }>(
+      "SELECT judge_input_hash AS h FROM chronicle_page_state WHERE state='extracted' ORDER BY decided_at DESC, updated_at DESC LIMIT 1"))[0].h).toBeNull();
+    body += '\nbob-example: renamed.\nbob-example: tail message 1.';
+    await put(ctx, conversation(body, 'Launch thread (renamed)'));
+    await run(engine, judge);
+    expect(calls).toBe(4);
+  }), 180_000);
+});
+

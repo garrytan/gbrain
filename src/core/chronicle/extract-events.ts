@@ -192,13 +192,20 @@ export function replacesPreviousGeneration(built: { events: readonly unknown[]; 
 
 /**
  * #8972: what the judge reads of one snapshot. `inputHash` covers every field the judge sees (page fields and the body's
- * first JUDGE_BODY_CHARS), the extractor version and what the events are stamped with (`stamp`: the depth page's
- * effective visibility and source incarnation), so an unchanged hash means a re-judge would publish the same events.
+ * first JUDGE_BODY_CHARS), the extractor version, what the events are stamped with (`stamp`: the depth page's
+ * effective visibility and source incarnation) and the settings that screen the judge's proposals (`stamp.tz`,
+ * `stamp.maxEvents`), so an unchanged hash means a re-judge would publish the same events. A generation that dropped
+ * proposals as future-dated also depends on the screen's cutoff day: its row records `cutoffInputHash` instead.
  * `window` is that body window; `windowHash` its sha256.
  */
-export function chronicleJudgedInput(input: ChronicleJudgeInput, stamp: { visibility: string; incarnation: string }): { inputHash: string; window: string; windowHash: string } {
+export function chronicleJudgedInput(input: ChronicleJudgeInput, stamp: { visibility: string; incarnation: string; tz: string; maxEvents: number }): { inputHash: string; window: string; windowHash: string } {
   const window = input.body.slice(0, JUDGE_BODY_CHARS);
   return { inputHash: digest(['chronicle-judge-input-v1', CHRONICLE_EXTRACTOR_VERSION, { ...input, body: window }, stamp]), window, windowHash: sha256(window) };
+}
+
+/** #8972: the judged-input hash of a generation whose future-dated proposals were dropped against `cutoff` (an ISO day). */
+export function cutoffInputHash(inputHash: string, cutoff: string): string {
+  return digest(['chronicle-judge-input-cutoff-v1', inputHash, cutoff]);
 }
 
 /** The latest message timestamp of a chat-shaped body (multi-day conversations end on their last message). */

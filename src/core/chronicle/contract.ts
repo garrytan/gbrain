@@ -82,8 +82,9 @@ export interface ChronicleLedgerRow {
   /** content_hash of each event page as the extractor wrote it, parallel to event_slugs. An event whose
    *  live hash is no longer in any row of its depth page was edited by an operator and is never touched. */
   event_hashes: string[];
-  /** #8972: digest of the whole judge input this row's run read (extract-events.ts `chronicleJudgedInput`); null when not
-   *  judged, or recorded before the column existed. */
+  /** #8972: digest of the whole judge input this row's run read (extract-events.ts `chronicleJudgedInput`, or `cutoffInputHash`
+   *  when the run dropped future-dated proposals); null when not judged, held, superseded after a judged run, or recorded
+   *  before the column existed. */
   judge_input_hash?: string | null;
   /** #8972: length and sha256 of the body window the judge read; a later generation covers this row when its own window
    *  starts with the same text. */
