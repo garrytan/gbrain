@@ -198,6 +198,16 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
       `The saved export checkpoint for source ${options.sourceId} (config key ${key}) is not valid JSON, so nothing was exported. Show it to the user and ask how to proceed before changing it.`,
       { fix: readFix('Prints the saved export checkpoint.', { argv: ['gbrain', 'config', 'get', key] }) });
   }
+  // #8528: an export that stopped before its source was bound (a destination the Git worktree or privacy checks refused,
+  // or an interruption) moves to another absent root. The old root and its staging directory are left as they are; the
+  // checkpoint's file hashes and schema policy are still checked against the database below, and a started claim keeps it.
+  let moved = false;
+  if (prior?.version === 1 && prior.root !== root && prior.brain_id === brain.brain_id && prior.source_incarnation === source.incarnation
+    && (prior.stage === 'inventory' || prior.stage === 'exported') && !source.local_path
+    && !(await ctx.engine.executeRaw("SELECT 1 FROM persistence_topology_changes WHERE request_id=$1::uuid AND state<>'failed'", [prior.request_id])).length) {
+    prior = { ...prior, root, staging_root: `${root}.gbrain-export-${randomUUID()}`, request_id: randomUUID(), stage: 'inventory', root_identity: undefined };
+    moved = true;
+  }
   if (prior && (prior.version !== 1 || prior.root !== root || prior.brain_id !== brain.brain_id || prior.source_incarnation !== source.incarnation)) {
     throw opError('local_conflict', 'The export checkpoint targets a different root or identity.',
       `An earlier export of source ${options.sourceId} is checkpointed for another root or source incarnation; resume it with its own --content-root, or ask the user to settle it before starting a new one.`,
@@ -212,7 +222,7 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
     throw opError('local_conflict', 'The source already has a canonical root; this export never moves it.',
       `Source ${options.sourceId} already has a canonical checkout, so it needs no database-only export; the export only creates a root for sources that have none.`);
   }
-  if (existsSync(root) && !prior) {
+  if (existsSync(root) && (!prior || moved)) {
     throw opError('local_conflict', 'Choose an absent export destination; existing directories are never overwritten.',
       `${root} already exists; pass --content-root a path that does not exist yet (the export creates it).`);
   }
@@ -240,6 +250,12 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
   if (!lock) {
     throw opError('writer_lock_unavailable', 'Another export is using this source checkpoint.',
       `Another export of source ${options.sourceId} holds its checkpoint lock. Wait for it to finish and preview the checkpoint before starting again; nothing was written by this run.`,
+      { fix: exportPreviewFix(root, options.sourceId, `Shows the checkpointed export state of source ${options.sourceId} without writing.`) });
+  }
+  if (moved && !await ctx.engine.getConfig(key).then(value => value === saved, () => false)) {
+    await lock.release();
+    throw opError('local_conflict', 'The export checkpoint changed while this export waited for its lock.',
+      `Another run updated the export checkpoint of source ${options.sourceId}, so it was not moved to ${root}. Preview the checkpoint before starting again.`,
       { fix: exportPreviewFix(root, options.sourceId, `Shows the checkpointed export state of source ${options.sourceId} without writing.`) });
   }
   try {

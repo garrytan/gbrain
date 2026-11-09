@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -140,4 +141,99 @@ test('a source schema change during export refuses binding and remains a checkpo
   const resumed = await exportDatabaseContent(ctx, options);
   expect(resumed.status).toBe('conflict');
   expect(resumed.conflicts[0].reason).toContain('source schema or ingestion policy changed');
+}), 120_000);
+
+test('#8528: an export refused at a root inside a Git worktree completes at another root, leaving the first staging untouched', () => fixture(async (ctx, home) => {
+  const repo = join(home, 'repo'); mkdirSync(repo);
+  execFileSync('git', ['init', '-q', repo]);
+  const options = { sourceId: 'default', confirmQuiesced: true, backup: 'operator_verified' as const };
+  await expect(exportDatabaseContent(ctx, { ...options, root: join(repo, 'content') })).rejects.toMatchObject({ code: 'local_conflict', message: expect.stringContaining('enclosing Git worktree') });
+  const staged = readdirSync(repo).filter(name => name.startsWith('content.gbrain-export-'));
+  expect(staged).toHaveLength(1);
+  const root = join(home, 'content');
+  expect((await exportDatabaseContent(ctx, { ...options, root, dryRun: true })).status).toBe('planned');
+  const result = await exportDatabaseContent(ctx, { ...options, root });
+  expect(result.status).toBe('complete');
+  expect(result.root).toBe(root);
+  expect(readFileSync(join(root, 'notes/example.md'), 'utf8')).toContain('A saved observation.');
+  expect((await ctx.engine.executeRaw<{ local_path: string | null }>("SELECT local_path FROM sources WHERE id='default'"))[0].local_path).toBe(root);
+  expect(readdirSync(repo).filter(name => name.startsWith('content.gbrain-export-'))).toEqual(staged);
+  expect(existsSync(join(repo, staged[0]!, 'notes/example.md'))).toBe(true);
+}), 120_000);
+
+test('#8528: an export interrupted before source binding moves to another root; the first root is kept as it was', () => fixture(async (ctx, home) => {
+  const first = join(home, 'first'), options = { sourceId: 'default', confirmQuiesced: true, backup: 'operator_verified' as const };
+  const setConfig = ctx.engine.setConfig.bind(ctx.engine);
+  let interrupted = false;
+  ctx.engine.setConfig = async (key, value) => {
+    if (!interrupted && key.startsWith('shared_skills.export.') && JSON.parse(value).stage === 'exported') {
+      interrupted = true; throw new Error('injected interruption before source binding');
+    }
+    return setConfig(key, value);
+  };
+  await expect(exportDatabaseContent(ctx, { ...options, root: first })).rejects.toThrow('injected interruption before source binding');
+  ctx.engine.setConfig = setConfig;
+  const bytes = readFileSync(join(first, 'notes/example.md'), 'utf8');
+  const root = join(home, 'second');
+  const result = await exportDatabaseContent(ctx, { ...options, root });
+  expect(result.status).toBe('complete');
+  expect(readFileSync(join(root, 'notes/example.md'), 'utf8')).toBe(bytes);
+  expect(readFileSync(join(first, 'notes/example.md'), 'utf8')).toBe(bytes);
+  expect((await ctx.engine.executeRaw<{ local_path: string | null }>("SELECT local_path FROM sources WHERE id='default'"))[0].local_path).toBe(root);
+}), 120_000);
+
+test('#8528: a moved export rechecks the inventory and still needs an absent destination', () => fixture(async (ctx, home) => {
+  const options = { sourceId: 'default', confirmQuiesced: true, backup: 'operator_verified' as const };
+  const repo = join(home, 'repo'); mkdirSync(repo);
+  execFileSync('git', ['init', '-q', repo]);
+  await expect(exportDatabaseContent(ctx, { ...options, root: join(repo, 'content') })).rejects.toMatchObject({ code: 'local_conflict' });
+  mkdirSync(join(home, 'taken'));
+  await expect(exportDatabaseContent(ctx, { ...options, root: join(home, 'taken'), dryRun: true })).rejects.toMatchObject({ code: 'local_conflict', message: expect.stringContaining('absent export destination') });
+  await ctx.engine.putPage('notes/example', { type: 'note', title: 'Example', compiled_truth: 'Changed after the checkpoint.', timeline: '', frontmatter: { visibility: 'private', custom: { retained: true } } }, { sourceId: 'default' });
+  const changed = await exportDatabaseContent(ctx, { ...options, root: join(home, 'content') });
+  expect(changed.status).toBe('conflict');
+  expect(changed.conflicts.map(conflict => conflict.reason).join(' ')).toContain('Database content changed since the export checkpoint');
+  expect(existsSync(join(home, 'content'))).toBe(false);
+  expect((await ctx.engine.executeRaw<{ local_path: string | null }>("SELECT local_path FROM sources WHERE id='default'"))[0].local_path).toBeNull();
+}), 120_000);
+
+test('#8528: a bound export never moves to another root', () => fixture(async (ctx, home) => {
+  const options = { sourceId: 'default', confirmQuiesced: true, backup: 'operator_verified' as const };
+  expect((await exportDatabaseContent(ctx, { ...options, root: join(home, 'content') })).status).toBe('complete');
+  await expect(exportDatabaseContent(ctx, { ...options, root: join(home, 'elsewhere'), dryRun: true })).rejects.toMatchObject({ code: 'local_conflict', message: expect.stringContaining('different root') });
+  expect(existsSync(join(home, 'elsewhere'))).toBe(false);
+}), 120_000);
+
+test('#8528: a move refuses when another run updated the checkpoint before this run took its lock', () => fixture(async (ctx, home) => {
+  const options = { sourceId: 'default', confirmQuiesced: true, backup: 'operator_verified' as const };
+  const repo = join(home, 'repo'); mkdirSync(repo);
+  execFileSync('git', ['init', '-q', repo]);
+  await expect(exportDatabaseContent(ctx, { ...options, root: join(repo, 'content') })).rejects.toMatchObject({ code: 'local_conflict' });
+  const getConfig = ctx.engine.getConfig.bind(ctx.engine);
+  let raced = false;
+  ctx.engine.getConfig = async key => {
+    const value = await getConfig(key);
+    if (!raced && value && key.startsWith('shared_skills.export.')) {
+      raced = true;
+      await ctx.engine.setConfig(key, JSON.stringify({ ...JSON.parse(value), pending_actions: ['another run'] }));
+    }
+    return value;
+  };
+  try {
+    await expect(exportDatabaseContent(ctx, { ...options, root: join(home, 'content') })).rejects.toMatchObject({ code: 'local_conflict', message: expect.stringContaining('changed while this export waited') });
+  } finally { ctx.engine.getConfig = getConfig; }
+  expect(existsSync(join(home, 'content'))).toBe(false);
+  expect(JSON.parse((await getConfig('shared_skills.export.v1.default.' + (await ctx.engine.executeRaw<{ incarnation: string }>("SELECT incarnation FROM sources WHERE id='default'"))[0].incarnation))!).root).toBe(join(repo, 'content'));
+}), 120_000);
+
+test('#8528: an export whose source claim already started keeps its root', () => fixture(async (ctx, home) => {
+  const options = { sourceId: 'default', confirmQuiesced: true, backup: 'operator_verified' as const };
+  const repo = join(home, 'repo'); mkdirSync(repo);
+  execFileSync('git', ['init', '-q', repo]);
+  await expect(exportDatabaseContent(ctx, { ...options, root: join(repo, 'content') })).rejects.toMatchObject({ code: 'local_conflict' });
+  const [{ incarnation }] = await ctx.engine.executeRaw<{ incarnation: string }>("SELECT incarnation FROM sources WHERE id='default'");
+  const checkpoint = JSON.parse((await ctx.engine.getConfig(`shared_skills.export.v1.default.${incarnation}`))!);
+  await ctx.engine.executeRaw(`INSERT INTO persistence_topology_changes(principal_id,request_id,digest,operation,source_id,state)
+    VALUES(gen_random_uuid(),$1::uuid,'example','claim','default','recovering')`, [checkpoint.request_id]);
+  await expect(exportDatabaseContent(ctx, { ...options, root: join(home, 'content'), dryRun: true })).rejects.toMatchObject({ code: 'local_conflict', message: expect.stringContaining('different root') });
 }), 120_000);
