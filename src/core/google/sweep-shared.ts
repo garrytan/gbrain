@@ -23,6 +23,7 @@ import { isPrivatePage } from '../search/private-visibility.ts';
 import { withPrivateVisibility } from './google-render.ts';
 import { isWriteThroughDisabled } from '../write-through.ts';
 import { isSourceDbOnlySlug } from '../persistence/source-storage.ts';
+import { intentCarriesPurgedContent } from '../persistence/purged-intent.ts';
 import type { GoogleSourceConfig, GoogleSourceState } from './types.ts';
 import type { LoopsExclusionPolicy } from './loops-exclusion.ts';
 
@@ -139,7 +140,7 @@ export async function importRendered(
   summary: GoogleSyncSummary,
   countedSlugs: Set<string>,
   identity: Record<string, string | readonly string[]> = {},
-): Promise<string> {
+): Promise<string | null> {
   markdown = connectorRender(markdown, { path: relPath, account: deps.cfg.account, ...identity });
   const slug = slugifyPath(relPath);
   const [labels] = await deps.engine.executeRaw<{ type: string; frontmatter: unknown }>(
@@ -162,6 +163,11 @@ export async function importRendered(
   const existing = await deps.engine.getPage(slug, { sourceId: deps.sourceId });
   if (existing) assertInlineBody(existing, 'Google connector materialization');
   markdown = await carryStoredFences(deps.sourceId, slug, relPath, existing, markdown, 'Google connector fence carry');
+  // #8644: content the owner purged is skipped before any file is touched, as the managed connector skips it (#6831).
+  if (await intentCarriesPurgedContent(deps.engine, { source_id: deps.sourceId, slug, intent: { content: markdown } }, { facts: false, pages: true })) {
+    deps.log(`[google] skipped ${slug}: its content matches a page purge tombstone; the rest of the sync continues. To let it back in: gbrain pages unpurge ${slug}`);
+    return null;
+  }
   const databaseOnly = await isWriteThroughDisabled(deps.engine) || isSourceDbOnlySlug(deps.cfg.dir, slug, 'refuse');
   const guard = databaseOnly ? null : await replaceableFile(deps.engine, deps.sourceId, slug, filePath, existing ? withStoredFactsFence : undefined);
   const drift = () => new OperationError('file_database_drift',
