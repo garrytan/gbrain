@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { existsSync, realpathSync } from 'node:fs';
-import { assertPhysicalRoot } from './physical-root.ts';
-import { inspectRelocatedPhysicalRoot } from './physical-root-record.ts';
+import { assertPhysicalRoot, movedPhysicalRootRefusal } from './physical-root.ts';
+import { inspectRelocatedPhysicalRoot, PHYSICAL_ROOT_MARKER, physicalRootError, readPhysicalRootReservation } from './physical-root-record.ts';
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
@@ -12,6 +12,7 @@ import { containsPath, getWorktreeBinding, type WorktreeBinding } from './owners
 import { completeWrite, lockCounters } from './journal.ts';
 import { principalKey, requestPrincipal, type WriteRequest } from './model.ts';
 import { catalogueError } from '../error-catalogue.ts';
+import { discoverGitRoot } from '../sync-git.ts';
 import { ACTIVE_REFRESH_STATES_SQL } from './worktree-refresh-schema.ts';
 
 export type TopologyBinding=WorktreeBinding & { unbound?:boolean };
@@ -85,12 +86,33 @@ function assertBindingPhysicalRoot(item: TopologyBinding, sourceId: string, addi
 
 /**
  * #6849: a lifecycle dry run predicts the physical-root refusal the real run hits in withTopologyLocks for the
- * source's own binding on this host. Read-only: it takes no lock and writes no stamp, reservation or row.
+ * source's own binding on this host, and (#8625) for an add or claim the refusal `reservePhysicalRoot` raises at the
+ * new root. Read-only: it takes no lock and writes no stamp, reservation or row.
  */
-export async function inspectTopologyPhysicalRoot(engine: BrainEngine, sourceId: string, additionalRoot?: string, opts: { relocation?: boolean } = {}): Promise<void> {
+export async function inspectTopologyPhysicalRoot(engine: BrainEngine, sourceId: string, additionalRoot?: string,
+  opts: { relocation?: boolean; operation?: string } = {}): Promise<void> {
   const binding = await getWorktreeBinding(engine, sourceId);
-  if (!binding || binding.owner_host_id !== hostIdFor(engine) || !binding.coordination_path) return;
-  assertBindingPhysicalRoot(binding, sourceId, additionalRoot, opts);
+  if (binding && binding.owner_host_id === hostIdFor(engine) && binding.coordination_path) assertBindingPhysicalRoot(binding, sourceId, additionalRoot, opts);
+  if (additionalRoot && (opts.operation === 'add' || opts.operation === 'claim')) await inspectClaimedPhysicalRoot(engine, sourceId, additionalRoot, opts.operation, hostIdFor(engine));
+}
+
+/** #8625: the checkout root a claim of `path` reserves (its Git top, as claimWorktree resolves it), or null for a missing path. */
+export function claimedWorktreeRoot(path: string): string | null {
+  let root: string;
+  try { root = realpathSync(path); } catch { return null; }
+  try { return realpathSync(discoverGitRoot(root)); } catch { return root; }
+}
+
+/**
+ * #8625: a stamp with no reservation beside it refuses the claim of `root` as a copied marker, named
+ * `physical_root_moved` when it is a checkout of this host that moved. The claim reserves `root` itself only when no
+ * local binding encloses it (otherwise it reuses that worktree's root), so only then does this predict the refusal.
+ */
+export async function inspectClaimedPhysicalRoot(engine: BrainEngine, sourceId: string, root: string, operation: 'add' | 'claim', hostId: string | null): Promise<void> {
+  if (!existsSync(join(root, PHYSICAL_ROOT_MARKER)) || readPhysicalRootReservation(root)) return;
+  const local = hostId ? await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM persistence_host_bindings WHERE host_id=$1::uuid', [hostId]) : [];
+  if (local.some(row => row.local_path && containsPath(row.local_path, root))) return;
+  throw await movedPhysicalRootRefusal(engine, root, { sourceId, operation }, hostId) ?? physicalRootError();
 }
 
 /**

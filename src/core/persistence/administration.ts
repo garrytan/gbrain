@@ -1,5 +1,7 @@
 /** Trusted local administration, shared by direct CLI and its authenticated resident proxy. */
 import { isAbsolute, join } from 'node:path';
+import { claimedWorktreeRoot, inspectClaimedPhysicalRoot } from './topology-locks.ts';
+import { movedPhysicalRootRefusal } from './physical-root.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { UNSUPPORTED_MANAGED_BULK_WRITERS } from './maintenance.ts';
@@ -327,9 +329,18 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     const sourceId = source(params.source_id), root = path(params.path);
     // #5198: say at claim time what the claim retires, before and after the fact.
     const notice = await readManagedMode(engine) ? {} : { activation_required: CLAIM_BEFORE_ACTIVATION_NOTICE };
-    if (params.dry_run) return { dry_run: true, action: operation, source_id: sourceId, path: root, current: await getWorktreeBinding(engine, sourceId, existingHostIdFor(engine)), ...notice };
+    // #8625: a moved checkout at the root the claim reserves is named with its exit.
+    const worktree = claimedWorktreeRoot(root);
+    if (params.dry_run) {
+      if (worktree) await inspectClaimedPhysicalRoot(engine, sourceId, worktree, 'claim', existingHostIdFor(engine));
+      return { dry_run: true, action: operation, source_id: sourceId, path: root, current: await getWorktreeBinding(engine, sourceId, existingHostIdFor(engine)), ...notice };
+    }
     const expectedState = await requireWriterAdminIntent(engine, operation, params);
-    return { claimed: true, binding: await claimWorktree(engine, sourceId, root, undefined, expectedState), ...notice };
+    try { return { claimed: true, binding: await claimWorktree(engine, sourceId, root, undefined, expectedState), ...notice }; }
+    catch (error) {
+      if (!(error instanceof OperationError) || error.detail !== 'physical_root_moved' || !worktree) throw error;
+      throw await movedPhysicalRootRefusal(engine, worktree, { sourceId, operation: 'claim' }, existingHostIdFor(engine)) ?? error;
+    }
   }
   if (operation === 'writer_activate') {
     keys(params, ['confirm_quiesced', 'dry_run', 'shared_skills', 'admin_intent', 'expected_state', 'cleanup_dead_local_locks']);

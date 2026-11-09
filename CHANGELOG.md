@@ -10,6 +10,44 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Moved your brain folder? gbrain now tells you how to bring it back.** When a managed checkout was moved to a new path, or a folder above it was renamed, `gbrain sources set-path` and `gbrain sources add` used to refuse with a generic "identity changed" or "checkout missing" error that offered no way out, and their `--dry-run` said everything was fine. Now the preview and the real command refuse the same way, name where gbrain recorded the folder and where it is now, and give the exact commands that get you back without losing the folder's ownership or Git history. Nothing new can rebind ownership: the commands are the ones that already worked, and gbrain still checks everything they do.
+
+### How to use it
+
+Run the command you were going to run, with `--dry-run`:
+
+```bash
+gbrain sources set-path notes /Users/alice-example/Brain --dry-run
+```
+
+The refusal (`recovery_required`, detail `physical_root_moved`) carries its exit as a `fix` the agent asks you about first, because it moves your folders:
+
+| What happened | The exit it names |
+|---|---|
+| Folder moved, its source still registered | `ln -s <new> <old>`, `gbrain sources set-path <source> <new>`, `rm <old>` |
+| Folder moved after `gbrain sources remove` | `mv <new> <old>`, then `gbrain sources add <id> --path <old>`, which reattaches the folder's history |
+| A parent folder renamed | the same, on the parent folder |
+| Copied to another disk and the original deleted | restore the original, or switch to classic mode (`gbrain sources writer deactivate --dry-run`); a copy cannot be reattached |
+
+### Things to watch
+
+- `gbrain sources add --dry-run` and `gbrain sources writer claim --dry-run` now refuse a folder that holds a copied ownership stamp, and `gbrain sources set-path --dry-run` refuses a missing checkout, as their real runs always did. They still write nothing.
+- A remote agent whose page write reaches such a folder sees only the detail, never a path.
+- A brain without a Git repository is unaffected: the default keyless brain's `gbrain sources set-path` stays a plain path update.
+
+Proposed and first implemented by @Kkkkkuro (#8625).
+
+### Itemized changes
+
+- `src/core/persistence/physical-root-record.ts`: `describeMovedPhysicalRoot` (read-only file evidence: the stamp's recorded root is gone, and the reservation of that root, beside it or beside the new root after a parent rename, carries the stamp's token, brain and worktree; `sameDirectory` from device, inode and birth time), `physicalRootMovedError` (path-free) and `physicalRootMovedRefusal` (the local CLI refusal with an `ask_user` fix chain in argv form, paths shell-quoted in the prose). An ownership stamp other users can read at the new path now refuses `ownership_record_not_private` instead of the generic error.
+- `src/core/persistence/physical-root.ts`: `movedPhysicalRoot` accepts the evidence only for this brain, a worktree this host owns and a host binding still at the recorded root; `reservePhysicalRoot` raises the path-free refusal on its copied-marker branch.
+- `src/core/persistence/source-lifecycle.ts`, `topology-locks.ts`, `administration.ts`: `add`, `claim`, `rebind` and `writer claim` build the full refusal (never for the automatic first-write claim); their dry runs predict it, and a rebind dry run of a missing checkout refuses `source_checkout_missing` like the real run.
+- `src/core/persistence/verb-errors.ts`, `src/core/error-registry.ts`: the `physical_root_moved` reason and its explanation; `docs/guides/error-codes.md` regenerated.
+- Docs: `docs/architecture/topologies.md#moved-root`, `docs/guides/write-refusals.md#moved-root`.
+- Tests: `test/physical-root-moved-8625.test.ts` (PGLite and Postgres: leaf and parent moves, bound and removed sources, Git and plain directories, a copy on a new inode, two sources in one worktree, `writer claim --dry-run`, five lookalikes that keep the generic refusal, a readable stamp, the classic keyless set-path, and a remote `put_page` whose refusal carries no path or worktree id).
+
 ## [0.60.620.0] - 2026-11-09
 
 **A diverged managed checkout now publishes its local commits on refresh by default when Git durability is on, after a secret scan of those commits.** Commits a script made with plain `git commit` in a managed checkout used to strand there whenever the remote moved: every `gbrain sources refresh` refused `refresh_diverged` and asked the user, unless `sources.refresh_publish_diverged` was set to `true`. With the setting unset, a worktree whose Git durability is on (`gbrain sources writer git-durability <source> --enable`, or the legacy hook) now publishes them itself: the local commits merged with the upstream in memory, never a rebase or force-push, then the fast-forward. The publish child scans, under its publish lock and for the exact commits it pushes, what they add: commit messages, added lines (including a value a later commit removed) and merge-commit conflict resolutions. A value that looks like a secret, added text too large to scan, or a commit that changes `.gbrain-scan-allow` or a `.gitattributes` refuses the new `publish_secret_found` naming the file, line, rule and commit, never the value, with nothing pushed; commits the scan cannot read in full refuse `publish_scan_unreadable` instead. The rewritten-upstream refusal and the `--expect-remote` bound are unchanged. `false` turns it off; `true` still publishes with durability off.
