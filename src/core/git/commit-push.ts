@@ -755,12 +755,12 @@ export function commitPathsLocked(repo: string, rel: string[], message: string, 
       commit = commitPaths(root, paths, message, scope);
     }
     // GST-2118: a file git left out stays in the ledger, so doctor dirty_age reports it and --pending retries it loudly.
-    const skipped = commit.skipped.map(s => s.path).filter(p => paths.includes(p));
-    if (skipped.length) notePending(root, skipped);
+    const ownSkipped = commit.skipped.filter(s => paths.includes(s.path));
+    if (ownSkipped.length) notePending(root, ownSkipped.map(s => s.path));
     settlePending(root);
-    if (commit.skipped.length) {
+    if (ownSkipped.length) {
       const branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).stdout.trim();
-      throw skippedPathsError(root, commit.skipped, { outcome: commit.sha ? 'committed_local' : 'nothing_to_commit', sha: commit.sha, committed: commit.sha, branch, remote: '', paths, integrated: 0, checkout: 'unchanged' });
+      throw skippedPathsError(root, ownSkipped, { outcome: commit.sha ? 'committed_local' : 'nothing_to_commit', sha: commit.sha, committed: commit.sha, branch, remote: '', paths, integrated: 0, checkout: 'unchanged' });
     }
     return commit.sha;
   } catch (e) {
