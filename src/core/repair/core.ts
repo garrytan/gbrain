@@ -282,7 +282,7 @@ export async function capacity(ctx: OperationContext) {
     return ([['lifetime_ids', `${scope}LifetimeIds`], ['terminal_bytes', `${scope}TerminalBytes`]] as const).map(([resource, setting]) => ({
       scope: key, resource, used: Number(row?.[resource] ?? 0), limit: limits[setting], stop_at: Math.floor(limits[setting] * STOP_RATIO),
       config_key: journalLimitKey(setting),
-    }));
+    })).filter(row => Number.isFinite(row.limit));
   });
 }
 

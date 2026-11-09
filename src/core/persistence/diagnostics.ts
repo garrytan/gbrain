@@ -127,7 +127,7 @@ export function capacityDiagnostics(counters: Counter[], limits: JournalLimits) 
       : [['outstanding_count', `${scope}Outstanding`], ['intent_bytes', `${scope}IntentBytes`],
         ['lifetime_ids', `${scope}LifetimeIds`], ['terminal_bytes', `${scope}TerminalBytes`],
         ...(scope === 'brain' ? [['recovery_bytes', 'brainRecoveryBytes'] as const] : [])];
-    return resources.map(([resource, setting]) => {
+    return resources.filter(([, setting]) => Number.isFinite(limits[setting])).map(([resource, setting]) => {
       const used = Number(counter[resource]), limit = limits[setting];
       const approaching = limit === 0 ? used > 0 : used >= limit * 0.8;
       return { scope: counter.key, resource, used, limit, remaining: Math.max(0, limit - used),

@@ -8,13 +8,25 @@ export const RETAINED_RECEIPT_BYTES = 4096;
 
 export const RECEIPT_RETENTION_KEY = 'persistence.receipt_retention_days';
 export const DEFAULT_RECEIPT_RETENTION_DAYS = 30;
+/**
+ * GBRA-108: while the brain's reserved receipt bytes pass this target, housekeeping compacts settled receipts and re-derivable
+ * producer refusals older than HOUSEKEEPING_FLOOR_DAYS instead of waiting out the default retention (compaction-pass.ts
+ * `EARLY_SQL`; an explicit retention is kept as set), and doctor tells the host operator. 0 turns both off. Never a write refusal.
+ */
+export const RECEIPT_TARGET_KEY = 'persistence.housekeeping.receipt_target_bytes';
+export const DEFAULT_RECEIPT_TARGET_BYTES = 8 * 1024 ** 3;
+export const HOUSEKEEPING_FLOOR_DAYS = 7;
+export async function readReceiptTargetBytes(engine:SqlEngine):Promise<number> {
+  const [row]=await engine.executeRaw<{value:string}>('SELECT value FROM config WHERE key=$1',[RECEIPT_TARGET_KEY]);
+  return row ? parseJournalConfigValue(RECEIPT_TARGET_KEY,row.value) : DEFAULT_RECEIPT_TARGET_BYTES;
+}
 
 export function journalLimitKey(key:keyof JournalLimits):string {
   return `persistence.limits.${key.replace(/[A-Z]/g,letter=>`_${letter.toLowerCase()}`)}`;
 }
 /** Every database config key the persistence journal reads. */
 export const JOURNAL_CONFIG_KEYS: readonly string[] = [
-  ...(Object.keys(DEFAULT_JOURNAL_LIMITS) as Array<keyof JournalLimits>).map(journalLimitKey), RECEIPT_RETENTION_KEY,
+  ...(Object.keys(DEFAULT_JOURNAL_LIMITS) as Array<keyof JournalLimits>).map(journalLimitKey), RECEIPT_RETENTION_KEY, RECEIPT_TARGET_KEY,
 ];
 export function parseJournalConfigValue(key:string,value:string):number {
   if(!/^(0|[1-9]\d*)$/.test(value) || !Number.isSafeInteger(Number(value))) {
@@ -51,7 +63,7 @@ export async function readJournalLimits(engine:SqlEngine & { kind?: string },ove
     const value=configured.get(journalLimitKey(key));
     if(value!==undefined) limits[key]=parseJournalConfigValue(journalLimitKey(key),value);
     if(overrides?.[key]!==undefined) limits[key]=overrides[key]!;
-    if(!Number.isSafeInteger(limits[key]) || limits[key]<0) throw new TypeError(`Invalid journal limit: ${key}`);
+    if((!Number.isSafeInteger(limits[key]) || limits[key]<0) && !(limits[key]===Infinity && DEFAULT_JOURNAL_LIMITS[key]===Infinity)) throw new TypeError(`Invalid journal limit: ${key}`);
   }
   return limits;
 }
