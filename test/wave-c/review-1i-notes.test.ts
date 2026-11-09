@@ -48,7 +48,7 @@ for (const backend of testBackends()) describe('[' + backend + '] the 1I review 
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
   beforeEach(() => { _resetIndexSplitPageConsumerForTests(); _resetGitFirstGateForTests(); _resetCliExitVerdictForTests(); });
   afterEach(() => {
-    _resetIndexSplitPageConsumerForTests(); _resetGitFirstGateForTests(); _resetCliExitVerdictForTests();
+    _resetIndexSplitPageConsumerForTests(); _resetGitFirstGateForTests(); _resetCliExitVerdictForTests(); process.exitCode = 0;
     delete indexLeaseClaimSeam.beforeRecheck; installFaultHook(undefined);
   });
 
