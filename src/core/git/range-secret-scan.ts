@@ -14,12 +14,17 @@
  * not empty or attributes could still apply, and a text file is then scanned whole. Added text over the scan cap is
  * reported as unscanned, and a commit that changes a file deciding what the scan sees (`.gbrain-scan-allow`, a
  * `.gitattributes`) as a gate change, so callers refuse. Output the parser does not recognise, a git failure or a run
- * past the time budget sets `unreadable` instead of returning a partial result.
+ * past the time budget sets `unreadable` instead of returning a partial result. The time budget is checked between git
+ * calls and while the diff is parsed, so a caller with a short budget (the owner's event loop) is never held much past it.
+ * Commits gbrain's commit ledger records as page writes (`PAGE_WRITERS`) are not scanned: page bodies are stored raw by
+ * design (docs/guides/write-refusals.md#what-stays-raw-by-design) and their Git backups have always been pushed, so the
+ * gate covers what gbrain did not write; `gbrain git commit-push` commits, which carry a script's files, are scanned.
  */
 import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { GIT_READ_ENV, gitChildEnv } from '../git-env.ts';
+import { readLedger } from './commit-ledger.ts';
 import { GIT_ENV } from '../git-transport.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { loadWorkspaceAllowlist, pathAllowlisted, SCAN_ALLOW_FILENAME } from '../secret-scan-allowlist.ts';
@@ -44,6 +49,9 @@ const CONFIG = ['-c', 'core.quotePath=false', '-c', 'core.attributesFile=/dev/nu
 const DIFF = ['diff-tree', '--stdin', '-r', '-p', '--root', '--cc', '--no-renames', '--no-ext-diff', '--no-textconv', '--no-color',
   '--full-index', '--src-prefix=a/', '--dst-prefix=b/', '--unified=0'];
 
+/** Ledger writers whose commits hold only page writes: a Git effect's commit and a hosted repository's door commits. */
+const PAGE_WRITERS: ReadonlySet<string> = new Set(['effect', 'door', 'hosted_repo']);
+
 class Unreadable extends Error { constructor(message: string, readonly timedOut = false) { super(message); } }
 
 type Run = ReturnType<typeof spawnSync>;
@@ -52,6 +60,12 @@ function run(root: string, args: string[], deadline: number, opts: { input?: str
   if (timeout <= 0) throw new Unreadable('the scan ran past its time budget', true);
   return spawnSync('git', ['-C', root, ...args], { input: opts.input ?? '', stdio: ['pipe', opts.out ?? 'pipe', 'pipe'], timeout,
     maxBuffer: opts.maxBuffer ?? 64 * 1024 * 1024, env: gitChildEnv({ ...GIT_ENV, ...GIT_READ_ENV, LC_ALL: 'C', GIT_NO_REPLACE_OBJECTS: '1', GIT_ATTR_NOSYSTEM: '1' }) });
+}
+/** The commits the ledger records as page writes; an unreadable ledger reads as none, so everything is scanned. */
+function pageWriteCommits(root: string, deadline: number): Set<string> {
+  const common = must(run(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'], deadline), 'rev-parse').toString().trim();
+  try { return new Set(readLedger(common).flatMap(record => record.e === 'commit' && PAGE_WRITERS.has(record.writer) ? [record.sha] : [])); }
+  catch { return new Set(); }
 }
 function must(r: Run, what: string): Buffer {
   if (r.error || r.status !== 0) {
@@ -109,12 +123,15 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
   const scan: RangeScan = { findings: [], unscanned: [], gate_changes: [] };
   const allowlist = loadWorkspaceAllowlist(root);
   const scanned = (path: string, commit: string, text: string, lineAt: (line: number) => number = line => line) => {
+    if (Date.now() > deadline) throw new Unreadable('the scan ran past its time budget', true);
     if (Buffer.byteLength(text) > SCAN_MAX_FILE_BYTES) { scan.unscanned.push({ path, commit }); return; }
     for (const f of scanText(text, { allowlist })) scan.findings.push({ path, commit, line: lineAt(f.line), pattern: f.pattern, fingerprint: f.fingerprint });
   };
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-range-scan-'));
   try {
-    const commits = must(run(root, ['rev-list', base ? `${base}..${head}` : head, '--'], deadline), 'rev-list').toString().split('\n').filter(Boolean);
+    const pageWrites = pageWriteCommits(root, deadline);
+    const commits = must(run(root, ['rev-list', base ? `${base}..${head}` : head, '--'], deadline), 'rev-list').toString().split('\n')
+      .filter(commit => commit && !pageWrites.has(commit));
     if (!commits.length) return scan;
 
     for (const commit of commits) {
@@ -154,7 +171,9 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
         added = []; at = []; bytes = 0; oversized = false;
       };
       const unexpected = (line: string) => new Unreadable(`git diff-tree printed a line the scan does not recognise in ${commit.slice(0, 12) || 'the range'}: ${JSON.stringify(line.slice(0, 80))}`);
+      let read = 0;
       for (const { text: line, long } of fileLines(fd, SCAN_MAX_FILE_BYTES + 1)) {
+        if (++read % 4096 === 0 && Date.now() > deadline) throw new Unreadable('the scan ran past its time budget', true);
         if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(line)) { flush(); commit = line; path = null; header = false; continue; }
         if (line.startsWith('diff --git ') || line.startsWith('diff --cc ') || line.startsWith('diff --combined ')) {
           flush();
@@ -251,7 +270,7 @@ export function rangeSecretRefusal(root: string, base: string, target: string, s
     ...scan.gate_changes.map(g => `${g.path} (changes what the scan sees, ${g.commit.slice(0, 7)})`)];
   return opError('publish_secret_found',
     `${named.length} item(s) in the local commits ${range} look like secrets or could not be scanned: ${named.slice(0, 10).join(', ')}${named.length > 10 ? ', ...' : ''}. Nothing was pushed.`,
-    `Remove the value from those commits (rewriting unpushed local commits is the user's call), or add a false positive's fingerprint to .gbrain-scan-allow, then retry. Never publish them with a command that skips this scan.${scan.gate_changes.length ? ` A commit that changes .gbrain-scan-allow or a .gitattributes is never published automatically, because it changes what the scan sees: review it and push it yourself (git -C ${root} push), then retry.` : ''}`,
+    `Remove the value from those commits (rewriting unpushed local commits is the user's call), or add a false positive's fingerprint to .gbrain-scan-allow, then retry. Never publish them with a command that skips this scan.${base ? '' : ' The remote has no such branch, so this covered the branch\'s whole history, which may include commits published elsewhere before: review it, and push the branch yourself once it is safe.'}${scan.gate_changes.length ? ` A commit that changes .gbrain-scan-allow or a .gitattributes is never published automatically, because it changes what the scan sees: review it and push it yourself (git -C ${root} push), then retry.` : ''}`,
     { detail: JSON.stringify(scan),
       fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
         argv: ['git', '-C', root, 'log', '--stat', base ? `${base}..${target}` : target],

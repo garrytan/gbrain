@@ -30,6 +30,8 @@ import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
 import { scanText } from '../src/core/secret-scan.ts';
+import { recordCommit, resetLedgerCacheForTests } from '../src/core/git/commit-ledger.ts';
+import { retryParkedPushes } from '../src/core/persistence/git-durability-administration.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { git } from './helpers/git-publication.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -37,7 +39,7 @@ import { withEnv } from './helpers/with-env.ts';
 const token = 'ghp_' + 'Zt4q'.repeat(9);
 const config = { engine: 'pglite' as const, embedding_disabled: true };
 const dirs: string[] = [];
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { resetLedgerCacheForTests(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
 interface Checkout { home: string; root: string; remote: string; other: string; cli: string }
 
@@ -203,6 +205,21 @@ describe('#8896 pushGitRoot scans the commits it publishes', () => {
     expect(remoteTip(c)).toBe(before);
   }, 60_000);
 
+  test('a commit the ledger records as a page write is not scanned; a commit-push commit still is', async () => {
+    const c = checkout();
+    const page = scriptCommit(c.root, 'notes/page.md', `Saved note with ${token}\n`);
+    recordCommit(c.root, { sha: page, writer: 'effect', ref: null });
+    expect(await withEnv(childEnv(c), () => pushGitRoot(c.root))).toEqual({ push: 'committed' });
+    expect(remoteTip(c)).toBe(page);
+    const script = scriptCommit(c.root, 'notes/deploy.md', `Deploy token ${token}\n`);
+    recordCommit(c.root, { sha: script, writer: 'commit_push', ref: null });
+    const error = await withEnv(childEnv(c), () => refusal(pushGitRoot(c.root)));
+    expect(error.code).toBe('publish_secret_found');
+    expect(error.message).toContain('notes/deploy.md:1 (');
+    expect(error.message).not.toContain('notes/page.md');
+    expect(remoteTip(c)).toBe(page);
+  }, 60_000);
+
   test('a clean ahead checkout still pushes', async () => {
     const c = checkout();
     scriptCommit(c.root, 'notes/page.md', 'A clean page\n');
@@ -211,10 +228,10 @@ describe('#8896 pushGitRoot scans the commits it publishes', () => {
   }, 60_000);
 });
 
-interface ManagedWrite { engine: BrainEngine; sourceId: string; runEffects: () => Promise<void>; effect: () => Promise<{ state: string; error_code: string | null }> }
+interface ManagedWrite { engine: BrainEngine; sourceId: string; worktreeId: string; runEffects: () => Promise<void>; effect: () => Promise<{ state: string; error_code: string | null }> }
 
 /** A managed source on the checkout with git durability on; `script` commits into the checkout before one page write whose Git effect is queued. */
-async function managedWrite(c: Checkout, script: () => void, run: (w: ManagedWrite) => Promise<void>): Promise<void> {
+async function managedWrite(c: Checkout, script: () => void, run: (w: ManagedWrite) => Promise<void>, body = 'After'): Promise<void> {
   await withEnv({ ...childEnv(c), GBRAIN_AUDIT_DIR: join(c.home, 'audit'), GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined }, async () => {
     const { engine, close } = await isolatedSharedSkillsEngine(undefined);
     try {
@@ -236,12 +253,12 @@ async function managedWrite(c: Checkout, script: () => void, run: (w: ManagedWri
       const authority = await submissionAuthority(ctx, 'put_page', sourceId, bound.source_incarnation, slug);
       await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId,
         sourceIncarnation: bound.source_incarnation, slug, pageId: snapshot.page.id, requestId: randomUUID(),
-        callerIntent: { content: 'After' }, intent: { content: 'After' }, worktreeId: bound.worktree_id, topologyGeneration: bound.topology_generation });
+        callerIntent: { content: body }, intent: { content: body }, worktreeId: bound.worktree_id, topologyGeneration: bound.topology_generation });
       const row = (await claimNextWrite(engine, localHostId()))!;
-      const result = await publishMutation(engine, row, { observedRevision: snapshot.revision, file: { path: file, root: c.root, content: 'After' },
-        apply: async tx => { await tx.putPage(slug, page('After'), { sourceId }); return {}; } }, localHostId());
+      const result = await publishMutation(engine, row, { observedRevision: snapshot.revision, file: { path: file, root: c.root, content: body },
+        apply: async tx => { await tx.putPage(slug, page(body), { sourceId }); return {}; } }, localHostId());
       expect(result.state).toBe('committed');
-      await run({ engine, sourceId,
+      await run({ engine, sourceId, worktreeId: bound.worktree_id,
         runEffects: async () => {
           await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now() WHERE kind='git'");
           await runPersistenceEffects(engine, config, { hostId: localHostId(), limit: 10 });
@@ -287,6 +304,37 @@ describe('#8896 through the effect worker', () => {
       const hold = (await readSyncStatus(w.engine, w.sourceId)).git_push_holds[0]!;
       expect(hold).toMatchObject({ retrying: 1, parked: 0, codes: ['publish_scan_unreadable'] });
       expect(hold.fix).toMatchObject({ ask_user: true, actor: 'user', argv: ['git', '-C', c.root, 'fsck'] });
+
+      writeFileSync(join(c.home, 'restored.txt'), 'plain text\n');
+      git(c.root, 'hash-object', '-w', join(c.home, 'restored.txt'));
+      await w.runEffects();
+      expect(await w.effect()).toMatchObject({ state: 'committed', error_code: null });
+      expect(remoteTip(c)).toBe(git(c.root, 'rev-parse', 'HEAD').trim());
     });
   }, 180_000);
+
+  test('a page write whose body holds a credential-shaped value still backs up: page bodies are stored raw by design', async () => {
+    const c = checkout();
+    await managedWrite(c, () => {}, async w => {
+      await w.runEffects();
+      expect(await w.effect()).toMatchObject({ state: 'committed', error_code: null });
+      expect(remoteTip(c)).toBe(git(c.root, 'rev-parse', 'HEAD').trim());
+      expect(git(c.remote, 'show', 'main:notes/acme-example.md')).toContain(token);
+    }, `Connection notes: ${token}`);
+  }, 180_000);
+
+  test('a parked publish_secret_found effect is released by retry-effects --parked-pushes once the value is allowlisted', async () => {
+    const c = checkout();
+    const before = remoteTip(c);
+    await managedWrite(c, () => scriptCommit(c.root, 'scripts-out/deploy.md', `Deploy token ${token}\n`), async w => {
+      for (let i = 0; i < 8 && (await w.effect()).state !== 'failed'; i++) await w.runEffects();
+      expect(await w.effect()).toMatchObject({ state: 'failed', error_code: 'targets_parked' });
+      expect(remoteTip(c)).toBe(before);
+      writeFileSync(join(c.root, '.gbrain-scan-allow'), `${scanText(`Deploy token ${token}\n`)[0]!.fingerprint}\n`);
+      expect(await retryParkedPushes(w.engine, w.worktreeId, false)).toMatchObject({ status: 'ok', requests: 1, queued: 1 });
+      await w.runEffects();
+      expect(await w.effect()).toMatchObject({ state: 'committed', error_code: null });
+      expect(remoteTip(c)).toBe(git(c.root, 'rev-parse', 'HEAD').trim());
+    });
+  }, 240_000);
 });
