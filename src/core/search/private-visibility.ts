@@ -676,7 +676,22 @@ export function privateProvenanceFilterUnderPolicy(factAlias: string): string {
   const policy = member && ACCESS_ID_RE.test(member)
     ? `CASE WHEN pp.slug = '${MEMBER_PAGE_PREFIX}${member}' THEN ${readPolicyFragment('pp', access.identity, hide, access.satisfiedRuleIds)} ELSE ${readPolicyFragment('pp', [], hide)} END`
     : readPolicyFragment('pp', [], hide);
-  return `NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy}))`;
+  return `(NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy})) AND ${privateEntityFilterForCaller(factAlias)})`;
+}
+
+/**
+ * A fact is never wider than the page it is about: hide a fact whose entity page (`entity_slug`, looked up in the fact's
+ * own source) the current caller cannot read under the read policy its page reads use, so a member the page's readers
+ * name keeps the fact and every other remote caller loses it. A fact with no entity page passes. Read sites only; it
+ * only ever narrows.
+ */
+export function privateEntityFilterForCaller(factAlias: string): string {
+  return `NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug = ${factAlias}.entity_slug AND NOT ${privatePagesFilterForCaller('entity_pp')})`;
+}
+
+/** privateProvenanceFilterFragment for a remote fact read: the provenance page gate plus the caller's entity-page gate. */
+export function privateFactFilterForCaller(factAlias: string): string {
+  return `(${privateProvenanceFilterFragment(factAlias)} AND ${privateEntityFilterForCaller(factAlias)})`;
 }
 
 /** True only inside a remote caller record whose read an operator relaxed (the env hatch or the config opt-out). */

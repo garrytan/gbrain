@@ -881,6 +881,9 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted page identity changed.');
   const observedRevision = snapshot?.revision ?? null;
   const activePack = pack?.manifest;
+  // A new page written over a soft-deleted one starts clean: it takes none of the deleted page's tags, timeline rows or
+  // facts (the delete recorded them in the page's history; restore_page is how the old page comes back).
+  const replacesTombstone = snapshot?.page.deleted_at != null && (row.operation === 'put_page' || row.operation === 'capture');
   if (row.operation === 'put_page' && snapshot && !snapshot.page.deleted_at && typeof p.content === 'string'
     && `${snapshot.page.compiled_truth}\n${snapshot.page.timeline ?? ''}`.trim()) {
     const incoming = parseMarkdown(p.content, row.slug, { activePack });
@@ -900,6 +903,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   const privateRequest = privateRequestGuarded(row.operation, p.kind) && typeof content === 'string' ? readPrivateRequest(content, () => parseMarkdown(content as string, row.slug, { activePack }).frontmatter) : null;
   if (privateRequest) assertPrivateRequestAllowed(row, content as string, privateRequest.frontmatter);
   let versionTags: string[] | undefined = preparedIntent?.tags;
+  if (replacesTombstone && typeof content === 'string') versionTags = parseMarkdown(content, row.slug, { activePack }).tags;
   // A replacement/restore publishes a live page. Only a recorded version may
   // explicitly restore a tombstone; legacy versions leave this state unchanged.
   let targetDeleted = false;
@@ -944,8 +948,8 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     }
   }
   const projected = !(options.unprojected || row.operation === 'remember' || row.operation.startsWith('takes_') || (row.operation === 'extract_facts' && p.kind === 'managed_facts_entity'));
-  const writer = (row.operation === 'put_page' || row.operation === 'edit_page') && p.kind !== 'managed_maintenance_page'
-    && (preparedIntent !== undefined || typeof p.expected_revision === 'string') ? 'editing' : 'preserving';
+  const writer = replacesTombstone || ((row.operation === 'put_page' || row.operation === 'edit_page') && p.kind !== 'managed_maintenance_page'
+    && (preparedIntent !== undefined || typeof p.expected_revision === 'string')) ? 'editing' : 'preserving';
   // #5969 (D3): only an ordinary put_page intent carries a timeline section; every other writer keeps the shared policy.
   const timelinePolicy = row.operation === 'put_page' ? timelineWritePolicy(p, row.authority.remote, writer) : undefined;
   enterClaimStep(clock, 'timeline_policy', undefined, 'db');
@@ -953,7 +957,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     slug: row.slug, sourceId: row.source_id, content, prior: snapshot });
   // #5567: database-only timeline rows are written back into the page before
   // the no-op check, digest, rendering and chunking see the body.
-  if (projected && snapshot && typeof content === 'string') {
+  if (projected && snapshot && !replacesTombstone && typeof content === 'string') {
     const parsed = parseMarkdown(content,row.slug);
     enterClaimStep(clock, 'materialize_timeline', undefined, 'db');
     const { timeline, materialized } = await materializeTimeline(engine,parsed,row.slug,snapshot,writer,timelinePolicy);
@@ -1087,6 +1091,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     let segmentedWrite = false;
     if (!noop) {
       const prior = snapshot ? await storedPageTier(tx, row.source_id, row.slug) : null;
+      if (replacesTombstone) await retireTombstoneFacts(tx, row.source_id, row.slug);
       // ENG-1: a managed fence edit keeps the page's tier; CEO-12: an agent rewrite that lowers a page files a queue item.
       const applied = await (isFenceEditWrite(row) ? withTrustKeep(tx, ['pages'], () => ready.apply(tx, lean ? preimage : undefined)) : ready.apply(tx, lean ? preimage : undefined));
       projectionPending = applied?.segmented?.complete === false || applied?.projectionPending === true;
@@ -1153,6 +1158,17 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       ...(contested.length ? { contested: { proposal_ref: contested[0], ...(contested.length > 1 ? { proposal_refs: contested } : {}) } } : {}) };
   } };
   return publication;
+}
+
+/**
+ * A put over a soft-deleted page: expire (not delete) the active facts the deleted page held, and those about it that no
+ * live page holds, so the new page does not inherit them. Facts other live pages hold about the slug stay theirs.
+ */
+async function retireTombstoneFacts(tx: BrainEngine, sourceId: string, slug: string): Promise<void> {
+  await tx.executeRaw(`UPDATE facts f SET expired_at = now(), row_num = NULL
+    WHERE f.source_id = $1 AND f.expired_at IS NULL
+      AND (f.source_markdown_slug = $2 OR (f.entity_slug = $2 AND NOT EXISTS (SELECT 1 FROM pages lp
+        WHERE lp.source_id = f.source_id AND lp.slug = f.source_markdown_slug AND lp.slug <> $2 AND lp.deleted_at IS NULL)))`, [sourceId, slug]);
 }
 
 /** What a page's projections report back: removed timeline rows and the contested proposal refs (#5575 guarded supersession). */
