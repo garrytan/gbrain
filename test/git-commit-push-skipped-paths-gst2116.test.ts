@@ -14,6 +14,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { renderCommitPushHelper } from '../src/core/brain-repo-durability.ts';
+import { commitPathsLocked } from '../src/core/git/commit-push.ts';
 import { recordManagedRoots } from '../src/core/persistence/root-registry.ts';
 import { runCli } from './helpers/cli-spawn.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -272,3 +273,17 @@ test('helper without gbrain: a non-ASCII flagged path, a nested-repository file 
   expect(remoteTip(f)).toBe(head(f));
 }, 90_000);
 
+test('write-through: commitPathsLocked fails commit_paths_skipped for a nested-repository file instead of returning the commit', () => {
+  const f = fixture('locked-nested', 'classic');
+  writeFileSync(join(f.brain, 'people', 'bob-example.md'), page('Bob', 'Second version.'));
+  const nested = nestedPage(f, 'carol-example.md');
+  let failure: { code?: string; message?: string } | undefined;
+  withEnv({ GBRAIN_HOME: f.home, ...identity }, () => {
+    try { commitPathsLocked(f.brain, [join(f.brain, 'people', 'bob-example.md'), join(f.brain, nested)], 'gbrain: write-through', { lockWaitMs: 2_000 }); }
+    catch (e) { failure = e as { code?: string; message?: string }; }
+  });
+  expect(failure?.code).toBe('commit_paths_skipped');
+  expect(failure?.message).toContain(nested);
+  expect(failure?.message).toContain('not pushed');
+  expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');
+}, 60_000);

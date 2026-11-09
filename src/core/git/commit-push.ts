@@ -490,7 +490,7 @@ function unindexedFiles(root: string, rel: string[], listed: string[]): string[]
  */
 function skippedPathsError(root: string, skipped: SkippedPath[], result: CommitPushResult, managed?: ManagedFilesystemRoot): OperationError {
   const list = `${skipped.slice(0, 20).map(s => `${s.path} (${s.reason})`).join(', ')}${skipped.length > 20 ? ', ...' : ''}`;
-  const pushed = result.committed && !result.managed && !result.no_remote && result.outcome !== 'push_deferred';
+  const pushed = !!result.committed && (result.outcome === 'pushed' || result.outcome === 'pushed_checkout_lagging');
   const rest = result.committed
     ? `The other named paths were committed as ${result.committed.slice(0, 7)}${pushed ? ` and pushed to ${result.remote}/${result.branch}` : ', not pushed'}.`
     : 'Nothing was committed.';
@@ -697,7 +697,8 @@ function settlePending(root: string): void {
  * doctor's `dirty_age` reports. It never commits without the lock: that races
  * other writers on the shared index. Paths must sit under `repo` (the source
  * root). No marker is set, so the post-commit hook publishes. Returns the new
- * commit, or null when the paths had no change.
+ * commit, or null when the paths had no change. A named path git left out fails
+ * `commit_paths_skipped` after the rest is committed (GST-2116).
  */
 export function commitPathsLocked(repo: string, rel: string[], message: string, opts: { lockWaitMs: number }): string | null {
   const root = checkoutRoot(repo);
@@ -714,15 +715,19 @@ export function commitPathsLocked(repo: string, rel: string[], message: string, 
   try {
     const pending = [...dirtyPaths(root, readPendingWriteThrough(root).map(e => e.path).filter(p => !paths.includes(p) && insideSourceRoots(p, roots)))];
     const scope = { roots, lockPath: lock.lockPath, markHeld: false };
-    let sha: string | null;
+    let commit: ReturnType<typeof commitPaths>;
     try {
-      sha = commitPaths(root, [...paths, ...pending], pending.length ? `${message} (+${pending.length} pending write-through file(s))` : message, scope).sha;
+      commit = commitPaths(root, [...paths, ...pending], pending.length ? `${message} (+${pending.length} pending write-through file(s))` : message, scope);
     } catch (e) {
       if (!pending.length) throw e;
-      sha = commitPaths(root, paths, message, scope).sha;
+      commit = commitPaths(root, paths, message, scope);
     }
     settlePending(root);
-    return sha;
+    if (commit.skipped.length) {
+      const branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).stdout.trim();
+      throw skippedPathsError(root, commit.skipped, { outcome: commit.sha ? 'committed_local' : 'nothing_to_commit', sha: commit.sha, committed: commit.sha, branch, remote: '', paths, integrated: 0, checkout: 'unchanged' });
+    }
+    return commit.sha;
   } catch (e) {
     if (PENDING_NOTED.has((e as { code?: string }).code ?? '')) notePending(root, paths);
     throw e;
