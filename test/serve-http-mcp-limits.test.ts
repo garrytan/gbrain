@@ -67,6 +67,16 @@ describe('serve --http enforces the /mcp limits the operator sets', () => {
     });
   }, 120_000);
 
+  test('a body cap that is not a whole number of bytes is ignored, not read as a tiny cap', async () => {
+    await withEnv({ ...UNSET, GBRAIN_HTTP_MAX_BODY_BYTES: '4MiB' }, async () => {
+      const app = await startServeHttp(engine);
+      try {
+        const token = await legacyToken(engine, ['read']);
+        expect((await rpc(app.base, token, 'tools/list')).status).toBe(200);
+      } finally { await app.close(); }
+    });
+  }, 120_000);
+
   test('with no limit set, serve --http keeps its unlimited rate and 4 MiB body default', async () => {
     await withEnv(UNSET, async () => {
       const app = await startServeHttp(engine);

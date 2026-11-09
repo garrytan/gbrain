@@ -672,8 +672,12 @@ async function recordMcpToolResult(
 
 /** A positive integer env var, or undefined when unset or not one. */
 function positiveEnvInt(name: string): number | undefined {
-  const n = Number.parseInt(process.env[name] ?? '', 10);
-  return Number.isFinite(n) && n > 0 ? n : undefined;
+  const raw = process.env[name]?.trim();
+  if (!raw) return undefined;
+  const n = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (Number.isSafeInteger(n) && n > 0) return n;
+  console.error(`[serve-http] ${name}=${JSON.stringify(raw)} is not a positive whole number; ignoring it.`);
+  return undefined;
 }
 
 /** GBRA-431: the POST /mcp body cap, GBRAIN_HTTP_MAX_BODY_BYTES when the operator sets it, else the SDK's 4 MiB. Over it the SDK answers 413 before the body is read. */

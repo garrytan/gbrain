@@ -105,17 +105,20 @@ export async function remoteTargetHidden(engine: BrainEngine, remote: boolean | 
 }
 
 /**
- * GBRA-431: the (source_id, slug) pairs among `pages` that name a live page the current remote caller can read, keyed
- * `${source_id}\u0000${slug}`. A slug with no live page row (never written, deleted, purged or renamed) is not
- * readable, so a caller of this keeps only what it returns (fail closed). Call for remote callers only.
+ * GBRA-431: for the (source_id, slug) pairs among `pages`, keyed `${source_id}\u0000${slug}`, which name any page row
+ * (`known`, soft-deleted rows included) and which name a live page the current remote caller can read (`readable`).
+ * A slug with no live page row (never written, deleted, purged or renamed) is not readable, so a caller that must
+ * fail closed keeps only `readable`. Call for remote callers only.
  */
-export async function remoteReadablePages(engine: BrainEngine, pages: readonly { source_id: string; slug: string }[]): Promise<Set<string>> {
-  if (pages.length === 0) return new Set();
+export async function remotePageAccess(engine: BrainEngine, pages: readonly { source_id: string; slug: string }[]): Promise<{ known: Set<string>; readable: Set<string> }> {
+  if (pages.length === 0) return { known: new Set(), readable: new Set() };
   const policy = await remoteReadPolicySql(engine, 'p');
-  const rows = await engine.executeRaw<{ source_id: string; slug: string }>(`SELECT p.source_id, p.slug FROM pages p
+  const rows = await engine.executeRaw<{ source_id: string; slug: string; readable: boolean }>(`SELECT p.source_id, p.slug,
+      bool_or(p.deleted_at IS NULL AND ${policy}) AS readable FROM pages p
     JOIN unnest($1::text[], $2::text[]) AS t(source_id, slug) ON p.source_id = t.source_id AND p.slug = t.slug
-    WHERE p.deleted_at IS NULL AND ${policy}`, [pages.map(p => p.source_id), pages.map(p => p.slug)]);
-  return new Set(rows.map(r => `${r.source_id}\u0000${r.slug}`));
+    GROUP BY p.source_id, p.slug`, [pages.map(p => p.source_id), pages.map(p => p.slug)]);
+  const key = (r: { source_id: string; slug: string }) => `${r.source_id}\u0000${r.slug}`;
+  return { known: new Set(rows.map(key)), readable: new Set(rows.filter(r => r.readable).map(key)) };
 }
 
 /**

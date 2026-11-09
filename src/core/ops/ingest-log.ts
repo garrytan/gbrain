@@ -9,7 +9,10 @@
 import type { Operation } from './contract.ts';
 import { clampSearchLimit } from '../engine.ts';
 import { linkReadScopeOpts } from './context.ts';
-import { remoteReadablePages } from '../persistence/page-visibility.ts';
+import { remotePageAccess } from '../persistence/page-visibility.ts';
+
+/** Row kinds whose source_ref and summary name one page while pages_updated stays empty. */
+const PAGE_REF_TYPES = new Set(['facts:absorb', 'write-verify-guard']);
 
 /** A file URL or an absolute, home-relative, relative or Windows path token in a free-form source_ref. */
 const HOST_PATH_RE = /(^|\s)(?:file:\/\/|\.{1,2}[\\/]|~?\/|[A-Za-z]:[\\/])\S*/g;
@@ -75,14 +78,18 @@ const get_ingest_log: Operation = {
       ...(scope.sourceIds ? { sourceIds: scope.sourceIds } : scope.sourceId ? { sourceIds: [scope.sourceId] } : {}),
     });
     if (ctx.remote === false) return rows;
-    // GBRA-431: a remote reader sees no slug of a page it cannot read, no row about such pages alone (its summary is
-    // about them) and no host filesystem path (a sync row's source_ref names the brain checkout).
-    const readable = await remoteReadablePages(ctx.engine, rows.flatMap(r => (r.pages_updated ?? []).map(slug => ({ source_id: r.source_id, slug }))));
-    return rows.flatMap(r => {
+    // GBRA-431: a remote reader sees a row only when every page it names is a live page the reader can read (its
+    // summary may describe any of them), with no host filesystem path (a sync row's source_ref names the checkout).
+    // A row that names its page in source_ref alone is checked on that page; one whose ref names a page the reader
+    // cannot read is dropped too.
+    const { known, readable } = await remotePageAccess(ctx.engine, rows.flatMap(r => [...(r.pages_updated ?? []), r.source_ref].map(slug => ({ source_id: r.source_id, slug }))));
+    const key = (r: { source_id: string }, slug: string) => `${r.source_id}\u0000${slug}`;
+    return rows.filter(r => {
       const pages = r.pages_updated ?? [];
-      const visible = pages.filter(slug => readable.has(`${r.source_id}\u0000${slug}`));
-      return pages.length > 0 && visible.length === 0 ? [] : [{ ...r, source_ref: remoteSourceRef(r.source_type, r.source_ref), pages_updated: visible }];
-    });
+      if (!pages.every(slug => readable.has(key(r, slug)))) return false;
+      if (pages.length === 0 && PAGE_REF_TYPES.has(r.source_type)) return readable.has(key(r, r.source_ref));
+      return !known.has(key(r, r.source_ref)) || readable.has(key(r, r.source_ref));
+    }).map(r => ({ ...r, source_ref: remoteSourceRef(r.source_type, r.source_ref) }));
   },
   scope: 'read',
 };

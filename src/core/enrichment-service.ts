@@ -34,7 +34,7 @@ import { isJunkEntityName } from './entity-name-quality.ts';
 import { followRetirement } from './entities/resolve.ts';
 import { maintenanceTransaction } from './persistence/attribution.ts';
 import { managedPersistenceEnabled } from './persistence/ownership.ts';
-import { remoteTargetHidden } from './persistence/page-visibility.ts';
+import { remoteReadPolicySql, remoteTargetHidden } from './persistence/page-visibility.ts';
 import { resolveExcludePrivatePages } from './search/private-visibility.ts';
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
 import { deriveTrust, derivedMaintenanceTransaction, lowerDerivedPage, lowerDerivedPageIn, lowerToDerivedTier } from './trust/taint.ts';
@@ -246,7 +246,13 @@ async function planEntity(
   const tierEscalated = suggestedTier < (request.tier || 3); // lower tier number = higher importance
 
   // 3. Check if entity page exists
+  // GBRA-431: a remote caller never writes onto, or learns anything from, an entity page it cannot read: the first
+  // such page met while resolving the slug skips this entity as not found, under the slug its name maps to.
+  const hidden = async (at: string, page: unknown) => page !== null && ctx !== undefined && await remoteTargetHidden(engine, ctx.remote, sourceId, at);
+  const notFound = (): EnrichmentResult => ({ slug: candidateSlug, action: 'skipped', skipped_reason: 'page_not_found', tier, backlinkCreated: false,
+    timelineAdded: false, mentionCount, mentionSources, suggestedTier, tierEscalated });
   let existingPage = await engine.getPage(slug, scope);
+  if (await hidden(slug, existingPage)) return notFound();
   // F8: a page whose title maps to this slug base names this entity; any other page at the slug may name another one.
   const namesEntity = (title: string | undefined) => entitySlugBase(title ?? '') === base;
   if (!existingPage || !namesEntity(existingPage.title)) {
@@ -256,6 +262,7 @@ async function planEntity(
     if (legacy !== candidateSlug && !/^(people|companies)\/$/.test(legacy)) {
       const legacySlug = await engine.resolveSlugWithAlias(legacy, sourceId);
       const legacyPage = await engine.getPage(legacySlug, { sourceId });
+      if (await hidden(legacySlug, legacyPage)) return notFound();
       // The legacy slug is lossy (José -> people/jos), so only reuse a page that names this entity.
       const same = (t: string) => t.normalize('NFC').trim().toLowerCase();
       if (legacyPage && same(legacyPage.title ?? '') === same(request.entityName)) { slug = legacySlug; existingPage = legacyPage; legacyFound = true; }
@@ -265,6 +272,7 @@ async function planEntity(
     if (!legacyFound && !existingPage && untagged !== candidateSlug) {
       const untaggedSlug = await engine.resolveSlugWithAlias(untagged, sourceId);
       const untaggedPage = await engine.getPage(untaggedSlug, scope);
+      if (await hidden(untaggedSlug, untaggedPage)) return notFound();
       if (untaggedPage && namesEntity(untaggedPage.title)) { slug = untaggedSlug; existingPage = untaggedPage; legacyFound = true; }
     }
     // An escaped slug (Aux -> companies/aux-company) can be another entity's natural slug, and a natural slug can be
@@ -277,6 +285,7 @@ async function planEntity(
       const tagged = `${prefix}/${entitySegment(base, request.entityType, true)}`;
       const taggedSlug = tagged === candidateSlug ? null : await engine.resolveSlugWithAlias(tagged, sourceId);
       const taggedPage = taggedSlug === null ? null : await engine.getPage(taggedSlug, scope);
+      if (taggedSlug !== null && await hidden(taggedSlug, taggedPage)) return notFound();
       if (taggedSlug === null || (taggedPage && !namesEntity(taggedPage.title))) {
         return { slug, action: 'skipped', skipped_reason: 'entity_slug_taken', tier, backlinkCreated: false, timelineAdded: false,
           mentionCount, mentionSources, suggestedTier, tierEscalated };
@@ -287,7 +296,7 @@ async function planEntity(
   }
   // B-9: a retired page (canonical: false, superseded_by) answers through its canonical page, as fact resolution does (#6898).
   if (existingPage) {
-    const live = await followRetirement(engine, sourceId, slug);
+    const live = await followRetirement(engine, sourceId, slug, ctx && ctx.remote !== false ? `AND ${await remoteReadPolicySql(engine, 'p')}` : '');
     if (!live) {
       return { slug, action: 'skipped', skipped_reason: 'retired_page_unfollowable', tier, backlinkCreated: false, timelineAdded: false,
         mentionCount, mentionSources, suggestedTier, tierEscalated };
@@ -297,12 +306,6 @@ async function planEntity(
   let action: 'created' | 'updated' | 'skipped';
 
   if (existingPage) {
-    // GBRA-431: a remote caller never writes onto an entity page it cannot read; that entity is skipped as not found
-    // and the rest of the batch still runs.
-    if (ctx && await remoteTargetHidden(engine, ctx.remote, sourceId, slug)) {
-      return { slug, action: 'skipped', skipped_reason: 'page_not_found', tier, backlinkCreated: false, timelineAdded: false,
-        mentionCount, mentionSources, suggestedTier, tierEscalated };
-    }
     // UPDATE path — add timeline entry
     action = 'updated';
   } else {

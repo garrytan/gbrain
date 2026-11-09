@@ -105,6 +105,8 @@ for (const kind of testBackends()) {
       await importFromContent(engine, HUB, note('Shared roadmap', 'The shared roadmap.', ['type: note']), { sourceId: SRC, noEmbed: true });
       await importFromContent(engine, OPEN, note('Open plan', 'Open planning notes.', ['type: note']), { sourceId: SRC, noEmbed: true });
       await importFromContent(engine, RESTRICTED, note('Vesper Example', 'Person notes.', ['type: person', 'readable_by: [alice-example]']), { sourceId: SRC, noEmbed: true });
+      await importFromContent(engine, 'people/hidden-successor-example', note('Hidden Successor', 'Person notes.', ['type: person', 'visibility: private']), { sourceId: SRC, noEmbed: true });
+      await importFromContent(engine, 'people/olden-example', note('Olden Example', 'Retired.', ['type: person', 'superseded_by: people/hidden-successor-example']), { sourceId: SRC, noEmbed: true });
       await importFromContent(engine, PRIVATE, note('Quiet plan', 'Quiet planning notes.', ['type: note', 'visibility: private']), { sourceId: SRC, noEmbed: true });
       for (const slug of [OPEN, RESTRICTED, PRIVATE]) {
         await engine.addLink(slug, HUB, 'roadmap', 'mentions', 'manual', undefined, undefined, { fromSourceId: SRC, toSourceId: SRC }); // gbrain-allow-direct-insert: test fixture edges
@@ -160,6 +162,10 @@ for (const kind of testBackends()) {
           .toEqual({ who, isError: false, hidden: expect.objectContaining({ action: 'skipped', skipped_reason: 'page_not_found', backlinkCreated: false }) });
         expect(entities.some(e => e.slug !== RESTRICTED && e.action !== 'skipped')).toBe(true);
       }
+      for (const who of ['bob', 'writer']) {
+        const out = await call(who, 'extract_entities', { text: 'Olden Example joined the planning call.', source_slug: OPEN });
+        expect({ who, isError: out.isError, leaked: out.text.includes('hidden-successor') }).toEqual({ who, isError: false, leaked: false });
+      }
       expect(await state(RESTRICTED)).toEqual(restricted);
       const alice = await call('alice', 'extract_entities', { text: 'Vesper Example joined the planning call.', source_slug: OPEN });
       expect((alice.json.entities as Array<{ slug: string; action: string }>).find(e => e.slug === RESTRICTED)?.action).toBe('updated');
@@ -172,24 +178,26 @@ for (const kind of testBackends()) {
     }, 120_000);
 
     test('get_ingest_log names no page a remote reader cannot read and no host path; local callers see the row whole', async () => {
-      await engine.logIngest({ source_id: SRC, source_type: 'git_sync', source_ref: '/srv/brains/acme-example @ abcdef12', pages_updated: [OPEN, RESTRICTED, PRIVATE, MISSING], summary: 'Sync: +4 ~0 -0' });
+      await engine.logIngest({ source_id: SRC, source_type: 'git_sync', source_ref: '/srv/brains/acme-example @ abcdef12', pages_updated: [OPEN], summary: 'Sync: +1 ~0 -0' });
+      await engine.logIngest({ source_id: SRC, source_type: 'fixture', source_ref: 'ref-mixed', pages_updated: [OPEN, RESTRICTED, PRIVATE], summary: 'Ingested canaryhpmixed' });
+      await engine.logIngest({ source_id: SRC, source_type: 'fixture', source_ref: 'ref-gone', pages_updated: [MISSING], summary: 'Ingested canaryhpgone' });
       await engine.logIngest({ source_id: SRC, source_type: 'fixture', source_ref: 'ref-hidden-only', pages_updated: [RESTRICTED, PRIVATE], summary: 'Ingested canaryhphidden' });
+      await engine.logIngest({ source_id: SRC, source_type: 'fixture', source_ref: 'ref-alice', pages_updated: [RESTRICTED], summary: 'Ingested canaryhpalice' });
+      await engine.logIngest({ source_id: SRC, source_type: 'write-verify-guard', source_ref: PRIVATE, pages_updated: [], summary: 'read-back failed canaryhpguard' });
+      await engine.logIngest({ source_id: SRC, source_type: 'note', source_ref: RESTRICTED, pages_updated: [], summary: 'canaryhpref' });
       await engine.logIngest({ source_id: SRC, source_type: 'git_sync', source_ref: '/home/alice-example/Mobile Documents/brain @ 0123abcd', pages_updated: [OPEN], summary: 'Sync: +1 ~0 -0' });
       await engine.logIngest({ source_id: SRC, source_type: 'directory', source_ref: './brain-example', pages_updated: [OPEN], summary: 'Import' });
-      const remote = await call('reader', 'get_ingest_log', { limit: 5 });
+      const remote = await call('reader', 'get_ingest_log', { limit: 20 });
       expect(remote.isError).toBe(false);
-      const row = (JSON.parse(remote.text.split('\n_META_HOT')[0]) as Array<{ source_ref: string; pages_updated: string[] }>).find(r => r.source_ref.endsWith('@ abcdef12'))!;
-      expect({ ref: row.source_ref, pages: row.pages_updated }).toEqual({ ref: '<local path> @ abcdef12', pages: [OPEN] });
-      const refs = (JSON.parse(remote.text.split('\n_META_HOT')[0]) as Array<{ source_ref: string }>).map(r => r.source_ref);
-      expect(refs).toEqual(expect.arrayContaining(['<local path> @ 0123abcd', '<local path>']));
-      expect(remote.text).not.toContain('Mobile Documents');
-      expect(remote.text).not.toContain('brain-example');
-      expect(remote.text).not.toContain('canaryhphidden');
-      expect((await call('alice', 'get_ingest_log', { limit: 5 })).text).toContain(RESTRICTED);
-      const whole = await local('get_ingest_log', { limit: 5 });
-      expect(whole.text).toContain('/srv/brains/acme-example');
-      expect(whole.text).toContain(PRIVATE);
-      expect(whole.text).toContain('canaryhphidden');
+      const refs = (JSON.parse(remote.text.split('\n_META_HOT')[0]) as Array<{ source_ref: string; pages_updated: string[] }>).map(r => r.source_ref);
+      expect(refs).toEqual(expect.arrayContaining(['<local path> @ abcdef12', '<local path> @ 0123abcd', '<local path>']));
+      for (const hidden of [RESTRICTED, PRIVATE, MISSING, 'canaryhpmixed', 'canaryhpgone', 'canaryhphidden', 'canaryhpalice', 'canaryhpguard', 'canaryhpref', 'Mobile Documents', 'brain-example', '/srv/brains']) {
+        expect({ hidden, shown: remote.text.includes(hidden) }).toEqual({ hidden, shown: false });
+      }
+      const alice = (await call('alice', 'get_ingest_log', { limit: 20 })).text;
+      expect({ alice: alice.includes('canaryhpalice'), ref: alice.includes('canaryhpref'), mixed: alice.includes('canaryhpmixed') }).toEqual({ alice: true, ref: true, mixed: false });
+      const whole = await local('get_ingest_log', { limit: 20 });
+      for (const shown of ['/srv/brains/acme-example', PRIVATE, 'canaryhphidden', 'canaryhpmixed', 'canaryhpguard']) expect({ shown, ok: whole.text.includes(shown) }).toEqual({ shown, ok: true });
     }, 120_000);
 
     test('ontology_propose refuses an entity page its caller cannot read, and keeps an observation no wider than the page', async () => {
