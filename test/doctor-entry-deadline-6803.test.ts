@@ -107,8 +107,8 @@ test('#8979: a local probe that hangs is killed at its entry deadline instead of
   const bin = mkdtempSync(join(tmpdir(), 'gbrain-8979-bin-'));
   const pids = join(bin, 'pids');
   for (const tool of ['npm', 'crontab', 'which']) {
-    // Ignores SIGTERM, so only a hard kill ends it before its 6 s sleep.
-    writeFileSync(join(bin, tool), `#!/bin/sh\necho $$ >> '${pids}'\ntrap '' TERM\nexec sleep 6\n`, { mode: 0o755 });
+    // A wrapper that ignores SIGTERM and waits on a child of its own, so only a hard kill of the whole group ends both.
+    writeFileSync(join(bin, tool), `#!/bin/sh\ntrap '' TERM\necho $$ >> '${pids}'\nsleep 6 &\necho $! >> '${pids}'\nwait\n`, { mode: 0o755 });
   }
   try {
     await withEnv({ PATH: `${bin}:${process.env.PATH}` }, async () => {

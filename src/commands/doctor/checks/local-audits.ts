@@ -383,7 +383,8 @@ export const extractionBacklogsEntry: DoctorEntry = {
 /**
  * #8979: a local probe's stdout, or null when it fails or outlives its bound (5 s, clipped to the entry deadline less
  * the report reserve; `entryDeadlineAt` is read when the entry starts). It runs asynchronously and is killed with
- * SIGKILL at its bound, so a probe that hangs never blocks the event loop or outlives the entry's deadline. A probe
+ * SIGKILL at its bound (on POSIX its whole process group, so a wrapper's children die too), so a probe that hangs
+ * never blocks the event loop or outlives the entry's deadline. A probe
  * the entry deadline cut short marks the entry's scope expired, so its checks report unknown instead of absent.
  */
 async function localProbe(entryDeadlineAt: number | undefined, file: string, args: string[]): Promise<string | null> {
@@ -393,14 +394,24 @@ async function localProbe(entryDeadlineAt: number | undefined, file: string, arg
   const cutShort = () => { if (scope && end < ownEnd) scope.expired = true; return null; };
   const timeout = end - Date.now();
   if (timeout <= 0) return cutShort();
-  const { execFile } = await import('../../../core/spawn.ts');
+  const { spawn } = await import('../../../core/spawn.ts');
+  const posix = process.platform !== 'win32';
   return new Promise((resolve) => {
-    const child = execFile(file, args, { encoding: 'utf8', shell: process.platform === 'win32' }, (error, stdout) => {
-      clearTimeout(timer);
-      resolve(error ? null : stdout);
-    });
-    const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(cutShort()); }, timeout);
-    child.stdin?.end();
+    const child = spawn(file, args, { shell: !posix, detached: posix, stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    let done = false;
+    const finish = (value: string | null) => { if (done) return; done = true; clearTimeout(timer); resolve(value); };
+    const timer = setTimeout(() => {
+      if (done) return;
+      try { if (posix && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { child.kill('SIGKILL'); }
+      child.stdout?.destroy();
+      child.unref();
+      finish(cutShort());
+    }, timeout);
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => { out += chunk; });
+    child.on('error', () => finish(null));
+    child.on('close', (code) => finish(code === 0 ? out : null));
   });
 }
 
