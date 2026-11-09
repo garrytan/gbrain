@@ -1811,10 +1811,9 @@ export async function extractTimelineForSlugs(
   // one `links_extracted_at` stamp, so both must agree on what was read.
   const slugToPath = (opts?.tree ?? await indexMarkdownTree(repoPath, await readMetafilePagesMode(engine))).slugToPath;
   // v0.18.0+ multi-source: source-qualify so timeline rows don't fan out
-  // across every source containing the slug (the addTimelineEntry's
-  // INSERT...SELECT-from-pages fan-out was Data R1's HIGH 2).
-  const entryOpts = opts?.sourceId ? { sourceId: opts.sourceId } : undefined;
-  const quarantined = await quarantinedSlugs(engine, opts?.sourceId ?? 'default');
+  // across every source containing the slug (Data R1's HIGH 2).
+  const sourceId = opts?.sourceId ?? 'default';
+  const quarantined = await quarantinedSlugs(engine, sourceId);
   let created = 0;
   const processed: string[] = [];
   const errors: Array<{ slug: string; error: string }> = [];
@@ -1826,10 +1825,17 @@ export async function extractTimelineForSlugs(
     try {
       const content = readFileSync(filePath, 'utf-8');
       const entries = extractTimelineFromContent(content, slug);
-      await retractRemovedTimelineEntries(engine, slug, opts?.sourceId ?? 'default', content);
-      for (const entry of entries) {
-        await addProjectedTimelineEntry(engine, entry.slug, { date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail }, entryOpts);
-        created++;
+      await retractRemovedTimelineEntries(engine, slug, sourceId, content);
+      // #6805: one projected batch per page, whatever its timeline length. A batch the database refuses (one bad row
+      // fails the statement) is retried row by row, so the page keeps its other rows and still reports the refusal.
+      try { created += await addProjectedTimelineBatch(engine, entries.map(entry => ({ ...entry, source_id: sourceId })), { auditSite: 'extract.timeline_inc' }); }
+      catch {
+        let refusal: unknown;
+        for (const entry of entries) {
+          try { if (await addProjectedTimelineEntry(engine, entry.slug, { date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail }, { sourceId })) created++; }
+          catch (e) { refusal ??= e; }
+        }
+        if (refusal) throw refusal;
       }
       processed.push(slug);
     } catch (e) { errors.push({ slug, error: e instanceof Error ? e.message : String(e) }); }
