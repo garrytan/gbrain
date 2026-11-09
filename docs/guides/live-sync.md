@@ -698,6 +698,24 @@ vars — incident-time escape hatches, not everyday knobs.
    an upstream rewritten by a force-push (or one gbrain has no earlier record
    of) still refuses `refresh_diverged`, and `--dry-run` never publishes.
 
+   `gbrain sources git-reconcile` does this for every source checkout on the
+   host at once: a managed checkout goes through the refresh above; a checkout
+   gbrain cloned for the source (a recorded remote URL, the source folder at the
+   repository root) publishes its local commits the same way (secret scan,
+   rewrite check, merge in memory, bound to the upstream it checked so a
+   force-push in between refuses) and fast-forwards when it is only behind. Any
+   other checkout, such as a source folder inside a repository gbrain did not
+   clone, only fast-forwards and reports its local commits `unpublished` unless
+   `sources.refresh_publish_diverged` is `true`; `false` leaves every checkout's
+   local commits `unpublished`. A source with sync turned off is skipped unless
+   named. A level checkout costs one fetch and reports `in_sync`, so any agent,
+   cron or hook can call it as often and as concurrently as it likes; callers
+   on one checkout take turns and end with the same upstream. Autopilot runs it
+   each tick, its pulls and publishes in bounded child processes
+   (`autopilot.git_pull false` skips it). Exit 0 means every checkout is level
+   or left unpublished, 1 that one needs the user (the result names the
+   refusal), 4 that a retry can fix it.
+
    **Say to your agent:** *"Bring my notes source up to date with its remote."*
 
 9. **Turn automatic pulls off for every source.** On an unmanaged brain,

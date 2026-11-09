@@ -520,6 +520,7 @@ test/shared-skills-writer-boundary.test.ts
 test/source-lifecycle-dry-run-physical-root-6849.test.ts
 test/source-retire-missing-checkout.test.ts
 test/source-row-diagnostics.test.ts
+test/sources-git-reconcile.test.ts
 test/sources-resolve-path.test.ts
 test/stats-health-source-scope.test.ts
 test/sync-absent-from-worktree-s27.test.ts

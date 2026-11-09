@@ -144,7 +144,10 @@ Rules for the wrapper and everything that calls it:
    Set caller timeouts of at least 10 s in the shell and in the language
    runtime that runs it (a runtime's exec timeout can override the shell's
    without saying so), and turn on the [warm CLI socket](cli-socket.md) so
-   reads skip the cold start.
+   reads skip the cold start. A call that fetches or pushes
+   (`gbrain sources git-reconcile`, `gbrain sources refresh`) can take minutes
+   on a slow remote: give it at least 15 minutes rather than killing it
+   mid-push, and let overlapping runs take turns instead of skipping them.
 6. **Quote the env file.** A file a shell sources is shell syntax. An unquoted
    `&` in a URL ends the assignment and backgrounds the rest, so the variable
    silently keeps its old value. Quote every value, keep Postgres URLs to
