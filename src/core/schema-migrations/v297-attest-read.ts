@@ -12,8 +12,8 @@ import type { Migration } from './types.ts';
 // NULL too. Database only, so a repo-less brain gets it unchanged. Nothing is
 // rewritten on upgrade. No schema.sql mirror, like v286. Numbered on the
 // GBRA-284 branch; expect a renumber at the merge slot.
-export const v294: Migration = {
-  version: 294,
+export const v297: Migration = {
+  version: 297,
   name: 'attest_read',
   idempotent: true,
   sql: `
