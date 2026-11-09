@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**gbrain's background claude-cli calls no longer read your personal Claude Code instructions.** On Claude Code 2.1.314 or newer the claude-cli provider runs its child with `--setting-sources ""`, so your `~/.claude/CLAUDE.md`, memory and `settings.json` stop steering gbrain's extraction and summary calls (and stop adding about 42k cached tokens to each). The trade-off: `settings.json`'s `env`, `apiKeyHelper` and permission rules don't reach the child either; the subscription login is kept. Older CLIs are unchanged.
+
+### Itemized changes
+
+- `src/core/ai/providers/claude-cli-language-model.ts`: `runClaude` adds `--setting-sources ""` when a cached `claude --version` (once per binary per process) reads `SETTING_SOURCES_MIN_VERSION` (2.1.314) or newer. Reported and first fixed by @Masashi-Ono0611 (#8350).
+- Docs: `docs/ai-providers/claude-cli.md` (the trade-off), `docs/guides/skillopt.md`, `docs/architecture/key-files/core-ai-continued.md`.
+- Tests: `test/claude-cli-setting-sources-8342.test.ts`; the `test/claude-cli-output-cap.test.ts` stub answers `--version`.
+
 ## [0.60.620.0] - 2026-11-09
 
 **A diverged managed checkout now publishes its local commits on refresh by default when Git durability is on, after a secret scan of those commits.** Commits a script made with plain `git commit` in a managed checkout used to strand there whenever the remote moved: every `gbrain sources refresh` refused `refresh_diverged` and asked the user, unless `sources.refresh_publish_diverged` was set to `true`. With the setting unset, a worktree whose Git durability is on (`gbrain sources writer git-durability <source> --enable`, or the legacy hook) now publishes them itself: the local commits merged with the upstream in memory, never a rebase or force-push, then the fast-forward. The publish child scans, under its publish lock and for the exact commits it pushes, what they add: commit messages, added lines (including a value a later commit removed) and merge-commit conflict resolutions. A value that looks like a secret, added text too large to scan, or a commit that changes `.gbrain-scan-allow` or a `.gitattributes` refuses the new `publish_secret_found` naming the file, line, rule and commit, never the value, with nothing pushed; commits the scan cannot read in full refuse `publish_scan_unreadable` instead. The rewritten-upstream refusal and the `--expect-remote` bound are unchanged. `false` turns it off; `true` still publishes with durability off.

@@ -131,6 +131,12 @@ user-level `~/.claude/CLAUDE.md`, memory and `settings.json` stay out of
 every call and the login is kept (gbrain reads `claude --version` once per
 binary per process). An older CLI still loads them on every call.
 
+Trade-off: `--setting-sources ""` loads no settings source at all, so the
+`env` block, `apiKeyHelper` and permission rules in your `settings.json` don't
+reach the child either. The subscription (OAuth) login is kept, but a claude
+login or proxy that depends on `settings.json` doesn't apply to gbrain's
+claude-cli calls on these versions.
+
 The adapter does not use `claude`'s own agentic tool-calling — it injects a
 fenced instruction block into the system prompt teaching the model a
 `<use_tools>[{id,name,input}, ...]</use_tools>` JSON emission format
