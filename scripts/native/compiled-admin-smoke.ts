@@ -22,12 +22,26 @@ const port = await new Promise<number>((done, fail) => {
 });
 const home = mkdtempSync(join(tmpdir(), 'gbrain-admin-smoke-'));
 mkdirSync(join(home, '.gbrain', 'brain.pglite'), { recursive: true });
+mkdirSync(join(home, 'tmp'));
 writeFileSync(join(home, '.gbrain', 'config.json'), `${JSON.stringify({ engine: 'pglite', database_path: join(home, '.gbrain', 'brain.pglite'), embedding_dimensions: 1536 })}\n`);
-const server = Bun.spawn([binary, 'serve', '--http', '--port', String(port), '--bind', '127.0.0.1'], {
-  cwd: home,
-  env: { ...process.env, HOME: home, GBRAIN_HOME: home, GBRAIN_SKIP_STARTUP_HOOKS: '1', GBRAIN_ADMIN_BOOTSTRAP_TOKEN: 'admin-smoke-bootstrap-token-aaaaaaaaaaaa', OPENAI_API_KEY: '', ANTHROPIC_API_KEY: '' },
-  stdout: 'pipe', stderr: 'pipe',
-});
+const env: Record<string, string> = {
+  PATH: process.env.PATH ?? '/usr/bin:/bin',
+  HOME: home, USERPROFILE: home, GBRAIN_HOME: home,
+  XDG_CONFIG_HOME: join(home, 'config'), XDG_CACHE_HOME: join(home, 'cache'), XDG_STATE_HOME: join(home, 'state'),
+  TMPDIR: join(home, 'tmp'), TMP: join(home, 'tmp'), TEMP: join(home, 'tmp'),
+  LANG: 'C.UTF-8', LC_ALL: 'C',
+  GBRAIN_NO_BANNER: '1', GBRAIN_SKIP_STARTUP_HOOKS: '1', GBRAIN_BACKUP_CHECK: '0', GBRAIN_SWEEP: '0',
+  GBRAIN_ADMIN_BOOTSTRAP_TOKEN: 'admin-smoke-bootstrap-token-aaaaaaaaaaaa',
+};
+// Never spread process.env: an inherited GBRAIN_DATABASE_URL or DATABASE_URL outranks config.json, and this server opens /admin with a public token.
+for (const name of ['SystemRoot', 'WINDIR', 'ComSpec']) if (process.env[name]) env[name] = process.env[name]!;
+const server = Bun.spawn([binary, 'serve', '--http', '--port', String(port), '--bind', '127.0.0.1'], { cwd: home, env, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
+let output = '';
+const drain = async (stream: ReadableStream<Uint8Array>) => {
+  const decoder = new TextDecoder();
+  for await (const part of stream) output = (output + decoder.decode(part, { stream: true })).slice(-4000);
+};
+void Promise.all([drain(server.stdout), drain(server.stderr)]).catch(() => {});
 const base = `http://127.0.0.1:${port}`;
 try {
   const deadline = performance.now() + 60_000;
@@ -36,20 +50,24 @@ try {
     ready = await fetch(`${base}/health`, { signal: AbortSignal.timeout(2000) }).then(r => r.ok, () => false);
     if (!ready) await Bun.sleep(250);
   }
-  if (!ready) throw new Error(`serve --http never answered /health (exit ${server.exitCode}): ${(await new Response(server.stderr).text().catch(() => '')).slice(0, 2000)}`);
+  if (!ready) throw new Error(`serve --http never answered /health (exit ${server.exitCode}): ${output.slice(-2000)}`);
 
   const page = await fetch(`${base}/admin/`, { signal: AbortSignal.timeout(10_000) });
   const html = await page.text();
   if (page.status !== 200 || !/text\/html/.test(page.headers.get('content-type') ?? '') || !html.includes('<div id="root">')) {
     throw new Error(`/admin/ did not return the admin shell (status ${page.status}, ${page.headers.get('content-type')})`);
   }
-  const assets = [...html.matchAll(/<(script|link)\b[^>]*?\b(?:src|href)="(\/admin\/[^"]+)"/g)].map(([, tag, path]) => ({ tag: tag!, path: path! }));
+  const assets = [...html.matchAll(/<(script|link)\b([^>]*)>/g)].flatMap(([, tag, attrs]) => {
+    const path = /\b(?:src|href)="(\/admin\/[^"]+)"/.exec(attrs!)?.[1];
+    const rel = /\brel="([^"]*)"/.exec(attrs!)?.[1] ?? '';
+    const want = tag === 'script' || /\bmodulepreload\b/.test(rel) ? /javascript/ : /\bstylesheet\b/.test(rel) ? /css/ : /./;
+    return path ? [{ tag: tag!, path, want }] : [];
+  });
   if (!assets.some(a => a.tag === 'script')) throw new Error('/admin/ loads no same-origin script');
-  for (const { tag, path } of assets) {
+  for (const { path, want } of assets) {
     const res = await fetch(`${base}${path}`, { signal: AbortSignal.timeout(10_000) });
     const body = await res.arrayBuffer();
     const type = res.headers.get('content-type') ?? '';
-    const want = tag === 'script' ? /javascript/ : /css/;
     if (res.status !== 200 || body.byteLength === 0 || !want.test(type)) throw new Error(`${path}: status ${res.status}, ${body.byteLength} bytes, ${type}`);
   }
   console.log(`Compiled admin smoke passed: /admin/ and ${assets.length} asset(s)`);

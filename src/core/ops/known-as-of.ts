@@ -21,7 +21,7 @@ export const KNOWN_AS_OF_PARAM: ParamDef = { type: 'string', fullSurfaceOnly: tr
 export const VERSIONS_DIFF_PARAM: ParamDef = { type: 'boolean', actsWhenTrue: true, fullSurfaceOnly: true, description: 'With known_as_of: each version also carries a unified diff from the version before it.' };
 
 /** get_page parameters that select a body window, a fuzzy match or an edit view, none of which a historical read serves: a recorded-time read sets them aside and names them (GST-2214: GPT-6.1 Sol fills every one). */
-const GET_PAGE_UNSUPPORTED = ['fuzzy', 'include_content', 'content_only', 'include_timeline_entries', 'grammar_diagnostics', 'include_quarantined',
+const GET_PAGE_UNSUPPORTED = ['fuzzy', 'include_content', 'content_only', 'include_timeline_entries', 'grammar_diagnostics',
   'lines', 'bytes', 'around_chunk_id', 'context_lines', 'cursor', 'max_bytes', 'view', 'outline_from', 'section', 'grep', 'context'] as const;
 
 /** The get_page arguments a recorded-time read serves; the refusal's fix keeps only these. */
@@ -102,11 +102,13 @@ function ledgerView(read: PageAtTime) {
 /** `get_page {known_as_of}`: the page at the slug as recorded at the instant, with the interval it was in and whether the ledger certifies it. */
 export async function getPageKnownAsOf(ctx: OperationContext, p: Record<string, unknown>): Promise<Record<string, unknown>> {
   const at = parseKnownAsOf(p.known_as_of);
-  if (p.body !== undefined && p.body !== 'auto' && p.body !== 'full' && p.body !== 'none') {
+  const badBody = p.body !== undefined && p.body !== 'auto' && p.body !== 'full' && p.body !== 'none';
+  const drop = [...(p.include_quarantined === true ? ['include_quarantined'] : []), ...(badBody ? ['body'] : [])];
+  if (drop.length) {
     const name = (k: string) => opTransport(ctx) === 'cli' ? `--${k.replace(/_/g, '-')}` : `\`${k}\``;
-    const kept = Object.fromEntries(GET_PAGE_AS_OF_ARGS.filter(k => p[k] !== undefined && k !== 'body').map(k => [k, p[k]]));
-    throw opError('invalid_params', `get_page: known_as_of does not combine with body: ${String(p.body)}.`,
-      `Drop ${name('body')} to read the page as recorded at known_as_of, or drop ${name('known_as_of')} for the current page. A recorded-time read takes only ${GET_PAGE_AS_OF_ARGS.slice(2).map(name).join(', ')} (auto, full or none).`,
+    const kept = Object.fromEntries(GET_PAGE_AS_OF_ARGS.filter(k => p[k] !== undefined && !drop.includes(k)).map(k => [k, p[k]]));
+    throw opError('invalid_params', `get_page: known_as_of does not combine with ${drop.map(k => k === 'body' ? `body: ${String(p.body)}` : k).join(' or ')}.`,
+      `Drop ${drop.map(name).join(', ')} to read the page as recorded at known_as_of, or drop ${name('known_as_of')} for the current page. A recorded-time read takes only ${GET_PAGE_AS_OF_ARGS.slice(2).map(name).join(', ')} (auto, full or none).`,
       { fix: readFix('The same call without the arguments that select a window or view of the current page, which a recorded-time read does not serve.',
         { argv: ['gbrain', 'get', ...Object.entries(kept).filter(([k]) => k !== 'slug').flatMap(([k, v]) => v === true ? [`--${k.replace(/_/g, '-')}`] : v === false ? [] : [`--${k.replace(/_/g, '-')}`, String(v)]), '--', String(p.slug)],
           mcp: { tool: 'get_page', arguments: kept } }) });

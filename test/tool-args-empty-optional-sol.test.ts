@@ -355,6 +355,15 @@ describe("GST-927: GBEV-3's replayed Sol shapes", () => {
     expect(served as Record<string, unknown>).toEqual(plain);
   });
 
+  test('GST-2214: a recorded-time read still refuses include_quarantined: true, which it would not honour', async () => {
+    await enableBeliefLedger(engine, 'default');
+    const at = new Date(Date.now() + 1000).toISOString();
+    await Bun.sleep(1100);
+    const out = await paths['mcp remote (http)']!('get_page', { slug: SLUG, known_as_of: at, include_quarantined: true, include_content: true });
+    expect([out.ok, summary(out), out.text.includes('get_page: known_as_of does not combine with include_quarantined.')]).toEqual([false, 'invalid_params', true]);
+    expect(out.text).not.toContain(BODY_MARKER);
+  });
+
   test('GST-2214: traverse_graph with hops beside depth, link_type and direction walks the chain on every entry point, naming what was set aside', async () => {
     const hops = [{ link_type: 'founded', toward: 'object' }];
     const results: Record<string, string> = {};
