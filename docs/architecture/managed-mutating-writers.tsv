@@ -21,6 +21,18 @@ op	add_timeline_entry	coordinator	submitPageMutation admits a journaled page mut
 op	revert_version	coordinator	submitPageMutation admits a journaled page mutation.
 op	edit_page	coordinator	submitPageMutation admits a journaled page mutation; edits apply to the locked snapshot.
 op	append_page	coordinator	submitPageMutation admits a journaled page mutation; the append applies to the locked snapshot.
+op	log_turn	coordinator	mutateHandoffPage submits a revision-checked put_page of the thread page (handoff/store.ts).
+op	update_thread_summary	coordinator	mutateHandoffPage submits a revision-checked put_page of the thread page.
+op	checkpoint	coordinator	mutateHandoffPage submits a revision-checked put_page of the thread page.
+op	pickup	coordinator	mutateHandoffPage submits a revision-checked put_page of the thread page when the picking agent joins the history; a read-only pickup writes nothing.
+op	register_agent	coordinator	mutateHandoffPage submits a revision-checked put_page of the agents/<name> page.
+op	heartbeat	coordinator	mutateHandoffPage put_page of the agent page (skipped within a minute of the last one), then one put_page per delegation whose lease ran out.
+op	delegate	coordinator	mutateHandoffPage creates the delegation page with a create-only put_page, then appends a turn to its thread.
+op	claim_task	coordinator	mutateHandoffPage put_page naming the revision it read, so concurrent claims commit once.
+op	complete_task	coordinator	mutateHandoffPage put_page of the delegation page, then a turn on its thread.
+op	release_task	coordinator	mutateHandoffPage put_page of the delegation page, then a turn on its thread.
+op	fan_out	coordinator	One create-only put_page per sibling delegation page, then a turn on the shared thread.
+op	pick_result	coordinator	One revision-checked put_page per fan-out sibling whose pick changes, then a turn on the thread.
 op	begin_page_upload	no_canonical_write	Opens an upload session row; no page is written until commit_page_upload.
 op	upload_page_part	no_canonical_write	Stages one part of an upload session; no page is written until commit_page_upload.
 op	commit_page_upload	coordinator	submitPageMutation admits the staged body as a journaled page mutation (put_page, or append_page in append mode).

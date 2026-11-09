@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 307576,
-    "stdoutSha256": "150733f23f662d965ad8d4cf5e961d207d096be8dedff50fbe7474b15b11bbed",
+    "stdoutBytes": 307587,
+    "stdoutSha256": "61adae13295a83dec6990cc3d62866cd9f97f6b4f1dc8b91ef083da6d0cdd2fc",
     "toolNames": [
       "remember",
       "entity",
@@ -9072,7 +9072,7 @@
       },
       {
         "description": "Pick up a thread: returns its rolling summary, last 10 turns, decisions, open questions, next step, linked pages, linked delegations and handoff history. With agent, you join the history (e.g. grok-bot -> claude) and a parked thread becomes active.",
-        "idempotent": false,
+        "idempotent": true,
         "local_only": false,
         "mutating": true,
         "name": "pickup",
@@ -9489,7 +9489,7 @@
         "schema": {
           "properties": {
             "agents": {
-              "description": "Agents to send it to, e.g. ['claude', 'chatgpt'].",
+              "description": "Two or more agents to send it to, e.g. ['claude', 'chatgpt'].",
               "items": {
                 "type": "string"
               },

@@ -38,6 +38,7 @@ function writeReceipt(outcome: { revision: string | null; noop: boolean; pending
 const log_turn: Operation = {
   name: 'log_turn',
   mutating: true,
+  idempotent: false,
   writeInference: 'async_derived',
   scope: 'write',
   outputRedaction: 'no_stored_text',
@@ -109,6 +110,7 @@ const update_thread_summary: Operation = {
 const checkpoint: Operation = {
   name: 'checkpoint',
   mutating: true,
+  idempotent: false,
   writeInference: 'async_derived',
   scope: 'write',
   outputRedaction: 'no_stored_text',
@@ -168,6 +170,7 @@ const find_thread: Operation = {
 const pickup: Operation = {
   name: 'pickup',
   mutating: true,
+  idempotent: true,
   writeInference: 'async_derived',
   scope: 'write',
   outputRedaction: 'retrieval',

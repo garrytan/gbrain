@@ -7587,6 +7587,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   {
     "name": "log_turn",
     "mutating": true,
+    "idempotent": false,
     "writeInference": "async_derived",
     "scope": "write",
     "outputRedaction": "no_stored_text",
@@ -7697,6 +7698,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   {
     "name": "checkpoint",
     "mutating": true,
+    "idempotent": false,
     "writeInference": "async_derived",
     "scope": "write",
     "outputRedaction": "no_stored_text",
@@ -7800,6 +7802,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   {
     "name": "pickup",
     "mutating": true,
+    "idempotent": true,
     "writeInference": "async_derived",
     "scope": "write",
     "outputRedaction": "retrieval",
@@ -7911,6 +7914,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   {
     "name": "delegate",
     "mutating": true,
+    "idempotent": false,
     "writeInference": "async_derived",
     "scope": "write",
     "outputRedaction": "no_stored_text",
@@ -8025,6 +8029,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   {
     "name": "claim_task",
     "mutating": true,
+    "idempotent": false,
     "writeInference": "async_derived",
     "scope": "write",
     "outputRedaction": "retrieval",
@@ -8060,6 +8065,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   {
     "name": "complete_task",
     "mutating": true,
+    "idempotent": false,
     "writeInference": "async_derived",
     "scope": "write",
     "outputRedaction": "no_stored_text",
@@ -8111,6 +8117,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   {
     "name": "release_task",
     "mutating": true,
+    "idempotent": false,
     "writeInference": "async_derived",
     "scope": "write",
     "outputRedaction": "no_stored_text",
@@ -8147,6 +8154,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   {
     "name": "fan_out",
     "mutating": true,
+    "idempotent": false,
     "writeInference": "async_derived",
     "scope": "write",
     "outputRedaction": "no_stored_text",
@@ -8163,8 +8171,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
           "type": "string"
         },
         "required": true,
-        "minItems": 2,
-        "description": "Agents to send it to, e.g. ['claude', 'chatgpt']."
+        "description": "Two or more agents to send it to, e.g. ['claude', 'chatgpt']."
       },
       "title": {
         "type": "string",

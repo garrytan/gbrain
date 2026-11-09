@@ -148,6 +148,7 @@ const heartbeat: Operation = {
 const delegate_op: Operation = {
   name: 'delegate',
   mutating: true,
+  idempotent: false,
   writeInference: 'async_derived',
   scope: 'write',
   outputRedaction: 'no_stored_text',
@@ -198,6 +199,7 @@ const inbox_op: Operation = {
 const claim_task: Operation = {
   name: 'claim_task',
   mutating: true,
+  idempotent: false,
   writeInference: 'async_derived',
   scope: 'write',
   outputRedaction: 'retrieval',
@@ -226,6 +228,7 @@ const claim_task: Operation = {
 const complete_task: Operation = {
   name: 'complete_task',
   mutating: true,
+  idempotent: false,
   writeInference: 'async_derived',
   scope: 'write',
   outputRedaction: 'no_stored_text',
@@ -253,6 +256,7 @@ const complete_task: Operation = {
 const release_task: Operation = {
   name: 'release_task',
   mutating: true,
+  idempotent: false,
   writeInference: 'async_derived',
   scope: 'write',
   outputRedaction: 'no_stored_text',
@@ -276,6 +280,7 @@ const release_task: Operation = {
 const fan_out: Operation = {
   name: 'fan_out',
   mutating: true,
+  idempotent: false,
   writeInference: 'async_derived',
   scope: 'write',
   outputRedaction: 'no_stored_text',
@@ -283,7 +288,7 @@ const fan_out: Operation = {
     + 'Compare the results with the user, then record the chosen one with pick_result.',
   params: {
     from_agent: AGENT_PARAM,
-    agents: { type: 'array', items: { type: 'string' }, required: true, minItems: 2, description: "Agents to send it to, e.g. ['claude', 'chatgpt']." },
+    agents: { type: 'array', items: { type: 'string' }, required: true, description: "Two or more agents to send it to, e.g. ['claude', 'chatgpt']." },
     ...TASK_FIELDS,
     source_id: SOURCE_PARAM,
   },
