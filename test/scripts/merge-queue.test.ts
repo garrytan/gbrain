@@ -136,7 +136,7 @@ class FakeGh implements Gh {
   releaseGate: string | null = 'success';
   merged: Array<{ n: number; sha: string; title: string }> = [];
   beforeMerge: (() => void) | null = null;
-  posted: Array<{ n: number; body: string }> = [];
+  posted: Array<{ n: number; body: string; author?: string }> = [];
   constructor(readonly origin: string, readonly master: string) {}
   private head(branch: string): string {
     return git(this.origin, 'rev-parse', `refs/heads/${branch}`).trim();
@@ -160,8 +160,8 @@ class FakeGh implements Gh {
   }
   addLabel(n: number, label: string): void { this.prs.get(n)!.labels.push(label); }
   comment(n: number, body: string): void { this.posted.push({ n, body }); }
-  comments(n: number): string[] { return this.notes(n); }
-  notes(n: number): string[] { return this.posted.filter((c) => c.n === n).map((c) => c.body); }
+  comments(n: number): Array<{ author: string; body: string }> { return this.posted.filter((c) => c.n === n).map((c) => ({ author: c.author ?? 'garrytan', body: c.body })); }
+  notes(n: number): string[] { return this.posted.filter((c) => c.n === n && !c.author).map((c) => c.body); }
   closePr(n: number): void { this.prs.get(n)!.state = 'CLOSED'; }
   checks(sha: string): CheckRun[] {
     return ['Test/cheap-tier', 'Test/full-suite', 'E2E Tests/e2e-full-suite'].map((name) => ({ name, status: 'completed', conclusion: this.red.has(`${sha}:${name}`) ? 'failure' : 'success' } as CheckRun)).concat(this.extra);
@@ -182,7 +182,8 @@ class FakeGh implements Gh {
     return merged;
   }
   pushRuns(sha: string): WorkflowRun[] {
-    return ['Test', 'E2E Tests', 'Release'].map((name, i) => ({ id: i + 1, name, status: this.postMerge[name] === 'in_progress' ? 'in_progress' : 'completed', conclusion: this.postMerge[name] ?? 'success' }));
+    const state = this.merged.some((m) => m.sha === sha) ? this.postMerge : {};
+    return ['Test', 'E2E Tests', 'Release'].map((name, i) => ({ id: i + 1, name, status: state[name] === 'in_progress' ? 'in_progress' : 'completed', conclusion: state[name] ?? 'success' }));
   }
   jobConclusion(): string | null { return this.releaseGate; }
   receiptHead(pr: number): string | null { return this.pr(pr).headRefOid; }
@@ -339,12 +340,17 @@ describe('merge-queue verify and land', () => {
   test('a red master push freezes the queue, and a running Release ci-gate leaves it waiting', () => {
     const fx = fixture();
     ownerBranch(fx, 1, 'src/a.ts');
-    expect(mq(fx, ['build', '1']).code).toBe(0);
+    ownerBranch(fx, 2, 'src/b.ts');
+    expect(mq(fx, ['build', '1', '2']).code).toBe(0);
     fx.gh.postMerge = { Test: 'failure' };
     const r = mq(fx, ['land', String(queuePr(fx, 'mq/0.1.1.0-pr1'))]);
     expect(r.code).toBe(1);
     expect(r.out).toContain('POST_MERGE: red');
     expect(r.out).toContain('QUEUE_FROZEN');
+    const next = mq(fx, ['land', String(queuePr(fx, 'mq/0.1.2.0-pr2'))]);
+    expect(next.code).toBe(1);
+    expect(next.out).toMatch(/master [0-9a-f]{12} is red/);
+    expect(fx.gh.merged.length).toBe(1);
 
     const gh = new FakeGh(fx.origin, fx.master);
     gh.releaseGate = null;
@@ -356,6 +362,31 @@ describe('merge-queue verify and land', () => {
 });
 
 describe('merge-queue refresh and rebuild', () => {
+  test('ignores a queue note from another author, and refuses to refresh a non-tail entry whose owner added a CI file', () => {
+    const fx = fixture();
+    ownerBranch(fx, 1, 'src/a.ts');
+    ownerBranch(fx, 2, 'src/b.ts');
+    expect(mq(fx, ['build', '1', '2']).code).toBe(0);
+    const q1 = queuePr(fx, 'mq/0.1.1.0-pr1');
+    ownerBranch(fx, 3, 'src/c.ts', { author: 'outside-dev' });
+    const outside = rev(fx.origin, 'refs/heads/owner-3');
+    fx.gh.posted.push({ n: q1, author: 'outside-dev', body: queueNote({ owner: 3, ownerHead: outside, base: 'master', baseHead: rev(fx.origin, 'refs/heads/master') }) });
+    expect(mq(fx, ['refresh', String(q1)]).code).toBe(0);
+    expect(isAncestor(fx.origin, outside, 'mq/0.1.1.0-pr1')).toBe(false);
+    expect(mq(fx, ['verify', String(q1)]).code).toBe(0);
+
+    git(fx.work, 'checkout', '-q', 'owner-1');
+    put(fx.work, { '.github/workflows/test.yml': 'name: Test\n' });
+    git(fx.work, 'add', '-A');
+    git(fx.work, 'commit', '-qm', 'owner adds a CI file');
+    git(fx.work, 'push', '-q', 'origin', 'owner-1');
+    const r = mq(fx, ['refresh', String(q1)]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('changes the CI self-attestation files, so its entry must be last');
+    expect(isAncestor(fx.origin, rev(fx.work, 'HEAD'), 'mq/0.1.2.0-pr2')).toBe(false);
+    expect(mq(fx, ['build', '2']).out).toContain('#2 is already queued as mq/0.1.2.0-pr2');
+  }, 120_000);
+
   test('refresh fixes an entry in place: versions stay, the entry behind re-merges the new head', () => {
     const fx = fixture();
     ownerBranch(fx, 1, 'src/a.ts');

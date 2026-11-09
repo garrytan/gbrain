@@ -358,17 +358,25 @@ export function resolveVersionOnlyHunks(text: string): { text: string; unresolve
   return { text: out.join('\n'), unresolved };
 }
 
+/** One or more whole BEHAVIOR_CHANGES records: each starts at two-space indent with `{ since: '` and the block ends `},`. */
+function isRows(lines: string[]): boolean {
+  return lines.length > 0 && lines[0]!.startsWith("  { since: '") && /\},\s*$/.test(lines.at(-1)!) && lines.every((l) => l === '' || /^ {2}[{}]/.test(l) || /^ {3}/.test(l));
+}
+
 /**
- * Resolve diff3 conflict hunks in which both sides only added lines at the same place (an empty base section),
- * such as two branches each appending a BEHAVIOR_CHANGES row: theirs (the base being merged in, the earlier
- * release) first, then ours. Any other hunk stays in place and counts as unresolved.
+ * Resolves diff3 hunks of behavior-change-notice.ts where both sides only appended whole records to the BEHAVIOR_CHANGES
+ * array at one place (an empty base section): the base's records first, then the branch's. Any other hunk, including an
+ * insertion outside the array or one that is not whole records, stays conflicted.
  */
 export function resolveAppendedLines(text: string): { text: string; unresolved: number } {
   const lines = text.split('\n');
   const out: string[] = [];
   let unresolved = 0;
+  let inRows = false;
   for (let i = 0; i < lines.length; i++) {
     if (!lines[i]!.startsWith('<<<<<<< ')) {
+      if (/^export const BEHAVIOR_CHANGES\b.*= \[$/.test(lines[i]!)) inRows = true;
+      else if (lines[i] === '];') inRows = false;
       out.push(lines[i]!);
       continue;
     }
@@ -384,7 +392,7 @@ export function resolveAppendedLines(text: string): { text: string; unresolved: 
       } else if (section !== 'theirs' && l === '=======') section = 'theirs';
       else side[section].push(l);
     }
-    if (sawBase && side.base.length === 0) out.push(...side.theirs, ...side.ours);
+    if (inRows && sawBase && side.base.length === 0 && isRows(side.ours) && isRows(side.theirs)) out.push(...side.theirs, ...side.ours);
     else {
       unresolved++;
       out.push(...lines.slice(start, i + 1));

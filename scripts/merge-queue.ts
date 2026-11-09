@@ -61,7 +61,7 @@ export interface Gh {
   createPr(opts: { head: string; title: string; body: string }): number;
   addLabel(n: number, label: string): void;
   comment(n: number, body: string): void;
-  comments(n: number): string[];
+  comments(n: number): Array<{ author: string; body: string }>;
   closePr(n: number): void;
   checks(sha: string): CheckRun[];
   merge(n: number, sha: string, title: string, message: string): string;
@@ -275,6 +275,7 @@ function buildEntry(ctx: Ctx, p: Planned): number {
     install(dir);
   }
   const wt = ctx.git.at(dir);
+  if (!existsSync(join(wt.run('rev-parse', '--path-format=absolute', '--git-dir').trim(), 'gbrain-restamp.json'))) wt.run('checkout', '--quiet', '--force', '-B', p.branch, ownerHead);
   restamp(ctx, dir, p.base);
   const head = wt.run('rev-parse', 'HEAD').trim();
   const version = (wt.show(head, 'VERSION') ?? '').trim();
@@ -294,7 +295,8 @@ function live(ctx: Ctx): Live[] {
   return liveEntries(ctx.git).map((e, index) => {
     const pr = ctx.gh.openPrForBranch(e.branch);
     if (!pr) stop(`${e.branch} has no open queue PR`, `rebuild it, or delete the branch: git push origin --delete ${e.branch}`);
-    return { ...e, pr, meta: readNote(ctx.gh.comments(pr.number)), index };
+    const note = readNote(ctx.gh.comments(pr.number).filter((c) => c.author === ctx.gh.repoOwner()).map((c) => c.body));
+    return { ...e, pr, meta: note?.owner === e.owner ? note : null, index };
   });
 }
 
@@ -337,7 +339,8 @@ function verifyProblems(ctx: Ctx, e: Live, first: Live, expectHead?: string, vmG
   if (!e.pr.title.startsWith(`v${version} `)) p.push(`queue PR title does not start with v${version}`);
   if (!e.meta) p.push('queue PR has no queue note (Queue-Owner-Head / Queue-Base)');
   else {
-    const owner = ctx.gh.pr(e.meta.owner);
+    const owner = ctx.gh.pr(e.owner);
+    if (owner.isCrossRepository || owner.author !== ctx.gh.repoOwner()) p.push(`owner #${e.owner} is a contributor PR (${owner.author})`);
     if (owner.headRefOid !== e.meta.ownerHead) p.push(`owner #${e.meta.owner} pushed after inclusion (${owner.headRefOid.slice(0, 12)}); refresh to fix in place, or rebuild --drop`);
     if (!ctx.git.ok('merge-base', '--is-ancestor', e.meta.ownerHead, e.head)) p.push(`owner head ${e.meta.ownerHead} is not in the entry`);
   }
@@ -354,14 +357,21 @@ function verifyProblems(ctx: Ctx, e: Live, first: Live, expectHead?: string, vmG
   return p;
 }
 
+/** Entries for owners not already queued, behind the tail. */
+function planNew(ctx: Ctx, owners: number[]): Planned[] {
+  const queued = liveEntries(ctx.git).find((e) => owners.includes(e.owner));
+  if (queued) stop(`#${queued.owner} is already queued as ${queued.branch}`, 'refresh that entry instead, or rebuild it');
+  return plan(ctx, owners, tail(ctx));
+}
+
 function cmdPlan(ctx: Ctx, owners: number[]): void {
   fetchAll(ctx);
-  plan(ctx, owners, tail(ctx)).forEach((p, i) => ctx.log(`PLAN: +${i + 1} #${p.owner.number} ${p.branch} version=${p.version} base=${p.base}`));
+  planNew(ctx, owners).forEach((p, i) => ctx.log(`PLAN: +${i + 1} #${p.owner.number} ${p.branch} version=${p.version} base=${p.base}`));
 }
 
 function cmdBuild(ctx: Ctx, owners: number[]): void {
   fetchAll(ctx);
-  for (const p of plan(ctx, owners, tail(ctx))) {
+  for (const p of planNew(ctx, owners)) {
     buildEntry(ctx, p);
     fetchAll(ctx);
   }
@@ -394,44 +404,51 @@ function cmdVerify(ctx: Ctx, n: number, expectHead?: string, vmGateTree?: string
   return e;
 }
 
-/** Wait for master's push runs of Test and E2E Tests on the merge commit and for Release's ci-gate, so no release is superseded. */
-export function waitPostMerge(gh: Gh, sha: string, timeoutMs: number, clock: { now: () => number; sleep: (ms: number) => void }, log: (l: string) => void): 'green' | 'red' | 'pending' {
-  const deadline = clock.now() + timeoutMs;
-  for (;;) {
-    let runs: WorkflowRun[] = [];
-    try {
-      runs = gh.pushRuns(sha);
-    } catch {
-      runs = [];
+/** Master's push runs of Test and E2E Tests on sha and, when sha changed VERSION, Release's ci-gate; a gh error reads as pending. */
+export function postMergeState(gh: Gh, sha: string, release: boolean): { verdict: 'green' | 'red' | 'pending'; lines: string[] } {
+  let runs: WorkflowRun[] = [];
+  try {
+    runs = gh.pushRuns(sha);
+  } catch {
+    runs = [];
+  }
+  const newest = (name: string) => runs.filter((x) => x.name === name).sort((a, b) => b.id - a.id)[0];
+  const lines: string[] = [];
+  let red = false;
+  let done = true;
+  for (const name of POST_MERGE_WORKFLOWS) {
+    const r = newest(name);
+    if (!r || r.status !== 'completed') {
+      done = false;
+      lines.push(`${name}=${r?.status ?? 'not started'}`);
+      continue;
     }
-    const newest = (name: string) => runs.filter((x) => x.name === name).sort((a, b) => b.id - a.id)[0];
-    const lines: string[] = [];
-    let red = false;
-    let done = true;
-    for (const name of POST_MERGE_WORKFLOWS) {
-      const r = newest(name);
-      if (!r || r.status !== 'completed') {
-        done = false;
-        lines.push(`${name}=${r?.status ?? 'not started'}`);
-        continue;
-      }
-      if (r.conclusion !== 'success') red = true;
-      lines.push(`${name}=${r.conclusion}`);
-    }
-    const release = newest('Release');
+    if (r.conclusion !== 'success') red = true;
+    lines.push(`${name}=${r.conclusion}`);
+  }
+  if (release) {
+    const run = newest('Release');
     let gate: string | null = null;
     try {
-      gate = release ? gh.jobConclusion(release.id, 'ci-gate') : null;
+      gate = run ? gh.jobConclusion(run.id, 'ci-gate') : null;
     } catch {
       gate = null;
     }
     if (gate === null) done = false;
     else if (gate !== 'success') red = true;
-    lines.push(`Release ci-gate=${release ? gate ?? 'running' : 'not started'}`);
-    if (red || done || clock.now() >= deadline) {
-      const verdict = red ? 'red' : done ? 'green' : 'pending';
-      log(`POST_MERGE: ${verdict} ${sha} ${lines.join(' ')}`);
-      return verdict;
+    lines.push(`Release ci-gate=${run ? gate ?? 'running' : 'not started'}`);
+  }
+  return { verdict: red ? 'red' : done ? 'green' : 'pending', lines };
+}
+
+/** Wait for master's push runs and Release's ci-gate on a landed merge commit, so no release is superseded. */
+export function waitPostMerge(gh: Gh, sha: string, timeoutMs: number, clock: { now: () => number; sleep: (ms: number) => void }, log: (l: string) => void): 'green' | 'red' | 'pending' {
+  const deadline = clock.now() + timeoutMs;
+  for (;;) {
+    const s = postMergeState(gh, sha, true);
+    if (s.verdict !== 'pending' || clock.now() >= deadline) {
+      log(`POST_MERGE: ${s.verdict} ${sha} ${s.lines.join(' ')}`);
+      return s.verdict;
     }
     clock.sleep(30_000);
   }
@@ -444,6 +461,12 @@ function cmdLand(ctx: Ctx, n: number, expectHead: string | undefined, vmGateTree
   fetchAll(ctx);
   if (landingTree(ctx.git, MASTER, e.head) !== tree) {
     ctx.log(`VERIFY: refused #${e.pr.number}: master moved during verify; rerun land`);
+    return false;
+  }
+  const masterSha = ctx.git.run('rev-parse', MASTER).trim();
+  const m = postMergeState(ctx.gh, masterSha, !ctx.git.ok('diff', '--quiet', `${masterSha}^1`, masterSha, '--', 'VERSION'));
+  if (m.verdict !== 'green') {
+    ctx.log(`VERIFY: refused #${e.pr.number}: master ${masterSha.slice(0, 12)} is ${m.verdict} (${m.lines.join(' ')}); land only after master's push runs and Release's ci-gate are green`);
     return false;
   }
   const sha = ctx.gh.merge(e.pr.number, e.head, `${plainTitle(e.pr.title)} (#${e.pr.number})`, `Queue entry ${e.version} for #${e.owner}.`);
@@ -472,23 +495,27 @@ function cmdRefresh(ctx: Ctx, n: number): void {
     const wt = ctx.git.at(dir);
     if (existsSync(join(wt.run('rev-parse', '--path-format=absolute', '--git-dir').trim(), 'gbrain-restamp.json'))) stop(`a restamp is stopped in ${dir}`, 'finish it there (bun run release:restamp --continue), then rerun refresh');
     if (!wt.ok('merge-base', '--is-ancestor', e.head, 'HEAD')) wt.run('checkout', '--quiet', '-B', e.branch, e.head);
-    const owner = ctx.gh.pr(e.meta.owner);
+    const owner = ownerPr(ctx, e.owner);
     wt.run('fetch', '--quiet', 'origin', owner.headRefOid);
+    if (owner.headRefOid !== e.meta.ownerHead && e.index !== entries.length - 1 && touchesSelfAttestation(wt, owner.headRefOid).length) {
+      stop(`#${e.owner}'s new head changes the CI self-attestation files, so its entry must be last`, `rebuild ${e.pr.number} --drop ${e.owner}, then build ${e.owner} again at the tail`);
+    }
     if (!wt.ok('merge-base', '--is-ancestor', owner.headRefOid, 'HEAD') && sh(['git', 'merge', '--no-ff', '--no-edit', owner.headRefOid], dir, ctx.opts.env).code !== 0) {
       stop(`merging #${e.meta.owner}'s new head into ${e.branch} conflicts in ${dir}`, 'resolve and commit there, push the branch (no force), then rerun refresh');
     }
     const base = e.index === 0 ? 'master' : entries[e.index - 1]!.branch;
     const baseRef = base === 'master' ? MASTER : `refs/remotes/origin/${base}`;
-    const ownerMoved = wt.run('rev-parse', 'HEAD').trim() !== e.head;
+    const ownerMoved = owner.headRefOid !== e.meta.ownerHead;
     const landsClean = base === 'master' && landingTree(wt, MASTER, 'HEAD') === wt.run('rev-parse', 'HEAD^{tree}').trim();
     if (ownerMoved || (!landsClean && !wt.ok('merge-base', '--is-ancestor', baseRef, 'HEAD'))) restamp(ctx, dir, base);
     const head = wt.run('rev-parse', 'HEAD').trim();
     const version = (wt.show(head, 'VERSION') ?? '').trim();
     if (version !== e.version) stop(`refresh moved ${e.branch} to VERSION ${version}`, 'master moved under the queue; rebuild it from Q1');
-    if (base !== 'master') checkInherited(wt, baseRef, head, e.version, e.branch);
-    if (head !== e.head) {
-      wt.run('push', '--quiet', 'origin', `${head}:refs/heads/${e.branch}`);
-      ctx.gh.comment(e.pr.number, queueNote({ owner: e.meta.owner, ownerHead: owner.headRefOid, base, baseHead: wt.run('rev-parse', baseRef).trim() }));
+    checkInherited(wt, baseRef, head, e.version, e.branch);
+    const baseHead = wt.run('rev-parse', baseRef).trim();
+    if (head !== e.head) wt.run('push', '--quiet', 'origin', `${head}:refs/heads/${e.branch}`);
+    if (head !== e.head || ownerMoved || e.meta.base !== base || e.meta.baseHead !== baseHead) {
+      ctx.gh.comment(e.pr.number, queueNote({ owner: e.meta.owner, ownerHead: owner.headRefOid, base, baseHead }));
     }
     ctx.log(`REFRESHED: #${e.pr.number} ${e.branch} head=${head}${head === e.head ? ' (unchanged)' : ''}`);
     fetchAll(ctx);
@@ -542,7 +569,7 @@ export function ghCli(repo: string, cwd: string, env?: Record<string, string | u
     createPr: ({ head, title, body }) => Number(/\/pull\/(\d+)/.exec(gh('pr', 'create', '-R', repo, '--base', 'master', '--head', head, '--title', title, '--body', body))?.[1]),
     addLabel: (n, label) => void gh('pr', 'edit', String(n), '-R', repo, '--add-label', label),
     comment: (n, body) => void gh('pr', 'comment', String(n), '-R', repo, '--body', body),
-    comments: (n) => (JSON.parse(gh('pr', 'view', String(n), '-R', repo, '--json', 'comments')) as { comments: Array<{ body: string }> }).comments.map((c) => c.body),
+    comments: (n) => (JSON.parse(gh('pr', 'view', String(n), '-R', repo, '--json', 'comments')) as { comments: Array<{ author: { login: string } | null; body: string }> }).comments.map((c) => ({ author: c.author?.login ?? '', body: c.body })),
     closePr: (n) => void gh('pr', 'close', String(n), '-R', repo),
     checks: (sha) => {
       const newest = new Map<string, { id: number; name: string }>();

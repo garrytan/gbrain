@@ -163,7 +163,12 @@ merge coordinator runs it; owners never stamp a queued PR themselves.
   ([master-push reuse](ci-event-parity.md#master-push-reuse)).
 - **One landing at a time.** Master pushes cancel each other's runs, and a
   cancelled push run marks its release superseded, so `land` returns only after
-  the push runs and Release's ci-gate finish. Red freezes the queue.
+  the push runs and Release's ci-gate finish, and refuses to merge while
+  master's tip is red or still running them. Red freezes the queue.
+- **Queue notes.** Only a note comment by the repository owner counts, and it
+  must name the branch's owner PR; `refresh` and `verify` re-check that the
+  owner PR is not a contributor PR. `refresh` refuses an owner push that adds a
+  CI self-attestation file to an entry that is not last.
 - **Ship receipt.** Each queue head gets a stamp-only /ship on the queue PR
   (`build` already stamped it), so its receipt's head is the queue head. A
   receipt does not carry from the owner PR to a stamped or stacked head.

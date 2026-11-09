@@ -457,8 +457,15 @@ describe('release:restamp helpers', () => {
   });
 
   test('rows both sides appended at one place resolve base rows first; an edited row stays conflicted', () => {
-    const appended = "rows = [\n  a,\n<<<<<<< ours\n  branch_row,\n||||||| base\n=======\n  master_row,\n>>>>>>> theirs\n];\n";
-    expect(resolveAppendedLines(appended)).toEqual({ text: 'rows = [\n  a,\n  master_row,\n  branch_row,\n];\n', unresolved: 0 });
+    const head = 'export const BEHAVIOR_CHANGES: ReadonlyArray<Row> = [\n';
+    const branchRow = "  { since: 'TBD', id: 'b', text: 'B.' },";
+    const masterRows = ["  { since: '0.2.0.0', id: 'm', text: (x) => {", "    return x ? 'M.' : null;", '  } },'];
+    const appended = `${head}  { since: '0.1.0.0', text: 'A.' },\n<<<<<<< ours\n${branchRow}\n||||||| base\n=======\n${masterRows.join('\n')}\n>>>>>>> theirs\n];\n`;
+    expect(resolveAppendedLines(appended)).toEqual({ text: `${head}  { since: '0.1.0.0', text: 'A.' },\n${masterRows.join('\n')}\n${branchRow}\n];\n`, unresolved: 0 });
+    const guards = 'function key(x) {\n<<<<<<< ours\n  if (x) return true;\n||||||| base\n=======\n  if (x) return false;\n>>>>>>> theirs\n  return null;\n}\n';
+    expect(resolveAppendedLines(`${head}];\n${guards}`).unresolved).toBe(1);
+    const partial = `${head}<<<<<<< ours\n${branchRow}\n||||||| base\n=======\n  { since: '0.2.0.0', id: 'm', text: 'M.' },\n];\nexport const LEAK = 1;\n>>>>>>> theirs\n];\n`;
+    expect(resolveAppendedLines(partial).unresolved).toBe(1);
     const edited = '<<<<<<< ours\n  a2,\n||||||| base\n  a,\n=======\n  a3,\n>>>>>>> theirs\n';
     expect(resolveAppendedLines(edited).unresolved).toBe(1);
     const noBase = '<<<<<<< ours\n  x,\n=======\n  y,\n>>>>>>> theirs\n';
