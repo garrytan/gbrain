@@ -141,6 +141,35 @@ export async function remoteReadersChecked<T extends { parsedPage: { frontmatter
   return prepared;
 }
 
+/**
+ * GST-2051: the member a remote write's token or OAuth client is bound to, as `member:<id>`, when the write goes to
+ * `default`: the no-grant floor of every token without `--sources` and the registration default of every OAuth
+ * client, read by every credential without a source grant, unbound ones included. Null for a local, unbound, attested
+ * or audience write, and for any other source (the operator chose that source's audience). Read from the stored
+ * binding at preparation, so a binding removed after submission takes effect; a disabled member's page names a reader
+ * nobody holds and is refused, and a binding that cannot be read throws instead of publishing the page shared.
+ */
+export async function defaultSourceMemberWriter(engine: SqlEngine, authority: Pick<WriteAuthority, 'remote' | 'actingFor' | 'principal' | 'sourceId'>): Promise<string | null> {
+  const { principal } = authority;
+  if (!authority.remote || authority.actingFor || authority.sourceId !== 'default' || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return null;
+  const [row] = await engine.executeRaw<{ member_id: string | null }>(principal.kind === 'legacy_token'
+    ? 'SELECT member_id FROM access_tokens WHERE id::text = $1'
+    : 'SELECT member_id FROM oauth_clients WHERE client_id = $1', [principal.id]);
+  return row?.member_id ? `member:${row.member_id}` : null;
+}
+
+/**
+ * GST-2051: the readers a page written by a default-source member writer (defaultSourceMemberWriter) keeps when its content
+ * names none: the stored page's readers when it has them, else the writer alone for a page this write creates. An
+ * existing page with no readers stays as it is. Only ever narrows: a page naming readers is left to the caller.
+ */
+export function defaultSourceWriterReaders(writer: string | null, frontmatter: Record<string, unknown>, stored: { frontmatter?: unknown; deleted_at?: unknown } | null | undefined): void {
+  if (!writer || hasReaders(frontmatter)) return;
+  const live = stored && stored.deleted_at == null ? stored : null;
+  if (live && hasReaders(live.frontmatter)) frontmatter.readable_by = (live.frontmatter as Record<string, unknown>).readable_by;
+  else if (!live) frontmatter.readable_by = [writer];
+}
+
 /** The one refusal a remote writer gets for a target it may not see; other visibility refusals reuse it verbatim. */
 export function pageNotVisibleError() {
   return opError('page_not_found', 'Page not found.', 'This page does not exist or is not visible to this connection, so nothing was written. Do not retry this slug as a create; ask the user whether the page exists and who can read it, or write to a different slug.');
