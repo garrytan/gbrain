@@ -57,7 +57,7 @@ import { importFromContent } from '../import-file.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
-import { PRIVACY_ALIASES, privacyAliasSql, privateSnapshotFilterFragment, readHonorAliases } from '../search/private-visibility.ts';
+import { PRIVACY_ALIASES, privacyAliasSql, privacyPartSql, privateSnapshotFilterFragment, readHonorAliases } from '../search/private-visibility.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope } from './core.ts';
 
 export type ClearClass = 'alias' | 'alias-and-visibility' | 'git-publish';
@@ -76,7 +76,7 @@ const bounded = { timeoutMs: 120_000 };
 type Labels = { access?: string; visibility?: string };
 interface LabelRow { id: number; source_id: string; slug: string; type: string; frontmatter: Record<string, unknown> | null; revision: string | null; chars: number; git: boolean }
 interface Selection { source_ids: string[]; class: LabelsClass | null }
-interface Approved { mode: 'clear' | 'restore'; class: LabelsClass; brain_id: string; source_id: string; slug: string; page_id: number; revision: string | null; labels: Labels; chars: number; selection: Selection }
+interface Approved { mode: 'clear' | 'restore'; class: LabelsClass; brain_id: string; source_id: string; slug: string; page_id: number; revision: string | null; labels: Labels; chars: number; selection: Selection; exposes?: number[] }
 interface LabelsItem extends RepairItem { entry: Approved; ledger: PrivateLabelsLedger }
 /**
  * One ledger line. `phase`: `intent` is appended before the page write, `committed` after it landed, with the revision it
@@ -156,7 +156,7 @@ function selectedClass(opts?: RepairPlanOptions): LabelsClass | null {
 }
 
 const hashParts = (scope: RepairScope, selection: Selection, entries: Approved[]) => ({ kind: 'private-labels-v1', brain_id: scope.brain_id, selection,
-  items: entries.map(e => [e.mode, e.class, e.source_id, e.page_id, e.slug, e.revision, Object.entries(e.labels).sort()]) });
+  items: entries.map(e => [e.mode, e.class, e.source_id, e.page_id, e.slug, e.revision, Object.entries(e.labels).sort(), e.exposes ?? []]) });
 
 /** Every category's count over the scope and the clear entries of the selected classes, in (class, page id) order. */
 async function planClear(engine: BrainEngine, scope: RepairScope, selection: Selection, classes: readonly ClearClass[]) {
@@ -215,34 +215,49 @@ async function planRestore(engine: BrainEngine, scope: RepairScope, selection: S
   return { counts: counts as Record<string, number>, entries, unreadable };
 }
 
+type Dependents = { derived_from: number; atom: number; concept: number; life_chronicle: number };
+
 /**
- * GST-2093: the pages a window's clears expose besides themselves, by category: a derived_from page (not itself a derived
- * type) whose declared origins that are visibility: private all lose it in this window, and a life-chronicle event whose
- * origin (`event.depth`) is a listed page hidden now. Each must not be private by its own fields. Counts only.
+ * GST-2093: the pages a window's clears expose besides themselves, by category, judged by the remote privacy rules
+ * (privacyPartSql) on each page as it is now and as it would be once the window applies. A candidate is a live page of
+ * the same source tied to a cleared page the way those rules follow privacy: `derived_from`, an atom's `source_slug`, a
+ * life-chronicle event's `event.depth`, or a concept-provenance link to a cleared atom or to an atom of a cleared origin.
+ * The postimage is the pages table shadowed with the window's keys removed. Also returned, per cleared page id, the
+ * exposed page ids tied to it: the preview hash binds them, and apply refuses a window that would expose a page outside them.
  */
-async function windowDependents(engine: BrainEngine, window: Approved[]): Promise<{ derived_from: number; life_chronicle: number }> {
+async function windowDependents(engine: BrainEngine, window: Approved[]): Promise<{ counts: Dependents; exposes: Map<number, number[]> }> {
+  const counts: Dependents = { derived_from: 0, atom: 0, concept: 0, life_chronicle: 0 };
+  const exposes = new Map<number, number[]>();
   const clears = window.filter(entry => entry.mode === 'clear');
-  if (!clears.length) return { derived_from: 0, life_chronicle: 0 };
+  if (!clears.length) return { counts, exposes };
   await readHonorAliases(engine);
-  const declared = (p: string) => `ARRAY(SELECT regexp_replace(declared.slug, '\\.md$', '') FROM jsonb_array_elements_text(
-    CASE WHEN jsonb_typeof(${p}.frontmatter->'derived_from') = 'array' THEN ${p}.frontmatter->'derived_from' ELSE jsonb_build_array(${p}.frontmatter->'derived_from') END) AS declared(slug))`;
-  const [row] = await engine.executeRaw<{ derived_from: number; life_chronicle: number }>(`WITH cleared AS (
-      SELECT * FROM unnest($1::text[], $2::text[], $3::text[]) AS c(source_id, slug, visibility)),
-    lineage AS (SELECT p.source_id, ${declared('p')} AS origins FROM pages p
-      WHERE p.deleted_at IS NULL AND p.source_id = ANY($1::text[]) AND jsonb_typeof(p.frontmatter->'derived_from') IN ('array', 'string')
-        AND p.type NOT IN ('atom', 'question', 'concept', 'event') AND ${privateSnapshotFilterFragment('p')}
-        AND NOT EXISTS (SELECT 1 FROM cleared c WHERE c.source_id = p.source_id AND c.slug = p.slug))
-    SELECT (SELECT count(*)::int FROM lineage l
-        WHERE EXISTS (SELECT 1 FROM cleared c WHERE c.visibility = 'private' AND c.source_id = l.source_id AND c.slug = ANY(l.origins))
-          AND NOT EXISTS (SELECT 1 FROM pages o WHERE o.source_id = l.source_id AND o.slug = ANY(l.origins) AND o.frontmatter->>'visibility' = 'private'
-            AND NOT EXISTS (SELECT 1 FROM cleared c WHERE c.visibility = 'private' AND c.source_id = o.source_id AND c.slug = o.slug))) AS derived_from,
-      (SELECT count(*)::int FROM pages e
-        JOIN cleared c ON c.source_id = e.source_id AND c.slug = e.frontmatter->'event'->>'depth'
-        JOIN pages o ON o.source_id = c.source_id AND o.slug = c.slug AND o.deleted_at IS NULL
-        WHERE e.deleted_at IS NULL AND e.type = 'event' AND e.frontmatter->>'captured_via' LIKE 'life-chronicle:%' AND NOT (e.frontmatter ? 'derived_from')
-          AND ${privateSnapshotFilterFragment('e')} AND NOT ${privateSnapshotFilterFragment('o')}) AS life_chronicle`,
-    [clears.map(entry => entry.source_id), clears.map(entry => entry.slug), clears.map(entry => entry.labels.visibility ?? '')], bounded);
-  return { derived_from: Number(row?.derived_from ?? 0), life_chronicle: Number(row?.life_chronicle ?? 0) };
+  const rows = await engine.executeRaw<{ id: number; cleared_id: number; category: keyof Dependents }>(`WITH cleared AS (
+      SELECT * FROM unnest($1::integer[], $2::text[], $3::text[], $4::text[]) AS c(id, source_id, slug, keys)),
+    candidates AS (SELECT DISTINCT p.id, c.id AS cleared_id FROM pages p JOIN cleared c ON c.source_id = p.source_id
+      WHERE p.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM cleared x WHERE x.id = p.id) AND (
+        p.frontmatter->>'source_slug' = c.slug OR p.frontmatter->'event'->>'depth' = c.slug
+        OR (jsonb_typeof(p.frontmatter->'derived_from') IN ('array', 'string') AND c.slug = ANY(ARRAY(SELECT regexp_replace(declared.slug, '\\.md$', '')
+          FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(p.frontmatter->'derived_from') = 'array' THEN p.frontmatter->'derived_from'
+            ELSE jsonb_build_array(p.frontmatter->'derived_from') END) AS declared(slug))))
+        OR EXISTS (SELECT 1 FROM links l JOIN pages a ON a.id = l.to_page_id WHERE l.from_page_id = p.id AND l.link_source = 'concept-provenance'
+          AND l.link_type = 'synthesized_from' AND (a.id = c.id OR (a.source_id = c.source_id AND a.frontmatter->>'source_slug' = c.slug)))))
+    SELECT cand.id, cand.cleared_id, CASE WHEN p.type = 'event' AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%' THEN 'life_chronicle'
+        WHEN p.type = 'atom' THEN 'atom' WHEN p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL THEN 'concept' ELSE 'derived_from' END AS category
+      FROM candidates cand JOIN pages p ON p.id = cand.id
+      WHERE NOT ${privacyPartSql('p')} AND cand.id IN (
+        WITH pages AS NOT MATERIALIZED (SELECT pg.id, pg.source_id, pg.slug, pg.type, pg.deleted_at,
+            CASE WHEN c.id IS NULL THEN pg.frontmatter ELSE pg.frontmatter - string_to_array(c.keys, ',') END AS frontmatter
+          FROM pages pg LEFT JOIN cleared c ON c.id = pg.id)
+        SELECT after_clear.id FROM pages after_clear WHERE after_clear.id IN (SELECT id FROM candidates) AND ${privacyPartSql('after_clear')})
+      ORDER BY cand.id`,
+    [clears.map(entry => entry.page_id), clears.map(entry => entry.source_id), clears.map(entry => entry.slug), clears.map(entry => Object.keys(entry.labels).sort().join(','))], bounded);
+  const counted = new Set<number>();
+  for (const row of rows) {
+    const id = Number(row.id);
+    if (!counted.has(id)) { counted.add(id); counts[row.category]++; }
+    exposes.set(Number(row.cleared_id), [...(exposes.get(Number(row.cleared_id)) ?? []), id]);
+  }
+  return { counts, exposes };
 }
 
 /**
@@ -296,6 +311,8 @@ export const privateLabelsRepair: RepairHandler = {
       if (approved.items.some(entry => (entry.selection.class ?? null) !== selection.class || JSON.stringify(entry.selection.source_ids) !== JSON.stringify(selection.source_ids))) {
         throw previewChangedError(opts.expect, command);
       }
+      const approvedExposes = new Set(approved.items.flatMap(entry => entry.exposes ?? []));
+      if ([...(await windowDependents(engine, approved.items)).exposes.values()].flat().some(id => !approvedExposes.has(id))) throw previewChangedError(opts.expect, command);
       return { items: toItems(approved.items).filter(item => afterCursor(item.cursor, after)), preview_hash: opts.expect, residuals: {} };
     }
     const size = Math.min(Math.max(1, opts?.limit ?? PRIVATE_LABELS_WINDOW), PRIVATE_LABELS_WINDOW_MAX);
@@ -311,11 +328,13 @@ export const privateLabelsRepair: RepairHandler = {
       projected.restorable!--;
       projected.already_restored!++;
     }
+    const found = restore ? null : await windowDependents(engine, window);
+    for (const entry of window) if (found?.exposes.has(entry.page_id)) entry.exposes = found.exposes.get(entry.page_id);
     const hash = previewHash(hashParts(scope, selection, window));
     if (window.length) await saveApprovedSet<Approved>(engine, { command: 'private-labels', hash }, window);
     const gitPublish = restore ? 0 : before['git-publish'] ?? 0;
-    const dependents = restore ? null : await windowDependents(engine, window);
-    const exposed = dependents ? dependents.derived_from + dependents.life_chronicle : 0;
+    const dependents = found?.counts ?? null;
+    const exposed = dependents ? Object.values(dependents).reduce((sum, n) => sum + n, 0) : 0;
     const fileBacked = (await filesInCheckout(engine, window.map(entry => entry.page_id))).size;
     const warnings = [
       ...(pastWindow ? [`This preview lists one window of ${window.length} item(s); ${pastWindow} more found past it. Apply this window (or decide not to), then preview again for the next one: ${command}`] : []),
@@ -327,8 +346,8 @@ export const privateLabelsRepair: RepairHandler = {
         + 'from the checkout, but every earlier commit, and any remote it was pushed to, keeps the page\'s content.'] : []),
       ...(gitPublish && selection.class !== 'git-publish' ? [`${gitPublish} page(s) of class git-publish (git-canonical sources) carry the same label and are not in this preview: `
         + 'private pages there are database-only, so clearing commits each into its source\'s Git history for the first time. Preview them by name: gbrain repair private-labels --class git-publish'] : []),
-      ...(exposed ? [`Clearing this window also exposes ${exposed} page(s) whose only privacy is a listed page's label: ${dependents!.derived_from} derived_from page(s) whose `
-        + `declared origin loses visibility: private, ${dependents!.life_chronicle} life-chronicle event(s) extracted from a listed page. Remote callers that are not the brain owner `
+      ...(exposed ? [`Clearing this window also exposes ${exposed} page(s) whose only privacy is a listed page's label: ${dependents!.derived_from} derived_from page(s), `
+        + `${dependents!.atom} atom(s), ${dependents!.concept} synthesized concept(s) and ${dependents!.life_chronicle} life-chronicle event(s) extracted from a listed page. Remote callers that are not the brain owner `
         + 'can read them once this window applies (readable_by and folder rules still apply). To keep one private, give it its own label first; --class restore re-hides them with their origins.'] : []),
       ...(fileBacked ? [`${fileBacked} listed page(s) have a file in their source's checkout on a brain without managed persistence. This repair writes only the database there, `
         + 'and the next sync or re-import would put the label back from the file, so the apply holds each (outcome file_backed) with the file to edit.'] : []),

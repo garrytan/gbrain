@@ -2119,10 +2119,13 @@ What it clears and what it keeps:
 The preview lists one window of pages under a hash, with every class's count
 before and after the window. It also counts, by category and without slugs, the
 pages that the window would expose along with its own (`details.dependents`).
-These are `derived_from` pages whose origin loses `visibility: private`, and
-life-chronicle events extracted from a listed page. A warning names the counts
-when they aren't zero. To keep one of those pages private, give it its own
-label before you apply.
+It judges each page by the same rules remote reads use, before and after the
+window: `derived_from` pages, atoms whose origin is a listed page, synthesized
+concepts built from such atoms, and life-chronicle events extracted from a
+listed page. A warning names the counts when they aren't zero. To keep one of
+those pages private, give it its own label before you apply. The preview hash
+covers the pages it counted, so if a new page would be exposed by the time you
+apply, the apply refuses with `preview_changed` and you preview again.
 
 `--apply --expect <preview_hash>` applies exactly that window and checks each
 page against its current revision and labels first. A page edited since the

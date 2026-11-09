@@ -515,6 +515,48 @@ describe('repair private-labels write-ahead ledger', () => {
 });
 
 /**
+ * Review finding on GST-2092: a crash can leave the ledger's last line cut off. The next intent line must start on a
+ * line of its own, or it joins the torn tail, is unreadable, and restore cannot find the page it cleared.
+ */
+describe('repair private-labels ledger with a torn last line', () => {
+  test('the intent line after a torn tail stays readable, so a crash after the page write still restores', async () => {
+    const source = 'source-t';
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-private-labels-torn-'));
+    const runIn = async (argv: string[]) => {
+      const out = JSON.parse(await withEnv({ GBRAIN_HOME: home, GBRAIN_INTERACTIVE: '0', CI: '1' }, () => capture(() => runRepairCommand(engine, [...argv, '--json'])))).results[0];
+      _resetCliExitVerdictForTests();
+      return out;
+    };
+    try {
+      await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [source]);
+      await seed('notes/t', 'note', { access: 'private' }, source);
+      const preview = await runIn(['private-labels', '--source', source]);
+      const brain = preview.scope.brain_id;
+      const path = join(home, '.gbrain', 'repair', 'private-labels', brain + '.jsonl');
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, '{"');
+      const scope = await resolveRepairScope(engine, source);
+      const logger = { info() {}, warn() {}, error() {} };
+      const applied = await withEnv({ GBRAIN_HOME: home }, async () => {
+        const real = privateLabelsLedger(brain);
+        const crashing = { ...real, record(line: PrivateLabelsLedgerLine) {
+          if (line.phase !== 'intent') throw new Error('forced crash after the page write');
+          real.record(line);
+        } };
+        return (await repairRunner(engine, { apply: true, logger })).run('private-labels', scope, { explicit: true, expect: preview.preview_hash, privateLabelsLedger: crashing });
+      });
+      expect(applied.failed).toEqual([]);
+      expect('access' in (await row('notes/t', source)).frontmatter).toBe(false);
+      const restore = await runIn(['private-labels', '--source', source, '--class', 'restore']);
+      expect(restore.listing).toEqual([{ item: source + ':notes/t', class: 'restore', detail: 're-add access: private' }]);
+      expect(restore.warnings.some((w: string) => w.startsWith('1 ledger line(s) could not be read'))).toBe(true);
+      expect((await runIn(['private-labels', '--source', source, '--class', 'restore', '--apply', '--expect', restore.preview_hash])).applied).toBe(1);
+      expect((await row('notes/t', source)).frontmatter.access).toBe('private');
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+});
+
+/**
  * GST-2128 item 4: restore reads ledger lines as untrusted input. Only access and visibility (visibility only as
  * private) with string values are re-added; any other line, and one whose page id is not an integer, is counted
  * unreadable instead of failing the preview or reaching a page.
@@ -592,10 +634,10 @@ describe('repair private-labels preview counts the dependents a window exposes',
 
     const first = await json(['private-labels', '--source', source, '--limit', '1']);
     expect(first.listing).toEqual([{ item: source + ':meetings/m1', class: 'alias', detail: 'remove access: private' }]);
-    expect(first.details.dependents).toEqual({ derived_from: 0, life_chronicle: 1 });
+    expect(first.details.dependents).toEqual({ derived_from: 0, atom: 0, concept: 0, life_chronicle: 1 });
     const whole = await json(['private-labels', '--source', source]);
     expect(whole.listing.map((l: { item: string }) => l.item)).toEqual([source + ':meetings/m1', source + ':notes/origin-d']);
-    expect(whole.details.dependents).toEqual({ derived_from: 1, life_chronicle: 1 });
+    expect(whole.details.dependents).toEqual({ derived_from: 1, atom: 0, concept: 0, life_chronicle: 1 });
     const warning = whole.warnings.find((w: string) => w.includes('page(s) whose only privacy'));
     expect(warning).toContain('2 page(s)');
     expect(warning).toContain('1 derived_from');
@@ -609,8 +651,60 @@ describe('repair private-labels preview counts the dependents a window exposes',
     expect(await remoteGet('events/e1')).toContain('canaryeventone');
     expect(await remoteGet('notes/summary-two')).not.toContain('canary');
     const none = await json(['private-labels', '--source', source]);
-    expect(none.details.dependents).toEqual({ derived_from: 0, life_chronicle: 0 });
+    expect(none.details.dependents).toEqual({ derived_from: 0, atom: 0, concept: 0, life_chronicle: 0 });
     expect(none.warnings.some((w: string) => w.includes('page(s) whose only privacy'))).toBe(false);
+  });
+});
+
+/**
+ * Review findings on GST-2093: the dependents count follows the remote privacy rules on every page type (an ordinary
+ * concept or note with derived_from, an atom whose origin is the cleared page, a synthesized concept built from such an
+ * atom), and the preview hash binds the pages it exposes, so a dependent added after the preview refuses the apply.
+ */
+describe('repair private-labels dependents follow the remote privacy rules and bind the preview', () => {
+  const remoteGetIn = async (source: string, slug: string) => (await dispatchToolCall(engine, 'get_page', { slug }, { remote: true, transport: 'stdio', sourceId: source, takesHoldersAllowList: ['world'] }))
+    .content.map(c => c.text).join(NL);
+
+  test('every page type whose only privacy is the cleared origin is counted, and each becomes readable remotely', async () => {
+    const source = 'source-x';
+    __resetPrivateVisibilityCacheForTests();
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [source]);
+    await seed('notes/origin-x', 'note', { access: 'private', visibility: 'private' }, source);
+    await seed('concepts/plain-x', 'concept', { derived_from: 'notes/origin-x' }, source, 'canaryplainconcept lineage page.');
+    await seed('notes/note-x', 'note', { derived_from: 'notes/origin-x' }, source, 'canarynotex lineage page.');
+    await seed('atoms/a1-x', 'atom', { visibility: 'world', source_slug: 'notes/origin-x' }, source, 'canaryatomone extracted atom.');
+    await seed('atoms/a2-x', 'atom', { visibility: 'world', source_slug: 'notes/origin-x' }, source, 'canaryatomtwo extracted atom.');
+    await seed('concepts/synth-x', 'concept', { synthesized_by: 'test', visibility: 'world' }, source, 'canarysynthx synthesized concept.');
+    await engine.executeRaw("INSERT INTO links (from_page_id, to_page_id, link_type, link_source) SELECT c.id, a.id, 'synthesized_from', 'concept-provenance' FROM pages c, pages a "
+      + "WHERE c.source_id = $1 AND a.source_id = $1 AND c.slug = 'concepts/synth-x' AND a.slug = 'atoms/a2-x'", [source]);
+    const dependents = ['concepts/plain-x', 'notes/note-x', 'atoms/a1-x', 'atoms/a2-x', 'concepts/synth-x'];
+    for (const slug of dependents) expect(await remoteGetIn(source, slug)).not.toContain('canary');
+
+    const preview = await json(['private-labels', '--source', source]);
+    expect(preview.listing).toEqual([{ item: source + ':notes/origin-x', class: 'alias-and-visibility', detail: 'remove access: private, visibility: private' }]);
+    expect(preview.details.dependents).toEqual({ derived_from: 2, atom: 2, concept: 1, life_chronicle: 0 });
+    expect(preview.warnings.find((w: string) => w.includes('page(s) whose only privacy'))).toContain('5 page(s)');
+
+    expect((await json(['private-labels', '--source', source, '--apply', '--expect', preview.preview_hash])).applied).toBe(1);
+    __resetPrivateVisibilityCacheForTests();
+    for (const slug of dependents) expect(await remoteGetIn(source, slug)).toContain('canary');
+  });
+
+  test('a dependent added after the preview refuses the old --expect; a fresh preview counts it and applies', async () => {
+    const source = 'source-y';
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [source]);
+    await seed('notes/origin-y', 'note', { access: 'private', visibility: 'private' }, source);
+    const preview = await json(['private-labels', '--source', source]);
+    expect(preview.details.dependents).toEqual({ derived_from: 0, atom: 0, concept: 0, life_chronicle: 0 });
+    await seed('notes/summary-y', 'note', { derived_from: 'notes/origin-y' }, source, 'canarysummaryy lineage page.');
+    const refused = await refusal(() => run(['private-labels', '--source', source, '--apply', '--expect', preview.preview_hash, '--json']));
+    _resetCliExitVerdictForTests();
+    expect(refused.code).toBe('preview_changed');
+    expect((await row('notes/origin-y', source)).frontmatter.access).toBe('private');
+    const fresh = await json(['private-labels', '--source', source]);
+    expect(fresh.details.dependents).toEqual({ derived_from: 1, atom: 0, concept: 0, life_chronicle: 0 });
+    expect(fresh.preview_hash).not.toBe(preview.preview_hash);
+    expect((await json(['private-labels', '--source', source, '--apply', '--expect', fresh.preview_hash])).applied).toBe(1);
   });
 });
 

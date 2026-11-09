@@ -20,7 +20,7 @@ The owner's `recall` with a `question` now returns its private facts, as `recall
 
 `--class restore` treats ledger lines as untrusted input. It re-adds only `access` (a string) and `visibility: private`. A line with any other key, a non-string value or a page id that isn't an integer is counted as unreadable instead of failing the preview (GST-2092, GST-2128).
 
-The private-labels preview now counts the pages each window would expose along with its own: `derived_from` pages whose origin loses `visibility: private`, and life-chronicle events extracted from a listed page. It reports them by category (`details.dependents`, no slugs) and warns when the count isn't zero (GST-2093).
+The private-labels preview now counts the pages each window would expose along with its own: `derived_from` pages, atoms whose origin is a listed page, synthesized concepts built from such atoms, and life-chronicle events extracted from a listed page, each judged by the rules remote reads use. It reports them by category (`details.dependents`, no slugs) and warns when the count isn't zero. The preview hash covers the pages it counted, so an apply that would expose a page added since the preview refuses `preview_changed` (GST-2093). A ledger line a crash cut off no longer swallows the next one.
 
 On a brain without managed persistence, a page whose file sits in its source's checkout is no longer cleared in the database only, because the next sync or re-import would put the label back from the file. The apply holds it with outcome `file_backed` and names the file to edit. Repo-less pages clear as before (GST-2128).
 
