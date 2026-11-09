@@ -258,11 +258,17 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     keys(params,['action','source_id','request_id','expected_incarnation','path','name','config','refederate','confirm_destructive','dry_run','remote_url','create_directory','expired_only']);
     if (params.action === 'claim') throw new OperationError('writer_admin_intent_required', 'Claims require the dedicated state-bound writer administration surface.', WRITER_INSPECTION_HINT);
     const { runManagedSourceLifecycle }=await import('./source-lifecycle.ts');
-    return runManagedSourceLifecycle(engine,{operation:params.action as import('./source-lifecycle.ts').SourceLifecycleInput['operation'],sourceId:source(params.source_id),
+    const result=await runManagedSourceLifecycle(engine,{operation:params.action as import('./source-lifecycle.ts').SourceLifecycleInput['operation'],sourceId:source(params.source_id),
       requestId:params.request_id as string|undefined,expectedIncarnation:params.expected_incarnation as string|undefined,
       path:params.path===undefined?undefined:path(params.path),name:params.name as string|undefined,config:params.config as Record<string,unknown>|undefined,
       refederate:params.refederate as boolean|undefined,confirmDestructive:params.confirm_destructive as boolean|undefined,dryRun:params.dry_run===true,
       remoteUrl:params.remote_url as string|undefined,createDirectory:params.create_directory as boolean|undefined,expiredOnly:params.expired_only as boolean|undefined});
+    // #8982: a restore that re-federates names the member-written pages without readers it makes no-grant readable.
+    if (params.action !== 'restore' || params.dry_run === true || result.noop === true || params.source_id === 'default') return result;
+    const [restored] = await engine.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id=$1', [source(params.source_id)]);
+    const exposed = await (await import('../access/federation-exposure.ts')).memberPagesFederationExposesOrWarn(engine, source(params.source_id),
+      (await import('../sources-load.ts')).isSourceFederated(restored?.config));
+    return exposed ? { ...result, member_pages_exposed: exposed } : result;
   }
   if (operation === 'writer_failures') {
     keys(params, ['source_id', 'state', 'group_by', 'since', 'limit', 'before', 'code', 'origin', 'category', 'operation']);
