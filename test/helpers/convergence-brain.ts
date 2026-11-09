@@ -334,7 +334,7 @@ export class Brain {
     this.note(`phase 0: fault-free import in ${(this.elapsed.baseline_import_ms / 1000).toFixed(1)}s; oracle calibration problems: ${this.calibration.length}`);
   }
 
-  /** A fresh resident serve and at most MAX_RECOVERY_RUNS plain syncs, no operator step; a synced run that reports commits landed behind it (a queued write's Git commit) is followed by the next. */
+  /** A fresh resident serve and at most MAX_RECOVERY_RUNS plain syncs, no operator step; a synced run that HEAD has moved past since (a queued write's Git commit landing during or after it) is followed by the next. */
   async recover(): Promise<void> {
     const started = performance.now();
     const serve = new StdioServe(this);
@@ -344,9 +344,11 @@ export class Brain {
       const envelope = lastJson(r.out);
       this.recoveryRuns.push({ ...r, envelope });
       this.keepLog(`recovery-${run}-client.log`, `${r.out}\n${r.err}`);
-      const behind = ((envelope?.watermark as { pending?: { commits_behind?: { count?: number } } } | undefined)?.pending?.commits_behind?.count) ?? 0;
-      this.note(`recovery run ${run}: exit ${r.code} in ${(r.ms / 1000).toFixed(1)}s outcome=${String(envelope?.outcome ?? envelope?.sync_status ?? envelope?.error ?? 'none')}${behind ? `, ${behind} commit(s) landed behind it` : ''}`);
-      if (r.code === 0 && envelope?.outcome === 'synced' && behind === 0) break;
+      const [source] = await this.engine!.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [SOURCE]);
+      const head = this.git('rev-parse', 'HEAD');
+      const behind = source.last_commit && source.last_commit !== head ? this.git('log', '--format=%h %s', `${source.last_commit}..HEAD`).split('\n').filter(Boolean) : [];
+      this.note(`recovery run ${run}: exit ${r.code} in ${(r.ms / 1000).toFixed(1)}s outcome=${String(envelope?.outcome ?? envelope?.sync_status ?? envelope?.error ?? 'none')}${behind.length ? `; ${behind.length} commit(s) landed after it: ${behind.join('; ')}` : ''}`);
+      if (r.code === 0 && envelope?.outcome === 'synced' && !behind.length) break;
     }
     this.elapsed.recovery_ms = performance.now() - started;
     this.keepLog('recovery-serve.log', serve.stderr);
