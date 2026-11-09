@@ -27,6 +27,7 @@
  */
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { scanRange } from './range-secret-scan.ts';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { execFileSync } from '../spawn.ts';
 import { gitChildEnv, literalPathspecs } from '../git-env.ts';
@@ -121,6 +122,8 @@ export interface CommitPushOptions {
   branch?: string;
   /** Push-only: never advance the checkout and skip its pre-push hook (a managed canonical worktree; see the header). */
   keepCheckout?: boolean;
+  /** Before pushing, scan what the commits the upstream lacks add (messages, added lines, merge resolutions) and refuse `publish_secret_found` on a finding: the gate for automatic publishes of commits gbrain did not write. */
+  scanSecrets?: boolean;
   /** Commit the pending write-through files (`--pending`) instead of named paths. */
   pending?: boolean;
   /** Commit and publish files outside the configured source root(s): the user's explicit choice, or gbrain's own scaffolding at the checkout root. */
@@ -142,13 +145,14 @@ interface Ctx {
 
 interface GitRun { code: number; stdout: string; stderr: string }
 
-function git(root: string, args: string[], opts: { auth?: boolean; timeoutMs?: number; env?: NodeJS.ProcessEnv; input?: string } = {}): GitRun {
+function git(root: string, args: string[], opts: { auth?: boolean; timeoutMs?: number; env?: NodeJS.ProcessEnv; input?: string; maxBuffer?: number } = {}): GitRun {
   const base = opts.auth ? { ...GIT_ENV_AUTH } : { ...GIT_ENV };
   try {
     const stdout = execFileSync('git', ['-C', root, ...args], {
       stdio: ['pipe', 'pipe', 'pipe'],
       input: opts.input ?? '',
       timeout: opts.timeoutMs ?? 60_000,
+      ...(opts.maxBuffer ? { maxBuffer: opts.maxBuffer } : {}),
       env: gitChildEnv({ ...base, LC_ALL: 'C', LANGUAGE: 'C', ...opts.env }),
     }).toString();
     return { code: 0, stdout, stderr: '' };
@@ -1025,6 +1029,32 @@ function assertLocalCommitsInsideRoots(ctx: Ctx, target: string, roots: string[]
         docs: 'docs/guides/shared-checkout-git.md#source-roots' } });
 }
 
+/** The automatic-publish secret gate: scan what the commits in trackingRef..target add (the exact range this publish pushes, under its lock). */
+function assertNoSecretsInRange(ctx: Ctx, target: string): void {
+  const scan = scanRange(ctx.root, ctx.trackingRef, target);
+  if (scan.unreadable !== undefined) {
+    throw opError('publish_scan_unreadable', `The secret scan could not read the local commits ${ctx.trackingRef}..${target.slice(0, 12)} (${scan.unreadable}). No secret was reported. Nothing was pushed.`,
+      `The publish pushes only commits it has read in full. Check the checkout with git fsck in ${ctx.root} (a missing or corrupt object, a full disk, or a git too slow for the 300 s budget), fix what it reports, then retry. Never publish with a command that skips this scan.`,
+      { detail: JSON.stringify({ unreadable: scan.unreadable }), fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
+        argv: ['git', '-C', ctx.root, 'fsck'],
+        why: 'Read-only: names missing or corrupt objects in the unpublished commits, the usual reason the scan cannot read them.',
+        user_message: `The secret scan could not read the unpublished commits in ${ctx.root}, so nothing was pushed. Check the checkout with git fsck and fix what it reports?`,
+        docs: 'docs/guides/shared-checkout-git.md#publish_scan_unreadable' } });
+  }
+  if (!scan.findings.length && !scan.unscanned.length && !scan.gate_changes.length) return;
+  const named = [...scan.findings.map(f => `${f.path}:${f.line} (${f.pattern}, ${f.commit.slice(0, 7)})`), ...scan.unscanned.map(u => `${u.path} (too large to scan, ${u.commit.slice(0, 7)})`),
+    ...scan.gate_changes.map(g => `${g.path} (changes what the scan sees, ${g.commit.slice(0, 7)})`)];
+  throw opError('publish_secret_found',
+    `${named.length} item(s) in the local commits ${ctx.trackingRef}..${target.slice(0, 12)} look like secrets or could not be scanned: ${named.slice(0, 10).join(', ')}${named.length > 10 ? ', ...' : ''}. Nothing was pushed.`,
+    'Remove the value from those commits (rewriting unpushed local commits is the user\'s call), or add a false positive\'s fingerprint to .gbrain-scan-allow, then retry. Never publish them with a command that skips this scan.',
+    { detail: JSON.stringify(scan),
+      fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
+        argv: ['git', '-C', ctx.root, 'log', '--stat', `${ctx.trackingRef}..${target}`],
+        why: 'Lists the unpublished commits the scan refused; read-only. A secret pushed to the remote stays in its history.',
+        user_message: `Unpublished commits in ${ctx.root} hold ${named.length || 'some'} item(s) that look like secrets or could not be scanned (${named.slice(0, 3).join(', ')}). Nothing was pushed. Remove them from those commits, or confirm a false positive so it can be allowlisted by fingerprint?`,
+        docs: 'docs/guides/shared-checkout-git.md#publish_secret_found' } });
+}
+
 /** Advance the shared checkout (caller holds the commit lock) with a real compare-and-swap: fast-forward only, hooks off, never autostash. */
 function advanceLocked(root: string, target: string, expectedHead: string): { checkout: CheckoutState; reason?: string } {
   const head = git(root, ['rev-parse', 'HEAD']).stdout.trim();
@@ -1203,6 +1233,7 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
       const head = gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD');
       const target = start && !isAncestor(root, start, head) ? start : head;
       if (!opts.allowOutsideSourceRoot) assertLocalCommitsInsideRoots(ctx, target, roots);
+      if (opts.scanSecrets) assertNoSecretsInRange(ctx, target);
       const published = publish(ctx, target, resolutions, expectRemote, cwd);
       if (!elsewhere) rmSync(absGitPath(root, CONFLICT_STATE_NAME), { force: true });
       const moved = published.sha === head || elsewhere || opts.keepCheckout ? { checkout: 'unchanged' as const } : advanceWithLock(root, published.sha, head, onlyWhenClean, opts.lockWaitMs);
