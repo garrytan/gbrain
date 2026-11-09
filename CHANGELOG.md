@@ -18,11 +18,14 @@ identifiers and attribution are available in the pre-removal Git revision
 
 **`gbrain dream --drain` stops as no progress when its batches only skip items the backlog keeps counting.** The drain checked for no progress only after a batch that extracted nothing and skipped nothing. A page the phase skips on every batch while the backlog still counts it kept that check from ever running, so the drain ran all 1,000 batches, held the cycle lock for minutes and ended `max_batches` with exit 11, which tells the caller to rerun a stop a rerun cannot clear. A batch that extracts nothing now always rechecks the backlog: when it did not shrink, the drain stops `no_progress` (`atom_drain_no_progress`, exit 1), and skips that do shrink it keep draining. Reported by @h6y3 (#8445).
 
+**`gbrain dream --help --json` prints its help as one JSON document.** Under `--json`, stdout carries only a JSON document, and dream printed its help as plain text, which went to stderr. So stdout was empty, the run exited 0 and logged a missing-document event that `gbrain doctor` counts under its agent-contract check. It now prints `{"command": "dream", "help": "<the help text>", "contract_version": 1}`, and `dream retriage --help --json` and `dream reset-key --help --json` do the same. `gbrain dream --help` without `--json` prints exactly the same text as before. Reported by @Kkkkkuro (#8510).
+
 ### Itemized changes
 
 - `src/core/cycle/unindexed-files.ts`: `details.complete` also requires `errors.length === 0`. Test: `test/unindexed-files.test.ts` (a source whose `.git/HEAD` is unreadable: phase `warn`, one error, `complete: false`).
 - `src/core/cycle/source-window.ts`: the listing instant and the last page's `updated_at` are formatted with `to_char(... AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`. Test: `test/sync-disabled-cycle-window.test.ts` (the real queued handler under `German, DMY` advances window by window; `German`, `SQL` and `Postgres` styles under a +05:45 time zone give ISO UTC cursors with microseconds and the same windows), now also run on Postgres by `test/e2e/sync-disabled-cycle-window-postgres.test.ts`.
 - `src/core/cycle/extract-atoms-drain.ts`: the no-progress recount runs after every batch with `extracted === 0`, not only when `skipped` is also 0. Test: `test/extract-atoms-drain.test.ts` (a skip-only batch over a flat backlog stops `no_progress` after one batch; skip-only batches that shrink the backlog drain).
+- `src/cli/help/render.ts`: new `printHelpText(command, text, args)`, the `--help --json` document for a handler that prints its own help text; `src/commands/dream.ts`, `dream-retriage.ts` and `dream-reset-key.ts` print their help through it. Test: `test/dream-help-json-8510.test.ts` (the real CLI: one document per help, no `json_document_missing` event, plain `--help` stdout equal to the document text).
 
 ## [0.60.620.0] - 2026-11-09
 
