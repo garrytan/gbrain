@@ -16,9 +16,9 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ### Itemized changes
 
-- `src/core/think/index.ts`: the trajectory window filter keeps each metric's latest point before the window start (events are not carried); candidate entities come from the gathered pages plus the pages the window dropped.
+- `src/core/think/temporal-window.ts`: `trajectoryPointsInWindow` keeps the points inside the window plus each metric's latest point before its start (events are not carried); `filterPagesToWindow` also returns the dropped pages.
 - `src/core/think/gather.ts`: `ThinkGatherResult.outsideWindowSlugs` lists the pages the window dropped.
-- `src/core/think/temporal-window.ts`: `filterPagesToWindow` also returns the dropped pages.
+- `src/core/think/index.ts`: the trajectory step filters through `trajectoryPointsInWindow`, and its candidate entities come from the gathered pages plus the pages the window dropped.
 - Tests: `test/think-trajectory-window.test.ts` (a month with no reading of its own gets the March reading and not January's or June's; an entity page dated outside the month still routes its trajectory). Each test fails with its own fix reverted.
 
 ## [0.60.620.0] - 2026-11-09
