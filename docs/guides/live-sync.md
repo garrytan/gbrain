@@ -707,8 +707,8 @@ vars — incident-time escape hatches, not everyday knobs.
    other checkout, such as a source folder inside a repository gbrain did not
    clone, only fast-forwards and reports its local commits `unpublished` unless
    `sources.refresh_publish_diverged` is `true`; `false` leaves every checkout's
-   local commits `unpublished`. A source with sync turned off is skipped unless
-   named. A level checkout costs one fetch and reports `in_sync`, so any agent,
+   local commits `unpublished`. A source with sync turned off
+   (`gbrain sources set-sync <id> off`) is skipped unless named. A level checkout costs one fetch and reports `in_sync`, so any agent,
    cron or hook can call it as often and as concurrently as it likes; callers
    on one checkout take turns and end with the same upstream. Autopilot runs it
    each tick, its pulls and publishes in bounded child processes
