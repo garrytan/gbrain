@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.632.0] - 2026-11-09
 
 **A page write that git could not commit because the file is flagged assume-unchanged or skip-worktree now stays in the write-through pending ledger.** gbrain's own page writes and `gbrain git commit-push --pending` asked `git status` which pending files were still uncommitted, and status does not show a flagged entry, so the write was left uncommitted, dropped from the ledger (doctor `dirty_age` never reported it and no later write retried it), and `--pending` answered `nothing_to_commit` with exit 0. A flagged file whose bytes differ from HEAD now counts as uncommitted.
 
