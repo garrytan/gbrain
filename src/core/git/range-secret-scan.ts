@@ -16,7 +16,6 @@
  * `.gitattributes`) as a gate change, so callers refuse. Output the parser does not recognise, a git failure or a run
  * past the time budget sets `unreadable` instead of returning a partial result.
  */
-import { spawnSync } from 'node:child_process';
 import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
@@ -25,6 +24,7 @@ import { GIT_ENV } from '../git-transport.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { loadWorkspaceAllowlist, pathAllowlisted, SCAN_ALLOW_FILENAME } from '../secret-scan-allowlist.ts';
 import { scanText, SCAN_MAX_FILE_BYTES } from '../secret-scan.ts';
+import { spawnSync } from '../spawn.ts';
 
 export interface RangeSecretFinding { path: string; commit: string; line: number; pattern: string; fingerprint: string }
 export interface RangeScan {
@@ -254,4 +254,3 @@ export function rangeSecretRefusal(root: string, base: string, target: string, s
         user_message: `Unpublished commits in ${root} hold ${named.length || 'some'} item(s) that look like secrets or could not be scanned (${named.slice(0, 3).join(', ')}). Nothing was pushed. Remove them from those commits, or confirm a false positive so it can be allowlisted by fingerprint?`,
         docs: 'docs/guides/shared-checkout-git.md#publish_secret_found' } });
 }
-
