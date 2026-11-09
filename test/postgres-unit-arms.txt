@@ -129,6 +129,7 @@ test/g4-forget-fence-edit.test.ts
 test/gated-hold-strict-page-gst2535.test.ts
 test/get-chunks-paging.test.ts
 test/git-canonical-conversion-evidence-d4.test.ts
+test/ghost-pages-git-canonical-7967.test.ts
 test/git-canonical-conversion-g8a.test.ts
 test/git-canonical-conversion-live-writer.test.ts
 test/git-canonical-conversion-no-checkout-7885.test.ts
