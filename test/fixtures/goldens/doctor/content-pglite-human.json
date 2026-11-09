@@ -90,7 +90,7 @@
       "  [OK] rls: Skipped (PGLite — no PostgREST exposure, RLS not applicable)",
       "  [OK] function_search_path: Every gbrain function that pins a search_path ends it with pg_temp",
       "  [OK] schema_version: Version <latest> (latest: <latest>)",
-      "  [OK] schema_columns: 1391 column(s) verified against live schema",
+      "  [OK] schema_columns: 1392 column(s) verified against live schema",
       "  [OK] schema_missing_tables: All 175 table(s) the applied migrations create exist.",
       "  [OK] rls_event_trigger: Skipped (PGLite — no event trigger support)",
       "  [INFO] embeddings: Not applicable: embeddings are disabled on this brain (keyword search keeps working).",
