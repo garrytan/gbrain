@@ -51,8 +51,12 @@ const ledger = (brain: string) => readPendingWriteThrough(brain).map(e => e.path
 test('a flagged write-through file is not committed and stays in the pending ledger, where doctor dirty_age sees it', async () => {
   const brain = fixture('locked-flagged');
   writeFlagged(brain, 'people/alice-example.md');
-  const sha = await withEnv(identity, async () => commitPathsLocked(brain, [join(brain, 'people', 'alice-example.md')], 'gbrain: write-through people/alice-example', { lockWaitMs: 1000 }));
-  expect(sha).toBeNull();
+  const thrown = await withEnv(identity, async () => {
+    try { commitPathsLocked(brain, [join(brain, 'people', 'alice-example.md')], 'gbrain: write-through people/alice-example', { lockWaitMs: 1000 }); } catch (e) { return e as { code?: string; detail?: string }; }
+    return null;
+  });
+  expect(thrown?.code).toBe('commit_paths_skipped');
+  expect(JSON.parse(thrown!.detail!).committed).toBeNull();
   expect(headBlob(brain, 'people/alice-example.md')).toContain('First version.');
   expect(ledger(brain)).toEqual(['people/alice-example.md']);
   expect(pendingWriteThroughStillDirty(brain).map(e => e.path)).toEqual(['people/alice-example.md']);
@@ -90,8 +94,12 @@ test('a write-through to a skip-worktree file git add refuses stays in the ledge
   git(brain, 'update-index', '--skip-worktree', '--', 'people/alice-example.md');
   writeFileSync(join(brain, 'people', 'alice-example.md'), page('Hidden', 'A write-through edit git add refuses.'));
   writeFileSync(join(brain, 'people', 'bob-example.md'), page('Bob', 'Second version.'));
-  const sha = await withEnv(identity, async () => commitPathsLocked(brain, [join(brain, 'people', 'alice-example.md'), join(brain, 'people', 'bob-example.md')], 'gbrain: write-through', { lockWaitMs: 1000 }));
-  expect(sha).not.toBeNull();
+  const thrown = await withEnv(identity, async () => {
+    try { commitPathsLocked(brain, [join(brain, 'people', 'alice-example.md'), join(brain, 'people', 'bob-example.md')], 'gbrain: write-through', { lockWaitMs: 1000 }); } catch (e) { return e as { code?: string; detail?: string }; }
+    return null;
+  });
+  expect(thrown?.code).toBe('commit_paths_skipped');
+  expect(JSON.parse(thrown!.detail!).committed).toBe(git(brain, 'rev-parse', 'HEAD'));
   expect(headBlob(brain, 'people/bob-example.md')).toContain('Second version.');
   expect(headBlob(brain, 'people/alice-example.md')).toContain('First version.');
   expect(ledger(brain)).toEqual(['people/alice-example.md']);

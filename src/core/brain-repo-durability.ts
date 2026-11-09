@@ -313,15 +313,19 @@ _unstaged() {
   return 0
 }
 _skipped=""
-_finish() {
-  [ -z "$_skipped" ] && exit 0
+_report_skipped() {
+  [ -n "$_skipped" ] || return 0
   {
-    echo "Error [commit_paths_skipped]: git did not commit these named path(s); the other named paths were committed and pushed:"
+    echo "Error [commit_paths_skipped]: git did not commit these named path(s); the other named paths were $1:"
     printf '%s\\n' "$_skipped" | sed 's/^/  /'
     echo "Why: git add stages nothing and still exits 0 for a modified file flagged assume-unchanged or skip-worktree, or a file inside a nested Git repository."
     echo "Fix: read the flags with git ls-files -v -- <path> and ask the user (a skip-worktree flag is often set on purpose to keep local edits out of commits); to commit the edits clear them (git update-index --no-assume-unchanged -- <path>, and separately git update-index --no-skip-worktree -- <path>), or move the file out of the nested repository, then rerun."
     echo "Next: ask_user"
   } >&2
+}
+_finish() {
+  [ -z "$_skipped" ] && exit 0
+  _report_skipped "committed and pushed"
   exit 1
 }
 echo "[brain-commit-push] gbrain git commit-push unavailable; using the minimal locked commit + push" >&2
@@ -361,13 +365,14 @@ exec 9>&- 8>&-
 unset BRAIN_COMMIT_LOCK_HELD GBRAIN_COMMIT_VIA
 if command -v flock >/dev/null 2>&1; then
   exec 7>"$_gd/brain-publish.lock"
-  flock -w "\${GBRAIN_PUBLISH_LOCK_WAIT_SECONDS:-300}" 7 || { echo "PUSH FAILED: another push held this checkout's publish lock; the commit is local-only. Run: gbrain git commit-push --push-only" >&2; exit 4; }
+  flock -w "\${GBRAIN_PUBLISH_LOCK_WAIT_SECONDS:-300}" 7 || { echo "PUSH FAILED: another push held this checkout's publish lock; the commit is local-only. Run: gbrain git commit-push --push-only" >&2; _report_skipped "committed locally, not pushed"; exit 4; }
 fi
 if git push origin "$_head:refs/heads/$_branch" >>"$_log" 2>&1; then
   echo "$(date -u +%FT%TZ) [push] ok $_branch $(git rev-parse --short "$_head")" >>"$_log"; _finish
 fi
 echo "$(date -u +%FT%TZ) [push] LOCAL-ONLY, NEEDS ATTENTION: $_branch @ $(git rev-parse --short "$_head") push rejected; run gbrain git commit-push --push-only" >>"$_log"
 echo "PUSH FAILED — the commit is local-only. Install gbrain, then run: gbrain git commit-push --push-only (it merges remote commits safely). Never git pull --rebase here." >&2
+_report_skipped "committed locally, not pushed"
 exit 4
 `;
 }
