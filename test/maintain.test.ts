@@ -111,7 +111,7 @@ const UNSAFE_PHASES: CyclePhase[] = [
   'grade_takes', 'calibration_profile', 'edge_contradictions', 'claim_conflicts', 'drift', 'standing_questions',
   'chronicle', 'facts_drain', 'conversation_facts_backfill', 'enrich_thin', 'skillopt',
 ];
-const NO_PROVIDERS = { embedding: false, fenceRepairModel: false, contentRepairModel: false };
+const NO_PROVIDERS = { embedding: false, decideConflict: false, fenceRepairModel: false, contentRepairModel: false };
 
 describe('maintainSafePhases', () => {
   test('never includes the page purge or a paid phase', () => {
@@ -128,7 +128,7 @@ describe('maintainSafePhases', () => {
   });
 
   test('holds back each phase that would call a provider on this brain', () => {
-    const { phases, held } = maintainSafePhases('default', { embedding: true, fenceRepairModel: true, contentRepairModel: true });
+    const { phases, held } = maintainSafePhases('default', { embedding: true, decideConflict: true, fenceRepairModel: true, contentRepairModel: true });
     expect(held).toEqual(['extract_facts', 'fence_repair', 'content_repair']);
     expect(phases.filter((phase) => held.includes(phase))).toEqual([]);
     expect(phases).toContain('extract');
@@ -178,5 +178,27 @@ describe('runMaintain --safe on a stale default source', () => {
     const rows = await engine.executeRaw<{ slug: string }>(`SELECT slug FROM pages WHERE slug = 'notes/old' AND deleted_at IS NOT NULL`);
     expect(rows.map((r) => r.slug)).toEqual(['notes/old']);
     expect((cycle?.details?.phases ?? []).map((p) => p.phase).filter((phase) => UNSAFE_PHASES.includes(phase))).toEqual([]);
+  });
+
+  test('a keyless brain with the decide conflict slot on holds extract_facts, whose sweep calls the decision provider', async () => {
+    const lastCycle = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();
+    await engine.executeRaw(
+      `UPDATE sources SET config = config || jsonb_build_object('last_full_cycle_at', $1::text) WHERE id = 'default'`,
+      [lastCycle],
+    );
+    await engine.setConfig('decide.slots.conflict.mode', 'on');
+    const out: string[] = [];
+    const spy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => { out.push(args.map(String).join(' ')); });
+    try {
+      await withEnv({ GBRAIN_HOME: home }, () => runMaintain(engine, ['--json']));
+    } finally {
+      spy.mockRestore();
+      await engine.unsetConfig('decide.slots.conflict.mode');
+    }
+    const report = JSON.parse(out.join('\n')) as { actions: Array<{ name: string; status: string; details?: { source_id?: string; phases?: CyclePhase[]; held_phases?: CyclePhase[] } }> };
+    const cycle = report.actions.find((a) => a.name === 'cycle_freshness' && a.details?.source_id === 'default');
+    expect(cycle?.status).toBe('would_apply');
+    expect(cycle?.details?.held_phases).toContain('extract_facts');
+    expect(cycle?.details?.phases).not.toContain('extract_facts');
   });
 });

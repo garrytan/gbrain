@@ -17,6 +17,9 @@ import { isAvailable } from '../core/ai/gateway.ts';
 import { fenceRepairLlmEnabled } from '../core/fence-repair/config.ts';
 import { resolveFenceRepairModel } from '../core/fence-repair/model.ts';
 import { resolveContentRepairModel } from '../core/content-repair/llm.ts';
+import { loadConfigSnapshot } from '../core/config-snapshot.ts';
+import { readDecideConfig } from '../core/ai/decide/config.ts';
+import { hasTypesafeKey } from '../core/ai/decide/index.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { BrainHealth } from '../core/types.ts';
 import { buildChecks, computeDoctorReport, type DoctorReport, type Check } from './doctor.ts';
@@ -91,13 +94,14 @@ export const MAINTAIN_SAFE_PHASES: readonly CyclePhase[] = [
 /** Which providers a safe phase would call on this brain; those phases are held back. */
 export interface SafePhaseProviders {
   embedding: boolean;
+  decideConflict: boolean;
   fenceRepairModel: boolean;
   contentRepairModel: boolean;
 }
 
 export function maintainSafePhases(sourceId: string, providers: SafePhaseProviders): { phases: CyclePhase[]; held: CyclePhase[] } {
   const held: CyclePhase[] = [];
-  if (providers.embedding) held.push('extract_facts');
+  if (providers.embedding || providers.decideConflict) held.push('extract_facts');
   if (providers.fenceRepairModel) held.push('fence_repair');
   if (providers.contentRepairModel) held.push('content_repair');
   const phases = resolveCyclePhases(undefined, sourceId)
@@ -109,6 +113,7 @@ async function readSafePhaseProviders(engine: BrainEngine): Promise<SafePhasePro
   const repairLlm = await fenceRepairLlmEnabled(engine);
   return {
     embedding: isAvailable('embedding'),
+    decideConflict: readDecideConfig(await loadConfigSnapshot(engine), { typesafeKey: hasTypesafeKey() }).slots.conflict.mode !== 'off',
     fenceRepairModel: repairLlm && (await resolveFenceRepairModel(engine)) !== null,
     contentRepairModel: repairLlm && (await resolveContentRepairModel(engine)) !== null,
   };
