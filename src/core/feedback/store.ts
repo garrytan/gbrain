@@ -61,7 +61,7 @@ export interface AppliedRating {
   newly_applied: boolean;
 }
 
-const pageRowExists = (source: string, slug: string) => `EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = ${source} AND pg.slug = ${slug})`;
+const pageRowExists = (source: string, slug: string) => `EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = ${source} AND pg.slug = ${slug} FOR KEY SHARE)`;
 const edgeEndsExist = (source: string, key: string) =>
   `${pageRowExists(source, `split_part(${key}, '|', 1)`)} AND ${pageRowExists(source, `reverse(split_part(reverse(${key}), '|', 1))`)}`;
 

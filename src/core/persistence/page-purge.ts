@@ -325,7 +325,6 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
   removed.page_aliases = await count('DELETE FROM page_aliases WHERE source_id=$1 AND slug=$2 RETURNING 1', [sourceId, slug]);
   removed.slug_aliases = await count('DELETE FROM slug_aliases WHERE source_id=$1 AND canonical_slug=$2 RETURNING 1', [sourceId, slug]);
   removed.slug_rename_history = await count('DELETE FROM slug_rename_history WHERE source_id=$1 AND new_slug=$2 RETURNING 1', [sourceId, slug]);
-  Object.assign(removed, await scrubPurgedSlugs(tx, sourceId, [slug]));
   // #6511 [R2]: the preparation sweep's targets, plus the tail past its ceiling and the rows pending at scan time, re-tested here.
   const recheck = await lookup('tail_recheck', () => recheckRequestsCarrying(tx, sourceId, needles, prepared.sweep,
     { exclude: row.id, beforePending: () => faultPoint('purge:pending_recheck', { requestId: row.request_id, sourceId, operation: row.operation }) }));
@@ -358,6 +357,7 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
   await writeOriginDeletedMarker(tx, { sourceId, page: { id: page.id, slug, source_path: page.source_path } });
   const { shas, ...segmentRows } = await deletePageWithSegments(tx, sourceId, slug, page.id, segmentClaims);
   Object.assign(removed, segmentRows);
+  Object.assign(removed, await scrubPurgedSlugs(tx, sourceId, [slug]));
   if (!retention) appendPurgeIntent({ request: row.id, request_id: row.request_id, source_id: sourceId, source_incarnation: row.source_incarnation,
     scope: 'page', slug, purge_epoch: epoch, content_hashes: [...hashes], facts: mirrorFacts, takes: mirrorTakes, lifetimes });
   const key = `${sourceId}:${row.request_id}`;
