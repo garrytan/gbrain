@@ -279,7 +279,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       headers['Vary'] = 'Origin';
       if (preflight) {
         headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS';
-        headers['Access-Control-Allow-Headers'] = `Content-Type, Authorization, Accept, ${AGENT_LABEL_HEADER}`;
+        headers['Access-Control-Allow-Headers'] = `Content-Type, Authorization, Accept, ${AGENT_LABEL_HEADER}, ${GBRAIN_CLIENT_HEADER}`;
       }
     }
     return headers;
