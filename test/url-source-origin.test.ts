@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import * as childProcess from 'node:child_process';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -394,7 +394,7 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
     expect(localConfig(root, 'core.hooksPath')).toBeNull();
   }), 120_000);
 
-  test('a lock-down that fails part way is reported as a partial change to the checkout, and the record is not written', () => brain(async () => {
+  test('a lock-down that fails part way leaves the checkout config as it was, and the record is not written', () => brain(async () => {
     const root = defaultCloneDir('source-a');
     repoAt(root, { 'example.md': 'Canonical\n' });
     await insert('source-a', root, URL_CONFIG);
@@ -408,9 +408,56 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
     try { report = await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: true, remote: false }); }
     finally { patched.mockRestore(); }
     expect(report.results[0]).toMatchObject({ source_id: 'source-a', status: 'refused', code: 'write_failed' });
-    expect(report.results[0]!.reason).toContain('part of the git-lfs and hooks lock-down');
     expect(report.results[0]!.reason).not.toContain('already has git-lfs downloads and hooks off');
+    expect(localConfig(root, 'lfs.fetchexclude')).toBeNull();
+    expect(existsSync(join(root, '.git', 'config.lock'))).toBe(false);
+    expect(await config('source-a')).toEqual(URL_CONFIG);
+  }), 60_000);
+
+  test('a failed relock keeps the lock-down keys its checkout already had', () => brain(async () => {
+    const root = defaultCloneDir('source-a');
+    repoAt(root, { 'example.md': 'Canonical\n' });
+    git(['-C', root, 'config', 'lfs.fetchexclude', '*']);
+    await insert('source-a', root, { ...URL_CONFIG, added_by_remote_caller: true });
+    const original = childProcess.execFileSync;
+    const patched = spyOn(childProcess, 'execFileSync').mockImplementation(((file: string, args?: readonly string[], options?: object) => {
+      if (file === 'git' && args?.includes('--file') && !args.includes('--unset-all') && args.includes('lfs.fetchexclude')) throw new Error('config write failed (example)');
+      return original(file, args as string[], options as never);
+    }) as typeof childProcess.execFileSync);
+    let report: Awaited<ReturnType<typeof recordSourceOrigin>>;
+    try { report = await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: true, remote: false }); }
+    finally { patched.mockRestore(); }
+    expect(report.results[0]).toMatchObject({ source_id: 'source-a', status: 'refused', code: 'write_failed' });
     expect(localConfig(root, 'lfs.fetchexclude')).toBe('*');
+    expect(existsSync(join(root, '.git', 'config.lock'))).toBe(false);
+  }), 60_000);
+
+  test('the lock-down keeps a group-writable config mode and a symlinked config, as Git does', () => brain(async home => {
+    const root = defaultCloneDir('source-a');
+    repoAt(root, { 'example.md': 'Canonical\n' });
+    const target = join(home, 'shared-config');
+    writeFileSync(target, readFileSync(join(root, '.git', 'config')));
+    chmodSync(target, 0o664);
+    rmSync(join(root, '.git', 'config'));
+    symlinkSync(target, join(root, '.git', 'config'));
+    await insert('source-a', root, URL_CONFIG);
+    expect((await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: true, remote: false })).results[0]).toMatchObject({ status: 'recorded' });
+    expect(lstatSync(join(root, '.git', 'config')).isSymbolicLink()).toBe(true);
+    expect(statSync(target).mode & 0o777).toBe(0o664);
+    expect(localConfig(root, 'core.hooksPath')).toBe('/dev/null');
+    expect(existsSync(`${target}.lock`) || existsSync(join(root, '.git', 'config.lock'))).toBe(false);
+  }), 60_000);
+
+  test('a config.lock another Git process holds refuses the lock-down write_failed and leaves both files alone', () => brain(async () => {
+    const root = defaultCloneDir('source-a');
+    repoAt(root, { 'example.md': 'Canonical\n' });
+    await insert('source-a', root, URL_CONFIG);
+    writeFileSync(join(root, '.git', 'config.lock'), 'held (example)\n');
+    const [result] = (await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: true, remote: false })).results;
+    expect(result).toMatchObject({ source_id: 'source-a', status: 'refused', code: 'write_failed' });
+    expect(result!.reason).toContain('config.lock exists');
+    expect(readFileSync(join(root, '.git', 'config.lock'), 'utf8')).toBe('held (example)\n');
+    expect(localConfig(root, 'core.hooksPath')).toBeNull();
     expect(await config('source-a')).toEqual(URL_CONFIG);
   }), 60_000);
 
