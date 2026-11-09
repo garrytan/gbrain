@@ -17,6 +17,7 @@
 
 import { listenOrRefuse, type AdoptableServer } from './serve-http-listen.ts';
 import express from 'express';
+import { withTimeout } from '../core/timeout.ts';
 import type { Socket } from 'net';
 import type { Request, RequestHandler, CookieOptions } from 'express';
 import cookieParser from 'cookie-parser';
@@ -552,20 +553,41 @@ async function logServeHttpStartup(engine: BrainEngine, options: ServeHttpOption
   // is on — list_brain_skillpack is gated by the same flag). Fail-open.
   if (publishSkills) {
     try {
-      const { loadAllSources } = await import('../core/sources-load.ts');
-      const { loadSkillpackManifest } = await import('../core/skillpack/manifest-v1.ts');
-      const { existsSync } = await import('fs');
-      const { join } = await import('path');
-      const srcs = await loadAllSources(engine);
-      let n = 0;
-      for (const s of srcs) {
-        if (!s.local_path || !existsSync(join(s.local_path, 'skillpack.json'))) continue;
-        try {
-          if (loadSkillpackManifest(s.local_path).brain_resident === true) n++;
-        } catch {
-          /* malformed pack → ignore */
+      const budgetMs = 1500;
+      const signal = AbortSignal.timeout(budgetMs);
+      const n = await withTimeout((async () => {
+        const { loadAllSources } = await import('../core/sources-load.ts');
+        const { validateSkillpackManifest } = await import('../core/skillpack/manifest-v1.ts');
+        const { access, open } = await import('node:fs/promises');
+        const { constants } = await import('node:fs');
+        const { join } = await import('node:path');
+        let count = 0;
+        for (const source of await loadAllSources(engine)) {
+          if (signal.aborted) break;
+          if (!source.local_path) continue;
+          try {
+            // Optional discovery must not block the server on a pipe or a
+            // slow mount. Check the opened file so a path race can't turn a
+            // regular-file read into a blocking FIFO open.
+            const file = await open(join(source.local_path, 'skillpack.json'), constants.O_RDONLY | constants.O_NONBLOCK);
+            try {
+              if (signal.aborted || !(await file.stat()).isFile()) continue;
+              const manifest = validateSkillpackManifest(JSON.parse(await file.readFile({ encoding: 'utf8', signal })));
+              if (!manifest.brain_resident) continue;
+              for (const path of manifest.skills) {
+                signal.throwIfAborted();
+                await access(join(source.local_path, path));
+              }
+              count++;
+            } finally {
+              await file.close();
+            }
+          } catch {
+            /* missing, unreadable or malformed pack: ignore */
+          }
         }
-      }
+        return count;
+      })(), budgetMs, 'brain-resident skillpack banner');
       if (n > 0) {
         console.error(
           `[serve-http] NOTE: ${n} source${n === 1 ? '' : 's'} ship a brain-resident skillpack — ` +

@@ -17,7 +17,7 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, request, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -84,6 +84,35 @@ async function stopChild(child: ChildProcess | null): Promise<void> {
 function body(res: unknown): Record<string, any> {
   return JSON.parse((res as { content: Array<{ text: string }> }).content[0].text);
 }
+
+test('a skillpack FIFO with no writer does not prevent HTTP from becoming healthy', async () => {
+  const home = mkdtempSync(join(realpathSync(tmpdir()), 'gbrain-http-skillpack-'));
+  const env = envFor(home);
+  let http: ReturnType<typeof startHttp> | null = null;
+  try {
+    const fixture = join(home, 'fixture');
+    mkdirSync(fixture);
+    expect(cli(['init', '--pglite', '--no-embedding', '--non-interactive', '--path', join(home, 'brain')], env).status).toBe(0);
+    expect(cli(['sources', 'add', 'fixture', '--path', fixture, '--force'], env).status).toBe(0);
+    expect(cli(['config', 'set', 'mcp.publish_skills', 'true'], env).status).toBe(0);
+    expect(spawnSync('mkfifo', [join(fixture, 'skillpack.json')]).status).toBe(0);
+    const port = await freePort();
+    http = startHttp(env, port);
+    expect(await waitFor(async () => {
+      const result = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(500) });
+      return result.ok && (await result.json()).status === 'ok';
+    }, 8_000)).toBe(true);
+  } finally {
+    // SIGTERM cannot interrupt the old synchronous open. SIGKILL bounds
+    // cleanup for that regression without opening the FIFO from the test.
+    if (http?.child.exitCode === null && http.child.signalCode === null) {
+      const stopped = new Promise(resolve => http!.child.once('exit', resolve));
+      http.child.kill('SIGKILL');
+      await stopped;
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 30_000);
 
 describe('serve --http: lock held → status-only → recovery on the same port', () => {
   let home: string;
