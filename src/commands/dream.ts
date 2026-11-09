@@ -914,16 +914,21 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   // 'partial' cycles still exit 0.
   const failedPhases = report.phases.filter(p => p.status === 'fail' || p.details?.contained === true).map(p => p.phase);
   const failed = report.status === 'failed' || failedPhases.length > 0;
+  // #7646: a phase that needs the user (sync_anchor_relative) fails again on every rerun; its ask_user fix leads instead.
+  const askPhase = report.phases.find(p => failedPhases.includes(p.phase) && p.fix?.next === 'ask_user');
   if (!opts.json) printHuman(report);
   else if (!failed || !jsonGuardActive()) await writeJsonDocument(JSON.stringify(report, null, 2));
   else {
     // D2: under the --json guard a failed cycle is one envelope leading with the CycleReport keys.
     writeCliError(opError('cycle_failed', `The dream cycle ${report.status === 'failed' ? 'failed' : 'had failing phases'}${failedPhases.length ? ` (${failedPhases.join(', ')})` : ''}.`,
-      `Read phases[].error for the cause, fix it, then rerun the phase: gbrain dream --phase ${failedPhases[0] ?? '<phase>'}`),
-    'dream', { json: true, stderr: false, legacy: { ...report } });
+      askPhase ? `The ${askPhase.phase} phase needs the user: ${askPhase.summary} Follow phases[].fix before rerunning.`
+        : `Read phases[].error for the cause, fix it, then rerun the phase: gbrain dream --phase ${failedPhases[0] ?? '<phase>'}`),
+    'dream', { json: true, stderr: false, legacy: { ...report }, ...(askPhase ? { extra: { fix: askPhase.fix } } : {}) });
   }
   if (failed && !opts.json && failedPhases.length > 0) {
-    console.error(`Dream failed: ${failedPhases.length} phase(s) failed (${failedPhases.join(', ')}); see the phase errors above. After fixing the cause, re-run one with: gbrain dream --phase ${failedPhases[0]}`);
+    console.error(askPhase
+      ? `Dream failed: the ${askPhase.phase} phase needs the user before it can run: ${askPhase.fix?.user_message ?? askPhase.summary}`
+      : `Dream failed: ${failedPhases.length} phase(s) failed (${failedPhases.join(', ')}); see the phase errors above. After fixing the cause, re-run one with: gbrain dream --phase ${failedPhases[0]}`);
   }
   if (failed) process.exit(1);
 
