@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.623.0] - 2026-11-09
 
 **The brain owner's own agents now read the whole personal brain, and pages stamped `access: private` by default can be cleared in reviewed batches.** On a single-user brain, writer templates stamped `access: private` on ordinary research and ops pages, and every remote caller got `not_found` for them, the owner's own agent included. `gbrain access owner set <member>` now names the owner (config `access.owner_member`, database state, so repo-less brains work the same). Every token, OAuth client or stdio server bound to that member reads `visibility: private` pages, privacy-alias pages, derived and pinned-question pages and private facts through `get_page`, `search`, `query`, `recall` and the other page reads, within its source grant. `readable_by` and folder rules still bind it, a shared-room audience gets no relaxation, and other members, unbound and public callers read exactly as before. `gbrain repair private-labels` previews the existing labels with counts per category, keeps real restrictions, and clears the over-stamped ones in reviewed, recorded, reversible batches. The bulk-ingestion page template no longer writes an `access:` line, and docs/guides/access-designations.md defines every designation.
 
