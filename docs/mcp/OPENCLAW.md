@@ -88,12 +88,15 @@ the brain host, while the stdio route above gives the gateway full local
 database access.
 
 ```bash
+openclaw gateway stop
 openclaw mcp add gbrain --url https://<brain-host>/mcp --transport streamable-http --auth oauth
 openclaw mcp login gbrain
 openclaw mcp doctor gbrain --probe
+openclaw gateway start
 ```
 
-`openclaw mcp login` runs the browser sign-in (on a headless host it prints a
+`mcp add`, `login` and `doctor --probe` refuse while the local gateway runs, so
+stop it first and start it again after. `openclaw mcp login` runs the browser sign-in (on a headless host it prints a
 `--code` command to finish with). OpenClaw registers its client through dynamic
 client registration, so the brain owner turns that on and approves the consent
 ([native OAuth path](../guides/hosted-harness-access.md#native-oauth-path),
