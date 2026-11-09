@@ -57,7 +57,7 @@ const ROOT = process.env.GBRAIN_PLUGIN_TREE_ROOT || resolve(import.meta.dir, '..
 
 function usage(): never {
   console.error(
-    'usage: bun run scripts/generate-plugin-tree.ts --out <dir> [--variants-out <dir>] [--write-gaps]',
+    'usage: bun run scripts/generate-plugin-tree.ts --out <dir> [--variants-out <dir>] [--execution-route local-cli|configured-mcp] [--write-gaps]',
   );
   process.exit(2);
 }
@@ -66,14 +66,22 @@ const args = process.argv.slice(2);
 let out = '';
 let variantsOut = '';
 let writeGaps = false;
+let executionRoute = 'local-cli';
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === '--out') out = args[++i] ?? '';
   else if (a === '--variants-out') variantsOut = args[++i] ?? '';
   else if (a === '--write-gaps') writeGaps = true;
+  else if (a === '--execution-route') executionRoute = args[++i] ?? '';
   else usage();
 }
-if (!out) usage();
+if (!out || !['local-cli', 'configured-mcp'].includes(executionRoute)) usage();
+// Persona manifests install a local stdio server and hooks. Do not silently
+// publish them as a remote package; reject before touching either output.
+if (executionRoute === 'configured-mcp' && variantsOut) {
+  console.error('generate-plugin-tree: configured-mcp cannot emit local persona variants');
+  process.exit(2);
+}
 
 interface PluginLanes {
   starter_policy: string;
@@ -171,6 +179,12 @@ for (const slug of laneSet) {
  */
 const OPS_BY_NAME = new Map(operations.map(op => [op.name, op]));
 function surfaceNote(gaps: readonly string[]): string {
+  if (executionRoute === 'configured-mcp') return [
+    '', '## Tools outside the configured MCP surface', '',
+    'The source workflow names these operations: ' + gaps.map(name => `\`${name}\``).join(', ') + '.',
+    'Use only operations exposed and authorized by the configured connection.',
+    'A missing operation stops that step; do not use a local CLI or widen grants as a fallback.', '',
+  ].join('\n');
   const rows = gaps.map(name => {
     const op = OPS_BY_NAME.get(name);
     return `- \`${name}\` → \`${op ? cliEquivalent(op).join(' ') : `gbrain call ${name} '<params_json>'`}\``;
@@ -212,6 +226,23 @@ function withWhenToUse(text: string): string {
   return `${text.slice(0, close)}\nwhen_to_use: ${JSON.stringify(render(picked))}${text.slice(close)}`;
 }
 
+/** Keep frontmatter intact: this is execution guidance, not a host permission declaration. */
+function withExecutionRoute(text: string): string {
+  if (executionRoute !== 'configured-mcp') return text;
+  const frontmatter = text.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/);
+  if (!frontmatter) throw new Error('configured-mcp requires skill frontmatter');
+  const offset = frontmatter[0].length;
+  return text.slice(0, offset) + `
+## Execution route: configured MCP
+
+Before following this workflow, read [Brain Routing Convention](../conventions/brain-routing.md#configured-mcp-execution-route).
+Use its configured-MCP route for every brain operation. CLI examples below
+describe intent; they are not commands to execute on this host. Missing remote
+capabilities stop the affected step. This guidance does not enforce host permissions.
+
+` + text.slice(offset);
+}
+
 /** Copy one bundled skill; add `when_to_use` and append the surface note to its SKILL.md when it has gaps. */
 function copySkill(slug: string, destSkillsDir: string): void {
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
@@ -219,7 +250,7 @@ function copySkill(slug: string, destSkillsDir: string): void {
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- build-time generator; slug comes from this repository's own plugin definition
   const skillMd = join(destSkillsDir, slug, 'SKILL.md');
   const gaps = starterGaps(slug);
-  const text = withWhenToUse(readFileSync(skillMd, 'utf8'));
+  const text = withExecutionRoute(withWhenToUse(readFileSync(skillMd, 'utf8')));
   writeFileSync(skillMd, gaps.length === 0 ? text : text.replace(/\n*$/, '\n') + surfaceNote(gaps));
 }
 
@@ -289,7 +320,22 @@ const version = readFileSync(join(ROOT, 'VERSION'), 'utf8').trim();
 const gapSkills = Object.keys(computedGaps).length;
 writeFileSync(
   join(outDir, 'README.md'),
-  `<!-- gbrain-plugin-tree-stamp: ${version} -->
+  executionRoute === 'configured-mcp' ? `<!-- gbrain-plugin-tree-stamp: ${version} -->
+# gbrain configured-MCP skill tree (generated)
+
+Regenerate with \`bun run scripts/generate-plugin-tree.ts --out <dir> --execution-route configured-mcp\`.
+This is the curated workflow tree and its shared assets, with guidance for an
+already authenticated host MCP connection. It contains no launcher, server
+registration, hooks, endpoint, credentials or vendor-specific plugin manifest.
+
+Read [Brain Routing Convention](skills/conventions/brain-routing.md#configured-mcp-execution-route).
+The deployment owns connection selection, HTTPS/tunnel access and authentication.
+Use the actual tool schemas and grants. Never initialize a local brain or fall
+back to a local CLI when an operation is missing. Local filesystem, maintenance
+and provider steps may be unavailable; exporting a skill does not make it runnable.
+Host packaging, activation and natural skill selection require native testing.
+This is advisory workflow routing, not a tool-execution security boundary.
+` : `<!-- gbrain-plugin-tree-stamp: ${version} -->
 # gbrain plugin skill tree (generated — do not hand-edit)
 
 This tree is the curated skill set for the gbrain Codex and Claude Code

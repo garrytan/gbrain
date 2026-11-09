@@ -890,3 +890,27 @@ into the binary. The custom HTTP wrapper pattern (see
 [voice recipe](../../recipes/twilio-voice-brain.md)) is supported for
 teams that need bespoke middleware, but for most remote deployments the
 built-in server is the recommended path.
+
+## Export workflows for an already connected MCP host
+
+The HTTP endpoint above can sit behind an operator-managed HTTPS tunnel.
+If the host already authenticates that connection and accepts static skills,
+export the official workflow tree with an explicit remote execution route:
+
+```bash
+bun run scripts/generate-plugin-tree.ts --out /tmp/gbrain-configured-mcp-skills --execution-route configured-mcp
+```
+
+The exporter includes skills and shared dependencies with configured-MCP routing
+guidance. It does not provision a tunnel, register a server, change grants, or
+produce a vendor plugin manifest. Package the tree using the host's supported
+format, preserving its existing connection. Local stdio persona variants are
+incompatible with this mode. The default export and existing plugins are unchanged.
+
+Read the generated README and
+[routing convention](../../skills/conventions/brain-routing.md#configured-mcp-execution-route).
+Verify skill loading, identity/source selection, supported operations and write
+receipt/readback behavior in the target host. Filesystem and owner-only steps
+may be unavailable; a static export is not proof of remote workflow support.
+For live brain-published skills, use the existing
+[shared-skill protocol](../guides/shared-brain-skills.md) instead.

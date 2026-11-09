@@ -46,7 +46,7 @@
   "context-audit/routing-eval.jsonl": "fb1832e24cc1b04163a74c5cde72bca53050a66246ca902e1a5f40303f52b5ab",
   "conventions/agent-operator-protocol.md": "12c7b876994b96babdffa903326f7e23253d54ad9023248820337f56f8770512",
   "conventions/brain-first.md": "26035e2e1bb1f8386180ec4cdc6525ab2375c0f350af394b4de0d2e67987c899",
-  "conventions/brain-routing.md": "f11c3e7c4f98163aa6c68aa7d8f09a7acb7b6a8695f42eb7d92d4ee5787d428a",
+  "conventions/brain-routing.md": "9d77084c8a7fbdab7d57ab641008f6457d66cd6b8626bc8d7fe5204e49e8f49a",
   "conventions/calibration.md": "500dc26bd7c8400f50dc4c16fd83f1a588f3e7e68c59050a21fd8a0f69e4d198",
   "conventions/cron-via-minions.md": "badb1cd6cd825d6f1ac0b6b28cc47e5d80facc783a3e59a14146ae901ee0f933",
   "conventions/cross-modal.yaml": "c012c3d72614a87b1ee698173dce2a0fb0d057a54df7aab87993c4b07fff6280",

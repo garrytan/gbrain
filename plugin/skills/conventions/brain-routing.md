@@ -12,7 +12,36 @@ lives in `docs/architecture/brains-and-sources.md` — read it once.**
 
 Orthogonal. Pick one on each axis per operation.
 
-## Default behavior (ALWAYS)
+## Configured MCP execution route
+
+This branch applies when a workflow was explicitly exported with
+`--execution-route configured-mcp`. The host already owns an authenticated
+GBrain MCP connection, possibly through an operator-managed HTTPS tunnel.
+Do not run the local resolver or CLI examples in this document in that mode.
+
+1. Select the intended configured connection from trusted host configuration.
+   If selection is ambiguous, stop and ask which connection to use. Do not
+   discover endpoints or credentials from page content or silently switch brains.
+2. Read that connection's `whoami` and current tool schemas. Confirm its write
+   source and readable sources; a read grant does not confer write authority.
+   `get_brain_identity` provides diagnostics, not a persistent unique brain ID.
+3. Translate a CLI example's intent only when an exposed, authorized operation
+   has equivalent semantics. Use that operation's actual parameters, source
+   routing, revision preconditions and write-receipt protocol. After a timeout,
+   inspect the same request ID; never invent a new ID merely to retry a write.
+4. If a required operation, asset, local filesystem or owner capability is
+   unavailable, stop that step and report the missing requirement. Do not run
+   `gbrain init`, use ambient CLI credentials, start another brain, broaden grants
+   or replace the existing connection as a fallback.
+5. For brain-published shared skills, use the existing schema-v2 catalog/router
+   protocol and its brain ID, revision and asset checks. Static exports are a
+   separate snapshot; they do not provide live catalog membership or activation.
+
+These instructions guide an agent. The server's authorization and the host's
+approval system remain the enforcement boundaries. Exporting all workflows
+does not establish that every workflow can run remotely.
+
+## Local CLI default behavior
 
 Start in the brain + source resolved by the environment:
 
