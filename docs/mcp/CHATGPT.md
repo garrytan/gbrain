@@ -13,6 +13,14 @@ dashboard, tunnels, and `--bind` / `--public-url` — lives in
 from there, then come back for the ChatGPT client. Owner login and client
 management use [ADMIN.md](ADMIN.md); OAuth `admin` scope cannot perform them.
 
+## Already connected through an account App?
+
+Keep that existing App, transport, identity and source grant. Adding GBrain
+workflows to its account plugin is a separate packaging task; it does not require
+creating another brain or repeating the server setup below. Follow
+[account plugin skill distribution](../guides/account-cloud-plugin.md) for
+packaging, per-client verification and migration of old device-local routing.
+
 ## Setup
 
 ### 1. Start and expose the server (DEPLOY.md steps 1 + 3)
