@@ -301,10 +301,11 @@ checkpoint resume, or DB-contention-aware pace mode.
 
 ## Version locations (single source of truth: `VERSION` file)
 
-Every release updates the required version stamps in the table below.
-`bun run release:restamp` rewrites all of them, renumbers the branch's own
-schema migrations after master's and runs the auto-derived regenerations;
-run it when the PR is next to merge ([how](docs/RELEASING.md#release-restamp)).
+Every release updates the required version stamps in the table below. PRs do
+not: a PR carries a `changelog.d` fragment, and the release PR
+(`gstack-release-stamp open`, which runs `bun scripts/release-restamp.ts
+--stamp-only <version>`) rewrites every row at once
+([releases per batch](docs/RELEASING.md#releases-per-batch)).
 Update TODOS only when filing new work. `/ship`'s Step 12 idempotency check
 catches VERSION vs package.json drift; the canonical list lives here.
 
@@ -469,8 +470,10 @@ This applies to README, CHANGELOG, docs, PRs, commits, issues, and release pages
 
 ## PR title format — version FIRST (IRON RULE)
 
-PR titles and version-bump commit subjects start with the version, followed by
-the conventional-commit subject:
+A PR that carries no version (every PR under
+[releases per batch](docs/RELEASING.md#releases-per-batch)) is titled in
+plain words. Release PR titles and version-bump commit subjects start with the
+version, followed by the conventional-commit subject:
 
 ```
 vMAJOR.MINOR.PATCH.MICRO <type>(<scope>): <summary> (#issue or wave ref)

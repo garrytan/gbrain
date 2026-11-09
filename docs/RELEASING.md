@@ -134,7 +134,96 @@ queued commit against `master`.
   actually merged (`gh pr view <n> --json state,mergedAt`) before tagging,
   announcing or starting dependent work.
 
+## Releases per batch
+
+PRs no longer pick a version. A PR adds a changelog fragment and lands;
+a release PR, opened a few times a day, gives every fragment that reached
+master since the last release one version and writes all the stamps at once.
+`.gstack/ship-policy.json` turns this on (`changelog_fragments`,
+`merge: "direct"`), and gstack's /ship, receipt and land commands follow it.
+
+**What a PR carries.**
+
+- `changelog.d/<branch-slug>.md`: the PR's CHANGELOG entry with no version
+  heading (bold one-line summary, then the itemized sections; voice rules
+  below). /ship writes it. Front matter may say
+  `important: security|regression|data-loss|blocker`; releases are PATCH
+  only, so there is no `bump:` line. Format:
+  [changelog.d/README.md](../changelog.d/README.md).
+- One `behavior-changes.d/<id>.md` file per new upgrade-notice row, named
+  in the fragment as `<!-- behavior-change: <id> -->`
+  ([behavior-changes.d/README.md](../behavior-changes.d/README.md)).
+- Its own schema migrations, numbered master's latest + 1 when written.
+- Nothing else that carries a version: no edit to VERSION, the package.json
+  version, the plugin manifests, the BOOTSTRAP stamp, the plugin or template
+  trees, a released CHANGELOG section or a released `since:` row. The PR
+  title is plain words with no version in front.
+
+**The release PR.** The merge lane runs `gstack-release-stamp open`. On a
+fresh worktree of `origin/master` it sets VERSION to master's PATCH + 1,
+folds every `changelog.d` fragment under one `## [<version>] - <date>`
+heading and deletes the fragments, then runs
+`bun scripts/release-restamp.ts --stamp-only <version>` (every required row
+of the CLAUDE.md "Version locations" table plus the plugin, variant and
+template stamp lines; no fetch, no merge, no commit) and
+`bun scripts/build-behavior-changes.ts`, which dates each
+`behavior-changes.d` row whose marker now sits under the new heading. It
+pushes `release/<version>` and opens the PR. The lane lands it with
+`gstack-ship-queue land --pr <n> --pin <head>`, which accepts only a head
+that is exactly the release stamp of master's tip. The release PR runs the
+cheap tier; release.yml's ci-gate waits for the full Test and E2E push runs
+on the release commit before anything publishes.
+
+**When releases happen.** At 00:00, 06:00, 12:00 and 18:00 UTC the merge
+lane opens a release when master holds at least one fragment and the last
+release is 4 hours old or more. It also opens one right after landing a PR
+whose fragment says `important:`, so an important fix is in a published
+release within about an hour and can go to the stable channel (see "Daily
+stable check").
+
+**What refuses a bad release.** gstack's land refuses a release head that
+changes anything but stamps, the CHANGELOG fold and `release_outputs` (here
+`src/core/behavior-changes.generated.ts`, which it regenerates and compares
+byte for byte). release.yml runs `bun scripts/check-behavior-since.ts --stamped`,
+which refuses a release commit that still holds a `changelog.d` fragment,
+a literal `since: 'TBD'` row or a stale behavior-change table. A cancelled
+or skipped Test or E2E push run fails the gate with the `gh run rerun <id>`
+to run; the gate no longer follows to a later commit with the same VERSION,
+because between releases every master commit shares one.
+
+**Migration collisions.** Two open PRs can take the same migration number.
+GitHub then reports the second one conflicting (both edit the generated
+registry), and `check:schema-migration-order` fails on the merged tree.
+`bun run migrations:renumber` renumbers the branch's own migrations after
+master's latest (file name, export name and `version:` literal; the rest
+must be token-identical) and regenerates the registry, as step 5 of
+[Release restamp](#release-restamp) describes. That makes a new head, which
+needs a new full CI run. Migration numbers stay sequential for the reason
+given there.
+
+**Converting an open stamped PR.** A PR written before this switch still
+carries a version. `bun run release:unstamp` merges `origin/master`, puts
+every stamp back to master's version, moves the branch's CHANGELOG entry to
+`changelog.d/<branch-slug>.md` and its appended plain-text
+`BEHAVIOR_CHANGES` rows to `behavior-changes.d/` (with their markers),
+puts the notice file and its size-table row back to master's, and commits
+once. It refuses, with the fix, a branch with no entry of its own, one that
+edits a released CHANGELOG section, one that carries other PRs' entries (land
+or convert those first), and notice rows it can't move (rows without an id,
+rows whose text is a function, edits other than appending). Plain
+`release:restamp` refuses once master's policy says `merge: "direct"`.
+
+**Why notice rows are files.** Every PR used to append its row to the end of
+one array in `src/core/behavior-change-notice.ts`, which also raised that
+file's line in `scripts/module-size-limits.tsv`; those two lines were the
+second-largest source of master conflicts after the stamps. Rows in their
+own files, which the release never edits or deletes, touch neither line.
+
 ## CHANGELOG + VERSION are branch-scoped
+
+Under [releases per batch](#releases-per-batch) a PR writes only its
+`changelog.d` fragment; the voice rules below apply to that text, and the
+version and placement rules apply to the release PR.
 
 **VERSION and CHANGELOG describe what THIS branch adds vs master, not how we got
 here.** Every feature branch that ships gets its own version bump and CHANGELOG
@@ -181,6 +270,11 @@ If any answer is no, fix it before continuing.
 - Credit to external contributors when a community PR was incorporated.
 
 ## Release restamp
+
+Under [releases per batch](#releases-per-batch) PRs do not restamp: the
+release PR stamps, and `release:restamp` refuses. Its renumbering runs on its
+own as `bun run migrations:renumber`, and `bun run release:unstamp` converts a
+PR stamped the old way. The steps below describe the shared machinery.
 
 `bun run release:restamp` makes a branch next-to-merge in one command. Run it
 when your PR is next in the merge line, not earlier: the merge coordinator
@@ -554,10 +648,10 @@ succeed on the release commit.
 - **Failed run:** nothing is published and the job fails with the run and the
   master-red issue. After master is green again, publish the current VERSION
   with `gh workflow run release.yml --ref master`.
-- **Run cancelled by a newer push:** the gate follows the next master commit.
-  If it contains the release commit and carries the same VERSION, that commit
-  is gated and published. If VERSION moved on, this version is skipped and the
-  newer VERSION's release run publishes.
+- **Cancelled or skipped run:** nothing is published and the job fails with
+  `gh run rerun <id>`. Master push runs are keyed by commit, so a newer push
+  no longer cancels them; and between releases many master commits share one
+  VERSION, so the gate never follows to a later commit.
 - **Backfill:** `gh workflow run release.yml --ref master` gates and publishes
   master HEAD's VERSION. Other refs are refused.
 - The gate waits up to 110 minutes, then fails with the backfill command.

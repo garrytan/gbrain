@@ -61,8 +61,10 @@ permissions:
 # replay never cancels another or a full run.
 # Event parity (docs/TESTING.md#event-parity): the event suffixes only separate
 # runs that must not cancel each other; they change no job, matrix or parameter.
+# A push to master is keyed by its commit, so a newer push never cancels it: the Release gate
+# (scripts/release-gate.ts) publishes only the release commit's own green runs.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.native_only == true && '-native-only' || '' }}${{ github.event_name == 'workflow_dispatch' && (inputs.race_hunt == true || inputs.stress_files != '' || inputs.stress_base != '') && format('-diagnostic-{0}', github.run_id) || '' }}${{ github.event_name == 'schedule' && '-nightly' || '' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.sha) || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.native_only == true && '-native-only' || '' }}${{ github.event_name == 'workflow_dispatch' && (inputs.race_hunt == true || inputs.stress_files != '' || inputs.stress_base != '') && format('-diagnostic-{0}', github.run_id) || '' }}${{ github.event_name == 'schedule' && '-nightly' || '' }}
   cancel-in-progress: true
 
 jobs:

@@ -1,9 +1,8 @@
 /**
  * scripts/release-gate.ts + release.yml wiring: publication and the
  * latest-stable move wait for Test and E2E Tests success on the release
- * commit; a failed run publishes nothing with the next step; a run cancelled
- * by a newer push is followed to the next master commit with the same
- * VERSION (or marks the version superseded); dispatch backfills through the
+ * commit; a failed or cancelled run publishes nothing with the next step (no
+ * later commit is published in its place); dispatch backfills through the
  * same gate; non-master refs are refused.
  */
 import { describe, expect, test } from 'bun:test';
@@ -19,14 +18,11 @@ const B = 'b'.repeat(40);
 const C = 'c'.repeat(40);
 const run = (id: number, n: number, sha: string, status: string, conclusion: string | null, attempt = 1): GateRun => ({ id, run_number: n, run_attempt: attempt, status, conclusion, head_sha: sha, head_branch: 'master', event: 'push' });
 
-function deps(runs: Record<string, GateRun[]>, versions: Record<string, string> = {}, outside: string[] = [], reused: Record<number, Provenance> = {}): GateDeps & { calls: string[] } {
+function deps(runs: Record<string, GateRun[]>, reused: Record<number, Provenance> = {}): GateDeps & { calls: string[] } {
   const calls: string[] = [];
   return {
     calls,
     async runsFor(file, sha) { calls.push(`runs ${file} ${sha.slice(0, 1)}`); return (runs[file] ?? []).filter(r => r.head_sha === sha); },
-    async newerRuns(file, after) { return (runs[file] ?? []).filter(r => r.run_number > after); },
-    async versionAt(sha) { return versions[sha] ?? '0.60.70.0'; },
-    async contains(_base, head) { return !outside.includes(head); },
     async provenance(_file, r) { return reused[r.id] ?? { reused: false }; },
   };
 }
@@ -54,29 +50,21 @@ describe('release gate', () => {
     expect((await evaluate(rerunGreen, A, '0.60.70.0')).kind).toBe('publish');
   });
 
-  test('a run cancelled by a newer push is followed to the next master commit with the same VERSION, which is published', async () => {
-    const d = deps({
-      'test.yml': [run(1, 10, A, 'completed', 'cancelled'), run(3, 11, B, 'completed', 'success')],
-      'e2e.yml': [run(2, 20, A, 'completed', 'success'), run(4, 21, B, 'completed', 'success')],
-    });
-    const v = await evaluate(d, A, '0.60.70.0');
-    expect(v).toMatchObject({ kind: 'publish', sha: B });
-    expect(v.why).toContain('same VERSION');
-    const notYet = deps({ 'test.yml': [run(1, 10, A, 'completed', 'cancelled')], 'e2e.yml': [run(2, 20, A, 'completed', 'success')] });
-    expect((await evaluate(notYet, A, '0.60.70.0')).why).toContain('waiting for the newer push-to-master run');
-    const redSuccessor = deps({ 'test.yml': [run(1, 10, A, 'completed', 'cancelled'), run(3, 11, B, 'completed', 'failure')], 'e2e.yml': [run(4, 21, B, 'completed', 'success')] });
-    expect(await evaluate(redSuccessor, A, '0.60.70.0')).toMatchObject({ kind: 'fail', sha: B });
-  });
-
-  test('a cancellation by a push that moved VERSION marks this version superseded; a successor that lacks the release commit fails', async () => {
-    const moved = deps({ 'test.yml': [run(1, 10, A, 'completed', 'cancelled'), run(3, 11, B, 'in_progress', null)], 'e2e.yml': [] }, { [B]: '0.60.71.0' });
-    expect(await evaluate(moved, A, '0.60.70.0')).toMatchObject({ kind: 'superseded', sha: B });
-    const stray = deps({ 'test.yml': [run(1, 10, A, 'completed', 'cancelled'), run(3, 11, C, 'completed', 'success')], 'e2e.yml': [] }, {}, [C]);
-    expect((await evaluate(stray, A, '0.60.70.0')).kind).toBe('fail');
+  test('a cancelled or skipped run publishes nothing, and no later master commit is published in its place', async () => {
+    for (const conclusion of ['cancelled', 'skipped']) {
+      const d = deps({
+        'test.yml': [run(1, 10, A, 'completed', conclusion), run(3, 11, B, 'completed', 'success')],
+        'e2e.yml': [run(2, 20, A, 'completed', 'success'), run(4, 21, B, 'completed', 'success')],
+      });
+      const v = await evaluate(d, A, '0.60.70.0');
+      expect(v).toMatchObject({ kind: 'fail', sha: A });
+      expect(v.kind === 'fail' && v.next).toContain('gh run rerun 1');
+      expect(d.calls.some(c => c.endsWith(' b'))).toBe(false);
+    }
   });
 
   test('a publish names the full-suite run each workflow reused, and writes both ids', async () => {
-    const d = deps({ 'test.yml': [run(1, 10, A, 'completed', 'success')], 'e2e.yml': [run(2, 20, A, 'completed', 'success')] }, {}, [], { 1: { reused: true, run_id: 900, run_attempt: 2, sha: B } });
+    const d = deps({ 'test.yml': [run(1, 10, A, 'completed', 'success')], 'e2e.yml': [run(2, 20, A, 'completed', 'success')] }, { 1: { reused: true, run_id: 900, run_attempt: 2, sha: B } });
     const v = await evaluate(d, A, '0.60.70.0');
     expect(v).toMatchObject({ kind: 'publish', sha: A, sources: [{ workflow: 'Test', run_id: 1, reused: { run_id: 900, run_attempt: 2, sha: B } }, { workflow: 'E2E Tests', run_id: 2 }] });
     expect(v.why).toContain('Test reused full-suite run 900 attempt 2');
@@ -86,7 +74,7 @@ describe('release gate', () => {
   });
 
   test('a reused push run whose reuse record cannot be read publishes nothing and names the re-run', async () => {
-    const d = deps({ 'test.yml': [run(1, 10, A, 'completed', 'success')], 'e2e.yml': [run(2, 20, A, 'completed', 'success')] }, {}, [], { 2: { problem: "run 2 has no 'reused-full-suite' artifact" } });
+    const d = deps({ 'test.yml': [run(1, 10, A, 'completed', 'success')], 'e2e.yml': [run(2, 20, A, 'completed', 'success')] }, { 2: { problem: "run 2 has no 'reused-full-suite' artifact" } });
     const v = await evaluate(d, A, '0.60.70.0');
     expect(v.kind).toBe('fail');
     if (v.kind !== 'fail') return;
@@ -104,7 +92,6 @@ describe('release gate', () => {
     let i = 0;
     const d: GateDeps = {
       async runsFor(file) { return file === 'test.yml' ? [states[Math.min(i++, 2)]!] : [run(2, 20, A, 'completed', 'success')]; },
-      async newerRuns() { return []; }, async versionAt() { return '0.60.70.0'; }, async contains() { return true; },
       async provenance() { return { reused: false }; },
     };
     const v = await gate(d, { sha: A, version: '0.60.70.0', timeoutMs: 10 * 60_000, pollMs: 60_000, log: l => lines.push(l), sleep: async ms => { t += ms; }, now: () => t });
