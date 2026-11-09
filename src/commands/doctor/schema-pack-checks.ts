@@ -11,7 +11,7 @@ import { statSync } from 'node:fs';
 import { redactConnectionInfo } from '../../core/audit/redact-connection-info.ts';
 import { formatPackBytes, OVERSIZED_PACK_RUNBOOK, schemaPackMaxBytes } from '../../core/schema-pack/loader.ts';
 import { loadActivePackForLocalEngine } from '../../core/schema-pack/best-effort.ts';
-import { sanitizeTypeForDisplay, storedTypeMissesPack } from '../../core/schema-pack/type-usage.ts';
+import { WRITER_OWNED_PAGE_TYPES, sanitizeTypeForDisplay, storedTypeMissesPack } from '../../core/schema-pack/type-usage.ts';
 
 // =================================================================
 // v0.39 T7 + T9 — schema-pack doctor checks
@@ -104,7 +104,8 @@ interface SourceConformance {
  * #5879: pages match the active pack only when their stored type is a
  * declared page type or an alias of one (`storedTypeMissesPack`, the same
  * classification as `schema lint --with-db`). Each source is graded against
- * its own resolved pack. Any undeclared type warns; untyped pages warn at
+ * its own resolved pack. Any undeclared type warns, except gbrain's own
+ * page types (`WRITER_OWNED_PAGE_TYPES`, #8815); untyped pages warn at
  * >= 10% of a source.
  */
 export async function checkSchemaPackConsistency(
@@ -140,7 +141,7 @@ export async function checkSchemaPackConsistency(
     const pack = await loadActivePackForLocalEngine(engine, { sourceId: src });
     if (!pack) { unresolved.push(src); continue; }
     const undeclaredTypes = types
-      .filter((t): t is { type: string; n: number } => !!t.type && storedTypeMissesPack(t.type, pack.manifest))
+      .filter((t): t is { type: string; n: number } => !!t.type && !WRITER_OWNED_PAGE_TYPES.has(t.type) && storedTypeMissesPack(t.type, pack.manifest))
       .map((t) => ({ type: t.type, count: t.n }))
       .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type));
     graded.push({

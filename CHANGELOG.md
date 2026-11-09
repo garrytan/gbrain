@@ -20,6 +20,7 @@ identifiers and attribution are available in the pre-removal Git revision
 - `conversation_format_coverage`: the sample now includes pages stored under the granular conversation types the extractor already reads (`slack-thread`, `slack-dm-day`, `email-digest`), so unparseable transcripts on a brain that never ran the type-consolidation pack are reported instead of silently skipped. Reported by @Masashi-Ono0611 (#8519).
 - `minions_migration` under `gbrain doctor --fast`: a migration the brain's config can decline (v0.53.0, `shared_skills.migration.enabled`) is no longer listed as not run. Without a database connection the check cannot read that setting, and `gbrain apply-migrations --yes` skips a declined migration, so the warning could never clear. The full `gbrain doctor` still reports it when it is not declined. Reported by @Masashi-Ono0611 (#8721).
 - `stale_mentions`: each stale example now carries its own `gbrain unlink` command with the link type the row is stored under. The hint used to say `--link-type mentions` for every row, which removes nothing for a typed link stored under a verb such as `founded`. Reported by @Masashi-Ono0611 (#8817).
+- `schema_pack_consistency`: pages of the types gbrain itself writes (`extract_receipt` receipts under `extracts/`, and `code` pages from the code importer) no longer count as undeclared on a custom schema pack copied before the base pack declared them. Your own undeclared types still warn. Reported by @Masashi-Ono0611 (#8818).
 
 ## [0.60.620.0] - 2026-11-09
 

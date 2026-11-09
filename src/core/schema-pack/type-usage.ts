@@ -62,6 +62,14 @@ export function storedTypeMissesPack(type: string | null | undefined, pack: Type
 }
 
 /**
+ * Page types gbrain's own writers stamp outside the content taxonomy: `code`
+ * (the code importer) and `extract_receipt` (the extract receipt writer under
+ * extracts/). gbrain-base-v2 declares both since #6818; a custom pack copied
+ * before then lacks them, which is not the owner's schema drift (#8815).
+ */
+export const WRITER_OWNED_PAGE_TYPES: ReadonlySet<string> = new Set(['code', 'extract_receipt']);
+
+/**
  * Type strings come from user/agent frontmatter and get echoed into terminal
  * warnings — strip control/non-printable characters (ANSI-escape hygiene) and
  * cap the length so a hostile or garbled value can't mangle the terminal.
