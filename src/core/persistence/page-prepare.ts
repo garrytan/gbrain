@@ -436,7 +436,10 @@ async function compareFileTarget(engine: BrainEngine, row: Parameters<typeof pre
     if (claimants.length) { options.sharedOrigin.onShared({ target, claimants }); return undefined; }
   }
   // G7a: a page whose file its private transition removed (withheld_source_path) writes it again; the file is absent by design.
-  const withheld = !snapshot?.page.source_path && Boolean(snapshot?.page.withheld_source_path);
+  // So does a strict page that was private from its first write (database_only_reason private, no file ever recorded): it
+  // writes its file for the first time when it turns world.
+  const withheld = !snapshot?.page.source_path && (Boolean(snapshot?.page.withheld_source_path) || (!before && !!snapshot && !snapshot.page.source_uri
+    && isPrivacyClass((await engine.executeRaw<{ reason: string | null }>('SELECT database_only_reason AS reason FROM pages WHERE id=$1', [snapshot.page.id]))[0]?.reason)));
   if (!before && snapshot && !snapshot.page.deleted_at && !options.allowMissing && !withheld) {
     // A declared db_only page has no canonical file by design and publishes to
     // the database only. gbrain.yml is consulted only here, where the write

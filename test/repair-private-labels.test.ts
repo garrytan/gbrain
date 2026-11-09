@@ -15,7 +15,8 @@
  *    gbrain repair command entry (argument parse, runner, runRepair).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -31,6 +32,10 @@ import { classifyPrivateLabel } from '../src/core/repair/private-labels.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { withCoordinatedWrite, withTrustBackfill } from '../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
+import { claimWorktree } from '../src/core/persistence/ownership.ts';
+import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import type { OperationContext } from '../src/core/ops/contract.ts';
+import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 
 let engine: PGLiteEngine;
 const dir = mkdtempSync(join(tmpdir(), 'gbrain-private-labels-'));
@@ -250,6 +255,20 @@ describe('repair private-labels', () => {
     expect(relisted.details.counts.before.alias).toBe(2);
     expect(relisted.details.counts.before['alias-and-visibility']).toBe(1);
   });
+
+  test('restore skips a page whose label was set again by hand since the preview, and keeps the value the user set', async () => {
+    const clear = await json(['private-labels', '--class', 'alias']);
+    expect((await json(['private-labels', '--class', 'alias', '--apply', '--expect', clear.preview_hash])).applied).toBe(2);
+    const preview = await json(['private-labels', '--class', 'restore']);
+    expect(preview.listing.map((l: { item: string }) => l.item)).toEqual(['default:notes/alias', 'default:notes/readers']);
+    await seed('notes/alias', 'note', { status: 'draft', access: 'restricted' });
+    const applied = await json(['private-labels', '--class', 'restore', '--apply', '--expect', preview.preview_hash]);
+    expect(applied.applied).toBe(1);
+    expect(applied.skipped).toBe(1);
+    expect((await row('notes/alias')).frontmatter.access).toBe('restricted');
+    expect((await row('notes/readers')).frontmatter.access).toBe('private');
+    expect(ledgerLines(brainId).filter(l => l.restored && l.slug === 'notes/alias')).toHaveLength(1);
+  });
 });
 
 /**
@@ -314,6 +333,86 @@ describe('repair private-labels keeps the trust tier', () => {
       await disposePersistenceConsumer(engine);
       await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     }
+  });
+});
+
+/**
+ * git-publish is the one clear that writes Git history: on a managed brain with a git-canonical source the cleared page
+ * is committed into the source checkout through the maintenance door, and the ledger records it so restore can re-add
+ * the label.
+ */
+describe('repair private-labels --class git-publish on a git-canonical source', () => {
+  test('apply removes the label, commits the page into the source checkout and records it; restore re-adds the label', async () => {
+    const source = 'source-g';
+    const root = join(dir, 'git-checkout');
+    mkdirSync(root, { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    execFileSync('git', ['-c', 'user.name=example', '-c', 'user.email=example@example.com', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: root });
+    await engine.executeRaw('INSERT INTO sources (id, name, local_path) VALUES ($1, $1, $2) ON CONFLICT (id) DO NOTHING', [source, root]);
+    await engine.executeRaw('UPDATE sources SET config = $2::jsonb WHERE id = $1', [source, JSON.stringify({ canonical: 'git' })]);
+    await engine.setConfig('sync.write_through', 'true');
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    try {
+      await withEnv({ GBRAIN_HOME: dir }, async () => {
+        await registerLocalWriter(engine, 'cli');
+        await claimWorktree(engine, source, root);
+        const ctx = { engine, sourceId: source, remote: false, config: { engine: engine.kind, embedding_disabled: true } as never, dryRun: false,
+          logger: { info() {}, warn() {}, error() {} } } as OperationContext;
+        await submitPageMutation(ctx, { operation: 'put_page', params: { slug: 'notes/g', request_id: crypto.randomUUID(),
+          content: serializeMarkdown({ access: 'private', topic: 'kept' }, body('notes/g'), '', { type: 'note' as never, title: 'notes/g', tags: ['t1'] }) } });
+        expect(existsSync(join(root, 'notes', 'g.md'))).toBe(false);
+        const before = await row('notes/g', source);
+        const preview = await json(['private-labels', '--source', source, '--class', 'git-publish']);
+        expect(preview.listing).toEqual([{ item: source + ':notes/g', class: 'git-publish', detail: 'remove access: private' }]);
+        const applied = await json(['private-labels', '--source', source, '--class', 'git-publish', '--apply', '--expect', preview.preview_hash]);
+        expect(applied.failed).toEqual([]);
+        expect(applied.applied).toBe(1);
+        const cleared = await row('notes/g', source);
+        const { access: _a, ...rest } = before.frontmatter;
+        expect(cleared.frontmatter).toEqual(rest);
+        expect(cleared.compiled_truth).toBe(before.compiled_truth);
+        const file = join(root, 'notes', 'g.md');
+        expect(existsSync(file)).toBe(true);
+        expect(readFileSync(file, 'utf8')).not.toMatch(/^access:/m);
+        expect(execFileSync('git', ['log', '--format=%H', '--', 'notes/g.md'], { cwd: root, encoding: 'utf8' }).trim()).not.toBe('');
+        const brain = preview.scope.brain_id;
+        expect(ledgerLines(brain).filter(l => l.source_id === source).map(l => [l.slug, l.removed])).toEqual([['notes/g', { access: 'private' }]]);
+
+        const restorePreview = await json(['private-labels', '--source', source, '--class', 'restore']);
+        expect(restorePreview.listing).toEqual([{ item: source + ':notes/g', class: 'restore', detail: 're-add access: private' }]);
+        const restored = await json(['private-labels', '--source', source, '--class', 'restore', '--apply', '--expect', restorePreview.preview_hash]);
+        expect(restored.failed).toEqual([]);
+        expect(restored.applied).toBe(1);
+        expect((await row('notes/g', source)).frontmatter).toEqual(before.frontmatter);
+      });
+    } finally {
+      await disposePersistenceConsumer(engine);
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    }
+  });
+});
+
+describe('repair private-labels when the undo ledger cannot record', () => {
+  test('a clear whose ledger line fails to save still reports the page as applied and names the removed values', async () => {
+    const source = 'source-h';
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [source]);
+    await seed('notes/h', 'note', { access: 'private' }, source);
+    const preview = await json(['private-labels', '--source', source]);
+    const ledger = preview.details.ledger as string;
+    chmodSync(ledger, 0o400);
+    try {
+      const applied = await json(['private-labels', '--source', source, '--apply', '--expect', preview.preview_hash]);
+      expect(applied.failed).toEqual([]);
+      expect(applied.applied).toBe(1);
+      expect(JSON.stringify(applied)).toContain('access: private');
+      expect('access' in (await row('notes/h', source)).frontmatter).toBe(false);
+    } finally { chmodSync(ledger, 0o600); }
+  });
+
+  test('a restore preview with no ledger line for this brain says where restore has to run', async () => {
+    const preview = await json(['private-labels', '--source', 'source-h', '--class', 'restore']);
+    expect(preview.listing ?? []).toEqual([]);
+    expect(preview.warnings.some((w: string) => w.includes('has no line for brain') && w.includes(preview.details.ledger))).toBe(true);
   });
 });
 

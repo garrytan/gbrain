@@ -661,7 +661,7 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'The preview lists one window (--limit, default 1000) by class (alias, alias-and-visibility) with every category\'s count before and after; '
       + '--apply --expect <hash> applies exactly that window, one revision-bound page write each; a bare --apply is refused. Pages in git-canonical sources '
       + '(git-publish: clearing commits them into Git) run only with --class git-publish. Each cleared label is recorded in '
-      + '<gbrain home>/repair/private-labels/<brain>.jsonl, and --class restore re-adds it. Runs only when named; never on upgrade.',
+      + '$GBRAIN_HOME/repair/private-labels/<brain>.jsonl, and --class restore re-adds it. Runs only when named; never on upgrade.',
   },
   'generations': {
     handler: generationsRepair, embeds: 'effect', checks: ['generation_retirements', 'generation_held', 'generation_pending'], explicit_only: true, preview_bound: true, consent: 'destructive',

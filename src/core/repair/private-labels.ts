@@ -34,7 +34,8 @@
  * <gbrain home>/repair/private-labels/<brain_id>.jsonl, src/commands/repair-private-labels.ts),
  * and --class restore plans from its lines: each recorded page still live and still
  * without those keys gets them back (preview-bound the same way, with its own line).
- * An apply or a restore preview without a ledger is refused.
+ * An apply or a restore preview without a ledger is refused. A git-publish clear is not fully undone: restore re-adds
+ * the label and the file leaves the checkout, but the commits that held it keep the page's content.
  */
 import type { BrainEngine } from '../engine.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
@@ -152,7 +153,7 @@ async function planRestore(engine: BrainEngine, scope: RepairScope, selection: S
   const entries: Approved[] = [];
   for (const line of removals) {
     const page = byId.get(line.page_id);
-    if (!page || page.source_id !== line.source_id) { counts.page_gone++; continue; }
+    if (!page || page.source_id !== line.source_id || page.slug !== line.slug) { counts.page_gone++; continue; }
     if (Object.keys(line.removed!).some(key => Object.hasOwn(page.frontmatter ?? {}, key))) { counts.already_restored++; continue; }
     counts.restorable++;
     entries.push({ mode: 'restore', class: 'restore', brain_id: scope.brain_id, source_id: page.source_id, slug: page.slug, page_id: Number(page.id),
@@ -223,10 +224,13 @@ export const privateLabelsRepair: RepairHandler = {
         : 'Clearing a label widens what remote callers that are not the brain owner can read: each cleared page becomes readable remotely (readable_by and folder rules still apply). '
           + 'Undo with: gbrain repair private-labels --class restore',
       ...(gitPublish && selection.class === 'git-publish' ? [`${gitPublish} page(s) of class git-publish live in git-canonical sources, where private pages are database-only; `
-        + 'clearing commits each listed page into its source\'s Git history for the first time.'] : []),
+        + 'clearing commits each listed page into its source\'s Git history for the first time. That part is one-way: --class restore re-adds the label and removes the file '
+        + 'from the checkout, but every earlier commit, and any remote it was pushed to, keeps the page\'s content.'] : []),
       ...(gitPublish && selection.class !== 'git-publish' ? [`${gitPublish} page(s) of class git-publish (git-canonical sources) carry the same label and are not in this preview: `
         + 'private pages there are database-only, so clearing commits each into its source\'s Git history for the first time. Preview them by name: gbrain repair private-labels --class git-publish'] : []),
       ...(planned.unreadable ? [`${planned.unreadable} ledger line(s) could not be read and are not planned.`] : []),
+      ...(restore && !Object.values(before).some(Boolean) ? [`The ledger ${ledger!.path} has no line for brain ${scope.brain_id} in this scope. Restore reads only the ledger on the host `
+        + 'and GBRAIN_HOME that ran the clear; run it there.'] : []),
     ];
     return { items: toItems(window, hash), preview_hash: hash, residuals: {}, warnings,
       listing: window.map(entry => ({ item: `${entry.source_id}:${entry.slug}`, class: entry.class,
@@ -266,8 +270,13 @@ export const privateLabelsRepair: RepairHandler = {
         if (acceptedPendingReceipt(error)) item.ledger.record(line);
         throw error;
       }
-      item.ledger.record(line);
-      return { applied: true, outcome: entry.mode === 'clear' ? 'cleared' : 'restored', detail: { ledger: item.ledger.path } };
+      const outcome = entry.mode === 'clear' ? 'cleared' : 'restored';
+      try { item.ledger.record(line); } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { applied: true, outcome, reason: `The page was written but its ledger line was not saved (${message}). Keep these values to undo it by hand: ${describeLabels(entry.labels)}.`,
+          detail: { ledger: item.ledger.path, ledger_error: message, labels: entry.labels } };
+      }
+      return { applied: true, outcome, detail: { ledger: item.ledger.path } };
     } finally {
       if (item.last && item.hash) await clearApprovedSet(ctx.engine, { command: 'private-labels', hash: item.hash });
     }

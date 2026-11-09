@@ -126,6 +126,11 @@ database, so a repo-less brain works the same. The owner relaxation applies to a
 when it speaks for itself (no audience, or an audience of the owner alone); never to a shared-room audience or an
 attested call. `gbrain access owner clear` turns it off.
 
+One owner credential both reads every private page and writes new `default` pages that other members read, so an
+owner agent can copy private content into a shared page. A prompt planted in a page that agent reads can ask it to.
+Bind only agents you trust with the whole brain as the owner; give every other agent its own member, whose new pages
+stay kept to it.
+
 ## Related
 
 - [Multi-source brains](multi-source-brains.md): sources and grants.
