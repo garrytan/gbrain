@@ -211,6 +211,7 @@ used?"* — your agent runs `gbrain volunteer-context --stats`.
 | `retrieval_reflex_max_pointers` | 3 | pointer cap per turn |
 | `retrieval_reflex_lexical_arms` | true | the lowercase-alias + surname recall arms (env: `GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS`); off = disables both arms |
 | `context.hot_memory.session_only` | off | hot facts on the turn and session-start hooks come from the current session only, with no fallback to other sessions' recent facts (DB-plane; see [ambient writeback](ambient-writeback.md#hot-memory-and-other-sessions)) |
+| `hooks.context_refresh_every_turns` | 0 | 0 = the boundary context pack loads once, at SessionStart. N > 0 = the UserPromptSubmit hook also pulls the session's pack every Nth prompt; the session's since-cursor makes it carry only facts and pages written since the last pack, so facts saved mid-session arrive without a restart (file plane: `gbrain config set hooks.context_refresh_every_turns 5`; env `GBRAIN_CONTEXT_REFRESH_EVERY_TURNS` wins) |
 | `context.proactive_brief` | off | the proactive brief ("Before you start") on the SessionStart and UserPromptSubmit hooks (DB-plane: `gbrain config set context.proactive_brief true`) |
 
 Per-call knobs: `max_pages` + `min_confidence` on both the op and `gbrain watch`

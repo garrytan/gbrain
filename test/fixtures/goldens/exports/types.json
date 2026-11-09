@@ -2802,7 +2802,7 @@
           "eval?: { capture?: boolean; scrub_pii?: boolean; } | undefined",
           "expansion_model?: string | undefined",
           "google_api_key?: string | undefined",
-          "hooks?: { stop_push_debounce_min?: number | string; } | undefined",
+          "hooks?: { stop_push_debounce_min?: number | string; context_refresh_every_turns?: number | string; } | undefined",
           "integrations?: { memorable?: { enabled?: boolean; }; } | undefined",
           "litellm_api_key?: string | undefined",
           "mcp?: { instructions?: string; publish_skills?: boolean; publish_advisor?: boolean; skills_dir?: string; strict_params?: \"warn\" | \"reject\"; default_surface_dcr?: \"verbs\" | \"starter\" | \"full\"; advertised_surface?: \"verbs\" | \"starter\" | \"full\"; result_rows?: \"lean\" | \"full\"; allow_session_widen?: boolean | string; } | undefined",

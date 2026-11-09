@@ -271,6 +271,9 @@
         "Env: GBRAIN_HOOKS=0 disables all events (immediate exit 0).",
         "     GBRAIN_SESSION_AGENT=<label>|off|owner names who wrote the session's user",
         "     turns (an agent's are never saved as yours; off saves nothing).",
+        "     GBRAIN_CONTEXT_REFRESH_EVERY_TURNS=<N> makes user-prompt also pull the",
+        "     session's new facts and pages every Nth prompt (config",
+        "     hooks.context_refresh_every_turns; default 0 = SessionStart only).",
         "All events fail open: errors exit 0 with empty stdout and a heartbeat entry at",
         "<gbrain home>/integrations/hooks/heartbeat.jsonl."
       ],

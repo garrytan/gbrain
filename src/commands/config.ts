@@ -58,6 +58,7 @@ export function isSensitiveConfigKey(key: string): boolean {
 const FILE_PLANE_DOTTED_KEYS: ReadonlySet<string> = new Set([
   'push.allow_unverified_remote',
   'hooks.stop_push_debounce_min',
+  'hooks.context_refresh_every_turns', // the engine-free user-prompt hook reads it (commands/hook-turn-refresh.ts)
   'backup.check_enabled',
   'backup.check_interval_days',
   // #4748: resolveMcpInstructions reads ONLY the file plane (all three MCP

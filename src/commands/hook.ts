@@ -60,6 +60,7 @@ import {
   type ContextPackResponse,
 } from '../core/context/resolve-ipc.ts';
 import { contextSourceId, requestSessionStartPack, sessionStartAwaitsServe } from '../core/context/session-start-pack.ts';
+import { startTurnRefresh } from './hook-turn-refresh.ts';
 import type { WindowTurn } from '../core/context/entity-salience.ts';
 import {
   confineTranscriptPath,
@@ -278,6 +279,9 @@ Events (wired into .claude/settings.local.json by gbrain bootstrap):
 Env: GBRAIN_HOOKS=0 disables all events (immediate exit 0).
      GBRAIN_SESSION_AGENT=<label>|off|owner names who wrote the session's user
      turns (an agent's are never saved as yours; off saves nothing).
+     GBRAIN_CONTEXT_REFRESH_EVERY_TURNS=<N> makes user-prompt also pull the
+     session's new facts and pages every Nth prompt (config
+     hooks.context_refresh_every_turns; default 0 = SessionStart only).
 All events fail open: errors exit 0 with empty stdout and a heartbeat entry at
 <gbrain home>/integrations/hooks/heartbeat.jsonl.`;
 
@@ -1222,6 +1226,9 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     const secret = readIpcSecretForConfig(cfg);
     if (!secret) return { outcome: 'degraded', reason: 'no_serve' };
 
+    // Every Nth prompt also pulls the session's new facts/pages, beside turn_context (hook-turn-refresh.ts).
+    const refreshP = startTurnRefresh({ cfg, sessionId: sanitizeSessionId(sessionId), socketPath, secret, sourceId, timeoutMs: (io.userPromptDeadlineMs ?? USER_PROMPT_DEADLINE_MS) - (Date.now() - t0) - 50 });
+
     const res = await requestTurnContext(socketPath, {
       secret,
       window: turns,
@@ -1247,7 +1254,7 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     }
     // Context-pressure notice (pressure.ts) leads the block so the cap loop never trims it.
     const pressure = transcriptPath && io.harness !== 'codex' ? claudeCodePressure(resp.block?.pressure, transcriptPath, sessionId) : null;
-    const text = [pressure?.notice, resp.block?.text].filter(Boolean).join('\n\n');
+    const text = [pressure?.notice, await refreshP, resp.block?.text].filter(Boolean).join('\n\n');
     if (!text) return resp.degradedReason === 'server_budget' ? { outcome: 'degraded', reason: 'server_budget', turns: turns.length } : { outcome: 'ok', reason: 'empty_block', turns: turns.length };
 
     // [ENG-1] The 10000-char harness cap applies to the WHOLE stdout payload;
