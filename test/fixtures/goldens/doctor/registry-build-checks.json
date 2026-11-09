@@ -923,6 +923,10 @@
       },
       {
         "category": "brain",
+        "name": "chronicle_duplicate_events"
+      },
+      {
+        "category": "brain",
         "name": "auto_chronicle_default_on"
       },
       {

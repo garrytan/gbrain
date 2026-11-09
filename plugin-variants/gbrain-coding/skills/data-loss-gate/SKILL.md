@@ -94,7 +94,9 @@ Brain / database level (gbrain-specific):
   `--yes` only after the user agrees.
 - **Source removal** — `gbrain sources remove <id>` deletes the source AND
   every page in it. The `--confirm-destructive` flag does not substitute for
-  the card.
+  the card. A managed removal deletes pages in committed batches: one that
+  stops early (`write_pending`) has already deleted some, so say so and rerun it
+  to finish.
 - **Mount removal** — `gbrain mounts remove <id>` only removes the local
   registration (the mounted brain's database survives; re-add to recover). Gate
   it anyway when the flow ALSO plans to delete the mount's underlying database

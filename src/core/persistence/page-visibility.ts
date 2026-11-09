@@ -1,12 +1,14 @@
 import { opError } from '../ops/contract.ts';
-import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, readPolicyFragment, readRemotePolicyNow, withCallerAccess } from '../search/private-visibility.ts';
+import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, OWNER_MEMBER_KEY, readPolicyFragment, readRemotePolicyNow, withCallerAccess } from '../search/private-visibility.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { folderAccessForAll, memberIdentityFor, resolveAudienceIdentities } from '../access/caller.ts';
 import type { AudiencePrincipal } from '../access/audience.ts';
 import { parseStoredActor, storedActorIdentity } from '../access/actor.ts';
-import { hasReaders, normalizePrincipal, normalizeReaders, readersAllow, NOBODY } from '../access/principals.ts';
+import { ACCESS_ID_RE, hasReaders, normalizePrincipal, normalizeReaders, readersAllow, NOBODY } from '../access/principals.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import type { SqlEngine, WriteAuthority } from './model.ts';
+import type { BrainEngine } from '../engine.ts';
+import { noGrantFloorReads } from '../source-resolver.ts';
 
 /** Publication uses fresh policy, independent of the read-side telemetry cache (read through the resolver). */
 export async function excludesPrivateWrites(engine: SqlEngine, remote: boolean): Promise<boolean> {
@@ -139,6 +141,50 @@ export async function remoteReadersChecked<T extends { parsedPage: { frontmatter
   const acting = authority.actingFor;
   assertRemoteReadersValid(after, await writerIdentities(engine, authority), Array.isArray(acting) ? acting : acting ? [`member:${acting.member}`] : undefined);
   return prepared;
+}
+
+/**
+ * GST-2051: the member a remote write's token or OAuth client is bound to, as `member:<id>`, when the write goes to a
+ * source every credential without a source grant reads, unbound ones included (noGrantFloorReads): `default`, the
+ * no-grant floor of every token without `--sources` and the registration default of every OAuth client, and since
+ * #8982 every federated source. Null for a local, unbound, attested or audience write, and for any other source (the
+ * operator chose that source's audience through its grants). Read from the stored binding and source config at
+ * preparation, so a binding removed after submission takes effect; a disabled member's page names a reader nobody
+ * holds and is refused, and a binding or source table that cannot be read throws instead of publishing the page shared.
+ */
+export async function defaultSourceMemberWriter(engine: BrainEngine, authority: Pick<WriteAuthority, 'remote' | 'actingFor' | 'principal' | 'sourceId'>): Promise<string | null> {
+  const { principal } = authority;
+  if (!authority.remote || authority.actingFor || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return null;
+  const [row] = await engine.executeRaw<{ member_id: string | null }>(principal.kind === 'legacy_token'
+    ? 'SELECT member_id FROM access_tokens WHERE id::text = $1'
+    : 'SELECT member_id FROM oauth_clients WHERE client_id = $1', [principal.id]);
+  return row?.member_id && await noGrantFloorReads(engine, authority.sourceId) ? `member:${row.member_id}` : null;
+}
+
+/**
+ * GST-2059: whether a default-source member writer is the brain owner (config access.owner_member, an enabled member),
+ * whose new pages stay shared. A disabled or removed owner member is not the owner here, so its pages keep the stamp.
+ */
+export async function defaultSourceWriterIsOwner(engine: SqlEngine, writer: string | null): Promise<boolean> {
+  if (!writer) return false;
+  const [row] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [OWNER_MEMBER_KEY]);
+  const owner = row?.value?.trim();
+  if (!owner || !ACCESS_ID_RE.test(owner) || writer !== `member:${owner}`) return false;
+  const [live] = await engine.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE id = $1 AND disabled_at IS NULL AND tombstoned_at IS NULL', [owner]);
+  return !!live;
+}
+
+/**
+ * GST-2051: the readers a page written by a default-source member writer (defaultSourceMemberWriter) keeps when its content
+ * names none: the stored page's readers when it has them, else the writer alone for a page this write creates, unless
+ * the writer is the brain owner (GST-2059), whose new pages stay shared. An existing page with no readers stays as it
+ * is. Only ever narrows: a page naming readers is left to the caller.
+ */
+export function defaultSourceWriterReaders(writer: string | null, frontmatter: Record<string, unknown>, stored: { frontmatter?: unknown; deleted_at?: unknown } | null | undefined, owner = false): void {
+  if (!writer || hasReaders(frontmatter)) return;
+  const live = stored && stored.deleted_at == null ? stored : null;
+  if (live && hasReaders(live.frontmatter)) frontmatter.readable_by = (live.frontmatter as Record<string, unknown>).readable_by;
+  else if (!live && !owner) frontmatter.readable_by = [writer];
 }
 
 /** The one refusal a remote writer gets for a target it may not see; other visibility refusals reuse it verbatim. */

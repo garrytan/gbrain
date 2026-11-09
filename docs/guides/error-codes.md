@@ -666,7 +666,7 @@ More: [docs/guides/shared-checkout-git.md#checkout_not_a_source](../../docs/guid
 |---|---|---|---|---|---|---|
 | Automatic event extraction (auto_chronicle) skipped or failed this page; `reason` says why and `fix`, when present, is the next step. | A capability this request needs is not configured or not reachable on this brain. | Read the receipt or doctor `auto_chronicle` check: its `why` explains the reason and its `fix`, when present, is the next step (paid fixes need the user's agreement). | agent | `gbrain doctor --json` | 1 | no |
 
-Reasons: `auto_chronicle_off`, `auto_chronicle_invalid`, `slug_bound_client`, `operation_bound_client`, `no_extract`, `history`, `not_yet_happened`, `too_short`, `dream_generated`, `page_body_segmented`, `no_write_decision`, `not_chronicle_shaped`, `already_extracted`, `superseded`, `daily_limit`, `judge_llm_unavailable`, `no_pricing`, `budget_exhausted`, `campaign_exhausted`, `judge_chat_error`, `judge_truncated`, `judge_parse_failed`, `malformed_proposal`, `publish_error`, `judge_refused`, `page_missing`, `no_events`, `future_dated`, `date_imprecise`, `no_chat_provider`.
+Reasons: `auto_chronicle_off`, `auto_chronicle_invalid`, `slug_bound_client`, `operation_bound_client`, `no_extract`, `history`, `not_yet_happened`, `too_short`, `dream_generated`, `page_body_segmented`, `no_write_decision`, `not_chronicle_shaped`, `already_extracted`, `judge_input_unchanged`, `judge_input_failed`, `superseded`, `daily_limit`, `judge_llm_unavailable`, `no_pricing`, `budget_exhausted`, `campaign_exhausted`, `judge_chat_error`, `judge_truncated`, `judge_parse_failed`, `malformed_proposal`, `publish_error`, `judge_refused`, `page_missing`, `no_events`, `future_dated`, `date_imprecise`, `no_chat_provider`.
 
 More: [docs/guides/life-chronicle.md#skip-and-failure-codes](../../docs/guides/life-chronicle.md#skip-and-failure-codes)
 
@@ -837,6 +837,18 @@ More: [docs/guides/shared-checkout-git.md#source-roots](../../docs/guides/shared
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The commit was refused before staging: no paths, a path outside the checkout, the whole checkout, or a path git would not stage. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-checkout-git.md#outcomes](../../docs/guides/shared-checkout-git.md#outcomes)
+
+### commit_paths_skipped
+
+<a id="commit_paths_skipped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain git commit-push (or the brain's committed commit-push helper) committed the other named paths but git left the listed ones out: a modified file flagged assume-unchanged or skip-worktree, or a file inside a nested Git repository. | git add stages nothing for those and still exits 0 (or, for a named skip-worktree file, refuses every path), so reporting success would leave the write uncommitted with nothing in any log. | Read each skipped path and its reason in the message. Clear an assume-unchanged or skip-worktree flag after the user agrees, one flag per call (git update-index --no-assume-unchanged -- <path>, git update-index --no-skip-worktree -- <path>), or move a file out of a nested repository, then rerun the same commit-push. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `assume_unchanged`, `skip_worktree`, `not_staged`.
 
 More: [docs/guides/shared-checkout-git.md#outcomes](../../docs/guides/shared-checkout-git.md#outcomes)
 

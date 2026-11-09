@@ -28,6 +28,8 @@ import {
 import type { Check } from '../../doctor.ts';
 import { withSkippedSegmented } from '../check-fix.ts';
 import type { DoctorContext, DoctorEntry } from '../context.ts';
+import { scanDeadline } from '../budget.ts';
+import { currentStatementDeadline } from '../../../core/statement-deadline.ts';
 
 async function runStubGuard(ctx: DoctorContext): Promise<Check[]> {
   const { engine, orphanRatioSourceId } = ctx;
@@ -378,8 +380,45 @@ export const extractionBacklogsEntry: DoctorEntry = {
   run: runExtractionBacklogs,
 };
 
+/**
+ * #8979: a local probe's stdout, or null when it fails or outlives its bound (5 s, clipped to the entry deadline less
+ * the report reserve; `entryDeadlineAt` is read when the entry starts). It runs asynchronously and is killed with
+ * SIGKILL at its bound (on POSIX its whole process group, so a wrapper's children die too), so a probe that hangs
+ * never blocks the event loop or outlives the entry's deadline. A probe
+ * the entry deadline cut short marks the entry's scope expired, so its checks report unknown instead of absent.
+ */
+async function localProbe(entryDeadlineAt: number | undefined, file: string, args: string[]): Promise<string | null> {
+  const scope = currentStatementDeadline();
+  const ownEnd = Date.now() + 5_000;
+  const end = scanDeadline({ entryDeadlineAt }, 5_000);
+  const cutShort = () => { if (scope && end < ownEnd) scope.expired = true; return null; };
+  const timeout = end - Date.now();
+  if (timeout <= 0) return cutShort();
+  const { spawn } = await import('../../../core/spawn.ts');
+  const posix = process.platform !== 'win32';
+  return new Promise((resolve) => {
+    // nosemgrep: javascript.lang.security.audit.spawn-shell-true.spawn-shell-true -- file and args are constants from the three call sites (npm root -g, which -a gbrain, crontab -l); the shell is Windows-only, where npm resolves to npm.cmd, as with the execFile it replaced; trusted local CLI only
+    const child = spawn(file, args, { shell: !posix, detached: posix, stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    let done = false;
+    const finish = (value: string | null) => { if (done) return; done = true; clearTimeout(timer); resolve(value); };
+    const timer = setTimeout(() => {
+      if (done) return;
+      try { if (posix && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { child.kill('SIGKILL'); }
+      child.stdout?.destroy();
+      child.unref();
+      finish(cutShort());
+    }, timeout);
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => { out += chunk; });
+    child.on('error', () => finish(null));
+    child.on('close', (code) => finish(code === 0 ? out : null));
+  });
+}
+
 async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
+  const { entryDeadlineAt } = ctx;
 
   // 3e. home_dir_in_worktree (v0.35.8.0; peeled to doctor/checks/home-worktree.ts).
   // Walks up from `gbrainPath()` toward $HOME looking for a VALIDATED `.git`
@@ -406,35 +445,19 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
   // whose bin is not on PATH still warns when no real gbrain is. Skips
   // silently when neither finds anything (e.g. running via `bun src/cli.ts`).
   try {
-    const { execSync, execFileSync } = await import('../../../core/spawn.ts');
     const { homedir } = await import('node:os');
     const bunGlobalRoot = join(process.env.BUN_INSTALL || join(homedir(), '.bun'), 'install', 'global');
     const globalPackages = [join(bunGlobalRoot, 'node_modules', 'gbrain')];
-    let npmRoot: string | undefined;
-    try {
-      npmRoot = execFileSync('npm', ['root', '-g'], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-        timeout: 5000,
-        shell: process.platform === 'win32',
-      }).trim();
-      if (npmRoot) globalPackages.push(join(npmRoot, 'gbrain'));
-    } catch {
-      // No npm (or it failed): only Bun's global dir is checked.
-    }
-    let candidates: string[] = [];
-    try {
-      candidates = execSync('which -a gbrain', {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-      })
-        .split('\n')
-        .map((s) => s.trim())
-        .filter(Boolean);
-    } catch {
-      // `which` exits non-zero when gbrain isn't on PATH (or is missing
-      // entirely on this platform) — nothing to check.
-    }
+    // No npm (or it failed): only Bun's global dir is checked.
+    const npmRoot = (await localProbe(entryDeadlineAt, 'npm', ['root', '-g']))?.trim() || undefined;
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- npmRoot is the local operator's own `npm root -g` output, joined only to look for an installed gbrain package; trusted local CLI only
+    if (npmRoot) globalPackages.push(join(npmRoot, 'gbrain'));
+    // `which` exits non-zero when gbrain isn't on PATH (or is missing
+    // entirely on this platform) — nothing to check.
+    const candidates = ((await localProbe(entryDeadlineAt, 'which', ['-a', 'gbrain'])) ?? '')
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean);
     const { assessGbrainBinaries } = await import('../../../core/npm-squat-check.ts');
     const { fileURLToPath } = await import('node:url');
     const assessment = assessGbrainBinaries(candidates, {
@@ -517,8 +540,8 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
   // GBRA-108: cron lines (and scripts they run) that call gbrain without GBRAIN_HOME (doctor/checks/cron-gbrain-home.ts).
   // No environment gate: a container can run cron too; without a crontab the check emits nothing.
   try {
-    const { cronGbrainHomeCheck, readCrontab } = await import('./cron-gbrain-home.ts');
-    const cron = cronGbrainHomeCheck(readCrontab(), process.env.GBRAIN_HOME || undefined);
+    const { cronGbrainHomeCheck } = await import('./cron-gbrain-home.ts');
+    const cron = cronGbrainHomeCheck(await localProbe(entryDeadlineAt, 'crontab', ['-l']), process.env.GBRAIN_HOME || undefined);
     if (cron) checks.push(cron);
   } catch {
     // Best-effort: an unreadable crontab never blocks doctor.
