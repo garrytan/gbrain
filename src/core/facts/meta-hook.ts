@@ -44,7 +44,7 @@ import { partitionForActivation, suppressionSummary } from '../eligibility/activ
 import { trustFields } from '../eligibility/labels.ts';
 import { quoteFacts } from '../search/transcript-quote.ts';
 import { eligibilityCacheField, readTrustGeneration } from '../eligibility/generation.ts';
-import { callerRelaxesPrivacy, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { callerRelaxesPrivacy, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { isConfigTruthy } from '../config.ts';
 import { callerIdentityKey } from '../access/member-facts.ts';
 
@@ -160,7 +160,10 @@ export async function getBrainHotMemoryMeta(
   // read returns, so it is part of the tier too.
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
   // GBRA-218: on a brain with member restrictions a relaxed read still applies the readers part, so it has its own tier.
-  const tier = ctx.remote === false ? 'all' : !excludePrivate ? 'world+private-pages' : callerRelaxesPrivacy() ? 'world+private-pages-readers' : 'world';
+  // GST-2089: the brain owner reads private facts too, so its remote tier is marked apart from every world-only tier.
+  const worldOnly = worldOnlyFacts(ctx.remote);
+  const pageTier = !excludePrivate ? 'world+private-pages' : callerRelaxesPrivacy() ? 'world+private-pages-readers' : 'world';
+  const tier = ctx.remote === false ? 'all' : worldOnly ? pageTier : `private-facts+${pageTier}`;
   // encodeCacheField (F5): source_id / session_id are caller-controlled and
   // may contain the '::' delimiter; percent-encode ':' so bumpHotMemoryCache's
   // split('::') can never mis-slice a component.
@@ -215,8 +218,8 @@ export async function getBrainHotMemoryMeta(
   };
 
   // Build a fresh payload. Visibility tier: remote → world-only;
-  // local → all rows.
-  const visibility = ctx.remote === false ? undefined : ['world'] as ('world' | 'private')[];
+  // local and the brain owner → all rows.
+  const visibility = worldOnly ? ['world'] as ('world' | 'private')[] : undefined;
 
   // Floor, quarantined pages and needs_rederive apply in SQL; activation
   // control runs after ranking so the withheld count can be reported.
