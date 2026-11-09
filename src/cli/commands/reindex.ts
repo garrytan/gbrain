@@ -52,6 +52,10 @@ export async function run(engine: BrainEngine, args: string[]): Promise<void> {
     await reindex.runReindexSegmented(engine, args);
     return;
   }
+  if (args.includes('--timeline-bullets')) {
+    await reindex.runReindexTimelineBullets(engine, args);
+    return;
+  }
   if (args.includes('--oversized')) {
     const { runOversizedBackfill, formatOversizedBackfillReceipt } = await import('../../core/oversized-backfill.ts');
     const value = (flag: string) => { const at = args.indexOf(flag); return at >= 0 ? args[at + 1] : undefined; };

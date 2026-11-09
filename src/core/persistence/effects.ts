@@ -10,6 +10,8 @@ import { isPersistenceDeclaration, PERSISTENCE_PROTOCOL_PREDICATE } from './prot
 import type { GBrainConfig } from '../config.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError, opError } from '../ops/contract.ts';
+import { INDEX_SPLIT_PAGE_EFFECT, indexSplitPageConsumer } from './git-first-gate.ts';
+import './index-split-page.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
@@ -601,7 +603,7 @@ async function embedSegmentedEffect(engine: BrainEngine, config: GBrainConfig, e
     `Another worker took over the embedding of ${page.slug} in source ${effect.source_id}; this attempt stops without installing vectors and the owning claim finishes it.`,
     { fix: effectStatusFix(effect) });
   const embed = opts.embedding?.embed ?? embedBatch;
-  const result = await embedSegmentedPage(engine, page, { signature, signal: opts.signal, occurrenceIds: effect.data.occurrence_ids,
+  const result = await embedSegmentedPage(engine, page, { signature, signal: opts.signal, occurrenceIds: effect.data.occurrence_ids, tail: effect.data.occurrence_ids !== undefined,
     whileWaiting: async () => { if (!await renewPersistenceEffectClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, effect)) throw claimLost(); },
     embedFn: (texts, o) => withAIInvocationPreflight(async () => {
       opts.signal?.throwIfAborted();
@@ -615,6 +617,7 @@ async function embedSegmentedEffect(engine: BrainEngine, config: GBrainConfig, e
       await assertEmbeddingEffectEnabled(tx, config);
     } });
   if (result.stopped === 'budget') { await completeEffect(engine, effect, { embedding: 'skipped', reason: 'budget_capped' }); return; }
+  if (result.stopped === 'source_capped' || result.stopped === 'uncertain') { await completeEffect(engine, effect, { embedding: 'skipped', reason: result.stopped === 'source_capped' ? 'source_spend_capped' : 'uncertain_spend' }); return; }
   if (result.stopped === 'page_moved') { await completeEffect(engine, effect, { embedding: 'superseded', reason: 'revision_changed' }); return; }
   if (result.stopped === 'busy') throw pageEmbeddingLeaseUnavailable(page.id, false);
   const stamp = await resolveProvenanceStamp(engine, signature);
@@ -876,7 +879,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
     // still proves the owned root, but it is not held while recording.
     const recordOnly = effect.kind === 'git' && hardened === false && !targetedWithdrawalEffect(effect) && !effect.data.source_scan;
     try {
-      if (effect.worktree_id && !['embedding', 'facts-backstop', 'links'].includes(effect.kind)) {
+      if (effect.worktree_id && !['embedding', 'facts-backstop', 'links', INDEX_SPLIT_PAGE_EFFECT].includes(effect.kind)) {
         if (!binding) throw ownerUnavailable(effect);
         lock = await takeLock(binding);
         if (!lock) throw writerBusy(effect);
@@ -891,7 +894,12 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
       }, { pipelineFirst: isPersistenceDeclaration });
       effect = await upgradeWithdrawalEffect(engine, effect, opts.hostId);
       if (effect.kind === 'git' || effect.kind === 'embedding') attempt.gate = (await mirrorGates(engine, [effect.request_id])).get(effect.request_id);
-      if (effect.kind === 'withdrawal-mirror') await mirrorPage(engine, effect, binding, opts, attempt);
+      if (effect.kind === INDEX_SPLIT_PAGE_EFFECT) {
+        const consumer = indexSplitPageConsumer();
+        if (!consumer) throw opError('unsupported_mutation_protocol', 'No index consumer is registered in this process.',
+          `Effect ${effect.id} of request ${effect.request_id} indexes a committed page, and this process cannot run it; it stays queued for a worker that can. Inspect it with gbrain sources writer status --source ${effect.source_id} --json.`);
+        await consumer.run(engine, config, effect, opts.hostId);
+      } else if (effect.kind === 'withdrawal-mirror') await mirrorPage(engine, effect, binding, opts, attempt);
       else if (effect.kind === 'git') await gitPage(engine, effect, binding, opts, attempt, hardened, lock);
       else await withAIAttribution({ request_id: effect.request_id, effect: effect.kind }, () => effect.kind === 'facts-backstop'
         ? dispatchFactsBackstopEffect(engine, effect, opts.hostId)

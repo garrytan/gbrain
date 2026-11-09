@@ -254,6 +254,15 @@ export async function assertPreparedFactWithdrawals(engine: BrainEngine, sourceI
   }
 }
 
+/**
+ * One fence region of a streamed import (page-body/streamed-fences.ts), checked as assertPreparedFactWithdrawals
+ * checks a whole section: a withdrawn or purged claim in a malformed facts fence refuses typed invalid_fence.
+ */
+export async function assertFenceRegionWithdrawals(engine: BrainEngine, sourceId: string, fence: string, section: 'body' | 'timeline', subject: string): Promise<void> {
+  if (!await ambiguousFenceMatchesWithdrawal(engine, sourceId, [fence], subject)) return;
+  throw fenceOperationError({ reason: 'withdrawn_claim_in_malformed_fence', fence: 'facts', section, rows: [], columns: [], line: null }, subject, sourceId);
+}
+
 /** Explicit remember is not an implicit restore operation for that entity. A purged claim counts as withdrawn for every writer. */
 export async function isFactWithdrawn(
   engine: BrainEngine, sourceId: string, visibility: string, claim: string, entitySlug: string | null, memberPage: string | null = null,

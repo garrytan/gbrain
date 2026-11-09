@@ -70,8 +70,8 @@ const gitArgs = (session: GitSession, args: string[]) =>
 const gitOptions = (session: GitSession) => ({ timeout: session.timeoutMs, termGraceMs: GIT_TERM_GRACE_MS, maxBuffer: 1024 * 1024, signal: session.signal });
 const sessionEnv = (session: GitSession) => session.indexFile ? { ...GIT_ENV, GIT_INDEX_FILE: session.indexFile } : GIT_ENV;
 
-function run(session: GitSession, args: string[]) {
-  return execFileBounded('git', gitArgs(session, args), { ...gitOptions(session), env: gitChildEnv(sessionEnv(session)) });
+function run(session: GitSession, args: string[], input?: string, maxBuffer?: number) {
+  return execFileBounded('git', gitArgs(session, args), { ...gitOptions(session), env: gitChildEnv(sessionEnv(session)), input, ...(maxBuffer ? { maxBuffer } : {}) });
 }
 
 /** A read-only git step whose stdout is raw bytes (a tree object); null when git exits non-zero. */
@@ -145,9 +145,9 @@ async function indexLockError(session: GitSession, stderr: string, mayReclaim: b
     { detail: lock, fix: staleLockFix(session.root, lock, why) });
 }
 
-export async function git(session: GitSession, args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
+export async function git(session: GitSession, args: string[], input?: string, maxBuffer?: number): Promise<{ stdout: string; stderr: string; code: number }> {
   for (let reclaimed = false; ; reclaimed = true) {
-    const { error, stdout, stderr } = await run(session, args);
+    const { error, stdout, stderr } = await run(session, args, input, maxBuffer);
     if (error && (error.killed || typeof error.code !== 'number')) throw gitFailure('Git execution did not finish within its bounded attempt.',
       `A git command in the canonical checkout did not finish within ${Math.round(session.timeoutMs / 1000)} seconds or could not start.`);
     const code = error?.code as number ?? 0;

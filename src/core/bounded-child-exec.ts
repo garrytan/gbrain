@@ -35,6 +35,8 @@ export interface BoundedExecOptions {
   termGraceMs?: number;
   /** 'buffer' returns stdout and stderr as raw bytes (NUL-delimited git listings); default 'utf8'. */
   encoding?: 'utf8' | 'buffer';
+  /** Written to the child's stdin, which is then closed (a git --stdin / --batch listing). */
+  input?: string;
 }
 
 /**
@@ -56,7 +58,7 @@ export interface BoundedExecOptions {
 export function execFileBounded(file: string, args: string[], options: BoundedExecOptions & { encoding: 'buffer' }): Promise<{ error: ExecFileException | null; stdout: Buffer; stderr: Buffer }>;
 export function execFileBounded(file: string, args: string[], options: BoundedExecOptions): Promise<{ error: ExecFileException | null; stdout: string; stderr: string }>;
 export function execFileBounded(file: string, args: string[], options: BoundedExecOptions): Promise<{ error: ExecFileException | null; stdout: string | Buffer; stderr: string | Buffer }> {
-  const { timeout, signal, termGraceMs = BOUNDED_EXEC_TERM_GRACE_MS, encoding = 'utf8', ...rest } = options;
+  const { timeout, signal, termGraceMs = BOUNDED_EXEC_TERM_GRACE_MS, encoding = 'utf8', input, ...rest } = options;
   const empty = encoding === 'buffer' ? Buffer.alloc(0) : '';
   return new Promise(resolve => {
     let settled = false;
@@ -81,6 +83,7 @@ export function execFileBounded(file: string, args: string[], options: BoundedEx
       if (stopped) finish(stopped, empty, empty);
       else finish(error, stdout, stderr);
     });
+    if (input !== undefined) { child.stdin?.on('error', () => { /* a child that exits early reports through its exit */ }); child.stdin?.end(input); }
     const stop = (message: string, code: string) => {
       if (stopped) return;
       stopped = Object.assign(new Error(message), { code, killed: true, signal: 'SIGTERM' as const });

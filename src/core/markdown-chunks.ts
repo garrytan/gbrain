@@ -1,11 +1,13 @@
 import type { ChunkInput } from './types.ts';
 import type { BrainEngine } from './engine.ts';
-import { chunkText } from './chunkers/recursive.ts';
+import { chunkText, MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
+import { chunkTimelineBullets } from './chunkers/bullet-chunks.ts';
 import { chunkCodeText, detectCodeLanguage } from './chunkers/code.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
 import { credentialSafeProjection } from './credential-projection.ts';
 import { scanFencedBlocks, MAX_FENCES_PER_PAGE } from './fence-scan.ts';
 import { isQuarantined } from './quarantine.ts';
+import { bodyUnread } from './page-body/page-shape.ts';
 import { resolveMaxChunkTokens } from './embedding-input-limit.ts';
 import { estimateEmbedTokens } from './chunkers/token-estimate.ts';
 import { fenceTrustMarker, loadFenceChunkOverlay, markFenceChunk, splitFenceOverlay, type FenceChunkOverlay } from './eligibility/fence-overlay.ts';
@@ -139,6 +141,36 @@ export async function fencedCodeChunks(markdown: string, startChunkIndex: number
 
 
 /**
+ * `pages.chunker_version` of an inline Markdown page whose timeline was chunked at bullet boundaries: the timeline
+ * prose goes through chunkTimelineBullets (chunkers/bullet-chunks.ts, the segmented timeline chunker), so an entry
+ * added at the top changes only the passage it joins. A timeline whose projection has no bullet line falls back to
+ * chunkText and the page chunks exactly as MARKDOWN_CHUNKER_VERSION did and keeps that stamp. Every check of whether a page is current (upgrade, sync, import no-op, doctor, the safe
+ * fence) compares against MARKDOWN_CHUNKER_VERSION or SAFE_FENCE_CHUNKER_VERSION, so a page at either version is
+ * current and nothing re-chunks it on its own: a page sealed at MARKDOWN_CHUNKER_VERSION keeps its chunks through every
+ * rebuild of an unchanged body (inlineTimelineBullets) until `gbrain reindex --timeline-bullets --apply`
+ * (page-state/timeline-rechunk.ts).
+ */
+export const INLINE_TIMELINE_CHUNKER_VERSION = 5;
+
+/**
+ * Whether a rebuild of a page's unchanged body chunks its timeline at bullets: every page except one whose chunks
+ * were sealed by the pre-bullet inline chunker (MARKDOWN_CHUNKER_VERSION up to INLINE_TIMELINE_CHUNKER_VERSION), which
+ * keeps them. A body write leaves the page below the safe fence (bodyWriteChunkVersion), so its next chunking is new.
+ */
+export function inlineTimelineBullets(storedChunkerVersion: number | null | undefined): boolean {
+  const stored = storedChunkerVersion ?? 0;
+  return stored < MARKDOWN_CHUNKER_VERSION || stored >= INLINE_TIMELINE_CHUNKER_VERSION;
+}
+
+/** Chunks and the `pages.chunker_version` a seal of exactly these chunks records. */
+export interface MarkdownChunkSet { chunks: ChunkInput[]; chunkerVersion: number }
+
+export interface MarkdownChunkOptions {
+  /** Chunk the timeline at bullet boundaries (INLINE_TIMELINE_CHUNKER_VERSION); default off, the MARKDOWN_CHUNKER_VERSION chunks. */
+  timelineBullets?: boolean;
+}
+
+/**
  * Truth then timeline prose chunks through a fence overlay, plus the
  * overlay's low-tier facts-fence rows as trailing chunks, each piece led by
  * the fence trust marker naming the row tier (#5575 ENG-1). Prose chunks
@@ -146,13 +178,18 @@ export async function fencedCodeChunks(markdown: string, startChunkIndex: number
  * the recognized code-fence chunks of the overlaid truth before them.
  */
 async function overlaidChunks(page: { compiled_truth: string; timeline?: string | null }, maxTokens: number,
-  overlay: FenceChunkOverlay | undefined, fenced?: (truth: string, start: number) => Promise<ChunkInput[]>): Promise<ChunkInput[]> {
+  overlay: FenceChunkOverlay | undefined, opts: MarkdownChunkOptions,
+  fenced?: (truth: string, start: number) => Promise<ChunkInput[]>): Promise<MarkdownChunkSet> {
   const chunks: ChunkInput[] = [];
+  let bulleted = false;
   const truth = splitFenceOverlay(page.compiled_truth, overlay);
   const timeline = splitFenceOverlay(page.timeline ?? '', overlay);
   for (const [text, source] of [[truth.main, 'compiled_truth'], [timeline.main, 'timeline']] as const) {
     if (!text.trim()) continue;
-    for (const c of chunkText(text, { maxTokens, spans: true })) {
+    const bullets = source === 'timeline' && opts.timelineBullets
+      ? chunkTimelineBullets(credentialSafeProjection(sanitizeRemoteBody(text)), { maxTokens }) : null;
+    bulleted ||= !!bullets?.length;
+    for (const c of bullets ?? chunkText(text, { maxTokens, spans: true })) {
       chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: source,
         ...(c.byte_start !== undefined && c.byte_end !== undefined ? { projected_byte_start: c.byte_start, projected_byte_end: c.byte_end } : {}) });
     }
@@ -164,7 +201,7 @@ async function overlaidChunks(page: { compiled_truth: string; timeline?: string 
       chunks.push({ chunk_index: chunks.length, chunk_text: markFenceChunk(tier, c.text, unconfirmed), chunk_source: 'compiled_truth' });
     }
   }
-  return chunks;
+  return { chunks, chunkerVersion: bulleted ? INLINE_TIMELINE_CHUNKER_VERSION : MARKDOWN_CHUNKER_VERSION };
 }
 
 /**
@@ -176,25 +213,37 @@ async function overlaidChunks(page: { compiled_truth: string; timeline?: string 
  * out and moves rows below the page tier into trailing marked chunks; without
  * one the output is unchanged.
  */
-export async function prepareMarkdownChunks(page: {
-  compiled_truth: string;
-  timeline?: string;
-  frontmatter?: Record<string, unknown> | null;
-}, maxChunkTokens?: number, overlay?: FenceChunkOverlay): Promise<ChunkInput[]> {
+export async function prepareMarkdownChunks(page: MarkdownChunkPage, maxChunkTokens?: number, overlay?: FenceChunkOverlay): Promise<ChunkInput[]> {
+  if (isQuarantined(page.frontmatter)) return [];
+  return (await overlaidChunks(page, maxChunkTokens ?? resolveMaxChunkTokens(), overlay, {}, extractFencedChunks)).chunks;
+}
+
+type MarkdownChunkPage = { compiled_truth: string; timeline?: string; frontmatter?: Record<string, unknown> | null };
+
+/** prepareMarkdownChunks with a timeline chunker choice and the chunker version a seal of its chunks records. */
+export async function prepareMarkdownChunkSet(page: MarkdownChunkPage, maxChunkTokens?: number, overlay?: FenceChunkOverlay,
+  opts: MarkdownChunkOptions = {}): Promise<MarkdownChunkSet> {
   // A quarantined page has no live chunks. An embed_skip page keeps its chunks (keyword search) and gets no vectors:
   // every embedding path skips it (#6722), so a page under the ceiling never drops out of search for its size.
-  if (isQuarantined(page.frontmatter)) return [];
-  return overlaidChunks(page, maxChunkTokens ?? resolveMaxChunkTokens(), overlay, extractFencedChunks);
+  if (isQuarantined(page.frontmatter)) return { chunks: [], chunkerVersion: MARKDOWN_CHUNKER_VERSION };
+  return overlaidChunks(page, maxChunkTokens ?? resolveMaxChunkTokens(), overlay, opts, extractFencedChunks);
 }
 
 /** Truth and timeline prose only (no code-fence chunks), through the overlay: embed's chunkless-page rebuilds. */
 export function prepareProseChunks(page: { compiled_truth: string; timeline?: string | null }, maxChunkTokens: number,
-  overlay?: FenceChunkOverlay): Promise<ChunkInput[]> {
-  return overlaidChunks(page, maxChunkTokens, overlay);
+  overlay?: FenceChunkOverlay, opts: MarkdownChunkOptions = {}): Promise<MarkdownChunkSet> {
+  return overlaidChunks(page, maxChunkTokens, overlay, opts);
 }
 
-/** The importer's projection of one page: its fence overlay read in one query, then prepareMarkdownChunks. */
+/**
+ * The importer's projection of one page: its fence overlay read in one query, then prepareMarkdownChunkSet. A page
+ * sealed at the pre-bullet chunker keeps it while the import leaves its body unchanged (a frontmatter-only edit, a
+ * projection rebuild); a new or changed body chunks its timeline at bullets.
+ */
 export async function prepareFenceAwareMarkdownChunks(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string,
-  page: Parameters<typeof prepareMarkdownChunks>[0]): Promise<ChunkInput[]> {
-  return prepareMarkdownChunks(page, undefined, await loadFenceChunkOverlay(engine, { sourceId, slug, compiled_truth: page.compiled_truth, timeline: page.timeline }));
+  page: MarkdownChunkPage, existing?: { id: number; deleted_at?: unknown; compiled_truth: string; timeline?: string | null } | null): Promise<MarkdownChunkSet> {
+  const unchanged = !!existing && !existing.deleted_at && !bodyUnread(existing) && existing.compiled_truth === page.compiled_truth && (existing.timeline ?? '') === (page.timeline ?? '');
+  const [stored] = unchanged ? await engine.executeRaw<{ chunker_version: number | null }>('SELECT chunker_version FROM pages WHERE id = $1', [existing!.id]) : [];
+  const overlay = await loadFenceChunkOverlay(engine, { sourceId, slug, compiled_truth: page.compiled_truth, timeline: page.timeline });
+  return prepareMarkdownChunkSet(page, undefined, overlay, { timelineBullets: inlineTimelineBullets(stored?.chunker_version == null ? null : Number(stored.chunker_version)) });
 }

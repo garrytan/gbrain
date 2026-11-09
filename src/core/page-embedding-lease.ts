@@ -131,10 +131,15 @@ export function stillPendingChunks<C extends { chunk_index: number; chunk_text: 
     .map(c => ({ ...selected.get(c.chunk_index)!, ...c }));
 }
 
-/** Chunk indexes of the page's live rows with no vector in `column`, read while the caller holds the page's lease. */
-export async function vectorlessChunkIndexes(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, column: string): Promise<Set<number>> {
+/**
+ * Of the `listed` chunk indexes (one batch's rows), those whose live row still has no vector in `column`, read while
+ * the caller holds the page's lease. Only the listed rows are read, so a full embed of a large page reads each row a
+ * bounded number of times (Wave C 1F; it used to read every vector-less row of the page per batch).
+ */
+export async function vectorlessChunkIndexes(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, column: string, listed: readonly number[]): Promise<Set<number>> {
+  if (listed.length === 0) return new Set();
   const rows = await engine.executeRaw<{ chunk_index: number }>(
     `SELECT cc.chunk_index FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-      WHERE cc.page_id = $1 AND cc.${quoteIdentifier(column)} IS NULL AND ${chunkGenerationFilter('p', 'cc')}`, [pageId]);
+      WHERE cc.page_id = $1 AND cc.chunk_index = ANY($2::int[]) AND cc.${quoteIdentifier(column)} IS NULL AND ${chunkGenerationFilter('p', 'cc')}`, [pageId, [...listed]]);
   return new Set(rows.map(row => Number(row.chunk_index)));
 }

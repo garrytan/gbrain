@@ -202,7 +202,7 @@ export const PERSISTENCE_SCHEMA_STATEMENTS = [
     intent jsonb,
     authority jsonb NOT NULL,
     sequence bigserial NOT NULL UNIQUE,
-    state text NOT NULL DEFAULT 'queued' CHECK (state IN ('queued','running','recovering','committed','conflict','failed','cancelled')),
+    state text NOT NULL DEFAULT 'queued' CHECK (state IN ('queued','running','recovering','indexing','committed','conflict','failed','cancelled')),
     execution_token uuid,
     claim_expires_at timestamptz,
     recovery jsonb,

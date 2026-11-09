@@ -1,9 +1,9 @@
 import type { BrainEngine } from '../engine.ts';
 import { assertRecoveryVersion } from './recovery-version.ts';
+import { isPublishedRequestState, TERMINAL_REQUEST_STATES, type RequestStateName } from './request-states.ts';
 
 export type Principal = { kind: 'oauth_client' | 'legacy_token' | 'local_cli' | 'local_stdio' | 'application'; id: string };
-/** `deferred` (PR B, docs/designs/REFRESH_WRITE_BARRIER.md): admitted during a worktree refresh, unclaimable until it is released. */
-export type RequestState = 'queued' | 'deferred' | 'running' | 'recovering' | 'committed' | 'conflict' | 'failed' | 'cancelled';
+export type RequestState = RequestStateName;
 export interface WriteAuthority {
   /** The caller's self-declared agent label (X-Gbrain-Agent-Label). Unverified text: nothing authorizes on it. */
   agentLabel?: string;
@@ -160,7 +160,7 @@ export interface WriteRequest {
   updated_at: Date | string;
   completed_at: Date | string | null;
 }
-export const TERMINAL_STATES: ReadonlySet<RequestState> = new Set(['committed', 'conflict', 'failed', 'cancelled']);
+export const TERMINAL_STATES: ReadonlySet<RequestState> = new Set(TERMINAL_REQUEST_STATES);
 export interface JournalLimits {
   principalOutstanding: number; brainOutstanding: number;
   principalIntentBytes: number; brainIntentBytes: number;
@@ -189,3 +189,5 @@ export type SqlEngine = Pick<BrainEngine, 'executeRaw'>;
 export function principalKey(p: Principal): string { return `principal:${p.kind}:${p.id}`; }
 export function requestPrincipal(r: WriteRequest): Principal { return { kind: r.principal_kind, id: r.principal_id }; }
 export function isTerminal(r: Pick<WriteRequest, 'state'>): boolean { return TERMINAL_STATES.has(r.state); }
+/** Published: Git holds the write (`indexing`) or it ended. Its physical publication (recovery record, reservation) is complete (request-states.ts). */
+export function isPublished(r: Pick<WriteRequest, 'state'>): boolean { return isPublishedRequestState(r.state); }

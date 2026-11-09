@@ -58,6 +58,8 @@ export interface ConsentRequest {
   selection?: unknown;
   /** Raw argv, for --yes/--max-usd/--expect/--apply/--trust/--non-interactive. */
   args: readonly string[];
+  /** The fix's own `--max-usd N` is the approval (a per-page embed raises page caps with it), so no `--yes` is added. */
+  max_usd_approves?: boolean;
 }
 
 /** The ambient inputs requireConsent reads; every field defaults to the live process. */
@@ -262,10 +264,10 @@ export interface ConfirmationPayload {
   contract_version: 1;
 }
 
-/** The approved command: `--yes`, plus `--expect <plan_hash>` for destructive work, so it runs verbatim once approved. */
+/** The approved command: `--yes` (unless its own `--max-usd N` approves it), plus `--expect <plan_hash>` for destructive work, so it runs verbatim once approved. */
 export function consentFix(req: ConsentRequest): Action {
   const argv = [...req.argv];
-  if (!argv.includes('--yes')) argv.push('--yes');
+  if (!argv.includes('--yes') && !(req.max_usd_approves && argv.includes('--max-usd'))) argv.push('--yes');
   if (req.effects.includes('destructive') && req.plan_hash && !argv.includes('--expect')) argv.push('--expect', req.plan_hash);
   return {
     argv, consent: [...req.effects], actor: req.actor, why: req.why, user_message: req.user_message,

@@ -59,7 +59,7 @@ import { withSearchConnectionBudget } from '../core/search/connection-budget.ts'
 import { isEngineDegraded } from '../core/degraded-marker.ts';
 import { admittedPendingReceipt, isWriteReceipt, publicWriteReceipt, type WriteReceipt } from '../core/persistence/types.ts';
 import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, withRequestIdentityMemo, withVerifiedLocalRegistration } from '../core/persistence/identity.ts';
-import { frameOverCap, resultTooLargeError } from '../core/egress-budget.ts';
+import { frameOverCap, isPagedRead, resultTooLargeError } from '../core/egress-budget.ts';
 import { isAIInvocationPolicyError } from '../core/ai/invocation-guard.ts';
 
 // WP3: normalization + validation moved to validate-params.ts (direct unit
@@ -1357,7 +1357,7 @@ async function dispatchResolvedCall(
       if (failure !== undefined) ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${failure}; degrading to no hook keys`);
     }
     // Large pages: the egress backstop measures the final frame; a read over the connection's cap is refused whole, never cut.
-    const over = op.mutating ? null : await frameOverCap(out, { remote: ctx.remote, transport: ctx.transport, engine, config: ctx.config });
+    const over = op.mutating ? null : await frameOverCap(out, { remote: ctx.remote, transport: ctx.transport, engine, config: ctx.config, pagedRead: isPagedRead(name, safeParams, ctx.thinClient) });
     if (over) return errorResult(resultTooLargeError(name, safeParams, over), opts, { op: name, mutating: false, idempotent: op.idempotent === true });
     return out;
   } catch (e: unknown) {

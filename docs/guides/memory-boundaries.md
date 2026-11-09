@@ -378,6 +378,22 @@ gbrain doctor --only partial_embedding --json    # pages embedded only up to the
 gbrain config set embed.max_usd_per_page 5       # raise the per-page cap (ask the user first)
 ```
 
+<a id="timeline-bullet-chunks"></a>
+**Timeline chunks of pages of 1 MiB and under.** A new page, or a page whose
+body is edited, chunks a timeline that has bullet entries at entry
+boundaries, as pages stored in segments do, so an entry added at the top
+re-embeds only the passage it joins. Pages stored before keep their chunks,
+which stay current for search; nothing re-chunks them on upgrade, sync or
+doctor. Doctor's `inline_timeline_chunks` check (informational) counts them,
+and the re-chunk is a preview-first operator step that makes no provider
+call:
+
+```bash
+gbrain reindex --timeline-bullets --json         # preview: pages, chunk counts, new chunk texts; writes nothing
+gbrain reindex --timeline-bullets --apply        # re-chunk them; vectors of unchanged chunk texts are kept
+gbrain embed --stale                             # embed the new chunk texts (paid, under the usual caps)
+```
+
 ## Where text goes
 
 Local storage does not mean every enabled feature runs locally. Keyless keyword

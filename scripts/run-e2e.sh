@@ -159,6 +159,7 @@ for _e2e_var in $(env | grep -oE '^(CONDUCTOR_|MCP_|OPENCLAW_|HERMES_|GROK_|OPEN
     GBRAIN_PGBOUNCER_E2E_URL|GBRAIN_PGBOUNCER_E2E_DB) ;; # backend-matrix pooled target (scripts/e2e-backend-matrix.txt)
     GBRAIN_SUPAVISOR_URL) ;; # #6543 explicit Supavisor transaction-pooler target for the live pooler suites
     GBRAIN_TEST_WAIT_MULTIPLIER) ;;  # coverage deadline multiplier read by test/helpers/wait-for.ts — keep
+    GBRAIN_TEST_PROPERTY_SEEDS) ;;  # #7782: all on the nightly schedule runs every conversation facts property seed range — keep
     GBRAIN_TEST_REQUIRE_COMPILE) ;;  # bootstrap-compiled-binary opt-in: a failed compile fails instead of skipping
     GBRAIN_E2E_FILE_TIMEOUT) ;;  # per-file cap override — read AFTER this scrub, so it must survive it
     GBRAIN_E2E_ALLOW_DB) ;;  # #3485 name-floor opt-in — the guard's own error

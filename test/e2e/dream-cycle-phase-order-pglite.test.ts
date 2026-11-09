@@ -133,6 +133,7 @@ const EXPECTED_PHASES: CyclePhase[] = [
   'fence_repair',                // #6188 — fence repair (global maintenance lane)
   'content_repair',              // #6377 — the rest of the content-repair lane (slug conflicts)
   'unindexed_files',             // #6865 — committed files with no page and no hold, scheduled for a re-screen
+  'git_maintenance',             // Wave C 1C — packs and prunes strict sources' Git object stores
   'synthesize',
   'extract',
   'extract_facts',               // v0.32.2 — reconcile fence → DB facts index

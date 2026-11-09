@@ -53,6 +53,7 @@ const REGISTRATIONS: Record<string, Kind> = {
   'src/core/backfill-registry.ts': 'self',
   'src/core/search/decide-stage.ts': 'self',
   'src/core/persistence/service.ts': 'no-consumer',
+  'src/core/persistence/index-split-page.ts': 'reader-loads',
   'src/core/trust/page-handlers.ts': 'reader-loads',
   'src/core/trust/supersede-handlers.ts': 'reader-loads',
 };

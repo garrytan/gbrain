@@ -39,18 +39,19 @@ import { invalidParam, readFix } from './op-fix.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage, pageBodyBytes } from '../page-body/page-shape.ts';
 import { deepResearchPageUrl, encodeDeepResearchId } from '../deep-research-id.ts';
-import { encodedFrameBytes, EGRESS_CAP_CONFIG_KEYS, egressTransport, FRAME_RESERVE_BYTES, resultByteCap } from '../egress-budget.ts';
+import { encodedFrameBytes, EGRESS_CAP_CONFIG_KEYS, egressTransport, FRAME_RESERVE_BYTES, isPagedRead, resultByteCap } from '../egress-budget.ts';
 import { DEFAULT_INLINE_BODY_BYTES, chunkDocumentSpan, readPageDocument, spanHoldsChunk, type PageDocument } from '../page-window/document.ts';
 import {
-  DEFAULT_CONTEXT_LINES, DEFAULT_OUTLINE_LIMIT, DEFAULT_WINDOW_BYTES, MAX_CONTEXT_LINES, MAX_OUTLINE_LIMIT, MAX_WINDOW_BYTES,
+  DEFAULT_CONTEXT_LINES, DEFAULT_OUTLINE_LIMIT, DEFAULT_WINDOW_BYTES, MAX_CONTEXT_LINES, MAX_OUTLINE_LIMIT, MAX_PAGED_WINDOW_BYTES, MAX_WINDOW_BYTES,
   decodeCursor, encodeCursor, pageOutline, sha256Hex, totalLines, windowAround, windowForBytes, windowForLines, windowFrom,
-  type PageOutline, type WindowSlice, type WindowView,
+  type PageOutline, type WindowCursor, type WindowSlice, type WindowView,
 } from '../page-window/window.ts';
 import {
   markdownDigest, markdownHead, readViewLines, segmentedMarkdownDocument, segmentedOutline, segmentedReadDocument, tailDigest, type SegmentedDocument,
 } from '../page-window/segmented.ts';
 import { confirmBodyPin, hiddenBefore, openSegmentedBody, type BodyPin } from '../page-body/read-range.ts';
 import { inlineRegions, inlineTailDigest } from '../page-body/tail-digest.ts';
+import { bodyExtends, createReadPin, digestKey, fenceOverlayIdentity, readPinPrincipal, renderKey, useReadPin, type ReadPin } from '../page-body/read-pins.ts';
 import { TIMELINE_SEPARATOR } from '../page-window/document.ts';
 import { renderTrustedText, type TrustFields } from '../eligibility/labels.ts';
 import { fenceTranscriptText, neutralizeToolCalls } from '../search/transcript-quote.ts';
@@ -286,12 +287,15 @@ export function segmentedReadFix(slug: string, sourceId: string) {
     { argv: ['gbrain', 'get', '--source', sourceId, '--body', 'auto', '--', slug], mcp: { tool: 'get_page', arguments: { slug, source_id: sourceId, body: 'auto' } } });
 }
 
-/** The largest window this caller may receive: the request, the per-window ceiling and the egress cap minus metadata room. */
-async function windowBudget(ctx: OperationContext, requested: number | undefined, fallback: number): Promise<number> {
-  const cap = await resultByteCap({ remote: ctx.remote, transport: ctx.transport, engine: ctx.engine, config: ctx.config });
+/**
+ * The largest window this caller may receive: the request, the per-window ceiling and the egress cap minus metadata room.
+ * A paged read (the thin client's markdown download, egress-budget.ts isPagedRead) has the larger ceiling and cap.
+ */
+async function windowBudget(ctx: OperationContext, requested: number | undefined, fallback: number, pagedRead = false): Promise<number> {
+  const cap = await resultByteCap({ remote: ctx.remote, transport: ctx.transport, engine: ctx.engine, config: ctx.config, pagedRead });
   // A window's text can grow ~2x through the two JSON levels of a frame (newlines, quotes).
   const egressRoom = Number.isFinite(cap) ? Math.max(4096, Math.floor((cap - ENVELOPE_RESERVE_BYTES) / 2)) : Number.POSITIVE_INFINITY;
-  const ceiling = ctx.remote === false ? Number.POSITIVE_INFINITY : MAX_WINDOW_BYTES;
+  const ceiling = ctx.remote === false ? Number.POSITIVE_INFINITY : pagedRead ? MAX_PAGED_WINDOW_BYTES : MAX_WINDOW_BYTES;
   return Math.max(1, Math.min(requested ?? fallback, ceiling, egressRoom));
 }
 
@@ -392,27 +396,61 @@ function inlineDocument(doc: PageDocument): WindowDocument {
   };
 }
 
+interface SegmentedWindows {
+  doc: WindowDocument;
+  size: Record<string, unknown>;
+  /** The read pin a cursor carried, when it continues this read on its pinned generation and view past an append. */
+  continued: ReadPin | null;
+  /** The cursor's live pin names another rendered view of the same revision (an overlay moved): its offsets no longer apply. */
+  viewMoved: boolean;
+  /** The pin the next cursor carries: the one in use, else a new one on this generation and view; undefined when none could be written. */
+  pinToken: () => Promise<string | undefined>;
+}
+
 /**
  * A segmented page's document and size (spec 7.2): read-view totals from the stored sums (the line count cached
- * per revision), for a trusted caller the stored body size, and for `none` the tail digest; a markdown view's size
+ * per rendered view), for a trusted caller the stored body size, and for `none` the tail digest; a markdown view's size
  * is its cached digest. A remote caller gets projected totals only, as for an inline page.
+ *
+ * Wave C 1E: a cursor's read pin (page-body/read-pins.ts) continues the read on its pinned body generation after an
+ * append (the current body extends the pinned one; any other edit restarts the read with revision_changed), while the rendered view is otherwise the one pinned (the same head, metadata, tags and overlay) and
+ * get_page has authorized this window again; its size is the pinned view's. Anything else reads the current page.
  */
-async function segmentedWindows(ctx: OperationContext, input: PartialReadInput, req: BodyRequest, mode: BodyMode): Promise<{ doc: WindowDocument; size: Record<string, unknown> }> {
+async function segmentedWindows(ctx: OperationContext, input: PartialReadInput, req: BodyRequest, mode: BodyMode, cursor: WindowCursor | null): Promise<SegmentedWindows> {
   const { page, revision, tags } = input;
-  const body = await openSegmentedBody(ctx.engine, { pageId: page.id, pin: { ...input.pin, revision } });
   const audience = ctx.remote === false ? 'trusted' : 'remote';
-  const stored = audience === 'trusted' ? { body_bytes: body.bodyBytes, body_lines: body.bodyLines } : {};
+  const principal = readPinPrincipal(ctx);
+  const held = cursor?.pin ? await useReadPin(ctx.engine, { token: cursor.pin, pageId: page.id, revision: cursor.revision, view: req.view, audience, principal }) : null;
+  const open = (generation?: number) => openSegmentedBody(ctx.engine, { pageId: page.id, ...(generation === undefined ? {} : { generation }), pin: { ...input.pin, revision } });
+  const current = await open();
+  const moved = held && cursor!.revision !== revision ? held : null;
+  const older = moved && moved.generation !== current.generation ? await open(moved.generation) : null;
+  const pinned = moved && (!older || await bodyExtends(ctx.engine, older, current)) ? moved : null;
+  const body = pinned && older ? older : current;
+  const head = req.view === 'markdown' ? markdownHead(page, tags) : null;
+  const key = renderKey(req.view, req.view === 'markdown' ? audience : 'remote', head, body.ledger, await fenceOverlayIdentity(ctx.engine, page.source_id, page.slug));
+  if (pinned && pinned.viewKey !== key) return segmentedWindows(ctx, input, req, mode, null);
+  const stored = audience === 'trusted' && !pinned ? { body_bytes: body.bodyBytes, body_lines: body.bodyLines } : {};
   let seg: SegmentedDocument;
   let size: Record<string, unknown>;
   if (req.view === 'markdown') {
-    seg = await segmentedMarkdownDocument(ctx.engine, body, markdownHead(page, tags), audience);
-    size = { ...await markdownDigest(seg, revision, audience), ...stored };
+    seg = await segmentedMarkdownDocument(ctx.engine, body, head!, audience);
+    size = pinned ? { total_bytes: pinned.totalBytes, total_lines: pinned.totalLines, sha256: pinned.sha256 }
+      : { ...await markdownDigest(seg, digestKey(key, body.generation), audience), ...stored };
   } else {
     seg = await segmentedReadDocument(ctx.engine, body);
-    size = { total_bytes: seg.total, total_lines: await readViewLines(seg, revision), ...(seg.timelineByte >= 0 ? { timeline_byte_start: seg.timelineByte } : {}),
+    size = { total_bytes: seg.total, total_lines: pinned?.totalLines ?? await readViewLines(seg, digestKey(key, body.generation)),
+      ...(seg.timelineByte >= 0 ? { timeline_byte_start: seg.timelineByte } : {}),
       ...stored, ...(mode === 'none' ? await tailDigest(ctx.engine, body, ctx.remote !== false) : {}) };
   }
-  return { size, doc: {
+  if (pinned && seg.total !== pinned.totalBytes) return segmentedWindows(ctx, input, req, mode, null);
+  const reuse = held && held.generation === body.generation && held.viewKey === key ? held.token : undefined;
+  let token: Promise<string | undefined> | undefined;
+  const pinToken = () => token ??= reuse ? Promise.resolve(reuse) : createReadPin(ctx.engine, {
+    pageId: page.id, generation: body.generation, purpose: 'read', audience, view: req.view, viewKey: key, principal, revision,
+    totalBytes: Number(size.total_bytes), totalLines: Number(size.total_lines), sha256: typeof size.sha256 === 'string' ? size.sha256 : null,
+  }).then(t => t ?? undefined);
+  return { size, continued: pinned, viewMoved: !!held && !pinned && held.viewKey !== key, pinToken, doc: {
     total: seg.total, segmented: true, segments: seg,
     outline: (from, limit) => segmentedOutline(seg, from, limit, Number(size.total_lines)),
     from: (offset, maxBytes) => seg.from(offset, maxBytes),
@@ -488,7 +526,8 @@ async function noneResult(ctx: OperationContext, page: Page, out: Record<string,
  * carries compiled_truth, timeline or content.
  */
 export async function readPartialBody(ctx: OperationContext, input: PartialReadInput, req: BodyRequest): Promise<Record<string, unknown>> {
-  const { page, revision, tags, quarantined, trust, extras } = input;
+  const { page, tags, quarantined, trust, extras } = input;
+  let { revision } = input;
   const neutralize = input.neutralize === true && req.view !== 'markdown';
   const wrap = (text: string) => envelopeText(neutralize && text ? neutralizeToolCalls(text) : text, quarantined, trust, input.quote ? page.slug : null);
   const base: Record<string, unknown> = {
@@ -501,10 +540,19 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
   if (omitted) return { ...base, body: mode, truncated: true, body_omitted: true, chars: 0 };
 
   const markdown = req.view === 'markdown';
+  const decoded = req.selector?.kind === 'cursor' ? decodeCursor(req.selector.raw) : null;
+  const cursor = decoded && decoded.page_id === page.id && decoded.view === req.view ? decoded : null;
   let doc: WindowDocument;
   let size: Record<string, unknown>;
-  if (isSegmentedPage(page)) ({ doc, size } = await segmentedWindows(ctx, input, req, mode));
-  else {
+  let segmented: SegmentedWindows | null = null;
+  if (isSegmentedPage(page)) {
+    segmented = await segmentedWindows(ctx, input, req, mode, cursor);
+    ({ doc, size } = segmented);
+    if (segmented.continued) {
+      revision = segmented.continued.revision;
+      Object.assign(base, { revision, pinned: { body_generation: segmented.continued.generation, page_revision: input.revision } });
+    }
+  } else {
     const whole: PageDocument = markdown
       ? { bytes: Buffer.from(serializePageToMarkdown(input.visibleBody, tags), 'utf8'), timelineByte: -1 }
       : await readPageDocument(ctx.engine, page);
@@ -517,6 +565,10 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
     doc = inlineDocument(whole);
   }
   const out: Record<string, unknown> = { ...base, body: mode, view: req.view, ...(doc.segmented ? { body_storage: 'segmented' } : {}), size };
+  const nextCursor = async (offset: number, maxBytes: number) => {
+    const pin = segmented ? await segmented.pinToken() : undefined;
+    return encodeCursor({ page_id: page.id, revision, view: req.view, offset, max_bytes: maxBytes, ...(pin ? { pin } : {}) });
+  };
   // A segmented read is returned only while the page is still at the revision its caller was authorized for.
   const confirmed = async (result: Record<string, unknown>) => {
     if (doc.segments) await confirmBodyPin(ctx.engine, doc.segments.body);
@@ -540,7 +592,7 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
       const first = await doc.from(0, await windowBudget(ctx, req.maxBytes, AUTO_WINDOW_BYTES));
       out.window = { ...first, text: wrap(first.text) };
       out.truncated = true;
-      if (first.byte_end < doc.total) setNext(out, page, encodeCursor({ page_id: page.id, revision, view: 'read', offset: first.byte_end, max_bytes: req.maxBytes ?? DEFAULT_WINDOW_BYTES }), false);
+      if (first.byte_end < doc.total) setNext(out, page, await nextCursor(first.byte_end, req.maxBytes ?? DEFAULT_WINDOW_BYTES), false);
       out.auto_reason = 'over_inline_bytes';
       return confirmed(out);
     }
@@ -579,9 +631,10 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
         return fallBack(invalidParam(ctx, 'get_page', 'view', `get_page: this cursor pages view '${c.view}'; pass view: '${c.view}' with it.`, { choices: ['read', 'markdown'], example: c.view }),
           'cursor', `the cursor pages view '${c.view}'`);
       }
-      if (c.revision !== revision) {
+      if (c.revision !== revision || segmented?.viewMoved) {
         const position = Math.min(c.offset, doc.total);
-        return fallBack(opError('revision_changed', `Page ${page.slug} changed since this cursor was issued (revision ${c.revision}, now ${revision}).`,
+        return fallBack(opError('revision_changed', segmented?.viewMoved ? `Page ${page.slug} renders differently since this cursor was issued (its withdrawal or fence overlay changed at revision ${revision}).`
+          : `Page ${page.slug} changed since this cursor was issued (revision ${c.revision}, now ${revision}).`,
           `Continue from the same byte offset at the current revision (bytes: { offset: ${position}, length: ${c.max_bytes} }), or start over from the outline.`,
           { legacy_error: 'invalid_params', detail: JSON.stringify({ revision, cursor_revision: c.revision, offset: position }),
             fix: readFix('Reads on from the same byte offset at the current revision.', { argv: ['gbrain', 'get', '--source', page.source_id, '--', page.slug],
@@ -604,18 +657,18 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
     if (!around.window) out.window = { text: wrap(around.chunkText) };
     return around.window;
   };
-  const cap = await resultByteCap({ remote: ctx.remote, transport: ctx.transport, engine: ctx.engine, config: ctx.config });
-  const startCursor = sel?.kind === 'cursor' ? decodeCursor(sel.raw) : null;
-  const cursorReads = startCursor !== null && startCursor.page_id === page.id && startCursor.view === req.view && startCursor.revision === revision;
-  let maxBytes = await windowBudget(ctx, req.maxBytes ?? (cursorReads ? startCursor.max_bytes : undefined), DEFAULT_WINDOW_BYTES);
+  const pagedRead = isPagedRead('get_page', { view: req.view }, ctx.thinClient);
+  const cap = await resultByteCap({ remote: ctx.remote, transport: ctx.transport, engine: ctx.engine, config: ctx.config, pagedRead });
+  const cursorReads = cursor !== null && cursor.revision === revision && !segmented?.viewMoved;
+  let maxBytes = await windowBudget(ctx, req.maxBytes ?? (cursorReads ? cursor.max_bytes : undefined), DEFAULT_WINDOW_BYTES, pagedRead);
   for (let attempt = 0; ; attempt++) {
     const win = await select(maxBytes);
     if (!win) return confirmed({ ...out, truncated: true });
     out.window = { ...win, text: wrap(win.text) };
-    const target = markdown || typeof win.byte_start !== 'number' ? undefined : await editTarget(ctx, page, doc, win, revision);
+    const target = markdown || segmented?.continued || typeof win.byte_start !== 'number' ? undefined : await editTarget(ctx, page, doc, win, revision);
     if (target) out.edit_target = target; else delete out.edit_target;
     out.truncated = win.byte_start > 0 || win.byte_end < doc.total;
-    if (win.byte_end < doc.total) setNext(out, page, encodeCursor({ page_id: page.id, revision, view: req.view, offset: win.byte_end, max_bytes: cursorMax }), markdown);
+    if (win.byte_end < doc.total) setNext(out, page, await nextCursor(win.byte_end, cursorMax), markdown);
     else { delete out.next_cursor; delete out.next; }
     if (!Number.isFinite(cap) || attempt >= 6) return confirmed(out);
     const frame = encodedFrameBytes({ content: [{ type: 'text', text: JSON.stringify(out) }] }) + ENVELOPE_RESERVE_BYTES - FRAME_RESERVE_BYTES;

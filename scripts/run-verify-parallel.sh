@@ -128,6 +128,7 @@ CHECKS=(
   "check:jsonb"
   # Positional $N::jsonb + JSON.stringify double-encode (AST-lite, ~0.2s).
   "check:jsonb-params"
+  "check:request-state-lists"
   "check:search-path"
   "check:source-id-projection"
   "check:source-config-leak"

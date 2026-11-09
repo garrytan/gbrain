@@ -1,4 +1,5 @@
 import { isEmbedSkipped } from '../embed-skip.ts';
+import { gitFirstStrictActive } from './git-first-gate.ts';
 import { appendPurgeCommitted } from '../belief/purge-mirror.ts';
 import { sizeStateField } from '../page-embedding-budget.ts';
 import { enterClaimStep, waitingOnWhile, type ClaimPhaseClock } from './claim-phase.ts';
@@ -45,6 +46,7 @@ import { getWorktreeBinding } from './ownership.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
+import { importsCommittedFile, indexPendingError, pendingPrecondition, readPendingHead, type PendingHead } from './git-first.ts';
 import { isUnboundSourcePage } from './unbound-source.ts';
 import { slugPathFile } from './unbound-pages.ts';
 import { isOriginTwinPage } from './origin-twins.ts';
@@ -339,7 +341,9 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
     /** Runs between the pieces of a segmented page's file comparison (an effect's claim renewal). */
     between?: () => Promise<void>;
     /** #7436: the preparation's clock, so its stamp says `waiting_on=git` while a Git check runs. */
-    clock?: ClaimPhaseClock } = {}): Promise<PreparedMutation['file']> {
+    clock?: ClaimPhaseClock;
+    /** Wave C (ceo-r3-outside-1): the request whose pending head this whole-page write replaces; its committed file is the expected one. */
+    supersedesPending?: string } = {}): Promise<PreparedMutation['file']> {
   if (!row.worktree_id) return undefined;
   // An in-memory canonical file over the 25 MiB push-scan cap is refused (only a page over the 24 MiB single-string
   // ceiling renders one). That page's file is streamed instead (restore_page of a page whose body was not read back,
@@ -393,7 +397,10 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
     const declared = await strictPageClass(engine, row.source_id, root, renderedPageForClass(row.slug, content, snapshot), snapshot?.page ?? null)
       ?? (await waitingOnWhile(options.clock, 'git', () => ignoredTarget(root, path)) ? 'git_ignored' : null);
     if (declared) {
-      if (!isPrivacyClass(declared) || !snapshot || snapshot.page.deleted_at) return undefined;
+      if (!isPrivacyClass(declared) || snapshot?.page.deleted_at) return undefined;
+      // Wave C: a page whose first version is committed but not yet indexed has no rows; its file is in Git all the same,
+      // so its private transition removes that file too (the index step would otherwise import it over the private page).
+      if (!snapshot && !await readPendingHead(engine, row.source_id, row.slug)) return undefined;
       if (!existsSync(path) && await headBlob(root, path) === null) return undefined;
       content = null;
       options = { ...options, deleting: true };
@@ -416,7 +423,7 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
 }
 
 /** prepareFileTarget's comparison of the file at `path` (`before`, its bytes or a piecewise reading) with the snapshot. */
-async function compareFileTarget(engine: BrainEngine, row: Parameters<typeof prepareFileTarget>[1], snapshot: PageSnapshot | null,
+async function compareFileTarget(engine: BrainEngine, row: Parameters<typeof prepareFileTarget>[1] & { id?: string; intent?: WriteRequest['intent']; operation?: string }, snapshot: PageSnapshot | null,
   content: string | Uint8Array | StreamedFileContent | null, options: Parameters<typeof prepareFileTarget>[5] & object,
   target: { root: string; path: string; mode: Awaited<ReturnType<typeof scannerSlugRootMode>> | undefined; capturedPath: string | null | undefined; before: Buffer | FileBytes | null }): Promise<PreparedMutation['file']> {
   const { root, path, mode, capturedPath, before } = target;
@@ -476,6 +483,7 @@ async function compareFileTarget(engine: BrainEngine, row: Parameters<typeof pre
     const landed = !matches && !staleCache && content !== null && beforeHash() === fileContentHash(content)
       && await sourceCanonicalGit(engine, row.source_id) && await committedBlob(root, path) !== null;
     if (landed) return { path, root, content, expectedBeforeHash: beforeHash() };
+    if (!matches && !staleCache && await refuseWhileIndexPending(engine, row, options.supersedesPending, beforeHash, content === null)) return { path, root, content, expectedBeforeHash: beforeHash() };
     if (!matches && !staleCache) {
       const held = await heldFileRefusal(engine, row, root, path, 'drift', options.remote === true);
       if (held) throw held;
@@ -500,10 +508,56 @@ async function compareFileTarget(engine: BrainEngine, row: Parameters<typeof pre
     }
   } else if (before && !snapshot && content !== null && beforeHash() !== fileContentHash(content)
     && !(options.capture && beforeHash() === options.capture.hash)) {
+    if (await refuseWhileIndexPending(engine, row, options.supersedesPending, beforeHash, content === null)) return { path, root, content, expectedBeforeHash: beforeHash() };
     throw await heldFileRefusal(engine, row, root, path, 'occupied', options.remote === true)
       ?? new OperationError('source_changed', 'An unindexed file already occupies the canonical page path.', 'Import the file before replacing it.');
   }
   return { path, root, content, expectedBeforeHash: before ? beforeHash() : null };
+}
+
+/**
+ * Wave C (ceo-r3-outside-1): the file differs from the rows because another write's committed head waits for its index.
+ * True when the write may replace it anyway: a delete or a private transition (the file is removed), or a whole-page write prepared against that head while the file is
+ * still the committed head; throws index_pending for any other write.
+ */
+async function refuseWhileIndexPending(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'slug'> & { id?: string; intent?: WriteRequest['intent']; operation?: string },
+  supersedes?: string, fileHash?: () => string, removesFile = false): Promise<boolean> {
+  const pending = await readPendingHead(engine, row.source_id, row.slug);
+  if (!pending || pending.request_id === row.id || importsCommittedFile(row)) return false;
+  // A delete or a private transition removes the file rather than adding content (spec §3.1 step 7): it replaces the
+  // committed head, the door publication clears the head, and the flip aborts.
+  if (row.operation === 'delete_page' || removesFile) return true;
+  if (supersedes === pending.request_id && fileHash?.() === pending.body_sha256) return true;
+  throw indexPendingError(row.slug, pending);
+}
+
+/** Wave C (spec §3.1): whether a put (or an append or a segmented page's edit composed whole, page-append.ts, prepareInlineOrSegmentedMutation) stages its segmented body or defers it to the index step (strict git-first, git-first-gate.ts). */
+async function deferSegmentedBody(engine: BrainEngine, row: WriteRequest, options: { gitFirstIndex?: false }, notPlain: boolean): Promise<boolean> {
+  return options.gitFirstIndex !== false && (row.operation === 'put_page' || row.operation === 'capture' || row.operation === 'append_page' || row.operation === 'edit_page') && !notPlain
+    && await gitFirstStrictActive(engine, row.source_id);
+}
+
+/** A deferred body whose target Git does not keep (no file, or a database-only class) takes today's path instead. */
+function gitKeepsDeferredTarget(file: PreparedMutation['file'], databaseOnly: Pick<PreparedMutation, 'databaseOnlyReason'>): boolean {
+  return !!file && typeof file.content === 'string' && !databaseOnly.databaseOnlyReason;
+}
+
+/** The metadata a deferred write carries to its door transaction (git-first.ts IndexFromGit). */
+function indexFromGitOf(ready: PreparedContentImport, row: WriteRequest): Pick<PreparedMutation, 'indexFromGit'> {
+  if (!ready.deferredToIndex) return {};
+  const page = ready.parsedPage;
+  // T-DX1: the write gate assessed these bytes before the door; the receipt says what it decided, as an applied write's does.
+  const gate = gateField(ready.result.gate, `p:${row.source_id}/${row.slug}`, null);
+  const quarantined = quarantineOutcome(page.frontmatter);
+  return { indexFromGit: { title: page.title, type: page.type, frontmatter: page.frontmatter ?? {},
+    ...(gate || quarantined ? { outcome: { ...(gate ? { gate } : {}), ...(quarantined ? { quarantined } : {}) } } : {}) } };
+}
+
+/** #6188 (D12): what Tier 1 rewrote; a remote caller is never told about the takes fence it cannot read (preserved verbatim). */
+function shownFencesNormalized(row: WriteRequest, snapshot: PageSnapshot | null, fixes: PreparedContentImport['result']['fences_normalized']) {
+  const shownFixes = (fixes ?? []).filter(fix => !row.authority.remote || fix.fence !== 'takes');
+  return shownFixes.length ? { fences_normalized: pageFencesNormalized({ sourceId: row.source_id, slug: row.slug, fixes: shownFixes,
+    writer: row.principal_kind, path: snapshot?.page.source_path ?? null, remote: row.authority.remote }) } : {};
 }
 
 /**
@@ -827,7 +881,7 @@ async function segmentedContentHash(engine: BrainEngine, snapshot: PageSnapshot,
  */
 export async function preparePageMutation(unbounded: BrainEngine, row: WriteRequest, _config: GBrainConfig,
   preparedIntent?: { content: string; expectedRevision: string; tags?: string[] }, signal?: AbortSignal,
-  options: { allowMissingFile?: boolean; coordinated?: boolean; clock?: ClaimPhaseClock; boundedChunkWrites?: true; unprojected?: true } = {}): Promise<PreparedMutation> {
+  options: { allowMissingFile?: boolean; coordinated?: boolean; clock?: ClaimPhaseClock; boundedChunkWrites?: true; unprojected?: true; gitFirstIndex?: false } = {}): Promise<PreparedMutation> {
   // Wave B (spec 6.2): a committed upload session prepares the put_page its staged parts hold.
   if (row.operation === 'put_page' && isStagingBodyRef(row.intent?.body_ref)) {
     signal?.throwIfAborted();
@@ -851,6 +905,22 @@ function assertPrivateRequestAllowed(row: WriteRequest, content: string, frontma
   assertPrivateRequestKept(row, frontmatter);
 }
 
+/**
+ * Wave C (ceo-r3-outside-1): the write's revision check. A whole-page write may replace a committed head whose index is
+ * pending; its precondition is checked against that head (git-first.ts pendingPrecondition), and the file it replaces is
+ * the committed one. An append composed over that head (page-append.ts, ceo-r3-outside-3) names its revision. Returns the
+ * head it supersedes, or null.
+ */
+async function checkWriteRevision(engine: BrainEngine, row: WriteRequest, snapshot: PageSnapshot | null,
+  preparedIntent: Parameters<typeof preparePageMutation>[3]): Promise<PendingHead | null> {
+  const pending = (preparedIntent ? row.operation === 'append_page' : row.operation === 'put_page' || row.operation === 'capture')
+    ? await readPendingHead(engine, row.source_id, row.slug) : null;
+  const supersedes = pending && pending.request_id !== row.id && (!preparedIntent || preparedIntent.expectedRevision === pending.revision) ? pending : null;
+  assertPageRevision(supersedes ? { revision: pendingPrecondition(row.slug, supersedes, snapshot?.revision, preparedIntent?.expectedRevision ?? row.intent!.expected_revision) } : snapshot,
+    preparedIntent ? { expectedRevision: preparedIntent.expectedRevision } : engineMutationPrecondition(parseMutationPrecondition(row.intent!)));
+  return supersedes;
+}
+
 async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: WriteRequest, _config: Parameters<typeof preparePageMutation>[2],
   preparedIntent: Parameters<typeof preparePageMutation>[3], signal: AbortSignal | undefined,
   options: NonNullable<Parameters<typeof preparePageMutation>[5]>): Promise<PreparedMutation> {
@@ -871,13 +941,13 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   ]) as [unknown, PageSnapshot | null, Awaited<ReturnType<typeof loadActivePackForEngine>> | null];
   // Wave B (spec 6.3): edit_page on a segmented page splices the touched segments; a declined edit takes the string path.
   const segmented = row.operation === 'edit_page' && stored && !stored.page.deleted_at && isSegmentedPage(stored.page) && stored.page.id === row.page_id
-    ? await prepareSegmentedEditMutation(engine, row, stored) : null;
+    && !await gitFirstStrictActive(engine, row.source_id) ? await prepareSegmentedEditMutation(engine, row, stored) : null;
   if (segmented) return segmented;
   // Wave B: a segmented page within the single-string ceiling is compared and merged as strings.
   const snapshot = await materializedSnapshot(unbounded, stored);
   signal?.throwIfAborted();
   enterClaimStep(clock, 'revision_check');
-  assertPageRevision(snapshot, preparedIntent ? { expectedRevision: preparedIntent.expectedRevision } : engineMutationPrecondition(parseMutationPrecondition(p)));
+  const supersedes = await checkWriteRevision(engine, row, snapshot, preparedIntent);
   if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted page identity changed.');
   const observedRevision = snapshot?.revision ?? null;
   const activePack = pack?.manifest;
@@ -986,6 +1056,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   enterClaimStep(clock, 'import_content', undefined, 'db');
   const result = await importFromContent(engine, row.slug, content, {
     ...source, noEmbed: true, remote: row.authority.remote || p.keep_hidden_rows === true, activePack, fences: projected ? 'coordinated' : 'lenient', coordinated: lean, boundedChunkWrites: options.boundedChunkWrites,
+    deferSegmented: await deferSegmentedBody(engine, row, options, targetDeleted || !!versionTags),
     segmentedOwner: { kind: row.operation === 'edit_page' ? 'edit' : 'put', principalKind: row.principal_kind, principalId: row.principal_id, baseRevision: observedRevision },
     ...(lean ? { existingSnapshot: snapshot } : {}),
     // #6259: only owner-tier intents keep gate-owned markers; an ordinary put_page, local or remote, has them stripped.
@@ -1058,26 +1129,25 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     async () => noop || targetDeleted ? pageNoopAdvisories(row) : !ordinaryPage ? remoteLinkHint(row) : preparePageAdvisories(engine,row,ready.parsedPage,snapshot),
     async () => !noop && !targetDeleted && autoLinkedPage && (row.authority.autoLinkTrusted ?? !row.authority.remote) && await isAutoLinkEnabled(engine)
       ? prepareAutomaticLinks(engine,row.slug,ready.parsedPage,row.source_id,options.coordinated === true) : undefined,
-    () => prepareFileTarget(engine, row, snapshot, targetDeleted ? null : rendered, undefined, { capture, allowMissing: options.allowMissingFile, activePack, remote: row.authority.remote, newPageIgnoredDatabaseOnly: true, clock }),
+    () => prepareFileTarget(engine, row, snapshot, targetDeleted ? null : rendered, undefined, { capture, allowMissing: options.allowMissingFile, activePack, remote: row.authority.remote, newPageIgnoredDatabaseOnly: true, clock,
+      ...(supersedes ? { supersedesPending: supersedes.request_id } : {}) }),
     // Always-loaded core tier: owner-only marking, brain-wide budget, remote-edit policy (core-guard.ts).
     async () => noop ? null : prepareCoreGuard(engine, { row, snapshot, incoming: targetDeleted ? null : ready.parsedPage }),
   ]) as [Awaited<ReturnType<typeof prepareCanonicalProjections>> | undefined, Record<string, unknown>,
     Awaited<ReturnType<typeof prepareAutomaticLinks>> | undefined, PreparedMutation['file'], Awaited<ReturnType<typeof prepareCoreGuard>> | null];
-  // #6188 (D12): what Tier 1 rewrote; a remote caller is never told about the takes fence it cannot read (preserved verbatim).
-  const shownFixes = (ready.result.fences_normalized ?? []).filter(fix => !row.authority.remote || fix.fence !== 'takes');
-  const fencesNormalized = shownFixes.length ? { fences_normalized: pageFencesNormalized({ sourceId: row.source_id, slug: row.slug, fixes: shownFixes,
-    writer: row.principal_kind, path: snapshot?.page.source_path ?? null, remote: row.authority.remote }) } : {};
+  const fencesNormalized = shownFencesNormalized(row, snapshot, ready.result.fences_normalized);
   const file = target && fenceRepair ? { ...target, commit: fenceRepairCommit(relative(target.root, target.path).split(sep).join('/'), fenceRepair.classes, fenceRepair.tier) } : target;
   enterClaimStep(clock, 'publication_mode', undefined, 'db');
   const [mintMode, databaseOnly] = await pipelined(together, [
     async () => file && !snapshot?.page.source_path ? scannerSlugRootMode(engine, row.source_id, file.root) : undefined,
     () => pageDatabaseOnlyPublication(engine, row, file),
   ]) as [Awaited<ReturnType<typeof scannerSlugRootMode>> | undefined, Pick<PreparedMutation, 'databaseOnlyReason'>];
+  if (ready.deferredToIndex && !gitKeepsDeferredTarget(file, databaseOnly)) return prepareInlineOrSegmentedMutation(unbounded, row, _config, preparedIntent, signal, { ...options, gitFirstIndex: false });
   const sourcePath = file && mintMode ? scannerSourcePath(file.root, file.path, mintMode) : undefined;
   // An inferred mode is pinned with the first origin it mints, so later pages cannot flip the inference (#5610).
   const pinMode = sourcePath && mintMode && scannerSourcePath(file!.root, file!.root) && !await readSlugRootMode(engine, row.source_id) ? mintMode : undefined;
   const publication: PreparedMutation = { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, ...databaseOnly,
-    ...(core ? { exclusiveSources: core.exclusiveSources } : {}), ...(trust ? { trust } : {}), ...(ready.afterCommit ? { afterCommit: ready.afterCommit } : {}),
+    ...indexFromGitOf(ready, row), ...(supersedes ? { supersedesPending: supersedes.request_id } : {}), ...(core ? { exclusiveSources: core.exclusiveSources } : {}), ...(trust ? { trust } : {}), ...(ready.afterCommit ? { afterCommit: ready.afterCommit } : {}),
     validate: async tx => { await ready.validate(tx); await core?.validate(tx); }, apply: async (tx, preimage) => {
     let autoLinks: Awaited<ReturnType<NonNullable<typeof links>['apply']>> | undefined;
     let removedTimeline: TimelineRowsRemoved | null = null;

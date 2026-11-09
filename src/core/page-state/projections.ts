@@ -4,7 +4,7 @@ import type { ProgressReporter } from '../progress.ts';
 import type { Chunk, ChunkInput, ResolvedColumn, PageKind } from '../types.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../chunkers/recursive.ts';
 import { CHUNKER_VERSION } from '../chunkers/code.ts';
-import { prepareMarkdownChunks } from '../markdown-chunks.ts';
+import { inlineTimelineBullets, prepareMarkdownChunkSet } from '../markdown-chunks.ts';
 import { loadFenceChunkOverlay, type FenceChunkOverlay } from '../eligibility/fence-overlay.ts';
 import { prepareCodeChunks, installCodeChunkEdges } from '../code-chunks.ts';
 import { resolveMaxChunkTokens } from '../embedding-input-limit.ts';
@@ -69,6 +69,10 @@ export interface ProjectionSnapshot {
   pageKind: PageKind;
   /** #5575 ENG-1: held, purged and below-page-tier fence rows, read with the snapshot. */
   fenceOverlay?: FenceChunkOverlay;
+  /** `pages.chunker_version` when the snapshot was read (part of `indexingContext`, so an install refuses a changed one). */
+  storedChunkerVersion: number | null;
+  /** A Markdown rebuild chunks the timeline at bullets (inlineTimelineBullets of the stored version; `reindex --timeline-bullets` sets it). */
+  timelineBullets: boolean;
 }
 
 export type ProjectionConflictField = 'text_projection_revision' | 'chunk_digest' | 'indexing_context';
@@ -134,7 +138,7 @@ export async function stampEmbeddingInputs(engine: Pick<BrainEngine, 'executeRaw
   return target.column;
 }
 
-async function indexingContext(engine: BrainEngine, snapshot: PageSnapshot, maxChunkTokensOverride?: number): Promise<{ key: string; model: string | null; maxChunkTokens: number; column: ResolvedColumn; pageKind: PageKind; provenanceModel: string | null; corpusGeneration: string | null }> {
+async function indexingContext(engine: BrainEngine, snapshot: PageSnapshot, maxChunkTokensOverride?: number): Promise<{ key: string; model: string | null; maxChunkTokens: number; column: ResolvedColumn; pageKind: PageKind; provenanceModel: string | null; corpusGeneration: string | null; storedChunkerVersion: number | null }> {
   const { config, model, column, provenanceModel } = await embeddingWriteTarget(engine);
   const maxChunkTokens = maxChunkTokensOverride ?? resolveMaxChunkTokens();
   const [projection] = await engine.executeRaw<{ chunker_version: number | null; corpus_generation: string | null }>(
@@ -145,7 +149,8 @@ async function indexingContext(engine: BrainEngine, snapshot: PageSnapshot, maxC
     maxChunkTokens, storedChunkerVersion: projection?.chunker_version ?? null, corpusGeneration: projection?.corpus_generation ?? null,
     chunkerVersion: MARKDOWN_CHUNKER_VERSION, codeChunkerVersion: CHUNKER_VERSION, pageKind: kind.page_kind,
     ftsLanguage: getFtsLanguage() }), model, maxChunkTokens, column, pageKind: kind.page_kind, provenanceModel,
-    corpusGeneration: projection?.corpus_generation ?? null };
+    corpusGeneration: projection?.corpus_generation ?? null,
+    storedChunkerVersion: projection?.chunker_version == null ? null : Number(projection.chunker_version) };
 }
 
 /**
@@ -154,7 +159,9 @@ async function indexingContext(engine: BrainEngine, snapshot: PageSnapshot, maxC
  * its embedding `page-body/segmented-embedding.ts`, never this body read.
  */
 export async function readProjectionSnapshot(engine: BrainEngine, slug: string, sourceId: string,
-  opts: { allowUnsealed?: boolean; maxChunkTokens?: number; requireLiveSource?: boolean } = {}): Promise<ProjectionSnapshot | null> {
+  opts: { allowUnsealed?: boolean; maxChunkTokens?: number; requireLiveSource?: boolean; preview?: boolean } = {}): Promise<ProjectionSnapshot | null> {
+  // A preview reads without the page guard, which inserts its guard row and locks: it writes nothing and installs nothing.
+  if (opts.preview) return readGuardedProjectionSnapshot(engine, slug, sourceId, opts);
   return engine.transaction(async tx => {
     await tx.lockPageKeys([{ sourceId, slug }]);
     return readGuardedProjectionSnapshot(tx, slug, sourceId, opts);
@@ -170,7 +177,7 @@ async function readGuardedProjectionSnapshot(tx: BrainEngine, slug: string, sour
   const fenceOverlay = context.pageKind === 'markdown' ? await loadFenceChunkOverlay(tx, { sourceId, slug, compiled_truth: snapshot.page.compiled_truth, timeline: snapshot.page.timeline }) : undefined;
   return { snapshot, chunks: await tx.getChunks(slug, { sourceId, includeUnsealed: true }), indexingContext: context.key,
     embeddingModel: context.model, embeddingColumn: context.column, maxChunkTokens: context.maxChunkTokens, maxChunkTokensOverride: opts.maxChunkTokens, pageKind: context.pageKind,
-    ...(fenceOverlay ? { fenceOverlay } : {}) };
+    ...(fenceOverlay ? { fenceOverlay } : {}), storedChunkerVersion: context.storedChunkerVersion, timelineBullets: inlineTimelineBullets(context.storedChunkerVersion) };
 }
 
 /** #7172: the queue reason of a revision whose publication left its chunk replacement to `continueDeferredProjection`. */
@@ -229,6 +236,8 @@ async function planProjectionKeep(tx: BrainEngine, current: PageSnapshot, contex
 /** #7172: a deferred chunk replacement's remaining writes, planned once from what is stored and spent in steps. */
 interface DeferredReplacement {
   current: PageSnapshot; pageId: number; column: ResolvedColumn; moves: ChunkMove[]; at: Map<number, number>; stale: number[]; inserts: ChunkInput[];
+  /** The chunker version the seal records for the planned chunks. */
+  chunkerVersion: number;
   /** `chunkRowsFingerprint` after the plan's last committed step: a step that finds another one plans again. */
   fingerprint: string;
 }
@@ -247,7 +256,7 @@ async function planDeferredReplacement(tx: BrainEngine, sourceId: string, slug: 
   if (!prepared || prepared.pageKind !== 'markdown' || prepared.snapshot.page.text_projection_revision === prepared.snapshot.revision) return null;
   const current = prepared.snapshot;
   const pageId = Number(current.page.id);
-  const { chunks } = await preparePageProjection(prepared);
+  const { chunks, chunkerVersion } = await preparePageProjection(prepared);
   const context = await indexingContext(tx, current, prepared.maxChunkTokensOverride);
   const plan = await planProjectionKeep(tx, current, context, prepared.chunks, chunks);
   await tx.executeRaw('DELETE FROM content_chunks WHERE page_id=$1 AND NOT(id=ANY($2::int[]))', [pageId, plan.kept.map(chunk => Number(chunk.id))]);
@@ -258,7 +267,7 @@ async function planDeferredReplacement(tx: BrainEngine, sourceId: string, slug: 
   const moved = new Set(plan.moves.map(move => move.id));
   const occupied = new Set([...plan.kept.filter(row => !moved.has(Number(row.id))).map(row => row.chunk_index), ...plan.moves.map(move => move.to)]);
   return { current, pageId, column: context.column, moves: plan.moves, at: new Map(plan.kept.map(chunk => [chunk.chunk_index, Number(chunk.id)])), stale,
-    inserts: chunks.filter(chunk => !occupied.has(chunk.chunk_index)), fingerprint: '' };
+    inserts: chunks.filter(chunk => !occupied.has(chunk.chunk_index)), fingerprint: '', chunkerVersion };
 }
 
 /**
@@ -300,8 +309,8 @@ export async function continueDeferredProjectionStep(engine: BrainEngine, source
       await tx.executeRaw(`UPDATE content_chunks SET ${quoteIdentifier(base.column.name)}=NULL,embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,
         embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE page_id=$1 AND id=ANY($2::int[])`, [pageId, base.stale]);
     }
-    if (base.inserts.length) await tx.upsertChunks(slug, base.inserts, { sourceId, embeddingColumn: base.column, sealChunkerVersion: MARKDOWN_CHUNKER_VERSION, pageId, deferSeal: true });
-    await sealImportedPage(tx, slug, sourceId, current, MARKDOWN_CHUNKER_VERSION, pageId);
+    if (base.inserts.length) await tx.upsertChunks(slug, base.inserts, { sourceId, embeddingColumn: base.column, sealChunkerVersion: base.chunkerVersion, pageId, deferSeal: true });
+    await sealImportedPage(tx, slug, sourceId, current, base.chunkerVersion, pageId);
     await tx.executeRaw('DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid', job);
     return ['sealed'];
   });
@@ -327,7 +336,9 @@ export async function continueDeferredProjection(engine: BrainEngine, sourceId: 
 }
 
 /** No provider work under the guard. Delayed derived results lose to newer content. */
-export async function installPageProjection(engine: BrainEngine, prepared: ProjectionSnapshot, chunks: ChunkInput[], opts: { seal?: boolean; signature?: string; preserveEmbeddings?: boolean; code?: Awaited<ReturnType<typeof prepareCodeChunks>> } = {}): Promise<void> {
+export async function installPageProjection(engine: BrainEngine, prepared: ProjectionSnapshot, chunks: ChunkInput[], opts: { seal?: boolean; signature?: string; preserveEmbeddings?: boolean; code?: Awaited<ReturnType<typeof prepareCodeChunks>>;
+  /** The version a seal records (preparePageProjection's `chunkerVersion`); default MARKDOWN_CHUNKER_VERSION. */
+  chunkerVersion?: number } = {}): Promise<void> {
   const { snapshot } = prepared;
   const sourceId = snapshot.page.source_id;
   const slug = snapshot.page.slug;
@@ -365,7 +376,7 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
     if (opts.code) await installCodeChunkEdges(tx, slug, sourceId, opts.code);
     if (opts.seal) {
       await tx.executeRaw(`UPDATE pages SET chunker_version=$3
-        WHERE source_id=$1 AND slug=$2`, [sourceId, slug, MARKDOWN_CHUNKER_VERSION]);
+        WHERE source_id=$1 AND slug=$2`, [sourceId, slug, opts.chunkerVersion ?? MARKDOWN_CHUNKER_VERSION]);
       await sealPageTextProjection(tx, slug, sourceId, current!);
       await tx.executeRaw('DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid', [snapshot.sourceIncarnation, slug, snapshot.revision]);
     }
@@ -505,7 +516,7 @@ export async function resealSafeChunks(engine: BrainEngine, slug: string, source
   if (!await projectionBelowSafeFence(engine, prepared.snapshot.page.id)
     && prepared.snapshot.page.text_projection_revision === prepared.snapshot.revision) return null;
   const projection = await preparePageProjection(prepared);
-  await installPageProjection(engine, prepared, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code });
+  await installPageProjection(engine, prepared, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code, chunkerVersion: projection.chunkerVersion });
   const [pending] = await engine.executeRaw<{ chunks: number; chars: number }>(`SELECT COUNT(*)::int AS chunks,
     COALESCE(SUM(length(chunk_text)),0)::int AS chars FROM content_chunks
     WHERE page_id=$1 AND ${quoteIdentifier(prepared.embeddingColumn.name)} IS NULL AND modality='text'`, [prepared.snapshot.page.id]);
@@ -518,10 +529,11 @@ export async function preparePageProjection(prepared: ProjectionSnapshot) {
     const path = typeof page.frontmatter.file === 'string' ? page.frontmatter.file : page.source_path;
     if (!path) throw new Error('Code projection requires a recorded source path. Restore frontmatter.file or source_path before retrying.');
     const code = await prepareCodeChunks(page, path);
-    return { chunks: code.chunks, code };
+    return { chunks: code.chunks, code, chunkerVersion: MARKDOWN_CHUNKER_VERSION };
   }
   if (prepared.pageKind !== 'markdown') throw new Error('This page kind requires its source importer (images: see `gbrain doctor --only text_projection_readiness --json`).');
-  return { chunks: await prepareMarkdownChunks(page, prepared.maxChunkTokens, prepared.fenceOverlay), code: undefined };
+  const { chunks, chunkerVersion } = await prepareMarkdownChunkSet(page, prepared.maxChunkTokens, prepared.fenceOverlay, { timelineBullets: prepared.timelineBullets });
+  return { chunks, code: undefined, chunkerVersion };
 }
 
 // These reads walk jobs and probe sources/pages per job; the OFFSET 0 fences
@@ -850,7 +862,7 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
         continue;
       }
       const projection = await preparePageProjection(prepared);
-      await installPageProjection(engine, prepared, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code });
+      await installPageProjection(engine, prepared, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code, chunkerVersion: projection.chunkerVersion });
       rebuilt++;
     } catch (error) {
       if (!(error instanceof PageRevisionConflictError)) {

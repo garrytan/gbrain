@@ -355,6 +355,7 @@ const EXTERNAL_SERVICE_URLS = ['GBRAIN_SUPAVISOR_URL'];
 export function skipReason(file: string): string | null {
   const text = readFileSync(join(ROOT, file), 'utf8');
   if (/process\.platform/.test(text)) return `every test skipped on ${process.platform}: platform-only tests, run by their owning native lane; not stressed`;
+  if (/\bdescribePropertyRange\(/.test(text) && process.env.GBRAIN_TEST_PROPERTY_SEEDS !== 'all') return 'every test skipped outside the nightly schedule: a schedule-only property seed range (the scheduled Test and E2E runs set GBRAIN_TEST_PROPERTY_SEEDS=all, #7782); not stressed';
   const keys = [...new Set([...text.matchAll(/process\.env\.([A-Z0-9_]*(?:API_KEY|TOKEN|SECRET))/g)].map(m => m[1]!))];
   if (keys.length) return `every test skipped without ${keys.join(', ')} (secret not available here); not stressed`;
   const external = EXTERNAL_SERVICE_URLS.filter(name => text.includes(`process.env.${name}`) && !process.env[name]);

@@ -28,7 +28,9 @@ export async function run(engine: BrainEngine, args: string[], ctx: CliDispatchC
   // non-zero on failures > 0. (undefined = backgrounded via --background.)
   const embedResult = await runEmbed(engine, args, SELECTED_CONFIG_BY_ENGINE.get(engine) ?? null, consent);
   // #6803: large pages waiting for embedding approval left the stale queue; say so (informational, never a failure).
-  if (embedResult && args.includes('--stale') && !args.some(a => a === '--images' || a === '--facts' || a === '--held')) {
+  // Wave C 1F: a target run a page's cap, hold or the source's 24-hour ledger stopped carries the same report and exits 11.
+  const budgetLimited = !!embedResult && 'reason' in embedResult && embedResult.reason === 'budget_limited';
+  if (embedResult && (budgetLimited || args.includes('--stale')) && !args.some(a => a === '--images' || a === '--facts' || a === '--held')) {
     await (await import('../../core/held-embedding.ts')).noteBudgetLimited(engine, args, embedResult, getCliOptions().quiet);
   }
   // D2: under --json the result is the one document (a budget stop carries
@@ -42,7 +44,7 @@ export async function run(engine: BrainEngine, args: string[], ctx: CliDispatchC
     setCliExitVerdict(BUDGET_STOP_EXIT_CODE);
   } else if (embedResult && embedResult.failures > 0) {
     setCliExitVerdict(1);
-  } else if (embedResult && 'reason' in embedResult && embedResult.reason === 'time_budget') {
+  } else if (budgetLimited || (embedResult && 'reason' in embedResult && embedResult.reason === 'time_budget')) {
     setCliExitVerdict(BUDGET_STOP_EXIT_CODE);
   }
 }
@@ -60,7 +62,14 @@ async function authorizeEmbed(engine: BrainEngine, args: string[]): Promise<{ au
   const { requireEmbedBackfillConsent } = await import('../../core/embed-consent.ts');
   const { isConsentRefusal, printConsentRefusal } = await import('../../core/consent.ts');
   const sourceAt = opts.indexOf('--source');
-  const estimable = opts.includes('--stale') || opts.includes('--all');
+  const { embedPositionalSlug, slugsAfter } = await import('../../commands/embed-target.ts');
+  const slugsAt = opts.indexOf('--slugs');
+  const target = opts.includes('--held') || opts.includes('--facts') || opts.includes('--images') ? []
+    : slugsAt >= 0 ? slugsAfter(opts, slugsAt)
+    : opts.includes('--all') || opts.includes('--stale') ? [] : [embedPositionalSlug(opts)].filter((s): s is string => s !== undefined);
+  // Wave C 1F (T-DX4): a target run estimates its pages and is approved with --max-usd <ceiling>, which also raises their per-page cap.
+  const perPage = target.length > 0;
+  const estimable = perPage || opts.includes('--stale') || opts.includes('--all');
   const argv = ['gbrain', 'embed', ...args.filter(a => a !== '--yes')];
   try {
     const authorization = await requireEmbedBackfillConsent(engine, {
@@ -69,9 +78,10 @@ async function authorizeEmbed(engine: BrainEngine, args: string[]): Promise<{ au
       ...(estimable && !opts.includes('--images') && !opts.includes('--facts') ? { preview_argv: [...argv.filter(a => a !== '--background'), '--dry-run'] } : {}),
       args,
       scope: {
-        all: opts.includes('--all'),
+        all: !perPage && opts.includes('--all'),
         ...(sourceAt >= 0 && opts[sourceAt + 1] ? { sourceId: opts[sourceAt + 1] } : {}),
-        unestimated: !estimable || opts.includes('--slugs') || opts.includes('--facts') || opts.includes('--images'),
+        ...(perPage ? { slugs: target, perPage: true } : {}),
+        unestimated: !estimable || opts.includes('--facts') || opts.includes('--images'),
         ...(opts.includes('--images') ? { images: true } : {}),
       },
     });

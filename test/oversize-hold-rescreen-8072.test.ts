@@ -60,8 +60,9 @@ afterAll(async () => {
 /** Hundreds of uncommitted paths outside the incoming diff, like the checkout that hit the hang; and a short budget for the stalled sync. */
 const PRESERVED = 300, STALL_BUDGET_MS = 20_000, FAIR_BUDGET_MS = 20_000;
 const each = (fn: (f: RefreshFixture) => Promise<void>) => withEnv(keyless, async () => { for (const engine of engines) await withRefreshFixture(engine, fn); });
-/** Over the page ceiling, under the segmented ceiling, with a facts fence the streamed import refuses after reading the whole file. */
-const fenced = `${conversationPage(PAGE_MAX_BYTES + 1024 * 1024, { seed: 8072 }).trimEnd()}\n\n## Facts\n\n<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|---|---|---|---|---|---|---|---|---|\n| 1 | Example fact | fact | 1.0 | world | high | | | test | |\n<!--- gbrain:facts:end -->\n`;
+/** Over the page ceiling, under the segmented ceiling, with two facts fences in one section: the streamed import checks one
+ *  fence at a time (#7605), and a second fence in a section needs the whole page, so it refuses after reading the whole file. */
+const fenced = `${conversationPage(PAGE_MAX_BYTES + 1024 * 1024, { seed: 8072 }).trimEnd()}\n\n## Facts\n\n<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|---|---|---|---|---|---|---|---|---|\n| 1 | Example fact | fact | 1.0 | world | high | | | test | |\n<!--- gbrain:facts:end -->\n\n<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|---|---|---|---|---|---|---|---|---|\n| 1 | Second fence fact | fact | 1.0 | world | high | | | test | |\n<!--- gbrain:facts:end -->\n`;
 
 const holdsOf = async (f: RefreshFixture) => (await readGitSourceHolds(f.engine, { sourceIds: [f.alpha] }))[0]?.holds ?? [];
 const requestsFor = async (f: RefreshFixture, slug: string) => Number((await f.engine.executeRaw<{ n: number }>(
@@ -73,7 +74,7 @@ test('#8072: a held over-ceiling file the streamed import refused is not read ag
   expect((await refreshWorktree(f.engine, f.alpha)).status).toBe('completed');
   const [held] = await holdsOf(f);
   expect(held).toMatchObject({ path: 'conv.md', code: 'file_too_large', meta: { attempts: 1 } });
-  expect(held!.message).toContain('facts and takes fences');
+  expect(held!.message).toContain('more than one facts fence');
   const requests = await requestsFor(f, 'conv');
   expect(requests).toBeGreaterThan(0);
 

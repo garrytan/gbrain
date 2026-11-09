@@ -1316,6 +1316,16 @@ More: [docs/guides/ambient-recall.md#replay-after-a-degraded-wake](../../docs/gu
 |---|---|---|---|---|---|---|
 | Commit or stash canonical skill edits before optimization. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### disk_space_low
+
+<a id="disk_space_low"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The brain host's disk is too full to hold an upload session on a git-canonical source; parts already stored are kept. | On a strict source an upload spools its parts to a file on the brain host before the door commits them to Git, so the database never holds the bytes. The session needs room for the spool, the publication stage and Git's loose objects; a write that ran out of space mid-part stored nothing more and the session stays resumable. | Free space on the brain host (the detail lists each term of what the upload needs), then resume the upload with the same request_id. | host_admin | `gbrain doctor --json` | 1 | yes |
+
+More: [docs/guides/write-refusals.md#disk_space_low](../../docs/guides/write-refusals.md#disk_space_low)
+
 ### doctor_tier_unavailable
 
 <a id="doctor_tier_unavailable"></a>
@@ -2032,6 +2042,16 @@ More: [docs/designs/GIT_CANONICAL_MEMORY.md#conversion](../../docs/designs/GIT_C
 |---|---|---|---|---|---|---|
 | The canonical checkout is on a detached HEAD, so a push would target the wrong ref. | Only the operator of the brain host can change what blocks this. | Check out the branch the remote should track (git switch <branch>) on the brain host, then rerun. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### git_door_timeout
+
+<a id="git_door_timeout"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A strict (canonical: git) write's door commit did not reach its ref update within the publication transaction's door bound, so nothing was committed and the write was not published. | A publication transaction holds its page locks while the door commits its files. A door that stalls (a slow disk, a held index lock, a hung Git step) is refused once `PUBLICATION_DOOR_BOUND_MS` (120 s; `GBRAIN_PUBLICATION_DOOR_BOUND_MS`) has passed since the transaction opened, checked before the door starts and again before it moves the branch, so the rows roll back, recovery restores the prior bytes and the locks are released. The request ends failed; HEAD is where it was. | Check the checkout on the brain host (git status, disk latency, a held .git/index.lock), then submit the write again with a new request_id; the failed request stays failed. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/write-refusals.md#git_door_timeout](../../docs/guides/write-refusals.md#git_door_timeout)
+
 ### git_durability_not_enabled
 
 <a id="git_durability_not_enabled"></a>
@@ -2090,6 +2110,26 @@ Reasons: `opt_in_off`, `checkout_unconfigured`.
 
 More: [docs/guides/write-refusals.md#git_lfs_not_enabled](../../docs/guides/write-refusals.md#git_lfs_not_enabled)
 
+### git_maintenance_busy
+
+<a id="git_maintenance_busy"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another git maintenance run holds this repository's maintenance lock, so this one did not start; the object store is unchanged. | gbrain packs and prunes a repository under its own maintenance lock (never the writer lock), so two runs never overlap. | Wait for the running maintenance to finish (a first repack of a large repository takes minutes), then run gbrain git maintenance --source <id> --dry-run to see what is left. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/shared-checkout-git.md#git-maintenance](../../docs/guides/shared-checkout-git.md#git-maintenance)
+
+### git_maintenance_failed
+
+<a id="git_maintenance_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A git step of gbrain git maintenance failed; the run is recorded as failed and nothing past that step ran. | repack, prune and prune-packed are git's own commands, and gbrain stops at the first one that fails instead of continuing on a repository git could not process. | Read the git error in the message (a full disk, a corrupt object, a permission), fix its cause, then run gbrain git maintenance --source <id> --apply again; doctor git_repo_health shows the recorded failure. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/shared-checkout-git.md#git-maintenance](../../docs/guides/shared-checkout-git.md#git-maintenance)
+
 ### git_object_missing
 
 <a id="git_object_missing"></a>
@@ -2099,6 +2139,16 @@ More: [docs/guides/write-refusals.md#git_lfs_not_enabled](../../docs/guides/writ
 | A committed file's Git object is missing from the checkout and its working-tree copy differs or is gone, so managed sync holds that file alone. | An interrupted gc, a partial clone without its promisor remote or disk corruption can drop an object a commit still names. Sync imports the working-tree bytes when they hash to the committed blob id; otherwise it imports nothing from a guess, and the rest of the source keeps syncing. | Run git fsck in the checkout to see what is missing, restore it with git fetch (a partial or shallow clone) or from a backup, then sync again; every sync re-tests the hold. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#git_object_missing](../../docs/guides/write-refusals.md#git_object_missing)
+
+### git_objects_missing
+
+<a id="git_objects_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| doctor git_repo_health found objects that a strict source's HEAD, refs or index need missing from its Git object store (git fsck --connectivity-only). | Git cannot recreate a lost object: commits that name it cannot be read, checked out or pushed until it comes back from a copy that still has it. Pruning beside a concurrent writer has a small window git itself leaves open, so doctor checks connectivity after the fact. | Stop writers to the source, restore the objects from its remote (git fetch --refetch), another clone or a backup, or hash an unchanged page file again with git hash-object -w, then run gbrain doctor --only git_repo_health. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/shared-checkout-git.md#missing-git-objects](../../docs/guides/shared-checkout-git.md#missing-git-objects)
 
 ### git_operation_in_progress
 
@@ -2492,6 +2542,26 @@ More: [docs/designs/GIT_CANONICAL_MEMORY.md#remote-and-hosted-writes](../../docs
 |---|---|---|---|---|---|---|
 | This local CLI principal already owns another source/destination for this harness. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
 
+### index_held
+
+<a id="index_held"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A strict write's bytes are committed to Git, but deriving the page from the committed blob stopped on a content cause, so the database still shows the previous generation. | The door commit landed (side_effects: committed_in_git), so resending the write would only commit the same bytes again. The hold code names the cause (a missing Git object, a hash mismatch); the page is repaired from Git, not by a new write. | Do not resend the write; the bytes are in Git. Read the hold with gbrain write-request <id>, fix the cause it names, then rebuild the page from its committed head. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#index_held](../../docs/guides/write-refusals.md#index_held)
+
+### index_pending
+
+<a id="index_pending"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The page has a committed write whose index step has not flipped yet, so its rows still describe the previous generation; this write was refused before anything was written. | On a strict source a large write commits to Git first and is indexed from the committed blob afterwards. Applying an edit to the rows before that flip would build on stale content, so the write waits for the index step. | Wait a few seconds, read the page again, then submit the write with a new request_id. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/write-refusals.md#index_pending](../../docs/guides/write-refusals.md#index_pending)
+
 ### insufficient_scope
 
 <a id="insufficient_scope"></a>
@@ -2811,6 +2881,16 @@ More: [docs/guides/repair.md#legacy-twins](../../docs/guides/repair.md#legacy-tw
 Reasons: `storage_unavailable`.
 
 More: [docs/guides/repair.md#legacy-twins](../../docs/guides/repair.md#legacy-twins)
+
+### lfs_pointer_unsmudged
+
+<a id="lfs_pointer_unsmudged"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A synced Markdown file is committed as a Git LFS pointer, so managed sync holds that file and the stored page stays as it was. | Sync reads committed blobs without smudging them (GIT_LFS_SKIP_SMUDGE=1), and a checkout without git-lfs never smudges, so an LFS-tracked page reaches sync as its ~130-byte pointer text; imported, that text would replace the page, and re-indexing from Git needs the real bytes. The rest of the source keeps syncing. | Ask the user first, since it changes how the file is stored: git lfs pull --include <path>, append an anchored /<path> -filter -diff -merge override to .gitattributes (git lfs untrack misses a wildcard rule), git add --renormalize -- <path> .gitattributes, then commit both through gbrain git commit-push (a hosted source takes the real bytes from the user's own clone; the hold's fix names the branch and quotes the path), then gbrain sync --source <id> --no-pull. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#lfs_pointer_unsmudged](../../docs/guides/write-refusals.md#lfs_pointer_unsmudged)
 
 ### link_cursor_invalid
 

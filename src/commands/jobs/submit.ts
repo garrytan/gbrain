@@ -103,7 +103,7 @@ export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext)
     try {
       await requireEmbedBackfillConsent(engine, {
         command: 'jobs submit', argv, preview_argv: [...argv, '--dry-run'], args,
-        scope: { all: data.all === true, ...(typeof data.sourceId === 'string' ? { sourceId: data.sourceId } : {}), unestimated: Array.isArray(data.slugs) },
+        scope: { all: data.all === true, ...(typeof data.sourceId === 'string' ? { sourceId: data.sourceId } : {}), ...(Array.isArray(data.slugs) ? { slugs: data.slugs.map(String) } : {}) },
       });
     } catch (e) {
       if (!isConsentRefusal(e)) throw e;

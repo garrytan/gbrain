@@ -107,6 +107,10 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'foreign_ownership_marker',
   'coordination_lock_location',
   'safe_index_pending',
+  // Inline pages whose bulleted timeline the pre-bullet chunker sealed (doctor/checks/inline-timeline-chunks.ts).
+  'inline_timeline_chunks',
+  // Wave C 1H-a (T-DX7): readiness for the git-first strict path (doctor/checks/large-pages.ts).
+  'large_pages',
   'self_capture',
   'brain_score',
   // W1: belief ledger coverage intervals, drift, orphan lifetimes and unsafe restores.
@@ -244,6 +248,10 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'git_index_lag',
   // GST-1601: local edits adopted in the last 24 h per source (doctor/checks/local-edit-adoptions.ts).
   'local_edit_adoptions',
+  // Wave C 1C (G7): each strict source's Git object store and its last maintenance run (doctor/checks/git-repo-health.ts).
+  'git_repo_health',
+  // Wave C 1D: page files held as unsmudged Git LFS pointers (doctor/checks/lfs-page-pointers.ts).
+  'lfs_page_pointers',
   'edge_validity',
   'text_projection_readiness',
   'timeline_coverage',
