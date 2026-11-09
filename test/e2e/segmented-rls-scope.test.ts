@@ -36,7 +36,7 @@ const WRITER = `gbrain_seg_rls_writer_${tag}`;
 const SOURCES = { 'src-a': 'alphaneedle', 'src-b': 'bravoneedle' } as const;
 const slugOf = (id: string) => `notes/ledger-${id}`;
 const PAGE_BODY_RLS_TABLES = ['page_body_manifest', 'page_body_staging_parts', 'page_body_staging_texts', 'page_body_stagings', 'page_derivation_spend',
-  'page_segment_derivation_purge_pages', 'page_segment_derivation_purges', 'page_segment_derivations', 'page_segment_texts', 'page_view_digests'];
+  'page_read_pins', 'page_segment_derivation_purge_pages', 'page_segment_derivation_purges', 'page_segment_derivations', 'page_segment_texts', 'page_view_digests'];
 /** What a search and a body read touch besides the recipe's tables, opened to the reader. */
 const SEARCH_SIDE_TABLES = ['config', 'timeline_entries'];
 

@@ -1633,12 +1633,12 @@ export class PostgresEngine implements BrainEngine {
       async tx => chunksImpl.getChunks(scopedRead(this.engineSqlOn(tx)), column, slug, { sourceIds, sourceId }, { ...opts, chunkManifest: await chunkManifestReads(this, this.engineSqlOn(tx)) }));
   }
 
-  async getChunkPage(slug: string, opts: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; requireSafeChunks?: boolean; fromIndex: number; limit: number }) {
+  async getChunkPage(slug: string, opts: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; requireSafeChunks?: boolean; fromIndex: number; limit: number; cursor?: string }) {
     const sourceIds = opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : undefined;
     const sourceId = opts.sourceId ?? 'default';
     const column = (await resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })).name;
     return this.withScopedReadTransaction(sourceIds, sourceIds ? undefined : sourceId,
-      async tx => chunksImpl.getChunkPage(scopedRead(this.engineSqlOn(tx)), column, slug, { sourceIds, sourceId }, { ...opts, chunkManifest: await chunkManifestReads(this, this.engineSqlOn(tx)) }));
+      async tx => chunksImpl.getChunkPage(scopedRead(this.engineSqlOn(tx)), column, slug, { sourceIds, sourceId }, { ...opts, chunkManifest: await chunkManifestReads(this, this.engineSqlOn(tx)) }, this));
   }
 
   /** S2: quoted identifier of the registry-ACTIVE embedding column for the
@@ -1650,7 +1650,7 @@ export class PostgresEngine implements BrainEngine {
     return quoteIdentifier(col.name);
   }
 
-  async countStaleChunks(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean }): Promise<number> {
+  async countStaleChunks(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; excludeSegmented?: boolean }): Promise<number> {
     const column = (await resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })).name;
     return this.withScopedReadTransaction(undefined, opts?.sourceId, tx => chunksImpl.countStaleChunks(scopedRead(this.engineSqlOn(tx)), column, opts));
   }
@@ -1681,6 +1681,7 @@ export class PostgresEngine implements BrainEngine {
     sourceId?: string;
     orderBy?: 'page_id' | 'updated_desc';
     afterUpdatedAt?: string | null;
+    excludeSegmented?: boolean;
   }): Promise<StaleChunkRow[]> {
     const column = (await resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })).name;
     return this.withScopedReadTransaction(undefined, opts?.sourceId, tx => chunksImpl.listStaleChunks(scopedRead(this.engineSqlOn(tx)), column, opts));

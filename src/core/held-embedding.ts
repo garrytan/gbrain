@@ -187,9 +187,6 @@ async function oversizedFacts(engine: BrainEngine, sourceId: string | undefined,
  * under the user's `--max-usd`, one source per approval.
  */
 export async function heldEmbedArgv(engine: BrainEngine, args: readonly string[], signature: string | null, say: (line: string) => void): Promise<{ argv: string[] } | HeldListing> {
-  if (args.includes('--background')) {
-    throw opError('invalid_params', '[embed] --held runs in the foreground: the per-page approval is not carried into background jobs.', 'Run it again without --background.');
-  }
   const at = args.indexOf('--source');
   const sourceId = at >= 0 ? args[at + 1] : undefined;
   const dryRun = args.includes('--dry-run');

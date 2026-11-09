@@ -16,7 +16,7 @@ src/core/code-graph-readiness.ts	2
 src/core/code-intel/read-scope.ts	1
 src/core/code-intel/recursive-walk.ts	4
 src/core/destructive-guard.ts	2
-src/core/embed-consent.ts	2
+src/core/embed-consent.ts	1
 src/core/embed-stale-images.ts	1
 src/core/embedding-invalidation.ts	4
 src/core/embedding-migration-retention.ts	1

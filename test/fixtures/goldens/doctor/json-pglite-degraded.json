@@ -1061,14 +1061,14 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "1388 column(s) verified against live schema",
+          "message": "1435 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 175 table(s) the applied migrations create exist.",
+          "message": "All 179 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -3494,6 +3494,29 @@
         {
           "category": "brain",
           "details": {
+            "docs": "docs/guides/shared-checkout-git.md#git-maintenance",
+            "maintenance": "auto",
+            "sources": []
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No strict source has a Git checkout on this host.",
+          "name": "git_repo_health",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "docs": "docs/guides/write-refusals.md#lfs_pointer_unsmudged",
+            "sources": []
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No source holds a page file committed as a Git LFS pointer.",
+          "name": "lfs_page_pointers",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "docs": "docs/guides/repair.md#outside-content-fences",
             "items": [],
             "pages": 0
@@ -3525,6 +3548,19 @@
           "elapsed_ms": "<volatile>",
           "message": "The config file does not disable embeddings.",
           "name": "embedding_plane_disagreement",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "chunker_version": 5,
+            "count": "exact",
+            "informational": true,
+            "pages_pending": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Every inline page with a bulleted timeline is chunked at bullet boundaries.",
+          "name": "inline_timeline_chunks",
           "status": "ok"
         },
         {
@@ -3762,7 +3798,7 @@
           "category": "meta",
           "details": {
             "counts": {
-              "global": 17,
+              "global": 18,
               "mixed": 2,
               "source": 12
             },
@@ -3783,6 +3819,7 @@
               "extract_facts": "source",
               "facts_drain": "global",
               "fence_repair": "global",
+              "git_maintenance": "global",
               "grade_takes": "global",
               "lint": "source",
               "orphans": "global",
@@ -3801,7 +3838,7 @@
             }
           },
           "elapsed_ms": "<volatile>",
-          "message": "Phase taxonomy: 12 source-scoped, 17 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, content_repair, unindexed_files, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, claim_conflicts, drift, standing_questions, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
+          "message": "Phase taxonomy: 12 source-scoped, 18 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, content_repair, unindexed_files, git_maintenance, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, claim_conflicts, drift, standing_questions, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
           "name": "cycle_phase_scope",
           "status": "ok"
         },

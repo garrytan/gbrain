@@ -131,9 +131,12 @@ import { providerConsentEntry } from './checks/provider-consent.ts';
 import { behaviorChangesEntry } from './checks/behavior-changes.ts';
 import { fenceIntegrityEntry } from './checks/fence-integrity.ts';
 import { outsideContentFencesEntry } from './checks/outside-content-fences.ts';
+import { inlineTimelineChunksEntry } from './checks/inline-timeline-chunks.ts';
 import { dbAheadOfGitEntry } from './checks/db-ahead-of-git.ts';
 import { gitIndexLagEntry } from './checks/git-index-lag.ts';
 import { localEditAdoptionsEntry } from './checks/local-edit-adoptions.ts';
+import { gitRepoHealthEntry } from './checks/git-repo-health.ts';
+import { lfsPagePointersEntry } from './checks/lfs-page-pointers.ts';
 import { syncConfigKeysEntry } from './checks/sync-config-keys.ts';
 import { ghostPagesEntry } from './checks/ghost-pages.ts';
 import { memberAccessEntry } from './checks/member-access.ts';
@@ -321,11 +324,17 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   gitIndexLagEntry,
   // GST-1601: the one-sided local edits adopted in the last 24 h per source (informational, always ok).
   localEditAdoptionsEntry,
+  // Wave C 1C (G7): each strict source's Git object store and its last maintenance run.
+  gitRepoHealthEntry,
+  // Wave C 1D: page files held as unsmudged Git LFS pointers.
+  lfsPagePointersEntry,
   // GBRA-221: live fence rows on imported pages whose body is outside-authored text (review only).
   outsideContentFencesEntry,
   // GBRA-248 W0: writes waiting on a long-quiet owner host, and a file plane that disables embeddings over a database with vectors.
   ownerHostStaleEntry,
   embeddingPlaneDisagreementEntry,
+  // Inline pages whose bulleted timeline the pre-bullet chunker sealed (informational, always ok; preview-first reindex).
+  inlineTimelineChunksEntry,
   fenceIntegrityEntry,
   searchModeEntry,
 ];

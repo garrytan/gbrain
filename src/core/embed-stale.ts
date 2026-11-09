@@ -38,6 +38,7 @@ import { contentDriftSweepLine, runContentDriftSweep, type ContentDriftSweepStat
 import { meterPageBatch, spendGrant } from './page-embedding-budget.ts';
 import { acquirePageEmbeddingLease, stillPendingChunks } from './page-embedding-lease.ts';
 import { chunkGenerationFilter, chunkVisibleFilter } from './search/safe-chunks.ts';
+import { pageBudgetLimitedFilter } from './page-size-policy.ts';
 import { embedSegmentedPage, embedSegmentedRows, readSegmentedEmbedPage, type SegmentedEmbedOpts } from './page-body/segmented-embedding.ts';
 
 /**
@@ -121,6 +122,11 @@ export interface EmbedStaleOpts {
    * here; concurrency is the worker count.
    */
   pacer?: DbPacer;
+  /**
+   * Wave C 1F: hand each segmented page to the embed-page job (one bounded slice at a time, in the page's own order)
+   * instead of embedding it here; set by the embed-backfill job. Without a resident worker the page embeds inline.
+   */
+  delegateSegmented?: boolean;
 }
 
 export interface EmbedStaleResult {
@@ -154,6 +160,8 @@ export interface EmbedStaleResult {
   done: boolean;
   /** True iff the loop exited because `signal.aborted` fired. */
   aborted: boolean;
+  /** Wave C 1F: segmented pages handed to the embed-page job this run. */
+  delegatedPages?: number;
 }
 
 /** Per-drain stamp context: the signature plus the registry-active column
@@ -289,6 +297,52 @@ async function embedSegmentedStaleRows(engine: BrainEngine, stale: readonly Stal
   return true;
 }
 
+/** Wave C 1F: segmented pages of a source with vector-less live rows, outside a hold, cap or embed_skip marker (the embed-page job's queue). */
+async function listSegmentedStalePages(engine: BrainEngine, sourceId: string): Promise<number[]> {
+  const column = quoteIdentifier((await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name);
+  const rows = await engine.executeRaw<{ id: number }>(
+    `SELECT p.id FROM pages p WHERE p.source_id = $1 AND p.body_storage = 'segmented' AND p.deleted_at IS NULL
+        AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT ${pageBudgetLimitedFilter('p')}
+        AND EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id AND cc.${column} IS NULL AND ${chunkGenerationFilter('p', 'cc')})
+      ORDER BY p.id`, [sourceId]);
+  return rows.map(row => Number(row.id));
+}
+
+/**
+ * Wave C 1F: a segmented page embeds in its own order (newest first for a conversation, document order otherwise)
+ * through the embed-page job when `delegate` is set, never sliced by page_id and chunk_index like the batches below;
+ * without a worker it embeds here. True when the run was stopped.
+ */
+async function embedSegmentedStalePages(engine: BrainEngine, sourceId: string, result: EmbedStaleResult,
+  opts: Omit<SegmentedEmbedOpts, 'beforeInstall'> & { deadline?: number; stamp?: ProvenanceStamp; delegate?: boolean; assertOwned?: (tx?: BrainEngine) => Promise<void>; stopped: () => boolean }): Promise<boolean> {
+  const { stamp, delegate, assertOwned, stopped, ...embedOpts } = opts;
+  for (const pageId of await listSegmentedStalePages(engine, sourceId)) {
+    if (stopped()) return true;
+    await assertOwned?.();
+    const page = await readSegmentedEmbedPage(engine, { id: pageId });
+    if (!page) continue;
+    if (delegate) {
+      const { submitEmbedPageJob } = await import('./minions/handlers/embed-page.ts');
+      if (await submitEmbedPageJob(engine, page, { reason: 'embed-backfill' }) !== null) {
+        result.delegatedPages = (result.delegatedPages ?? 0) + 1;
+        continue;
+      }
+    }
+    try {
+      const done = await embedSegmentedPage(engine, page, { ...embedOpts,
+        beforeInstall: async tx => { await assertOwned?.(tx); if (stopped()) throw new AbortError(); } });
+      result.embedded += done.embedded;
+      if (done.embedded) result.pagesProcessed += 1;
+      if (done.complete && stamp) await stampIfPageProvenanceComplete(engine, page.slug, page.source_id, stamp);
+    } catch (e) {
+      if (stopped()) return true;
+      if (e instanceof Error && e.name === 'LockStolenError') throw e;
+      process.stderr.write(`\n  [embed-stale] error on ${sourceId}/${page.slug}: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
+  }
+  return false;
+}
+
 export async function embedStalePages(
   engine: BrainEngine,
   slugs: string[],
@@ -318,7 +372,7 @@ export async function embedStalePages(
     try {
       const segmented = await readSegmentedEmbedPage(engine, { sourceId, slug });
       if (segmented) {
-        const page = await embedSegmentedPage(engine, segmented, { embedFn, signal: opts.signal, signature: opts.embeddingSignature });
+        const page = await embedSegmentedPage(engine, segmented, { embedFn: opts.embedFn, signal: opts.signal, signature: opts.embeddingSignature });
         const stamp = page.complete ? await resolveProvenanceStamp(engine, opts.embeddingSignature) : undefined;
         if (stamp) await stampIfPageProvenanceComplete(engine, slug, sourceId, stamp);
         result.embedded += page.embedded;
@@ -507,6 +561,7 @@ export async function embedStaleForSource(
   if (sweep.state === 'failed') process.stderr.write(`\n  [embed-stale] ${contentDriftSweepLine(sweep, true)}\n`);
   if (stopped()) return { ...result, aborted: true };
 
+  if (await embedSegmentedStalePages(engine, sourceId, result, { embedFn: opts.embedFn, signal, signature, stamp, deadline: opts.deadline, delegate: opts.delegateSegmented, assertOwned: opts.assertOwned, stopped })) return { ...result, aborted: true };
   for (;;) {
     if (stopped()) {
       result.aborted = true;
@@ -517,7 +572,7 @@ export async function embedStaleForSource(
       engine.listStaleChunks({
         batchSize,
         afterPageId,
-        afterChunkIndex,
+        afterChunkIndex, excludeSegmented: true,
         sourceId,
       }),
     );
@@ -525,7 +580,7 @@ export async function embedStaleForSource(
       const blocked = await countArchivedEmbeddingWork(engine, { sourceId, signature });
       if (blocked) { result.blocked = blocked; result.failures = (result.failures ?? 0) + blocked; }
       if (projectionBlocked) result.blocked = (result.blocked ?? 0) + projectionBlocked;
-      const remaining = await engine.countStaleChunks({ sourceId, ...(signature && { signature }) });
+      const remaining = await engine.countStaleChunks({ sourceId, ...(signature && { signature }), ...(result.delegatedPages ? { excludeSegmented: true } : {}) });
       if (remaining || result.chunksProcessed || result.blocked) {
         result.remaining = remaining;
         result.complete = remaining === 0 && !result.blocked;
@@ -561,7 +616,7 @@ export async function embedStaleForSource(
       const slug = stale[0].slug;
       try {
         await opts.assertOwned?.();
-        if (stopped() || await embedSegmentedStaleRows(engine, stale, result, { embedFn, signal, signature, stamp, pacer, assertOwned: opts.assertOwned, stopped })) return;
+        if (stopped() || await embedSegmentedStaleRows(engine, stale, result, { embedFn: opts.embedFn, signal, signature, stamp, pacer, assertOwned: opts.assertOwned, stopped })) return;
         await using lease = await acquirePageEmbeddingLease(engine, stale[0].page_id, { signal, deadline: opts.deadline });
         if (lease.busy) return;
         // SUP-3874: split legacy oversized chunk_text before embedding.
@@ -679,7 +734,7 @@ export async function embedStaleForSource(
       const blocked = await countArchivedEmbeddingWork(engine, { sourceId, signature });
       if (blocked) { result.blocked = blocked; result.failures = (result.failures ?? 0) + blocked; }
       if (projectionBlocked) result.blocked = (result.blocked ?? 0) + projectionBlocked;
-      result.remaining = await engine.countStaleChunks({ sourceId, ...(signature && { signature }) });
+      result.remaining = await engine.countStaleChunks({ sourceId, ...(signature && { signature }), ...(result.delegatedPages ? { excludeSegmented: true } : {}) });
       result.complete = result.remaining === 0 && !result.blocked;
       result.done = true;
       return result;

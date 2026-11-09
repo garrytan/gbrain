@@ -29,6 +29,7 @@ import { sealImportedPage, sealPageTextProjection } from '../page-state/projecti
 import { abortSegmentedStaging, materializedSnapshot, sealSegmentedPage } from './segmented-apply.ts';
 import { prepareManagedSyncStreamed, type SyncBodyRef } from './sync-streamed.ts';
 import { fenceBody, withoutBody } from '../page-body/page-shape.ts';
+import { remoteFenceBody } from '../page-body/streamed-fences.ts';
 import { pipelined, transactionMemo } from '../page-state/transactions.ts';
 import { prepareCanonicalProjections } from './canonical-projections.ts';
 import { sliceMemo } from './slice-memo.ts';
@@ -871,7 +872,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
   }
   let importContent = p.content;
   if (row.authority.remote) {
-    const stored = base ? fenceBody(base.page) : null;
+    const stored = base ? await remoteFenceBody(engine, base.page) : null;
     const compiled_truth = preserveProtectedTakes(parsedInput.compiled_truth, stored?.compiled_truth ?? '');
     const timeline = preserveProtectedTakes(parsedInput.timeline ?? '', stored?.timeline ?? '');
     if (compiled_truth !== parsedInput.compiled_truth || timeline !== (parsedInput.timeline ?? '')) {

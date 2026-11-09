@@ -19,6 +19,7 @@ import { readProjectionSnapshot, installPageProjection } from './page-state/proj
  */
 
 import { chunkText } from './chunkers/recursive.ts';
+import { INLINE_TIMELINE_CHUNKER_VERSION } from './markdown-chunks.ts';
 import { fenceTrustMarker, markFenceChunk, unmarkFenceChunk } from './eligibility/fence-overlay.ts';
 import { estimateEmbedTokens } from './chunkers/token-estimate.ts';
 import { resolveMaxChunkTokens } from './embedding-input-limit.ts';
@@ -193,7 +194,8 @@ export async function healOversizedPageChunks(
   }
   // The final compare and replacement share the same page guard.
   try {
-    await installPageProjection(engine, prepared, healed.chunks, { seal: true, preserveEmbeddings: true });
+    await installPageProjection(engine, prepared, healed.chunks, { seal: true, preserveEmbeddings: true,
+      ...(prepared.storedChunkerVersion === INLINE_TIMELINE_CHUNKER_VERSION ? { chunkerVersion: INLINE_TIMELINE_CHUNKER_VERSION } : {}) });
   } catch (error) {
     if (!(error instanceof PageRevisionConflictError)) throw error;
     return { changed: false, splitCount: 0, chunks: await engine.getChunks(slug, getOpts) };

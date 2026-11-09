@@ -18,7 +18,7 @@
  *   - extract: a brain-wide `extract --stale` sweep or remediation pass.
  *   - doctor-refresh: the background measure of every standard doctor check
  *     (#7263; its own overall budget in commands/doctor/last-known.ts).
- * Per-page jobs (facts-absorb, chronicle_extract, contextual_reindex_per_chunk)
+ * Per-page jobs (facts-absorb, chronicle_extract, contextual_reindex_per_chunk, embed-page)
  * are deliberately absent: they arrive in large fan-outs, so limiting them to
  * one slot would cut their throughput. subagent jobs are absent too: callers
  * wait on them interactively. Operators add names with

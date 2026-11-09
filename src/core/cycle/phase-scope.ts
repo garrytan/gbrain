@@ -19,6 +19,7 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   fence_repair: 'global',
   content_repair: 'global',
   unindexed_files: 'global',
+  git_maintenance: 'global',
   synthesize: 'mixed',
   extract: 'source',
   extract_facts: 'source',

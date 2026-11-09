@@ -20,6 +20,7 @@ import { embeddingsDisabled } from '../core/embedding-disabled.ts';
 import { DELETED_PAGE_PURGE_WINDOW_HOURS, embeddingStateFix, type EmbeddingState, type EmbeddingStateRow } from '../core/embedding-state.ts';
 import { approvalAmount, approvalBasis, heldApproveAction } from '../core/held-embedding-action.ts';
 import { budgetRowAppliesFilter } from '../core/page-size-policy.ts';
+import { embedProgressLine, readEmbedProgressView, type EmbedProgressView } from '../core/embedding-ledger.ts';
 import { chunkGenerationFilter } from '../core/search/safe-chunks.ts';
 import { quoteIdentifier, resolveActiveEmbeddingColumnFromEngine } from '../core/search/embedding-column.ts';
 import { effectiveBytesBlock } from '../core/import-screen.ts';
@@ -40,6 +41,8 @@ export interface PageStatus {
   searchable: true | 'keyword' | false;
   page: { id: number; slug: string; deleted: boolean; chunks: number; unembedded: number } | null;
   embedding_hold: { state: 'held' | 'capped'; reason: string | null; updated_at: string } | null;
+  /** Wave C 1F: a segmented page's embedding progress (page_embedding_progress), with the line the human output prints; null when none is recorded. */
+  embedding_progress: (EmbedProgressView & { line: string }) | null;
   hold: { code: string; message: string } | null;
   source_path: string | null;
   /** The file is in the source's synced commit (`sources.last_commit`); null without a Git checkout here or a recorded file. */
@@ -188,7 +191,7 @@ export async function readPagesStatus(engine: BrainEngine, sourceId: string, slu
   for (const slug of slugs) {
     const page = pages.get(slug);
     if (!page) {
-      out.push({ slug, source_id: sourceId, state: 'missing', searchable: false, page: null, embedding_hold: null, hold: null, source_path: null, in_synced_commit: null,
+      out.push({ slug, source_id: sourceId, state: 'missing', searchable: false, page: null, embedding_hold: null, embedding_progress: null, hold: null, source_path: null, in_synced_commit: null,
         why: stateWhy(slug, 'missing', { unembedded: 0, disabled, embeddingHold: null }), fix: null });
       continue;
     }
@@ -213,9 +216,10 @@ export async function readPagesStatus(engine: BrainEngine, sourceId: string, slu
       fix = embeddingStateFix(classifier, { sourceId, slug, markerBytes: row?.marker_bytes ?? null, blockBytes, embeddingsEnabled: !disabled,
         verify: { argv: ['gbrain', 'pages', 'status', slug, '--source', sourceId, '--json'] } });
     }
+    const progress = page.deleted ? null : await readEmbedProgressView(engine, Number(page.id));
     out.push({ slug, source_id: sourceId, state, searchable: SEARCHABLE[state],
       page: { id: Number(page.id), slug: page.slug, deleted: page.deleted, chunks: Number(page.chunks), unembedded },
-      embedding_hold: embeddingHold, hold: record ? { code: record.code, message: record.message } : null, source_path: page.source_path,
+      embedding_hold: embeddingHold, embedding_progress: progress ? { ...progress, line: embedProgressLine(progress) } : null, hold: record ? { code: record.code, message: record.message } : null, source_path: page.source_path,
       in_synced_commit: file?.inSynced ?? null, why, fix });
   }
   return { source_id: sourceId, last_commit: lastCommit, head, at_head: head && lastCommit ? head === lastCommit : null, embeddings_enabled: !disabled, pages: out };
@@ -234,6 +238,7 @@ export async function runPagesStatus(engine: BrainEngine, args: string[]): Promi
     const reach = p.searchable === true ? 'searchable' : p.searchable === 'keyword' ? 'keyword search only' : 'not searchable';
     console.log(`  ${p.slug}: ${p.state} (${reach})`);
     console.log(`    ${p.why}`);
+    if (p.embedding_progress) console.log(`    embedding: ${p.embedding_progress.line}`);
     const fix = p.fix ? renderAction(p.fix, render) : null;
     if (fix?.command) console.log(`    fix (${fix.next.replace(/_/g, ' ')}): ${fix.command}`);
   }

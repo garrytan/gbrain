@@ -57,6 +57,7 @@ import type { BrainEngine } from '../../engine.ts';
 import type { MinionJobContext } from '../types.ts';
 import { parseUsdLimit, usdLimitToCap, resolveSpendPosture } from '../../spend-posture.ts';
 import { recordMinionJobSpend } from '../../minion-spend.ts';
+import { withSourceSpendLedger, type SourceSpendCapped } from '../../embedding-ledger.ts';
 
 import { embedBackfillLockId, EMBED_BACKFILL_LOCK_TTL_MIN } from '../../embed-backfill-lock.ts';
 import { keylessEmbedBackfill, reportKeylessNotice } from '../../embed-backfill-submit.ts';
@@ -75,7 +76,8 @@ export interface EmbedBackfillResult {
   status: 'success' | 'already_in_progress' | 'budget_exhausted' | 'aborted' | 'skipped';
   /** Set when status === 'skipped': the brain is keyless by choice, so nothing was read or embedded. */
   outcome?: 'embed_backfill_skipped';
-  reason?: 'embedding_disabled';
+  /** 'source_spend_capped' with status budget_exhausted: `embed.backfill_max_usd_per_source_24h` refused the next call (Wave C 1F). */
+  reason?: 'embedding_disabled' | 'source_spend_capped';
   /** The embed_backfill_skipped notice, on the first skip for this brain state only. */
   notice?: RenderedNotice;
   sourceId: string;
@@ -300,9 +302,13 @@ export function makeEmbedBackfillHandler(
       drainAbort.abort();
     });
 
+    // Wave C 1F: each embedding call is reserved in the source's 24-hour ledger before it is sent; a refusal stops the drain.
+    let sourceCapped: SourceSpendCapped | null = null;
     try {
-      const result = await withBudgetTracker(tracker, async () =>
+      const result = await withSourceSpendLedger(engine, { sourceId, jobId: job.id, onRefused: refusal => { sourceCapped = refusal; drainAbort.abort(); } }, () => withBudgetTracker(tracker, async () =>
         runStale(engine, sourceId, {
+          // Wave C 1F: each segmented page goes to its own embed-page job (bounded slices, the page's own order).
+          delegateSegmented: true,
           batchSize,
           signal: drainAbort.signal,
           deadline: job.deadlineAtMs ?? undefined,
@@ -339,7 +345,12 @@ export function makeEmbedBackfillHandler(
             progressWrites.add(write);
           },
         }),
-      );
+      ));
+      if (sourceCapped) {
+        const capped: SourceSpendCapped = sourceCapped;
+        return { status: 'budget_exhausted', sourceId, embedded: result.embedded, chunksProcessed: result.chunksProcessed, pagesProcessed: result.pagesProcessed,
+          invalidated: result.invalidated, spentUsd: tracker.totalSpent, budgetCapUsd: capped.capUsd, reason: 'source_spend_capped' };
+      }
 
       if (stalled) {
         // Watchdog abort, not an operator abort: fail the job so the queue's

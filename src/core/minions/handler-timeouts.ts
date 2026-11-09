@@ -48,6 +48,7 @@
 const THIRTY_MIN_MS = 30 * 60 * 1000;
 const SIXTY_MIN_MS = 60 * 60 * 1000;
 const TEN_MIN_MS = 10 * 60 * 1000;
+const TWENTY_MIN_MS = 20 * 60 * 1000;
 
 /**
  * Default wall-clock budget (ms) for long-running handler types. A handler
@@ -57,6 +58,9 @@ export const HANDLER_DEFAULT_TIMEOUT_MS: Readonly<Record<string, number>> = {
   subagent: THIRTY_MIN_MS,
   subagent_aggregator: THIRTY_MIN_MS,
   'embed-backfill': THIRTY_MIN_MS,
+  // Wave C 1F: one embed-page slice stops at 10 minutes (EMBED_PAGE_SLICE_MS) and queues its continuation; the
+  // budget leaves room for the batch in flight at the slice deadline.
+  'embed-page': TWENTY_MIN_MS,
   'connector-sync': THIRTY_MIN_MS,
   'autopilot-cycle': THIRTY_MIN_MS,
   // #2194 fix #3: brain-wide maintenance (embed-all/orphans/purge/…) can run
@@ -103,6 +107,7 @@ export const HANDLER_DEFAULT_LOCK_DURATION_MS: Readonly<Record<string, number>> 
   subagent: FIVE_MIN_MS,
   subagent_aggregator: FIVE_MIN_MS,
   'embed-backfill': FIVE_MIN_MS,
+  'embed-page': FIVE_MIN_MS,
   'connector-sync': FIVE_MIN_MS,
   'autopilot-cycle': FIVE_MIN_MS,
   'autopilot-global-maintenance': FIVE_MIN_MS,

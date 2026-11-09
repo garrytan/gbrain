@@ -33,7 +33,7 @@
  * 2. Fails when: any partial-run path deletes by coverage, keeps or stale bookkeeping, a move loses or duplicates a
  *    batch, a settling run leaves an old batch beside a new one, or incremental runs drift from a fresh extraction.
  */
-import { expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { createHash, randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { AppendBrain } from './append-brain.ts';
@@ -188,6 +188,25 @@ export const PROPERTY_PARTITIONS: ReadonlyArray<{ first: number; last: number; f
   { first: 27, last: 28, floors: { moved: 6, failed_window: 7, marked_failed: 2, collected: 5, since: 1, cap: 1, grammar_lost: 1, held_quoted: 1, held_two_grammars: 0 } },
   { first: 29, last: 30, floors: { moved: 8, failed_window: 3, marked_failed: 0, collected: 5, since: 2, cap: 1, grammar_lost: 1, held_quoted: 0, held_two_grammars: 1 } },
 ];
+
+/**
+ * The ranges every event runs (#7782): a fixed sample whose seeds reach every change, constraint, grammar branch and
+ * path the 30 seeds reach. The nightly Test and E2E schedule sets GBRAIN_TEST_PROPERTY_SEEDS=all and runs every range.
+ */
+export const PROPERTY_SAMPLE: readonly number[] = [1, 3, 13];
+
+/**
+ * Range `first`'s describe on `engine`: run when the range is in PROPERTY_SAMPLE or GBRAIN_TEST_PROPERTY_SEEDS=all (and
+ * `available`), otherwise skipped under a name that says so. `body` opens the range's brains in its own hooks.
+ */
+export function describePropertyRange(first: number, engine: 'pglite' | 'postgres', body: () => void, available = true): void {
+  const { last } = PROPERTY_PARTITIONS.find(range => range.first === first)!;
+  const seeds = process.env.GBRAIN_TEST_PROPERTY_SEEDS;
+  if (seeds && seeds !== 'all') throw new Error(`GBRAIN_TEST_PROPERTY_SEEDS is unset (the sample) or "all", not "${seeds}"`);
+  const name = `conversation facts deletion invariant, seeds ${first} to ${last} [${engine}]`;
+  if (seeds === 'all' || PROPERTY_SAMPLE.includes(first)) (available ? describe : describe.skip)(name, body);
+  else describe.skip(`${name} [seeds ${first}-${last}: schedule only, GBRAIN_TEST_PROPERTY_SEEDS=all]`, body);
+}
 
 export function defineConversationFactsPropertyCases(opts: { getBrain: () => AppendBrain; getFresh: () => AppendBrain; first: number }): void {
   const { first, last, floors } = PROPERTY_PARTITIONS.find(range => range.first === opts.first)!;

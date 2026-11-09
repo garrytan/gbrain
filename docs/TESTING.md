@@ -1375,21 +1375,22 @@ COVERAGE_DIR=$PWD/.coverage bash scripts/test-shard.sh 1 28 \
 When `bun run test` finds any failure, the wrapper:
 
 1. Writes failure blocks (each prefixed with `--- shard N: <test name> ---`) to `.context/test-failures.log` (workspace-local, gitignored). On systems without a writable `.context/`, falls back to `/tmp/gbrain-test-failures.log`.
-2. Prints a loud stderr banner with the absolute log path, plus the last 30 lines of the failure log inlined. Banner survives `| head` / `| tail` / agent-side log truncation.
+2. Prints a stderr banner with the absolute log path and the failure log's last 30 lines, which survives `| head` / `| tail` / agent-side truncation.
 3. Writes a one-line-per-shard summary to `.context/test-summary.txt` (`shard N/M: pass=X fail=Y skip=Z rc=W`).
-4. Exits non-zero. Empty failure log + non-zero exit = infrastructure problem (wedged shard, killed child); the banner says so.
+4. Exits non-zero. An empty failure log with a non-zero exit is infrastructure (wedged shard, killed child); the banner says so.
 
 If a shard hits the per-shard `GBRAIN_TEST_SHARD_TIMEOUT` cap (default 3000s — sized so the heaviest count-balanced shard finishes under 4-way contention; `GBRAIN_TEST_SHARD_KILL_AFTER` sets the grace after TERM before KILL, default 30s), the wrapper classifies the kill one of two ways:
 
-- **EXIT-HANG → warn-pass.** If the shard's log had been silent for ≥300s at kill time AND shows zero `(fail)` markers, the shard finished all its work, leaked a handle, and never exited (a known PGLite-adjacent handle leak — see TODOS.md "unit-shard exit hang"). The wrapper prints a `⚠️ shard N/M: EXIT-HANG ... Treating as pass-with-warning` banner, writes `EXIT-HANG (idle Ns, 0 fails) ... warn-pass` to the summary, and does NOT fail the run. Its pass counts are undercounted (bun never printed its final summary). Bun's per-test `--timeout` turns a genuinely hung TEST into a printed `(fail)` — new output — so this classification cannot mask a hung test; the residual maskable case is a file-level import hang in the very last file, which the banner keeps visible.
+- **EXIT-HANG → warn-pass.** If the shard's log had been silent for ≥300s at kill time AND shows zero `(fail)` markers, the shard finished all its work, leaked a handle, and never exited (a known PGLite-adjacent handle leak — see TODOS.md "unit-shard exit hang"). The wrapper prints a `⚠️ shard N/M: EXIT-HANG ... Treating as pass-with-warning` banner, writes `EXIT-HANG (idle Ns, 0 fails) ... warn-pass` to the summary and does not fail the run. Its pass counts are low (bun printed no final summary). Bun's per-test `--timeout` prints a hung test as `(fail)`, so this cannot mask a hung test; only a file-level import hang in the last file stays maskable, and the banner shows it.
 - **WEDGED → hard failure.** Anything else (failures present, or the log was still growing) writes `--- shard N: WEDGED after ${SHARD_TIMEOUT}s ---` to the failure log with the last 50 lines of the shard log, marks the run failed, and proceeds with other shards' results.
 
-Triage rule: a `warn-pass` EXIT-HANG line in `.context/test-summary.txt` is NOT a test failure — don't burn time bisecting it; a `WEDGED` line is.
+Triage: a `warn-pass` EXIT-HANG line in `.context/test-summary.txt` is not a test failure; a `WEDGED` line is.
 
 ### File taxonomy
 
 - `*.test.ts`: the parallel unit loop.
-- `*.slow.test.ts`: `bun run test:slow` only (intentional cold-path or long workloads that would dominate the fast loop). In CI they run in named slow jobs or inside the unit shards.
+- `*.slow.test.ts`: `bun run test:slow` locally (cold paths, long workloads); CI runs them in named slow jobs or the unit shards.
+- Property seeds: the nightly Test and E2E schedules set `GBRAIN_TEST_PROPERTY_SEEDS=all` (all 30 conversation facts seeds); other runs take `PROPERTY_SAMPLE` (seeds 1-4, 13-14).
 - `*.serial.test.ts`: `bun run test:serial` after the parallel pass, one Bun process per file (`--max-concurrency=1` in a shared process still leaks `mock.module` through the module registry), with those processes pooled. Each file is listed with its class and reason in `scripts/serial-files.tsv` (see [When to quarantine](#when-to-quarantine-instead-of-fix)); machine-global or timing-bound files run on the sequential `EXCLUSIVE_FILES` lane, at most four. Do not put parallelism back on a serial file without fixing the contention root cause.
 - `test/e2e/*.test.ts`: real-Postgres E2E, skipped when `DATABASE_URL` is unset. `test/phantom-redirect-engine-parity.test.ts` also rides this lane (its PGLite arm lives in `test/`; its Postgres arm needs a `DATABASE_URL` lane). `run-e2e.sh` wraps each file in a hard outer timeout (default 180s, `GBRAIN_E2E_FILE_TIMEOUT=<seconds>` overrides) because a blocking PGLite WASM call can outlive Bun's timer-based `--timeout`; LLM-bound Tier 2 files get four times the cap.
 - `tests/heavy/*.sh`: ops-shape shell scripts (pg_upgrade matrix, RSS budget, read latency under sync, sync lock regression) costing minutes; `bun run test:heavy` or the nightly `heavy-tests.yml`. Files prefixed `_` are helpers the runner skips. `tests/heavy/README.md` says when a script belongs here instead of `*.slow.test.ts`.

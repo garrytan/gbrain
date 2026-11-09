@@ -38,11 +38,13 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `e2e.yml` | Doc-only merge-queue entry selects no E2E file | Named exception | Every push to master (whole corpus) and the nightly E2E schedule |
 | `e2e.yml` | Full-corpus coverage lanes and their `e2e-status` checks | Named exception | Nightly E2E schedule (or a `full_corpus` dispatch) |
 | `e2e.yml` | Tier 2 (LLM Skills) runs keyed on the nightly only; other events skip it, and `e2e-status` prints "not run: keys withheld" instead of counting it green | Named exception | Nightly E2E schedule (or a `full_corpus` dispatch), keyed; `scripts/require-executed-tests.ts` fails the job when any test skipped or none ran, and each test fails unless the agent called a gbrain MCP tool |
+| `test.yml`, `e2e.yml` | `GBRAIN_TEST_PROPERTY_SEEDS=all` (#7782): every conversation facts property seed range, against the fixed `PROPERTY_SAMPLE` of 3 ranges on other events | Named exception | Nightly Test and E2E schedules |
 | `heavy-tests.yml` | Label-gated jobs on pull requests | Named exception | Nightly Heavy Tests schedule |
 | `heavy-tests.yml` | `grok-door` (label or input only) | Recorded decision: no scheduled run until the `XAI_API_KEY` secret exists | None yet, by decision |
 | `heavy-tests.yml` | `opencode-door-canary` | Named exception: schedule-only, non-gating canary | Itself |
 | `macos-validation.yml` | Label-gated on pull requests | Named exception | Nightly macOS validation schedule |
 | `scale-tier.yml` | Path- or label-gated 10k on pull requests | Named exception | Nightly Scale tier schedule (10k-50k) |
+| `large-pages-nightly.yml` | No `pull_request` trigger: schedule and dispatch only, record-only, outside `test-status` | Named exception | Itself (nightly Large pages schedule) |
 | `semgrep.yml` | PR diff scan vs full-tree scan | Named exception | Weekly Semgrep schedule |
 | `osv-scanner.yml` | Pull requests scan only on a manifest change | Named exception | Weekly OSV schedule; `dependency-audit` on every PR |
 | `nightly-watch.yml` | `workflow_run` event guard | Not a test scope: it files issues from qualifying scheduled and push-to-master runs | — |

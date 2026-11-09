@@ -8,13 +8,13 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import '../src/core/operations.ts';
 import { CLI_COMMANDS } from '../src/cli/command-table.ts';
-import { CLI_FLAG_REGISTRY, CLI_ROUTING_FLAGS } from '../src/core/cli-flag-registry.generated.ts';
+import { CLI_FLAG_REGISTRY, CLI_ROUTING_FLAGS, CLI_ROUTING_SUBCOMMANDS } from '../src/core/cli-flag-registry.generated.ts';
 import {
   __resetCliRoutingForTests, cliRouting, installCliRouting, noteResolvedSource, pinRouting, recordedSource, routingFlagsFor,
 } from '../src/core/fix-routing.ts';
 import { cliRenderContext, renderAction, toAgentError, type Action, type RenderContext } from '../src/core/agent-output.ts';
 import { opError } from '../src/core/ops/contract.ts';
-import { buildRoutingFlags } from '../scripts/generate-flag-registry.ts';
+import { buildRoutingTables } from '../scripts/generate-flag-registry.ts';
 
 const routing = { brain: 'teambrain', source: 'wiki' };
 const read = (argv: string[], extra: Partial<Action> = {}): Action => ({ argv, consent: [], actor: 'agent', why: 'x', requires_exclusive: false, ...extra });
@@ -52,6 +52,20 @@ describe('pinRouting', () => {
     expect(pinRouting(['gbrain', 'timeline-add', 'a', '2026-01-01', 'x'], routing)).toEqual(['gbrain', 'timeline-add', 'a', '2026-01-01', 'x', '--brain', 'teambrain']);
   });
 
+  test('dx-r3-outside-3: git maintenance fixes are pinned; git commit-push and git guard fixes stay unpinned', () => {
+    expect(pinRouting(['gbrain', 'git', 'maintenance', '--source', 'wiki', '--apply'], routing))
+      .toEqual(['gbrain', 'git', 'maintenance', '--source', 'wiki', '--apply', '--brain', 'teambrain']);
+    expect(pinRouting(['gbrain', 'git', 'maintenance', '--dry-run'], routing))
+      .toEqual(['gbrain', 'git', 'maintenance', '--dry-run', '--brain', 'teambrain', '--source', 'wiki']);
+    expect(pinRouting(['gbrain', 'git', 'maintenance', '--path', '/srv/brain', '--dry-run'], routing))
+      .toEqual(['gbrain', 'git', 'maintenance', '--path', '/srv/brain', '--dry-run', '--brain', 'teambrain']);
+    expect(pinRouting(['gbrain', 'git', 'commit-push', '-m', 'msg', '--', 'notes/a.md'], routing)).toEqual(['gbrain', 'git', 'commit-push', '-m', 'msg', '--', 'notes/a.md']);
+    expect(pinRouting(['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', '/srv/brain'], routing))
+      .toEqual(['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', '/srv/brain']);
+    expect(pinRouting(['gbrain', 'git', 'guard', '--install'], routing)).toEqual(['gbrain', 'git', 'guard', '--install']);
+    expect(pinRouting(['gbrain', 'git', '--', 'maintenance'], routing)).toEqual(['gbrain', 'git', '--', 'maintenance']);
+  });
+
   test('malformed ids are never interpolated', () => {
     expect(pinRouting(['gbrain', 'get', 'a'], { brain: '--yes', source: 'a b' })).toEqual(['gbrain', 'get', 'a']);
   });
@@ -69,7 +83,8 @@ describe('routing table agrees with the command table and the generated registry
   });
 
   test('every engine-opening command pins --brain; pre-connect ones only when their code reads the brain option', () => {
-    for (const r of CLI_COMMANDS.filter(c => c.phase !== 'pre-connect')) expect(routingFlagsFor(r.name).brain, r.name).toBe(true);
+    for (const r of CLI_COMMANDS.filter(c => c.phase !== 'pre-connect')) expect(routingFlagsFor(r.name, {}, r.routes_subcommands?.[0]).brain, r.name).toBe(true);
+    expect(routingFlagsFor('git', {}, 'commit-push')).toEqual({ brain: false, source: false });
     expect(routingFlagsFor('db-repair').brain).toBe(true);
     expect(routingFlagsFor('embeddings').brain).toBe(true);
     expect(routingFlagsFor('apply-migrations').brain).toBe(false);
@@ -77,7 +92,10 @@ describe('routing table agrees with the command table and the generated registry
   });
 
   test('committed routing table matches a fresh generator run (bun run build:flag-registry)', () => {
-    expect(Object.fromEntries(Object.entries(CLI_ROUTING_FLAGS).map(([k, v]) => [k, [...v]]))).toEqual(buildRoutingFlags());
+    const fresh = buildRoutingTables();
+    expect(Object.fromEntries(Object.entries(CLI_ROUTING_FLAGS).map(([k, v]) => [k, [...v]]))).toEqual(fresh.routing);
+    expect(Object.fromEntries(Object.entries(CLI_ROUTING_SUBCOMMANDS).map(([k, v]) => [k, [...v]]))).toEqual(fresh.subcommands);
+    for (const r of CLI_COMMANDS.filter(c => c.routes_subcommands)) expect(CLI_ROUTING_SUBCOMMANDS[r.name], r.name).toEqual([...r.routes_subcommands!].sort());
   });
 });
 

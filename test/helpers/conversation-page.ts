@@ -1,6 +1,6 @@
 /**
  * A seeded conversation-like Markdown page of about `bytes` UTF-8 bytes (Wave B
- * large-page tests and `scripts/bench-large-pages.ts`): day headers, speaker
+ * large-page tests; the bench streams its pages with conversation-stream.ts): day headers, speaker
  * turns between placeholder names, paragraphs of varied length, now and then a
  * fenced code block, and an optional unique needle word at chosen fractions of
  * the body. No gbrain fences, NUL bytes or real names. Deterministic per seed.

@@ -47,13 +47,15 @@ export async function segmentPage(engine: BrainEngine, slug: string, opts: {
   generation: number;
   occurrences: FixtureOccurrence[];
   title?: string;
+  /** Page kind (default `note`); `conversation` pages embed newest first (Wave C 1F). */
+  type?: string;
   bodyBytes?: number;
   sourceId?: string;
   /** Leave the text projection unsealed, as a flip that deferred its retirement does (default sealed). */
   unsealed?: boolean;
 }): Promise<SegmentedFixture> {
   const sourceId = opts.sourceId ?? 'default';
-  await engine.putPage(slug, { type: 'note', title: opts.title ?? slug, compiled_truth: 'Segmented fixture.', timeline: '', frontmatter: {} }, { sourceId });
+  await engine.putPage(slug, { type: opts.type ?? 'note', title: opts.title ?? slug, compiled_truth: 'Segmented fixture.', timeline: '', frontmatter: {} }, { sourceId });
   await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_text: 'Segmented fixture.', chunk_source: 'compiled_truth' }], { sourceId });
   const [page] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1 AND source_id = $2', [slug, sourceId]);
   const pageId = Number(page!.id);

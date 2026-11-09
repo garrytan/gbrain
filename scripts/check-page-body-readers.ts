@@ -23,7 +23,7 @@
  *                      quoted values like `chunk_source = 'timeline'` excluded)
  *                      or projecting `*` / `p.*` from `pages`
  *   call:<name>        a call to serializePageToMarkdown, serializeMarkdown,
- *                      contentHash, prepareMarkdownChunks, pageDocument,
+ *                      contentHash, prepareMarkdownChunks, prepareMarkdownChunkSet, pageDocument,
  *                      refreshPageBody or putPage
  *
  * `boundedBodyPrefixSql` (page-window/bounded-lead.ts), the one sanctioned
@@ -59,7 +59,7 @@ const ROOT = process.env.GBRAIN_GUARD_ROOT ?? join(import.meta.dir, '..');
 const BASELINE_REL = 'scripts/page-body-readers-baseline.tsv';
 const ANCHOR = 'docs/TESTING.md#page-body-readers';
 const BODY_FIELDS = new Set(['compiled_truth', 'timeline']);
-const BODY_CALLS = new Set(['serializePageToMarkdown', 'serializeMarkdown', 'contentHash', 'prepareMarkdownChunks', 'pageDocument',
+const BODY_CALLS = new Set(['serializePageToMarkdown', 'serializeMarkdown', 'contentHash', 'prepareMarkdownChunks', 'prepareMarkdownChunkSet', 'pageDocument',
   'refreshPageBody', 'putPage']);
 const ALLOWED_UNITS = new Set(['boundedBodyPrefixSql']);
 export const ACTIONS = new Set(['STREAM', 'LEAD', 'META', 'SEGW', 'INLINE', 'NONE']);

@@ -45,6 +45,7 @@ import { readManagedMode } from './ownership.ts';
 import { MANAGED_SYNC_PASS_OP, SYNC_ORIGIN_DELETED_OP, type SyncSelection } from './sync-pass-row.ts';
 import { faultPoint } from './fault-points.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../chunkers/recursive.ts';
+import { INLINE_TIMELINE_CHUNKER_VERSION } from '../markdown-chunks.ts';
 import { filterYielding, loopYield, progressYield, sortYielding, turnYield, whileActive, type LoopYield } from './sync-yield.ts';
 import { countsMatch, proveConfirm, readLevelMark, type ConfirmProof, type LevelMark } from './sync-pass-confirm.ts';
 import { domainCache, levelDomain, narrowedWalk, walkAttestations, type LevelDomainCache } from './sync-pass-narrow.ts';
@@ -411,7 +412,7 @@ async function readPages(exec: Exec, kind: 'postgres' | 'pglite', sourceId: stri
       NULLIF(c.revision, p.knowledge_revision::text) AS rec_revision,
       CASE WHEN c.parser IS DISTINCT FROM $4::jsonb THEN c.parser::text END AS rec_parser, c.parser = $4::jsonb AS rec_parser_expected,
       c.full_episode AS rec_full_episode, c.working AS rec_working,
-      (p.page_kind = 'markdown' AND p.chunker_version = ${MARKDOWN_CHUNKER_VERSION} AND p.body_storage IS DISTINCT FROM 'segmented'
+      (p.page_kind = 'markdown' AND p.chunker_version IN (${MARKDOWN_CHUNKER_VERSION}, ${INLINE_TIMELINE_CHUNKER_VERSION}) AND p.body_storage IS DISTINCT FROM 'segmented'
         AND p.text_projection_revision IS NOT DISTINCT FROM p.knowledge_revision AND p.contextual_retrieval_mode IS NOT NULL) AS derived_current
     FROM pages p LEFT JOIN (SELECT fingerprint, completed_keys->0->>'origin' AS origin, completed_keys->0->>'blob_oid' AS blob_oid,
         completed_keys->0->>'disk_blob_oid' AS disk_blob_oid, completed_keys->0->>'revision' AS revision,

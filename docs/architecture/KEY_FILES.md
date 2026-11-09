@@ -9,7 +9,7 @@ Find a path's entry:
 rg -n -F 'src/core/ops/pages.ts' docs/architecture/key-files/
 ```
 
-Ranges use each entry's first path. Search when a path crosses subsystems.
+Ranges use each entry's first path.
 Edit the subsystem entry, not this page, when behavior changes.
 Keep entries current-state: history belongs in `CHANGELOG.md` and Git.
 Where a new storage method, migration, doctor check, command, route or sync
@@ -56,8 +56,8 @@ link it here; never raise the cap.
 | [Core Search (2/2)](key-files/core-search-2.md) | `search/rerank.ts` to `search/vector-pool.ts`, relational, multi-hop, `hub-dampening.ts`, `crag.ts`; [CJK](key-files/core-search-cjk.md), [evidence](key-files/core-search-evidence.md) |
 | [Core Services (1/3)](key-files/core-services-1.md) | `src/core/advisor/*.ts` through `src/core/connectors/` |
 | [Core Services (1/3, continued)](key-files/core-services-1-continued.md) | `src/core/context/` through `src/core/context/ipc-path.ts` |
-| [Core Services (2/3)](key-files/core-services-2.md) | `src/core/conversation-parser/` through `src/core/ops/sources.ts`, except `src/core/persistence/` |
-| [Core Services (2/3, continued)](key-files/core-services-2-continued.md) | `page-state/`, `page-{body,window}/`, `progressive-batch/` |
+| [Core Services (2/3)](key-files/core-services-2.md) | `src/core/conversation-parser/` through `ops/sources.ts`, except `persistence/` |
+| [Core Services (2/3, continued)](key-files/core-services-2-continued.md) | `page-{state,body}/`, `progressive-batch/`; [reads](key-files/page-reads.md), [writes](key-files/large-page-writes.md) |
 | [Commit notifier](key-files/commit-notifier.md) | `src/core/notifier/` |
 | [Core Services (3/3)](key-files/core-services-3.md) | `src/core/think/index.ts` through `src/core/verbs/usage-log.ts` |
 | [Core Utilities (1/2)](key-files/core-utilities-1.md) | `archive-crawler-config.ts` through `remediation-checkpoint.ts`; [`cycle.ts`](key-files/core-cycle-primitive.md) |

@@ -1083,6 +1083,14 @@
       },
       {
         "category": "brain",
+        "name": "git_repo_health"
+      },
+      {
+        "category": "brain",
+        "name": "lfs_page_pointers"
+      },
+      {
+        "category": "brain",
         "name": "outside_content_fences"
       },
       {
@@ -1092,6 +1100,10 @@
       {
         "category": "brain",
         "name": "embedding_plane_disagreement"
+      },
+      {
+        "category": "brain",
+        "name": "inline_timeline_chunks"
       },
       {
         "category": "brain",
