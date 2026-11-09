@@ -89,7 +89,17 @@ beforeAll(async () => {
   await engine.upsertEventProjection({ depthSlug: 'people/alice-example', eventSlug: 'notes/n1', date: TODAY, summary: planted('event'), sourceId: SRC });
   const page = await engine.getPage('notes/n1', { sourceId: SRC });
   await engine.addTakesBatch([{ page_id: (page as { id: number }).id, row_num: 1, claim: planted('take'), kind: 'view', holder: 'world', weight: 0.8 }] as never);
-  for (const slug of ['people/alice-example', 'notes/n1', 'misc/orphan', 'stubs/s1']) {
+  // Agent handoff pages: a thread and a task addressed to plant-agent, stored text planted in title, summary, turn and instructions.
+  await engine.putPage('threads/plant-thread', {
+    type: 'note', title: planted('thread'), timeline: '',
+    compiled_truth: `# thread\n\n## Summary\n\n${planted('thread summary')}\n\n## Turns\n\n### Turn 1 · plant-agent · ${TODAY}T00:00:00.000Z\n\n${planted('turn')}`,
+    frontmatter: { handoff_type: 'thread', agent: 'plant-agent', status: 'active', agents: ['plant-agent'] },
+  }, { sourceId: SRC });
+  await engine.putPage('delegations/plant-task', {
+    type: 'note', title: planted('task'), timeline: '', compiled_truth: `# task\n\n## Instructions\n\n${planted('instructions')}`,
+    frontmatter: { handoff_type: 'delegation', from_agent: 'plant-from', to_agent: 'plant-agent', status: 'open', priority: 'normal', auto_ok: false, attempts: 0 },
+  }, { sourceId: SRC });
+  for (const slug of ['people/alice-example', 'notes/n1', 'misc/orphan', 'stubs/s1', 'threads/plant-thread']) {
     const p = await engine.getPage(slug, { sourceId: SRC });
     await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_text: p!.compiled_truth, chunk_source: 'compiled_truth', token_count: 8 }], { sourceId: SRC });
   }
@@ -217,6 +227,13 @@ const SWEEP: Record<string, Row> = {
   schema_review_orphans: { args: { limit: 50 } },
   list_write_conflicts: { args: {} },
   get_memory_settings: { args: {} },
+  // agent handoff — reads (pickup without an agent and claim_task return stored task/thread text too)
+  find_thread: { args: { query: 'PLANTMARK' } },
+  pickup: { args: { thread_id: 'plant-thread' } },
+  inbox: { args: { agent: 'plant-agent' } },
+  claim_task: { args: { task_id: 'plant-task', agent: 'plant-agent' } },
+  route: { args: {}, content: false },
+  routing_stats: { args: {} },
   // no_stored_text — write receipts (the planted content is the caller's own
   // input here; the receipt must not echo it)
   remember: { args: { fact: planted('remembered'), provenance: 'test:sweep', request_id: randomUUID() } },

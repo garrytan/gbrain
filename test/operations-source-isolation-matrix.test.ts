@@ -175,6 +175,13 @@ const MATRIX: Row[] = [
     controlSees: r => leakToken((r as any).matches) !== null,
     expectScoped: r => { expect(leakToken((r as any).matches)).toBeNull(); } },
   { name: 'get_chunks', mode: 'isolated', args: { slug: 'notes/beta-note' } },
+  // Agent handoff reads use the caller's write source; find_thread echoes its query, so the probe reads the matches.
+  { name: 'find_thread', mode: 'isolated', args: { query: 'BETAMARKER thread' },
+    controlSees: r => leakToken((r as any).matches) !== null,
+    expectScoped: r => { expect(leakToken((r as any).matches)).toBeNull(); } },
+  { name: 'inbox', mode: 'isolated', args: { agent: 'handoff-agent', include_closed: true } },
+  { name: 'route', mode: 'isolated', args: {} },
+  { name: 'routing_stats', mode: 'isolated', args: {} },
   { name: 'get_ingest_log', mode: 'isolated', args: { limit: 50 } },
   { name: 'find_orphans', mode: 'isolated', args: {} },
   { name: 'rank_entities', mode: 'isolated', args: {} },
@@ -269,6 +276,17 @@ beforeAll(async () => {
     await engine.addTag(`notes/${name}-note`, `${name}-topic`, { sourceId: src });
     await engine.addTag(`people/${name}-person`, `${name}-topic`, { sourceId: src });
     await engine.addLink(`notes/${name}-note`, `people/${name}-person`, `${MARK} ctx`, 'mentions', 'markdown', undefined, undefined, { fromSourceId: src, toSourceId: src });
+    // Agent handoff pages per source (thread, task addressed to handoff-agent, agent): handoff reads stay in the caller's write source.
+    const handoffAt = new Date(CAPTURED_NOW_MS).toISOString();
+    await engine.putPage(`threads/${name}-thread`, { type: 'note', title: `${MARK} thread`, timeline: '',
+      compiled_truth: `# ${MARK} thread\n\n## Summary\n\n${MARK} thread summary`,
+      frontmatter: { handoff_type: 'thread', agent: `src${name}-bot`, status: 'active', agents: [`src${name}-bot`], created_at: handoffAt, updated_at: handoffAt } }, { sourceId: src });
+    await installFixtureChunks(engine, `threads/${name}-thread`, [{ chunk_index: 0, chunk_text: `${MARK} thread summary`, chunk_source: 'compiled_truth', token_count: 4 }], { sourceId: src });
+    await engine.putPage(`delegations/${name}-task`, { type: 'note', title: `${MARK} task`, timeline: '',
+      compiled_truth: `# ${MARK} task\n\n## Instructions\n\n${MARK} instructions`,
+      frontmatter: { handoff_type: 'delegation', from_agent: `src${name}-bot`, to_agent: 'handoff-agent', priority: 'normal', auto_ok: false, status: 'open', attempts: 0, created_at: handoffAt, updated_at: handoffAt } }, { sourceId: src });
+    await engine.putPage(`agents/src${name}-bot`, { type: 'note', title: `src${name}-bot`, timeline: '', compiled_truth: `# src${name}-bot`,
+      frontmatter: { handoff_type: 'agent', model: 'matrix-model', registered_at: handoffAt, last_heartbeat: handoffAt } }, { sourceId: src });
     // Wanted page: an unresolved link from the note to a missing marker-named target.
     await engine.executeRaw(`INSERT INTO wanted_links (origin_page_id, source_id, producer, ref_kind, target_source_id, target_ref, checked_at)
       SELECT id, $1, 'body', 'slug', $1, $2, now() FROM pages WHERE slug = $3 AND source_id = $1`,

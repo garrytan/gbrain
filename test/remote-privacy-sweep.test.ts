@@ -183,6 +183,11 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   get_chunks: { slug: WORLD_FENCE_SLUG },
   resolve_slugs: { partial: 'world-page' },
   whois: { query: WORLD.pageTitle },
+  // Agent handoff: a private page named as an entity or context ref must never surface its title.
+  find_thread: { query: WORLD.pageTitle },
+  inbox: { agent: 'sweep-agent' },
+  route: { tags: ['sweep'] },
+  routing_stats: {},
   volunteer_context: { window: 'Recent discussion about WORLDSWEEP topics and pages.' },
   chronicle_day: { date: '2026-01-02' },
   chronicle_since: { date: '2020-01-01' },
@@ -200,6 +205,18 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   // put_page-into-fence-bearing-page restoration-echo class is explicitly
   // NOT covered here (write-side sweep TODO).
   put_page: { slug: 'notes/sweep-fresh-write', content: '# Fresh write\n\nNew content.\n' },
+  log_turn: { agent: 'sweep-agent', title: 'Sweep handoff thread', summary: 'fresh sweep turn', entities: [WORLD_PAGE_SLUG, PRIV_PAGE_SLUG] },
+  update_thread_summary: { thread_id: 'sweep-handoff-thread', summary: 'fresh sweep summary', agent: 'sweep-agent' },
+  checkpoint: { thread_id: 'sweep-handoff-thread', agent: 'sweep-agent', next_up: 'fresh sweep next step' },
+  pickup: { thread_id: 'sweep-handoff-thread', agent: 'sweep-agent-2' },
+  register_agent: { name: 'sweep-agent', model: 'sweep-model' },
+  heartbeat: { name: 'sweep-agent' },
+  delegate: { from_agent: 'sweep-agent', to_agent: 'sweep-agent-2', title: 'Sweep task', instructions: 'fresh sweep task', context: [PRIV_PAGE_SLUG], thread_id: 'sweep-handoff-thread' },
+  claim_task: { task_id: 'sweep-missing-task', agent: 'sweep-agent' },
+  complete_task: { task_id: 'sweep-missing-task', agent: 'sweep-agent', result: 'fresh sweep result' },
+  release_task: { task_id: 'sweep-missing-task', agent: 'sweep-agent', reason: 'fresh sweep reason' },
+  fan_out: { from_agent: 'sweep-agent', agents: ['sweep-agent', 'sweep-agent-2'], title: 'Sweep fan out', instructions: 'fresh sweep fan out' },
+  pick_result: { task_id: 'sweep-missing-task' },
   put_pages: { request_id: '6007a5e0-0000-4000-8000-000000000001', pages: [{ slug: 'notes/sweep-fresh-batch', content: '# Fresh batch\n\nNew content.\n' }] },
   // A stale revision on the fence-bearing page: the refusal must not echo it.
   edit_page: { slug: WORLD_FENCE_SLUG, expected_revision: '00000000-0000-4000-8000-000000000000', edits: [{ old_text: 'x', new_text: 'y' }] },
@@ -236,7 +253,9 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
 const COORDINATED_WRITES = new Set(['put_page', 'put_pages', 'capture', 'delete_page', 'restore_page', 'revert_version', 'edit_page', 'append_page',
   'remember', 'forget', 'add_tag', 'remove_tag', 'add_timeline_entry',
   'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve',
-  'get_write_request', 'list_write_requests', 'cancel_write_request']);
+  'get_write_request', 'list_write_requests', 'cancel_write_request',
+  // Agent handoff writes that publish a page on every call (the others answer a repeat as a no-op).
+  'log_turn', 'checkpoint', 'delegate', 'fan_out']);
 
 const EXPECTED_BY_SHAPE: Record<string, Partial<Record<Shape, Outcome>>> = {
   whoami: { scalar: 'error', federated: 'ok' },
@@ -279,6 +298,11 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   get_chunks: 'data',
   resolve_slugs: 'data',
   whois: 'data',
+  // agent handoff reads: handoff pages only (the corpus has none at phase R)
+  find_thread: 'ok',
+  inbox: 'ok',
+  route: 'ok',
+  routing_stats: 'ok',
   get_backlinks: 'data',
   traverse_graph: 'data',
   rank_entities: 'data',
@@ -381,6 +405,19 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   // ever names pages that answer returned to the same client.
   rate_answer: 'error',
   put_page: 'ok',
+  // agent handoff writes (fresh threads/delegations/agents slugs); task ops on a missing task refuse
+  log_turn: 'ok',
+  update_thread_summary: 'ok',
+  checkpoint: 'ok',
+  pickup: 'ok',
+  register_agent: 'ok',
+  heartbeat: 'ok',
+  delegate: 'ok',
+  claim_task: 'error',
+  complete_task: 'error',
+  release_task: 'error',
+  fan_out: 'ok',
+  pick_result: 'error',
   put_pages: 'ok',
   delete_page: 'ok',
   restore_page: 'ok',
@@ -605,6 +642,12 @@ ${PRIV.pageBody}
     claim: PRIV.take,
     kind: 'take',
     holder: 'brain',
+  });
+  // 6. Agent handoff: a thread a local agent logged naming the world page and
+  //    the private page. Remote pickup / find_thread must never surface the
+  //    private title (linked pages a remote caller cannot read stay title-less).
+  await operationsByName['log_turn'].handler(localCtx(), {
+    agent: 'sweep-agent', title: 'Sweep handoff thread', summary: 'seeded handoff turn', entities: [WORLD_PAGE_SLUG, PRIV_PAGE_SLUG],
   });
   // ── Source 2 (federated-arm variants) ───────────────────────────────
   // Direct row insert: sources_add demands a committed git repo (sync

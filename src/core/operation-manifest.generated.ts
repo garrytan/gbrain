@@ -7583,5 +7583,753 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     },
     "scope": "write",
     "area": "admin"
+  },
+  {
+    "name": "log_turn",
+    "mutating": true,
+    "writeInference": "async_derived",
+    "scope": "write",
+    "outputRedaction": "no_stored_text",
+    "description": "Append a turn to a shared thread page (threads/<id>.md) so any agent can pick the work up later. Pass thread_id to continue a thread, or title to start or continue the thread with that title. Decisions accumulate; open_questions, when passed, replace the open list. Entities (slugs or names) are linked to their pages.",
+    "params": {
+      "agent": {
+        "type": "string",
+        "required": true,
+        "description": "Your agent name, e.g. 'claude' or 'grok-bot'."
+      },
+      "model": {
+        "type": "string",
+        "description": "Your model label, e.g. 'claude-opus-5-5'."
+      },
+      "thread_id": {
+        "type": "string",
+        "description": "Thread to continue. Omit and pass title to start one."
+      },
+      "title": {
+        "type": "string",
+        "description": "Thread title, e.g. '12 Oak St listing deck'."
+      },
+      "summary": {
+        "type": "string",
+        "required": true,
+        "description": "One to three lines on what happened this turn."
+      },
+      "decisions": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Decisions made this turn."
+      },
+      "open_questions": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "The open questions now (replaces the list)."
+      },
+      "entities": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Pages this turn touched: slugs ('properties/12-oak-st') or names."
+      },
+      "next_up": {
+        "type": "string",
+        "description": "The next step, if it changed."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "active",
+          "parked",
+          "done"
+        ],
+        "description": "Set the thread status."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Source holding the handoff pages; default your write source."
+      }
+    },
+    "cliHints": {
+      "name": "log-turn"
+    },
+    "area": "handoff"
+  },
+  {
+    "name": "update_thread_summary",
+    "mutating": true,
+    "idempotent": true,
+    "writeInference": "async_derived",
+    "scope": "write",
+    "outputRedaction": "no_stored_text",
+    "description": "Replace a thread's rolling summary: what the work is, where it stands, and what matters for whoever picks it up next.",
+    "params": {
+      "thread_id": {
+        "type": "string",
+        "required": true,
+        "description": "Thread id, e.g. '12-oak-st-listing-deck'."
+      },
+      "summary": {
+        "type": "string",
+        "required": true,
+        "description": "The new rolling summary (markdown)."
+      },
+      "agent": {
+        "type": "string",
+        "description": "Your agent name; joins the handoff history."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Source holding the handoff pages; default your write source."
+      }
+    },
+    "cliHints": {
+      "name": "thread-summary",
+      "positional": [
+        "thread_id"
+      ]
+    },
+    "area": "handoff"
+  },
+  {
+    "name": "checkpoint",
+    "mutating": true,
+    "writeInference": "async_derived",
+    "scope": "write",
+    "outputRedaction": "no_stored_text",
+    "description": "Save your place on a thread: record the next step (and optionally a new rolling summary) and park the thread, so you or another agent can resume it with pickup.",
+    "params": {
+      "thread_id": {
+        "type": "string",
+        "required": true,
+        "description": "Thread id, e.g. '12-oak-st-listing-deck'."
+      },
+      "agent": {
+        "type": "string",
+        "required": true,
+        "description": "Your agent name, e.g. 'claude' or 'grok-bot'."
+      },
+      "model": {
+        "type": "string",
+        "description": "Your model label, e.g. 'claude-opus-5-5'."
+      },
+      "next_up": {
+        "type": "string",
+        "required": true,
+        "description": "What to do next when the work resumes."
+      },
+      "summary": {
+        "type": "string",
+        "description": "A new rolling summary."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "active",
+          "parked",
+          "done"
+        ],
+        "description": "Default 'parked'."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Source holding the handoff pages; default your write source."
+      }
+    },
+    "cliHints": {
+      "name": "checkpoint",
+      "positional": [
+        "thread_id"
+      ]
+    },
+    "area": "handoff"
+  },
+  {
+    "name": "find_thread",
+    "mutating": false,
+    "idempotent": true,
+    "scope": "read",
+    "outputRedaction": "retrieval",
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "description": "Find the thread a user means (\"the project about Y from Grok Bot\"): hybrid search over thread pages plus link-graph hits on the pages the query names, boosted when the named agent worked on it and by recency. Returns the top matches with a why line; confirm with the user, then pickup.",
+    "params": {
+      "query": {
+        "type": "string",
+        "required": true,
+        "description": "What the work was about, e.g. '12 Oak St listing deck'."
+      },
+      "agent": {
+        "type": "string",
+        "description": "The agent or app that held it (boosts, does not filter)."
+      },
+      "since": {
+        "type": "string",
+        "description": "Updated on/after: YYYY-MM-DD, ISO time, or 7d/2w."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "active",
+          "parked",
+          "done"
+        ],
+        "description": "Only threads with this status."
+      },
+      "limit": {
+        "type": "number",
+        "description": "Matches to return, 1-10 (default 3)."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Source holding the handoff pages; default your write source."
+      }
+    },
+    "cliHints": {
+      "name": "find-thread",
+      "positional": [
+        "query"
+      ]
+    },
+    "area": "handoff"
+  },
+  {
+    "name": "pickup",
+    "mutating": true,
+    "writeInference": "async_derived",
+    "scope": "write",
+    "outputRedaction": "retrieval",
+    "description": "Pick up a thread: returns its rolling summary, last 10 turns, decisions, open questions, next step, linked pages, linked delegations and handoff history. With agent, you join the history (e.g. grok-bot -> claude) and a parked thread becomes active.",
+    "params": {
+      "thread_id": {
+        "type": "string",
+        "required": true,
+        "description": "Thread id, e.g. '12-oak-st-listing-deck'."
+      },
+      "agent": {
+        "type": "string",
+        "description": "Your agent name; omit for a read-only look."
+      },
+      "model": {
+        "type": "string",
+        "description": "Your model label, e.g. 'claude-opus-5-5'."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Source holding the handoff pages; default your write source."
+      }
+    },
+    "cliHints": {
+      "name": "pickup",
+      "positional": [
+        "thread_id"
+      ]
+    },
+    "area": "handoff"
+  },
+  {
+    "name": "register_agent",
+    "mutating": true,
+    "idempotent": true,
+    "writeInference": "async_derived",
+    "scope": "write",
+    "outputRedaction": "no_stored_text",
+    "description": "Register an agent (agents/<name>.md) with its model and capabilities so delegations and routing can address it. Also counts as a heartbeat.",
+    "params": {
+      "name": {
+        "type": "string",
+        "required": true,
+        "description": "Agent name, e.g. 'claude' or 'grok-bot'."
+      },
+      "model": {
+        "type": "string",
+        "required": true,
+        "description": "Model label, e.g. 'claude-opus-5-5'."
+      },
+      "capabilities": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "What it is good at, e.g. ['decks', 'research']."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Source holding the handoff pages; default your write source."
+      }
+    },
+    "cliHints": {
+      "name": "register-agent",
+      "positional": [
+        "name"
+      ]
+    },
+    "area": "handoff"
+  },
+  {
+    "name": "heartbeat",
+    "mutating": true,
+    "idempotent": true,
+    "writeInference": "async_derived",
+    "scope": "write",
+    "outputRedaction": "no_stored_text",
+    "description": "Mark an agent live (registering it on first use) and reopen delegations whose lease ran out. Returns how many tasks wait in its inbox. Call it on your schedule and at the start of every chat, then call inbox.",
+    "params": {
+      "name": {
+        "type": "string",
+        "required": true,
+        "description": "Your agent name."
+      },
+      "model": {
+        "type": "string",
+        "description": "Your model label (recorded on first use or change)."
+      },
+      "capabilities": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Your capabilities (replaces the recorded list)."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Source holding the handoff pages; default your write source."
+      }
+    },
+    "cliHints": {
+      "name": "heartbeat",
+      "positional": [
+        "name"
+      ]
+    },
+    "area": "handoff"
+  },
+  {
+    "name": "delegate",
+    "mutating": true,
+    "writeInference": "async_derived",
+    "scope": "write",
+    "outputRedaction": "no_stored_text",
+    "description": "Hand work to another agent: writes a task page (delegations/<id>.md) addressed to to_agent or to_model. With neither, the top target from route is used and its reason recorded. The task shows in that agent's inbox.",
+    "params": {
+      "from_agent": {
+        "type": "string",
+        "required": true,
+        "description": "Your agent name, e.g. 'claude'."
+      },
+      "title": {
+        "type": "string",
+        "required": true,
+        "description": "Short task title."
+      },
+      "instructions": {
+        "type": "string",
+        "required": true,
+        "description": "What to do, in enough detail to act without asking."
+      },
+      "context": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Page slugs to read first, e.g. ['properties/12-oak-st']."
+      },
+      "thread_id": {
+        "type": "string",
+        "description": "Thread the work belongs to (the delegation is noted on it)."
+      },
+      "priority": {
+        "type": "string",
+        "enum": [
+          "urgent",
+          "high",
+          "normal",
+          "low"
+        ],
+        "description": "Default 'normal'."
+      },
+      "due": {
+        "type": "string",
+        "description": "Due date, YYYY-MM-DD or ISO time."
+      },
+      "auto_ok": {
+        "type": "boolean",
+        "description": "The receiving agent may start without asking the user."
+      },
+      "tags": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Tags routing rules match on."
+      },
+      "task_type": {
+        "type": "string",
+        "description": "Task type routing rules match on."
+      },
+      "to_agent": {
+        "type": "string",
+        "description": "Agent to hand it to."
+      },
+      "to_model": {
+        "type": "string",
+        "description": "Or: any agent on this model."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Source holding the handoff pages; default your write source."
+      }
+    },
+    "cliHints": {
+      "name": "delegate"
+    },
+    "area": "handoff"
+  },
+  {
+    "name": "inbox",
+    "mutating": false,
+    "idempotent": true,
+    "scope": "read",
+    "outputRedaction": "retrieval",
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "description": "Tasks waiting for an agent: open tasks addressed to it (or to its model), highest priority first, each with an ask_user line (null when auto_ok), plus the tasks it holds. A task addressed to another agent never appears.",
+    "params": {
+      "agent": {
+        "type": "string",
+        "required": true,
+        "description": "Your agent name, e.g. 'claude'."
+      },
+      "include_closed": {
+        "type": "boolean",
+        "description": "Also list its done and failed tasks."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Source holding the handoff pages; default your write source."
+      }
+    },
+    "cliHints": {
+      "name": "inbox",
+      "positional": [
+        "agent"
+      ]
+    },
+    "area": "handoff"
+  },
+  {
+    "name": "claim_task",
+    "mutating": true,
+    "writeInference": "async_derived",
+    "scope": "write",
+    "outputRedaction": "retrieval",
+    "description": "Claim a task from your inbox with a lease (default 15 minutes). Atomic: when two agents race, one wins and the other gets task_claimed. Claiming again while you hold it renews the lease. Returns the full task; then pickup its thread.",
+    "params": {
+      "task_id": {
+        "type": "string",
+        "required": true,
+        "description": "Task id from inbox or delegate."
+      },
+      "agent": {
+        "type": "string",
+        "required": true,
+        "description": "Your agent name, e.g. 'claude'."
+      },
+      "lease_minutes": {
+        "type": "number",
+        "description": "Lease length, 1-240 (default 15)."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Source holding the handoff pages; default your write source."
+      }
+    },
+    "cliHints": {
+      "name": "claim-task",
+      "positional": [
+        "task_id"
+      ]
+    },
+    "area": "handoff"
+  },
+  {
+    "name": "complete_task",
+    "mutating": true,
+    "writeInference": "async_derived",
+    "scope": "write",
+    "outputRedaction": "no_stored_text",
+    "description": "Finish a task you claimed: record the result (and any file slugs or URLs) and mark it done, or failed. The result is noted on its thread.",
+    "params": {
+      "task_id": {
+        "type": "string",
+        "required": true,
+        "description": "Task id from inbox or delegate."
+      },
+      "agent": {
+        "type": "string",
+        "required": true,
+        "description": "Your agent name, e.g. 'claude'."
+      },
+      "result": {
+        "type": "string",
+        "required": true,
+        "description": "What you did and what came out of it."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "done",
+          "failed"
+        ],
+        "description": "Default 'done'."
+      },
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Slugs, paths or URLs of what you produced."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Source holding the handoff pages; default your write source."
+      }
+    },
+    "cliHints": {
+      "name": "complete-task",
+      "positional": [
+        "task_id"
+      ]
+    },
+    "area": "handoff"
+  },
+  {
+    "name": "release_task",
+    "mutating": true,
+    "writeInference": "async_derived",
+    "scope": "write",
+    "outputRedaction": "no_stored_text",
+    "description": "Give a claimed task back when you can't finish it, with the reason. It returns to its addressee's inbox.",
+    "params": {
+      "task_id": {
+        "type": "string",
+        "required": true,
+        "description": "Task id from inbox or delegate."
+      },
+      "agent": {
+        "type": "string",
+        "required": true,
+        "description": "Your agent name, e.g. 'claude'."
+      },
+      "reason": {
+        "type": "string",
+        "required": true,
+        "description": "Why you are releasing it."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Source holding the handoff pages; default your write source."
+      }
+    },
+    "cliHints": {
+      "name": "release-task",
+      "positional": [
+        "task_id"
+      ]
+    },
+    "area": "handoff"
+  },
+  {
+    "name": "fan_out",
+    "mutating": true,
+    "writeInference": "async_derived",
+    "scope": "write",
+    "outputRedaction": "no_stored_text",
+    "description": "Send the same task to several agents at once: one sibling task each, all under one thread (created from the title when thread_id is omitted). Compare the results with the user, then record the chosen one with pick_result.",
+    "params": {
+      "from_agent": {
+        "type": "string",
+        "required": true,
+        "description": "Your agent name, e.g. 'claude'."
+      },
+      "agents": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "required": true,
+        "minItems": 2,
+        "description": "Agents to send it to, e.g. ['claude', 'chatgpt']."
+      },
+      "title": {
+        "type": "string",
+        "required": true,
+        "description": "Short task title."
+      },
+      "instructions": {
+        "type": "string",
+        "required": true,
+        "description": "What to do, in enough detail to act without asking."
+      },
+      "context": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Page slugs to read first, e.g. ['properties/12-oak-st']."
+      },
+      "thread_id": {
+        "type": "string",
+        "description": "Thread the work belongs to (the delegation is noted on it)."
+      },
+      "priority": {
+        "type": "string",
+        "enum": [
+          "urgent",
+          "high",
+          "normal",
+          "low"
+        ],
+        "description": "Default 'normal'."
+      },
+      "due": {
+        "type": "string",
+        "description": "Due date, YYYY-MM-DD or ISO time."
+      },
+      "auto_ok": {
+        "type": "boolean",
+        "description": "The receiving agent may start without asking the user."
+      },
+      "tags": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Tags routing rules match on."
+      },
+      "task_type": {
+        "type": "string",
+        "description": "Task type routing rules match on."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Source holding the handoff pages; default your write source."
+      }
+    },
+    "cliHints": {
+      "name": "fan-out"
+    },
+    "area": "handoff"
+  },
+  {
+    "name": "pick_result",
+    "mutating": true,
+    "idempotent": true,
+    "writeInference": "async_derived",
+    "scope": "write",
+    "outputRedaction": "no_stored_text",
+    "description": "Record which fan-out result the user chose. The pick feeds routing: an agent whose results win is ranked higher next time.",
+    "params": {
+      "task_id": {
+        "type": "string",
+        "required": true,
+        "description": "Task id from inbox or delegate."
+      },
+      "by": {
+        "type": "string",
+        "description": "Who picked, default 'user'."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Source holding the handoff pages; default your write source."
+      }
+    },
+    "cliHints": {
+      "name": "pick-result",
+      "positional": [
+        "task_id"
+      ]
+    },
+    "area": "handoff"
+  },
+  {
+    "name": "route",
+    "mutating": false,
+    "idempotent": true,
+    "scope": "read",
+    "outputRedaction": "retrieval",
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "description": "Rank who should take a task, deterministically (no model call): rules in the routing page (routing.md), which agents are live (recent heartbeat), and past outcomes (completion rate, failures, fan-out wins). Each target carries its reasons. Pass task_id, or tags and task_type.",
+    "params": {
+      "task_id": {
+        "type": "string",
+        "description": "Rank targets for an existing task."
+      },
+      "tags": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Tags of the work to route."
+      },
+      "task_type": {
+        "type": "string",
+        "description": "Task type of the work to route."
+      },
+      "exclude": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Agents to leave out (e.g. yourself)."
+      },
+      "limit": {
+        "type": "number",
+        "description": "Targets to return, 1-20 (default 5)."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Source holding the handoff pages; default your write source."
+      }
+    },
+    "cliHints": {
+      "name": "route"
+    },
+    "area": "handoff"
+  },
+  {
+    "name": "routing_stats",
+    "mutating": false,
+    "idempotent": true,
+    "scope": "read",
+    "outputRedaction": "no_stored_text",
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "description": "Per-agent delegation outcomes from the task pages: assigned, claims, done, failed, released, completion rate, median minutes to claim, and fan-out win rate.",
+    "params": {
+      "agent": {
+        "type": "string",
+        "description": "One agent; default every agent seen."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Source holding the handoff pages; default your write source."
+      }
+    },
+    "cliHints": {
+      "name": "routing-stats",
+      "positional": [
+        "agent"
+      ]
+    },
+    "area": "handoff"
   }
 ];

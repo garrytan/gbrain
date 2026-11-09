@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 171 tools across 26 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 187 tools across 27 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -68,6 +68,27 @@ Every non-localOnly operation on the MCP surface: 171 tools across 26 areas. **S
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
 | `purge_fact` | Owner-only, trusted local CLI on the brain host (`gbrain forget <id> --purge`). | admin |  |  |
+
+## handoff
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `checkpoint` | Save your place on a thread: record the next step (and optionally a new rolling summary) and park the thread, so you or another agent can resume it with pickup. | write |  |  |
+| `claim_task` | Claim a task from your inbox with a lease (default 15 minutes). | write |  |  |
+| `complete_task` | Finish a task you claimed: record the result (and any file slugs or URLs) and mark it done, or failed. | write |  |  |
+| `delegate` | Hand work to another agent: writes a task page (delegations/<id>.md) addressed to to_agent or to_model. | write |  |  |
+| `fan_out` | Send the same task to several agents at once: one sibling task each, all under one thread (created from the title when thread_id is omitted). | write |  |  |
+| `find_thread` | Find the thread a user means ("the project about Y from Grok Bot"): hybrid search over thread pages plus link-graph hits on the pages the query names, boosted when the named agent worked on it and by recency. | read |  |  |
+| `heartbeat` | Mark an agent live (registering it on first use) and reopen delegations whose lease ran out. | write |  |  |
+| `inbox` | Tasks waiting for an agent: open tasks addressed to it (or to its model), highest priority first, each with an ask_user line (null when auto_ok), plus the tasks it holds. | read |  |  |
+| `log_turn` | Append a turn to a shared thread page (threads/<id>.md) so any agent can pick the work up later. | write |  |  |
+| `pick_result` | Record which fan-out result the user chose. | write |  |  |
+| `pickup` | Pick up a thread: returns its rolling summary, last 10 turns, decisions, open questions, next step, linked pages, linked delegations and handoff history. | write |  |  |
+| `register_agent` | Register an agent (agents/<name>.md) with its model and capabilities so delegations and routing can address it. | write |  |  |
+| `release_task` | Give a claimed task back when you can't finish it, with the reason. | write |  |  |
+| `route` | Rank who should take a task, deterministically (no model call): rules in the routing page (routing.md), which agents are live (recent heartbeat), and past outcomes (completion rate, failures, fan-out wins). | read |  |  |
+| `routing_stats` | Per-agent delegation outcomes from the task pages: assigned, claims, done, failed, released, completion rate, median minutes to claim, and fan-out win rate. | read |  |  |
+| `update_thread_summary` | Replace a thread's rolling summary: what the work is, where it stands, and what matters for whoever picks it up next. | write |  |  |
 
 ## identity
 

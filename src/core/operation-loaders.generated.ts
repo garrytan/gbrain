@@ -8,6 +8,8 @@
 // String-literal import()s so bun --compile embeds every module.
 
 const load_admin = () => import('./ops/admin.ts') as Promise<Record<string, unknown>>;
+const load_agent_delegation = () => import('./ops/agent-delegation.ts') as Promise<Record<string, unknown>>;
+const load_agent_threads = () => import('./ops/agent-threads.ts') as Promise<Record<string, unknown>>;
 const load_attribution = () => import('./ops/attribution.ts') as Promise<Record<string, unknown>>;
 const load_brain_membership = () => import('./ops/brain-membership.ts') as Promise<Record<string, unknown>>;
 const load_calibration = () => import('./ops/calibration.ts') as Promise<Record<string, unknown>>;
@@ -256,4 +258,20 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "questions_refresh": [load_questions, "questionsOperations"],
   "questions_unpin": [load_questions, "questionsOperations"],
   "mute_notice": [load_notices, "noticesOperations"],
+  "log_turn": [load_agent_threads, "agentThreadOperations"],
+  "update_thread_summary": [load_agent_threads, "agentThreadOperations"],
+  "checkpoint": [load_agent_threads, "agentThreadOperations"],
+  "find_thread": [load_agent_threads, "agentThreadOperations"],
+  "pickup": [load_agent_threads, "agentThreadOperations"],
+  "register_agent": [load_agent_delegation, "agentDelegationOperations"],
+  "heartbeat": [load_agent_delegation, "agentDelegationOperations"],
+  "delegate": [load_agent_delegation, "agentDelegationOperations"],
+  "inbox": [load_agent_delegation, "agentDelegationOperations"],
+  "claim_task": [load_agent_delegation, "agentDelegationOperations"],
+  "complete_task": [load_agent_delegation, "agentDelegationOperations"],
+  "release_task": [load_agent_delegation, "agentDelegationOperations"],
+  "fan_out": [load_agent_delegation, "agentDelegationOperations"],
+  "pick_result": [load_agent_delegation, "agentDelegationOperations"],
+  "route": [load_agent_delegation, "agentDelegationOperations"],
+  "routing_stats": [load_agent_delegation, "agentDelegationOperations"],
 };
