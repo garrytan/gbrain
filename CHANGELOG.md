@@ -14,6 +14,8 @@ identifiers and attribution are available in the pre-removal Git revision
 
 **OpenClaw setups stop breaking each other, upgrades stop breaking OpenClaw, and four other harness fixes land.** Six fixes for people running gbrain with OpenClaw. Setting up one agent's workspace no longer rewrites or removes the per-turn brain rule every other agent on the same gateway relies on. Background turns (heartbeats, cron, finished commands) no longer get told to answer. `gbrain upgrade` no longer reinstalls gbrain in a way OpenClaw refuses to load as a plugin. `gbrain doctor` stops failing on skills another tool put in the workspace. The OpenClaw guide now leads with an install route that works and documents OpenClaw's own remote MCP connection.
 
+**gbrain's background claude-cli calls no longer read your personal Claude Code instructions.** On Claude Code 2.1.314 or newer the claude-cli provider runs its child with `--setting-sources ""`, so your `~/.claude/CLAUDE.md`, memory and `settings.json` stop steering gbrain's extraction and summary calls (and stop adding about 42k cached tokens to each). The trade-off: `settings.json`'s `env`, `apiKeyHelper` and permission rules don't reach the child either; the subscription login is kept. Older CLIs are unchanged.
+
 Four more harness fixes: a per-turn hook you paste into Hermes by hand now counts, `gbrain setup claude-code --instructions-only` writes the per-turn rule hook on Windows, `request_tools` stops promising tools a stdio session cannot call, and `gbrain schema show --source` reads that source's pack.
 
 - `gbrain setup openclaw --workspace <dir>` leaves the gateway-shared turn-rule plugin alone when it would name another server, and `--no-instructions` there no longer removes it, or the brain-first block in other workspaces' `AGENTS.md`, for every agent; it says how to change it for all agents instead and exits 0. A plugin an older gbrain wrote for the same server is rewritten (reported by @Masashi-Ono0611, #8401).
@@ -35,6 +37,9 @@ Four more harness fixes: a per-turn hook you paste into Hermes by hand now count
 - `src/core/mcp-registration.ts`: `openclawThinClientBlock` names OpenClaw's native remote MCP route.
 - Docs: `docs/mcp/OPENCLAW.md`, `docs/guides/upgrades-auto-update.md`, `TODOS.md`.
 - Tests: `test/brain-first-turn-rule.test.ts`, `test/setup-brain-first.test.ts`, `test/check-resolvable.test.ts`, `test/mcp-registration-blocks.test.ts`, and the upgrade suites that pin the child `bun` argv.
+- `src/core/ai/providers/claude-cli-language-model.ts`: `runClaude` adds `--setting-sources ""` when a cached `claude --version` (once per binary per process) reads `SETTING_SOURCES_MIN_VERSION` (2.1.314) or newer. Reported and first fixed by @Masashi-Ono0611 (#8350).
+- Docs: `docs/ai-providers/claude-cli.md` (the trade-off), `docs/guides/skillopt.md`, `docs/architecture/key-files/core-ai-continued.md`.
+- Tests: `test/claude-cli-setting-sources-8342.test.ts`; the `test/claude-cli-output-cap.test.ts` stub answers `--version`.
 
 ## [0.60.620.0] - 2026-11-09
 
