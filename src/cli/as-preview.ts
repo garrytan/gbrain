@@ -1,7 +1,7 @@
 /**
  * GBRA-218 local `--as <member>`: an operation's reads previewed as one member.
  * The handler runs under that member's identity with the remote read policy
- * (readers and privacy), while ctx.remote stays false, so upload confinement
+ * (readers and privacy; GST-2059: the brain owner reads with privacy relaxed), while ctx.remote stays false, so upload confinement
  * and write trust are unchanged. An unknown or ill-formed member is refused
  * before any work.
  */
@@ -33,15 +33,18 @@ const PASSTHROUGH: AsPreview = { run: fn => fn(), context: ctx => ctx };
 export async function openAsPreview(engine: BrainEngine, member: string | undefined, command: string): Promise<AsPreview> {
   if (member === undefined) return PASSTHROUGH;
   let identity: string[];
+  let owner: boolean;
   try {
-    identity = (await (await import('../core/access/members.ts')).memberIdentity(engine, member)).identity;
+    const resolved = await (await import('../core/access/members.ts')).memberIdentity(engine, member);
+    identity = resolved.identity;
+    owner = resolved.member === await (await import('../core/access/owner.ts')).ownerMemberId(engine);
   } catch (e: unknown) {
     await finishCliTeardown({ engine });
     exitCliError(e, command);
   }
   const { withCallerAccess } = await import('../core/search/private-visibility.ts');
   const folder = await (await import('../core/access/caller.ts')).folderAccessFor(engine, identity);
-  const access = { identity, ...folder, applyRemoteReadPolicy: true, hidePrivate: true, privateReadableSources: [] };
+  const access = { identity, ...folder, applyRemoteReadPolicy: true, hidePrivate: !owner, owner, privateReadableSources: [] };
   return {
     run: fn => withCallerAccess(access, fn),
     context: ctx => ({ ...ctx, accessIdentity: identity, applyRemoteReadPolicy: true }),
