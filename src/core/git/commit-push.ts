@@ -479,7 +479,8 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
   const untracked = listed(['ls-files', '--others', '--exclude-standard']);
   const deleted = listed(['diff', '--cached', '--no-renames', '--name-only', '--diff-filter=D']);
   const matching = (paths: string[]) => rel.filter(spec => paths.some(p => covers(spec, p)));
-  const unmatched = rel.filter(spec => !matching([...tracked, ...untracked, ...deleted]).includes(spec));
+  const matched = new Set(matching([...tracked, ...untracked, ...deleted]));
+  const unmatched = rel.filter(spec => !matched.has(spec));
   try {
     for (const [mode, specs] of [['-u', matching(tracked)], ['-A', matching(untracked)], ['-A', unmatched]] as const) {
       if (!specs.length) continue;
