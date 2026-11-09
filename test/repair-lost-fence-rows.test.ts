@@ -17,7 +17,10 @@ import { renderTakesFence } from '../src/core/takes-fence.ts';
 import { emptyFenceBlock } from '../src/core/generations/fence.ts';
 import { resolveRepairScope, type RepairResult } from '../src/core/repair/core.ts';
 import { repairRunner } from '../src/core/repair/registry.ts';
+import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { durableGitRepo } from './helpers/git-publication.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 
@@ -41,6 +44,8 @@ const live = async (engine: BrainEngine) => ({
   facts: (await engine.executeRaw<{ fact: string }>("SELECT fact FROM facts WHERE source_id='default' AND source_markdown_slug=$1 AND expired_at IS NULL ORDER BY row_num", [SLUG])).map(r => r.fact),
   takes: (await engine.executeRaw<{ claim: string }>("SELECT t.claim FROM takes t JOIN pages p ON p.id=t.page_id WHERE p.source_id='default' AND p.slug=$1 ORDER BY t.row_num", [SLUG])).map(r => r.claim),
 });
+const tierOf = async (engine: BrainEngine, table: 'facts' | 'takes', claim: string) => (await engine.executeRaw<{ trust_tier: string }>(table === 'facts'
+  ? "SELECT trust_tier FROM facts WHERE source_id='default' AND fact=$1 AND expired_at IS NULL" : 'SELECT trust_tier FROM takes WHERE claim=$1', [claim]))[0]?.trust_tier;
 async function repair(engine: BrainEngine, expectHash?: string): Promise<RepairResult> {
   const scope = await resolveRepairScope(engine, 'default');
   return (await repairRunner(engine, { apply: expectHash !== undefined, noEmbed: true, logger: { info() {}, warn() {}, error() {} } })).run('lost-fence-rows', scope,
@@ -136,6 +141,36 @@ for (const backend of testBackends()) {
         await put(ctx, PAGE(`Alice v4.\n\n${emptyFenceBlock('facts')}\n${emptyFenceBlock('takes')}`));
         await put(ctx, PAGE(`Alice v5.\n\n${FACTS(ROW(3, B))}\n${TAKES([3, TB])}`));
         expect((await repair(engine)).affected).toBe(0);
+      }, opts), 180_000);
+
+      test('a restored fact whose expired row has no stored tier comes back at the lowest tier, and the preview says so', () => managedBrain(async ({ engine, ctx }) => {
+        await loseRows(ctx);
+        await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw("DELETE FROM facts WHERE source_id='default' AND fact=$1 AND expired_at IS NOT NULL", [A]), TEST_WRITE_ATTRIBUTION));
+        const preview = await repair(engine);
+        expect(preview.affected).toBe(1);
+        expect(JSON.stringify(preview.listing)).toContain('at the lowest trust tier: no record of its earlier tier');
+        await repair(engine, preview.preview_hash);
+        expect(await tierOf(engine, 'facts', A)).toBe('external_untrusted');
+      }, opts), 180_000);
+
+      test('a restored take comes back at the lowest tier: a deleted take keeps no record of its tier', () => managedBrain(async ({ engine, ctx }) => {
+        await loseRows(ctx);
+        const preview = await repair(engine);
+        await repair(engine, preview.preview_hash);
+        expect(await tierOf(engine, 'takes', TA)).toBe('external_untrusted');
+      }, opts), 180_000);
+
+      test('an apply whose page write is left pending lowers the restored tiers when it is rerun', () => managedBrain(async ({ engine, ctx }) => {
+        await loseRows(ctx);
+        const preview = await repair(engine);
+        const first = await withEnv({ GBRAIN_WRITE_WAIT_MS: '0' }, () => repair(engine, preview.preview_hash));
+        await settleManagedGitEffects(engine);
+        for (let i = 0; i < 100 && !(await live(engine)).facts.includes(A); i++) await Bun.sleep(100);
+        const now = await live(engine);
+        expect({ facts: now.facts.sort(), takes: now.takes.sort() }).toEqual({ facts: [A, B].sort(), takes: [TA, TB].sort() });
+        if (first.stopped?.reason === 'write_pending') await repair(engine, preview.preview_hash);
+        expect(await tierOf(engine, 'takes', TA)).toBe('external_untrusted');
+        expect(first.stopped?.reason).toBe('write_pending');
       }, opts), 180_000);
 
       test('an apply after the page changed restores nothing and asks for a new preview', () => managedBrain(async ({ engine, ctx }) => {

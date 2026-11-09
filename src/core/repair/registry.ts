@@ -686,7 +686,7 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     consentText: {
       what: 'Put the previewed fact and take rows back into their pages\' Facts and Takes sections',
       why: 'The preview listed each row an older gbrain expired or deleted after a page rewrite dropped its section and a later remember or takes add re-created the section without it; page history holds each row. A section rebuilt by hand without a row looks the same, so check the list.',
-      risk: 'Each listed page is republished through a revision-bound put_page with the rows added and nothing else changed; a page that changed since the preview is skipped. A restored fact is a new facts row at the trust tier the expired one had. Page history keeps the earlier revision, and a managed source commits the file, so git revert undoes it.',
+      risk: 'Each listed page is republished through a revision-bound put_page with the rows added and nothing else changed; a page that changed since the preview is skipped. A restored row never gets more trust than it had: a fact comes back at the tier the expired row had, and a take, or a fact with no recorded tier, at the lowest tier. If the page write is left pending, rerun the same apply to finish lowering the tiers. Page history keeps the earlier revision, and a managed source commits the file, so git revert undoes it.',
       user_message: 'Put the previewed facts and takes back into their pages? Only those rows are added',
     },
     summary: 'Restore fact and take rows an older gbrain retired after a page rewrite dropped their Facts or Takes section: the next remember or takes add '

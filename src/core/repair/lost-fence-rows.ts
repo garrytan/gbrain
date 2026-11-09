@@ -29,7 +29,7 @@ import { heldFenceFactRows } from '../facts/unfenced-facts.ts';
 import { isFactWithdrawn } from '../facts/withdrawal.ts';
 import { readFenceBlocks } from '../generations/fence.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { opError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { stableJson } from '../persistence/digest.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
@@ -39,7 +39,7 @@ import { heldTakeRows } from '../persistence/takes-prepare.ts';
 import { parseTakesFence, upsertTakeRow, type ParsedTake } from '../takes-fence.ts';
 import { takesPreparation } from '../takes-write.ts';
 import { setRowTier } from '../trust/page-handlers.ts';
-import { compareTrust, storedTrustTier } from '../trust/tier.ts';
+import { compareTrust, isTrustTier, storedTrustTier, type TrustTier } from '../trust/tier.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairScope } from './core.ts';
 
 const DOCS = 'docs/guides/repair.md#lost-fence-rows';
@@ -189,7 +189,36 @@ async function plannedPage(engine: BrainEngine, entry: { source_id: string; slug
 const hashParts = (scope: RepairScope, pages: LostRowsPage[]) => ({ kind: 'lost-fence-rows-v1', brain_id: scope.brain_id, source_ids: scope.source_ids, pages });
 const item = (page: LostRowsPage, hash: string, last: boolean): LostRowsItem => ({ cursor: { phase: 1, id: page.page_id }, source_id: page.source_id, slug: page.slug,
   chars: 0, action: `restore_rows:${page.rows.length}`, page, hash, last });
-const describeRow = (row: LostRow) => `${row.kind} #${row.row_num} "${row.claim}" (retired ${row.retired_at}, restored from page version ${row.version_id})`;
+const describeRow = (row: LostRow) => `${row.kind} #${row.row_num} "${row.claim}" (retired ${row.retired_at}, restored from page version ${row.version_id}, `
+  + `${restoreTier(row) === 'external_untrusted' && !(row.kind === 'fact' && row.trust_tier === 'external_untrusted') ? 'at the lowest trust tier: no record of its earlier tier' : `at trust tier ${restoreTier(row)}`})`;
+
+/**
+ * The tier a restored row may have at most: the tier the expired fact had, or the lowest tier when no record holds one (a
+ * fact with no stored tier, every take: a deleted take's tier is in no record). A repair never hands a row more trust.
+ */
+const restoreTier = (row: LostRow): TrustTier => row.kind === 'fact' && isTrustTier(row.trust_tier) ? row.trust_tier : 'external_untrusted';
+
+/**
+ * Lowers each restored row of `page` (live at its planned number with its claim) to `restoreTier`. With `onlyIfAll`, does
+ * nothing and returns false unless every row is already live: the rerun of an apply whose page write was left pending.
+ */
+async function lowerRestoredTiers(engine: BrainEngine, page: LostRowsPage, onlyIfAll: boolean): Promise<boolean> {
+  const live = await Promise.all(page.rows.map(async row => (row.kind === 'fact'
+    ? await engine.executeRaw<{ id: number; trust_tier: string | null }>(`SELECT id::int AS id, trust_tier FROM facts
+        WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num=$3 AND fact=$4 AND expired_at IS NULL`, [page.source_id, page.slug, row.row_num, row.claim])
+    : await engine.executeRaw<{ id: number; trust_tier: string | null }>('SELECT id::int AS id, trust_tier FROM takes WHERE page_id=$1 AND row_num=$2 AND claim=$3',
+      [page.page_id, row.row_num, row.claim]))[0]));
+  if (onlyIfAll && live.some(row => !row)) return false;
+  for (const [index, row] of page.rows.entries()) {
+    const restored = live[index];
+    const tier = restoreTier(row);
+    if (restored && compareTrust(storedTrustTier(restored.trust_tier), tier) > 0) {
+      await setRowTier(engine, { table: row.kind === 'fact' ? 'facts' : 'takes', id: Number(restored.id), sourceId: page.source_id, tier,
+        note: { repair: 'lost-fence-rows', [row.kind]: row.id } });
+    }
+  }
+  return true;
+}
 
 export const lostFenceRowsRepair: RepairHandler = {
   kind: 'lost-fence-rows',
@@ -201,7 +230,7 @@ export const lostFenceRowsRepair: RepairHandler = {
       const listing: RepairListing[] = scan.pages.map(page => ({ item: `${page.source_id}:${page.slug} (revision ${page.revision})`, class: 'restore',
         detail: page.rows.map(describeRow).join('; ') }));
       return { items: scan.pages.map((page, index) => item(page, hash, index === scan.pages.length - 1)), preview_hash: hash, residuals: scan.residuals, listing,
-        ...(scan.pages.length ? { warnings: ['A restored fact comes back as a new facts row; the expired row stays as history. A restored take\'s earlier trust tier is in no record.'] } : {}),
+        ...(scan.pages.length ? { warnings: ['A restored fact comes back as a new facts row; the expired row stays as history. A restored row never gets more trust than it had: a take, or a fact with no recorded tier, comes back at the lowest tier.'] } : {}),
         details: { docs: DOCS } };
     }
     if (!opts.expect) {
@@ -216,25 +245,27 @@ export const lostFenceRowsRepair: RepairHandler = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { page, hash, last } = entry as LostRowsItem;
+    let pending = false;
+    const detail = { facts: page.rows.filter(r => r.kind === 'fact').length, takes: page.rows.filter(r => r.kind === 'take').length };
     try {
+      // A rerun after this repair's own page write was left pending finds the rows live at their numbers: it only lowers their tiers.
+      if (await lowerRestoredTiers(ctx.engine, page, true)) return { applied: true, outcome: 'restored', detail };
       const changed = (reason: string): RepairItemOutcome => ({ applied: false, outcome: 'changed_since_preview', reason: `${page.slug}: ${reason}; run ${COMMAND} again for a new preview.` });
       const [now] = (await scanLostFenceRows(ctx.engine, [page.source_id], page)).pages;
       if (!now || now.revision !== page.revision || stableJson(now.rows) !== stableJson(page.rows)) return changed('the page or its lost rows changed since the preview');
       const planned = await plannedPage(ctx.engine, page);
       if (typeof planned === 'string') return changed(planned);
-      await submitPageMutation(ctx, { operation: 'put_page', params: { slug: page.slug, source_id: page.source_id, content: planned.content, expected_revision: page.revision,
-        request_id: await repairRequestId(ctx, 'lost-fence-rows', entry, page.revision) } });
-      for (const row of page.rows.filter(r => r.kind === 'fact' && r.trust_tier)) {
-        const [restored] = await ctx.engine.executeRaw<{ id: number; trust_tier: string }>(`SELECT id::int AS id, trust_tier FROM facts
-          WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num=$3 AND expired_at IS NULL`, [page.source_id, page.slug, row.row_num]);
-        const tier = storedTrustTier(row.trust_tier!);
-        if (restored && compareTrust(storedTrustTier(restored.trust_tier), tier) > 0) {
-          await setRowTier(ctx.engine, { table: 'facts', id: Number(restored.id), sourceId: page.source_id, tier, note: { repair: 'lost-fence-rows', fact: row.id } });
-        }
+      try {
+        await submitPageMutation(ctx, { operation: 'put_page', params: { slug: page.slug, source_id: page.source_id, content: planned.content, expected_revision: page.revision,
+          request_id: await repairRequestId(ctx, 'lost-fence-rows', entry, page.revision) } });
+      } catch (error) {
+        pending = error instanceof OperationError && error.code === 'write_pending';
+        throw error;
       }
-      return { applied: true, outcome: 'restored', detail: { facts: page.rows.filter(r => r.kind === 'fact').length, takes: page.rows.filter(r => r.kind === 'take').length } };
+      await lowerRestoredTiers(ctx.engine, page, false);
+      return { applied: true, outcome: 'restored', detail };
     } finally {
-      if (last) await clearApprovedSet(ctx.engine, { command: 'lost-fence-rows', hash });
+      if (last && !pending) await clearApprovedSet(ctx.engine, { command: 'lost-fence-rows', hash });
     }
   },
   render(details) {

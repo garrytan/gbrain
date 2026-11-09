@@ -2124,8 +2124,14 @@ Each row comes back byte for byte from the newest page version that held it,
 at its old row number when that number is free. The apply republishes each
 page through one revision-bound page write that adds only those rows; a page
 changed since the preview is skipped and asks for a new preview. A restored
-fact is a new facts row at the trust tier the expired one had (the expired row
-stays as history). It is explicit-only and nothing runs on upgrade: show the
+fact is a new facts row (the expired row stays as history). A restored row
+never gets more trust than it had: a fact comes back at the tier the expired
+row had, and a take, or a fact with no recorded tier, at the lowest tier
+(`external_untrusted`); the preview says which on each row. If the apply
+stops because its page write is still pending, rerun the same apply command:
+it finishes lowering the tiers.
+
+It is explicit-only and nothing runs on upgrade: show the
 user the preview before running the apply.
 
 ### Extractor facts
