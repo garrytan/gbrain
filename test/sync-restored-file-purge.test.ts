@@ -229,6 +229,41 @@ for (const backend of testBackends()) {
   });
 
   describe(`${backend}: the retention purge never removes a file that is committed`, () => {
+    test('working-tree mode: a sync-deleted page whose committed file stays off disk is purged database-only, not deferred forever', () => managedBrain(async ({ engine, root }) => {
+      await engine.setConfig('sync.include_working_tree', 'true');
+      await sync(engine);
+      const parked = join(root, '..', 'doc-a.parked');
+      renameSync(join(root, `${A}.md`), parked);
+      await sync(engine);
+      expect((await page(engine, A))?.deleted_at).not.toBeNull();
+      await age(engine, 100);
+      await purge(engine, root, 'CLI purge-deleted');
+      expect(await page(engine, A)).toBeUndefined();
+      expect(git(root, 'ls-tree', '--name-only', 'HEAD', '--', `${A}.md`)).toBe(`${A}.md`);
+      renameSync(parked, join(root, `${A}.md`));
+      await sync(engine);
+      expect((await page(engine, A))?.deleted_at).toBeNull();
+      fileKept(root, A);
+    }, { setup, databaseUrl }), 300_000);
+
+    test('a sync-made tombstone whose returned file sync holds is refused with the hold, not deferred, and the file stays', () => managedBrain(async ({ engine, root }) => {
+      await sync(engine);
+      await removeAndSync(engine, root, [A]);
+      const broken = '---\ntype: concept\ntitle: [unclosed\n---\n\nAlice-example wrote about topic a.\n';
+      writeFileSync(join(root, `${A}.md`), broken); commit(root, 're-add with broken frontmatter');
+      await sync(engine);
+      expect((await page(engine, A))?.deleted_at).not.toBeNull();
+      expect((await status(engine)).state).not.toBe('synced');
+      await age(engine, 100);
+      const { purgeDeletedPagesCoordinated } = await import('../src/core/persistence/purge-deleted.ts');
+      const result = await purgeDeletedPagesCoordinated(engine, 72);
+      expect({ count: result.count, deferred: result.deferred, codes: result.blocked.map(b => b.code) }).toEqual({ count: 0, deferred: 0, codes: ['source_changed'] });
+      expect(result.blocked[0]!.reason).toContain('held by sync (invalid_frontmatter)');
+      expect((await page(engine, A))?.deleted_at).not.toBeNull();
+      expect(readFileSync(join(root, `${A}.md`), 'utf8')).toBe(broken);
+      expect(git(root, 'status', '--porcelain', '--', `${A}.md`)).toBe('');
+    }, { setup, databaseUrl }), 300_000);
+
     test("an older version purged the page and committed the file's removal; a revert of that commit imports the file as a new page", () => managedBrain(async ({ engine, root }) => {
       await sync(engine);
       const before = await page(engine, A);

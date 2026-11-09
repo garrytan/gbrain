@@ -26,6 +26,7 @@ import { submissionAuthority } from '../src/core/persistence/authority.ts';
 import { frozenVerbWriteError, runMemoryWrite } from '../src/core/persistence/verb-errors.ts';
 import { opError } from '../src/core/ops/contract.ts';
 import { DELETION_INVENTORY } from '../src/core/deletion-inventory.ts';
+import { redactJson } from '../src/core/persistence/intent-redaction.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const CLAIM = 'Vault combination is 7731';
@@ -104,6 +105,16 @@ describe('purge eval fixes', () => {
     const outcomes = await engine.executeRaw<{ outcome: { entry: { summary: string }; bullet: string } }>(`SELECT outcome FROM persistence_requests WHERE operation='add_timeline_entry' ORDER BY sequence`);
     expect(outcomes.map(o => [o.outcome.entry.summary, o.outcome.bullet])).toEqual([['[purged]', '[purged]'], ['[purged]', '[purged]']]);
   }, 60_000);
+
+  test('W3: timeline text is matched whole in its own receipts, so redacting 5,000 of them costs one set lookup per string', () => {
+    const receipts = Array.from({ length: 5000 }, (_, i) => ({ status: 'ok', entry: { date: '2026-02-03', summary: `Entry ${i} for acme-example` }, bullet: `- **2026-02-03** | Entry ${i} for acme-example` }));
+    const exact = new Set(receipts.flatMap(r => [r.entry.summary, r.bullet]));
+    const started = performance.now();
+    const redacted = receipts.map(r => redactJson(r, [], exact));
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(redacted.every(r => r.entry.summary === '[purged]' && r.bullet === '[purged]' && r.entry.date === '2026-02-03' && r.status === 'ok')).toBe(true);
+    expect(redactJson({ note: 'Entry 7 for acme-example, quoted elsewhere' }, [], exact)).toEqual({ note: 'Entry 7 for acme-example, quoted elsewhere' });
+  });
 
   test('39-3: remembering a purged claim refuses with purged_content (verb path, local and remote mapping)', async () => {
     const id = await seed();

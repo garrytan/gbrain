@@ -62,8 +62,9 @@ export interface SyncPathState {
   /**
    * An active hold at `p`: whether it is at level `L` in its own domain, re-screen due, or in the retry set. #7199 `unscreened`:
    * a side-`unknown` drift hold an older gbrain wrote before the drift screen compared the page with the file at the baseline commit.
+   * GST-2201 `deletionSide`: a `file_drift` hold on the deletion side (`tombstone_edited`, `purged_differs`, `file_gone`).
    */
-  hold: { atLevel: boolean; rescreenDue: boolean; retried: boolean; unscreened?: boolean } | null;
+  hold: { atLevel: boolean; rescreenDue: boolean; retried: boolean; unscreened?: boolean; deletionSide?: boolean } | null;
   /**
    * A deletion marker at the origin: `deleted` (with the blob ids it held) or `legacy` (the baseline blob of a page deleted
    * before PR 4; `deletion` is the committed deleting request that proves it, and a legacy marker without one settles nothing).
@@ -159,8 +160,9 @@ type Matched = Omit<SyncClassified, 'inFlight' | 'classAction'>;
  * is at its level and not re-screen due, the pass re-runs it (`held`, `rescreenDue`).
  */
 function firstMatch(s: SyncPathState, strict = false): Matched {
-  // GST-2201: a hold an older version raised over a sync-made tombstone whose file came back (tombstone_edited) is re-run.
-  const syncRestored = s.page?.live === false && s.page.syncDeleted === true && s.level !== null;
+  // GST-2201: a deletion-side hold an older version raised over a sync-made tombstone whose file came back (tombstone_edited)
+  // is re-run; a hold the import itself raised (invalid frontmatter, a slug conflict) stands.
+  const syncRestored = s.page?.live === false && s.page.syncDeleted === true && s.level !== null && s.hold?.deletionSide === true;
   if (s.hold && s.hold.atLevel && !s.hold.rescreenDue && !s.hold.retried && !syncRestored) return { cls: 'held', settled: true, action: 'none' };
   const rest = strict ? gitWins(s) : afterHold(s);
   // The re-run is the import the hold refused, where an import is what the level would get anyway (`import`) or changes

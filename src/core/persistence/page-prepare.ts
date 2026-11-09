@@ -667,13 +667,16 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
     && await originCommitted(engine, row.source_id, snapshot.page.source_path)
     && (await engine.executeRaw(`SELECT 1 FROM persistence_requests r WHERE r.source_id=$1 AND r.slug=$2 AND (r.page_id IS NULL OR r.page_id=$3) AND r.operation='delete_page'
       AND r.state='committed' AND r.outcome->'write_through'->>'skipped'='shared_origin' LIMIT 1`, [row.source_id, row.slug, snapshot.page.id])).length === 0;
+  let keepOrigin = false;
   if (committedFile) {
     const [made] = await engine.executeRaw<{ sync: boolean }>(`SELECT ${syncDeleteOrigin('p')} AS sync FROM pages p WHERE p.id=$1`, [snapshot.page.id]);
-    if (made?.sync) throw pageRefusal('revision_conflict', 'The file of this sync-deleted page is committed again, so the retention purge left the page and the file alone; the next sync restores the page.', row,
+    // Only a file on disk can come back through sync: one off disk in working-tree mode is purged database-only instead.
+    if (made?.sync && existsSync(file!.path)) throw pageRefusal('revision_conflict', 'The file of this sync-deleted page is committed again, so the retention purge left the page and the file alone; the next sync restores the page.', row,
       `Page ${row.slug}'s file is committed in source ${row.source_id}'s checkout.`, pageFix(row.source_id, row.slug));
+    keepOrigin = made?.sync === true;
   }
   // #6511: the purge's journal sweep runs here, under the preparation budget, never inside the 5 s publication transaction.
-  const preparedPurge: PreparedPagePurge | null = purge ? await preparePagePurge(engine, row, snapshot, clock) : null;
+  const preparedPurge: PreparedPagePurge | null = purge ? { ...await preparePagePurge(engine, row, snapshot, clock), ...(keepOrigin ? { keepOrigin } : {}) } : null;
   // #6948: a page merged into its duplicate holds that page's body, so an owner purge would tombstone the survivor's content.
   if (preparedPurge && !preparedPurge.retention && await isOriginTwinPage(engine, row.source_id, row.slug)) {
     const error = pageRefusal('source_changed', 'The page was merged into a duplicate that holds the same content, so a purge (which tombstones its content source-wide) was refused and nothing was removed, tombstoned or redacted. '
