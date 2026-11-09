@@ -16,7 +16,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -269,6 +269,24 @@ describe('repair private-labels', () => {
     expect((await row('notes/readers')).frontmatter.access).toBe('private');
     expect(ledgerLines(brainId).filter(l => l.restored && l.slug === 'notes/alias')).toHaveLength(1);
   });
+
+  test('a restore recorded while its write was only accepted, whose write then failed, stays restorable', async () => {
+    // The accepted-pending branch records the restored line before the queued write settles; here the write never landed.
+    const page = await row('notes/readers');
+    expect(page.frontmatter.access).toBe('private');
+    const clear = await json(['private-labels', '--class', 'alias']);
+    expect(clear.listing.map((l: { item: string }) => l.item)).toContain('default:notes/readers');
+    const cleared = await json(['private-labels', '--class', 'alias', '--apply', '--expect', clear.preview_hash]);
+    expect(cleared.failed).toEqual([]);
+    const removal = ledgerLines(brainId).filter(l => l.slug === 'notes/readers' && l.removed).at(-1)!;
+    appendFileSync(ledgerPath(brainId), JSON.stringify({ ...removal, removed: undefined, restored: removal.removed, at: new Date().toISOString(), request_id: crypto.randomUUID() }) + NL);
+    expect('access' in (await row('notes/readers')).frontmatter).toBe(false);
+    const preview = await json(['private-labels', '--class', 'restore']);
+    expect(preview.listing.map((l: { item: string }) => l.item)).toContain('default:notes/readers');
+    const restored = await json(['private-labels', '--class', 'restore', '--apply', '--expect', preview.preview_hash]);
+    expect(restored.failed).toEqual([]);
+    expect((await row('notes/readers')).frontmatter.access).toBe('private');
+  });
 });
 
 /**
@@ -347,7 +365,9 @@ describe('repair private-labels --class git-publish on a git-canonical source', 
     const root = join(dir, 'git-checkout');
     mkdirSync(root, { recursive: true });
     execFileSync('git', ['init', '-q'], { cwd: root });
-    execFileSync('git', ['-c', 'user.name=example', '-c', 'user.email=example@example.com', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Example Writer'], { cwd: root });
+    execFileSync('git', ['config', 'user.email', 'writer@example.invalid'], { cwd: root });
+    execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'init'], { cwd: root });
     await engine.executeRaw('INSERT INTO sources (id, name, local_path) VALUES ($1, $1, $2) ON CONFLICT (id) DO NOTHING', [source, root]);
     await seed('notes/nofile', 'note', { topic: 'shared' }, source);
     await engine.executeRaw('UPDATE sources SET config = $2::jsonb WHERE id = $1', [source, JSON.stringify({ canonical: 'git' })]);

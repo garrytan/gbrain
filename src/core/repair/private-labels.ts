@@ -141,15 +141,19 @@ async function planClear(engine: BrainEngine, scope: RepairScope, selection: Sel
 /** The ledger's latest line per page decides: a removal whose page is live and still lacks every removed key is restorable. */
 async function planRestore(engine: BrainEngine, scope: RepairScope, selection: Selection, ledger: PrivateLabelsLedger) {
   const { lines, unreadable } = ledger;
-  const latest = new Map<string, LedgerLine>();
+  // A page's latest clear decides; a later restored line is not proof, since a restore accepted pending can still fail.
+  const pages = new Set<string>();
+  const latestRemoval = new Map<string, LedgerLine>();
   for (const line of lines) {
-    if (line.brain_id === scope.brain_id && scope.source_ids.includes(line.source_id)) latest.set(`${line.source_id}:${line.page_id}`, line);
+    if (line.brain_id !== scope.brain_id || !scope.source_ids.includes(line.source_id)) continue;
+    pages.add(`${line.source_id}:${line.page_id}`);
+    if (line.removed) latestRemoval.set(`${line.source_id}:${line.page_id}`, line);
   }
-  const removals = [...latest.values()].filter(line => line.removed);
+  const removals = [...latestRemoval.values()];
   const live = removals.length ? await engine.executeRaw<LabelRow>(`SELECT id, source_id, slug, type, frontmatter, knowledge_revision::text AS revision, COALESCE(body_bytes, 0) AS chars
     FROM pages WHERE id = ANY($1::integer[]) AND deleted_at IS NULL`, [removals.map(line => line.page_id)], bounded) : [];
   const byId = new Map(live.map(row => [Number(row.id), row]));
-  const counts = { restorable: 0, already_restored: latest.size - removals.length, page_gone: 0 };
+  const counts = { restorable: 0, already_restored: pages.size - removals.length, page_gone: 0 };
   const entries: Approved[] = [];
   for (const line of removals) {
     const page = byId.get(line.page_id);

@@ -22,7 +22,10 @@ identifiers and attribution are available in the pre-removal Git revision
 - `src/cli/as-preview.ts`: `--as <owner>` previews the owner's view.
 - `src/core/repair/private-labels.ts` (new), `src/commands/repair-private-labels.ts` (new): `gbrain repair private-labels`, explicit-only and preview-bound; classes `alias`, `alias-and-visibility`, `git-publish` (named only) and `restore`; a ledger under the gbrain home records each change.
 - Skills and docs: `skills/conventions/page-privacy.md` (new), `skills/bulk-ingestion` (template), `skills/brain-ops`, `skills/_AGENT_README.md`, `skills/frontmatter-guard`; `docs/guides/access-designations.md` (new), linked from multi-source brains, company brain, page anatomy and brains-and-sources; `docs/protocol/MCP_META_CHANNELS.md`.
-- Tests: `test/access-owner-reads.test.ts`, `test/repair-private-labels.test.ts`.
+- `src/core/persistence/page-visibility.ts`, `src/core/persistence/page-prepare.ts`, `src/core/persistence/upload-streamed.ts`: a new `default` page the enabled owner's credential creates through `put_page` or a streamed upload is not kept to the owner (no `readable_by: [member:<id>]`); a rewrite keeps its stored readers, and `POST /ingest` still refuses the owner.
+- `src/core/persistence/page-prepare.ts`: on a git-canonical source, a page that was private from its first write (no file ever recorded) writes its file for the first time when it stops being private, so `--class git-publish` and an ordinary edit no longer refuse it as a removed canonical file.
+- `src/core/repair/private-labels.ts`: restore plans from each page's latest clear and its current labels, so a restore that was accepted but never landed stays restorable; a ledger line that fails to save after a write reports the values to undo by hand; a git-publish clear is called one-way, since Git history keeps the page.
+- Tests: `test/access-owner-reads.test.ts`, `test/access-owner-default-writes.test.ts`, `test/repair-private-labels.test.ts`.
 
 ## [0.60.622.0] - 2026-11-09
 
