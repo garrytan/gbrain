@@ -10,6 +10,14 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+### Added
+
+- `gbrain setup openclaw --skill-loading resolve|shadow|off`: a separate OpenClaw plugin, `gbrain-skill-resolver`, that puts up to 3 relevant skills in front of the model on each real user turn, ranked inside the gateway's Node process in a worker thread with a 50 ms deadline, so a busy gateway never waits on gbrain. It leaves OpenClaw's own skill list alone. `shadow` ranks and logs what it would have suggested without injecting anything; `--live-fraction`, `--pins-route` and `--owner-sender` stage a rollout. Switching modes or pins rewrites only gbrain's state file, so no OpenClaw command runs and the gateway does not reload. A partial install is never reported as done: it exits 3 with `skill_resolver_plugin_not_installed` and the commands still to run. Off by default.
+- `gbrain skills pin add|remove|list --catalog <c>`: operator-chosen always-on skills, shown as a pinned block and never suggested twice. gbrain ships none; pins must name a skill in the catalog.
+- `gbrain doctor --only skill_resolver` reports the OpenClaw plugin, its library, each agent's catalog and pins, and over the last 24 hours the outcomes, how often a suggested skill was opened and the deadline-miss rate; it warns when more than 5% of at least 20 turns missed the deadline.
+
 ## [0.60.633.0] - 2026-11-09
 
 ### Added
