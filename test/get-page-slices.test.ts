@@ -293,7 +293,7 @@ for (const kind of testBackends()) {
           expect({ extra, code: e.code }).toEqual({ extra, code: 'invalid_params' });
         }
         const historical = await refusal(get({ slug: 'notes/sections', section: 'Goals', known_as_of: '2026-01-01T00:00:00Z' }));
-        expect(historical.message).toContain('section');
+        expect([historical.code, historical.message.includes('section')]).toEqual(['coverage_from', false]);
       });
 
       test('body auto or window with a slice still slices', async () => {

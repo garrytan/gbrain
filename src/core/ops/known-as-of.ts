@@ -20,7 +20,7 @@ export const KNOWN_AS_OF_PARAM: ParamDef = { type: 'string', fullSurfaceOnly: tr
   description: 'Recorded time: the page as this brain had recorded it at this ISO 8601 instant (2026-10-01T12:00:00Z), from the belief ledger. Not as_of, which is valid time (a date).' };
 export const VERSIONS_DIFF_PARAM: ParamDef = { type: 'boolean', actsWhenTrue: true, fullSurfaceOnly: true, description: 'With known_as_of: each version also carries a unified diff from the version before it.' };
 
-/** get_page parameters that select a body window, a fuzzy match or an edit view, none of which a historical read serves. */
+/** get_page parameters that select a body window, a fuzzy match or an edit view, none of which a historical read serves: a recorded-time read sets them aside and names them (GST-2214: GPT-6.1 Sol fills every one). */
 const GET_PAGE_UNSUPPORTED = ['fuzzy', 'include_content', 'content_only', 'include_timeline_entries', 'grammar_diagnostics', 'include_quarantined',
   'lines', 'bytes', 'around_chunk_id', 'context_lines', 'cursor', 'max_bytes', 'view', 'outline_from', 'section', 'grep', 'context'] as const;
 
@@ -102,14 +102,11 @@ function ledgerView(read: PageAtTime) {
 /** `get_page {known_as_of}`: the page at the slug as recorded at the instant, with the interval it was in and whether the ledger certifies it. */
 export async function getPageKnownAsOf(ctx: OperationContext, p: Record<string, unknown>): Promise<Record<string, unknown>> {
   const at = parseKnownAsOf(p.known_as_of);
-  const extra = GET_PAGE_UNSUPPORTED.filter(k => p[k] !== undefined && p[k] !== false);
-  const badBody = p.body !== undefined && p.body !== 'auto' && p.body !== 'full' && p.body !== 'none';
-  if (extra.length || badBody) {
-    const drop: string[] = badBody ? [...extra, 'body'] : extra;
+  if (p.body !== undefined && p.body !== 'auto' && p.body !== 'full' && p.body !== 'none') {
     const name = (k: string) => opTransport(ctx) === 'cli' ? `--${k.replace(/_/g, '-')}` : `\`${k}\``;
-    const kept = Object.fromEntries(GET_PAGE_AS_OF_ARGS.filter(k => p[k] !== undefined && !drop.includes(k)).map(k => [k, p[k]]));
-    throw opError('invalid_params', `get_page: known_as_of does not combine with ${extra.length ? extra.join(', ') : `body: ${String(p.body)}`}.`,
-      `Drop ${drop.map(name).join(', ')} to read the page as recorded at known_as_of, or drop ${name('known_as_of')} for the current page. A recorded-time read takes only ${GET_PAGE_AS_OF_ARGS.slice(2).map(name).join(', ')} (auto, full or none).`,
+    const kept = Object.fromEntries(GET_PAGE_AS_OF_ARGS.filter(k => p[k] !== undefined && k !== 'body').map(k => [k, p[k]]));
+    throw opError('invalid_params', `get_page: known_as_of does not combine with body: ${String(p.body)}.`,
+      `Drop ${name('body')} to read the page as recorded at known_as_of, or drop ${name('known_as_of')} for the current page. A recorded-time read takes only ${GET_PAGE_AS_OF_ARGS.slice(2).map(name).join(', ')} (auto, full or none).`,
       { fix: readFix('The same call without the arguments that select a window or view of the current page, which a recorded-time read does not serve.',
         { argv: ['gbrain', 'get', ...Object.entries(kept).filter(([k]) => k !== 'slug').flatMap(([k, v]) => v === true ? [`--${k.replace(/_/g, '-')}`] : v === false ? [] : [`--${k.replace(/_/g, '-')}`, String(v)]), '--', String(p.slug)],
           mcp: { tool: 'get_page', arguments: kept } }) });
@@ -119,7 +116,9 @@ export async function getPageKnownAsOf(ctx: OperationContext, p: Record<string, 
   const read = await readAsCaller(ctx, { sourceId, slug, at }, p.include_deleted === true);
   const current = read.current && (await readable(ctx, read, [read.current], p.min_trust))[0];
   if (!current || (current.deleted && p.include_deleted !== true)) throw pageNotFoundError(ctx, slug, { includeDeleted: p.include_deleted === true, sourceIdParam: sourceId });
-  return { ...intervalView(ctx, current, { body: p.body !== 'none', inlineMax: await inlineBodyBytes(ctx) }), ...ledgerView(read) };
+  const ignored = GET_PAGE_UNSUPPORTED.filter(k => p[k] !== undefined && p[k] !== false);
+  return { ...intervalView(ctx, current, { body: p.body !== 'none', inlineMax: await inlineBodyBytes(ctx) }), ...ledgerView(read),
+    ...(ignored.length ? { set_aside: { ignored, note: `Read the whole page as recorded at known_as_of; ignored ${ignored.length > 1 ? `${ignored.slice(0, -1).join(', ')} and ${ignored[ignored.length - 1]}` : ignored[0]}, which read the current page. Drop known_as_of to read a window or view of the current page.` } } : {}) };
 }
 
 /** `get_versions {known_as_of}`: the page's validity intervals known at the instant, newest first; `diff` adds each one's change from the one before it. */

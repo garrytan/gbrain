@@ -33,6 +33,7 @@ function mkPoint(text: string): TrajectoryPoint {
   return {
     fact_id: 1,
     valid_from: new Date('2026-01-01'),
+    valid_until: null,
     metric: 'mrr',
     value: 50000,
     unit: 'USD',
