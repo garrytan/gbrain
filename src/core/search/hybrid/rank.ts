@@ -461,12 +461,12 @@ export async function sizeReturnPool(
         minKeep: resolvedMode.autocut_min_keep,
         minTopScore: resolvedMode.autocut_min_top,
       },
-      // Preserve alias-hop exact matches: applyAliasHop injects the canonical
+      // Preserve alias-hop matches (exact and qualified): applyAliasHop injects the canonical
       // page AFTER reranking, so it has no rerank_score. Without this it would
       // be dropped whenever autocut cuts on the scored set (Codex P1).
       // #1663: same guarantee for structural exact-lookup tier hits (slug /
       // exact-title identity matches also arrive post-rerank, unscored).
-      (x) => x.alias_hit === true || x.exact_lookup !== undefined || x.relational_pinned === true,
+      (x) => x.alias_hit === true || x.qualified_alias_hit === true || x.exact_lookup !== undefined || x.relational_pinned === true,
     );
     returnPool = r.kept;
     autocutDecision = r.decision;
