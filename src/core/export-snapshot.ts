@@ -27,7 +27,7 @@ export async function readExportWithdrawals(tx: BrainEngine, sourceId: string): 
     ORDER BY visibility,fact_hash,subject`, [sourceId]);
 }
 
-export type ExportSnapshot = { page: Page; tags: string[]; generation?: number | null };
+export type ExportSnapshot = { page: Page; tags: string[] };
 
 export async function readExportPage(tx: BrainEngine, key: { id: string; source_id: string; slug: string }, withdrawals: ExportWithdrawal[]): Promise<ExportSnapshot> {
   return (await readExportPages(tx, [key], withdrawals))[0]!;
@@ -52,7 +52,7 @@ export async function readExportPages(tx: BrainEngine, keys: ReadonlyArray<{ id:
   const snapshots = keys.map(key => {
     const row = byId.get(String(key.id));
     if (!row || row.source_id !== key.source_id || row.slug !== key.slug) throw new Error('Export snapshot unexpectedly lost a selected page.');
-    return { page: rowToPage(row), tags: row.export_tags as string[], generation: row.body_generation == null ? null : Number(row.body_generation) };
+    return { page: rowToPage(row), tags: row.export_tags as string[] };
   });
   const fenced = snapshots.flatMap(({ page }) => {
     if (isSegmentedPage(page) || !(page.compiled_truth.includes('gbrain:facts:begin') || page.timeline.includes('gbrain:facts:begin'))) return [];

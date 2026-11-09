@@ -25,6 +25,7 @@ import { SEGMENTED_CHUNKER_VERSION } from '../../src/core/page-body/segment-chun
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { segmentPage, sha256 } from '../helpers/segmented-chunks-fixture.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { unquoteTranscriptText } from '../../src/core/search/transcript-quote.ts';
 
 const BIG = 'notes/keyset-walk-example';
 const SMALL = 'notes/keyset-small-example';
@@ -202,14 +203,16 @@ for (const kind of testBackends()) {
         emitNotice: (n: Notice) => { captured.notices.push(n); }, emitResponseMeta: (k: string, v: unknown) => { captured.meta[k] = v; },
       } as unknown as OperationContext;
       const get = (params: Record<string, unknown>) => operationsByName.get_chunks!.handler(ctx, params) as Promise<Array<Record<string, unknown>>>;
+      // #8042 (GST-687): a remote reader gets an agent-written page's chunks quoted; compare the page's own text.
+      const own = (r: Record<string, unknown>) => r.quoted === 'transcript' ? unquoteTranscriptText(r.chunk_text as string, SMALL) : r.chunk_text;
       const first = await get({ slug: SMALL, limit: 2 });
-      expect(first.map(r => r.chunk_text)).toEqual(['first passage', 'second passage']);
+      expect(first.map(own)).toEqual(['first passage', 'second passage']);
       const cursor = first[1]!.next_cursor as string;
       expect(first[1]).toMatchObject({ truncated: true, next_from_index: 2, next_cursor: expect.stringMatching(/^gch1\./) });
       expect(captured.meta.pagination).toEqual({ from_index: 0, limit: 2, returned: 2, total_chunks: 5, next_from_index: 2, next_cursor: cursor });
       expect(captured.notices[0]!.fix?.mcp).toEqual({ tool: 'get_chunks', arguments: { slug: SMALL, cursor, limit: 2 } });
       const second = await get(captured.notices[0]!.fix!.mcp!.arguments as Record<string, unknown>);
-      expect(second.map(r => r.chunk_text)).toEqual(['third passage', 'fourth passage']);
+      expect(second.map(own)).toEqual(['third passage', 'fourth passage']);
       expect(captured.meta.pagination).toMatchObject({ from_index: 2, returned: 2, next_from_index: 4 });
       await expect(get({ slug: BIG, cursor })).rejects.toMatchObject({ code: 'invalid_params' });
       await expect(get({ slug: SMALL, cursor: 'gch1.not-a-cursor' })).rejects.toMatchObject({ code: 'invalid_params' });

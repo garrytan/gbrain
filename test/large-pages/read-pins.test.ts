@@ -32,6 +32,7 @@ import { factRow } from '../helpers/segmented-privacy-fixture.ts';
 import { holdFingerprint } from '../../src/core/write-gate-store.ts';
 import { fenceRowHoldTexts } from '../../src/core/eligibility/fence-overlay.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { unquoteTranscriptText } from '../../src/core/search/transcript-quote.ts';
 
 const sha = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
 const ALPHA = 'zzclaim alpha one';
@@ -94,7 +95,11 @@ for (const kind of testBackends()) {
       }
       return replies;
     };
-    const text = (replies: Reply[]) => replies.map(r => r.body.window?.text ?? '').join('');
+    // #8042 (GST-687): a remote reader gets an agent-written page's windows quoted; size and sha256 cover the page's own bytes.
+    const text = (replies: Reply[]) => replies.map(r => {
+      const t = r.body.window?.text ?? '';
+      return r.body.quoted === 'transcript' ? unquoteTranscriptText(t, String(r.body.slug)) : t;
+    }).join('');
 
     beforeAll(async () => { brain = await openAppendBrain(kind); }, 600_000);
     afterAll(() => brain.close(), 120_000);
@@ -219,7 +224,7 @@ for (const kind of testBackends()) {
         if (++calls === 1) await append(slug, '\n\nAppended while the thin client paged.\n');
         return r.body;
       }, { slug }, async t => { out.push(t); });
-      expect(out.join('')).toBe(whole);
+      expect(unquoteTranscriptText(out.join(''), slug)).toBe(whole);
       expect(pagedReadWork.spooled).toBe(calls);
       expect(pagedReadWork.replayed).toBe(calls);
     }, 300_000);
@@ -261,7 +266,7 @@ for (const kind of testBackends()) {
       const whole = text(await pageOn(slug, await markdown(slug, { max_bytes: 4 * 1024 * 1024 }), {}));
       expect(whole).toContain('## Section a 310 revised\n');
       expect(whole).not.toContain('## Section a 310\n');
-      expect(out.join('')).toBe(whole);
+      expect(unquoteTranscriptText(out.join(''), slug)).toBe(whole);
       expect(pagedReadWork.spooled).toBe(calls);
       expect(pagedReadWork.replayed).toBe(calls - 1);
     }, 300_000);

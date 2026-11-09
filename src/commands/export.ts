@@ -148,8 +148,8 @@ a fresh directory. See docs/storage-tiering.md#safe-export.`);
       let cursor = '0';
       for (;;) {
         checkDeadline();
-        const batch = await tx.executeRaw<{ id: string; segmented: boolean; slug: string; source_id: string; source_path: string | null; source_path_bytes: number; raw_count: number; bytes: number }>(
-          `SELECT p.id::text, p.body_storage='segmented' AS segmented, left(p.slug,4097) AS slug, p.source_id, left(p.source_path,4097) AS source_path, octet_length(p.source_path) AS source_path_bytes,
+        const batch = await tx.executeRaw<{ id: string; segmented: boolean; slug: string; source_id: string; source_path: string | null; source_path_bytes: number; raw_count: number; bytes: number; body_generation: string | null }>(
+          `SELECT p.id::text, p.body_storage='segmented' AS segmented, p.body_generation::text AS body_generation, left(p.slug,4097) AS slug, p.source_id, left(p.source_path,4097) AS source_path, octet_length(p.source_path) AS source_path_bytes,
             (SELECT count(*) FROM raw_data r WHERE r.page_id=p.id) AS raw_count,
             CASE WHEN p.body_storage='segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth)::bigint + octet_length(p.timeline) END
               + octet_length(p.frontmatter::text)
@@ -180,7 +180,7 @@ a fresh directory. See docs/storage-tiering.md#safe-export.`);
             try {
               if (isSegmentedPage(page)) {
                 deferred.push({ name: staged.planStream(target.path, Number(key.bytes), segmentedLimit), bytes: Number(key.bytes),
-                  page: { id: page.id, slug: page.slug, source_id: page.source_id, body_bytes: page.body_bytes }, generation: snapshot.generation!,
+                  page: { id: page.id, slug: page.slug, source_id: page.source_id, body_bytes: page.body_bytes }, generation: Number(key.body_generation),
                   head: segmentedExportHead(snapshot, target.escaped) });
                 ledgers.set(batchSource, withdrawals);
               } else staged.add(target.path, 'file', inlineExportMarkdown(snapshot, target.escaped));
