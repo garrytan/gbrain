@@ -122,6 +122,33 @@ for (const kind of testBackends()) {
       expect(rows['young-committed']).toMatchObject({ compacted: false, has_intent: true });
     });
 
+    check('the retention pass keeps a refused caller write that failed-writes can still replay until a later request resolves it', async engine => {
+      const requests = await requestFixture(engine);
+      for (const slug of ['drifted', 'guarded', 'resolved', 'other-failure']) await requests.publish(await requests.admit(slug));
+      await settleEffects(engine);
+      const id = async (slug: string) => (await engine.executeRaw<{ id: string }>('SELECT id FROM persistence_requests WHERE slug=$1 ORDER BY sequence LIMIT 1', [slug]))[0]!.id;
+      // Refusals `gbrain repair failed-writes` replays: a file/database drift and a writer guard on a caller's own page write.
+      await editRequest(engine, await id('drifted'), "state='conflict',error_code='source_changed'");
+      await editRequest(engine, await id('guarded'), "state='failed',error_code='writer_coordinator_required'");
+      await editRequest(engine, await id('resolved'), "state='conflict',error_code='source_changed'");
+      // A refusal failed-writes does not replay.
+      await editRequest(engine, await id('other-failure'), "state='failed',error_code='example_failure'");
+      await age(engine, 40);
+      // A later committed write of the page resolves its refusal.
+      const later = await requests.admit('resolved');
+      await editRequest(engine, later.id, "state='committed',completed_at=now(),error_code=NULL");
+      await settleEffects(engine);
+      await engine.setConfig(RECEIPT_TARGET_KEY, '0');
+      await runCompactionPass(engine, { hostId: 'host-a' });
+      const rows = await receipts(engine);
+      const first = (slug: string) => rows.find(r => r.slug === slug)!;
+      expect(first('drifted')).toMatchObject({ compacted: false, has_intent: true });
+      expect(first('guarded')).toMatchObject({ compacted: false, has_intent: true });
+      expect(first('resolved')).toMatchObject({ compacted: true });
+      expect(first('other-failure')).toMatchObject({ compacted: true });
+      // Explicitly dropping it stays the operator's call (gbrain repair receipt-compaction --include-failures).
+    });
+
     check('a long synthetic run: storage above the target keeps a week of settled receipts, failed intents wait for the retention, writes never refuse', async engine => {
       const requests = await requestFixture(engine);
       await engine.setConfig(RECEIPT_TARGET_KEY, '1');

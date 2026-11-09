@@ -9,6 +9,7 @@ import type { Action } from '../agent-output.ts';
 import { digest, jsonBytes, requireUuid } from './digest.ts';
 import { authorizeWrite } from './authority.ts';
 import { journalLimitKey, oneYearCapacity, readJournalLimits, readReceiptRetentionDays } from './limits.ts';
+import { UNRESOLVED_CALLER_REFUSAL_SQL } from './terminal-classify.ts';
 import { outstandingCapacityDetail, retryWriteAdmission, waitOutRefreshFence } from './admission-retry.ts';
 import { PreadmitBrainChanged } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
@@ -1246,6 +1247,7 @@ export async function compactWriteReceiptsDetailed(engine: BrainEngine, retentio
     WHERE state IN ('committed','conflict','failed','cancelled') AND recovery IS NULL AND NOT compacted
     AND completed_at < now()-($1::double precision*interval '1 day')
     AND NOT EXISTS (SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.state<>'committed')
+    AND NOT ${UNRESOLVED_CALLER_REFUSAL_SQL('r')}
     ${OPEN_SYNC_CURSOR_EXCLUSION('r')}
     ${NEWEST_SYNC_RECEIPT_EXCLUSION('r')}
     ORDER BY sequence LIMIT 100`, [retentionDays]);

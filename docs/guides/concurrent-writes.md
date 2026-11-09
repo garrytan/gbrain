@@ -886,7 +886,11 @@ work; it does not discard an accepted request to make room. Terminal diagnostic
 compaction has a default eligibility threshold of 30 days and preserves replay IDs, digests, terminal
 outcomes, and frozen memory-verb result fields. Pending/recovering requests are
 not evicted, and receipts with unfinished effects stay retained without
-blocking compaction of later receipts. Lifetime IDs and replay protection are
+blocking compaction of later receipts. A caller's refused write that
+`gbrain repair failed-writes` could still replay (a writer-guard or
+`source_changed` refusal of a `put_page`, `add_timeline_entry` or
+`remember` that no later request wrote, removed or repeated) keeps its intent
+at any age; `gbrain repair receipt-compaction --include-failures` drops it explicitly. Lifetime IDs and replay protection are
 not silently reset.
 
 Each admission reserves at least 16 KiB of receipt bytes. When the request
@@ -981,8 +985,9 @@ off), the resident consumer's compaction pass also compacts receipts older than
 of producers that write again from current content (maintenance pages and
 managed sync, file import, reconcile and file repair page writes). Job
 receipts (`submit_job`), connector writes and every other refusal keep their
-intent until the retention window: `gbrain repair failed-writes` replays a
-caller's refused write from it, conversation facts resubmit a frozen
+intent until the retention window (a caller's replayable refusal until a
+later write resolves it): `gbrain repair failed-writes` replays a caller's
+refused write from it, conversation facts resubmit a frozen
 extraction, atom retries and connector held-item retries read it. Receipts
 with unfinished effects, an open sync or a recovery are kept as before. An explicit `persistence.receipt_retention_days`
 is the operator's choice, and housekeeping leaves it alone.
