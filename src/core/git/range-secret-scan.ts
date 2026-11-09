@@ -49,7 +49,11 @@ const CONFIG = ['-c', 'core.quotePath=false', '-c', 'core.attributesFile=/dev/nu
 const DIFF = ['diff-tree', '--stdin', '-r', '-p', '--root', '--cc', '--no-renames', '--no-ext-diff', '--no-textconv', '--no-color',
   '--full-index', '--src-prefix=a/', '--dst-prefix=b/', '--unified=0'];
 
-/** Ledger writers whose commits hold only page writes: a Git effect's commit and a hosted repository's door commits. */
+/**
+ * Ledger writers whose commits hold only page writes: a Git effect's commit and a hosted repository's door commits. A
+ * record that adopted a file edited outside gbrain (`adopted`) carries bytes gbrain did not write, so it is scanned, and
+ * so is a page-write commit older than the retained ledger or made before it existed.
+ */
 const PAGE_WRITERS: ReadonlySet<string> = new Set(['effect', 'door', 'hosted_repo']);
 
 class Unreadable extends Error { constructor(message: string, readonly timedOut = false) { super(message); } }
@@ -64,7 +68,7 @@ function run(root: string, args: string[], deadline: number, opts: { input?: str
 /** The commits the ledger records as page writes; an unreadable ledger reads as none, so everything is scanned. */
 function pageWriteCommits(root: string, deadline: number): Set<string> {
   const common = must(run(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'], deadline), 'rev-parse').toString().trim();
-  try { return new Set(readLedger(common).flatMap(record => record.e === 'commit' && PAGE_WRITERS.has(record.writer) ? [record.sha] : [])); }
+  try { return new Set(readLedger(common).flatMap(record => record.e === 'commit' && PAGE_WRITERS.has(record.writer) && !record.adopted?.length ? [record.sha] : [])); }
   catch { return new Set(); }
 }
 function must(r: Run, what: string): Buffer {

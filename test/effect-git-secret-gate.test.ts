@@ -220,6 +220,21 @@ describe('#8896 pushGitRoot scans the commits it publishes', () => {
     expect(remoteTip(c)).toBe(page);
   }, 60_000);
 
+  test('a page-write record that adopted an outside edit, or a ledger that cannot be read, leaves the commit scanned', async () => {
+    const c = checkout();
+    const adopted = scriptCommit(c.root, 'notes/page.md', `Adopted edit with ${token}\n`);
+    recordCommit(c.root, { sha: adopted, writer: 'effect', ref: null, adopted: ['notes/page.md'] });
+    expect((await withEnv(childEnv(c), () => refusal(pushGitRoot(c.root)))).code).toBe('publish_secret_found');
+
+    const d = checkout();
+    const page = scriptCommit(d.root, 'notes/page.md', `Saved note with ${token}\n`);
+    recordCommit(d.root, { sha: page, writer: 'effect', ref: null });
+    const ledger = join(d.root, '.git', 'gbrain', 'commit-ledger.jsonl');
+    rmSync(ledger); mkdirSync(ledger);
+    expect((await withEnv(childEnv(d), () => refusal(pushGitRoot(d.root)))).code).toBe('publish_secret_found');
+    expect(remoteTip(d)).not.toBe(page);
+  }, 60_000);
+
   test('a clean ahead checkout still pushes', async () => {
     const c = checkout();
     scriptCommit(c.root, 'notes/page.md', 'A clean page\n');
@@ -321,6 +336,26 @@ describe('#8896 through the effect worker', () => {
       expect(remoteTip(c)).toBe(git(c.root, 'rev-parse', 'HEAD').trim());
       expect(git(c.remote, 'show', 'main:notes/acme-example.md')).toContain(token);
     }, `Connection notes: ${token}`);
+  }, 180_000);
+
+  test('a script commit that lands right after the effect commit is not ledgered as a page write, so its secret holds the push', async () => {
+    const c = checkout();
+    const before = remoteTip(c);
+    const real = Bun.which('git')!;
+    const bin = join(c.home, 'race-bin'), mark = join(c.home, 'raced');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'git'), [
+      '#!/bin/sh', `'${real}' "$@"`, 'code=$?',
+      `case " $* " in *" commit --only "*) if [ $code -eq 0 ] && [ ! -f '${mark}' ]; then touch '${mark}';`,
+      `  mkdir -p '${c.root}/scripts-out'; printf 'Deploy token %s\\n' '${token}' > '${c.root}/scripts-out/race.md';`,
+      `  '${real}' -C '${c.root}' add scripts-out/race.md && '${real}' -C '${c.root}' -c core.hooksPath=/dev/null commit -q -m 'script races the effect'; fi;; esac`,
+      'exit $code', ''].join('\n'), { mode: 0o755 });
+    await withEnv({ PATH: `${bin}:${process.env.PATH}` }, () => managedWrite(c, () => {}, async w => {
+      await w.runEffects();
+      expect(git(c.root, 'log', '-1', '--format=%s').trim()).toBe('script races the effect');
+      expect(await w.effect()).toMatchObject({ error_code: 'publish_secret_found' });
+      expect(remoteTip(c)).toBe(before);
+    }));
   }, 180_000);
 
   test('a parked publish_secret_found effect is released by retry-effects --parked-pushes once the value is allowlisted', async () => {

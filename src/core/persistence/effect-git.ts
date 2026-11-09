@@ -366,7 +366,7 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
     const noted = new Map<string, GitCommitNote>();
     for (const c of changed) { const note = notes?.get(c.requested); if (note && !noted.has(c.path)) noted.set(c.path, note); }
     let messageDir: string | undefined;
-    let result;
+    let result, headBefore: string | null = null;
     try {
       const paragraphs = commitMessage(commitPaths, noted);
       const message = commitMessageArgs(paragraphs, () => {
@@ -374,14 +374,18 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
         return messageDir = mkdtempSync(join(persistenceHome(), 'commit-message-'));
       });
       const before = await git(session, ['rev-parse', '--verify', '--quiet', 'HEAD']);
-      await recordIntentAsync(root, { writer: 'effect', head_before: before.code === 0 ? before.stdout.trim() : null, message: paragraphs.join('\n\n') });
+      headBefore = before.code === 0 ? before.stdout.trim() : null;
+      await recordIntentAsync(root, { writer: 'effect', head_before: headBefore, message: paragraphs.join('\n\n') });
       result = await git(session, [...(commitPaths.some(path => removed.has(path)) ? NO_FSCACHE : []), 'commit', '--only', ...message, '--', ...literalPathspecs(commitPaths)]);
     } finally { if (messageDir) rmSync(messageDir, { recursive: true, force: true }); }
     if (result.code === 0) {
-      const head = await git(session, ['rev-parse', 'HEAD']);
+      // #8896: the secret scan trusts ledgered page writes, so HEAD is recorded only when its parent is the HEAD this commit
+      // started from: a commit that landed on top in between (a script's plain `git commit`) stays unrecorded and scanned.
+      const head = await git(session, ['rev-list', '--parents', '-n', '1', 'HEAD']);
+      const [sha, ...parents] = head.code === 0 ? head.stdout.trim().split(' ') : [];
       const trailers = [...noted.values()].flatMap(note => note.trailers ?? []);
       const supersedes = supersededBy(trailers), adopted = adoptedBy(trailers);
-      if (head.code === 0) await recordCommitAsync(root, { sha: head.stdout.trim(), writer: 'effect', ...(supersedes.length ? { supersedes } : {}), ...(adopted.length ? { adopted } : {}) });
+      if (sha && parents.join(' ') === (headBefore ?? '')) await recordCommitAsync(root, { sha, writer: 'effect', ...(supersedes.length ? { supersedes } : {}), ...(adopted.length ? { adopted } : {}) });
     }
     const outcome = result.code === 0 ? { git: 'committed' } : gitFailure('Cannot commit the canonical Git target.',
       `git commit failed for ${commitPaths.length} file(s); a missing Git identity (user.name, user.email) in that checkout is one cause to check.`);
