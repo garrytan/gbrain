@@ -13,6 +13,7 @@
 import type { BrainEngine } from './engine.ts';
 import type { OperationContext } from './ops/contract.ts';
 import { privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages } from './search/private-visibility.ts';
+import { deletedPageProjectionHiddenSql } from './eligibility/sql.ts';
 import { buildNearNameIndex, loadEntityNames, normalizeEntityName, queryNearNames, shardCountFor, type NearNameKind } from './entities/near-name.ts';
 import { quoteFacts } from './search/transcript-quote.ts';
 
@@ -32,6 +33,7 @@ export async function listUnattributedFacts(engine: BrainEngine, ctx: OperationC
       WHERE source_id = ANY($1::text[]) AND entity_slug IS NULL AND expired_at IS NULL
         AND (valid_until IS NULL OR valid_until > now())
         AND ($2::boolean = false OR visibility = 'world')${provenance}
+        AND ${deletedPageProjectionHiddenSql('facts', 'facts')}
       ORDER BY id DESC LIMIT $3 OFFSET $4`,
     [sourceIds, worldOnly, opts.limit + 1, opts.offset],
   );
