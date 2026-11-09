@@ -135,7 +135,10 @@ Trade-off: `--setting-sources ""` loads no settings source at all, so the
 `env` block, `apiKeyHelper` and permission rules in your `settings.json` don't
 reach the child either. The subscription (OAuth) login is kept, but a claude
 login or proxy that depends on `settings.json` doesn't apply to gbrain's
-claude-cli calls on these versions.
+claude-cli calls on these versions. To load them again, set
+`GBRAIN_CLAUDE_CLI_USER_SETTINGS=1` in the environment gbrain runs in (your
+shell or `~/.gbrain/.env`; a project `.env` can't set it): the child then gets
+no `--setting-sources` flag and gbrain skips the version probe.
 
 The adapter does not use `claude`'s own agentic tool-calling — it injects a
 fenced instruction block into the system prompt teaching the model a

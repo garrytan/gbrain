@@ -36,13 +36,13 @@ function stub(versionLine: string) {
     `cat "${response}"`,
   ].join('\n') + '\n');
   chmodSync(bin, 0o755);
-  const call = async () => {
-    await withEnv({ GBRAIN_CLAUDE_CLI_BIN: bin }, () => new ClaudeCliLanguageModel('claude-sonnet-5-5').doGenerate({
+  const call = async (extraEnv: Record<string, string | undefined> = {}) => {
+    await withEnv({ GBRAIN_CLAUDE_CLI_BIN: bin, ...extraEnv }, () => new ClaudeCliLanguageModel('claude-sonnet-5-5').doGenerate({
       prompt: [{ role: 'user', content: [{ type: 'text', text: 'Reply OK' }] }],
     } as LanguageModelV2CallOptions));
     return readFileSync(join(dir, 'argv'), 'utf8').trimEnd().split('\n').map((l) => l.slice(1, -1));
   };
-  const probes = () => readFileSync(join(dir, 'probes'), 'utf8').trimEnd().split('\n').length;
+  const probes = () => { try { return readFileSync(join(dir, 'probes'), 'utf8').trimEnd().split('\n').length; } catch { return 0; } };
   return { call, probes };
 }
 
@@ -81,6 +81,15 @@ describe('claude-cli keeps the user\'s own settings and CLAUDE.md out of the chi
     expect(settingSources(readFileSync(join(dir, 'argv'), 'utf8').trimEnd().split('\n').map((l) => l.slice(1, -1)))).toBeNull();
     expect(readFileSync(join(dir, 'probe-cwd'), 'utf8').trim()).not.toBe(process.cwd());
   }, 30_000);
+
+  test('GBRAIN_CLAUDE_CLI_USER_SETTINGS=1 opts back in: no --setting-sources and no version probe', async () => {
+    const s = stub('2.1.316 (Claude Code)');
+    const argv = await s.call({ GBRAIN_CLAUDE_CLI_USER_SETTINGS: '1' });
+    expect(settingSources(argv)).toBeNull();
+    expect(argv).toContain('--settings');
+    expect(s.probes()).toBe(0);
+    expect(settingSources(await s.call({ GBRAIN_CLAUDE_CLI_USER_SETTINGS: '0' }))).toBe('');
+  });
 
   test('an older or unreadable version keeps today\'s argv', async () => {
     for (const line of ['2.1.313 (Claude Code)', '2.0.60 (Claude Code)', 'not a version']) {

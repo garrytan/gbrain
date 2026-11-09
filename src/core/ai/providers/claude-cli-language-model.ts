@@ -25,7 +25,8 @@
  *   skill resolution. On a CLI at SETTING_SOURCES_MIN_VERSION or newer,
  *   `--setting-sources ""` keeps user-level ~/.claude/CLAUDE.md, memory and
  *   settings out of the child (#8342) without `--bare`, which forces
- *   ANTHROPIC_API_KEY auth; an older CLI still loads them. #4119: to isolate
+ *   ANTHROPIC_API_KEY auth; an older CLI still loads them, and
+ *   GBRAIN_CLAUDE_CLI_USER_SETTINGS=1 loads them again. #4119: to isolate
  *   the whole config dir (SkillOpt rollouts), set
  *   GBRAIN_CLAUDE_CLI_HERMETIC_CONFIG — see resolveHermeticConfigDir.
  *
@@ -474,8 +475,9 @@ function runClaude(
     if (thinkingOff) env.MAX_THINKING_TOKENS = '0';
     // #8342: load no settings source, so the user's own ~/.claude/CLAUDE.md,
     // memory and settings.json never steer this call. Unlike --bare this
-    // keeps the subscription login.
-    if (takesNoSettingSources(env)) args.push('--setting-sources', '');
+    // keeps the subscription login. GBRAIN_CLAUDE_CLI_USER_SETTINGS=1 opts
+    // back in (no flag, no version probe).
+    if (process.env.GBRAIN_CLAUDE_CLI_USER_SETTINGS !== '1' && takesNoSettingSources(env)) args.push('--setting-sources', '');
     const child = spawn(claudeBin(), args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: ensureCleanCwd(),
