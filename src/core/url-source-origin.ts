@@ -104,7 +104,7 @@ function lockDownCheckout(root: string): void {
   const gitDir = hardenedGitSync(root, ['rev-parse', '--absolute-git-dir'], GIT_LIMITS);
   if (!gitDir.ok) throw new Error(`Git could not locate the repository of ${root}`);
   const file = join(gitDir.stdout.toString('utf8').replace(/\n$/, ''), 'config');
-  for (const setting of LFS_OFF_CLONE_CONFIG.filter(arg => arg !== '--config')) {
+  for (const setting of LFS_OFF_CLONE_CONFIG.filter((_, at) => at % 2 === 1)) {
     const at = setting.indexOf('=');
     execFileSync('git', ['config', '--file', file, setting.slice(0, at), setting.slice(at + 1)],
       { cwd: dirname(file), env: hardenedGitEnvironment(), stdio: 'pipe', timeout: GIT_LIMITS.timeoutMs });
