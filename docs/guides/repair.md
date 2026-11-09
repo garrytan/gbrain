@@ -2851,9 +2851,8 @@ A source already recorded as remote whose checkout lacks the lock-down (one
 recorded before this) gets it on `--remote --apply` and reports `recorded`,
 even when its files now use git-lfs (no `lfs_tracked` refusal for it; only a
 checkout Git cannot place refuses it, as `lfs_unknown`); one that has it stays
-`already_recorded`, and the record is never removed. Each setting is written
-with `--replace-all`, so a key that already holds several values ends with the
-one clone-time value.
+`already_recorded`, and the record is never removed. Each setting's existing values are removed before it is written, so a key that
+already holds several values ends with the one clone-time value.
 Only `.git/config` changes, never a tracked file; a gbrain frontmatter
 hook wired through `core.hooksPath` stops running there, as on any clone a
 remote caller adds. `--local` records a local add and changes no checkout, and
