@@ -5,9 +5,7 @@
       17,
       18,
       19,
-      100,
-      297,
-      298
+      100
     ],
     "helpers": {
       "ALIAS_TABLES": "cddd37c636af42d862c08ca7754a57dfe9d12576b769fa8f74a5f02c803f67a0",
@@ -100,7 +98,7 @@
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 301,
+    "latest": 299,
     "records": [
       {
         "handler": {
@@ -4841,7 +4839,7 @@
         "sqlFor": "absent",
         "transaction": "absent",
         "verify": "absent",
-        "version": 299
+        "version": 297
       },
       {
         "handler": {
@@ -4859,7 +4857,7 @@
             "quietMigrationNotices",
             "tableRows"
           ],
-          "sha256": "185abb97826975fb8325cc049fd48df16b6ae24f08255456b651e1d9fc9b9faa"
+          "sha256": "ac74c4c88b14391e6243984952e3180bc52b375f3ab4d0731977a4a75bbba23d"
         },
         "idempotent": true,
         "name": "page_body_manifest_closed_index",
@@ -4870,7 +4868,7 @@
         "sqlFor": "absent",
         "transaction": false,
         "verify": "absent",
-        "version": 300
+        "version": 298
       },
       {
         "handler": "absent",
@@ -4883,7 +4881,7 @@
         "sqlFor": "absent",
         "transaction": "absent",
         "verify": "absent",
-        "version": 301
+        "version": 299
       }
     ],
     "versions": [
@@ -5178,9 +5176,9 @@
       294,
       295,
       296,
-      299,
-      300,
-      301
+      297,
+      298,
+      299
     ]
   },
   "normalizer": "migrations-record-v1"

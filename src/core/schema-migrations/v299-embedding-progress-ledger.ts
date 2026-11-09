@@ -21,8 +21,8 @@ import type { Migration } from './types.ts';
 //   page's cap (an embed job's identity), so a retried job raises it once.
 // No page text is stored (a returned batch holds vectors until its install
 // deletes it; a page delete cascades). DDL only, nothing to backfill.
-export const v301: Migration = {
-  version: 301,
+export const v299: Migration = {
+  version: 299,
   name: 'embedding_progress_ledger',
   idempotent: true,
   sql: `

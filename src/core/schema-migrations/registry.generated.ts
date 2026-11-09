@@ -297,9 +297,9 @@ import { v293 } from './v293-qm-attest-sources.ts';
 import { v294 } from './v294-refresh-barrier-import-deferral.ts';
 import { v295 } from './v295-refresh-retry-hint-history-index.ts';
 import { v296 } from './v296-ingest-applied-captures.ts';
-import { v299 } from './v299-page-read-pins.ts';
-import { v300 } from './v300-page-body-manifest-closed-index.ts';
-import { v301 } from './v301-embedding-progress-ledger.ts';
+import { v297 } from './v297-page-read-pins.ts';
+import { v298 } from './v298-page-body-manifest-closed-index.ts';
+import { v299 } from './v299-embedding-progress-ledger.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -595,7 +595,7 @@ export const MIGRATIONS: Migration[] = [
   v294,
   v295,
   v296,
+  v297,
+  v298,
   v299,
-  v300,
-  v301,
 ];
