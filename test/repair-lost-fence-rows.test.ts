@@ -113,6 +113,24 @@ for (const backend of testBackends()) {
         expect((await repair(engine)).affected).toBe(0);
       }, opts), 180_000);
 
+      test('a lost row the user re-added and then withdrew again is not listed', () => managedBrain(async ({ engine, ctx }) => {
+        await loseRows(ctx);
+        const { id } = await operationsByName.remember!.handler(ctx, { fact: A, entity: SLUG, provenance: 'the user said so', content_origin: 'user_said', request_id: randomUUID() }) as { id: number };
+        await operationsByName.forget!.handler(ctx, { id: String(id), reason: 'the user withdrew it' });
+        const added = await operationsByName.takes_add!.handler(ctx, { slug: SLUG, claim: TA, kind: 'bet', holder: 'world', request_id: randomUUID() }) as { row_num: number };
+        await operationsByName.takes_remove!.handler(ctx, { slug: SLUG, row_num: added.row_num, request_id: randomUUID() });
+        expect(await live(engine)).toEqual({ facts: [B], takes: [TB] });
+        expect((await repair(engine)).affected).toBe(0);
+      }, opts), 180_000);
+
+      test('a lost row the user put back by hand and then deleted from the section is not listed', () => managedBrain(async ({ engine, ctx }) => {
+        await loseRows(ctx);
+        await put(ctx, PAGE(`Alice v4.\n\n${FACTS(ROW(2, B), ROW(3, A))}\n${TAKES([2, TB], [3, TA])}`));
+        await put(ctx, PAGE(`Alice v5.\n\n${FACTS(ROW(2, B))}\n${TAKES([2, TB])}`));
+        expect(await live(engine)).toEqual({ facts: [B], takes: [TB] });
+        expect((await repair(engine)).affected).toBe(0);
+      }, opts), 180_000);
+
       test('an apply after the page changed restores nothing and asks for a new preview', () => managedBrain(async ({ engine, ctx }) => {
         await loseRows(ctx);
         const preview = await repair(engine);

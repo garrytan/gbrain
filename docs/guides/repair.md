@@ -2098,7 +2098,10 @@ generation retired it without an empty-section proof, no row with the same
 claim is on the page now, and page history shows the row in a section that
 then vanished before the retirement. A row you removed by editing a section
 that stayed in place, a row retired by an explicit empty section, and a
-forgotten fact are never listed. `gbrain repair generations --mode restore`
+forgotten fact are never listed, and neither is a row you re-added after the
+loss and then removed again. A section you rebuilt by hand without a row
+leaves the same records as the bug, so read the preview with the user before
+applying it. `gbrain repair generations --mode restore`
 does not cover this case, because the retiring write published a fence that
 parsed; this kind reads page history instead.
 

@@ -9,9 +9,11 @@
  * A row is listed only when the records prove that shape:
  *   1. a fact_fence or take_fence generation retired it (`derived_generation_items`, action `retired`) without an
  *      empty-fence or deleted-page proof, and the fact was live when it did (a take is deleted outright);
- *   2. no live fact with the same claim and visibility (no take with the same claim) is on the page now;
- *   3. page history holds the row in a fence, and the newest version holding it is followed by one with no fence of
- *      that kind at all: the section vanished, then came back without the row. A row an edit removed from
+ *   2. no live fact with the same claim and visibility (no take with the same claim) is on the page now, and the fact's
+ *      claim is not withdrawn (forget) or purged;
+ *   3. page history holds the claim in a fence (at any row number, so a later re-add counts), and the newest body
+ *      holding it is followed by one with no fence of that kind at all: the section vanished, then came back without
+ *      it. A claim removed later from a section that stayed (an edit, a forget strike, a takes_remove) is not listed. A row an edit removed from
  *      a fence that stayed in place is a deliberate removal and is never listed.
  * The fence cell comes from the newest version that held it, byte for byte; a row number now taken gets the next free
  * one. A page with no fence of that kind today also carries its held rows, as the append does.
@@ -24,6 +26,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { factsFenceSection, parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, type ParsedFact } from '../facts-fence.ts';
 import { heldFenceFactRows } from '../facts/unfenced-facts.ts';
+import { isFactWithdrawn } from '../facts/withdrawal.ts';
 import { readFenceBlocks } from '../generations/fence.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { opError } from '../ops/contract.ts';
@@ -53,21 +56,25 @@ interface Retired { kind: 'fact_fence' | 'take_fence'; source_id: string; slug: 
 
 const hasFence = (body: { compiled_truth: string | null; timeline: string | null }, fence: 'facts' | 'takes') => readFenceBlocks(body, fence).state !== 'absent';
 
+/** A page's bodies in write order: every stored version (by id, not timestamp: a version's snapshot time and its write's
+ * generation time are not ordered alike on every engine), then the page as it is now (`id` null). */
+type History = Array<{ id: number | null; compiled_truth: string; timeline: string | null }>;
+
 /**
- * The newest page version whose fence holds the row, when the first version after it has no fence of that kind at all;
- * `removed` when that version kept the fence without the row, or no later version exists (the write that retired it
- * replaced the holding body itself: an edit inside the fence); null when no version holds it. Versions are read in write
- * order (id), not by timestamp: a version's snapshot time and its write's generation time are not ordered alike on
- * every engine.
+ * The newest body whose fence holds the claim (at any row number: a later re-add counts), when the body after it has
+ * no fence of that kind at all; `removed` when the body after it kept the fence without the claim (an edit, a forget
+ * strike or a takes_remove reservation after any re-add), or when it is the page as it is now; null when no stored
+ * version holds it.
  */
-async function lostIn(engine: BrainEngine, pageId: number, fence: 'facts' | 'takes', holds: (body: string) => ParsedFact | ParsedTake | undefined) {
-  const versions = await engine.executeRaw<{ id: number; compiled_truth: string; timeline: string | null }>(`SELECT id::int AS id, compiled_truth, timeline FROM page_versions
-    WHERE page_id=$1 AND compiled_truth IS NOT NULL ORDER BY id`, [pageId]);
+function lostIn(history: History, fence: 'facts' | 'takes', holds: (body: string) => ParsedFact | ParsedTake | undefined) {
   let held: { version_id: number; cell: ParsedFact | ParsedTake } | null = null;
   let next: 'absent' | 'fence' | null = null;
-  for (const version of versions) {
-    const cell = holds(`${version.compiled_truth}\n${version.timeline ?? ''}`);
-    if (cell) { held = { version_id: Number(version.id), cell }; next = null; } else if (held && next === null) next = hasFence(version, fence) ? 'fence' : 'absent';
+  for (const body of history) {
+    const cell = holds(`${body.compiled_truth}\n${body.timeline ?? ''}`);
+    if (cell) {
+      if (body.id === null) return 'removed' as const;
+      held = { version_id: body.id, cell }; next = null;
+    } else if (held && next === null) next = hasFence(body, fence) ? 'fence' : 'absent';
   }
   return !held ? null : next === 'absent' ? held : 'removed' as const;
 }
@@ -82,6 +89,22 @@ export async function scanLostFenceRows(engine: BrainEngine, sourceIds: readonly
        AND ($2::text IS NULL OR (g.source_id = $2 AND g.owner_key = 'page:' || $3))
      ORDER BY g.source_id, g.owner_key, g.id, i.item_key`, [[...sourceIds], only?.source_id ?? null, only?.slug ?? null]);
   const byPage = new Map<string, { source_id: string; slug: string; rows: LostRow[] }>();
+  const histories = new Map<string, History | Residual>();
+  const historyOf = async (sourceId: string, slug: string): Promise<History | Residual> => {
+    const key = `${sourceId}\u0000${slug}`;
+    if (!histories.has(key)) {
+      const raw = await engine.readPageSnapshot(slug, { sourceId });
+      if (!raw || raw.page.deleted_at) histories.set(key, 'page_missing');
+      else if (segmentedOverCeiling(raw.page as never)) histories.set(key, 'fence_unreadable');
+      else {
+        const now = (await materializedSnapshot(engine, raw))!.page;
+        const versions = await engine.executeRaw<{ id: number; compiled_truth: string; timeline: string | null }>(`SELECT id::int AS id, compiled_truth, timeline
+          FROM page_versions WHERE page_id=$1 AND compiled_truth IS NOT NULL ORDER BY id`, [Number(now.id)]);
+        histories.set(key, [...versions.map(v => ({ ...v, id: Number(v.id) })), { id: null, compiled_truth: now.compiled_truth, timeline: now.timeline ?? null }]);
+      }
+    }
+    return histories.get(key)!;
+  };
   for (const r of retired) {
     const p = r.preimage;
     const fact = r.kind === 'fact_fence';
@@ -92,10 +115,13 @@ export async function scanLostFenceRows(engine: BrainEngine, sourceIds: readonly
       ? await engine.executeRaw(`SELECT 1 FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND expired_at IS NULL AND fact=$3 AND visibility=$4`, [r.source_id, r.slug, p.fact, p.visibility])
       : await engine.executeRaw('SELECT 1 FROM takes WHERE page_id=$1 AND claim=$2', [page.id, p.claim]);
     if (back.length) continue;
+    if (fact && await isFactWithdrawn(engine, r.source_id, String(p.visibility), String(p.fact), (p.entity_slug as string | null) ?? r.slug, r.slug)) continue;
+    const history = await historyOf(r.source_id, r.slug);
+    if (typeof history === 'string') { residuals[history]++; continue; }
     const rowNum = Number(p.row_num);
     const found = fact
-      ? await lostIn(engine, page.id, 'facts', body => parseFactsFence(body).facts.find(f => f.rowNum === rowNum && f.claim === p.fact && f.visibility === p.visibility && f.active))
-      : await lostIn(engine, page.id, 'takes', body => parseTakesFence(body).takes.find(t => t.rowNum === rowNum && t.claim === p.claim));
+      ? lostIn(history, 'facts', body => parseFactsFence(body).facts.find(f => f.claim === p.fact && f.visibility === p.visibility && f.active))
+      : lostIn(history, 'takes', body => parseTakesFence(body).takes.find(t => t.claim === p.claim));
     if (found === 'removed') continue;
     if (!found) { residuals.no_history++; continue; }
     const key = `${r.source_id}\u0000${r.slug}`;
@@ -112,7 +138,7 @@ export async function scanLostFenceRows(engine: BrainEngine, sourceIds: readonly
     if (typeof planned === 'string') { residuals[planned]++; continue; }
     pages.push(planned.page);
   }
-  return { pages, residuals };
+  return { pages: pages.sort((a, b) => a.page_id - b.page_id), residuals };
 }
 
 /** The page as it is now with the lost rows at the numbers they take, and the content that republishes it. */
