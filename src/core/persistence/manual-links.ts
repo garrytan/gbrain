@@ -7,8 +7,8 @@ import { pageIdentityError } from './page-identity.ts';
 import { preparePageMutation } from './page-prepare.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
-import { LINKS_FENCE_ORIGIN_FIELD, LinksFenceRewriteRefusal, MANAGED_LINK_SOURCES, linksFenceSection, removeLinksFenceRows,
-  upsertLinksFenceRow } from '../links-fence.ts';
+import { LINKS_FENCE_ORIGIN_FIELD, LinksFenceRewriteRefusal, MANAGED_LINK_SOURCES, linksFenceSection, readPageLinksFence, removeLinksFenceRows,
+  renderLinksFence, replaceOrInsertLinksFence, upsertLinksFenceRow, type LinksFenceRow } from '../links-fence.ts';
 import { linksFenceProjectionRows, projectLinksFence } from '../links-fence-projection.ts';
 import { removeManualTransitions } from '../link-temporal-apply.ts';
 
@@ -22,12 +22,31 @@ const DATABASE_ONLY = `l.origin_field IS DISTINCT FROM '${LINKS_FENCE_ORIGIN_FIE
 const FENCED = `l.origin_field='${LINKS_FENCE_ORIGIN_FIELD}' AND l.origin_page_id=$1`;
 
 /**
+ * The edges a links fence of page `pageId` projected that are still stored, as fence rows with their manual dates. A
+ * rewrite that drops the page's links section leaves exactly these (an absent fence retires nothing); a link the user
+ * withdrew (remove_link, an empty section, a row deleted from the section) has no edge any more and is not among them.
+ */
+async function keptLinksFenceRows(engine: BrainEngine, pageId: number): Promise<LinksFenceRow[]> {
+  const rows = await engine.executeRaw<{ to: string; type: string; source: string; context: string | null; valid_from: string | null; valid_until: string | null }>(
+    `SELECT t.slug AS to, l.link_type AS type, l.link_source AS source, l.context,
+        (SELECT max(lt.occurred_on)::text FROM link_transitions lt WHERE lt.origin_page_id=l.from_page_id AND lt.from_page_id=l.from_page_id
+          AND lt.to_page_id=l.to_page_id AND lt.link_type=l.link_type AND lt.producer='manual' AND lt.kind='start') AS valid_from,
+        (SELECT max(lt.occurred_on)::text FROM link_transitions lt WHERE lt.origin_page_id=l.from_page_id AND lt.from_page_id=l.from_page_id
+          AND lt.to_page_id=l.to_page_id AND lt.link_type=l.link_type AND lt.producer='manual' AND lt.kind='end') AS valid_until
+       FROM links l JOIN pages t ON t.id=l.to_page_id
+      WHERE l.from_page_id=$1 AND l.origin_page_id=$1 AND l.origin_field=$2`, [pageId, LINKS_FENCE_ORIGIN_FIELD]);
+  return rows.map(row => ({ to: row.to, type: row.type, source: row.source, context: row.context ?? '',
+    ...(row.valid_from ? { validFrom: row.valid_from } : {}), ...(row.valid_until ? { validUntil: row.valid_until } : {}) }));
+}
+
+/**
  * `add_link` / `remove_link` on a managed brain (G5): the authored edge lives in the from page's links fence
  * (links-fence.ts), written through the page-mutation door like add_timeline_entry. The preparer upserts or
  * removes the fence row at the snapshot's revision (a segmented page is read back whole) and publishes the page.
  * The publication projects the fence (canonical-projections.ts) and the apply projects it once more, so a fence
  * the write left unchanged (an idempotent add) still has its edges. `add_link` drops the database-only twin of
- * the edge it fences (same endpoints, type and provenance, no origin). `remove_link` also deletes the matching
+ * the edge it fences (same endpoints, type and provenance, no origin); on a page with no links fence, the section it
+ * creates lists the edges a dropped section left first (`keptLinksFenceRows`). `remove_link` also deletes the matching
  * database-only edges written before the fence existed, with their manual dated statements, so a removal only
  * moves the database toward git; edges a reconciliation producer derives from the page text stay, and the result
  * names them (`derived_from_text`, with `derived_message` saying to edit the page text instead).
@@ -41,10 +60,12 @@ export async function prepareManualLinkMutation(engine: BrainEngine, row: WriteR
   const to = String(p.to).toLowerCase();
   const linkType = optional(p.link_type), linkSource = optional(p.link_source);
   const validFrom = optional(p.valid_from), validUntil = optional(p.valid_until);
+  const kept = row.operation === 'add_link' && readPageLinksFence(snapshot.page).state === 'absent' ? await keptLinksFenceRows(engine, Number(stored.page.id)) : [];
+  const current = kept.length ? replaceOrInsertLinksFence(snapshot.page[section] ?? '', renderLinksFence(kept)) : snapshot.page[section] ?? '';
   let body: string;
   try {
     body = row.operation === 'add_link'
-      ? upsertLinksFenceRow(snapshot.page[section] ?? '', { to, type: linkType ?? '', source: linkSource ?? 'manual', context: String(p.context ?? ''),
+      ? upsertLinksFenceRow(current, { to, type: linkType ?? '', source: linkSource ?? 'manual', context: String(p.context ?? ''),
         ...(validFrom ? { validFrom } : {}), ...(validUntil ? { validUntil } : {}) }).body
       : removeLinksFenceRows(snapshot.page[section] ?? '', { to, type: linkType, source: linkSource }).body;
   } catch (error) {
