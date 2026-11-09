@@ -70,7 +70,42 @@ export type CheckoutRefusalOrigin = typeof CHECKOUT_REFUSAL_ORIGINS[number];
 export interface CheckoutRefusalDetail { origin: CheckoutRefusalOrigin; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
 /** #6693: a page write refused because its file holds a committed change sync has not imported (`pending_import`) or sync holds the file (`sync_held`). */
 export interface PendingImportDetail { origin: 'pending_import' | 'sync_held'; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
-export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail | FenceRefusalDetail | WithdrawalRefusalDetail | OwnerExceptionDetail | CanonicalFileDetail | CheckoutRefusalDetail | PendingImportDetail }
+/** GST-1601: the cause of any other source_changed refusal, from its message (verb-errors.ts writeFailureDiagnostic). */
+export const SOURCE_CHANGED_ORIGINS = ['file_database_drift', 'canonical_path_occupied', 'raw_file_changed', 'pinned_git_worktree_conflict', 'unsafe_file_target',
+  'source_binding_changed', 'unbound_source'] as const;
+export type SourceChangedOrigin = typeof SOURCE_CHANGED_ORIGINS[number];
+export interface SourceChangedDetail { origin: SourceChangedOrigin; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
+/**
+ * #8729: a segmented write refused body_staging_expired: the staging it names and, when the flip found the generation it
+ * would publish incomplete, what that generation's rows covered. Fixed identifiers and counts only; owner-only (`staging`
+ * is not a public key), so the receipt names the staging for the owner's drill-down.
+ */
+export interface StagingRefusalDetail {
+  origin: 'body_staging';
+  staging: { staging_id: string; state?: string | null; reason?: 'generation_incomplete'; rows?: number; segment_count?: number; covered_bytes?: number | null; body_bytes?: number };
+  stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null };
+}
+export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail | FenceRefusalDetail | WithdrawalRefusalDetail | OwnerExceptionDetail | CanonicalFileDetail | CheckoutRefusalDetail | PendingImportDetail | SourceChangedDetail | StagingRefusalDetail }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const STAGING_STATES: readonly unknown[] = ['open', 'sealed', 'prepared', 'committed', 'aborted', 'expired'];
+const count = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+
+/** #8729: the bounded detail of a body_staging_expired refusal (engine-sql/page-body.ts), read field by field from its JSON, or undefined. */
+export function stagingFailureDetail(error: Pick<OperationError, 'code' | 'detail'>): StagingRefusalDetail | undefined {
+  if (error.code !== 'body_staging_expired' || typeof error.detail !== 'string') return undefined;
+  let raw: Record<string, unknown> | null;
+  try { raw = JSON.parse(error.detail) as Record<string, unknown> | null; } catch { return undefined; }
+  if (!raw || typeof raw !== 'object' || typeof raw.staging_id !== 'string' || !UUID.test(raw.staging_id)) return undefined;
+  const staging: StagingRefusalDetail['staging'] = { staging_id: raw.staging_id.toLowerCase() };
+  if (raw.state === null || STAGING_STATES.includes(raw.state)) staging.state = raw.state as string | null;
+  if (raw.reason === 'generation_incomplete') {
+    staging.reason = 'generation_incomplete';
+    for (const key of ['rows', 'segment_count', 'body_bytes'] as const) { const n = count(raw[key]); if (n !== undefined) staging[key] = n; }
+    staging.covered_bytes = count(raw.covered_bytes) ?? null;
+  }
+  return { origin: 'body_staging', staging };
+}
 
 const IDENT = /^[A-Za-z_][A-Za-z0-9_.:-]{0,79}$/;
 const ident = (value: unknown) => typeof value === 'string' && IDENT.test(value) ? value : undefined;

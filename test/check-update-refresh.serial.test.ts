@@ -22,6 +22,7 @@ const realFetch = globalThis.fetch;
 const realLog = console.log;
 let homeDir: string;
 let priorHome: string | undefined;
+let priorChannel: string | undefined;
 
 function bump(kind: 'minor' | 'patch' | 'micro'): string {
   const v = parseSemver(VERSION)!;
@@ -45,6 +46,9 @@ function stubVersionFetch(body: string | null, status = 200): void {
 
 beforeEach(() => {
   priorHome = process.env.GBRAIN_HOME;
+  priorChannel = process.env.GBRAIN_RELEASE_CHANNEL;
+  // These cases cover the alpha channel (every release, VERSION at latest-stable); stable has its own suites.
+  process.env.GBRAIN_RELEASE_CHANNEL = 'alpha';
   homeDir = mkdtempSync(join(tmpdir(), 'gbrain-refresh-'));
   process.env.GBRAIN_HOME = homeDir;
 });
@@ -52,6 +56,8 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = realFetch;
   console.log = realLog;
+  if (priorChannel === undefined) delete process.env.GBRAIN_RELEASE_CHANNEL;
+  else process.env.GBRAIN_RELEASE_CHANNEL = priorChannel;
   if (priorHome === undefined) delete process.env.GBRAIN_HOME;
   else process.env.GBRAIN_HOME = priorHome;
   rmSync(homeDir, { recursive: true, force: true });
@@ -78,22 +84,30 @@ describe('fetchLatestRelease — resolves from the VERSION file, discriminates f
     expect(await fetchLatestRelease()).toEqual({ ok: false, reason: 'no_releases' });
   });
 
-  test('GBRA-175: the stable channel reads VERSION at the stable tag, from the argument or self_upgrade.channel', async () => {
+  test('GBRA-224: stable reads the evidence record, never a bare VERSION file; alpha (and its alias latest) reads VERSION at latest-stable', async () => {
     const urls: string[] = [];
+    const record = JSON.stringify({ schema: 1, version: '0.99.0.0', commit: 'a'.repeat(40), tree: 'b'.repeat(40), soak_run: 'https://github.com/garrytan/gbrain/actions/runs/1', known_bad: ['0.98.0.0'] });
     globalThis.fetch = (async (url: any) => {
       urls.push(String(url));
-      return new Response(String(url).includes('/gbrain/stable/VERSION') ? '0.99.0.0\n' : '0.99.9.0\n', { status: 200 });
+      return new Response(String(url).endsWith('/stable-record/stable.json') ? record : '0.99.9.0\n', { status: 200 });
     }) as typeof fetch;
-    expect(await fetchLatestRelease('stable')).toMatchObject({ ok: true, tag: '0.99.0.0' });
-    expect(await fetchLatestRelease()).toMatchObject({ ok: true, tag: '0.99.9.0' });
+    expect(await fetchLatestRelease('stable')).toMatchObject({ ok: true, tag: '0.99.0.0', knownBad: ['0.98.0.0'] });
+    expect(await fetchLatestRelease()).toMatchObject({ ok: true, tag: '0.99.9.0', knownBad: [] });
+    delete process.env.GBRAIN_RELEASE_CHANNEL;
+    expect(await fetchLatestRelease()).toMatchObject({ ok: true, tag: '0.99.0.0' });
     mkdirSync(join(homeDir, '.gbrain'), { recursive: true });
-    writeFileSync(join(homeDir, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: join(homeDir, 'brain.pglite'), self_upgrade: { channel: 'stable' } }));
+    writeFileSync(join(homeDir, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: join(homeDir, 'brain.pglite'), self_upgrade: { channel: 'latest' } }));
+    expect(await fetchLatestRelease()).toMatchObject({ ok: true, tag: '0.99.9.0' });
+    process.env.GBRAIN_RELEASE_CHANNEL = 'stable';
     expect(await fetchLatestRelease()).toMatchObject({ ok: true, tag: '0.99.0.0' });
     expect(urls).toEqual([
-      'https://raw.githubusercontent.com/garrytan/gbrain/stable/VERSION',
+      'https://raw.githubusercontent.com/garrytan/gbrain/stable-record/stable.json',
       'https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/VERSION',
-      'https://raw.githubusercontent.com/garrytan/gbrain/stable/VERSION',
+      'https://raw.githubusercontent.com/garrytan/gbrain/stable-record/stable.json',
+      'https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/VERSION',
+      'https://raw.githubusercontent.com/garrytan/gbrain/stable-record/stable.json',
     ]);
+    expect(urls.some(u => u.includes('/stable/VERSION'))).toBe(false);
   });
 });
 
