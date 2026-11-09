@@ -21,6 +21,7 @@ test/access-member-facts.test.ts
 test/access-member-sweep.test.ts
 test/access-members.test.ts
 test/access-on-behalf-of.test.ts
+test/access-owner-reads.test.ts
 test/access-page-indexes-online.test.ts
 test/access-qm-actor.test.ts
 test/access-ungranted-member-writes.test.ts

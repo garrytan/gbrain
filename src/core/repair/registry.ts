@@ -92,6 +92,7 @@ import { factClaimDatesRepair } from './fact-claim-dates.ts';
 import { provenanceRepair } from './provenance.ts';
 import { secretSpansRepair } from './secret-spans.ts';
 import { rowsBehindRepair } from './rows-behind.ts';
+import { privateLabelsRepair, type PrivateLabelsLedger } from './private-labels.ts';
 import { generationsRepair, generationsSelectionArgv, type GenerationsSelection } from '../generations/repair.ts';
 import { restoreDaysHint } from '../generations/config.ts';
 import { ERROR_CATALOGUE, catalogueError } from '../error-catalogue.ts';
@@ -652,6 +653,16 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'join only with --include-ambiguous; rows with an uncommitted working-tree edit are left out. --apply --expect <hash> applies exactly that set. '
       + 'Runs only when named; never on upgrade.',
   },
+  'private-labels': {
+    handler: privateLabelsRepair, embeds: 'effect', checks: [], explicit_only: true, preview_bound: true,
+    summary: 'Clear privacy labels writer templates over-stamped on ordinary pages: access: private (and the visibility: private stamped from it) is removed, '
+      + 'which widens what remote callers that are not the brain owner can read. Real restrictions are kept and counted: pinned questions, derived pages '
+      + '(atoms, synthesized concepts, chronicle events), access restricted or confidential, a confidentiality value, and visibility: private with no alias. '
+      + 'The preview lists one window (--limit, default 1000) by class (alias, alias-and-visibility) with every category\'s count before and after; '
+      + '--apply --expect <hash> applies exactly that window, one revision-bound page write each; a bare --apply is refused. Pages in git-canonical sources '
+      + '(git-publish: clearing commits them into Git) run only with --class git-publish. Each cleared label is recorded in '
+      + '<gbrain home>/repair/private-labels/<brain>.jsonl, and --class restore re-adds it. Runs only when named; never on upgrade.',
+  },
   'generations': {
     handler: generationsRepair, embeds: 'effect', checks: ['generation_retirements', 'generation_held', 'generation_pending'], explicit_only: true, preview_bound: true, consent: 'destructive',
     consentText: {
@@ -754,7 +765,7 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
       slugs?: string[]; noLlm?: boolean; maxLlmUsd?: number; deadline?: number; stop?: AbortSignal; recordDatabaseStops?: boolean;
       prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string; provenance?: string; cursor?: string; progress?: ProgressReporter;
       keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number; generations?: GenerationsSelection; day?: string; rules?: string[];
-      cwdPrefixes?: string[]; sessions?: string[]; principal?: string } = {}): Promise<RepairResult> {
+      cwdPrefixes?: string[]; sessions?: string[]; principal?: string; privateLabelsLedger?: PrivateLabelsLedger } = {}): Promise<RepairResult> {
       const ctx = { engine, config, logger, dryRun: !opts.apply, remote: false, sourceId: scope.source_ids[0], writeWaitMs } as OperationContext;
       const spec = repairSpec(kind, opts.registry);
       return runRepair(ctx, spec.handler, scope, { apply: opts.apply, limit: run.limit, embeddingModel, sourceFlag: run.sourceFlag, spec,
@@ -765,7 +776,7 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
         explicit: run.explicit, expect: run.expect, includeAmbiguous: run.includeAmbiguous, includeCrossEntity: run.includeCrossEntity, only: run.only, skip: run.skip, slugs: run.slugs, noLlm: run.noLlm,
         maxLlmUsd: run.maxLlmUsd, deadline: run.deadline, ...(run.stop ? { stop: run.stop } : {}), ...(run.recordDatabaseStops ? { recordDatabaseStops: true } : {}), prefer: run.prefer, requests: run.requests, allDrifted: run.allDrifted, driftClass: run.driftClass, since: run.since,
         held: run.held, side: run.side, state: run.state, provenance: run.provenance, cursor: run.cursor, progress: run.progress, keep: run.keep, requestId: run.requestId, olderThan: run.olderThan, includeFailures: run.includeFailures, force: run.force, from: run.from, close: run.close, afterPage: run.afterPage, generations: run.generations, day: run.day, rules: run.rules,
-        cwdPrefixes: run.cwdPrefixes, sessions: run.sessions, principal: run.principal });
+        cwdPrefixes: run.cwdPrefixes, sessions: run.sessions, principal: run.principal, privateLabelsLedger: run.privateLabelsLedger });
     },
   };
 }

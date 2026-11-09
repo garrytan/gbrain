@@ -64,9 +64,10 @@ suppresses writes for that turn, including when standing capture is enabled.
 > conversation is observed making the opted-in call.
 >
 > **Choose a readback path that can see the intended visibility.** Trusted local
-> CLI callers can recall and withdraw private facts. Every MCP caller, including
-> stdio, and a thin CLI connected to MCP currently have world-only fact recall
-> and withdrawal. A
+> CLI callers can recall and withdraw private facts. Every other MCP caller, including
+> stdio, and a thin CLI connected to MCP have world-only fact recall
+> and withdrawal; a credential bound to the brain owner (`gbrain access owner`)
+> also recalls private facts. A
 > request to remember does not authorize making real private information
 > world-visible. Use a trusted local write/readback path for private memory
 > when available. If only remote access is available, a successful private
