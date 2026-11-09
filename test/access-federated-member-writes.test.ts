@@ -78,6 +78,9 @@ for (const kind of testBackends()) {
       await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ($1, $1, '{"federated": true}'::jsonb), ($2, $2, '{"federated": false}'::jsonb)
         ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config`, [FEDERATED, ISOLATED]);
       for (const id of ['alice-example', 'bob-example']) await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1)', [id]);
+      await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris, grant_types, scope, token_endpoint_auth_method,
+        client_id_issued_at, source_id, federated_read, member_id) VALUES ('alice-fed-client', 'x', 'alice-fed-client', '{}', '{client_credentials}', 'read write',
+        'client_secret_post', 0, $1, ARRAY[$1]::text[], 'alice-example')`, [FEDERATED]);
       for (const [name, member, sourceGrant] of [['alice-a', 'alice-example', [FEDERATED]], ['alice-b', 'alice-example', [ISOLATED]], ['bob-b', 'bob-example', [ISOLATED]],
         ['bob', 'bob-example', undefined], ['public', null, undefined]] as const) {
         const minted = await mintLegacyToken(engine, { name, scopes: ['read', 'write'], takesHolders: ['world'], ...(sourceGrant ? { sourceGrant: [...sourceGrant] } : {}) });
@@ -112,6 +115,33 @@ for (const kind of testBackends()) {
       expect(await reads('public', slug, canary, ISOLATED)).toEqual(none);
       expect(await reads('bob', slug, canary, ISOLATED)).toEqual(none);
       expect((await call('bob-b', 'get_page', { slug })).text).toContain(canary + '.');
+    }, 240_000);
+
+    test('an OAuth client bound to a member with a federated write source is kept to its member too', async () => {
+      const canary = marker('client');
+      const slug = 'notes/alice-client-' + canary;
+      const auth = { token: '', clientId: 'alice-fed-client', clientName: 'alice-fed-client', principal: { kind: 'oauth_client', id: 'alice-fed-client' }, scopes: ['read', 'write'],
+        member: { id: 'alice-example', groups: [] }, sourceId: FEDERATED, allowedSources: [FEDERATED] } as unknown as AuthInfo;
+      const out = await dispatchToolCall(engine, 'put_page', { slug, content: note('Alice client', 'Alice client code ' + canary + '.'), request_id: randomUUID() },
+        { remote: true, transport: 'http', auth, sourceId: FEDERATED, takesHoldersAllowList: ['world'] });
+      expect(out.isError === true).toBe(false);
+      expect((await stored(slug, FEDERATED)).page_readers).toEqual(['member:alice-example']);
+      expect(await reads('bob', slug, canary, FEDERATED)).toEqual(none);
+      expect(await reads('public', slug, canary, FEDERATED)).toEqual(none);
+    }, 240_000);
+
+    test('with default isolated the no-grant floor is default alone, so a federated write source is not stamped and stays unread', async () => {
+      await engine.executeRaw(`UPDATE sources SET config = config || '{"federated": false}'::jsonb WHERE id = 'default'`);
+      try {
+        expect(await noGrantFederatedScope(engine, false, 'default')).toBeUndefined();
+        const canary = marker('isodefault');
+        const slug = 'notes/alice-isodefault-' + canary;
+        expect((await call('alice-a', 'put_page', { slug, content: note('Alice isodefault', 'Alice isodefault code ' + canary + '.') })).isError).toBe(false);
+        expect(await stored(slug, FEDERATED)).toMatchObject({ page_readers: null });
+        expect(await reads('public', slug, canary, FEDERATED)).toEqual(none);
+      } finally {
+        await engine.executeRaw(`UPDATE sources SET config = config || '{"federated": true}'::jsonb WHERE id = 'default'`);
+      }
     }, 240_000);
 
     test('a member-bound write cannot leave the source its grant names', async () => {
