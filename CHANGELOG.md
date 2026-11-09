@@ -16,6 +16,18 @@ The brain owner's remote credentials (`gbrain access owner set <member>`) now ge
 
 The owner's `recall` with a `question` now returns its private facts, as `recall` by entity or session already did. Before, ranking a question dropped them.
 
+`gbrain repair private-labels` now writes its undo ledger ahead of each page. Every cleared or restored page gets an `intent` line before the page write and a `committed` line after it, so a run that stops between the two can still be undone with `--class restore`. When the ledger can't take the intent line, the apply refuses with `storage_error` and changes nothing (GST-2092).
+
+`--class restore` treats ledger lines as untrusted input. It re-adds only `access` (a string) and `visibility: private`. A line with any other key, a non-string value or a page id that isn't an integer is counted as unreadable instead of failing the preview (GST-2092, GST-2128).
+
+The private-labels preview now counts the pages each window would expose along with its own: `derived_from` pages whose origin loses `visibility: private`, and life-chronicle events extracted from a listed page. It reports them by category (`details.dependents`, no slugs) and warns when the count isn't zero (GST-2093).
+
+On a brain without managed persistence, a page whose file sits in its source's checkout is no longer cleared in the database only, because the next sync or re-import would put the label back from the file. The apply holds it with outcome `file_backed` and names the file to edit. Repo-less pages clear as before (GST-2128).
+
+An apply that ends with a failure, a stop or a pending write keeps its approved preview, so rerunning the same `--apply --expect <hash>` resumes it instead of asking for a new preview (GST-2128).
+
+Restore no longer lists a page whose label was removed by hand after a restore landed. The preview counts it as `removed_after_restore` and says so (GST-2128).
+
 ## [0.60.623.0] - 2026-11-09
 
 **The brain owner's own agents now read the whole personal brain, and pages stamped `access: private` by default can be cleared in reviewed batches.** On a single-user brain, writer templates stamped `access: private` on ordinary research and ops pages, and every remote caller got `not_found` for them, the owner's own agent included. `gbrain access owner set <member>` now names the owner (config `access.owner_member`, database state, so repo-less brains work the same). Every token, OAuth client or stdio server bound to that member reads `visibility: private` pages, privacy-alias pages, derived and pinned-question pages and private facts through `get_page`, `search`, `query`, `recall` and the other page reads, within its source grant. `readable_by` and folder rules still bind it, a shared-room audience gets no relaxation, and other members, unbound and public callers read exactly as before. `gbrain repair private-labels` previews the existing labels with counts per category, keeps real restrictions, and clears the over-stamped ones in reviewed, recorded, reversible batches. The bulk-ingestion page template no longer writes an `access:` line, and docs/guides/access-designations.md defines every designation.
