@@ -19,7 +19,7 @@
  *     updates and releases it once the file and database agree again;
  *   - doctor `maintenance_write_drift` and `gbrain repair file-drift`.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -35,10 +35,10 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import { sha256 } from './digest.ts';
 import { existingHostIdFor } from './identity.ts';
 import { getWorktreeBinding } from './ownership.ts';
-import { staleMirrorPage } from './mirror-read-only.ts';
+import { sourceMirrorReadOnly, staleMirrorPage } from './mirror-read-only.ts';
 import { isOriginTwinPage } from './origin-twins.ts';
-import { prepareFileTarget } from './page-prepare.ts';
-import { readReconcileState } from './reconcile-state.ts';
+import { prepareFileTarget, publishesDatabaseOnly } from './page-prepare.ts';
+import { adoptableSlugOrigin, readReconcileState } from './reconcile-state.ts';
 import { reconcileCanonical } from './reconcile-merge.ts';
 import { classifyDrift } from './reconcile-additive.ts';
 import { recordsNoFileOrigin, slugPathFile } from './unbound-pages.ts';
@@ -86,13 +86,14 @@ export async function liveFileDrift(engine: BrainEngine, sourceId: string, slug:
   const root = join(binding.local_path, binding.relative_path);
   // GBRA-133 (#7931): a stale mirror page publishes database-only but reconciles against the file at its slug path.
   // #7974: it is compared as reconcile reads it; a slug path that reading cannot settle (several spellings) is unknown.
-  // GBRA-108: so is an origin twin with no recorded file. Sync imports the file at its slug path into it (and holds it
-  // file_drift when they differ), so the drift is read from that file as repair file-drift adopts it. A slug-path file
-  // another live page records is that page's (sync imports it there), so the twin stays database-only.
-  const twin = !page.page.source_path && await isOriginTwinPage(engine, sourceId, slug);
-  if (twin || await staleMirrorPage(engine, sourceId, page.page)) {
+  // GBRA-108: so is an origin twin with no recorded file that adopts its slug path (twinReading). Sync imports that file
+  // into it (and holds it file_drift when they differ), so the drift is read from it as repair file-drift adopts it.
+  // A slug-path file another live page records is that page's (sync imports it there), so the twin stays database-only.
+  const twin = await twinReading(engine, sourceId, root, page);
+  if (twin === 'db_only') return { still_present: null, reason: 'db_only_slug_path', db_revision: page.revision };
+  if (twin === 'adopt' || await staleMirrorPage(engine, sourceId, page.page)) {
     try {
-      const state = await readReconcileState(engine, sourceId, slug, undefined, { adoptSlugPath: twin });
+      const state = await readReconcileState(engine, sourceId, slug, undefined, { adoptSlugPath: twin === 'adopt' });
       const agrees = classifyDrift(state.file, reconcileCanonical(state.snapshot.page, state.snapshot.tags)).verdict === 'no_drift';
       return { still_present: !agrees, reason: agrees ? 'agrees' : 'file_database_drift', db_revision: state.snapshot.revision,
         path: relative(state.root, state.path).split(sep).join('/'), file_hash: sha256(state.raw) };
@@ -120,6 +121,21 @@ export async function liveFileDrift(engine: BrainEngine, sourceId: string, slug:
     return { still_present: true, reason: 'file_database_drift', db_revision: page.revision, path: relative(root, path).split(sep).join('/'),
       ...(file_hash ? { file_hash } : {}) };
   }
+}
+
+/**
+ * GBRA-108: how liveFileDrift reads an origin twin with no recorded file, in a source that is not a read-only mirror (no
+ * repair writes there): `adopt` when it adopts its slug path as reconcile does (adoptableSlugOrigin); `db_only` when that
+ * path is under a declared storage.db_only directory and holds a file, which sync imports into the twin but no repair
+ * adopts; null (prepareFileTarget's database-only reading) otherwise.
+ */
+async function twinReading(engine: BrainEngine, sourceId: string, root: string, page: PageSnapshot): Promise<'adopt' | 'db_only' | null> {
+  if (page.page.source_path || !existsSync(root) || !await isOriginTwinPage(engine, sourceId, page.page.slug) || await sourceMirrorReadOnly(engine, sourceId)) return null;
+  const real = realpathSync(root), mode = await scannerSlugRootMode(engine, sourceId, real);
+  try {
+    if (await adoptableSlugOrigin(engine, sourceId, real, page, mode)) return 'adopt';
+    return publishesDatabaseOnly(real, page.page.slug, page) && existsSync(slugPathFile(real, page.page.slug, mode)) ? 'db_only' : null;
+  } catch { return 'adopt'; } // a refusal (several files import as the slug, an invalid gbrain.yml): readReconcileState reports it
 }
 
 /** The path `prepareFileTarget` compares, resolved the same way (recorded source path, captured file URI, then the slug path). */

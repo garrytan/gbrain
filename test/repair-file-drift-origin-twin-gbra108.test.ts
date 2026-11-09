@@ -44,8 +44,8 @@ const holds = (engine: BrainEngine) => engine.executeRaw<{ code: string; path: s
 const row = async (engine: BrainEngine) => (await engine.executeRaw<{ source_path: string | null; database_only_reason: string | null; compiled_truth: string }>(
   'SELECT source_path, database_only_reason, compiled_truth FROM pages WHERE source_id=$1 AND slug=$2', ['default', SLUG]))[0]!;
 
-/** A legacy origin twin whose file then gained a timeline bullet in an external commit, held `file_drift` by sync. */
-async function heldLegacyTwin(engine: BrainEngine, root: string): Promise<void> {
+/** The imported page turned into a legacy origin twin with no recorded file and database-only edits; `extra` runs in the same write. */
+async function legacyTwin(engine: BrainEngine, extra?: (tx: BrainEngine) => Promise<unknown>): Promise<void> {
   expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
   await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], async () => {
     await tx.executeRaw("DELETE FROM op_checkpoints WHERE op='sync-import-provenance'");
@@ -53,10 +53,21 @@ async function heldLegacyTwin(engine: BrainEngine, root: string): Promise<void> 
       ingested_at=NULL, ingested_via=NULL, source_path=NULL, source_uri=NULL, database_only_reason='origin_twin',
       compiled_truth=compiled_truth || E'\\nA database-only line.', frontmatter=frontmatter || '{"status":"database-only"}'::jsonb
       WHERE source_id='default' AND slug=$1`, [SLUG]);
+    await extra?.(tx);
   }, TEST_WRITE_ATTRIBUTION));
+}
+
+/** An external commit appends a timeline bullet to the twin's slug-path file; sync runs a full pass over it. */
+async function externalEdit(engine: BrainEngine, root: string): Promise<void> {
   appendFileSync(join(root, PATH), `${BULLET}\n`);
   git(root, 'commit', '-qam', 'external edit');
   expect((await performManagedSync(engine, { ...OPTS, full: true })).status).toBe('synced');
+}
+
+/** A legacy origin twin whose file then gained a timeline bullet in an external commit, held `file_drift` by sync. */
+async function heldLegacyTwin(engine: BrainEngine, root: string): Promise<void> {
+  await legacyTwin(engine);
+  await externalEdit(engine, root);
   expect(await holds(engine)).toEqual([{ code: 'file_drift', path: PATH }]);
 }
 
@@ -89,11 +100,44 @@ test('a held origin twin resolved --prefer file takes the file and clears the ho
   expect(after.compiled_truth).toContain(BULLET);
 }, { setup: setupRepo }), 120000);
 
-test('an origin twin whose slug-path file another live page records stays database-only', () => managedBrain(async ({ engine, root }) => {
-  expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
-  await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], async () => {
-    await tx.executeRaw("UPDATE pages SET source_path=NULL, source_uri=NULL, database_only_reason='origin_twin' WHERE source_id='default' AND slug=$1", [SLUG]);
-    await tx.executeRaw("UPDATE pages SET source_path=$1 WHERE source_id='default' AND slug='notes/keeper-example'", [PATH]);
-  }, TEST_WRITE_ATTRIBUTION));
-  expect(await liveFileDrift(engine, 'default', SLUG)).toMatchObject({ still_present: false, reason: 'database_only' });
-}, { setup: ({ root }) => { setupRepo({ root }); writeFileSync(join(root, 'notes', 'keeper-example.md'), '---\ntype: concept\ntitle: Keeper Example\n---\n\nThe keeper.\n'); git(root, 'add', '-A'); git(root, 'commit', '-qm', 'keeper'); } }), 120000);
+const DATABASE_ONLY = { still_present: false, reason: 'database_only' };
+
+test('an origin twin whose slug-path file another live page records stays database-only, and sync holds nothing for it', () => managedBrain(async ({ engine, root }) => {
+  await legacyTwin(engine, tx => tx.executeRaw("UPDATE pages SET source_path=$1 WHERE source_id='default' AND slug='notes/keeper-example'", [PATH]));
+  expect(await liveFileDrift(engine, 'default', SLUG)).toMatchObject(DATABASE_ONLY);
+  git(root, 'rm', '-q', 'notes/keeper-example.md');
+  await externalEdit(engine, root);
+  expect(await holds(engine)).toEqual([]);
+  expect(await liveFileDrift(engine, 'default', SLUG)).toMatchObject(DATABASE_ONLY);
+}, { setup: ({ root }) => { setupRepo({ root }); writeFileSync(join(root, 'notes', 'keeper-example.md'), FILE); git(root, 'add', '-A'); git(root, 'commit', '-qm', 'keeper'); } }), 120000);
+
+test('an origin twin in a read-only mirror source is not listed for a repair no apply could make', () => managedBrain(async ({ engine, root }) => {
+  await legacyTwin(engine, tx => tx.executeRaw("UPDATE sources SET config=config || '{\"mirror_read_only\":\"true\"}'::jsonb WHERE id='default'"));
+  await externalEdit(engine, root);
+  expect(await liveFileDrift(engine, 'default', SLUG)).toMatchObject(DATABASE_ONLY);
+  const planned = await preview(engine, 'database');
+  expect(planned.affected).toBe(0);
+  expect(planned.listing).toEqual([{ item: `default:${SLUG}`, class: 'no_drift', detail: 'database_only' }]);
+}, { setup: setupRepo }), 120000);
+
+test('a held origin twin under a declared db_only path is listed as unknown with its reason, never no_drift', () => managedBrain(async ({ engine, root }) => {
+  await legacyTwin(engine);
+  await externalEdit(engine, root);
+  expect(await holds(engine)).toEqual([{ code: 'file_drift', path: PATH }]);
+  expect(await liveFileDrift(engine, 'default', SLUG)).toMatchObject({ still_present: null, reason: 'db_only_slug_path' });
+  const planned = await preview(engine, 'database');
+  expect(planned.residuals).toEqual({ unknown_db_only_slug_path: 1 });
+  expect(planned.listing).toEqual([{ item: `default:${SLUG}`, class: 'unknown', detail: 'db_only_slug_path' }]);
+}, { setup: ({ root }) => { setupRepo({ root }); writeFileSync(join(root, 'gbrain.yml'), 'storage:\n  db_only:\n    - notes/\n'); git(root, 'add', '-A'); git(root, 'commit', '-qm', 'db_only'); } }), 120000);
+
+test('an origin twin whose slug-path file is missing stays database-only', () => managedBrain(async ({ engine, root }) => {
+  await legacyTwin(engine);
+  git(root, 'rm', '-q', PATH);
+  git(root, 'commit', '-qm', 'remove the file');
+  expect(await liveFileDrift(engine, 'default', SLUG)).toMatchObject(DATABASE_ONLY);
+}, { setup: setupRepo }), 120000);
+
+test('an origin twin whose slug path no file can import as stays database-only', () => managedBrain(async ({ engine }) => {
+  await legacyTwin(engine, tx => tx.executeRaw("UPDATE pages SET slug='notes/Alpha-Example' WHERE source_id='default' AND slug=$1", [SLUG]));
+  expect(await liveFileDrift(engine, 'default', 'notes/Alpha-Example')).toMatchObject(DATABASE_ONLY);
+}, { setup: setupRepo }), 120000);
