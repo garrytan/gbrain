@@ -29,6 +29,7 @@ import type { Check } from '../../doctor.ts';
 import { withSkippedSegmented } from '../check-fix.ts';
 import type { DoctorContext, DoctorEntry } from '../context.ts';
 import { scanDeadline } from '../budget.ts';
+import { currentStatementDeadline } from '../../../core/statement-deadline.ts';
 
 async function runStubGuard(ctx: DoctorContext): Promise<Check[]> {
   const { engine, orphanRatioSourceId } = ctx;
@@ -382,18 +383,23 @@ export const extractionBacklogsEntry: DoctorEntry = {
 /**
  * #8979: a local probe's stdout, or null when it fails or outlives its bound (5 s, clipped to the entry deadline less
  * the report reserve; `entryDeadlineAt` is read when the entry starts). It runs asynchronously and is killed with
- * SIGKILL at its bound, so a probe that hangs never blocks the event loop or outlives the entry's deadline.
+ * SIGKILL at its bound, so a probe that hangs never blocks the event loop or outlives the entry's deadline. A probe
+ * the entry deadline cut short marks the entry's scope expired, so its checks report unknown instead of absent.
  */
 async function localProbe(entryDeadlineAt: number | undefined, file: string, args: string[]): Promise<string | null> {
-  const timeout = scanDeadline({ entryDeadlineAt }, 5_000) - Date.now();
-  if (timeout <= 0) return null;
+  const scope = currentStatementDeadline();
+  const ownEnd = Date.now() + 5_000;
+  const end = scanDeadline({ entryDeadlineAt }, 5_000);
+  const cutShort = () => { if (scope && end < ownEnd) scope.expired = true; return null; };
+  const timeout = end - Date.now();
+  if (timeout <= 0) return cutShort();
   const { execFile } = await import('../../../core/spawn.ts');
   return new Promise((resolve) => {
     const child = execFile(file, args, { encoding: 'utf8', shell: process.platform === 'win32' }, (error, stdout) => {
       clearTimeout(timer);
       resolve(error ? null : stdout);
     });
-    const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(null); }, timeout);
+    const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(cutShort()); }, timeout);
     child.stdin?.end();
   });
 }

@@ -37,6 +37,7 @@ import type { DoctorContext, DoctorEntry } from '../src/commands/doctor/context.
 import { StatementDeadlineError, deadlineBoundEngine, withStatementDeadline } from '../src/core/statement-deadline.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const ENTRY_BUDGET = 'doctor.entry_budget_ms';
 const noProgress = new Proxy({}, { get: () => () => undefined }) as DoctorContext['progress'];
@@ -109,21 +110,34 @@ test('#8979: a local probe that hangs is killed at its entry deadline instead of
     // Ignores SIGTERM, so only a hard kill ends it before its 6 s sleep.
     writeFileSync(join(bin, tool), `#!/bin/sh\necho $$ >> '${pids}'\ntrap '' TERM\nexec sleep 6\n`, { mode: 0o755 });
   }
-  const path = process.env.PATH;
-  process.env.PATH = `${bin}:${path}`;
   try {
-    const args = ['--json', '--budget-ms', '1000'];
-    const started = Date.now();
-    const checks = await runDoctorRegistry(ctxFor(null, args), [homeDirInWorktreeEntry]);
-    expect(Date.now() - started).toBeLessThan(1_000 + 400);
-    expect(byName(checks, 'home_dir_in_worktree')).toBeDefined();
+    await withEnv({ PATH: `${bin}:${process.env.PATH}` }, async () => {
+      const args = ['--json', '--budget-ms', '1000'];
+      const started = Date.now();
+      const checks = await runDoctorRegistry(ctxFor(null, args), [homeDirInWorktreeEntry]);
+      expect(Date.now() - started).toBeLessThan(1_000 + 400);
+      // Cut short by the deadline, the probes' checks are unknown, never absent.
+      expect(byName(checks, 'npm_squat')?.details).toMatchObject({ health: 'unknown', reason: 'budget' });
+    });
     await new Promise((r) => setTimeout(r, 1_500));
     const launched = readFileSync(pids, 'utf8').split('\n').filter(Boolean).map(Number);
     expect(launched.length).toBeGreaterThan(0);
     const alive = launched.filter((pid) => { try { process.kill(pid, 0); return true; } catch { return false; } });
     expect(alive).toEqual([]);
   } finally {
-    process.env.PATH = path;
+    rmSync(bin, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test('#8979: a local probe that answers in time feeds its check', async () => {
+  const bin = mkdtempSync(join(tmpdir(), 'gbrain-8979-bin-'));
+  writeFileSync(join(bin, 'crontab'), "#!/bin/sh\necho '0 * * * * gbrain sync --all'\n", { mode: 0o755 });
+  try {
+    await withEnv({ PATH: `${bin}:${process.env.PATH}`, GBRAIN_HOME: undefined }, async () => {
+      const checks = await runDoctorRegistry(ctxFor(null, ['--json']), [homeDirInWorktreeEntry]);
+      expect(byName(checks, 'cron_gbrain_home')).toMatchObject({ status: 'ok' });
+    });
+  } finally {
     rmSync(bin, { recursive: true, force: true });
   }
 }, 30_000);
