@@ -2849,9 +2849,9 @@ doctor stops listing either. Each apply re-reads the source inside one
 transaction and refuses `source_changed` if it moved since the check. On a
 managed brain it first takes the worktree locks and rows a reclone takes, so
 no reclone runs between the record and the clone; while a reclone, refresh or
-write holds them the id is refused `source_busy` (nothing changed; run it
-again once that finishes, and finish a refresh with `gbrain sources refresh
-<id> --resume`). A write that fails is reported for its own id as
+write holds them the id is refused `source_busy` (nothing changed, unless
+the reason says the checkout already got the lock-down; run it again once
+that process or refresh has finished). A write that fails is reported for its own id as
 `write_failed`, saying whether the checkout already got all or part of the
 lock-down, and the other ids keep their results. Without git-lfs files a
 clone with these settings holds the same tracked bytes, so the stored writer

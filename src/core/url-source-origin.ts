@@ -208,7 +208,7 @@ export async function recordSourceOrigin(engine: BrainEngine, ids: string[], opt
       results.push(code === 'write_pending'
         ? refusal(id, 'source_busy', `Another gbrain process (a reclone, refresh or write) holds source ${id}'s worktree locks, so its origin was not recorded; ${unchanged} Run this again once that process finishes.`)
         : code === 'refresh_in_progress'
-          ? refusal(id, 'source_busy', `A refresh of the worktree holding source ${id} is still running, so its origin was not recorded; ${unchanged} Finish it (gbrain sources refresh ${id} --resume), then run this again.`)
+          ? refusal(id, 'source_busy', `${message} So source ${id}'s origin was not recorded; ${unchanged} Run this again once that refresh has finished or been recovered.`)
           : refusal(id, 'write_failed', `Recording source ${id}'s origin failed: ${message} The record was not written.${lockdown} The other ids in this run keep their own results; run this again for ${id}.`));
     }
   }
