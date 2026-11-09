@@ -107,7 +107,7 @@ export async function runUnindexedFilesPhase(engine: BrainEngine | null, opts: U
     details: {
       mode: opts.dryRun ? 'dry_run' : 'apply', sources: sources.map(({ by_code: _codes, ...source }) => source), scanned: total('scanned'), unindexed: total('unindexed'),
       slug_taken: total('slug_taken'), scheduled_now: total('scheduled_now'), already_scheduled: total('already_scheduled'), metafile_skipped: total('metafile_skipped'), by_code: byCode,
-      complete: incomplete === 0, time_budget_ms: timeBudgetMs, skipped, errors,
+      complete: incomplete === 0 && errors.length === 0, time_budget_ms: timeBudgetMs, skipped, errors,
       ...(errors.length ? { fix: { argv: ['gbrain', 'doctor', '--only', 'unindexed_files', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'Shows each managed Git source\'s unindexed-file state and the next step; read-only.' } } : {}),
     },
