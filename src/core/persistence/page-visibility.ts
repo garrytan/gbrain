@@ -145,13 +145,17 @@ export async function remoteReadersChecked<T extends { parsedPage: { frontmatter
  * GST-2051: the member a remote write's token or OAuth client is bound to, as `member:<id>`, when the write goes to
  * `default`: the no-grant floor of every token without `--sources` and the registration default of every OAuth
  * client, read by every credential without a source grant, unbound ones included. Null for a local, unbound, attested
- * or audience write, and for any other source (the operator chose that source's audience). Re-resolved live from the
- * stored principal, so a binding removed after submission takes effect at preparation.
+ * or audience write, and for any other source (the operator chose that source's audience). Read from the stored
+ * binding at preparation, so a binding removed after submission takes effect; a disabled member's page names a reader
+ * nobody holds and is refused, and a binding that cannot be read throws instead of publishing the page shared.
  */
 export async function defaultSourceMemberWriter(engine: SqlEngine, authority: Pick<WriteAuthority, 'remote' | 'actingFor' | 'principal' | 'sourceId'>): Promise<string | null> {
   const { principal } = authority;
   if (!authority.remote || authority.actingFor || authority.sourceId !== 'default' || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return null;
-  return (await memberIdentityFor(engine, { principal })).find(p => p.startsWith('member:')) ?? null;
+  const [row] = await engine.executeRaw<{ member_id: string | null }>(principal.kind === 'legacy_token'
+    ? 'SELECT member_id FROM access_tokens WHERE id::text = $1'
+    : 'SELECT member_id FROM oauth_clients WHERE client_id = $1', [principal.id]);
+  return row?.member_id ? `member:${row.member_id}` : null;
 }
 
 /**

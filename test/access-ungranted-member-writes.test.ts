@@ -137,6 +137,31 @@ for (const kind of testBackends()) {
       expect(await stored(slug)).toMatchObject({ page_readers: ['member:alice-example'], body: expect.stringContaining('Alice ' + canary) });
     }, 240_000);
 
+    test('a binding the write cannot read, or a write bound to a disabled member, is refused instead of publishing shared', async () => {
+      const canary = marker('lookup');
+      const slug = 'notes/alice-lookup-' + canary;
+      const auth = await provider().verifyAccessToken(tokens.alice) as unknown as AuthInfo;
+      await engine.executeRaw('ALTER TABLE access_tokens RENAME COLUMN member_id TO member_id_unreadable');
+      try {
+        await dispatchToolCall(engine, 'put_page', { slug, content: note('Alice lookup', 'Alice lookup code ' + canary + '.'), request_id: randomUUID() },
+          { remote: true, transport: 'http', auth, sourceId: 'default', takesHoldersAllowList: ['world'] });
+      } finally { await engine.executeRaw('ALTER TABLE access_tokens RENAME COLUMN member_id_unreadable TO member_id'); }
+      expect(await stored(slug)).toBeUndefined();
+      expect(await reads('public', slug, canary)).toEqual(none);
+      await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', ['carol-example']);
+      const minted = await mintLegacyToken(engine, { name: 'carol', scopes: ['read', 'write'], takesHolders: ['world'] });
+      await engine.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id = $1::uuid', [minted.id, 'carol-example']);
+      tokens.carol = minted.token;
+      const carolAuth = await provider().verifyAccessToken(tokens.carol) as unknown as AuthInfo;
+      await engine.executeRaw('UPDATE access_members SET disabled_at = now() WHERE id = $1', ['carol-example']);
+      const carolSlug = 'notes/carol-' + canary;
+      const carolOut = await dispatchToolCall(engine, 'put_page', { slug: carolSlug, content: note('Carol', 'Carol code ' + canary + '.'), request_id: randomUUID() },
+        { remote: true, transport: 'http', auth: carolAuth, sourceId: 'default', takesHoldersAllowList: ['world'] });
+      expect(JSON.parse(carolOut.content.map(c => c.text).join('\n')).code).toBe('readable_by_invalid');
+      expect(await stored(carolSlug)).toBeUndefined();
+      expect(await reads('public', carolSlug, canary)).toEqual(none);
+    }, 240_000);
+
     test('a token granted --sources default and an OAuth client at its registration default are kept to their member too', async () => {
       const canary = marker('grant');
       const slug = 'notes/alice-grant-' + canary;
