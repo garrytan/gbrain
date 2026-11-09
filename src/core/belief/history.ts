@@ -7,7 +7,9 @@
  *     event of the same claim (any key, so a fact moved to `private`) is
  *     private: making a claim private hides its earlier world history;
  *   - the stream page's current lifetime is visible now (a page made private
- *     later hides its earlier events; an ended lifetime hides them too);
+ *     later hides its earlier events; an ended lifetime hides them too), and
+ *     for facts and takes it is not quarantined (#6259: a quarantined page's
+ *     claims are scraped text, kept from remote readers as its body is);
  *   - for links, every page-backed endpoint and the origin are visible now;
  *   - for takes, the take's holder is one the caller may read (`takesHolders`, default `['world']`, the takes
  *     surfaces' rule). A removal carries no value, so its holder is the key's newest earlier value's (one key is one
@@ -20,6 +22,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { quarantineFilterFragment } from '../quarantine.ts';
 
 export interface BeliefHistoryRow {
   id: number; slug: string; page_lifetime: string | null; subject_kind: string; subject_key: string; event_type: string; origin: string;
@@ -58,7 +61,7 @@ export async function readBeliefHistoryPage(engine: BrainEngine, q: BeliefHistor
   const rows = await engine.executeRaw<BeliefHistoryRow & { stream_visible: boolean | null; later_private: boolean; take_holder: string | null }>(`SELECT e.id, e.slug, e.page_lifetime::text AS page_lifetime,
       e.subject_kind, e.subject_key, e.event_type, e.origin, e.trust_tier, e.writer_tier, e.tier_basis, e.visibility, e.recorded_at, e.source_time,
       e.value, e.value_hash, e.prior_hash, e.state_hash, e.cause, e.purged, e.redacted_fields,
-      (SELECT ${privatePagesFilterFragment('p')} FROM belief_page_lifetimes l JOIN pages p ON p.source_id = l.source_id AND p.slug = l.slug
+      (SELECT ${privatePagesFilterFragment('p')} AND (e.subject_kind NOT IN ('fact', 'take') OR ${quarantineFilterFragment('p')}) FROM belief_page_lifetimes l JOIN pages p ON p.source_id = l.source_id AND p.slug = l.slug
         AND p.deleted_at IS NULL AND (l.page_id IS NULL OR p.id = l.page_id)
         WHERE l.page_lifetime = e.page_lifetime AND l.ended_at IS NULL) AS stream_visible,
       (e.claim_fp IS NOT NULL AND EXISTS (SELECT 1 FROM belief_events v WHERE v.source_id = e.source_id AND v.source_incarnation = e.source_incarnation
