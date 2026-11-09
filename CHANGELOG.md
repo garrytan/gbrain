@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.627.0] - 2026-11-09
+
+**A webhook capture can no longer drop a page's readers (GST-2112).** `POST /ingest` wrote through a trusted local path whose only check was that the sender could read the page, so a member-bound token granted a source could replace a page whose `readable_by` named it with a body that named no readers, and every caller could then read the page. The route and the `ingest_capture` job now apply the remote `put_page` readers rule: a body that drops `readable_by` from a page that names readers, or names readers that leave out the sender, is refused `readable_by_invalid` (403 at the route, nothing queued; at write time for a job already queued). The job binds its write to the revision it checked, so readers added between the check and the write refuse the write with `revision_conflict` and the retry refuses `readable_by_invalid`. A capture already queued from a member-bound credential whose write source is `default` is refused `permission_denied` at write time, as the route refuses it before queueing. Bodies that keep the readers, and pages without readers, import as before.
+
+### Itemized changes
+
+- `src/commands/serve-http-webhooks.ts`: the route applies the remote readers rule to the capture body before anything is queued.
+- `src/core/minions/handlers/ingest-capture.ts`, `src/core/import-file.ts`: the job reads the page snapshot before the visibility check, applies the same rule at write time, binds its write to the checked revision (`revision_conflict` when it moved; a page that did not exist stays a create), and refuses a member-bound `default` writer `permission_denied`.
+- `src/core/behavior-change-notice.ts`: one row for the changed capture behavior.
+- Docs: `docs/guides/write-refusals.md`.
+- Tests: `test/ingest-capture-keeps-readers.test.ts` (PGLite and Postgres).
+
 ## [0.60.626.0] - 2026-11-09
 
 **`gbrain sources record-origin --remote` now locks down the existing checkout too, and on a managed brain it can no longer report success while a reclone still clones with git-lfs on.** On a managed brain the record took only the source row lock, so a reclone that had already read the source, or held its worktree locks, could clone with git-lfs downloads and hooks on after the command said the source was recorded. The record now takes the worktree locks and rows a reclone takes (refusing the id `source_busy` while one runs), and the reclone reads the record under its own locks. `--remote --apply` now also turns git-lfs downloads and hooks off in the existing checkout's `.git/config`, because a reclone only happens when a checkout is lost or replaced, and until then doctor read green while the checkout still fetched git-lfs objects and ran hooks. The git-lfs check now reads a committed `.gitattributes` under a directory whose name holds a tab (it was cut at the tab and skipped), ignores commented-out `filter=lfs` lines, says "declares a git-lfs filter" when a rule only declares one, and records a clone of an empty repository instead of telling the operator to restore an intact checkout. A failed write is reported for its own id instead of ending the run without saying which ids were recorded.
