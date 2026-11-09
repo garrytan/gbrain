@@ -395,6 +395,10 @@
       },
       {
         "category": "ops",
+        "name": "postgres_tls"
+      },
+      {
+        "category": "ops",
         "name": "function_search_path"
       },
       {
