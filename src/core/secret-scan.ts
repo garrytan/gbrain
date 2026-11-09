@@ -207,7 +207,7 @@ const PROVIDER_KEYS_SINCE = '0.60.502.0';
 const ESCAPE_BOUNDARY = '(?:\\\\(?:[bfnrt]|u[0-9A-Fa-f]{4}|x[0-9A-Fa-f]{2}|U[0-9A-Fa-f]{8})|%[0-9A-Fa-f]{2}|=3[Dd]|(?:\\x1b|\\\\(?:u001[bB]|x1[bB]|033))\\[[0-9;]{0,32}m)';
 const ESCAPE_IN_LINE_RE = /\\[bfnrtuxU0]|%[0-9A-Fa-f]{2}|=3[Dd]|\x1b\[/;
 const JWT_VALUE = '(eyJ[A-Za-z0-9_-]{8,4096}\\.[A-Za-z0-9_-]{8,4096}\\.[A-Za-z0-9_-]{8,4096})';
-const BEARER_ANCHOR = '[Bb](?:earer|EARER)\\s+)((?:[A-Za-z0-9._~+/=-]|\\\\/){20,})';
+const BEARER_ANCHOR = '[Bb](?:earer|EARER)\\s+)((?=(?:[A-Za-z0-9._~+/=-]|\\\\/){20})[A-Za-z0-9._~+/=-]*(?:\\\\/[A-Za-z0-9._~+/=-]*)*)';
 const BASIC_HEADER = 'authorization\\s{0,16}:\\s{0,16}basic\\s{1,16})([A-Za-z0-9+/=]{4,2048})(?![A-Za-z0-9+/=])';
 const BASIC_BARE = 'basic\\s{1,16})([A-Za-z0-9+/=]{16,2048})(?![A-Za-z0-9+/=])';
 

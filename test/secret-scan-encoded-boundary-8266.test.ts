@@ -41,6 +41,13 @@ describe('#8266 a bearer token with an escaped slash is redacted whole', () => {
     expect(out).toBe('{"h":"Authorization: Bearer <REDACTED:bearer>","n":1}');
   });
 
+  test('a very long bearer-class run does not stop the rule from matching the token after it', () => {
+    const token = 'EXAMPLEfakeTOKEN' + alnum(24);
+    const line = 'Authorization: Bearer ' + 'A'.repeat(1_000_000) + ' then Bearer ' + token;
+    expect(scanText(line).length).toBeGreaterThan(0);
+    expect(redactFindings(line).text.includes(token)).toBe(false);
+  });
+
   test('the token still ends at an escaped newline or quote', () => {
     const tok = alnum(40);
     expect(redactFindings(`{"h":"Bearer ${tok}\\nnext"}`).text).toBe('{"h":"Bearer <REDACTED:bearer>\\nnext"}');
