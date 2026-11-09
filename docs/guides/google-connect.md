@@ -507,11 +507,11 @@ attached. The catalog (also emitted as structured JSON with `--json`):
 Cursor expiries (`historyId` older than ~a week, calendar/contacts
 `syncToken` 410, or a contacts HTTP 400 explicitly reporting an expired sync
 token) use bounded re-lists automatically. Contacts recovery refreshes its
-own cursor without restarting Gmail. A full contacts list (first sync, an
-expired token, `--full`) saves its page cursor after each page and lists at
-most 10 pages (2,000 contacts) per sync, so a large address book finishes
-over several syncs, each resuming where the last stopped, while Calendar and
-Gmail still run every time. A contact that keeps failing does not hold the
+own cursor without restarting Gmail. A full contacts list (first sync or an
+expired token) saves its page cursor after each page and lists at most 10
+pages (2,000 contacts) per sync, so a large address book finishes over
+several syncs, each resuming where the last stopped, while Calendar and Gmail
+still run every time. `--full` lists every page from page 1 in one run. A contact that keeps failing does not hold the
 list back: the cursor moves past its page, and once the list ends the next
 sync starts it again from page 1 without saving a sync token, so the contact
 is retried. A contacts HTTP 400 on a sync-token request that
