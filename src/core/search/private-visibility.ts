@@ -302,6 +302,15 @@ export function callerIsOwner(): boolean {
   return currentCallerAccess().owner;
 }
 
+/**
+ * GST-2089: whether a fact read stays world-only (visibility = 'world'). Only the trusted local CLI (remote strictly
+ * false) and the brain owner (CallerAccess.owner, the page rule) read private facts; provenance, source grants and
+ * member access still apply to both. Fact arms decide their visibility list here and nowhere else.
+ */
+export function worldOnlyFacts(remote: boolean | undefined): boolean {
+  return remote !== false && !callerIsOwner();
+}
+
 /** The current caller's member identity; empty outside a bound remote read or a local --as, and for an audience of several entries (see callerIdentities). */
 export function callerIdentity(): readonly string[] {
   return currentCallerAccess().identity;

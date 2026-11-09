@@ -2089,6 +2089,89 @@ A page with no file changes through `get_page` (`include_content: true`) and
 write fence markers. Neither outcome is a default, and nothing changes until the
 user chooses.
 
+### Private labels (over-stamped `access: private`)
+
+Older writer templates stamped `access: private` on ordinary research and ops
+pages, so remote callers other than the brain owner get `not_found` for them.
+`gbrain repair private-labels` clears those labels in reviewed windows and can
+put every one back. It is explicit-only and preview-bound, and nothing runs on
+upgrade.
+
+**Say to your agent:** *"Preview which of my pages carry an over-stamped access: private label."*
+
+```bash
+gbrain repair private-labels --source <id> --json                          # preview: one window, counts and a hash
+gbrain repair private-labels --source <id> --apply --expect <preview_hash>
+```
+
+What it clears and what it keeps:
+
+- **Cleared:** `access: private` with no `visibility` (class `alias`: the
+  `access` key goes), and `access: private` with `visibility: private` (class
+  `alias-and-visibility`: both keys go). Nothing else on the page changes, and
+  `readable_by` and folder rules still apply.
+- **Kept and counted:** pinned questions; derived pages (atoms, pages with
+  `derived_from` or `source_slug`, synthesized concepts, life-chronicle
+  events), whose privacy follows their origin; `access: restricted` or
+  `confidential` and any `confidentiality` value; an explicit
+  `visibility: private` with no `access: private`.
+
+The preview lists one window of pages under a hash, with every class's count
+before and after the window. It also counts, by category and without slugs, the
+pages that the window would expose along with its own (`details.dependents`).
+It judges each page by the same rules remote reads use, before and after the
+window: `derived_from` pages, atoms whose origin is a listed page, synthesized
+concepts built from such atoms, and life-chronicle events extracted from a
+listed page. A warning names the counts when they aren't zero. To keep one of
+those pages private, give it its own label before you apply. The preview hash
+covers the pages it counted, so if a new page would be exposed by the time you
+apply, the apply refuses with `preview_changed` and you preview again.
+
+`--apply --expect <preview_hash>` applies exactly that window and checks each
+page against its current revision and labels first. A page edited since the
+preview reports `changed_since_preview` and is left alone. A bare `--apply` is
+refused. On a brain without managed persistence the repair writes only the
+database, so a page whose file sits in its source's checkout is held with
+outcome `file_backed`. The next sync or re-import would put the label back from
+the file, so edit the file's frontmatter, commit it, and run
+`gbrain sync --source <id>`. Repo-less pages clear as usual.
+
+**Windows and resume.** `--limit <n>` sets the window size (default 1000, at
+most 10000). When more pages remain past the window, the preview says so: apply
+this window, then preview again for the next one. An apply that stops before
+it's done (an interrupt, a time or capacity stop, a pending write or a failed
+page) keeps its approved preview. Rerun the same `--apply --expect` command and
+it resumes after the last applied page. You need a new preview only after the
+window has been applied in full, or when the preview hash changed
+([`preview_changed`](#preview-changed)).
+
+**Git-canonical sources.** Private pages there are database-only, so clearing
+one commits it into the source's Git history for the first time. That class,
+`git-publish`, is never in the default preview. Run it only by name:
+`gbrain repair private-labels --class git-publish`. The commit is one-way:
+restore re-adds the label and removes the file from the checkout, but every
+earlier commit, and any remote it was pushed to, keeps the page's content.
+
+**Undo.** Every change goes to an undo ledger at
+`~/.gbrain/repair/private-labels/<brain>.jsonl` (under `$GBRAIN_HOME/.gbrain/` if
+set) on the host that ran it. Each page gets an `intent` line with the exact
+removed values before its write and a `committed` line after it. A run that
+stops between the two can still be undone. If the ledger can't take the intent
+line, the apply refuses with `storage_error` and changes nothing.
+
+```bash
+gbrain repair private-labels --source <id> --class restore --json
+gbrain repair private-labels --source <id> --class restore --apply --expect <preview_hash>
+```
+
+Restore re-adds only `access` and `visibility: private` from the ledger, and
+only to pages that are still live and lack those keys. It counts `restorable`,
+`already_restored`, `page_gone` and `removed_after_restore` (a page whose label
+was removed by hand after a restore landed; it isn't listed again). A ledger
+line with any other key, a non-string value or a page id that isn't an integer
+is counted as unreadable and never applied. Run restore on the host and
+`GBRAIN_HOME` that ran the clear, because the ledger lives there.
+
 ### Extractor facts
 
 A managed write by a gbrain older than v0.60.11.0 to a conversation page
