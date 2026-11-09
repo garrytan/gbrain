@@ -112,7 +112,10 @@ export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: s
   if (!rows.length) {
     throw opError('not_found', `No page "${slug}"${sourceId ? ` in source ${sourceId}` : ''}.`, 'Check the slug with gbrain list or gbrain search.');
   }
-  const members = (await listMembers(engine)).filter(m => m.status === 'enabled');
+  const members = await Promise.all((await listMembers(engine)).filter(m => m.status === 'enabled').map(async m => {
+    const identity = identityFor(m.id, m.groups);
+    return { id: m.id, identity, folder: await folderAccessFor(engine, identity) };
+  }));
   const entries: WhoCanReadEntry[] = [];
   for (const row of rows) {
     const fm = typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter;
@@ -121,12 +124,10 @@ export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: s
     const ruled = (row.folder_rule_ids?.length ?? 0) > 0;
     const allowed: string[] = [];
     if (readers !== null || ruled) {
-      for (const m of members) {
-        const identity = identityFor(m.id, m.groups);
-        const folder = await folderAccessFor(engine, identity);
+      for (const { id, identity, folder } of members) {
         const admitted = await withCallerAccess({ identity, ...folder, restricted: true }, () => engine.executeRaw(
           `SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${accessAllowedSql('p', identity)}`, [row.source_id, row.slug]));
-        if (admitted.length) allowed.push(m.id);
+        if (admitted.length) allowed.push(id);
       }
     }
     const notes = [
