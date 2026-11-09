@@ -60,7 +60,7 @@ import {
 import { lockRenewalAudit } from '../audit/lock-renewal-audit.ts';
 import { loadavg, cpus } from 'os';
 import { monitorEventLoopDelay } from 'perf_hooks';
-import { isRetryableConnError } from '../retry-matcher.ts';
+import { getCode, getMessage, isRetryableConnError } from '../retry-matcher.ts';
 import { reconnectAfterConnectionError as reconnectEngineAfterConnError } from './reconnect.ts';
 import { LocalConfigurationError, isLocalConfigurationError } from './configuration-error.ts';
 
@@ -98,6 +98,14 @@ import { withEngineScope } from '../engine-scope.ts';
 import { startWakeDrain } from '../wakeshift/drain.ts';
 
 export { parseRssFromProcStatus };
+
+/** Include PostgreSQL shutdown and the Unix socket disappearing after shutdown. */
+function isPostgresPollOutage(error: unknown): boolean {
+  const code = getCode(error);
+  if (code === '57P01' || code === '57P02' || code === '57P03') return true;
+  return code === 'ENOENT' && (error as { syscall?: unknown }).syscall === 'connect' &&
+    /^connect ENOENT \/.*\/\.s\.PGSQL\.\d+$/.test(getMessage(error));
+}
 
 /**
  * Read accurate RSS from /proc/self/status (RssAnon + RssShmem).
@@ -805,9 +813,7 @@ export class MinionWorker extends EventEmitter {
           // happened to reconnect or crash. Promotion is a standalone UPDATE
           // from delayed→waiting, so after a connection failure we can safely
           // rebuild the worker-owned pool before continuing to claim work.
-          if (isRetryableConnError(e)) {
-            await this.reconnectAfterConnectionError('promoteDelayed', e);
-          }
+          await this.recoverPollConnectionError('promoteDelayed', e);
         }
 
         if (!this.running) break;
@@ -869,10 +875,9 @@ export class MinionWorker extends EventEmitter {
             // job (invisible active job, no renewal, later stall). So instead:
             // reconnect once and let the NEXT poll tick re-claim against a live
             // pool. Non-retryable errors propagate (real bug → PM restart).
-            if (!isRetryableConnError(e)) throw e;
+            if (!await this.recoverPollConnectionError('claim', e)) throw e;
             const msg = e instanceof Error ? e.message : String(e);
-            console.error(`[worker] claim hit a connection error; reconnecting, retry on next tick: ${msg}`);
-            await this.reconnectAfterConnectionError('claim', e);
+            console.error(`[worker] claim hit a connection error; retry on next tick: ${msg}`);
             await new Promise(resolve => setTimeout(resolve, this.opts.pollInterval));
             continue;
           }
@@ -1050,6 +1055,17 @@ export class MinionWorker extends EventEmitter {
     this.idleWaiter.wake('stop');
     this.wakeDrain?.stop(); this.wakeDrain = null;
     try { this.eldHistogram?.disable(); } catch { /* fail-open */ }
+  }
+
+  private async recoverPollConnectionError(site: 'promoteDelayed' | 'claim', error: unknown): Promise<boolean> {
+    const retryable = isRetryableConnError(error);
+    if (!retryable && (this.engine.kind !== 'postgres' || !isPostgresPollOutage(error))) return false;
+    // A shutdown code can belong to one backend. Let the driver reopen that
+    // connection while jobs are active instead of closing their shared pool.
+    if (retryable || this.executions.size === 0) {
+      await this.reconnectAfterConnectionError(site, error);
+    }
+    return true;
   }
 
   /**
