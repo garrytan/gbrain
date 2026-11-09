@@ -44,6 +44,7 @@ export const MIN_REPLAY_ROWS = 20;
 export interface FixtureRow {
   query: string;
   expected_top_3_slugs: string[];
+  expect_no_match?: true;
   notes?: string;
 }
 
@@ -133,6 +134,7 @@ Two-layer eval gate (v0.33 ENG-D2) for naive gbrain whoknows:
 
 Fixture format (JSONL, one row per line):
   {"query": "lab automation", "expected_top_3_slugs": ["wiki/people/alice", "..."], "notes": "..."}
+  {"query": "out-of-corpus topic", "expected_top_3_slugs": [], "expect_no_match": true}
 
 Options:
   --json              Emit JSON report instead of human-readable table
@@ -170,6 +172,12 @@ export function readFixture(path: string): FixtureRow[] {
         query: o.query as string,
         expected_top_3_slugs: expected,
       };
+      if (o.expect_no_match === true) {
+        if (expected.length || (o.expected_top_3_slugs as unknown[]).length) {
+          throw new Error('expect_no_match requires an empty expected_top_3_slugs array');
+        }
+        row.expect_no_match = true;
+      }
       if (typeof o.notes === 'string') row.notes = o.notes;
       rows.push(row);
     } else {
@@ -222,7 +230,7 @@ async function runQualityGate(
       query: row.query,
       expected: row.expected_top_3_slugs,
       actual_top_3: actualTop3,
-      hit: topKHit(actualTop3, row.expected_top_3_slugs, 3),
+      hit: row.expect_no_match ? results.length === 0 : topKHit(actualTop3, row.expected_top_3_slugs, 3),
     });
   }
   const hits = rows.filter((r) => r.hit).length;

@@ -40,6 +40,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { HybridSearchMeta, PageType, SearchResult } from '../core/types.ts';
 import { hybridSearch } from '../core/search/hybrid.ts';
 import { INTERNAL_BREADTH_SEARCH_OPTS } from '../core/search/internal-breadth.ts';
+import { gradeRetrievalConfidence } from '../core/search/crag.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 
@@ -215,11 +216,15 @@ export async function findExperts(
   //    fan-out by taking max raw_match per composite key.
   const byKey = new Map<string, SearchResult>();
   for (const r of results) {
+    // A nearest neighbor exists even when no person or company covers the
+    // topic. Admit evidence before ranking recency or relationship strength.
+    if (gradeRetrievalConfidence([r], { query: opts.topic }).level === 'weak') continue;
     const key = `${r.source_id ?? 'default'}::${r.slug}`;
     const prev = byKey.get(key);
     if (!prev || r.score > prev.score) byKey.set(key, r);
   }
   const candidates = Array.from(byKey.values());
+  if (candidates.length === 0) return [];
 
   // 3. Enrich by exact page identity, then recheck admission. Salience is an
   // optional ranking signal; dates also prove the current page is readable.

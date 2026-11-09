@@ -6,11 +6,11 @@
  */
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'path';
 import { fileURLToPath } from 'url';
-import { existsSync, readFileSync, statSync } from 'fs';
+import { existsSync, statSync } from 'fs';
 import type { BrainEngine } from '../../../core/engine.ts';
 import { REPAIR_SOURCE_CONFIG_SQL } from '../../../core/source-config-sql.ts';
 import { checkLinkSourceCheck } from '../../../core/link-source-check-repair.ts';
-import { loadConfig } from '../../../core/config.ts';
+import { gbrainPath, loadConfig } from '../../../core/config.ts';
 import type { ProgressReporter } from '../../../core/progress.ts';
 import type { Check } from '../../doctor.ts';
 import { PAGE_CHILD_FK_TARGETS, orphanPredicate } from '../../../core/repair/orphan-children.ts';
@@ -53,6 +53,9 @@ export function resolveWhoknowsFixturePath(
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- override is the operator-set GBRAIN_WHOKNOWS_FIXTURE_PATH doctor test-fixture path (the check only READS that jsonl, never loads or executes it); absolutizing the operator's own relative path against the process cwd is the intent, unchanged from the pre-hoist form
     return isAbsolute(override) ? override : resolvePath(process.cwd(), override);
   }
+
+  const operatorFixture = gbrainPath('eval', 'whoknows.jsonl');
+  if (existsSync(operatorFixture)) return operatorFixture;
 
   try {
     let dir = dirname(fileURLToPath(moduleUrl));
@@ -105,13 +108,11 @@ export async function whoknowsHealthCheck(_engine: BrainEngine): Promise<Check> 
         message: 'whoknows eval fixture exists but is empty. The eval cannot pass without queries.',
       };
     }
-    const raw = readFileSync(fixturePath, 'utf-8');
-    const rows = raw
-      .split('\n')
-      .filter((l) => {
-        const t = l.trim();
-        return t && !t.startsWith('#') && !t.startsWith('//');
-      });
+    const { readFixture } = await import('../../eval-whoknows.ts');
+    const fixture = readFixture(fixturePath);
+    const rows = [...new Set(fixture.filter(row =>
+      row.query.trim() && (row.expected_top_3_slugs.length > 0 || row.expect_no_match),
+    ).map(row => row.query.trim().normalize('NFKC').toLowerCase()))];
     if (rows.length < 5) {
       return {
         name: 'whoknows_health',
@@ -122,7 +123,7 @@ export async function whoknowsHealthCheck(_engine: BrainEngine): Promise<Check> 
     return {
       name: 'whoknows_health',
       status: 'ok',
-      message: `whoknows eval fixture present (${rows.length} queries). Run \`gbrain eval whoknows test/fixtures/whoknows-eval.jsonl\` to grade.`,
+      message: `whoknows eval fixture present (${rows.length} queries). Run the whoknows eval on this fixture to grade.`,
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
