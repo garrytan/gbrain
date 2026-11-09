@@ -10,6 +10,36 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Six search, takes, trajectory and open-loop answers that were quietly wrong now say what is true.** A keyword listing no longer drops its total just because the rows took a moment to load. Searching for a page by its handle finds that page even when the search also tries the entity's other names. Link and graph results stop hiding a page name that merely looks like an API key. A take that was true only for a stretch of time reaches `gbrain think` with its dates. A monthly revenue figure is no longer reported as a crash because it came after an annual one. And when the brain cannot read its list of sources, the `open_loops` answer says it does not know instead of calling your inbox clean.
+
+### What you'd see
+
+| You ask for | Before | Now |
+|---|---|---|
+| `search` with `match: "keyword"` on a slow brain | "Keyword match count unavailable" | the total |
+| keyword search for `acme-example`, a company with an alias | the alias matches, not the company page | both, counted |
+| `get_links` to `districts/pa-<long name>` | `districts/<REDACTED:voyage>` | the slug |
+| `think` over a take held Sep to Jan | a claim with no dates | `since=… until=… source=…` |
+| `gbrain eval trajectory` with an annual then a monthly MRR | a 92% "regression" | nothing flagged |
+| `open_loops` when the sources table cannot be read | "no google source", coverage complete | `no_google_sources: null`, coverage partial, a notice to retry |
+
+### Things to watch
+
+- `takes_search` rows now carry `since_date`, `until_date` and `source`, the same fields `takes_list` already returns for the same takes.
+- A trajectory regression now needs two observations with the same unit and period at different dates. When two different values are reported for one date, that date is skipped and the dates on either side are compared. An observation with no unit or period only compares with others that also lack it.
+
+### Itemized changes
+
+- `src/core/search/keyword-paging.ts`: `readKeywordPage` passes its row read to `countKeywordMatches`, so the count waits for the rows plus the grace, as on the hybrid path. Reported and first fixed by @akinduroifedayo in #8500.
+- `src/core/search/keyword-handles.ts`: `slugHandles` judges each alternative of a bare `OR` on its own; a negation or a non-handle phrase only stops its own alternative's handles, and quote marks split words and an empty phrase is ignored, as in `websearch_to_tsquery`. Reported and first fixed by @javieraldape in #8633.
+- `src/core/search/output-redaction.ts`: `from_slug`, `to_slug`, `origin_slug` and their `*_source_id` are identity fields; link context is still scanned. Reported and first fixed by @calebhicks in #8545.
+- `src/core/engine-sql/takes.ts`, `src/core/engine.ts` (`TakeHit`), `src/core/utils.ts`, `src/core/think/gather.ts`, `src/core/think/sanitize.ts`: both take searches select `since_date`, `until_date` and `source`; think renders `until=`, and all three attribute values, plus any holder outside the holder grammar, are neutralized and escaped like the claim. Takes SQL-text and export-surface goldens regenerated. Reported and first fixed by @calebhicks in #8546.
+- `src/core/trajectory.ts` (`comparablePairs`), `src/core/trajectory-format.ts`: regressions and the `(superseded prior)` annotation pair only same-metric, same-unit, same-period observations at a strictly later date, and a point with no finite date is left out instead of dropping the entity's whole trajectory block. Reported and first fixed by @calebhicks in #8547 and #8541.
+- `src/core/ops/loops.ts`, `src/core/error-registry.ts`, `src/core/notice-ledger.ts`: a failed sources read answers `no_google_sources: null`, `completeness: "partial"` and a `loops_source_read_failed` notice with no database error text; the digest says so. `skills/google-loops/SKILL.md` names the case. Reported and first fixed by @javieraldape in #8718.
+- Tests: `test/search-keyword-paging.test.ts`, `test/search/keyword-handles.test.ts`, `test/search/keyword-handles-or-alternatives-8618.test.ts`, `test/search/output-redaction-link-slugs-8545.test.ts`, `test/takes-search-validity-8546.test.ts`, `test/trajectory.test.ts`, `test/trajectory-format.test.ts`, `test/loops-source-read-failure-8452.test.ts`.
+
 ## [0.60.620.0] - 2026-11-09
 
 **A diverged managed checkout now publishes its local commits on refresh by default when Git durability is on, after a secret scan of those commits.** Commits a script made with plain `git commit` in a managed checkout used to strand there whenever the remote moved: every `gbrain sources refresh` refused `refresh_diverged` and asked the user, unless `sources.refresh_publish_diverged` was set to `true`. With the setting unset, a worktree whose Git durability is on (`gbrain sources writer git-durability <source> --enable`, or the legacy hook) now publishes them itself: the local commits merged with the upstream in memory, never a rebase or force-push, then the fast-forward. The publish child scans, under its publish lock and for the exact commits it pushes, what they add: commit messages, added lines (including a value a later commit removed) and merge-commit conflict resolutions. A value that looks like a secret, added text too large to scan, or a commit that changes `.gbrain-scan-allow` or a `.gitattributes` refuses the new `publish_secret_found` naming the file, line, rule and commit, never the value, with nothing pushed; commits the scan cannot read in full refuse `publish_scan_unreadable` instead. The rewritten-upstream refusal and the `--expect-remote` bound are unchanged. `false` turns it off; `true` still publishes with durability off.
