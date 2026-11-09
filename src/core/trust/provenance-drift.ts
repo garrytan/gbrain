@@ -34,6 +34,7 @@ export type DriftClass = 'remote' | 'ambiguous' | 'local' | 'needs_review' | 're
 /** Pages scanned per source by the doctor check. */
 export const DRIFT_SCAN_LIMIT = 50_000;
 const BATCH = 500;
+export const COLUMN_ONLY_REASON = 'a stamp differs from the pages column and no version changed it';
 const REMOTE_PRINCIPALS = ['oauth_client', 'legacy_token', 'local_stdio'];
 
 export interface DriftSnapshot { frontmatter: Record<string, unknown>; writer: DriftWriter; request_id: string | null }
@@ -121,6 +122,8 @@ export function analyzePageDrift(input: DriftPageInput, opts: { includeAmbiguous
   const writer: DriftWriter = damaging.some(change => change.writer === 'remote') ? 'remote' : 'unattributed';
   const verdict: DriftVerdict = { class: writer === 'remote' ? 'remote' : 'ambiguous', writer, marker_lost: markerLost, stamps_rewritten: stampsRewritten, marker_missing: markerMissing, changes };
   if (needsReview) return { ...verdict, class: 'needs_review', reason: needsReview };
+  // No version changed a stamp: the page only differs from its `pages` column (which follows the last write), so the writer is not unknown.
+  if (verdict.class === 'ambiguous' && stampsRewritten && !markerLost && !changes.some(change => change.request_id !== null || change.key === 'cap' || change.from !== (input.columns[change.key as ProvenanceStampKey] ?? null))) verdict.reason = COLUMN_ONLY_REASON;
   if (verdict.class === 'ambiguous' && !opts.includeAmbiguous) return verdict;
   return { ...verdict, ...planRestore(live, restoredStamps, markerLost ? lostCap : null, stored) };
 }

@@ -24,7 +24,7 @@ import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, sa
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { GIT_HOLD_OP, gitHoldFix, type GitHoldRecord } from '../persistence/sync-holds.ts';
 import { ownerRepairFile, repairPageMarker, restorePageProvenance } from '../trust/page-handlers.ts';
-import { plannedDigest, readPageDrift, scanProvenanceDrift, type DriftItem } from '../trust/provenance-drift.ts';
+import { COLUMN_ONLY_REASON, plannedDigest, readPageDrift, scanProvenanceDrift, type DriftItem } from '../trust/provenance-drift.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 
 const DOCS = 'docs/guides/repair.md#provenance';
@@ -59,6 +59,7 @@ function summaryOf(item: DriftItem): string {
 
 function writerDetail(item: DriftItem): string {
   const change = item.verdict.changes.find(entry => entry.writer === item.verdict.writer) ?? item.verdict.changes[0];
+  if (item.verdict.reason === COLUMN_ONLY_REASON) return COLUMN_ONLY_REASON;
   return change ? `written by a ${change.writer} write${change.request_id ? ` (request ${change.request_id})` : ''}` : '';
 }
 
@@ -96,7 +97,7 @@ async function scan(engine: BrainEngine, scope: RepairScope, selection: Selectio
       if (verdict.class === 'needs_review') { residuals.needs_review!++; listing.push({ item: label, class: 'needs_review', detail: `${verdict.reason}; edit the page by hand` }); continue; }
       if (!verdict.restore) {
         residuals.ambiguous!++;
-        listing.push({ item: label, class: 'ambiguous', detail: `no recorded writer; previewed with --include-ambiguous only; ${writerDetail(item)}` });
+        listing.push({ item: label, class: 'ambiguous', detail: `${verdict.reason === COLUMN_ONLY_REASON ? 'columns follow the last write' : 'no recorded writer'}; previewed with --include-ambiguous only; ${writerDetail(item)}` });
         continue;
       }
       const hold = holds.get(item.page_id);
