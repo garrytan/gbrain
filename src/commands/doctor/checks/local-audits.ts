@@ -397,6 +397,7 @@ async function localProbe(entryDeadlineAt: number | undefined, file: string, arg
   const { spawn } = await import('../../../core/spawn.ts');
   const posix = process.platform !== 'win32';
   return new Promise((resolve) => {
+    // nosemgrep: javascript.lang.security.audit.spawn-shell-true.spawn-shell-true -- file and args are constants from the three call sites (npm root -g, which -a gbrain, crontab -l); the shell is Windows-only, where npm resolves to npm.cmd, as with the execFile it replaced; trusted local CLI only
     const child = spawn(file, args, { shell: !posix, detached: posix, stdio: ['ignore', 'pipe', 'ignore'] });
     let out = '';
     let done = false;
@@ -449,6 +450,7 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
     const globalPackages = [join(bunGlobalRoot, 'node_modules', 'gbrain')];
     // No npm (or it failed): only Bun's global dir is checked.
     const npmRoot = (await localProbe(entryDeadlineAt, 'npm', ['root', '-g']))?.trim() || undefined;
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- npmRoot is the local operator's own `npm root -g` output, joined only to look for an installed gbrain package; trusted local CLI only
     if (npmRoot) globalPackages.push(join(npmRoot, 'gbrain'));
     // `which` exits non-zero when gbrain isn't on PATH (or is missing
     // entirely on this platform) — nothing to check.
