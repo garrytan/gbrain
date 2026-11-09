@@ -1014,9 +1014,9 @@ the recovery is done.
 
 **Warnings before the wall.** A cap at or past 80%, or one that runs out
 within `persistence.capacity.warn_days` (default 30), adds the
-`[gbrain notice write_capacity_low]` notice (kind `info`). It rides a write
-that succeeded, so it opens with "This write was saved" and its fix is the
-read-only `gbrain doctor --only persistence_capacity --json`; the
+`[gbrain notice write_capacity_low]` notice (kind `info`). It rides
+receipts and status output whatever the call did, so it opens with "This
+notice is not a refusal" and its fix is the read-only `gbrain doctor --only persistence_capacity --json`; the
 `gbrain config set` command stays in doctor's finding for the brain host. Write and sync receipts carry it at most once an
 hour per engine per scope (a remote client sees only the brain and its own
 principal); `gbrain sync status`, doctor and autopilot cycle output carry it

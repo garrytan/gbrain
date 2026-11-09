@@ -68,7 +68,7 @@ for (const kind of testBackends()) {
       // GST-2107: the notice rides a write that succeeded, so its last lines name a read-only check, never a cap raise for the user.
       expect(first[0]).toMatchObject({ kind: 'info', fix: { actor: 'agent', argv: ['gbrain', 'doctor', '--only', 'persistence_capacity', '--json'] } });
       expect(first[0]!.why).toContain('81%');
-      expect(first[0]!.why).toContain('This write was saved');
+      expect(first[0]!.why).toContain('This notice is not a refusal');
       expect(first[0]!.why).not.toContain('config set');
       // A remote agent reads the rendered notice: over MCP its fix is the read-scope get_brain_health call, never a step to relay.
       for (const transport of ['http', 'stdio'] as const) {
@@ -145,9 +145,10 @@ for (const kind of testBackends()) {
         await tx.executeRaw("UPDATE persistence_requests SET created_at=now()-interval '2 days' WHERE id=ANY($1::uuid[])", [ids.slice(1, 101)]);
       });
       await engine.setConfig('persistence.limits.principal_lifetime_ids', '1101');
+      // The forecast a receipt, doctor or /metrics read in the last minute records the rates the refusal uses under its locks.
+      const forecast = await readCapacityForecast(engine);
       const refusal = await fixture.admit('one-more').then(() => null, (error: { code?: string; fix?: { argv?: string[] } }) => error);
       expect(refusal).toMatchObject({ code: 'write_quota_exhausted', reason: 'lifetime_ids' });
-      const forecast = await readCapacityForecast(engine);
       const doctor = forecast.rows.find(r => r.scope.startsWith('principal:') && r.resource === 'lifetime_ids')!;
       expect(doctor.recommended_limit).toBe(Math.ceil(1101 + (1100 / 7) * 365));
       expect(Number(refusal!.fix!.argv!.at(-1))).toBe(doctor.recommended_limit);
@@ -173,24 +174,22 @@ for (const kind of testBackends()) {
       }
     });
 
-    check('repeated refusals within a minute reuse one rate read per scope, as a paused producer retries under the counter locks', async engine => {
+    check('a refusal under the counter locks reads at most the latest 1,000 admissions, and none after a forecast recorded the rates', async engine => {
       const fixture = await requestFixture(engine);
       for (let i = 0; i < 3; i++) await fixture.admit(`rate-${i}`);
-      let walks = 0;
+      await engine.setConfig('persistence.limits.brain_lifetime_ids', '10');
+      const reads: string[] = [];
       const counted = { ...engine, executeRaw: (sql: string, params?: unknown[]) => {
-        if (sql.includes('LIMIT 200000')) walks++;
+        if (/FROM persistence_requests/.test(sql)) reads.push(sql);
         return engine.executeRaw(sql, params);
       } } as unknown as BrainEngine;
-      const first = await oneYearCapacity(counted, 'brain', 'LifetimeIds', 3, 10);
-      expect(await oneYearCapacity(counted, 'brain', 'LifetimeIds', 3, 10)).toBe(first);
-      expect(await oneYearCapacity(counted, 'brain', 'TerminalBytes', 3, 10)).toBeGreaterThan(0);
-      expect(walks).toBe(1);
-      await fixture.admit('rate-new');
-      expect(await oneYearCapacity(counted, 'brain', 'LifetimeIds', 4, 10)).toBeGreaterThanOrEqual(first);
-      expect(walks).toBe(1);
-      const principal = (await readCapacityForecast(engine)).rows.find(r => r.scope.startsWith('principal:'))!.scope;
-      await oneYearCapacity(counted, principal, 'LifetimeIds', 4, 10);
-      expect(walks).toBe(2);
+      await oneYearCapacity(counted, 'brain', 'LifetimeIds', 3, 10);
+      expect(reads.some(sql => sql.includes('LIMIT 1000'))).toBe(true);
+      expect(reads.some(sql => /LIMIT (?!1\b|1000\b)\d+/.test(sql))).toBe(false);
+      const doctor = (await readCapacityForecast(counted)).rows.find(r => r.scope === 'brain' && r.resource === 'lifetime_ids')!;
+      reads.length = 0;
+      expect(await oneYearCapacity(counted, 'brain', 'LifetimeIds', doctor.used, doctor.limit)).toBe(doctor.recommended_limit);
+      expect(reads.some(sql => sql.includes('LIMIT 1000'))).toBe(false);
     });
 
     check('writes within a minute share one snapshot; the next minute reads again', async engine => {
