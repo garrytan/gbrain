@@ -12,7 +12,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**Five harness fixes: Hermes, Windows, request_tools, schema show and claude-cli.** A per-turn hook you paste into Hermes by hand now counts, Windows Claude Code installs get the per-turn rule hook, `request_tools` stops promising tools a stdio session cannot call, `gbrain schema show --source` reads that source's pack, and claude-cli calls no longer carry your personal Claude Code instructions.
+**Four harness fixes: Hermes, Windows, request_tools and schema show.** A per-turn hook you paste into Hermes by hand now counts, Windows Claude Code installs get the per-turn rule hook, `request_tools` stops promising tools a stdio session cannot call, and `gbrain schema show --source` reads that source's pack.
 
 ### Itemized changes
 
@@ -20,7 +20,6 @@ identifiers and attribution are available in the pre-removal Git revision
 - **Windows:** `gbrain setup claude-code` and the other install paths now write the per-turn rule hook for a Windows gbrain binary (`C:\...\gbrain.exe`) instead of skipping it with "no absolute gbrain binary was found". The hook names its paths in Git Bash's `/c/...` form, which is how Claude Code runs hooks on Windows. Codex runs hooks on Windows without a POSIX shell, so it still gets the printed step, now with that reason (reported by @Masashi-Ono0611, #8451).
 - **request_tools:** on a stdio session started at a narrower surface (`gbrain serve --surface starter`), `request_tools {tools: [...]}` lists only the tools the session can call. A tool outside it comes back with its schema, `listed: false` and a note to call `request_tools {"surface":"full"}` first, instead of a promise that it is in your tool list (reported by @Masashi-Ono0611, #8734).
 - **Schema packs:** `gbrain schema show --source <id>` shows that source's own pack (its per-source override, else the brain-wide pack) instead of failing with `Unknown pack: <id>`. A pack you name still wins (reported by @Masashi-Ono0611, #8900).
-- **claude-cli provider:** on Claude Code 2.1.314 or newer, gbrain's background `claude-cli` calls run with `--setting-sources ""`, so your `~/.claude/CLAUDE.md`, memory and `settings.json` no longer steer them, and your subscription login is kept. gbrain reads `claude --version` once per binary; older CLIs are unchanged (reported by @Masashi-Ono0611, #8350).
 
 ## [0.60.620.0] - 2026-11-09
 
