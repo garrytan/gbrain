@@ -9,7 +9,7 @@
  * caller's token, so a stale owner cannot act on its successor's lease.
  */
 import { closeSync, fsyncSync, openSync, promises, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
-const { open: openAsync, readFile: readFileAsync, unlink: unlinkAsync } = promises;
+const { open: openAsync, readFile: readFileAsync, rename: renameAsync, stat: statAsync, unlink: unlinkAsync } = promises;
 import { randomBytes } from 'node:crypto';
 import { hostname } from 'node:os';
 import { ResolverError } from './errors.ts';
@@ -21,13 +21,23 @@ export interface LeaseOpts { purpose: string; leaseMs: number; generation?: numb
 /** A lease file that never parses (a crash mid-create) counts as expired this long after its last write. */
 const UNPARSABLE_GRACE_MS = 60_000;
 
-function readLease(path: string): LeaseRecord | 'unparsable' | null {
-  let text: string;
-  try { text = readFileSync(path, 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e; }
+function parseLease(text: string): LeaseRecord | 'unparsable' {
   try {
     const r = JSON.parse(text) as LeaseRecord;
     return r && typeof r.token === 'string' && typeof r.expires_ms === 'number' ? r : 'unparsable';
   } catch { return 'unparsable'; }
+}
+
+function readLease(path: string): LeaseRecord | 'unparsable' | null {
+  let text: string;
+  try { text = readFileSync(path, 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e; }
+  return parseLease(text);
+}
+
+async function readLeaseAsync(path: string): Promise<LeaseRecord | 'unparsable' | null> {
+  let text: string;
+  try { text = await readFileAsync(path, 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e; }
+  return parseLease(text);
 }
 
 function makeRecord(opts: LeaseOpts): LeaseRecord {
@@ -97,17 +107,35 @@ export function renewLease(lease: Lease, leaseMs: number, now: () => number = Da
   return holdsLease(lease);
 }
 
+async function writeAsync(path: string, rec: LeaseRecord, flag: 'wx'): Promise<boolean> {
+  let fh;
+  try { fh = await openAsync(path, flag, 0o600); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false; throw e; }
+  try { await fh.writeFile(JSON.stringify(rec)); await fh.sync(); } finally { await fh.close(); }
+  return true;
+}
+
 /**
- * One attempt with async I/O only, for a caller whose event loop owns a
- * deadline (the hook lane): an expired or unparsable lease counts as held
- * here (the sync acquireLease reclaims it), so this never replaces a file.
+ * tryAcquireLease with async I/O only, for a caller whose event loop owns a
+ * deadline (the hook lane): null while a live lease is held; an expired or
+ * unparsable one is reclaimed the same way, so a holder that exited at its
+ * deadline strands the file for at most its lease.
  */
 export async function tryAcquireLeaseAsync(path: string, opts: LeaseOpts): Promise<Lease | null> {
+  const now = (opts.now ?? Date.now)();
   const rec = makeRecord(opts);
-  let fh;
-  try { fh = await openAsync(path, 'wx', 0o600); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'EEXIST') return null; throw e; }
-  try { await fh.writeFile(JSON.stringify(rec)); await fh.sync(); } finally { await fh.close(); }
-  return { path, token: rec.token, record: rec };
+  const mine = { path, token: rec.token, record: rec };
+  if (await writeAsync(path, rec, 'wx')) return mine;
+  const cur = await readLeaseAsync(path);
+  if (cur === null) return (await writeAsync(path, rec, 'wx')) ? mine : null;
+  const expired = cur === 'unparsable'
+    ? await statAsync(path).then(s => now - s.mtimeMs > UNPARSABLE_GRACE_MS, () => true)
+    : now > cur.expires_ms;
+  if (!expired) return null;
+  const tmp = `${path}.${randomBytes(6).toString('hex')}`;
+  await writeAsync(tmp, rec, 'wx');
+  await renameAsync(tmp, path);
+  const after = await readLeaseAsync(path);
+  return after !== null && after !== 'unparsable' && after.token === rec.token ? mine : null;
 }
 
 export async function releaseLeaseAsync(lease: Lease): Promise<boolean> {
