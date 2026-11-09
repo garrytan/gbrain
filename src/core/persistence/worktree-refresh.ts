@@ -56,6 +56,8 @@ export interface WorktreeRefreshRow {
   id: string; worktree_id: string; source_ids: string[]; principal_id: string; owner_epoch: string | number;
   topology_generation: string | number; state: WorktreeRefreshState; old_head: string; target_head: string; upstream_ref: string;
   preserved_uncommitted: string[]; outcome: Record<string, unknown>; created_at: string | Date; updated_at: string | Date; completed_at: string | Date | null;
+  /** The newest write request sequence when the row was inserted: a managed-sync request past it was admitted after the refresh began. */
+  barrier_sequence?: string | number | null;
 }
 export type RefreshBoundary = 'drained' | 'fenced' | 'merged' | 'syncing' | 'synced';
 export interface RefreshHooks { boundary?: (point: RefreshBoundary, row: WorktreeRefreshRow) => Promise<void> | void }
@@ -107,34 +109,58 @@ function refusal(name: CatalogueName, cause: string, fix: string, refreshId?: st
 const RETRY_IN_TICK = Symbol('retry_in_tick');
 const retryInTick = (error: OperationError) => Object.assign(error, { [RETRY_IN_TICK]: true });
 /**
- * GST-1457: members whose last_commit is past the refresh's start commit: set (null means never synced) and not old_head or an ancestor
- * of it. With HEAD back at old_head, lifting the fence would let their next sync diff that commit back to old_head and soft-delete what it
- * added, so --abandon refuses them. A commit git cannot place (missing object, unreadable checkout) counts as past.
+ * GST-1457: members whose database is past the refresh's start commit: a last_commit that is set (null means never synced) and neither
+ * old_head nor an ancestor of it, or (GST-1465) a managed-sync import or delete admitted after the refresh began, which a sliced pass leaves
+ * behind with last_commit still at old_head. With HEAD back at old_head, lifting the fence would leave those pages ahead of git or let the
+ * member's next sync soft-delete what it added, so --abandon refuses them. A commit git cannot place (GST-1472: any answer but exit 0 or 1
+ * of merge-base --is-ancestor) counts as past.
  */
-async function membersPastStart(engine: BrainEngine, row: Pick<WorktreeRefreshRow, 'source_ids' | 'old_head'>, root: string | null | undefined): Promise<string[]> {
-  const moved = (await engine.executeRaw<{ id: string; last_commit: string | null }>('SELECT id,last_commit FROM sources WHERE id = ANY($1::text[]) ORDER BY id', [row.source_ids]))
-    .filter((member): member is { id: string; last_commit: string } => member.last_commit !== null && member.last_commit !== row.old_head);
-  if (!moved.length || !root) return moved.map(member => member.id);
+async function membersPastStart(engine: BrainEngine, row: Pick<WorktreeRefreshRow, 'source_ids' | 'old_head' | 'barrier_sequence'>, root: string): Promise<string[]> {
+  const members = await engine.executeRaw<{ id: string; last_commit: string | null; imported: boolean }>(`SELECT s.id,s.last_commit,
+    EXISTS (SELECT 1 FROM persistence_requests r WHERE r.source_id=s.id AND r.sequence > COALESCE($2::bigint,0)
+      AND r.intent->>'kind' IN ('managed_sync_import','managed_sync_delete') AND r.state NOT IN ('failed','conflict','cancelled')) AS imported
+    FROM sources s WHERE s.id = ANY($1::text[]) ORDER BY s.id`, [row.source_ids, row.barrier_sequence == null ? null : String(row.barrier_sequence)]);
+  const moved = members.filter(member => member.imported || (member.last_commit !== null && member.last_commit !== row.old_head));
   return withGit(async git => {
     const past: string[] = [];
-    for (const member of moved) if (!await isAncestor(git, root, member.last_commit, row.old_head)) past.push(member.id);
+    for (const member of moved) if (member.imported || await ancestry(git, root, member.last_commit!, row.old_head) !== true) past.push(member.id);
     return past;
   }).catch(() => moved.map(member => member.id));
 }
 /**
- * GST-1457: where the way out moves HEAD. The refresh target, or the newest member last_commit on the target's line when every other
- * member's commit is an ancestor of it (a cycle sync carried a member past the target while syncing, #6712), so --resume never completes
- * with a member ahead of HEAD, whose next sync would roll it back.
+ * GST-1457, GST-1472: where the way out moves HEAD so no member's next sync rolls it back. `forward`: the refresh target, or the newest
+ * member commit on the target's line (a cycle sync carried a member past it while syncing, #6712). `diverged`: member commits on this
+ * refresh's line that do not form one line, each tip listed; no single commit keeps every member's pages. `unplaced`: a member commit git
+ * cannot place (a missing object, an unreadable checkout, a git timeout), so no commit can be named until git reads it. A member already off
+ * old_head's line before the refresh (rewritten history) is the state an uninterrupted refresh completes on, so it names nothing.
  */
-async function keepPagesHead(engine: BrainEngine, row: Pick<WorktreeRefreshRow, 'source_ids' | 'target_head'>, root: string): Promise<string> {
-  const commits = [...new Set((await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id = ANY($1::text[])', [row.source_ids]))
-    .map(member => member.last_commit).filter((commit): commit is string => !!commit))];
+type WayOut = { kind: 'forward'; head: string } | { kind: 'diverged'; tips: string[] } | { kind: 'unplaced'; members: Array<{ source_id: string; commit: string }> };
+async function keepPagesWayOut(engine: BrainEngine, row: Pick<WorktreeRefreshRow, 'source_ids' | 'old_head' | 'target_head'>, root: string): Promise<WayOut> {
+  const members = (await engine.executeRaw<{ id: string; last_commit: string | null }>('SELECT id,last_commit FROM sources WHERE id = ANY($1::text[]) ORDER BY id', [row.source_ids]))
+    .filter((member): member is { id: string; last_commit: string } => !!member.last_commit);
+  const unplaced = (commits: string[]): WayOut => ({ kind: 'unplaced', members: members.filter(member => commits.includes(member.last_commit)).map(member => ({ source_id: member.id, commit: member.last_commit })) });
   return withGit(async git => {
-    let head = row.target_head;
-    for (const commit of commits) if (commit !== head && await isAncestor(git, root, head, commit)) head = commit;
-    for (const commit of commits) if (!await isAncestor(git, root, commit, head)) return row.target_head;
-    return head;
-  }).catch(() => row.target_head);
+    const line = [row.target_head], lost: string[] = [];
+    for (const { last_commit: commit } of members) {
+      if (line.includes(commit)) continue;
+      const contained = await ancestry(git, root, commit, row.target_head);
+      const onLine = contained === false ? await ancestry(git, root, row.old_head, commit) : contained === null ? null : false;
+      if (onLine === null) lost.push(commit); else if (onLine) line.push(commit);
+    }
+    if (lost.length) return unplaced(lost);
+    const tips: string[] = [];
+    for (const commit of line) {
+      let covered = false;
+      for (const other of line) {
+        if (other === commit || covered) continue;
+        const ancestor = await ancestry(git, root, commit, other);
+        if (ancestor === null) return unplaced([commit, other]);
+        covered = ancestor;
+      }
+      if (!covered) tips.push(commit);
+    }
+    return tips.length === 1 ? { kind: 'forward', head: tips[0]! } as const : { kind: 'diverged', tips } as const;
+  }).catch(() => unplaced(members.map(member => member.last_commit)));
 }
 /** `git merge-base --is-ancestor`: true or false, or null when git cannot tell (a missing object, an unreadable checkout). */
 async function ancestry(git: Git, root: string, ancestor: string, descendant: string): Promise<boolean | null> {
@@ -153,6 +179,15 @@ async function memberOutsideHead(engine: BrainEngine, git: Git, root: string, ro
     if (await ancestry(git, root, row.old_head, member.last_commit) !== false) return true;
   }
   return false;
+}
+/**
+ * Whether recovery records the merge at `head`: HEAD is the refresh target or descends from it, and holds every member commit synced on this
+ * refresh's line. A fenced or merged row at exactly the target skips the member check (no member synced while it held the fence). GST-1472:
+ * --abandon at such a HEAD names --resume instead of a reset.
+ */
+async function adoptsHead(engine: BrainEngine, git: Git, root: string, row: WorktreeRefreshRow, head: string | null): Promise<boolean> {
+  return head !== null && (head === row.target_head || await isAncestor(git, root, row.target_head, head)) && await isAncestor(git, root, row.old_head, row.target_head)
+    && ((row.state !== 'recovery_required' && head === row.target_head) || !await memberOutsideHead(engine, git, root, row, head));
 }
 /**
  * GBEV-44: true when gbrain's commit ledger names every commit in from..to (writes admitted before the fence that landed while the refresh drained).
@@ -265,20 +300,43 @@ async function refusedBeforeAbort(engine: BrainEngine, git: Git, root: string, r
     && await ancestry(git, root, row.old_head, head) === true && await ancestry(git, root, row.target_head, head) === false
     && !await memberOutsideHead(engine, git, root, row, head) && await reachedTargetSince(git, root, row, head, startedAt) === false;
 }
+/** GST-1477: the way out for an operator who reset to the start commit on purpose to reject an upstream change; git stays the parent. */
+const revertRoute = (root: string, sourceId: string) =>
+  `If the user reset the checkout on purpose to reject an upstream change, keep git the parent instead: after that move, commit git -C ${q(root)} revert --no-edit <the unwanted commits> on top, then gbrain sources refresh ${sourceId} --resume; the next sync removes those pages through history.`;
 const keepSyncedWayOut = (row: Pick<WorktreeRefreshRow, 'source_ids'>, root: string, head: string) =>
-  `Ask the user first: git -C ${q(root)} merge --ff-only ${head} moves the checkout to the commit its members already synced (it keeps uncommitted edits git can carry; git -C ${q(root)} status --short lists them), then gbrain sources refresh ${row.source_ids[0]} --resume finishes the refresh and keeps the pages its members synced. If git refuses (an uncommitted edit overlaps an incoming file, or HEAD is not an ancestor of ${head}), ask the user before git -C ${q(root)} reset --hard ${head}, which discards local commits and uncommitted edits not in it, then --resume.`;
-/** GST-1457: the refusal when a member synced past old_head; its fix fast-forwards to the commit the members synced (ask_user, preview first), then --resume. */
-async function membersSyncedRefusal(engine: BrainEngine, row: WorktreeRefreshRow, root: string, moved: string[], cause: string): Promise<OperationError> {
+  `Ask the user first: git -C ${q(root)} merge --ff-only ${head} moves the checkout to the commit its members already synced (it keeps uncommitted edits git can carry; git -C ${q(root)} status --short lists them), then gbrain sources refresh ${row.source_ids[0]} --resume finishes the refresh and keeps the pages its members synced. If git refuses (an uncommitted edit overlaps an incoming file, or HEAD is not an ancestor of ${head}), ask the user before git -C ${q(root)} reset --hard ${head}, which discards local commits and uncommitted edits not in it, then --resume. ${revertRoute(root, row.source_ids[0])}`;
+const unplacedText = (way: Extract<WayOut, { kind: 'unplaced' }>) => way.members.map(member => `${member.commit} (${member.source_id}'s last synced commit)`).join(', ');
+/** GST-1472: why the way out names no single fast-forward, appended to the refusal's cause. */
+const wayOutCause = (way: WayOut, root: string) => way.kind === 'unplaced' ? ` Git cannot place ${unplacedText(way)} in ${root}, so recovery cannot tell which commit keeps those pages.`
+  : way.kind === 'diverged' ? ` Their commits do not form one line: ${way.tips.join(', ')}.` : '';
+function wayOutText(row: Pick<WorktreeRefreshRow, 'source_ids'>, root: string, way: WayOut): string {
   const source = row.source_ids[0];
-  const head = await keepPagesHead(engine, row, root);
-  const error = refusal('refresh_recovery_required', cause, keepSyncedWayOut(row, root, head), row.id);
-  error.fix = { ask_user: true, argv: ['git', '-C', root, 'merge', '--ff-only', head], preview_argv: ['git', '-C', root, 'status', '--short'],
-    consent: [], actor: 'agent', requires_exclusive: false,
-    why: `Fast-forwards the checkout to ${head}, the commit ${moved.join(', ')} already synced toward; git keeps uncommitted edits it can carry and refuses, changing nothing, when one overlaps an incoming file. Then --resume finishes refresh ${row.id} without rolling a member back.`,
-    user_message: `Refresh ${row.id} of ${row.source_ids.join(', ')} stopped with the checkout ${root} back at ${row.old_head}, after ${moved.join(', ')} had already synced past it. Abandoning it would let the next sync delete the pages those sources synced. To keep them, fast-forward the checkout to ${head} (git merge --ff-only keeps uncommitted edits and refuses if one overlaps an incoming file; git status --short lists them) and then run gbrain sources refresh ${source} --resume. Go ahead?`,
-    verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', source, '--json'] },
-    then: { argv: ['gbrain', 'sources', 'refresh', source, '--resume'], consent: [], actor: 'agent', requires_exclusive: false,
-      why: `With HEAD at ${head}, which contains the refresh target, records the merge and runs the member syncs, so refresh ${row.id} completes.` } };
+  if (way.kind === 'forward') return keepSyncedWayOut(row, root, way.head);
+  if (way.kind === 'unplaced') return `Git cannot place ${unplacedText(way)} (a missing object, an unreadable checkout or a git timeout), so nothing was changed. Fetch it with git -C ${q(root)} fetch --all --no-tags (git -C ${q(root)} cat-file -e <commit>^{commit} confirms git has it), then gbrain sources refresh ${source} --resume names the commit to move the checkout to with git merge --ff-only. If no remote holds the commit any more, ask the user: gbrain never guesses which pages it held.`;
+  return `The members synced commits on lines that do not meet (${way.tips.join(', ')}), so no single commit keeps every member's pages, and which win is the user's call. Ask the user first: git -C ${q(root)} merge --no-edit ${way.tips.join(' ')} joins those lines in one commit that keeps them all (on a conflict git stops with the conflicts in the checkout: resolve and commit them, or git -C ${q(root)} merge --abort), then gbrain sources refresh ${source} --resume finishes the refresh. To drop one line's changes instead, commit git -C ${q(root)} revert --no-edit <those commits> on top of that merge before --resume; the next sync removes those pages through history.`;
+}
+function wayOutFix(row: Pick<WorktreeRefreshRow, 'id' | 'source_ids' | 'old_head'>, root: string, way: WayOut, moved: string[]): Action {
+  const source = row.source_ids[0];
+  const verify = { argv: ['gbrain', 'sources', 'writer', 'status', '--source', source, '--json'] };
+  const resume = (why: string): Action => ({ argv: ['gbrain', 'sources', 'refresh', source, '--resume'], consent: [], actor: 'agent', requires_exclusive: false, why });
+  if (way.kind === 'unplaced') return { argv: ['git', '-C', root, 'fetch', '--all', '--no-tags', '--quiet'], consent: [], actor: 'agent', requires_exclusive: false,
+    why: `Git cannot place ${unplacedText(way)} in ${root}, so recovery cannot name the commit that keeps those pages. A fetch moves only remote-tracking refs and brings back a commit a remote still holds; then --resume names the way out. If no remote holds it, ask the user.`,
+    verify: { argv: ['git', '-C', root, 'cat-file', '-e', `${way.members[0]!.commit}^{commit}`] },
+    then: resume(`With git able to place every member commit, names the way out that keeps their pages, or finishes refresh ${row.id}.`) };
+  const head = way.kind === 'forward' ? way.head : null;
+  return { ask_user: true, argv: head ? ['git', '-C', root, 'merge', '--ff-only', head] : ['git', '-C', root, 'merge', '--no-edit', ...(way as { tips: string[] }).tips],
+    preview_argv: ['git', '-C', root, 'status', '--short'], consent: [], actor: 'agent', requires_exclusive: false, verify,
+    why: head ? `Fast-forwards the checkout to ${head}, the commit ${moved.join(', ')} already synced toward; git keeps uncommitted edits it can carry and refuses, changing nothing, when one overlaps an incoming file. Then --resume finishes refresh ${row.id} without rolling a member back.`
+      : `Merges the lines ${moved.join(', ')} synced (${(way as { tips: string[] }).tips.join(', ')}) into one commit that holds them all; git stops on a conflict. Then --resume finishes refresh ${row.id} without rolling a member back.`,
+    user_message: head ? `Refresh ${row.id} of ${row.source_ids.join(', ')} stopped with the checkout ${root} away from ${head}, after ${moved.join(', ')} had already synced past the pre-refresh commit ${row.old_head}. Abandoning it would let the next sync delete the pages those sources synced. To keep them, fast-forward the checkout to ${head} (git merge --ff-only keeps uncommitted edits and refuses if one overlaps an incoming file; git status --short lists them) and then run gbrain sources refresh ${source} --resume. If you reset the checkout on purpose to reject an upstream change, say so: then fast-forward, commit a git revert of that change on top, and run --resume, so the next sync removes those pages through history. Go ahead with the fast-forward?`
+      : `Refresh ${row.id} of ${row.source_ids.join(', ')} stopped after ${moved.join(', ')} synced commits on lines that do not meet: ${(way as { tips: string[] }).tips.join(', ')}. No single commit keeps every source's pages, so which win is your call. To keep them all, merge those lines in ${root} (git merge --no-edit; on a conflict git stops so it can be resolved) and then run gbrain sources refresh ${source} --resume. To drop one line's changes, merge and then commit a git revert of them on top before --resume. Merge them all?`,
+    then: resume(`With HEAD holding every member's commit, which contains the refresh target, records the merge and runs the member syncs, so refresh ${row.id} completes.`) };
+}
+/** GST-1457: the refusal when a member is past old_head; its fix moves HEAD to the commit that keeps every member's pages (ask_user, preview first), then --resume. */
+async function membersSyncedRefusal(engine: BrainEngine, row: WorktreeRefreshRow, root: string, moved: string[], cause: string): Promise<OperationError> {
+  const way = await keepPagesWayOut(engine, row, root);
+  const error = refusal('refresh_recovery_required', `${cause}${wayOutCause(way, root)}`, wayOutText(row, root, way), row.id);
+  error.fix = wayOutFix(row, root, way, moved);
   return error;
 }
 /**
@@ -405,7 +463,7 @@ async function markRecoveryRequired(engine: BrainEngine, row: WorktreeRefreshRow
   const moved = await membersPastStart(engine, row, root);
   const error = refusal('refresh_recovery_required',
     `The checkout HEAD (${head ?? 'unreadable'}) is not the verified upstream commit ${row.target_head}${moved.length ? `, and ${moved.join(', ')} already synced past the pre-refresh commit ${row.old_head}` : ` nor the pre-refresh commit ${row.old_head}`}; writes to this worktree stay fenced.`,
-    moved.length ? `Inspect with gbrain sources writer status ${source}. ${keepSyncedWayOut(row, root, await keepPagesHead(engine, row, root))}`
+    moved.length ? `Inspect with gbrain sources writer status ${source}. ${wayOutText(row, root, await keepPagesWayOut(engine, row, root))}`
       : `Inspect with gbrain sources writer status ${source}. Ask the user before resetting the checkout (destructive): git -C ${q(root)} reset --hard ${row.old_head} then gbrain sources refresh ${source} --abandon, or git -C ${q(root)} reset --hard ${row.target_head} then gbrain sources refresh ${source} --resume.`,
     row.id);
   await engine.transaction(tx => transition(tx, row, ['draining', 'fenced', 'merged', 'syncing', 'recovery_required'], 'recovery_required',
@@ -1138,8 +1196,7 @@ async function recoverOne(engine: BrainEngine, git: Git, row: WorktreeRefreshRow
     const by = await ownCommits(git, root, row.old_head, head!) ? OWN_COMMITS : 'a commit gbrain did not make';
     const cause = `The refreshing process stopped at its merge: HEAD moved from ${row.old_head} to ${head} (${by}) right before it, so git refused the fast-forward (or never ran it), and nothing was merged.`;
     await engine.transaction(tx => transition(tx, row, ['fenced'], 'aborted', { refusal: { code: 'refresh_interrupted', cause }, observed_head: head }));
-  } else if (['fenced', 'merged', 'recovery_required'].includes(row.state) && head !== null && (head === row.target_head || await isAncestor(git, root, row.target_head, head))
-    && await isAncestor(git, root, row.old_head, row.target_head) && ((row.state !== 'recovery_required' && head === row.target_head) || !await memberOutsideHead(engine, git, root, row, head))) {
+  } else if (['fenced', 'merged', 'recovery_required'].includes(row.state) && await adoptsHead(engine, git, root, row, head)) {
     await bookkeeping(engine, row);
   } else if (row.state === 'syncing' && head !== null && (head === row.target_head || await isAncestor(git, root, row.target_head, head))) {
     // stays syncing; the member syncs run from --resume or any later cycle sync.
@@ -1247,6 +1304,37 @@ async function membersAtTarget(engine: BrainEngine, git: Git, row: WorktreeRefre
   return synced;
 }
 
+/**
+ * GST-1465: runs `work` holding every member's drain lease, so no sync pass is in flight while --abandon checks the members and lifts the
+ * fence; a pass that pinned the target while the row was syncing would otherwise import or stamp it after the fence lifts. A lease a live
+ * pass holds refuses sync_drain_lease_held and changes nothing; an expired one is taken over, which fences its holder's later writes out.
+ */
+async function underMemberLeases<T>(engine: BrainEngine, row: WorktreeRefreshRow, work: () => Promise<T>, members: string[] = row.source_ids): Promise<T> {
+  const [member, ...rest] = members;
+  if (!member) return work();
+  const [{ withDrainLease, readDrainHolder }, { LockUnavailableError, syncLockId }] = await Promise.all([import('./sync-lease.ts'), import('../db-lock.ts')]);
+  const held = async (how: string) => {
+    const holder = await readDrainHolder(engine, member).catch(() => null);
+    const error = refusal('sync_drain_lease_held', `Refresh ${row.id} was not abandoned: ${how} (${holder ? `${holder.kind} pid ${holder.pid ?? 'unknown'} on ${holder.host ?? 'an unknown host'}` : 'holder unknown'}), and a pass in flight may still import or stamp the commit it pinned, so lifting the fence now could leave the database ahead of git. Nothing was changed.`,
+      `Wait for that sync pass to finish (gbrain sources writer status --source ${member} --json shows its drain lease holder), then retry gbrain sources refresh ${row.source_ids[0]} --abandon.`, row.id);
+    error.fix = writerStatusFix(`Shows who holds ${member}'s drain lease, read-only; once that pass ends, gbrain sources refresh ${row.source_ids[0]} --abandon checks the members again.`, member);
+    return error;
+  };
+  const box: { done: boolean; value?: T } = { done: false };
+  try {
+    await withDrainLease(engine, member, { holder: { kind: 'refresh', id: row.id }, remote: false }, async () => {
+      box.value = await underMemberLeases(engine, row, work, rest);
+      box.done = true;
+      return { status: 'up_to_date' } as SyncResult;
+    });
+  } catch (error) {
+    if (!(error instanceof LockUnavailableError) || error.lockId !== syncLockId(member)) throw error;
+    throw await held(`a sync pass of ${member} holds its drain lease`);
+  }
+  if (!box.done) throw await held(`${member}'s drain lease moved to another process while the members were checked`);
+  return box.value as T;
+}
+
 async function resumeOrAbandon(engine: BrainEngine, sourceId: string, opts: RefreshOptions, syncBudgetMs: number): Promise<WorktreeRefreshResult> {
   const binding = await getWorktreeBinding(engine, sourceId, existingHostIdFor(engine));
   if (!await managedPersistenceEnabled(engine) || !binding) throw refusal('refresh_not_managed',
@@ -1267,16 +1355,22 @@ async function resumeOrAbandon(engine: BrainEngine, sourceId: string, opts: Refr
         if (row.state === 'syncing') throw refusal('refresh_in_progress', 'The checkout already holds the upstream commit; abandoning now would leave files ahead of the database.',
           `gbrain sources refresh ${sourceId} --resume`, row.id);
         if (row.state !== 'draining' && head !== row.old_head && !await movedBeforeMerge(engine, git, root, row, head) && !await refusedBeforeAbort(engine, git, root, row, head)) {
-          if (head === row.target_head) throw refusal('refresh_in_progress', `The checkout is at the refresh target ${row.target_head}; finish it instead of abandoning.`,
-            `gbrain sources refresh ${sourceId} --resume`, row.id);
-          throw await markRecoveryRequired(engine, row, head, root);
+          if (await adoptsHead(engine, git, root, row, head)) throw refusal('refresh_in_progress', head === row.target_head ? `The checkout is at the refresh target ${row.target_head}; finish it instead of abandoning.`
+            : `The checkout HEAD ${head} descends from the refresh target ${row.target_head}, so --resume records the merge and finishes the refresh; finish it instead of abandoning.`,
+          `gbrain sources refresh ${sourceId} --resume`, row.id);
+          if (head !== row.target_head) throw await markRecoveryRequired(engine, row, head, root);
+          throw await membersSyncedRefusal(engine, row, root, await membersPastStart(engine, row, root), `Refresh ${row.id} was not abandoned: the checkout is at the refresh target ${row.target_head}, but a member synced a commit it does not hold, so --resume cannot finish it there either. Nothing was changed.`);
         }
-        const moved = row.state === 'recovery_required' ? await membersPastStart(engine, row, root) : [];
-        if (moved.length) throw await membersSyncedRefusal(engine, row, root, moved, `Refresh ${row.id} was not abandoned: the checkout is back at the pre-refresh commit ${row.old_head}, but ${moved.join(', ')} already synced past it, so lifting the fence would let the next sync soft-delete the pages that sync added. Nothing was changed.`);
-        await engine.transaction(tx => transition(tx, row, ['draining', 'fenced', 'merged', 'recovery_required'], 'aborted',
-          { refusal: { code: 'refresh_abandoned', cause: `The operator abandoned the refresh with HEAD at ${head}.` } }));
-        return { ...empty, status: 'abandoned', refresh_id: row.id, source_ids: row.source_ids, old_head: row.old_head, target_head: row.target_head,
-          upstream_ref: row.upstream_ref, preserved_uncommitted: row.preserved_uncommitted, next: `gbrain sources refresh ${sourceId}` };
+        const abandon = async (): Promise<WorktreeRefreshResult> => {
+          const moved = row.state === 'recovery_required' ? await membersPastStart(engine, row, root) : [];
+          if (moved.length) throw await membersSyncedRefusal(engine, row, root, moved, `Refresh ${row.id} was not abandoned: the checkout is back at the pre-refresh commit ${row.old_head}, but ${moved.join(', ')} already synced past it, so lifting the fence would leave those pages ahead of git or let the next sync soft-delete what that sync added. Nothing was changed.`);
+          await engine.transaction(tx => transition(tx, row, ['draining', 'fenced', 'merged', 'recovery_required'], 'aborted',
+            { refusal: { code: 'refresh_abandoned', cause: `The operator abandoned the refresh with HEAD at ${head}.` } }));
+          return { ...empty, status: 'abandoned', refresh_id: row.id, source_ids: row.source_ids, old_head: row.old_head, target_head: row.target_head,
+            upstream_ref: row.upstream_ref, preserved_uncommitted: row.preserved_uncommitted, next: `gbrain sources refresh ${sourceId}` };
+        };
+        // GST-1465: a syncing row's members may have a pass in flight; the check and the abort hold every member's drain lease.
+        return row.state === 'recovery_required' ? withTopologyLocks(engine, sourceId, () => underMemberLeases(engine, row, abandon), undefined, 30_000) : abandon();
       }
       return resumeHeld(engine, git, sourceId, active.id, root, head, empty, syncBudgetMs);
     });
@@ -1291,10 +1385,12 @@ async function resumeHeld(engine: BrainEngine, git: Git, sourceId: string, refre
   await engine.executeRaw(`UPDATE persistence_worktree_refreshes SET outcome=outcome||jsonb_build_object('holder',$2::text::jsonb,'previous_holder',COALESCE(outcome->'previous_holder',outcome->'holder'))
     WHERE id=$1::uuid AND state IN ${ACTIVE_REFRESH_STATES_SQL}`, [refreshId, JSON.stringify(refreshHolder(engine))]);
   let row = await withTopologyLocks(engine, sourceId, async () => recoverOne(engine, git, await readRefresh(engine, refreshId), root, unattended), undefined, 30_000);
-  if (row.state === 'recovery_required' && head === row.old_head) {
+  if (row.state === 'recovery_required' && head !== null) {
     const moved = await membersPastStart(engine, row, root);
-    if (moved.length) throw await membersSyncedRefusal(engine, row, root, moved, `The checkout is back at the pre-refresh commit ${row.old_head}, but ${moved.join(', ')} already synced past it, so --resume cannot finish refresh ${row.id} from here and --abandon would let the next sync soft-delete the pages that sync added.`);
-    throw refusal('refresh_recovery_required',
+    if (moved.length) throw await membersSyncedRefusal(engine, row, root, moved, head === row.old_head
+      ? `The checkout is back at the pre-refresh commit ${row.old_head}, but ${moved.join(', ')} already synced past it, so --resume cannot finish refresh ${row.id} from here and --abandon would let the next sync soft-delete the pages that sync added.`
+      : `The checkout HEAD ${head} does not hold every commit ${moved.join(', ')} synced past the pre-refresh commit ${row.old_head}, so --resume cannot finish refresh ${row.id} there.`);
+    if (head === row.old_head) throw refusal('refresh_recovery_required',
       `The checkout is back at the pre-refresh commit ${row.old_head}; nothing remains to resume.`, `gbrain sources refresh ${sourceId} --abandon`, row.id);
   }
   if (row.state === 'recovery_required') {
@@ -1395,10 +1491,17 @@ export async function refreshHolderReport(engine: BrainEngine, row: Pick<Worktre
   // #7712, #7731: what the next step does depends on the checkout HEAD, read on the host that holds the checkout.
   const head = binding?.local_path ? await withGit(git => headOf(git, binding.local_path!)).catch(() => null) : undefined;
   if (row.state === 'recovery_required') {
-    const keep = binding?.local_path ? await keepPagesHead(engine, row, binding.local_path) : row.target_head;
+    // GST-1477: HEAD and the members' ancestry are read in the owner's checkout; without it nothing here can say which step is safe.
+    if (!binding?.local_path) return { ...base, auto_recovery: 'none', fix: { argv: verify.argv, consent: [], actor: 'host_admin', requires_exclusive: false, verify,
+      why: `Refresh ${row.id} stopped without verifying the checkout HEAD, and its checkout is on host ${holderHost ?? 'unknown'}, not this one. Whether --abandon is safe depends on that checkout's HEAD and on whether each member's last synced commit is an ancestor of the start commit ${row.old_head}, which only the owner host can check, so this host names no step. Run this on the owner host: it names --resume, --abandon or the way out that keeps the members' pages.` } };
+    const root = binding.local_path;
+    const way = await keepPagesWayOut(engine, row, root);
+    const keep = way.kind === 'forward' ? way.head : null;
     if (head === row.target_head && keep === row.target_head) return { ...base, auto_recovery: 'none', fix: { argv: resume, consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `Refresh ${row.id} stopped without verifying the checkout HEAD, which is now the refresh target ${row.target_head}, so --resume records the merge and finishes the refresh; nothing needs resetting.` } };
-    const moved = await membersPastStart(engine, row, binding?.local_path);
+    const moved = await membersPastStart(engine, row, root);
+    if (way.kind !== 'forward') return { ...base, auto_recovery: 'none', fix: { ...wayOutFix(row, root, way, moved),
+      why: `Refresh ${row.id} stopped without verifying the checkout HEAD, and ${moved.join(', ')} already synced past the start commit ${row.old_head}, so --abandon refuses.${wayOutCause(way, root)} ${wayOutText(row, root, way)}` } };
     if (head === row.old_head && !moved.length) return { ...base, auto_recovery: 'none', fix: { argv: ['gbrain', 'sources', 'refresh', source, '--abandon'], consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `Refresh ${row.id} stopped without verifying the checkout HEAD, which is back at the pre-refresh commit ${row.old_head}, so --abandon lifts the fence and nothing moved; then gbrain sources refresh ${source} starts again.` } };
     if (head === row.old_head) return { ...base, auto_recovery: 'none', fix: { argv: resume, consent: [], actor: 'agent', requires_exclusive: false, verify,
