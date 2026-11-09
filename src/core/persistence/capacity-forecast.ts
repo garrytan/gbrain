@@ -56,7 +56,7 @@ export interface CapacityForecastRow {
   /** Terminal bytes only: uncompacted receipts holding more intent and authority than they reserved (admitted before #6696). */
   under_reserved_receipts?: number;
   basis: string;
-  /** A cap that covers one more year at this rate (never below double the current cap). */
+  /** A cap that covers one more year at the window's mean rate, so one bulk day is not projected for a year (never below double the current cap). */
   recommended_limit: number;
   status: 'ok' | 'warn' | 'fail';
 }
@@ -200,6 +200,7 @@ export async function readCapacityForecast(engine: SqlEngine & { kind?: string }
       const netPerDay = ids ? perDay : Math.max(total('net') / windowDays, total('recent_net'));
       const maxDay = Math.max(0, ...[...byDay.values()].map(day => ids ? day.ids : day.gross));
       const mean = total(ids ? 'ids' : 'gross') / windowDays;
+      const netMean = ids ? mean : total('net') / windowDays;
       const spike = [...byDay.values()].find(day => mean > 0 && (ids ? day.ids : day.gross) > SPIKE_FACTOR * mean)?.day ?? null;
       const remaining = Math.max(0, limit - used);
       let daysLeft: number | null;
@@ -219,7 +220,7 @@ export async function readCapacityForecast(engine: SqlEngine & { kind?: string }
         max_day_7d: maxDay, spike_day: spike,
         days_to_exhaustion: daysLeft === null ? null : Math.floor(daysLeft),
         exhaustion_date: daysLeft === null ? null : new Date(now + daysLeft * 86_400_000).toISOString().slice(0, 10),
-        basis, recommended_limit: recommendedLimit(resource, used, limit, { perDay, netPerDay }, retention), status });
+        basis, recommended_limit: recommendedLimit(resource, used, limit, { perDay: mean, netPerDay: netMean }, retention), status });
     }
   }
   return { rows, thresholds: { warn_days: warnDays, fail_days: failDays, warn_pct: CAPACITY_WARN_PCT, fail_pct: CAPACITY_FAIL_PCT },

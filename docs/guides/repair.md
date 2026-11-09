@@ -2668,6 +2668,7 @@ gbrain config set persistence.receipt_retention_days 90   # keep the receipts wh
 gbrain repair failed-writes --source <id>                 # preview: every refused write with its class
 gbrain repair failed-writes --source <id> --apply --expect <hash>
 gbrain repair failed-writes --source <id>                 # replayed writes now read already_written
+gbrain config unset persistence.receipt_retention_days    # recovered: back to 30 days, so receipts stop holding write capacity 3x longer
 ```
 
 Candidates are failed receipts refused by the guard (`writer_coordinator_required`,

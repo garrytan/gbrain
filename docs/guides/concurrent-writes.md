@@ -914,7 +914,8 @@ run out within `persistence.capacity.warn_days` (30) days, and fails at 95% or
 within `persistence.capacity.fail_days` (7) days. Receipt bytes are forecast at
 their compacted (net) size once compaction can start; the finding's `basis`
 says which rate it used. It prints the `gbrain config set` command with a value
-that covers about one more year at that rate; `persistence_request_growth`
+that covers about one more year at the window's mean rate (a bulk day in the
+last 24 hours shortens the days left, but is not projected for a year); `persistence_request_growth`
 uses the same threshold and value, and a `write_quota_exhausted` refusal
 carries the same command. Raising a cap is a mitigation: lifetime IDs remain
 permanent replay protection.
@@ -1005,11 +1006,18 @@ When `persistence_capacity` warns or fails, or a write is refused with
 
 Raising a receipt-bytes cap is safe: the counter tracks bytes that are really
 stored, and compaction frees the window's reservations as receipts age out.
+Check `persistence.receipt_retention_days` first: a window raised for a
+recovery holds every receipt's reservation that much longer and multiplies the
+window part of the recommended value, so `gbrain config unset
+persistence.receipt_retention_days` (back to 30 days) is the smaller step once
+the recovery is done.
 
 **Warnings before the wall.** A cap at or past 80%, or one that runs out
 within `persistence.capacity.warn_days` (default 30), adds the
-`[gbrain notice write_capacity_low]` notice (kind `info`) with the same
-`gbrain config set` command. Write and sync receipts carry it at most once an
+`[gbrain notice write_capacity_low]` notice (kind `info`). It rides a write
+that succeeded, so it opens with "This write was saved" and its fix is the
+read-only `gbrain doctor --only persistence_capacity --json`; the
+`gbrain config set` command stays in doctor's finding for the brain host. Write and sync receipts carry it at most once an
 hour per engine per scope (a remote client sees only the brain and its own
 principal); `gbrain sync status`, doctor and autopilot cycle output carry it
 every time. `gbrain notices mute write_capacity_low` mutes it on receipts;
