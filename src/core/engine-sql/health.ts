@@ -137,8 +137,9 @@ export async function getHealth(
        GROUP BY cc.page_id
     ),
     chunk_totals AS (
-      SELECT COALESCE(sum(c.chunks) FILTER (WHERE f.eligible), 0) AS eligible,
-             COALESCE(sum(c.embedded) FILTER (WHERE f.eligible), 0) AS eligible_embedded,
+      -- #7212: coverage counts the same live, eligible chunks as missing_embeddings; a soft-deleted page's retained chunks count in neither.
+      SELECT COALESCE(sum(c.chunks) FILTER (WHERE f.eligible AND f.live), 0) AS eligible,
+             COALESCE(sum(c.embedded) FILTER (WHERE f.eligible AND f.live), 0) AS eligible_embedded,
              COALESCE(sum(c.chunks - c.embedded) FILTER (WHERE f.eligible AND f.live), 0) AS missing
         FROM chunk_pages c
         CROSS JOIN LATERAL (

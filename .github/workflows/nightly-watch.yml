@@ -58,6 +58,7 @@ on:
       - CI health
       - TLA+ specs
       - Stable daily
+      - Upgrade matrix
     types: [completed]
     branches: [master]
   workflow_dispatch:

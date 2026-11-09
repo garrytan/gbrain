@@ -5,7 +5,8 @@
 import type { BrainEngine } from '../core/engine.ts';
 import {
   countDeadDreamSubmissions, dreamBreakerBaseKey, dreamBreakerResetCommand, loadDreamBreakerThreshold,
-  resetDreamBreakerKey, DREAM_BREAKER_CONFIG_KEY, DREAM_BREAKER_KEY_PREFIXES, DREAM_PATTERNS_SOURCE_KEY_PREFIX,
+  resetDreamBreakerKey, DREAM_BREAKER_CONFIG_KEY, DREAM_PATTERNS_SOURCE_KEY_PREFIX, DREAM_PHASE_KEY_PREFIX,
+  DREAM_RESETTABLE_KEY_PREFIXES, DREAM_SYNTH_FILE_KEY_PREFIX,
 } from '../core/cycle/dream-breaker.ts';
 import { setCliExitVerdict, writeJsonDocument } from '../core/cli-force-exit.ts';
 import { opError } from '../core/ops/contract.ts';
@@ -19,6 +20,10 @@ whose submissions died ${'`'}${DREAM_BREAKER_CONFIG_KEY}${'`'} times (default 3)
 Patterns deaths (and patterns runs cancelled at their timeout after paid work)
 count under ${'`'}${DREAM_PATTERNS_SOURCE_KEY_PREFIX}<source id>${'`'}, whatever reflections each
 run read; a completed run resets it, so only consecutive deaths trip it.
+Synthesize deaths also count per transcript under
+${'`'}${DREAM_SYNTH_FILE_KEY_PREFIX}<source id>:<file>${'`'}, so a transcript that grows between
+dying runs still trips it. ${'`'}${DREAM_PHASE_KEY_PREFIX}<phase>:<source id>${'`'} keys count cycle
+phases that failed after paid model calls.
 
   <base-key>   Re-enable one key (without any :c<i>of<n> chunk suffix). The reset
                is stored in the brain and survives restarts; deaths after it
@@ -57,8 +62,8 @@ export async function runDreamResetKey(engine: BrainEngine | null, args: string[
     return;
   }
   const baseKey = dreamBreakerBaseKey(positional[0]!);
-  if (!DREAM_BREAKER_KEY_PREFIXES.some(prefix => baseKey.startsWith(prefix))) {
-    setCliExitVerdict(writeCliRefusal(usageError(`Not a dream breaker key: ${baseKey}. Keys start with ${DREAM_BREAKER_KEY_PREFIXES.join(' or ')}; run gbrain dream reset-key --list.`,
+  if (!DREAM_RESETTABLE_KEY_PREFIXES.some(prefix => baseKey.startsWith(prefix))) {
+    setCliExitVerdict(writeCliRefusal(usageError(`Not a dream breaker key: ${baseKey}. Keys start with ${DREAM_RESETTABLE_KEY_PREFIXES.join(', ')}; run gbrain dream reset-key --list.`,
       'Run `gbrain dream reset-key --list --json` for the tripped keys and their reset commands.'), 'dream', { json }));
     return;
   }
