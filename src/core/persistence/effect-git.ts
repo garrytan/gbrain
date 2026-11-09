@@ -276,7 +276,7 @@ export function commitMessageArgs(paragraphs: string[], dir: string | (() => str
 }
 
 /**
- * #5530: commit a group of single-file targets with one `commit --only`. The
+ * #5530: commit a group of single-file targets with one commit (`effectCommit`). The
  * caller owns the native worktree lock and has probed durability. Each
  * target's outcome (or its own error) is keyed by its requested relative
  * path; a failing target never enters the commit. Nothing is pushed.
@@ -361,76 +361,86 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
       }
     }
     if (!changed.length) return;
-    // --only keeps unrelated staged paths out of this commit. After a lost
+    // Only these paths are committed; unrelated staged paths stay staged. After a lost
     // database acknowledgment the same HEAD/file state is an exact no-op.
     const commitPaths = [...new Set(changed.map(c => c.path))];
     const noted = new Map<string, GitCommitNote>();
     for (const c of changed) { const note = notes?.get(c.requested); if (note && !noted.has(c.path)) noted.set(c.path, note); }
-    let messageDir: string | undefined;
-    let result, headBefore: string | null = null;
-    try {
-      const paragraphs = commitMessage(commitPaths, noted);
-      const message = commitMessageArgs(paragraphs, () => {
-        mkdirSync(persistenceHome(), { recursive: true, mode: 0o700 });
-        return messageDir = mkdtempSync(join(persistenceHome(), 'commit-message-'));
-      });
-      const before = await git(session, ['rev-parse', '--verify', '--quiet', 'HEAD']);
-      headBefore = before.code === 0 ? before.stdout.trim() : null;
-      await recordIntentAsync(root, { writer: 'effect', head_before: headBefore, message: paragraphs.join('\n\n') });
-      result = await git(session, [...(commitPaths.some(path => removed.has(path)) ? NO_FSCACHE : []), 'commit', '--only', ...message, '--', ...literalPathspecs(commitPaths)]);
-    } finally { if (messageDir) rmSync(messageDir, { recursive: true, force: true }); }
-    if (result.code === 0) {
-      const wanted = new Map<string, string | null>();
-      for (const c of changed) {
-        const hash = expected?.get(c.requested);
-        if (hash !== undefined && (!wanted.has(c.path) || wanted.get(c.path) === hash)) wanted.set(c.path, hash);
-        else wanted.set(c.path, '');
-      }
-      const own = await ownCommit(session, root, prefix, headBefore, commitPaths, wanted);
-      const trailers = [...noted.values()].flatMap(note => note.trailers ?? []);
-      const supersedes = supersededBy(trailers), adopted = adoptedBy(trailers);
-      if (own) await recordCommitAsync(root, { sha: own.sha, writer: 'effect', ...(own.verified ? { verified: true } : {}),
-        ...(supersedes.length ? { supersedes } : {}), ...(adopted.length ? { adopted } : {}) });
+    const wanted = new Map<string, string | null>();
+    for (const c of changed) {
+      const hash = expected?.get(c.requested);
+      wanted.set(c.path, hash !== undefined && (!wanted.has(c.path) || wanted.get(c.path) === hash) ? hash : '');
     }
-    const outcome = result.code === 0 ? { git: 'committed' } : gitFailure('Cannot commit the canonical Git target.',
+    mkdirSync(persistenceHome(), { recursive: true, mode: 0o700 });
+    const scratch = mkdtempSync(join(persistenceHome(), 'effect-commit-'));
+    let created: string | null;
+    try { created = await effectCommit(session, root, scratch, commitPaths, wanted, commitMessage(commitPaths, noted).map(stripspace).filter(Boolean), noted); }
+    finally { rmSync(scratch, { recursive: true, force: true }); }
+    const outcome = created ? { git: 'committed' } : gitFailure('Cannot commit the canonical Git target.',
       `git commit failed for ${commitPaths.length} file(s); a missing Git identity (user.name, user.email) in that checkout is one cause to check.`);
     for (const c of changed) results.set(c.requested, outcome);
   });
   return results;
 }
 
+/** Git's whitespace cleanup of a `-m` paragraph, as `git commit -m` applies it: trailing blanks, repeated and edge blank lines go. */
+export function stripspace(paragraph: string): string {
+  const lines: string[] = [];
+  for (const line of paragraph.split('\n').map(text => text.replace(/[ \t\r]+$/, ''))) if (line || lines.length && lines[lines.length - 1]) lines.push(line);
+  while (lines.length && !lines[lines.length - 1]) lines.pop();
+  return lines.join('\n');
+}
+
 /**
- * #8896: the commit `commit --only` just made, read with rev-parse under the writer lock, and whether the secret scan may
- * trust it as a page write. Null (left out of the ledger) unless its only parent is `headBefore` and it changes exactly
- * `paths`: a script's commit or amend that landed in between differs in one of them. `verified` also needs, for every
- * path, the sha256 of the bytes the effect wrote (`wanted`; null for a removal, '' for none known) to match the file read
- * once now, the committed blob to have that read's object id, and HEAD to be unchanged after the checks. Any mismatch,
- * unknown expectation or git failure leaves the commit scanned.
+ * #8896: a Git effect's commit, made by plumbing so its sha is gbrain's own before any ref names it. The index entries
+ * `git add` just staged for `paths` are laid over HEAD's tree in a scratch index, `commit-tree` writes the commit, the
+ * ledger records its sha, and `update-ref HEAD <new> <old>` moves the branch only if HEAD is still the commit it was
+ * built on; a moved HEAD is read again and the commit rebuilt once. Null when git fails or HEAD moved twice. The
+ * secret scan skips an effect commit only by this recorded sha, so an amend, reset or reword is a different commit and
+ * is scanned. The record is `verified` only when every path's staged blob is the bytes the effect wrote (`wanted`: the
+ * sha256 the effect recorded, null for a removal, '' for none known): the file, read once, hashes to it and has the
+ * staged blob's id; an outside edit that reached the index first fails that, and the commit is scanned.
  */
-async function ownCommit(session: GitSession, root: string, prefix: string, headBefore: string | null, paths: string[],
-  wanted: ReadonlyMap<string, string | null>): Promise<{ sha: string; verified: boolean } | null> {
-  const head = async () => { const r = await git(session, ['rev-parse', '--verify', '--quiet', 'HEAD']); return r.code === 0 ? r.stdout.trim() : ''; };
-  const sha = await head();
-  if (!sha) return null;
-  const parents = await git(session, ['rev-list', '--parents', '-n', '1', sha]);
-  if (parents.code !== 0 || parents.stdout.trim().split(' ').slice(1).join(' ') !== (headBefore ?? '')) return null;
-  const full = new Set(paths.map(path => prefix + path));
-  const diff = await git(session, ['diff-tree', '--no-commit-id', '--name-only', '-r', '-z', '--no-renames', '--root', sha]);
-  const touched = diff.code === 0 ? diff.stdout.split('\0').filter(Boolean) : null;
-  if (!touched || touched.length !== full.size || !touched.every(path => full.has(path))) return null;
-  if (paths.some(path => wanted.get(path) === '' || !wanted.has(path))) return { sha, verified: false };
-  const format = await git(session, ['rev-parse', '--show-object-format']);
-  const listed = await git(session, ['ls-tree', '-r', '-z', '--full-tree', sha, '--', ...literalPathspecs([...full])]);
-  if (format.code !== 0 || listed.code !== 0) return { sha, verified: false };
-  const blobs = new Map(listed.stdout.split('\0').filter(Boolean).map(entry => {
-    const [mode, type, oid] = entry.slice(0, entry.indexOf('\t')).split(' ');
-    return [entry.slice(entry.indexOf('\t') + 1), mode?.startsWith('100') && type === 'blob' ? oid : ''] as const;
+async function effectCommit(session: GitSession, root: string, scratch: string, paths: string[],
+  wanted: ReadonlyMap<string, string | null>, paragraphs: string[], noted: ReadonlyMap<string, GitCommitNote>): Promise<string | null> {
+  const layout = await git(session, ['rev-parse', '--show-toplevel', '--show-prefix', '--show-object-format']);
+  const listed = await git(session, ['ls-files', '-s', '-z', '--', ...literalPathspecs(paths)]);
+  if (layout.code !== 0 || listed.code !== 0) return null;
+  const [top, prefix, format] = layout.stdout.split('\n');
+  const staged = new Map(listed.stdout.split('\0').filter(Boolean).map(entry => {
+    const [mode, oid, stage] = entry.slice(0, entry.indexOf('\t')).split(' ');
+    return [entry.slice(entry.indexOf('\t') + 1), { mode: mode!, oid: oid!, stage: stage! }] as const;
   }));
-  for (const path of paths) {
-    const hash = wanted.get(path)!, oid = blobs.get(prefix + path);
-    if (hash === null ? oid !== undefined : !oid || fileDigests(join(root, path), format.stdout.trim()) !== `${hash} ${oid}`) return { sha, verified: false };
+  if ([...staged.values()].some(entry => entry.stage !== '0')) return null;
+  const verified = paths.every(path => {
+    const hash = wanted.get(path), entry = staged.get(path);
+    if (hash === undefined || hash === '') return false;
+    return hash === null ? !entry : !!entry && entry.mode.startsWith('100') && fileDigests(join(root, path), format!) === `${hash} ${entry.oid}`;
+  });
+  const trailers = [...noted.values()].flatMap(note => note.trailers ?? []);
+  const supersedes = supersededBy(trailers), adopted = adoptedBy(trailers);
+  const message = commitMessageArgs(paragraphs, scratch);
+  for (let attempt = 0; ; attempt++) {
+    const before = await git(session, ['rev-parse', '--verify', '--quiet', 'HEAD']);
+    const head = before.code === 0 ? before.stdout.trim() : null;
+    await recordIntentAsync(root, { writer: 'effect', head_before: head, message: paragraphs.join('\n\n') });
+    const index: GitSession = { ...session, root: top!, indexFile: join(scratch, `index-${attempt}`) };
+    const removals = paths.filter(path => !staged.has(path)).map(path => prefix + path);
+    const entries = paths.flatMap(path => { const entry = staged.get(path); return entry ? ['--cacheinfo', `${entry.mode},${entry.oid},${prefix}${path}`] : []; });
+    if ((await git(index, head ? ['read-tree', head] : ['read-tree', '--empty'])).code !== 0
+      || entries.length && (await git(index, ['update-index', '--add', ...entries])).code !== 0
+      || removals.length && (await git(index, ['update-index', '--force-remove', '--', ...removals])).code !== 0) return null;
+    const tree = await git(index, ['write-tree']);
+    if (tree.code !== 0) return null;
+    const commit = await git(session, ['commit-tree', tree.stdout.trim(), ...(head ? ['-p', head] : []), ...message]);
+    if (commit.code !== 0) return null;
+    const created = commit.stdout.trim();
+    await recordCommitAsync(root, { sha: created, writer: 'effect', ...(verified ? { verified: true } : {}),
+      ...(supersedes.length ? { supersedes } : {}), ...(adopted.length ? { adopted } : {}) });
+    const moved = await git(session, ['update-ref', '-m', `commit: ${paragraphs[0]!.split('\n')[0]}`, 'HEAD', created, head ?? '']);
+    if (moved.code === 0) return created;
+    if (attempt) return null;
   }
-  return { sha, verified: await head() === sha };
 }
 
 /** `<sha256> <git blob id>` of the file's bytes, read once; null when it cannot be read or changes size while read. */

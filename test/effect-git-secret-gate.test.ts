@@ -250,21 +250,25 @@ describe('#8896 pushGitRoot scans the commits it publishes', () => {
 
 /**
  * A PATH whose `git` runs `step` once (`{git}` in it is the real git), before or after the first call whose arguments
- * contain `match`. The real git runs with the original PATH, so a git that is itself a PATH-resolving shim never finds
+ * contain one of `match`. The real git runs with the original PATH, so a git that is itself a PATH-resolving shim never finds
  * this wrapper again.
  */
-function racingGit(c: Checkout, match: string, when: 'before' | 'after', step: string): string {
+function racingGit(c: Checkout, match: string[], when: 'before' | 'after', step: string): string {
   const path = process.env.PATH ?? '', real = `PATH='${path}' '${Bun.which('git')!}'`;
   const bin = join(c.home, 'race-bin'), mark = join(c.home, 'raced');
   const hook = `if [ ! -f '${mark}' ]; then touch '${mark}'; ${step.replaceAll('{git}', real)}; fi`;
+  const cases = match.map(m => `*" ${m} "*`).join('|');
   mkdirSync(bin);
   writeFileSync(join(bin, 'git'), ['#!/bin/sh',
-    when === 'before' ? `case " $* " in *" ${match} "*) ${hook};; esac` : '',
+    when === 'before' ? `case " $* " in ${cases}) ${hook};; esac` : '',
     `${real} "$@"`, 'code=$?',
-    when === 'after' ? `case " $* " in *" ${match} "*) if [ $code -eq 0 ]; then ${hook}; fi;; esac` : '',
+    when === 'after' ? `case " $* " in ${cases}) if [ $code -eq 0 ]; then ${hook}; fi;; esac` : '',
     'exit $code', ''].join('\n'), { mode: 0o755 });
   return `${bin}:${path}`;
 }
+
+/** The git call after which the Git effect's commit exists: the porcelain commit, or the plumbing commit's ref move. */
+const EFFECT_COMMIT = ['commit --only', 'update-ref -m commit:'];
 
 interface ManagedWrite { engine: BrainEngine; sourceId: string; worktreeId: string; runEffects: () => Promise<void>; effect: () => Promise<{ state: string; error_code: string | null }> }
 
@@ -364,7 +368,7 @@ describe('#8896 through the effect worker', () => {
   test('a script commit that lands right after the effect commit is not ledgered as a page write, so its secret holds the push', async () => {
     const c = checkout();
     const before = remoteTip(c);
-    const PATH = racingGit(c, 'commit --only', 'after', `mkdir -p '${c.root}/scripts-out'; printf 'Deploy token %s\\n' '${token}' > '${c.root}/scripts-out/race.md';`
+    const PATH = racingGit(c, EFFECT_COMMIT, 'after', `mkdir -p '${c.root}/scripts-out'; printf 'Deploy token %s\\n' '${token}' > '${c.root}/scripts-out/race.md';`
       + ` {git} -C '${c.root}' add scripts-out/race.md && {git} -C '${c.root}' -c core.hooksPath=/dev/null commit -q -m 'script races the effect'`);
     await withEnv({ PATH }, () => managedWrite(c, () => {}, async w => {
       await w.runEffects();
@@ -377,7 +381,7 @@ describe('#8896 through the effect worker', () => {
   test('a script amending the effect commit (same parent) is not ledgered as a page write, so its secret holds the push', async () => {
     const c = checkout();
     const before = remoteTip(c);
-    const PATH = racingGit(c, 'commit --only', 'after', `mkdir -p '${c.root}/scripts-out'; printf 'Deploy token %s\\n' '${token}' > '${c.root}/scripts-out/race.md';`
+    const PATH = racingGit(c, EFFECT_COMMIT, 'after', `mkdir -p '${c.root}/scripts-out'; printf 'Deploy token %s\\n' '${token}' > '${c.root}/scripts-out/race.md';`
       + ` {git} -C '${c.root}' add scripts-out/race.md && {git} -C '${c.root}' -c core.hooksPath=/dev/null commit -q --amend --no-edit`);
     await withEnv({ PATH }, () => managedWrite(c, () => {}, async w => {
       await w.runEffects();
@@ -388,10 +392,35 @@ describe('#8896 through the effect worker', () => {
     }));
   }, 180_000);
 
+  test('a script rewording the effect commit (same parent, paths and bytes) is not trusted, so its message is scanned', async () => {
+    const c = checkout();
+    const before = remoteTip(c);
+    const PATH = racingGit(c, EFFECT_COMMIT, 'after', `{git} -C '${c.root}' -c core.hooksPath=/dev/null commit -q --amend -m "Deploy token ${token}"`);
+    await withEnv({ PATH }, () => managedWrite(c, () => {}, async w => {
+      await w.runEffects();
+      expect(git(c.root, 'log', '-1', '--format=%B')).toContain(token);
+      expect(await w.effect()).toMatchObject({ error_code: 'publish_secret_found' });
+      expect(remoteTip(c)).toBe(before);
+    }));
+  }, 180_000);
+
+  test('a source-scan walk commits a page whose body holds a credential-shaped value as gbrain\'s own, so it still backs up', async () => {
+    const c = checkout();
+    await managedWrite(c, () => {}, async w => {
+      const snapshot = (await w.engine.readPageSnapshot('notes/acme-example', { sourceId: w.sourceId }))!;
+      writeFileSync(join(c.root, 'notes/acme-example.md'), serializePageToMarkdown(snapshot.page, snapshot.tags));
+      await w.engine.executeRaw(`UPDATE persistence_effects SET data = data || '{"source_scan": true}'::jsonb WHERE kind='git'`);
+      for (let i = 0; i < 4 && (await w.effect()).state !== 'committed'; i++) await w.runEffects();
+      expect(git(c.root, 'log', '-1', '--format=%s').trim()).not.toBe('Initial');
+      expect(await w.effect()).toMatchObject({ state: 'committed', error_code: null });
+      expect(git(c.remote, 'show', 'main:notes/acme-example.md')).toContain(token);
+    }, `Connection notes: ${token}`);
+  }, 180_000);
+
   test('a page file changed after the effect checked its bytes is not ledgered as verified, so the changed bytes are scanned', async () => {
     const c = checkout();
     const before = remoteTip(c);
-    const PATH = racingGit(c, 'add -A', 'before', `printf 'Deploy token %s\\n' '${token}' >> '${c.root}/notes/acme-example.md'`);
+    const PATH = racingGit(c, ['add -A'], 'before', `printf 'Deploy token %s\\n' '${token}' >> '${c.root}/notes/acme-example.md'`);
     await withEnv({ PATH }, () => managedWrite(c, () => {}, async w => {
       await w.runEffects();
       expect(git(c.root, 'show', 'HEAD:notes/acme-example.md')).toContain(token);

@@ -396,12 +396,16 @@ async function publishGitPage(engine: BrainEngine, effect: PersistenceEffect, bi
   // hash the mirror recorded writing at this revision, else the rendering measured now (a segmented page's from its
   // segments, unreadPageFile, never held as one string).
   const mirrored = attempt.gate?.files.get(snapshot.page.slug);
-  if (verdict === 'evidence' && (snapshot.page.deleted_at || persistenceFileHash(path) !== (mirrored?.revision === snapshot.revision ? mirrored.hash
-    : content === null ? (await unreadPageFile(engine, snapshot, keep)).hash : fileContentHash(content)))) {
+  const rendered = verdict !== 'evidence' || snapshot.page.deleted_at ? undefined : mirrored?.revision === snapshot.revision ? mirrored.hash
+    : content === null ? (await unreadPageFile(engine, snapshot, keep)).hash : fileContentHash(content);
+  if (verdict === 'evidence' && (snapshot.page.deleted_at || persistenceFileHash(path) !== rendered)) {
     await skipTarget(engine, effect, snapshot, 'withdrawal_not_mirrored');
     return;
   }
-  const result = await publishGitEffect(root, relative(root, path).split(sep).join('/'), opts.signal, hardened, await gitCommitNote(engine, effect), undefined, owner);
+  // #8896: the bytes this walk expects, so its commit is a page write the secret scan skips when the file holds them.
+  const expected = effect.data.approved_file?.slug === snapshot.page.slug ? effect.data.approved_file.expected_sha256
+    : rendered ?? (content === null ? undefined : fileContentHash(content));
+  const result = await publishGitEffect(root, relative(root, path).split(sep).join('/'), opts.signal, hardened, await gitCommitNote(engine, effect), undefined, owner, expected);
   if (result.reason === 'durability_not_enabled') await completeEffect(engine, effect, result);
   else await finishPage(engine, effect, snapshot, result);
 }
@@ -909,7 +913,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
   //
   // #5530: a claimed single-file git effect brings up to 99 more ready
   // single-file git effects of its worktree. Under the worktree lock each path
-  // is validated as before, the group makes one `commit --only`, and every
+  // is validated as before, the group makes one commit, and every
   // root pushes once at the end of the pass. A path failure fails only its
   // effect; a push failure leaves the whole group retryable (the next pass
   // finds nothing to commit and pushes once). Nothing holds a lock or a
