@@ -47,7 +47,7 @@ import { printCuratedHelp } from './help/render.ts';
 import { OWN_EQUALS_PARSERS, READER_ALIASES, findUnknownFlag, splitFlagEquals } from './flag-equals.ts';
 import { printHelp } from './top-help.ts';
 import { curatedFlagError } from './help/validate.ts';
-import { cliCommandOf, exitCliError, exitOnRepairFailed, reportInBandFailure, unknownFlagError, usageError, writeCliError, writeCliNotice, writeFatalCliError } from './cli-error.ts';
+import { classifyPostgresReadError, cliCommandOf, exitCliError, exitOnRepairFailed, reportInBandFailure, unknownFlagError, usageError, writeCliError, writeCliNotice, writeFatalCliError } from './cli-error.ts';
 import type { Notice } from '../core/agent-output.ts';
 import { opError, opOwnsSource } from '../core/ops/contract.ts';
 import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
@@ -2631,6 +2631,10 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
         return null;
       }
     })();
+    if (command === 'jobs' && args[0] === 'stats') {
+      const error = classifyPostgresReadError(serveConnectError, resolvedEngineKind, 'jobs stats');
+      if (error !== serveConnectError) exitCliError(error, 'jobs');
+    }
     // C10: a supervisor asked for fail-fast — exit non-zero with the classified envelope on stderr.
     if (command === 'serve') {
       const failFast = await import('../core/serve-fail-fast.ts');

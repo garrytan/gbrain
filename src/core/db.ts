@@ -564,6 +564,8 @@ export async function connect(config: EngineConfig, hooks: PoolHealthHooks = {})
       'Cannot connect to database',
       msg,
       'Check the database URL; `gbrain engine status --probe` names where it comes from (environment variable or the config file under GBRAIN_HOME)',
+      undefined,
+      { cause: e },
     );
   }
 }

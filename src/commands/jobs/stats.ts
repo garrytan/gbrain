@@ -2,14 +2,26 @@
 import { hasFlag, parseFlag, type JobsCommandContext } from './shared.ts';
 import { formatNice, getEffectiveNiceness } from '../../core/minions/niceness.ts';
 import { DREAM_INLINE_PRIVATE_QUEUE_PREFIX, deriveWedgeSignal } from '../../core/minions/queue.ts';
+import { classifyPostgresReadError, exitCliError } from '../../cli/cli-error.ts';
 import type { QueueFamilyStats } from '../../core/minions/queue-families.ts';
 
 export async function runJobsStats({ args, engine, queue }: JobsCommandContext): Promise<void> {
-  try { await queue.ensureSchema(); }
-  catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
-
+  const reportConnectionFailure = (error: unknown) => {
+    const classified = classifyPostgresReadError(error, engine.kind, 'jobs stats');
+    if (classified !== error) exitCliError(classified, 'jobs');
+  };
+  try {
+    await queue.ensureSchema();
+  } catch (error) {
+    reportConnectionFailure(error);
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
   const statsQueue = parseFlag(args, '--queue') ?? 'default';
-  const stats = await queue.getStats({ queue: statsQueue });
+  const stats = await queue.getStats({ queue: statsQueue }).catch(error => {
+    reportConnectionFailure(error);
+    throw error;
+  });
 
   // Divergence detection: intake (created in window) vs USEFUL drain
   // (drained_completed — cancellations are outflow, not work; a naive

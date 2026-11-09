@@ -2350,8 +2350,9 @@ export class GBrainError extends Error {
     public cause_description: string,
     public fix: string,
     public docs_url?: string,
+    options?: ErrorOptions,
   ) {
-    super(`${problem}: ${cause_description}. Fix: ${fix}`);
+    super(`${problem}: ${cause_description}. Fix: ${fix}`, options);
     this.name = 'GBrainError';
   }
 }
