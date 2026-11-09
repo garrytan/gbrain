@@ -1178,19 +1178,20 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
   }
   // GST-1113: the mark check and the config write hold the source row, so a concurrent --attest-sources mark commits
   // before (and federate refuses) or after (and sees federated, so it refuses), never between them.
-  await engine.transaction(async tx => {
+  const wasFederated = await engine.transaction(async tx => {
     const [row] = await tx.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id = $1 FOR UPDATE', [id]);
     if (value) await (await import('../core/access/attest-sources.ts')).assertNotScopeSource(tx, id);
-    const config = parseConfig(row?.config ?? src.config);
+    const config = parseConfig(row?.config ?? src.config), before = isFederated(config);
     config.federated = value;
     await tx.executeRaw(
       `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
       [JSON.stringify(normalizeSourceConfig(config)), id],
     );
+    return before;
   });
   say(`Source "${id}" is now ${value ? 'federated (appears in cross-source default search)' : 'isolated (only searched when explicitly named)'}.`);
   const exposure = await import('../core/access/federation-exposure.ts');
-  const exposed = await exposure.remotePagesFederationExposesOrWarn(engine, id, value && id !== 'default' && !isFederated(src.config));
+  const exposed = await exposure.remotePagesFederationExposesOrWarn(engine, id, value && id !== 'default' && !wasFederated);
   if (exposed) console.error(exposure.pagesExposedLines(id, exposed).join('\n'));
   if (json) console.log(JSON.stringify({ id, federated: value, ...(exposed ? { pages_exposed: exposed } : {}) }));
 

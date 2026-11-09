@@ -6,9 +6,10 @@
  * it writes nothing and never refuses the change.
  *
  * A page counts when it names no readers and no folder rule and the writer of its live revision or of any earlier
- * version (the write attribution columns) is a remote credential: a token or OAuth client, revoked or not. No record
- * keeps which member a credential was bound to when it wrote, so a credential unbound or rebound since then counts
- * too, and each example names the member it is bound to now (null when none). The database is the record, so a
+ * version (the write attribution columns) is a remote credential: a token or OAuth client, revoked or deleted since. No
+ * record keeps which member a credential was bound to when it wrote, so a credential unbound or rebound since then
+ * counts too, and each example names the member it is bound to now (null when none or deleted). A write that moves
+ * the revision attribution without a version snapshot (a tag change) hides the earlier remote author from this read. The database is the record, so a
  * repo-less brain answers the same way.
  */
 import { shellQuote } from '../agent-output.ts';
@@ -24,19 +25,18 @@ export interface PagesExposed {
 /** The pages of `sourceId` a remote credential wrote that name no readers (the first five by slug), or null when there are none. */
 export async function remotePagesFederationExposes(engine: SqlEngine, sourceId: string): Promise<PagesExposed | null> {
   const rows = await engine.executeRaw<{ slug: string; member: string | null; total: number }>(
-    `WITH writers AS (
-       SELECT 'legacy_token'::text AS kind, id::text AS pid, member_id FROM access_tokens
-       UNION ALL
-       SELECT 'oauth_client'::text, client_id, member_id FROM oauth_clients),
-     open AS (SELECT id, slug, revision_principal_kind, revision_principal_id FROM pages
+    `WITH open AS (SELECT id, slug, revision_principal_kind, revision_principal_id FROM pages
        WHERE source_id = $1 AND deleted_at IS NULL AND page_readers IS NULL AND folder_rule_ids IS NULL),
      authored AS (
-       SELECT o.slug, w.member_id FROM open o JOIN writers w ON w.kind = o.revision_principal_kind AND w.pid = o.revision_principal_id
+       SELECT slug, revision_principal_kind AS kind, revision_principal_id AS pid FROM open
        UNION ALL
-       SELECT o.slug, w.member_id FROM open o JOIN page_versions v ON v.page_id = o.id
-         JOIN writers w ON w.kind = v.write_principal_kind AND w.pid = v.write_principal_id)
-     SELECT slug, min(member_id) AS member, (count(*) OVER ())::int AS total
-       FROM authored GROUP BY slug ORDER BY slug LIMIT 5`, [sourceId]);
+       SELECT o.slug, v.write_principal_kind, v.write_principal_id FROM open o JOIN page_versions v ON v.page_id = o.id)
+     SELECT a.slug, min(coalesce(t.member_id, c.member_id)) AS member, (count(*) OVER ())::int AS total
+       FROM authored a
+       LEFT JOIN access_tokens t ON a.kind = 'legacy_token' AND t.id::text = a.pid
+       LEFT JOIN oauth_clients c ON a.kind = 'oauth_client' AND c.client_id = a.pid
+      WHERE a.kind IN ('legacy_token', 'oauth_client')
+      GROUP BY a.slug ORDER BY a.slug LIMIT 5`, [sourceId]);
   const first = rows[0];
   if (!first) return null;
   const bound = rows.find(r => r.member !== null && r.slug.includes('/'));

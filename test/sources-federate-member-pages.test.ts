@@ -6,7 +6,7 @@
  *    unbound token then reads the member's page. The federate still happens (exit and config unchanged), and its
  *    output now names the count, the page and its member, the check and restrict commands, on stderr and under
  *    --json as pages_exposed; restore (unmanaged and managed) does the same. Pages with readers and operator pages
- *    are not named; a credential unbound since it wrote still is, and a hostile slug is shell-quoted.
+ *    are not named; a credential unbound or deleted since it wrote still is, and a hostile slug is shell-quoted.
  * 2. Fails when: federate prints no preview of the member's page (master), names a page with readers or an operator
  *    page, drops an unbound credential's page, builds a command with an unquoted slug, warns on unfederate, or stops
  *    federating.
@@ -106,25 +106,30 @@ describe('sources federate previews member-written pages it exposes (#8982, pgli
     expect(await federated()).toBe(true);
   }, 240_000);
 
-  test('a credential unbound since it wrote still counts; a hostile slug is shell-quoted in the commands', async () => {
+  test('a credential unbound or deleted since it wrote still counts; a hostile slug is shell-quoted in the commands', async () => {
     await engine.executeRaw("UPDATE sources SET config = config || '{\"federated\": false}'::jsonb WHERE id = $1", [SRC]);
     const [plan] = await engine.executeRaw<{ slug: string; kind: string; pid: string }>(`SELECT slug, revision_principal_kind AS kind, revision_principal_id AS pid
       FROM pages WHERE source_id = $1 AND slug LIKE 'notes/alice-plan-%'`, [SRC]);
-    const rename = (from: string, to: string) => engine.transaction(async tx => {
-      await tx.executeRaw("SELECT set_config('gbrain.write_principal_kind', $1, true), set_config('gbrain.write_principal_id', $2, true)", [plan!.kind, plan!.pid]);
+    const [operator] = await engine.executeRaw<{ kind: string; pid: string }>(`SELECT revision_principal_kind AS kind, revision_principal_id AS pid
+      FROM pages WHERE source_id = $1 AND slug = 'notes/operator-page'`, [SRC]);
+    const attribute = (from: string, to: string, kind: string, pid: string) => engine.transaction(async tx => {
+      await tx.executeRaw("SELECT set_config('gbrain.write_principal_kind', $1, true), set_config('gbrain.write_principal_id', $2, true)", [kind, pid]);
       await tx.executeRaw('UPDATE pages SET slug = $3 WHERE source_id = $1 AND slug = $2', [SRC, from, to]);
     });
+    const rename = (from: string, to: string) => attribute(from, to, plan!.kind, plan!.pid);
     await engine.executeRaw("UPDATE access_tokens SET member_id = NULL WHERE name = 'alice'");
     const hostile = 'notes/$(printf injected)/plan';
     await rename(plan!.slug, hostile);
+    await attribute('notes/operator-page', 'notes/operator-page-moved', 'oauth_client', 'deleted-client-example');
     try {
       const out = await sources(['federate', SRC, '--json']);
-      expect(JSON.parse(out.stdout).pages_exposed).toEqual({ count: 1, examples: [{ slug: hostile, member: null }],
+      expect(JSON.parse(out.stdout).pages_exposed).toEqual({ count: 2, examples: [{ slug: hostile, member: null }, { slug: 'notes/operator-page-moved', member: null }],
         check: "gbrain access who-can-read 'notes/$(printf injected)/plan' --source " + SRC,
         restrict: 'gbrain access rule add --prefix <folder/> --readers <member> --source ' + SRC });
       expect(out.stderr).toContain("'notes/$(printf injected)/plan' (credential bound to no member now)");
     } finally {
       await rename(hostile, plan!.slug);
+      await attribute('notes/operator-page-moved', 'notes/operator-page', operator!.kind, operator!.pid);
       await engine.executeRaw("UPDATE access_tokens SET member_id = 'alice-example' WHERE name = 'alice'");
     }
   }, 240_000);
