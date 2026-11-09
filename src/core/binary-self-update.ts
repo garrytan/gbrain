@@ -3,7 +3,7 @@
  * (v0.42 self-upgrading-gbrain wave, eng-review Finding 2 — "make the atomic
  * swap claim true for the one method we own").
  *
- * `bun` / `bun-link` / `clawhub` delegate their swap to those package managers.
+ * `bun` / `bun-link` delegate their swap to those package managers.
  * The compiled standalone binary is the only method gbrain itself writes, so
  * it's the only place we can (and now do) guarantee atomicity:
  *

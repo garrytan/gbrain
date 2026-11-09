@@ -27,6 +27,7 @@ const AUDITED: Record<string, Audit> = {
   'src/core/generations/adapters/page.ts': { calls: { importFromContent: 1 }, disposition: 'derived', why: 'a stored preimage or a producer page gbrain serializes' },
   'src/core/import-file.ts': { calls: { importFromContent: 2 }, disposition: 'held', why: 'the identity-move retry passes the caller\'s options; importFromFile holds before it imports' },
   'src/core/minions/handlers/ingest-capture.ts': { calls: { importFromContent: 1 }, disposition: 'held', why: 'the shared import options set holdNoncanonicalPrivate (#7880)' },
+  'src/core/repair/private-labels.ts': { calls: { importFromContent: 1 }, disposition: 'derived', why: 'the stored page re-serialized with only the previewed privacy keys removed or re-added' },
   'src/core/oversized-backfill.ts': { calls: { importFromContent: 1 }, disposition: 'derived', why: 're-serializes the stored page' },
   'src/core/persistence/connector-sync.ts': { calls: { importFromContent: 1 }, disposition: 'derived',
     why: 'GitHub and Google renders: fixed keys, provider text only as quoted values, visibility: private only in lowercase; the rest is the stored page' },

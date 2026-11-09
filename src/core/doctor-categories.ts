@@ -117,6 +117,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'auto_chronicle',
   'auto_chronicle_default_on',
   'chronicle_config_invalid',
+  'chronicle_duplicate_events',
   'facts_drain',
   'fact_take_vectors',
   'code_chunk_metadata',

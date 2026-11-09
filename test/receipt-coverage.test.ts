@@ -33,7 +33,7 @@ const RECEIPT_COVERAGE: Record<string, Coverage> = {
   'src/core/repair/segmented-mirror.ts': { sites: 1, receipted: 'repair segmented-mirror: admitWriteInTransaction admits each page\'s repair request and completeWrite records its terminal receipt in the same transaction' },
   'src/core/facts/purge.ts': { sites: 1, receipted: 'purge_fact: admitWriteInTransaction admits the request and completeWrite records its terminal receipt in the same transaction' },
   'src/core/shared-skills/publication.ts': { sites: 1, receipted: 'shared-skill revision pruning inside an admitted skill publication' },
-  'src/core/persistence/source-lifecycle.ts': { sites: 1, receipted: 'source add/claim/remove under a persistence_topology_changes receipt' },
+  'src/core/persistence/source-lifecycle.ts': { sites: 2, receipted: 'source add/claim/remove under a persistence_topology_changes receipt; the remove/purge page batches (#7702/#8905) commit ahead of it under the same request_id, which a rerun resumes and the final transaction receipts' },
   'src/core/persistence/topology-recovery.ts': { sites: 1, receipted: 'topology recovery under its persistence_topology_changes receipt' },
   'src/core/page-state/materialize.ts': { sites: 1, tables: ['pages'], todo: 'TODO(receipts): derived page materialization should publish as a maintenance intent' },
   'src/core/timeline-extract.ts': { sites: 1, tables: ['timeline_entries'], todo: 'TODO(receipts): timeline retraction should publish like managed_maintenance_timeline_extract' },
