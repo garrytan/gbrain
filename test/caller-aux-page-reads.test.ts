@@ -21,6 +21,7 @@ import { resolveEntitiesToPointers } from '../src/core/context/retrieval-reflex.
 import { assembleBrief, resolvePullCounterparty } from '../src/core/context/proactive-brief.ts';
 import { withCallerAccess, __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { addMember } from '../src/core/access/members.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const SRC = 'source-a';
 const ALICE = 'people/alice-example';
@@ -67,16 +68,12 @@ describe('#8395 auxiliary page reads follow the caller', () => {
   });
 
   test('local core reads keep the plain privacy fragment, even with the read hatch open', async () => {
-    const prior = process.env.GBRAIN_REMOTE_PRIVATE_PAGES;
-    process.env.GBRAIN_REMOTE_PRIVATE_PAGES = '1';
-    try {
+    await withEnv({ GBRAIN_REMOTE_PRIVATE_PAGES: '1' }, async () => {
       __resetPrivateVisibilityCacheForTests();
       expect(await core(false)).toEqual([]);
       expect(await core(true)).toEqual([SECRET]);
-    } finally {
-      if (prior === undefined) delete process.env.GBRAIN_REMOTE_PRIVATE_PAGES; else process.env.GBRAIN_REMOTE_PRIVATE_PAGES = prior;
-      __resetPrivateVisibilityCacheForTests();
-    }
+    });
+    __resetPrivateVisibilityCacheForTests();
   });
 
   test('strict entity resolution and refusal candidates', async () => {
@@ -96,17 +93,13 @@ describe('#8395 auxiliary page reads follow the caller', () => {
   });
 
   test('derived decisions without forCaller keep the plain privacy fragment, even with the read hatch open', async () => {
-    const prior = process.env.GBRAIN_REMOTE_PRIVATE_PAGES;
-    process.env.GBRAIN_REMOTE_PRIVATE_PAGES = '1';
-    try {
+    await withEnv({ GBRAIN_REMOTE_PRIVATE_PAGES: '1' }, async () => {
       __resetPrivateVisibilityCacheForTests();
       expect((await resolveStrictEntityReference(engine, SRC, SECRET, { excludePrivate: true })).slug).toBeNull();
       expect(await entityReferenceCandidates(engine, SRC, 'Carol Example', { excludePrivate: true })).not.toContain(SECRET);
       expect((await resolveStrictEntityReference(engine, SRC, SECRET, { excludePrivate: true, forCaller: true })).slug).toBe(SECRET);
-    } finally {
-      if (prior === undefined) delete process.env.GBRAIN_REMOTE_PRIVATE_PAGES; else process.env.GBRAIN_REMOTE_PRIVATE_PAGES = prior;
-      __resetPrivateVisibilityCacheForTests();
-    }
+    });
+    __resetPrivateVisibilityCacheForTests();
   });
 
   test('retrieval pointers, pull counterparties and brief edits', async () => {
