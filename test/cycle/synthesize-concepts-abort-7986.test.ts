@@ -43,12 +43,12 @@ async function conceptPages(): Promise<string[]> {
   return (await engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE slug LIKE 'concepts/%' AND deleted_at IS NULL ORDER BY slug")).map(r => r.slug);
 }
 
-async function cycleAbortedOnSecondCall(transport: (opts: ChatOpts, job: AbortController) => Promise<ChatResult>) {
-  const job = new AbortController();
+async function cycleAbortedOnSecondCall(transport: (opts: ChatOpts, job: AbortController) => Promise<ChatResult>,
+  first: ChatResult = answer('A narrative about the first concept.'), job = new AbortController()) {
   let calls = 0;
   __setChatTransportForTests(async (opts) => {
     calls++;
-    if (calls === 1) return answer('A narrative about the first concept.');
+    if (calls === 1) return first;
     return transport(opts, job);
   });
   try {
@@ -84,5 +84,37 @@ describe('#7986 synthesize_concepts stops on the cycle abort signal', () => {
     expect(run.outcome).toMatchObject({ error: { name: 'AbortError' } });
     expect(seen[0]?.aborted).toBe(true);
     expect(run.calls).toBe(2);
+  }, 60_000);
+
+  test('a job aborted while the first concept is being prepared for publication publishes nothing', async () => {
+    const job = new AbortController();
+    const getPage = PGLiteEngine.prototype.getPage;
+    // A this-preserving wrapper: a transaction's engine inherits it and must still read on its own connection.
+    engine.getPage = async function (this: PGLiteEngine, slug: string, opts?: Parameters<typeof getPage>[1]) {
+      if (slug.startsWith('concepts/')) job.abort(new Error('job timed out'));
+      return getPage.call(this, slug, opts);
+    } as typeof engine.getPage;
+    try {
+      const run = await cycleAbortedOnSecondCall(async () => answer('never reached'), undefined, job);
+      expect(run.pages).toEqual([]);
+      expect(run.outcome).toMatchObject({ error: { name: 'AbortError' } });
+      expect(run.calls).toBe(1);
+    } finally {
+      delete (engine as { getPage?: unknown }).getPage;
+    }
+  }, 60_000);
+
+  test('an aborted run still records the spend and the failed attempts of the calls it finished', async () => {
+    const clipped = { ...answer('A clipped narr'), stopReason: 'length' as const };
+    const run = await cycleAbortedOnSecondCall(async (_opts, job) => {
+      job.abort(new Error('job timed out'));
+      return answer('A narrative the slow model finished after the job timed out.');
+    }, clipped);
+    expect(run.outcome).toMatchObject({ error: { name: 'AbortError' } });
+    const [rollup] = await engine.executeRaw<{ cost_usd: number; round_completed_count: number }>(
+      "SELECT cost_usd::float8 AS cost_usd, round_completed_count FROM extract_rollup_7d WHERE kind = 'concepts' AND source_id = 'default'");
+    expect(rollup?.cost_usd).toBeGreaterThan(0);
+    expect(rollup?.round_completed_count).toBe(0);
+    expect(await engine.getConfig('dream.concepts.failed_attempts')).toContain('concepts/alpha');
   }, 60_000);
 });
