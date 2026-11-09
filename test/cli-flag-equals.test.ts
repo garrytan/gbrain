@@ -406,6 +406,7 @@ describe('#7619 split rules', () => {
       'src/core/git-head.ts': 'git child argv',
       'src/core/git-remote.ts': 'git child argv',
       'src/core/git/commit-push.ts': 'git child argv',
+      'src/core/git/range-secret-scan.ts': 'git child argv',
       'src/core/hardened-git.ts': 'git child argv (the reason-trailer log options)',
       'src/core/persistence/checkout-state.ts': 'git child argv',
       'src/core/persistence/effect-git.ts': 'git child argv',
