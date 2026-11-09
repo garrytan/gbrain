@@ -1726,6 +1726,20 @@
           "category": "brain",
           "details": {
             "by_source": [],
+            "count": 0,
+            "docs": "docs/guides/repair.md#atom-fence-rows",
+            "origin_unread": 0,
+            "repair": "atom-fence-rows"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No world atom carries a fence row its source page shows only to the owner.",
+          "name": "atom_fence_rows",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "by_source": [],
             "docs": "docs/guides/repair.md#generations",
             "items": 0,
             "keys": 0,

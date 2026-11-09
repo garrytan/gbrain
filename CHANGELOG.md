@@ -10,6 +10,20 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Atoms extracted from a world page never carry a fence row the page shows only to its owner, and `gbrain repair atom-fence-rows` finds and narrows atoms stored before.** A world page's facts table can hold rows marked `visibility: private`, and its takes table is never part of what a remote caller reads. Atom extraction, take proposals and the patterns phase read a page as a world reader sees it, so what they produce holds only world rows. Atoms an earlier version stored may still hold such a row: doctor `atom_fence_rows` counts them and names the read-only preview, and only `gbrain repair atom-fence-rows --apply --expect <hash>` makes the previewed atoms private. Nothing runs on upgrade.
+
+### Itemized changes
+
+- `src/core/cycle/extract-atoms-input.ts`: a page's extraction input is its `publicBody` (facts rows other than world and the takes fence removed); the cap, the watermark and quote verification apply to that text, on the cycle phase and the managed path alike.
+- `src/core/cycle/propose-takes.ts`: the extractor receives the page's `publicBody`; the content hash, fence skip and dedup rows still read the stored body.
+- `src/core/cycle/patterns.ts`: reflection excerpts in the subagent prompt and the quote-grounding sources are the reflection's `publicBody`.
+- `src/core/repair/atom-fence-rows.ts` (new, registered in `repair/core.ts`, `repair/registry.ts`, `persistence/preview-approval.ts`): explicit-only, preview-bound kind; the preview lists each world atom with its source page and the row kinds and numbers it carries (never the row text) and changes nothing; the apply sets `visibility: private` on exactly the previewed set through a revision-bound put_page.
+- `src/commands/doctor/checks/atom-fence-rows.ts` (new, a host-only `WAVE_CHECKS` entry, BRAIN category): `atom_fence_rows` warns with the count per source and the preview command.
+- Docs: `docs/guides/repair.md#atom-fence-rows` (what is listed, the apply, cost), `skills/RESOLVER.md`, key-files rows in `core-cycle.md`, `hindsight.md`, `core-cycle-patterns.md` and `memory-purge.md`.
+- Tests (PGLite and Postgres): `test/extract-atoms-world-fence-rows.test.ts` (cycle phase and managed brain: prompt, atoms and a remote read of each atom hold only world rows), `test/cycle-world-fence-rows.test.ts` (propose_takes input and proposals, patterns prompt and quote grounding), `test/repair-atom-fence-rows.test.ts` (doctor finding, preview changes nothing, apply without `--expect` refuses, apply narrows exactly the previewed atoms, unmanaged and managed).
+
 ## [0.60.626.0] - 2026-11-09
 
 **`gbrain sources record-origin --remote` now locks down the existing checkout too, and on a managed brain it can no longer report success while a reclone still clones with git-lfs on.** On a managed brain the record took only the source row lock, so a reclone that had already read the source, or held its worktree locks, could clone with git-lfs downloads and hooks on after the command said the source was recorded. The record now takes the worktree locks and rows a reclone takes (refusing the id `source_busy` while one runs), and the reclone reads the record under its own locks. `--remote --apply` now also turns git-lfs downloads and hooks off in the existing checkout's `.git/config`, because a reclone only happens when a checkout is lost or replaced, and until then doctor read green while the checkout still fetched git-lfs objects and ran hooks. The git-lfs check now reads a committed `.gitattributes` under a directory whose name holds a tab (it was cut at the tab and skipped), ignores commented-out `filter=lfs` lines, says "declares a git-lfs filter" when a rule only declares one, and records a clone of an empty repository instead of telling the operator to restore an intact checkout. A failed write is reported for its own id instead of ending the run without saying which ids were recorded.

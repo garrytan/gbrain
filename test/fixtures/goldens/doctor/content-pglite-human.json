@@ -138,6 +138,7 @@
       "  [OK] google_calendar_readable: No Google source recorded an unreadable calendar at its last sync.",
       "  [OK] google_api_access: No Google source recorded a disabled API or missing scope at its last sync.",
       "  [OK] atom_retirements_restorable: No atom retired by an empty re-extraction is waiting to be restored.",
+      "  [OK] atom_fence_rows: No world atom carries a fence row its source page shows only to the owner.",
       "  [OK] generation_retirements: No live generation retired items in the last 30 day(s).",
       "  [OK] generation_held: No derived generation is held.",
       "  [OK] generation_pending: No activated generation waits on a member request, and no orphan candidate exists.",

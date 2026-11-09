@@ -65,6 +65,7 @@ test/contact-rows-drift-8109.test.ts
 test/conversation-facts-outcome-marker-purge-7778.test.ts
 test/conversation-facts-oversized-sidecar.test.ts
 test/conversation-facts-purged-claim-7438.test.ts
+test/cycle-world-fence-rows.test.ts
 test/cycle/derived-write-through-commit.test.ts
 test/cycle/dream-reverse-write-commit.test.ts
 test/cycle/synthesize-concepts-merge.test.ts
@@ -85,6 +86,7 @@ test/engine-sql-facts-keyset.test.ts
 test/extract-all-stamp-intersection.serial.test.ts
 test/extract-atoms-input-truncated-6503.test.ts
 test/extract-atoms-raised-cap-drain-7391.test.ts
+test/extract-atoms-world-fence-rows.test.ts
 test/extract-endpoint-revision.serial.test.ts
 test/extract-entities-managed.test.ts
 test/extract-timeline-from-meetings-managed.test.ts
@@ -473,6 +475,7 @@ test/refresh-write-barrier.test.ts
 test/remediation-manual-only.test.ts
 test/remember-batch-entity-7432.test.ts
 test/repair-apply-pending-6543.test.ts
+test/repair-atom-fence-rows.test.ts
 test/repair-database-stop-gbra133.test.ts
 test/repair-embedding-effects.test.ts
 test/repair-failed-writes-conflict-6429.test.ts

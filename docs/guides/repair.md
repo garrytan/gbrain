@@ -8,7 +8,7 @@ can load, and Google source files other local users can read. `gbrain repair`
 fixes those and the other kinds listed in
 [What each kind fixes](#what-each-kind-fixes). Every run is a preview unless
 you pass `--apply`.
-The explicit-only kinds, among them `google-file-modes`, `stale-atoms`, `atoms-restore`, `extractor-facts`, `unwithdrawn-facts`,
+The explicit-only kinds, among them `google-file-modes`, `stale-atoms`, `atoms-restore`, `atom-fence-rows`, `extractor-facts`, `unwithdrawn-facts`,
 `captured-facts`, `agent-session-facts`, `redacted-facts`, `loop-facts`, `ontology-facts`, `orphan-children`, `failed-writes`, `frontmatter`, `managed-sync-orphans`, `content-receipt-root`, `stuck-recovery`, `aliases`, `rename-identity` and `segmented-mirror`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
 `gbrain doctor --remediation-plan` lists the same kinds as repair steps, and
 `gbrain doctor --remediate --yes --include-repairs --expect <plan_hash>` runs them under a budget
@@ -1974,6 +1974,46 @@ late can still restore it. An explicit `gbrain delete <slug> --purge` is not
 held. Doctor `atom_retirements_restorable` warns while such atoms exist, with
 their count, origins, oldest and newest retirement and the date the first hold
 ends; its fix is the read-only preview. Show the user the preview before
+running the apply.
+
+### Atom fence rows
+
+A world atom carries the claim of a fence row its source page shows only to
+the owner when an older extraction read the whole page: a facts row whose
+`visibility` is not `world`, or a takes row whose holder is not `world`.
+Extraction now reads a page as a world reader sees it, so new atoms never
+carry such a row, but atoms already stored keep what they copied and a remote
+read returns it. `gbrain repair atom-fence-rows` finds them and, only when you
+apply it, makes them private. It is explicit-only and preview-bound, and
+nothing runs on upgrade.
+
+```bash
+gbrain doctor --only atom_fence_rows --json            # count per source; ok when none
+gbrain repair atom-fence-rows --source <id> --json     # preview: each atom, its source page, the row kinds and numbers, and a hash
+gbrain repair atom-fence-rows --source <id> --apply --expect <hash>
+```
+
+An atom is listed when it is live, page-bound (`source_slug`), stamped
+`visibility: world`, and its title, body or `source_quote` contains (case and
+whitespace folded) the claim of such a row of its live source page, unless the
+page's world text holds the same claim too. Claims shorter than 12 characters
+are not matched. The preview names each atom with its source page and the
+rows (`facts row 2`, `takes row 1`), never the row text, and changes nothing.
+A source page stored in segments is not read: its world atoms are counted as
+`origin_unread`.
+
+The apply sets `visibility: private` on exactly the previewed set through a
+revision-bound put_page, which re-chunks and re-embeds each atom; remote reads
+and search stop returning it, local reads keep it. An atom whose revision,
+source page or matched rows changed since the preview reports
+`changed_since_preview` and is kept. `--apply` without `--expect` refuses
+with the preview and apply commands; a stale hash or another `--source`
+refuses with [`preview_changed`](#preview-changed).
+
+Cost: doctor and the preview read every world atom whose source page names a
+facts or takes fence, in pages of 500 by id, and each such source page once;
+no model is called. Doctor bounds each statement at 120 seconds and reports
+the count as unknown when one overruns. Show the user the preview before
 running the apply.
 
 ### Generations

@@ -56,6 +56,7 @@ import { GBrainError } from '../types.ts';
 import { isConfigTruthy } from '../config.ts';
 import { matchingCloseBracket } from '../llm-json.ts';
 import { TAKE_KIND_VALUES } from '../takes-fence.ts';
+import { publicBody } from '../mentions/aliases.ts';
 import { attributionChecksEnabled } from './attribution-checks.ts';
 import { downgradeAssistantOnlyHolders } from './propose-takes-attribution.ts';
 import { ProposeTakesFailures, PROPOSE_TAKES_HOLD_RUNS, type FailedPage } from './propose-takes-failures.ts';
@@ -1015,7 +1016,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
       try {
         proposals = await extractor({
           pagePath: page.slug,
-          pageBody: body,
+          pageBody: publicBody(body),
           existingTakes,
           modelHint: opts.model,
           // #4494: configurable output caps (see resolution above).
