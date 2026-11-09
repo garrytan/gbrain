@@ -9,7 +9,11 @@
  *   - GBRAIN_TEST_PG_PLAIN_REMOTE_URL: a server with ssl=off reached through a
  *     non-loopback address, no sslmode. connect() refuses with
  *     postgres_tls_required; the same URL plus sslmode=disable connects and the
- *     doctor finding warns.
+ *     doctor finding warns; sslmode=prefer falls back to plaintext and the doctor
+ *     says so.
+ *   - GBRAIN_TEST_PG_TLS_POOLER_URL: a transaction pooler that takes TLS from the
+ *     client and talks plaintext to the database. pg_stat_ssl reads unencrypted
+ *     (the pooler's hop), and the doctor judges the client hop: ok, no fix.
  *
  * The two remote URLs need a container reached through its bridge address, so
  * they are opt-in (they skip when unset); see the PR for the docker commands.
@@ -18,11 +22,12 @@
 import { describe, test, expect } from 'bun:test';
 import * as db from '../../src/core/db.ts';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
-import { postgresTlsCheck } from '../../src/commands/doctor/checks/postgres-tls.ts';
+import { postgresTlsCheck, postgresTlsEntry } from '../../src/commands/doctor/checks/postgres-tls.ts';
 
 const LOCAL = process.env.DATABASE_URL;
 const TLS_REMOTE = process.env.GBRAIN_TEST_PG_TLS_REMOTE_URL;
 const PLAIN_REMOTE = process.env.GBRAIN_TEST_PG_PLAIN_REMOTE_URL;
+const TLS_POOLER = process.env.GBRAIN_TEST_PG_TLS_POOLER_URL;
 const SESSION_SSL = 'SELECT ssl, version FROM pg_stat_ssl WHERE pid = pg_backend_pid()';
 
 async function moduleSessionTls(url: string): Promise<{ ssl: boolean; version: string | null }> {
@@ -31,6 +36,12 @@ async function moduleSessionTls(url: string): Promise<{ ssl: boolean; version: s
     const [row] = await db.getConnection().unsafe(SESSION_SSL);
     return { ssl: row.ssl === true, version: row.version ?? null };
   } finally { await db.disconnect(); }
+}
+
+async function doctorOn(url: string): Promise<{ status: string; message: string; fix?: unknown }[]> {
+  const engine = new PostgresEngine();
+  await engine.connect({ database_url: url, poolSize: 1 } as never);
+  try { return await postgresTlsEntry.run({ engine } as never) as never; } finally { await engine.disconnect(); }
 }
 
 function withParam(url: string, param: string): string {
@@ -85,5 +96,28 @@ describe.skipIf(!PLAIN_REMOTE)('non-loopback Postgres with ssl=off', () => {
     const check = postgresTlsCheck(url, session)!;
     expect(check.status).toBe('warn');
     expect(check.message).toContain('sslmode=disable');
+  }, 60_000);
+});
+
+describe.skipIf(!PLAIN_REMOTE)('sslmode=prefer against a server without TLS', () => {
+  test('the driver falls back to plaintext and doctor says exactly that', async () => {
+    const [check] = await doctorOn(withParam(PLAIN_REMOTE!, 'sslmode=prefer'));
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('fell back to plaintext');
+  }, 60_000);
+});
+
+describe.skipIf(!TLS_POOLER)('a TLS client behind a transaction pooler with a plaintext upstream', () => {
+  test('pg_stat_ssl reads the pooler hop, and doctor judges the client hop: ok, no fix', async () => {
+    const engine = new PostgresEngine();
+    await engine.connect({ database_url: TLS_POOLER!, poolSize: 1 } as never);
+    try {
+      const [row] = await engine.executeRaw<{ ssl: boolean }>(SESSION_SSL);
+      expect(row.ssl).toBe(false);
+      const [check] = await postgresTlsEntry.run({ engine } as never) as { status: string; message: string; fix?: unknown }[];
+      expect(check.status).toBe('ok');
+      expect(check.message).toContain('pooler');
+      expect(check.fix).toBeUndefined();
+    } finally { await engine.disconnect(); }
   }, 60_000);
 });

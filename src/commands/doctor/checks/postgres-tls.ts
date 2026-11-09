@@ -1,19 +1,18 @@
 /**
- * postgres_tls: is this Postgres brain's connection encrypted? A brain on a
- * non-loopback host connected without TLS (the session's own pg_stat_ssl row)
- * is a warning that names the fix; an encrypted one is ok, with a note when
- * sslmode=require encrypts without verifying the server certificate. PGLite
- * opens no network connection and emits nothing. The TLS default itself is
- * src/core/pg-tls.ts.
- *
- * Behind a pooler (PgBouncer, Supavisor) pg_stat_ssl describes the pooler's
- * link to the database, not this client's link to the pooler; the message
- * says so when the URL asked for TLS but the session reads unencrypted.
+ * postgres_tls: is this Postgres brain's own connection encrypted? The verdict
+ * comes from the client side: the TLS mode the driver used for the URL the
+ * engine connected with (sslmode=require, verify-ca and verify-full make the
+ * driver refuse a server without TLS). Behind a pooler (PgBouncer, Supavisor)
+ * pg_stat_ssl describes the pooler's hop to the database, so it is reported as
+ * detail and never turns a TLS client into a warning. sslmode=disable warns, and
+ * so does sslmode=prefer when the server's SSLRequest answer shows the driver
+ * fell back to plaintext. PGLite opens no network connection and emits nothing.
+ * The TLS default itself is src/core/pg-tls.ts.
  */
 
 import { loadConfig } from '../../../core/config.ts';
 import type { Action } from '../../../core/agent-output.ts';
-import { pgConnectHosts, isLoopbackPgHost, resolvePgTls } from '../../../core/pg-tls.ts';
+import { pgConnectHosts, pgFirstHostPort, isLoopbackPgHost, probeServerTls, resolvePgTls } from '../../../core/pg-tls.ts';
 import { doctorVerify } from '../check-fix.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
@@ -30,30 +29,45 @@ const TLS_FIX: Action = {
   docs: 'docs/guides/error-codes.md#postgres_tls_required',
 };
 
-/** Pure: the finding for a connected Postgres brain, from its URL and its session's pg_stat_ssl row (null when unreadable). */
-export function postgresTlsCheck(url: string, session: SessionTls | null, env: Record<string, string | undefined> = process.env): Check | null {
+/**
+ * Pure: the finding for a connected Postgres brain, judged from this machine's side: the TLS mode the
+ * driver used for the URL the engine connected with. pg_stat_ssl (null when unreadable) is detail only,
+ * since behind a pooler it describes the pooler's hop. preferAnswer is the server's SSLRequest answer,
+ * read only for sslmode=prefer, the one mode whose driver falls back to plaintext.
+ */
+export function postgresTlsCheck(
+  url: string,
+  session: SessionTls | null,
+  env: Record<string, string | undefined> = process.env,
+  preferAnswer: 'S' | 'N' | null = null,
+): Check | null {
   const hosts = pgConnectHosts(url, {}, env);
   if (hosts.length > 0 && hosts.every(isLoopbackPgHost)) {
     return { name: 'postgres_tls', status: 'ok', message: 'The Postgres host is on this machine; TLS is not required.' };
   }
-  const tls = resolvePgTls(url, {}, env);
-  const optedOut = tls.mode === 'disable';
-  if (!session && !optedOut) return null;
-  if (session?.ssl && !optedOut) {
-    const unverified = tls.mode === 'require' || tls.mode === 'prefer' || tls.mode === 'allow';
+  const { mode } = resolvePgTls(url, {}, env);
+  const serverView = session ? { server_reports_ssl: session.ssl, server_ssl_version: session.version } : {};
+  if (mode === 'disable' || (mode === 'prefer' && preferAnswer === 'N')) {
     return {
-      name: 'postgres_tls', status: 'ok',
-      message: `The connection to the non-local Postgres host is encrypted (${session.version ?? 'TLS'}).${unverified ? ' sslmode=' + tls.mode + ' does not verify the server certificate; sslmode=verify-full with the server CA also verifies it.' : ''}`,
-      details: { ssl: true, version: session.version, sslmode: tls.mode },
+      name: 'postgres_tls', status: 'warn',
+      message: mode === 'disable'
+        ? 'Connected to a non-local Postgres host without TLS (sslmode=disable in the database URL): the password and page contents cross the network in plaintext. Turn TLS on at the server and use sslmode=require or sslmode=verify-full.'
+        : 'sslmode=prefer fell back to plaintext: the non-local Postgres server does not offer TLS, so the password and page contents cross the network unencrypted. Turn TLS on at the server and use sslmode=require, which refuses to fall back.',
+      details: { client_tls: false, sslmode: mode, ...serverView },
+      fix: TLS_FIX,
     };
   }
+  if (mode === 'prefer' && preferAnswer !== 'S') return null;
+  const unverified = mode === 'require' || mode === 'prefer' || mode === 'allow';
+  const notes = [
+    mode === 'prefer' ? 'sslmode=prefer falls back to plaintext if the server ever stops offering TLS; sslmode=require refuses to.' : '',
+    unverified ? 'sslmode=' + mode + ' does not verify the server certificate; sslmode=verify-full with the server CA also verifies it.' : '',
+    session && !session.ssl ? 'The server reports this session unencrypted: behind a pooler that is the pooler\'s own hop to the database, which cannot be checked from this machine.' : '',
+  ].filter(Boolean).join(' ');
   return {
-    name: 'postgres_tls', status: 'warn',
-    message: optedOut
-      ? 'Connected to a non-local Postgres host without TLS (sslmode=disable in the database URL): the password and page contents cross the network in plaintext. Turn TLS on at the server and use sslmode=require or sslmode=verify-full.'
-      : `The non-local Postgres server reports this session as unencrypted although the URL asks for sslmode=${tls.mode}. Behind a pooler, this is the pooler's own link to the database; make sure that link is encrypted too.`,
-    details: { ssl: false, sslmode: tls.mode },
-    fix: TLS_FIX,
+    name: 'postgres_tls', status: 'ok',
+    message: 'This connection to the non-local Postgres host uses TLS' + (session?.ssl && session.version ? ' (' + session.version + ')' : '') + '.' + (notes ? ' ' + notes : ''),
+    details: { client_tls: true, sslmode: mode, ...serverView },
   };
 }
 
@@ -61,14 +75,19 @@ async function runPostgresTls(ctx: DoctorContext): Promise<Check[]> {
   const engine = connectedEngine(ctx);
   const checks: Check[] = [];
   if (engine.kind !== 'postgres') return checks;
-  const url = loadConfig()?.database_url;
+  const url = (engine as { connectedDatabaseUrl?: string }).connectedDatabaseUrl ?? loadConfig()?.database_url;
   if (!url) return checks;
   let session: SessionTls | null = null;
   try {
     const rows = await engine.executeRaw<{ ssl: boolean; version: string | null }>('SELECT ssl, version FROM pg_stat_ssl WHERE pid = pg_backend_pid()');
     if (rows[0]) session = { ssl: rows[0].ssl === true, version: rows[0].version ?? null };
-  } catch { /* pg_stat_ssl unreadable: no finding */ }
-  const check = postgresTlsCheck(url, session);
+  } catch { /* pg_stat_ssl unreadable: the client-side verdict stands */ }
+  let preferAnswer: 'S' | 'N' | null = null;
+  if (resolvePgTls(url).mode === 'prefer') {
+    const target = pgFirstHostPort(url);
+    if (target) preferAnswer = await probeServerTls(target.host, target.port);
+  }
+  const check = postgresTlsCheck(url, session, process.env, preferAnswer);
   if (check) checks.push({ name: 'postgres_tls', status: check.status, message: check.message, ...(check.details ? { details: check.details } : {}), ...(check.fix ? { fix: check.fix } : {}) });
   return checks;
 }

@@ -115,7 +115,8 @@ export function probeServerTls(host: string, port: number, timeoutMs = 3000): Pr
 /** Failures that happen before or after the TLS handshake (DNS, refused, timeout, a server SQLSTATE): no probe. */
 const NOT_A_TLS_REFUSAL: ReadonlySet<string> = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ETIMEDOUT', 'CONNECT_TIMEOUT', 'ENETUNREACH', 'EHOSTUNREACH']);
 
-function firstHostPort(url: string, opts: Record<string, unknown>, env: Env): { host: string; port: number } | null {
+/** The first host and port the driver dials, or null for a Unix socket. */
+export function pgFirstHostPort(url: string, opts: Record<string, unknown> = {}, env: Env = processEnv()): { host: string; port: number } | null {
   const host = pgConnectHosts(url, opts, env)[0];
   if (!host || host.startsWith('/')) return null;
   if (typeof opts.port === 'number') return { host, port: opts.port };
@@ -146,7 +147,7 @@ export async function tlsRequiredDefaultError(
   if (resolvePgTls(url, opts, env).source !== 'default') return null;
   const code = String((error as { code?: unknown } | null)?.code ?? '');
   if (NOT_A_TLS_REFUSAL.has(code) || /^[0-9A-Z]{5}$/.test(code)) return null;
-  const target = firstHostPort(url, opts, env);
+  const target = pgFirstHostPort(url, opts, env);
   if (!target) return null;
   return (await probe(target.host, target.port)) === 'N' ? await postgresTlsRequiredError() : null;
 }

@@ -40,10 +40,34 @@ describe('postgres_tls doctor check', () => {
     expect(c.message).toContain('sslmode=disable');
   });
 
-  test('a session the server reports unencrypted warns even when the URL asked for TLS (a pooler hop)', () => {
-    const c = postgresTlsCheck(REMOTE, { ssl: false, version: null }, {})!;
-    expect(c.status).toBe('warn');
+  test('a TLS client behind a pooler is ok: pg_stat_ssl describes the pooler hop, not this connection', () => {
+    const pooler = 'postgres://u:p@aws-0-example.pooler.example.com:6543/postgres';
+    const c = postgresTlsCheck(pooler, { ssl: false, version: null }, {})!;
+    expect(c.status).toBe('ok');
     expect(c.message).toContain('pooler');
+    expect(c.message).toContain('cannot be checked from this machine');
+    expect(c.fix).toBeUndefined();
+    expect(JSON.stringify(c)).not.toContain('plaintext');
+  });
+
+  test('a required mode is judged from the client side even when pg_stat_ssl is unreadable', () => {
+    const c = postgresTlsCheck(REMOTE + '?sslmode=verify-full', null, {})!;
+    expect(c.status).toBe('ok');
+    expect(c.details?.client_tls).toBe(true);
+  });
+
+  test('sslmode=prefer that fell back to plaintext is described as exactly that', () => {
+    const c = postgresTlsCheck(REMOTE + '?sslmode=prefer', { ssl: false, version: null }, {}, 'N')!;
+    expect(c.status).toBe('warn');
+    expect(c.message).toContain('fell back to plaintext');
+    expect(c.message).not.toContain('pooler');
+    expect(c.fix).toBeDefined();
+  });
+
+  test('sslmode=prefer against a server that offers TLS is ok and says require would refuse a fallback', () => {
+    const c = postgresTlsCheck(REMOTE + '?sslmode=prefer', { ssl: true, version: 'TLSv1.3' }, {}, 'S')!;
+    expect(c.status).toBe('ok');
+    expect(c.message).toContain('sslmode=require');
   });
 
   test('an encrypted non-loopback session is ok and says require does not verify the certificate', () => {
@@ -59,8 +83,8 @@ describe('postgres_tls doctor check', () => {
     expect(postgresTlsCheck('postgres://u@127.0.0.1:5432/brain', { ssl: false, version: null }, {})!.status).toBe('ok');
   });
 
-  test('an unreadable pg_stat_ssl on a remote host emits nothing', () => {
-    expect(postgresTlsCheck(REMOTE, null, {})).toBeNull();
+  test('sslmode=prefer with no answer from the server emits nothing', () => {
+    expect(postgresTlsCheck(REMOTE + '?sslmode=prefer', null, {}, null)).toBeNull();
   });
 
   test('the entry is registered and emits nothing on PGLite', async () => {
