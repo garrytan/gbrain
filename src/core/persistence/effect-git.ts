@@ -420,11 +420,13 @@ const OWNER_SCAN_BUDGET_MS = 10_000;
  * they publish. The plain push reads the remote branch tip (`git ls-remote`, never a possibly stale tracking ref,
  * which would hide a commit a rewound remote no longer has), scans exactly `<tip>..<HEAD sha>` and pushes that sha
  * only as a fast-forward of the tip, leased on it; a tip that is not an ancestor, or a remote that moves before the
- * push lands, goes to the shared publish, which fetches first and runs with `--scan-secrets`. A finding, an
- * unscannable file or a commit changing what the scan sees holds the effect with `publish_secret_found`; a range git
- * cannot read in full or a remote with no such branch holds it with `publish_scan_unreadable`. The in-process scan
+ * push lands, goes to the shared publish, which fetches first and runs with `--scan-secrets`. A remote with no such
+ * branch (a first push to a new remote) gets HEAD's whole history scanned and the branch created only if it does not
+ * exist yet. A finding, an unscannable file or a commit changing what the scan sees holds the effect with
+ * `publish_secret_found`; a range git cannot read in full holds it with `publish_scan_unreadable`. The in-process scan
  * runs synchronously on the owner's event loop, so it gets `scanBudgetMs` (well inside the consumer heartbeat's live
- * window); a range it cannot finish in that time goes to the shared publish, whose child process scans with the full budget.
+ * window); a range it cannot finish in that time goes to the shared publish, whose child process scans with the full budget,
+ * except a whole history for a missing branch, which holds the effect with `publish_scan_unreadable` naming the upstream.
  */
 export async function pushGitRoot(root: string, signal?: AbortSignal, scanBudgetMs = OWNER_SCAN_BUDGET_MS): Promise<{ push: 'committed'; integrated?: number } | { push: 'skipped'; reason: 'no_tracking_remote' }> {
   return withSession(root, signal, undefined, false, async session => {
@@ -442,15 +444,7 @@ export async function pushGitRoot(root: string, signal?: AbortSignal, scanBudget
     const listed = await git(session, ['ls-remote', '--', remote.stdout.trim(), ref]);
     if (listed.code !== 0) throw unavailable();
     const tip = listed.stdout.split('\n').map(line => line.split('\t')).find(([, name]) => name === ref)?.[0] ?? '';
-    if (!tip) throw heldSecret(root, opError('publish_scan_unreadable',
-      `${remote.stdout.trim()} has no branch ${short}, so the secret scan has no published tip to compare the local commits against. Nothing was pushed.`,
-      `Check that the checkout's upstream (branch.${branch.stdout.trim()}.merge) names a branch the remote still has (git ls-remote --heads ${remote.stdout.trim()}). If the branch was deleted or renamed on purpose, point the upstream at the right branch, or review the commits and push the branch yourself; gbrain never creates a remote branch from commits it has not scanned against one.`,
-      { detail: JSON.stringify({ unreadable: `${remote.stdout.trim()} has no branch ${short}` }), fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
-        argv: ['git', '-C', root, 'ls-remote', '--heads', '--', remote.stdout.trim()],
-        why: 'Read-only: lists the branches the remote has, to check the checkout\'s upstream.',
-        user_message: `The remote ${remote.stdout.trim()} has no branch ${short} for ${root}, so nothing was pushed. Should the checkout's upstream point at another branch, or will you review the commits and push this branch yourself?`,
-        docs: 'docs/guides/shared-checkout-git.md#publish_scan_unreadable' } }));
-    if ((await git(session, ['merge-base', '--is-ancestor', tip, sha])).code === 0) {
+    if (!tip || (await git(session, ['merge-base', '--is-ancestor', tip, sha])).code === 0) {
       const scan = scanRange(root, tip, sha, scanBudgetMs);
       if (!scan.timed_out) {
         const refusal = rangeSecretRefusal(root, tip, sha, scan);
@@ -459,7 +453,14 @@ export async function pushGitRoot(root: string, signal?: AbortSignal, scanBudget
         const push = await git(session, ['push', `--force-with-lease=${ref}:${tip}`, '--', remote.stdout.trim(), `${sha}:${ref}`]);
         if (push.code === 0) return { push: 'committed' } as const;
         if (!NON_FAST_FORWARD.test(push.stderr) && !STALE_LEASE.test(push.stderr)) throw unavailable();
-      }
+      } else if (!tip) throw heldSecret(root, opError('publish_scan_unreadable',
+        `${remote.stdout.trim()} has no branch ${short}, and the secret scan of the whole history a first push would create it with ran past its in-process budget. Nothing was pushed.`,
+        `Check that the checkout's upstream (branch.${branch.stdout.trim()}.merge) names a branch the remote should have (git ls-remote --heads ${remote.stdout.trim()}). If the branch was deleted or renamed on purpose, point the upstream at the right branch, or review the history and push the branch yourself; gbrain never creates a remote branch from history it has not scanned.`,
+        { detail: JSON.stringify({ unreadable: scan.unreadable }), fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
+          argv: ['git', '-C', root, 'ls-remote', '--heads', '--', remote.stdout.trim()],
+          why: 'Read-only: lists the branches the remote has, to check the checkout\'s upstream.',
+          user_message: `The remote ${remote.stdout.trim()} has no branch ${short} for ${root}, and its whole history is too large to scan here, so nothing was pushed. Should the checkout's upstream point at another branch, or will you review the history and push this branch yourself?`,
+          docs: 'docs/guides/shared-checkout-git.md#publish_scan_unreadable' } }));
     }
     signal?.throwIfAborted();
     return publishKeepingCheckout(root, signal);

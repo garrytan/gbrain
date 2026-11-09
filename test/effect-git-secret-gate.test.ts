@@ -126,11 +126,32 @@ describe('#8896 pushGitRoot scans the commits it publishes', () => {
     expect(remoteTip(c)).toBe(base);
   }, 120_000);
 
-  test('a remote without the branch refuses instead of scanning nothing', async () => {
+  test('a remote without the branch (a first push): a clean history creates it', async () => {
     const c = checkout();
     scriptCommit(c.root, 'notes/page.md', 'A clean page\n');
     git(c.remote, 'update-ref', '-d', 'refs/heads/main');
+    expect(await withEnv(childEnv(c), () => pushGitRoot(c.root))).toEqual({ push: 'committed' });
+    expect(remoteTip(c)).toBe(git(c.root, 'rev-parse', 'HEAD').trim());
+  }, 60_000);
+
+  test('a remote without the branch: a secret anywhere in the history refuses, and no branch is created', async () => {
+    const c = checkout();
+    scriptCommit(c.root, 'notes/deploy.md', `Deploy token ${token}\n`);
+    git(c.root, 'push', '-q');
+    scriptCommit(c.root, 'notes/page.md', 'A clean page write on top\n');
+    git(c.remote, 'update-ref', '-d', 'refs/heads/main');
     const error = await withEnv(childEnv(c), () => refusal(pushGitRoot(c.root)));
+    expect(error.code).toBe('publish_secret_found');
+    expect(error.message).toContain('notes/deploy.md:1 (');
+    expect(error.message).toContain('and its whole history');
+    expect(() => git(c.remote, 'rev-parse', '--verify', 'refs/heads/main')).toThrow();
+  }, 60_000);
+
+  test('a remote without the branch whose history scan runs past the in-process budget holds, naming the upstream check', async () => {
+    const c = checkout();
+    scriptCommit(c.root, 'notes/page.md', 'A clean page\n');
+    git(c.remote, 'update-ref', '-d', 'refs/heads/main');
+    const error = await withEnv(childEnv(c), () => refusal(pushGitRoot(c.root, undefined, 0)));
     expect(error.code).toBe('publish_scan_unreadable');
     expect(error.message).toContain('origin has no branch main');
     expect(error.fix?.argv).toEqual(['git', '-C', c.root, 'ls-remote', '--heads', '--', 'origin']);

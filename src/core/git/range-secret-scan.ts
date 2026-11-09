@@ -103,6 +103,7 @@ function attributesNeutral(root: string, deadline: number): boolean {
   return !existsSync(file) || readFileSync(file, 'utf8').split('\n').every(line => !line.trim() || line.trim().startsWith('#'));
 }
 
+/** An empty `base` scans `head` and its whole history (a first push that creates the remote branch). */
 export function scanRange(root: string, base: string, head: string, timeoutMs = 300_000): RangeScan {
   const deadline = Date.now() + timeoutMs;
   const scan: RangeScan = { findings: [], unscanned: [], gate_changes: [] };
@@ -113,7 +114,7 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
   };
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-range-scan-'));
   try {
-    const commits = must(run(root, ['rev-list', `${base}..${head}`, '--'], deadline), 'rev-list').toString().split('\n').filter(Boolean);
+    const commits = must(run(root, ['rev-list', base ? `${base}..${head}` : head, '--'], deadline), 'rev-list').toString().split('\n').filter(Boolean);
     if (!commits.length) return scan;
 
     for (const commit of commits) {
@@ -235,8 +236,9 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
  * otherwise `publish_secret_found` naming each finding, unscanned file and gate change (never a value).
  */
 export function rangeSecretRefusal(root: string, base: string, target: string, scan: RangeScan): OperationError | null {
+  const range = base ? `${base}..${target.slice(0, 12)}` : `${target.slice(0, 12)} and its whole history`;
   if (scan.unreadable !== undefined) {
-    return opError('publish_scan_unreadable', `The secret scan could not read the local commits ${base}..${target.slice(0, 12)} (${scan.unreadable}). No secret was reported. Nothing was pushed.`,
+    return opError('publish_scan_unreadable', `The secret scan could not read the local commits ${range} (${scan.unreadable}). No secret was reported. Nothing was pushed.`,
       `The publish pushes only commits it has read in full. Check the checkout with git fsck in ${root} (a missing or corrupt object, a full disk, or a git too slow for the 300 s budget), fix what it reports, then retry. Never publish with a command that skips this scan.`,
       { detail: JSON.stringify({ unreadable: scan.unreadable }), fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
         argv: ['git', '-C', root, 'fsck'],
@@ -248,11 +250,11 @@ export function rangeSecretRefusal(root: string, base: string, target: string, s
   const named = [...scan.findings.map(f => `${f.path}:${f.line} (${f.pattern}, ${f.commit.slice(0, 7)})`), ...scan.unscanned.map(u => `${u.path} (too large to scan, ${u.commit.slice(0, 7)})`),
     ...scan.gate_changes.map(g => `${g.path} (changes what the scan sees, ${g.commit.slice(0, 7)})`)];
   return opError('publish_secret_found',
-    `${named.length} item(s) in the local commits ${base}..${target.slice(0, 12)} look like secrets or could not be scanned: ${named.slice(0, 10).join(', ')}${named.length > 10 ? ', ...' : ''}. Nothing was pushed.`,
+    `${named.length} item(s) in the local commits ${range} look like secrets or could not be scanned: ${named.slice(0, 10).join(', ')}${named.length > 10 ? ', ...' : ''}. Nothing was pushed.`,
     `Remove the value from those commits (rewriting unpushed local commits is the user's call), or add a false positive's fingerprint to .gbrain-scan-allow, then retry. Never publish them with a command that skips this scan.${scan.gate_changes.length ? ` A commit that changes .gbrain-scan-allow or a .gitattributes is never published automatically, because it changes what the scan sees: review it and push it yourself (git -C ${root} push), then retry.` : ''}`,
     { detail: JSON.stringify(scan),
       fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
-        argv: ['git', '-C', root, 'log', '--stat', `${base}..${target}`],
+        argv: ['git', '-C', root, 'log', '--stat', base ? `${base}..${target}` : target],
         why: 'Lists the unpublished commits the scan refused; read-only. A secret pushed to the remote stays in its history.',
         user_message: `Unpublished commits in ${root} hold ${named.length || 'some'} item(s) that look like secrets or could not be scanned (${named.slice(0, 3).join(', ')}). Nothing was pushed. Remove them from those commits, or confirm a false positive so it can be allowlisted by fingerprint?`,
         docs: 'docs/guides/shared-checkout-git.md#publish_secret_found' } });
