@@ -16,10 +16,10 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ### Itemized changes
 
-- `src/core/persistence/drift-conflicts.ts`: `liveFileDrift` reads an adoptable origin twin with no recorded file against its slug-path file. A twin in a read-only mirror source, or whose slug path no file can import as, keeps `database_only`. A twin under a declared db_only path, which sync holds but no repair can adopt, reads `unknown` (`db_only_slug_path`) instead of passing as `no_drift`.
+- `src/core/persistence/drift-conflicts.ts`: `liveFileDrift` reads an adoptable origin twin with no recorded file against its slug-path file. A twin in a read-only mirror source, whose slug path no file can import as, whose slug-path file sync doesn't admit (outside its scope or under `sync.exclude`), or whose slug-path file another page records as its source path keeps `database_only`. A slug path several files import as keeps the earlier reading instead of reporting `slug_path_ambiguous`. A twin under a declared db_only path, which sync holds but no repair can adopt, reads `unknown` (`db_only_slug_path`) instead of passing as `no_drift`, and so does a slug-path file another page names only by file URI (`shared_origin`), since sync still imports it into the twin.
 - `src/core/persistence/reconcile-state.ts`: the slug-path adoption check moves into one exported `adoptableSlugOrigin`, which reconcile and the drift preview now share. Reconcile's behaviour is unchanged.
 - Applying either side to such a twin binds the slug-path file as its `source_path` and clears `origin_twin`. Maintenance writes to a twin whose slug-path file differs are now refused as drift, like any drifted page.
-- Tests: `test/repair-file-drift-origin-twin-gbra108.test.ts` (PGLite, managed source, real git): a legacy page with no import record held by sync, previewed and applied for both `--prefer database` and `--prefer file`, after which a re-sync clears the hold; also mirror-read-only, db_only, non-importable slug path, missing file and shared-origin cases.
+- Tests: `test/repair-file-drift-origin-twin-gbra108.test.ts` (PGLite, managed source, real git): a legacy page with no import record held by sync, previewed and applied for both `--prefer database` and `--prefer file`, after which a re-sync clears the hold; also mirror-read-only, db_only, non-importable slug path, missing file, shared-origin, excluded slug path, URI-only claimant and ambiguous slug path cases.
 
 ## [0.60.628.0] - 2026-11-09
 
