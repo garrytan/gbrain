@@ -456,6 +456,7 @@ test/purge-missing-cache-6911.test.ts
 test/purge-read-surfaces.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
 test/qm-memory-tools.test.ts
+test/qm-personal-sources.test.ts
 test/qm-scope-read.test.ts
 test/qm-scope-writes.test.ts
 test/read-meta-diag.test.ts
