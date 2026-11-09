@@ -29,6 +29,8 @@ export const PROPOSAL_LINK_SOURCE = 'qm-proposal';
 export const PROPOSAL_RETRY_AFTER_MS = 300_000;
 /** Approval checks whose refusal closes a proposal: failed (the person or the grant) and conflict (the target moved). */
 const FAILED_CODES = new Set(['actor_unlinked', 'actor_not_attested', 'permission_denied', 'page_not_found', 'source_changed']);
+/** Upkeep closes an awaiting proposal failed on these (permission_denied is run-scoped to ItemRun, so it is decided first); any other error is one row's. */
+const UPKEEP_CLOSE_CODES = new Set(['actor_unlinked', 'actor_not_attested', 'permission_denied']);
 
 export interface ProposalLimits {
   ttlHours: number; maxPendingPerActor: number; maxPendingPerCredential: number; retentionDays: number; maxPayloadChars: number; maxReasonChars: number;
@@ -174,8 +176,10 @@ export async function cancelOwnProposal(engine: SqlEngine, row: MemoryProposal):
  * The upkeep pass (consumer maintenance and the one-shot housekeeping turn): expires overdue proposals, closes awaiting
  * ones whose stored authority no longer resolves (the person unlinked or disabled, memory_propose or the grant revoked;
  * OV8: the proposer still reads and cancels them meanwhile), and purges every closed row older than the retention window.
+ * Any other authority-check failure is that row's (GBRA-130, ItemRun): it stays awaiting, is counted in `failed`, and the
+ * pass goes on; a run-scoped failure or a systemic run still stops it.
  */
-export async function runMemoryProposalUpkeep(engine: BrainEngine, opts: { scanLimit?: number } = {}): Promise<{ expired: number; closed: number; purged: number }> {
+export async function runMemoryProposalUpkeep(engine: BrainEngine, opts: { scanLimit?: number } = {}): Promise<{ expired: number; closed: number; failed: number; purged: number }> {
   const limits = await readProposalLimits(engine);
   let expired: unknown[];
   try {
@@ -183,23 +187,26 @@ export async function runMemoryProposalUpkeep(engine: BrainEngine, opts: { scanL
       WHERE state='awaiting_owner' AND expires_at<=now() RETURNING 1`, [expiryReason(limits)]);
   } catch (error) {
     const { isMissingSchemaObject } = await import('../utils.ts');
-    if (isMissingSchemaObject(error, 'table', 'memory_proposals')) return { expired: 0, closed: 0, purged: 0 };
+    if (isMissingSchemaObject(error, 'table', 'memory_proposals')) return { expired: 0, closed: 0, failed: 0, purged: 0 };
     throw error;
   }
   const { authorizeWrite } = await import('./authority.ts');
   const pending = (await engine.executeRaw<Record<string, unknown>>(`SELECT * FROM memory_proposals WHERE state='awaiting_owner'
     ORDER BY created_at LIMIT $1`, [opts.scanLimit ?? 200])).map(normalize);
+  const { ItemRun } = await import('../item-failure.ts');
+  const run = new ItemRun('memory_proposals.upkeep_authority');
   let closed = 0;
   for (const row of pending) {
     try { await authorizeWrite(engine, row.authority, row.operation, row.slug); } catch (error) {
-      if (!(error instanceof OperationError) || !['actor_unlinked', 'actor_not_attested', 'permission_denied'].includes(error.code)) throw error;
+      if (!(error instanceof OperationError) || !UPKEEP_CLOSE_CODES.has(error.code)) { run.fail(row.request_id, error); continue; }
       const after = await closeProposal(engine, row, 'failed', { reason: error.message, code: error.code, decidedBy: 'gbrain:upkeep' });
       if (after.state === 'failed') closed++;
     }
+    run.succeed();
   }
   const purged = await engine.executeRaw(`DELETE FROM memory_proposals WHERE state<>'awaiting_owner'
     AND COALESCE(decided_at, updated_at) <= now() - ($1::integer * interval '1 day') RETURNING 1`, [limits.retentionDays]);
-  return { expired: expired.length, closed, purged: purged.length };
+  return { expired: expired.length, closed, failed: run.failures.length, purged: purged.length };
 }
 
 /** What QM reads for a proposal with no journal row (get_write_request, cancel_write_request): never the proposed text. */

@@ -349,6 +349,7 @@ test/pathological/a46-content-lane-kinds.test.ts
 test/pathological/a47-backfill-poison-row.test.ts
 test/pathological/a49-unmanaged-purge-tombstones.test.ts
 test/pathological/a50-unmanaged-expired-sources.test.ts
+test/pathological/a68-memory-proposal-upkeep.test.ts
 test/pathological/a9-repair-core.test.ts
 test/pathological/b-10-ontology-rekey-collision.test.ts
 test/pathological/b-7-facts-pageless-entity.test.ts
