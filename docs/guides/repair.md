@@ -2852,7 +2852,10 @@ recorded before this) gets it on `--remote --apply` and reports `recorded`,
 even when its files now use git-lfs (no `lfs_tracked` refusal for it; only a
 checkout Git cannot place refuses it, as `lfs_unknown`); one that has it stays
 `already_recorded`, and the record is never removed. Each setting's existing values are removed before it is written, so a key that
-already holds several values ends with the one clone-time value.
+already holds several values ends with the one clone-time value. The settings
+are written to a copy held as Git's `config.lock` and renamed over the config in
+one step, so a failure part way leaves the config as it was (a `config.lock`
+another Git process holds refuses `write_failed`).
 Only `.git/config` changes, never a tracked file; a gbrain frontmatter
 hook wired through `core.hooksPath` stops running there, as on any clone a
 remote caller adds. `--local` records a local add and changes no checkout, and
