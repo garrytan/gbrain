@@ -238,7 +238,7 @@ test('with automatic publishing turned off, local commits stay unpublished while
   const engine = plain;
   try {
     const r = repo('optout');
-    await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::jsonb)', ['optout-source', r.root, JSON.stringify({ remote_url: r.remote })]);
+    await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::jsonb)', ['optout-source', r.root, JSON.stringify({ remote_url: r.remote, managed_clone: true })]);
     await engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, 'false');
     const theirs = siblingPush(r, 'notes/theirs.md', 'from the sibling\n');
     expect(await reconcileAll(engine)).toMatchObject([{ sources: ['optout-source'], status: 'fast_forwarded', behind: 1 }]);
@@ -279,7 +279,7 @@ test('a checkout that fails with a plain error is reported for that checkout and
   const broken = repo('plain-error'), healthy = repo('plain-healthy');
   try {
     await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$4::jsonb),($3,$3,$5,$6::jsonb)',
-      ['broken-source', broken.root, 'healthy-source', JSON.stringify({ remote_url: broken.remote }), healthy.root, JSON.stringify({ remote_url: healthy.remote })]);
+      ['broken-source', broken.root, 'healthy-source', JSON.stringify({ remote_url: broken.remote, managed_clone: true }), healthy.root, JSON.stringify({ remote_url: healthy.remote, managed_clone: true })]);
     commit(broken.root, 'notes/stuck.md', 'stuck\n');
     const local = commit(healthy.root, 'notes/mine.md', 'mine\n');
     chmodSync(join(broken.root, '.git'), 0o555);
@@ -291,4 +291,17 @@ test('a checkout that fails with a plain error is reported for that checkout and
     chmodSync(join(broken.root, '.git'), 0o755);
     await resetPlain();
   }
+}, 120_000);
+
+test('a checkout with a recorded remote that gbrain did not clone keeps its local commits by default', async () => {
+  const engine = plain;
+  const r = repo('recorded-remote');
+  try {
+    await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::jsonb)', ['recorded-remote', r.root, JSON.stringify({ remote_url: r.remote })]);
+    const before = tip(r);
+    const local = commit(r.root, 'notes/private.md', 'not for the remote\n');
+    expect(await reconcileAll(engine)).toMatchObject([{ sources: ['recorded-remote'], status: 'unpublished', ahead: 1 }]);
+    expect(tip(r)).toBe(before);
+    expect(onRemote(r, local)).toBe(false);
+  } finally { await resetPlain(); }
 }, 120_000);

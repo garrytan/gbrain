@@ -38,7 +38,7 @@ function source(name: string): { root: string; remote: string } {
 }
 async function only(name: string, root: string, remote: string) {
   await engine.executeRaw('DELETE FROM sources WHERE id <> $1', ['default']);
-  await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::jsonb)', [name, root, JSON.stringify({ remote_url: remote })]);
+  await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::jsonb)', [name, root, JSON.stringify({ remote_url: remote, managed_clone: true })]);
 }
 function wrapper(name: string, onPush: string): string {
   const path = join(dir, name);

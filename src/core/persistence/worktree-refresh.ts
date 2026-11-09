@@ -118,7 +118,7 @@ const retryInTick = (error: OperationError) => Object.assign(error, { [RETRY_IN_
  */
 async function membersPastStart(engine: BrainEngine, row: Pick<WorktreeRefreshRow, 'source_ids' | 'old_head' | 'barrier_sequence'>, root: string): Promise<string[]> {
   const members = await engine.executeRaw<{ id: string; last_commit: string | null; imported: boolean }>(`SELECT s.id,s.last_commit,
-    EXISTS (SELECT 1 FROM persistence_requests r WHERE r.source_id=s.id AND r.sequence > COALESCE($2::bigint,0)
+    EXISTS (SELECT 1 FROM persistence_requests r WHERE r.source_id=s.id AND $2::bigint IS NOT NULL AND r.sequence > $2::bigint
       AND r.intent->>'kind' IN ('managed_sync_import','managed_sync_delete') AND r.state NOT IN ('failed','conflict','cancelled')) AS imported
     FROM sources s WHERE s.id = ANY($1::text[]) ORDER BY s.id`, [row.source_ids, row.barrier_sequence == null ? null : String(row.barrier_sequence)]);
   const moved = members.filter(member => member.imported || (member.last_commit !== null && member.last_commit !== row.old_head));
@@ -322,7 +322,7 @@ function wayOutFix(row: Pick<WorktreeRefreshRow, 'id' | 'source_ids' | 'old_head
   const resume = (why: string): Action => ({ argv: ['gbrain', 'sources', 'refresh', source, '--resume'], consent: [], actor: 'agent', requires_exclusive: false, why });
   if (way.kind === 'unplaced') return { argv: ['git', '-C', root, 'fetch', '--all', '--no-tags', '--quiet'], consent: [], actor: 'agent', requires_exclusive: false,
     why: `Git cannot place ${unplacedText(way)} in ${root}, so recovery cannot name the commit that keeps those pages. A fetch moves only remote-tracking refs and brings back a commit a remote still holds; then --resume names the way out. If no remote holds it, ask the user.`,
-    verify: { argv: ['git', '-C', root, 'cat-file', '-e', `${way.members[0]!.commit}^{commit}`] },
+    ...(way.members[0] ? { verify: { argv: ['git', '-C', root, 'cat-file', '-e', `${way.members[0].commit}^{commit}`] } } : {}),
     then: resume(`With git able to place every member commit, names the way out that keeps their pages, or finishes refresh ${row.id}.`) };
   const head = way.kind === 'forward' ? way.head : null;
   return { ask_user: true, argv: head ? ['git', '-C', root, 'merge', '--ff-only', head] : ['git', '-C', root, 'merge', '--no-edit', ...(way as { tips: string[] }).tips],

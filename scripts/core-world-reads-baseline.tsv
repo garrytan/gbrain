@@ -431,7 +431,7 @@ src/core/git-head.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/git-remote.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/git-remote.ts	process_env	1	W6: settings plane out of the core
 src/core/git-remote.ts	spawn_import	1	W7: process-wide effects move to src/cli
-src/core/git-transport.ts	process_env	1	W6: settings plane out of the core
+src/core/git-transport.ts	process_env	2	W6: settings plane out of the core
 src/core/git-visible-files.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/git-visible-files.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/git-visible-files.ts	spawn_import	1	W7: process-wide effects move to src/cli
@@ -442,7 +442,7 @@ src/core/git/commit-ledger.ts	module_collection	1	W6: per-engine state; PR B led
 src/core/git/commit-ledger.ts	spawn_import	1	W7: process-wide effects move to src/cli; PR B ledger resolves the git common dir
 src/core/git/commit-push.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/git/commit-push.ts	module_collection	1	W6: per-engine state, or mark as a constant table
-src/core/git/commit-push.ts	process_env	7	W6: settings plane out of the core
+src/core/git/commit-push.ts	process_env	6	W6: settings plane out of the core
 src/core/git/commit-push.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/git/range-secret-scan.ts	fs_import	1	W7: filesystem boundary moves to the local app (the publish scan streams git output through a private temp file)
 src/core/git/range-secret-scan.ts	spawn_import	1	W7: process-wide effects move to src/cli (the publish scan runs git plumbing)

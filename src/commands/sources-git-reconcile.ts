@@ -17,7 +17,7 @@ import { isTruthy } from '../core/connectors/config-keys.ts';
 import { existsSync, realpathSync } from 'node:fs';
 import { classifyGitCheckout } from '../core/git-checkout.ts';
 import { gitTopLevel } from '../core/persistence/git-gap.ts';
-import { sourceConfigHasRemoteUrl } from '../core/sources-load.ts';
+import { isOwnedClone } from '../core/url-clone.ts';
 import { isSyncDisabledConfig } from '../core/sync-policy.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { classifyItemFailure, type ClassifiedItemFailure } from '../core/item-failure.ts';
@@ -82,10 +82,11 @@ export async function reconcileSources(engine: BrainEngine, opts: ReconcileOptio
   for (const source of listed) {
     if (!explicit && isSyncDisabledConfig(configs.get(source.id))) continue;
     const binding = managed ? await getWorktreeBinding(engine, source.id, existingHostIdFor(engine)) : null;
+    if (managed && !binding) continue;
     const root = binding?.local_path ?? source.local_path!;
     if (!existsSync(root) || classifyGitCheckout(root) === 'not_git') continue;
     const key = binding ? `worktree:${binding.worktree_id}` : `path:${root}`;
-    const cloned = sourceConfigHasRemoteUrl(configs.get(source.id)) && gitTopLevel(root) === realpathSync(root);
+    const cloned = isOwnedClone({ id: source.id, local_path: source.local_path, config: configs.get(source.id) }) && gitTopLevel(root) === realpathSync(root);
     const group = groups.get(key) ?? { sources: [], root, managed: !!binding, cloned };
     group.sources.push(source.id);
     group.cloned &&= cloned;
@@ -100,7 +101,7 @@ export async function reconcileSources(engine: BrainEngine, opts: ReconcileOptio
       const result = group.managed
         ? await withReconcileLock(group.root, opts.waitMs ?? 300_000, () => reconcileManaged(engine, group.sources[0], group.root, publish, opts))
         : await reconcileCheckout(group.root, { dryRun: opts.dryRun, publish, ...(opts.waitMs !== undefined ? { waitMs: opts.waitMs } : {}), ...(opts.childTimeoutMs ? { childTimeoutMs: opts.childTimeoutMs } : {}),
-          ...(publishSetting === null && !cloned ? { unpublishedReason: `gbrain did not clone this checkout for the source (no recorded remote, or the source folder is not the repository root); publish it with gbrain git commit-push --push-only --scan-secrets --path ${group.root}, or set ${REFRESH_PUBLISH_DIVERGED_KEY} true to publish such checkouts automatically` } : {}) });
+          ...(publishSetting === null && !cloned ? { unpublishedReason: `gbrain did not clone this checkout for the source (it was not added with gbrain sources add --url, or the source folder is not the repository root); publish it with gbrain git commit-push --push-only --scan-secrets --path ${group.root}, or set ${REFRESH_PUBLISH_DIVERGED_KEY} true to publish such checkouts automatically` } : {}) });
       out.push({ ...entry, ...result });
     } catch (error) {
       const failure = classifyItemFailure(error);
