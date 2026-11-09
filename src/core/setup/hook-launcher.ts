@@ -132,9 +132,9 @@ export function shellWords(command: string): string[] | null {
   return words;
 }
 
-/** An absolute path (POSIX, or a Windows drive or UNC path) shaped like a hook launcher (<config dir>/hook-launcher/gbrain-hook). */
-export function isHookLauncherPath(path: string): boolean {
-  return (path.startsWith('/') || win32.isAbsolute(path)) && path.replace(/\\/g, '/').endsWith(`/${HOOK_LAUNCHER_DIR}/${HOOK_LAUNCHER_NAME}`);
+/** An absolute path (POSIX, or on Windows a drive or UNC path) shaped like a hook launcher (<config dir>/hook-launcher/gbrain-hook). */
+export function isHookLauncherPath(path: string, platform: NodeJS.Platform = process.platform): boolean {
+  return (path.startsWith('/') || (platform === 'win32' && win32.isAbsolute(path))) && path.replace(/\\/g, '/').endsWith(`/${HOOK_LAUNCHER_DIR}/${HOOK_LAUNCHER_NAME}`);
 }
 
 /** A path as a hook command names it: Claude Code runs hooks through Git Bash on Windows, which (like the launcher's own check) wants /c/... for C:\... */
@@ -145,7 +145,7 @@ export function hookShellPath(path: string): string {
 
 /** The launcher a hook command runs gbrain through, as a path this platform's file calls can read, or null for a command that starts gbrain in the session directory. */
 export function hookLauncherInCommand(command: string, platform: NodeJS.Platform = process.platform): string | null {
-  const launcher = shellWords(command)?.find(isHookLauncherPath);
+  const launcher = shellWords(command)?.find((word) => isHookLauncherPath(word, platform));
   return launcher ? msysToNativePath(launcher, platform) : null;
 }
 

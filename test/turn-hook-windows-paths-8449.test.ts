@@ -37,9 +37,11 @@ describe('per-turn rule hook with Windows drive-letter paths (#8449)', () => {
     const command = claudeTurnRuleCommand(gbrainBin, undefined, winLauncher);
     expect(hookLauncherInCommand(command, 'win32')).toBe(winLauncher);
     expect(hookLauncherInCommand(command, 'linux')).toBe('/c/Users/alice example/.gbrain/hook-launcher/gbrain-hook');
-    expect(isHookLauncherPath(winLauncher)).toBe(true);
-    expect(isHookLauncherPath('C:/Users/alice example/.gbrain/hook-launcher/gbrain-hook')).toBe(true);
-    expect(isHookLauncherPath('.gbrain\\hook-launcher\\gbrain-hook')).toBe(false);
+    expect(isHookLauncherPath(winLauncher, 'win32')).toBe(true);
+    expect(isHookLauncherPath('C:/Users/alice example/.gbrain/hook-launcher/gbrain-hook', 'win32')).toBe(true);
+    expect(isHookLauncherPath('.gbrain\\hook-launcher\\gbrain-hook', 'win32')).toBe(false);
+    expect(isHookLauncherPath(winLauncher, 'linux')).toBe(false);
+    expect(isHookLauncherPath('\\x\\hook-launcher\\gbrain-hook', 'linux')).toBe(false);
     expect(hookShellPath('/home/alice-example/.gbrain/hook-launcher/gbrain-hook')).toBe('/home/alice-example/.gbrain/hook-launcher/gbrain-hook');
   });
 
