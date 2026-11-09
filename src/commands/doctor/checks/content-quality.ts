@@ -11,6 +11,8 @@ import { EMBED_SKIP_FILTER_FRAGMENT } from '../../../core/embed-skip.ts';
 import { startHeartbeat } from '../../../core/progress.ts';
 import { checkUnverifiedExtractions } from './extraction-sync.ts';
 import type { Check } from '../../doctor.ts';
+import type { BrainEngine } from '../../../core/engine.ts';
+import type { ContentSanityAuditEvent } from '../../../core/audit/content-sanity-audit.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { agentFix, checkError, doctorVerify, withSkippedSegmented } from '../check-fix.ts';
 import { scanDeadline } from '../budget.ts';
@@ -18,6 +20,40 @@ import { boundUnknownDetails } from '../bounded-unknown.ts';
 
 /** Oversized pages `oversized_pages` lists before it reports a floor. */
 const OVERSIZED_LIST_LIMIT = 100;
+
+/**
+ * Only a newer, smaller canonical page can clear a historical size-only
+ * warning. Keep missing pages, segmented pages and ambiguous audit entries
+ * open. Use the original threshold recorded by the ingest assessor.
+ */
+export async function resolvedOversizeAuditIndexes(
+  engine: BrainEngine,
+  events: readonly ContentSanityAuditEvent[],
+): Promise<Set<number>> {
+  const candidates: Array<{ idx: number; source_id: string; slug: string; ts: string; byte_limit: number }> = [];
+  for (const [idx, event] of events.entries()) {
+    if (event.event_type !== 'warn' || event.bypass_active || !event.source_id || !event.slug ||
+        !Array.isArray(event.junk_pattern_matches) || event.junk_pattern_matches.length ||
+        !Array.isArray(event.literal_substring_matches) || event.literal_substring_matches.length ||
+        !Array.isArray(event.reason_messages) || event.reason_messages.length !== 1) continue;
+    const match = /^PAGE_OVERSIZE_WARN: body (\d+) bytes exceeds (\d+) byte warn threshold$/.exec(event.reason_messages[0]);
+    const byteLimit = Number(match?.[2]);
+    if (!match || Number(match[1]) !== event.bytes || !Number.isSafeInteger(byteLimit) ||
+        byteLimit < 1 || event.bytes <= byteLimit || !Number.isFinite(Date.parse(event.ts))) continue;
+    candidates.push({ idx, source_id: event.source_id, slug: event.slug, ts: event.ts, byte_limit: byteLimit });
+    if (candidates.length === 500) break;
+  }
+  if (!candidates.length) return new Set();
+  const rows = await engine.executeRaw<{ idx: number }>(`
+    SELECT e.idx
+    FROM jsonb_to_recordset($1::text::jsonb) AS e(idx int, source_id text, slug text, ts timestamptz, byte_limit bigint)
+    JOIN pages p ON p.source_id = e.source_id AND p.slug = e.slug
+    WHERE p.deleted_at IS NULL AND p.body_storage IS DISTINCT FROM 'segmented'
+      AND p.updated_at > e.ts AND p.compiled_truth IS NOT NULL
+      AND octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) <= e.byte_limit
+  `, [JSON.stringify(candidates)]);
+  return new Set(rows.map(row => row.idx));
+}
 
 async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
   const { args, progress } = ctx;
@@ -205,7 +241,10 @@ async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
         message: 'No content-sanity events in last 7 days (audit JSONL is local to this host; share GBRAIN_AUDIT_DIR for multi-host visibility)',
       });
     } else {
-      const summary = summarizeContentSanityEvents(events);
+      const resolved = await resolvedOversizeAuditIndexes(engine, events).catch(() => new Set<number>());
+      const openEvents = events.filter((_, index) => !resolved.has(index));
+      const summary = summarizeContentSanityEvents(openEvents);
+      const resolvedPages = new Set([...resolved].map(index => JSON.stringify([events[index].source_id, events[index].slug])));
       const topPatterns = summary.top_patterns.slice(0, 3).map(p => `${p.name}=${p.count}`).join(', ');
       const topSources = Object.entries(summary.by_source)
         .sort((a, b) => b[1] - a[1])
@@ -230,11 +269,12 @@ async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
       const softBlocked = summary.by_type.soft_block + summary.by_type.flag;
       const status: 'ok' | 'warn' | 'fail' =
         hardBlocked > 0 ? 'fail' :
-          (softBlocked > 0 || events.length >= 10) ? 'warn' : 'ok';
+          (softBlocked > 0 || openEvents.length >= 10) ? 'warn' : 'ok';
       checks.push({
         name: 'content_sanity_audit_recent',
         status,
-        message: `${events.length} events (hard=${hardBlocked} [hard_block=${summary.by_type.hard_block} reject=${summary.by_type.reject} quarantine=${summary.by_type.quarantine}] soft=${softBlocked} [soft_block=${summary.by_type.soft_block} flag=${summary.by_type.flag}] warn=${summary.by_type.warn})${topPatterns ? ', patterns: ' + topPatterns : ''}${topSources ? ', sources: ' + topSources : ''}. (Local audit only — multi-host operators set GBRAIN_AUDIT_DIR.)`,
+        message: `${openEvents.length} unresolved events (hard=${hardBlocked} [hard_block=${summary.by_type.hard_block} reject=${summary.by_type.reject} quarantine=${summary.by_type.quarantine}] soft=${softBlocked} [soft_block=${summary.by_type.soft_block} flag=${summary.by_type.flag}] warn=${summary.by_type.warn})${topPatterns ? ', patterns: ' + topPatterns : ''}${topSources ? ', sources: ' + topSources : ''}. ${resolved.size} size-only warning(s) verified fixed in current pages; ${events.length} total audit event(s) retained. (Local audit only — multi-host operators set GBRAIN_AUDIT_DIR.)`,
+        details: { total_events: events.length, unresolved_events: openEvents.length, verified_resolved_size_warnings: resolved.size, verified_resolved_pages: resolvedPages.size },
       });
     }
   } catch (err) {

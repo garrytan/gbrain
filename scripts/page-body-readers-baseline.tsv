@@ -22,6 +22,7 @@ src/commands/core.ts	suggestCandidates	field	INLINE
 src/commands/core.ts	suggestCandidates	sql	INLINE	
 src/commands/doctor/checks/calibration.ts	checkLinkResolutionOpportunity	field	LEAD	
 src/commands/doctor/checks/calibration.ts	checkLinkResolutionOpportunity	sql	LEAD	
+src/commands/doctor/checks/content-quality.ts	resolvedOversizeAuditIndexes	sql	META	SQL checks inline byte size without returning body text; segmented rows remain unresolved.
 src/commands/doctor/checks/content-quality.ts	runContentSanity	sql	META	
 src/commands/doctor/checks/data-integrity.ts	runMarkdownBody	sql	META	
 src/commands/doctor/checks/derived-visibility.ts	derivedVisibilityCheck	sql	NONE	not the page body: p.* in a CTE, only metadata columns read
