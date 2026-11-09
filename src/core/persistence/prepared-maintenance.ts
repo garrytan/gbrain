@@ -26,6 +26,7 @@ import { preparePageMutation, prepareFileTarget } from './page-prepare.ts';
 import { prepareTakesMutation } from './takes-prepare.ts';
 import { digest, sha256 } from './digest.ts';
 import type { PreparedMutation } from './coordinator.ts';
+import { withTrustKeep } from './context.ts';
 import { isTerminal, type WriteAuthority, type WriteRequest } from './model.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
 import { nativeLockCapability } from './native-lock.ts';
@@ -236,17 +237,19 @@ export function maintenanceGhostRefusal(sourceId: string, slug: string): Operati
 /** #5523: a Life Chronicle timeline row projected onto the depth page in the same publication. */
 export interface MaintenanceEventProjection { depth_slug: string; date: string; summary: string; }
 
+/** `keepTrust`: the edit authors nothing (it only removes privacy labels), so the page keeps its stored trust tier (withTrustKeep). */
 type MaintenancePageOptions = { requestId?: string; expectedRevision: string | null; file?: boolean;
-  eventProjection?: MaintenanceEventProjection; derivation?: DerivationDeclaration };
+  eventProjection?: MaintenanceEventProjection; derivation?: DerivationDeclaration; keepTrust?: true };
 
 /** A maintenance page publication's intent and request id; `batch` (G6) is the run's batch id, part of both. */
 function maintenancePageRequest(authority: MaintenanceAuthority, slug: string, content: string, options: MaintenancePageOptions, batch?: string) {
   const projection = options.eventProjection ? { event_projection: options.eventProjection } : {};
   const derivation = options.derivation ? { derivation: options.derivation } : {};
   const grouped = batch ? { maintenance_batch: batch } : {};
-  return { intent: { kind: 'managed_maintenance_page', content, expected_revision: options.expectedRevision, ...projection, ...derivation, ...grouped },
+  const keep = options.keepTrust ? { keep_trust: true } : {};
+  return { intent: { kind: 'managed_maintenance_page', content, expected_revision: options.expectedRevision, ...projection, ...derivation, ...grouped, ...keep },
     requestId: options.requestId ?? maintenanceRequestId({ authority: authority.writer, slug, content, revision: options.expectedRevision, file: options.file ?? true,
-      ...projection, ...derivation, ...grouped }) };
+      ...projection, ...derivation, ...grouped, ...keep }) };
 }
 
 /** `derivation` (#5575 I2): the deriver's taint declaration; the page and its edges are stamped from it at publication. */
@@ -595,8 +598,9 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   if (row.intent?.kind === 'managed_maintenance_timeline_extract') return (await import('../../commands/extract-timeline-db.ts')).prepareTimelineExtract(engine, row);
   if (row.intent?.kind === 'managed_maintenance_meeting_timeline') return (await import('../extract-timeline-from-meetings.ts')).prepareMeetingTimeline(engine, row);
   if (row.intent?.kind === 'managed_maintenance_page') {
-    const prepared = await preparePageMutation(engine, row.intent.expected_revision === null
+    const page = await preparePageMutation(engine, row.intent.expected_revision === null
       ? { ...row, intent: { ...row.intent, expected_revision: undefined } } : row, config, undefined, undefined, { clock });
+    const prepared: PreparedMutation = row.intent.keep_trust === true ? { ...page, apply: (tx, preimage) => withTrustKeep(tx, ['pages'], () => page.apply(tx, preimage)) } : page;
     const projection = row.intent.event_projection as MaintenanceEventProjection | undefined;
     if (!projection) return prepared;
     // #5523: the event page and its depth-page timeline row commit together in
