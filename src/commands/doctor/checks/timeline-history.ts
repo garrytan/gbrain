@@ -33,7 +33,8 @@ interface ScanState extends PassTotals {
   cursor: number;
   /** Pages earlier runs of this pass found with rows to report (capped). */
   found?: number[];
-  /** `found` dropped pages past FOUND_CAP, so this pass's recount is a lower bound. */
+  /** `found` dropped pages past FOUND_CAP, so this pass's recount is a lower bound. A state saved
+   * before this flag existed has none; its `found` at the cap may have dropped pages. */
   found_clipped?: boolean;
   /** Highest timeline row id when the pass started; rows above it may be unscanned. */
   started_max_entry: number;
@@ -76,7 +77,7 @@ export async function timelineHistoryCheck(engine: BrainEngine, sourceId?: strin
       inspected: state.inspected + scan.inspected,
       runs: state.runs + 1,
     };
-    const clipped = state.found_clipped === true || state.affected > (state.found?.length ?? 0);
+    const clipped = state.found_clipped ?? (state.found?.length ?? 0) >= foundCap;
     const multiRun = pass.runs > 1;
     const segmented = await segmentedTimelinePages(engine, sources);
     const segmentedDetails = segmented.pages ? { segmented_pages: segmented.pages, segmented_rows: segmented.rows, segmented_sample: segmented.sample } : {};

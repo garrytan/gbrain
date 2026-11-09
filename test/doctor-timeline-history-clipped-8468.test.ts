@@ -5,6 +5,8 @@
  * as exact and could record a clean pass while the dropped pages still held
  * database-only rows. A clipped pass is now a lower bound and never clean.
  * `foundCap` lowers the cap the way `pageCap` lowers the per-run budget.
+ * A pass state saved before the clipped flag existed records no flag; one
+ * whose kept list is at the cap may have dropped pages and is a lower bound.
  */
 import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -68,4 +70,18 @@ test('a clipped pass whose kept pages were repaired keeps warning and is not tru
   const next = await run();
   expect(next.status).toBe('warn');
   expect(next.details).not.toHaveProperty('last_full_pass');
+});
+
+test('a saved pass from before the clipped flag, with its list at the cap, is a lower bound (no cap seam)', async () => {
+  const [{ max_entry }] = await engine.executeRaw<{ max_entry: number | string }>('SELECT COALESCE(max(id), 0) AS max_entry FROM timeline_entries');
+  const legacy = { materializable: 0, unrenderable: 0, affected: 0, inspected: PAGES, runs: 1, cursor: 2 ** 31 - 1,
+    found: Array.from({ length: 10_000 }, (_, i) => 1_000_000 + i), started_max_entry: Number(max_entry) };
+  await engine.setConfig('doctor.timeline_history.scan:default', JSON.stringify(legacy));
+  const end = await timelineHistoryCheck(engine, 'default');
+  expect(end.status).toBe('warn');
+  expect(end.details).toMatchObject({ count: 'lower_bound', truncated: false });
+  expect(end.message).toContain('gbrain repair timeline');
+  const fresh = await timelineHistoryCheck(engine, 'default');
+  expect(fresh.status).toBe('warn');
+  expect(fresh.details).toMatchObject({ count: 'exact', materializable_rows: 2 });
 });
