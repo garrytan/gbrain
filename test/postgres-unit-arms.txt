@@ -155,6 +155,8 @@ test/large-pages/credential-reseal-segments.test.ts
 test/large-pages/doctor-oversized-segmented.test.ts
 test/large-pages/doctor-skipped-segmented.test.ts
 test/large-pages/edit-segmented.test.ts
+test/large-pages/embedding-at-scale.test.ts
+test/large-pages/embedding-tail-append.test.ts
 test/large-pages/export-pinned-stream.test.ts
 test/large-pages/forget-reason-segmented.test.ts
 test/large-pages/forget-scope.test.ts

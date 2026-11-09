@@ -26,7 +26,9 @@
  * (engine-sql/chunks.ts staleChunkWhere) so the sweep never retries them; an explicit
  * approval (`gbrain embed --held --source S --max-usd N`, or `--slugs <slug>
  * --source S --max-usd N`) passes `approvedCapUsd`, lifts the hold and raises the
- * cap. Every printed approve and its N come from held-embedding-action.ts.
+ * cap. An approval with an identity (`approvalId`, an embed job's) is recorded
+ * on the row with the cap it raised, so a retried or reclaimed job raises the
+ * cap once. Every printed approve and its N come from held-embedding-action.ts.
  *
  * Crash safety: a reservation older than an hour (the provider call never
  * settled) is counted as spent, never released, so a crash cannot reopen
@@ -70,9 +72,12 @@ export async function resolvePageEmbedCapUsd(engine: Pick<BrainEngine, 'getConfi
 }
 
 export interface PageEmbedGrant {
-  /** chunk_index values this run may embed: the newest stale chunks that fit the remaining budget. */
+  /** chunk_index values this run may embed: the first stale chunks in embedding order that fit the remaining budget, then the tail allowance. */
   chunkIndexes: ReadonlySet<number>;
   reservedUsd: number;
+  /** The share of `chunkIndexes` granted from the tail allowance (a capped page's appended occurrences), and its estimate, booked in the 24 h ledger only. */
+  tailChunkIndexes?: ReadonlySet<number>;
+  tailUsd?: number;
   /** Stale chunks left without a vector because the cap was reached. */
   deferred: number;
   capUsd: number;
@@ -85,10 +90,17 @@ export type PageEmbedDecision =
   | { kind: 'held'; reason: string }
   | { kind: 'grant'; grant: PageEmbedGrant };
 
-interface BudgetRow { state: PageBudgetState; reason: string | null; embedding_signature: string | null; spent_usd: number; reserved_usd: number; stale_reservation: boolean; cap_usd: number | null }
+interface BudgetRow { state: PageBudgetState; reason: string | null; embedding_signature: string | null; spent_usd: number; reserved_usd: number; stale_reservation: boolean; cap_usd: number | null; approval_id?: string | null }
+
+/** Wave C 1F: the approval `approvalId` already raised this page's cap (false without an identity). */
+export async function pageApprovalApplied(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, approvalId: string | undefined): Promise<boolean> {
+  if (approvalId === undefined) return false;
+  const [row] = await engine.executeRaw<{ approval_id: string | null }>('SELECT approval_id FROM page_embedding_budget WHERE page_id = $1', [pageId]);
+  return row?.approval_id === approvalId;
+}
 
 /** A segmented page (Wave B) carries `body_bytes` and no body strings; an inline page carries its body. */
-type BudgetPage = { id: number; body_storage?: BodyStorage | null; body_bytes?: number | null; compiled_truth?: string; timeline?: string | null };
+type BudgetPage = { id: number; body_storage?: BodyStorage | null; body_bytes?: number | null; body_generation?: number | null; compiled_truth?: string; timeline?: string | null };
 
 /**
  * The head, middle and tail sample windows of a segmented page, read one
@@ -125,24 +137,34 @@ export async function holdPageEmbedding(engine: Pick<BrainEngine, 'executeRaw'>,
 /**
  * Decide what one embedding run may spend on `page`. Small pages are
  * unmetered. A held page returns `held` unless the caller carries the user's
- * approval. Otherwise the newest stale chunks that fit the remaining budget are
- * granted and their estimated cost is reserved.
+ * approval. Otherwise the stale chunks that fit the remaining budget are
+ * granted in embedding order (newest first, or the order `stale` is in with
+ * `preordered`: a segmented page's one order, segmented-embedding.ts) and
+ * their estimated cost is reserved. With `tailUsdPerDay` (an append's own
+ * occurrences on a capped page), the chunks the cap leaves out are granted
+ * from the page's tail allowance while its last 24 hours' tail spend
+ * (embedding-ledger.ts) leaves room; the tail share is not booked on the page
+ * ledger. With `junkGeneration`, the junk sample is read once per body
+ * generation of a segmented page (recorded on page_embedding_progress).
  */
 export async function planPageEmbedding(engine: BrainEngine, page: BudgetPage,
   stale: ReadonlyArray<{ chunk_index: number; chunk_text: string }>,
-  opts: { signature?: string | null; approvedCapUsd?: number; maxMarkupRatio?: number } = {}): Promise<PageEmbedDecision> {
+  opts: { signature?: string | null; approvedCapUsd?: number; approvalId?: string; maxMarkupRatio?: number; preordered?: boolean; tailUsdPerDay?: number; junkGeneration?: number } = {}): Promise<PageEmbedDecision> {
   if (!isLargePageBytes(pageBodyBytes(page)) || stale.length === 0) return { kind: 'unmetered' };
   const approved = opts.approvedCapUsd !== undefined;
   const configured = await resolvePageEmbedCapUsd(engine);
   const { rate, priced } = ledgerPricePerMTok(opts.signature);
   return engine.transaction(async tx => {
     await tx.executeRaw('INSERT INTO page_embedding_budget (page_id) VALUES ($1) ON CONFLICT (page_id) DO NOTHING', [page.id]);
-    const [row] = await tx.executeRaw<BudgetRow>(`SELECT state, reason, embedding_signature, spent_usd, reserved_usd, cap_usd,
+    const [row] = await tx.executeRaw<BudgetRow>(`SELECT state, reason, embedding_signature, spent_usd, reserved_usd, cap_usd, approval_id,
         (reserved_usd > 0 AND updated_at < now() - interval '1 hour') AS stale_reservation
       FROM page_embedding_budget WHERE page_id = $1 FOR UPDATE`, [page.id]);
     if (!row) return { kind: 'unmetered' } as const;
+    const freshApproval = approved && (opts.approvalId === undefined || row.approval_id !== opts.approvalId);
     if (row.state === 'held' && !approved) return { kind: 'held', reason: row.reason ?? 'awaiting_approval' } as const;
-    if (!approved && row.state === 'open') {
+    const sampled = opts.junkGeneration !== undefined && isSegmentedPage(page)
+      && Number((await tx.executeRaw<{ junk_generation: number | null }>('SELECT junk_generation FROM page_embedding_progress WHERE page_id = $1', [page.id]))[0]?.junk_generation) === opts.junkGeneration;
+    if (!approved && row.state === 'open' && !sampled) {
       const junk = isSegmentedPage(page)
         ? assessJunkWindows(await segmentedSampleWindows(tx, page.id), { max_markup_ratio: opts.maxMarkupRatio })
         : assessSampledJunk(`${page.compiled_truth}\n${page.timeline ?? ''}`, { max_markup_ratio: opts.maxMarkupRatio });
@@ -151,32 +173,52 @@ export async function planPageEmbedding(engine: BrainEngine, page: BudgetPage,
         await tx.executeRaw(`UPDATE page_embedding_budget SET state = 'held', reason = $2, updated_at = now() WHERE page_id = $1`, [page.id, reason]);
         return { kind: 'held', reason } as const;
       }
+      if (opts.junkGeneration !== undefined) await tx.executeRaw('UPDATE page_embedding_progress SET junk_generation = $2 WHERE page_id = $1', [page.id, opts.junkGeneration]);
+    } else if (approved && opts.junkGeneration !== undefined && !sampled) {
+      // The user approved this generation: a later slice of the same run never samples it into a hold again.
+      await tx.executeRaw('UPDATE page_embedding_progress SET junk_generation = $2 WHERE page_id = $1', [page.id, opts.junkGeneration]);
     }
     const sameLedger = !row.embedding_signature || !opts.signature || row.embedding_signature === opts.signature;
     const spent = sameLedger ? Number(row.spent_usd) + (row.stale_reservation ? Number(row.reserved_usd) : 0) : 0;
     let reserved = sameLedger && !row.stale_reservation ? Number(row.reserved_usd) : 0;
     const stored = row.cap_usd === null ? configured : Number(row.cap_usd);
-    const capUsd = approved ? Math.max(stored, spent + reserved + opts.approvedCapUsd!) : stored;
+    const capUsd = approved ? Math.max(stored, spent + reserved + (freshApproval ? opts.approvedCapUsd! : 0)) : stored;
     const remaining = Math.max(0, capUsd - spent - reserved);
     const chunkIndexes = new Set<number>();
     let reservedUsd = 0;
-    for (const chunk of [...stale].sort((a, b) => b.chunk_index - a.chunk_index)) {
-      const cost = estimateCostFromChars(chunk.chunk_text.length, rate);
+    const ordered = opts.preordered ? [...stale] : [...stale].sort((a, b) => b.chunk_index - a.chunk_index);
+    let next = 0;
+    for (; next < ordered.length; next++) {
+      const cost = estimateCostFromChars(ordered[next]!.chunk_text.length, rate);
       if (reservedUsd + cost > remaining) break;
       reservedUsd += cost;
-      chunkIndexes.add(chunk.chunk_index);
+      chunkIndexes.add(ordered[next]!.chunk_index);
+    }
+    const tailChunkIndexes = new Set<number>();
+    let tailUsd = 0;
+    if (next < ordered.length && (opts.tailUsdPerDay ?? 0) > 0) {
+      const [tail] = await tx.executeRaw<{ usd: number | null }>(`SELECT sum(usd) AS usd FROM embedding_spend
+        WHERE page_id = $1 AND kind = 'tail' AND state <> 'released' AND at > now() - interval '24 hours'`, [page.id]);
+      const tailRemaining = Math.max(0, opts.tailUsdPerDay! - Number(tail?.usd ?? 0));
+      for (; next < ordered.length; next++) {
+        const cost = estimateCostFromChars(ordered[next]!.chunk_text.length, rate);
+        if (tailUsd + cost > tailRemaining) break;
+        tailUsd += cost;
+        tailChunkIndexes.add(ordered[next]!.chunk_index);
+        chunkIndexes.add(ordered[next]!.chunk_index);
+      }
     }
     const deferred = stale.length - chunkIndexes.size;
     const openWindow = reserved > 0;
     reserved += reservedUsd;
-    const state: PageBudgetState = deferred > 0 ? 'capped' : 'open';
+    const state: PageBudgetState = deferred > 0 || tailChunkIndexes.size > 0 ? 'capped' : 'open';
     const [written] = await tx.executeRaw<{ reservation_window: string | null }>(`UPDATE page_embedding_budget SET state = $2, reason = $3, embedding_signature = COALESCE($4, embedding_signature),
         spent_usd = $5::float8, reserved_usd = $6::float8, ${RESERVED_AT_SQL('$6::float8', '$8::boolean')},
-        cap_usd = $7::float8, updated_at = now() WHERE page_id = $1 RETURNING ${RESERVATION_WINDOW_SQL} AS reservation_window`,
-    [page.id, state, deferred > 0 ? 'cap_reached' : null, opts.signature ?? null, spent, reserved,
-      approved && Number.isFinite(capUsd) ? capUsd : row.cap_usd, openWindow]);
+        cap_usd = $7::float8, approval_id = COALESCE($9, approval_id), updated_at = now() WHERE page_id = $1 RETURNING ${RESERVATION_WINDOW_SQL} AS reservation_window`,
+    [page.id, state, state === 'capped' ? 'cap_reached' : null, opts.signature ?? null, spent, reserved,
+      approved && Number.isFinite(capUsd) ? capUsd : row.cap_usd, openWindow, freshApproval ? opts.approvalId ?? null : null]);
     const grant: PageEmbedGrant = {
-      chunkIndexes, reservedUsd, deferred, capUsd,
+      chunkIndexes, reservedUsd, deferred, capUsd, ...(tailChunkIndexes.size ? { tailChunkIndexes, tailUsd } : {}),
       settle: ({ ok }) => settleLedgerReservation(engine, { table: 'page_embedding_budget', pageId: page.id }, written?.reservation_window ?? null,
         reservedUsd, ok ? reservedUsd : 0, ok && !priced ? 1 : 0),
     };
@@ -371,7 +413,7 @@ async function pageApproveCommand(page: { slug: string; source_id?: string }, wa
  * otherwise `chunks` is the batch to embed, every candidate on an unmetered page.
  */
 export async function meterPageBatch<C extends { chunk_index: number; chunk_text: string }>(engine: BrainEngine, page: BudgetPage & { slug: string; source_id?: string },
-  candidates: readonly C[], opts: { signature?: string | null; approvedCapUsd?: number; announceHeld?: boolean }): Promise<{ grant?: PageEmbedGrant; chunks: C[] } | null> {
+  candidates: readonly C[], opts: { signature?: string | null; approvedCapUsd?: number; approvalId?: string; announceHeld?: boolean; preordered?: boolean; tailUsdPerDay?: number; junkGeneration?: number }): Promise<{ grant?: PageEmbedGrant; chunks: C[] } | null> {
   const decision = await planPageEmbedding(engine, page, candidates, opts);
   if (decision.kind === 'unmetered') return { chunks: [...candidates] };
   if (decision.kind === 'held') {

@@ -1336,9 +1336,51 @@ CREATE TABLE IF NOT EXISTS page_embedding_budget (
   reserved_at TIMESTAMPTZ,
   unpriced_calls INTEGER NOT NULL DEFAULT 0 CHECK (unpriced_calls >= 0),
   cap_usd DOUBLE PRECISION CHECK (cap_usd IS NULL OR cap_usd >= 0),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  approval_id TEXT
 );
 CREATE INDEX IF NOT EXISTS page_embedding_budget_state_idx ON page_embedding_budget (state) WHERE state <> 'open';
+CREATE TABLE IF NOT EXISTS page_embedding_progress (
+  page_id INTEGER PRIMARY KEY REFERENCES pages(id) ON DELETE CASCADE,
+  generation BIGINT NOT NULL,
+  embed_order TEXT NOT NULL CHECK (embed_order IN ('newest','document')),
+  cursor_seq INTEGER,
+  cursor_ordinal INTEGER,
+  cursor_chunk_index INTEGER,
+  embedded_rows BIGINT NOT NULL DEFAULT 0 CHECK (embedded_rows >= 0),
+  live_rows BIGINT NOT NULL DEFAULT 0 CHECK (live_rows >= 0),
+  spent_usd DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (spent_usd >= 0),
+  state TEXT NOT NULL DEFAULT 'running' CHECK (state IN ('running','complete','capped','held','source_capped','uncertain','busy')),
+  junk_generation BIGINT,
+  next_run_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS embedding_batches (
+  batch_id TEXT PRIMARY KEY,
+  page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  source_id TEXT NOT NULL,
+  generation BIGINT NOT NULL,
+  column_name TEXT NOT NULL,
+  signature TEXT,
+  context TEXT NOT NULL,
+  rows JSONB NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('calling','returned','uncertain')),
+  usd DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (usd >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS embedding_batches_page ON embedding_batches (page_id, state);
+CREATE TABLE IF NOT EXISTS embedding_spend (
+  batch_id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  page_id INTEGER,
+  kind TEXT NOT NULL CHECK (kind IN ('page','tail','job')),
+  usd DOUBLE PRECISION NOT NULL CHECK (usd >= 0),
+  state TEXT NOT NULL CHECK (state IN ('reserved','settled','uncertain','released')),
+  at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS embedding_spend_window ON embedding_spend (source_id, at);
+CREATE INDEX IF NOT EXISTS embedding_spend_page ON embedding_spend (page_id, at) WHERE kind = 'tail';
 CREATE TABLE IF NOT EXISTS chronicle_page_state (
   source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
   page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,

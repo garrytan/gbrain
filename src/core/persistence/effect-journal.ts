@@ -53,7 +53,13 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
     if (!opts.pushOnly && outcome.persistence && typeof outcome.persistence === 'object') Object.assign(outcome.persistence, { git_state: 'queued' });
   }
   if (snapshot && !snapshot.page.deleted_at) {
-    if (!prepared?.deferEmbedding && !prepared?.embeddingCurrent) queue('embedding', opts.pageTargets ? { version: 2, targets: opts.pageTargets } : {});
+    // Wave C 1F: a segmented append's effect embeds the occurrences it added (the live rows its generation wrote).
+    if (!prepared?.deferEmbedding && !prepared?.embeddingCurrent) queue('embedding', {
+      ...(opts.pageTargets ? { version: 2, targets: opts.pageTargets } : {}),
+      ...(prepared?.embedAppended ? { occurrence_ids: (await tx.executeRaw<{ occurrence_id: string }>(
+        `SELECT m.occurrence_id::text FROM page_body_manifest m JOIN pages p ON p.id = m.page_id
+          WHERE m.page_id = $1 AND m.staging_id IS NULL AND m.gen_from = p.body_generation AND m.gen_to IS NULL`, [snapshot.page.id])).map(row => Number(row.occurrence_id)) } : {}),
+    });
     outcome.embedding_state = await embeddingDisabled(tx) ? 'disabled' : prepared?.deferEmbedding ? 'deferred' : prepared?.embeddingCurrent ? 'current' : 'queued';
     if ((outcome.facts_backstop as { queued?: boolean } | undefined)?.queued) {
       if (!(await isFactsExtractionEnabled(tx))) outcome.facts_backstop = { skipped: 'extraction_disabled' };

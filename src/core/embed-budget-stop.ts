@@ -10,7 +10,7 @@ import type { BrainEngine } from './engine.ts';
 
 export interface EmbedBudgetStopFields {
   embedded: number;
-  reason?: 'stall_timeout' | 'time_budget' | 'cost_cap';
+  reason?: 'stall_timeout' | 'time_budget' | 'cost_cap' | 'budget_limited';
   remaining_stale?: number;
   resume_command?: string;
 }

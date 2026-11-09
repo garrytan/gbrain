@@ -113,7 +113,7 @@ export const GATEWAY_REFRESH_JOB_NAMES = new Set([
   'consolidate',
   'extract_facts',
   'extract-atoms-drain',
-  'embed-backfill',
+  'embed-backfill', 'embed-page',
   // connector-sync's PGLite embed kickoff calls runEmbedCore inline (the
   // embedding gateway), so it must see a refreshed gateway config like the
   // other embed jobs — otherwise a worker booted before `config set` embeds
@@ -648,6 +648,8 @@ export async function registerBuiltinHandlers(
     const { makeEmbedBackfillHandler } = await import('../core/minions/handlers/embed-backfill.ts');
     return await makeEmbedBackfillHandler(engine)(job);
   });
+  // Wave C 1F: one bounded slice of a segmented page's embedding; it queues its own continuation.
+  registerBuiltinJob(worker, engine, 'embed-page', async (job) => (await import('../core/minions/handlers/embed-page.ts')).makeEmbedPageHandler(engine)(job));
   // connector-sync: fetch a chat provider's history and ingest it. Fetch+ingest
   // needs no LLM, but the PGLite embed kickoff calls runEmbedCore inline, so
   // it's in GATEWAY_REFRESH_JOB_NAMES (gateway refresh before the handler).

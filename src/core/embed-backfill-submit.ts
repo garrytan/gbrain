@@ -27,7 +27,7 @@
  *      recent embed-backfill for this source finished or is still active
  *      inside the window.
  *   3. Per-source 24h rolling spend cap (default $25). Computed from the
- *      embed-backfill-tagged rows in the budget audit JSONL. Refuses
+ *      source's embedding_spend ledger (embedding-ledger.ts). Refuses
  *      submission when spend has hit the cap.
  *
  *   4. Stall cap (#6803). Backs off, then refuses, while the source's last
@@ -52,9 +52,10 @@ import { embedBackfillWorkerSurface } from './minions/embed-backfill-admission.t
 import { MinionQueue } from './minions/queue.ts';
 import { EMBED_BACKFILL_STALL_LIMIT, readEmbedBackfillBlockers, readEmbedBackfillStall } from './embed-backfill-stall.ts';
 import { parseUsdLimit, resolveSpendPosture, type SpendPosture } from './spend-posture.ts';
+import { SOURCE_SPEND_CAP_KEY, sourceSpend24h } from './embedding-ledger.ts';
 
 export const COOLDOWN_CONFIG_KEY = 'embed.backfill_cooldown_min';
-export const SPEND_CAP_CONFIG_KEY = 'embed.backfill_max_usd_per_source_24h';
+export const SPEND_CAP_CONFIG_KEY = SOURCE_SPEND_CAP_KEY;
 
 const DEFAULT_COOLDOWN_MIN = 10;
 const DEFAULT_SPEND_CAP_USD = 25;
@@ -91,38 +92,18 @@ export interface SubmitEmbedBackfillOpts {
 }
 
 /**
- * Default 24h-spend aggregator. Reads completed embed-backfill rows in
- * `minion_jobs` and sums their token usage × known-price proxy. We
- * deliberately do NOT read the budget-tracker audit JSONL — the file
- * lives on the worker's local disk and may not be present on the
- * machine submitting the job (e.g. a remote MCP serve-http process).
- *
- * The minion_jobs.tokens_input/output columns ARE populated by the
- * subagent flow but NOT by the embed flow (gateway.embed doesn't go
- * through the chat-completion roll-up). For v0.40 we use a job-COUNT
- * proxy capped at the daily limit: 1 job ≈ default-cap-share. Accepts
- * imprecision in exchange for cross-process visibility.
- *
- * A precise rolling-spend tracker is filed as a v0.41 TODO.
+ * Default 24h-spend aggregator: the source's embedding_spend rows of the last
+ * 24 hours (embedding-ledger.ts), which every embed-backfill job, embed-page
+ * slice and tail batch books. A database table, so a submitter on another
+ * machine (a remote MCP serve-http process) sees the worker's spend.
  */
 async function defaultSpend24hForSource(
   engine: BrainEngine,
   sourceId: string,
 ): Promise<number> {
-  // Conservative proxy: count jobs that completed (or are running) in the
-  // 24h window. Each is treated as worth `DEFAULT_SPEND_CAP_USD / 25` ($1)
-  // toward the cap — i.e. 25 jobs in 24h saturate the default cap.
-  const rows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n
-       FROM minion_jobs
-      WHERE name = 'embed-backfill'
-        AND data->>'sourceId' = $1
-        AND status IN ('active', 'completed')
-        AND created_at > NOW() - INTERVAL '24 hours'`,
-    [sourceId],
-  );
-  const jobCount = rows[0]?.n ?? 0;
-  return jobCount * 1; // $1 / job placeholder; configurable in a later wave.
+  // Wave C 1F (T-E14): the real ledger (embedding-ledger.ts) replaces the job-count proxy: every
+  // reserved, settled and uncertain embedding_spend row of the source in the last 24 hours.
+  return (await sourceSpend24h(engine, sourceId)).total_usd;
 }
 
 /**

@@ -63,7 +63,7 @@ export interface ChunkPageGuards {
  */
 export type ChunkTransactionRunner = <T>(fn: (tx: Pick<BrainEngine, 'executeRaw'>) => Promise<T>) => Promise<T>;
 
-type StaleChunkOpts = { sourceId?: string; signature?: string; includeNullSignature?: boolean };
+type StaleChunkOpts = { sourceId?: string; signature?: string; includeNullSignature?: boolean; excludeSegmented?: boolean };
 
 /** Held or capped large pages (page-embedding-budget.ts) leave the embedding queue while the hold applies. */
 const budgetLimited = trustedSql(pageBudgetLimitedFilter('p'));
@@ -632,6 +632,8 @@ function staleChunkWhere(column: string, opts?: StaleChunkOpts): SqlFragment {
   // Large pages held for approval or at their spend cap (page-embedding-budget.ts) leave the queue until it changes or the page is no longer large.
   conds.push(sqlFragment`NOT ${budgetLimited}`);
   if (opts?.sourceId !== undefined) conds.push(sqlFragment`p.source_id = ${opts.sourceId}`);
+  // Wave C 1F: a sweep that hands segmented pages to the embed-page job leaves them out.
+  if (opts?.excludeSegmented) conds.push(sqlFragment`p.body_storage IS DISTINCT FROM 'segmented'`);
   return joinFragments(conds, ' AND ');
 }
 
@@ -804,8 +806,11 @@ export async function listStaleChunks(exec: ScopedRead, column: string, opts?: {
   sourceId?: string;
   orderBy?: 'page_id' | 'updated_desc';
   afterUpdatedAt?: string | null;
+  /** Wave C 1F: leave segmented pages out (the sweep hands them to the embed-page job in the page's own order). */
+  excludeSegmented?: boolean;
 }): Promise<StaleChunkRow[]> {
     const limit = opts?.batchSize ?? 2000;
+    const segmented = opts?.excludeSegmented ? sqlFragment` AND p.body_storage IS DISTINCT FROM 'segmented'` : sqlFragment``;
     const afterPid = opts?.afterPageId ?? 0;
     const afterIdx = opts?.afterChunkIndex ?? -1;
     const orderBy = opts?.orderBy ?? 'page_id';
@@ -891,7 +896,7 @@ export async function listStaleChunks(exec: ScopedRead, column: string, opts?: {
           JOIN pages p ON p.id = cc.page_id
           WHERE cc.${staleColId} IS NULL AND p.deleted_at IS NULL
             AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT ${budgetLimited}
-              AND ${generation}
+              AND ${generation}${segmented}
             AND (cc.page_id, cc.chunk_index) > (${afterPid}, ${afterIdx})
           ORDER BY cc.page_id, cc.chunk_index
           LIMIT ${limit}
@@ -905,7 +910,7 @@ export async function listStaleChunks(exec: ScopedRead, column: string, opts?: {
         WHERE cc.${staleColId} IS NULL AND p.deleted_at IS NULL
           AND p.source_id = ${opts.sourceId}
           AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT ${budgetLimited}
-              AND ${generation}
+              AND ${generation}${segmented}
           AND (cc.page_id, cc.chunk_index) > (${afterPid}, ${afterIdx})
         ORDER BY cc.page_id, cc.chunk_index
         LIMIT ${limit}

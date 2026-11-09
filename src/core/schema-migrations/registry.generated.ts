@@ -299,6 +299,7 @@ import { v295 } from './v295-refresh-retry-hint-history-index.ts';
 import { v296 } from './v296-ingest-applied-captures.ts';
 import { v299 } from './v299-page-read-pins.ts';
 import { v300 } from './v300-page-body-manifest-closed-index.ts';
+import { v301 } from './v301-embedding-progress-ledger.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -596,4 +597,5 @@ export const MIGRATIONS: Migration[] = [
   v296,
   v299,
   v300,
+  v301,
 ];

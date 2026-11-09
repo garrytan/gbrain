@@ -1281,7 +1281,7 @@ export interface BrainEngine {
    * grandfathered). Provider-migration paths set this so pre-stamp pages
    * aren't silently left in the old embedding space.
    */
-  countStaleChunks(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean }): Promise<number>;
+  countStaleChunks(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; excludeSegmented?: boolean }): Promise<number>;
   /**
    * Sum of LENGTH(chunk_text) over stale chunks — the character-count
    * backlog the embed phase / embed-backfill will process. Sibling of
@@ -1365,6 +1365,8 @@ export interface BrainEngine {
     // both round-trip TIMESTAMPTZ as Date | string; ISO string is the
     // common denominator on the wire).
     afterUpdatedAt?: string | null;
+    /** Wave C 1F: leave segmented pages out (they go to the embed-page job). */
+    excludeSegmented?: boolean;
   }): Promise<StaleChunkRow[]>;
   /**
    * Pre-flight count for the chunkless-page safety net: pages with

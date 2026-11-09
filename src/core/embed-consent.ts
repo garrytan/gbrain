@@ -19,14 +19,22 @@ import { requireConsent, type Authorization } from './consent.ts';
 import { opError } from './ops/contract.ts';
 
 /** Job names whose handler is an embedding backfill (an explicit `jobs submit` of one is paid work). */
-export const EMBED_BACKFILL_JOB_NAMES: ReadonlySet<string> = new Set(['embed', 'embed-backfill', 'embed-catch-up']);
+export const EMBED_BACKFILL_JOB_NAMES: ReadonlySet<string> = new Set(['embed', 'embed-backfill', 'embed-catch-up', 'embed-page']);
 
 export interface EmbedBackfillScope {
   /** Every chunk is re-embedded (`--all`); otherwise only chunks without a vector (and chunkless pages). */
   all?: boolean;
   sourceId?: string;
-  /** Slug lists, facts and images have no cheap pre-flight estimate. */
+  /** Facts and images have no cheap pre-flight estimate. */
   unestimated?: boolean;
+  /** Wave C 1F (dx-r3-outside-5): the target pages of a `<slug>` / `--slugs` run; the estimate covers only their live rows. */
+  slugs?: readonly string[];
+  /**
+   * A per-page approval (`gbrain embed <slug>`, `--slugs`): the consent fix names `--max-usd <ceiling>` instead of `--yes`,
+   * since only `--max-usd` raises a capped page's allowance, and a cap below the whole estimate is a partial slice the run
+   * stops at (what it embedded stays), never a refusal.
+   */
+  perPage?: boolean;
   /** `--images`: the run spends with the multimodal embedding model and, when OCR is on, the OCR model. */
   images?: boolean;
 }
@@ -94,11 +102,17 @@ export async function estimateEmbedBackfillUsd(engine: BrainEngine, scope: Embed
     const { estimateCostFromChars, lookupEmbeddingPrice } = await import('./embedding-pricing.ts');
     const price = lookupEmbeddingPrice(getEmbeddingModel());
     if (price.kind !== 'known') return null;
-    const params = scope.sourceId ? [scope.sourceId] : [];
-    const bySource = scope.sourceId ? ' AND p.source_id = $1' : '';
+    const params: unknown[] = scope.sourceId ? [scope.sourceId] : [];
+    let bySource = scope.sourceId ? ' AND p.source_id = $1' : '';
+    if (scope.slugs) {
+      params.push([...scope.slugs]);
+      bySource += ` AND p.slug = ANY($${params.length}::text[])`;
+    }
+    const { chunkGenerationFilter } = await import('./search/safe-chunks.ts');
+    const live = scope.slugs ? ` AND ${chunkGenerationFilter('p', 'c')}` : '';
     const chunks = await engine.executeRaw<{ chars: number | string }>(
       `SELECT COALESCE(SUM(length(c.chunk_text)), 0)::bigint AS chars FROM content_chunks c JOIN pages p ON p.id = c.page_id
-        WHERE p.deleted_at IS NULL${scope.all ? '' : ' AND c.embedding IS NULL'}${bySource}`, params);
+        WHERE p.deleted_at IS NULL${scope.all ? '' : ' AND c.embedding IS NULL'}${bySource}${live}`, params);
     const chunkless = scope.all ? [] : await engine.executeRaw<{ chars: number | string }>(
       `SELECT COALESCE(SUM(length(p.compiled_truth) + length(p.timeline)), 0)::bigint AS chars FROM pages p
         WHERE p.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id = p.id)${bySource}`, params);
@@ -125,7 +139,10 @@ export async function requireEmbedBackfillConsent(engine: BrainEngine, opts: {
 }): Promise<Authorization | null> {
   if (!(await embedWouldSpend(engine, { images: opts.scope.images === true }))) return null;
   const est = await estimateEmbedBackfillUsd(engine, opts.scope);
-  const cost = est === null ? 'its cost could not be estimated in advance' : `it is estimated at $${est.toFixed(4)}`;
+  const { derivedCapUsd } = await import('./consent.ts');
+  const ceiling = opts.scope.perPage && est !== null && !opts.argv.includes('--max-usd') ? derivedCapUsd(est).toFixed(2) : null;
+  const cost = est === null ? 'its cost could not be estimated in advance'
+    : `it is estimated at $${est.toFixed(4)}${ceiling ? ` and spends at most $${ceiling} (--max-usd also raises each page's per-page cap by that much)` : ''}`;
   const auth = await requireConsent({
     command: opts.command,
     effects: ['paid'],
@@ -134,12 +151,12 @@ export async function requireEmbedBackfillConsent(engine: BrainEngine, opts: {
     why: `Embedding sends page text to the configured embedding provider, which bills per token; ${cost}.`,
     risk: 'Spends money with the embedding provider. Keyword search keeps working without it.',
     user_message: `Generating the missing embeddings sends your page text to the embedding provider and costs money (${est === null ? 'cost unknown in advance' : `about $${est.toFixed(4)}`}). OK to run it?`,
-    argv: opts.argv,
+    argv: ceiling ? [...opts.argv, '--max-usd', ceiling] : opts.argv,
     ...(opts.preview_argv ? { preview_argv: opts.preview_argv } : {}),
     est_usd: est,
     args: opts.args,
   }, { getConfig: (key) => engine.getConfig(key) });
-  if (auth.cap_usd !== null && est !== null && est > auth.cap_usd) {
+  if (!opts.scope.perPage && auth.cap_usd !== null && est !== null && est > auth.cap_usd) {
     throw opError('cost_cap_exceeded',
       `The embedding backfill is estimated at $${est.toFixed(4)}, above the $${auth.cap_usd.toFixed(2)} cap; nothing ran.`,
       'Ask the user whether to raise the cap, then re-run with a higher --max-usd.',

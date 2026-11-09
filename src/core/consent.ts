@@ -262,10 +262,10 @@ export interface ConfirmationPayload {
   contract_version: 1;
 }
 
-/** The approved command: `--yes`, plus `--expect <plan_hash>` for destructive work, so it runs verbatim once approved. */
+/** The approved command: `--yes` (unless it names its `--max-usd N` approval), plus `--expect <plan_hash>` for destructive work, so it runs verbatim once approved. */
 export function consentFix(req: ConsentRequest): Action {
   const argv = [...req.argv];
-  if (!argv.includes('--yes')) argv.push('--yes');
+  if (!argv.includes('--yes') && !argv.includes('--max-usd')) argv.push('--yes');
   if (req.effects.includes('destructive') && req.plan_hash && !argv.includes('--expect')) argv.push('--expect', req.plan_hash);
   return {
     argv, consent: [...req.effects], actor: req.actor, why: req.why, user_message: req.user_message,

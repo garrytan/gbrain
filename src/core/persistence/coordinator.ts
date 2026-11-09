@@ -108,6 +108,8 @@ interface PreparedMutationBase {
   afterCommit?(engine: BrainEngine): Promise<void>;
   /** #7122: the truth bytes an append_page added; a remote append's `links` effect reads only these. Absent for every other write. */
   mentionRange?: AppendedRange;
+  /** Wave C 1F: an append to a segmented page; its embedding effect embeds the occurrences it added, under the tail allowance. */
+  embedAppended?: true;
 }
 /**
  * A page file target; `publishMode` (Google pages) is the exact mode it publishes with, and its created directories get 0700.

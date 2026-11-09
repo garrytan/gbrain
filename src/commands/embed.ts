@@ -55,6 +55,7 @@ import { isEmbeddingZeroNormError } from '../core/ai/embedding-guard.ts';
 import { wrapChunkTextsForStoredMode } from '../core/embedding-context.ts';
 import { meterPageBatch, spendGrant } from '../core/page-embedding-budget.ts';
 import { heldApprovalUsd, heldEmbedArgv } from '../core/held-embedding.ts';
+import { backgroundEmbedTarget, delegateSegmentedPage, embedPageTarget, embedPositionalSlug, pageCapped, slugsAfter, type EmbedPageTarget } from './embed-target.ts';
 import { countSegmentedEmbedRows, embedSegmentedPage, readSealedSegmentedEmbedPage, readSegmentedEmbedPage, type SegmentedEmbedPage } from '../core/page-body/segmented-embedding.ts';
 import {
   restampIfDemotedToTitleTier,
@@ -154,8 +155,12 @@ export interface EmbedOpts {
   slugs?: string[];
   /** Embed a single page. */
   slug?: string;
-  /** The user's `--max-usd N` on a foreground `--slugs`/`--held` run: lifts a large page's hold and raises its per-page cap by N. */
+  /** The user's `--max-usd N` on a `<slug>`, `--slugs` or `--held` run (foreground or `--background`): lifts a large page's hold and raises its per-page cap by N. */
   approvedPageCapUsd?: number;
+  /** Wave C 1F: the approval's identity (the embed job's), so a retried job raises each page's cap once. */
+  approvalId?: string;
+  /** Wave C 1F: hand a segmented target page to an embed-page job (bounded slices) under this spend authorization; the `embed` job sets it. */
+  delegateSegmented?: EmbedPageTarget['delegate'];
   /**
    * v0.31.12: scope to a specific source. When set, only pages from this
    * source are embedded. When omitted, all sources are processed (but
@@ -368,7 +373,9 @@ export interface EmbedResult {
    * `failures`/`failure_samples` also carry a stall entry so existing
    * failures>0 consumers surface it unchanged.
    */
-  reason?: 'stall_timeout' | 'time_budget' | 'cost_cap';
+  reason?: 'stall_timeout' | 'time_budget' | 'cost_cap' | 'budget_limited';
+  /** Wave C 1F: segmented target pages handed to embed-page jobs (their job ids). */
+  embed_page_jobs?: number[];
   /** With `reason: 'time_budget'` (src/core/embed-budget-stop.ts): stale chunks left and the command that finishes them. */
   remaining_stale?: number;
   resume_command?: string;
@@ -488,7 +495,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     for (const s of opts.slugs) {
       if (isAborted(opts.signal)) break; // #1737: stop the per-slug loop on abort
       try {
-        await embedPage(engine, s, !!opts.dryRun, result, opts.sourceId, opts.signal, opts.quiet, opts.approvedPageCapUsd);
+        await embedPage(engine, s, !!opts.dryRun, result, opts.sourceId, opts.signal, opts.quiet, embedPageTarget(opts));
       } catch (e: unknown) {
         if (isAborted(opts.signal)) break; // shutdown, not a failure
         // #3037: a page-level error (not found, DB write) must not exit 0.
@@ -823,7 +830,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     return result;
   }
   if (opts.slug) {
-    await embedPage(engine, opts.slug, !!opts.dryRun, result, opts.sourceId, opts.signal, opts.quiet, opts.approvedPageCapUsd);
+    await embedPage(engine, opts.slug, !!opts.dryRun, result, opts.sourceId, opts.signal, opts.quiet, embedPageTarget(opts));
     return result;
   }
   throw new Error('No embed target specified. Pass { slug }, { slugs }, { all }, or { stale }.');
@@ -885,12 +892,6 @@ export function isKeylessStaleRefusal(args: string[], embeddingDisabled: boolean
     && embeddingDisabled === true;
 }
 
-/** The `--slugs` list: the arguments after it up to the next flag, so `--slugs a b --max-usd 1` never reads `1` as a slug. */
-function slugsAfter(args: readonly string[], at: number): string[] {
-  const end = args.findIndex((a, i) => i > at && a.startsWith('--'));
-  return args.slice(at + 1, end < 0 ? undefined : end);
-}
-
 export async function runEmbed(engine: BrainEngine, args: string[], selectedConfig: GBrainConfig | null = null,
   /** The CLI's consent outcome (src/cli/commands/embed.ts); its cap meters the run (fix wave 13 P1.18). */
   consent: { authorization: Authorization | null } | null = null): Promise<EmbedResult | EmbedFactsResult | StaleImageSweepResult | undefined> {
@@ -929,6 +930,7 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
   if (args.includes('--background')) {
     const { maybeBackground } = await import('../core/cli-options.ts');
     const { jobSpendAuthorization } = await import('../core/minions/spend-authorization.ts');
+    const target = await backgroundEmbedTarget(engine, args);
     const backgrounded = await maybeBackground({
       engine,
       args,
@@ -944,6 +946,7 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
           stale: cleanArgs.includes('--stale'),
           dryRun: cleanArgs.includes('--dry-run'),
           slugs: slugsI >= 0 ? slugsAfter(cleanArgs, slugsI) : undefined,
+          ...target,
           sourceId: srcI >= 0 ? cleanArgs[srcI + 1] : undefined,
           // Background parity (D7): these four used to be silently DROPPED,
           // degrading the documented recovery command to a plain stale run.
@@ -993,12 +996,13 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
     // E-2: CLI-only single-flight for stale runs (the minion path locks itself).
     opts = { all, stale, dryRun, sourceId, batchSize, priority, catchUp, ...(pace && { pace }), ...(stale && { singleFlight: true }), ...(includeNullSignature && { includeNullSignature: true }) };
   } else {
-    const slug = args.find(a => !a.startsWith('--'));
+    const slug = embedPositionalSlug(args);
     if (!slug) {
       serr('Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...|--held] [--dry-run] [--batch-size N] [--priority recent] [--catch-up] [--include-null-signature] [--yes | --max-usd N] | --stale --images (gbrain embed --help: paid runs need the user\'s approval)');
       process.exit(1);
     }
-    opts = { slug, dryRun, sourceId, batchSize, priority, catchUp };
+    const approvedPageCapUsd = await heldApprovalUsd(engine, args);
+    opts = { slug, dryRun, sourceId, batchSize, priority, catchUp, ...(approvedPageCapUsd !== undefined && { approvedPageCapUsd }) };
   }
 
   // CLI path: wire a reporter so --progress-json / --quiet / TTY rendering
@@ -1076,7 +1080,7 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
  * chunk read. A dry run only counts those rows.
  */
 async function embedSegmented(engine: BrainEngine, page: SegmentedEmbedPage, result: EmbedResult,
-  opts: { dryRun: boolean; signal?: AbortSignal; signature?: string; approvedCapUsd?: number; all?: boolean }): Promise<void> {
+  opts: { dryRun: boolean; signal?: AbortSignal; signature?: string; approvedCapUsd?: number; approvalId?: string; all?: boolean }): Promise<void> {
   if (opts.dryRun) {
     const counts = await countSegmentedEmbedRows(engine, page.id);
     result.total_chunks += counts.total;
@@ -1085,9 +1089,10 @@ async function embedSegmented(engine: BrainEngine, page: SegmentedEmbedPage, res
     return;
   }
   try {
-    const done = await embedSegmentedPage(engine, page, { embedFn: (texts, o) => embedBatchWithBackoff(texts, o),
-      signal: opts.signal, signature: opts.signature, approvedCapUsd: opts.approvedCapUsd, all: opts.all });
+    const done = await embedSegmentedPage(engine, page, { signal: opts.signal, signature: opts.signature, approvedCapUsd: opts.approvedCapUsd, approvalId: opts.approvalId, all: opts.all });
     result.embedded += done.embedded;
+    if (done.stopped === 'source_capped' || (done.stopped === 'budget' && await pageCapped(engine, page.id))) result.reason ??= 'budget_limited';
+    if (done.stopped === 'uncertain') serr(`  ${page.slug}: a batch's provider call may have been billed without an answer, so its chunks wait for the user's approval (gbrain embed ${page.slug} --source ${page.source_id} --max-usd N)`);
     const stamp = done.complete ? await resolveProvenanceStamp(engine, opts.signature) : undefined;
     if (stamp) await stampIfPageProvenanceComplete(engine, page.slug, page.source_id, stamp);
     if (done.stopped === 'page_moved') recordFailure(result, 1, page.slug, EMBED_UNAVAILABLE_MESSAGE);
@@ -1106,7 +1111,7 @@ async function embedPage(
   sourceId?: string,
   signal?: AbortSignal,
   quiet?: boolean,
-  approvedPageCapUsd?: number,
+  target: EmbedPageTarget = {},
 ) {
   const opts = sourceId ? { sourceId } : undefined;
   const initial = await engine.readPageSnapshot(slug, opts);
@@ -1116,7 +1121,9 @@ async function embedPage(
   const segmented = await readSealedSegmentedEmbedPage(engine, initial.page, !dryRun);
   if (segmented) {
     if (isEmbedSkipped(initial.page.frontmatter)) { if (!quiet) serr(`  ${slug}: skipped (frontmatter.embed_skip set); its chunks stay keyword-searchable`); return; }
-    await embedSegmented(engine, segmented, result, { dryRun, signal, signature: currentEmbeddingSignature() ?? undefined, approvedCapUsd: approvedPageCapUsd });
+    const jobId = target.delegate && !dryRun ? await delegateSegmentedPage(engine, segmented, target) : null;
+    if (jobId !== null) { (result.embed_page_jobs ??= []).push(jobId); result.pages_processed++; return; }
+    await embedSegmented(engine, segmented, result, { dryRun, signal, signature: currentEmbeddingSignature() ?? undefined, approvedCapUsd: target.approvedCapUsd, approvalId: target.approvalId });
     return;
   }
   const origin = await readProjectionSnapshot(engine, slug, initial.page.source_id, { allowUnsealed: true, requireLiveSource: !dryRun });
@@ -1210,8 +1217,9 @@ async function embedPage(
     return;
   }
   const metered = await meterPageBatch(engine, prepared.snapshot.page, toEmbed,
-    { signature: currentEmbeddingSignature(), announceHeld: true, ...(approvedPageCapUsd !== undefined && { approvedCapUsd: approvedPageCapUsd }) });
-  if (!metered) { result.pages_processed++; return; }
+    { signature: currentEmbeddingSignature(), announceHeld: true, ...(target.approvedCapUsd !== undefined && { approvedCapUsd: target.approvedCapUsd, approvalId: target.approvalId }) });
+  if (!metered) { result.pages_processed++; if (await pageCapped(engine, page.id)) result.reason ??= 'budget_limited'; return; }
+  if (metered.chunks.length < toEmbed.length) result.reason ??= 'budget_limited';
   toEmbed = metered.chunks;
   let embeddings: (Float32Array | null)[];
   let failed = 0;
