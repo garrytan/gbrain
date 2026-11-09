@@ -84,7 +84,8 @@ with no `visibility` read exactly like `visibility: private` (unless the operato
 
 Writers never add them to new pages: write `visibility: private` when a page needs privacy, and nothing otherwise.
 `gbrain repair private-labels` previews and clears `access: private` labels that were stamped on ordinary pages, and
-keeps `restricted`, `confidential` and `confidentiality` as real restrictions.
+keeps `restricted`, `confidential` and `confidentiality` as real restrictions
+([how to run and undo it](repair.md#private-labels-over-stamped-access-private)).
 
 ### Derived pages and lineage
 
