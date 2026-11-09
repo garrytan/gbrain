@@ -477,6 +477,7 @@
               "window_days": 1
             },
             "housekeeping": {
+              "compactable_bytes": null,
               "explicit_retention_days": null,
               "over_target": false,
               "target_bytes": 8589934592,
@@ -490,7 +491,7 @@
             "verify": "gbrain doctor --only persistence_capacity --json"
           },
           "elapsed_ms": "<volatile>",
-          "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 19163 reserved bytes, under the housekeeping target of 8589934592.",
+          "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 19163 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
           "name": "persistence_capacity",
           "status": "ok"
         },
