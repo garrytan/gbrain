@@ -57,12 +57,12 @@ function release(gbrainRoot: string, files: Record<string, string>): void {
 
 interface Env { gbrainRoot: string; ws: string; home: string; statePath: string; backups: string; skillsRoot: string }
 
-function setup(): Env {
+function setup(opts: { sharedDeps?: string[]; first?: Record<string, string> } = {}): Env {
   const gbrainRoot = tmp('sp-safe-gbrain-');
   mkdirSync(join(gbrainRoot, 'src'), { recursive: true });
   writeFileSync(join(gbrainRoot, 'src', 'cli.ts'), '// stub\n');
-  writeFileSync(join(gbrainRoot, 'openclaw.plugin.json'), JSON.stringify({ name: 'gbrain-test', version: '0.0.1', skills: ['skills/demo', 'skills/other'], shared_deps: [] }));
-  release(gbrainRoot, V1);
+  writeFileSync(join(gbrainRoot, 'openclaw.plugin.json'), JSON.stringify({ name: 'gbrain-test', version: '0.0.1', skills: ['skills/demo', 'skills/other'], shared_deps: opts.sharedDeps ?? [] }));
+  release(gbrainRoot, opts.first ?? V1);
   const ws = tmp('sp-safe-ws-');
   const home = tmp('sp-safe-home-');
   const gb = join(home, '.gbrain');
@@ -148,6 +148,34 @@ describe('base recording and whole-skill update', () => {
     expect(outcome(result, 'demo')).toMatchObject({ result: 'skipped', reason: 'history_unverified' });
     expect(result.summary.updated).toBe(0);
     expect(read(env, 'demo/SKILL.md')).toBe(V1['demo/SKILL.md']);
+  });
+
+  test('pinning then unpinning a skill that was never installed does not install it', async () => {
+    const env = setup();
+    release(env.gbrainRoot, V2);
+    expect(outcome(await update(env), 'demo').result).toBe('not_installed');
+    await setSkillPinned(env.skillsRoot, 'demo', true, { statePath: env.statePath });
+    await setSkillPinned(env.skillsRoot, 'demo', false, { statePath: env.statePath });
+    const result = await update(env);
+    expect(outcome(result, 'demo').result).toBe('not_installed');
+    expect(existsSync(join(env.ws, 'skills', 'demo/SKILL.md'))).toBe(false);
+    expect(loadState({ statePath: env.statePath }).roots?.[env.skillsRoot]?.demo).toBeUndefined();
+  });
+
+  test('a release that adds a shared dependency updates every skill once, and restore puts it all back', async () => {
+    const env = setup({ sharedDeps: ['skills/conventions'], first: { ...V1, 'conventions/a.md': 'a v1\n' } });
+    await scaffold(env);
+    release(env.gbrainRoot, { ...V2, 'conventions/b.md': 'b v2\n' });
+    const result = await update(env);
+    expect(result.summary).toMatchObject({ updated: 2, failed: 0 });
+    expect(result.restore_command).toBeNull();
+    expect(read(env, 'conventions/b.md')).toBe('b v2\n');
+    expect(read(env, 'other/SKILL.md')).toBe(V2['other/SKILL.md']);
+    const [journal] = listJournals(env.backups);
+    expect(journal!.skills.flatMap(s => s.files.map(f => f.rel)).filter(rel => rel === 'conventions/b.md')).toHaveLength(1);
+    await runSkillpackRestore({ id: journal!.id, statePath: env.statePath, backups: env.backups });
+    expect(existsSync(join(env.ws, 'skills', 'conventions/b.md'))).toBe(false);
+    expect(read(env, 'other/SKILL.md')).toBe(V1['other/SKILL.md']);
   });
 
   test('a pinned skill is skipped until unpinned', async () => {

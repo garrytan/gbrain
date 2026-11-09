@@ -181,7 +181,7 @@ export function classifySkill(ctx: ClassifyContext, slug: string): SkillOutcome 
     slug, result: 'current', pinned: record?.pinned === true, changes: [], historical: files.filter(f => f.state === 'historical').map(f => f.rel), notes, files,
   };
   const skillMd = files.find(f => f.rel === `${slug}/SKILL.md`);
-  if (!record && skillMd?.pre === null) return { ...outcome, result: 'not_installed', historical: [] };
+  if (!Object.keys(record?.files ?? {}).length && skillMd?.pre === null) return { ...outcome, result: 'not_installed', historical: [] };
   const changed = files.filter(f => f.state !== 'unchanged');
   outcome.changes = changed.map(f => f.rel);
   if (changed.length === 0 && !unsafe) return outcome;
@@ -358,7 +358,14 @@ export async function runSkillpackUpdate(opts: UpdateOptions): Promise<UpdateRes
     records: loadState({ statePath: opts.statePath }).roots?.[opts.skillsRoot] ?? {},
     acceptHistorical: opts.acceptHistorical === true, noDiff: opts.noDiff === true,
   };
-  const outcomes = slugs.map(slug => classifySkill(ctx, slug));
+  const claimed = new Set<string>();
+  const outcomes = slugs.map(slug => classifySkill(ctx, slug)).map((o): SkillOutcome => {
+    if (o.result !== 'would_update') return o;
+    const files = o.files.filter(f => !(f.sharedDep && f.state !== 'unchanged' && claimed.has(f.rel)));
+    for (const f of files) if (f.sharedDep && f.state !== 'unchanged') claimed.add(f.rel);
+    const changes = files.filter(f => f.state !== 'unchanged').map(f => f.rel);
+    return changes.length ? { ...o, files, changes } : { ...o, files, changes, result: 'current' };
+  });
   const base = {
     dry_run: opts.dryRun === true, skills_root: opts.skillsRoot,
     history: history.ok ? { verified: true } : { verified: false, reason: history.reason },
@@ -447,7 +454,9 @@ export async function setSkillPinned(skillsRoot: string, slug: string, pinned: b
     const record = root[slug];
     if ((record?.pinned === true) === pinned) return { state: null, result: false };
     const { pinned: _old, ...rest } = record ?? { files: {}, recorded_at: new Date().toISOString() };
-    root[slug] = pinned ? { ...rest, pinned: true } : rest;
+    if (pinned) root[slug] = { ...rest, pinned: true };
+    else if (Object.keys(rest.files).length) root[slug] = rest;
+    else delete root[slug];
     return { state: { ...state, roots: { ...state.roots, [skillsRoot]: root } }, result: true };
   }, { statePath: opts.statePath });
 }
