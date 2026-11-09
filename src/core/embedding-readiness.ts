@@ -131,7 +131,7 @@ export async function prepareEmbeddingProjections(engine: BrainEngine, opts: { s
           await opts.assertOwned?.(tx);
           opts.signal?.throwIfAborted();
           if (Date.now() >= (opts.deadline ?? Infinity)) throw new Error('Projection recovery deadline exceeded.');
-          await installPageProjection(tx, prepared, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code });
+          await installPageProjection(tx, prepared, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code, chunkerVersion: projection.chunkerVersion });
           await opts.assertOwned?.(tx);
           opts.signal?.throwIfAborted();
           if (Date.now() >= (opts.deadline ?? Infinity)) throw new Error('Projection recovery deadline exceeded.');

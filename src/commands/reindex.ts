@@ -39,6 +39,7 @@ import { loadConfig } from '../core/config.ts';
 import { BudgetExhausted, BudgetTracker } from '../core/budget/budget-tracker.ts';
 import { withBudgetTracker } from '../core/ai/gateway.ts';
 import type { SegmentedRechunkReceipt } from '../core/page-body/rechunk.ts';
+import type { TimelineRechunkReceipt } from '../core/page-state/timeline-rechunk.ts';
 
 interface ReindexOpts {
   /** Cap total pages reindexed. Useful for triage runs on huge brains. */
@@ -92,6 +93,7 @@ USAGE
   gbrain reindex --vectors    [--dry-run] [--json]
   gbrain reindex --oversized  [--limit N] [--dry-run] [--json] [--source <id>]
   gbrain reindex --segmented  [--source <id>] [--slug <slug>] [--apply] [--json]
+  gbrain reindex --timeline-bullets [--source <id>] [--slug <slug>] [--limit N] [--apply] [--json]
 
 TARGETS (exactly one required)
   --markdown        Re-chunk markdown pages whose chunker_version lags the
@@ -121,6 +123,18 @@ TARGETS (exactly one required)
                     only the segments that change, keeps the vectors of
                     unchanged chunk texts and leaves new texts to the embed
                     sweep (gbrain embed --stale). Never runs on upgrade.
+  --timeline-bullets
+                    Re-chunk inline pages (1 MiB and under) whose timeline has
+                    bullet entries and whose chunks the pre-bullet chunker made:
+                    timeline passages then break only between entries, so a new
+                    entry at the top re-embeds only the passage it joins. New
+                    and edited pages already chunk this way; existing pages
+                    stay as they are and keep serving search until this runs.
+                    Previews by default (pages, chunk counts, new chunk texts;
+                    writes nothing). --apply re-chunks without provider calls,
+                    keeps the vectors of unchanged chunk texts and leaves new
+                    texts to the embed sweep (gbrain embed --stale). Never runs
+                    on upgrade, sync or doctor.
 
 OPTIONS
   --type <t>        --markdown only: restrict to one page type
@@ -137,9 +151,11 @@ OPTIONS
                     --dry-run, --no-embed and a keyless brain never ask);
                     --multimodal skips its cost confirm
   --max-usd USD     --markdown: approve the paid run with this cost cap
-  --source <id>     --aliases, --oversized and --segmented: restrict to one source
-  --slug <slug>     --segmented only: one page
-  --apply           --segmented only: apply the previewed re-chunk
+  --source <id>     --aliases, --oversized, --segmented and --timeline-bullets:
+                    restrict to one source
+  --slug <slug>     --segmented and --timeline-bullets: one page
+  --apply           --segmented and --timeline-bullets: apply the previewed
+                    re-chunk
   --repo PATH       --markdown only: brain repo override
   --json            Machine-readable output
   --help, -h        Show this help
@@ -185,6 +201,7 @@ export function validateReindexModeScope(args: string[]): string | null {
   if (args.includes('--aliases')) return '--type is only supported with reindex --markdown, not --aliases';
   if (args.includes('--oversized')) return '--type is only supported with reindex --markdown, not --oversized';
   if (args.includes('--segmented')) return '--type is only supported with reindex --markdown, not --segmented';
+  if (args.includes('--timeline-bullets')) return '--type is only supported with reindex --markdown, not --timeline-bullets';
   return null;
 }
 
@@ -661,6 +678,33 @@ export async function runReindexSegmented(engine: BrainEngine, args: string[]): 
   const receipt = await runSegmentedRechunk(engine, { apply: args.includes('--apply'), sourceId: value('--source'), slug: value('--slug') });
   if (json) process.stdout.write(JSON.stringify(receipt, null, 2) + '\n');
   else for (const line of formatSegmentedRechunkReceipt(receipt)) console.log(line);
+  if (receipt.pages.some(page => page.state === 'failed')) setCliExitVerdict(1);
+  return receipt;
+}
+
+/**
+ * `gbrain reindex --timeline-bullets`: preview (default) or `--apply` the bullet-aligned timeline re-chunk of inline
+ * pages the pre-bullet inline chunker sealed (core/page-state/timeline-rechunk.ts). Nothing on upgrade, sync, doctor or
+ * migration runs it.
+ */
+export async function runReindexTimelineBullets(engine: BrainEngine, args: string[]): Promise<TimelineRechunkReceipt | null> {
+  args = normalizeReindexArgs(args);
+  const json = args.includes('--json');
+  const invalid = ['--source', '--slug'].find(flag => invalidRequiredValueFlag(args, flag));
+  const error = invalid ? `invalid ${invalid}: expected a value` : invalidPositiveIntegerFlag(args, '--limit') ? 'invalid --limit: expected a positive integer' : null;
+  if (error) {
+    if (json) process.stdout.write(JSON.stringify({ error }) + '\n');
+    else process.stderr.write(`[reindex] ${error}\n`);
+    setCliExitVerdict(2);
+    return null;
+  }
+  const value = (flag: string) => { const at = args.indexOf(flag); return at >= 0 ? args[at + 1] : undefined; };
+  const { runTimelineRechunk, formatTimelineRechunkReceipt } = await import('../core/page-state/timeline-rechunk.ts');
+  const limit = value('--limit');
+  const receipt = await runTimelineRechunk(engine, { apply: args.includes('--apply'), sourceId: value('--source'), slug: value('--slug'),
+    ...(limit ? { limit: Number(limit) } : {}) });
+  if (json) process.stdout.write(JSON.stringify(receipt, null, 2) + '\n');
+  else for (const line of formatTimelineRechunkReceipt(receipt)) console.log(line);
   if (receipt.pages.some(page => page.state === 'failed')) setCliExitVerdict(1);
   return receipt;
 }

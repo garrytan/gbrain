@@ -27,6 +27,7 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import { sizeStateField } from '../page-embedding-budget.ts';
 import { readPageBodyPolicy } from '../page-body/limits.ts';
 import { importStreamedMarkdownFile, type StreamedPreparedImport } from '../page-body/streamed-import.ts';
+import { assertNoHiddenFenceRows } from '../page-body/streamed-fences.ts';
 import { ownerImportTrust } from '../trust/channel.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { sealSegmentedPage } from './segmented-apply.ts';
@@ -95,6 +96,8 @@ export async function prepareManagedSyncStreamed(engine: BrainEngine, row: Write
   // A screen without admission (an origin occupant, a waiver) never streams a page this size.
   if (ctx.screening) throw refuse('invalid_params', 'A streamed import is prepared only under its admitted request.',
     `${p.sourcePath} is over the single-string ceiling, so it is prepared only under its admitted request.`);
+  // A remote sync carries over what remote reads hide (preserveProtectedTakes, the hidden-row merge) only over a body it holds as one string.
+  if (row.authority.remote && base && !base.page.deleted_at) await assertNoHiddenFenceRows(engine, { id: Number(base.page.id), slug: base.page.slug, source_id: row.source_id });
   const policy = await readPageBodyPolicy(engine);
   if (!policy.segmented || ref.bytes > policy.maxBytes) throw ctx.contentRefusal({ code: 'file_too_large',
     message: `File too large (${ref.bytes} bytes): segmented page storage (pages.segmented_storage) is off or the file is over pages.max_bytes (${policy.maxBytes}).` });
@@ -103,7 +106,7 @@ export async function prepareManagedSyncStreamed(engine: BrainEngine, row: Write
   if (!filePath || !stat || stat.size !== ref.bytes) throw changed();
   let ready: StreamedPreparedImport | undefined;
   enterClaimStep(ctx.clock, 'import_content', undefined, 'fs');
-  const result = await importStreamedMarkdownFile(engine, filePath, p.sourcePath, { sourceId: row.source_id, noEmbed: true, ...(ctx.activePack ? { activePack: ctx.activePack } : {}), history: ctx.history,
+  const result = await importStreamedMarkdownFile(engine, filePath, p.sourcePath, { sourceId: row.source_id, noEmbed: true, remote: row.authority.remote === true, ...(ctx.activePack ? { activePack: ctx.activePack } : {}), history: ctx.history,
     coordinated: { snapshot: base, sha256: ref.sha256, slug: row.slug, moved: !!renamed, prepare: async value => { ready = value; return value.result; },
       owner: { kind: 'sync', principalKind: row.principal_kind, principalId: row.principal_id, baseRevision: base?.revision ?? null } } }, stat, policy)
     .catch(error => { throw error instanceof OperationError && error.code === 'source_changed' ? changed() : error; });

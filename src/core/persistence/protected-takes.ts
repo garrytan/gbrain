@@ -15,11 +15,15 @@ function fence(body:string):{text:string,read:boolean}|null {
   const region=regions[0]!;
   return {text:body.slice(region.start,region.end),read:region.read};
 }
+/** A remote writer's body adds or changes a takes fence (remote writes change takes through the scoped takes operations). */
+export function takesFenceMutationError() {
+  return opError('permission_denied','Use the scoped takes operations to mutate a takes fence.',
+    'Send the page without its takes fence (it is preserved automatically), and change takes with takes_add, takes_update, takes_supersede, or takes_resolve.');
+}
 /** Remote full-page reads omit takes; a round trip must preserve their canonical fence. */
 export function preserveProtectedTakes(incoming:string,stored:string):string {
   const before=fence(stored),after=fence(incoming);
-  if(after!==null && after.text!==before?.text) throw opError('permission_denied','Use the scoped takes operations to mutate a takes fence.',
-    'Send the page without its takes fence (it is preserved automatically), and change takes with takes_add, takes_update, takes_supersede, or takes_resolve.');
+  if(after!==null && after.text!==before?.text) throw takesFenceMutationError();
   if(before===null || after!==null) return incoming;
   // A fence quoted in markdown code was hidden from the remote reader, but
   // re-appending it at EOF would move it out of the code and make it live.

@@ -25,6 +25,9 @@ import { ContentHashStream } from '../../src/core/page-body/content-hash-stream.
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence } from '../../src/core/facts-fence.ts';
 import { segmentedFactsFenceView } from '../../src/core/page-body/segment-facts.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
+import { streamedImportSeams } from '../../src/core/page-body/streamed-import.ts';
+import { withCoordinatedWrite } from '../../src/core/persistence/context.ts';
+import { TEST_WRITE_ATTRIBUTION } from '../helpers/write-attribution.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -179,6 +182,36 @@ for (const kind of testBackends()) {
       await commit({ upload_id: id, allow_shrink: true });
       await expectStoredBody(slug, smaller);
     }, 900_000);
+
+    test('a withdrawal committed while an upload over 24 MiB with a facts fence is prepared refuses its publication (revision_conflict)', async () => {
+      await setConfig('write_gate.agent_mode', 'off');
+      const slug = 'notes/huge-fenced-race';
+      const claim = 'Ships the beta in spring';
+      const text = `${conversation(25 * MiB, 'fenced-race')}
+
+## Facts
+
+${FACTS_FENCE_BEGIN}
+| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |
+|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|
+| 1 | ${claim} | fact | 1.0 | world | high | 2026-01-01 |  | s |  |
+${FACTS_FENCE_END}`;
+      let fired = 0;
+      // Once the upload's import is prepared, before its publisher runs: the publication's validate must see the new ledger row.
+      streamedImportSeams.prepared = async () => {
+        if (fired++) return;
+        await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(
+          `INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash) VALUES ('default','world',$1,gbrain_fact_fingerprint($2))`, [slug, claim]), TEST_WRITE_ATTRIBUTION));
+      };
+      try {
+        const refused = await commitRefusal({ upload_id: await staged(text, slug) });
+        expect(refused.code).toBe('revision_conflict');
+      } finally {
+        delete streamedImportSeams.prepared;
+      }
+      expect(fired).toBe(1);
+      expect(await engine.getPage(slug, { sourceId: 'default' })).toBeNull();
+    }, 600_000);
 
     test('a remote replace over 24 MiB of a page with a hidden takes fence, private facts rows or timeline rows refuses upload_protected_content and releases its bytes', async () => {
       const cases: Array<['takes' | 'facts' | 'timeline', string, () => Promise<unknown>]> = [

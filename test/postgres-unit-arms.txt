@@ -142,6 +142,7 @@ test/import-inline-chunk-keep.test.ts
 test/import-revision-concurrency.test.ts
 test/import-write-barrier.test.ts
 test/init-cold-home-embedding.test.ts
+test/inline-timeline-bullets.test.ts
 test/keyword-statement-timeout-knob-6495.test.ts
 test/keyword-timeout-negative-cache-6495.test.ts
 test/lane-apply-pipelining.test.ts
@@ -241,6 +242,7 @@ test/large-pages/segmented-timeline-retract-versions.test.ts
 test/large-pages/segmented-versions.test.ts
 test/large-pages/segmented-withdrawal-mirror.test.ts
 test/large-pages/segmented-withdrawn-fence-delete.test.ts
+test/large-pages/streamed-fence-forget.test.ts
 test/large-pages/streamed-import-drift.test.ts
 test/large-pages/streamed-sync-origin-b14.test.ts
 test/large-pages/stuck-recovery-large.slow.test.ts

@@ -25,7 +25,7 @@
     "golden/prose-100000": "b0e26a29b4e8df0d5d4515ce658c42f2ab9db6cff0ca6a67fc146d7bafee6fc0",
     "golden/prose-500000": "bedf6011d92195ae0e0d32bb20ff51193c3d587be871337d519ec16771a2a564",
     "golden/prose-900000": "6ea0cf2282ab03f840cd837c432f479315bb944258f930ee6f56bfe0a1ce879b",
-    "golden/at-threshold": "aef313469326c1321cf92e6f9c20bf597cd9b8eb419984f9582df3f262b91826"
+    "golden/at-threshold": "2cb493030d7fd2b86bb4c703c580418ce23769241197c1a5937249edbabda5f8"
   },
   "bodyBytes": {
     "golden/tiny": 19,

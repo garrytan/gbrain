@@ -115,7 +115,7 @@ export async function prepareGoogleReceiptPatch(engine: BrainEngine, row: WriteR
         if (changed.length !== 1) throw receiptRaceRefusal('The Gmail page changed before metadata publication.', row);
         const next = await readProjectionSnapshot(tx, row.slug, row.source_id, { allowUnsealed: true });
         if (!next || !chunks) throw receiptRaceRefusal('The Gmail receipt projection is unavailable.', row);
-        await installPageProjection(tx, next, chunks.chunks, { seal: true, preserveEmbeddings: true, code: chunks.code });
+        await installPageProjection(tx, next, chunks.chunks, { seal: true, preserveEmbeddings: true, code: chunks.code, chunkerVersion: chunks.chunkerVersion });
       }
       return { status: noop ? 'skipped' : 'updated', slug: row.slug, source_id: row.source_id, noop, attachment_metadata_only: true };
     } };

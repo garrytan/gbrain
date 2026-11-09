@@ -1095,6 +1095,10 @@
       },
       {
         "category": "brain",
+        "name": "inline_timeline_chunks"
+      },
+      {
+        "category": "brain",
         "name": "fence_integrity"
       },
       {

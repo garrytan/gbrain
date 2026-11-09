@@ -62,7 +62,7 @@ import { warnOncePerProcess, validateSlug, contentHash, contentHashLegacy, ATOMS
 import { decorateEmbeddingDimError } from './embedding-dim-check.ts';
 import { resolveImportContextualMode } from './import-contextual-mode.ts';
 import { runGuardrails } from './guardrails.ts';
-import { fenceBody, pageBodySegmentedError } from './page-body/page-shape.ts';
+import { bodyUnread, fenceBody, pageBodySegmentedError } from './page-body/page-shape.ts';
 import { abortSegmentedStaging, bodyStorageOf, demoteSegmentedPage, materializedPage, materializedSnapshot, sealSegmentedPage, stageSegmentedImport,
   stringWriteStorage, type SegmentedImport } from './persistence/segmented-apply.ts';
 import type { SegmentedStagingOwner } from './page-body/ingest.ts';
@@ -469,6 +469,7 @@ export async function importFromContent(
     // against its own existing counterpart (fences don't migrate between
     // columns here; splitBody keeps them where the caller wrote them).
     // #6188 (E7): Tier 1 in place before the hidden-row merge and withdrawal preservation; the hash covers the normalized body.
+    if (opts.remote === true && existing && !existing.deleted_at && bodyUnread(existing)) await (await import('./page-body/streamed-fences.ts')).assertNoHiddenFenceRows(engine, { id: Number(existing.id), slug, source_id: sourceId ?? 'default' });
     const fences = await applyImportFences({ engine, sourceId: sourceId ?? 'default', slug, mode: opts.fences ?? 'lenient', screened: opts.fenceScreen, screen, parsed, activePack: opts.activePack, remote: opts.remote === true, existing });
     if (fences.refused) return fences.refused;
     if (opts.remote === true && existing) {
@@ -637,7 +638,7 @@ export async function importFromContent(
     // dispositions) in the provider-free path used by background rebuilds too.
     const bodyBytes = Buffer.byteLength(parsed.compiled_truth, 'utf-8') + Buffer.byteLength(parsed.timeline ?? '', 'utf-8');
     const storage = await stringWriteStorage(engine, bodyBytes, bodyStorageOf(existing));
-    const chunks = storage.storage === 'segmented' ? [] : await prepareFenceAwareMarkdownChunks(engine, sourceId ?? 'default', slug, parsed);
+    const { chunks, chunkerVersion: chunkerSeal } = storage.storage === 'segmented' ? { chunks: [], chunkerVersion: MARKDOWN_CHUNKER_VERSION } : await prepareFenceAwareMarkdownChunks(engine, sourceId ?? 'default', slug, parsed, existing);
 
     // Embedding failures propagate unless onPostCommitEmbedding lets the caller
     // report enrichment separately from the already-persisted content.
@@ -839,7 +840,7 @@ export async function importFromContent(
             await applyMoveWaves(tx, Number(pageId), chunkWrites.waves);
             const embeddingColumn = await stampEmbeddingInputs(tx, fresh, null,
               { title: parsed.title, tier: effectiveCRMode === 'title' ? 'title' : 'none', corpusGeneration });
-            await tx.upsertChunks(slug, kept.size ? fresh.filter((_, i) => !kept.has(i)) : fresh, { ...txOpts, ...(embeddingColumn ? { embeddingColumn } : {}), sealChunkerVersion: MARKDOWN_CHUNKER_VERSION,
+            await tx.upsertChunks(slug, kept.size ? fresh.filter((_, i) => !kept.has(i)) : fresh, { ...txOpts, ...(embeddingColumn ? { embeddingColumn } : {}), sealChunkerVersion: chunkerSeal,
               ...(pageId !== undefined ? { pageId: Number(pageId) } : {}), ...(deferSeal ? { deferSeal: true as const } : {}) });
             // v0.41.31: stamp embedding provenance when this import actually
             // embedded (not --no-embed), so a later model/dims swap is detectable
@@ -854,7 +855,7 @@ export async function importFromContent(
           } else {
             // Seal only the completed, full-body sanitized replacement (the upsert above seals its own); a
             // body-only write or a failed transaction must never certify old stored fragments.
-            if (!deferSeal && !segmented) await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3', [MARKDOWN_CHUNKER_VERSION, txOpts.sourceId, slug]);
+            if (!deferSeal && !segmented) await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3', [chunkerSeal, txOpts.sourceId, slug]);
           }
         },
       ]);
@@ -889,7 +890,7 @@ export async function importFromContent(
       // The reason routes a resident or drain rebuild of this revision to the bounded continuation.
       if (deferChunks) await queuePageProjection(tx, txOpts.sourceId, slug, DEFERRED_CHUNK_REPLACEMENT);
       if (deferChunks) return { pageId, sealed: false, projectionPending: true as const };
-      return { pageId, sealed: !opts.coordinated && !opts.beforeCommit, ...(deferSeal ? { chunkerSeal: MARKDOWN_CHUNKER_VERSION } : {}) };
+      return { pageId, sealed: !opts.coordinated && !opts.beforeCommit, ...(deferSeal ? { chunkerSeal } : {}) };
     };
     if (opts.prepare) return opts.prepare({
       slug, parsedPage, observedRevision: (existing as (typeof existing & { knowledge_revision?: string }) | null)?.knowledge_revision ?? null,
