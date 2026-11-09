@@ -75,7 +75,6 @@ link it here; never raise the cap.
 | [Runtime](key-files/runtime.md) | `src/core/abort-check.ts` through `src/core/zombie-reap.ts` |
 | [Security](key-files/security.md) | `src/core/destructive-guard.ts` through `src/core/write-gate-scan.ts`; [purge](key-files/memory-purge.md) |
 | [Shared brain skills](key-files/shared-skills.md) | Canonical catalog, enrollment, migration, publication and harness integration |
-| [Skill resolver](key-files/skill-resolver.md) | `src/core/skills/resolver/`, `gbrain skills index/resolve/library`, the hook lane and the Node bundle |
 | [Skills](key-files/skills.md) | `src/core/audit-skill-brain-first.ts` through `src/core/skills-integrity.ts` |
 | [Tooling And Tests](key-files/tooling-and-tests.md) | `.github/workflows/test.yml` through `test/remote-privacy-sweep.test.ts` |
 | [CI Health And Test Guards](key-files/ci-health-and-test-guards.md) | `nightly-watch.yml` through `check-image-decoders-embedded.sh`, contributor audit, fix-wave gate |
