@@ -27,6 +27,7 @@ function mkMetricPoint(o: {
   return {
     fact_id: o.id,
     valid_from: new Date(o.date),
+    valid_until: null,
     metric: o.metric,
     value: o.value,
     unit,
@@ -49,6 +50,7 @@ function mkEventPoint(o: {
   return {
     fact_id: o.id,
     valid_from: new Date(o.date),
+    valid_until: null,
     metric: null,
     value: null,
     unit: null,
@@ -74,6 +76,7 @@ describe('formatTrajectoryBlock — empty + null cases', () => {
       {
         fact_id: 1,
         valid_from: new Date('2026-01-01'),
+        valid_until: null,
         metric: null,
         value: null,
         unit: null,

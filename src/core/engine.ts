@@ -791,6 +791,7 @@ export interface TrajectoryOpts {
 export interface TrajectoryPoint {
   fact_id: number;
   valid_from: Date;
+  valid_until: Date | null;
   metric: string | null;
   value: number | null;
   unit: string | null;

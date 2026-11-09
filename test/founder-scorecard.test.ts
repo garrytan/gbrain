@@ -23,6 +23,7 @@ function pt(args: {
   return {
     fact_id: args.id,
     valid_from: new Date(args.date),
+    valid_until: null,
     metric: args.metric,
     value: args.value,
     unit: 'USD',
