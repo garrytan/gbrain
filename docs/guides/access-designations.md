@@ -34,12 +34,14 @@ Five kinds of caller read a brain:
 | `readable_by: [...]` | reads | only when listed | only when listed | hidden | only when every entry is listed |
 | folder rule (`gbrain access rule`) | reads | only when listed | only when listed | hidden | only when every entry is listed |
 | derived from a `readable_by` page | reads | hidden | hidden | hidden | hidden |
-| fact `visibility: private` | reads | `recall` reads | hidden | hidden | hidden |
+| fact `visibility: private` | reads | reads | hidden | hidden | hidden |
 
 "Hidden" means the same `not_found` a missing page gets, on every read path (get_page, search, query, recall, lists,
 links, timelines, versions). The owner reads through `get_page`, `search`, `query`, `recall` and the other page
-reads in every source its grant reads; the owner's source grant still bounds which sources those are. Facts outside
-`recall` (hot memory, turn context, context packs) stay world-only for every remote caller, the owner included.
+reads in every source its grant reads; the owner's source grant still bounds which sources those are. It also gets
+private facts from `recall`, the `query` facts arm, `think` trajectories, hot memory, `delta` and `context_pack` hot
+facts, except a fact taken from a page it cannot read. Facts on `entity` and `context_pack` cards stay world-only for
+every remote caller, the owner included.
 
 Two grants relax privacy for callers that are not the owner, and both are operator decisions:
 `gbrain auth rescope --private-pages granted-sources` (private pages in the sources that grant names) and the
@@ -116,7 +118,7 @@ except the owner's, whose new pages stay shared (`POST /ingest` still refuses bo
 
 Each fact row has its own visibility. `remember` defaults to `world`, except into a private page or under an
 explicit private `facts.default_visibility`; extracted facts follow `facts.default_visibility` (private when unset)
-and are never wider than their page. Remote `recall` returns private facts to the owner only.
+and are never wider than their page. Remote fact reads return private facts to the owner only.
 
 ### The owner (`gbrain access owner`)
 
