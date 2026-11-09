@@ -115,7 +115,8 @@ function lockDownGaps(root: string): string[] {
 /**
  * Writes the clone-time lock-down (`LFS_OFF_CLONE_CONFIG`) into the repository's shared config (`--git-common-dir`, so a linked
  * worktree's repository gets it too), without running Git in the checkout, then reads back what Git uses there and throws when a
- * worktree-scoped or included setting still overrides a key. `progress` says how far it got: `started` before the first write,
+ * worktree-scoped or included setting still overrides a key. Each key's existing values are removed before its one value is
+ * written, so a key that held several ends with the clone-time value. `progress` says how far it got: `started` before the first write,
  * `written` once every key is in the file.
  */
 function lockDownCheckout(root: string, progress: { state: 'none' | 'started' | 'written' | 'done' }): void {
@@ -123,8 +124,12 @@ function lockDownCheckout(root: string, progress: { state: 'none' | 'started' | 
   if (!commonDir.ok) throw new Error(`Git could not locate the repository of ${root}.`);
   const file = join(resolve(root, commonDir.stdout.toString('utf8').replace(/\n$/, '')), 'config');
   progress.state = 'started';
-  for (const [key, value] of LOCK_DOWN)
-    execFileSync('git', ['config', '--file', file, '--replace-all', key, value], { cwd: dirname(file), env: hardenedGitEnvironment(), stdio: 'pipe', timeout: GIT_LIMITS.timeoutMs });
+  const options = { cwd: dirname(file), env: hardenedGitEnvironment(), stdio: 'pipe', timeout: GIT_LIMITS.timeoutMs } as const;
+  for (const [key, value] of LOCK_DOWN) {
+    try { execFileSync('git', ['config', '--file', file, '--unset-all', key], options); }
+    catch (error) { if ((error as { status?: number }).status !== 5) throw error; }
+    execFileSync('git', ['config', '--file', file, key, value], options);
+  }
   progress.state = 'written';
   const gaps = lockDownGaps(root);
   if (gaps.length) throw new Error(`Git in the checkout at ${root} still reads another value for ${gaps.join(', ')} (a worktree-scoped or included config overrides ${file}).`);
