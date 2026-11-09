@@ -16,7 +16,7 @@ import { parseTakesFence } from '../takes-fence.ts';
 import { screenFenceCtx, type ContentRefusal, type FenceScreen, type ImportScreenResult } from '../import-screen.ts';
 import type { ParsedMarkdown, ParseOpts } from '../markdown.ts';
 import { VERSION } from '../../version.ts';
-import { fenceBody } from '../page-body/page-shape.ts';
+import { bodyUnread, fenceBody } from '../page-body/page-shape.ts';
 import { fencesNormalizeEnabled } from './config.ts';
 import { fenceRefusal, scanCanonicalFences, targetFenceRefusal } from './refusal.ts';
 import { effectiveVisibility, folderRestricted } from '../search/private-visibility.ts';
@@ -83,10 +83,11 @@ export interface ImportFences {
  * withdrawal preservation and the content hash all see the normalized body.
  * Returns the coordinated refusal as the import's result, or the fields to report.
  */
-export async function applyImportFences(input: Omit<Parameters<typeof resolveImportFences>[0], 'screen' | 'existing'> & {
+export async function applyImportFences(input: Omit<Parameters<typeof resolveImportFences>[0], 'screen' | 'existing' | 'engine'> & { engine: BrainEngine;
   screen: ImportScreenResult; parsed: { compiled_truth: string; timeline: string; type: ParsedMarkdown['type']; frontmatter: ParsedMarkdown['frontmatter'] };
   existing: { id: number; compiled_truth: string; timeline?: string | null; deleted_at?: Date | null } | null;
 }): Promise<{ refused?: { slug: string; status: 'error'; chunks: 0; error: string; refusal: ContentRefusal; skip_reason: 'invalid_fence' }; fields: { fences_normalized?: FenceFix[]; fence_issues?: FenceIssueWire[] } }> {
+  if (input.remote && input.existing && !input.existing.deleted_at && bodyUnread(input.existing)) await (await import('../page-body/streamed-fences.ts')).assertNoHiddenFenceRows(input.engine, { id: Number(input.existing.id), slug: input.slug, source_id: input.sourceId });
   const existing = input.existing && input.existing.deleted_at == null ? { id: input.existing.id, ...fenceBody(input.existing) } : null;
   const fences = await resolveImportFences({ ...input, screen: (input.screen as { fences?: FenceScreen }).fences, existing });
   if (fences.refusal) return { refused: { slug: input.slug, status: 'error', chunks: 0, error: fences.refusal.message, refusal: fences.refusal, skip_reason: 'invalid_fence' }, fields: {} };
