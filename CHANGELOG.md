@@ -12,7 +12,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**Six search, takes, trajectory and open-loop answers that were quietly wrong now say what is true.** A keyword listing no longer drops its total just because the rows took a moment to load. Searching for a page by its handle finds that page even when the search also tries the entity's other names. Link and graph results stop hiding a page name that merely looks like an API key. A take that was true only for a stretch of time reaches `gbrain think` with its dates. A monthly revenue figure is no longer reported as a crash because it came after an annual one. And when the brain cannot read its list of sources, the `open_loops` answer says it does not know instead of calling your inbox clean.
+**Eight search, recall, takes, trajectory and open-loop answers that were quietly wrong or quietly costly now behave.** A keyword listing no longer drops its total just because the rows took a moment to load. Searching for a page by its handle finds that page even when the search also tries the entity's other names. Link and graph results stop hiding a page name that merely looks like an API key. A take that was true only for a stretch of time reaches `gbrain think` with its dates. A monthly revenue figure is no longer reported as a crash because it came after an annual one. And when the brain cannot read its list of sources, the `open_loops` answer says it does not know instead of calling your inbox clean. A process holding several embedded brains no longer throws out every brain's in-flight query embeddings when one engine closes, so the next identical query is not paid for again. And a Postgres role that can read `pages` but does not own it stops warning about planner statistics on every import.
 
 ### What you'd see
 
@@ -23,12 +23,20 @@ identifiers and attribution are available in the pre-removal Git revision
 | `get_links` to `districts/pa-<long name>` | `districts/<REDACTED:voyage>` | the slug |
 | `think` over a take held Sep to Jan | a claim with no dates | `since=… until=… source=…` |
 | `gbrain eval trajectory` with an annual then a monthly MRR | a 92% "regression" | nothing flagged |
+| repeating a query in brain B after brain A closed mid-embed | a second paid embedding call | the cached vector |
+| `gbrain import` as a non-owner role after the owner ran `ANALYZE` | "Projection planner statistics were not refreshed" every time | quiet; a large pass still warns once |
 | `open_loops` when the sources table cannot be read | "no google source", coverage complete | `no_google_sources: null`, coverage partial, a notice to retry |
 
 ### Things to watch
 
 - `takes_search` rows now carry `since_date`, `until_date` and `source`, the same fields `takes_list` already returns for the same takes.
 - A trajectory regression now needs two observations with the same unit and period at different dates. When two different values are reported for one date, that date is skipped and the dates on either side are compared. An observation with no unit or period only compares with others that also lack it.
+
+### Query embeddings and planner statistics
+
+A process that holds several embedded brains (an MCP host, an app that opens one engine per user) used to discard every query embedding still in flight anywhere in the process whenever any one engine closed, so the next identical query in a surviving brain went back to the provider and was paid for again. Each embed in flight now belongs to its own engine: closing one engine only stops that engine's embeds from being cached.
+
+On Postgres, when gbrain connects as a role that can read `pages` but does not own it (an app role next to an owner that runs maintenance), every `gbrain import`, sync and reindex printed `Projection planner statistics were not refreshed: database-owner maintenance is required`, even right after the owner ran `ANALYZE`, and `gbrain doctor` reported the projection statistic as absent. Postgres shows expression statistics only to the table owner, so gbrain read "hidden" as "missing". It now reads them as not inspectable: a small write pass stays quiet, and a pass large enough that the owner should analyze (50 + 10% of pages) still warns once.
 
 ### Itemized changes
 
@@ -38,7 +46,10 @@ identifiers and attribution are available in the pre-removal Git revision
 - `src/core/engine-sql/takes.ts`, `src/core/engine.ts` (`TakeHit`), `src/core/utils.ts`, `src/core/think/gather.ts`, `src/core/think/sanitize.ts`: both take searches select `since_date`, `until_date` and `source`; think renders `until=`, and all three attribute values, plus any holder outside the holder grammar, are neutralized and escaped like the claim. Takes SQL-text and export-surface goldens regenerated. Reported and first fixed by @calebhicks in #8546.
 - `src/core/trajectory.ts` (`comparablePairs`), `src/core/trajectory-format.ts`: regressions and the `(superseded prior)` annotation pair only same-metric, same-unit, same-period observations at a strictly later date, and a point with no finite date is left out instead of dropping the entity's whole trajectory block. Reported and first fixed by @calebhicks in #8547 and #8541.
 - `src/core/ops/loops.ts`, `src/core/error-registry.ts`, `src/core/notice-ledger.ts`: a failed sources read answers `no_google_sources: null`, `completeness: "partial"` and a `loops_source_read_failed` notice with no database error text; the digest says so. `skills/google-loops/SKILL.md` names the case. Reported and first fixed by @javieraldape in #8718.
+- `src/core/ai/query-embed-cache.ts`, `src/core/ai/gateway.ts`, `src/core/ai/engine-gateway.ts`: an engine's close (`dropQueryEmbeddingsTagged`) no longer bumps the process-wide generation. It marks that engine's gateway state `released`, and `embedQuery` skips the store when the state it started under was released, so only the closed engine's in-flight embeds are dropped. A `cache_namespace` engine keeps its in-flight embed for the reopened brain, and a full `clearQueryEmbedCache` still drops every one. Reported and first fixed by @javieraldape in #8639.
+- `src/core/search/projection-statistics.ts`: `can_inspect` applies `pg_stats_ext_exprs`'s own rule (`pg_has_role(relowner, 'USAGE')` outside row security), so a SELECT-only role reads the projection statistic as `uninspectable` instead of `uncollected`; `missingSearchStatistics` and doctor `planner_stats_stale` stop listing it as absent (doctor says the role cannot inspect it and adds `projection_statistics: "uninspectable"` to its details, instead of calling it fresh), and `statisticsStillCurrent` lets a pass below the threshold skip the refresh when the statistic is collected or not inspectable. Reported and first fixed by @Masashi-Ono0611 in #8630.
 - Tests: `test/search-keyword-paging.test.ts`, `test/search/keyword-handles.test.ts`, `test/search/keyword-handles-or-alternatives-8618.test.ts`, `test/search/output-redaction-link-slugs-8545.test.ts`, `test/takes-search-validity-8546.test.ts`, `test/trajectory.test.ts`, `test/trajectory-format.test.ts`, `test/loops-source-read-failure-8452.test.ts`.
+- Tests (query embeddings and planner statistics): `test/engine-gateway-state.test.ts` (closing engine A while engine B's query embed is in flight leaves B's vector cached, so repeating the query makes no provider call; an engine's own in-flight embed is still not cached after it closes); `test/engine-cache-namespace.test.ts` (a namespaced engine's in-flight embed is still there for the reopened brain); `test/projection-statistics.test.ts` (a SELECT-only role over owner-analyzed statistics: nothing missing, `cannot be inspected`, two small passes refresh nothing and print nothing, a large pass warns once); `test/e2e/planner-stats-postgres.test.ts` (doctor run as a SELECT-only role reports the projection statistic as uninspectable).
 
 ## [0.60.620.0] - 2026-11-09
 

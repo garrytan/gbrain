@@ -97,6 +97,8 @@ export interface GatewayState {
   noKeyNoticed: Set<string>;
   /** Recipes that rejected json_schema at call time, so their structured calls go straight to the text path. */
   structuredOutputRejected: Set<string>;
+  /** Set when the engine closed and its query embeddings were dropped: an embed it started stores nothing (gateway.ts embedQuery). */
+  released?: boolean;
 }
 
 /** A gateway state that has learned nothing yet. */
@@ -142,7 +144,9 @@ function queryCacheTag(settings: EngineSettings): string {
 export function releaseEngineGatewayState(engine: object): void {
   const settings = embeddedSettingsRecord(engine);
   const state = settings && states.get(settings);
-  if (state && !settings.cache_namespace) dropQueryEmbeddingsTagged(state.cacheTag);
+  if (!state || settings.cache_namespace) return;
+  dropQueryEmbeddingsTagged(state.cacheTag);
+  state.released = true;
 }
 
 /** Provider keys of a disconnected engine in scope, as env entries, so a call still in flight scrubs them from its error. */
