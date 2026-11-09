@@ -68,7 +68,7 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => { for (const brain of brains.values()) await brain.close(); }, 60_000);
 
-const jobCtx = (id: number, data: Record<string, unknown>): MinionJobContext => ({ id, name: 'ingest_capture', data, attempts_made: 0,
+const jobCtx = (id: number, data: Record<string, unknown>): MinionJobContext => ({ id, name: 'ingest_capture', data, attempts_made: 0, idempotency_key: null,
   signal: new AbortController().signal, deadlineAtMs: null, shutdownSignal: new AbortController().signal, updateProgress: async () => {},
   updateTokens: async () => {}, log: async () => {}, isActive: async () => true, readInbox: async () => [] });
 const jsonData = (data: unknown) => (typeof data === 'string' ? JSON.parse(data) : data) as Record<string, unknown>;

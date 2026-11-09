@@ -95,6 +95,7 @@ const ROWS: readonly Row[] = [
   ['facts', 'swept', 'fact', 'source_id entity_slug fact kind visibility notability context source source_session embedding source_markdown_slug claim_metric claim_unit claim_period event_type dimension value value_hash dim_status embedding_model embedded_text_hash write_principal_kind write_principal_id last_write_principal_kind last_write_principal_id attributed_to trust_tier write_origin source_window'],
   ['files', 'swept', 'page_files', 'source_id page_slug filename storage_path mime_type content_hash metadata'],
   ['gbrain_cycle_locks', 'out_of_scope', 'no_memory_text', 'id holder_host'],
+  ['ingest_applied_captures', 'out_of_scope', 'no_memory_text', 'idempotency_key source_id slug result'],
   ['ingest_log', 'out_of_scope', 'probed_reported', 'source_id source_type source_ref pages_updated summary writer_version', 'summary pages_updated'],
   ['link_edge_proposals', 'out_of_scope', 'probed_reported', 'source_id link_type evidence_hash status model generated_line detail', 'generated_line detail'],
   ['link_relationships', 'out_of_scope', 'no_memory_text', 'link_type scope source_id semantics status_now evidence_hash'],

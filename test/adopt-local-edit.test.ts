@@ -32,7 +32,7 @@ import { submitRememberMutation } from '../src/core/persistence/memory-mutations
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
-import { readLedger } from '../src/core/git/commit-ledger.ts';
+import { ledgerFiles, readLedger, recordIntent } from '../src/core/git/commit-ledger.ts';
 import { isTerminal, requestPrincipal, type WriteRequest } from '../src/core/persistence/model.ts';
 import { cancelWriteRequest } from '../src/core/persistence/control.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -623,3 +623,173 @@ test('#8755 p: a stale editor save matches an earlier revision whose edges hold 
   await expectRefused(f, page('Alpha one', EARLIER), timeline(f), 'add_timeline_entry');
   expect(published).toBe(0);
 }), 180_000);
+
+
+// ── #8824 / #8767 / #8826 ───────────────────────────────────────────────────
+
+/** The adoption commit of `rel`: the newest commit on its path whose subject is the adoption's. */
+const adoptCommit = (f: RefreshFixture, rel: string) => git(f.root, 'log', '--format=%H %s', '--', `alpha/${rel}`).split('\n')
+  .filter(line => line.includes(`gbrain: adopt local edit to ${rel}`)).map(line => line.split(' ')[0]!);
+const statementCancel = () => Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+/** Drops the commit-ledger lines naming `shas` (a busy ledger lock or a crash after `git commit`); intent lines stay. */
+function dropCommitLines(f: RefreshFixture, shas: string[]): number {
+  const ledger = ledgerFiles(join(f.root, '.git')).current;
+  const lines = readFileSync(ledger, 'utf8').split('\n');
+  const kept = lines.filter(line => { try { const r = JSON.parse(line); return !(r.e === 'commit' && shas.includes(r.sha)); } catch { return true; } });
+  writeFileSync(ledger, kept.join('\n'));
+  return lines.length - kept.length;
+}
+
+test('#8824: an adoption whose commit landed before its caller\'s claim ended is published by the consumer, naming that commit', () => each(async f => {
+  const { installFaultHook } = await import('../src/core/persistence/fault-points.ts');
+  const rel = 'people/alice-example.md', slug = 'people/alice-example';
+  commitFile(f.root, `alpha/${rel}`, PERSON, 'person page');
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  writeFileSync(join(f.root, 'alpha', rel), PERSON.replace('Alice is a person.', `Alice is a person.\n\n${LOCAL}`));
+  const blob = blobOf(f, rel), replaced = await revision(f, slug);
+  let fired = 0, cancelled: string | undefined;
+  installFaultHook(async (point, detail) => {
+    if (detail.operation !== 'put_page' || detail.sourceId !== f.alpha) return;
+    if (point === 'publication:before_commit' && fired++ === 0) throw statementCancel();
+    // The publication failed after the adoption's commit landed; the caller's claim ends before recovery requeues it.
+    if (point === 'persistence:recovery_interruption_charged' && cancelled === undefined) {
+      const [caller] = await f.engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE operation='add_timeline_entry' AND source_id=$1 AND state='running' ORDER BY sequence DESC LIMIT 1", [f.alpha]);
+      cancelled = (await cancelWriteRequest(f.engine, requestPrincipal(caller!), caller!.request_id))?.state;
+    }
+  });
+  try { await call(f, 'add_timeline_entry', { slug, date: '2026-11-06', summary: 'Entry whose claim ends.' }).catch(() => undefined); } finally { installFaultHook(undefined); }
+  expect(fired).toBeGreaterThan(0);
+  expect(cancelled).toBe('cancelled');
+  const landed = adoptCommit(f, rel);
+  expect(landed).toHaveLength(1);
+  const [adoption] = await adoptionRows(f);
+  const done = await settled(f.engine, adoption!);
+  expect(done).toMatchObject({ state: 'committed' });
+  expect(done.error_code).not.toBe('write_claim_lost');
+  expect((done.outcome as { persistence?: unknown }).persistence).toMatchObject({ git_state: 'committed', git_commit: landed[0], landed_before_row: true });
+  expect((done.outcome as { adopted_local_edit?: unknown }).adopted_local_edit).toEqual({ path: rel, blob, replaced_revision: replaced });
+  expect(adoptCommit(f, rel)).toEqual(landed);
+  expect((await f.engine.readPageSnapshot(slug, { sourceId: f.alpha }))!.page.compiled_truth).toContain(LOCAL);
+  const out = await call(f, 'remember', { fact: 'alice-example follows the adopted edit', entity: slug, provenance: 'test' });
+  expect(out.isError).toBe(false);
+  const remembered = await settled(f.engine, await lastRow(f, 'remember'));
+  expect(remembered.state).toBe('committed');
+  expect(file(f, rel)).toContain(LOCAL);
+  expect(file(f, rel)).toContain('alice-example follows the adopted edit');
+}), 180_000);
+
+test('#8767: a terminal failure after the adoption\'s commit leaves a receipt naming that commit', () => each(async f => {
+  const { installFaultHook } = await import('../src/core/persistence/fault-points.ts');
+  const { readTerminalFailures } = await import('../src/core/persistence/terminal-failures.ts');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  const blob = blobOf(f, 'one.md'), replaced = await revision(f, 'one');
+  let fired = 0;
+  installFaultHook((point, detail) => {
+    if (point === 'publication:before_commit' && detail.operation === 'put_page' && detail.sourceId === f.alpha && fired++ === 0) throw new Error('example terminal failure after the adoption commit');
+  });
+  try { await timeline(f)().catch(() => undefined); } finally { installFaultHook(undefined); }
+  expect(fired).toBe(1);
+  const landed = adoptCommit(f, 'one.md');
+  expect(landed).toHaveLength(1);
+  const note = `one.md: worktree blob ${blob} over revision ${replaced}`;
+  expect(git(f.root, 'log', '-1', '--format=%B', landed[0]!)).toContain(`gbrain-adopted: ${note}`);
+  const line = readLedger(join(f.root, '.git')).find(r => r.e === 'commit' && r.sha === landed[0]) as { adopted?: string[] } | undefined;
+  expect(line?.adopted).toEqual([note]);
+  const [adoption] = await adoptionRows(f);
+  const done = await settled(f.engine, adoption!);
+  expect(done.state).toBe('failed');
+  expect((done.outcome as { persistence?: unknown }).persistence).toEqual({ git_state: 'committed', git_commit: landed[0], landed_before_row: true });
+  const listing = await readTerminalFailures(f.engine, { sourceId: f.alpha, state: 'all' });
+  expect(listing.status).toBe('ok');
+  expect((listing as { rows?: Array<{ request_id: string }> }).rows?.map(row => row.request_id)).toContain(done.request_id);
+}), 180_000);
+
+test('#8824: an adoption whose commit line never reached the ledger is still published, proved by its intent line', () => each(async f => {
+  const { installFaultHook } = await import('../src/core/persistence/fault-points.ts');
+  const rel = 'people/alice-example.md', slug = 'people/alice-example';
+  commitFile(f.root, `alpha/${rel}`, PERSON, 'person page');
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  writeFileSync(join(f.root, 'alpha', rel), PERSON.replace('Alice is a person.', `Alice is a person.\n\n${LOCAL}`));
+  const blob = blobOf(f, rel), replaced = await revision(f, slug);
+  let fired = 0, dropped = 0, cancelled: string | undefined;
+  installFaultHook(async (point, detail) => {
+    if (detail.operation !== 'put_page' || detail.sourceId !== f.alpha) return;
+    if (point === 'publication:before_commit' && fired++ === 0) { dropped = dropCommitLines(f, adoptCommit(f, rel)); throw statementCancel(); }
+    if (point === 'persistence:recovery_interruption_charged' && cancelled === undefined) {
+      const [caller] = await f.engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE operation='add_timeline_entry' AND source_id=$1 AND state='running' ORDER BY sequence DESC LIMIT 1", [f.alpha]);
+      cancelled = (await cancelWriteRequest(f.engine, requestPrincipal(caller!), caller!.request_id))?.state;
+    }
+  });
+  try { await call(f, 'add_timeline_entry', { slug, date: '2026-11-06', summary: 'Entry whose claim ends.' }).catch(() => undefined); } finally { installFaultHook(undefined); }
+  expect(fired).toBeGreaterThan(0);
+  expect(dropped).toBe(1);
+  expect(cancelled).toBe('cancelled');
+  const landed = adoptCommit(f, rel);
+  expect(landed).toHaveLength(1);
+  expect(readLedger(join(f.root, '.git')).some(r => r.e === 'commit' && r.sha === landed[0])).toBe(false);
+  const [adoption] = await adoptionRows(f);
+  const done = await settled(f.engine, adoption!);
+  expect(done).toMatchObject({ state: 'committed' });
+  expect((done.outcome as { persistence?: unknown }).persistence).toMatchObject({ git_state: 'committed', git_commit: landed[0], landed_before_row: true });
+  expect((done.outcome as { adopted_local_edit?: unknown }).adopted_local_edit).toEqual({ path: rel, blob, replaced_revision: replaced });
+  expect((await f.engine.readPageSnapshot(slug, { sourceId: f.alpha }))!.page.compiled_truth).toContain(LOCAL);
+}), 180_000);
+
+test('#8824: an intent line proves no landed adoption without its commit, or on another parent, or with another message', () => each(async f => {
+  const { landedAdoptionCommit } = await import('../src/core/persistence/local-edit-adoption.ts');
+  const { localEditAdoptionCommit } = await import('../src/core/persistence/effect-model.ts');
+  const root = join(f.root, 'alpha'), target = join(root, 'one.md'), ledger = ledgerFiles(join(f.root, '.git')).current;
+  const parent = head(f), headBlob = git(f.root, 'rev-parse', 'HEAD:alpha/one.md');
+  writeFileSync(target, EDITED);
+  const blob = blobOf(f, 'one.md'), replaced = await revision(f, 'one');
+  const note = localEditAdoptionCommit('one.md', blob, replaced);
+  const message = `${note.subject}\n\n${note.trailers!.join('\n')}`;
+  const adopted = { path: 'one.md', blob, replaced_revision: replaced, head: headBlob };
+  const intent = (headBefore: string, text: string) => recordIntent(f.root, { writer: 'effect', head_before: headBefore, message: text });
+  intent(parent, message);
+  expect(await landedAdoptionCommit(root, target, adopted)).toBeNull();
+  writeFileSync(ledger, '');
+  intent(git(f.root, 'rev-parse', 'HEAD~1'), message);
+  intent(parent, `${note.subject}\n\nA message that differs.\n\n${note.trailers!.join('\n')}`);
+  git(f.root, 'commit', '-q', '-m', note.subject, '-m', note.trailers!.join('\n'), '--', 'alpha/one.md');
+  const landed = head(f);
+  expect(git(f.root, 'rev-parse', `${landed}^`)).toBe(parent);
+  expect(await landedAdoptionCommit(root, target, adopted)).toBeNull();
+  intent(parent, message);
+  expect(await landedAdoptionCommit(root, target, adopted)).toBe(landed);
+}), 180_000);
+
+test('#8826: a cherry-pick -n of another path leaves no marker, and neither the adoption nor its caller commits the picked path', () => each(async f => {
+  const branch = git(f.root, 'symbolic-ref', '--short', 'HEAD');
+  git(f.root, 'checkout', '-q', '-b', 'side-example');
+  const picked = commitFile(f.root, 'notes-example.md', 'Picked onto the index.\n', 'side example');
+  git(f.root, 'checkout', '-q', branch);
+  git(f.root, 'cherry-pick', '-n', picked);
+  expect(['CHERRY_PICK_HEAD', 'MERGE_HEAD', 'sequencer'].filter(marker => fs.existsSync(join(f.root, '.git', marker)))).toEqual([]);
+  expect(git(f.root, 'diff', '--cached', '--name-only')).toBe('notes-example.md');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  const blob = blobOf(f, 'one.md'), replaced = await revision(f, 'one');
+  const out = await call(f, 'add_timeline_entry', { slug: 'one', date: '2026-11-06', summary: 'Entry beside a cherry-pick -n.' });
+  expect(out.isError).toBe(false);
+  const done = await settled(f.engine, await lastRow(f, 'add_timeline_entry'));
+  await expectAdopted(f, done, 'one.md', 'one', blob, replaced, 'Entry beside a cherry-pick -n.');
+  const [caller] = git(f.root, 'log', '-1', '--format=%H', '--', 'alpha/one.md').split('\n');
+  expect(git(f.root, 'show', '--name-only', '--format=', caller!).split('\n').filter(Boolean)).toEqual(['alpha/one.md']);
+  expect(git(f.root, 'diff', '--cached', '--name-only')).toBe('notes-example.md');
+  expect(git(f.root, 'log', '--format=%H', '--', 'notes-example.md')).toBe('');
+}), 180_000);
+
+test('#8826: a bisect, or a squash merge stopped on a conflict in another path, keeps the refusal', () => each(async f => {
+  git(f.root, 'bisect', 'start');
+  try { await expectRefused(f, EDITED, timeline(f), 'add_timeline_entry'); } finally { git(f.root, 'bisect', 'reset'); }
+  const branch = git(f.root, 'symbolic-ref', '--short', 'HEAD');
+  git(f.root, 'checkout', '-q', '-b', 'squash-example');
+  commitFile(f.root, 'beta/one.md', page('Beta one', 'A side edit.'), 'side');
+  git(f.root, 'checkout', '-q', branch);
+  commitFile(f.root, 'beta/one.md', page('Beta one', 'A main edit.'), 'main');
+  expect(() => git(f.root, 'merge', '--squash', 'squash-example')).toThrow();
+  expect(fs.existsSync(join(f.root, '.git', 'MERGE_HEAD'))).toBe(false);
+  expect(git(f.root, 'ls-files', '-u', '--', 'alpha/one.md')).toBe('');
+  try { await expectRefused(f, EDITED, timeline(f), 'add_timeline_entry'); } finally { git(f.root, 'reset', '-q', '--hard'); }
+}), 180_000);
+

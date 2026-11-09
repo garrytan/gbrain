@@ -52,7 +52,7 @@ async function makeContext(lane: 'anthropic' | 'gateway' | 'oneshot'): Promise<M
   };
   const job = await queue.add('subagent', data, {}, { allowProtectedSubmit: true });
   return {
-    id: job.id, name: job.name, data, attempts_made: 0, deadlineAtMs: null,
+    id: job.id, name: job.name, data, attempts_made: 0, idempotency_key: null, deadlineAtMs: null,
     signal: new AbortController().signal, shutdownSignal: new AbortController().signal,
     async updateProgress() {}, async updateTokens() {}, async log() {},
     async isActive() { return true; }, async readInbox() { return []; },

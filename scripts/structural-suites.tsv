@@ -201,7 +201,7 @@ test/fix-wave-structural.test.ts	v0.41.8.0 #1340 — PGLite WASM init classifier
 test/fix-wave-structural.test.ts	v0.42.20.0 — background-work registry drains every sink before disconnect	9	readFileSync,source-surface-helper
 test/fix-wave-structural.test.ts	v0.42.20.0 — search-cache drained via the background-work registry	1	source-surface-helper
 test/fix-wave-structural.test.ts	v0.42.43.0 #2095 — volunteer-events sink + cycle purge wiring (structural pins)	2	readFileSync,source-surface-helper
-test/frontmatter-install-hook.test.ts	frontmatter install-hook (B13)	28	readFileSync
+test/frontmatter-install-hook.test.ts	frontmatter install-hook (B13)	30	readFileSync
 test/fts-cjk-boundary.test.ts	one copy of the DDL	2	readFileSync
 test/gbrain-owned-page-types.test.ts	#5881 gbrain-owned page types are declared by gbrain-base-v2	3	readFileSync
 test/get-page-federated-scope.test.ts	#2555 get_chunks federated scope	5	source-surface-helper

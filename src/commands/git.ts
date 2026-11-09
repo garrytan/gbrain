@@ -50,6 +50,8 @@ Flags:
   --keep-checkout     With --push-only: never move the checkout and skip its pre-push hook. The one
                       publish allowed in a managed canonical worktree (its Git effects' integrate_conflict
                       fix); gbrain sources refresh brings the merged remote files in afterwards.
+  --scan-secrets      With --push-only: before pushing, scan what the unpublished commits add (messages,
+                      added lines, merge resolutions) and refuse publish_secret_found on a finding.
   --pull              Bring remote commits in (fast-forward, or an in-memory merge); never pushes.
   --require-clean     Unattended rule: --pull skips when the checkout has any local edit;
                       a push never advances a checkout that has one, and never waits for
@@ -81,12 +83,12 @@ is installed.`;
 interface Parsed {
   sub?: string; path?: string; message?: string; branch?: string; expectRemote?: string; json: boolean; pushOnly: boolean; pull: boolean;
   requireClean: boolean; dryRun: boolean; help: boolean; keepCheckout: boolean; paths: string[]; resolve: string[]; base: string[];
-  pending: boolean; allowOutside: boolean; install: boolean; uninstall: boolean;
+  pending: boolean; allowOutside: boolean; install: boolean; uninstall: boolean; scanSecrets: boolean;
 }
 
 function parse(args: string[]): Parsed {
   const p: Parsed = { json: false, pushOnly: false, pull: false, requireClean: false, dryRun: false, help: false, keepCheckout: false, paths: [], resolve: [], base: [],
-    pending: false, allowOutside: false, install: false, uninstall: false };
+    pending: false, allowOutside: false, install: false, uninstall: false, scanSecrets: false };
   let rest = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -103,6 +105,7 @@ function parse(args: string[]): Parsed {
     else if (a === '--json') p.json = true;
     else if (a === '--push-only') p.pushOnly = true;
     else if (a === '--keep-checkout') p.keepCheckout = true;
+    else if (a === '--scan-secrets') p.scanSecrets = true;
     else if (a === '--pull') p.pull = true;
     else if (a === '--require-clean') p.requireClean = true;
     else if (a === '--dry-run') p.dryRun = true;
@@ -188,7 +191,7 @@ export async function runGit(args: string[]): Promise<number> {
     if (!p.path) assertSourceCheckout(repo);
     const cwd = p.path ? realpathSync(p.path) : process.cwd();
     if ((p.pull && p.pushOnly) || (p.pull && (p.message || p.paths.length || p.resolve.length || p.branch))
-      || (p.pushOnly && (p.message || p.paths.length)) || ((p.resolve.length || p.branch || p.expectRemote || p.keepCheckout) && !p.pushOnly)
+      || (p.pushOnly && (p.message || p.paths.length)) || ((p.resolve.length || p.branch || p.expectRemote || p.keepCheckout || p.scanSecrets) && !p.pushOnly)
       || (p.pending && (p.pull || p.pushOnly || p.paths.length)) || (p.allowOutside && p.pull) || (p.base.length && (p.pull || p.pushOnly || p.pending))) {
       throw opError('commit_paths_invalid', 'These flags do not combine.',
         'Use one mode: -m <msg> -- <paths> (commit + push), --pending [-m <msg>], --push-only [--keep-checkout] [--branch <b>] [--expect-remote <sha> --resolve ...], or --pull [--require-clean].');
@@ -228,6 +231,7 @@ export async function runGit(args: string[]): Promise<number> {
       ...(p.pending ? { pending: true } : {}),
       ...(p.allowOutside ? { allowOutsideSourceRoot: true } : {}),
       ...(p.keepCheckout ? { keepCheckout: true } : {}),
+      ...(p.scanSecrets ? { scanSecrets: true } : {}),
       ...(p.branch ? { branch: p.branch } : {}),
       ...(p.resolve.length ? { resolutions: parseResolutions(p.resolve) } : {}),
       ...(p.expectRemote ? { expectRemote: p.expectRemote } : {}),
@@ -242,8 +246,12 @@ export async function runGit(args: string[]): Promise<number> {
         : `nothing to commit; not pushed: ${repo} has no Git remote`);
       return 0;
     }
-    if (result.outcome === 'committed_local') {
-      emit(json, { ...result, repo }, `committed ${result.sha!.slice(0, 7)} on ${result.branch}; not pushed: this is a managed checkout, so the owner's next Git publish pushes it (or gbrain git commit-push --push-only --keep-checkout)`);
+    if (result.managed) {
+      const upstream = result.upstream;
+      const state = !upstream ? `${result.branch} has no upstream`
+        : result.unpublished === 0 ? `${result.branch} is on ${upstream} as last fetched`
+        : `${result.unpublished ?? 'an unknown number of'} commit(s) on ${result.branch} ${result.unpublished === null ? 'may not be' : 'are not'} on ${upstream} as last fetched; a managed checkout publishes through its owner (gbrain git commit-push --push-only --keep-checkout --path ${repo} publishes them)`;
+      emit(json, { ...result, repo }, `${result.committed ? `committed ${result.committed.slice(0, 7)} on ${result.branch}` : 'nothing to commit'}; not pushed: ${state}`);
       return 0;
     }
     appendPushLog(result.outcome === 'nothing_to_commit' || result.confirmed === 'remote' ? 'nothing' : result.integrated ? 'ok-after-merge' : 'ok',
