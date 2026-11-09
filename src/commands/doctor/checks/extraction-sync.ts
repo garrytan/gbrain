@@ -811,6 +811,7 @@ export async function computeExtractAtomsBacklogCheck(
  * `source_path`, pre-binding-era atoms by neither); their page liveness cannot
  * be resolved by slug, so they are reported as their own informational count
  * and never as drift, gone, or part of the WARN ratio.
+ * A source page a sync rename moved stays alive through its rename alias (#7462).
  */
 export async function computeAtomProvenanceDriftCheck(
   engine: BrainEngine,
@@ -867,10 +868,12 @@ export async function computeAtomProvenanceDriftCheck(
                 -- a slug-unbound atom is never drift: its hash is over a file,
                 -- not a page, so the page probe is meaningless (#4806)
                 (atom.ss IS NOT NULL AND h.sh IS NULL) AS drifted,
-                (s.slug IS NOT NULL) AS src_alive
+                (s.slug IS NOT NULL OR rs.slug IS NOT NULL) AS src_alive
            FROM atom
            LEFT JOIN live_hashes h ON h.source_id = atom.source_id AND h.sh = atom.sh
            LEFT JOIN live_slugs  s ON s.source_id = atom.source_id AND s.slug = atom.ss
+           LEFT JOIN slug_aliases r ON s.slug IS NULL AND r.source_id = atom.source_id AND r.alias_slug = atom.ss AND r.notes = 'rename'
+           LEFT JOIN live_slugs rs ON rs.source_id = r.source_id AND rs.slug = r.canonical_slug
        )
        SELECT count(*) FILTER (WHERE ss IS NOT NULL) AS total,
               count(*) FILTER (WHERE ss IS NULL) AS slug_unbound,
