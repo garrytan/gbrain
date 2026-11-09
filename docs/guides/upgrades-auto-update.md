@@ -74,7 +74,7 @@ PATH and the Bun the running process uses:
   commit; the swap fast-forwards to exactly that commit
   (`git merge --ff-only <sha>`), so a floor raised upstream after the check is
   not installed unchecked.
-- **global package (`bun`) and ClawHub:** `package.json` at the ref the
+- **global package (`bun`):** `package.json` at the ref the
   install's `github:` spec names (the default branch when unpinned) on
   raw.githubusercontent.com.
 - **compiled binary:** exempt; it carries its own Bun.
@@ -181,8 +181,8 @@ release commit, and the binary install downloads that release's asset.
 **Never downgrade.** A build at or above the stable release is offered
 nothing, so an install that ran ahead on alpha waits until stable passes it.
 The one exception is a build on the record's `known_bad` list: it is offered
-the current stable release even when that is older. A ClawHub install follows
-ClawHub's own line and is refused with the reinstall command.
+the current stable release even when that is older. An install whose method
+cannot be detected is refused with the reinstall command.
 
 **The update cache and snooze are per channel.** Each channel keeps its own
 answer (`update-check.<channel>.json`, which also records the evidence policy)

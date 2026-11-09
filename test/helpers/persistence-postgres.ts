@@ -20,8 +20,9 @@ export async function isolatedPersistencePostgres(databaseUrl:string, connection
  * One migrated template per test file: each clone (CREATE DATABASE ... TEMPLATE) is its own fresh brain,
  * so permanent receipt IDs never cross tests, without re-running every migration per test.
  */
-export async function persistencePostgresTemplate(databaseUrl:string, poolSize=4):Promise<{clone:()=>Promise<{engine:PostgresEngine;close:()=>Promise<void>}>;dispose:()=>Promise<void>}> {
+export async function persistencePostgresTemplate(databaseUrl:string, poolSize=4, prepare?:(engine:PostgresEngine)=>Promise<void>):Promise<{clone:()=>Promise<{engine:PostgresEngine;close:()=>Promise<void>}>;dispose:()=>Promise<void>}> {
   const template=await isolatedPersistencePostgres(databaseUrl);
+  try { await prepare?.(template.engine); } catch (error) { await template.close(); throw error; }
   await template.engine.disconnect();
   const name=new URL(template.databaseUrl).pathname.slice(1);
   const admin=postgres(databaseUrl,{max:1,prepare:false});

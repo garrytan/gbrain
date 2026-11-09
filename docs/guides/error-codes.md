@@ -840,6 +840,18 @@ More: [docs/guides/shared-checkout-git.md#source-roots](../../docs/guides/shared
 
 More: [docs/guides/shared-checkout-git.md#outcomes](../../docs/guides/shared-checkout-git.md#outcomes)
 
+### commit_paths_skipped
+
+<a id="commit_paths_skipped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain git commit-push (or the brain's committed commit-push helper) committed the other named paths but git left the listed ones out: a modified file flagged assume-unchanged or skip-worktree, or a file inside a nested Git repository. | git add stages nothing for those and still exits 0, so reporting success would leave the write uncommitted with nothing in any log. | Read each skipped path and its reason in the message. Clear an assume-unchanged or skip-worktree flag after the user agrees, one flag per call (git update-index --no-assume-unchanged -- <path>, git update-index --no-skip-worktree -- <path>), or move a file out of a nested repository, then rerun the same commit-push. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `assume_unchanged`, `skip_worktree`, `not_staged`.
+
+More: [docs/guides/shared-checkout-git.md#outcomes](../../docs/guides/shared-checkout-git.md#outcomes)
+
 ### commit_prestaged_paths
 
 <a id="commit_prestaged_paths"></a>
