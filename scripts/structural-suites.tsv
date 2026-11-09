@@ -333,7 +333,7 @@ test/scripts/full-ci-workflow.test.ts	full CI on pull requests	6	readFileSync
 test/scripts/full-ci-workflow.test.ts	master-push reuse of a passed full-suite run	2	readFileSync
 test/scripts/heavy-door-workflow.test.ts	heavy door supply chain and coverage gates	8	readFileSync
 test/scripts/merge-queue.test.ts	merge-queue --stack	1	readFileSync
-test/scripts/merge-queue.test.ts	merge-queue build	2	readFileSync
+test/scripts/merge-queue.test.ts	merge-queue build	3	readFileSync
 test/scripts/merge-queue.test.ts	merge-queue helpers	3	readFileSync
 test/scripts/native-lock-prebuilds.test.ts	native lock distribution integrity	2	readFileSync
 test/scripts/native-setup-toolchain.test.ts	scripts/native/setup-toolchain.ts download budget	4	readFileSync

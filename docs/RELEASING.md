@@ -186,6 +186,13 @@ merge coordinator runs it; owners never stamp a queued PR themselves.
   owner branch and run `refresh`; otherwise `rebuild <its queue PR> --drop <owner PR>`.
   A rebuild never force-pushes: the entries behind a dropped one already
   contain its commits, so they move to new branches.
+- **A stopped restamp.** When `build`, `refresh` or `rebuild` stops on a
+  restamp conflict, resolve it in the worktree the message names, run
+  `bun run release:restamp --continue` there, then rerun the command: it pushes
+  the resolved entry instead of restamping it again. A rebuild that stopped
+  after pushing some new branches leaves two branches claiming one version, and
+  every command refuses until you delete the newer-round branches it pushed
+  (closing their queue PRs) and rerun the rebuild.
 - **Behind a hand-built stack.** While no `mq/` entry is live, `--stack` lists
   the owner branches of a stack built by hand, in landing order. Each must
   contain the one before it and carry one PATCH more (branches already on

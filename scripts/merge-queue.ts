@@ -175,21 +175,25 @@ export function landingTree(git: Git, master: string, head: string): string | nu
   return r.code === 0 ? r.out.split('\n')[0]!.trim() : null;
 }
 
-/** Live entries: mq/ branches on origin not yet on master, in version order (one per version; the latest round wins). */
+/** Live entries: mq/ branches on origin not yet on master, each owner's newest round, in version order; two entries claiming one version refuse. */
 export function liveEntries(git: Git): Entry[] {
   const refs = git.run('for-each-ref', '--format=%(refname:strip=3) %(objectname)', `refs/remotes/origin/${BRANCH_PREFIX}`).split('\n').filter(Boolean);
-  const byVersion = new Map<string, Entry & { round: number }>();
+  const all: Array<Entry & { round: number }> = [];
   for (const line of refs) {
     const [branch, head] = line.split(' ') as [string, string];
     const p = parseBranch(branch);
     if (!p || git.ok('merge-base', '--is-ancestor', head, MASTER)) continue;
-    const prev = byVersion.get(p.version);
-    if (!prev || p.round > prev.round) byVersion.set(p.version, { branch, version: p.version, owner: p.owner, head, round: p.round });
+    all.push({ branch, version: p.version, owner: p.owner, head, round: p.round });
   }
   const newestRound = new Map<number, number>();
-  for (const e of byVersion.values()) newestRound.set(e.owner, Math.max(newestRound.get(e.owner) ?? 0, e.round));
-  return [...byVersion.values()].filter((e) => e.round === newestRound.get(e.owner))
-    .sort((a, b) => compareVersions(a.version, b.version)).map(({ round: _round, ...e }) => e);
+  for (const e of all) newestRound.set(e.owner, Math.max(newestRound.get(e.owner) ?? 0, e.round));
+  const byVersion = new Map<string, Entry & { round: number }>();
+  for (const e of all.filter((x) => x.round === newestRound.get(x.owner))) {
+    const prev = byVersion.get(e.version);
+    if (prev) stop(`${prev.branch} and ${e.branch} both claim version ${e.version}`, 'a build or rebuild stopped partway: delete the branch that should not be live (git push origin --delete <branch>) and close its queue PR, then rerun the build or rebuild');
+    byVersion.set(e.version, e);
+  }
+  return [...byVersion.values()].sort((a, b) => compareVersions(a.version, b.version)).map(({ round: _round, ...e }) => e);
 }
 
 interface Ctx { git: Git; gh: Gh; log: (l: string) => void; opts: Opts }
@@ -284,6 +288,16 @@ function worktreeFor(ctx: Ctx, branch: string): string {
   return join(root, branch.replace(/\//g, '-'));
 }
 
+/** A new worktree for branch at ref, with dependencies installed from its bun.lock (release:restamp runs generators there). */
+function addWorktree(ctx: Ctx, dir: string, branch: string, ref: string): void {
+  ctx.git.run('worktree', 'add', '--quiet', '-B', branch, dir, ref);
+  const install = ctx.opts.install ?? ((cwd: string) => {
+    const r = sh(['bun', 'install', '--frozen-lockfile'], cwd, ctx.opts.env);
+    if (r.code !== 0) stop(`bun install --frozen-lockfile failed in ${cwd}: ${r.err.trim().split('\n').pop()}`, `fix bun.lock on ${branch}`);
+  });
+  install(dir);
+}
+
 function restamp(ctx: Ctx, dir: string, base: string): void {
   const run = ctx.opts.restamp ?? ((cwd: string, argv: string[]) => releaseRestamp(argv, { cwd, env: ctx.opts.env, log: ctx.log }));
   if (run(dir, ['--base', base]) !== 0) {
@@ -304,17 +318,12 @@ function buildEntry(ctx: Ctx, p: Planned): number {
   const baseRef = p.base === 'master' ? MASTER : `refs/remotes/origin/${p.base}`;
   const baseHead = ctx.git.run('rev-parse', baseRef).trim();
   const dir = worktreeFor(ctx, p.branch);
-  if (!existsSync(dir)) {
-    ctx.git.run('worktree', 'add', '--quiet', '-B', p.branch, dir, ownerHead);
-    const install = ctx.opts.install ?? ((cwd: string) => {
-      const r = sh(['bun', 'install', '--frozen-lockfile'], cwd, ctx.opts.env);
-      if (r.code !== 0) stop(`bun install --frozen-lockfile failed in ${cwd}: ${r.err.trim().split('\n').pop()}`, 'fix bun.lock on the owner branch');
-    });
-    install(dir);
-  }
+  if (!existsSync(dir)) addWorktree(ctx, dir, p.branch, ownerHead);
   const wt = ctx.git.at(dir);
-  if (!existsSync(join(wt.run('rev-parse', '--path-format=absolute', '--git-dir').trim(), 'gbrain-restamp.json'))) wt.run('checkout', '--quiet', '--force', '-B', p.branch, ownerHead);
-  restamp(ctx, dir, p.base);
+  const stopped = existsSync(join(wt.run('rev-parse', '--path-format=absolute', '--git-dir').trim(), 'gbrain-restamp.json'));
+  const resumed = !stopped && wt.ok('merge-base', '--is-ancestor', ownerHead, 'HEAD') && wt.ok('merge-base', '--is-ancestor', baseHead, 'HEAD') && (wt.show('HEAD', 'VERSION') ?? '').trim() === p.version;
+  if (!stopped && !resumed) wt.run('checkout', '--quiet', '--force', '-B', p.branch, ownerHead);
+  if (!resumed) restamp(ctx, dir, p.base);
   const head = wt.run('rev-parse', 'HEAD').trim();
   const version = (wt.show(head, 'VERSION') ?? '').trim();
   if (version !== p.version) stop(`restamp gave ${p.branch} VERSION ${version}; the queue assigned ${p.version}`, 'the entry ahead moved; rebuild from it');
@@ -530,7 +539,7 @@ function cmdRefresh(ctx: Ctx, n: number): void {
   for (const e of entries.slice(find(entries, n).index)) {
     if (!e.meta) stop(`#${e.pr.number} has no queue note`, 'rebuild it');
     const dir = worktreeFor(ctx, e.branch);
-    if (!existsSync(dir)) ctx.git.run('worktree', 'add', '--quiet', '-B', e.branch, dir, e.head);
+    if (!existsSync(dir)) addWorktree(ctx, dir, e.branch, e.head);
     const wt = ctx.git.at(dir);
     if (existsSync(join(wt.run('rev-parse', '--path-format=absolute', '--git-dir').trim(), 'gbrain-restamp.json'))) stop(`a restamp is stopped in ${dir}`, 'finish it there (bun run release:restamp --continue), then rerun refresh');
     if (!wt.ok('merge-base', '--is-ancestor', e.head, 'HEAD')) wt.run('checkout', '--quiet', '-B', e.branch, e.head);

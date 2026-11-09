@@ -6,7 +6,9 @@
  * Fixtures: three stacked entries (versions, migrations, CHANGELOG sections and since: rows keep their owners'
  * versions), landing in order with the landing-tree check, refusals (out of order, red full-suite, outside master
  * commit, owner pushed after inclusion, contributor PR, CI self-attestation entry not last), a red master push that
- * freezes the queue, a pending post-merge wait, fix in place (refresh) and a rebuild that drops an entry.
+ * freezes the queue, a pending post-merge wait, fix in place (refresh), a rebuild that drops an entry, a build resumed
+ * after a resolved restamp conflict, a rebuild stopped partway (refused, not silently shortened) and refresh installing
+ * dependencies in a worktree it creates.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
@@ -195,11 +197,13 @@ const CHECKS = JSON.stringify([
   { name: 'schema migration order', argv: ['bun', ORDER] },
 ]);
 
-function mq(fx: Fx, argv: string[]): { code: number; out: string } {
+const RESTAMP_ENV = { ...process.env, GBRAIN_RESTAMP_STEPS: STEPS, GBRAIN_RESTAMP_CHECKS: CHECKS, GBRAIN_RESTAMP_DATE: '2026-11-09', GBRAIN_RESTAMP_PR_TITLE: 'fix(area): change' };
+
+function mq(fx: Fx, argv: string[], install: (cwd: string) => void = () => {}): { code: number; out: string } {
   const lines: string[] = [];
-  const env = { ...process.env, GBRAIN_RESTAMP_STEPS: STEPS, GBRAIN_RESTAMP_CHECKS: CHECKS, GBRAIN_RESTAMP_DATE: '2026-11-09', GBRAIN_RESTAMP_PR_TITLE: 'fix(area): change', GBRAIN_MQ_WORKTREES: join(fx.root, 'wt') };
+  const env = { ...RESTAMP_ENV, GBRAIN_MQ_WORKTREES: join(fx.root, 'wt') };
   const code = main(argv, {
-    cwd: fx.work, env, gh: fx.gh, log: (l) => lines.push(l), install: () => {}, sleep: () => {}, now: () => 0,
+    cwd: fx.work, env, gh: fx.gh, log: (l) => lines.push(l), install, sleep: () => {}, now: () => 0,
     restamp: (cwd, args) => releaseRestamp(args, { cwd, env, log: (l) => lines.push(l) }),
   });
   return { code, out: lines.join('\n') };
@@ -262,6 +266,27 @@ describe('merge-queue build', () => {
     expect(refused.out).toContain('pass --vm-gate-tree');
     expect(mq(fx, ['verify', String(last), '--vm-gate-tree', '0'.repeat(40)]).out).toContain('pass --vm-gate-tree');
     expect(mq(fx, ['verify', String(last), '--vm-gate-tree', tree]).code).toBe(0);
+  }, 180_000);
+
+  test('resumes an entry whose restamp stopped on a conflict once release:restamp --continue resolved it', () => {
+    const fx = fixture();
+    ownerBranch(fx, 1, 'src/a.ts');
+    ownerBranch(fx, 2, 'src/a.ts');
+    expect(mq(fx, ['build', '1']).code).toBe(0);
+    const stopped = mq(fx, ['build', '2']);
+    expect(stopped.code).toBe(1);
+    expect(stopped.out).toContain('release:restamp --base mq/0.1.1.0-pr1 stopped');
+    const dir = join(fx.root, 'wt', 'mq-0.1.2.0-pr2');
+    put(dir, { 'src/a.ts': 'export const CHANGED_1 = true;\nexport const CHANGED_2 = true;\n' });
+    git(dir, 'add', 'src/a.ts');
+    expect(releaseRestamp(['--continue'], { cwd: dir, env: RESTAMP_ENV, log: () => {} })).toBe(0);
+    const r = mq(fx, ['build', '2']);
+    expect(r.out).not.toContain('refused');
+    expect(r.code).toBe(0);
+    const q = 'mq/0.1.2.0-pr2';
+    expect(show(fx, q, 'src/a.ts')).toBe('export const CHANGED_1 = true;\nexport const CHANGED_2 = true;\n');
+    expect(show(fx, q, 'VERSION').trim()).toBe('0.1.2.0');
+    expect(isAncestor(fx.origin, 'mq/0.1.1.0-pr1', q)).toBe(true);
   }, 180_000);
 });
 
@@ -452,6 +477,31 @@ describe('merge-queue refresh and rebuild', () => {
     expect(old.map((n) => fx.gh.pr(n).state)).toEqual(['CLOSED', 'CLOSED']);
     expect(fx.gh.notes(old[0]!).at(-1)).toContain('dropped #2');
   }, 180_000);
+
+  test('a rebuild that stops partway refuses the queue instead of dropping the entry it displaced', () => {
+    const fx = fixture();
+    ownerBranch(fx, 1, 'src/a.ts');
+    ownerBranch(fx, 2, 'src/b.ts');
+    expect(mq(fx, ['build', '1', '2']).code).toBe(0);
+    ownerBranch(fx, 3, 'src/a.ts');
+    const stopped = mq(fx, ['rebuild', String(queuePr(fx, 'mq/0.1.1.0-pr1')), '--first', '3']);
+    expect(stopped.code).toBe(1);
+    expect(stopped.out).toContain('release:restamp --base mq/0.1.1.0-pr3-r2 stopped');
+    const status = mq(fx, ['status']);
+    expect(status.code).toBe(1);
+    expect(status.out).toContain('mq/0.1.1.0-pr1 and mq/0.1.1.0-pr3-r2 both claim version 0.1.1.0');
+  }, 180_000);
+
+  test('refresh installs dependencies in a worktree it has to create', () => {
+    const fx = fixture();
+    ownerBranch(fx, 1, 'src/a.ts');
+    expect(mq(fx, ['build', '1']).code).toBe(0);
+    rmSync(join(fx.root, 'wt'), { recursive: true, force: true });
+    git(fx.work, 'worktree', 'prune');
+    const installed: string[] = [];
+    expect(mq(fx, ['refresh', String(queuePr(fx, 'mq/0.1.1.0-pr1'))], (cwd) => installed.push(cwd)).code).toBe(0);
+    expect(installed).toEqual([join(fx.root, 'wt', 'mq-0.1.1.0-pr1')]);
+  }, 120_000);
 });
 
 describe('merge-queue helpers', () => {
