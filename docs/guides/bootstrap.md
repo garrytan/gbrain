@@ -16,7 +16,7 @@ Normative design docs: [AGENT_BOOTSTRAP_DESIGN.md](../designs/AGENT_BOOTSTRAP_DE
 (scope) and [AGENT_BOOTSTRAP_PLAN.md](../designs/AGENT_BOOTSTRAP_PLAN.md)
 (implementation). The paste block lives in the README; the runbook your agent
 follows is `BOOTSTRAP_FOR_AGENTS.md` at the repo root, fetched at the
-`latest-stable` ref.
+`stable` ref.
 
 ## What gets installed, exactly
 
@@ -134,8 +134,9 @@ a kill switch (`gbrain config set facts.extraction_enabled false`).
 
 ## Security posture
 
-- **Supply chain:** the paste block and install command pin the `latest-stable`
-  ref — a maintainer-controlled tag advanced only after a release fully publishes.
+- **Supply chain:** the paste block and install command pin the `stable`
+  ref — a maintainer-controlled tag moved only to a published release whose exact
+  tree passed the production soak.
   The runbook carries a version stamp; `bootstrap status` warns on skew. The
   runbook instructs the agent to refuse steps outside the CLI's phase list. bun
   installs via package manager or checksum-verified download.

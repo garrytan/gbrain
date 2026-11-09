@@ -5,7 +5,7 @@
  */
 import express, { type Express, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
-import { createHmac } from 'crypto';
+import { createHash, createHmac, randomBytes } from 'crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
@@ -15,6 +15,9 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { executeRawJsonb } from '../core/sql-query.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
+import { coalesceOnIdempotencyKey } from '../core/minions/idempotency-coalesce.ts';
+import { APPLICATION_AUTHORITY } from '../core/minions/submission-authority.ts';
+import type { MinionJob } from '../core/minions/types.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { ERROR_CATALOGUE } from '../core/error-catalogue.ts';
 import {
@@ -27,6 +30,8 @@ import type { ServeHttpContext } from './serve-http.ts';
 import { NO_SOURCES } from '../core/source-id.ts';
 import { noSourceGrantError } from '../core/ops/context.ts';
 import { renderAction } from '../core/agent-output.ts';
+import { assertWebhookWriterMayReplace } from '../core/minions/handlers/ingest-capture.ts';
+import { validateSlug } from '../core/utils.ts';
 
 /**
  * v0.46: normalize the per-event GitHub webhook payload shape into
@@ -101,14 +106,29 @@ export function selectGitHubItemSources<Row extends { local_path: string | null;
 ): { verified: Row[]; legacyMatched: boolean } {
   const verified: Row[] = [];
   let legacyMatched = false;
-  for (const row of rows) {
-    const cfg = (typeof row.config === 'string' ? JSON.parse(row.config) : (row.config ?? {})) as Record<string, unknown>;
-    if (cfg.kind === 'github' && githubKindCoversRepo(cfg, row.local_path, repo) && verify(cfg)) {
+  const candidates = rows.map((row) => ({
+    row,
+    cfg: (typeof row.config === 'string' ? JSON.parse(row.config) : (row.config ?? {})) as Record<string, unknown>,
+  }));
+  const isLegacy = (cfg: Record<string, unknown>) => !(cfg.kind === 'github' && cfg.webhook_secret != null);
+  // Every github-kind row is checked before scope decides anything, and the legacy rows share exactly one check (a
+  // throwaway one when the repo has none), so the work done for an unsigned request does not depend on whether or how
+  // many sources name the repository (#8768). The check goes to the lowest-id legacy row that has a secret, so a second
+  // legacy source with a different secret is not tried.
+  const legacyPick =
+    candidates.find((c) => isLegacy(c.cfg) && typeof c.cfg.webhook_secret === 'string' && c.cfg.webhook_secret !== '') ??
+    candidates.find((c) => isLegacy(c.cfg));
+  for (const candidate of candidates) {
+    const { row, cfg } = candidate;
+    if (isLegacy(cfg) && candidate !== legacyPick) continue;
+    const signed = verify(cfg);
+    if (cfg.kind === 'github' && githubKindCoversRepo(cfg, row.local_path, repo) && signed) {
       verified.push(row);
       continue;
     }
-    if (cfg.github_repo === repo && verify(cfg)) legacyMatched = true;
+    if (cfg.github_repo === repo && signed) legacyMatched = true;
   }
+  if (!legacyPick) verify({});
   return { verified, legacyMatched };
 }
 
@@ -165,11 +185,12 @@ async function handleGitHubItemEvent(
       `SELECT id, local_path, config FROM sources
          WHERE archived = false
            AND ((config->>'github_repo' = $1)
-             OR (config->>'kind' = 'github' AND config->>'webhook_secret' IS NOT NULL))`,
+             OR (config->>'kind' = 'github' AND config->>'webhook_secret' IS NOT NULL))
+         ORDER BY id`,
       [ref.repo],
     );
     const { verified, legacyMatched } = selectGitHubItemSources(rows, ref.repo, (cfg) =>
-      verifyWebhookSig(cfg, sigHeader, payload),
+      verifyWebhookSig(cfg.webhook_secret, sigHeader, payload),
     );
     if (verified.length > 1) {
       res.status(500).json({
@@ -226,14 +247,56 @@ async function handleGitHubItemEvent(
   }
 }
 
-function verifyWebhookSig(cfg: Record<string, unknown>, sigHeader: string, payload: Buffer): boolean {
-  const secret = cfg.webhook_secret;
-  if (typeof secret !== 'string' || secret === '') return false;
-  // Strict hex shape first: a malformed 64-char signature would make
-  // safeHexEqual throw (500 instead of 401).
-  if (!/^sha256=[0-9a-f]{64}$/.test(sigHeader)) return false;
-  const computedHex = createHmac('sha256', secret).update(payload).digest('hex');
-  return safeHexEqual(sigHeader.slice('sha256='.length), computedHex);
+/** Slugs near 2.7 KB exceed the page key index's row size, so a capture with one would be accepted and never land; 1024 bytes leaves a wide margin. */
+const MAX_INGEST_SLUG_BYTES = 1024;
+
+/** The normalized target slug for an X-Gbrain-Slug header; throws on an invalid slug or one over MAX_INGEST_SLUG_BYTES. */
+function ingestTargetSlug(callerSlug: string): string {
+  const bytes = Buffer.byteLength(callerSlug, 'utf8');
+  if (bytes > MAX_INGEST_SLUG_BYTES) throw new Error(`Invalid slug: X-Gbrain-Slug is ${bytes} bytes; the limit is ${MAX_INGEST_SLUG_BYTES}.`);
+  return validateSlug(callerSlug);
+}
+
+/**
+ * The job a server before v0.60.609.0 recorded for this capture, or null. Its key had no slug part
+ * (`ingest:webhook:<client>:<write source>:<content hash>`), and a job row keeps its key until `gbrain jobs prune`
+ * removes it, which nothing runs on a schedule, so such a row can answer a retry for as long as the brain keeps it. A
+ * retry that missed it queued a second job, and that job wrote the old body over any edit made since. The row answers
+ * only for the target slug it was queued with: the old key collapsed one body sent to two slugs, which is the dropped
+ * write #8769 fixed. A dead or cancelled row frees its key and answers nothing, as under the current key.
+ */
+async function legacyIngestJob(engine: BrainEngine, clientId: string, writeSourceId: string, contentHash: string, targetSlug: string): Promise<MinionJob | null> {
+  const key = `ingest:webhook:${clientId}:${writeSourceId}:${contentHash}`;
+  return engine.transaction(async (tx) => {
+    const [row] = await tx.executeRaw<{ data: unknown }>('SELECT data FROM minion_jobs WHERE idempotency_key = $1', [key]);
+    if (!row) return null;
+    const data = (typeof row.data === 'string' ? JSON.parse(row.data) : row.data) as { slug?: unknown } | null;
+    let rowSlug = '';
+    try {
+      if (typeof data?.slug === 'string' && data.slug) rowSlug = ingestTargetSlug(data.slug);
+    } catch {
+      return null;
+    }
+    return rowSlug === targetSlug ? coalesceOnIdempotencyKey(tx, key, APPLICATION_AUTHORITY) : null;
+  });
+}
+
+/** Stands in for a missing webhook secret; no source holds it and a match against it is still refused. */
+const THROWAWAY_WEBHOOK_KEY = randomBytes(32);
+
+/**
+ * True when `sigHeader` is GitHub's HMAC-SHA256 of `payload` under `secret`. The HMAC over the body is computed on
+ * every call, with a throwaway key when there is no source or no secret, so an unsigned caller cannot time responses
+ * to learn which repositories this brain syncs with a live secret (#8768). GitHub sends "sha256=<hex>": the prefix is
+ * stripped before safeHexEqual because Buffer.from('sha256=...', 'hex') truncates at the 's' and would make every
+ * signature "match", and the strict hex shape is checked first because a malformed 64-char signature makes
+ * safeHexEqual throw (500 instead of 401).
+ */
+function verifyWebhookSig(secret: unknown, sigHeader: string, payload: Buffer): boolean {
+  const keyed = typeof secret === 'string' && secret !== '';
+  const computedHex = createHmac('sha256', keyed ? secret : THROWAWAY_WEBHOOK_KEY).update(payload).digest('hex');
+  const matches = /^sha256=[0-9a-f]{64}$/.test(sigHeader) && safeHexEqual(sigHeader.slice('sha256='.length), computedHex);
+  return matches && keyed;
 }
 
 /** POST /ingest (OAuth write scope) and POST /webhooks/github (per-source HMAC), in registration order. */
@@ -468,29 +531,67 @@ async function handleIngest(
     return;
   }
 
+  // The job re-checks this writer at write time; refusing here answers the caller before anything is queued.
+  const writeSourceId = authInfo.sourceId ?? 'default';
+  const writer = authInfo.principal ? { principal: { kind: authInfo.principal.kind, id: authInfo.principal.id } } : undefined;
+  let targetSlug = '';
+  if (callerSlug) {
+    try {
+      targetSlug = ingestTargetSlug(callerSlug);
+    } catch (err) {
+      res.status(400).json({ error: 'invalid_slug', message: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+    try {
+      await assertWebhookWriterMayReplace(engine, writer, writeSourceId, callerSlug);
+    } catch (err) {
+      if (!(err instanceof OperationError)) throw err;
+      res.status(err.code === 'page_not_found' ? 404 : 403).json({ error: err.code, message: err.message });
+      return;
+    }
+  }
+
+  // The same body sent to two slugs is two writes, so the normalized target slug (empty when the job picks one) is part
+  // of the key next to the write source; dropping it handed the second caller the first job, a 202 with nothing
+  // written to its slug (#8769). The slug goes in hashed so the key stays well inside the key index's row size.
+  const slugKey = targetSlug ? createHash('sha256').update(targetSlug).digest('hex') : '';
+  const idempotencyKey = `ingest:webhook:${authInfo.clientId}:${writeSourceId}:${slugKey}:${contentHash}`;
   try {
-    const writeSourceId = authInfo.sourceId ?? 'default';
-    const job = await ingestQueue.add(
+    const legacyJob = await legacyIngestJob(engine, authInfo.clientId, writeSourceId, contentHash, targetSlug);
+    const job = legacyJob ?? await ingestQueue.add(
       'ingest_capture',
       {
         event,
         ...(callerSlug ? { slug: callerSlug } : {}),
         sourceId: writeSourceId,
+        ...(writer ? { writer } : {}),
       },
       {
-        // Idempotency: same content from the same client within the
-        // queue's lifetime is a single job. Different content gets
-        // different jobs. Daemon-side dedup catches the 24h window;
-        // the queue-level idempotency catches simultaneous retries.
+        // Idempotency: the same content from the same client to the same
+        // slug is one capture. While its job row exists the queue hands
+        // back that job; the ingest_capture handler applies a capture once
+        // per key for 90 days, even after `gbrain jobs prune` removed its
+        // job row (GST-1856), so a replay never rewrites the page. Different
+        // content gets different jobs. Daemon-side dedup catches the 24h window.
         // The effective write source is part of the key: a client rescoped
         // from source X to Y must land a NEW capture in Y rather than being
         // deduped against its old X-bound job.
-        idempotency_key: `ingest:webhook:${authInfo.clientId}:${writeSourceId}:${contentHash}`,
-        // Cap waiting jobs from a single client so a runaway integration
+        idempotency_key: idempotencyKey,
+        // Cap waiting captures per write source so a runaway integration
         // can't fill the queue.
         maxWaiting: 50,
       },
     );
+    // At the cap the queue hands back the newest waiting job instead of inserting this capture. Answering 202 with
+    // that job id would drop this body without a trace, so the caller is told to retry once the backlog drains.
+    if (!legacyJob && job.idempotency_key !== idempotencyKey) {
+      res.setHeader('Retry-After', '30');
+      res.status(429).json({
+        error: 'ingest_backlog_full',
+        message: 'POST /ingest has 50 captures waiting for this source; nothing was queued. Retry after the backlog drains.',
+      });
+      return;
+    }
 
     const latency = Date.now() - startTime;
     try {
@@ -662,15 +763,21 @@ function mountGitHubWebhook(app: Express, ctx: ServeHttpContext): void {
         res.status(500).json({ error: 'lookup_failed' });
         return;
       }
-      if (!source) {
-        res.status(404).json({ error: 'unknown_repo', repo: fullName });
-        return;
-      }
-
-      const cfg = (typeof source.config === 'string' ? JSON.parse(source.config) : source.config) as {
+      const cfg = (source ? (typeof source.config === 'string' ? JSON.parse(source.config) : source.config) : {}) as {
         webhook_secret?: string;
         tracked_branch?: string;
       };
+
+      // HMAC verify before anything about the repository is answered: an unknown repo, a source with no secret and a
+      // bad signature all get the same 401 after the same HMAC work, so an unsigned request cannot tell which
+      // repositories this brain syncs.
+      const secret = cfg.webhook_secret;
+      const verified = verifyWebhookSig(secret, sigHeader, payload);
+      if (!source || !verified) {
+        if (source && !(typeof secret === 'string' && secret)) console.error(`webhook: push for source ${source.id} refused: no webhook secret is set (run: gbrain sources webhook set ${source.id})`);
+        res.status(401).json({ error: 'signature_mismatch' });
+        return;
+      }
 
       // D5: ref must match the configured tracked branch (default 'main').
       const trackedBranch = cfg.tracked_branch ?? 'main';
@@ -682,30 +789,6 @@ function mountGitHubWebhook(app: Express, ctx: ServeHttpContext): void {
           received_ref: ref,
           tracked_branch: trackedBranch,
         });
-        return;
-      }
-
-      const secret = cfg.webhook_secret;
-      if (!secret || typeof secret !== 'string') {
-        res.status(401).json({ error: 'webhook_not_configured', message: 'Run: gbrain sources webhook set ' + source.id });
-        return;
-      }
-
-      // HMAC verify. GitHub sends "sha256=<hex>" — strip the prefix BEFORE
-      // safeHexEqual because Buffer.from('sha256=...', 'hex') silently
-      // truncates at the first non-hex char (the 's'), leaving both
-      // operands as 0-byte buffers and making every signature "match".
-      // Strict hex shape first: a malformed 64-char signature would make
-      // safeHexEqual throw (500 instead of 401), codex LOW.
-      const { createHmac } = await import('node:crypto');
-      const computedHex = createHmac('sha256', secret).update(payload).digest('hex');
-      const prefix = 'sha256=';
-      if (!/^sha256=[0-9a-f]{64}$/.test(sigHeader)) {
-        res.status(401).json({ error: 'signature_mismatch', message: 'expected sha256=<64 hex> signature' });
-        return;
-      }
-      if (!safeHexEqual(sigHeader.slice(prefix.length), computedHex)) {
-        res.status(401).json({ error: 'signature_mismatch' });
         return;
       }
 

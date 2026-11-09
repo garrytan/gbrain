@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { runAgentSetupCli } from '../src/core/agent-install/entry.ts';
 import { MINIMUM_BUN_VERSION } from '../src/core/runtime-version.ts';
 
-const HELPER_URL = 'https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/scripts/setup-in-agent.sh';
+const HELPER_URL = 'https://raw.githubusercontent.com/garrytan/gbrain/stable/scripts/setup-in-agent.sh';
 const temporaries: string[] = [];
 afterEach(() => { for (const dir of temporaries.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
