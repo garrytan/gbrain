@@ -770,6 +770,18 @@ function contactData(p: RawPerson): ContactData {
 }
 
 export class PeopleClient extends GoogleApiClient {
+  /** One 200-contact page; publish it before saving its continuation. */
+  async listConnectionPage(opts: { syncToken?: string | null; pageToken?: string | null; signal?: AbortSignal }): Promise<{
+    contacts: ContactData[]; nextPageToken: string | null; nextSyncToken: string | null;
+  }> {
+    const params = new URLSearchParams({ personFields: CONTACT_PERSON_FIELDS, pageSize: '200', requestSyncToken: 'true' });
+    if (opts.syncToken) params.set('syncToken', opts.syncToken);
+    if (opts.pageToken) params.set('pageToken', opts.pageToken);
+    const body = await this.fetchJSON<{ connections?: RawPerson[]; nextPageToken?: string; nextSyncToken?: string }>(
+      `${PEOPLE_BASE}/people/me/connections?${params}`, 'people', opts);
+    return { contacts: (body.connections ?? []).map(contactData), nextPageToken: body.nextPageToken || null, nextSyncToken: body.nextSyncToken || null };
+  }
+
   /** Incremental with syncToken; full otherwise. 410 → GoogleCursorExpiredError. */
   async listConnections(opts: {
     syncToken?: string | null;

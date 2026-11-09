@@ -819,7 +819,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
     if (activeServices.includes('contacts')) {
       const stop = startHeartbeat(progress, 'contacts sweep');
       try {
-        await sweepContacts(deps, people, state, activePack, summary, countedSlugs, holds);
+        await sweepContacts(deps, people, state, activePack, summary, countedSlugs, holds, () => saveGoogleState(deps, state));
         reached.add('contacts');
       } catch (e) {
         if (managed) rethrowConnectorWriteError(e);

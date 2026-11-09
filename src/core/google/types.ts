@@ -174,6 +174,8 @@ export interface GoogleSourceState {
    */
   calendar_horizon_ms?: number | null;
   contacts_sync_token: string | null;
+  /** Unfinished People walk: continuation and original request mask/token travel together. */
+  contacts_pending?: { page_token: string; sync_token: string | null; person_fields: string } | null;
   /**
    * #6324: the `personFields` mask `contacts_sync_token` was minted under
    * (`CONTACT_PERSON_FIELDS` at the time). Written together with the token
