@@ -9,7 +9,9 @@
  * - the job refuses the same body at write time, also when the readers were added after the 202;
  * - a body that drops the writer itself from readable_by is refused;
  * - a body that keeps the readers, and a page without readers, still import;
- * - on a managed brain (the door's put_page runs as a trusted local write) the job refuses the same way, PGLite and Postgres.
+ * - on a managed brain (the door's put_page runs as a trusted local write), PGLite and Postgres: a member-bound default-source
+ *   capture is refused (GST-2051), and on a granted source the job refuses a body that drops readable_by, also when the
+ *   readers land after its first check and before the snapshot its write binds to.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import express from 'express';
@@ -28,6 +30,9 @@ import { computeContentHash, type IngestionEvent } from '../src/core/ingestion/t
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
+import { claimWorktree } from '../src/core/persistence/ownership.ts';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 
 const SRC = 'source-a';
@@ -252,5 +257,46 @@ for (const backend of testBackends()) {
       expect(await readers0()).toEqual(['alice-example', 'bob-example']);
       expect((await stored0())?.compiled_truth).toContain('Original body.');
     }, { databaseUrl }), 120_000);
+
+    test('on a granted source the job refuses a body that drops readable_by, also when readers land before the write\'s snapshot; readers and text kept', () => managedBrain(async ({ engine, ctx }) => {
+      __resetPrivateVisibilityCacheForTests();
+      for (const id of ['alice-example', 'bob-example']) await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1) ON CONFLICT DO NOTHING', [id]);
+      const putA = (slug: string, content: string, expected_revision?: string) => submitPageMutation(ctx, { operation: 'put_page',
+        params: { slug, source_id: SRC, content, ...(expected_revision ? { expected_revision } : {}) } });
+      await putA(SHARED, page('Shared plan', READERS));
+      await putA(LATER, page('Restricted later'));
+      const bob = await mintLegacyToken(engine, { name: 'bob-managed-a', scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [SRC] });
+      await engine.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id = $1::uuid', [bob.id, 'bob-example']);
+      const job = (slug: string, content: string) => jobCtx({ event: webhookEvent(content), slug, sourceId: SRC,
+        writer: { principal: { kind: 'legacy_token', id: String(bob.id) } } });
+      const storedA = async (slug: string) => (await engine.readPageSnapshot(slug, { sourceId: SRC }))?.page;
+      const readersA = async (slug: string) => ((await storedA(slug))?.frontmatter as Record<string, unknown> | undefined)?.readable_by ?? null;
+
+      await expect(makeIngestCaptureHandler(engine)(job(SHARED, page('Shared plan', '', 'Replaced on a managed brain.')))).rejects.toMatchObject({ code: 'readable_by_invalid' });
+      expect(await readersA(SHARED)).toEqual(['alice-example', 'bob-example']);
+      expect((await storedA(SHARED))?.compiled_truth).toContain('Original body.');
+
+      let snapshots = 0;
+      let restricted = false;
+      const racing = new Proxy(engine, { get(target, key) {
+        if (key === 'readPageSnapshot') return async (...args: Parameters<typeof engine.readPageSnapshot>) => {
+          if (args[0] === LATER && ++snapshots === 2) {
+            restricted = true;
+            await putA(LATER, page('Restricted later', READERS), (await target.readPageSnapshot(LATER, { sourceId: SRC }))!.revision);
+          }
+          return target.readPageSnapshot(...args);
+        };
+        const value = Reflect.get(target, key) as unknown;
+        return typeof value === 'function' ? value.bind(target) : value;
+      } });
+      await expect(makeIngestCaptureHandler(racing)(job(LATER, page('Restricted later', '', 'Checked while open.')))).rejects.toMatchObject({ code: 'readable_by_invalid' });
+      expect(restricted).toBe(true);
+      expect(await readersA(LATER)).toEqual(['alice-example', 'bob-example']);
+      expect((await storedA(LATER))?.compiled_truth).toContain('Original body.');
+    }, { databaseUrl, setup: async ({ engine, root }) => {
+      const sourceRoot = join(root, '..', 'source-a'); mkdirSync(sourceRoot);
+      await engine.executeRaw('INSERT INTO sources (id, name, local_path) VALUES ($1, $1, $2) ON CONFLICT (id) DO NOTHING', [SRC, sourceRoot]);
+      await claimWorktree(engine, SRC, sourceRoot);
+    } }), 120_000);
   });
 }
