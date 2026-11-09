@@ -306,3 +306,16 @@ test('classic: a skipped path still fails commit_paths_skipped when the push fai
   expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');
   expect(readFileSync(join(f.home, '.gbrain', 'brain-push.log'), 'utf8')).toContain('LOCAL-ONLY, NEEDS ATTENTION: main');
 }, 60_000);
+
+test('helper without gbrain: a skipped path is still named when the push fails', () => {
+  const f = fixture('helper-pushfail', 'classic');
+  writeFileSync(join(f.brain, 'people', 'bob-example.md'), page('Bob', 'Second version.'));
+  const nested = nestedPage(f, 'carol-example.md');
+  git(f.brain, 'remote', 'set-url', 'origin', join(dir, 'missing.git'));
+  const r = helper(f, false, 'write pages', 'people/bob-example.md', nested);
+  expect(r.status).toBe(4);
+  expect(r.stderr).toContain('PUSH FAILED');
+  expect(r.stderr).toContain('commit_paths_skipped');
+  expect(r.stderr).toContain(nested);
+  expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');
+}, 60_000);
