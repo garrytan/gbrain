@@ -676,7 +676,17 @@ export function privateProvenanceFilterUnderPolicy(factAlias: string): string {
   const policy = member && ACCESS_ID_RE.test(member)
     ? `CASE WHEN pp.slug = '${MEMBER_PAGE_PREFIX}${member}' THEN ${readPolicyFragment('pp', access.identity, hide, access.satisfiedRuleIds)} ELSE ${readPolicyFragment('pp', [], hide)} END`
     : readPolicyFragment('pp', [], hide);
-  return `NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy}))`;
+  return `(NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy})) AND ${privateEntityFilterForCaller(factAlias)})`;
+}
+
+/**
+ * GBRA-431: a fact is never wider than the page it is about. Hide a fact whose entity page (`entity_slug`, looked up
+ * in the fact's own source; soft-deleted rows count, fail closed) the current caller cannot read under its own read
+ * policy, so a member its readers name keeps the fact and everyone else loses it. A fact with no entity page passes.
+ * Applied beside the provenance gate by both provenance fragments; it only ever narrows.
+ */
+export function privateEntityFilterForCaller(factAlias: string): string {
+  return `NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug = ${factAlias}.entity_slug AND NOT ${privatePagesFilterForCaller('entity_pp')})`;
 }
 
 /** True only inside a remote caller record whose read an operator relaxed (the env hatch or the config opt-out). */
@@ -685,8 +695,8 @@ export function callerRelaxesPrivacy(): boolean {
 }
 
 export function privateProvenanceFilterFragment(factAlias: string): string {
-  return `NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id ` +
-    `AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${privatePagesFilterFragment('pp')}))`;
+  return `(NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id ` +
+    `AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${privatePagesFilterFragment('pp')})) AND ${privateEntityFilterForCaller(factAlias)})`;
 }
 
 /**
