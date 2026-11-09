@@ -25,6 +25,7 @@ import type { BrainEngine } from '../engine.ts';
 import { embeddedKey, embeddedKeyInScope, unscopedWithOpenEmbeddedEngines } from '../engine-scope-store.ts';
 import { requestConfigRows } from '../config-snapshot.ts';
 import { isValidSourceId } from '../source-id.ts';
+import { asciiLower, asciiLowerSql, edgeTrimSql } from '../edge-whitespace.ts';
 import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
 import { validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
 
@@ -484,7 +485,8 @@ export type Visibility = 'private' | 'world';
 /**
  * Privacy aliases: keys a page may carry instead of `visibility` (the
  * bulk-ingestion template's `access`, a `confidentiality` field), with the
- * values that mean private. Matching is case-insensitive on the trimmed value.
+ * values that mean private. Matching is ASCII case-insensitive on the value trimmed of
+ * edge whitespace, the same on the TypeScript and SQL sides.
  * Everything derived from an aliased page (facts, chronicle events, timeline
  * rows, remember saves into it) is private. Remote page reads honor the aliases
  * too unless the operator sets `visibility.honor_aliases false`.
@@ -498,14 +500,14 @@ export const HONOR_ALIASES_KEY = 'visibility.honor_aliases';
 function hasPrivacyAlias(frontmatter: Record<string, unknown>): boolean {
   return Object.entries(PRIVACY_ALIASES).some(([key, values]) => {
     const value = frontmatter[key];
-    return typeof value === 'string' && values.includes(value.trim().toLowerCase());
+    return typeof value === 'string' && values.includes(asciiLower(value.trim()));
   });
 }
 
 /** SQL twin of hasPrivacyAlias on a page alias (a code-provided literal). */
 export function privacyAliasSql(alias: string): string {
   return `(${Object.entries(PRIVACY_ALIASES).map(([key, values]) =>
-    `COALESCE(lower(btrim(${alias}.frontmatter->>'${key}')) IN (${values.map(v => `'${v}'`).join(',')}), false)`).join(' OR ')})`;
+    `COALESCE(${asciiLowerSql(edgeTrimSql(`${alias}.frontmatter->>'${key}'`))} IN (${values.map(v => `'${v}'`).join(',')}), false)`).join(' OR ')})`;
 }
 
 /**
