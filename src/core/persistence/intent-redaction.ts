@@ -237,15 +237,15 @@ export async function findRequestsHoldingStagings(engine: Pick<BrainEngine, 'exe
 }
 
 /**
- * Cancel the queued requests of `targets` with `purged_content` inside the purge's transaction (the caller holds their
- * counter locks): the staged body they would publish is being purged. A request already claimed (running,
- * recovering, or with a recovery record) refuses the purge with retryable `purge_blocked_pending_recovery`.
+ * Cancel the unclaimed (queued, or deferred behind a refresh: GST-1602) requests of `targets` with `purged_content` inside the
+ * purge's transaction (the caller holds their counter locks): the staged body they would publish is being purged. A request
+ * already claimed (running, recovering, or with a recovery record) refuses the purge with retryable `purge_blocked_pending_recovery`.
  */
 export async function cancelRequestsHoldingStagings(tx: BrainEngine, targets: readonly IntentRedactionTarget[], exclude?: string): Promise<number> {
   const ids = targets.map(t => t.id).filter(id => id !== exclude);
   if (!ids.length) return 0;
   const rows = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
-  const blocked = rows.find(row => (!isTerminal(row) && row.state !== 'queued') || row.recovery);
+  const blocked = rows.find(row => (!isTerminal(row) && row.state !== 'queued' && row.state !== 'deferred') || row.recovery);
   if (blocked) {
     throw opError('purge_blocked_pending_recovery', 'A pending write is publishing a staged body that holds this content, so nothing was purged.',
       `Request ${blocked.request_id} (${blocked.operation} on ${blocked.slug}, state ${blocked.state}) is publishing the staged body. Wait for it to finish, then retry the purge with the same request id.`,

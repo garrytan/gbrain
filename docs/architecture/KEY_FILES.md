@@ -28,7 +28,7 @@ link it here; never raise the cap.
 | [Agent operator contract](key-files/agent-contract.md) | `agent-output.ts`, error registry + docs, notice ledger, `isCallable`, `--json` guard, contract scanner |
 | [Commands (1/6)](key-files/commands-1.md) | `agent-logs.ts` to `db-repair.ts` |
 | [Commands (2/6)](key-files/commands-2.md) | `src/commands/doctor.ts` and `src/commands/doctor/` |
-| [Commands (2/6, continued)](key-files/commands-2-continued.md) | `doctor/checks/routing-federation.ts`, `git-convergence.ts`, `keyword-plan.ts`, `dream-retriage.ts` to `embed.ts` |
+| [Commands (2/6, continued)](key-files/commands-2-continued.md) | More `doctor/checks/*`, `dream-retriage.ts` to `embed.ts`; [tiers and budgets](key-files/doctor-budgets.md) |
 | [Commands (3/6)](key-files/commands-3.md) | `src/commands/engine-status.ts` through `extract.ts` |
 | [Commands (3/6, continued)](key-files/commands-3-continued.md) | `src/commands/extract-timeline-db.ts` through `frontmatter-install-hook.ts` |
 | [Commands (4/6)](key-files/commands-4.md) | `src/commands/frontmatter.ts` through `pages-status.ts` |
