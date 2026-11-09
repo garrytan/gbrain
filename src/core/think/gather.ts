@@ -715,20 +715,20 @@ function graphEvidenceLine(p: SearchResult): string {
 
 export function takesHitToTakeForPrompt(h: TakeHit | Take): {
   page_slug: string; row_num: number; claim: string; kind: string;
-  holder: string; weight: number; source?: string | null; since_date?: string | null; trust_tier?: TrustTier; origin?: string;
+  holder: string; weight: number; source: string | null; since_date: string | null; until_date: string | null; trust_tier?: TrustTier; origin?: string;
 } {
-  // TakeHit + Take share the slug/claim/kind/holder/weight surface.
-  const t = h as Take & TakeHit;
+  // TakeHit + Take share the slug/claim/kind/holder/weight/source/validity-window surface.
   const lt = h as { trust_tier?: TrustTier; origin?: string };
   return {
-    page_slug: t.page_slug,
-    row_num: t.row_num,
-    claim: t.claim,
-    kind: t.kind,
-    holder: t.holder,
-    weight: t.weight,
-    source: 'source' in t ? (t as Take).source : null,
-    since_date: 'since_date' in t ? (t as Take).since_date : null,
+    page_slug: h.page_slug,
+    row_num: h.row_num,
+    claim: h.claim,
+    kind: h.kind,
+    holder: h.holder,
+    weight: h.weight,
+    source: h.source,
+    since_date: h.since_date,
+    until_date: h.until_date,
     ...(lt.trust_tier ? { trust_tier: lt.trust_tier, origin: lt.origin } : {}),
   };
 }

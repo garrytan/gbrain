@@ -4253,7 +4253,10 @@
           "page_slug: string",
           "row_num: number",
           "score: number",
+          "since_date: string | null",
+          "source: string | null",
           "take_id: number",
+          "until_date: string | null",
           "weight: number"
         ],
         "name": "TakeHit"
