@@ -10,6 +10,20 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.634.0] - 2026-11-09
+
+**Privacy, trust and access checks written in SQL now give the same answer as their TypeScript versions, so remote callers can't see a page through one path that another path hides.** Several rules are evaluated twice: once in TypeScript on a page already read, and once in SQL for list, search, backlink and scan queries. Postgres `btrim(x)` strips only spaces, while JavaScript's `trim()` strips every Unicode edge whitespace character, and Postgres `lower()` follows the database collation. A page marked private through the `access` or `confidentiality` field, with other whitespace around the value (a YAML block scalar keeps a trailing newline), was hidden from remote `get_page` but not from remote list and search. The fast page filters also skipped the full check for `type: question` pages and pages with a `pinned_question` key, which the full check treats as private.
+
+### Itemized changes
+
+- `src/core/edge-whitespace.ts` (new): `EDGE_WHITESPACE`, exactly what JavaScript's `trim()` strips, `edgeTrimSql()`, and an ASCII-only lowercase for TypeScript and SQL.
+- `src/core/search/private-visibility.ts`: `privacyAliasSql` trims and lowercases like the row-side check; `privatePagesFilterFragmentFast` and the caller fast path send question and `pinned_question` pages to the full check.
+- `src/core/persistence/git-declared.ts`: `privacyClass` runs the lineage check for question pages too, so a question page built from a private input stays out of Git, as remote reads already hide it.
+- `src/core/trust/channel.ts`, `src/core/trust/backfill.ts`: the frontmatter trust caps and the backfill's extractor marker trim the same whitespace as the TypeScript caps; the transcript-harness cap lowercases ASCII on both sides.
+- `src/core/access/caller.ts` (local stdio member binding), `src/core/persistence/unbound-pages.ts` (database-only pages), `src/core/persistence/effect-journal.ts` (the `auto_link` / `mcp.remote_auto_links` gate), `src/core/repair/private-labels.ts` and `src/core/persistence/local-edit-adoption.ts` use the shared set.
+- Behaviour: a page whose alias value carries such whitespace, or a question or pinned-question page without `visibility`, is now hidden from remote list, search and backlink reads as well as from `get_page`. Doctor and repair counts that use these checks may move to match. Nothing rewrites stored pages.
+- Tests: `test/edge-whitespace-twins.test.ts` (PGLite and Postgres) holds each SQL check equal to its TypeScript side on generated inputs and checks remote list and search; `test/trust-claim.test.ts`, `test/trust-backfill.test.ts` and `test/remote-graph-freshness.test.ts` gain edge-whitespace cases.
+
 ## [0.60.633.0] - 2026-11-09
 
 ### Added
