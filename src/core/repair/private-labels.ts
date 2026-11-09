@@ -153,7 +153,7 @@ async function planRestore(engine: BrainEngine, scope: RepairScope, selection: S
   const entries: Approved[] = [];
   for (const line of removals) {
     const page = byId.get(line.page_id);
-    if (!page || page.source_id !== line.source_id || page.slug !== line.slug) { counts.page_gone++; continue; }
+    if (!page || page.source_id !== line.source_id) { counts.page_gone++; continue; }
     if (Object.keys(line.removed!).some(key => Object.hasOwn(page.frontmatter ?? {}, key))) { counts.already_restored++; continue; }
     counts.restorable++;
     entries.push({ mode: 'restore', class: 'restore', brain_id: scope.brain_id, source_id: page.source_id, slug: page.slug, page_id: Number(page.id),
@@ -267,7 +267,12 @@ export const privateLabelsRepair: RepairHandler = {
         if (authority) await publishMaintenancePage(ctx.engine, authority, entry.slug, content, { expectedRevision: snapshot.revision, requestId, keepTrust: true });
         else if (!await importAtRevision(ctx.engine, entry, snapshot.revision, content, opts?.embed === true)) return changed;
       } catch (error) {
-        if (acceptedPendingReceipt(error)) item.ledger.record(line);
+        if (acceptedPendingReceipt(error)) {
+          try { item.ledger.record(line); } catch (ledgerError) {
+            ctx.logger?.warn?.(`private-labels: ${entry.source_id}:${entry.slug} was accepted but its ledger line was not saved (${ledgerError instanceof Error ? ledgerError.message : String(ledgerError)}). `
+              + `Keep these values to undo it by hand: ${describeLabels(entry.labels)}.`);
+          }
+        }
         throw error;
       }
       const outcome = entry.mode === 'clear' ? 'cleared' : 'restored';

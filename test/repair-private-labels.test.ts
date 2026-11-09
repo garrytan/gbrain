@@ -16,7 +16,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -349,6 +349,7 @@ describe('repair private-labels --class git-publish on a git-canonical source', 
     execFileSync('git', ['init', '-q'], { cwd: root });
     execFileSync('git', ['-c', 'user.name=example', '-c', 'user.email=example@example.com', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: root });
     await engine.executeRaw('INSERT INTO sources (id, name, local_path) VALUES ($1, $1, $2) ON CONFLICT (id) DO NOTHING', [source, root]);
+    await seed('notes/nofile', 'note', { topic: 'shared' }, source);
     await engine.executeRaw('UPDATE sources SET config = $2::jsonb WHERE id = $1', [source, JSON.stringify({ canonical: 'git' })]);
     await engine.setConfig('sync.write_through', 'true');
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
@@ -361,6 +362,9 @@ describe('repair private-labels --class git-publish on a git-canonical source', 
         await submitPageMutation(ctx, { operation: 'put_page', params: { slug: 'notes/g', request_id: crypto.randomUUID(),
           content: serializeMarkdown({ access: 'private', topic: 'kept' }, body('notes/g'), '', { type: 'note' as never, title: 'notes/g', tags: ['t1'] }) } });
         expect(existsSync(join(root, 'notes', 'g.md'))).toBe(false);
+        const missing = await submitPageMutation(ctx, { operation: 'put_page', params: { slug: 'notes/nofile', request_id: crypto.randomUUID(), expected_revision: (await row('notes/nofile', source)).revision,
+          content: serializeMarkdown({ topic: 'edited' }, body('notes/nofile'), '', { type: 'note' as never, title: 'notes/nofile', tags: ['t1'] }) } }).then(() => null, (error: unknown) => error);
+        expect(String((missing as Error | null)?.message)).toContain('The canonical file was removed outside coordinated publication.');
         const before = await row('notes/g', source);
         const preview = await json(['private-labels', '--source', source, '--class', 'git-publish']);
         expect(preview.listing).toEqual([{ item: source + ':notes/g', class: 'git-publish', detail: 'remove access: private' }]);
@@ -393,26 +397,29 @@ describe('repair private-labels --class git-publish on a git-canonical source', 
 });
 
 describe('repair private-labels when the undo ledger cannot record', () => {
-  test('a clear whose ledger line fails to save still reports the page as applied and names the removed values', async () => {
+  test('a clear whose ledger line fails to save still reports the page as applied and names the removed values; restore then says where to run', async () => {
     const source = 'source-h';
-    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [source]);
-    await seed('notes/h', 'note', { access: 'private' }, source);
-    const preview = await json(['private-labels', '--source', source]);
-    const ledger = preview.details.ledger as string;
-    chmodSync(ledger, 0o400);
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-private-labels-ledger-'));
+    mkdirSync(join(home, '.gbrain', 'repair'), { recursive: true });
+    writeFileSync(join(home, '.gbrain', 'repair', 'private-labels'), 'a file where the ledger directory belongs');
+    const runIn = async (argv: string[]) => {
+      const out = JSON.parse(await withEnv({ GBRAIN_HOME: home, GBRAIN_INTERACTIVE: '0', CI: '1' }, () => capture(() => runRepairCommand(engine, [...argv, '--json'])))).results[0];
+      _resetCliExitVerdictForTests();
+      return out;
+    };
     try {
-      const applied = await json(['private-labels', '--source', source, '--apply', '--expect', preview.preview_hash]);
+      await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [source]);
+      await seed('notes/h', 'note', { access: 'private' }, source);
+      const preview = await runIn(['private-labels', '--source', source]);
+      const applied = await runIn(['private-labels', '--source', source, '--apply', '--expect', preview.preview_hash]);
       expect(applied.failed).toEqual([]);
       expect(applied.applied).toBe(1);
       expect(JSON.stringify(applied)).toContain('access: private');
       expect('access' in (await row('notes/h', source)).frontmatter).toBe(false);
-    } finally { chmodSync(ledger, 0o600); }
-  });
-
-  test('a restore preview with no ledger line for this brain says where restore has to run', async () => {
-    const preview = await json(['private-labels', '--source', 'source-h', '--class', 'restore']);
-    expect(preview.listing ?? []).toEqual([]);
-    expect(preview.warnings.some((w: string) => w.includes('has no line for brain') && w.includes(preview.details.ledger))).toBe(true);
+      const restore = await runIn(['private-labels', '--source', source, '--class', 'restore']);
+      expect(restore.listing ?? []).toEqual([]);
+      expect(restore.warnings.some((w: string) => w.includes('has no line for brain') && w.includes(restore.details.ledger))).toBe(true);
+    } finally { rmSync(home, { recursive: true, force: true }); }
   });
 });
 
