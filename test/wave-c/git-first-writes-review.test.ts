@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { operations } from '../../src/core/operations.ts';
 import { runPersistenceEffects } from '../../src/core/persistence/effects.ts';
-import { _resetGitFirstGateForTests, _resetIndexSplitPageConsumerForTests, registerIndexSplitPageConsumer } from '../../src/core/persistence/git-first-gate.ts';
+import { _resetGitFirstGateForTests, _resetIndexSplitPageConsumerForTests, indexSplitPageConsumer, registerIndexSplitPageConsumer } from '../../src/core/persistence/git-first-gate.ts';
 import { localHostId } from '../../src/core/persistence/identity.ts';
 import { PAGE_MAX_BYTES } from '../../src/core/page-size-policy.ts';
 import { durableGitRepo, git } from '../helpers/git-publication.ts';
@@ -148,8 +148,19 @@ for (const backend of testBackends()) describe(`[${backend}] git-first writes af
       await withTrustBackfill(tx, () => tx.executeRaw("UPDATE pages SET trust_tier = 'operator_curated' WHERE source_id = 'default' AND slug = $1", [slug]));
     }, TEST_WRITE_ATTRIBUTION));
     const revision = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!.revision;
-    expect((await write(engine, ctx, slug, pageBody(2 * MiB, 'MARKERAGENTREWRITE'), 'put', { expectedRevision: revision })).state).toBe('indexing');
+    // The index step waits for the release: the resident owner would otherwise run it inside the write's wait window and
+    // flip the request to committed before the receipt is read.
+    const indexer = indexSplitPageConsumer()!;
+    let release!: () => void;
+    const released = new Promise<void>(resolve => { release = resolve; });
+    registerIndexSplitPageConsumer({ run: async (...args) => { await released; return indexer.run(...args); } });
+    let rewrite: Awaited<ReturnType<typeof write>>;
+    try {
+      rewrite = await write(engine, ctx, slug, pageBody(2 * MiB, 'MARKERAGENTREWRITE'), 'put', { expectedRevision: revision });
+      expect(rewrite.state).toBe('indexing');
+    } finally { release(); }
     await settle(engine, slug);
+    expect((await engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE id = $1::uuid', [rewrite.id]))[0]?.state).toBe('committed');
     const [page] = await engine.executeRaw<{ trust_tier: string }>("SELECT trust_tier FROM pages WHERE source_id = 'default' AND slug = $1", [slug]);
     expect(page?.trust_tier).toBe('agent_written');
     const proposals = await listTrustProposals(engine, { sourceId: 'default', action: 'lower_page' });
