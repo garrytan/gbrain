@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { operationsByName } from '../src/core/operations.ts';
-import { parseLinksFence, readPageLinksFence, renderLinksFence } from '../src/core/links-fence.ts';
+import { linksFenceRowProblem, parseLinksFence, readPageLinksFence, renderLinksFence } from '../src/core/links-fence.ts';
 import { durableGitRepo } from './helpers/git-publication.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -28,7 +28,9 @@ const COMPANY = (title: string) => `---\ntype: company\ntitle: ${title}\n---\n\n
 const ACME = { to: 'companies/acme-example', type: 'works_at', source: 'manual', validFrom: '2025-03-01', context: 'met at a conference' };
 const BETA = { to: 'companies/beta-example', type: 'advises', source: 'manual', context: 'board seat' };
 const GAMMA = { to: 'companies/gamma-example', type: 'invested_in', source: 'manual', context: 'seed round' };
-const SECTION = (rows: Array<typeof ACME | typeof BETA>) => `## Links\n\n${renderLinksFence(rows)}\n`;
+const ACME_PAST = { to: ACME.to, type: 'works_at', source: 'manual', validFrom: '2020-01-01', validUntil: '2021-01-01', context: 'first stint' };
+const ACME_AGAIN = { to: ACME.to, type: 'works_at', source: 'crm-import', validFrom: '2022-01-01', context: 'second stint' };
+const SECTION = (rows: Array<typeof ACME | typeof BETA | typeof ACME_PAST>) => `## Links\n\n${renderLinksFence(rows)}\n`;
 
 const op = (ctx: OperationContext, name: string, params: Record<string, unknown>) =>
   operationsByName[name]!.handler(ctx, { request_id: randomUUID(), ...params }) as Promise<Record<string, unknown>>;
@@ -82,6 +84,25 @@ for (const backend of testBackends()) {
         expect(await transitions(engine)).toEqual([{ to: ACME.to, type: ACME.type, kind: 'start', on: ACME.validFrom }]);
         expect(await fenceRows(engine)).toEqual([ACME, BETA]);
         await fileHolds(engine, root, [ACME.to, BETA.to]);
+      }, opts), 180_000);
+
+      test('two kept rows to the same page and type with different sources and dates: add_link succeeds and every dated statement survives', () => managedBrain(async ({ engine, ctx, root }) => {
+        const bySource = <T extends { source: string }>(rows: T[]) => [...rows].sort((a, b) => a.source.localeCompare(b.source));
+        const byDate = <T extends { kind: string; on: string }>(rows: T[]) => [...rows].sort((a, b) => `${a.kind}${a.on}`.localeCompare(`${b.kind}${b.on}`));
+        await seed(ctx);
+        await put(ctx, ALICE, PERSON(`Alice v1.\n\n${SECTION([ACME_PAST, ACME_AGAIN])}`));
+        const stated = byDate(await transitions(engine));
+        expect(stated).toEqual([{ to: ACME.to, type: 'works_at', kind: 'end', on: '2021-01-01' },
+          { to: ACME.to, type: 'works_at', kind: 'start', on: '2020-01-01' }, { to: ACME.to, type: 'works_at', kind: 'start', on: '2022-01-01' }]);
+        await put(ctx, ALICE, PERSON('Alice v2, rewritten by an agent without the links section.\n'));
+        await addLink(ctx, BETA);
+        await op(ctx, 'add_tag', { slug: ALICE, tag: 'example' });
+        expect(bySource(await edges(engine))).toEqual(bySource([edgeOf(ACME_PAST), edgeOf(ACME_AGAIN), edgeOf(BETA)]));
+        expect(byDate(await transitions(engine))).toEqual(stated);
+        const rows = await fenceRows(engine);
+        expect(rows.map(linksFenceRowProblem)).toEqual([null, null, null]);
+        expect(rows.flatMap(row => row.to === ACME.to ? [row.validFrom, row.validUntil] : []).filter(Boolean).sort()).toEqual(['2020-01-01', '2021-01-01', '2022-01-01']);
+        await fileHolds(engine, root, [ACME.to, ACME.to, BETA.to]);
       }, opts), 180_000);
 
       test('a link removed with remove_link while the section is gone stays removed after a later add_link', () => managedBrain(async ({ engine, ctx, root }) => {

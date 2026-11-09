@@ -22,21 +22,38 @@ const DATABASE_ONLY = `l.origin_field IS DISTINCT FROM '${LINKS_FENCE_ORIGIN_FIE
 const FENCED = `l.origin_field='${LINKS_FENCE_ORIGIN_FIELD}' AND l.origin_page_id=$1`;
 
 /**
- * The edges a links fence of page `pageId` projected that are still stored, as fence rows with their manual dates. A
+ * The edges a links fence of page `pageId` projected that are still stored, as fence rows carrying their manual dates. A
  * rewrite that drops the page's links section leaves exactly these (an absent fence retires nothing); a link the user
  * withdrew (remove_link, an empty section, a row deleted from the section) has no edge any more and is not among them.
+ * A manual dated statement belongs to the relationship (to, type), not to one fence row, so the rows that share a
+ * relationship share its statements: each start is paired with an end on or after it, and the pairs go to those rows in
+ * source order. Every statement is rendered back, so the new section projects the same dates, and no row ends before it
+ * starts, which would refuse the write.
  */
 async function keptLinksFenceRows(engine: BrainEngine, pageId: number): Promise<LinksFenceRow[]> {
-  const rows = await engine.executeRaw<{ to: string; type: string; source: string; context: string | null; valid_from: string | null; valid_until: string | null }>(
-    `SELECT t.slug AS to, l.link_type AS type, l.link_source AS source, l.context,
-        (SELECT max(lt.occurred_on)::text FROM link_transitions lt WHERE lt.origin_page_id=l.from_page_id AND lt.from_page_id=l.from_page_id
-          AND lt.to_page_id=l.to_page_id AND lt.link_type=l.link_type AND lt.producer='manual' AND lt.kind='start') AS valid_from,
-        (SELECT max(lt.occurred_on)::text FROM link_transitions lt WHERE lt.origin_page_id=l.from_page_id AND lt.from_page_id=l.from_page_id
-          AND lt.to_page_id=l.to_page_id AND lt.link_type=l.link_type AND lt.producer='manual' AND lt.kind='end') AS valid_until
-       FROM links l JOIN pages t ON t.id=l.to_page_id
-      WHERE l.from_page_id=$1 AND l.origin_page_id=$1 AND l.origin_field=$2`, [pageId, LINKS_FENCE_ORIGIN_FIELD]);
-  return rows.map(row => ({ to: row.to, type: row.type, source: row.source, context: row.context ?? '',
-    ...(row.valid_from ? { validFrom: row.valid_from } : {}), ...(row.valid_until ? { validUntil: row.valid_until } : {}) }));
+  const [edges, statements] = await Promise.all([
+    engine.executeRaw<{ to_page_id: number; to: string; type: string; source: string; context: string | null }>(
+      `SELECT l.to_page_id, t.slug AS to, l.link_type AS type, l.link_source AS source, l.context FROM links l JOIN pages t ON t.id=l.to_page_id
+        WHERE l.from_page_id=$1 AND l.origin_page_id=$1 AND l.origin_field=$2 ORDER BY t.slug, l.link_type, l.link_source`, [pageId, LINKS_FENCE_ORIGIN_FIELD]),
+    engine.executeRaw<{ to_page_id: number; type: string; kind: string; on: string }>(
+      `SELECT DISTINCT to_page_id, link_type AS type, kind, occurred_on::text AS on FROM link_transitions
+        WHERE origin_page_id=$1 AND from_page_id=$1 AND producer='manual' ORDER BY 4`, [pageId]),
+  ]);
+  type Dates = { validFrom?: string; validUntil?: string };
+  const key = (toPageId: number, type: string) => `${Number(toPageId)}\u0000${type}`;
+  const dates = new Map<string, Dates[]>();
+  for (const relationship of new Set(edges.map(edge => key(edge.to_page_id, edge.type)))) {
+    const starts = statements.filter(s => key(s.to_page_id, s.type) === relationship && s.kind === 'start').map(s => s.on);
+    const pairs: Dates[] = [];
+    for (const end of statements.filter(s => key(s.to_page_id, s.type) === relationship && s.kind === 'end').map(s => s.on)) {
+      const at = starts.findLastIndex(start => start <= end);
+      pairs.push({ ...(at === -1 ? {} : { validFrom: starts.splice(at, 1)[0] }), validUntil: end });
+    }
+    dates.set(relationship, [...pairs, ...starts.map((validFrom): Dates => ({ validFrom }))]
+      .sort((a, b) => (a.validFrom ?? a.validUntil!).localeCompare(b.validFrom ?? b.validUntil!)));
+  }
+  return edges.map(edge => ({ to: edge.to, type: edge.type, source: edge.source, context: edge.context ?? '',
+    ...(dates.get(key(edge.to_page_id, edge.type))!.shift() ?? {}) }));
 }
 
 /**
