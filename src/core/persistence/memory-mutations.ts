@@ -190,7 +190,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   registerMutationPreparer('remember', prepareMemoryMutation);
   const { visibility: _defaulted, ...withoutDefault } = params;
   const sub = await submission(ctx, 'remember', params, opts.visibilityDefaulted ? withoutDefault : params);
-  if (sub.prior) { const prior = sub.prior; const settled = await waitForWrite(ctx.engine, prior, ctx.config, waitMs ?? ctx.writeWaitMs); return throwIfHeld(withRememberTarget(prior, () => writeResponse(settled))); }
+  if (sub.prior) { const prior = sub.prior; const settled = await waitForWrite(ctx.engine, prior, ctx.config, waitMs ?? ctx.writeWaitMs); return rememberLanded(settled, throwIfHeld(withRememberTarget(prior, () => writeResponse(settled)))); }
   const { p, sourceId, principal, callerIntent, requestId, clientRequestId } = sub;
   const [source] = await ctx.engine.executeRaw<RememberSource>(
     "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
@@ -201,8 +201,10 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const resolved = entity ? await resolveRememberEntity(ctx, sourceId, entity) : null;
   // GST-359 C2: a remote member's fact is private, on its member page, and never inferred onto another page.
   // GST-1113: an attested memory_write that named a scope source saves world facts on that source's scope page instead.
+  // GST-2243: share: true saves a member's fact as anyone else's, on the subject's page for every reader of the source.
   const scopePage = perCallWriteSource(ctx, sourceId);
-  const memberPage = scopePage ? SCOPE_PAGE_SLUG : memberFactPage(ctx);
+  const ownPage = scopePage ? null : memberFactPage(ctx);
+  const memberPage = scopePage ? SCOPE_PAGE_SLUG : p.share === true ? null : ownPage;
   const call: RememberCall = memberPage ? { p: { ...p, visibility: scopePage ? 'world' : 'private', infer_entity: false }, visibilityDefaulted: false }
     : { p, visibilityDefaulted: opts.visibilityDefaulted === true };
   const inference = entity === null && !memberPage ? await inferRememberTarget(ctx, sourceId, source, call) : null;
@@ -236,7 +238,13 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const written = await waitForWrite(ctx.engine, row, ctx.config, waitMs ?? ctx.writeWaitMs);
   const response = throwIfHeld(withRememberTarget(row, () => writeResponse(written)));
   emitFenceNotice(ctx, response, row.slug);
-  return response;
+  return rememberLanded(written, response);
+}
+
+/** GST-2243: every remember reply names the page the fact went to and who can recall it. */
+function rememberLanded<T>(row: WriteRequest, response: T): T {
+  const visibility = (row.intent as { visibility?: unknown } | null)?.visibility;
+  return { ...response, page: row.slug, ...(visibility === 'world' || visibility === 'private' ? { visibility } : {}) };
 }
 
 /**
