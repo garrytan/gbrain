@@ -15,6 +15,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { brainFirstTurnRule, renderBrainFirstTurnRule, type BrainFirstAccess } from '../src/core/setup/brain-first.ts';
 import { runHook } from '../src/commands/hook.ts';
 import { hermesTurnHookCommand, removeHermesTurnHook, syncHermesTurnHook } from '../src/core/setup/hermes-turn-hook.ts';
+import { inspectTurnHook } from '../src/core/setup/turn-hook-check.ts';
 import { OPENCLAW_TURN_PLUGIN_ID, openclawTurnPluginDir, removeOpenclawTurnPlugin, syncOpenclawTurnPlugin } from '../src/core/setup/openclaw-turn-plugin.ts';
 
 const roots: string[] = [];
@@ -239,6 +240,26 @@ describe('per-turn rule: Hermes pre_llm_call hook in config.yaml', () => {
     const damaged = hermes('# gbrain:turn-rule:begin\nmodel: x\n');
     expect(syncHermesTurnHook({ hermesHome: damaged, access, dryRun: false }).action).toBe('print');
     expect(cfg(damaged)).toBe('# gbrain:turn-rule:begin\nmodel: x\n');
+  });
+
+  test('doctor sees the printed entry once it is pasted into the user\'s hooks: section, and only that exact command', async () => {
+    const theirs = 'hooks:\n  pre_tool_call:\n    - command: /usr/bin/true\n';
+    const d = hermes(theirs);
+    const snippet = syncHermesTurnHook({ hermesHome: d, access, dryRun: false }).snippet!;
+    const pasted = `${theirs}  pre_llm_call:\n${snippet.split('\n').slice(2).join('\n')}`;
+    expect(load(pasted)).toEqual({ hooks: { pre_tool_call: [{ command: '/usr/bin/true' }], pre_llm_call: [{ command: cmd, timeout: 10 }] } });
+    writeFileSync(join(d, 'config.yaml'), pasted);
+    const root = home([{ harness: 'hermes', status: 'installed', access }]);
+    const ledger = join(root, '.gbrain', 'agent-instructions.json');
+    const entries = JSON.parse(readFileSync(ledger, 'utf8')).entries;
+    writeFileSync(ledger, JSON.stringify({ version: 1, entries: entries.map((e: Record<string, unknown>) => ({ ...e, path: join(d, 'SOUL.md') })) }));
+    await withEnv({ GBRAIN_HOME: root, HERMES_HOME: d }, async () => {
+      expect(inspectTurnHook('hermes')).toMatchObject({ state: 'untrusted', via: 'native' });
+      writeFileSync(join(d, 'shell-hooks-allowlist.json'), JSON.stringify({ approvals: [{ event: 'pre_llm_call', command: cmd }] }));
+      expect(inspectTurnHook('hermes')).toMatchObject({ state: 'wired', via: 'native' });
+      writeFileSync(join(d, 'config.yaml'), pasted.replace(JSON.stringify(cmd), JSON.stringify('/bin/echo hi')));
+      expect(inspectTurnHook('hermes').state).toBe('missing');
+    });
   });
 
   test('dry-run writes nothing', () => {
