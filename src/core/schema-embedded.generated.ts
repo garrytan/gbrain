@@ -2122,6 +2122,13 @@ CREATE TABLE IF NOT EXISTS embedding_spend (
 );
 CREATE INDEX IF NOT EXISTS embedding_spend_window ON embedding_spend (source_id, at);
 CREATE INDEX IF NOT EXISTS embedding_spend_page ON embedding_spend (page_id, at) WHERE kind = 'tail';
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE page_embedding_progress ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE embedding_batches ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE embedding_spend ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
 -- #5876 (migration chronicle_page_state): Life Chronicle ledger, the durable
 -- record of each page content's automatic-extraction decision and outcome.
 CREATE TABLE IF NOT EXISTS chronicle_page_state (

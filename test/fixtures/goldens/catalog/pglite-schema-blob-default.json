@@ -1776,7 +1776,7 @@
           "11 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "12 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "embedding_spend": {
         "columns": [
@@ -1788,7 +1788,7 @@
           "6 state text/text NOT NULL",
           "7 at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "eval_candidates": {
         "columns": [
@@ -2443,7 +2443,7 @@
           "12 next_run_at timestamp with time zone/timestamptz NULL",
           "13 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
-        "flags": "relkind=r rls=false force_rls=false"
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "page_extraction_state": {
         "columns": [

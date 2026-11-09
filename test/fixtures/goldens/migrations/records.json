@@ -4875,8 +4875,8 @@
         "idempotent": true,
         "name": "embedding_progress_ledger",
         "sql": {
-          "length": 2159,
-          "sha256": "b2cdc069934b3ac89051524258d4bcf56041721c54788d8121d303334daeb066"
+          "length": 2537,
+          "sha256": "0fda698f45146b8e59776b9adf987e4a51fc26c3953fef5109ec22e00ab2f75c"
         },
         "sqlFor": "absent",
         "transaction": "absent",
