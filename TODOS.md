@@ -1,5 +1,9 @@
 # TODOS
 
+## Hermes transcript ingest follow-ups (filed 2026-11-09, #8901)
+
+- [ ] **P1 — Cleanup command for automated Hermes pages imported before the session-kind filter (#8901 item 6).** **What:** stores imported before this change hold conversation pages for cron, sub-agent, kanban and tool sessions; the filter stops new ones but removes nothing. **Fix:** a `gbrain transcripts prune` (or equivalent) that classifies existing Hermes pages by `transcript_import.session_source` / raw `source` where present and by `state.db` where the session row survives, previews first, then soft-deletes through the persistence coordinator (part pages included), with discriminating tests. **Deferred from plan:** `PLAN-8901.md` (user decision D3, 2026-11-09). **Effort:** M. **Priority:** P1.
+
 ## Local edit adoption follow-ups (filed 2026-11-07, GBRA-341, #8755)
 
 - [ ] **P2 — Harden `adopt_local_edits` before any source turns it on (#8755).** **What:** the adoption can import merge-conflict markers, adopt an editor's stale save over gbrain's committed write, read a huge file whole, hold the worktree queue through its quiet window, leave its Git commit behind when the publication transaction rolls back, and treat a nested checkout's unreadable `HEAD` as repo-less. **Fix:** per item in #8755. **Effort:** M. **Priority:** P2.
