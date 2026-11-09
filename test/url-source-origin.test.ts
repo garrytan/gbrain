@@ -401,7 +401,7 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
     const original = childProcess.execFileSync;
     let writes = 0;
     const patched = spyOn(childProcess, 'execFileSync').mockImplementation(((file: string, args?: readonly string[], options?: object) => {
-      if (file === 'git' && args?.includes('--file') && ++writes === 2) throw new Error('config write failed (example)');
+      if (file === 'git' && args?.includes('--file') && !args.includes('--unset-all') && ++writes === 2) throw new Error('config write failed (example)');
       return original(file, args as string[], options as never);
     }) as typeof childProcess.execFileSync);
     let report: Awaited<ReturnType<typeof recordSourceOrigin>>;
