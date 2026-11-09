@@ -245,10 +245,15 @@ async function runShow(args: string[]): Promise<void> {
   // synthesize/patterns/filing-audit/check-resolvable mid-wave.
   const asFilingRules = args.includes('--as-filing-rules');
   const jsonFlag = args.includes('--json') || asFilingRules;
-  const packArg = args.find((a) => !a.startsWith('--'));
-  const packName = packArg;
+  const { source, positional } = parseFlags(args);
+  const packName = positional.find((a) => !a.startsWith('--'));
   let manifest;
-  if (packName) {
+  if (!packName && source) {
+    // Resolve through the engine tier chain (incl. the per-source override),
+    // the same way `schema active --source` does.
+    const { loadActivePackForEngine } = await import('../core/schema-pack/engine-resolution.ts');
+    manifest = (await withConnectedEngine((engine) => loadActivePackForEngine(engine, { remote: false, sourceId: source }))).manifest;
+  } else if (packName) {
     const path = packPathByName(packName);
     if (!path) {
       console.error(`Unknown pack: ${packName}`);
