@@ -138,7 +138,7 @@ export async function sweepContacts(
   // A blocked re-list that reached its last page starts over at page 1 next sync, retrying the contact that failed.
   if (blocked && listed) {
     state.contacts_relist = null;
-    state.contacts_sync_token = null;
+    if (!delta) state.contacts_sync_token = null;
   }
   if (blocked || !listed) return;
   // Cursor and the mask it was minted under commit together, only after the

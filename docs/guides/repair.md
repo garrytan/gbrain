@@ -2848,8 +2848,12 @@ and the command then reads back the values Git uses in the checkout: when a
 worktree-scoped or included setting still overrides one, it refuses
 `write_failed`, names the key, and says the settings were already written.
 A source already recorded as remote whose checkout lacks the lock-down (one
-recorded before this) gets it on `--remote --apply` and reports `recorded`;
-one that has it stays `already_recorded`, and the record is never removed.
+recorded before this) gets it on `--remote --apply` and reports `recorded`,
+even when its files now use git-lfs (no `lfs_tracked` refusal for it; only a
+checkout Git cannot place refuses it, as `lfs_unknown`); one that has it stays
+`already_recorded`, and the record is never removed. Each setting is written
+with `--replace-all`, so a key that already holds several values ends with the
+one clone-time value.
 Only `.git/config` changes, never a tracked file; a gbrain frontmatter
 hook wired through `core.hooksPath` stops running there, as on any clone a
 remote caller adds. `--local` records a local add and changes no checkout, and
@@ -2877,7 +2881,8 @@ refuses, writing nothing:
   which this command does not do. If the source should not keep those files,
   check that nothing in its checkout is unpushed or only local, then remove it
   with `gbrain sources remove <id> --confirm-destructive`.
-- `lfs_unknown`: gbrain cannot confirm the checkout has no git-lfs files,
+- `lfs_unknown`: gbrain cannot confirm the checkout has no git-lfs files (for
+  a source already recorded as remote, cannot reach it to turn them off),
   and the reason names which cause applies: the checkout is missing (restore
   it, then run this again); the clone directory is not the top level of its
   own Git repository, because Git resolves it to an enclosing repository or to
