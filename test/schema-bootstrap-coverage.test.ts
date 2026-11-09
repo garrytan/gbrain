@@ -1227,7 +1227,7 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // v286: absent from both schema blobs; readers go through to_jsonb(row), so a schema without it reads as none.
   'access_tokens.attest_sources',
   'oauth_clients.attest_sources',
-  // GST-1158 (migration v294) - a member's operator-declared email. Same posture as v286: access_members exists only
+  // GST-1158 (migration v297) - a member's operator-declared email. Same posture as v286: access_members exists only
   // through migrations, so no index or function in either blob references it, and only the operator's access commands
   // and owner-session routes read or write it.
   'access_members.email',
