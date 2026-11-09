@@ -231,14 +231,17 @@ function completedKey(sourceId: string, slug: string): string {
 // Default synthesis via the gateway.
 // ---------------------------------------------------------------------------
 
-const defaultSynthesize: SynthesizeFn = async ({ system, user, model, abortSignal }) => {
+/** No prompt cache. The system prompt (buildEnrichPrompt's rules, ~230 tokens) is below Anthropic's minimum cacheable
+ *  prefix, so with cacheSystem the only breakpoint that took was the call-level auto-cache, which marks the last block:
+ *  this page's own evidence, different on every call. Every write-up paid the 1.25x cache-write price on its whole
+ *  prompt and none was read back (a production brain: 17.9M cache-written tokens, 0 read, over 5,388 calls in 30 days). */
+export const defaultSynthesize: SynthesizeFn = async ({ system, user, model, abortSignal }) => {
   const res = await chat({
     model,
     system,
     messages: [{ role: 'user', content: user }],
     maxTokens: 2048,
     abortSignal,
-    cacheSystem: true,
   });
   return res.text;
 };
