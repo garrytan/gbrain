@@ -332,24 +332,23 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
   // #6511 [R2]: the preparation sweep's targets, plus the tail past its ceiling and the rows pending at scan time, re-tested here.
   const recheck = await lookup('tail_recheck', () => recheckRequestsCarrying(tx, sourceId, needles, prepared.sweep,
     { exclude: row.id, beforePending: () => faultPoint('purge:pending_recheck', { requestId: row.request_id, sourceId, operation: row.operation }) }));
-  // The page's add_timeline_entry receipts keep the entry text in their outcome (`entry`, `bullet`), compacted ones included.
-  // In those receipts the text is matched whole (a set lookup, linear in the receipts); in the page's other requests it is a
-  // needle, as its reasons are. A page past the cap leaves the journal sweep incomplete instead of claiming every receipt.
-  const timeline = await lookup('slug_lookup', () => tx.executeRaw<IntentRedactionTarget & { summary: string | null; bullet: string | null }>(`SELECT id::text AS id, principal_kind, principal_id,
-    outcome->'entry'->>'summary' AS summary, outcome->>'bullet' AS bullet FROM persistence_requests
-    WHERE source_id=$1 AND slug=$2 AND operation='add_timeline_entry' AND outcome ? 'entry' ORDER BY sequence LIMIT $3`, [sourceId, slug, TIMELINE_RECEIPT_CAP]));
-  const timelineText = new Set(timeline.flatMap(t => [t.summary, t.bullet]).map(text => text?.trim() ?? '').filter(Boolean));
-  const timelineIds = new Set(timeline.map(t => t.id));
+  // The page's add_timeline_entry receipts keep the entry text in their outcome (`entry` summary and source, `bullet`), compacted
+  // ones included. That text is matched whole in the page's own requests (a set lookup, linear in their strings). A page past
+  // the cap leaves the journal sweep incomplete instead of claiming every receipt.
+  const timelineRows = await lookup('slug_lookup', () => tx.executeRaw<IntentRedactionTarget & { summary: string | null; source: string | null; bullet: string | null }>(`SELECT id::text AS id,
+    principal_kind, principal_id, outcome->'entry'->>'summary' AS summary, outcome->'entry'->>'source' AS source, outcome->>'bullet' AS bullet FROM persistence_requests
+    WHERE source_id=$1 AND slug=$2 AND operation='add_timeline_entry' AND outcome ? 'entry' ORDER BY sequence LIMIT $3`, [sourceId, slug, TIMELINE_RECEIPT_CAP + 1]));
+  const timeline = timelineRows.slice(0, TIMELINE_RECEIPT_CAP);
+  const timelineText = new Set(timeline.flatMap(t => [t.summary, t.source, t.bullet]).map(text => text?.trim() ?? '').filter(Boolean));
   const forSlug = await lookup('slug_lookup', async () => [...await findRequestsForSlugs(tx, sourceId, [slug]), ...reasons.length ? await requestsRecordingReasons(tx, sourceId, slug) : [], ...timeline]);
   const own = new Set(forSlug.map(r => r.id));
   const requests = [...new Map([...forSlug, ...prepared.sweep.targets, ...recheck.targets].map(r => [r.id, r])).values()];
   // GBRA-217: the page's reasons are needles in its own requests only, so a short reason never redacts another page's receipt.
-  removed.persistence_requests = await lookup('redaction_read', async () => await redactRequestIntents(tx, requests.filter(r => timelineIds.has(r.id)), row.id,
-    { skipPending: true, needles: [...needles, ...reasons], exact: timelineText }) + await redactRequestIntents(tx, requests.filter(r => own.has(r.id) && !timelineIds.has(r.id)), row.id,
-    { skipPending: true, needles: [...needles, ...reasons, ...timelineText] }) + await redactRequestIntents(tx, requests.filter(r => !own.has(r.id)), row.id, { skipPending: true, needles }));
+  removed.persistence_requests = await lookup('redaction_read', async () => await redactRequestIntents(tx, requests.filter(r => own.has(r.id)), row.id,
+    { skipPending: true, needles: [...needles, ...reasons], exact: timelineText }) + await redactRequestIntents(tx, requests.filter(r => !own.has(r.id)), row.id, { skipPending: true, needles }));
   removed.persistence_effects = await stripPageGitNotes(tx, sourceId, slug);
   const journalSweep = { scanned: prepared.sweep.scanned, ceiling: prepared.sweep.ceiling, watermark: prepared.sweep.watermark ?? null, batch: prepared.sweep.batch ?? 1,
-    tail: recheck.tail, pending_rechecked: recheck.pendingRechecked, complete: prepared.sweep.complete && recheck.complete && timeline.length < TIMELINE_RECEIPT_CAP };
+    tail: recheck.tail, pending_rechecked: recheck.pendingRechecked, complete: prepared.sweep.complete && recheck.complete && timelineRows.length <= TIMELINE_RECEIPT_CAP };
   const files = await tx.executeRaw<{ storage_path: string }>(`DELETE FROM files WHERE (page_id=$1 OR (page_id IS NULL AND page_slug=$2 AND (source_id=$3 OR source_id IS NULL)))
     RETURNING storage_path`, [page.id, slug, sourceId]);
   removed.files = files.length;

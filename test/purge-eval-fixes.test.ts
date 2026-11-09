@@ -95,10 +95,11 @@ describe('purge eval fixes', () => {
 
   test('W3: a page purge leaves no timeline text in its add_timeline_entry receipts, compacted ones included', async () => {
     await seed();
-    const kept = await call('add_timeline_entry', { slug: 'people/alice-example', date: '2026-02-03', summary: 'Moved house TIMELINE-MARK-ONE', request_id: randomUUID() });
+    const kept = await call('add_timeline_entry', { slug: 'people/alice-example', date: '2026-02-03', summary: 'Moved house TIMELINE-MARK-ONE', source: 'https://private.example/TIMELINE-MARK-SOURCE', request_id: randomUUID() });
     const compacted = await call('add_timeline_entry', { slug: 'people/alice-example', date: '2026-02-04', summary: 'Changed banks TIMELINE-MARK-TWO', request_id: randomUUID() });
     expect([kept.status, compacted.status]).toEqual(['ok', 'ok']);
     await engine.executeRaw(`UPDATE persistence_requests SET intent=NULL, compacted=true WHERE operation='add_timeline_entry' AND outcome->'entry'->>'summary' LIKE '%MARK-TWO'`);
+    expect(await journalCarries('TIMELINE-MARK-SOURCE')).toBe(1);
     expect(await journalCarries('TIMELINE-MARK')).toBe(2);
     expect((await purgePage('people/alice-example')).status).toBe('purged');
     expect(await journalCarries('TIMELINE-MARK')).toBe(0);

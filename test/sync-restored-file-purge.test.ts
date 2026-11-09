@@ -29,6 +29,7 @@ import { SYNC_DELETE_TOMBSTONE_OP } from '../src/core/persistence/sync-delete-to
 import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
 import { __resetTreeReuseForTests } from '../src/core/persistence/sync-tree-reuse.ts';
 import { runPages } from '../src/commands/pages.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -262,6 +263,52 @@ for (const backend of testBackends()) {
       expect((await page(engine, A))?.deleted_at).not.toBeNull();
       expect(readFileSync(join(root, `${A}.md`), 'utf8')).toBe(broken);
       expect(git(root, 'status', '--porcelain', '--', `${A}.md`)).toBe('');
+    }, { setup, databaseUrl }), 300_000);
+
+    test("an old shared-origin delete of the same slug does not exempt a later sync-made tombstone: the restored file stays", () => managedBrain(async ({ engine, ctx, root }) => {
+      await sync(engine);
+      await personDelete(engine, ctx, USER);
+      // That old delete is recorded as one that kept the file because another page shared it (a fixture write); the page is restored.
+      await engine.transaction(async tx => {
+        await declarePersistenceProtocol(tx);
+        await tx.executeRaw(`UPDATE persistence_requests SET outcome = jsonb_set(COALESCE(outcome, '{}'::jsonb), '{write_through}', '{"written": false, "skipped": "shared_origin"}')
+          WHERE operation='delete_page' AND slug=$1`, [USER]);
+      });
+      const tombstone = await engine.readPageSnapshot(USER, { sourceId: 'default', includeDeleted: true });
+      await submitPageMutation(ctx, { operation: 'restore_page', params: { slug: USER, expected_revision: tombstone!.revision, request_id: randomUUID() } });
+      await settleManagedGitEffects(engine);
+      if (git(root, 'status', '--porcelain', '--', `${USER}.md`)) commit(root, 'restore user note');
+      await sync(engine);
+      expect((await page(engine, USER))?.deleted_at).toBeNull();
+      await removeAndSync(engine, root, [USER]);
+      git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'revert', '--no-edit', 'HEAD');
+      await age(engine, 100);
+      await purge(engine, root, 'CLI purge-deleted');
+      expect((await page(engine, USER))?.deleted_at).not.toBeNull();
+      expect(existsSync(join(root, `${USER}.md`))).toBe(true);
+      expect(git(root, 'status', '--porcelain', '--', `${USER}.md`)).toBe('');
+    }, { setup, databaseUrl }), 300_000);
+
+    test('a file committed between the purge\'s preparation and its publication is not removed', () => managedBrain(async ({ engine, ctx, root }) => {
+      await sync(engine);
+      await personDelete(engine, ctx, USER);
+      if (git(root, 'status', '--porcelain', '--', `${USER}.md`)) commit(root, 'remove user note');
+      await sync(engine);
+      writeFileSync(join(root, `${USER}.md`), BODY[USER]!);
+      await age(engine, 100);
+      let committed = false;
+      installFaultHook(async (point, detail) => {
+        if (point !== 'consumer:prepared' || detail.operation !== 'delete_page' || committed) return;
+        committed = true;
+        commit(root, 'restore user note');
+      });
+      const { purgeDeletedPagesCoordinated } = await import('../src/core/persistence/purge-deleted.ts');
+      try { await purgeDeletedPagesCoordinated(engine, 72); } finally { installFaultHook(undefined); }
+      expect(committed).toBe(true);
+      fileKept(root, USER);
+      await purgeDeletedPagesCoordinated(engine, 72);
+      expect(await page(engine, USER)).toBeUndefined();
+      fileKept(root, USER);
     }, { setup, databaseUrl }), 300_000);
 
     test("an older version purged the page and committed the file's removal; a revert of that commit imports the file as a new page", () => managedBrain(async ({ engine, root }) => {

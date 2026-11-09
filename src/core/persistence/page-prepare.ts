@@ -661,12 +661,15 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
   }
   // GST-2201: a retention purge never removes a file committed at the source's last commit or at HEAD. A tombstone sync made
   // from the file's absence waits for the sync that restores it; a person's tombstone is removed database-only and the file stays.
-  // A person's delete that kept the file only because another live page shared it (`write_through.skipped: shared_origin`)
-  // still removes the file once the tombstone owns it alone.
-  const committedFile = purge && p.retention === true && snapshot.page.deleted_at != null && !!file && !shared && excludedPath === null
-    && await originCommitted(engine, row.source_id, snapshot.page.source_path)
-    && (await engine.executeRaw(`SELECT 1 FROM persistence_requests r WHERE r.source_id=$1 AND r.slug=$2 AND (r.page_id IS NULL OR r.page_id=$3) AND r.operation='delete_page'
-      AND r.state='committed' AND r.outcome->'write_through'->>'skipped'='shared_origin' LIMIT 1`, [row.source_id, row.slug, snapshot.page.id])).length === 0;
+  // A person's delete that made this tombstone and never removed its file (`write_through.written: false`: another live page
+  // shared it, the source was unbound, ...) still has the purge finish that removal. Publication re-checks, so a commit made after preparation is kept too.
+  const retentionFile = purge && p.retention === true && snapshot.page.deleted_at != null && !!file && !shared && excludedPath === null;
+  const committedNow = async (exec: BrainEngine) => await originCommitted(exec, row.source_id, snapshot.page.source_path)
+    && (await exec.executeRaw(`SELECT 1 FROM persistence_requests r JOIN pages p ON p.id=$3 WHERE r.source_id=$1 AND r.slug=$2 AND (r.page_id IS NULL OR r.page_id=$3)
+      AND r.operation='delete_page' AND r.state='committed' AND r.outcome->'write_through'->>'written'='false' AND NOT ${syncDeleteOrigin('p')}
+      AND NOT EXISTS (SELECT 1 FROM persistence_requests l WHERE l.source_id=r.source_id AND l.slug=r.slug AND l.state='committed' AND l.sequence > r.sequence
+        AND l.operation IN ('restore_page', 'delete_page')) LIMIT 1`, [row.source_id, row.slug, snapshot.page.id])).length === 0;
+  const committedFile = retentionFile && await committedNow(engine);
   let keepOrigin = false;
   if (committedFile) {
     const [made] = await engine.executeRaw<{ sync: boolean }>(`SELECT ${syncDeleteOrigin('p')} AS sync FROM pages p WHERE p.id=$1`, [snapshot.page.id]);
@@ -695,6 +698,10 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
     ...(excludedPath !== null ? { databaseOnlyReason: 'sync_excluded' as const } : {}), ...(shared ? { databaseOnlyReason: 'shared_origin' as const } : {}),
     ...(committedFile ? { databaseOnlyReason: 'committed_file' as const } : {}),
     ...(shared ? { validate: async (tx: BrainEngine) => { prepared.databaseOnlyWarning = await validateSharedOrigin(tx, row, shared, sharedRetention); } } : {}),
+    ...(retentionFile && !committedFile ? { validate: async (tx: BrainEngine) => {
+      if (await committedNow(tx)) throw pageRefusal('revision_conflict', 'The page\'s file was committed while the retention purge was prepared, so the purge left the page and the file alone; the next run re-reads it.', row,
+        `Page ${row.slug}'s file is committed in source ${row.source_id}'s checkout.`, pageFix(row.source_id, row.slug));
+    } } : {}),
     apply: async tx => {
       if (purge && excludedPath !== null) await assertStillSyncExcluded(tx, row, excludedPath);
       // #7311: the tombstone forgets the survivor's file, as an origin_twin page has, so its purge writes no deletion marker for it.

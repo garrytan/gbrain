@@ -92,7 +92,7 @@ Brain / database level (gbrain-specific):
   first; the command itself asks (exit 3 without a terminal) and runs with
   `--yes` only after the user agrees. It keeps a file committed at the source's
   last synced commit or at HEAD (the page waits or goes database-only), unless a
-  person deleted the page and the file stayed only because another page shared it.
+  person's delete of the page never removed the file (e.g. another page shared it).
 - **Source removal** — `gbrain sources remove <id>` deletes the source AND
   every page in it. The `--confirm-destructive` flag does not substitute for
   the card. A managed removal deletes pages in committed batches: one that
