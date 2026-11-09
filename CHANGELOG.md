@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.624.0] - 2026-11-09
 
 **`gbrain doctor` now ends on its `--budget-ms` deadline when a local probe hangs, and the cheap incident checks keep their share of the budget.** The `home_dir_in_worktree` entry, which runs before the connection checks, ran `npm root -g`, `which -a gbrain` and `crontab -l` synchronously, with 5-second limits on the first and last and none on `which`. While one of them hung, nothing else in the process could run, the deadline included. So a 2500 ms run took about 5100 ms, and every later check, `links_extraction_lag` and `persistence_capacity` included, came back unknown with `elapsed_ms: 0`. Those probes now run asynchronously and are killed with SIGKILL at the entry's deadline (5 s at most, less the 250 ms report reserve), so none of them outlives the run. The entries before the connection checks may use at most half of the time left when the check run starts, so the ops sections and the cheap incident checks keep the other half. `--only`, `--fast` and a run with no database connection still give those entries the whole budget. This was the flaky `#6803 doctor deadlines (postgres)` E2E case (#8979). It failed on every backend-matrix job that ran on the 20261026.1 runner image, where a probe ran into its 5 s limit.
 
