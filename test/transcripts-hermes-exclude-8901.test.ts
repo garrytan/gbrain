@@ -22,8 +22,9 @@
  * switch; an explicit set is part of the `--since last` fingerprint, the
  * default is not (and only for Hermes stores / auto-detected paths); a config
  * value that is not a list refuses the run instead of excluding nothing; the
- * frontmatter labels pass the same redaction as the title; a BLOB or non-JSON
- * `model_config` is unparsed metadata, never an aborted scan; operator labels
+ * frontmatter labels pass the same redaction as the title; a BLOB holding JSON
+ * text is read as Hermes' json_extract reads it, while a non-UTF-8 BLOB or a
+ * non-JSON `model_config` is unparsed metadata, never an aborted scan; operator labels
  * such as `constructor` count correctly.
  * Regression it catches: a predicate that reads `parent_session_id`, a filter
  * applied after rendering (slugs leak into `--facts`), an all-excluded store
@@ -218,9 +219,14 @@ describe('hermes adapter: session-kind filter (#8901)', () => {
     expect(marker('{not json')).toEqual({ delegate: false, unparsed: true });
     expect(marker('[1,2]')).toEqual({ delegate: false, unparsed: true });
     expect(marker('"text"')).toEqual({ delegate: false, unparsed: true });
-    // SQLite lets a BLOB or a number sit in the TEXT column: unparsed, never a throw.
+    // SQLite lets a BLOB or a number sit in the TEXT column: bytes that are not
+    // JSON, and a number, are unparsed, never a throw; a BLOB that holds JSON
+    // text is read the way Hermes' json_extract reads it (outside review, ship pass 2).
     expect(marker(Buffer.from([1, 2, 3]))).toEqual({ delegate: false, unparsed: true });
+    expect(marker(Buffer.from([0xde, 0xad, 0xbe, 0xef]))).toEqual({ delegate: false, unparsed: true });
     expect(marker(42)).toEqual({ delegate: false, unparsed: true });
+    expect(marker(Buffer.from('{"_delegate_from":"parent-1"}', 'utf8'))).toEqual({ delegate: true, unparsed: false, from: 'parent-1' });
+    expect(marker(Buffer.from('{"model":"model-example"}', 'utf8'))).toEqual({ delegate: false, unparsed: false });
     // A non-string parent value is presence only, never serialized; a deeply nested one never throws.
     expect(marker('{"_delegate_from":{"id":"p"}}')).toEqual({ delegate: true, unparsed: false });
     const deep = `{"_delegate_from":${'['.repeat(60_000)}${']'.repeat(60_000)}}`;
@@ -262,8 +268,10 @@ describe('hermes adapter: session-kind filter (#8901)', () => {
       ins.run('plain-desktop', 'desktop', null, 1786314400);
       ins.run('textless-garbled', 'desktop', '{not json', 1786318000);
       ins.run('blob-source', Buffer.from([0x01, 0x02]), null, 1786321600);
+      // A BLOB that holds JSON text with the marker: a delegate child, as Hermes' json_extract reads it.
+      ins.run('blob-json-delegate', 'desktop', Buffer.from('{"_delegate_from":"plain-desktop"}', 'utf8'), 1786325200);
       const m = db.prepare('INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)');
-      for (const id of ['blob-config', 'cron-garbled', 'ctor-labelled', 'proto-labelled', 'plain-desktop', 'blob-source']) {
+      for (const id of ['blob-config', 'cron-garbled', 'ctor-labelled', 'proto-labelled', 'plain-desktop', 'blob-source', 'blob-json-delegate']) {
         m.run(id, 'user', `hello from ${id}`, 1786300001);
         m.run(id, 'assistant', `reply to ${id}`, 1786300002);
       }
@@ -272,7 +280,16 @@ describe('hermes adapter: session-kind filter (#8901)', () => {
       db.close();
     }
     const { sessions, diag } = await parseWith(path, ['cron', 'constructor', '__proto__']);
-    expect(sessions.map(s => s.meta.sessionId)).toEqual(['blob-config', 'plain-desktop', 'blob-source']);
+    expect(sessions.map(s => s.meta.sessionId)).toEqual(['blob-config', 'plain-desktop', 'blob-source', 'blob-json-delegate']);
+    // The JSON-text BLOB is parsed, not unparsed: the row imports with `subagent` unlisted and carries the delegate flag.
+    const blobDelegate = sessions.find(s => s.meta.sessionId === 'blob-json-delegate')!;
+    expect(blobDelegate.meta.delegate).toBe(true);
+    expect(blobDelegate.meta.hostMetadataUnparsed).toBeUndefined();
+    expect(blobDelegate.meta.raw!.delegate_from).toBe('plain-desktop');
+    const underDefault = await parseWith(path, hermes.DEFAULT_HERMES_EXCLUDE_SOURCES);
+    expect(underDefault.sessions.map(s => s.meta.sessionId)).not.toContain('blob-json-delegate');
+    expect(underDefault.diag.excludedBySource).toEqual({ subagent: 1 });
+    expect(underDefault.diag.delegatesExcluded).toBe(1);
     // A BLOB in the source column is not a label: no frontmatter kind, raw source null, no throw.
     const blobSource = sessions.find(s => s.meta.sessionId === 'blob-source')!;
     expect(blobSource.meta.sessionSource).toBeUndefined();

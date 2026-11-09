@@ -297,12 +297,19 @@ export function normalizeExcludeSources(list: readonly string[]): string[] {
  */
 export function hermesDelegateMarker(modelConfig: unknown): { delegate: boolean; unparsed: boolean; from?: string } {
   if (modelConfig == null) return { delegate: false, unparsed: false };
-  // SQLite lets a BLOB (or a number) sit in the TEXT column; it is unparsed
-  // metadata, never a reason to abort the store scan.
-  if (typeof modelConfig !== 'string') return { delegate: false, unparsed: true };
-  if (!modelConfig.trim()) return { delegate: false, unparsed: false };
+  // SQLite lets a BLOB (or a number) sit in the TEXT column. Hermes reads the
+  // marker with json_extract, which parses a BLOB holding JSON text exactly
+  // like the text (and rejects bytes that are not JSON), so a UTF-8 BLOB is
+  // decoded before the check; bytes that are not UTF-8, and a number, are
+  // unparsed metadata, never a reason to abort the store scan.
+  let text: string;
+  if (typeof modelConfig === 'string') text = modelConfig;
+  else if (modelConfig instanceof Uint8Array) {
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(modelConfig); } catch { return { delegate: false, unparsed: true }; }
+  } else return { delegate: false, unparsed: true };
+  if (!text.trim()) return { delegate: false, unparsed: false };
   let cfg: unknown;
-  try { cfg = JSON.parse(modelConfig); } catch { return { delegate: false, unparsed: true }; }
+  try { cfg = JSON.parse(text); } catch { return { delegate: false, unparsed: true }; }
   if (typeof cfg !== 'object' || cfg === null || Array.isArray(cfg)) return { delegate: false, unparsed: true };
   const from = (cfg as Record<string, unknown>)._delegate_from;
   if (from === null || from === undefined) return { delegate: false, unparsed: false };
