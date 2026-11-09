@@ -159,6 +159,22 @@ test('a skip-worktree file left in the ledger does not fail a later write-throug
   expect(ledger(brain)).toEqual(['people/alice-example.md']);
 });
 
+test('a file flagged both skip-worktree and assume-unchanged does not stop other pending pages from committing', async () => {
+  const brain = fixture('both-flags');
+  git(brain, 'update-index', '--skip-worktree', '--', 'people/alice-example.md');
+  git(brain, 'update-index', '--assume-unchanged', '--', 'people/alice-example.md');
+  expect(git(brain, 'ls-files', '-v', '--', 'people/alice-example.md')).toStartWith('s ');
+  writeFileSync(join(brain, 'people', 'alice-example.md'), page('Hidden', 'A write-through edit git add refuses.'));
+  writeFileSync(join(brain, 'people', 'bob-example.md'), page('Bob', 'A pending edit.'));
+  notePending(brain, ['people/alice-example.md', 'people/bob-example.md']);
+  writeFileSync(join(brain, 'people', 'carol-example.md'), page('Carol', 'New page.'));
+  await withEnv(identity, async () => commitPathsLocked(brain, [join(brain, 'people', 'carol-example.md')], 'w', { lockWaitMs: 1000 }));
+  expect(headBlob(brain, 'people/carol-example.md')).toContain('New page.');
+  expect(headBlob(brain, 'people/bob-example.md')).toContain('A pending edit.');
+  expect(git(brain, 'diff', '--cached', '--name-only').trim()).toBe('');
+  expect(ledger(brain)).toEqual(['people/alice-example.md']);
+});
+
 test('control: an ordinary pending file is committed by --pending and the ledger settles empty', async () => {
   const brain = fixture('pending-ok', true);
   writeFileSync(join(brain, 'people', 'alice-example.md'), page('Alice', 'Second version.'));

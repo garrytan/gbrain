@@ -598,7 +598,7 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
   const before = indexEntries(root, rel);
   // GST-2118: git add refuses a named skip-worktree file that is on disk; it is left to the skipped-path check, so the other paths still commit.
   const sparse = new Set(gitOk(root, ['ls-files', '-v', '-z', '--', ...literalPathspecs(rel)], 'ls-files -v').split('\0')
-    .filter(entry => entry.startsWith('S ') && rel.includes(entry.slice(2)) && existsSync(join(root, entry.slice(2)))).map(entry => entry.slice(2)));
+    .filter(entry => /^[sS] /.test(entry) && rel.includes(entry.slice(2)) && existsSync(join(root, entry.slice(2)))).map(entry => entry.slice(2)));
   const add = rel.some(p => !sparse.has(p)) ? withIndexRetry(root, ['add', '-A', '--', ...literalPathspecs(rel.filter(p => !sparse.has(p)))], 'git add') : { code: 0, stdout: '', stderr: '' };
   if (add.code !== 0) {
     throw opError('commit_paths_invalid', 'git add refused the given paths.', add.stderr.trim().slice(0, 300) || 'Check the paths exist or are tracked.');
