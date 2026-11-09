@@ -12,13 +12,15 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**The write-refusal guide and the upgrade notice now say what happens to a webhook capture of a page the revision backfill has not reached (follow-up to GST-2112).** Since v0.60.627.0, `POST /ingest` with `X-Gbrain-Slug` answers such a capture 409 `revision_backfill_pending` and stores and queues nothing, so the capture exists only with its sender; an `ingest_capture` job already in the queue refuses at write time and ends `dead` with its body kept. Neither was written down. `docs/guides/write-refusals.md` and the v0.60.627.0 upgrade notice row now say it, with the recovery: `gbrain apply-migrations --force-schema` on the brain host, then send a capture that got the 409 again and re-run a dead job with `gbrain jobs retry <id>`. The E2E runner also gives `test/e2e/source-retire-batched-postgres.test.ts` (60,000 pages) the 4x per-file budget: on a loaded CI runner it ran past the 180 s cap and was killed with its third test in flight and no failed assertion.
+**A `revision_backfill_pending` refusal now names the command that actually resumes the backfill, and the write-refusal guide says what a webhook capture of such a page gets (follow-up to GST-2112).** The refusal's message, which is also the body of the 409 `POST /ingest` answers for a page the revision backfill has not reached and the error a dead `ingest_capture` job keeps, said `gbrain apply-migrations --yes`, which does not resume the backfill once the schema is current, and linked a section that does not cover it. It now says `gbrain apply-migrations --force-schema` on the brain host and links `docs/guides/write-refusals.md#revision-backfill`. Since #8940 that 409 stores and queues nothing, so the capture exists only with its sender, and an `ingest_capture` job already queued for such a page goes straight to `dead`; neither was written down. The guide's `revision_backfill_pending` row and a new upgrade notice row now say both, with the recovery: resume the backfill, send a capture that got the 409 again, and re-run a dead job with `gbrain jobs retry <id>`. The E2E runner also gives `test/e2e/source-retire-batched-postgres.test.ts` (60,000 pages) the 4x per-file budget: on a loaded CI runner it ran past the 180 s cap and was killed with a test in flight and no failed assertion.
 
 ### Itemized changes
 
-- `docs/guides/write-refusals.md`: the `revision_backfill_pending` row covers the 409 at `POST /ingest` and the dead `ingest_capture` job, with the resend and `gbrain jobs retry <job id>` recovery.
-- `src/core/behavior-change-notice.ts`: the `ingest_keeps_readers_gst2112` row names the 409 and its recovery.
-- `scripts/run-e2e.sh`: `source-retire-batched-postgres.test.ts` joins the 4x per-file budget list. No test or assertion changed.
+- `src/core/page-state/types.ts`: `RevisionBackfillPendingError`'s message names `gbrain apply-migrations --force-schema` and the `#revision-backfill` anchor, matching the error registry's fix.
+- `docs/guides/write-refusals.md`: the `revision_backfill_pending` row covers the 409 at `POST /ingest`, the `ingest_capture` job that goes straight to `dead`, and the resend and `gbrain jobs retry <job id>` recovery.
+- `src/core/behavior-change-notice.ts`: one row for the changed message and the recovery.
+- `scripts/run-e2e.sh`: `source-retire-batched-postgres.test.ts` joins the 4x per-file budget list. No assertion in that file changed.
+- Tests: `test/ingest-capture-keeps-readers.test.ts` checks that the 409 body and the job's refusal name `--force-schema` and the anchor.
 
 ## [0.60.627.0] - 2026-11-09
 

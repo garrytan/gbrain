@@ -108,7 +108,7 @@ export class RevisionBackfillPendingError extends PageRevisionConflictError {
   constructor(expectedRevision: string | null) {
     super(expectedRevision, REVISION_BACKFILL_PENDING);
     this.message = 'This page has no revision yet: the revision backfill for pages written before the upgrade has not reached it. '
-      + 'Resume it with: gbrain apply-migrations --yes (see docs/guides/write-refusals.md#other-error-codes).';
+      + 'Resume it on the brain host with: gbrain apply-migrations --force-schema (see docs/guides/write-refusals.md#revision-backfill).';
     this.name = 'RevisionBackfillPendingError';
   }
 }
