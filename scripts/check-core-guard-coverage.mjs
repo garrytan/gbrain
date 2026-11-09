@@ -49,6 +49,7 @@ const EXEMPT = {
   'src/core/repair/captured-facts.ts': 'owner-run repair that expires fact rows (shrinks only)',
   'src/core/repair/agent-session-facts.ts': 'owner-run repair that re-attributes capture-lane facts and retires their takes (no content added)',
   'src/core/repair/extractor-facts.ts': 'owner-run repair restoring expired fact rows',
+  'src/core/repair/unwithdrawn-facts.ts': 'owner-run, preview-bound repair putting expired fact rows back to their recorded before-state (row number and lifecycle); page text is unchanged',
   'src/core/repair/redacted-facts.ts': 'owner-run, preview-bound repair rewriting the text of database-only fact rows to words a source page proves; page text is unchanged (fenced rows publish through put_page, preparePageMutation)',
   'src/core/repair/visibility.ts': 'owner-run, preview-first repair that only tightens database-only fact rows from world to private; page text is unchanged (fenced rows and page labels publish through put_page, preparePageMutation)',
   'src/core/repair/conversation-labels.ts': 'owner-run repair expiring fact rows and writing an outcome row (shrinks only; page text unchanged)',

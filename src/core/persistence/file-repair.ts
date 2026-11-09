@@ -75,7 +75,7 @@ import type { SyncRename } from './sync-discovery.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import { contentRepairCommit, fenceRepairCommit, localEditAdoptionCommit } from './effect-model.ts';
-import { ADOPTED_CHANGE_REASON, adoptedHeadHolds, commitAdoptedLocalEdit } from './local-edit-adoption.ts';
+import { ADOPTED_CHANGE_REASON, adoptedHeadHolds, assertAdoptionCaller, commitAdoptedLocalEdit, conflictOrOperation, landedAdoptionCommit } from './local-edit-adoption.ts';
 import { recordSlugLineAlias } from '../page-state/rename-alias.ts';
 import type { WriteRequest } from './model.ts';
 import { bindOrigin } from './origin-guard.ts';
@@ -105,7 +105,7 @@ export interface ManagedFileRepairIntent extends Record<string, unknown> {
   /** #6696 C8: the hold observation the repair read; the publication clears the path's hold only while it is that observation (a newer hold stays). */
   holdObservedAt?: string;
   /** GST-1601: an adopted one-sided local edit (local-edit-adoption.ts): the worktree blob and the revision it replaces. */
-  adoptLocalEdit?: { blob: string; replaced_revision: string; head: string | null };
+  adoptLocalEdit?: { blob: string; replaced_revision: string; head: string | null; caller?: { id: string; token: string | null } };
 }
 
 /** The repair command a refusal names (D6 router): a fence repair's, the content repair's, or the frontmatter repair's. */
@@ -350,6 +350,9 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
     return target;
   };
   const target = checkFile();
+  // #8824: the caller's claim is checked only before the adoption's commit lands; a replay after it publishes that commit.
+  const adoptionLanded = () => adopted ? landedAdoptionCommit(root, target, { path: p.path, ...adopted }) : Promise.resolve(null);
+  if (adopted && !await adoptionLanded()) await assertAdoptionCaller(engine, row, adopted.caller);
   const source = { sourceId: row.source_id };
   const snapshot = await engine.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
   assertPageRevision(snapshot, { expectedRevision: p.expected_revision ?? null }); // null: admitted against an absent page; still a revision_conflict if one appeared (#5385)
@@ -394,7 +397,10 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
         `Source ${row.source_id}'s canonical owner changed while repair request ${row.request_id} was prepared, so it published nothing. Check the owner, then preview the repair again.`,
         { fix: ownerStatusFix(row.source_id) });
       checkFile();
-      if (adopted && !await adoptedHeadHolds(binding, root, target, adopted.head)) throw changedSincePreview(row.source_id, p.path, 'git HEAD moved after its local edit was read', kind);
+      if (adopted && !await adoptedHeadHolds(binding, root, target, adopted.head, adopted.blob)) throw changedSincePreview(row.source_id, p.path, 'git HEAD moved after its local edit was read', kind);
+      // #8755: the caller's claim and the index are read again here, where the adoption commits: a cancel or a conflict may come after preparation.
+      if (adopted && !await adoptionLanded()) await assertAdoptionCaller(tx, row, adopted.caller, true);
+      if (adopted && adopted.head !== null && await conflictOrOperation(root, target)) throw changedSincePreview(row.source_id, p.path, 'a merge, rebase or conflicted path appeared after its local edit was read', kind);
       if (contentRepair?.declared_alias) await assertDeclaredSlugAbsent(tx, row.source_id, root, p, contentRepair.declared_alias, row.slug, kind);
       await assertRenameSource(tx);
       await ready.validate(tx);

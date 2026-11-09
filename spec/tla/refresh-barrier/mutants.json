@@ -71,8 +71,8 @@
         "edits": [
           {
             "file": "src/core/persistence/refresh-barrier.ts",
-            "before": "if (paths === null || paths.has(target)) touched.push(target);",
-            "after": "if (paths === null) touched.push(target);"
+            "before": "if (changes === null || changes.paths.has(changes.fold ? target.toLowerCase() : target)) touched.push(target);",
+            "after": "if (changes === null) touched.push(target);"
           }
         ],
         "tests": [
@@ -375,8 +375,8 @@
         "edits": [
           {
             "file": "src/core/persistence/refresh-barrier.ts",
-            "before": "      await declarePersistenceProtocol(tx);\n      const [held] = await tx.executeRaw(`SELECT 1 FROM persistence_requests r JOIN sources s ON s.id=r.source_id\n        WHERE r.id=$1::uuid AND r.state='deferred' AND r.deferred_import_from=$2 AND COALESCE(s.last_commit,'')=r.deferred_import_from\n          AND r.updated_at<now()-($3::double precision*interval '1 millisecond') FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);\n",
-            "after": "      const [held] = await tx.executeRaw(`SELECT 1 FROM persistence_requests r JOIN sources s ON s.id=r.source_id\n        WHERE r.id=$1::uuid AND r.state='deferred' AND r.deferred_import_from=$2 AND COALESCE(s.last_commit,'')=r.deferred_import_from\n          AND r.updated_at<now()-($3::double precision*interval '1 millisecond') FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);\n      await declarePersistenceProtocol(tx);\n"
+            "before": "      await declarePersistenceProtocol(tx);\n      const [held] = await tx.executeRaw(`SELECT 1 FROM persistence_requests r JOIN sources s ON s.id=r.source_id\n        WHERE r.id=$1::uuid AND r.state='deferred' AND r.deferred_import_from=$2 AND COALESCE(s.last_commit,'')=r.deferred_import_from\n          AND ${holdOverdue('$3::double precision')} FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);\n",
+            "after": "      const [held] = await tx.executeRaw(`SELECT 1 FROM persistence_requests r JOIN sources s ON s.id=r.source_id\n        WHERE r.id=$1::uuid AND r.state='deferred' AND r.deferred_import_from=$2 AND COALESCE(s.last_commit,'')=r.deferred_import_from\n          AND ${holdOverdue('$3::double precision')} FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);\n      await declarePersistenceProtocol(tx);\n"
           }
         ],
         "tests": [
@@ -403,8 +403,8 @@
         "edits": [
           {
             "file": "src/core/persistence/refresh-barrier.ts",
-            "before": "interval '1 millisecond') FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);",
-            "after": "interval '1 millisecond')`, [row.id, row.deferred_import_from, maxWaitMs]);"
+            "before": "${holdOverdue('$3::double precision')} FOR SHARE OF s`, [row.id, row.deferred_import_from, maxWaitMs]);",
+            "after": "${holdOverdue('$3::double precision')}`, [row.id, row.deferred_import_from, maxWaitMs]);"
           }
         ],
         "tests": [
@@ -443,6 +443,32 @@
       }
     },
     {
+      "id": "resume-marks-refused-merge-recovery",
+      "kind": "guard",
+      "title": "recovery marks an orphaned fenced refresh recovery_required when git refused its fast-forward (a plain-git commit on old_head) and the process died before the abort (GST-1674 reverted)",
+      "expect": "RecoveryOnlyByPolicy",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "RefusedAbortable(i) == rmstart[i] /\\ rtgt[i] = 0",
+        "after": "RefusedAbortable(i) == FALSE"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/worktree-refresh.ts",
+            "before": "  const startedAt = row.outcome.merge_started_at;\n  return row.state === 'fenced'",
+            "after": "  const startedAt = row.outcome.merge_started_at;\n  return false && row.state === 'fenced'"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/persistence-worktree-refresh-restart.test.ts",
+            "filter": "a refresh killed after git refused its fast-forward recovers by aborting"
+          }
+        ]
+      }
+    },
+    {
       "id": "resume-needs-exact-target",
       "kind": "guard",
       "title": "recovery runs bookkeeping for an orphaned fenced or merged refresh only when HEAD is exactly the target, not a descendant",
@@ -464,6 +490,61 @@
           {
             "test": "test/refresh-write-barrier.test.ts",
             "filter": "a refresh killed after its merge, with a commit landed on the target before bookkeeping, recovers on the owner scan"
+          }
+        ]
+      }
+    },
+    {
+      "id": "abort-skips-owed-sync",
+      "kind": "guard",
+      "title": "a refresh run never syncs the members an aborted refresh left behind HEAD (GST-1853 reverted)",
+      "expect": "DeferredLeaves",
+      "config": "RefreshBarrierAbortLiveness.cfg",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "OwedSyncBegin ==\n  /\\ pc[RFR] = \"idle\"",
+        "after": "OwedSyncBegin ==\n  /\\ FALSE /\\ pc[RFR] = \"idle\""
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/worktree-refresh.ts",
+            "before": "  if (newest?.state !== 'aborted') return NO_OWED_SYNC;\n",
+            "after": "  if (newest?.state !== 'aborted' || newest) return NO_OWED_SYNC;\n"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/refresh-barrier-held-after-abort.test.ts",
+            "filter": "GST-1853",
+            "postgres": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "replan-over-foreign-commit",
+      "kind": "guard",
+      "title": "a refresh takes a HEAD moved under its fence as its start even when another agent's commit is in it (#8828's ledger check removed)",
+      "expect": "ReplanOnlyOwnCommits",
+      "spec": {
+        "file": "RefreshBarrier.tla",
+        "before": "OwnSince(i) == ~ForeignSince(i)",
+        "after": "OwnSince(i) == TRUE"
+      },
+      "code": {
+        "edits": [
+          {
+            "file": "src/core/persistence/worktree-refresh.ts",
+            "before": "  if (await ancestry(git, root, row.old_head, head) !== true || !await ownCommits(git, root, row.old_head, head)) return null;\n",
+            "after": "  if (await ancestry(git, root, row.old_head, head) !== true) return null;\n"
+          }
+        ],
+        "tests": [
+          {
+            "test": "test/refresh-own-commits-replan-8828.test.ts",
+            "filter": "one foreign commit",
+            "postgres": true
           }
         ]
       }

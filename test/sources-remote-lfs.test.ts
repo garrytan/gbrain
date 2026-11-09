@@ -185,7 +185,7 @@ if (args.includes('clone')) mkdirSync(args[args.length - 1]!, { recursive: true 
   test('the trusted local CLI keeps LFS downloads', async () => {
     await add(false, 'local-added');
     expect(clones()).toEqual([false]);
-    expect((await config('local-added')).added_by_remote_caller).toBeUndefined();
+    expect((await config('local-added')).added_by_remote_caller).toBe(false);
   });
 
   test('a remote caller\'s failed clone gets a fixed message; the local CLI keeps git\'s error', async () => {

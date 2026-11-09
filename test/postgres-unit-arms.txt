@@ -95,6 +95,7 @@ test/facts-insert-guards-7105.test.ts
 test/facts-publication-large-fence-6898.test.ts
 test/facts-subject-infer-7405.test.ts
 test/fence-fact-append.test.ts
+test/fence-first-generation-8819.test.ts
 test/fence-repair-receipts.test.ts
 test/fenced-embed-reuse-6961.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
@@ -460,6 +461,9 @@ test/reason-trailers-gbra217.test.ts
 test/recall-page-fill.test.ts
 test/receipt-compaction-newest-sync-gbra130.test.ts
 test/reconcile-clears-stalled-hold-7364.test.ts
+test/refresh-barrier-gst1623.test.ts
+test/refresh-barrier-held-after-abort.test.ts
+test/refresh-own-commits-replan-8828.test.ts
 test/refresh-retry-hint-gst1582.test.ts
 test/refresh-write-barrier.test.ts
 test/remediation-manual-only.test.ts
@@ -482,6 +486,7 @@ test/repair-quoted-markers-8059.test.ts
 test/repair-receipt-compaction.test.ts
 test/repair-rename-identity-6729.test.ts
 test/repair-secret-spans.test.ts
+test/repair-unwithdrawn-facts-8819.test.ts
 test/retrieval-coverage-notices.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts
@@ -588,6 +593,7 @@ test/trust-owner-actions.test.ts
 test/unbound-source-6536.test.ts
 test/unindexed-files-convergence-7149.test.ts
 test/unindexed-files.test.ts
+test/url-source-origin.test.ts
 test/v273-validate-timeouts.test.ts
 test/valid-time-gbra217.test.ts
 test/vector-manifest-probe-bound.test.ts

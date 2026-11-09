@@ -51,6 +51,7 @@ function makeCtx(
     name: 'shell',
     data,
     attempts_made: 0,
+    idempotency_key: null,
     signal: opts.signal ?? new AbortController().signal,
     deadlineAtMs: null,
     shutdownSignal: opts.shutdownSignal ?? new AbortController().signal,

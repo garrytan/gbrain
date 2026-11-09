@@ -15,9 +15,11 @@
  * Seams: the refresh fixture (one clone, sources alpha and beta), managedBrain for the repo-less case, the effect
  * worker run in-process, `localEditAdoptionSeams.beforePublish`.
  */
-import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, expect, spyOn, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import * as fs from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { acquireWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -30,7 +32,7 @@ import { submitRememberMutation } from '../src/core/persistence/memory-mutations
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
-import { readLedger } from '../src/core/git/commit-ledger.ts';
+import { ledgerFiles, readLedger, recordIntent } from '../src/core/git/commit-ledger.ts';
 import { isTerminal, requestPrincipal, type WriteRequest } from '../src/core/persistence/model.ts';
 import { cancelWriteRequest } from '../src/core/persistence/control.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -399,3 +401,395 @@ test('a repo-less brain adopts the edit into the database alone', async () => {
     expect(versions.some(v => v.change_reason === 'adopted_local_edit')).toBe(true);
   }, backend === 'postgres' ? { databaseUrl: process.env.DATABASE_URL } : {});
 }, 180_000);
+
+// ── #8755 hardening ─────────────────────────────────────────────────────────
+
+test('#8755 a: a write to another page on the same worktree is not held for the full quiet bound behind an adoption whose file never settles', () => each(async f => {
+  const { localEditAdoptionSeams } = await import('../src/core/persistence/local-edit-adoption.ts');
+  localEditAdoptionSeams.maxWaitMs = 1500;
+  let n = 0;
+  const touch = () => writeFileSync(join(f.root, 'alpha', 'one.md'), page('Alpha one', `The first alpha observation.\n\n${LOCAL} ${n++}`));
+  touch();
+  const timer = setInterval(touch, 100);
+  try {
+    const pending = timeline(f)().catch(() => undefined);
+    for (let i = 0; i < 100 && !(await f.engine.executeRaw("SELECT 1 FROM persistence_requests WHERE operation='add_timeline_entry' AND source_id=$1 AND state='running'", [f.alpha])).length; i++) await new Promise(resolve => setTimeout(resolve, 50));
+    const started = Date.now();
+    const other = await local(f, 'put_page', { slug: 'two', content: page('Alpha two', 'Another page on the same worktree.') });
+    let row: WriteRequest | undefined;
+    for (let i = 0; i < 150; i++) {
+      [row] = await f.engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE request_id=$1::uuid", [other.request_id]);
+      if (row && isTerminal(row)) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    expect(row?.state).toBe('committed');
+    expect(Date.now() - started).toBeLessThan(15_000);
+    await pending;
+  } finally { clearInterval(timer); localEditAdoptionSeams.maxWaitMs = undefined; }
+  expect((await adoptionRows(f)).filter(r => r.state === 'committed')).toEqual([]);
+}, { quietMs: 60_000 }), 180_000);
+
+test('#8755 b: a publication that fails after the adoption\'s commit is recovered: the adoption commits once and the caller lands', () => each(async f => {
+  const { installFaultHook } = await import('../src/core/persistence/fault-points.ts');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  const blob = blobOf(f, 'one.md'), replaced = await revision(f, 'one');
+  let fired = 0;
+  installFaultHook((point, detail) => {
+    if (point === 'publication:before_commit' && detail.operation === 'put_page' && detail.sourceId === f.alpha && fired++ === 0) {
+      throw Object.assign(new Error('could not serialize access due to concurrent update'), { code: '40001' });
+    }
+  });
+  try { await timeline(f)().catch(() => undefined); } finally { installFaultHook(undefined); }
+  expect(fired).toBeGreaterThan(0);
+  const done = await settled(f.engine, await lastRow(f, 'add_timeline_entry'));
+  await expectAdopted(f, done, 'one.md', 'one', blob, replaced, 'Must not land.');
+  expect(git(f.root, 'log', '--format=%s', '--', 'alpha/one.md').split('\n').filter(s => s.includes('adopt local edit'))).toHaveLength(1);
+  const [adoption] = await adoptionRows(f);
+  expect((adoption!.outcome as { persistence?: { git_commit?: string } }).persistence?.git_commit).toBeTruthy();
+}), 180_000);
+
+test('#8755 c: conflict markers keep the refusal: an unmerged path, and a merge in progress', () => each(async f => {
+  const MARKERS = page('Alpha one', `The first alpha observation.\n\n<<<<<<< HEAD\nours\n=======\n${LOCAL}\n>>>>>>> side`);
+  const base = git(f.root, 'rev-parse', 'HEAD:alpha/one.md');
+  writeFileSync(join(f.root, 'theirs.tmp'), page('Alpha one', `The first alpha observation.\n\n${LOCAL}`));
+  const theirs = git(f.root, 'hash-object', '-w', 'theirs.tmp');
+  git(f.root, 'update-index', '--force-remove', 'alpha/one.md');
+  execFileSync('git', ['-C', f.root, 'update-index', '--index-info'], { input: `100644 ${base} 1\talpha/one.md\n100644 ${base} 2\talpha/one.md\n100644 ${theirs} 3\talpha/one.md\n` });
+  await expectRefused(f, MARKERS, timeline(f), 'add_timeline_entry');
+  git(f.root, 'update-index', '--add', '--cacheinfo', `100644,${base},alpha/one.md`);
+  writeFileSync(join(f.root, '.git', 'MERGE_HEAD'), `${head(f)}\n`);
+  try { await expectRefused(f, EDITED, timeline(f), 'add_timeline_entry'); } finally { rmSync(join(f.root, '.git', 'MERGE_HEAD'), { force: true }); }
+}), 180_000);
+
+test('#8755 d: a stale editor save keeps the refusal: the earlier revision as it was, and one missing the row gbrain added', () => each(async f => {
+  const before = file(f, 'one.md');
+  const out = await call(f, 'add_timeline_entry', { slug: 'one', date: '2026-11-06', summary: 'Entry gbrain added.' });
+  expect(out.isError).toBe(false);
+  const added = await settled(f.engine, await lastRow(f, 'add_timeline_entry'));
+  expect(added.state).toBe('committed');
+  await gitEffectDone(f, added.id);
+  expect(git(f.root, 'show', 'HEAD:alpha/one.md')).toContain('Entry gbrain added.');
+  await expectRefused(f, before, timeline(f), 'add_timeline_entry');
+  await expectRefused(f, before.replace('The first alpha observation.', `The first alpha observation.\n\n${LOCAL}`), timeline(f), 'add_timeline_entry');
+}), 180_000);
+
+test('#8755 e: a file over the page size limit keeps the refusal, and the adoption never reads it', () => each(async f => {
+  const { PAGE_MAX_BYTES } = await import('../src/core/page-size-policy.ts');
+  const read = fs.readFileSync, target = join(f.root, 'alpha', 'one.md');
+  let adoptionReads = 0;
+  const reads = spyOn(fs, 'readFileSync').mockImplementation(((path: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+    if (String(path) === target && String(new Error().stack).includes('adoptionIntent')) adoptionReads++;
+    return (read as (...args: unknown[]) => unknown)(path, ...rest);
+  }) as typeof fs.readFileSync);
+  try {
+    await expectRefused(f, page('Alpha one', `The first alpha observation.\n\n${'x'.repeat(PAGE_MAX_BYTES + 1)}`), timeline(f), 'add_timeline_entry');
+  } finally { reads.mockRestore(); }
+  expect(adoptionReads).toBe(0);
+}), 180_000);
+
+test('#8755 j: an empty persistence.adopt_quiet_ms reads as the default window, not as no wait', () => each(async f => {
+  await setConfig(f.engine, 'persistence.adopt_quiet_ms', '');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  const written = Date.now();
+  await call(f, 'add_timeline_entry', { slug: 'one', date: '2026-11-06', summary: 'Entry after the default window.' });
+  const done = await settled(f.engine, await lastRow(f, 'add_timeline_entry'));
+  expect(done.state).toBe('committed');
+  const [adoption] = await adoptionRows(f);
+  expect(new Date(adoption!.created_at as unknown as string).getTime() - written).toBeGreaterThanOrEqual(4_000);
+}), 180_000);
+
+test('#8755 l: doctor local_edit_adoptions still counts an adoption whose receipt was compacted', () => each(async f => {
+  const { localEditAdoptionsEntry } = await import('../src/commands/doctor/checks/local-edit-adoptions.ts');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  await call(f, 'add_timeline_entry', { slug: 'one', date: '2026-11-06', summary: 'Entry for the doctor.' });
+  expect((await settled(f.engine, await lastRow(f, 'add_timeline_entry'))).state).toBe('committed');
+  const [adoption] = await adoptionRows(f);
+  await f.engine.transaction(async tx => {
+    await tx.executeRaw("SELECT set_config('gbrain.persistence_protocol','2',true)");
+    await tx.executeRaw('UPDATE persistence_requests SET intent=NULL,compacted=true WHERE id=$1::uuid', [adoption!.id]);
+  });
+  const check = (await localEditAdoptionsEntry.run({ engine: f.engine, progress: { heartbeat() {} } } as never) as Array<{ details?: any }>)[0]!;
+  expect(check.details.sources.filter((s: { source_id: string }) => s.source_id === f.alpha)).toEqual([{ source_id: f.alpha, adoptions: 1, paths: ['one.md'] }]);
+}), 180_000);
+
+test('#8755 k: a repo-less-looking source inside an enclosing repository whose HEAD git cannot read keeps the refusal', async () => {
+  for (const backend of backends) await managedBrain(async ({ engine, ctx, root }) => {
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug: SLUG, request_id: randomUUID(), content: '---\ntype: person\ntitle: Owner\n---\n\nBody.\n' } });
+    await setConfig(engine, 'persistence.adopt_local_edits.source.default', 'true');
+    await setConfig(engine, 'persistence.adopt_quiet_ms', '0');
+    const path = join(root, `${SLUG}.md`);
+    const edited = readFileSync(path, 'utf8').replace('Body.', `Body.\n\n${LOCAL}`);
+    execFileSync('git', ['init', '-q', '-b', 'main', join(root, '..')]);
+    writeFileSync(path, edited);
+    const before = (await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!.revision;
+    await submitRememberMutation(ctx, { fact: 'Owner prefers async updates', entity: SLUG, provenance: 'test', visibility: 'world' }).catch(() => undefined);
+    const done = await settled(engine, await lastRow({ engine }, 'remember'));
+    expect(done.state).not.toBe('committed');
+    expect(readFileSync(path, 'utf8')).toBe(edited);
+    expect((await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!.revision).toBe(before);
+    expect((await adoptionRows({ engine })).filter(r => r.state === 'committed')).toEqual([]);
+  }, backend === 'postgres' ? { databaseUrl: process.env.DATABASE_URL } : {});
+}, 180_000);
+
+
+test('#8755 h: an adoption names its caller\'s claim, and one whose caller no longer holds it publishes nothing', () => each(async f => {
+  const { assertAdoptionCaller } = await import('../src/core/persistence/local-edit-adoption.ts');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  await timeline(f)().catch(() => undefined);
+  const done = await settled(f.engine, await lastRow(f, 'add_timeline_entry'));
+  expect(done.state).toBe('committed');
+  const [adoption] = await adoptionRows(f);
+  const caller = (adoption!.intent as { adoptLocalEdit?: { caller?: { id: string; token: string } } }).adoptLocalEdit?.caller;
+  expect(caller?.id).toBe(done.id);
+  expect(caller?.token).toBeTruthy();
+  const refused = await assertAdoptionCaller(f.engine, adoption!, caller).then(() => null, (e: { code?: string }) => e);
+  expect(refused?.code).toBe('write_claim_lost');
+}), 180_000);
+
+
+test('#8755 m: a caller cancelled after its adoption prepared has nothing adopted', () => each(async f => {
+  const { localEditAdoptionSeams } = await import('../src/core/persistence/local-edit-adoption.ts');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  const before = { head: head(f), revision: await revision(f, 'one') };
+  let cancelled: string | undefined;
+  localEditAdoptionSeams.beforePublish = async () => {
+    const [caller] = await f.engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE operation='add_timeline_entry' AND source_id=$1 AND state='running' ORDER BY sequence DESC LIMIT 1", [f.alpha]);
+    cancelled = (await cancelWriteRequest(f.engine, requestPrincipal(caller!), caller!.request_id))?.state;
+  };
+  await timeline(f)().catch(() => undefined);
+  expect(cancelled).toBe('cancelled');
+  const [adoption] = await adoptionRows(f);
+  expect(adoption).toMatchObject({ state: 'failed', error_code: 'write_claim_lost' });
+  expect(file(f, 'one.md')).toBe(EDITED);
+  expect(head(f)).toBe(before.head);
+  expect(await revision(f, 'one')).toBe(before.revision);
+}), 180_000);
+
+test('#8755 n: a conflict or a merge that starts after the adoption prepared keeps the refusal and the index', () => each(async f => {
+  const { localEditAdoptionSeams } = await import('../src/core/persistence/local-edit-adoption.ts');
+  const base = git(f.root, 'rev-parse', 'HEAD:alpha/one.md');
+  writeFileSync(join(f.root, 'theirs.tmp'), EDITED);
+  const theirs = git(f.root, 'hash-object', '-w', 'theirs.tmp');
+  const stages = `100644 ${base} 1\talpha/one.md\n100644 ${base} 2\talpha/one.md\n100644 ${theirs} 3\talpha/one.md\n`;
+  const refused = async () => {
+    const before = { head: head(f), revision: await revision(f, 'one') };
+    await timeline(f)().catch(() => undefined);
+    const row = await settled(f.engine, await lastRow(f, 'add_timeline_entry'));
+    expect(row).toMatchObject({ state: 'conflict', error_code: 'source_changed' });
+    expect((await adoptionRows(f)).filter(r => r.state === 'committed')).toEqual([]);
+    expect(file(f, 'one.md')).toBe(EDITED);
+    expect(head(f)).toBe(before.head);
+    expect(await revision(f, 'one')).toBe(before.revision);
+  };
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  localEditAdoptionSeams.beforePublish = () => {
+    git(f.root, 'update-index', '--force-remove', 'alpha/one.md');
+    execFileSync('git', ['-C', f.root, 'update-index', '--index-info'], { input: stages });
+  };
+  await refused();
+  expect(git(f.root, 'ls-files', '-u', '--', 'alpha/one.md').split('\n')).toHaveLength(3);
+  git(f.root, 'update-index', '--force-remove', 'alpha/one.md');
+  git(f.root, 'update-index', '--add', '--cacheinfo', `100644,${base},alpha/one.md`);
+  localEditAdoptionSeams.beforePublish = () => { writeFileSync(join(f.root, '.git', 'MERGE_HEAD'), `${head(f)}\n`); };
+  try { await refused(); } finally { rmSync(join(f.root, '.git', 'MERGE_HEAD'), { force: true }); }
+}), 180_000);
+
+test('#8755 o: an adoption whose caller names no claim token ends write_claim_lost, not a database error', () => each(async f => {
+  const { localEditAdoptionSeams } = await import('../src/core/persistence/local-edit-adoption.ts');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  const before = { head: head(f), revision: await revision(f, 'one') };
+  let calls = 0;
+  localEditAdoptionSeams.beforePublish = async () => {
+    if (calls++) return;
+    await f.engine.executeRaw("UPDATE persistence_requests SET intent=jsonb_set(intent, '{adoptLocalEdit,caller,token}', 'null'::jsonb) WHERE source_id=$1 AND intent ? 'adoptLocalEdit'", [f.alpha]);
+    throw Object.assign(new Error('could not serialize access due to concurrent update'), { code: '40001' });
+  };
+  await timeline(f)().catch(() => undefined);
+  expect(calls).toBe(1);
+  const [adoption] = await adoptionRows(f);
+  expect(adoption).toMatchObject({ state: 'failed', error_code: 'write_claim_lost' });
+  expect(file(f, 'one.md')).toBe(EDITED);
+  expect(head(f)).toBe(before.head);
+  expect(await revision(f, 'one')).toBe(before.revision);
+}), 180_000);
+
+test('#8755 p: a stale editor save matches an earlier revision whose edges hold whitespace beyond space, tab and newline', () => each(async f => {
+  const { localEditAdoptionSeams } = await import('../src/core/persistence/local-edit-adoption.ts');
+  let published = 0;
+  localEditAdoptionSeams.beforePublish = () => { published++; };
+  const EARLIER = 'An earlier body a stale editor buffer still held.';
+  await f.engine.executeRaw(`INSERT INTO page_versions (page_id, compiled_truth, timeline, frontmatter)
+    SELECT id, $1, timeline, frontmatter FROM pages WHERE source_id=$2 AND slug='one'`, [`\u00a0\ufeff${EARLIER}\u3000\u2028`, f.alpha]);
+  await expectRefused(f, page('Alpha one', EARLIER), timeline(f), 'add_timeline_entry');
+  expect(published).toBe(0);
+}), 180_000);
+
+
+// ── #8824 / #8767 / #8826 ───────────────────────────────────────────────────
+
+/** The adoption commit of `rel`: the newest commit on its path whose subject is the adoption's. */
+const adoptCommit = (f: RefreshFixture, rel: string) => git(f.root, 'log', '--format=%H %s', '--', `alpha/${rel}`).split('\n')
+  .filter(line => line.includes(`gbrain: adopt local edit to ${rel}`)).map(line => line.split(' ')[0]!);
+const statementCancel = () => Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+/** Drops the commit-ledger lines naming `shas` (a busy ledger lock or a crash after `git commit`); intent lines stay. */
+function dropCommitLines(f: RefreshFixture, shas: string[]): number {
+  const ledger = ledgerFiles(join(f.root, '.git')).current;
+  const lines = readFileSync(ledger, 'utf8').split('\n');
+  const kept = lines.filter(line => { try { const r = JSON.parse(line); return !(r.e === 'commit' && shas.includes(r.sha)); } catch { return true; } });
+  writeFileSync(ledger, kept.join('\n'));
+  return lines.length - kept.length;
+}
+
+test('#8824: an adoption whose commit landed before its caller\'s claim ended is published by the consumer, naming that commit', () => each(async f => {
+  const { installFaultHook } = await import('../src/core/persistence/fault-points.ts');
+  const rel = 'people/alice-example.md', slug = 'people/alice-example';
+  commitFile(f.root, `alpha/${rel}`, PERSON, 'person page');
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  writeFileSync(join(f.root, 'alpha', rel), PERSON.replace('Alice is a person.', `Alice is a person.\n\n${LOCAL}`));
+  const blob = blobOf(f, rel), replaced = await revision(f, slug);
+  let fired = 0, cancelled: string | undefined;
+  installFaultHook(async (point, detail) => {
+    if (detail.operation !== 'put_page' || detail.sourceId !== f.alpha) return;
+    if (point === 'publication:before_commit' && fired++ === 0) throw statementCancel();
+    // The publication failed after the adoption's commit landed; the caller's claim ends before recovery requeues it.
+    if (point === 'persistence:recovery_interruption_charged' && cancelled === undefined) {
+      const [caller] = await f.engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE operation='add_timeline_entry' AND source_id=$1 AND state='running' ORDER BY sequence DESC LIMIT 1", [f.alpha]);
+      cancelled = (await cancelWriteRequest(f.engine, requestPrincipal(caller!), caller!.request_id))?.state;
+    }
+  });
+  try { await call(f, 'add_timeline_entry', { slug, date: '2026-11-06', summary: 'Entry whose claim ends.' }).catch(() => undefined); } finally { installFaultHook(undefined); }
+  expect(fired).toBeGreaterThan(0);
+  expect(cancelled).toBe('cancelled');
+  const landed = adoptCommit(f, rel);
+  expect(landed).toHaveLength(1);
+  const [adoption] = await adoptionRows(f);
+  const done = await settled(f.engine, adoption!);
+  expect(done).toMatchObject({ state: 'committed' });
+  expect(done.error_code).not.toBe('write_claim_lost');
+  expect((done.outcome as { persistence?: unknown }).persistence).toMatchObject({ git_state: 'committed', git_commit: landed[0], landed_before_row: true });
+  expect((done.outcome as { adopted_local_edit?: unknown }).adopted_local_edit).toEqual({ path: rel, blob, replaced_revision: replaced });
+  expect(adoptCommit(f, rel)).toEqual(landed);
+  expect((await f.engine.readPageSnapshot(slug, { sourceId: f.alpha }))!.page.compiled_truth).toContain(LOCAL);
+  const out = await call(f, 'remember', { fact: 'alice-example follows the adopted edit', entity: slug, provenance: 'test' });
+  expect(out.isError).toBe(false);
+  const remembered = await settled(f.engine, await lastRow(f, 'remember'));
+  expect(remembered.state).toBe('committed');
+  expect(file(f, rel)).toContain(LOCAL);
+  expect(file(f, rel)).toContain('alice-example follows the adopted edit');
+}), 180_000);
+
+test('#8767: a terminal failure after the adoption\'s commit leaves a receipt naming that commit', () => each(async f => {
+  const { installFaultHook } = await import('../src/core/persistence/fault-points.ts');
+  const { readTerminalFailures } = await import('../src/core/persistence/terminal-failures.ts');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  const blob = blobOf(f, 'one.md'), replaced = await revision(f, 'one');
+  let fired = 0;
+  installFaultHook((point, detail) => {
+    if (point === 'publication:before_commit' && detail.operation === 'put_page' && detail.sourceId === f.alpha && fired++ === 0) throw new Error('example terminal failure after the adoption commit');
+  });
+  try { await timeline(f)().catch(() => undefined); } finally { installFaultHook(undefined); }
+  expect(fired).toBe(1);
+  const landed = adoptCommit(f, 'one.md');
+  expect(landed).toHaveLength(1);
+  const note = `one.md: worktree blob ${blob} over revision ${replaced}`;
+  expect(git(f.root, 'log', '-1', '--format=%B', landed[0]!)).toContain(`gbrain-adopted: ${note}`);
+  const line = readLedger(join(f.root, '.git')).find(r => r.e === 'commit' && r.sha === landed[0]) as { adopted?: string[] } | undefined;
+  expect(line?.adopted).toEqual([note]);
+  const [adoption] = await adoptionRows(f);
+  const done = await settled(f.engine, adoption!);
+  expect(done.state).toBe('failed');
+  expect((done.outcome as { persistence?: unknown }).persistence).toEqual({ git_state: 'committed', git_commit: landed[0], landed_before_row: true });
+  const listing = await readTerminalFailures(f.engine, { sourceId: f.alpha, state: 'all' });
+  expect(listing.status).toBe('ok');
+  expect((listing as { rows?: Array<{ request_id: string }> }).rows?.map(row => row.request_id)).toContain(done.request_id);
+}), 180_000);
+
+test('#8824: an adoption whose commit line never reached the ledger is still published, proved by its intent line', () => each(async f => {
+  const { installFaultHook } = await import('../src/core/persistence/fault-points.ts');
+  const rel = 'people/alice-example.md', slug = 'people/alice-example';
+  commitFile(f.root, `alpha/${rel}`, PERSON, 'person page');
+  await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true });
+  writeFileSync(join(f.root, 'alpha', rel), PERSON.replace('Alice is a person.', `Alice is a person.\n\n${LOCAL}`));
+  const blob = blobOf(f, rel), replaced = await revision(f, slug);
+  let fired = 0, dropped = 0, cancelled: string | undefined;
+  installFaultHook(async (point, detail) => {
+    if (detail.operation !== 'put_page' || detail.sourceId !== f.alpha) return;
+    if (point === 'publication:before_commit' && fired++ === 0) { dropped = dropCommitLines(f, adoptCommit(f, rel)); throw statementCancel(); }
+    if (point === 'persistence:recovery_interruption_charged' && cancelled === undefined) {
+      const [caller] = await f.engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE operation='add_timeline_entry' AND source_id=$1 AND state='running' ORDER BY sequence DESC LIMIT 1", [f.alpha]);
+      cancelled = (await cancelWriteRequest(f.engine, requestPrincipal(caller!), caller!.request_id))?.state;
+    }
+  });
+  try { await call(f, 'add_timeline_entry', { slug, date: '2026-11-06', summary: 'Entry whose claim ends.' }).catch(() => undefined); } finally { installFaultHook(undefined); }
+  expect(fired).toBeGreaterThan(0);
+  expect(dropped).toBe(1);
+  expect(cancelled).toBe('cancelled');
+  const landed = adoptCommit(f, rel);
+  expect(landed).toHaveLength(1);
+  expect(readLedger(join(f.root, '.git')).some(r => r.e === 'commit' && r.sha === landed[0])).toBe(false);
+  const [adoption] = await adoptionRows(f);
+  const done = await settled(f.engine, adoption!);
+  expect(done).toMatchObject({ state: 'committed' });
+  expect((done.outcome as { persistence?: unknown }).persistence).toMatchObject({ git_state: 'committed', git_commit: landed[0], landed_before_row: true });
+  expect((done.outcome as { adopted_local_edit?: unknown }).adopted_local_edit).toEqual({ path: rel, blob, replaced_revision: replaced });
+  expect((await f.engine.readPageSnapshot(slug, { sourceId: f.alpha }))!.page.compiled_truth).toContain(LOCAL);
+}), 180_000);
+
+test('#8824: an intent line proves no landed adoption without its commit, or on another parent, or with another message', () => each(async f => {
+  const { landedAdoptionCommit } = await import('../src/core/persistence/local-edit-adoption.ts');
+  const { localEditAdoptionCommit } = await import('../src/core/persistence/effect-model.ts');
+  const root = join(f.root, 'alpha'), target = join(root, 'one.md'), ledger = ledgerFiles(join(f.root, '.git')).current;
+  const parent = head(f), headBlob = git(f.root, 'rev-parse', 'HEAD:alpha/one.md');
+  writeFileSync(target, EDITED);
+  const blob = blobOf(f, 'one.md'), replaced = await revision(f, 'one');
+  const note = localEditAdoptionCommit('one.md', blob, replaced);
+  const message = `${note.subject}\n\n${note.trailers!.join('\n')}`;
+  const adopted = { path: 'one.md', blob, replaced_revision: replaced, head: headBlob };
+  const intent = (headBefore: string, text: string) => recordIntent(f.root, { writer: 'effect', head_before: headBefore, message: text });
+  intent(parent, message);
+  expect(await landedAdoptionCommit(root, target, adopted)).toBeNull();
+  writeFileSync(ledger, '');
+  intent(git(f.root, 'rev-parse', 'HEAD~1'), message);
+  intent(parent, `${note.subject}\n\nA message that differs.\n\n${note.trailers!.join('\n')}`);
+  git(f.root, 'commit', '-q', '-m', note.subject, '-m', note.trailers!.join('\n'), '--', 'alpha/one.md');
+  const landed = head(f);
+  expect(git(f.root, 'rev-parse', `${landed}^`)).toBe(parent);
+  expect(await landedAdoptionCommit(root, target, adopted)).toBeNull();
+  intent(parent, message);
+  expect(await landedAdoptionCommit(root, target, adopted)).toBe(landed);
+}), 180_000);
+
+test('#8826: a cherry-pick -n of another path leaves no marker, and neither the adoption nor its caller commits the picked path', () => each(async f => {
+  const branch = git(f.root, 'symbolic-ref', '--short', 'HEAD');
+  git(f.root, 'checkout', '-q', '-b', 'side-example');
+  const picked = commitFile(f.root, 'notes-example.md', 'Picked onto the index.\n', 'side example');
+  git(f.root, 'checkout', '-q', branch);
+  git(f.root, 'cherry-pick', '-n', picked);
+  expect(['CHERRY_PICK_HEAD', 'MERGE_HEAD', 'sequencer'].filter(marker => fs.existsSync(join(f.root, '.git', marker)))).toEqual([]);
+  expect(git(f.root, 'diff', '--cached', '--name-only')).toBe('notes-example.md');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  const blob = blobOf(f, 'one.md'), replaced = await revision(f, 'one');
+  const out = await call(f, 'add_timeline_entry', { slug: 'one', date: '2026-11-06', summary: 'Entry beside a cherry-pick -n.' });
+  expect(out.isError).toBe(false);
+  const done = await settled(f.engine, await lastRow(f, 'add_timeline_entry'));
+  await expectAdopted(f, done, 'one.md', 'one', blob, replaced, 'Entry beside a cherry-pick -n.');
+  const [caller] = git(f.root, 'log', '-1', '--format=%H', '--', 'alpha/one.md').split('\n');
+  expect(git(f.root, 'show', '--name-only', '--format=', caller!).split('\n').filter(Boolean)).toEqual(['alpha/one.md']);
+  expect(git(f.root, 'diff', '--cached', '--name-only')).toBe('notes-example.md');
+  expect(git(f.root, 'log', '--format=%H', '--', 'notes-example.md')).toBe('');
+}), 180_000);
+
+test('#8826: a bisect, or a squash merge stopped on a conflict in another path, keeps the refusal', () => each(async f => {
+  git(f.root, 'bisect', 'start');
+  try { await expectRefused(f, EDITED, timeline(f), 'add_timeline_entry'); } finally { git(f.root, 'bisect', 'reset'); }
+  const branch = git(f.root, 'symbolic-ref', '--short', 'HEAD');
+  git(f.root, 'checkout', '-q', '-b', 'squash-example');
+  commitFile(f.root, 'beta/one.md', page('Beta one', 'A side edit.'), 'side');
+  git(f.root, 'checkout', '-q', branch);
+  commitFile(f.root, 'beta/one.md', page('Beta one', 'A main edit.'), 'main');
+  expect(() => git(f.root, 'merge', '--squash', 'squash-example')).toThrow();
+  expect(fs.existsSync(join(f.root, '.git', 'MERGE_HEAD'))).toBe(false);
+  expect(git(f.root, 'ls-files', '-u', '--', 'alpha/one.md')).toBe('');
+  try { await expectRefused(f, EDITED, timeline(f), 'add_timeline_entry'); } finally { git(f.root, 'reset', '-q', '--hard'); }
+}), 180_000);
+

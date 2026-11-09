@@ -75,6 +75,11 @@ import { join } from 'node:path';
 //     a preview-approved `gbrain repair generations --mode restore` of a
 //     consolidation chain or a fence generation; local CLI, and the
 //     contradiction probe never calls it.
+//   - repair/unwithdrawn-facts.ts (#8819) — `gbrain repair unwithdrawn-facts`
+//     writes back the ledger preimage (valid_until included) of a fact the
+//     first managed fence generation retired though no fence held it; local
+//     CLI, explicit-only, preview-bound, and the contradiction probe never
+//     calls it.
 const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
   'src/core/cycle/extract-facts.ts',
   'src/core/cycle/phases/consolidate.ts',
@@ -93,6 +98,7 @@ const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
   'src/core/postgres-engine.ts',
   'src/core/pglite-engine.ts',
   'src/core/repair/consolidate-ties.ts',
+  'src/core/repair/unwithdrawn-facts.ts',
 ]);
 
 function walkTs(dir: string, acc: string[] = []): string[] {

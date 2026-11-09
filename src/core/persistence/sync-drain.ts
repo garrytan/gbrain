@@ -260,7 +260,8 @@ function transientDelay(error: unknown, attempt: number, refreshWaitedMs: number
   if (error instanceof OperationError && error.code === 'worktree_refreshing') {
     if (refreshWaitedMs >= REFRESH_WAIT_MS) return null;
     const hinted = Number(/retry_after_ms=(\d+)/.exec(String(error.detail ?? ''))?.[1]);
-    return Number.isFinite(hinted) && hinted > 0 ? hinted : 1000;
+    // GST-1623: never past the drain's refresh budget, so a long hint ends the wait on time instead of oversleeping it.
+    return Math.min(Number.isFinite(hinted) && hinted > 0 ? hinted : 1000, REFRESH_WAIT_MS - refreshWaitedMs);
   }
   // Admission gave up on lock contention (a concurrent publication holds the shared counters); the frozen request ID is kept.
   if (error instanceof OperationError && error.detail === 'database_contention') return refreshWaitedMs >= REFRESH_WAIT_MS ? null : 1000;
@@ -269,6 +270,9 @@ function transientDelay(error: unknown, attempt: number, refreshWaitedMs: number
   if (!contention && !isRetryableConnError(error) && !isStatementTimeoutError(error) && getCode(error) !== '57014') return null;
   return baseMs * 4 ** (attempt - 1);
 }
+
+/** Test seam: the drain's retry delay for one failed pass. */
+export const _transientDelayForTests = transientDelay;
 
 /** The error's message (or code), with anything that looks like a connection URL removed. */
 function errorText(error: unknown): string {
@@ -370,20 +374,21 @@ function stallText(index: number, total: number | null, stalledMs: number, claim
     + `${seen.consumer ? ` · consumer=${seen.consumer}` : ''}${seen.blocked_by ? ` · blocked_by=${headBlockerText(seen.blocked_by)}` : ''}`;
 }
 
-/** Re-enter `pass` until the managed cursor is done, the caller stops it, or it is blocked. */
 /**
  * The in-pass line's age of an unclaimed head. A head that moved since the last read is the writer making progress (it
  * commits requests queued ahead of this pass, a dead owner's in-flight writes among them), so the age counts from that
- * read, never from before `floor` (the drain's own last commit).
+ * read, never from before `floor` (the drain's own last commit). Every head read feeds it, a claimed head's included,
+ * whose line keeps the claim's own step age when it has one.
  */
-function inPassHeadAge(): (requestId: string | null | undefined, at: number, floor: number) => number {
+function inPassHeadAge(): (requestId: string | null | undefined, at: number, floor: number, claimAgeMs?: number | null) => number {
   let seen: { id: string | null | undefined; at: number; since: number } | null = null;
-  return (id, at, floor) => {
+  return (id, at, floor, claimAgeMs) => {
     seen = { id, at, since: seen && seen.id !== id ? seen.at : seen?.since ?? floor };
-    return at - Math.max(floor, seen.since);
+    return claimAgeMs ?? at - Math.max(floor, seen.since);
   };
 }
 
+/** Re-enter `pass` until the managed cursor is done, the caller stops it, or it is blocked. */
 export async function runDrain(input: DrainInput): Promise<SyncResult> {
   const clock = input.clock ?? Date.now;
   const startedAt = clock(), headAge = inPassHeadAge();
@@ -422,7 +427,7 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
     Promise.resolve().then(() => probe.head!()).then(head => {
       if (!head || !inPass || stall || clock() - lastCommitAt < every || tickAt - lastLine < every) return;
       lastLine = tickAt;
-      serr(stallText(index, total, head.claim?.step_age_ms ?? headAge(head.request_id, clock(), lastCommitAt), head.claim, head.head_state, head));
+      serr(stallText(index, total, headAge(head.request_id, clock(), lastCommitAt, head.claim?.step_age_ms), head.claim, head.head_state, head));
     }).catch(() => undefined).finally(() => { readingHead = false; });
   }, every) : null;
   stallLine?.unref?.();

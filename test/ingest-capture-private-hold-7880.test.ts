@@ -55,7 +55,7 @@ function event(content: string, untrusted: boolean): IngestionEvent {
   return { source_id: 'source-a', source_kind: 'webhook', source_uri: 'mcp-webhook:client-example:1', received_at: new Date('2026-10-28T12:00:00Z').toISOString(),
     content_type: 'text/markdown', content, content_hash: computeContentHash(content), untrusted_payload: untrusted };
 }
-const job = (data: Record<string, unknown>): MinionJobContext => ({ id: 1, name: 'ingest_capture', data, attempts_made: 0, signal: new AbortController().signal,
+const job = (data: Record<string, unknown>): MinionJobContext => ({ id: 1, name: 'ingest_capture', data, attempts_made: 0, idempotency_key: null, signal: new AbortController().signal,
   deadlineAtMs: null, shutdownSignal: new AbortController().signal, updateProgress: async () => {}, updateTokens: async () => {}, log: async () => {},
   isActive: async () => true, readInbox: async () => [] });
 type Outcome = { status?: string; thrown?: unknown; code?: string; message?: string };

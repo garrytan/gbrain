@@ -66,15 +66,26 @@ function runSpec(m: Mutant, tla2tools: string): void {
   const mutated = applyOnce(readFileSync(target, 'utf8'), m.spec);
   if (mutated === null) return fail('MUTANT_STALE', m.id, `spec text not found exactly once in ${m.spec.file}: ${JSON.stringify(m.spec.before)}`);
   writeFileSync(target, mutated);
-  const r = spawnSync('java', ['-XX:+UseParallelGC', `-Djava.io.tmpdir=${join(work, 'tmp')}`, '-cp', tla2tools, 'tlc2.TLC', '-workers', 'auto',
-    '-config', config, '-metadir', join(work, 'states'), `${catalog.module}.tla`], { cwd: work, encoding: 'utf8', timeout: timeoutS * 1000 });
+  const tlc = (cfg: string) => spawnSync('java', ['-XX:+UseParallelGC', `-Djava.io.tmpdir=${join(work, 'tmp')}`, '-cp', tla2tools, 'tlc2.TLC', '-workers', 'auto',
+    '-config', cfg, '-metadir', join(work, `states-${cfg}`), `${catalog.module}.tla`], { cwd: work, encoding: 'utf8', timeout: timeoutS * 1000 });
+  const r = tlc(config);
   const log = `${r.stdout ?? ''}${r.stderr ?? ''}`;
   writeFileSync(join(work, 'tlc.log'), log);
   const spawnCode = (r.error as NodeJS.ErrnoException | undefined)?.code;
   if (spawnCode === 'ENOENT') return fail('MUTANT_INCOMPLETE', m.id, `cannot run java (ENOENT); TLC did not start. Install Java 11 or later on PATH and rerun: bun scripts/spec/mutants.ts --only ${m.id} --spec-only`);
   if (r.error || r.signal) return fail('MUTANT_INCOMPLETE', m.id, `TLC did not finish within TLC_TIMEOUT_S (${timeoutS} s) or was killed (${spawnCode ?? r.signal}). If the spec or config changed, find the action that multiplies states; otherwise rerun once. Log: ${work}/tlc.log`);
   checked++;
-  const violated = log.match(/(?:Invariant|Action property|Property) (\w+) is violated/)?.[1];
+  let violated = log.match(/(?:Invariant|Action property|Property) (\w+) is violated/)?.[1];
+  // TLC names no property when a temporal one fails: check the config's properties one at a time to name it.
+  if (!violated && log.includes('Temporal properties were violated.')) {
+    const text = readFileSync(join(work, config), 'utf8');
+    for (const property of [...text.matchAll(/^PROPERTY (\w+)$/gm)].map(match => match[1]!)) {
+      const single = `${property}-${config}`;
+      writeFileSync(join(work, single), text.replace(/^PROPERTY \w+\n/gm, '') + `PROPERTY ${property}\n`);
+      const each = tlc(single);
+      if (`${each.stdout ?? ''}${each.stderr ?? ''}`.includes('Temporal properties were violated.')) { violated = property; break; }
+    }
+  }
   const clean = log.includes('Model checking completed. No error has been found.');
   if (m.expect === 'survives') {
     if (clean) return void console.log(`ok   ${m.id} (survivor): survives as expected (defense in depth)`);
