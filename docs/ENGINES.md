@@ -223,7 +223,9 @@ which names both choices: turn TLS on at the server, or add
 connection to a non-local server uses TLS. It judges that from the client side:
 `sslmode=require`, `verify-ca` and `verify-full` make the driver refuse a
 server without TLS. It warns on `sslmode=disable`, and on `sslmode=prefer` when
-the server does not offer TLS (prefer then falls back to plaintext). Behind a
+the server does not offer TLS or reports the session unencrypted (prefer falls
+back to plaintext without saying so, so doctor never certifies a prefer
+connection as encrypted). Behind a
 pooler, the server's `pg_stat_ssl` row describes the pooler's own hop to the
 database, which can't be checked from your machine, so doctor shows it as detail
 and never warns about it. PGLite opens no network connection, so none of this

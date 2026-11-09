@@ -83,6 +83,25 @@ describe('postgres_tls doctor check', () => {
     expect(postgresTlsCheck('postgres://u@127.0.0.1:5432/brain', { ssl: false, version: null }, {})!.status).toBe('ok');
   });
 
+  test('sslmode=prefer with a session the server reports unencrypted warns, whatever a fresh probe answers', () => {
+    for (const answer of ['S', null] as const) {
+      const c = postgresTlsCheck(REMOTE + '?sslmode=prefer', { ssl: false, version: null }, {}, answer)!;
+      expect(c.status).toBe('warn');
+      expect(c.message).toContain('plaintext');
+      expect(c.details?.client_tls).not.toBe(true);
+    }
+  });
+
+  test('sslmode=prefer never certifies the client hop: a fresh probe is not the engine socket', () => {
+    const c = postgresTlsCheck(REMOTE + '?sslmode=prefer', { ssl: true, version: 'TLSv1.3' }, {}, 'S')!;
+    expect(c.details?.client_tls).toBeNull();
+  });
+
+  test('PGSSL=disable is TLS for the driver (only URL values turn it off), so doctor does not warn', () => {
+    const c = postgresTlsCheck(REMOTE, { ssl: true, version: 'TLSv1.3' }, { PGSSL: 'disable' })!;
+    expect(c.status).toBe('ok');
+  });
+
   test('sslmode=prefer with no answer from the server emits nothing', () => {
     expect(postgresTlsCheck(REMOTE + '?sslmode=prefer', null, {}, null)).toBeNull();
   });

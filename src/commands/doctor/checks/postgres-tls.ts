@@ -45,29 +45,34 @@ export function postgresTlsCheck(
   if (hosts.length > 0 && hosts.every(isLoopbackPgHost)) {
     return { name: 'postgres_tls', status: 'ok', message: 'The Postgres host is on this machine; TLS is not required.' };
   }
-  const { mode } = resolvePgTls(url, {}, env);
+  const { source, mode } = resolvePgTls(url, {}, env);
   const serverView = session ? { server_reports_ssl: session.ssl, server_ssl_version: session.version } : {};
-  if (mode === 'disable' || (mode === 'prefer' && preferAnswer === 'N')) {
+  const optedOut = mode === 'disable' && source !== 'env';
+  const prefer = mode === 'prefer';
+  if (optedOut || (prefer && (preferAnswer === 'N' || session?.ssl === false))) {
     return {
       name: 'postgres_tls', status: 'warn',
-      message: mode === 'disable'
+      message: optedOut
         ? 'Connected to a non-local Postgres host without TLS (sslmode=disable in the database URL): the password and page contents cross the network in plaintext. Turn TLS on at the server and use sslmode=require or sslmode=verify-full.'
-        : 'sslmode=prefer fell back to plaintext: the non-local Postgres server does not offer TLS, so the password and page contents cross the network unencrypted. Turn TLS on at the server and use sslmode=require, which refuses to fall back.',
-      details: { client_tls: false, sslmode: mode, ...serverView },
+        : preferAnswer === 'N'
+          ? 'sslmode=prefer fell back to plaintext: the non-local Postgres server does not offer TLS, so the password and page contents cross the network unencrypted. Turn TLS on at the server and use sslmode=require, which refuses to fall back.'
+          : 'sslmode=prefer may have fallen back to plaintext: the server reports this session unencrypted, and prefer lets the driver connect without TLS whenever a server does not offer it. Use sslmode=require, which refuses to fall back.',
+      details: { client_tls: optedOut || preferAnswer === 'N' ? false : null, sslmode: mode, ...serverView },
       fix: TLS_FIX,
     };
   }
-  if (mode === 'prefer' && preferAnswer !== 'S') return null;
-  const unverified = mode === 'require' || mode === 'prefer' || mode === 'allow';
+  if (prefer && preferAnswer !== 'S' && !session?.ssl) return null;
+  const unverified = mode === 'require' || prefer || mode === 'allow';
   const notes = [
-    mode === 'prefer' ? 'sslmode=prefer falls back to plaintext if the server ever stops offering TLS; sslmode=require refuses to.' : '',
     unverified ? 'sslmode=' + mode + ' does not verify the server certificate; sslmode=verify-full with the server CA also verifies it.' : '',
-    session && !session.ssl ? 'The server reports this session unencrypted: behind a pooler that is the pooler\'s own hop to the database, which cannot be checked from this machine.' : '',
+    !prefer && session && !session.ssl ? 'The server reports this session unencrypted: behind a pooler that is the pooler\'s own hop to the database, which cannot be checked from this machine.' : '',
   ].filter(Boolean).join(' ');
   return {
     name: 'postgres_tls', status: 'ok',
-    message: 'This connection to the non-local Postgres host uses TLS' + (session?.ssl && session.version ? ' (' + session.version + ')' : '') + '.' + (notes ? ' ' + notes : ''),
-    details: { client_tls: true, sslmode: mode, ...serverView },
+    message: (prefer
+      ? 'sslmode=prefer: the non-local Postgres server ' + (session?.ssl ? 'reports this session encrypted' : 'offers TLS') + ', but prefer lets the driver fall back to plaintext without saying so, and that cannot be confirmed from this machine; sslmode=require refuses to fall back.'
+      : 'This connection to the non-local Postgres host uses TLS' + (session?.ssl && session.version ? ' (' + session.version + ')' : '') + '.') + (notes ? ' ' + notes : ''),
+    details: { client_tls: prefer ? null : true, sslmode: mode, ...serverView },
   };
 }
 
