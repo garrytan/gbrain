@@ -49,6 +49,11 @@ describe('conversation_facts_backfill exclude_sources (#7043)', () => {
     expect(r.summary).toContain('exclude_sources');
   });
 
+  test('a JSON-quoted comma list is split without its quotes (#8901 shared parser)', async () => {
+    await engine.setConfig(KEY, '"source-a, source-b"');
+    expect((await loadCfg(engine)).excludeSources).toEqual(['source-a', 'source-b']);
+  });
+
   test('a comma list works too, and an unknown id excludes nothing else', async () => {
     await engine.setConfig(KEY, 'source-a, source-missing');
     expect((await loadCfg(engine)).excludeSources).toEqual(['source-a', 'source-missing']);

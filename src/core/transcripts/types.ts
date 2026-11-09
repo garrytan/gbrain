@@ -52,6 +52,35 @@ export interface TranscriptSessionMeta {
   /** ISO 8601 UTC session start; slug date derives from this (fallback: first message). */
   startedAt?: string;
   /**
+   * #8901: the host's own session-kind label when it records one (Hermes
+   * `sessions.source`: `desktop`, `cron`, `subagent`, a hook's custom name).
+   * Rendered as `transcript_import.session_source` so a page can be
+   * classified after the host prunes the session row.
+   */
+  sessionSource?: string;
+  /**
+   * #8901: the host's immutable creation label when it differs from
+   * `sessionSource` (Hermes keeps `created_source: desktop` on a row whose
+   * routing `source` became `local`). Rendered as
+   * `transcript_import.session_created_source`.
+   */
+  sessionCreatedSource?: string;
+  /**
+   * #8901: the session is a delegate (sub-agent) child by the host's own
+   * marker, whatever its `sessionSource` says (Hermes children spawned under
+   * a desktop or gateway turn inherit the parent's source and carry
+   * `_delegate_from` in `model_config`). Rendered as
+   * `transcript_import.delegate: true`.
+   */
+  delegate?: boolean;
+  /**
+   * #8901: the host metadata needed for the delegate check did not parse (a
+   * BLOB or non-JSON `model_config`), so a marker there could not be read.
+   * Ingest counts it per SCANNED session (past the since filter and the
+   * no-timestamp skip; `sessionMetadataUnparsed`); it is never rendered.
+   */
+  hostMetadataUnparsed?: boolean;
+  /**
    * Raw session metadata for engine.putRawData — a plain OBJECT, never a
    * pre-stringified JSON string (the postgres.js double-encode trap).
    */
@@ -93,6 +122,18 @@ export interface FileDiagnostics {
    * and does not hold the watermark.
    */
   subagentRollout?: boolean;
+  /**
+   * #8901: sessions the adapter dropped by `ParseSessionsOpts.excludeSessionSources`
+   * before reading their messages. Never yielded, never counted in `sessions`,
+   * not errors; a store whose every session was excluded sets `expectedEmpty`.
+   */
+  sessionsExcluded?: number;
+  /** #8901: `sessionsExcluded` broken down by the label each row was counted under (its listed `source`, else its listed `created_source`, else `subagent` for a marker-bearing delegate child). */
+  excludedBySource?: Record<string, number>;
+  /** #8901: delegate children recognised by the host's marker rather than by `source` (a subset of `excludedBySource.subagent`). */
+  delegatesExcluded?: number;
+  /** #8901: every listed label that matched at least one excluded row (a row matching two labels is counted once in `excludedBySource` but names both here), sorted; the command reports the listed labels missing from it. */
+  excludeLabelsMatched?: string[];
 }
 
 export interface ParseSessionsOpts {
@@ -102,6 +143,15 @@ export interface ParseSessionsOpts {
    * read, so an over-budget rollout still imports.
    */
   maxBytes?: number;
+  /**
+   * #8901: host session-kind labels to drop before any message is read, so the
+   * session never becomes a page and never reaches `--facts`. Honoured by
+   * adapters whose host records a kind per session (Hermes `sessions.source`;
+   * there `subagent` also drops delegate children recognised by the host's
+   * `_delegate_from` marker). Other adapters ignore it. Absent or empty: drop
+   * nothing. Dropped sessions are reported in `FileDiagnostics.sessionsExcluded`.
+   */
+  excludeSessionSources?: readonly string[];
 }
 
 export interface TranscriptAdapter {

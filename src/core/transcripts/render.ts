@@ -203,6 +203,11 @@ export function redactSession(
     return { m, text: plan(m.text), speaker: m.speaker ? plan(m.speaker) : undefined };
   });
   const titlePlan = session.meta.title ? plan(session.meta.title) : undefined;
+  // #8901: the host's session-kind labels are persisted into frontmatter, so a
+  // hook's free-text source gets the same scan as the title (its raw-metadata
+  // copy already does; the two copies of one store string must agree).
+  const sourcePlan = session.meta.sessionSource ? plan(session.meta.sessionSource) : undefined;
+  const createdSourcePlan = session.meta.sessionCreatedSource ? plan(session.meta.sessionCreatedSource) : undefined;
   // Flatness is ENFORCED, not assumed: strings are planned; primitive
   // scalars pass; anything nested (arrays/objects an adapter let through
   // from hostile export data) is DROPPED — it would reach putRawData
@@ -225,6 +230,8 @@ export function redactSession(
   }));
   const meta = { ...session.meta };
   if (titlePlan) meta.title = apply(titlePlan);
+  if (sourcePlan) meta.sessionSource = apply(sourcePlan);
+  if (createdSourcePlan) meta.sessionCreatedSource = apply(createdSourcePlan);
   if (meta.raw) {
     const raw: Record<string, unknown> = {};
     for (const e of rawEntries) raw[e.key] = e.plan ? apply(e.plan) : e.scalar;
@@ -427,6 +434,10 @@ export function renderSessionParts(
         part,
         ...(single ? { of: 1 } : { part_bytes: partTargetBytes }),
         ...(imperatives > 0 ? { imperatives_flagged: imperatives } : {}),
+        // #8901: the host's session kind, so a page outlives its session row.
+        ...(meta.sessionSource ? { session_source: meta.sessionSource } : {}),
+        ...(meta.sessionCreatedSource ? { session_created_source: meta.sessionCreatedSource } : {}),
+        ...(meta.delegate ? { delegate: true } : {}),
       },
     };
     const body = group.map((b) => b.text).join('\n\n');

@@ -83,6 +83,59 @@ gbrain transcripts status                    # found vs imported, per harness
 
 **Say to your agent:** *"Import my conversations from my chatgpt export at ~/Downloads/conversations.json"* — *"Archive my session transcripts"* — and later, *"When did I first discuss agent memory?"* (the archive answers origin questions with dated quotes).
 
+#### Hermes stores: automated sessions stay out
+
+A Hermes `state.db` holds the agent's automation beside your conversations:
+scheduled cron runs, delegate sub-agent children, kanban workers, tool
+integrations and hook-driven runs. Hermes records the kind on every session
+(`sessions.source`, with the creation label kept in `created_source` when the
+routing label becomes `local`, and a `_delegate_from` marker for sub-agent
+children spawned under a desktop or gateway turn, which inherit the parent's
+source). The importer reads that metadata and drops the automated sessions
+before anything is rendered, with no model call: they never become pages and
+never reach `--facts`. By default it drops what Hermes hides from its own
+session history (`subagent` incl. delegate children, `kanban`, `tool`); `cron`
+and a hook's custom source are kept until you name them. A compression
+continuation or a branch is a conversation and always imports: only the
+marker, never `parent_session_id`, identifies a sub-agent child.
+
+```bash
+gbrain transcripts ingest ~/.hermes/state.db --dry-run                       # see the "excluded:" line first
+gbrain transcripts ingest ~/.hermes/state.db --exclude-source cron,subagent,kanban,tool,hook-example
+gbrain transcripts ingest ~/.hermes/state.db --exclude-source none           # import everything
+gbrain config set transcripts.hermes.exclude_sources '["cron","subagent","kanban","tool"]'   # default for scheduled runs
+```
+
+The flag wins over the config key (a JSON array or a comma list; `[]` or
+`none` imports everything), which wins over the default. An explicit list
+**replaces** the default: `--exclude-source cron` alone re-admits sub-agent,
+kanban and tool sessions, so name them again to keep them out (the summary
+says so). A label that reads as JSON on its own (it starts with `[`, `{` or `"`, or
+is `true`, `null` or a number) must be given inside a JSON array when set
+through the key. Unmatched labels and re-admitted default members are also
+carried in `--json` (`unmatched_exclude_sources`, `readmitted_default_sources`). Excluded sessions are
+reported on an `excluded:` line and in `--json` (`sessionsExcluded`,
+`excludedBySource`, `delegatesExcluded`); they are not errors and do not hold
+the `--since last` watermark. A list you set explicitly is part of the
+`--since last` scope for Hermes stores and auto-detected paths: changing it
+starts a fresh scope (like `--max-bytes`), so a session you stop excluding is
+picked up on the next run. A config value that is not a list (a JSON object,
+`null`, `none` beside other labels) refuses the run instead of excluding
+nothing. Every Hermes page the run imports records its kind under
+`transcript_import` (`session_source`, `session_created_source` when it
+differs, `delegate: true`), so pages can be told apart after Hermes prunes the
+session row; prefer `session_created_source` when it is present, since Hermes
+can rewrite `source` later. The creation label counts for exclusion too: a
+session created by `cron` and later continued by hand is still excluded when
+`cron` is named. Unmatched labels are named in the summary and in `--json`
+(`unmatched_exclude_sources`). Pages imported before this release get those keys
+on the next **full** scan (no `--since`): a `--since last` schedule skips
+sessions below its watermark before rendering, and a page whose session the
+current list excludes is not rewritten at all (run once with
+`--exclude-source none` to stamp everything). Other formats ignore the flag.
+
+**Say to your agent:** *"Import my Hermes sessions but leave out the cron jobs and sub-agent runs"* (your agent runs `gbrain transcripts ingest <store> --exclude-source cron,subagent` and shows you the `excluded:` line) — *"Which of my imported Hermes pages are sub-agent runs?"* (your agent queries `transcript_import.delegate`).
+
 Codex sessions imported before gbrain read codex 0.153+ rollouts lost their
 user turns (#5163): the pages hold the assistant side only, and `--since last`
 never re-reads them. `gbrain transcripts recover codex` lists those sessions,
