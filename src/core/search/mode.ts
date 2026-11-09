@@ -1316,7 +1316,7 @@ export function knobsHash(
   const privateReadable = ctx?.excludePrivate === true ? privateReadableSources() : [];
   if (privateReadable.length) parts.push(`xpr=${[...privateReadable].sort().join(',')}`);
   // GBRA-218 (append-only, no bump): a read under the read policy keys on its member identity (sorted at
-  // record time) and on an operator privacy relaxation; an unbound, unrelaxed read adds no part.
+  // record time) and on a privacy relaxation (operator or, GST-2059, owner); an unbound, unrelaxed read adds no part.
   if (ctx?.excludePrivate === true) {
     const access = currentCallerAccess();
     if (access.identity.length) parts.push(`xid=${createHash('sha256').update(access.identity.join(',')).digest('hex').slice(0, 16)}`);
