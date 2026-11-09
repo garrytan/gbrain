@@ -506,10 +506,10 @@ export class ConnectionManager {
     const ends: Promise<void>[] = [];
     this._epoch++;
     this._sessionInit = null;
+    this._directInit = null;
     if (this._directPool) {
       ends.push(endPoolBounded(this._directPool));
       this._directPool = null;
-      this._directInit = null;
     }
     if (this._readPool && !this._readPoolOwnedExternally) {
       ends.push(endPoolBounded(this._readPool));
