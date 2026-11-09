@@ -18,7 +18,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 - `vendor/postgres` (`patches/postgres@3.4.9.patch`): the first `RevalidateCachedQuery` error starts a process-wide plan generation; each connection drops its prepared statements before it builds its next query.
 - `src/core/retry-matcher.ts`: `isStalePlanError` (SQLSTATE 0A000 with routine `RevalidateCachedQuery`, never the code alone) and `retryOnStalePlan`, one more run for a transaction that does only database work.
-- `src/core/persistence/admission-retry.ts`, `src/core/persistence/coordinator.ts`: write admission retries a stale plan within its existing budget, and publication and effects release a claim it aborted, as they do for contention.
+- `src/core/persistence/admission-retry.ts`, `src/core/persistence/coordinator.ts`: write admission re-runs a stale plan up to three times within its existing budget and then rethrows it unchanged, and publication and effects release a claim it aborted, as they do for contention.
 - `src/core/oauth-grants.ts`, `src/core/minions/queue.ts`: the client-locked OAuth grant transaction and `completeJob` / `failJob` run once more after a stale plan.
 - Tests: `test/stale-plan-heal.test.ts` (Postgres; listed in `test/postgres-unit-arms.txt`).
 

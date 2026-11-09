@@ -33,7 +33,9 @@ const retryRoutines = new Set([
 // table it reads with SELECT * or RETURNING *) fails on every connection that prepared it. Stock postgres.js forgets it
 // only on the connection that failed, so each pooled connection failed once, and inside a transaction the caller saw
 // the failure. The first one in the process starts a new plan generation: each connection drops its prepared
-// statements before it builds its next query, and prepares them again.
+// statements before it builds its next query, and prepares them again. Only a statement this connection had cached
+// starts one: a fresh statement that fails this way (a pooler mapping it onto an older server-side statement) is not
+// healed by preparing again.
 let planGeneration = 0
 
 const errorFields = {
@@ -819,7 +821,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
       if (errorResponse) {
         // GBrain: a failed statement describes again next time instead of trusting shared parameter types.
         query.sharedTypes && options.shared_types.delete(query.typesKey)
-        errorResponse.routine === 'RevalidateCachedQuery' && planGeneration++
+        query.prepared && errorResponse.routine === 'RevalidateCachedQuery' && planGeneration++
         query.retried
           ? errored(query.retried)
           : query.prepared && retryRoutines.has(errorResponse.routine) && !query.cancelled
