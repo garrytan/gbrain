@@ -27,7 +27,7 @@
  *     conservative for v1.
  */
 
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { SSRFError, HttpBodyError, HttpProxyError, fetchWithSSRFGuard, type GuardedHttpResponse } from '../ssrf-validate.ts';
 
@@ -71,6 +71,8 @@ export interface ImageLoadOpts {
   timeoutMs?: number;
   /** Max redirect hops (URLs only). Defaults to 3. */
   maxRedirects?: number;
+  /** Accept file:// URIs and absolute paths. Only trusted local callers set it; defaults to false. */
+  allowLocalPath?: boolean;
 }
 
 /**
@@ -96,6 +98,9 @@ export async function loadImageInput(
     return loadHttpUrl(input, { maxBytes, timeoutMs: opts.timeoutMs ?? 5000, maxRedirects: opts.maxRedirects ?? 3 });
   }
   if (input.startsWith('file://') || isAbsolute(input)) {
+    if (!opts.allowLocalPath) {
+      throw new ImageLoadError('INVALID_URL', 'Local file paths are not accepted here: pass an http(s):// URL or a data: URI.');
+    }
     const path = input.startsWith('file://') ? input.slice(7) : input;
     return loadLocalPath(path, maxBytes);
   }
@@ -108,8 +113,12 @@ export async function loadImageInput(
 async function loadLocalPath(path: string, maxBytes: number): Promise<LoadedImage> {
   let bytes: Buffer;
   try {
+    const info = await stat(path);
+    if (!info.isFile()) throw new ImageLoadError('FETCH_FAILED', `${path} is not a regular file`);
+    if (info.size > maxBytes) throw new ImageLoadError('OVERSIZED', `Image at ${path} is ${info.size} bytes; cap is ${maxBytes}`);
     bytes = await readFile(path);
   } catch (err) {
+    if (err instanceof ImageLoadError) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('ENOENT')) {
       throw new ImageLoadError('NOT_FOUND', `File not found: ${path}`);

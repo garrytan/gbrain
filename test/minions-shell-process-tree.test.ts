@@ -24,6 +24,7 @@ function makeCtx(data: Record<string, unknown>, signal: AbortSignal): MinionJobC
     name: 'shell',
     data,
     attempts_made: 0,
+    idempotency_key: null,
     signal,
     deadlineAtMs: null,
     shutdownSignal: new AbortController().signal,

@@ -16,7 +16,7 @@ FROM oven/bun:1 AS builder
 ARG VOYAGE_API_KEY
 ENV VOYAGE_API_KEY=$VOYAGE_API_KEY
 
-RUN bun install -g github:garrytan/gbrain#latest-stable
+RUN bun install -g github:garrytan/gbrain#stable
 RUN gbrain init --pglite  # auto-picks the Voyage default (voyage-4 @ 1024d), persists config
 ```
 
@@ -26,7 +26,7 @@ RUN gbrain init --pglite  # auto-picks the Voyage default (voyage-4 @ 1024d), pe
   env:
     VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
   run: |
-    bun install -g github:garrytan/gbrain#latest-stable
+    bun install -g github:garrytan/gbrain#stable
     gbrain init --pglite
 ```
 
@@ -40,7 +40,7 @@ If the API key is a runtime secret (Kubernetes secret, runtime env injection, en
 
 ```dockerfile
 FROM oven/bun:1
-RUN bun install -g github:garrytan/gbrain#latest-stable
+RUN bun install -g github:garrytan/gbrain#stable
 
 # Build the brain shape without a provider — schema lands at the default
 # width, but no embed callsite will actually run until runtime config.
@@ -68,7 +68,7 @@ The runtime `gbrain init --force` re-runs the init flow against the now-populate
 
 ```dockerfile
 FROM oven/bun:1
-RUN bun install -g github:garrytan/gbrain#latest-stable
+RUN bun install -g github:garrytan/gbrain#stable
 RUN gbrain init --pglite --no-embedding   # keyless install — done; no runtime re-init needed
 ```
 

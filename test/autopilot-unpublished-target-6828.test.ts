@@ -25,6 +25,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseSemver } from '../src/core/semver.ts';
 import { VERSION } from '../src/version.ts';
+import { writeChannelCache } from './helpers/update-cache.ts';
 
 const REPO = join(import.meta.dir, '..');
 const AUTOPILOT_TS = join(REPO, 'src', 'commands', 'autopilot.ts');
@@ -53,9 +54,9 @@ function harness(label: string, opts: { spec?: string; cache?: string } = {}): H
   writeFileSync(join(dotG, 'config.json'), JSON.stringify({
     engine: 'pglite',
     database_path: join(dotG, 'brain.pglite'),
-    self_upgrade: { mode: 'auto', quiet_hours: { start: hour, end: (hour + 2) % 24, tz: 'UTC' } },
+    self_upgrade: { mode: 'auto', channel: 'alpha', quiet_hours: { start: hour, end: (hour + 2) % 24, tz: 'UTC' } },
   }));
-  if (opts.cache) writeFileSync(join(dotG, 'last-update-check'), `${opts.cache}\n`);
+  if (opts.cache) writeChannelCache(dotG, opts.cache);
 
   const bunInstall = join(root, 'bunhome');
   const globalRoot = join(bunInstall, 'install', 'global');
@@ -148,13 +149,13 @@ async function run(h: Harness, script: string, env: Record<string, string> = {})
     ? readdirSync(auditDir).flatMap((f) => readFileSync(join(auditDir, f), 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)))
     : [];
   const config = JSON.parse(readFileSync(join(h.home, '.gbrain', 'config.json'), 'utf8'));
-  const cachePath = join(h.home, '.gbrain', 'last-update-check');
+  const cachePath = join(h.home, '.gbrain', 'update-check.alpha.json');
   return {
     code, out, err, audit,
     su: config.self_upgrade,
     calls: readFileSync(h.argvLog, 'utf8').split('\n').filter(Boolean),
     fetched: JSON.parse(/FETCHED (.*)/.exec(out)?.[1] ?? '[]') as string[],
-    cache: existsSync(cachePath) ? readFileSync(cachePath, 'utf8').trim() : null,
+    cache: existsSync(cachePath) ? JSON.parse(readFileSync(cachePath, 'utf8')).marker : null,
     upgradeState: existsSync(join(h.home, '.gbrain', 'upgrade-state.json')),
     justUpgraded: existsSync(join(h.home, '.gbrain', 'just-upgraded-from')),
   };

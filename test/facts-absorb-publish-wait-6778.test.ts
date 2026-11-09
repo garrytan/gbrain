@@ -123,7 +123,7 @@ async function fixture(name: string, run: (f: Fixture) => Promise<void>): Promis
 
 function jobContext(job: Fixture['job'], deadlineAtMs: number | null): MinionJobContext {
   const signal = new AbortController().signal;
-  return { id: job.id, name: 'facts-absorb', data: job.data, attempts_made: 0, signal, deadlineAtMs, shutdownSignal: signal,
+  return { id: job.id, name: 'facts-absorb', data: job.data, attempts_made: 0, idempotency_key: null, signal, deadlineAtMs, shutdownSignal: signal,
     updateProgress: async () => {}, updateTokens: async () => {}, log: async () => {}, isActive: async () => true, readInbox: async () => [] } as MinionJobContext;
 }
 

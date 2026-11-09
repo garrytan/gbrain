@@ -8,7 +8,7 @@
 > gbrainio workspace new         # a person picks the plan in the browser
 > curl -fsSL https://bun.sh/install | bash   # skip if Bun 1.4.4+ is installed
 > export PATH="$HOME/.bun/bin:$PATH"
-> bun install -g github:garrytan/gbrain#latest-stable   # the gbrain CLI only; no local brain
+> bun install -g github:garrytan/gbrain#stable   # the gbrain CLI only; no local brain
 > # Claude Code (an existing gbrain entry is kept):
 > (claude mcp get gbrain >/dev/null 2>&1 || claude mcp add --transport http --scope user gbrain https://gbrain.io/mcp) && gbrain setup claude-code --instructions-only
 > # Codex (an existing gbrain entry is kept):
@@ -51,8 +51,9 @@ If you fetched this file by URL without cloning yet, the companion files live at
 <!-- npm-trap + #218 recovery: canonical copy lives in README.md ("Install" warning) — sync edits. -->
 > **NEVER install from the npm registry.** The npm package named `gbrain` is unrelated and
 > can shadow the real binary. Never run `npm install -g gbrain` or `bun add -g gbrain` (the
-> missing `github:` prefix is the trap). Install only `github:garrytan/gbrain#latest-stable`
-> (plain `github:garrytan/gbrain` installs master) or a git clone, as below. Already installed
+> missing `github:` prefix is the trap). Install only `github:garrytan/gbrain#stable`
+> (the soaked stable channel; `#latest-stable` is the alpha line with every release, and plain
+> `github:garrytan/gbrain` installs master) or a git clone, as below. Already installed
 > from npm? Remove it (`npm uninstall -g gbrain` / `bun remove -g gbrain`); `gbrain doctor` detects it.
 
 > **On Codex or Claude Code?** After the install, the plugin wires MCP plus curated skills:
@@ -64,7 +65,7 @@ Default path (Bun 1.4.4 or newer is required — gbrain is a Bun + TypeScript ru
 ```bash
 curl -fsSL https://bun.sh/install | bash
 export PATH="$HOME/.bun/bin:$PATH"
-bun install -g github:garrytan/gbrain#latest-stable
+bun install -g github:garrytan/gbrain#stable
 ```
 
 Verify: `gbrain --version` should print a version number. If `gbrain` is not found,
@@ -82,7 +83,7 @@ key ([Step 3](#step-3-create-the-brain)). On any other harness, `gbrain init --p
 > (reinstalling does not help).
 >
 > ```bash
-> git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
+> git clone --branch stable https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
 > bun install && bun link
 > ```
 
@@ -777,8 +778,8 @@ autopilot (`gbrain autopilot pause`), wait until no job is active, run
 `gbrain upgrade` on every install (it restarts every gbrain process onto the
 new build and verifies one build runs, or refuses `restart_refused` naming the
 process it cannot restart), check that each process reports the new version,
-then `gbrain autopilot resume`. A production brain follows the stable channel
-(`gbrain config set self_upgrade.channel stable`)
+then `gbrain autopilot resume`. Installs follow the stable channel by default;
+`gbrain config set self_upgrade.channel alpha` follows every release
 ([the order](skills/gbrain-upgrade/SKILL.md#always-on-hosts-pause-drain-upgrade-verify-resume),
 [stable channel](docs/guides/upgrades-auto-update.md#stable-channel)).
 

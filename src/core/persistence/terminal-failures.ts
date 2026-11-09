@@ -144,7 +144,7 @@ export async function readTerminalFailureSummary(engine: BrainEngine, opts: { so
       WHERE (${RECOVERY('r')} OR (${TERMINAL('r')} AND ${ENDED('r')} > now()-($1::int*interval '1 day')))
         AND ($2::text[] IS NULL OR r.source_id=ANY($2::text[]))
     ), resolved AS (
-      SELECT r.id FROM base r WHERE NOT r.has_recovery AND EXISTS (SELECT 1 FROM persistence_requests c WHERE ${supersessionSql('r', 'c')})
+      SELECT r.id FROM base r WHERE NOT r.has_recovery AND EXISTS (SELECT 1 FROM persistence_requests c WHERE ${supersessionSql('r', 'c', 'r.intent_kind')})
     ), tagged AS (
       SELECT b.*, (x.id IS NOT NULL OR (NOT b.has_recovery AND b.error_code='${SYNC_PASS_SUPERSEDED}')) AS resolved, (b.has_recovery OR b.ended_at > now()-($3::int*interval '1 day')) AS in_window, ${HISTORICAL_BY_BUILD('b')} AS historical_build
       FROM base b LEFT JOIN resolved x ON x.id=b.id
@@ -330,17 +330,18 @@ export async function readTerminalFailures(engine: BrainEngine, q: TerminalFailu
   const want = q.groupBy ? MAX_SCAN : limit + 1;
   while (out.length < want && scanned < MAX_SCAN && !exhausted) {
     const batch = await bounded<KeyColumns & { request_id: string; sequence: string; slug: string; error_detail: Record<string, unknown> | null; ended_at: string; admitted_at: string; later_state: string | null; same_intent: boolean | null }>(engine,
-      `SELECT r.request_id::text AS request_id, r.sequence::text AS sequence, r.source_id, r.slug, r.operation, r.intent->>'kind' AS intent_kind, r.state, r.error_code, r.error_detail,
+      `SELECT r.request_id::text AS request_id, r.sequence::text AS sequence, r.source_id, r.slug, r.operation, r.intent_kind, r.state, r.error_code, r.error_detail,
           r.error_detail->>'origin' AS origin, r.error_detail->>'reason' AS reason, r.error_detail->>'cause' AS cause,
           r.recovery IS NOT NULL AS has_recovery, r.blocked_reason, r.compacted, ${terminalKnockOnSql('r')} AS knock_on, ${ROUTED_MESSAGE('r')} AS routed_message, ${BUILD('r')} AS build,
           to_char(${ENDED('r')} AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') AS ended_at, to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') AS admitted_at,
           later.state AS later_state, later.same_intent
-        FROM persistence_requests r
-        LEFT JOIN LATERAL (SELECT c.state, c.digest=r.digest AS same_intent FROM persistence_requests c WHERE ${supersessionSql('r', 'c')}
+        FROM (SELECT p.*, p.intent->>'kind' AS intent_kind FROM persistence_requests p
+          WHERE p.source_id=$1 AND (${RECOVERY('p')} OR (${TERMINAL('p')} AND ${ENDED('p')} > now()-($2::int*interval '1 day')))
+            AND ($3::bigint IS NULL OR p.sequence < $3::bigint)
+          ORDER BY p.sequence DESC LIMIT $4) r
+        LEFT JOIN LATERAL (SELECT c.state, c.digest=r.digest AS same_intent FROM persistence_requests c WHERE ${supersessionSql('r', 'c', 'r.intent_kind')}
           ORDER BY ${supersessionOrderSql('r', 'c')} LIMIT 1) later ON r.recovery IS NULL
-        WHERE r.source_id=$1 AND (${RECOVERY('r')} OR (${TERMINAL('r')} AND ${ENDED('r')} > now()-($2::int*interval '1 day')))
-          AND ($3::bigint IS NULL OR r.sequence < $3::bigint)
-        ORDER BY r.sequence DESC LIMIT $4`, [q.sourceId, t.windowDays, cursor, BATCH]);
+        ORDER BY r.sequence DESC`, [q.sourceId, t.windowDays, cursor, BATCH]);
     if (batch === 'unknown') return { status: 'unknown', source_id: q.sourceId, reason: `the read did not finish within ${TERMINAL_STATEMENT_MS} ms (or no connection within ${TERMINAL_ACQUIRE_MS} ms)` };
     if (batch.length < BATCH) exhausted = true;
     for (const row of batch) {

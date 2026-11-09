@@ -262,7 +262,7 @@ own `fix` and a link to this section:
 
 | `reason` | Cause | Next step |
 | --- | --- | --- |
-| `file_database_drift` | The file was edited outside a coordinated write, or it is older than the database copy. | Run the `fix` (a reconcile preview), then resolve and apply it as described in [Repair a file/database disagreement](#repair-a-filedatabase-disagreement). |
+| `file_database_drift` | The file was edited outside a coordinated write, or it is older than the database copy. | Run the `fix` (a reconcile preview), then resolve and apply it as described in [Repair a file/database disagreement](#repair-a-filedatabase-disagreement). A source with `persistence.adopt_local_edits.source.<id>` on adopts a one-sided edit for `remember`, `capture` and `add_timeline_entry` instead ([file_database_drift](write-refusals.md#file_database_drift)). |
 | `held_file` | Sync holds the file because it cannot import it. | Run the hold repair in `fix` (for example `gbrain repair frontmatter --source workspace`), as in [held files](repair.md#held-files). |
 | `canonical_file_missing` | The file was removed while lint ran. | Recover the file or import the deletion; reconciliation does not restore missing files. |
 | `revision_changed` | Another write published the page while lint ran. | Nothing; the next cycle lints the current revision. `fix` reads the page as it is now. |

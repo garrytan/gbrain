@@ -284,7 +284,7 @@ export interface GBrainConfig {
    */
   self_upgrade?: {
     mode?: 'auto' | 'notify' | 'off';
-    channel?: 'latest' | 'stable';
+    channel?: 'stable' | 'alpha' | 'latest';
     /** Set true once the upgrade-time consent prompt has been shown. */
     mode_prompted?: boolean;
     /** Quiet-hours window for the autopilot silent channel. */
@@ -1858,7 +1858,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'minions.',
   'pace.',              // pace.mode + PACE_MODE_CONFIG_KEYS (src/core/pace-mode.ts)
   'decide.',            // System One decide.* (validated by src/core/ai/decide/config.ts DECIDE_CONFIG_KEYS)
-  'sync.max_deletes.source.', 'sync.max_delete_ratio.source.', 'sync.apply_held_deletions.source.', // #7130 per-source delete caps, GBRA-133 per-source held-deletion switch
+  'sync.max_deletes.source.', 'sync.max_delete_ratio.source.', 'sync.apply_held_deletions.source.', 'persistence.adopt_local_edits.source.', // #7130 per-source delete caps, GBRA-133 per-source held-deletion switch, GST-1601 per-source local-edit adoption
   'connectors.',        // chat-connectors: source_id, sync_floor_min, embed_kickoff_min_pages, doctor_stale_hours, <provider>.{auto_sync,last_sync_at,auth_error_at,watermark_iso} (no secrets — creds are file-plane)
 ];
 

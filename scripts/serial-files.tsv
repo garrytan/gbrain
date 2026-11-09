@@ -460,3 +460,4 @@ test/search/identifier-probe.serial.test.ts	R1	R1: mutates process.env (GBRAIN_H
 test/search/slug-handles.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/launcher-lanes-bunfig.serial.test.ts	global-state	global-state: spawns gbrain serve subprocesses against one shared PGLite brain and its data-dir lock; withEnv scopes HOME, GBRAIN_HOME and CODEX_HOME around the bootstrap and setup writers
 test/extraction-review-door.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME) around real git subprocesses against tmp repos for the page-door review decisions
+test/release-channel-w1.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_RELEASE_CHANNEL) and stubs globalThis.fetch

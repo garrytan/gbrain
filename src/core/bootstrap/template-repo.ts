@@ -31,6 +31,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join, resolve } from 'node:path';
 import { TEMPLATE_PLACEHOLDER_MANIFEST, writeManifest } from './format.ts';
 import { renderWorkspace } from './render.ts';
+import { INSTALL_PIN, INSTALL_RAW_BASE } from '../install-ref.ts';
 
 /** Stamp line contract shared with scripts/check-bootstrap-templates.sh and
  * the release workflow. `{{VERSION}}` is replaced at generation time from the
@@ -65,7 +66,7 @@ const TEMPLATE_README_LINES: readonly string[] = [
   '',
   '   ```',
   '   Read and follow every step of:',
-  '   https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/BOOTSTRAP_FOR_AGENTS.md',
+  `   ${INSTALL_RAW_BASE}/BOOTSTRAP_FOR_AGENTS.md`,
   '   Goal: finish setting up this cloned template as my persistent personal',
   '   agent, with gbrain as your memory. Interview me before writing any',
   '   identity file — never invent answers. You are not done until',
@@ -73,7 +74,7 @@ const TEMPLATE_README_LINES: readonly string[] = [
   '   ```',
   '',
   '   Already running the gbrain CLI',
-  '   (`bun install -g github:garrytan/gbrain#latest-stable`)? Then the first',
+  `   (\`bun install -g ${INSTALL_PIN}\`)? Then the first`,
   '   step is always:',
   '',
   '   ```',

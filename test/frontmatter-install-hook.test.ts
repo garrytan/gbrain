@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { execFileSync } from 'child_process';
 import {
-  activeGitHooks, FRONTMATTER_HOOK_VERSION, frontmatterHookVersion, inspectFrontmatterHook, installHook, uninstallHook,
+  activeGitHooks, FRONTMATTER_HOOK_VERSION, frontmatterHookVersion, hooksPathBlocker, inspectFrontmatterHook, installHook, uninstallHook,
 } from '../src/commands/frontmatter-install-hook.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -325,6 +325,68 @@ describe('frontmatter install-hook (B13)', () => {
     } finally {
       rmSync(other, { recursive: true, force: true });
     }
+  });
+
+  test('a clone with hooks off on purpose (core.hooksPath=/dev/null) is skipped: nothing written, hooks stay off, no rewiring advice', async () => {
+    execFileSync('git', ['-C', tmp, 'config', 'core.hooksPath', '/dev/null']);
+    expect(await install(tmp)).toBe('skipped_hooks_off');
+    expect(existsSync(join(tmp, '.githooks'))).toBe(false);
+    expect(localHooksPath(tmp)).toBe('/dev/null');
+    expect(hooksPathBlocker(tmp)).not.toContain('.githooks');
+    expect(await install(tmp, true)).toBe('skipped_hooks_off');
+    expect(localHooksPath(tmp)).toBe('/dev/null');
+  });
+
+  test('the hooks-off reason names the clone setting it checked and no cause it did not check', () => {
+    execFileSync('git', ['-C', tmp, 'config', 'core.hooksPath', '/dev/null']);
+    expect(hooksPathBlocker(tmp)).toBe("hooks are off in this clone's own config (core.hooksPath=/dev/null), and gbrain leaves them off");
+  });
+
+  test('inherited GIT_DIR, GIT_WORK_TREE or GIT_CONFIG* variables cannot change the hooks-off decision', async () => {
+    const plain = mkdtempSync(join(tmpdir(), 'fm-hook-plain-'));
+    try {
+      gitInit(plain);
+      await install(plain);
+      execFileSync('git', ['-C', tmp, 'config', 'core.hooksPath', '/dev/null']);
+      const plainConfig = join(plain, '.git', 'config'), offConfig = join(tmp, '.git', 'config');
+      const intoPlain = [{ GIT_DIR: join(plain, '.git') }, { GIT_DIR: join(plain, '.git'), GIT_WORK_TREE: plain }, { GIT_CONFIG: plainConfig },
+        { GIT_CONFIG_GLOBAL: plainConfig, GIT_CONFIG_SYSTEM: plainConfig }, { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.hooksPath', GIT_CONFIG_VALUE_0: '.githooks' },
+        { GIT_CONFIG_PARAMETERS: "'core.hookspath'='.githooks'" }];
+      for (const env of intoPlain) {
+        await withEnv(env, async () => {
+          expect(installHook(tmp, true)).toBe('skipped_hooks_off');
+          expect(inspectFrontmatterHook(tmp, 'source-a')).toBeNull();
+        });
+        expect(existsSync(join(tmp, '.githooks'))).toBe(false);
+        expect(localHooksPath(tmp)).toBe('/dev/null');
+      }
+      for (const env of [{ GIT_DIR: join(tmp, '.git') }, { GIT_DIR: join(tmp, '.git'), GIT_WORK_TREE: tmp }, { GIT_CONFIG: offConfig }])
+        await withEnv(env, async () => { expect(inspectFrontmatterHook(plain, 'source-a')).not.toBeNull(); });
+    } finally {
+      rmSync(plain, { recursive: true, force: true });
+    }
+  });
+
+  test('hooks off machine-wide (a global core.hooksPath=/dev/null) is not a hooks-off clone: the hook is written unwired with the usual advice', () => {
+    const globalConfig = join(tmp, '..', `fm-global-${process.pid}.gitconfig`);
+    writeFileSync(globalConfig, '[core]\n\thooksPath = /dev/null\n');
+    try {
+      withEnv({ GIT_CONFIG_GLOBAL: globalConfig, GIT_CONFIG_SYSTEM: '/dev/null' }, () => {
+        expect(installHook(tmp, false)).toBe('installed_unwired');
+        expect(hooksPathBlocker(tmp)).toContain('core.hooksPath already points at /dev/null');
+      });
+      expect(existsSync(join(tmp, '.githooks', 'pre-commit'))).toBe(true);
+    } finally {
+      rmSync(globalConfig, { force: true });
+    }
+  });
+
+  test('doctor does not ask to refresh an old gbrain hook in a clone with hooks off on purpose (install-hook would skip it)', () => {
+    mkdirSync(join(tmp, '.githooks'), { recursive: true });
+    writeFileSync(join(tmp, '.githooks', 'pre-commit'), '#!/bin/sh\n# gbrain frontmatter pre-commit hook (v0.22.4+)\ngbrain frontmatter validate "$f"\n');
+    expect(inspectFrontmatterHook(tmp, 'source-a')).toMatchObject({ version: 1, current: false });
+    execFileSync('git', ['-C', tmp, 'config', 'core.hooksPath', '/dev/null']);
+    expect(inspectFrontmatterHook(tmp, 'source-a')).toBeNull();
   });
 
   test('a fresh clone that carries the committed gbrain hook gets wired on install (not "unchanged" while inert)', async () => {

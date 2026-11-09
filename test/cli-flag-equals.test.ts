@@ -406,6 +406,7 @@ describe('#7619 split rules', () => {
       'src/core/git-head.ts': 'git child argv',
       'src/core/git-remote.ts': 'git child argv',
       'src/core/git/commit-push.ts': 'git child argv',
+      'src/core/git/range-secret-scan.ts': 'git child argv',
       'src/core/hardened-git.ts': 'git child argv (the reason-trailer log options)',
       'src/core/persistence/checkout-state.ts': 'git child argv',
       'src/core/persistence/effect-git.ts': 'git child argv',
@@ -433,6 +434,7 @@ describe('#7619 split rules', () => {
       'src/eval/longmemeval/via-operation.ts': 'git child argv',
       'src/core/git/commit-guard.ts': 'git child argv',
       'src/commands/doctor/checks/foreign-writers.ts': 'git child argv',
+      'src/core/persistence/pending-import.ts': 'git child argv',
     };
     const READER = [/['"`]--[a-z0-9-]+=/, /(?:startsWith|indexOf|===)\(?\s*`\$\{\w+\}=`/, /startsWith\(\w+ \+ '='\)/];
     const found = [...new Glob('src/**/*.ts').scanSync('.')].filter(p => !p.endsWith('.generated.ts') && READER.some(r => r.test(readFileSync(p, 'utf8'))));

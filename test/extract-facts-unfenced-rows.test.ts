@@ -284,6 +284,8 @@ for (const backend of testBackends()) {
         `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence, row_num, source_markdown_slug)
          VALUES ('default', $1, 'Bob example used to advise Widget co', 'fact', 'world', 'high', '2024-01-01', 'linkedin', 1.0, 9, $1) RETURNING id`, [OTHER]);
       staleId = Number(stale.id);
+      await managed.executeRaw(`INSERT INTO page_versions (page_id, compiled_truth, frontmatter) VALUES ($1, $2, '{}'::jsonb)`,
+        [page.id, `# Bob Example\n\n${FENCE_ROW_1.replace('| 1 | Alice example joined Acme example |', '| 9 | Bob example used to advise Widget co |')}`]);
     } });
   }, 180_000);
 
