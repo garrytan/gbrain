@@ -1227,7 +1227,7 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // v286: absent from both schema blobs; readers go through to_jsonb(row), so a schema without it reads as none.
   'access_tokens.attest_sources',
   'oauth_clients.attest_sources',
-  // GST-1158 F3 (migration v294) - how an attested call that names sources reads them. Same posture as v286: absent
+  // GST-1158 F3 (migration v297) - how an attested call that names sources reads them. Same posture as v286: absent
   // from both schema blobs; readers read it through to_jsonb(row), so a schema before it reads as NULL (the scope).
   'access_tokens.attest_read',
   'oauth_clients.attest_read',
@@ -1269,6 +1269,8 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'persistence_worktree_refreshes.released_at',
   'persistence_requests.deferred_refresh_id',
   'persistence_consumers.capabilities',
+  // GST-1582 (v291): migration-only like the PR B columns above, for the same reason.
+  'persistence_requests.deferred_import_from',
 ]);
 
 test('every ALTER TABLE ADD COLUMN in MIGRATIONS is covered by applyForwardReferenceBootstrap (column-only class)', async () => {

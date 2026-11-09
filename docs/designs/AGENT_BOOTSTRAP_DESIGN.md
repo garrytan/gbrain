@@ -111,7 +111,7 @@ open >10 days from first code commit)
 Paste block + tag-pinned runbook (`BOOTSTRAP_FOR_AGENTS.md`, fetched at the
 `latest-stable` ref — advanced by the release job only after assets publish, so
 published copies never rot); optional GitHub template repo (generated at release from
-the same renderer); binary via `bun install -g github:garrytan/gbrain#latest-stable`
+the same renderer); binary via `bun install -g github:garrytan/gbrain#stable`
 (never npm). The paste block lives in the README's `## Install` section, as
 per-harness subsections ordered "For Codex — the recommended first step" → "For
 Claude Code" → "For OpenClaw or Hermes" (the 2026-08-09 ordering decision, recorded

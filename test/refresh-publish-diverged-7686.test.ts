@@ -2,11 +2,13 @@
  * #7686: an opt-in refresh publishes a diverged managed checkout before it
  * fast-forwards.
  *
- * Protects: with `sources.refresh_publish_diverged` on (standing consent, default
- * off) a refresh of a checkout that has local commits while its upstream moved
+ * Protects: with `sources.refresh_publish_diverged` on (explicitly, or unset on a
+ * worktree whose Git durability is on) a refresh of a checkout that has local commits while its upstream moved
  * on pushes HEAD merged with the upstream in memory (the keep-checkout publish,
  * which never moves the checkout), then fast-forwards, keeping the local commits;
- * with the setting off it refuses `refresh_diverged` as before; a conflicting path
+ * with the setting false, or unset while Git durability is not on, it refuses
+ * `refresh_diverged`; local commits holding a value that looks like a secret refuse
+ * `publish_secret_found` in the publish child, before anything is pushed; a conflicting path
  * refuses `integrate_conflict` naming the path and changes nothing; an uncommitted
  * edit on an incoming path refuses `refresh_dirty` before anything is pushed; a dry
  * run never publishes; with gbrain.quarantine on, the refresh names the parked
@@ -84,7 +86,7 @@ function diverge(f: RefreshFixture, local = { path: 'beta/local.md', content: pa
   return f.head();
 }
 
-test('the setting is a registered knob, default off', () => {
+test('the setting is a registered knob (unset means on when Git durability is on)', () => {
   expect(REFRESH_PUBLISH_DIVERGED_KEY).toBe('sources.refresh_publish_diverged');
   expect(KNOWN_CONFIG_KEYS).toContain(REFRESH_PUBLISH_DIVERGED_KEY);
   expect(KNOWN_CONFIG_KEYS).toEqual(expect.arrayContaining(['sources.refresh_fetch_timeout_ms', 'sources.refresh_drain_wait_ms']));
@@ -117,17 +119,48 @@ test('setting on: the text result names the publish', () => each(async f => {
   expect(out.join('\n')).toContain('Refresh completed');
 }), 120_000);
 
-test('setting off (unset or false): the refresh refuses refresh_diverged, pushes nothing and names the setting', () => each(async f => {
+test('setting off (false, or unset while Git durability is not on): the refresh refuses refresh_diverged, pushes nothing and names the way to turn it on', () => each(async f => {
   const local = diverge(f);
   const remote = remoteHead(f);
   for (const value of [null, 'false']) {
     if (value !== null) await f.engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, value);
     const error = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_diverged');
     expect(error.suggestion).toContain('gbrain config set sources.refresh_publish_diverged true');
+    if (value === null) {
+      expect(error.message).toContain('Git durability is not on for this worktree');
+      expect(error.suggestion).toContain(`gbrain sources writer git-durability ${f.alpha} --enable`);
+    }
     expect(remoteHead(f)).toBe(remote);
     expect(f.head()).toBe(local);
     expect(await f.refreshRows()).toEqual([]);
   }
+}), 120_000);
+
+test('setting unset with Git durability on: a diverged refresh publishes the local commits, then fast-forwards', () => each(async f => {
+  const local = diverge(f);
+  await f.engine.executeRaw(`UPDATE persistence_host_bindings SET git_durability='enabled' WHERE local_path=$1`, [f.root]);
+  try {
+    const done = await refreshWorktree(f.engine, f.alpha);
+    expect(done).toMatchObject({ status: 'completed', old_head: local, published: { local_commits: 1, integrated: 1 } });
+    expect(remoteHead(f)).toBe(done.published!.sha);
+    git(f.root, 'merge-base', '--is-ancestor', local, 'HEAD');
+  } finally {
+    await f.engine.executeRaw(`UPDATE persistence_host_bindings SET git_durability=NULL WHERE local_path=$1`, [f.root]);
+  }
+}), 120_000);
+
+test('setting on: local commits holding a value that looks like a secret refuse publish_secret_found naming the file and rule, never the value, and nothing is pushed', () => each(async f => {
+  const token = 'ghp_' + 'Zt4q'.repeat(9);
+  const local = diverge(f, { path: 'beta/local.md', content: page('Local', `Deploy token ${token}`) });
+  git(f.root, 'rm', '-q', 'beta/local.md'); git(f.root, 'commit', '-qm', 'remove it again');
+  const remote = remoteHead(f);
+  await f.engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, 'true');
+  const error = await refusedWith(refreshWorktree(f.engine, f.alpha), 'publish_secret_found');
+  expect(error.message).toContain('look like secrets or could not be scanned: beta/local.md:');
+  expect(error.message).toContain(local.slice(0, 7));
+  expect(`${error.message}${error.suggestion}`).not.toContain(token);
+  expect(remoteHead(f)).toBe(remote);
+  expect(await f.refreshRows()).toEqual([]);
 }), 120_000);
 
 test('setting on: a conflicting path refuses integrate_conflict naming it, and nothing is pushed, fenced or moved', () => each(async f => {

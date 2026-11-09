@@ -50,10 +50,16 @@ const search_by_image: Operation = {
     // D18 P0 — remote callers cannot pass image_path. Rejecting at handler
     // entry, before any file I/O fires. validateParams catches it too at the
     // dispatch layer; this is defense-in-depth.
-    if (ctx.remote === true && imagePath) {
+    if (ctx.remote !== false && imagePath) {
       throw opError('permission_denied',
         'permission_denied: image_path is not permitted for remote callers (D18). Use image_url or image_data instead.',
         'Pass the image as `image_data` (base64 PNG/JPEG/WebP) or `image_url` (http(s)) instead of `image_path`.');
+    }
+
+    if (ctx.remote !== false && imageUrl && !/^https?:\/\//.test(imageUrl)) {
+      throw opError('permission_denied',
+        'permission_denied: image_url must be an http(s):// URL for remote callers; local files are never read for them.',
+        'Pass the image as `image_data` (base64 PNG/JPEG/WebP) or an http(s) `image_url`.');
     }
 
     if (!imagePath && !imageUrl && !imageData) {
@@ -70,17 +76,17 @@ const search_by_image: Operation = {
     // D23-#6 — remote OAuth clients are charged through the durable
     // reserve-then-settle ledger below. Local CLI callers bypass the cap
     // (clientId="") because they use their own provider credentials.
-    const clientId = (ctx.remote === true ? (ctx.auth?.clientId ?? '') : '');
+    const clientId = (ctx.remote !== false ? (ctx.auth?.clientId ?? '') : '');
 
     // Resolve image bytes via the SSRF-defended loader. For remote callers,
     // tighter byte cap.
     const remoteCap = await getRemoteMaxBytes(ctx.engine);
     const localCap = await getLocalMaxBytes(ctx.engine);
-    const cap = ctx.remote === true ? remoteCap : localCap;
+    const cap = ctx.remote === false ? localCap : remoteCap;
     const { loadImageInput } = await import('../search/image-loader.ts');
     const loaded = await loadImageInput(
       (imagePath ?? imageUrl ?? `data:${imageMime ?? 'image/png'};base64,${imageData}`)!,
-      { maxBytes: cap },
+      { maxBytes: cap, allowLocalPath: ctx.remote === false },
     );
 
     // Resolve source-scope through the single trust+grant resolver. Pre-fix

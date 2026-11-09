@@ -34,7 +34,7 @@ function stubWatcher() {
   return { watcher, add: (path: string) => emitter.emit('add', path) };
 }
 
-const job = (data: Record<string, unknown>): MinionJobContext => ({ id: 1, name: 'ingest_capture', data, attempts_made: 1, signal: new AbortController().signal,
+const job = (data: Record<string, unknown>): MinionJobContext => ({ id: 1, name: 'ingest_capture', data, attempts_made: 1, idempotency_key: null, signal: new AbortController().signal,
   deadlineAtMs: null, shutdownSignal: new AbortController().signal, updateProgress: async () => {}, updateTokens: async () => {}, log: async () => {},
   isActive: async () => true, readInbox: async () => [] });
 

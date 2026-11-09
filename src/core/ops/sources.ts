@@ -141,7 +141,7 @@ const sources_add: Operation = {
   mutating: true,
   scope: 'sources_admin',
   handler: async (ctx, p) => {
-    const { addSource } = await import('../sources-ops.ts');
+    const { addSource, SourceOpError } = await import('../sources-ops.ts');
     if(ctx.remote!==false&&await (await import('../persistence/ownership.ts')).managedPersistenceEnabled(ctx.engine))
       throw managedLifecycleRefusal(ctx, ['sources', 'add', ...sourceIdArg(p.id), ...(typeof p.url === 'string' && /^https:\/\/\S+$/.test(p.url) ? ['--url', p.url] : [])]);
 
@@ -180,9 +180,15 @@ const sources_add: Operation = {
       name: p.name as string | undefined,
       localPath: remotePath,
       remoteUrl: p.url as string | undefined,
+      addedByRemoteCaller: !isLocal,
       federated:
         p.federated === undefined ? null : (p.federated as boolean),
       cloneDir: remoteCloneDir,
+    }).catch((err: unknown) => {
+      // git's own error names the far end and how it answered; a remote caller gets a fixed message, the host log keeps it.
+      if (isLocal || !(err instanceof SourceOpError) || err.code !== 'clone_failed') throw err;
+      console.error(`[gbrain] sources_add ${String(p.id)}: ${err.message}`);
+      throw new SourceOpError('clone_failed', 'git clone failed for this URL. The brain host\'s log has the reason.', err);
     });
     const { redactSourceConfig } = await import('../source-config-redact.ts');
     const { parseSourceConfig } = await import('../sources-load.ts');
