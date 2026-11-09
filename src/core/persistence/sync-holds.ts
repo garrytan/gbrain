@@ -456,7 +456,7 @@ export async function clearDeletionHold(tx: Exec, input: { sourceId: string; inc
   return clearGitHold(tx, { ...input, observedAt: hold.observed_at });
 }
 
-/** GBRA-133: a deleted-side `file_drift` hold whose file is gone from the level and the disk (sync-pass.ts `deletionCandidates`). */
+/** GBRA-133: a deleted-side `file_drift` or a `concurrent_write` hold whose file is gone from the level and the disk (sync-pass.ts `deletionCandidates`). */
 export interface DeletionCandidate { path: string; page_id: number | null; slug: string | null }
 
 /**

@@ -471,11 +471,22 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
         docs: 'docs/guides/shared-checkout-git.md#outcomes' } });
   }
   const before = indexEntries(root, rel);
-  const add = withIndexRetry(root, ['add', '-A', '--', ...literalPathspecs(rel)], 'git add');
-  if (add.code !== 0) {
-    throw opError('commit_paths_invalid', 'git add refused the given paths.', add.stderr.trim().slice(0, 300) || 'Check the paths exist or are tracked.');
-  }
+  // #7984: a tracked path stages with `add -u`, because `add -A` refuses a deletion whose only match left is an ignored
+  // path; visible untracked files stage with `add -A`; a path already staged as deleted is staged. Any other path keeps
+  // git's own refusal (missing, or only an ignored untracked file).
+  const listed = (args: string[]) => git(root, [...args, '-z', '--', ...literalPathspecs(rel)]).stdout.split('\0').filter(Boolean);
+  const tracked = before.map(line => line.slice(line.indexOf('\t') + 1));
+  const untracked = listed(['ls-files', '--others', '--exclude-standard']);
+  const deleted = listed(['diff', '--cached', '--no-renames', '--name-only', '--diff-filter=D']);
+  const matching = (paths: string[]) => rel.filter(spec => paths.some(p => covers(spec, p)));
+  const matched = new Set(matching([...tracked, ...untracked, ...deleted]));
+  const unmatched = rel.filter(spec => !matched.has(spec));
   try {
+    for (const [mode, specs] of [['-u', matching(tracked)], ['-A', matching(untracked)], ['-A', unmatched]] as const) {
+      if (!specs.length) continue;
+      const add = withIndexRetry(root, ['add', mode, '--', ...literalPathspecs(specs)], 'git add');
+      if (add.code !== 0) throw opError('commit_paths_invalid', 'git add refused the given paths.', add.stderr.trim().slice(0, 300) || 'Check the paths exist or are tracked.');
+    }
     const paths = withRenamePartners(root, rel);
     const partners = paths.filter(p => !insideSourceRoots(p, scope.roots));
     if (partners.length) throw outsideRootError(root, scope.roots, partners, 'A staged rename would commit');
