@@ -57,7 +57,7 @@ export async function runUnindexedFilesPhase(engine: BrainEngine | null, opts: U
   const sources: Array<{ source_id: string; budget_ms: number; complete: boolean; scanned: number; unindexed: number; slug_taken: number; scheduled_now: number; already_scheduled: number;
     metafile_skipped: number; by_code: Record<string, number> }> = [];
   const skipped: Array<{ source_id: string; reason: string }> = [];
-  const errors: Array<{ source_id: string; code: string }> = [];
+  const errors: Array<{ source_id: string; code: string; reason?: string }> = [];
   let room = UNINDEXED_SCHEDULE_CAP;
   for (const row of rows) {
     if (now() >= deadlineAt) { skipped.push({ source_id: row.id, reason: 'deadline' }); continue; }
@@ -80,8 +80,18 @@ export async function runUnindexedFilesPhase(engine: BrainEngine | null, opts: U
         scheduled_now: scheduledNow, already_scheduled: scan.scheduled, metafile_skipped: scan.metafile_skipped, by_code: scan.by_code });
     } catch (error) {
       if (isUncontainedPhaseError(error, opts.signal)) throw error;
-      errors.push({ source_id: row.id, code: errorCode(error) });
+      const code = errorCode(error);
+      const reason = (error as { reason?: unknown } | null)?.reason;
+      if (code === 'sync_not_applicable' && reason === 'plain_directory') {
+        skipped.push({ source_id: row.id, reason });
+        continue;
+      }
+      errors.push({ source_id: row.id, code, ...(typeof reason === 'string' ? { reason } : {}) });
     }
+  }
+  if (skipped.length > 0 && skipped.length === rows.length && skipped.every(source => source.reason === 'plain_directory')) {
+    return { ...base, status: 'skipped', summary: 'No managed Git sources to scan; the registered content directories are non-Git.',
+      details: { reason: 'not_applicable', skipped } };
   }
   const total = (key: 'scanned' | 'unindexed' | 'slug_taken' | 'scheduled_now' | 'already_scheduled' | 'metafile_skipped') => sources.reduce((n, source) => n + source[key], 0);
   const byCode: Record<string, number> = {};

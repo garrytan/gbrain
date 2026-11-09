@@ -7,7 +7,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -307,6 +307,55 @@ test('the maintenance phase stores the result and schedules the paths; a dry run
   expect((await readUnindexedFiles(engine, [s.id])).get(s.id)).toMatchObject({ complete: true, unindexed: 1, pending: ['notes/b.md'] });
   await s.sync();
   expect((await engine.getPage('notes/b', { sourceId: s.id }))?.title).toBe('B');
+}), 240_000);
+
+test('a plain source is skipped while committed gaps are scanned; a lost or broken Git checkout still warns', () => each(async engine => {
+  const plain = await source(engine, { 'notes/plain.md': note('Plain') });
+  const gitSource = await source(engine, { 'notes/a.md': note('A') });
+  await gitSource.sync();
+  await gitSource.legacy({ 'notes/missing.md': note('Missing') });
+
+  const dotGit = join(plain.repo, '.git');
+  const moved = join(home, `saved-git-${plain.id}`);
+  renameSync(dotGit, moved);
+  try {
+    const mixed = await runUnindexedFilesPhase(engine, { dryRun: true });
+    expect(mixed).toMatchObject({ status: 'ok', details: {
+      skipped: expect.arrayContaining([{ source_id: plain.id, reason: 'plain_directory' }]),
+      sources: expect.arrayContaining([expect.objectContaining({ source_id: gitSource.id, unindexed: 1 })]),
+      errors: [],
+    } });
+    expect((await readUnindexedFiles(engine, [plain.id, gitSource.id])).size).toBe(0);
+
+    await unmanaged(engine, () => engine.executeRaw('UPDATE sources SET last_commit=$2 WHERE id=$1', [plain.id, git(gitSource.repo, 'rev-parse', 'HEAD')]));
+    const lost = await runUnindexedFilesPhase(engine, { dryRun: true });
+    expect(lost).toMatchObject({ status: 'warn', details: {
+      errors: expect.arrayContaining([{ source_id: plain.id, code: 'sync_not_applicable', reason: 'checkout_missing' }]),
+    } });
+    await unmanaged(engine, () => engine.executeRaw('UPDATE sources SET last_commit=NULL WHERE id=$1', [plain.id]));
+
+    const durability = (setting: 'enabled' | null) => engine.executeRaw(
+      'UPDATE persistence_host_bindings SET git_durability=$2 WHERE worktree_id=(SELECT worktree_id FROM persistence_source_bindings WHERE source_id=$1)',
+      [plain.id, setting]);
+    await durability('enabled');
+    try {
+      const lostDurable = await runUnindexedFilesPhase(engine, { dryRun: true });
+      expect(lostDurable).toMatchObject({ status: 'warn', details: {
+        errors: expect.arrayContaining([{ source_id: plain.id, code: 'sync_not_applicable', reason: 'checkout_missing' }]),
+      } });
+    } finally {
+      await durability(null);
+    }
+
+    writeFileSync(dotGit, 'gitdir: ../missing-worktree-gitdir\n');
+    const broken = await runUnindexedFilesPhase(engine, { dryRun: true });
+    expect(broken).toMatchObject({ status: 'warn', details: {
+      errors: expect.arrayContaining([expect.objectContaining({ source_id: plain.id })]),
+    } });
+  } finally {
+    rmSync(dotGit, { force: true });
+    renameSync(moved, dotGit);
+  }
 }), 240_000);
 
 test('retry-held --unindexed refuses a connector source with invalid_params', () => each(async engine => {
