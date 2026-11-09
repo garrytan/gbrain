@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.622.0] - 2026-11-09
 
 **`think` keeps an entity's trajectory when the question names a month.** A question such as "What was the MRR of acme-example in April 2026?" bounds think's evidence to April (PR #5086), and that window used to cost the trajectory block twice over: a metric whose readings fall before and after April (March and June) injected nothing, although the March reading was the value in force all April; and an entity page last edited outside April was dropped from the gathered pages, so when the question's noun phrase ("the acme-example team") did not resolve on its own, no entity was found. Each metric's latest reading before the window now joins the readings inside it, unless its `valid_until` ended by the time the window opens, and pages the window drops still name the entities whose trajectory is read; they stay out of the evidence. BrainBench Cat 25's hermetic gate goes from 4 of 6 probes (FAIL) to 6 of 6 (PASS).
 
