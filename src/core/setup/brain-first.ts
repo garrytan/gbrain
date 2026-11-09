@@ -431,7 +431,8 @@ function syncBrainFirstLocked(opts: { target: BrainFirstTarget; access: BrainFir
     if (decision.value === 'declined') {
       // The target moved (Codex: a non-empty AGENTS.override.md now wins), so an opt-out also strips the
       // blocks this harness still has at its other user-global paths; otherwise their records keep the per-turn rule on.
-      if (!target.project) {
+      // Each OpenClaw workspace is another agent's own file, so opting one out leaves the others.
+      if (!target.project && target.harness !== 'openclaw') {
         for (const other of readBrainFirstLedger().filter((e) => e.harness === target.harness && e.path !== target.path && e.status === 'installed' && !isProjectSurface(e.harness, e.path))) {
           syncBrainFirst({ ...opts, target: { ...target, path: other.path }, access: other.access });
         }

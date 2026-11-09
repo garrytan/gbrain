@@ -336,8 +336,9 @@ describe('per-turn rule: OpenClaw before_prompt_build plugin', () => {
       const index = readFileSync(join(openclawTurnPluginDir(), 'index.js'), 'utf8');
       const rec = recorder();
       const other = syncOpenclawTurnPlugin({ access: { kind: 'mcp', server: 'gbrain-a' }, workspace: '/ws/a', dryRun: false, openclawBin: '/bin/openclaw', run: rec.run });
-      expect(other.action).toBe('skip');
+      expect(other.action).toBe('print');
       expect(other.detail).toContain('names the `gbrain` MCP server');
+      expect(other.commands).toEqual(['gbrain setup openclaw --remove --workspace /ws/a']);
       expect(readFileSync(join(openclawTurnPluginDir(), 'index.js'), 'utf8')).toBe(index);
       expect(rec.calls).toEqual([]);
       expect(syncOpenclawTurnPlugin({ access, workspace: '/ws/a', dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run }).action).toBe('keep');
@@ -345,6 +346,40 @@ describe('per-turn rule: OpenClaw before_prompt_build plugin', () => {
       expect(kept.action).toBe('skip');
       expect(rec.calls).toEqual([]);
       expect(readFileSync(join(openclawTurnPluginDir(), 'index.js'), 'utf8')).toBe(index);
+    });
+  });
+
+  test('a plugin an older gbrain wrote (no recorded access): a same-server --workspace run rewrites it; another server or an unreadable rule is left', async () => {
+    const legacy = (rule: string) => {
+      const dir = openclawTurnPluginDir();
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'package.json'), `${JSON.stringify({ name: OPENCLAW_TURN_PLUGIN_ID, version: '1.0.0', private: true, type: 'module', openclaw: { extensions: ['./index.js'] } }, null, 2)}\n`);
+      writeFileSync(join(dir, 'index.js'), [`const RULE = ${JSON.stringify(rule)};`, 'export default {', `  id: '${OPENCLAW_TURN_PLUGIN_ID}',`, '  register(api) {', "    api.on('before_prompt_build', () => ({ prependContext: RULE }));", '  },', '};', ''].join('\n'));
+      return dir;
+    };
+    await withEnv({ OPENCLAW_STATE_DIR: state(), OPENCLAW_PROFILE: undefined }, async () => {
+      const dir = legacy(renderBrainFirstTurnRule(access, 'openclaw'));
+      expect(syncOpenclawTurnPlugin({ access, workspace: '/ws/a', dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run }).action).toBe('write');
+      expect(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).gbrain).toEqual({ access });
+      const mod = await import(join(dir, 'index.js'));
+      const handlers: Record<string, (event?: unknown, ctx?: unknown) => unknown> = {};
+      mod.default.register({ on: (event: string, fn: (event?: unknown, ctx?: unknown) => unknown) => { handlers[event] = fn; } });
+      expect(handlers.before_prompt_build({}, { inputProvenance: { kind: 'internal_system' } })).toEqual({ prependContext: renderBrainFirstTurnRule(access, 'openclaw', { reply: false }) });
+    });
+    await withEnv({ OPENCLAW_STATE_DIR: state(), OPENCLAW_PROFILE: undefined }, async () => {
+      const dir = legacy(renderBrainFirstTurnRule({ kind: 'mcp', server: 'gbrain-b' }, 'openclaw'));
+      const index = readFileSync(join(dir, 'index.js'), 'utf8');
+      const other = syncOpenclawTurnPlugin({ access, workspace: '/ws/a', dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run });
+      expect(other.action).toBe('print');
+      expect(other.detail).toContain('names the `gbrain-b` MCP server');
+      expect(readFileSync(join(dir, 'index.js'), 'utf8')).toBe(index);
+    });
+    await withEnv({ OPENCLAW_STATE_DIR: state(), OPENCLAW_PROFILE: undefined }, async () => {
+      const dir = legacy('not a gbrain rule');
+      const unreadable = syncOpenclawTurnPlugin({ access, workspace: '/ws/a', dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run });
+      expect(unreadable.action).toBe('print');
+      expect(unreadable.detail).toContain('gbrain cannot read');
+      expect(readFileSync(join(dir, 'index.js'), 'utf8')).toContain('not a gbrain rule');
     });
   });
 

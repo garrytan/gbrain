@@ -71,23 +71,38 @@ const installArgv = (bin: string, dir: string): string[][] => [
 
 const shown = (argv: string[]) => argv.map((a) => (/^[\w./:=@-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`)).join(' ');
 
-/** The access an installed plugin records in its package.json: undefined with no plugin, null when an older gbrain wrote it without one. */
-function installedAccess(dir: string): BrainFirstAccess | null | undefined {
+/**
+ * What an installed plugin was written for: the access its package.json records, else (an older gbrain recorded
+ * none) the server or launcher its RULE literal names. undefined with no plugin, null when neither can be read.
+ */
+function installedAccess(dir: string): { access: BrainFirstAccess; recorded: boolean } | null | undefined {
   if (!existsSync(join(dir, 'index.js'))) return undefined;
-  try { return (JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { gbrain?: { access?: BrainFirstAccess } }).gbrain?.access ?? null; } catch { return null; }
+  try {
+    const recorded = (JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { gbrain?: { access?: BrainFirstAccess } }).gbrain?.access;
+    if (recorded) return { access: recorded, recorded: true };
+    const literal = /^const RULE = (".*");$/m.exec(readFileSync(join(dir, 'index.js'), 'utf8'))?.[1];
+    const rule = literal ? JSON.parse(literal) as string : '';
+    const server = /on the `([^`]+)` MCP server/.exec(rule)?.[1];
+    const launcher = /check GBrain first \(`(.+?) search "<names>"`/.exec(rule)?.[1];
+    return server ? { access: { kind: 'mcp', server }, recorded: false } : launcher ? { access: { kind: 'cli', launcher }, recorded: false } : null;
+  } catch { return null; }
 }
 
 const named = (a: BrainFirstAccess) => (a.kind === 'mcp' ? `the \`${a.server}\` MCP server` : `\`${a.launcher}\``);
 
 /**
  * Write the plugin and install it with OpenClaw's CLI (accepted decision). Never throws. Every agent on the gateway gets
- * the plugin's rule, so a `workspace`-scoped run leaves an installed plugin whose rule would change to another server.
+ * the plugin's rule, so a `workspace`-scoped run leaves an installed plugin whose rule would name another server (or
+ * one it cannot read) and prints, unverified, the command that changes it for every agent.
  */
 export function syncOpenclawTurnPlugin(opts: { access: BrainFirstAccess; dryRun: boolean; workspace?: string; openclawBin?: string | null; run?: Run }): OpenclawTurnPluginOutcome {
   const dir = openclawTurnPluginDir();
   const installed = opts.workspace ? installedAccess(dir) : undefined;
-  if (installed !== undefined && (!installed || renderBrainFirstTurnRule(installed, 'openclaw') !== renderBrainFirstTurnRule(opts.access, 'openclaw'))) {
-    return { action: 'skip', path: dir, detail: `${dir} left as it is: every agent on this OpenClaw gateway gets its rule, which ${installed ? `names ${named(installed)}` : 'an older gbrain wrote without recording its server'}, so a --workspace run does not rewrite it. To change it for every agent: gbrain setup openclaw --remove --workspace ${opts.workspace}, then run this again` };
+  const same = installed && (installed.recorded
+    ? renderBrainFirstTurnRule(installed.access, 'openclaw') === renderBrainFirstTurnRule(opts.access, 'openclaw')
+    : named(installed.access) === named(opts.access));
+  if (installed !== undefined && !same) {
+    return { action: 'print', path: dir, detail: `${dir} left as it is: every agent on this OpenClaw gateway gets its rule, which ${installed ? `names ${named(installed.access)}` : 'gbrain cannot read'}, so a --workspace run does not rewrite it. To change it for every agent, run this, then this setup again`, commands: [`gbrain setup openclaw --remove --workspace ${opts.workspace}`] };
   }
   const files = openclawTurnPluginFiles(opts.access);
   const bin = opts.openclawBin !== undefined ? opts.openclawBin : findOpenclaw();
