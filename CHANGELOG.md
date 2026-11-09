@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.631.0] - 2026-11-09
 
 **A long conversation that keeps growing is no longer re-extracted, and re-paid for, on every new message.** Automatic event extraction reads a page's title, date, attendees and the first 12,000 characters of its body. On a conversation longer than that, each new message recorded a new revision, and each revision paid for another extraction call on exactly the same text. The model words each event a little differently every time, event pages are named after that wording, and an extraction of a page longer than 12,000 characters never retired the previous one, so every run added a fresh copy of every event. One page could collect dozens of paid calls and hundreds of duplicate events. Now a revision that changes nothing extraction reads (text, title, date, attendees, privacy) makes no call and writes nothing (it records `judge_input_unchanged`); a window the judge keeps failing on is paid for at most the page's attempt limit across all revisions, then records `judge_input_failed` until the text changes or a backfill asks again; and a re-extraction that re-read all the text the page's live events came from (for example after a title change, or the first time a conversation grows past 12,000 characters) replaces those events instead of adding to them. A page whose opening text was edited still keeps its earlier events, as before. Text past the first 12,000 characters is still not extracted; incremental coverage of the tail is tracked in #9013. Reported by @andreineacsu.
 
