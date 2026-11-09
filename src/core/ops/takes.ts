@@ -304,7 +304,7 @@ export const THINK_REMOTE_MODELS_KEY = 'think.remote_models';
  */
 async function remoteThinkModel(engine: OperationContext['engine'], requested: string | undefined): Promise<{ model?: string; ignored?: 'not_allowed' | 'unusable' }> {
   if (!requested) return {};
-  const [{ resolveModel }, { normalizeModelId }, { probeChatModel }] = await Promise.all([
+  const [{ resolveModel }, { normalizeModelId }, { probeChatModel, isAvailable }] = await Promise.all([
     import('../model-config.ts'), import('../model-id.ts'), import('../ai/gateway.ts'),
   ]);
   const resolve = async (cliFlag?: string) => normalizeModelId(await resolveModel(engine, { cliFlag, configKey: 'models.think', tier: 'deep', fallback: 'opus' }));
@@ -312,7 +312,7 @@ async function remoteThinkModel(engine: OperationContext['engine'], requested: s
   if (wanted === host) return {};
   const allowed = await Promise.all((listed ?? '').split(',').map(m => m.trim()).filter(Boolean).map(m => resolve(m)));
   if (!allowed.includes(wanted)) return { ignored: 'not_allowed' };
-  return probeChatModel(wanted).ok ? { model: wanted } : { ignored: 'unusable' };
+  return probeChatModel(wanted).ok && isAvailable('chat', wanted) ? { model: wanted } : { ignored: 'unusable' };
 }
 
 const think: Operation = {

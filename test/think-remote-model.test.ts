@@ -90,6 +90,17 @@ for (const kind of testBackends()) {
       expect(called).toEqual(['gpt-6.1-sol']);
       expect(r.body.warnings).toContain('MODEL_OVERRIDE_IGNORED:unusable');
       expect(r.notices.find(n => n.code === 'model_override_ignored')?.why).toContain('cannot run');
+      expect(r.notices.find(n => n.code === 'model_override_ignored')?.why).not.toContain('answered');
+    });
+
+    test('a listed model whose provider key the host lacks answers on the host model, not with a key error', async () => {
+      keyed();
+      await engine.setConfig('think.remote_models', 'deepseek:deepseek-chat');
+      const r = await remoteThink({ model: 'deepseek:deepseek-chat' });
+      expect(r.isError).toBe(false);
+      expect(called).toEqual(['gpt-6.1-sol']);
+      expect(r.body.synthesis_status).toBe('ok');
+      expect(r.body.warnings).toContain('MODEL_OVERRIDE_IGNORED:unusable');
     });
 
     test('a model param naming the host think model runs it with no notice', async () => {

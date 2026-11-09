@@ -303,8 +303,8 @@ export function modelOverrideIgnoredNotice(reason: 'not_allowed' | 'unusable'): 
     kind: 'info',
     dedupe_key: reason,
     why: reason === 'not_allowed'
-      ? 'This brain runs think on its own configured model for remote callers, so the requested model was not used; the answer came from the host think model (modelUsed names it). Omit model, or ask the brain owner to allow it on the brain host.'
-      : 'The requested model is allowed for remote callers on this brain but cannot run there right now, so the host think model answered instead (modelUsed names it).',
+      ? 'This brain runs think on its own configured model for remote callers, so the requested model was not used; think ran on the host think model instead (modelUsed names it). Omit model, or ask the brain owner to allow it on the brain host.'
+      : 'The requested model is allowed for remote callers on this brain but cannot run there right now, so it was not used; think ran on the host think model instead (modelUsed names it).',
     ...(reason === 'not_allowed' ? {
       fix: {
         argv: ['gbrain', 'config', 'set', 'think.remote_models', '<models>'],
