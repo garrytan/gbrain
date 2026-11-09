@@ -35,6 +35,8 @@ const SHARED = 'notes/shared-plan';
 const LATER = 'notes/restricted-later';
 const OPEN = 'notes/team-open';
 const RACED = 'notes/restricted-mid-write';
+const NARROWED = 'notes/narrowed-before-snapshot';
+const CREATED = 'notes/created-mid-write';
 
 let engine: PGLiteEngine;
 let server: Server;
@@ -55,6 +57,7 @@ beforeAll(async () => {
   await importFromContent(engine, LATER, page('Restricted later'), { sourceId: SRC, noEmbed: true } as never);
   await importFromContent(engine, OPEN, page('Team open'), { sourceId: SRC, noEmbed: true } as never);
   await importFromContent(engine, RACED, page('Restricted mid write'), { sourceId: SRC, noEmbed: true } as never);
+  await importFromContent(engine, NARROWED, page('Narrowed', READERS), { sourceId: SRC, noEmbed: true } as never);
   for (const id of ['alice-example', 'bob-example']) await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1)', [id]);
   const bob = await mintLegacyToken(engine, { name: 'bob', scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [SRC] });
   await engine.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id = $1::uuid', [bob.id, 'bob-example']);
@@ -147,6 +150,47 @@ describe('a webhook capture keeps a page\'s stored readers (GST-2112)', () => {
     expect(raced).toBe(true);
     expect(await readers(RACED)).toEqual(['alice-example', 'bob-example']);
     expect((await stored(RACED))?.compiled_truth).toContain('Original body.');
+  });
+
+  test('readers narrowed away from the writer while the check reads the page: the write refuses, the page keeps its text', async () => {
+    let narrowed = false;
+    const racing = new Proxy(engine, { get(target, key) {
+      if (key === 'readPageSnapshot') return async (...args: Parameters<PGLiteEngine['readPageSnapshot']>) => {
+        if (!narrowed && args[0] === NARROWED) {
+          narrowed = true;
+          await importFromContent(target, NARROWED, page('Narrowed', 'readable_by: [alice-example]\n'), { sourceId: SRC, noEmbed: true } as never);
+        }
+        return target.readPageSnapshot(...args);
+      };
+      const value = Reflect.get(target, key) as unknown;
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    await expect(makeIngestCaptureHandler(racing)(bobJob(NARROWED, page('Narrowed', 'readable_by: [bob-example]\n', 'Bob after losing access.'))))
+      .rejects.toMatchObject({ code: 'page_not_found' });
+    expect(narrowed).toBe(true);
+    expect(await readers(NARROWED)).toEqual(['alice-example']);
+    expect((await stored(NARROWED))?.compiled_truth).toContain('Original body.');
+  });
+
+  test('a page created between the check and the write: the write refuses revision_conflict, a retryable race', async () => {
+    let checked = false;
+    let raced = false;
+    const racing = new Proxy(engine, { get(target, key) {
+      if (key === 'readPageSnapshot') return async (...args: Parameters<PGLiteEngine['readPageSnapshot']>) => { checked = true; return target.readPageSnapshot(...args); };
+      if (key === 'getPage') return async (...args: Parameters<PGLiteEngine['getPage']>) => {
+        if (checked && !raced && args[0] === CREATED) {
+          raced = true;
+          await importFromContent(target, CREATED, page('Created mid write', READERS), { sourceId: SRC, noEmbed: true } as never);
+        }
+        return target.getPage(...args);
+      };
+      const value = Reflect.get(target, key) as unknown;
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    await expect(makeIngestCaptureHandler(racing)(bobJob(CREATED, page('Created mid write', '', 'Checked while absent.')))).rejects.toMatchObject({ code: 'revision_conflict' });
+    expect(raced).toBe(true);
+    expect(await readers(CREATED)).toEqual(['alice-example', 'bob-example']);
+    expect((await stored(CREATED))?.compiled_truth).toContain('Original body.');
   });
 
   test('a body whose frontmatter names another language is held by the importer, not answered 500', async () => {

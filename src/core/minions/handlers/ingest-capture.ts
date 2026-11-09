@@ -117,12 +117,13 @@ export async function assertWebhookWriterMayReplace(engine: BrainEngine, writer:
   assertScopePageWriter({ remote: true }, target, 'ingest_capture');
   const authority = { version: 1, principal: webhookPrincipal(writer), remote: true, sourceId, sourceIncarnation: '',
     scopes: [], operations: null, slugPrefixes: null, excludePrivate: await excludesPrivateWrites(engine, true) } as WriteAuthority;
+  // GST-2112: the snapshot is read before the visibility check, so the revision returned (which binds the write) is
+  // never older than the state the writer was authorized against.
+  const stored = content === undefined ? undefined : await engine.readPageSnapshot(target, { sourceId, includeDeleted: true });
   await authorizePageVisibility(engine, authority, target);
   if (content === undefined) return;
-  // GST-2112: the capture writes through a trusted local path, so apply the remote put_page readers rule here: a body
-  // never drops readable_by from a page that names readers, and the readers it names keep the writer.
-  // The returned revision binds the write to the frontmatter checked here.
-  const stored = await engine.readPageSnapshot(target, { sourceId, includeDeleted: true });
+  // The capture writes through a trusted local path, so apply the remote put_page readers rule here: a body never
+  // drops readable_by from a page that names readers, and the readers it names keep the writer.
   await remoteReadersChecked(engine, authority, stored?.page.frontmatter, { parsedPage: { frontmatter: parseMarkdown(content, target + '.md', { validate: true }).frontmatter } });
   return stored?.revision ?? null;
 }
