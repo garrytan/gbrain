@@ -66,7 +66,7 @@ async function expectNothingAdded(b: Box): Promise<void> {
   expect(liveProcesses(b)).toEqual([]);
   const config = JSON.parse(readFileSync(join(b.home, '.gbrain', 'config.json'), 'utf8'));
   expect(config.self_upgrade.mode).toBe('notify');
-  expect(config.self_upgrade.channel).toBeUndefined();
+  expect(config.self_upgrade.channel).toBe('stable');
   const status = await gbrain(b, ['connectors', 'status', '--json']);
   expect(status.exitCode, status.stderr).toBe(0);
   const providers = JSON.parse(status.stdout).providers as Array<{ provider: string; auto_sync: boolean; credential_present: boolean }>;

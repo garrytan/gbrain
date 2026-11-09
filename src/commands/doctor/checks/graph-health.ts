@@ -378,6 +378,8 @@ export const timelineHistoryEntry: DoctorEntry = {
     'foreign_ownership_marker',
     'coordination_lock_location',
     'unbound_source',
+    'dream_write_deferred',
+    'embedding_restamp_stalled',
     'writer_version',
     'segmented_storage',
     'self_capture',
@@ -403,8 +405,6 @@ export const timelineHistoryEntry: DoctorEntry = {
     'ontology_facts_fenced',
     'stale_frontmatter_keys',
     'maintenance_write_drift',
-    'dream_write_deferred',
-    'embedding_restamp_stalled',
   ],
   run: runTimelineHistory,
 };
