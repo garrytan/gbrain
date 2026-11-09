@@ -4892,6 +4892,38 @@ More: [docs/guides/write-refusals.md#tail_exposure_approval](../../docs/guides/w
 |---|---|---|---|---|---|---|
 | The skill target must remain within its selected root. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### task_claimed
+
+<a id="task_claimed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another agent holds an unexpired lease on this delegated task, so it was not claimed. | claim_task is atomic: of two agents claiming one task, exactly one wins; the other is refused until the winner completes, releases, or lets the lease run out. | Pick another task from inbox; the task reopens if the lease runs out. | agent | `repeat the read that failed` | 1 | no |
+
+### task_closed
+
+<a id="task_closed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The delegated task is already done or failed, so nothing was changed. | The request itself was wrong or no longer matches the brain; nothing was changed. | Check inbox for open work. | agent | `repeat the read that failed` | 1 | no |
+
+### task_not_addressed
+
+<a id="task_not_addressed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The delegated task is addressed to another agent or model, so this agent may not claim it. | A task addressed to one agent is never handed to another; addressing is how the sender chose who does the work. | Leave it for its addressee; your own work is in inbox. | agent | `repeat the read that failed` | 1 | no |
+
+### task_not_yours
+
+<a id="task_not_yours"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The delegated task is not claimed by this agent, so it cannot complete or release it. | The request itself was wrong or no longer matches the brain; nothing was changed. | Claim it with claim_task first, or check inbox for the tasks you hold. | agent | `repeat the read that failed` | 1 | no |
+
 ### timeline_comment_markup
 
 <a id="timeline_comment_markup"></a>

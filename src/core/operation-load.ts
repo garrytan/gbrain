@@ -115,8 +115,10 @@ const OP_AREAS: Record<string, string> = {
   schema_apply_mutations: 'schema', reload_schema_pack: 'schema',
   // discovery
   request_tools: 'discovery',
-  // agent handoff: thread pickup
+  // agent handoff: thread pickup, delegation inbox, deterministic routing
   log_turn: 'handoff', update_thread_summary: 'handoff', checkpoint: 'handoff', find_thread: 'handoff', pickup: 'handoff',
+  register_agent: 'handoff', heartbeat: 'handoff', delegate: 'handoff', inbox: 'handoff', claim_task: 'handoff',
+  complete_task: 'handoff', release_task: 'handoff', fan_out: 'handoff', pick_result: 'handoff', route: 'handoff', routing_stats: 'handoff',
 };
 
 const finalized = new WeakSet<Operation>();

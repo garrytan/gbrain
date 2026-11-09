@@ -89,6 +89,11 @@ export const CODES = {
   ambiguous_skill: { class: 'caller', summary: "This name belongs to multiple authorized sources." },
   answer_not_yours: { class: 'caller', summary: "The rated answer was returned to a different client.", docs: 'docs/guides/retrieval-feedback.md#answer_not_yours' },
   answer_pending: { class: 'retryable', summary: "The rated answer is still being recorded; retry in a few seconds.", docs: 'docs/guides/retrieval-feedback.md#answer_pending' },
+  // Agent handoff delegation inbox (src/core/handoff/delegations.ts): claim, complete and release refusals.
+  task_claimed: { class: 'caller', summary: "Another agent holds an unexpired lease on this delegated task, so it was not claimed.", why: 'claim_task is atomic: of two agents claiming one task, exactly one wins; the other is refused until the winner completes, releases, or lets the lease run out.', suggestion: 'Pick another task from inbox; the task reopens if the lease runs out.' },
+  task_closed: { class: 'caller', summary: "The delegated task is already done or failed, so nothing was changed.", suggestion: 'Check inbox for open work.' },
+  task_not_addressed: { class: 'caller', summary: "The delegated task is addressed to another agent or model, so this agent may not claim it.", why: 'A task addressed to one agent is never handed to another; addressing is how the sender chose who does the work.', suggestion: 'Leave it for its addressee; your own work is in inbox.' },
+  task_not_yours: { class: 'caller', summary: "The delegated task is not claimed by this agent, so it cannot complete or release it.", suggestion: 'Claim it with claim_task first, or check inbox for the tasks you hold.' },
   answer_unavailable: { class: 'caller', summary: "The rated answer is not recorded: unknown, dropped, or older than the retention window.", docs: 'docs/guides/retrieval-feedback.md#answer_unavailable' },
   api_not_enabled: { class: 'host_only', summary: "Google connect credential error: api not enabled.", docs: 'docs/guides/google-connect.md#troubleshooting' },
   approval_required: { class: 'consent', summary: "The change needs the owner's explicit approval before it can proceed." },
