@@ -14,6 +14,7 @@ import type { NativeLockHandle } from './native-lock.ts';
 import { proveIndexLockAbandoned, reclaimIndexLock, type IndexLockReclaim } from './index-lock-reclaim.ts';
 import { recordCommitAsync, recordIntentAsync } from '../git/commit-ledger.ts';
 import { supersededBy } from './import-deferral.ts';
+import { findingsInLog, rangeScanArgs, rangeSecretRefusal } from '../git/range-secret-scan.ts';
 
 /** An index lock younger than this is contention; an older one is reported as stale. */
 const INDEX_LOCK_GRACE_MS = 10 * 60 * 1000;
@@ -403,6 +404,8 @@ export async function gitRootAhead(root: string, signal?: AbortSignal): Promise<
 
 /** Git's refusal of a push because the remote branch moved (LC_ALL=C keeps it untranslated). */
 export const NON_FAST_FORWARD = /\[rejected\][^\n]*\((?:non-fast-forward|fetch first)\)/;
+/** Git's refusal of a leased push because the remote branch moved after its tip was read. */
+const STALE_LEASE = /\[rejected\][^\n]*\(stale info\)/;
 
 /**
  * Push the current branch to its tracking remote. A plain push is tried first (idempotent, cannot import remote
@@ -411,6 +414,13 @@ export const NON_FAST_FORWARD = /\[rejected\][^\n]*\((?:non-fast-forward|fetch f
  * without moving the checkout, so `gbrain sources refresh` stays the only importer of remote files. That publish
  * runs synchronously; it starts only after the remote answered this push. Both sides changing one file holds the
  * effect with `integrate_conflict` and the user's choice as its fix.
+ * #8896: a script's plain `git commit` in the checkout never passed the write path's scan, so both paths scan what
+ * they publish. The plain push reads the remote branch tip (`git ls-remote`, never a possibly stale tracking ref,
+ * which would hide a commit a rewound remote no longer has), scans exactly `<tip>..<HEAD sha>` and pushes that sha
+ * only as a fast-forward of the tip, leased on it; a tip that is not an ancestor, or a remote that moves before the
+ * push lands, goes to the shared publish, which fetches first and runs with `--scan-secrets`. A finding, an
+ * unscannable file, a commit changing what the scan sees, a range git cannot list or a remote with no such branch
+ * holds the effect with `publish_secret_found`.
  */
 export async function pushGitRoot(root: string, signal?: AbortSignal): Promise<{ push: 'committed'; integrated?: number } | { push: 'skipped'; reason: 'no_tracking_remote' }> {
   return withSession(root, signal, undefined, false, async session => {
@@ -419,15 +429,34 @@ export async function pushGitRoot(root: string, signal?: AbortSignal): Promise<{
     const remote = await git(session, ['config', '--get', `branch.${branch.stdout.trim()}.remote`]);
     const merge = await git(session, ['config', '--get', `branch.${branch.stdout.trim()}.merge`]);
     if (remote.code !== 0 || merge.code !== 0 || !remote.stdout.trim() || remote.stdout.trim() === '.') return { push: 'skipped', reason: 'no_tracking_remote' } as const;
-    const push = await git(session, ['push', '--', remote.stdout.trim(), `HEAD:${merge.stdout.trim()}`]);
-    if (push.code === 0) return { push: 'committed' } as const;
-    if (!NON_FAST_FORWARD.test(push.stderr)) throw opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
+    const head = await git(session, ['rev-parse', '--verify', 'HEAD']);
+    if (head.code !== 0) throw gitFailure('Cannot read the canonical checkout\'s HEAD.', 'git rev-parse HEAD failed, so nothing was scanned or pushed.');
+    const sha = head.stdout.trim(), short = merge.stdout.trim().replace(/^refs\/heads\//, ''), ref = `refs/heads/${short}`;
+    const unavailable = () => opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
       `git push to ${remote.stdout.trim()} failed (network, credentials or a remote that refused it). Nothing is lost locally and the worker pushes again on a later pass; gbrain never pulls or rebases the checkout. If it keeps failing, check the remote and its credentials with git push on the brain host.`,
       { fix: effectStatusFix });
+    const listed = await git(session, ['ls-remote', '--', remote.stdout.trim(), ref]);
+    if (listed.code !== 0) throw unavailable();
+    const tip = listed.stdout.split('\n').map(line => line.split('\t')).find(([, name]) => name === ref)?.[0] ?? '';
+    if (!tip) throw heldSecret(root, rangeSecretRefusal(root, `refs/remotes/${remote.stdout.trim()}/${short}`, sha, null, `${remote.stdout.trim()} has no branch ${short} to compare against`)!);
+    if ((await git(session, ['merge-base', '--is-ancestor', tip, sha])).code === 0) {
+      const scan = await execFileBounded('git', gitArgs(session, rangeScanArgs(tip, sha)),
+        { ...gitOptions(session), timeout: SECRET_SCAN_TIMEOUT_MS, maxBuffer: 1024 * 1024 * 1024, env: gitChildEnv(sessionEnv(session)) });
+      signal?.throwIfAborted();
+      const refusal = rangeSecretRefusal(root, tip, sha, scan.error ? null : findingsInLog(root, scan.stdout),
+        scan.stderr.trim().slice(0, 200) || `exit ${String(scan.error?.code ?? scan.error?.signal ?? 'unknown')}`);
+      if (refusal) throw heldSecret(root, refusal);
+      const push = await git(session, ['push', `--force-with-lease=${ref}:${tip}`, '--', remote.stdout.trim(), `${sha}:${ref}`]);
+      if (push.code === 0) return { push: 'committed' } as const;
+      if (!NON_FAST_FORWARD.test(push.stderr) && !STALE_LEASE.test(push.stderr)) throw unavailable();
+    }
     signal?.throwIfAborted();
     return publishKeepingCheckout(root, signal);
   });
 }
+
+/** #8896: the bound on the secret scan of the commits a plain push publishes (the shared publish allows the same). */
+const SECRET_SCAN_TIMEOUT_MS = 300_000;
 
 /** #7010: the bound on one keep-checkout publish (a fetch, an in-memory merge and a push, repeated while the remote keeps moving). */
 const KEEP_CHECKOUT_PUBLISH_TIMEOUT_MS = 600_000;
@@ -444,7 +473,7 @@ async function publishKeepingCheckout(root: string, signal?: AbortSignal): Promi
   if (!cli) throw opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
     `The remote branch moved, and publishing over it runs gbrain git commit-push --push-only --keep-checkout, but this process could not locate its own gbrain executable (set ${CHILD_ENV.childCliOverride} to it). Nothing is lost locally.`,
     { fix: effectStatusFix });
-  const child = await execFileBounded(cli.cmd, [...cli.argsPrefix, 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', root, '--json'], {
+  const child = await execFileBounded(cli.cmd, [...cli.argsPrefix, 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', root, '--json'], {
     timeout: KEEP_CHECKOUT_PUBLISH_TIMEOUT_MS, termGraceMs: GIT_TERM_GRACE_MS, maxBuffer: 1024 * 1024, signal,
     env: { ...process.env, GBRAIN_PUBLISH_LOCK_WAIT_SECONDS: '0', GBRAIN_PUSH_LOCK_WAIT_SECONDS: '0' },
   });
@@ -455,7 +484,7 @@ async function publishKeepingCheckout(root: string, signal?: AbortSignal): Promi
   if (doc && typeof doc.code === 'string' && typeof doc.message === 'string') {
     const error = opError(doc.code as Parameters<typeof opError>[0], doc.message, typeof doc.suggestion === 'string' ? doc.suggestion : '',
       { ...(typeof doc.detail === 'string' ? { detail: doc.detail } : {}), ...(doc.fix ? { fix: doc.fix as Action } : {}), retryable: doc.retryable === true });
-    throw error.code === 'integrate_conflict' ? heldConflict(root, error) : error;
+    throw error.code === 'integrate_conflict' ? heldConflict(root, error) : error.code === 'publish_secret_found' ? heldSecret(root, error) : error;
   }
   throw opError('push_unconfirmed', 'The canonical commit is durable locally; its push will retry.',
     `The remote branch moved and the keep-checkout publish did not report a push (${child.error ? `exit ${String(child.error.code ?? child.error.signal ?? 'unknown')}` : `outcome ${String(doc?.outcome ?? 'unreadable')}`}: ${child.stderr.trim().slice(0, 300) || 'no detail'}). Nothing is lost locally; the worker pushes again on a later pass.`,
@@ -476,6 +505,20 @@ function heldConflict(root: string, error: OperationError): OperationError {
     user_message: `${fix?.user_message ?? 'This machine and the remote changed the same file.'} Until you choose, Git backups of new page writes from ${root} are held (nothing is lost; the database has every write).`,
     verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--json'] } } });
   return held;
+}
+
+/**
+ * #8896: values that look like secrets in the unpublished commits hold the checkout's Git effects (they retry, then
+ * park): no retry can succeed until the user removes them from those commits or allowlists a false positive.
+ */
+function heldSecret(root: string, error: OperationError): OperationError {
+  const fix = error.fix as Action | undefined;
+  return opError('publish_secret_found', `Git backups of canonical page writes are held: ${error.message}`,
+    `${error.suggestion ?? ''} The page writes themselves are committed in the database and in local commits; nothing is lost, and nothing is pushed from ${root} while those commits hold the values. Afterwards, gbrain sources writer retry-effects with --parked-pushes for the source this checkout backs (gbrain sources writer status names it) retries the Git effects that parked meanwhile.`,
+    { ...(error.detail ? { detail: error.detail } : {}), fix: { ...(fix ?? { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
+      why: 'Rewriting unpublished commits or allowlisting a value is the user\'s call.' }),
+    user_message: `${fix?.user_message ?? `Unpublished commits in ${root} hold values that look like secrets.`} Until they are removed or allowlisted, Git backups of new page writes from ${root} are held (nothing is lost; the database has every write).`,
+    verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--json'] } } });
 }
 
 /** The outcome a Git effect records when its root has no durability hook: no git command ran. */

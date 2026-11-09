@@ -10,6 +10,7 @@
  * in the range that changes a file deciding what the scan sees (`.gbrain-scan-allow`, a `.gitattributes`) is reported
  * too, so callers refuse rather than let the published commits widen their own gate.
  */
+import { opError, type OperationError } from '../ops/contract.ts';
 import { loadWorkspaceAllowlist, pathAllowlisted, SCAN_ALLOW_FILENAME } from '../secret-scan-allowlist.ts';
 import { scanText, SCAN_MAX_FILE_BYTES } from '../secret-scan.ts';
 
@@ -69,4 +70,25 @@ export function findingsInLog(root: string, log: string): RangeScan {
   }
   flush();
   return scan;
+}
+
+/**
+ * The automatic-publish refusal for the commits in `base..target` of `root`: null only when the scan read the range and
+ * found nothing; otherwise `publish_secret_found` naming each item (never its value), or, with no scan, that git could
+ * not list the range (`failure`: git's stderr or exit), so a range that cannot be read is never published unscanned.
+ */
+export function rangeSecretRefusal(root: string, base: string, target: string, scan: RangeScan | null, failure: string): OperationError | null {
+  if (scan && !scan.findings.length && !scan.unscanned.length && !scan.gate_changes.length) return null;
+  const named = scan ? [...scan.findings.map(f => `${f.path}:${f.line} (${f.pattern}, ${f.commit.slice(0, 7)})`), ...scan.unscanned.map(u => `${u.path} (too large to scan, ${u.commit.slice(0, 7)})`),
+    ...scan.gate_changes.map(g => `${g.path} (changes what the scan sees, ${g.commit.slice(0, 7)})`)] : [];
+  return opError('publish_secret_found', scan
+    ? `${named.length} item(s) in the local commits ${base}..${target.slice(0, 12)} look like secrets or could not be scanned: ${named.slice(0, 10).join(', ')}${named.length > 10 ? ', ...' : ''}. Nothing was pushed.`
+    : `git could not list the local commits ${base}..${target.slice(0, 12)} to scan them for secrets (${failure}). Nothing was pushed.`,
+    'Remove the value from those commits (rewriting unpushed local commits is the user\'s call), or add a false positive\'s fingerprint to .gbrain-scan-allow, then retry. Never publish them with a command that skips this scan.',
+    { detail: JSON.stringify(scan ?? { error: 'unreadable' }),
+      fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
+        argv: ['git', '-C', root, 'log', '--stat', `${base}..${target}`],
+        why: 'Lists the unpublished commits the scan refused; read-only. A secret pushed to the remote stays in its history.',
+        user_message: `Unpublished commits in ${root} hold ${named.length || 'some'} item(s) that look like secrets or could not be scanned (${named.slice(0, 3).join(', ')}). Nothing was pushed. Remove them from those commits, or confirm a false positive so it can be allowlisted by fingerprint?`,
+        docs: 'docs/guides/shared-checkout-git.md#publish_secret_found' } });
 }
