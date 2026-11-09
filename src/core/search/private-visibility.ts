@@ -173,15 +173,16 @@ function originAllowedSql(p: string): string {
 /**
  * `privatePagesFilterFragment` with a cheap first test: a page with no
  * `visibility` or `derived_from` key (nor, unless the operator turned
- * `visibility.honor_aliases` off, a privacy-alias key) whose type is not atom, concept or event is visible by every rule
+ * `visibility.honor_aliases` off, a privacy-alias key, nor `readable_by` or `pinned_question`) whose type is not atom, concept,
+ * event or question is visible by every rule
  * above, so only the remaining pages run the full check. For scans over thousands of
  * candidate pages (an entity's referrers).
  */
 export function privatePagesFilterFragmentFast(pageAlias: string): string {
   return `(${folderRulesAllowedSql(pageAlias, [])} AND ((${pageAlias}.frontmatter->'visibility' IS NULL AND ${pageAlias}.frontmatter->'derived_from' IS NULL${honorAliases()
       ? `\n      AND ${pageAlias}.frontmatter->'access' IS NULL AND ${pageAlias}.frontmatter->'confidentiality' IS NULL` : ''}
-      AND ${pageAlias}.frontmatter->'readable_by' IS NULL
-      AND ${pageAlias}.type NOT IN ('atom', 'concept', 'event'))
+      AND ${pageAlias}.frontmatter->'readable_by' IS NULL AND ${pageAlias}.frontmatter->'pinned_question' IS NULL
+      AND ${pageAlias}.type NOT IN ('atom', 'concept', 'event', 'question'))
     OR ${privatePagesFilterFragment(pageAlias)}))`;
 }
 
@@ -393,7 +394,8 @@ export function privatePagesFilterFastForCaller(pageAlias: string): string {
 function privacyPartFastSql(pageAlias: string): string {
   return `((${pageAlias}.frontmatter->'visibility' IS NULL AND ${pageAlias}.frontmatter->'derived_from' IS NULL${honorAliases()
       ? `\n      AND ${pageAlias}.frontmatter->'access' IS NULL AND ${pageAlias}.frontmatter->'confidentiality' IS NULL` : ''}
-      AND ${pageAlias}.type NOT IN ('atom', 'concept', 'event'))
+      AND ${pageAlias}.frontmatter->'pinned_question' IS NULL
+      AND ${pageAlias}.type NOT IN ('atom', 'concept', 'event', 'question'))
     OR ${privacyPartSql(pageAlias)})`;
 }
 

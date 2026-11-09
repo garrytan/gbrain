@@ -24,7 +24,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../persistence/connector-identity.ts';
-import { edgeTrimSql } from '../edge-whitespace.ts';
+import { asciiLower, asciiLowerSql, edgeTrimSql } from '../edge-whitespace.ts';
 import {
   CONTENT_ORIGINS, OWNER_TIER_FLOOR, TRUST_TIER_RANK, compareTrust, contentOriginTier, effectiveWriteTrust, isTrustTier, minTrust, trustRankSql,
   type ContentOrigin, type TrustTier, type WriteTrust,
@@ -137,7 +137,7 @@ export function frontmatterTrustCaps(frontmatter: Record<string, unknown> | null
   }
   const transcript = fm.transcript_import as { harness?: unknown } | undefined;
   if (transcript && typeof transcript === 'object') {
-    caps.push(OWN_SESSION_HARNESSES.includes(str(transcript.harness).toLowerCase()) ? 'agent_written' : 'external_untrusted');
+    caps.push(OWN_SESSION_HARNESSES.includes(asciiLower(str(transcript.harness))) ? 'agent_written' : 'external_untrusted');
   }
   if (str(fm.source_url) && (str(fm.clipped_at) || str(fm.clipper) || str(fm.captured_via) === 'clipper' || str(fm.type) === 'clipping')) {
     caps.push('external_untrusted');
@@ -164,7 +164,7 @@ export function frontmatterTrustCapsSql(fm: string): string[] {
     `CASE WHEN jsonb_typeof(${fm}->'trust_tier') = 'string' THEN NULLIF(${trustRankSql(`(${fm}->>'trust_tier')`)}, 0) END`,
     ...['source_kind', 'ingested_via', 'captured_via'].map(stamp),
     `CASE WHEN jsonb_typeof(${fm}->'transcript_import') IN ('object', 'array') THEN
-      CASE WHEN lower(${text('harness', `(${fm}->'transcript_import')`)}) IN (${list(OWN_SESSION_HARNESSES)}) THEN ${TRUST_TIER_RANK.agent_written} ELSE ${TRUST_TIER_RANK.external_untrusted} END END`,
+      CASE WHEN ${asciiLowerSql(text('harness', `(${fm}->'transcript_import')`))} IN (${list(OWN_SESSION_HARNESSES)}) THEN ${TRUST_TIER_RANK.agent_written} ELSE ${TRUST_TIER_RANK.external_untrusted} END END`,
     `CASE WHEN ${text('source_url')} IS NOT NULL AND (${text('clipped_at')} IS NOT NULL OR ${text('clipper')} IS NOT NULL
       OR ${text('captured_via')} = 'clipper' OR ${text('type')} = 'clipping') THEN ${TRUST_TIER_RANK.external_untrusted} END`,
     `CASE WHEN ${text('provenance')} = 'auto-extracted' OR ${fm}->'dream_generated' = 'true'::jsonb OR ${text('dream_generated')} = 'true'

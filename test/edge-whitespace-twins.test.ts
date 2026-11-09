@@ -22,7 +22,10 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { databaseOnlyPageSql, isDatabaseOnlyPage } from '../src/core/persistence/unbound-pages.ts';
 import { memberIdentityFor, stdioMemberId, STDIO_MEMBER_KEY } from '../src/core/access/caller.ts';
 import { addMember } from '../src/core/access/members.ts';
-import { PRIVACY_ALIASES, __resetPrivateVisibilityCacheForTests, isPrivacyPrivatePage, privacyAliasSql } from '../src/core/search/private-visibility.ts';
+import {
+  PRIVACY_ALIASES, __resetPrivateVisibilityCacheForTests, isPrivacyPrivatePage, privacyAliasSql,
+  privatePagesFilterFastForCaller, privatePagesFilterForCaller, privatePagesFilterFragment, privatePagesFilterFragmentFast,
+} from '../src/core/search/private-visibility.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 
@@ -71,10 +74,10 @@ describe.each(testBackends())('%s', (backend) => {
     __resetPrivateVisibilityCacheForTests();
     const words = ['private', 'restricted', 'confidential', 'secret', 'public', 'internal', 'privates', ''];
     const shapes = (w: string) => [w, w.toUpperCase(), `${w[0]?.toUpperCase() ?? ''}${w.slice(1)}`, ...EDGES.flatMap(c => [`${c}${w}`, `${w}${c}`, `${c}${w.toUpperCase()}${c}`])];
-    const frontmatters = Object.keys(PRIVACY_ALIASES).flatMap(key => words.flatMap(w => shapes(w).map(v => ({ [key]: v }))));
+    const frontmatters: Array<Record<string, unknown>> = Object.keys(PRIVACY_ALIASES).flatMap(key => words.flatMap(w => shapes(w).map(v => ({ [key]: v }))));
     frontmatters.push({ access: 'PR\u0130VATE' }, { access: 'pri\u200bvate' }, { confidentiality: 'SECRET\u212a' }, { access: ['private'] }, { access: 1 });
     const rows = await engine().executeRaw<{ i: number; private: boolean }>(
-      `SELECT i, ${privacyAliasSql('p')} AS private FROM jsonb_array_elements($1::jsonb) WITH ORDINALITY AS t(frontmatter, i), LATERAL (SELECT t.frontmatter) AS p`,
+      `SELECT i, ${privacyAliasSql('p')} AS private FROM jsonb_array_elements($1::text::jsonb) WITH ORDINALITY AS t(frontmatter, i), LATERAL (SELECT t.frontmatter) AS p`,
       [JSON.stringify(frontmatters)]);
     expect(rows).toHaveLength(frontmatters.length);
     for (const row of rows) {
@@ -110,6 +113,24 @@ describe.each(testBackends())('%s', (backend) => {
     expect(await listed(ctx(false))).toEqual(Object.keys(pages).sort());
     expect(await searched(ctx(false))).toEqual(Object.keys(pages).sort());
   }, 120_000);
+
+  test('the fast page filters hide exactly what the full filters hide', async () => {
+    __resetPrivateVisibilityCacheForTests();
+    const sourceId = `fast-${randomUUID().slice(0, 8)}`;
+    await engine().executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+    const types = ['note', 'meeting', 'question', 'atom', 'concept', 'event'];
+    const frontmatters: Array<Record<string, unknown>> = [{}, { pinned_question: 'q' }, { visibility: 'private' }, { visibility: 'world' }, { access: 'private\n' },
+      { confidentiality: 'internal' }, { derived_from: 'notes/none-example' }, { readable_by: ['alice-example'] }, { synthesized_by: 'x' }];
+    let n = 0;
+    for (const type of types) for (const frontmatter of frontmatters) {
+      await engine().executeRaw(`INSERT INTO pages(slug,type,title,compiled_truth,source_id,frontmatter) VALUES($1,$2,'T','body',$3,$4::text::jsonb)`,
+        [`fast/p${n++}`, type, sourceId, JSON.stringify(frontmatter)]);
+    }
+    const visible = async (filter: string) => (await engine().executeRaw<{ slug: string }>(
+      `SELECT p.slug FROM pages p WHERE p.source_id = $1 AND ${filter} ORDER BY p.slug`, [sourceId])).map(r => r.slug);
+    expect(await visible(privatePagesFilterFragmentFast('p'))).toEqual(await visible(privatePagesFilterFragment('p')));
+    expect(await visible(privatePagesFilterFastForCaller('p'))).toEqual(await visible(privatePagesFilterForCaller('p')));
+  });
 
   test('the stdio member binding trims like stdioMemberId', async () => {
     await addMember(engine(), 'carol-example');
