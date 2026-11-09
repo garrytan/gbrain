@@ -235,6 +235,30 @@ test('a contact that keeps failing transiently keeps the page budget: the cursor
       rmSync(dir, { recursive: true, force: true });
     }
   }, 240_000);
+test('a --full re-list that passes a failing contact drops its old sync token, so the next sync re-lists and retries the contact', async () => {
+    const { dir, cfg } = await googleSource();
+    await engine.executeRaw(`CREATE FUNCTION relist_fail_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.title = 'Person c00200 Example' THEN RAISE EXCEPTION 'injected transient contact failure'; END IF; RETURN NEW; END $$`);
+    await engine.executeRaw('CREATE TRIGGER relist_fail BEFORE INSERT ON pages FOR EACH ROW EXECUTE FUNCTION relist_fail_fn()');
+    try {
+      seedState(dir, { contacts_sync_token: 'ppl-old', contacts_person_fields: CONTACT_PERSON_FIELDS });
+      const api = peopleApi(11);
+      await withEnv({ GBRAIN_HOME: mkdtempSync(join(tmpdir(), 'gbrain-home-8906-')), GBRAIN_TEST_8906_TOKEN: 'synthetic-fixture-token' }, () =>
+        runGoogleSync(engine, 'gsrc', cfg, { sourceId: 'gsrc', full: true, noEmbed: true, noExtract: true, noSchemaPack: true }, api.fetchImpl));
+      expect(api.served).toEqual(Array.from({ length: 11 }, (_, i) => 'p' + (i + 1)));
+      expect(await personPages()).toBe(2_199);
+      expect(readGoogleState(dir).contacts_sync_token).toBeNull();
+      expect(relistOf(dir)).toBeNull();
+      await engine.executeRaw('DROP TRIGGER relist_fail ON pages');
+      const before = api.requests.length;
+      await sync(cfg, api.fetchImpl);
+      expect(api.requests[before]).toEqual({ syncToken: null, pageToken: null });
+      expect(await personPages()).toBe(2_200);
+    } finally {
+      for (const sql of ['DROP TRIGGER IF EXISTS relist_fail ON pages', 'DROP FUNCTION IF EXISTS relist_fail_fn()']) await engine.executeRaw(sql);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
 test('--full ignores a saved re-list checkpoint and the page budget: it lists from page 1 to the end before recording last_full_at', async () => {
     const { dir, cfg } = await googleSource();
     try {
