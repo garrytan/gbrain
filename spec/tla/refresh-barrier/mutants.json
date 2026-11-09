@@ -482,8 +482,8 @@
         "edits": [
           {
             "file": "src/core/persistence/worktree-refresh.ts",
-            "before": "&& head !== null && (head === row.target_head || await isAncestor(git, root, row.target_head, head))\n    && await isAncestor(git, root, row.old_head, row.target_head)",
-            "after": "&& head !== null && (head === row.target_head || (row.state === 'recovery_required' && await isAncestor(git, root, row.target_head, head)))\n    && await isAncestor(git, root, row.old_head, row.target_head)"
+            "before": "return head !== null && (head === row.target_head || await isAncestor(git, root, row.target_head, head)) && await isAncestor(git, root, row.old_head, row.target_head)",
+            "after": "return head !== null && (head === row.target_head || (row.state === 'recovery_required' && await isAncestor(git, root, row.target_head, head))) && await isAncestor(git, root, row.old_head, row.target_head)"
           }
         ],
         "tests": [
