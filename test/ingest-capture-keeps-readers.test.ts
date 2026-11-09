@@ -193,6 +193,15 @@ describe('a webhook capture keeps a page\'s stored readers (GST-2112)', () => {
     expect((await stored(CREATED))?.compiled_truth).toContain('Original body.');
   });
 
+  test('a capture queued for a member-bound credential writing to default is refused at write time (GST-2051): nothing is created', async () => {
+    const carol = await mintLegacyToken(engine, { name: 'carol-default', scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: ['default'] });
+    await engine.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id = $1::uuid', [carol.id, 'alice-example']);
+    const queued = jobCtx({ event: webhookEvent(page('Queued before upgrade', '', 'Member note.')), slug: 'notes/queued-before-upgrade', sourceId: 'default',
+      writer: { principal: { kind: 'legacy_token', id: String(carol.id) } } });
+    await expect(makeIngestCaptureHandler(engine)(queued)).rejects.toMatchObject({ code: 'permission_denied' });
+    expect(await engine.readPageSnapshot('notes/queued-before-upgrade', { sourceId: 'default', includeDeleted: true })).toBeNull();
+  });
+
   test('a body whose frontmatter names another language is held by the importer, not answered 500', async () => {
     const res = await ingest(OPEN, '---js\n{ title: "Team open" }\n---\n# Team open\n');
     expect(res.status).toBe(202);
@@ -228,7 +237,7 @@ for (const backend of testBackends()) {
   describe(`a webhook capture keeps stored readers on a managed brain (${backend}, GST-2112)`, () => {
     const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
 
-    test('the job refuses a body that drops readable_by and imports one that keeps it', () => managedBrain(async ({ engine, ctx }) => {
+    test('the job refuses a member-bound default-source capture whether or not it keeps readable_by (GST-2051); readers and text kept', () => managedBrain(async ({ engine, ctx }) => {
       __resetPrivateVisibilityCacheForTests();
       for (const id of ['alice-example', 'bob-example']) await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1) ON CONFLICT DO NOTHING', [id]);
       await submitPageMutation(ctx, { operation: 'put_page', params: { slug: SHARED, content: page('Shared plan', READERS) } });
@@ -238,12 +247,10 @@ for (const backend of testBackends()) {
         writer: { principal: { kind: 'legacy_token', id: String(bob.id) } } });
       const stored0 = async () => (await engine.readPageSnapshot(SHARED, { sourceId: 'default' }))?.page;
       const readers0 = async () => ((await stored0())?.frontmatter as Record<string, unknown> | undefined)?.readable_by ?? null;
-      await expect(makeIngestCaptureHandler(engine)(job(page('Shared plan', '', 'Replaced on a managed brain.')))).rejects.toMatchObject({ code: 'readable_by_invalid' });
+      await expect(makeIngestCaptureHandler(engine)(job(page('Shared plan', '', 'Replaced on a managed brain.')))).rejects.toMatchObject({ code: 'permission_denied' });
+      await expect(makeIngestCaptureHandler(engine)(job(page('Shared plan', READERS, 'Managed update, readers kept.')))).rejects.toMatchObject({ code: 'permission_denied' });
       expect(await readers0()).toEqual(['alice-example', 'bob-example']);
       expect((await stored0())?.compiled_truth).toContain('Original body.');
-      expect((await makeIngestCaptureHandler(engine)(job(page('Shared plan', READERS, 'Managed update, readers kept.')))).status).toBe('imported');
-      expect(await readers0()).toEqual(['alice-example', 'bob-example']);
-      expect((await stored0())?.compiled_truth).toContain('Managed update, readers kept.');
     }, { databaseUrl }), 120_000);
   });
 }

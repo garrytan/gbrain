@@ -42,9 +42,9 @@ import { maintenanceTransaction } from '../../persistence/attribution.ts';
 import { managedPersistenceEnabled } from '../../persistence/ownership.ts';
 import { privateRequestRefusal } from '../../persistence/visibility-request.ts';
 import { parseMarkdown } from '../../markdown.ts';
-import { OperationError, type OperationContext } from '../../ops/contract.ts';
+import { OperationError, opError, type OperationContext } from '../../ops/contract.ts';
 import { submitPageMutation } from '../../persistence/page-mutations.ts';
-import { authorizePageVisibility, excludesPrivateWrites, remoteReadersChecked } from '../../persistence/page-visibility.ts';
+import { authorizePageVisibility, defaultSourceMemberWriter, excludesPrivateWrites, remoteReadersChecked } from '../../persistence/page-visibility.ts';
 import type { Principal, WriteAuthority } from '../../persistence/model.ts';
 import { assertMemberPageWriter, assertScopePageWriter } from '../../access/member-facts.ts';
 import { validateSlug } from '../../utils.ts';
@@ -117,6 +117,12 @@ export async function assertWebhookWriterMayReplace(engine: BrainEngine, writer:
   assertScopePageWriter({ remote: true }, target, 'ingest_capture');
   const authority = { version: 1, principal: webhookPrincipal(writer), remote: true, sourceId, sourceIncarnation: '',
     scopes: [], operations: null, slugPrefixes: null, excludePrivate: await excludesPrivateWrites(engine, true) } as WriteAuthority;
+  // GST-2051 x GST-2112: POST /ingest refuses a member-bound credential writing to default; a job queued before that
+  // refusal (or before the binding) is refused here at write time, since the capture cannot keep the page to the member.
+  if (authority.principal && await defaultSourceMemberWriter(engine, authority)) {
+    throw opError('permission_denied', 'A capture from a credential bound to a member whose write source is default is refused: its page would land where other members and unbound credentials read.',
+      'Write through the MCP put_page op, which keeps a new page to its member, or ask the brain operator to grant this credential its own write source (gbrain auth rescope --sources <private-source>,default).');
+  }
   // GST-2112: the snapshot is read before the visibility check, so the revision returned (which binds the write) is
   // never older than the state the writer was authorized against.
   const stored = content === undefined ? undefined : await engine.readPageSnapshot(target, { sourceId, includeDeleted: true });
