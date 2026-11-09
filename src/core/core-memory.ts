@@ -17,7 +17,7 @@
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from './engine.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
-import { privatePagesFilterFragment } from './search/private-visibility.ts';
+import { privatePagesFilterForCaller } from './search/private-visibility.ts';
 import { quarantineFilterFragment } from './quarantine.ts';
 import { compareTrust, OWNER_TIER_FLOOR, type TrustTier } from './trust/tier.ts';
 import type { ReadEligibility } from './eligibility/policy.ts';
@@ -252,7 +252,7 @@ export async function listCorePages(exec: RawExec, opts: ListCorePagesOpts = {})
     params.push(opts.exclude.sourceId, opts.exclude.slug);
     where.push(`NOT (p.source_id = $${params.length - 1} AND p.slug = $${params.length})`);
   }
-  if (opts.excludePrivate) where.push(privatePagesFilterFragment('p'));
+  if (opts.excludePrivate) where.push(privatePagesFilterForCaller('p'));
   const policy = opts.eligibility;
   if (policy) where.push(quarantineFilterFragment('p'), pageEligibleSql('p', { floor: policy.floor }));
   const trustCols = policy

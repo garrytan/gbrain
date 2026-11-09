@@ -30,7 +30,7 @@ import { slugifySegment } from '../sync.ts';
 const siblingCanonical: typeof import('../mentions/siblings.ts').siblingCanonical = async (...args) =>
   (await import('../mentions/siblings.ts')).siblingCanonical(...args);
 import { isMissingSchemaObject } from '../utils.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import { rankingLinkSql } from '../link-ranking-policy.ts';
 
 /**
@@ -490,7 +490,7 @@ export async function resolveStrictEntityReference(
 ): Promise<StrictResolution> {
   const trimmed = raw.trim();
   if (!trimmed) return { slug: null, miss: 'no_page' };
-  const privacy = opts.excludePrivate ? `AND ${privatePagesFilterFragment('p')}` : '';
+  const privacy = opts.excludePrivate ? `AND ${privatePagesFilterForCaller('p')}` : '';
   const live = async (slugs: string[]) => slugs.length === 0 ? [] : engine.executeRaw<{ slug: string; type: string | null }>(
     `SELECT p.slug, p.type FROM pages p
       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($2::text[]) ${privacy}`,
@@ -572,7 +572,7 @@ export async function entityReferenceCandidates(
   const trimmed = raw.trim();
   const token = slugify(trimmed);
   if (!token) return [];
-  const privacy = opts.excludePrivate ? `AND ${privatePagesFilterFragment('p')}` : '';
+  const privacy = opts.excludePrivate ? `AND ${privatePagesFilterForCaller('p')}` : '';
   const aliases = await aliasHitSlugs(engine, source_id, trimmed).catch(() => [] as string[]);
   const prefixed = (await findPrefixCandidates(engine, source_id, token)).map(c => c.slug);
   const named = await engine.executeRaw<{ slug: string }>(

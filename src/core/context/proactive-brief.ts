@@ -19,7 +19,7 @@ import { isConfigTruthy } from '../config.ts';
 import { HALFLIFE_DAYS } from '../facts/decay.ts';
 import { listOpenLoops, type OpenLoopRow } from '../loops/loops-store.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
-import { privatePagesFilterFragment, privateProvenanceFilterFragment, privateTimelineEventFilterFragment } from '../search/private-visibility.ts';
+import { privatePagesFilterForCaller, privatePagesFilterFragment, privateProvenanceFilterFragment, privateTimelineEventFilterForCaller } from '../search/private-visibility.ts';
 import { pageEligibleSql, projectionEligibleSql } from '../eligibility/sql.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 import { renderTrustedInline, trustFields } from '../eligibility/labels.ts';
@@ -202,7 +202,7 @@ async function entityPages(
   const rows = await engine.executeRaw<{ slug: string; title: string | null; type: string | null }>(
     `SELECT p.slug, p.title, p.type FROM pages p
       WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND p.deleted_at IS NULL
-        ${opts.excludePrivate ? `AND ${privatePagesFilterFragment('p')}` : ''}
+        ${opts.excludePrivate ? `AND ${privatePagesFilterForCaller('p')}` : ''}
         AND ${pageEligibleSql('p', opts.eligibility)}`,
     [sourceId, slugs],
   );
@@ -483,7 +483,7 @@ async function editItem(engine: BrainEngine, cp: BriefCounterparty, clock: Brief
             p.timeline, p.trust_tier, p.write_origin
        FROM pages p
       WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL
-        AND ${opts.includePrivate ? 'TRUE' : privatePagesFilterFragment('p')}
+        AND ${opts.includePrivate ? 'TRUE' : privatePagesFilterForCaller('p')}
         AND ${pageEligibleSql('p', opts.eligibility)}`,
     [cp.source_id, cp.slug, EDIT_MAX_PAGE_BYTES],
   );
@@ -493,7 +493,7 @@ async function editItem(engine: BrainEngine, cp: BriefCounterparty, clock: Brief
     engine.executeRaw<{ id: number; date: string; summary: string; detail: string; created_at: string | Date }>(
       `SELECT te.id, te.date::text AS date, te.summary, te.detail, te.created_at FROM timeline_entries te
         WHERE te.page_id = $1 AND te.created_at >= $2::timestamptz AND te.date >= $2::timestamptz::date
-          AND ${opts.includePrivate ? 'TRUE' : privateTimelineEventFilterFragment('te')}
+          AND ${opts.includePrivate ? 'TRUE' : privateTimelineEventFilterForCaller('te')}
           AND ${projectionEligibleSql('timeline_entries', 'te', opts.eligibility)}
         ORDER BY te.created_at DESC, te.date DESC, te.id DESC LIMIT 1`,
       [pg.id, since],
