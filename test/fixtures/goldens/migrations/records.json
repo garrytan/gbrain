@@ -4832,8 +4832,8 @@
         "idempotent": true,
         "name": "chronicle_judge_window",
         "sql": {
-          "length": 296,
-          "sha256": "6ab654bed8f18f1577c5a083474073b0f2ce116a7227cf0966f332fc8963c4c9"
+          "length": 441,
+          "sha256": "c9c5914995a27a7ed7724a433c42565f8aca86cd633c5a9d38930319b4f7bf05"
         },
         "sqlFor": "absent",
         "transaction": "absent",
