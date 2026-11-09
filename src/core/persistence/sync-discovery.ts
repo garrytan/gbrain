@@ -418,7 +418,7 @@ function committedDbOnlyVerdict(gitRoot: string, commit: string, root: string): 
   const path = rel ? `${rel}/gbrain.yml` : 'gbrain.yml';
   try {
     if (!syncGit(gitRoot, ['ls-tree', '--name-only', commit, '--', path]).trim()) return () => false;
-    const content = syncGit(gitRoot, ['show', `${commit}:${path}`]);
+    const content = syncGit(gitRoot, ['cat-file', '--filters', `${commit}:${path}`]);
     const config = storageConfigFromYaml(content, path);
     if (unresolvedDbOnlyIn(content, config)) return () => 'unknown';
     return slug => dbOnlyVerdict(slug, config);
@@ -834,5 +834,5 @@ export function readSyncContent(discovery: SyncDiscovery, entry: SyncEntry): str
         argv: ['gbrain', 'sync', '--no-pull', '--working-tree', '--source', discovery.sourceId] } });
     return bytes.toString('utf8');
   }
-  return syncGit(discovery.gitRoot, ['show', `${discovery.target}:${syncGitPath(discovery, entry.path)}`]);
+  return syncGit(discovery.gitRoot, ['cat-file', '--filters', `${discovery.target}:${syncGitPath(discovery, entry.path)}`]);
 }
