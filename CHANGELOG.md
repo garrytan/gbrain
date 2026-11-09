@@ -10,6 +10,31 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Six community-reported bugs in access, privacy, purge and secret scanning are fixed.** A member-bound caller now gets its own readable pages in core memory, entity lookups, reflex pointers and pull briefs, the same pages `get_page` returns. `gbrain access who-can-read` names the members a folder rule admits instead of saying everyone. Purging a page removes its name from the retrieval feedback tables and captured eval candidates. S3 and MinIO file URLs are signed for one hour, so a private bucket's file opens from another machine. The secret scanner now catches keys after terminal colour codes and other encoded boundaries, and redacts the whole of a JSON-escaped bearer token.
+
+| What you did | Before | Now |
+|---|---|---|
+| A member-bound credential reads core memory or resolves its own `readable_by` page | the page was hidden | the page is there, as in `get_page` |
+| `gbrain access who-can-read team-b/profile` under a folder rule | "every caller entitled to the source" | the members the rule admits |
+| `delete_page purge:true`, or the expired-tombstone purge | the slug stayed in `retrieval_*` and `eval_candidates` | removed, and the receipt checks each store |
+| `gbrain files signed-url` with S3 or MinIO storage | an unsigned URL, 403 on a private bucket | a presigned GET that expires in an hour |
+| A browser MCP client sends `X-Gbrain-Client` from an allowlisted origin | the preflight blocked the call | allowed on both HTTP transports |
+| Transcript text with a key after `\x1b[32m`, `\xNN`, `\UNNNNNNNN` or `=3D` | the key was kept | redacted |
+
+After upgrading, `gbrain doctor` asks for a fresh `gbrain transcripts audit-secrets` run (read-only) if your brain has imported transcripts, because the detectors changed.
+
+### Itemized changes
+
+- `src/core/core-memory.ts`, `src/core/entities/resolve.ts`, `src/core/context/retrieval-reflex.ts`, `src/core/context/proactive-brief.ts`: these reads filter with `privatePagesFilterForCaller` (and `privateTimelineEventFilterForCaller` for brief edits), the caller's member access plus the privacy rule with its grant and opt-out. Reported by @javieraldape (#8442).
+- `src/commands/access.ts`: `whoCanRead` asks the read path's own predicate (`accessAllowedSql` with each member's satisfied folder rules) per enabled member, and the note names folder rules. Reported by @Masashi-Ono0611 (#8743).
+- `src/core/feedback/store.ts`: `scrubPurgedSlugs` deletes the source's `retrieval_event_pages`, `retrieval_event_links`, `retrieval_feedback` and `retrieval_weights` rows naming the slug (a page key or either end of a `from|type|to` edge key) and drops it from `eval_candidates.retrieved_slugs` where the results came from that source. Called in the purge transaction by `purgePageInTransaction`, the belief-ledger tombstone expiry and the bulk `purgeDeletedPages`. `src/core/deletion-inventory.ts` moves the four tables to `swept`; `verifyPagePurge` reports each store. Reported by @Masashi-Ono0611 (#8822) and @alanshurafa (#8823).
+- `src/core/storage/s3.ts`: `getUrl` returns a SigV4 presigned GET with a 3600 s expiry. New dependency `@aws-sdk/s3-request-presigner` 3.1028.0 (the `client-s3` release), with `@aws-sdk/util-format-url` pinned to 3.972.9 from the same release. Reported by @liuwenyong1985 (#8793).
+- `src/mcp/http-transport.ts`, `src/commands/serve-http-oauth.ts`: `X-Gbrain-Client` joins the CORS allowed headers. Reported by @dajiaohuang (#8691).
+- `src/core/secret-scan.ts`: `ESCAPE_BOUNDARY` adds terminal colour codes (raw ESC, `\x1b`, `\u001b`, `\033`, `\e`; at most 32 parameter characters), `\xNN`, `\UNNNNNNNN` and `=3D`; the bearer value counts `\/` as one token character. `TRANSCRIPT_SECRET_AUDIT_VERSION` is 4. Reported by @javieraldape (#8764).
+- Tests: `test/caller-aux-page-reads.test.ts`, `test/access-who-can-read-folder-rules.test.ts`, `test/purge-retrieval-feedback-8821.test.ts`, `test/storage-s3-signed-url.test.ts`, `test/mcp-cors-client-header.test.ts`, `test/secret-scan-encoded-boundary-8266.test.ts`; `test/storage-s3.test.ts` checks the same URL bases on a presigned URL.
+
 ## [0.60.620.0] - 2026-11-09
 
 **A diverged managed checkout now publishes its local commits on refresh by default when Git durability is on, after a secret scan of those commits.** Commits a script made with plain `git commit` in a managed checkout used to strand there whenever the remote moved: every `gbrain sources refresh` refused `refresh_diverged` and asked the user, unless `sources.refresh_publish_diverged` was set to `true`. With the setting unset, a worktree whose Git durability is on (`gbrain sources writer git-durability <source> --enable`, or the legacy hook) now publishes them itself: the local commits merged with the upstream in memory, never a rebase or force-push, then the fast-forward. The publish child scans, under its publish lock and for the exact commits it pushes, what they add: commit messages, added lines (including a value a later commit removed) and merge-commit conflict resolutions. A value that looks like a secret, added text too large to scan, or a commit that changes `.gbrain-scan-allow` or a `.gitattributes` refuses the new `publish_secret_found` naming the file, line, rule and commit, never the value, with nothing pushed; commits the scan cannot read in full refuse `publish_scan_unreadable` instead. The rewritten-upstream refusal and the `--expect-remote` bound are unchanged. `false` turns it off; `true` still publishes with durability off.
