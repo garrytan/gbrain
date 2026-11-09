@@ -440,13 +440,20 @@ export interface SkippedPath { path: string; reason: 'assume_unchanged' | 'skip_
  * GST-2116: the named paths whose bytes on disk HEAD still lacks once the commit step is done. `git add -A` stages
  * nothing and exits 0 for a modified entry flagged assume-unchanged or skip-worktree (`ls-files -v`: lower case, or S;
  * `commit --only` may still pick one up beside another path, so the check reads HEAD) and for a file inside an untracked
- * nested repository. A skip-worktree entry absent from disk is a sparse checkout, not a change. Ignored files under a
- * named directory are left out as git leaves them; a named ignored file is refused by `git add` itself.
+ * nested repository. A skip-worktree entry absent from disk is a sparse checkout, not a change, and a flagged gitlink
+ * is left out (its commit lives in the nested repository, which hash-object cannot read). Ignored files under a named
+ * directory are left out as git leaves them; a named ignored file is refused by `git add` itself.
  */
 function unstagedPaths(root: string, rel: string[], listed: string[]): SkippedPath[] {
   const skipped = new Map<string, SkippedPath['reason']>();
-  for (const line of listed.filter(entry => /^[a-zS] /.test(entry))) {
+  const flagged = listed.filter(entry => /^[a-zS] /.test(entry));
+  const gitlinks = new Set(flagged.length
+    ? gitOk(root, ['ls-files', '-s', '-z', '--', ...literalPathspecs(flagged.map(line => line.slice(2)))], 'ls-files -s')
+      .split('\0').filter(entry => entry.startsWith('160000 ')).map(entry => entry.slice(entry.indexOf('\t') + 1))
+    : []);
+  for (const line of flagged) {
     const path = line.slice(2);
+    if (gitlinks.has(path)) continue;
     const abs = join(root, path);
     const reason = /^[sS]/.test(line) ? 'skip_worktree' as const : 'assume_unchanged' as const;
     const stat = (() => { try { return lstatSync(abs); } catch { return null; } })();
@@ -583,6 +590,7 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
   if (add.code !== 0) {
     throw opError('commit_paths_invalid', 'git add refused the given paths.', add.stderr.trim().slice(0, 300) || 'Check the paths exist or are tracked.');
   }
+  let landed: { committed: boolean; paths: string[]; listed: string[] };
   try {
     const paths = withRenamePartners(root, rel);
     const partners = paths.filter(p => !insideSourceRoots(p, scope.roots));
@@ -591,23 +599,28 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
     const listed = gitOk(root, ['ls-files', '-v', '-z', '--', ...literalPathspecs(paths)], 'ls-files -v').split('\0').filter(Boolean);
     const unindexed = new Set(unindexedFiles(root, paths, listed));
     const staged = paths.filter(p => !unindexed.has(p));
-    if (!staged.length || git(root, ['diff', '--cached', '--quiet', '--', ...literalPathspecs(staged)]).code === 0) return { sha: null, skipped: unstagedPaths(root, paths, listed) };
-    const env = { [COMMIT_VIA_ENV]: scope.lockPath, ...(scope.markHeld ? { [COMMIT_LOCK_ENV]: scope.lockPath } : {}) };
-    // #7759: literal per path, never git's global --literal-pathspecs: Git exports that to the commit's hooks, where a
-    // guard's glob pathspec ('*.json') then matches nothing and lets the commit through.
-    recordIntent(root, { writer: 'commit_push', head_before: git(root, ['rev-parse', '--verify', '--quiet', 'HEAD']).stdout.trim() || null, message });
-    const commit = withIndexRetry(root, ['commit', '--only', '-m', message, '--', ...literalPathspecs(staged)], 'git commit', env);
-    if (commit.code !== 0) {
-      throw opError('git_unavailable', `git commit failed in ${root}; the paths were unstaged again and keep their bytes.`,
-        `${commit.stderr.trim().slice(0, 300)} A missing git identity (user.name, user.email) or a refusing pre-commit hook are common causes.`);
+    if (!staged.length || git(root, ['diff', '--cached', '--quiet', '--', ...literalPathspecs(staged)]).code === 0) {
+      landed = { committed: false, paths, listed };
+    } else {
+      const env = { [COMMIT_VIA_ENV]: scope.lockPath, ...(scope.markHeld ? { [COMMIT_LOCK_ENV]: scope.lockPath } : {}) };
+      // #7759: literal per path, never git's global --literal-pathspecs: Git exports that to the commit's hooks, where a
+      // guard's glob pathspec ('*.json') then matches nothing and lets the commit through.
+      recordIntent(root, { writer: 'commit_push', head_before: git(root, ['rev-parse', '--verify', '--quiet', 'HEAD']).stdout.trim() || null, message });
+      const commit = withIndexRetry(root, ['commit', '--only', '-m', message, '--', ...literalPathspecs(staged)], 'git commit', env);
+      if (commit.code !== 0) {
+        throw opError('git_unavailable', `git commit failed in ${root}; the paths were unstaged again and keep their bytes.`,
+          `${commit.stderr.trim().slice(0, 300)} A missing git identity (user.name, user.email) or a refusing pre-commit hook are common causes.`);
+      }
+      landed = { committed: true, paths, listed };
     }
-    const sha = gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD');
-    recordCommit(root, { sha, writer: 'commit_push' });
-    return { sha, skipped: unstagedPaths(root, paths, listed) };
   } catch (e) {
     try { restoreIndex(root, rel, before); } catch { /* the index lock outlasted the retries; the error below still stands */ }
     throw e;
   }
+  // GST-2116: after the try, so a failure from here on never restores the index under a commit that landed.
+  const sha = landed.committed ? gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD') : null;
+  if (sha) recordCommit(root, { sha, writer: 'commit_push' });
+  return { sha, skipped: unstagedPaths(root, landed.paths, landed.listed) };
 }
 
 // ── Pending write-through ───────────────────────────────────────────────────

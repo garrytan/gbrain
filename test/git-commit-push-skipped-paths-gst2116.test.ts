@@ -319,3 +319,21 @@ test('helper without gbrain: a skipped path is still named when the push fails',
   expect(r.stderr).toContain(nested);
   expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');
 }, 60_000);
+
+test('classic: a named assume-unchanged gitlink beside a committed page leaves the commit standing, with no reversal staged', async () => {
+  const f = fixture('gitlink', 'classic');
+  const sub = join(f.brain, 'vendor');
+  execFileSync('git', ['init', '-q', '-b', 'main', sub]);
+  writeFileSync(join(sub, 'README'), 'nested\n');
+  git(sub, 'add', '.'); git(sub, 'commit', '-qm', 'nested');
+  git(f.brain, 'add', 'vendor'); git(f.brain, 'commit', '-qm', 'gitlink'); git(f.brain, 'push', '-q');
+  git(f.brain, 'update-index', '--assume-unchanged', '--', 'vendor');
+  writeFileSync(join(f.brain, 'people', 'alice-example.md'), page('Alice', 'Second version.'));
+  const r = await commitPush(f, 'people/alice-example.md', 'vendor');
+  expect(r.stdout).not.toContain('git_unavailable');
+  expect(r.exitCode).toBe(0);
+  expect(headBlob(f, 'people/alice-example.md')).toContain('Second version.');
+  expect(remoteTip(f)).toBe(head(f));
+  expect(git(f.brain, 'diff', '--cached', '--name-only')).toBe('');
+}, 60_000);
+
