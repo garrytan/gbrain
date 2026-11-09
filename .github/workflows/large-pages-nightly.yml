@@ -1,0 +1,110 @@
+name: Large pages nightly
+
+# Wave C large-page bench (Wave C spec section 9.2, PR 1G; docs/architecture/key-files/ci-health-and-test-guards.md). Runs
+# scripts/bench-large-pages.ts once per engine; each run writes one versioned receipt
+# (scripts/bench-large-pages-receipt.ts), uploaded as an artifact.
+#
+# Record-only: no gate reads the receipts yet. A cell fails only when the bench crashes or its receipt does not
+# conform to its schema (the bench checks it before writing). Each cell runs the door stages (a temporary strict
+# source with a local bare remote: a 2 MiB put with a small write queued behind it, a 20 MiB page, a 10 KB append,
+# a splice at 50%) and the Wave B database-tier stages just under the engine's ceiling until PRs 1H and 1I land: 256 MiB on
+# Postgres nightly, 128 MiB on PGLite (the database-tier canary).
+#
+# workflow_dispatch: `size` (the database-tier page, e.g. 200MiB or 1e8; blank for the engine's ceiling less 64 KiB) and
+# `engine` (both, postgres or pglite).
+#
+# Event parity (docs/ci-event-parity.md): schedule and dispatch only, outside test-status; it covers itself.
+
+on:
+  schedule:
+    - cron: '5 10 * * *'
+  workflow_dispatch:
+    inputs:
+      size:
+        description: Database-tier page size, e.g. 200MiB or 1e8 (blank for the engine's ceiling less 64 KiB)
+        type: string
+        default: ''
+      engine:
+        description: Engines to run
+        type: choice
+        options: [both, postgres, pglite]
+        default: both
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    name: large pages ${{ matrix.engine }}
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: ${{ fromJSON(inputs.engine == 'postgres' && '["postgres"]' || inputs.engine == 'pglite' && '["pglite"]' || '["postgres","pglite"]') }}
+    runs-on: ubicloud-standard-16-ubuntu-2404
+    timeout-minutes: 150
+    services:
+      postgres:
+        # An empty image skips the service on the PGLite cell.
+        image: ${{ matrix.engine == 'postgres' && 'pgvector/pgvector:pg16' || '' }}
+        # Loopback-only throwaway server: trust auth, so no password literal is needed.
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: gbrain_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-cache-${{ runner.os }}-
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile
+      - name: Large-page bench (${{ matrix.engine }}, record-only)
+        env:
+          DATABASE_URL: ${{ matrix.engine == 'postgres' && 'postgresql://postgres@localhost:5432/gbrain_test' || '' }}
+          ENGINE: ${{ matrix.engine }}
+          SIZE: ${{ inputs.size }}
+        run: |
+          set -euo pipefail
+          mkdir -p .context/large-pages
+          args=(--engine "$ENGINE" --out ".context/large-pages/receipt-$ENGINE.json")
+          if [ -n "$SIZE" ]; then args+=(--size "$SIZE"); fi
+          bun scripts/bench-large-pages.ts "${args[@]}"
+      - name: Summary
+        if: always()
+        env:
+          RECEIPT: .context/large-pages/receipt-${{ matrix.engine }}.json
+        run: |
+          if [ ! -f "$RECEIPT" ]; then
+            echo "No receipt: the bench failed before writing one; see the step log." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          jq -r '"### Large pages (" + .engine + "), record-only", "",
+            "| stage | ms | lock hold ms | peak RSS MiB | rows | git loose / packed KiB |", "|---|---|---|---|---|---|",
+            (.stages[] | "| " + .name + " | " + (.ms|tostring) + " | " + ((.lock_hold_ms // "")|tostring) + " | "
+              + ((.rss_peak_bytes / 1048576 | floor)|tostring) + " | " + (.rows|tostring|gsub("\\|"; "/")) + " | "
+              + (if .git then ((.git.loose_bytes / 1024 | floor)|tostring) + " / " + ((.git.packed_bytes / 1024 | floor)|tostring) else "" end) + " |")' \
+            "$RECEIPT" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        if: always()
+        with:
+          name: large-pages-receipt-${{ matrix.engine }}
+          path: .context/large-pages/
+          retention-days: 30
+          if-no-files-found: warn

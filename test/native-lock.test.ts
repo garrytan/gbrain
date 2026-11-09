@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { acquireNativeLock, nativeLockCapability, NativeLockUnavailableError, tryAcquireNativeLock, type NativeLockHandle } from '../src/core/persistence/native-lock.ts';
+import { acquireNativeLock, nativeLockCapability, nativeLockSeams, NativeLockUnavailableError, tryAcquireNativeLock, type NativeLockHandle } from '../src/core/persistence/native-lock.ts';
 import { waitFor } from './helpers/wait-for.ts';
 
 const roots: string[] = [];
@@ -102,6 +102,26 @@ describe('native writer locks', () => {
     expect(await acquireNativeLock(path, { timeoutMs: 10 })).toBeNull();
     await owner.release();
     await track(path);
+  });
+
+  test('the held seam reports each taken lock once, after its release, with its path and hold time; a refused take reports nothing', async () => {
+    const path = join(temporary(), 'writer.lock');
+    const held: Array<{ path: string; ms: number; released: boolean }> = [];
+    let lock: NativeLockHandle | null = null;
+    nativeLockSeams.held = (lockPath, ms) => { held.push({ path: lockPath, ms, released: lock?.released === true }); };
+    try {
+      const before = performance.now();
+      lock = await track(path);
+      expect(await acquireNativeLock(path, { timeoutMs: 30, pollMs: 10 })).toBeNull();
+      await Bun.sleep(60);
+      expect(held).toEqual([]);
+      await lock.release();
+      await lock.release();
+      expect(held).toHaveLength(1);
+      expect(held[0]).toMatchObject({ path, released: true });
+      expect(held[0]!.ms).toBeGreaterThanOrEqual(55);
+      expect(held[0]!.ms).toBeLessThanOrEqual(performance.now() - before);
+    } finally { nativeLockSeams.held = undefined; }
   });
 
   test('invalid paths, unsupported durations, and nonregular files fail closed', async () => {
