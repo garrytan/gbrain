@@ -412,6 +412,13 @@ export const agentSessionFactsRepair: RepairHandler = {
     const all = (page.facts ?? page.takes!).map(row => row.id);
     const changed = all.filter(id => !done.includes(id));
     const verb = page.facts ? 'reattributed' : 'retired';
+    if (changed.length) {
+      const snapshot = await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
+      if (snapshot && isSegmentedPage(snapshot.page)) {
+        return { applied: done.length > 0, outcome: done.length ? `partially_${verb}` : 'segmented_page_kept',
+          reason: `${done.length} of ${all.length} ${verb}; the page is stored in segments and is not rewritten, so these stay as they are: ${changed.join(', ')}` };
+      }
+    }
     return { applied: done.length > 0, outcome: !changed.length ? verb : done.length ? `partially_${verb}` : 'changed_since_preview',
       ...(changed.length ? { reason: `${done.length} of ${all.length} ${verb}; changed since the preview: ${changed.join(', ')}` } : {}) };
   },
