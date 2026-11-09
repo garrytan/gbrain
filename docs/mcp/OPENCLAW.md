@@ -91,7 +91,8 @@ block at the top of `GBRAIN-INSTRUCTIONS.md`.
 
 A rule in `AGENTS.md` reaches the system prompt only, so setup also puts it next
 to every user turn with a hook-only OpenClaw plugin, `gbrain-turn-rule`: its
-`before_prompt_build` handler returns the rule as `prependContext`. The plugin is
+`before_prompt_build` handler returns the rule as `prependContext` (without its
+closing "answer" sentence on heartbeat, cron and exec-completion turns). The plugin is
 self-contained (the rule text is in its code; it reads and calls nothing) and
 lives in `<OpenClaw state dir>/gbrain/gbrain-turn-rule`. Setup installs it with
 OpenClaw's own CLI:

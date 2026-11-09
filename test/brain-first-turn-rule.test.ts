@@ -285,6 +285,22 @@ describe('per-turn rule: OpenClaw before_prompt_build plugin', () => {
     });
   });
 
+  test('internal turns (heartbeat, cron, exec completion) get the rule without the reply sentence; every other turn keeps it', async () => {
+    await withEnv({ OPENCLAW_STATE_DIR: state(), OPENCLAW_PROFILE: undefined }, async () => {
+      syncOpenclawTurnPlugin({ access, dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run });
+      const mod = await import(join(openclawTurnPluginDir(), 'index.js'));
+      const handlers: Record<string, (event?: unknown, ctx?: unknown) => unknown> = {};
+      mod.default.register({ on: (event: string, fn: (event?: unknown, ctx?: unknown) => unknown) => { handlers[event] = fn; } });
+      const full = renderBrainFirstTurnRule(access, 'openclaw');
+      expect(full).toEndWith(' Then answer and finish the task.');
+      const internal = renderBrainFirstTurnRule(access, 'openclaw', { reply: false });
+      expect(internal).toBe(full.slice(0, -' Then answer and finish the task.'.length));
+      expect(handlers.before_prompt_build({}, { inputProvenance: { kind: 'internal_system' } })).toEqual({ prependContext: internal });
+      expect(handlers.before_prompt_build({}, { inputProvenance: { kind: 'external_user' } })).toEqual({ prependContext: full });
+      expect(handlers.before_prompt_build({}, {})).toEqual({ prependContext: full });
+    });
+  });
+
   test('no openclaw on PATH or a failed command: the plugin is written and the remaining commands are printed', async () => {
     await withEnv({ OPENCLAW_STATE_DIR: state(), OPENCLAW_PROFILE: undefined }, async () => {
       const o = syncOpenclawTurnPlugin({ access, dryRun: false, openclawBin: null });

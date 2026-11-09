@@ -2,8 +2,9 @@
  * openclaw-turn-plugin.ts — OpenClaw's native per-turn hook for the
  * brain-first rule: a hook-only OpenClaw plugin whose `before_prompt_build`
  * handler returns the rule as `prependContext`, so it reaches the model next
- * to each user turn. The workspace AGENTS.md block reaches the system prompt
- * only, and bots read it as identity, not as an instruction to call a tool.
+ * to each user turn (without its reply sentence on `internal_system` turns).
+ * The workspace AGENTS.md block reaches the system prompt only, and bots read
+ * it as identity, not as an instruction to call a tool.
  *
  * The plugin is self-contained (the rule text is written into its code; it
  * reads nothing and calls nothing) and lives in <OpenClaw state dir>/gbrain/.
@@ -37,12 +38,13 @@ export function openclawTurnPluginFiles(access: BrainFirstAccess): Record<string
     'index.js': [
       '// Managed by gbrain setup openclaw; a re-run rewrites this file. Remove: gbrain setup openclaw --remove',
       `const RULE = ${JSON.stringify(rule)};`,
+      `const INTERNAL_RULE = ${JSON.stringify(renderBrainFirstTurnRule(access, 'openclaw', { reply: false }))};`,
       'export default {',
       `  id: ${JSON.stringify(OPENCLAW_TURN_PLUGIN_ID)},`,
       "  name: 'GBrain turn rule',",
       `  description: ${JSON.stringify(DESCRIPTION)},`,
       '  register(api) {',
-      "    api.on('before_prompt_build', () => ({ prependContext: RULE }));",
+      "    api.on('before_prompt_build', (_event, ctx) => ({ prependContext: ctx?.inputProvenance?.kind === 'internal_system' ? INTERNAL_RULE : RULE }));",
       '  },',
       '};',
       '',

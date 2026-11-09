@@ -85,12 +85,14 @@ export function renderBrainFirstSnippet(harness: string, access: BrainFirstAcces
  * before_prompt_build). The block in the system prompt or identity file alone
  * left chat bots answering without the brain (harness-evals: 0 of 80 on
  * OpenClaw and Hermes); the same rule next to the turn was followed.
+ * `reply: false` drops the closing "answer" sentence, for turns nobody asked
+ * a reply to (OpenClaw heartbeat, cron and exec-completion turns).
  */
-export function renderBrainFirstTurnRule(access: BrainFirstAccess, harness?: string): string {
+export function renderBrainFirstTurnRule(access: BrainFirstAccess, harness?: string, opts: { reply?: boolean } = {}): string {
   const how = access.kind === 'cli' ? `\`${access.launcher} search "<names>"\` or \`${access.launcher} query "<question>"\``
     : access.surface === 'verbs' ? `\`recall\` or \`entity\` on the \`${access.server}\` MCP server`
       : `\`search\` or \`query\` on the \`${access.server}\` MCP server`;
-  return `GBrain: before answering this turn, check GBrain first (${how}) for the people, companies, projects, meetings and decisions it touches.${access.kind === 'mcp' ? turnRuleDiscovery(harness, access) : ''} Results span every source it holds: use only what the current requester may see. Then answer and finish the task.`;
+  return `GBrain: before answering this turn, check GBrain first (${how}) for the people, companies, projects, meetings and decisions it touches.${access.kind === 'mcp' ? turnRuleDiscovery(harness, access) : ''} Results span every source it holds: use only what the current requester may see.${opts.reply === false ? '' : ' Then answer and finish the task.'}`;
 }
 
 /**
