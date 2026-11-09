@@ -263,12 +263,12 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       path:params.path===undefined?undefined:path(params.path),name:params.name as string|undefined,config:params.config as Record<string,unknown>|undefined,
       refederate:params.refederate as boolean|undefined,confirmDestructive:params.confirm_destructive as boolean|undefined,dryRun:params.dry_run===true,
       remoteUrl:params.remote_url as string|undefined,createDirectory:params.create_directory as boolean|undefined,expiredOnly:params.expired_only as boolean|undefined});
-    // #8982: a restore that re-federates names the member-written pages without readers it makes no-grant readable.
+    // #8982: a restore that re-federates names the remote-written pages without readers it makes no-grant readable.
     if (params.action !== 'restore' || params.dry_run === true || result.noop === true || params.source_id === 'default') return result;
     const [restored] = await engine.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id=$1', [source(params.source_id)]);
-    const exposed = await (await import('../access/federation-exposure.ts')).memberPagesFederationExposesOrWarn(engine, source(params.source_id),
+    const exposed = await (await import('../access/federation-exposure.ts')).remotePagesFederationExposesOrWarn(engine, source(params.source_id),
       (await import('../sources-load.ts')).isSourceFederated(restored?.config));
-    return exposed ? { ...result, member_pages_exposed: exposed } : result;
+    return exposed ? { ...result, pages_exposed: exposed } : result;
   }
   if (operation === 'writer_failures') {
     keys(params, ['source_id', 'state', 'group_by', 'since', 'limit', 'before', 'code', 'origin', 'category', 'operation']);

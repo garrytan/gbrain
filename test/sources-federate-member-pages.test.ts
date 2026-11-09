@@ -5,9 +5,11 @@
  *    (GST-2051 stamps only writes the no-grant floor reads). Federating that source adds it to the floor, so an
  *    unbound token then reads the member's page. The federate still happens (exit and config unchanged), and its
  *    output now names the count, the page and its member, the check and restrict commands, on stderr and under
- *    --json as member_pages_exposed. Pages with readers and pages no member credential wrote are not named.
+ *    --json as pages_exposed; restore (unmanaged and managed) does the same. Pages with readers and operator pages
+ *    are not named; a credential unbound since it wrote still is, and a hostile slug is shell-quoted.
  * 2. Fails when: federate prints no preview of the member's page (master), names a page with readers or an operator
- *    page, warns on unfederate, or stops federating.
+ *    page, drops an unbound credential's page, builds a command with an unquoted slug, warns on unfederate, or stops
+ *    federating.
  * 3. Existing coverage: access-ungranted-member-writes (the default-source stamp) never federates a source.
  * 4. Real seams: a token minted by the token service and bound with SQL, verified by the OAuth provider, put_page
  *    dispatched through MCP dispatch on a repo-less PGLite brain, then the real sources command.
@@ -87,7 +89,7 @@ describe('sources federate previews member-written pages it exposes (#8982, pgli
     const out = await sources(['federate', SRC]);
     expect(await federated()).toBe(true);
     expect(out.stdout).toContain('is now federated');
-    expect(out.stderr).toContain('1 page(s) in "' + SRC + '" were written by a credential bound to a member');
+    expect(out.stderr).toContain('1 page(s) in ' + SRC + ' were written by a remote token or OAuth client');
     expect(out.stderr).toContain(slug + ' (member alice-example)');
     expect(out.stderr).toContain('gbrain access rule add --prefix notes/ --readers alice-example --source ' + SRC);
     expect(out.stderr).not.toContain('notes/alice-kept');
@@ -97,11 +99,34 @@ describe('sources federate previews member-written pages it exposes (#8982, pgli
     const off = await sources(['unfederate', SRC]);
     expect(off.stderr).not.toContain('Warning');
     const json = await sources(['federate', SRC, '--json']);
-    expect(JSON.parse(json.stdout)).toEqual({ id: SRC, federated: true, member_pages_exposed: {
+    expect(JSON.parse(json.stdout)).toEqual({ id: SRC, federated: true, pages_exposed: {
       count: 1, examples: [{ slug, member: 'alice-example' }],
       check: 'gbrain access who-can-read ' + slug + ' --source ' + SRC,
       restrict: 'gbrain access rule add --prefix notes/ --readers alice-example --source ' + SRC } });
     expect(await federated()).toBe(true);
+  }, 240_000);
+
+  test('a credential unbound since it wrote still counts; a hostile slug is shell-quoted in the commands', async () => {
+    await engine.executeRaw("UPDATE sources SET config = config || '{\"federated\": false}'::jsonb WHERE id = $1", [SRC]);
+    const [plan] = await engine.executeRaw<{ slug: string; kind: string; pid: string }>(`SELECT slug, revision_principal_kind AS kind, revision_principal_id AS pid
+      FROM pages WHERE source_id = $1 AND slug LIKE 'notes/alice-plan-%'`, [SRC]);
+    const rename = (from: string, to: string) => engine.transaction(async tx => {
+      await tx.executeRaw("SELECT set_config('gbrain.write_principal_kind', $1, true), set_config('gbrain.write_principal_id', $2, true)", [plan!.kind, plan!.pid]);
+      await tx.executeRaw('UPDATE pages SET slug = $3 WHERE source_id = $1 AND slug = $2', [SRC, from, to]);
+    });
+    await engine.executeRaw("UPDATE access_tokens SET member_id = NULL WHERE name = 'alice'");
+    const hostile = 'notes/$(printf injected)/plan';
+    await rename(plan!.slug, hostile);
+    try {
+      const out = await sources(['federate', SRC, '--json']);
+      expect(JSON.parse(out.stdout).pages_exposed).toEqual({ count: 1, examples: [{ slug: hostile, member: null }],
+        check: "gbrain access who-can-read 'notes/$(printf injected)/plan' --source " + SRC,
+        restrict: 'gbrain access rule add --prefix <folder/> --readers <member> --source ' + SRC });
+      expect(out.stderr).toContain("'notes/$(printf injected)/plan' (credential bound to no member now)");
+    } finally {
+      await rename(hostile, plan!.slug);
+      await engine.executeRaw("UPDATE access_tokens SET member_id = 'alice-example' WHERE name = 'alice'");
+    }
   }, 240_000);
 
   const archive = () => engine.executeRaw(`UPDATE sources SET archived = true, archived_at = now(), archive_expires_at = now() + interval '72 hours',
@@ -114,11 +139,11 @@ describe('sources federate previews member-written pages it exposes (#8982, pgli
     await archive();
     const out = await sources(['restore', SRC]);
     expect(await federated()).toBe(true);
-    expect(out.stderr).toContain('1 page(s) in "' + SRC + '" were written by a credential bound to a member');
+    expect(out.stderr).toContain('1 page(s) in ' + SRC + ' were written by a remote token or OAuth client');
     expect(out.stderr).toMatch(/notes\/alice-plan-\S+ \(member alice-example\)/);
   }, 240_000);
 
-  test('a managed restore returns them as member_pages_exposed', async () => {
+  test('a managed restore returns them as pages_exposed', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-federate-exposure-'));
     try {
       await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_SOURCE: undefined }, async () => {
@@ -126,7 +151,7 @@ describe('sources federate previews member-written pages it exposes (#8982, pgli
         await engine.executeRaw('UPDATE persistence_brain SET enabled = true WHERE singleton = 1');
         await runPersistenceAdministration(engine, 'source_lifecycle', { action: 'archive', source_id: SRC });
         const result = await runPersistenceAdministration(engine, 'source_lifecycle', { action: 'restore', source_id: SRC });
-        expect(result).toMatchObject({ state: 'committed', member_pages_exposed: { count: 1, examples: [{ member: 'alice-example' }] } });
+        expect(result).toMatchObject({ state: 'committed', pages_exposed: { count: 1, examples: [{ member: 'alice-example' }] } });
         expect(await federated()).toBe(true);
       });
     } finally {

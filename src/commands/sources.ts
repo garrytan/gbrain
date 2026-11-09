@@ -999,8 +999,8 @@ async function runRestore(engine: BrainEngine, args: string[]): Promise<void> {
   console.log(`Source "${id}" restored. ${noFederate ? 'Not re-federated.' : 'Re-federated.'}`);
   console.log(`All pages, chunks, and embeddings are intact.`);
   const exposure = await import('../core/access/federation-exposure.ts');
-  const exposed = await exposure.memberPagesFederationExposesOrWarn(engine, id, !noFederate && id !== 'default' && isFederated((await fetchSource(engine, id))?.config));
-  if (exposed) console.error(exposure.memberPagesExposedLines(id, exposed).join('\n'));
+  const exposed = await exposure.remotePagesFederationExposesOrWarn(engine, id, !noFederate && id !== 'default' && isFederated((await fetchSource(engine, id))?.config));
+  if (exposed) console.error(exposure.pagesExposedLines(id, exposed).join('\n'));
 
   // T4 (eng-review): if the source has a remote_url AND its clone dir was
   // autopurged (e.g. operator rm -rf'd $GBRAIN_HOME/clones/), re-clone
@@ -1176,8 +1176,6 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
     console.error(`Source "${id}" not found.`);
     process.exit(4);
   }
-  const exposure = await import('../core/access/federation-exposure.ts');
-  const exposed = await exposure.memberPagesFederationExposesOrWarn(engine, id, value && id !== 'default' && !isFederated(src.config));
   // GST-1113: the mark check and the config write hold the source row, so a concurrent --attest-sources mark commits
   // before (and federate refuses) or after (and sees federated, so it refuses), never between them.
   await engine.transaction(async tx => {
@@ -1191,8 +1189,10 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
     );
   });
   say(`Source "${id}" is now ${value ? 'federated (appears in cross-source default search)' : 'isolated (only searched when explicitly named)'}.`);
-  if (exposed) console.error(exposure.memberPagesExposedLines(id, exposed).join('\n'));
-  if (json) console.log(JSON.stringify({ id, federated: value, ...(exposed ? { member_pages_exposed: exposed } : {}) }));
+  const exposure = await import('../core/access/federation-exposure.ts');
+  const exposed = await exposure.remotePagesFederationExposesOrWarn(engine, id, value && id !== 'default' && !isFederated(src.config));
+  if (exposed) console.error(exposure.pagesExposedLines(id, exposed).join('\n'));
+  if (json) console.log(JSON.stringify({ id, federated: value, ...(exposed ? { pages_exposed: exposed } : {}) }));
 
   // v0.40 D19: auto-submit embed-backfill when coverage < 100%. Federation
   // flip is a moment when the user explicitly opted into seeing this source
