@@ -1,5 +1,5 @@
 import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -9,7 +9,7 @@ import { pageIdentityError, rememberAcceptsPageCreatedSince } from './page-ident
 import { atomicStagingPath, atomicWriteFileSync, mkdirPrivate, validateAtomicStagingPath } from '../atomic-write.ts';
 import { flushDirectory } from '../fs-durable.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
-import { sha256 } from './digest.ts';
+import { sha256, stableJson } from './digest.ts';
 import { authorizeStoredRequest } from './authority.ts';
 import { hostIdFor } from './identity.ts';
 import { acquireWorktree, getWorktreeBinding, guardOwnership, type WorktreeBinding } from './ownership.ts';
@@ -46,7 +46,7 @@ import { assertMutationProtocol, assertSharedSkillPersistence, declareDurablePer
 import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, publishStagedBundleFile, stageBundleFile, type MutationFile } from './bundle-files.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
-import { landedCommit, PENDING_IMPORT, SYNC_HELD } from './pending-import.ts';
+import { headCommit, landedCommit, PENDING_IMPORT, SYNC_HELD } from './pending-import.ts';
 import { CANONICAL_FILE_MISSING, CHECKOUT_REFUSAL_ORIGINS, type CheckoutRefusalOrigin, SOURCE_CHANGED_ORIGINS, type SourceChangedDetail, type SourceChangedOrigin, databaseRefusal, ownerExceptionFailure, stagingFailureDetail, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
 import { SYNC_CURSOR_REPLACED, SYNC_PASS_SUPERSEDED } from './sync-checkpoint-replaced.ts';
 import { fenceFailureDetail } from '../fence-repair/refusal.ts';
@@ -794,12 +794,25 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
       return blocked ?? row;
     }
     if (!isTerminal(row)) await upgradeRecoveryStaging(engine, 'persistence_requests', id, row.worktree_id!, 'restore');
+    // #8869: Git history and the full commit ledger are read before recovery takes DB locks.
+    // The worktree lock protects cooperating writers; the transaction rechecks HEAD for foreign writers too.
+    row = (await getWriteRequestById(engine, id))!;
+    const adoptionRoot = row.intent?.adoptLocalEdit && binding.local_path ? join(binding.local_path, binding.relative_path) : null;
+    const adoptionHead = adoptionRoot ? await headCommit(adoptionRoot) : null;
+    const adoptionLanded = !isTerminal(row) ? await adoptionCommitLanded(engine, row, binding) : null;
+    const adoptionPin = (request: WriteRequest) => stableJson([request.intent, request.recovery, request.state, request.execution_token, request.worktree_id]);
+    const pinnedAdoption = adoptionPin(row);
+    const changedAdoption = () => opError('recovery_required', 'Local edit adoption recovery evidence changed.',
+      `The journal or Git HEAD of request ${id} changed while recovery read its commit proof, so recovery stopped before restoring files. Its canonical owner can retry recovery with fresh evidence.`,
+      { fix: ownerStatusFix(row!.source_id) });
+    if (adoptionRoot && await headCommit(adoptionRoot) !== adoptionHead) throw changedAdoption();
     row = await engine.transaction(async tx => {
       await declareDurablePersistence(tx);
       await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [row!.worktree_id]);
       await lockCounters(tx, ['brain', principalKey(requestPrincipal(row!)), `worktree:${row!.worktree_id}`]);
       const [current] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [id]);
       if (!current.recovery) return current;
+      if (adoptionRoot && (adoptionPin(current) !== pinnedAdoption || await headCommit(adoptionRoot) !== adoptionHead)) throw changedAdoption();
       const records = recoveryFiles(current.recovery);
       let landed: string | null = null;
       if (isBundleRecovery(current.recovery)) {
@@ -870,7 +883,7 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
       const failure: PublicationFailure | undefined = terminalError ?? (current.error_code ? {code:current.error_code,message:current.error_message ?? 'Publication failed before database completion.',
         ...(current.error_detail ? { detail: current.error_detail as unknown as PublicationFailureDetail } : {})} : undefined);
       // #8767: so is a local edit adoption's own commit (local-edit-adoption.ts), on a failure and on the requeued replay.
-      landed ??= await adoptionCommitLanded(tx, current, binding);
+      landed ??= adoptionLanded;
       // G7b: a door commit that landed before its row is named on the receipt, whatever the replay's outcome.
       const kept = landed ? { persistence: { git_state: 'committed', git_commit: landed, landed_before_row: true } } : null;
       if (failure) return completeWrite(tx, current, failureState(failure.code), kept ?? {}, failure);
