@@ -219,7 +219,7 @@ export async function runGit(args: string[]): Promise<number> {
       const lock = execFileSync('git', ['-C', repo, 'rev-parse', '--git-path', COMMIT_LOCK_NAME], { env: gitChildEnv({ ...GIT_ENV }) }).toString().trim();
       const branch = execFileSync('git', ['-C', repo, 'symbolic-ref', '--quiet', '--short', 'HEAD'], { env: gitChildEnv({ ...GIT_ENV }) }).toString().trim();
       const paths = p.pull || p.pushOnly || !p.paths.length ? [] : scopePaths(repo, p.paths, cwd);
-      if (paths.length) previewPaths(repo, paths, { untrack: p.untrack, allowOutsideSourceRoot: p.allowOutside });
+      if (paths.length) previewPaths(repo, paths, { untrack: p.untrack, allowOutsideSourceRoot: p.allowOutside, bases, cwd });
       emit(json, { dry_run: true, repo, branch, lock, paths, mode: p.pull ? 'pull' : p.pushOnly ? 'push-only' : p.untrack ? 'untrack' : 'commit-push' },
         `dry run: ${p.pull ? 'pull' : p.pushOnly ? 'push-only' : `${p.untrack ? 'untrack' : 'commit'} ${paths.join(' ')}`} on ${branch} in ${repo} (lock ${lock}); nothing written`);
       return 0;

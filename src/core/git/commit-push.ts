@@ -447,12 +447,18 @@ function scopeBases(root: string, opts: CommitPushOptions, rel: string[]): Map<s
 }
 
 /**
- * What commitPaths refuses before anything is staged (and the dry run with it): a path outside the source root(s),
- * and a file another writer already staged under a named directory (name it to claim it).
+ * What commitPaths refuses before anything is staged (and the dry run with it): a path outside the source root(s), a
+ * `--base` blob HEAD no longer holds, and a file another writer already staged under a named directory (name it to claim it).
  */
-function admitPaths(root: string, rel: string[], roots: string[]): void {
+function admitPaths(root: string, rel: string[], roots: string[], bases?: ReadonlyMap<string, string>): void {
   const outside = rel.filter(p => !insideSourceRoots(p, roots));
   if (outside.length) throw outsideRootError(root, roots, outside, 'Refusing to commit');
+  for (const [path, base] of bases ?? []) {
+    const head = git(root, ['rev-parse', '--verify', '-q', `HEAD:${path}`]).stdout.trim() || 'absent';
+    if (head !== base) throw opError('commit_base_moved', `${path} changed at HEAD since the writer read it (base ${base}, HEAD ${head}).`,
+      `Nothing was staged or committed. Read ${path} at HEAD again (git -C ${root} show HEAD:${path}), redo the change on it, and rerun with --base ${path}=${head}.`,
+      { detail: JSON.stringify({ path, base, head }), docs: 'docs/guides/shared-checkout-git.md#base-check' });
+  }
   const swept = stagedPaths(root).filter(p => !rel.includes(p) && rel.some(spec => covers(spec, p)));
   if (swept.length) {
     const list = `${swept.slice(0, 10).join(', ')}${swept.length > 10 ? ', ...' : ''}`;
@@ -471,13 +477,7 @@ function admitPaths(root: string, rel: string[], roots: string[]): void {
  * index as it found it.
  */
 function commitPaths(root: string, rel: string[], message: string, scope: CommitScope): string | null {
-  admitPaths(root, rel, scope.roots);
-  for (const [path, base] of scope.bases ?? []) {
-    const head = git(root, ['rev-parse', '--verify', '-q', `HEAD:${path}`]).stdout.trim() || 'absent';
-    if (head !== base) throw opError('commit_base_moved', `${path} changed at HEAD since the writer read it (base ${base}, HEAD ${head}).`,
-      `Nothing was staged or committed. Read ${path} at HEAD again (git -C ${root} show HEAD:${path}), redo the change on it, and rerun with --base ${path}=${head}.`,
-      { detail: JSON.stringify({ path, base, head }), docs: 'docs/guides/shared-checkout-git.md#base-check' });
-  }
+  admitPaths(root, rel, scope.roots, scope.bases);
   const before = indexEntries(root, rel);
   if (scope.untrack) return untrackPaths(root, rel, message, scope, before);
   try {
@@ -546,10 +546,10 @@ const pathsRefused = (r: GitRun, untrack: boolean) => opError('commit_paths_inva
  * source roots of a staged rename's other side. Git is asked against a copy of the index, so the preview takes no lock
  * and writes nothing; each refusal carries the real run's code and text.
  */
-export function previewPaths(root: string, rel: string[], opts: { untrack?: boolean; allowOutsideSourceRoot?: boolean } = {}): void {
+export function previewPaths(root: string, rel: string[], opts: { untrack?: boolean; allowOutsideSourceRoot?: boolean; bases?: Map<string, string>; cwd?: string } = {}): void {
   const untrack = !!opts.untrack;
   const roots = opts.allowOutsideSourceRoot ? [''] : configuredSourceRoots(root);
-  admitPaths(root, rel, roots);
+  admitPaths(root, rel, roots, scopeBases(root, { repo: root, bases: opts.bases, cwd: opts.cwd }, rel));
   if (untrack) untrackTargets(root, rel);
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-preview-'));
   try {
