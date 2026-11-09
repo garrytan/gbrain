@@ -103,6 +103,7 @@ const ROWS: readonly Row[] = [
   ['links', 'out_of_scope', 'probed_reported', 'link_type context link_source link_kind origin_field resolution_type assertion_tense', 'context'],
   ['loop_suppressions', 'out_of_scope', 'no_memory_text', 'source_id kind value'],
   ['mcp_request_log', 'out_of_scope', 'probed_reported', 'token_name agent_name operation status params error_message', 'params error_message'],
+  ['mcp_request_log_rollup', 'out_of_scope', 'no_memory_text', 'token_name'],
   ['mcp_spend_log', 'out_of_scope', 'no_memory_text', 'client_id token_name operation provider model budget_key'],
   ['mcp_spend_reservations', 'out_of_scope', 'no_memory_text', 'client_id model provider status usage_unknown_reason budget_key'],
   ['mention_gazetteer_entries', 'out_of_scope', 'no_memory_text', 'source_id name_norm target_slug'],

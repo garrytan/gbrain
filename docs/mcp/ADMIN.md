@@ -695,7 +695,49 @@ not revoke server access.
 Jobs accepted before token invalidation continue under their existing grant
 checks. Revocation or deletion denies those jobs at their next
 authority check; external work already admitted may complete. All three actions
-retain request history, audit records, spending reservations, and settlement.
+retain request history within the request-log retention window, audit records,
+spending reservations, and settlement.
+
+## Request log retention
+
+`gbrain serve --http` writes one `mcp_request_log` row per call, `tools/list`
+included, so the log grows without limit. Retention is off by default. Turn it
+on with a window of 30 to 3650 days:
+
+```bash
+gbrain config set cycle.purge.mcp_request_log_retention_days 90
+```
+
+Values from 1 to 29 are refused, because the built-in usage readers look back
+30 days. `0`, `off` or `gbrain config unset` turns it off again.
+
+With retention on, the cycle `purge` phase (autopilot or `gbrain dream`)
+deletes rows older than the window. On a PGLite brain held by a live
+`gbrain serve` or `gbrain serve --http`, the serve prunes once an hour instead,
+in short batches between requests. Each run deletes at most 400,000 rows; the
+next run continues.
+
+The prune keeps these:
+
+- `surface_change` and `memory_setting_change` audit rows, which are never
+  pruned.
+- Per-client lifetime totals. Pruned rows are counted per token in
+  `mcp_request_log_rollup`, so the dashboard's total requests and last-used
+  times stay exact.
+
+Deleted request detail (operation, status, parameters, errors) cannot be
+restored, and raising the window later does not bring it back. A usage report
+whose window reaches past pruned history says so: `gbrain auth clients --usage`
+prints `window truncated` with the `--days` value that is complete (its `--json`
+carries `window_truncated`, `covered_days`, `pruned_before` and `window_note`),
+and `scripts/derive-starter-ops.ts` refuses with exit 1. Retention caps growth;
+it does not shrink a PGLite file that already grew.
+
+`gbrain doctor --only mcp_request_log_retention` reports the log's size and,
+with retention on, when the last prune ran and what it removed. It warns when
+the log passes about 1M rows or 1 GiB with retention off, and when no prune
+has run for 48 hours. Its fix that turns retention on asks the user first and
+is never part of `gbrain doctor --remediate`.
 
 ## Recover a failed step
 

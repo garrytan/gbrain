@@ -130,6 +130,7 @@ import { chatFallbackChainEntry } from './checks/chat-fallback.ts';
 import { providerConsentEntry } from './checks/provider-consent.ts';
 import { behaviorChangesEntry } from './checks/behavior-changes.ts';
 import { fenceIntegrityEntry } from './checks/fence-integrity.ts';
+import { mcpRequestLogRetentionEntry } from './checks/mcp-request-log.ts';
 import { outsideContentFencesEntry } from './checks/outside-content-fences.ts';
 import { dbAheadOfGitEntry } from './checks/db-ahead-of-git.ts';
 import { gitIndexLagEntry } from './checks/git-index-lag.ts';
@@ -327,6 +328,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   ownerHostStaleEntry,
   embeddingPlaneDisagreementEntry,
   fenceIntegrityEntry,
+  // #6770: MCP request-log size and the opt-in retention prune (read-only; the enable fix asks the user).
+  mcpRequestLogRetentionEntry,
   searchModeEntry,
 ];
 

@@ -12,6 +12,8 @@ import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { rescopeClientGrant } from '../core/grants/service.ts';
 import { resolveOwnerHolder } from '../core/owner-holder.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
+import { lifetimeUsage, readMcpLogRetentionDays } from '../core/mcp-request-log-retention.ts';
+import { readMcpUsageCoverage } from '../core/mcp-usage.ts';
 import { VERSION } from '../version.ts';
 import { mountAdminApiKeys } from './serve-http-api-keys.ts';
 import { mountAdminClients } from './serve-http-clients.ts';
@@ -257,8 +259,6 @@ function mountAdminOverviewApi(app: Express, ctx: ServeHttpContext): void {
           c.grant_types, c.scope, c.source_id, c.federated_read,
           c.created_at, c.token_ttl,
           CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
-          (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
-          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
           (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
         FROM oauth_clients c ORDER BY c.created_at DESC
       `;
@@ -269,14 +269,16 @@ function mountAdminOverviewApi(app: Express, ctx: ServeHttpContext): void {
           a.created_at, null as token_ttl,
           CASE WHEN a.revoked_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
           a.last_used_at,
-          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name) as total_requests,
           (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name AND created_at > now() - interval '24 hours') as requests_today
         FROM access_tokens a ORDER BY a.created_at DESC
       `;
+      // #6770: lifetime totals = rows still in the log + the pruned tally (mcp-request-log-retention.ts).
+      const lifetime = await lifetimeUsage(engine, [...oauthClients.map(c => String(c.id)), ...legacyKeys.map(k => String(k.name))]);
       res.json([
-        ...oauthClients,
+        ...oauthClients.map(c => ({ ...c, last_used_at: lifetime.get(String(c.id))?.last_used_at ?? null, total_requests: lifetime.get(String(c.id))?.requests ?? 0 })),
         ...legacyKeys.map(({ scopes, ...key }) => ({
           ...key,
+          total_requests: lifetime.get(String(key.name))?.requests ?? 0,
           // The SAME normalizer the verify path uses — the dashboard must
           // never display a grant the serve doesn't enforce (NULL =
           // grandfathered full access; damaged/deny rows show empty).
@@ -579,7 +581,8 @@ function mountAdminKeyApi(app: Express, ctx: ServeHttpContext): void {
          WHERE 1=1 ${filterSql}`,
         params,
       );
-      res.json({ rows, total: countResult.total, page, pages: Math.ceil(countResult.total / limit) });
+      const [retention_days, pruned_before] = await Promise.all([readMcpLogRetentionDays(engine), readMcpUsageCoverage(engine, 1).then(c => c.pruned_before)]);
+      res.json({ rows, total: countResult.total, page, pages: Math.ceil(countResult.total / limit), retention_days, pruned_before });
     } catch {
       res.status(503).json({ error: 'service_unavailable' });
     }
