@@ -105,3 +105,19 @@ test('a row the database refuses fails the page without costing it its other row
   expect(await summaries('notes/refused')).toEqual(['Before the refused row', 'After the refused row']);
   expect(result.created).toBe(2);
 });
+
+test('a page missing from the database fails the slug as the per-row path did, whether never imported or soft-deleted', async () => {
+  mkdirSync(join(repo, 'notes'), { recursive: true });
+  writeFileSync(join(repo, 'notes/absent.md'), `---\ntype: note\ntitle: notes/absent\n---\nA synthetic page.\n\n## Timeline\n\n${bullets(2).join('\n')}\n`);
+  const absent = await extract('notes/absent');
+  expect(absent.processed).toEqual([]);
+  expect(absent.errors).toEqual([{ slug: 'notes/absent', error: 'addTimelineEntry failed: page "notes/absent" (source=default) not found' }]);
+  expect(absent.created).toBe(0);
+
+  await page('notes/deleted', bullets(2));
+  expect(await engine.softDeletePage('notes/deleted', { sourceId: 'default' })).not.toBeNull();
+  const deleted = await extract('notes/deleted');
+  expect(deleted.processed).toEqual([]);
+  expect(deleted.errors).toEqual([{ slug: 'notes/deleted', error: 'addTimelineEntry failed: page "notes/deleted" (source=default) not found' }]);
+  expect(await summaries('notes/deleted')).toEqual([]);
+});
