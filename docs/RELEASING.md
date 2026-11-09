@@ -146,8 +146,8 @@ merge coordinator runs it; owners never stamp a queued PR themselves.
 | `plan <pr>...` | Prints the versions and branch names new entries would get behind the queue tail. Writes nothing. |
 | `build <pr>...` | For each owner PR: a queue branch `mq/<version>-pr<N>` at the owner's head, then `release:restamp --base <branch of the entry ahead>` (master for the first), push, a queue PR with the `full-ci` label. |
 | `status` | Each live entry with its head, `full-suite` / `e2e-full-suite`, receipt and whether its owner pushed since. |
-| `verify <queue-pr>` | The merge checks for Q1: the landing-tree check, VERSION = master + 1, the owner head unchanged and included, CHANGELOG additive, every check green on the exact head, mergeable clean, the ship receipt on the head. |
-| `land <queue-pr>` | `verify`, then the REST merge (`merge_method=merge`, `sha=<head>`), then waits for master's Test and E2E push runs and Release's ci-gate. |
+| `verify <queue-pr> [--vm-gate-tree <tree>]` | The merge checks for Q1: the landing-tree check, VERSION = master + 1, the owner head unchanged and included, CHANGELOG additive, every check green on the exact head (`Test/full-suite` and `E2E Tests/e2e-full-suite` from the newest run of each workflow), mergeable clean, the ship receipt on the head. |
+| `land <queue-pr> [--vm-gate-tree <tree>]` | `verify`, a fresh landing-tree check, then the REST merge (`merge_method=merge`, `sha=<head>`). It then checks that the merge commit's tree is the gated tree and waits for master's Test and E2E push runs and Release's ci-gate. |
 | `refresh <queue-pr>` | Fix in place: merges the owner's new head into the entry, then the entry ahead into each entry behind. Versions stay. |
 | `rebuild <queue-pr> [--drop <pr>] [--first <pr>]` | Rebuilds that entry and the tail on fresh branch names (`-r2`, ...) with versions shifted, then closes the queue PRs it replaced. |
 
@@ -164,9 +164,19 @@ merge coordinator runs it; owners never stamp a queued PR themselves.
 - **One landing at a time.** Master pushes cancel each other's runs, and a
   cancelled push run marks its release superseded, so `land` returns only after
   the push runs and Release's ci-gate finish. Red freezes the queue.
+- **Ship receipt.** Each queue head gets a stamp-only /ship on the queue PR
+  (`build` already stamped it), so its receipt's head is the queue head. A
+  receipt does not carry from the owner PR to a stamped or stacked head.
+- **Master moved under the merge.** The ruleset does not require an up-to-date
+  branch, so GitHub can merge into a master newer than the one checked. When the
+  merge commit's tree is not the gated tree, `land` prints `QUEUE_FROZEN` and
+  stops: run full-ci on master (or revert) before the next landing.
 - **CI self-attestation files.** An entry that changes one of
   `scripts/pregate-remote-gate.sh`'s attested paths goes last; nothing is built
-  behind it until it lands.
+  behind it until it lands. Its own full-ci runs cannot attest to it, so run
+  `scripts/pregate-remote-gate.sh` on its head (the VM gate) and pass the
+  `tree=` of its `PREGATE_REMOTE` line to `verify` and `land` as
+  `--vm-gate-tree`.
 - **Failures.** If the owner can push a fix within 30 minutes, push it to the
   owner branch and run `refresh`; otherwise `rebuild <its queue PR> --drop <owner PR>`.
   A rebuild never force-pushes: the entries behind a dropped one already

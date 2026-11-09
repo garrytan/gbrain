@@ -22,7 +22,8 @@
  * restamp). Entry i's tree is the tree master has once entries 1..i land, so
  * full-ci runs on every entry at once and the master push reuses each run.
  * The queue order is the version order of the mq/ branches not yet on master;
- * the owner PR head and the base are recorded in the queue PR body.
+ * the owner PR head and the base are recorded in a queue note, a comment on the
+ * queue PR, so /ship can rewrite the PR body freely.
  *
  * It never squashes, rebases or force-pushes. A rebuild pushes new branch names
  * and closes the queue PRs it replaces. land refuses anything but the first
@@ -45,7 +46,8 @@ export const SELF_ATTESTATION_PATHS = [
   '.github/workflows/test.yml', '.github/workflows/e2e.yml', 'scripts/ci-reuse.ts', 'scripts/ci-full-suite-tree.sh',
   'scripts/ci-executed-counts.ts', 'scripts/ci-manifest.ts', 'scripts/lib/gh-issue.ts',
 ];
-export const REQUIRED_FULL_CHECKS = ['full-suite', 'e2e-full-suite'];
+/** Check names are <workflow>/<job> for the Actions jobs of the newest run of each workflow and event on a head. */
+export const REQUIRED_FULL_CHECKS = ['Test/full-suite', 'E2E Tests/e2e-full-suite'];
 const POST_MERGE_WORKFLOWS = ['Test', 'E2E Tests'];
 const MASTER = 'refs/remotes/origin/master';
 
@@ -57,9 +59,9 @@ export interface Gh {
   pr(n: number): PullRequest;
   openPrForBranch(branch: string): PullRequest | null;
   createPr(opts: { head: string; title: string; body: string }): number;
-  editPrBody(n: number, body: string): void;
   addLabel(n: number, label: string): void;
   comment(n: number, body: string): void;
+  comments(n: number): string[];
   closePr(n: number): void;
   checks(sha: string): CheckRun[];
   merge(n: number, sha: string, title: string, message: string): string;
@@ -119,22 +121,26 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-/** The queue PR body; Queue-Owner-Head and Queue-Base are read back by readBody. */
-export function entryBody(e: { owner: number; ownerHead: string; base: string; baseHead: string; version: string; title: string }): string {
-  return [
-    `Queue entry for #${e.owner}: ${e.title}`,
-    '',
-    `#${e.owner}'s head merged onto ${e.base === 'master' ? 'master' : `the queue entry ahead (${e.base})`} and stamped ${e.version} by bun run merge-queue (${DOCS}). Landing this PR marks #${e.owner} merged.`,
-    '',
-    `Queue-Owner-Head: #${e.owner} ${e.ownerHead}`,
-    `Queue-Base: ${e.base} ${e.baseHead}`,
-  ].join('\n');
+export interface Note { owner: number; ownerHead: string; base: string; baseHead: string }
+
+export function entryBody(e: { owner: number; base: string; version: string; title: string }): string {
+  return `Queue entry for #${e.owner}: ${e.title}\n\n#${e.owner}'s head merged onto ${e.base === 'master' ? 'master' : `the queue entry ahead (${e.base})`} and stamped ${e.version} by bun run merge-queue (${DOCS}). Landing this PR marks #${e.owner} merged.`;
 }
 
-export function readBody(body: string): { owner: number; ownerHead: string; base: string; baseHead: string } | null {
-  const o = /^Queue-Owner-Head: #(\d+) ([0-9a-f]{40})$/m.exec(body);
-  const b = /^Queue-Base: (\S+) ([0-9a-f]{40})$/m.exec(body);
-  return o && b ? { owner: Number(o[1]), ownerHead: o[2]!, base: b[1]!, baseHead: b[2]! } : null;
+/** The queue note: a comment on the queue PR naming the owner head it carries and the base it was built on. */
+export function queueNote(n: Note): string {
+  return `<!-- merge-queue -->\nQueue-Owner-Head: #${n.owner} ${n.ownerHead}\nQueue-Base: ${n.base} ${n.baseHead}`;
+}
+
+/** The newest queue note among a PR's comments. */
+export function readNote(comments: string[]): Note | null {
+  for (const body of [...comments].reverse()) {
+    if (!body.startsWith('<!-- merge-queue -->')) continue;
+    const o = /^Queue-Owner-Head: #(\d+) ([0-9a-f]{40})$/m.exec(body);
+    const b = /^Queue-Base: (\S+) ([0-9a-f]{40})$/m.exec(body);
+    if (o && b) return { owner: Number(o[1]), ownerHead: o[2]!, base: b[1]!, baseHead: b[2]! };
+  }
+  return null;
 }
 
 /**
@@ -176,11 +182,14 @@ export function liveEntries(git: Git): Entry[] {
     const prev = byVersion.get(p.version);
     if (!prev || p.round > prev.round) byVersion.set(p.version, { branch, version: p.version, owner: p.owner, head, round: p.round });
   }
-  return [...byVersion.values()].sort((a, b) => compareVersions(a.version, b.version)).map(({ round: _round, ...e }) => e);
+  const newestRound = new Map<number, number>();
+  for (const e of byVersion.values()) newestRound.set(e.owner, Math.max(newestRound.get(e.owner) ?? 0, e.round));
+  return [...byVersion.values()].filter((e) => e.round === newestRound.get(e.owner))
+    .sort((a, b) => compareVersions(a.version, b.version)).map(({ round: _round, ...e }) => e);
 }
 
 interface Ctx { git: Git; gh: Gh; log: (l: string) => void; opts: Opts }
-interface Live extends Entry { pr: PullRequest; meta: ReturnType<typeof readBody>; index: number }
+interface Live extends Entry { pr: PullRequest; meta: Note | null; index: number }
 interface Planned { owner: PullRequest; version: string; branch: string; base: string }
 
 function fetchAll(ctx: Ctx): void {
@@ -196,7 +205,7 @@ function plainTitle(title: string): string {
 }
 
 function touchesSelfAttestation(git: Git, ref: string): string[] {
-  return SELF_ATTESTATION_PATHS.filter((p) => !git.ok('diff', '--quiet', MASTER, ref, '--', p));
+  return SELF_ATTESTATION_PATHS.filter((p) => !git.ok('diff', '--quiet', `${MASTER}...${ref}`, '--', p));
 }
 
 function ownerPr(ctx: Ctx, n: number): PullRequest {
@@ -273,10 +282,9 @@ function buildEntry(ctx: Ctx, p: Planned): number {
   if (!wt.ok('merge-base', '--is-ancestor', ownerHead, head) || !wt.ok('merge-base', '--is-ancestor', baseHead, head)) stop(`${p.branch} does not contain both #${p.owner.number}'s head and ${p.base}`, 'rebuild the entry');
   checkInherited(wt, baseRef, head, p.version, p.branch);
   wt.run('push', '--quiet', 'origin', `${head}:refs/heads/${p.branch}`);
-  const body = entryBody({ owner: p.owner.number, ownerHead, base: p.base, baseHead, version: p.version, title: plainTitle(p.owner.title) });
-  const existing = ctx.gh.openPrForBranch(p.branch);
-  const n = existing?.number ?? ctx.gh.createPr({ head: p.branch, title: `v${p.version} ${plainTitle(p.owner.title)}`, body });
-  if (existing) ctx.gh.editPrBody(n, body);
+  const n = ctx.gh.openPrForBranch(p.branch)?.number
+    ?? ctx.gh.createPr({ head: p.branch, title: `v${p.version} ${plainTitle(p.owner.title)}`, body: entryBody({ owner: p.owner.number, base: p.base, version: p.version, title: plainTitle(p.owner.title) }) });
+  ctx.gh.comment(n, queueNote({ owner: p.owner.number, ownerHead, base: p.base, baseHead }));
   ctx.gh.addLabel(n, 'full-ci');
   ctx.log(`QUEUE_ENTRY: #${n} ${p.branch} version=${p.version} head=${head} owner=#${p.owner.number}@${ownerHead.slice(0, 12)} base=${p.base}@${baseHead.slice(0, 12)}`);
   return n;
@@ -286,7 +294,7 @@ function live(ctx: Ctx): Live[] {
   return liveEntries(ctx.git).map((e, index) => {
     const pr = ctx.gh.openPrForBranch(e.branch);
     if (!pr) stop(`${e.branch} has no open queue PR`, `rebuild it, or delete the branch: git push origin --delete ${e.branch}`);
-    return { ...e, pr, meta: readBody(pr.body), index };
+    return { ...e, pr, meta: readNote(ctx.gh.comments(pr.number)), index };
   });
 }
 
@@ -297,8 +305,9 @@ function find(entries: Live[], n: number): Live {
 }
 
 function checkState(ctx: Ctx, sha: string): { failed: string[]; pending: string[]; full: Record<string, string> } {
+  const rank = (r: CheckRun) => (r.status !== 'completed' ? 3 : r.conclusion === 'skipped' ? 0 : r.conclusion === 'success' ? 1 : 2);
   const latest = new Map<string, CheckRun>();
-  for (const r of ctx.gh.checks(sha)) latest.set(r.name, r);
+  for (const r of ctx.gh.checks(sha)) if (rank(r) >= rank(latest.get(r.name) ?? r)) latest.set(r.name, r);
   const failed: string[] = [];
   const pending: string[] = [];
   for (const r of latest.values()) {
@@ -312,7 +321,7 @@ function checkState(ctx: Ctx, sha: string): { failed: string[]; pending: string[
   return { failed, pending, full };
 }
 
-function verifyProblems(ctx: Ctx, e: Live, first: Live, expectHead?: string): string[] {
+function verifyProblems(ctx: Ctx, e: Live, first: Live, expectHead?: string, vmGateTree?: string): string[] {
   const p: string[] = [];
   if (e !== first) p.push(`it is Q${e.index + 1}; only Q1 (#${first.pr.number}) may land`);
   if (e.pr.headRefOid !== e.head) p.push(`queue PR head ${e.pr.headRefOid} differs from the branch head ${e.head}`);
@@ -320,11 +329,13 @@ function verifyProblems(ctx: Ctx, e: Live, first: Live, expectHead?: string): st
   const tree = ctx.git.run('rev-parse', `${e.head}^{tree}`).trim();
   const landed = landingTree(ctx.git, MASTER, e.head);
   if (landed !== tree) p.push(`landing-tree check: merging into master writes ${landed ?? 'a conflict'}, the gated tree is ${tree}`);
+  const ci = touchesSelfAttestation(ctx.git, e.head);
+  if (ci.length && vmGateTree !== tree) p.push(`it changes ${ci.join(', ')}, so its own full-ci runs cannot attest to it: run scripts/pregate-remote-gate.sh on the head (VM gate) and pass --vm-gate-tree <the tree= of its PREGATE_REMOTE line>`);
   const master = masterVersion(ctx);
   const version = (ctx.git.show(e.head, 'VERSION') ?? '').trim();
   if (version !== nextPatchVersion(master) || version !== e.version) p.push(`VERSION is ${version}; master is ${master} and the branch name says ${e.version}`);
   if (!e.pr.title.startsWith(`v${version} `)) p.push(`queue PR title does not start with v${version}`);
-  if (!e.meta) p.push('queue PR body has no Queue-Owner-Head / Queue-Base lines');
+  if (!e.meta) p.push('queue PR has no queue note (Queue-Owner-Head / Queue-Base)');
   else {
     const owner = ctx.gh.pr(e.meta.owner);
     if (owner.headRefOid !== e.meta.ownerHead) p.push(`owner #${e.meta.owner} pushed after inclusion (${owner.headRefOid.slice(0, 12)}); refresh to fix in place, or rebuild --drop`);
@@ -364,17 +375,17 @@ function cmdStatus(ctx: Ctx): void {
     const c = checkState(ctx, e.head);
     const moved = e.meta && ctx.gh.pr(e.meta.owner).headRefOid !== e.meta.ownerHead ? ' owner-pushed' : '';
     const receipt = ctx.gh.receiptHead(e.pr.number) === e.head ? 'head' : 'missing';
-    ctx.log(`Q${e.index + 1}: #${e.pr.number} ${e.branch} head=${e.head.slice(0, 12)} full-suite=${c.full['full-suite']} e2e-full-suite=${c.full['e2e-full-suite']} failed=${c.failed.length} pending=${c.pending.length} receipt=${receipt}${moved}`);
+    ctx.log(`Q${e.index + 1}: #${e.pr.number} ${e.branch} head=${e.head.slice(0, 12)} full-suite=${c.full['Test/full-suite']} e2e-full-suite=${c.full['E2E Tests/e2e-full-suite']} failed=${c.failed.length} pending=${c.pending.length} receipt=${receipt}${moved}`);
   }
 }
 
-function cmdVerify(ctx: Ctx, n: number, expectHead?: string): Live | null {
+function cmdVerify(ctx: Ctx, n: number, expectHead?: string, vmGateTree?: string): Live | null {
   fetchAll(ctx);
   const entries = live(ctx);
   const e = find(entries, n);
   const review = ctx.git.run('diff', '--name-only', MASTER, e.head, '--', '.github', 'bun.lock', 'src/core/schema-migrations').split('\n').filter(Boolean);
   if (review.length) ctx.log(`REVIEW: changes under .github, bun.lock or schema-migrations: ${review.join(' ')}`);
-  const problems = verifyProblems(ctx, e, entries[0]!, expectHead);
+  const problems = verifyProblems(ctx, e, entries[0]!, expectHead, vmGateTree);
   if (problems.length) {
     ctx.log(`VERIFY: refused #${e.pr.number} ${e.branch}\n${problems.map((x) => `  - ${x}`).join('\n')}`);
     return null;
@@ -387,7 +398,12 @@ function cmdVerify(ctx: Ctx, n: number, expectHead?: string): Live | null {
 export function waitPostMerge(gh: Gh, sha: string, timeoutMs: number, clock: { now: () => number; sleep: (ms: number) => void }, log: (l: string) => void): 'green' | 'red' | 'pending' {
   const deadline = clock.now() + timeoutMs;
   for (;;) {
-    const runs = gh.pushRuns(sha);
+    let runs: WorkflowRun[] = [];
+    try {
+      runs = gh.pushRuns(sha);
+    } catch {
+      runs = [];
+    }
     const newest = (name: string) => runs.filter((x) => x.name === name).sort((a, b) => b.id - a.id)[0];
     const lines: string[] = [];
     let red = false;
@@ -403,7 +419,12 @@ export function waitPostMerge(gh: Gh, sha: string, timeoutMs: number, clock: { n
       lines.push(`${name}=${r.conclusion}`);
     }
     const release = newest('Release');
-    const gate = release ? gh.jobConclusion(release.id, 'ci-gate') : null;
+    let gate: string | null = null;
+    try {
+      gate = release ? gh.jobConclusion(release.id, 'ci-gate') : null;
+    } catch {
+      gate = null;
+    }
     if (gate === null) done = false;
     else if (gate !== 'success') red = true;
     lines.push(`Release ci-gate=${release ? gate ?? 'running' : 'not started'}`);
@@ -416,11 +437,23 @@ export function waitPostMerge(gh: Gh, sha: string, timeoutMs: number, clock: { n
   }
 }
 
-function cmdLand(ctx: Ctx, n: number, expectHead: string | undefined, timeoutMs: number): boolean {
-  const e = cmdVerify(ctx, n, expectHead);
+function cmdLand(ctx: Ctx, n: number, expectHead: string | undefined, vmGateTree: string | undefined, timeoutMs: number): boolean {
+  const e = cmdVerify(ctx, n, expectHead, vmGateTree);
   if (!e) return false;
+  const tree = ctx.git.run('rev-parse', `${e.head}^{tree}`).trim();
+  fetchAll(ctx);
+  if (landingTree(ctx.git, MASTER, e.head) !== tree) {
+    ctx.log(`VERIFY: refused #${e.pr.number}: master moved during verify; rerun land`);
+    return false;
+  }
   const sha = ctx.gh.merge(e.pr.number, e.head, `${plainTitle(e.pr.title)} (#${e.pr.number})`, `Queue entry ${e.version} for #${e.owner}.`);
   ctx.log(`LANDED: #${e.pr.number} ${e.version} merge=${sha}`);
+  fetchAll(ctx);
+  const landed = ctx.git.run('rev-parse', `${sha}^{tree}`).trim();
+  if (landed !== tree) {
+    ctx.log(`QUEUE_FROZEN: master moved before the merge, so ${sha} has tree ${landed}, not the gated tree ${tree}; run full-ci on master (or revert it) before landing anything else`);
+    return false;
+  }
   const clock = { now: ctx.opts.now ?? Date.now, sleep: ctx.opts.sleep ?? ((ms: number) => Bun.sleepSync(ms)) };
   const verdict = waitPostMerge(ctx.gh, sha, timeoutMs, clock, ctx.log);
   if (verdict === 'red') ctx.log('QUEUE_FROZEN: master is red; root-cause it before landing the next entry');
@@ -433,11 +466,12 @@ function cmdRefresh(ctx: Ctx, n: number): void {
   fetchAll(ctx);
   const entries = live(ctx);
   for (const e of entries.slice(find(entries, n).index)) {
-    if (!e.meta) stop(`#${e.pr.number} has no Queue-Owner-Head line`, 'rebuild it');
+    if (!e.meta) stop(`#${e.pr.number} has no queue note`, 'rebuild it');
     const dir = worktreeFor(ctx, e.branch);
     if (!existsSync(dir)) ctx.git.run('worktree', 'add', '--quiet', '-B', e.branch, dir, e.head);
     const wt = ctx.git.at(dir);
-    wt.run('checkout', '--quiet', '-B', e.branch, e.head);
+    if (existsSync(join(wt.run('rev-parse', '--path-format=absolute', '--git-dir').trim(), 'gbrain-restamp.json'))) stop(`a restamp is stopped in ${dir}`, 'finish it there (bun run release:restamp --continue), then rerun refresh');
+    if (!wt.ok('merge-base', '--is-ancestor', e.head, 'HEAD')) wt.run('checkout', '--quiet', '-B', e.branch, e.head);
     const owner = ctx.gh.pr(e.meta.owner);
     wt.run('fetch', '--quiet', 'origin', owner.headRefOid);
     if (!wt.ok('merge-base', '--is-ancestor', owner.headRefOid, 'HEAD') && sh(['git', 'merge', '--no-ff', '--no-edit', owner.headRefOid], dir, ctx.opts.env).code !== 0) {
@@ -445,15 +479,16 @@ function cmdRefresh(ctx: Ctx, n: number): void {
     }
     const base = e.index === 0 ? 'master' : entries[e.index - 1]!.branch;
     const baseRef = base === 'master' ? MASTER : `refs/remotes/origin/${base}`;
+    const ownerMoved = wt.run('rev-parse', 'HEAD').trim() !== e.head;
     const landsClean = base === 'master' && landingTree(wt, MASTER, 'HEAD') === wt.run('rev-parse', 'HEAD^{tree}').trim();
-    if (!landsClean && !wt.ok('merge-base', '--is-ancestor', baseRef, 'HEAD')) restamp(ctx, dir, base);
+    if (ownerMoved || (!landsClean && !wt.ok('merge-base', '--is-ancestor', baseRef, 'HEAD'))) restamp(ctx, dir, base);
     const head = wt.run('rev-parse', 'HEAD').trim();
     const version = (wt.show(head, 'VERSION') ?? '').trim();
     if (version !== e.version) stop(`refresh moved ${e.branch} to VERSION ${version}`, 'master moved under the queue; rebuild it from Q1');
     if (base !== 'master') checkInherited(wt, baseRef, head, e.version, e.branch);
     if (head !== e.head) {
       wt.run('push', '--quiet', 'origin', `${head}:refs/heads/${e.branch}`);
-      ctx.gh.editPrBody(e.pr.number, entryBody({ owner: e.meta.owner, ownerHead: owner.headRefOid, base, baseHead: wt.run('rev-parse', baseRef).trim(), version: e.version, title: plainTitle(owner.title) }));
+      ctx.gh.comment(e.pr.number, queueNote({ owner: e.meta.owner, ownerHead: owner.headRefOid, base, baseHead: wt.run('rev-parse', baseRef).trim() }));
     }
     ctx.log(`REFRESHED: #${e.pr.number} ${e.branch} head=${head}${head === e.head ? ' (unchanged)' : ''}`);
     fetchAll(ctx);
@@ -502,15 +537,28 @@ export function ghCli(repo: string, cwd: string, env?: Record<string, string | u
     pr: (n) => toPr(JSON.parse(gh('pr', 'view', String(n), '-R', repo, '--json', fields))),
     openPrForBranch: (branch) => {
       const list = JSON.parse(gh('pr', 'list', '-R', repo, '--head', branch, '--state', 'open', '--json', fields)) as Array<Record<string, unknown>>;
-      return list[0] ? toPr(list[0]) : null;
+      return list.map(toPr).find((p) => !p.isCrossRepository && p.author === repo.split('/')[0]) ?? null;
     },
     createPr: ({ head, title, body }) => Number(/\/pull\/(\d+)/.exec(gh('pr', 'create', '-R', repo, '--base', 'master', '--head', head, '--title', title, '--body', body))?.[1]),
-    editPrBody: (n, body) => void gh('pr', 'edit', String(n), '-R', repo, '--body', body),
     addLabel: (n, label) => void gh('pr', 'edit', String(n), '-R', repo, '--add-label', label),
     comment: (n, body) => void gh('pr', 'comment', String(n), '-R', repo, '--body', body),
+    comments: (n) => (JSON.parse(gh('pr', 'view', String(n), '-R', repo, '--json', 'comments')) as { comments: Array<{ body: string }> }).comments.map((c) => c.body),
     closePr: (n) => void gh('pr', 'close', String(n), '-R', repo),
-    checks: (sha) => (JSON.parse(gh('api', '--paginate', '--slurp', `repos/${repo}/commits/${sha}/check-runs?per_page=100`)) as Array<{ check_runs: Array<CheckRun & { id: number }> }>)
-      .flatMap((page) => page.check_runs).sort((a, b) => a.id - b.id).map((c) => ({ name: c.name, status: c.status, conclusion: c.conclusion })),
+    checks: (sha) => {
+      const newest = new Map<string, { id: number; name: string }>();
+      for (const r of (JSON.parse(gh('api', '--paginate', '--slurp', `repos/${repo}/actions/runs?head_sha=${sha}&per_page=100`)) as Array<{ workflow_runs: Array<{ id: number; name: string; event: string }> }>).flatMap((p) => p.workflow_runs)) {
+        const key = `${r.name}@${r.event}`;
+        if ((newest.get(key)?.id ?? 0) < r.id) newest.set(key, r);
+      }
+      const jobs = [...newest.values()].flatMap((run) => (JSON.parse(gh('api', '--paginate', '--slurp', `repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`)) as Array<{ jobs: Array<{ name: string; status: string; conclusion: string | null }> }>)
+        .flatMap((p) => p.jobs).map((j) => ({ name: `${run.name}/${j.name}`, status: j.status, conclusion: j.conclusion })));
+      const others = (JSON.parse(gh('api', '--paginate', '--slurp', `repos/${repo}/commits/${sha}/check-runs?per_page=100`)) as Array<{ check_runs: Array<CheckRun & { app: { slug: string } | null }> }>)
+        .flatMap((p) => p.check_runs).filter((c) => c.app?.slug !== 'github-actions').map((c) => ({ name: c.name, status: c.status, conclusion: c.conclusion }));
+      const runs = [...jobs, ...others];
+      const statuses = (JSON.parse(gh('api', `repos/${repo}/commits/${sha}/status`)) as { statuses: Array<{ context: string; state: string }> }).statuses
+        .map((s) => ({ name: s.context, status: s.state === 'pending' ? 'in_progress' : 'completed', conclusion: s.state === 'pending' ? null : s.state }));
+      return [...runs, ...statuses];
+    },
     merge: (n, sha, title, message) => (JSON.parse(gh('api', '-X', 'PUT', `repos/${repo}/pulls/${n}/merge`, '-f', 'merge_method=merge', '-f', `sha=${sha}`, '-f', `commit_title=${title}`, '-f', `commit_message=${message}`)) as { sha: string }).sha,
     pushRuns: (sha) => (JSON.parse(gh('api', `repos/${repo}/actions/runs?head_sha=${sha}&event=push&per_page=100`)) as { workflow_runs: WorkflowRun[] }).workflow_runs
       .map((r) => ({ id: r.id, name: r.name, status: r.status, conclusion: r.conclusion })),
@@ -535,43 +583,72 @@ const USAGE = `Usage: bun run merge-queue <command> [--repo owner/name]
   plan <pr>...                      versions and order for new entries behind the queue tail
   build <pr>...                     append entries behind the queue tail
   status                            every live entry
-  verify <queue-pr> [--expect-head <sha>]
-  land <queue-pr> [--expect-head <sha>] [--timeout-minutes 45]
+  verify <queue-pr> [--expect-head <sha>] [--vm-gate-tree <tree>]
+  land <queue-pr> [--expect-head <sha>] [--vm-gate-tree <tree>] [--timeout-minutes 45]
   refresh <queue-pr>                fix in place: owner's new head, then every entry behind
   rebuild <queue-pr> [--drop <pr>]... [--first <pr>]
 Docs: ${DOCS}`;
 
+const FLAGS: Record<string, { commands: string[]; valid: RegExp }> = {
+  '--repo': { commands: ['plan', 'build', 'status', 'verify', 'land', 'refresh', 'rebuild'], valid: /^[\w.-]+\/[\w.-]+$/ },
+  '--expect-head': { commands: ['verify', 'land'], valid: /^[0-9a-f]{40}$/ },
+  '--vm-gate-tree': { commands: ['verify', 'land'], valid: /^[0-9a-f]{40}$/ },
+  '--timeout-minutes': { commands: ['land'], valid: /^[1-9]\d*$/ },
+  '--drop': { commands: ['rebuild'], valid: /^#?\d+$/ },
+  '--first': { commands: ['rebuild'], valid: /^#?\d+$/ },
+};
+
+/** Positional PR numbers and validated flag values, or null when anything is unknown, malformed or misplaced. */
+export function parseArgs(cmd: string, rest: string[]): { nums: number[]; flags: Map<string, string[]> } | null {
+  const nums: number[] = [];
+  const flags = new Map<string, string[]>();
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i]!;
+    if (!a.startsWith('--')) {
+      if (!/^#?\d+$/.test(a)) return null;
+      nums.push(Number(a.replace('#', '')));
+      continue;
+    }
+    const spec = FLAGS[a];
+    const value = rest[++i];
+    if (!spec || !spec.commands.includes(cmd) || value === undefined || !spec.valid.test(value)) return null;
+    if (flags.has(a) && a !== '--drop') return null;
+    flags.set(a, [...(flags.get(a) ?? []), value.replace(/^#/, '')]);
+  }
+  const counts: Record<string, (n: number) => boolean> = { plan: (n) => n > 0, build: (n) => n > 0, status: (n) => n === 0 };
+  return (counts[cmd] ?? ((n: number) => n === 1))(nums.length) ? { nums, flags } : null;
+}
+
 export function main(argv: string[], opts: Opts = {}): number {
   const log = opts.log ?? ((l: string) => console.log(l));
   const [cmd, ...rest] = argv;
-  const flag = (name: string): string[] => rest.flatMap((a, i) => (a === name && rest[i + 1] ? [rest[i + 1]!] : []));
-  const nums = rest.filter((a, i) => /^#?\d+$/.test(a) && !rest[i - 1]?.startsWith('--')).map((a) => Number(a.replace('#', '')));
-  if (!cmd || cmd === '--help') {
+  if (cmd === '--help') {
     log(USAGE);
-    return cmd ? 0 : 2;
+    return 0;
+  }
+  const args = cmd && ['plan', 'build', 'status', 'verify', 'land', 'refresh', 'rebuild'].includes(cmd) ? parseArgs(cmd, rest) : null;
+  if (!cmd || !args) {
+    log(USAGE);
+    return 2;
   }
   const top = sh(['git', 'rev-parse', '--show-toplevel'], opts.cwd ?? process.cwd(), opts.env);
   if (top.code !== 0) {
     log(`MERGE_QUEUE: not inside a git checkout\n${USAGE}`);
     return 2;
   }
+  const one = (name: string) => args.flags.get(name)?.[0];
   const root = top.out.trim();
-  const ctx: Ctx = { git: new Git(root, opts.env), gh: opts.gh ?? ghCli(flag('--repo')[0] ?? 'garrytan/gbrain', root, opts.env), log, opts };
-  const many = ['plan', 'build'].includes(cmd);
-  if (many ? nums.length === 0 : ['status'].includes(cmd) ? nums.length !== 0 : nums.length !== 1) {
-    log(USAGE);
-    return 2;
-  }
+  const ctx: Ctx = { git: new Git(root, opts.env), gh: opts.gh ?? ghCli(one('--repo') ?? 'garrytan/gbrain', root, opts.env), log, opts };
+  const n = args.nums[0]!;
   try {
     switch (cmd) {
-      case 'plan': cmdPlan(ctx, nums); return 0;
-      case 'build': cmdBuild(ctx, nums); return 0;
+      case 'plan': cmdPlan(ctx, args.nums); return 0;
+      case 'build': cmdBuild(ctx, args.nums); return 0;
       case 'status': cmdStatus(ctx); return 0;
-      case 'verify': return cmdVerify(ctx, nums[0]!, flag('--expect-head')[0]) ? 0 : 1;
-      case 'land': return cmdLand(ctx, nums[0]!, flag('--expect-head')[0], Number(flag('--timeout-minutes')[0] ?? 45) * 60_000) ? 0 : 1;
-      case 'refresh': cmdRefresh(ctx, nums[0]!); return 0;
-      case 'rebuild': cmdRebuild(ctx, nums[0]!, flag('--drop').map(Number), flag('--first')[0] ? Number(flag('--first')[0]) : null); return 0;
-      default: log(USAGE); return 2;
+      case 'verify': return cmdVerify(ctx, n, one('--expect-head'), one('--vm-gate-tree')) ? 0 : 1;
+      case 'land': return cmdLand(ctx, n, one('--expect-head'), one('--vm-gate-tree'), Number(one('--timeout-minutes') ?? 45) * 60_000) ? 0 : 1;
+      case 'refresh': cmdRefresh(ctx, n); return 0;
+      default: cmdRebuild(ctx, n, (args.flags.get('--drop') ?? []).map(Number), one('--first') ? Number(one('--first')) : null); return 0;
     }
   } catch (e) {
     if (e instanceof Stop) {

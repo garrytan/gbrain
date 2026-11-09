@@ -14,7 +14,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
-  SELF_ATTESTATION_PATHS, branchName, compareVersions, entryBody, inheritedProblems, main, parseBranch, readBody, waitPostMerge,
+  SELF_ATTESTATION_PATHS, branchName, compareVersions, inheritedProblems, main, parseBranch, queueNote, readNote, waitPostMerge,
   type CheckRun, type Gh, type PullRequest, type WorkflowRun,
 } from '../../scripts/merge-queue.ts';
 import { main as releaseRestamp } from '../../scripts/release-restamp.ts';
@@ -131,10 +131,12 @@ class FakeGh implements Gh {
   prs = new Map<number, PullRequest & { owner: boolean }>();
   next = 100;
   red = new Set<string>();
+  extra: CheckRun[] = [];
   postMerge: Record<string, string> = {};
   releaseGate: string | null = 'success';
   merged: Array<{ n: number; sha: string; title: string }> = [];
-  comments: Array<{ n: number; body: string }> = [];
+  beforeMerge: (() => void) | null = null;
+  posted: Array<{ n: number; body: string }> = [];
   constructor(readonly origin: string, readonly master: string) {}
   private head(branch: string): string {
     return git(this.origin, 'rev-parse', `refs/heads/${branch}`).trim();
@@ -156,16 +158,18 @@ class FakeGh implements Gh {
     this.prs.set(n, { number: n, title: o.title, body: o.body, headRefOid: '', headRefName: o.head, state: 'OPEN', isCrossRepository: false, author: 'garrytan', labels: [], mergeStateStatus: 'CLEAN', owner: false });
     return n;
   }
-  editPrBody(n: number, body: string): void { this.prs.get(n)!.body = body; }
   addLabel(n: number, label: string): void { this.prs.get(n)!.labels.push(label); }
-  comment(n: number, body: string): void { this.comments.push({ n, body }); }
+  comment(n: number, body: string): void { this.posted.push({ n, body }); }
+  comments(n: number): string[] { return this.notes(n); }
+  notes(n: number): string[] { return this.posted.filter((c) => c.n === n).map((c) => c.body); }
   closePr(n: number): void { this.prs.get(n)!.state = 'CLOSED'; }
   checks(sha: string): CheckRun[] {
-    return ['cheap-tier', 'full-suite', 'e2e-full-suite'].map((name) => ({ name, status: 'completed', conclusion: this.red.has(`${sha}:${name}`) ? 'failure' : 'success' }));
+    return ['Test/cheap-tier', 'Test/full-suite', 'E2E Tests/e2e-full-suite'].map((name) => ({ name, status: 'completed', conclusion: this.red.has(`${sha}:${name}`) ? 'failure' : 'success' } as CheckRun)).concat(this.extra);
   }
   merge(n: number, sha: string, title: string, message: string): string {
     const p = this.prs.get(n)!;
     if (this.head(p.headRefName) !== sha) throw new Error('head moved');
+    this.beforeMerge?.();
     git(this.master, 'fetch', '-q', 'origin');
     git(this.master, 'reset', '-q', '--hard', 'origin/master');
     git(this.master, 'merge', '-q', '--no-ff', '-m', title, '-m', message, sha);
@@ -232,7 +236,7 @@ describe('merge-queue build', () => {
     const pr3 = fx.gh.pr(queuePr(fx, q3));
     expect(pr3.title).toBe('v0.1.3.0 fix(area): change 3');
     expect(pr3.labels).toEqual(['full-ci']);
-    expect(readBody(pr3.body)).toEqual({ owner: 3, ownerHead: rev(fx.origin, 'refs/heads/owner-3'), base: q2, baseHead: rev(fx.origin, q2) });
+    expect(readNote(fx.gh.notes(pr3.number))).toEqual({ owner: 3, ownerHead: rev(fx.origin, 'refs/heads/owner-3'), base: q2, baseHead: rev(fx.origin, q2) });
   }, 120_000);
 
   test('refuses a contributor PR, and an entry changing the CI self-attestation files unless it is last', () => {
@@ -248,7 +252,16 @@ describe('merge-queue build', () => {
     expect(mq(fx, ['build', '2', '1']).code).toBe(0);
     ownerBranch(fx, 4, 'src/d.ts');
     expect(mq(fx, ['build', '4']).out).toContain('changes the CI self-attestation files');
-  }, 120_000);
+
+    expect(mq(fx, ['land', String(queuePr(fx, 'mq/0.1.1.0-pr2'))]).code).toBe(0);
+    const last = queuePr(fx, 'mq/0.1.2.0-pr1');
+    const tree = git(fx.origin, 'rev-parse', 'mq/0.1.2.0-pr1^{tree}').trim();
+    const refused = mq(fx, ['verify', String(last)]);
+    expect(refused.code).toBe(1);
+    expect(refused.out).toContain('pass --vm-gate-tree');
+    expect(mq(fx, ['verify', String(last), '--vm-gate-tree', '0'.repeat(40)]).out).toContain('pass --vm-gate-tree');
+    expect(mq(fx, ['verify', String(last), '--vm-gate-tree', tree]).code).toBe(0);
+  }, 180_000);
 });
 
 describe('merge-queue verify and land', () => {
@@ -276,10 +289,14 @@ describe('merge-queue verify and land', () => {
     expect(mq(fx, ['build', '1']).code).toBe(0);
     const n = queuePr(fx, 'mq/0.1.1.0-pr1');
     const head = rev(fx.origin, 'mq/0.1.1.0-pr1');
-    fx.gh.red.add(`${head}:full-suite`);
-    expect(mq(fx, ['verify', String(n)]).out).toContain('full-suite is failure on the exact head');
+    fx.gh.red.add(`${head}:Test/full-suite`);
+    expect(mq(fx, ['verify', String(n)]).out).toContain('Test/full-suite is failure on the exact head');
     fx.gh.red.clear();
+    fx.gh.extra = [{ name: 'Test/full-suite', status: 'completed', conclusion: 'skipped' }];
     expect(mq(fx, ['verify', String(n)]).code).toBe(0);
+    fx.gh.extra = [{ name: 'Test/full-suite', status: 'completed', conclusion: 'failure' }];
+    expect(mq(fx, ['verify', String(n)]).out).toContain('Test/full-suite is failure on the exact head');
+    fx.gh.extra = [];
 
     git(fx.work, 'checkout', '-q', 'owner-1');
     put(fx.work, { 'src/a.ts': 'export const CHANGED_1 = 2;\n' });
@@ -292,6 +309,32 @@ describe('merge-queue verify and land', () => {
     git(fx.master, 'push', '-q', 'origin', 'master');
     expect(mq(fx, ['verify', String(n)]).out).toContain('landing-tree check');
   }, 120_000);
+
+  test('a merge that lands on a moved master freezes the queue instead of waiting on an ungated tree', () => {
+    const fx = fixture();
+    ownerBranch(fx, 1, 'src/a.ts');
+    expect(mq(fx, ['build', '1']).code).toBe(0);
+    fx.gh.beforeMerge = () => {
+      fx.gh.beforeMerge = null;
+      git(fx.master, 'fetch', '-q', 'origin');
+      git(fx.master, 'reset', '-q', '--hard', 'origin/master');
+      put(fx.master, { 'src/c.ts': 'export const C = 1;\n' });
+      git(fx.master, 'add', '-A');
+      git(fx.master, 'commit', '-qm', 'outside commit');
+      git(fx.master, 'push', '-q', 'origin', 'master');
+    };
+    const r = mq(fx, ['land', String(queuePr(fx, 'mq/0.1.1.0-pr1'))]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('QUEUE_FROZEN: master moved before the merge');
+    expect(r.out).not.toContain('POST_MERGE');
+  }, 120_000);
+
+  test('rejects unknown, misplaced and malformed flags', () => {
+    const fx = fixture();
+    for (const argv of [['verify', '1', '--expect-hed', 'a'.repeat(40)], ['plan', '1', '--vm-gate-tree', 'a'.repeat(40)], ['land', '1', '--expect-head', 'abc'], ['land', '1', '--timeout-minutes', '0'], ['verify', '1', '2'], ['status', '1'], ['bogus']]) {
+      expect(mq(fx, argv).code).toBe(2);
+    }
+  }, 60_000);
 
   test('a red master push freezes the queue, and a running Release ci-gate leaves it waiting', () => {
     const fx = fixture();
@@ -328,7 +371,7 @@ describe('merge-queue refresh and rebuild', () => {
     const [q1, q2] = ['mq/0.1.1.0-pr1', 'mq/0.1.2.0-pr2'];
     expect(isAncestor(fx.origin, fix, q1) && isAncestor(fx.origin, q1, q2)).toBe(true);
     expect([show(fx, q1, 'VERSION').trim(), show(fx, q2, 'VERSION').trim()]).toEqual(['0.1.1.0', '0.1.2.0']);
-    expect(readBody(fx.gh.pr(queuePr(fx, q1)).body)!.ownerHead).toBe(fix);
+    expect(readNote(fx.gh.notes(queuePr(fx, q1)))!.ownerHead).toBe(fix);
     expect(mq(fx, ['verify', String(queuePr(fx, q1))]).code).toBe(0);
   }, 180_000);
 
@@ -341,18 +384,21 @@ describe('merge-queue refresh and rebuild', () => {
     expect(isAncestor(fx.origin, 'refs/heads/owner-2', 'mq/0.1.2.0-pr3-r2')).toBe(false);
     expect(show(fx, 'mq/0.1.2.0-pr3-r2', NOTICE)).toContain("since: '0.1.2.0', id: 'change_3'");
     expect(old.map((n) => fx.gh.pr(n).state)).toEqual(['CLOSED', 'CLOSED']);
-    expect(fx.gh.comments.map((c) => c.body)[0]).toContain('dropped #2');
+    expect(fx.gh.notes(old[0]!).at(-1)).toContain('dropped #2');
   }, 180_000);
 });
 
 describe('merge-queue helpers', () => {
-  test('branch names, versions and the queue PR body round-trip', () => {
+  test('branch names, versions and the queue note round-trip', () => {
     expect(branchName('0.60.621.0', 8898)).toBe('mq/0.60.621.0-pr8898');
     expect(parseBranch('mq/0.60.622.0-pr8915-r3')).toEqual({ version: '0.60.622.0', owner: 8915, round: 3 });
     expect(parseBranch('capy/mq-thing')).toBeNull();
     expect(['0.60.99.0', '0.60.100.0', '0.60.9.0'].sort(compareVersions)).toEqual(['0.60.9.0', '0.60.99.0', '0.60.100.0']);
     const sha = 'a'.repeat(40);
-    expect(readBody(entryBody({ owner: 7, ownerHead: sha, base: 'mq/0.1.1.0-pr6', baseHead: sha, version: '0.1.2.0', title: 't' }))).toEqual({ owner: 7, ownerHead: sha, base: 'mq/0.1.1.0-pr6', baseHead: sha });
+    const older = queueNote({ owner: 7, ownerHead: 'b'.repeat(40), base: 'master', baseHead: sha });
+    const newer = queueNote({ owner: 7, ownerHead: sha, base: 'mq/0.1.1.0-pr6', baseHead: sha });
+    expect(readNote([older, 'Queue-Owner-Head: #9 ' + sha, newer, 'a later review comment'])).toEqual({ owner: 7, ownerHead: sha, base: 'mq/0.1.1.0-pr6', baseHead: sha });
+    expect(readNote(['no note here'])).toBeNull();
   });
 
   test('inheritedProblems names a moved since: row and a changed earlier CHANGELOG section', () => {

@@ -270,8 +270,9 @@ function merge(ctx: Ctx, state: State): void {
     if (f === 'CHANGELOG.md') {
       ctx.write(f, ctx.git('show', `${state.masterRef}:CHANGELOG.md`));
     } else if (f === BEHAVIOR_NOTICE_FILE) {
-      const r = resolveAppendedLines(diff3(ctx, f));
-      if (r.unresolved > 0) {
+      const merged = diff3(ctx, f);
+      const r = merged === null ? null : resolveAppendedLines(merged);
+      if (!r || r.unresolved > 0) {
         genuine.push(f);
         continue;
       }
@@ -306,8 +307,9 @@ function merge(ctx: Ctx, state: State): void {
   ctx.log(`restamp: merged ${state.masterRef} with a merge commit (${conflicted.length} conflict(s) resolved mechanically).`);
 }
 
-/** The conflicted file re-merged from its index stages with diff3 markers, so an empty base section is visible. */
-function diff3(ctx: Ctx, path: string): string {
+/** The conflicted file re-merged from its index stages with diff3 markers, so an empty base section is visible; null when a stage is missing (add/add) or merge-file errors. */
+function diff3(ctx: Ctx, path: string): string | null {
+  if (!['1', '2', '3'].every((s) => ctx.gitOk('cat-file', '-e', `:${s}:${path}`))) return null;
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-restamp-diff3-'));
   try {
     const stages = ['2', '1', '3'].map((s) => {
@@ -315,7 +317,8 @@ function diff3(ctx: Ctx, path: string): string {
       writeFileSync(file, ctx.git('show', `:${s}:${path}`));
       return file;
     });
-    return Bun.spawnSync(['git', 'merge-file', '-p', '--diff3', '-L', 'ours', '-L', 'base', '-L', 'theirs', ...stages], { cwd: ctx.root, stdout: 'pipe', stderr: 'pipe' }).stdout.toString();
+    const r = Bun.spawnSync(['git', 'merge-file', '-p', '--diff3', '-L', 'ours', '-L', 'base', '-L', 'theirs', ...stages], { cwd: ctx.root, stdout: 'pipe', stderr: 'pipe' });
+    return r.exitCode >= 0 && r.exitCode <= 127 ? r.stdout.toString() : null;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
