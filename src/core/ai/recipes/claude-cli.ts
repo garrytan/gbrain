@@ -60,6 +60,7 @@ export const claudeCli: Recipe = {
         'claude-haiku-4-5-20251001',
         'claude-fable-5',
         'claude-fable-5-1',
+        'claude-fable-5-2',
         'claude-opus-5-5',
         'claude-opus-5',
         'claude-opus-4-8',
@@ -81,6 +82,7 @@ export const claudeCli: Recipe = {
       models: [
         'claude-fable-5',
         'claude-fable-5-1',
+        'claude-fable-5-2',
         'claude-opus-5-5',
         'claude-opus-5',
         'claude-opus-4-8',

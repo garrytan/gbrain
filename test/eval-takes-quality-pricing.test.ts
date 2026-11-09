@@ -19,7 +19,7 @@ describe('getPricing — canonical table', () => {
   });
 
   test('every canonically priced model is budget-gateable, including new ones', () => {
-    for (const id of ['anthropic:claude-fable-5', 'anthropic:claude-fable-5-1', 'openai:gpt-5.6-sol', 'openai:gpt-5.6-luna']) {
+    for (const id of ['anthropic:claude-fable-5', 'anthropic:claude-fable-5-1', 'anthropic:claude-fable-5-2', 'openai:gpt-5.6-sol', 'openai:gpt-5.6-luna']) {
       expect(getPricing(id)).toEqual({ input_per_1m: CANONICAL_PRICING[id]!.input, output_per_1m: CANONICAL_PRICING[id]!.output });
     }
   });
