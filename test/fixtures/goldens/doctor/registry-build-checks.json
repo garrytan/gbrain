@@ -807,6 +807,10 @@
       },
       {
         "category": "ops",
+        "name": "unscoped_multi_user_token"
+      },
+      {
+        "category": "ops",
         "name": "index_audit"
       },
       {
