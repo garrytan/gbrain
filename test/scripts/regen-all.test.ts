@@ -39,6 +39,17 @@ describe('regen:all', () => {
     for (const c of POSTGRES_GOLDENS) expect(existsSync(join(ROOT, /bun test (?:--timeout=\d+ )?(\S+)/.exec(c)![1]!)), c).toBe(true);
   });
 
+  test('the CLI flag registry check compares a fresh render, not the generator-behavior tests (#9019)', () => {
+    // The behavior suite (test/generate-flag-registry.test.ts) pins
+    // individual rows, so a new --flag literal in a module doctor imports
+    // passed `check:regen-all` while the committed registry was stale; only
+    // the validation suite's freshness guard caught it. The check must run
+    // the generator's own --check, which diffs a fresh render against the
+    // committed file.
+    const entry = ARTIFACTS.find(a => a.name === 'CLI flag registry');
+    expect(entry?.check).toEqual(['bun', 'scripts/generate-flag-registry.ts', '--check']);
+  });
+
   test('every bun test it spawns passes an explicit --timeout (bunfig\'s [test] timeout is not applied, #6187)', () => {
     const argvs = [...ARTIFACTS.flatMap(a => [a.regen, a.check]), ...CONTRACT_GOLDENS.map(goldenArgv)];
     const bunTests = argvs.filter(argv => argv[0] === 'bun' && argv[1] === 'test');
