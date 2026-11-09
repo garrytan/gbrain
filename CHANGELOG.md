@@ -14,9 +14,12 @@ identifiers and attribution are available in the pre-removal Git revision
 
 **The `unindexed_files` maintenance phase no longer reports a complete scan when a source could not be scanned.** A source whose Git checkout failed to read was counted as an error and the phase warned, but its `details.complete` still said `true`, so anything reading the phase result took the run as a full scan of every managed source. `complete` is now `true` only when no source stopped at its time budget and none errored. Reported by @Masashi-Ono0611 (#8887).
 
+**A source with automatic sync off now walks forward through its pages on a database whose DateStyle is not ISO.** The per-source maintenance window saved its cursor in the session's date style. Under a day-first style such as `German, DMY` or `SQL, DMY`, a cursor dated after the 12th of a month was not a date the cycle handler could read, so it dropped the cursor and the next cycle started again from the source's oldest pages; a source over 2,000 pages never got past its first window. The cursor is now always written as a UTC ISO timestamp with microseconds. A source holding a cursor in the old form may start from its oldest pages one last time; from then on it advances. Reported by @javieraldape (#8771).
+
 ### Itemized changes
 
 - `src/core/cycle/unindexed-files.ts`: `details.complete` also requires `errors.length === 0`. Test: `test/unindexed-files.test.ts` (a source whose `.git/HEAD` is unreadable: phase `warn`, one error, `complete: false`).
+- `src/core/cycle/source-window.ts`: the listing instant and the last page's `updated_at` are formatted with `to_char(... AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`. Test: `test/sync-disabled-cycle-window.test.ts` (the real queued handler under `German, DMY` advances window by window; `German`, `SQL` and `Postgres` styles under a +05:45 time zone give ISO UTC cursors with microseconds and the same windows), now also run on Postgres by `test/e2e/sync-disabled-cycle-window-postgres.test.ts`.
 
 ## [0.60.620.0] - 2026-11-09
 

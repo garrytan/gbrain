@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { makeAutopilotCycleHandler } from '../src/core/minions/handlers/autopilot-cycle.ts';
 import { SOURCE_FRESHNESS_PHASES } from '../src/core/cycle/phase-scope.ts';
-import { sourceCycleWindowStamp, sourceWindow } from '../src/core/cycle/source-window.ts';
+import { listSourceChangedPages, sourceCycleWindowStamp, sourceWindow } from '../src/core/cycle/source-window.ts';
 import { performSync } from '../src/commands/sync.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -228,6 +228,63 @@ describe('#8573 sync-disabled source cycle window', () => {
       await writer.end();
       await disposePersistenceConsumer(engine);
       await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    }
+  }), 180_000);
+  test('#8771: the window cursor is ISO UTC under any session DateStyle and TimeZone, so a walk under a non-ISO DateStyle advances', async () => withEnv(env, async () => {
+    const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+    for (const engine of engines) {
+      try {
+        const seed = async () => {
+          const { id } = await source(engine, { syncEnabled: false });
+          await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+          for (let i = 0; i < 5; i++) {
+            await engine.putPage(`style/n-${i}`, { title: `Note ${i}`, type: 'note', compiled_truth: `Body ${i}.` }, { sourceId: id });
+            // A day past the 12th: a day-first cursor ('20.01.2026 ...') is not a date to Date.parse, so the handler dropped it.
+            await engine.executeRaw('UPDATE pages SET updated_at=$3::text::timestamptz WHERE source_id=$1 AND slug=$2', [id, `style/n-${i}`, `2026-01-20T10:00:0${i}.123456Z`]);
+          }
+          return id;
+        };
+        sourceWindow.pageLimit = 2;
+        if (engine.kind === 'pglite') {
+          // PGLite has one session, so a session DateStyle reaches the real queued handler's every read.
+          const id = await seed();
+          await engine.executeRaw("SET DateStyle = 'German, DMY'");
+          try {
+            await cycle(engine, id, 1);
+            expect(await config(engine, id)).toMatchObject({ last_source_cycle_window_slug: 'style/n-1' });
+            expect((await cycle(engine, id, 2)).weight).toMatchObject({ pages_recomputed: 2 });
+            expect(await config(engine, id)).toMatchObject({ last_source_cycle_window_slug: 'style/n-3' });
+            expect((await cycle(engine, id, 3)).weight).toMatchObject({ pages_recomputed: 1 });
+            expect((await cycle(engine, id, 4)).weight).toMatchObject({ pages_recomputed: 0 });
+          } finally {
+            await engine.executeRaw('RESET DateStyle');
+          }
+        }
+        for (const style of ['German, DMY', 'SQL, DMY', 'Postgres, MDY']) {
+          const id = await seed();
+          const windows = await engine.transaction(async tx => {
+            await tx.executeRaw(`SET LOCAL DateStyle = '${style}'`);
+            await tx.executeRaw("SET LOCAL TimeZone = 'Asia/Kathmandu'");
+            const listed = [];
+            let since: string | null = null;
+            for (let i = 0; i < 3; i++) {
+              const w = await listSourceChangedPages(tx, id, since);
+              listed.push(w);
+              await tx.executeRaw('UPDATE sources SET config = config || $2::text::jsonb WHERE id=$1',
+                [id, JSON.stringify({ last_source_cycle_window_at: w.next!.at, last_source_cycle_window_slug: w.next!.slug })]);
+              since = w.next!.at;
+            }
+            return listed;
+          });
+          expect(windows.map(w => w.slugs)).toEqual([['style/n-0', 'style/n-1'], ['style/n-2', 'style/n-3'], ['style/n-4']]);
+          for (const w of windows) expect(w.next!.at).toMatch(ISO_UTC);
+          expect(windows.map(w => w.next!.at).slice(0, 2)).toEqual(['2026-01-20T10:00:01.123456Z', '2026-01-20T10:00:03.123456Z']);
+          expect(windows.map(w => w.next!.slug)).toEqual(['style/n-1', 'style/n-3', '']);
+        }
+      } finally {
+        await disposePersistenceConsumer(engine);
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      }
     }
   }), 180_000);
 });
