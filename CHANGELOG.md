@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A take no longer disappears when gbrain re-creates a takes section that a page rewrite dropped.** When a page was rewritten without its takes section, its takes stayed stored, but the next `think --take --anchor <slug>` or `gbrain takes extract --from-pages` on that page built a fresh section numbered from 1: the new take replaced stored take #1 in place, with no record of the old one, and on a managed brain `takes extract --from-pages --include-covered` replaced the first stored takes and deleted the rest in the same write. These writers now render the stored takes, resolutions included, into the section they create and number their own takes after them, on repo-less, Git-backed and plain-directory brains. A take the user removed, or an explicit empty section retired, stays removed. A stored take whose resolution has no quality (recorded before takes had one) cannot be written into the section, so the write is refused (`invalid_input`) instead of clearing it. `takes extract --from-pages` skips a page whose takes markers are malformed (for example `<!-- gbrain:takes:begin -->` with two dashes) as `fence_unparsed` and goes on to the next page.
+
+### Itemized changes
+
+- `src/core/takes-write.ts`: `withStoredTakesFence` renders a page's stored takes (resolution cells included) into a new takes section when the body has no takes fence, refusing `fence_unparsed` when the body holds malformed takes markers, `invalid_input` when a stored resolution has no quality, and `invalid_input` when the render would not read back row for row. Used by `addTakeToPage` (`think --take`) and `appendTakesToPageMdFirst` (unmanaged `takes extract --from-pages`).
+- `src/core/extract-takes-from-pages.ts`: the managed `takes extract --from-pages` put composes from the same rendered section and dedupes new claims against those takes; a page the helper refuses is skipped with the refusal's code instead of ending the run.
+- `src/core/behavior-change-notice.ts`: one row for the changed behavior.
+- Docs: `docs/architecture/key-files/hindsight.md`.
+- Tests: `test/recreated-takes-section-keeps-stored-takes.test.ts` (`think --take` and `takes extract` on unmanaged brains, a plain directory and Git; managed extraction, repo-less and Git; removed takes, `takes remove` and empty sections stay removed; malformed markers skip one page; a resolution without a quality refuses; PGLite and Postgres).
+
 ## [0.60.627.0] - 2026-11-09
 
 **A webhook capture can no longer drop a page's readers (GST-2112).** `POST /ingest` wrote through a trusted local path whose only check was that the sender could read the page, so a member-bound token granted a source could replace a page whose `readable_by` named it with a body that named no readers, and every caller could then read the page. The route and the `ingest_capture` job now apply the remote `put_page` readers rule: a body that drops `readable_by` from a page that names readers, or names readers that leave out the sender, is refused `readable_by_invalid` (403 at the route, nothing queued; at write time for a job already queued). The job binds its write to the revision it checked, so readers added between the check and the write refuse the write with `revision_conflict` and the retry refuses `readable_by_invalid`. A capture already queued from a member-bound credential whose write source is `default` is refused `permission_denied` at write time, as the route refuses it before queueing. Bodies that keep the readers, and pages without readers, import as before.
