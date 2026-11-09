@@ -524,5 +524,21 @@ describe('runSlidingPool — a throwing callback (#8913)', () => {
       expect(siblingDone).toBe(true);
       expect(claimed).toEqual([0, 1]);
     });
+
+    test(`a throwing ${callback} stops an immediately resolving sibling from claiming the next item`, async () => {
+      const callbackError = new Error(`${callback} threw`);
+      const claimed: number[] = [];
+      const outcome = await runSlidingPool({
+        items: [0, 1, 2],
+        workers: 2,
+        onItem: async (item: number) => {
+          claimed.push(item);
+          if (item === 0) throw new Error('item failed');
+        },
+        [callback]: () => { throw callbackError; },
+      }).then(() => null, (err: unknown) => err);
+      expect(outcome).toBe(callbackError);
+      expect(claimed).toEqual([0, 1]);
+    });
   }
 });

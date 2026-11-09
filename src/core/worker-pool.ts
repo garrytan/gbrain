@@ -221,53 +221,58 @@ export async function runSlidingPool<T>(opts: SlidingPoolOpts<T>): Promise<Slidi
   const fatal: { failure: { error: unknown } | null } = { failure: null };
 
   async function worker(workerIdx: number): Promise<void> {
-    while (true) {
-      if (localAbort.signal.aborted) {
-        result.aborted = true;
-        return;
-      }
-      if (nextIdx >= total) return;
-      // ATOMICITY INVARIANT: this line is the load-bearing claim.
-      // Read + increment must remain a single synchronous statement.
-      // Do NOT insert `await` between them. See module header.
-      const idx = nextIdx++;
-      const item = items[idx];
-      try {
-        await opts.onItem(item, idx, workerIdx);
-        result.processed++;
-        opts.onProgress?.(result.processed, total);
-      } catch (err) {
-        // D13: must-abort error classes (BudgetExhausted, etc.) bypass
-        // onError and hard-abort the pool: the local abort signals the
-        // other workers, every worker finishes its current item, and the
-        // error is rethrown after the join (see the function doc).
-        if (isMustAbortError(err)) {
+    try {
+      while (true) {
+        if (localAbort.signal.aborted) {
           result.aborted = true;
-          if (!fatal.failure) fatal.failure = { error: err };
-          localAbort.abort();
+          return;
+        }
+        if (nextIdx >= total) return;
+        // ATOMICITY INVARIANT: this line is the load-bearing claim.
+        // Read + increment must remain a single synchronous statement.
+        // Do NOT insert `await` between them. See module header.
+        const idx = nextIdx++;
+        const item = items[idx];
+        try {
+          await opts.onItem(item, idx, workerIdx);
+          result.processed++;
+          opts.onProgress?.(result.processed, total);
+        } catch (err) {
+          // D13: must-abort error classes (BudgetExhausted, etc.) bypass
+          // onError and hard-abort the pool: the local abort signals the
+          // other workers, every worker finishes its current item, and the
+          // error is rethrown after the join (see the function doc).
+          if (isMustAbortError(err)) {
+            result.aborted = true;
+            if (!fatal.failure) fatal.failure = { error: err };
+            localAbort.abort();
+            result.errored++;
+            result.failures.push({ idx, label: labelFn(item), error: err });
+            return;
+          }
           result.errored++;
           result.failures.push({ idx, label: labelFn(item), error: err });
-          return;
+          const decision = decideOnError(err, item, idx);
+          if (decision === 'abort') {
+            result.aborted = true;
+            localAbort.abort();
+            return;
+          }
+          // 'continue' — claim the next item.
         }
-        result.errored++;
-        result.failures.push({ idx, label: labelFn(item), error: err });
-        const decision = decideOnError(err, item, idx);
-        if (decision === 'abort') {
-          result.aborted = true;
-          localAbort.abort();
-          return;
-        }
-        // 'continue' — claim the next item.
       }
+    } catch (err) {
+      // #8913: a throwing onError / failureLabel callback. Recorded and
+      // aborted before this worker returns, so no sibling claims again.
+      result.aborted = true;
+      if (!fatal.failure) fatal.failure = { error: err };
+      localAbort.abort();
     }
   }
 
   try {
     await Promise.all(
-      Array.from({ length: workerCount }, (_, w) => worker(w).catch((err: unknown) => {
-        if (!fatal.failure) fatal.failure = { error: err };
-        localAbort.abort();
-      })),
+      Array.from({ length: workerCount }, (_, w) => worker(w)),
     );
   } finally {
     if (opts.signal) opts.signal.removeEventListener('abort', onCallerAbort);
