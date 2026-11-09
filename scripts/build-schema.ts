@@ -452,6 +452,7 @@ export const PGLITE_RULES: readonly Rule[] = [
 /** DO blocks outside fragment regions are opaque, so each is classified by content hash. */
 export const PGLITE_DO_BLOCKS: Readonly<Record<string, { keep: boolean; reason: string }>> = {
   '146e456b365a': { keep: false, reason: 'schema.sql RLS enablement block (#5227 conditional enables): PGLite has no role system (the shared-skills fragment keeps its own block)' },
+  '24f37366cac2': { keep: true, reason: 'v299 embedding ledger RLS (page_embedding_progress, embedding_batches, embedding_spend): kept so a fresh PGLite install matches a migrated one, as the other per-table RLS blocks do' },
 };
 
 interface Addition {
