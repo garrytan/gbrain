@@ -42,6 +42,7 @@ const OPEN = 'notes/team-open';
 const RACED = 'notes/restricted-mid-write';
 const NARROWED = 'notes/narrowed-before-snapshot';
 const CREATED = 'notes/created-mid-write';
+const BACKFILL = 'notes/revision-backfill-pending';
 
 let engine: PGLiteEngine;
 let server: Server;
@@ -63,6 +64,7 @@ beforeAll(async () => {
   await importFromContent(engine, OPEN, page('Team open'), { sourceId: SRC, noEmbed: true } as never);
   await importFromContent(engine, RACED, page('Restricted mid write'), { sourceId: SRC, noEmbed: true } as never);
   await importFromContent(engine, NARROWED, page('Narrowed', READERS), { sourceId: SRC, noEmbed: true } as never);
+  await importFromContent(engine, BACKFILL, page('Backfill pending', READERS), { sourceId: SRC, noEmbed: true } as never);
   for (const id of ['alice-example', 'bob-example']) await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1)', [id]);
   const bob = await mintLegacyToken(engine, { name: 'bob', scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [SRC] });
   await engine.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id = $1::uuid', [bob.id, 'bob-example']);
@@ -196,6 +198,29 @@ describe('a webhook capture keeps a page\'s stored readers (GST-2112)', () => {
     expect(raced).toBe(true);
     expect(await readers(CREATED)).toEqual(['alice-example', 'bob-example']);
     expect((await stored(CREATED))?.compiled_truth).toContain('Original body.');
+  });
+
+  test('a page the revision backfill has not reached: the route answers 409 and queues nothing, the job refuses revision_backfill_pending (not a bare TypeError); the page keeps its text', async () => {
+    const revisions = async (sql: string) => {
+      await engine.executeRaw('ALTER TABLE pages DISABLE TRIGGER USER');
+      try { await engine.executeRaw(sql, [BACKFILL, SRC]); } finally { await engine.executeRaw('ALTER TABLE pages ENABLE TRIGGER USER'); }
+    };
+    await engine.executeRaw('ALTER TABLE pages ALTER COLUMN knowledge_revision DROP NOT NULL');
+    await revisions('UPDATE pages SET knowledge_revision = NULL WHERE slug = $1 AND source_id = $2');
+    try {
+      expect((await engine.readPageSnapshot(BACKFILL, { sourceId: SRC }))?.revision).toBe('backfill_pending');
+      const before = await queuedJobs();
+      const res = await ingest(BACKFILL, page('Backfill pending', READERS, 'Posted before the backfill.'));
+      expect(res.status).toBe(409);
+      expect((await res.json() as { error: string }).error).toBe('revision_backfill_pending');
+      expect(await queuedJobs()).toBe(before);
+      await expect(makeIngestCaptureHandler(engine)(bobJob(BACKFILL, page('Backfill pending', READERS, 'Captured before the backfill.')))).rejects.toMatchObject({ code: 'revision_backfill_pending' });
+      expect(await readers(BACKFILL)).toEqual(['alice-example', 'bob-example']);
+      expect((await stored(BACKFILL))?.compiled_truth).toContain('Original body.');
+    } finally {
+      await revisions('UPDATE pages SET knowledge_revision = gen_random_uuid() WHERE slug = $1 AND source_id = $2 AND knowledge_revision IS NULL');
+      await engine.executeRaw('ALTER TABLE pages ALTER COLUMN knowledge_revision SET NOT NULL');
+    }
   });
 
   test('a capture queued for a member-bound credential writing to default is refused at write time (GST-2051): nothing is created', async () => {

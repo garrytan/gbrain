@@ -34,6 +34,7 @@ import { assertWebhookWriterMayReplace } from '../core/minions/handlers/ingest-c
 import { defaultSourceMemberWriter } from '../core/persistence/page-visibility.ts';
 import type { WriteAuthority } from '../core/persistence/model.ts';
 import { validateSlug } from '../core/utils.ts';
+import { RevisionBackfillPendingError } from '../core/page-state/types.ts';
 
 /**
  * v0.46: normalize the per-event GitHub webhook payload shape into
@@ -563,8 +564,8 @@ async function handleIngest(
     try {
       await assertWebhookWriterMayReplace(engine, writer, writeSourceId, callerSlug, content);
     } catch (err) {
-      if (!(err instanceof OperationError)) throw err;
-      res.status(err.code === 'page_not_found' ? 404 : 403).json({ error: err.code, message: err.message });
+      if (!(err instanceof OperationError) && !(err instanceof RevisionBackfillPendingError)) throw err;
+      res.status(err.code === 'page_not_found' ? 404 : err.code === 'revision_backfill_pending' ? 409 : 403).json({ error: err.code, message: err.message });
       return;
     }
   }
