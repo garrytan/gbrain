@@ -2073,9 +2073,55 @@ CREATE TABLE IF NOT EXISTS page_embedding_budget (
   reserved_at TIMESTAMPTZ,
   unpriced_calls INTEGER NOT NULL DEFAULT 0 CHECK (unpriced_calls >= 0),
   cap_usd DOUBLE PRECISION CHECK (cap_usd IS NULL OR cap_usd >= 0),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- (migration v301) the approval that last raised cap_usd (an embed job's identity)
+  approval_id TEXT
 );
 CREATE INDEX IF NOT EXISTS page_embedding_budget_state_idx ON page_embedding_budget (state) WHERE state <> 'open';
+-- Wave C 1F (migration v301): embedding progress per segmented page, provider
+-- batch identities with their returned vectors before install, and the 24-hour
+-- spend ledger per source (src/core/embedding-ledger.ts).
+CREATE TABLE IF NOT EXISTS page_embedding_progress (
+  page_id INTEGER PRIMARY KEY REFERENCES pages(id) ON DELETE CASCADE,
+  generation BIGINT NOT NULL,
+  embed_order TEXT NOT NULL CHECK (embed_order IN ('newest','document')),
+  cursor_seq INTEGER,
+  cursor_ordinal INTEGER,
+  cursor_chunk_index INTEGER,
+  embedded_rows BIGINT NOT NULL DEFAULT 0 CHECK (embedded_rows >= 0),
+  live_rows BIGINT NOT NULL DEFAULT 0 CHECK (live_rows >= 0),
+  spent_usd DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (spent_usd >= 0),
+  state TEXT NOT NULL DEFAULT 'running' CHECK (state IN ('running','complete','capped','held','source_capped','uncertain','busy')),
+  junk_generation BIGINT,
+  next_run_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS embedding_batches (
+  batch_id TEXT PRIMARY KEY,
+  page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  source_id TEXT NOT NULL,
+  generation BIGINT NOT NULL,
+  column_name TEXT NOT NULL,
+  signature TEXT,
+  context TEXT NOT NULL,
+  rows JSONB NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('calling','returned','uncertain')),
+  usd DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (usd >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS embedding_batches_page ON embedding_batches (page_id, state);
+CREATE TABLE IF NOT EXISTS embedding_spend (
+  batch_id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  page_id INTEGER,
+  kind TEXT NOT NULL CHECK (kind IN ('page','tail','job')),
+  usd DOUBLE PRECISION NOT NULL CHECK (usd >= 0),
+  state TEXT NOT NULL CHECK (state IN ('reserved','settled','uncertain','released')),
+  at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS embedding_spend_window ON embedding_spend (source_id, at);
+CREATE INDEX IF NOT EXISTS embedding_spend_page ON embedding_spend (page_id, at) WHERE kind = 'tail';
 -- #5876 (migration chronicle_page_state): Life Chronicle ledger, the durable
 -- record of each page content's automatic-extraction decision and outcome.
 CREATE TABLE IF NOT EXISTS chronicle_page_state (
@@ -2153,6 +2199,25 @@ CREATE TABLE IF NOT EXISTS page_view_digests (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (page_id, revision, view, audience)
 );
+-- Wave C large pages (migration v299): short-lived read pins of segmented pages,
+-- a GC root for the pinned body generation (src/core/page-body/read-pins.ts).
+CREATE TABLE IF NOT EXISTS page_read_pins (
+  token TEXT PRIMARY KEY,
+  page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  body_generation BIGINT NOT NULL,
+  purpose TEXT NOT NULL CHECK (purpose IN ('read','export')),
+  audience TEXT NOT NULL CHECK (audience IN ('trusted','remote')),
+  view TEXT CHECK (view IN ('read','markdown')),
+  view_key TEXT,
+  principal TEXT,
+  revision TEXT NOT NULL,
+  total_bytes BIGINT CHECK (total_bytes >= 0),
+  total_lines BIGINT CHECK (total_lines >= 0),
+  sha256 TEXT,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS page_read_pins_generation ON page_read_pins (page_id, body_generation);
 -- Wave B segmented page storage (migration v248): segment texts, the
 -- generation-ranged body manifest and body stagings (src/core/page-body/).
 -- Before the persistence region so the managed-writer guard covers them.
@@ -2346,7 +2411,7 @@ DO \$rls\$
 DECLARE target TEXT;
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    FOREACH target IN ARRAY ARRAY['page_segment_texts','page_body_manifest','page_body_stagings','page_body_staging_parts','page_view_digests','page_body_staging_texts','page_segment_derivations','page_derivation_spend','page_segment_derivation_purges','page_segment_derivation_purge_pages'] LOOP
+    FOREACH target IN ARRAY ARRAY['page_segment_texts','page_body_manifest','page_body_stagings','page_body_staging_parts','page_view_digests','page_read_pins','page_body_staging_texts','page_segment_derivations','page_derivation_spend','page_segment_derivation_purges','page_segment_derivation_purge_pages'] LOOP
       IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                  WHERE n.nspname = current_schema() AND c.relname = target AND c.relkind = 'r' AND NOT c.relrowsecurity) THEN
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', target);

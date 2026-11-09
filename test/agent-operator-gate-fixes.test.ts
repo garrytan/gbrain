@@ -61,7 +61,7 @@ describe('doctor and embed fixes', () => {
     expect(fix.consent).toEqual(['paid']);
     expect(fix.argv).toEqual(['gbrain', 'embed', '--stale', '--catch-up', '--yes']);
     expect(fix.preview_argv).toEqual(['gbrain', 'embed', '--stale', '--catch-up', '--dry-run']);
-    expect([...EMBED_BACKFILL_JOB_NAMES].sort()).toEqual(['embed', 'embed-backfill', 'embed-catch-up']);
+    expect([...EMBED_BACKFILL_JOB_NAMES].sort()).toEqual(['embed', 'embed-backfill', 'embed-catch-up', 'embed-page']);
   });
 });
 

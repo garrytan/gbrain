@@ -13,9 +13,18 @@ export function makeEmbedHandler(engine: BrainEngine): MinionHandler {
     // readable via `gbrain jobs get <id>`). Stderr from the worker daemon
     // only emits coarse job-start / job-done lines; per-page detail lives
     // in the DB. Per Codex review #20.
+    const slug = typeof job.data.slug === 'string' ? job.data.slug : undefined;
+    const slugs = Array.isArray(job.data.slugs) ? (job.data.slugs as string[]) : undefined;
+    // Wave C 1F: the user's `--max-usd N` approval carries this job's identity, so each page's cap rises once however
+    // often the job is retried or reclaimed. A segmented target page embeds in embed-page slices queued under this job's
+    // spend authorization; an approval over several pages stays in this job, whose authorization caps the whole run.
+    const approved = typeof job.data.approvedPageCapUsd === 'number' && job.data.approvedPageCapUsd >= 0 ? job.data.approvedPageCapUsd : undefined;
+    const targets = slug !== undefined ? 1 : slugs?.length ?? 0;
     const embedResult = await runEmbedCore(engine, {
-      slug: typeof job.data.slug === 'string' ? job.data.slug : undefined,
-      slugs: Array.isArray(job.data.slugs) ? (job.data.slugs as string[]) : undefined,
+      slug,
+      slugs,
+      ...(approved !== undefined && { approvedPageCapUsd: approved, approvalId: `embed-job:${job.id}` }),
+      ...(targets > 0 && (approved === undefined || targets === 1) && { delegateSegmented: { spendAuthorization: job.spend?.record } }),
       all: !!job.data.all,
       stale: job.data.all ? false : (job.data.stale !== false),
       // `embed --background` serializes dryRun into the payload (embed.ts's
@@ -62,6 +71,8 @@ export function makeEmbedHandler(engine: BrainEngine): MinionHandler {
       dry_run: !!embedResult.dryRun,
       would_embed: embedResult.would_embed,
       failures: embedResult.failures,
+      ...(embedResult.embed_page_jobs && { embed_page_jobs: embedResult.embed_page_jobs }),
+      ...(embedResult.reason === 'budget_limited' && { reason: 'budget_limited' }),
       ...(embedResult.content_drift && { content_drift: embedResult.content_drift }),
     };
   };

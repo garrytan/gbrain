@@ -601,7 +601,7 @@ async function embedSegmentedEffect(engine: BrainEngine, config: GBrainConfig, e
     `Another worker took over the embedding of ${page.slug} in source ${effect.source_id}; this attempt stops without installing vectors and the owning claim finishes it.`,
     { fix: effectStatusFix(effect) });
   const embed = opts.embedding?.embed ?? embedBatch;
-  const result = await embedSegmentedPage(engine, page, { signature, signal: opts.signal, occurrenceIds: effect.data.occurrence_ids,
+  const result = await embedSegmentedPage(engine, page, { signature, signal: opts.signal, occurrenceIds: effect.data.occurrence_ids, tail: effect.data.occurrence_ids !== undefined,
     whileWaiting: async () => { if (!await renewPersistenceEffectClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, effect)) throw claimLost(); },
     embedFn: (texts, o) => withAIInvocationPreflight(async () => {
       opts.signal?.throwIfAborted();
@@ -615,6 +615,7 @@ async function embedSegmentedEffect(engine: BrainEngine, config: GBrainConfig, e
       await assertEmbeddingEffectEnabled(tx, config);
     } });
   if (result.stopped === 'budget') { await completeEffect(engine, effect, { embedding: 'skipped', reason: 'budget_capped' }); return; }
+  if (result.stopped === 'source_capped' || result.stopped === 'uncertain') { await completeEffect(engine, effect, { embedding: 'skipped', reason: result.stopped === 'source_capped' ? 'source_spend_capped' : 'uncertain_spend' }); return; }
   if (result.stopped === 'page_moved') { await completeEffect(engine, effect, { embedding: 'superseded', reason: 'revision_changed' }); return; }
   if (result.stopped === 'busy') throw pageEmbeddingLeaseUnavailable(page.id, false);
   const stamp = await resolveProvenanceStamp(engine, signature);

@@ -399,6 +399,7 @@ export async function prepareAppendMutation(engine: BrainEngine, row: WriteReque
     } });
     if (prepared) {
       if (mentionRange) prepared.mentionRange = mentionRange;
+      prepared.embedAppended = true;
       return prepared;
     }
     if (Number((stored.page as { body_bytes?: number | null }).body_bytes ?? 0) + Buffer.byteLength(text, 'utf8') + 1 > PAGE_MAX_BYTES) {

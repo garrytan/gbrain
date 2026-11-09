@@ -110,6 +110,14 @@
       "drift_decisions.drift_decisions_pkey": "p PRIMARY KEY (id)",
       "drift_decisions.drift_decisions_recommended_weight_check": "c CHECK (((recommended_weight >= (0)::double precision) AND (recommended_weight <= (1)::double precision)))",
       "drift_decisions.drift_decisions_take_id_fkey": "f FOREIGN KEY (take_id) REFERENCES takes(id) ON DELETE CASCADE",
+      "embedding_batches.embedding_batches_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
+      "embedding_batches.embedding_batches_pkey": "p PRIMARY KEY (batch_id)",
+      "embedding_batches.embedding_batches_state_check": "c CHECK ((state = ANY (ARRAY['calling'::text, 'returned'::text, 'uncertain'::text])))",
+      "embedding_batches.embedding_batches_usd_check": "c CHECK ((usd >= (0)::double precision))",
+      "embedding_spend.embedding_spend_kind_check": "c CHECK ((kind = ANY (ARRAY['page'::text, 'tail'::text, 'job'::text])))",
+      "embedding_spend.embedding_spend_pkey": "p PRIMARY KEY (batch_id)",
+      "embedding_spend.embedding_spend_state_check": "c CHECK ((state = ANY (ARRAY['reserved'::text, 'settled'::text, 'uncertain'::text, 'released'::text])))",
+      "embedding_spend.embedding_spend_usd_check": "c CHECK ((usd >= (0)::double precision))",
       "entity_identities.entity_identities_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "entity_identities.entity_identities_page_uniq": "u UNIQUE (source_id, page_id)",
       "entity_identities.entity_identities_pkey": "p PRIMARY KEY (id)",
@@ -296,6 +304,13 @@
       "page_embedding_budget.page_embedding_budget_spent_usd_check": "c CHECK ((spent_usd >= (0)::double precision))",
       "page_embedding_budget.page_embedding_budget_state_check": "c CHECK ((state = ANY (ARRAY['open'::text, 'held'::text, 'capped'::text])))",
       "page_embedding_budget.page_embedding_budget_unpriced_calls_check": "c CHECK ((unpriced_calls >= 0))",
+      "page_embedding_progress.page_embedding_progress_embed_order_check": "c CHECK ((embed_order = ANY (ARRAY['newest'::text, 'document'::text])))",
+      "page_embedding_progress.page_embedding_progress_embedded_rows_check": "c CHECK ((embedded_rows >= 0))",
+      "page_embedding_progress.page_embedding_progress_live_rows_check": "c CHECK ((live_rows >= 0))",
+      "page_embedding_progress.page_embedding_progress_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
+      "page_embedding_progress.page_embedding_progress_pkey": "p PRIMARY KEY (page_id)",
+      "page_embedding_progress.page_embedding_progress_spent_usd_check": "c CHECK ((spent_usd >= (0)::double precision))",
+      "page_embedding_progress.page_embedding_progress_state_check": "c CHECK ((state = ANY (ARRAY['running'::text, 'complete'::text, 'capped'::text, 'held'::text, 'source_capped'::text, 'uncertain'::text, 'busy'::text])))",
       "page_extraction_state.page_extraction_state_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "page_extraction_state.page_extraction_state_pipeline_check": "c CHECK ((pipeline = ANY (ARRAY['facts_backstop'::text, 'extract_atoms'::text, 'conversation_facts'::text])))",
       "page_extraction_state.page_extraction_state_pkey": "p PRIMARY KEY (page_id, pipeline)",
@@ -313,6 +328,13 @@
       "page_purges.page_purges_pkey": "p PRIMARY KEY (source_id, content_hash)",
       "page_purges.page_purges_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "page_purges.trust_generation_insert": "t TRIGGER DEFERRABLE INITIALLY DEFERRED",
+      "page_read_pins.page_read_pins_audience_check": "c CHECK ((audience = ANY (ARRAY['trusted'::text, 'remote'::text])))",
+      "page_read_pins.page_read_pins_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
+      "page_read_pins.page_read_pins_pkey": "p PRIMARY KEY (token)",
+      "page_read_pins.page_read_pins_purpose_check": "c CHECK ((purpose = ANY (ARRAY['read'::text, 'export'::text])))",
+      "page_read_pins.page_read_pins_total_bytes_check": "c CHECK ((total_bytes >= 0))",
+      "page_read_pins.page_read_pins_total_lines_check": "c CHECK ((total_lines >= 0))",
+      "page_read_pins.page_read_pins_view_check": "c CHECK ((view = ANY (ARRAY['read'::text, 'markdown'::text])))",
       "page_retrievals.page_retrievals_pkey": "p PRIMARY KEY (page_id)",
       "page_segment_derivation_purge_pages.page_segment_derivation_purge_pages_pkey": "p PRIMARY KEY (request_id, page_id)",
       "page_segment_derivation_purges.page_segment_derivation_purges_batch_rows_check": "c CHECK ((batch_rows >= 1))",
@@ -769,6 +791,12 @@
       "drift_decisions": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "embedding_batches": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "embedding_spend": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "entity_identities": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -919,6 +947,9 @@
       "page_embedding_budget": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "page_embedding_progress": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "page_extraction_state": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -938,6 +969,9 @@
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "page_purges": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "page_read_pins": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "page_retrievals": [
@@ -1260,6 +1294,11 @@
       "dream_verdicts_expires_idx": "CREATE INDEX dream_verdicts_expires_idx ON public.dream_verdicts USING btree (expires_at)",
       "dream_verdicts_pkey": "CREATE UNIQUE INDEX dream_verdicts_pkey ON public.dream_verdicts USING btree (file_path, content_hash)",
       "drift_decisions_pkey": "CREATE UNIQUE INDEX drift_decisions_pkey ON public.drift_decisions USING btree (id)",
+      "embedding_batches_page": "CREATE INDEX embedding_batches_page ON public.embedding_batches USING btree (page_id, state)",
+      "embedding_batches_pkey": "CREATE UNIQUE INDEX embedding_batches_pkey ON public.embedding_batches USING btree (batch_id)",
+      "embedding_spend_page": "CREATE INDEX embedding_spend_page ON public.embedding_spend USING btree (page_id, at) WHERE (kind = 'tail'::text)",
+      "embedding_spend_pkey": "CREATE UNIQUE INDEX embedding_spend_pkey ON public.embedding_spend USING btree (batch_id)",
+      "embedding_spend_window": "CREATE INDEX embedding_spend_window ON public.embedding_spend USING btree (source_id, at)",
       "entity_identities_canonical_uniq": "CREATE UNIQUE INDEX entity_identities_canonical_uniq ON public.entity_identities USING btree (entity_id) WHERE canonical",
       "entity_identities_entity_idx": "CREATE INDEX entity_identities_entity_idx ON public.entity_identities USING btree (entity_id)",
       "entity_identities_page_uniq": "CREATE UNIQUE INDEX entity_identities_page_uniq ON public.entity_identities USING btree (source_id, page_id)",
@@ -1474,6 +1513,7 @@
       "page_aliases_origin_uniq": "CREATE UNIQUE INDEX page_aliases_origin_uniq ON public.page_aliases USING btree (source_id, alias_norm, slug, origin)",
       "page_aliases_pkey": "CREATE UNIQUE INDEX page_aliases_pkey ON public.page_aliases USING btree (id)",
       "page_aliases_slug_idx": "CREATE INDEX page_aliases_slug_idx ON public.page_aliases USING btree (source_id, slug)",
+      "page_body_manifest_closed": "CREATE INDEX page_body_manifest_closed ON public.page_body_manifest USING btree (page_id, gen_to) WHERE (gen_to IS NOT NULL)",
       "page_body_manifest_live_bytes": "CREATE INDEX page_body_manifest_live_bytes ON public.page_body_manifest USING btree (page_id, byte_start) WHERE (gen_to IS NULL)",
       "page_body_manifest_live_seq": "CREATE UNIQUE INDEX page_body_manifest_live_seq ON public.page_body_manifest USING btree (page_id, seq) WHERE ((gen_to IS NULL) AND (staging_id IS NULL))",
       "page_body_manifest_pkey": "CREATE UNIQUE INDEX page_body_manifest_pkey ON public.page_body_manifest USING btree (page_id, occurrence_id, gen_from, staging_key)",
@@ -1488,6 +1528,7 @@
       "page_derivation_spend_pkey": "CREATE UNIQUE INDEX page_derivation_spend_pkey ON public.page_derivation_spend USING btree (page_id, family)",
       "page_embedding_budget_pkey": "CREATE UNIQUE INDEX page_embedding_budget_pkey ON public.page_embedding_budget USING btree (page_id)",
       "page_embedding_budget_state_idx": "CREATE INDEX page_embedding_budget_state_idx ON public.page_embedding_budget USING btree (state) WHERE (state <> 'open'::text)",
+      "page_embedding_progress_pkey": "CREATE UNIQUE INDEX page_embedding_progress_pkey ON public.page_embedding_progress USING btree (page_id)",
       "page_extraction_state_pkey": "CREATE UNIQUE INDEX page_extraction_state_pkey ON public.page_extraction_state USING btree (page_id, pipeline)",
       "page_extraction_state_truncated_idx": "CREATE INDEX page_extraction_state_truncated_idx ON public.page_extraction_state USING btree (pipeline, page_id) WHERE (input_truncated IS NOT NULL)",
       "page_facts_reconcile_pkey": "CREATE UNIQUE INDEX page_facts_reconcile_pkey ON public.page_facts_reconcile USING btree (page_id)",
@@ -1496,6 +1537,8 @@
       "page_mention_state_source_idx": "CREATE INDEX page_mention_state_source_idx ON public.page_mention_state USING btree (source_id, mention_version)",
       "page_projection_jobs_pkey": "CREATE UNIQUE INDEX page_projection_jobs_pkey ON public.page_projection_jobs USING btree (source_incarnation, slug)",
       "page_purges_pkey": "CREATE UNIQUE INDEX page_purges_pkey ON public.page_purges USING btree (source_id, content_hash)",
+      "page_read_pins_generation": "CREATE INDEX page_read_pins_generation ON public.page_read_pins USING btree (page_id, body_generation)",
+      "page_read_pins_pkey": "CREATE UNIQUE INDEX page_read_pins_pkey ON public.page_read_pins USING btree (token)",
       "page_retrievals_pkey": "CREATE UNIQUE INDEX page_retrievals_pkey ON public.page_retrievals USING btree (page_id)",
       "page_segment_derivation_purge_pages_pkey": "CREATE UNIQUE INDEX page_segment_derivation_purge_pages_pkey ON public.page_segment_derivation_purge_pages USING btree (request_id, page_id)",
       "page_segment_derivation_purges_pkey": "CREATE UNIQUE INDEX page_segment_derivation_purges_pkey ON public.page_segment_derivation_purges USING btree (request_id)",
@@ -2461,6 +2504,35 @@
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
+      "embedding_batches": {
+        "columns": [
+          "1 batch_id text/text NOT NULL",
+          "2 page_id integer/int4 NOT NULL",
+          "3 source_id text/text NOT NULL",
+          "4 generation bigint/int8 NOT NULL",
+          "5 column_name text/text NOT NULL",
+          "6 signature text/text NULL",
+          "7 context text/text NOT NULL",
+          "8 rows jsonb/jsonb NOT NULL",
+          "9 state text/text NOT NULL",
+          "10 usd double precision/float8 NOT NULL DEFAULT 0",
+          "11 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "12 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
+      "embedding_spend": {
+        "columns": [
+          "1 batch_id text/text NOT NULL",
+          "2 source_id text/text NOT NULL",
+          "3 page_id integer/int4 NULL",
+          "4 kind text/text NOT NULL",
+          "5 usd double precision/float8 NOT NULL",
+          "6 state text/text NOT NULL",
+          "7 at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
       "entity_identities": {
         "columns": [
           "1 id bigint/int8 NOT NULL DEFAULT nextval('entity_identities_id_seq'::regclass)",
@@ -3301,7 +3373,26 @@
           "7 reserved_at timestamp with time zone/timestamptz NULL",
           "8 unpriced_calls integer/int4 NOT NULL DEFAULT 0",
           "9 cap_usd double precision/float8 NULL",
-          "10 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+          "10 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "11 approval_id text/text NULL"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
+      "page_embedding_progress": {
+        "columns": [
+          "1 page_id integer/int4 NOT NULL",
+          "2 generation bigint/int8 NOT NULL",
+          "3 embed_order text/text NOT NULL",
+          "4 cursor_seq integer/int4 NULL",
+          "5 cursor_ordinal integer/int4 NULL",
+          "6 cursor_chunk_index integer/int4 NULL",
+          "7 embedded_rows bigint/int8 NOT NULL DEFAULT 0",
+          "8 live_rows bigint/int8 NOT NULL DEFAULT 0",
+          "9 spent_usd double precision/float8 NOT NULL DEFAULT 0",
+          "10 state text/text NOT NULL DEFAULT 'running'::text",
+          "11 junk_generation bigint/int8 NULL",
+          "12 next_run_at timestamp with time zone/timestamptz NULL",
+          "13 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -3366,6 +3457,25 @@
           "3 slug text/text NOT NULL",
           "4 request_id uuid/uuid NULL",
           "5 purged_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "page_read_pins": {
+        "columns": [
+          "1 token text/text NOT NULL",
+          "2 page_id integer/int4 NOT NULL",
+          "3 body_generation bigint/int8 NOT NULL",
+          "4 purpose text/text NOT NULL",
+          "5 audience text/text NOT NULL",
+          "6 view text/text NULL",
+          "7 view_key text/text NULL",
+          "8 principal text/text NULL",
+          "9 revision text/text NOT NULL",
+          "10 total_bytes bigint/int8 NULL",
+          "11 total_lines bigint/int8 NULL",
+          "12 sha256 text/text NULL",
+          "13 expires_at timestamp with time zone/timestamptz NOT NULL",
+          "14 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

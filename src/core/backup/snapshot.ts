@@ -9,7 +9,7 @@ import { acquireBootstrapLock } from '../bootstrap/lock.ts';
 import { configDir, type GBrainConfig } from '../config.ts';
 import { LATEST_VERSION } from '../migrate.ts';
 import { backupDumpFailed, sweepStaleRuntimeArtefacts } from './runtime-artefacts.ts';
-import { AgentInstallError, checkedManagedPaths, checkedRoot, confinedPath, privateWrite, readFileConfigState, readInstallReceipt, syncDirectory, type AgentInstallReceipt } from '../agent-install/state.ts';
+import { AgentInstallError, checkedManagedPaths, checkedRoot, confinedPath, privateWrite, privateWriteStream, readFileConfigState, readInstallReceipt, syncDirectory, type AgentInstallReceipt } from '../agent-install/state.ts';
 import { extractPgliteDump, hashFile, isBackupArchiveFile, readBackupArchive, writeBackupArchive, type ArchiveManifest } from './archive.ts';
 import { quarantineRestoredExecution, rebaseRestorePath, relativeBackupPath, type RestoreQuarantine } from './quarantine.ts';
 import { quarantineSharedSkillRestore, validateSharedSkillRestoreMode, type SharedSkillRestore, type SharedSkillRestoreOptions } from '../shared-skills/restore.ts';
@@ -174,7 +174,9 @@ export async function createPgliteBackup(options: { output: string; root?: strin
     // Under the writer lock: a dead serve's IPC socket in the data dir would fail the dump (#5312).
     const sweep = await sweepStaleRuntimeArtefacts(dbPath);
     const dump = await engine.db.dumpDataDir('none').catch(cause => { throw backupDumpFailed(cause, sweep); });
-    privateWrite(join(work, 'database.tar'), new Uint8Array(await dump.arrayBuffer()));
+    // Wave C 1E: the dump goes to disk piece by piece, never through arrayBuffer() (a second whole-tar copy). PGLite
+    // 0.4.3 builds the tar itself in memory (fs.dumpTar), so the backup still needs one tar's worth of heap.
+    await privateWriteStream(join(work, 'database.tar'), dump.stream());
     const files = [
       { path: 'database.tar', file: join(work, 'database.tar') },
       { path: 'config.json', file: join(work, 'config.json') },

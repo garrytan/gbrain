@@ -10,8 +10,6 @@ export const EXPORT_MARKER = '.gbrain-export-status';
 export const EXPORT_PAYLOAD_LIMIT = 32 * 1024 * 1024;
 export const EXPORT_STAGE_LIMIT = 8 * 1024 * 1024 * 1024;
 export const EXPORT_SNAPSHOT_MS = 10 * 60 * 1000;
-/** Snapshot time each byte of a streamed (segmented) page adds: 1 MiB/s, well under the measured read rate. */
-export const EXPORT_STREAM_BYTES_PER_MS = 1024 * 1024 / 1000;
 /** Free space a streamed stage file must leave on the staging filesystem. */
 export const EXPORT_STAGE_FREE_RESERVE = 512 * 1024 * 1024;
 
@@ -121,11 +119,23 @@ export class ExportStage {
    * bytes must stay within `limit`.
    */
   async addStream(path: string, expectedBytes: number, limit: number, pieces: AsyncIterable<Uint8Array | string>): Promise<void> {
+    await this.writeStream(this.planStream(path, expectedBytes, limit), expectedBytes, limit, pieces);
+  }
+
+  /**
+   * Plan a streamed file now (its path joins the collision checks) and write it later with writeStream: an export
+   * plans its segmented pages inside the snapshot transaction and streams them after it commits. Returns the file's name.
+   */
+  planStream(path: string, expectedBytes: number, limit: number): string {
     exportPathKey(path);
-    const free = statfsSync(this.directory);
-    if (expectedBytes > limit || expectedBytes + EXPORT_STAGE_FREE_RESERVE > Number(free.bavail) * Number(free.bsize)) throw stageCapacityError();
+    if (expectedBytes > limit || !fitsStageDisk(this.directory, expectedBytes)) throw stageCapacityError();
     const name = String(this.files++);
     this.plan(path, 'file', null, name);
+    return name;
+  }
+
+  async writeStream(name: string, expectedBytes: number, limit: number, pieces: AsyncIterable<Uint8Array | string>): Promise<void> {
+    if (!fitsStageDisk(this.directory, expectedBytes)) throw stageCapacityError();
     mkdirSync(join(this.directory, 'files'), { recursive: true });
     const fd = openSync(join(this.directory, 'files', name), 'wx', 0o600);
     let size = 0;
@@ -168,6 +178,12 @@ export class ExportStage {
     this.db.close();
     rmSync(this.directory, { recursive: true, force: true });
   }
+}
+
+/** A stage file of `bytes` leaves EXPORT_STAGE_FREE_RESERVE free on the staging filesystem. */
+function fitsStageDisk(directory: string, bytes: number): boolean {
+  const free = statfsSync(directory);
+  return bytes + EXPORT_STAGE_FREE_RESERVE <= Number(free.bavail) * Number(free.bsize);
 }
 
 function stageCapacityError(): Error {

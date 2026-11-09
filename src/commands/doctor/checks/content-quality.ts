@@ -14,6 +14,7 @@ import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { agentFix, checkError, doctorVerify, withSkippedSegmented } from '../check-fix.ts';
 import { scanDeadline } from '../budget.ts';
+import { readPageBodyPolicy } from '../../../core/page-body/limits.ts';
 import { boundUnknownDetails } from '../bounded-unknown.ts';
 
 /** Oversized pages `oversized_pages` lists before it reports a floor. */
@@ -32,7 +33,8 @@ async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
   //
   // - oversized_pages: indexed-free table scan (~100ms on 100K-page brains)
   //   counting pages whose body (compiled_truth + timeline, UTF-8 bytes
-  //   via octet_length per Codex r2 #13) exceeds the block threshold.
+  //   via octet_length per Codex r2 #13; body_bytes for a segmented page)
+  //   exceeds the block threshold.
   //   Status warn when 1+ rows; never fail (oversize is now a soft state).
   //   Excludes frontmatter.embed_skip pages via the canonical
   //   EMBED_SKIP_FILTER_FRAGMENT (src/core/embed-skip.ts) — key existence,
@@ -57,18 +59,25 @@ async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
   try {
     // #6526: the write gate's bytes_block (the DB config plane over file and env),
     // so a `gbrain config set content_sanity.bytes_block N` reaches this check too.
-    const bytesBlock = await (await import('../../../core/import-screen.ts')).effectiveBytesBlock(engine);
+    const { effectiveBytesBlock, loadImportSanityConfig } = await import('../../../core/import-screen.ts');
+    const bytesBlock = await effectiveBytesBlock(engine);
+    // Wave C 1E: a segmented page is sized by body_bytes against the block its streamed import judges it by
+    // (content_sanity.bytes_block, or unset the page ceiling; none while content sanity is off), not skipped.
+    const sanity = await loadImportSanityConfig(engine);
+    const segmentedBlock = sanity.disabled ? null : (sanity.cs.bytes_block ?? (await readPageBodyPolicy(engine)).maxBytes);
     // #1871: engine.executeRaw, not the dead-on-PGLite postgres singleton.
     const rows = await engine.executeRaw<{ slug: string; source_id: string; bytes: number }>(
       `SELECT p.slug, p.source_id,
-              octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) AS bytes
+              CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes
+                   ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END AS bytes
        FROM pages p
        WHERE p.deleted_at IS NULL
          AND ${EMBED_SKIP_FILTER_FRAGMENT}
-         AND (octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, ''))) > $1
+         AND CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes > $2::bigint
+                  ELSE (octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, ''))) > $1 END
        ORDER BY bytes DESC
        LIMIT ${OVERSIZED_LIST_LIMIT + 1}`,
-      [bytesBlock],
+      [bytesBlock, segmentedBlock],
     );
     // #7145: a full list means more pages exceed the block; the count is then a floor.
     const capped = rows.length > OVERSIZED_LIST_LIMIT;
@@ -80,11 +89,8 @@ async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
          AND (octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, ''))) <= $1`, [bytesBlock]);
     const backfillable = Number(skipped?.n ?? 0);
     const chunklessMarked = Number(skipped?.chunkless ?? 0);
-    // Decision #10: a segmented page's body columns are NULL, so both size scans above pass it by.
-    const [segmented] = await engine.executeRaw<{ n: number }>(`SELECT COUNT(*)::int AS n FROM pages p WHERE p.deleted_at IS NULL AND p.body_storage = 'segmented'`).catch(() => []);
-    const oversizedCheck = (check: Check) => checks.push(withSkippedSegmented(check, Number(segmented?.n ?? 0)));
     if (backfillable > 0) {
-      oversizedCheck({
+      checks.push({
         name: 'oversized_pages',
         status: 'warn',
         // #7184: a marked page keeps its chunks once healed or rewritten, so say how many are truly invisible.
@@ -96,7 +102,7 @@ async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
           'oversized_pages', { docs: 'docs/guides/memory-boundaries.md#large-pages-upgrade' }),
       });
     } else if (rows.length === 0) {
-      oversizedCheck({
+      checks.push({
         name: 'oversized_pages',
         status: 'ok',
         message: `No pages exceed ${bytesBlock} bytes (excluding embed_skip pages, which already took the accepted non-embeddable remediation)`,
@@ -106,7 +112,7 @@ async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
       const top = oversizeRows.slice(0, 3)
         .map(r => `${r.slug} (${r.bytes}b, src=${r.source_id})`)
         .join('; ');
-      oversizedCheck({
+      checks.push({
         name: 'oversized_pages',
         status: 'warn',
         details: { count: Math.min(rows.length, OVERSIZED_LIST_LIMIT), exact: !capped, ...(capped ? { limit: OVERSIZED_LIST_LIMIT } : {}) },

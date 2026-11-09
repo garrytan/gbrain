@@ -136,6 +136,7 @@ export const HANDLER_COVERAGE: Record<string, { covered: ContractCase } | { exem
   'consolidate': { exempt: 'dream consolidate phase over the facts table; not scoped to a connector source' },
   'contextual_reindex_per_chunk': { exempt: 'chunk-level reindex child of contextual retrieval; writes content_chunks only (unguarded)' },
   'embed': { exempt: 'chunk embedding; writes content_chunks only (unguarded); embed_backfill drives the source-scoped path' },
+  'embed-page': { exempt: 'one segmented page in bounded slices; writes content_chunks vectors and the embedding ledger only (derived); the embed_backfill fixture pages are below the segmentation threshold, so nothing is delegated to it here; driven in test/large-pages/embedding-at-scale.test.ts' },
   'embed-catch-up': { exempt: 'brain-wide embedding catch-up over the same path embed_backfill drives' },
   'enrich': { exempt: 'operator-requested entity enrichment; not an automatic connector job' },
   'extract-ner': { exempt: 'opt-in NER over checkout sources; not dispatched for connector sources' },

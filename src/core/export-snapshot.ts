@@ -5,11 +5,12 @@ import { rowToPage } from './utils.ts';
 import { EXPORT_PAYLOAD_LIMIT } from './export-stage.ts';
 import { isSegmentedPage } from './page-body/page-shape.ts';
 import { openSegmentedBody, readBodyRange, type BodyLedger } from './page-body/read-range.ts';
+import { assertRowsTile } from './page-body/body-tiling.ts';
 import { TIMELINE_SEPARATOR } from './page-window/document.ts';
 import type { Page } from './types.ts';
 import { serializeMarkdown, slugStampedFrontmatter } from './markdown.ts';
 
-const EXPORT_COLLECT_BYTES = 1024 * 1024;
+const EXPORT_COLLECT_BYTES = 64 * 1024 * 1024;
 
 /** Withdrawals are entity-scoped: `subject` is the entity slug, '*' applies to every page. */
 export type ExportWithdrawal = PageWithdrawal & { subject: string };
@@ -114,10 +115,16 @@ function applicableWithdrawals(slug: string, withdrawals: ExportWithdrawal[]): P
  * once (readBodyRange, trusted stored body) under `ledger` (export: `exportBodyLedger`, the overlay readExportPage gives
  * an inline page; a restore: the page snapshot's), so the bytes are those serializeMarkdown gives the same page read inline. A full collection every EXPORT_COLLECT_BYTES read keeps the
  * reads' garbage (protocol buffers, decoded texts) from piling up as in the streamed import (ingest.ts): a 127 MiB page
- * peaked ~700 MiB above a 2 MiB one without it, 8-55 MiB with it.
+ * peaked ~700 MiB above a 2 MiB one without it.
+ *
+ * With `pinned` the body read is that generation's, outside the snapshot that read `page` (export streams after its
+ * snapshot commits, holding a read pin on the generation, page-body/read-pins.ts): its rows must tile the snapshot's
+ * body_bytes, so a generation collected or changed since refuses (page_body_rows_unreadable) instead of a short file.
  */
-export async function* segmentedExportMarkdown(tx: BrainEngine, page: Pick<Page, 'id'>, ledger: BodyLedger, head: string, revision?: string): AsyncIterable<Uint8Array | string> {
-  const body = await openSegmentedBody(tx, { pageId: page.id, ledger, ...(revision !== undefined ? { pin: { revision } } : {}) });
+export async function* segmentedExportMarkdown(tx: BrainEngine, page: Pick<Page, 'id' | 'slug' | 'source_id' | 'body_bytes'>, ledger: BodyLedger, head: string,
+  revision?: string, pinned?: number): AsyncIterable<Uint8Array | string> {
+  const body = await openSegmentedBody(tx, { pageId: page.id, ledger, ...(revision !== undefined ? { pin: { revision } } : {}), ...(pinned !== undefined ? { generation: pinned } : {}) });
+  if (pinned !== undefined) assertRowsTile(body.rows, { slug: page.slug, sourceId: page.source_id, total: Number(page.body_bytes ?? 0) });
   let uncollected = 0;
   const collect = (bytes: number) => {
     uncollected += bytes;

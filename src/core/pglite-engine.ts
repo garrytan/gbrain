@@ -1820,10 +1820,10 @@ export class PGLiteEngine implements BrainEngine {
     return chunksImpl.getChunks(scopedRead(this.engineSql), column, slug, { sourceIds, sourceId }, opts);
   }
 
-  async getChunkPage(slug: string, opts: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; requireSafeChunks?: boolean; fromIndex: number; limit: number }) {
+  async getChunkPage(slug: string, opts: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; requireSafeChunks?: boolean; fromIndex: number; limit: number; cursor?: string }) {
     const sourceIds = opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : undefined;
     const column = (await resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })).name;
-    return chunksImpl.getChunkPage(scopedRead(this.engineSql), column, slug, { sourceIds, sourceId: opts.sourceId ?? 'default' }, opts);
+    return chunksImpl.getChunkPage(scopedRead(this.engineSql), column, slug, { sourceIds, sourceId: opts.sourceId ?? 'default' }, opts, this);
   }
 
   /** S2: quoted identifier of the registry-ACTIVE embedding column for the
@@ -1835,7 +1835,7 @@ export class PGLiteEngine implements BrainEngine {
     return quoteIdentifier(col.name);
   }
 
-  async countStaleChunks(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean }): Promise<number> {
+  async countStaleChunks(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; excludeSegmented?: boolean }): Promise<number> {
     const column = (await resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })).name;
     return chunksImpl.countStaleChunks(scopedRead(this.engineSql), column, opts);
   }
@@ -1866,6 +1866,7 @@ export class PGLiteEngine implements BrainEngine {
     sourceId?: string;
     orderBy?: 'page_id' | 'updated_desc';
     afterUpdatedAt?: string | null;
+    excludeSegmented?: boolean;
   }): Promise<StaleChunkRow[]> {
     const column = (await resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })).name;
     return chunksImpl.listStaleChunks(scopedRead(this.engineSql), column, opts);

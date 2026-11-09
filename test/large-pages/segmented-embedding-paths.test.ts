@@ -80,8 +80,8 @@ for (const kind of testBackends()) {
       `SELECT cc.chunk_index FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
         WHERE p.slug = $1 AND cc.embedding IS NOT NULL ORDER BY cc.chunk_index`, [slug])).map(r => Number(r.chunk_index));
 
-    /** A large (metered) segmented page of six vector-less rows, chunk_index 0..5. */
-    const sixRowPage = () => segmentPage(engine, SLUG, { generation: 1, bodyBytes: 4 * 1024 * 1024,
+    /** A large (metered) segmented conversation page of six vector-less rows, chunk_index 0..5 (newest first, Wave C 1F). */
+    const sixRowPage = () => segmentPage(engine, SLUG, { generation: 1, bodyBytes: 4 * 1024 * 1024, type: 'conversation',
       occurrences: [{ id: 1, byteStart: 0, genFrom: 1, chunks: [0, 1, 2, 3, 4, 5].map(i => ({ text: ROW_TEXT(i), chunkIndex: i })) }] });
 
     test('an approval raises the cap once per run: later keyset batches spend under it, newest rows first', async () => {
