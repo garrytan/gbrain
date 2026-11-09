@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { reconcileCheckout } from '../src/core/git/reconcile.ts';
+import { reconcileCheckout, upstreamFetch } from '../src/core/git/reconcile.ts';
 import { reconcileSources } from '../src/commands/sources-git-reconcile.ts';
 import { runSources } from '../src/commands/sources.ts';
 import { REFRESH_PUBLISH_DIVERGED_KEY } from '../src/core/persistence/worktree-refresh.ts';
@@ -71,6 +71,13 @@ const refusal = async (p: Promise<unknown>) => p.then(() => { throw new Error('e
 const childEnv = { ...identity, GBRAIN_JOB_CHILD_CLI: childCli };
 const reconcile = (root: string) => withEnv(childEnv, () => reconcileCheckout(root));
 const reconcileAll = (engine: BrainEngine, ids?: string[]) => withEnv(childEnv, () => reconcileSources(engine, ids ? { sourceIds: ids } : {}));
+
+test('the upstream fetch carries the transport hardening of every other remote git call and never prompts', () => {
+  const { argv, env } = upstreamFetch('/checkout', 'origin', 'main');
+  expect(argv).toEqual(expect.arrayContaining(['http.followRedirects=false', 'protocol.ext.allow=never']));
+  expect(argv.indexOf('--no-recurse-submodules')).toBeGreaterThan(argv.indexOf('fetch'));
+  expect(env).toMatchObject({ GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' });
+});
 
 test('no Git checkout and no upstream report themselves and change nothing', async () => {
   const plain = join(dir, 'plain'); mkdirSync(plain);

@@ -10,6 +10,7 @@
 import { execFileBounded } from '../bounded-child-exec.ts';
 import { classifyGitCheckout } from '../git-checkout.ts';
 import { gitChildEnv } from '../git-env.ts';
+import { GIT_ENV_AUTH, GIT_SSRF_SUBCOMMAND_FLAGS, ownRemoteTransportFlags } from '../git-transport.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { acquireNativeLock } from '../persistence/native-lock.ts';
 import { CHILD_ENV, resolveChildCliInvocation } from '../minions/job-isolation.ts';
@@ -35,6 +36,12 @@ export function gitReader(root: string, timeoutMs = 120_000): GitRead {
   };
 }
 
+/** The upstream fetch: the checkout's own remote, with transport hardening (no redirects, no external helpers, no submodules) and credentials allowed but never a prompt. */
+export function upstreamFetch(root: string, remote: string, ref: string): { argv: string[]; env: NodeJS.ProcessEnv } {
+  return { argv: ['-C', root, ...ownRemoteTransportFlags(), '-c', 'core.logAllRefUpdates=true', 'fetch', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--no-tags', '--quiet', remote, ref],
+    env: gitChildEnv({ ...GIT_ENV_AUTH }) };
+}
+
 /** Fetch the branch's upstream (logging the tracking ref's move, so a later rewrite check has a record) and count both sides; null without an upstream. */
 export async function fetchLevel(root: string, read: GitRead, fetchTimeoutMs = 120_000): Promise<CheckoutLevel | null> {
   const branch = (await read(['symbolic-ref', '--quiet', '--short', 'HEAD'], 1)).stdout.trim();
@@ -44,12 +51,11 @@ export async function fetchLevel(root: string, read: GitRead, fetchTimeoutMs = 1
   const remote = (await read(['config', '--get', `branch.${branch}.remote`], 1)).stdout.trim();
   const merge = (await read(['config', '--get', `branch.${branch}.merge`], 1)).stdout.trim();
   if (remote && remote !== '.') {
-    let fetched = await execFileBounded('git', ['-C', root, '-c', 'core.logAllRefUpdates=true', 'fetch', '--no-tags', '--quiet', remote, merge || branch],
-      { timeout: fetchTimeoutMs, env: gitChildEnv({ GIT_TERMINAL_PROMPT: '0' }) });
+    const fetch = upstreamFetch(root, remote, merge || branch);
+    let fetched = await execFileBounded('git', fetch.argv, { timeout: fetchTimeoutMs, env: fetch.env });
     for (let attempt = 1; fetched.error && attempt < 4 && /cannot lock ref|unable to update local ref/.test(String(fetched.stderr)); attempt++) {
       await new Promise(resolve => setTimeout(resolve, 250 * attempt));
-      fetched = await execFileBounded('git', ['-C', root, '-c', 'core.logAllRefUpdates=true', 'fetch', '--no-tags', '--quiet', remote, merge || branch],
-        { timeout: fetchTimeoutMs, env: gitChildEnv({ GIT_TERMINAL_PROMPT: '0' }) });
+      fetched = await execFileBounded('git', fetch.argv, { timeout: fetchTimeoutMs, env: fetch.env });
     }
     if (fetched.error) throw opError('fetch_failed', `git fetch ${remote} failed in ${root} (${String(fetched.stderr).trim().split('\n')[0] || fetched.error.message}); nothing changed.`,
       'Check the remote and its credentials, then retry.', { retryable: true });

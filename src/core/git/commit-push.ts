@@ -31,7 +31,7 @@ import { scanRange } from './range-secret-scan.ts';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { execFileSync } from '../spawn.ts';
 import { gitChildEnv, literalPathspecs } from '../git-env.ts';
-import { GIT_ENV, GIT_ENV_AUTH, GIT_SSRF_SUBCOMMAND_FLAGS, durableSsrfFlags } from '../git-transport.ts';
+import { GIT_ENV, GIT_ENV_AUTH, GIT_SSRF_SUBCOMMAND_FLAGS, ownRemoteTransportFlags as transportFlags } from '../git-transport.ts';
 import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesystemRootFor, type ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
 import { acquireNativeLock, acquireNativeLockSync, type NativeLockSyncHandle } from '../persistence/native-lock.ts';
 import { recordCommit, recordIntent } from './commit-ledger.ts';
@@ -173,20 +173,6 @@ function gitOk(root: string, args: string[], what: string, opts: Parameters<type
       `Run git status in ${root}, fix what git reports, then rerun the same gbrain git commit-push command.`);
   }
   return r.stdout.trim();
-}
-
-/**
- * Transport flags for this checkout's OWN configured remotes: no redirects, no
- * external helpers, no submodule fetch surface. The file protocol keeps git's
- * default (`user`): a bare repo on the same host is a supported brain topology
- * (the pre-#6530 helper pushed to it with plain git), and the URL is the
- * operator's own config, not remote-supplied input. GBRAIN_GIT_ALLOW_FILE_TRANSPORT
- * still forces `always` for tests.
- */
-function transportFlags(): string[] {
-  return durableSsrfFlags().flatMap((flag, i, all) =>
-    all[i - 1] === '-c' && flag.startsWith('protocol.file.allow=') && process.env.GBRAIN_GIT_ALLOW_FILE_TRANSPORT !== '1'
-      ? ['protocol.file.allow=user'] : [flag]);
 }
 
 /** Remote operations: transport hardening on every call, credentials allowed, no prompt. */
