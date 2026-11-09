@@ -20,7 +20,7 @@ import { dirname, join, resolve } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
-import { pushGitRoot } from '../src/core/persistence/effect-git.ts';
+import { commitGitTargets, pushGitRoot } from '../src/core/persistence/effect-git.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
 import { localHostId, registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { admitWrite, claimNextWrite } from '../src/core/persistence/journal.ts';
@@ -443,4 +443,37 @@ describe('#8896 through the effect worker', () => {
       expect(remoteTip(c)).toBe(git(c.root, 'rev-parse', 'HEAD').trim());
     });
   }, 240_000);
+});
+
+describe('#8896 the Git effect commit is made by plumbing', () => {
+  /** A committed repository at `root` with notes/a.md, ready for commitGitTargets. */
+  function repo(root: string): void {
+    mkdirSync(join(root, 'notes'), { recursive: true });
+    git(root, 'init', '-q', '-b', 'main');
+    git(root, 'config', 'user.name', 'Example Writer'); git(root, 'config', 'user.email', 'writer@example.invalid');
+    writeFileSync(join(root, 'notes', 'a.md'), 'Before\n');
+    git(root, 'add', 'notes/a.md'); git(root, 'commit', '-q', '-m', 'Initial');
+  }
+
+  test('a checkout whose path holds a newline commits', async () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-8896-'))); dirs.push(home);
+    const root = join(home, 'line\nbreak-brain');
+    repo(root);
+    writeFileSync(join(root, 'notes', 'a.md'), 'After\n');
+    const outcome = await withEnv({ GBRAIN_HOME: join(home, 'gbrain-home') }, () => commitGitTargets(root, ['notes/a.md']));
+    expect(outcome.get('notes/a.md')).toEqual({ git: 'committed' });
+    expect(git(root, 'show', 'HEAD:notes/a.md')).toBe('After\n');
+  }, 60_000);
+
+  test('an index another process reset after staging fails the commit instead of committing the old bytes', async () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-8896-'))); dirs.push(home);
+    const root = join(home, 'brain');
+    repo(root);
+    const before = git(root, 'rev-parse', 'HEAD').trim();
+    writeFileSync(join(root, 'notes', 'a.md'), 'After\n');
+    const PATH = racingGit({ home, root, remote: '', other: '', cli: '' }, ['diff --cached'], 'after', `{git} -C '${root}' reset -q`);
+    const outcome = await withEnv({ PATH, GBRAIN_HOME: join(home, 'gbrain-home') }, () => commitGitTargets(root, ['notes/a.md']));
+    expect(outcome.get('notes/a.md')).toBeInstanceOf(Error);
+    expect(git(root, 'rev-parse', 'HEAD').trim()).toBe(before);
+  }, 60_000);
 });

@@ -374,7 +374,7 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
     mkdirSync(persistenceHome(), { recursive: true, mode: 0o700 });
     const scratch = mkdtempSync(join(persistenceHome(), 'effect-commit-'));
     let created: string | null;
-    try { created = await effectCommit(session, root, scratch, commitPaths, wanted, commitMessage(commitPaths, noted).map(stripspace).filter(Boolean), noted); }
+    try { created = await effectCommit(session, root, prefix, scratch, commitPaths, wanted, commitMessage(commitPaths, noted).map(stripspace).filter(Boolean), noted); }
     finally { rmSync(scratch, { recursive: true, force: true }); }
     const outcome = created ? { git: 'committed' } : gitFailure('Cannot commit the canonical Git target.',
       `git commit failed for ${commitPaths.length} file(s); a missing Git identity (user.name, user.email) in that checkout is one cause to check.`);
@@ -399,23 +399,24 @@ export function stripspace(paragraph: string): string {
  * secret scan skips an effect commit only by this recorded sha, so an amend, reset or reword is a different commit and
  * is scanned. The record is `verified` only when every path's staged blob is the bytes the effect wrote (`wanted`: the
  * sha256 the effect recorded, null for a removal, '' for none known): the file, read once, hashes to it and has the
- * staged blob's id; an outside edit that reached the index first fails that, and the commit is scanned.
+ * staged blob's id; an outside edit that reached the index first fails that, and the commit is scanned. An index that
+ * no longer holds what was staged (an entry for a file that is gone, none for one on disk), or a tree that equals
+ * HEAD's, fails the commit, so the effect retries rather than reporting a commit of the wrong state.
  */
-async function effectCommit(session: GitSession, root: string, scratch: string, paths: string[],
+async function effectCommit(session: GitSession, root: string, prefix: string, scratch: string, paths: string[],
   wanted: ReadonlyMap<string, string | null>, paragraphs: string[], noted: ReadonlyMap<string, GitCommitNote>): Promise<string | null> {
-  const layout = await git(session, ['rev-parse', '--show-toplevel', '--show-prefix', '--show-object-format']);
+  const format = await git(session, ['rev-parse', '--show-object-format']);
   const listed = await git(session, ['ls-files', '-s', '-z', '--', ...literalPathspecs(paths)]);
-  if (layout.code !== 0 || listed.code !== 0) return null;
-  const [top, prefix, format] = layout.stdout.split('\n');
+  if (format.code !== 0 || listed.code !== 0) return null;
   const staged = new Map(listed.stdout.split('\0').filter(Boolean).map(entry => {
     const [mode, oid, stage] = entry.slice(0, entry.indexOf('\t')).split(' ');
     return [entry.slice(entry.indexOf('\t') + 1), { mode: mode!, oid: oid!, stage: stage! }] as const;
   }));
-  if ([...staged.values()].some(entry => entry.stage !== '0')) return null;
+  if ([...staged.values()].some(entry => entry.stage !== '0') || paths.some(path => staged.has(path) !== existsSync(join(root, path)))) return null;
   const verified = paths.every(path => {
     const hash = wanted.get(path), entry = staged.get(path);
     if (hash === undefined || hash === '') return false;
-    return hash === null ? !entry : !!entry && entry.mode.startsWith('100') && fileDigests(join(root, path), format!) === `${hash} ${entry.oid}`;
+    return hash === null ? !entry : !!entry && entry.mode.startsWith('100') && fileDigests(join(root, path), format.stdout.trim()) === `${hash} ${entry.oid}`;
   });
   const trailers = [...noted.values()].flatMap(note => note.trailers ?? []);
   const supersedes = supersededBy(trailers), adopted = adoptedBy(trailers);
@@ -424,21 +425,26 @@ async function effectCommit(session: GitSession, root: string, scratch: string, 
     const before = await git(session, ['rev-parse', '--verify', '--quiet', 'HEAD']);
     const head = before.code === 0 ? before.stdout.trim() : null;
     await recordIntentAsync(root, { writer: 'effect', head_before: head, message: paragraphs.join('\n\n') });
-    const index: GitSession = { ...session, root: top!, indexFile: join(scratch, `index-${attempt}`) };
-    const removals = paths.filter(path => !staged.has(path)).map(path => prefix + path);
+    // update-index reads --cacheinfo paths from the toplevel and --force-remove paths from the working directory (root).
+    const index: GitSession = { ...session, indexFile: join(scratch, `index-${attempt}`) };
+    const removals = paths.filter(path => !staged.has(path));
     const entries = paths.flatMap(path => { const entry = staged.get(path); return entry ? ['--cacheinfo', `${entry.mode},${entry.oid},${prefix}${path}`] : []; });
     if ((await git(index, head ? ['read-tree', head] : ['read-tree', '--empty'])).code !== 0
       || entries.length && (await git(index, ['update-index', '--add', ...entries])).code !== 0
       || removals.length && (await git(index, ['update-index', '--force-remove', '--', ...removals])).code !== 0) return null;
     const tree = await git(index, ['write-tree']);
-    if (tree.code !== 0) return null;
+    const base = head ? await git(session, ['rev-parse', '--verify', '--quiet', `${head}^{tree}`]) : null;
+    if (tree.code !== 0 || base && (base.code !== 0 || base.stdout.trim() === tree.stdout.trim())) return null;
     const commit = await git(session, ['commit-tree', tree.stdout.trim(), ...(head ? ['-p', head] : []), ...message]);
     if (commit.code !== 0) return null;
     const created = commit.stdout.trim();
     await recordCommitAsync(root, { sha: created, writer: 'effect', ...(verified ? { verified: true } : {}),
       ...(supersedes.length ? { supersedes } : {}), ...(adopted.length ? { adopted } : {}) });
     const moved = await git(session, ['update-ref', '-m', `commit: ${paragraphs[0]!.split('\n')[0]}`, 'HEAD', created, head ?? '']);
-    if (moved.code === 0) return created;
+    if (moved.code === 0) {
+      await git(session, ['maintenance', 'run', '--auto', '--quiet']).catch(() => undefined);
+      return created;
+    }
     if (attempt) return null;
   }
 }
