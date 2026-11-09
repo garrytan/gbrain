@@ -260,7 +260,9 @@ read back only by that member, written remotely by no one else), and `delta` cur
 (`get_write_request`, `list_write_requests`, `cancel_write_request`) and agent
 jobs (`submit_agent`, `get_agent_job`) belong to the person they were made for.
 QM's memory pair, `memory_recall` and `memory_write`, reads and saves that
-person's facts ([QM guide](../guides/qm.md)); `forget` and `forget_fact` withdraw
+person's facts ([QM guide](../guides/qm.md)); the personal tools of its contract v3
+(`query`, `get_page`, `whois`, `context_pack` and the rest) stay out of the default
+list, so add each to `--attest-ops` only for the client serving the person's own DM; `forget` and `forget_fact` withdraw
 only a fact on the person's own page (also for a credential bound to a member).
 A request carrying `x-qm-audience` is refused (`audience_not_supported`). Not attestable yet, because what they
 read or write is not yet kept to the person: `list_write_conflicts`, `capture`,
