@@ -55,6 +55,8 @@ export { assertValidSlugPrefixes } from './grants/encoding.ts';
 
 import type { SqlQuery, SqlValue } from './sql-query.ts';
 import { storedMinTrust } from './trust/tier.ts';
+import { tokenMemberBinding } from './access/token-binding.ts';
+import { withAttestRight } from './access/actor-model.ts';
 export type { SqlQuery, SqlValue };
 
 export interface AgentClientBindings {
@@ -572,6 +574,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
   // for both the SDK's public-client route and our confidential-client route.
   readonly skipLocalPkceValidation = true;
   private sql: SqlQuery;
+  private transaction?: OAuthTransaction;
   private _clientsStore: GBrainClientsStore;
   private readonly dcrDisabled: boolean;
   private tokenTtl: number;
@@ -580,6 +583,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
   constructor(options: GBrainOAuthProviderOptions) {
     this.sql = options.sql;
+    this.transaction = options.transaction;
     this.dcrDisabled = options.dcrDisabled === true;
     this.tokenTtl = options.tokenTtl || 3600;
     this.refreshTtl = options.refreshTtl || 30 * 24 * 3600;
@@ -690,7 +694,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     let oauthRows: Record<string, unknown>[];
     try {
       oauthRows = await this.sql`
-        SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+        SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes, to_jsonb(t)->>'grant_type' AS token_grant,
                (to_jsonb(c) - 'client_secret_hash') AS current_grant,
                EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
                  AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
@@ -883,6 +887,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         token,
         clientId: row.client_id as string,
         principal: { kind: 'oauth_client', id: row.client_id as string },
+        ...withAttestRight(await tokenMemberBinding(this.sql, currentGrant.member_id, currentGrant.may_act_for), currentGrant, row.token_grant),
         clientName: (row.client_name as string | null) ?? undefined,
         scopes: effectiveScopes,
         issuedScopes,
@@ -954,6 +959,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         token,
         clientId: name,
         principal: { kind: 'legacy_token', id: String(legacyRows[0].id) },
+        ...withAttestRight(await tokenMemberBinding(this.sql, legacyRows[0].member_id, legacyRows[0].may_act_for), legacyRows[0], 'legacy'),
         clientName: name,
         scopes: grant.scopes,
         ...(grant.allowedOperations === null ? {} : { allowedOperations: grant.allowedOperations }),
@@ -1123,7 +1129,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       const grant = { ...initial, ...changes, revision: 1 };
       grant.boundBrainId = normalizeGrantBrain(grant.boundBrainId);
       validateClientGrant(grant, await grantValidationContext(this.sql));
-      await insertClientGrant(this.sql, grant, { secretHash, redirectUris, grantTypes, authMethod, issuedAt: now });
+      // GST-1113: with a transaction, the scope-source check and the insert commit together under the source row locks.
+      const metadata = { secretHash, redirectUris, grantTypes, authMethod, issuedAt: now };
+      await (this.transaction ? this.transaction(sql => insertClientGrant(sql, grant, metadata)) : insertClientGrant(this.sql, grant, metadata));
       return { clientId, clientSecret };
     }
     if (grantPatch || hasScope(parseScopeString(scopes), 'agent')) {

@@ -180,6 +180,14 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async (engine, scope) => (await import('./checks/frontmatter-hook.ts')).frontmatterHookCheck(engine, scope.sourceIds),
   },
   {
+    id: 'url_source_origin', resolution: 'operator', registration: 'wave',
+    hostOnly: 'Which caller added a source is a decision only the brain host operator can record.',
+    count: d => Number(d.count ?? 0),
+    impact: 'Some URL source clones have no record of who added them, so their reclones use the clone settings of a local add',
+    instruction: 'Ask the user which of the listed sources a remote caller added; on the brain host, preview `gbrain sources record-origin <id>... --remote` (`--local` for the rest), then rerun it with --apply.',
+    run: async engine => (await import('./checks/url-source-origin.ts')).urlSourceOriginCheck(engine),
+  },
+  {
     id: 'orphan_persistence_bindings', resolution: 'repair', registration: 'wave',
     hostOnly: 'Bindings of removed sources are brain-wide persistence bookkeeping outside any source scope.',
     count: d => Number(d.count ?? 0),
@@ -190,8 +198,8 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     id: 'foreign_ownership_marker', resolution: 'operator', registration: 'wave',
     hostOnly: 'Ownership markers are private files beside the source checkouts on the brain host.',
     count: d => Number(d.count ?? 0),
-    impact: 'An ownership marker beside a source checkout names another brain or an unknown worktree, so claiming that checkout refuses recovery_required',
-    instruction: 'Confirm with the user that the recorded brain is retired, then remove exactly the marker file doctor names on the brain host and claim again (docs/guides/write-refusals.md#foreign-ownership-marker); never remove a marker of a brain still in use.',
+    impact: 'An ownership marker beside a source checkout names another brain or an unknown worktree, or other users can read it, so claiming or writing that checkout refuses recovery_required',
+    instruction: 'A marker other users can read: run the chmod 600 doctor names on the brain host, never remove it. A marker of another brain: confirm with the user that the recorded brain is retired, then remove exactly the marker file doctor names on the brain host and claim again (docs/guides/write-refusals.md#foreign-ownership-marker); never remove a marker of a brain still in use.',
     run: async engine => (await import('./checks/orphan-bindings.ts')).checkForeignOwnershipMarkers(engine),
   },
   {
@@ -257,6 +265,14 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     instruction: 'Run `gbrain upgrade` on each host doctor names (by host UUID), then restart its gbrain processes; the hold clears seven days after that writer\'s last request.',
     count: d => (Array.isArray(d.blockers) ? d.blockers.length : 0),
     run: async engine => (await import('./checks/segmented-storage.ts')).segmentedStorageCheck(engine),
+  },
+  {
+    id: 'segmented_tiling', resolution: 'operator', registration: 'doctor.ts',
+    hostOnly: 'It lists page slugs, and the repair it names runs only from the trusted local CLI on the brain host.',
+    impact: 'Some pages stored in segments have segment rows that do not cover their body, so every read of them refuses and sync holds their files',
+    instruction: 'Preview `gbrain repair segmented-tiling --source <id>` (read-only), show the user the listing, and apply it with the printed --expect hash only after they agree; it republishes each page from its file at HEAD and never runs automatically.',
+    count: d => (Array.isArray(d.pages) ? d.pages.length : 0),
+    run: async (engine, scope) => (await import('./checks/segmented-tiling.ts')).segmentedTilingCheck(engine, scope.sourceIds),
   },
   {
     id: 'self_capture', resolution: 'operator', registration: 'wave',
@@ -349,6 +365,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     count: d => Number(d.evidenced ?? 0) + Number(d.ambiguous ?? 0),
     impact: 'Some conversation-extractor facts were expired by the pre-v0.60.11.0 canonical projection and recall no longer returns them',
     run: async (engine, scope) => (await import('./checks/extractor-facts.ts')).extractorFactsCheck(engine, scope.sourceIds),
+  },
+  {
+    id: 'unwithdrawn_facts', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Restoring facts a facts-fence generation retired without a withdrawal is a host-side, explicit-only repair.',
+    count: d => Number(d.evidenced ?? 0) + Number(d.ambiguous ?? 0),
+    impact: 'Some facts were retired by a facts-fence generation although no fence of their page held them, and recall no longer returns them',
+    run: async (engine, scope) => (await import('./checks/unwithdrawn-facts.ts')).unwithdrawnFactsCheck(engine, scope.sourceIds),
   },
   {
     id: 'conversation_label_facts', resolution: 'repair', registration: 'wave',

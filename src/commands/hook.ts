@@ -124,6 +124,7 @@ import { HOOK_SUBCOMMANDS as HOOK_EVENTS, ROUTERS, subcommandHelpRequested } fro
 import { isManagedFilesystemPath } from '../core/persistence/filesystem-guard.ts';
 import { brainFirstTurnRule } from '../core/setup/brain-first.ts';
 import { TURN_RULE_LANE, turnRuleHookYields } from '../core/setup/turn-hook.ts';
+import { captureHookSessionCwd, hookSessionCwd } from '../core/setup/hook-launcher.ts';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 
@@ -200,7 +201,7 @@ export interface HookIo {
   stdin?: string;
   /** Injected stdout sink; default process.stdout.write. */
   write?: (s: string) => void;
-  /** Workspace dir override; default stdin JSON `cwd` → process.cwd(). */
+  /** Workspace dir override; default stdin JSON `cwd` → the session directory (GBRAIN_HOOK_CWD from the hook launcher, else process.cwd()). */
   cwd?: string;
   /** TEST SEAM: transcript confinement root (default ~/.claude/projects). */
   transcriptRoot?: string;
@@ -282,6 +283,7 @@ All events fail open: errors exit 0 with empty stdout and a heartbeat entry at
 
 /** Dispatch a hook event. Returns the process exit code (0 for every runtime path). */
 export async function runHook(args: string[], io: HookIo = {}): Promise<number> {
+  captureHookSessionCwd();
   const event = args[0];
   if (subcommandHelpRequested(args, ROUTERS.hook)) {
     write(io, USAGE + '\n');
@@ -329,7 +331,7 @@ export async function runHook(args: string[], io: HookIo = {}): Promise<number> 
         'session-end': 'SessionEnd',
         compact: 'PreCompact',
       }[event];
-      const dotClaude = join(io.cwd ?? process.cwd(), '.claude');
+      const dotClaude = join(io.cwd ?? hookSessionCwd(), '.claude');
       for (const file of ['settings.local.json', 'settings.json']) {
         const p = join(dotClaude, file);
         if (!existsSync(p)) continue;
@@ -348,9 +350,9 @@ export async function runHook(args: string[], io: HookIo = {}): Promise<number> 
     }
   }
   // Plugin lane (the Claude Code and Codex plugin manifests): yields to any other gbrain lane wiring this event.
-  if (process.env.GBRAIN_HOOK_LANE === 'plugin' && pluginHookYields(io.harness ?? 'claude-code', event, io.cwd ?? process.cwd())) return 0;
+  if (process.env.GBRAIN_HOOK_LANE === 'plugin' && pluginHookYields(io.harness ?? 'claude-code', event, io.cwd ?? hookSessionCwd())) return 0;
   // Turn-rule lane (src/core/setup/turn-hook.ts): rule only, and only when no other gbrain lane wires this event.
-  if (process.env.GBRAIN_HOOK_LANE === TURN_RULE_LANE && event === 'user-prompt' && turnRuleHookYields(io.harness ?? 'claude-code', io.cwd ?? process.cwd())) return 0;
+  if (process.env.GBRAIN_HOOK_LANE === TURN_RULE_LANE && event === 'user-prompt' && turnRuleHookYields(io.harness ?? 'claude-code', io.cwd ?? hookSessionCwd())) return 0;
 
   switch (event) {
     case 'session-start':
@@ -519,7 +521,7 @@ async function hookSessionStart(io: HookIo): Promise<number> {
 
   try {
     const j = await readStdinJson(io, 250);
-    const ws = io.cwd ?? (typeof j?.cwd === 'string' ? (j.cwd as string) : process.cwd());
+    const ws = io.cwd ?? (typeof j?.cwd === 'string' ? (j.cwd as string) : hookSessionCwd());
     const awaitServe = sessionStartAwaitsServe(j?.source, io.harness ?? 'claude-code', ws);
     const deadlineMs = awaitServe ? SESSION_START_SERVE_WAIT_DEADLINE_MS : SESSION_START_DEADLINE_MS;
     let serveNotReady = false;
@@ -736,7 +738,8 @@ function tryExecAsync(bin: string, args: string[], timeoutMs = HOOK_GIT_TIMEOUT_
     try {
       execFile(
         bin,
-        args,
+        // #8427: a checkout's .git/config core.fsmonitor names a command that `git status` runs; a hook probe never runs it.
+        bin === 'git' ? ['-c', 'core.fsmonitor=false', ...args] : args,
         { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, env: gitChildEnv() },
         (err, stdout) => resolve(err ? null : stdout.toString().trim()),
       );
@@ -748,13 +751,19 @@ function tryExecAsync(bin: string, args: string[], timeoutMs = HOOK_GIT_TIMEOUT_
 
 /**
  * Resolve the bootstrap workspace root for a hook event: the git toplevel of
- * `ws`, gated on an `initialized` agent.json manifest at that root. The gate
+ * `ws`, which must be the install receipt's workspace_dir (checked before any
+ * git runs, #8427) and hold an `initialized` agent.json manifest. The gate
  * is the security boundary — `gbrain hook <event>` run in an arbitrary repo
  * must never commit or push it. Shared by session-start and session-end.
  */
 async function resolveBootstrapWorkspaceRoot(ws: string): Promise<string | null> {
+  // #8427: only the receipt's workspace runs git; a checkout can supply its own initialized agent.json and .git/config.
+  const workspace = (() => { try { const w = readReceipt(resolveGbrainHome())?.workspace_dir; return w ? realpathOrResolve(w) : null; } catch { return null; } })();
+  if (!workspace) return null;
+  const at = realpathOrResolve(ws);
+  if (at !== workspace && !at.startsWith(workspace.endsWith('/') ? workspace : `${workspace}/`)) return null;
   const root = await tryExecAsync('git', ['-C', ws, 'rev-parse', '--show-toplevel']);
-  if (!root) return null;
+  if (!root || realpathOrResolve(root) !== workspace) return null;
   const manifest = readManifest(root);
   if (manifest.state !== 'initialized') return null; // not a bootstrap workspace
   return root;
@@ -1136,7 +1145,7 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     // Push failure wins the single banner slot; the monthly backup notice
     // rides the same rail (systemMessage + additionalContext) when no push
     // failure is pending. Both are cache/file readers, budgeted by the race.
-    turnRule = io.turnRule !== undefined ? io.turnRule : brainFirstTurnRule(io.harness ?? 'claude-code', io.cwd ?? process.cwd());
+    turnRule = io.turnRule !== undefined ? io.turnRule : brainFirstTurnRule(io.harness ?? 'claude-code', io.cwd ?? hookSessionCwd());
     // The turn-rule lane's connection may reach another brain, so it never reads this machine's context or banners.
     if (process.env.GBRAIN_HOOK_LANE === TURN_RULE_LANE) return { outcome: 'ok', reason: 'rule_only' };
     banner = io.disablePushBanner ? null : (pendingPushFailureBanner() ?? pendingBackupBanner());
@@ -1205,7 +1214,7 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     // keying material at all (no config, thin-client remote) — ENGINE-FREE
     // means no direct-engine fallback here; pull-mode covers it.
     const sessionId = typeof j.session_id === 'string' ? j.session_id : undefined;
-    const sourceId = await contextSource(io, cfg, sessionId, io.cwd ?? (typeof j.cwd === 'string' ? j.cwd : process.cwd()));
+    const sourceId = await contextSource(io, cfg, sessionId, io.cwd ?? (typeof j.cwd === 'string' ? j.cwd : hookSessionCwd()));
     const socketPath = await hookResolveSocketForConfig(cfg, sourceId);
     if (!socketPath) {
       return { outcome: 'degraded', reason: 'no_pglite_path' };
@@ -1401,7 +1410,7 @@ async function hookCompact(io: HookIo): Promise<number> {
     // any IPC. Written for EVERY engine config (the sweep backstop harvests it
     // when serve/IPC is unavailable). Per-step deadline degrades — a scan that
     // can't finish skips the segment ENTIRELY (never write unscanned content).
-    const { dir, stamp, source } = await sessionCorpus(io, cfg, sessionId, io.cwd ?? (typeof j.cwd === 'string' ? j.cwd : process.cwd()));
+    const { dir, stamp, source } = await sessionCorpus(io, cfg, sessionId, io.cwd ?? (typeof j.cwd === 'string' ? j.cwd : hookSessionCwd()));
     const speaker = hookSpeaker(io, dir, sessionId);
     if (speaker.bank !== true) { if (speaker.bank === 'failed') outcome = 'degraded'; reason = speaker.reason; return; }
     seatReasons = [...speaker.reasons, ...captureSeat(io, dir, sessionId, transcriptPath)];
@@ -1516,7 +1525,7 @@ async function hookStop(io: HookIo): Promise<number> {
       // #5820: the SessionEnd guard's fingerprint (#5413) — a turn from
       // gbrain's own claude-cli subprocess is never banked, or extracting it
       // spawns another claude-cli call that banks again.
-      const ws = io.cwd ?? (typeof j?.cwd === 'string' ? j.cwd : process.cwd());
+      const ws = io.cwd ?? (typeof j?.cwd === 'string' ? j.cwd : hookSessionCwd());
       if (isClaudeCliSelfTranscriptPath(conf.path) || isClaudeCliSelfTranscriptPath(ws)) return 'self_capture';
       const findLastUser = (parsed: ReturnType<typeof parseTranscript>): WindowTurn | undefined => {
         const index = parsed.genuineUserTurnIndexes.at(-1);
@@ -1612,7 +1621,7 @@ async function hookStop(io: HookIo): Promise<number> {
   // buffer append above and the heartbeat below are never at risk.
   let pushReason: string | undefined;
   try {
-    const ws = io.cwd ?? (typeof j?.cwd === 'string' ? (j.cwd as string) : process.cwd());
+    const ws = io.cwd ?? (typeof j?.cwd === 'string' ? (j.cwd as string) : hookSessionCwd());
     const raced = await withDeadline(STOP_PUSH_DEADLINE_MS, stopPushIfDue(ws, io));
     pushReason = raced === DEADLINE ? 'push_unavailable' : raced;
   } catch {
@@ -1725,7 +1734,7 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
   try {
     const j = await readStdinJson(io, 500);
     sessionId = sanitizeSessionId(j?.session_id);
-    ws = io.cwd ?? (typeof j?.cwd === 'string' ? (j.cwd as string) : process.cwd());
+    ws = io.cwd ?? (typeof j?.cwd === 'string' ? (j.cwd as string) : hookSessionCwd());
     const cfg = loadConfig();
     // ONE gate for the whole Memorable integration (memorableGateAllowed —
     // shared with the openclaw lane and doctor). Answered BEFORE the parse so
@@ -1805,7 +1814,7 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
         // Whole-file reads only: a bounded tail of a long agentic run can
         // legitimately hold assistant turns alone.
         if (parsed.genuineUserTurnIndexes.length === 0 && bytesN >= conf.size) degrade('no_user_turns');
-        const { root, dir, stamp, source } = await sessionCorpus(io, cfg, sessionId, ws ?? process.cwd());
+        const { root, dir, stamp, source } = await sessionCorpus(io, cfg, sessionId, ws ?? hookSessionCwd());
         const speaker = hookSpeaker(io, dir, sessionId);
         if (speaker.bank !== true) {
           segmentMode = speaker.reason;
@@ -1883,7 +1892,7 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
               corpus_path: corpusFile,
               content_hash: segmentHash(text),
               turn_count: turnsN,
-              workspace_root: ws ?? process.cwd(),
+              workspace_root: ws ?? hookSessionCwd(),
               tool_calls_json: toolCallsJson,
               secret_scan_ok: true, // scanner ran — the unscanned case took the branch above
             }, { trimRelayFile: true }); // both capture lanes trim memorable-relay.jsonl (converging newest-keeping trims)

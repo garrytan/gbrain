@@ -2771,6 +2771,8 @@ CREATE TABLE IF NOT EXISTS persistence_worktree_refreshes (
 CREATE UNIQUE INDEX IF NOT EXISTS persistence_worktree_refreshes_active
   ON persistence_worktree_refreshes(worktree_id)
   WHERE state IN ('draining','fenced','merged','syncing','recovery_required');
+CREATE INDEX IF NOT EXISTS persistence_worktree_refreshes_completed
+  ON persistence_worktree_refreshes(worktree_id, completed_at DESC) WHERE state='completed';
 -- END GENERATED from src/core/persistence/worktree-refresh-schema.ts (WORKTREE_REFRESH_SCHEMA_SQL)
 
 -- BEGIN GENERATED from src/core/company-brain/receipt-schema.ts (SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL). Edit that file, then run: bun run build:schema
@@ -2942,7 +2944,8 @@ CREATE OR REPLACE FUNCTION gbrain_guard_request_protocol() RETURNS trigger LANGU
       RAISE EXCEPTION 'unsupported_mutation_protocol: invalid page target' USING ERRCODE='42501';
     END IF;
     record:=NEW.recovery;
-    IF record IS NOT NULL AND ((target='page' AND record->>'version' IS DISTINCT FROM '1')
+    IF record IS NOT NULL AND ((target='page' AND record->>'version' IS DISTINCT FROM '1'
+        AND NOT (record->>'version'='3' AND record->>'target'='pages' AND jsonb_typeof(record->'files')='array'))
       OR (target='skill_bundle' AND (record->>'version' IS DISTINCT FROM '2' OR record->>'target' IS DISTINCT FROM 'skill_bundle'
         OR jsonb_typeof(record->'files') IS DISTINCT FROM 'array'))) THEN
       RAISE EXCEPTION 'unsupported_mutation_protocol: recovery target mismatch' USING ERRCODE='42501';
@@ -2976,7 +2979,7 @@ CREATE OR REPLACE FUNCTION gbrain_guard_protocol_activation() RETURNS trigger LA
         RAISE EXCEPTION 'writer_coordinator_required: writer state is unreadable to this database role' USING ERRCODE='42501';
       END IF;
       IF COALESCE(current_setting('gbrain.writer_quiesced',true),'')<>'true' OR NOT NEW.enabled OR NEW.writer_protocol_floor<>2
-        OR EXISTS (SELECT 1 FROM persistence_requests WHERE state IN ('queued','running','recovering') OR recovery IS NOT NULL)
+        OR EXISTS (SELECT 1 FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL)
         OR EXISTS (SELECT 1 FROM persistence_effects WHERE state='running' OR recovery IS NOT NULL)
         OR EXISTS (SELECT 1 FROM persistence_worktrees w WHERE EXISTS
           (SELECT 1 FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation
@@ -3200,6 +3203,10 @@ DO \$rls\$ BEGIN
     ALTER TABLE decide_sweep_deferred ENABLE ROW LEVEL SECURITY;
   END IF;
 END \$rls\$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS decide_proposals_claim_pair_uidx ON decide_proposals (source_id, LEAST(new_fact_id, old_fact_id), GREATEST(new_fact_id, old_fact_id)) WHERE sweep_id LIKE 'claim_conflicts:%';
+CREATE INDEX IF NOT EXISTS decide_proposals_pending_new_idx ON decide_proposals (new_fact_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS decide_proposals_pending_old_idx ON decide_proposals (old_fact_id) WHERE status = 'pending';
 
 CREATE TABLE IF NOT EXISTS decide_review_queue (
   kind            TEXT NOT NULL,
@@ -3735,7 +3742,7 @@ BEGIN
   FOR f IN SELECT p.oid::regprocedure AS sig, substr(c.setting, 13) AS path
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace CROSS JOIN LATERAL unnest(p.proconfig) AS c(setting)
     WHERE n.nspname = 'public' AND p.prokind = 'f' AND c.setting IN ('search_path=pg_catalog, public', 'search_path=pg_catalog')
-      AND p.proname IN ('auto_enable_rls', 'bump_page_generation_clock_fn', 'bump_page_generation_fn', 'enforce_minion_queue_protocol', 'gbrain_advance_page_revision', 'gbrain_advance_tag_revision', 'gbrain_bump_trust_generation', 'gbrain_clear_atom_page_state', 'gbrain_count_git_canonical_sources', 'gbrain_count_modifications', 'gbrain_forget_page_retrievals', 'gbrain_fts_input', 'gbrain_graduation_fence', 'gbrain_guard_effect_protocol', 'gbrain_guard_inserted_facts', 'gbrain_guard_protocol_activation', 'gbrain_guard_request_protocol', 'gbrain_guard_skill_publication', 'gbrain_lease_shared_skill_delivery', 'gbrain_mark_derivation_scope_entry', 'gbrain_preserve_fact_withdrawal', 'gbrain_queue_page_projection', 'gbrain_refuse_purged_fact', 'gbrain_refuse_purged_page', 'gbrain_refuse_purged_take', 'gbrain_refuse_purging_derivation', 'gbrain_require_managed_writer', 'gbrain_require_persistence_protocol', 'gbrain_snapshot_version_trust', 'gbrain_stamp_revision_attribution', 'gbrain_stamp_trust_tier', 'gbrain_stamp_version_attribution', 'gbrain_stamp_write_attribution', 'gbrain_try_jsonb', 'notify_minion_job_change', 'update_chunk_search_vector', 'update_page_search_vector')
+      AND p.proname IN ('auto_enable_rls', 'bump_page_generation_clock_fn', 'bump_page_generation_fn', 'enforce_minion_queue_protocol', 'gbrain_access_derive_page_readers', 'gbrain_access_folder_rules', 'gbrain_access_mark_restricted', 'gbrain_access_norm_readers', 'gbrain_access_origin_restricted', 'gbrain_access_pending_covers', 'gbrain_access_readers', 'gbrain_access_stamp_folder_rules', 'gbrain_access_state_unreadable', 'gbrain_advance_page_revision', 'gbrain_advance_tag_revision', 'gbrain_bump_trust_generation', 'gbrain_clear_atom_page_state', 'gbrain_count_git_canonical_sources', 'gbrain_count_modifications', 'gbrain_forget_page_retrievals', 'gbrain_fts_input', 'gbrain_graduation_fence', 'gbrain_guard_deferred_request', 'gbrain_guard_effect_protocol', 'gbrain_guard_inserted_facts', 'gbrain_guard_protocol_activation', 'gbrain_guard_request_protocol', 'gbrain_guard_skill_publication', 'gbrain_lease_shared_skill_delivery', 'gbrain_mark_derivation_scope_entry', 'gbrain_preserve_fact_withdrawal', 'gbrain_queue_page_projection', 'gbrain_refuse_purged_fact', 'gbrain_refuse_purged_page', 'gbrain_refuse_purged_take', 'gbrain_refuse_purging_derivation', 'gbrain_release_refresh_barrier', 'gbrain_require_managed_writer', 'gbrain_require_persistence_protocol', 'gbrain_snapshot_version_trust', 'gbrain_stamp_revision_attribution', 'gbrain_stamp_trust_tier', 'gbrain_stamp_version_attribution', 'gbrain_stamp_write_attribution', 'gbrain_try_jsonb', 'notify_minion_job_change', 'update_chunk_search_vector', 'update_page_search_vector')
       AND pg_has_role(current_user, p.proowner, 'USAGE')
     ORDER BY 1
   LOOP

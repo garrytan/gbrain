@@ -32,6 +32,22 @@ export interface CatalogueEntry {
 }
 
 export const ERROR_CATALOGUE = {
+  // GBRA-218 per-member read access: member ids, credential bindings and local --as.
+  access_member_invalid: { code: 'access_member_invalid', docs: 'docs/guides/write-refusals.md#access_member_invalid' },
+  access_member_id_retired: { code: 'access_member_id_retired', docs: 'docs/guides/write-refusals.md#access_member_id_retired' },
+  access_member_disabled: { code: 'access_member_disabled', docs: 'docs/guides/write-refusals.md#access_member_disabled' },
+  // GBRA-231 shared agents: the audience a harness asserts (X-Gbrain-On-Behalf-Of, _meta.on_behalf_of).
+  on_behalf_of_invalid_audience: { code: 'on_behalf_of_invalid_audience', docs: 'docs/guides/write-refusals.md#on_behalf_of_invalid_audience' },
+  on_behalf_of_unknown_member: { code: 'on_behalf_of_unknown_member', docs: 'docs/guides/write-refusals.md#on_behalf_of_unknown_member' },
+  on_behalf_of_not_permitted: { code: 'on_behalf_of_not_permitted', docs: 'docs/guides/write-refusals.md#on_behalf_of_not_permitted' },
+  on_behalf_of_in_arguments: { code: 'on_behalf_of_in_arguments', docs: 'docs/guides/write-refusals.md#on_behalf_of_in_arguments' },
+  // GST-359 C1 attested actor: the person a trusted system names (x-qm-actor) on a credential holding the attest right.
+  actor_not_attested: { code: 'actor_not_attested', docs: 'docs/guides/write-refusals.md#actor_not_attested' },
+  actor_unlinked: { code: 'actor_unlinked', docs: 'docs/guides/write-refusals.md#actor_unlinked' },
+  // GBRA-218 (A2) folder rules: invalid rules and policy files, pending narrowing.
+  access_rule_invalid: { code: 'access_rule_invalid', docs: 'docs/guides/write-refusals.md#access_rule_invalid' },
+  access_policy_invalid: { code: 'access_policy_invalid', docs: 'docs/guides/write-refusals.md#access_policy_invalid' },
+  access_policy_pending: { code: 'access_policy_pending', docs: 'docs/guides/write-refusals.md#access_policy_pending' },
   // W2 page-at-time: recorded-time reads (`known_as_of`).
   coverage_from: { code: 'coverage_from', docs: 'docs/guides/repair.md#coverage-from' },
   coverage_gap: { code: 'coverage_gap', docs: 'docs/guides/repair.md#coverage-gap' },
@@ -70,6 +86,8 @@ export const ERROR_CATALOGUE = {
   no_pricing: { code: 'no_pricing', docs: 'docs/guides/write-refusals.md#no_pricing' },
   timeline_comment_markup: { code: 'timeline_comment_markup', docs: 'docs/guides/repair.md#timeline-comments' },
   timeline_rows_would_be_removed: { code: 'timeline_rows_would_be_removed', docs: 'docs/guides/write-refusals.md#timeline_rows_would_be_removed' },
+  // GBRA-218: a remote write's frontmatter readable_by is malformed, drops the field, or locks the writer out.
+  readable_by_invalid: { code: 'readable_by_invalid', docs: 'docs/guides/write-refusals.md#readable_by_invalid' },
   reconcile_private_facts: { code: 'permission_denied', docs: 'docs/guides/write-refusals.md#reconcile-private-facts' },
   maintenance_backpressure: { code: 'maintenance_backpressure', docs: 'docs/guides/write-refusals.md#maintenance_backpressure' },
   // #6696: cumulative write caps (A5 background pause, A6 refusal at the cap, A7 bulk-run preflight).
@@ -116,6 +134,7 @@ export const ERROR_CATALOGUE = {
   setup_owner_conflict: { code: 'setup_owner_conflict', docs: 'docs/guides/repair.md#setup-owner-conflict' },
   setup_hosted_connection: { code: 'setup_hosted_connection', docs: 'docs/guides/repair.md#setup-hosted-connection' },
   turn_hook_not_loaded: { code: 'turn_hook_not_loaded', docs: 'docs/guides/repair.md#turn-hook-not-loaded' },
+  hook_session_cwd: { code: 'hook_session_cwd', docs: 'docs/guides/repair.md#hook-session-cwd' },
 } as const satisfies Record<string, CatalogueEntry>;
 
 export type CatalogueName = keyof typeof ERROR_CATALOGUE;

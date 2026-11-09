@@ -37,7 +37,7 @@ here using the actual harness adapter.
 Install Bun if needed, then the canonical GBrain distribution:
 
 ```bash
-bun install -g github:garrytan/gbrain#latest-stable
+bun install -g github:garrytan/gbrain#stable
 gbrain engine status --json
 ```
 
@@ -83,15 +83,17 @@ Configure the agent you are using:
 
 ```bash
 # Claude Code
-claude mcp add gbrain -- "$(command -v gbrain)" serve --surface starter --advertise verbs
+gbrain setup claude-code
 
 # Codex
-codex mcp add gbrain -- "$(command -v gbrain)" serve --surface starter --advertise verbs
+gbrain setup codex
 ```
 
-These launch a local stdio MCP process. Use the same intended brain and source
+These register a local stdio MCP process that starts through gbrain's
+launcher, so a session opened in a cloned repository never loads its
+`bunfig.toml` or `.env` (pass `--no-hooks` to skip setup's hooks). Use the same intended brain and source
 you inspected above; if an isolated installation already provided an absolute
-launcher, use that command in place of the bare `gbrain`.
+launcher, pass it as `--gbrain-bin <that launcher>`.
 
 The full surface serves every operation, including the seven memory verbs
 (`recall`, `remember`, `entity`, `synthesize`, `forget`, `context_pack`,

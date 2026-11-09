@@ -7,9 +7,16 @@
 > curl -sSL https://gbrainio.terminalwire.sh | bash
 > gbrainio terminal connect      # in a new terminal
 > gbrainio workspace new         # pick a plan in the browser
-> claude mcp add --transport http --scope user gbrain https://gbrain.io/mcp
-> codex mcp add gbrain --url https://gbrain.io/mcp
+> curl -fsSL https://bun.sh/install | bash   # skip if Bun 1.4.4+ is installed
+> export PATH="$HOME/.bun/bin:$PATH"
+> bun install -g github:garrytan/gbrain#stable   # the gbrain CLI only; no local brain
+> # Claude Code (an existing gbrain entry is kept):
+> (claude mcp get gbrain >/dev/null 2>&1 || claude mcp add --transport http --scope user gbrain https://gbrain.io/mcp) && gbrain setup claude-code --instructions-only
+> # Codex (an existing gbrain entry is kept):
+> (codex mcp get gbrain >/dev/null 2>&1 || codex mcp add gbrain --url https://gbrain.io/mcp) && gbrain setup codex --instructions-only
 > ```
+>
+> `gbrain setup <harness> --instructions-only` tells the agent the brain is there; agents seldom call an MCP server nobody told them about. It writes the [brain-first block](guides/setup.md#brain-first-instructions) into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` (a non-empty `AGENTS.override.md` instead when Codex has one) with a per-turn rule hook, and leaves the MCP entry alone; the same command with `--no-instructions` added takes them out.
 >
 > The installer is a shell script for macOS and Linux; read it before you run it.
 
@@ -24,7 +31,7 @@ The paths below are the manual equivalents. Pick one; mix later if needed.
 Already running [OpenClaw](https://github.com/garrytan/openclaw) or [Hermes](https://github.com/garrytan/hermes)?
 
 ```bash
-bun install -g github:garrytan/gbrain#latest-stable
+bun install -g github:garrytan/gbrain#stable
 gbrain init --pglite --no-embedding   # keyless; no server
 gbrain skillpack scaffold --harness openclaw --workspace <ws>   # OpenClaw: the five-skill brain-first core
 gbrain skillpack scaffold --all       # Hermes or any other workspace: every bundled skill (skills/manifest.json)
@@ -66,7 +73,7 @@ See the [agent upgrade steps](../INSTALL_FOR_AGENTS.md#upgrade).
 No agent platform, just shell + MCP-aware editor.
 
 ```bash
-bun install -g github:garrytan/gbrain#latest-stable
+bun install -g github:garrytan/gbrain#stable
 gbrain init --pglite --no-embedding
 ```
 
@@ -123,11 +130,11 @@ gbrain autopilot --install        # background daemon for nightly enrichment
 **Wire this same local brain into your coding agent** — zero server, zero token:
 
 ```bash
-claude mcp add gbrain -- "$(command -v gbrain)" serve --surface starter --advertise verbs  # Claude Code
-codex  mcp add gbrain -- "$(command -v gbrain)" serve --surface starter --advertise verbs  # Codex
+gbrain setup claude-code   # Claude Code
+gbrain setup codex         # Codex
 ```
 
-The agent spawns `gbrain serve` as a stdio subprocess against your local brain. `--surface starter --advertise verbs` is what every registration gbrain writes: the daily-driver set (40 ops) stays callable, and the tool list shows the seven memory verbs ([MEMORY_VERBS v1](protocol/MEMORY_VERBS_v1.md)) plus `request_tools`, which lists the other tools, returns any tool's full schema and reaches a left-out one. Drop `--advertise verbs` to list the whole starter set, or register `--surface full` (every operation) or `--surface verbs` (only the seven verbs, nothing else callable). Full walkthrough (both this local path and connecting to a remote brain), plus the brain-first protocol to paste into `CLAUDE.md` / `AGENTS.md`: **[Give your coding agent a memory](tutorials/connect-coding-agent.md)**.
+The agent spawns `gbrain serve` as a stdio subprocess against your local brain. Setup registers it behind gbrain's launcher (`<gbrain config dir>/hook-launcher/gbrain-hook`), because both harnesses start a stdio server in the session's directory and a script-mode Bun install would otherwise load that directory's `bunfig.toml` and `.env`; `--no-hooks` registers the server without hooks. `--surface starter --advertise verbs` is what every registration gbrain writes: the daily-driver set (40 ops) stays callable, and the tool list shows the seven memory verbs ([MEMORY_VERBS v1](protocol/MEMORY_VERBS_v1.md)) plus `request_tools`, which lists the other tools, returns any tool's full schema and reaches a left-out one. Drop `--advertise verbs` to list the whole starter set, or register `--surface full` (every operation) or `--surface verbs` (only the seven verbs, nothing else callable). Full walkthrough (both this local path and connecting to a remote brain), plus the brain-first protocol to paste into `CLAUDE.md` / `AGENTS.md`: **[Give your coding agent a memory](tutorials/connect-coding-agent.md)**.
 
 ## 3. MCP server (any MCP client)
 

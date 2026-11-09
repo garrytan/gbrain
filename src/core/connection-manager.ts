@@ -43,6 +43,7 @@ import { redactPgUrl } from './url-redact.ts';
 import { logConnectionEvent } from './connection-audit.ts';
 import { directPoolProfile, type DirectPoolProfile } from './direct-pool-profile.ts';
 import { deriveDirectUrl, deriveSessionPoolerUrl, isSupabasePoolerUrl } from './supabase-pooler-url.ts';
+import { settingsConnectionOptions } from './embedded-engine.ts';
 
 export { deriveDirectUrl, deriveSessionPoolerUrl, isSupabasePoolerUrl };
 
@@ -56,6 +57,13 @@ export interface ConnectionManagerOpts {
    * Sourced from GBRAIN_DIRECT_DATABASE_URL or explicit caller config.
    */
   directUrl?: string | null;
+  /**
+   * False for an engine opened from settings (engine-open.ts): the direct URL is `directUrl` alone (absent: none, or
+   * the route a known pooler URL derives) and GBRAIN_DIRECT_DATABASE_URL is never read.
+   */
+  directUrlFromEnv?: boolean;
+  /** True for an engine opened from settings: the direct pool passes every connection field explicitly, never PG* env. */
+  settingsConnection?: boolean;
   /**
    * Inherit pools + kill-switch state from a parent manager (worker engines,
    * transaction clones). When set, this manager is a thin reference holder
@@ -196,7 +204,7 @@ export class ConnectionManager {
       this._isSupabase = isSupabasePoolerUrl(opts.url);
       // Direct URL: explicit override > env > derive > null. Pooler-shaped
       // overrides are normalized to a real direct host (or dropped).
-      const envOverride = process.env.GBRAIN_DIRECT_DATABASE_URL;
+      const envOverride = opts.directUrlFromEnv === false ? undefined : process.env.GBRAIN_DIRECT_DATABASE_URL;
       const override = opts.directUrl ?? envOverride;
       this._directUrl = normalizeDirectUrl(opts.url, override);
       // #1915: an operator override is respected as-is — never second-guessed
@@ -429,7 +437,7 @@ export class ConnectionManager {
     const t0 = Date.now();
     let pool: Sql | null = null;
     try {
-      pool = postgres(this._directUrl, traceSqlOptions(opts, 'direct'));
+      pool = postgres(this._directUrl, traceSqlOptions(this.opts.settingsConnection ? { ...opts, ...settingsConnectionOptions(this._directUrl) } : opts, 'direct'));
       // Probe to validate connectivity early.
       await pool`SELECT 1`;
       logConnectionEvent({
@@ -496,6 +504,15 @@ export class ConnectionManager {
       this._readPool = null;
     }
     await Promise.all(ends);
+  }
+
+  /** Ends a manager a reconnect superseded once its in-flight work finishes, with no hard bound (a long hold such as CREATE INDEX CONCURRENTLY completes). */
+  retire(): void {
+    const pools = [this._directPool, this._readPoolOwnedExternally ? null : this._readPool];
+    this._directPool = null;
+    this._directInit = null;
+    this._readPool = null;
+    for (const pool of pools) pool?.end().catch(() => {});
   }
 
   /**

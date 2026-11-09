@@ -35,6 +35,7 @@ import { corpusFileSessionId } from '../context/corpus-segments.ts';
 import { writeHeartbeat } from '../context/hook-heartbeat.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { cosineSimilarity } from './classify.ts';
+import { onOwnedMemoryPageSql } from '../access/member-facts.ts';
 
 export const CAPTURE_LANES = ['hook:writeback', 'sweep:corpus', 'hook:compact'] as const;
 export const CAPTURE_DEDUP_WINDOW_MS = 15 * 60 * 1000;
@@ -175,6 +176,7 @@ export async function findCaptureDuplicate(scope: CaptureScope, candidate: Captu
       AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3) AND expired_at IS NULL AND (valid_until IS NULL OR valid_until>now())
       AND ($4::text IS NULL OR attributed_to IS NULL OR attributed_to=$4)
       AND ($5::text IS NULL OR source_markdown_slug IS DISTINCT FROM $5 OR source NOT LIKE 'cli:extract-conversation-facts%')
+      AND NOT ${onOwnedMemoryPageSql('facts')}
       ORDER BY created_at DESC, id DESC LIMIT ${CAPTURE_DEDUP_SCAN_LIMIT}`,
     [scope.sourceId, visibilities, candidate.fact, candidate.attributedTo ?? null, scope.replacingPage ?? null]);
   const conversation = canonicalConversationKey(scope.sessionId);

@@ -13,10 +13,13 @@ export function renderTimelineNarrative(rows: ChronicleTimelineRow[]): string {
   }
   const lines: string[] = [];
   for (const [date, rs] of byDate) {
-    const items = rs
-      .map((r) => (r.kind ? `${r.summary} (${r.kind})` : r.summary))
-      .join('; ');
-    lines.push(`${date} — ${rs.length} event${rs.length === 1 ? '' : 's'}: ${items}`);
+    const head = `${date} — ${rs.length} event${rs.length === 1 ? '' : 's'}:`;
+    // A quoted summary or kind (GST-687, #8384, a fenced block) keeps its fence whole: each event on its own lines, the kind above it.
+    if (rs.some((r) => r.summary.includes('\n') || r.kind?.includes('\n'))) {
+      lines.push(head, ...rs.map((r) => (r.kind ? `${r.kind.includes('\n') ? r.kind : `(${r.kind})`}\n${r.summary}` : r.summary)));
+      continue;
+    }
+    lines.push(`${head} ${rs.map((r) => (r.kind ? `${r.summary} (${r.kind})` : r.summary)).join('; ')}`);
   }
   return lines.join('\n');
 }

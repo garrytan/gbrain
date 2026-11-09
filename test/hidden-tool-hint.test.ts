@@ -14,6 +14,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { operations } from '../src/core/operations.ts';
 import type { AuthInfo } from '../src/core/operations.ts';
+import { fenceTranscriptText } from '../src/core/search/transcript-quote.ts';
 import { allowedOpNames, createStdioSurfaceState, filterOpsForSurface, isReadOnlyOperation, stdioToolListing, type McpSurface } from '../src/mcp/surface.ts';
 import { hiddenToolHint, hiddenToolRoute } from '../src/mcp/hidden-tool-hint.ts';
 import { dispatchRenderContext, dispatchToolCall, toolConnection, type DispatchOpts } from '../src/mcp/dispatch.ts';
@@ -150,7 +151,7 @@ describe('D2 hidden-takes scenario, installed configurations', () => {
     expect(n.fix!.mcp).toEqual({ tool: 'request_tools', arguments: { surface: 'full' } });
     expect(n.fix!.next).toBe('run');
     expect(await assertNextCallable(n, c.dispatchOpts)).toBe('request_tools');
-    expect(await takesVisibleBy(c.dispatchOpts)).toEqual(['Renewal ARR forecast 1.2M']);
+    expect(await takesVisibleBy(c.dispatchOpts)).toEqual([fenceTranscriptText('Renewal ARR forecast 1.2M', SLUG)]); // #8377: a stdio reader gets a claim below the owner's tier quoted
   });
 
   test('callable full, advertised starter: next is the takes_list call itself, stdio lists it (tools/list_changed)', async () => {
@@ -173,7 +174,7 @@ describe('D2 hidden-takes scenario, installed configurations', () => {
     const widen = stdioConnection({ surface: 'starter' });
     const w = hiddenNotice(await dispatchToolCall(engine, 'get_page', { slug: SLUG }, widen.dispatchOpts()))!;
     expect(await assertNextCallable(w, widen.dispatchOpts)).toBe('request_tools');
-    expect(await takesVisibleBy(widen.dispatchOpts)).toEqual(['Renewal ARR forecast 1.2M']);
+    expect(await takesVisibleBy(widen.dispatchOpts)).toEqual([fenceTranscriptText('Renewal ARR forecast 1.2M', SLUG)]); // #8377: a stdio reader gets a claim below the owner's tier quoted
   });
 
   test('full (callable and advertised): takes_list is listed, so no notice', async () => {
@@ -208,7 +209,7 @@ describe('D2 hidden-takes scenario, installed configurations', () => {
     expect(n.fix!.argv!.slice(0, 4)).toEqual(['gbrain', 'takes-list', '--page-slug', SLUG]);
     const full = stdioConnection({ surface: 'full', readOnly: true });
     expect(hiddenNotice(await dispatchToolCall(engine, 'get_page', { slug: SLUG }, full.dispatchOpts()))).toBeUndefined();
-    expect(await takesVisibleBy(full.dispatchOpts)).toEqual(['Renewal ARR forecast 1.2M']);
+    expect(await takesVisibleBy(full.dispatchOpts)).toEqual([fenceTranscriptText('Renewal ARR forecast 1.2M', SLUG)]); // #8377: a stdio reader gets a claim below the owner's tier quoted
   });
 
   test('session widening off: the CLI equivalent, never request_tools', async () => {

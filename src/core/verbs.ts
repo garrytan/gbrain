@@ -29,6 +29,7 @@ import { recordFunnelEvent, recordRememberOutcome } from './funnel.ts';
 import type { Operation } from './operations.ts';
 import { WRITE_RECEIPT_SCHEMA, WRITE_REQUEST_PARAM, AGENT_CONTENT_PARAMS, CONTENT_ORIGIN_PARAM } from './persistence/params.ts';
 import { WRITE_ERROR_CODES } from './persistence/types.ts';
+import { isStrictIsoDateTime } from './utils.ts';
 
 /** Frozen protocol version for the MEMORY_VERBS v1 verb set. Single source of truth. */
 export const MEMORY_VERBS_VERSION = 1;
@@ -58,6 +59,7 @@ const FACT_KINDS = ['event', 'preference', 'commitment', 'belief', 'fact'] as co
  */
 const FACT_KINDS_RESPONSE = [...FACT_KINDS, 'idea'] as const;
 const PROVENANCE_MAX = 500;
+const REMEMBER_CALL_SHAPE = 'A valid call: {"fact": "<one claim>", "entity": "<subject-slug>", "provenance": "<where you learned it, with the date>"}; several: items: [{fact, entity, provenance}, ...]. provenance (where the fact came from) is required.';
 
 // ─── remember ────────────────────────────────────────────────────────────────
 
@@ -65,7 +67,8 @@ const remember: Operation = {
   name: 'remember',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Save facts with provenance; set `entity` (the subject) or recall misses it. Branch on `status`; write_pending: poll get_write_request.',
+  description: 'Save {fact, provenance (required: source), `entity` (subject; recall needs it)} or items[]. Branch on `status`; write_pending: poll get_write_request.',
+  callShape: REMEMBER_CALL_SHAPE,
   params: {
     ...AGENT_CONTENT_PARAMS,
     fact: { type: 'string', description: 'One claim.' },
@@ -108,6 +111,10 @@ const remember: Operation = {
       fullSurfaceOnly: true,
     },
     replaces: { type: 'string', description: 'fact_id this fact replaces (same entity, or none).', fullSurfaceOnly: true },
+    claim_metric: { type: 'string', description: 'Typed claim metric, e.g. mrr (with claim_value).', fullSurfaceOnly: true },
+    claim_value: { type: 'number', description: 'Typed claim value (finite number).', fullSurfaceOnly: true },
+    claim_unit: { type: 'string', description: 'Typed claim unit, e.g. USD.', fullSurfaceOnly: true },
+    claim_period: { type: 'string', description: 'Typed claim period, e.g. monthly.', fullSurfaceOnly: true },
   },
   mutating: true,
   scope: 'write',
@@ -119,14 +126,16 @@ const remember: Operation = {
       const { runRememberBatch } = await import('./remember-batch.ts');
       return runRememberBatch(ctx, p, remember.handler, (code, message, suggestion) => verbError(code as never, message, suggestion));
     }
-    const fact = typeof p.fact === 'string' ? p.fact.trim() : '';
+    const { unquoteFactText } = await import('./search/transcript-quote.ts');
+    // #8377: a fact an agent copied out of a quoted read (recall, context_pack, hot memory) is stored without the fence.
+    const fact = typeof p.fact === 'string' ? (ctx.remote === false ? p.fact : unquoteFactText(p.fact)).trim() : '';
     if (!fact) {
       throw verbError(
         'invalid_params',
         'fact must be a non-empty string.',
         p.fact === undefined && Object.keys(p).length === 0
           ? 'The call arrived with no arguments; a tool call cut off at your output-token limit looks like this. Pass fact, or items with fewer entries per call.'
-          : 'Pass the claim to remember, e.g. fact: "picked Stripe over Adyen — onboarding speed", or several as items: [{fact, provenance}].',
+          : `Pass the claim to remember in fact. ${REMEMBER_CALL_SHAPE}`,
       );
     }
     // v1 contract: an absent provenance is a missing required parameter (invalid_params), an empty one is provenance_required.
@@ -134,7 +143,7 @@ const remember: Operation = {
       throw verbError(
         'invalid_params',
         'Missing required parameter: provenance',
-        'Pass `provenance` as a string (where the fact came from), e.g. provenance: "user told me, 2026-06-12". With items, provenance may be given per item instead.',
+        'Pass `provenance` as a string (where the fact came from), e.g. provenance: "<where you learned it, with the date>". With items, provenance may be given per item instead.',
       );
     }
     const provenance = typeof p.provenance === 'string' ? p.provenance.trim() : '';
@@ -142,7 +151,7 @@ const remember: Operation = {
       throw verbError(
         'provenance_required',
         'provenance is required and must be non-empty.',
-        'Pass where the fact came from, e.g. provenance: "user told me, 2026-06-12" or "import: notes.md".',
+        'Pass where the fact came from, e.g. provenance: "<where you learned it, with the date>" or "import: notes.md".',
       );
     }
     if (provenance.length > PROVENANCE_MAX) {
@@ -168,13 +177,15 @@ const remember: Operation = {
         'Use "world" (default — agents can recall it) or "private" (local CLI reads only).',
       );
     }
-    if (p.valid_from !== undefined && (typeof p.valid_from !== 'string' || !Number.isFinite(Date.parse(p.valid_from)))) {
+    if (p.valid_from !== undefined && !isStrictIsoDateTime(p.valid_from)) {
       throw verbError(
         'invalid_params',
-        'valid_from must be an ISO 8601 date or time.',
-        'Pass when the fact was said or became true, e.g. valid_from: "2026-03-01", or omit it.',
+        'valid_from must be an ISO 8601 date or time in years 0001-9999.',
+        'Pass when the fact was said or became true as YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS][Z|±HH:MM], e.g. valid_from: "2026-03-01", or omit it.',
       );
     }
+    const claim = (await import('./facts/typed-claim.ts')).parseClaimParams(ctx.remote === false ? p : { ...p,
+      ...Object.fromEntries((['claim_metric', 'claim_unit', 'claim_period'] as const).flatMap(k => typeof p[k] === 'string' ? [[k, unquoteFactText(p[k] as string)]] : [])) });
     if (p.content_origin !== undefined && !CONTENT_ORIGIN_PARAM.enum!.includes(p.content_origin as string)) {
       throw verbError('invalid_params', `content_origin must be one of ${CONTENT_ORIGIN_PARAM.enum!.join(', ')}; got ${JSON.stringify(p.content_origin)}.`,
         'Pass content_origin as user_said, tool_output (text from a web page, email, file or other tool) or inferred, or omit it.');
@@ -199,7 +210,7 @@ const remember: Operation = {
 
     const { submitRememberMutation } = await import('./persistence/memory-mutations.ts');
     const { runMemoryWrite } = await import('./persistence/verb-errors.ts');
-    const result = await runMemoryWrite(() => submitRememberMutation(ctx, { ...p, fact, provenance, kind, visibility, ...(replaces !== undefined ? { replaces } : {}) },
+    const result = await runMemoryWrite(() => submitRememberMutation(ctx, { ...p, fact, provenance, kind, visibility, ...claim, ...(replaces !== undefined ? { replaces } : {}) },
       undefined, { visibilityDefaulted: typeof p.visibility !== 'string' }));
     // F8: the explanation the CLI formatter prints, as a model-visible notice.
     if ((result as { degraded_dedup?: boolean } | null)?.degraded_dedup) {
@@ -601,6 +612,7 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
           unembedded: { type: 'integer', description: 'Facts in scope without a comparable embedding (ranked by word overlap only).' },
         },
       },
+      facts_below_floor: { type: 'integer', description: 'Present when question ranking found candidate facts and none cleared the admission floor: how many. Absent when nothing matched.' },
       facts_calibration: {
         type: 'object',
         description: 'Informational, present when question ranking used semantic matching on an embedding model whose fact admission floors were never measured: a short facts list is weaker evidence of "nothing matched". Never replaces facts_degraded.',

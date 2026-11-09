@@ -47,7 +47,7 @@
             "next": "report",
             "requires_exclusive": false,
             "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
-            "why": "Register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+            "why": "For Claude Code or Codex, run `gbrain setup claude-code` or `gbrain setup codex` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
           },
           "message": "pglite — serve IPC socket not present; enabled but NO resolve path exists right now: the IPC socket is only bound by a running `gbrain serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise) — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`",
           "name": "retrieval_reflex_health",
@@ -290,7 +290,7 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
-          "message": "mode=notify",
+          "message": "mode=notify; channel=stable (config)",
           "name": "self_upgrade_health",
           "status": "ok"
         },
@@ -449,7 +449,7 @@
             "next": "report",
             "requires_exclusive": false,
             "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
-            "why": "Register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+            "why": "For Claude Code or Codex, run `gbrain setup claude-code` or `gbrain setup codex` (it registers serve behind gbrain's launcher, so the session directory's bunfig.toml and .env never load). For any other host, register `<absolute path to gbrain> serve --surface starter --advertise verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
           },
           "message": "No agent harness was detected. Wire one when the user picks an agent app.",
           "name": "harness_wiring",
@@ -574,6 +574,7 @@
               "window_days": 1
             },
             "inspected": 2,
+            "outstanding": [],
             "paused_producers": [],
             "resources": [],
             "truncated": false,
@@ -1044,6 +1045,87 @@
           "status": "ok"
         },
         {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no page names readers and no member exists.",
+          "name": "access_readers_malformed",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no page names readers and no member exists.",
+          "name": "access_unknown_readers",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no page names readers and no member exists.",
+          "name": "access_recent_narrowings",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no page names readers and no member exists.",
+          "name": "access_page_readers_backfill",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no source has a folder rule.",
+          "name": "access_policy_pending",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no source has a folder rule.",
+          "name": "access_policy_widening_held",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no source has a folder rule.",
+          "name": "access_policy_invalid",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no source has a folder rule.",
+          "name": "access_policy_store_mismatch",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no page names readers and no member exists.",
+          "name": "access_may_act_for_wildcard",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
           "category": "ops",
           "elapsed_ms": "<volatile>",
           "message": "Skipped (PGLite — no PostgREST exposure, RLS not applicable)",
@@ -1074,7 +1156,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 162 table(s) the applied migrations create exist.",
+          "message": "All 175 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -1316,6 +1398,13 @@
         },
         {
           "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Every live page stored in segments has segment rows that cover its whole body.",
+          "name": "segmented_tiling",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
           "details": {
             "count": "exact",
             "kept_unrenderable_rows": 0,
@@ -1397,6 +1486,14 @@
               },
               {
                 "name": "persistence_requests_foreground_committed",
+                "state": "valid"
+              },
+              {
+                "name": "persistence_requests_replay_id",
+                "state": "valid"
+              },
+              {
+                "name": "persistence_requests_slug_sequence",
                 "state": "valid"
               }
             ],
@@ -1529,6 +1626,18 @@
           "elapsed_ms": "<volatile>",
           "message": "No outdated gbrain frontmatter pre-commit hook is installed.",
           "name": "frontmatter_hook",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "count": 0,
+            "docs": "docs/guides/repair.md#url-source-origin",
+            "sources": []
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Every URL source clone records who added it, or was cloned where only the local CLI can clone.",
+          "name": "url_source_origin",
           "status": "ok"
         },
         {
@@ -1793,6 +1902,20 @@
           "elapsed_ms": "<volatile>",
           "message": "No conversation-extractor fact is left expired by the pre-v0.60.11.0 projection.",
           "name": "extractor_facts_expired",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "ambiguous": 0,
+            "docs": "docs/guides/repair.md#unwithdrawn-facts",
+            "evidenced": 0,
+            "excluded": 0,
+            "repair": "unwithdrawn-facts"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No fact is left retired by a facts-fence generation that no fence withdrew.",
+          "name": "unwithdrawn_facts",
           "status": "ok"
         },
         {
@@ -2671,6 +2794,41 @@
           "status": "ok"
         },
         {
+          "category": "brain",
+          "details": {
+            "dirty": [
+              {
+                "age_ms": "<volatile>",
+                "checkout": "<home>/notes-src",
+                "path": "notes/broken-frontmatter.md",
+                "state": "untracked"
+              }
+            ],
+            "dirty_count": 1,
+            "dirty_warn_after_minutes": 30,
+            "foreign": [],
+            "partial": false,
+            "partial_reasons": [],
+            "unconfirmed": [],
+            "unknown": [],
+            "window": [
+              {
+                "common": "<home>/notes-src/.git",
+                "from": null,
+                "ledger": false,
+                "ledger_start": null,
+                "oldest_reflog": "<ts>",
+                "to": "<ts>",
+                "uncovered": 2
+              }
+            ]
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Every locally created commit in the covered window of 1 repository is in gbrain's commit ledger, and no page file waits uncommitted for more than 30 minutes. A repository gbrain has not committed in yet has no ledger, so its window is empty.",
+          "name": "foreign_writers",
+          "status": "ok"
+        },
+        {
           "category": "ops",
           "elapsed_ms": "<volatile>",
           "message": "System One is off (every decide slot is off; nothing is sent).",
@@ -2944,6 +3102,20 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "docs": "docs/guides/wakeshift.md#troubleshooting",
+            "enabled": false,
+            "key_source": "none"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Reporting back through Wakeshift is off (gbrain wakeshift enable turns it on).",
+          "name": "wakeshift",
+          "readiness_state": "disabled_by_choice",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
           "category": "brain",
           "details": {
             "applicable": false
@@ -3121,6 +3293,7 @@
                 "table": "timeline_entries"
               }
             ],
+            "unknown_pages": 0,
             "unknown_pct": 0
           },
           "elapsed_ms": "<volatile>",
@@ -3639,6 +3812,7 @@
                   "mirror_source": 0,
                   "private": 0
                 },
+                "live_pages": 5,
                 "pages": 5,
                 "source_id": "notes",
                 "states": {
@@ -3664,7 +3838,7 @@
             "timeout_ms": "<volatile>"
           },
           "elapsed_ms": "<volatile>",
-          "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 5 equal. Page detail: gbrain sources git-gap <source-id>.",
+          "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 5 live page(s), 5 equal. Page detail: gbrain sources git-gap <source-id>.",
           "name": "db_ahead_of_git",
           "status": "ok"
         },
@@ -3678,6 +3852,17 @@
           "elapsed_ms": "<volatile>",
           "message": "No source is strict (git-canonical), so no index trails a commit.",
           "name": "git_index_lag",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "docs": "docs/guides/write-refusals.md#file_database_drift",
+            "sources": []
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No local edit was adopted in the last 24 h.",
+          "name": "local_edit_adoptions",
           "status": "ok"
         },
         {
@@ -4000,7 +4185,7 @@
           "category": "meta",
           "details": {
             "counts": {
-              "global": 16,
+              "global": 17,
               "mixed": 2,
               "source": 12
             },
@@ -4008,6 +4193,7 @@
               "backlinks": "source",
               "calibration_profile": "global",
               "chronicle": "global",
+              "claim_conflicts": "global",
               "consolidate": "source",
               "content_repair": "global",
               "conversation_facts_backfill": "source",
@@ -4038,7 +4224,7 @@
             }
           },
           "elapsed_ms": "<volatile>",
-          "message": "Phase taxonomy: 12 source-scoped, 16 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, content_repair, unindexed_files, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, drift, standing_questions, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
+          "message": "Phase taxonomy: 12 source-scoped, 17 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, content_repair, unindexed_files, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, claim_conflicts, drift, standing_questions, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
           "name": "cycle_phase_scope",
           "status": "ok"
         },

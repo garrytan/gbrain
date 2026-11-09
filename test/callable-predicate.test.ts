@@ -12,11 +12,13 @@ import { isCallable, publishGatesFromDisabled, type CallableContext } from '../s
 import { filterOpsForSurface } from '../src/mcp/surface.ts';
 import { operationScopesAllowed } from '../src/core/scope.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { PUBLISH_GATE_KEYS } from '../src/mcp/publish-gates.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 const SURFACES = ['verbs', 'starter', 'full'] as const;
 const SCOPE_SETS: readonly string[][] = [['read'], ['read', 'write'], ['admin'], ['agent'], ['admin', 'skills_member_self']];
-const GATE_STATES: Record<string, boolean>[] = [{}, { 'mcp.publish_skills': true, 'mcp.publish_advisor': true }];
+const ALL_GATES_ON: Record<string, boolean> = Object.fromEntries([...PUBLISH_GATE_KEYS, 'mcp.publish_wakeshift'].map(key => [key, true]));
+const GATE_STATES: Record<string, boolean>[] = [{}, ALL_GATES_ON];
 
 /** The pre-A2 HTTP list filter minus F5's owner-only (`cliOnly`) ops, kept here as the independent oracle. */
 function legacyHttpList(surface: typeof SURFACES[number], scopes: string[], gates: Record<string, boolean>): string[] {
@@ -72,7 +74,7 @@ describe('dispatch refuses what the list hides on the dispatch-enforced axes', (
       test(`${transport} ${surface}: unknown_tool ⇔ not callable on surface/locality`, async () => {
         const allowed = surface === 'full' ? undefined : new Set(filterOpsForSurface(operations, surface).map(o => o.name));
         const allScopes = ['admin', 'agent', ...new Set(operations.flatMap(o => o.requiredScopes ?? []))];
-        const ctx: CallableContext = { transport, surface, scopes: allScopes, publishGates: { 'mcp.publish_skills': true, 'mcp.publish_advisor': true } };
+        const ctx: CallableContext = { transport, surface, scopes: allScopes, publishGates: ALL_GATES_ON };
         const mismatches: string[] = [];
         for (const op of operations) {
           const hidden = !isCallable(op, ctx);

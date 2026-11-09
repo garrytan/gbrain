@@ -49,7 +49,7 @@ async function ownedJob(budget: number | null = null, extra: Record<string, unkn
     allowed_tools: snapshot.tools, allowed_slug_prefixes: snapshot.slugPrefixes, source_id: snapshot.sourceId,
     ...extra, __owner_client_id: 'owner', __delegation_grant: snapshot };
   const job = await new MinionQueue(engine).add('subagent', data, {}, { allowProtectedSubmit: true, delegatedClientId: 'owner' });
-  return { id: job.id, name: job.name, data, attempts_made: 0,
+  return { id: job.id, name: job.name, data, attempts_made: 0, idempotency_key: null,
     signal: new AbortController().signal, shutdownSignal: new AbortController().signal, deadlineAtMs: null,
     async updateProgress() {}, async updateTokens() {}, async log() {}, async isActive() { return true; }, async readInbox() { return []; } };
 }
@@ -144,6 +144,22 @@ describe('remote-owned production tool visibility', () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it('GBRA-218: a job reads as its client\'s bound member, re-resolved on every tool call', async () => {
+    const ctx = await ownedJob();
+    await engine.executeRaw("INSERT INTO access_members (id) VALUES ('alice-example')");
+    await importFromContent(engine, 'notes/member-job', '---\ntitle: Member job\ntype: note\nreadable_by: [alice-example]\n---\nCanary jobmemberread.', { noEmbed: true, sourceId: 'default' });
+    const read = productionTools(ctx).find(tool => tool.name === 'brain_get_page')!;
+    const sees = async () => JSON.stringify(await read.execute({ slug: 'notes/member-job', include_content: true }, { engine, jobId: ctx.id, remote: true }).catch(e => String(e))).includes('jobmemberread');
+    expect(await sees()).toBe(false);
+    await engine.executeRaw("UPDATE oauth_clients SET member_id = 'alice-example' WHERE client_id = 'owner'");
+    expect(await sees()).toBe(true);
+    await engine.executeRaw("UPDATE access_members SET disabled_at = now() WHERE id = 'alice-example'");
+    expect(await sees()).toBe(false);
+    await engine.executeRaw("UPDATE access_members SET disabled_at = NULL WHERE id = 'alice-example'");
+    await engine.executeRaw("UPDATE oauth_clients SET member_id = NULL WHERE client_id = 'owner'");
+    expect(await sees()).toBe(false);
+  });
 
   it('every source-selecting read enforces the current grant including explicit overrides', async () => {
     const ctx = await ownedJob(null, {}, ['get_page', 'search', 'query', 'list_pages', 'resolve_slugs']);

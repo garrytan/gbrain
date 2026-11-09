@@ -458,6 +458,28 @@ CREATE POLICY trust_policy_state_writer ON trust_policy_state FOR ALL TO <writer
 ```
 <!-- gbrain:maintainer-rls-recipe:end -->
 
+<a id="folder-access-tables"></a>**Folder access tables.** A page write stamps the folder rules covering its slug
+from `access_policy_state` and `access_rules`, and remote reads hide the prefixes listed in
+`access_pending_coverage`, all as the database role doing the write or read. A role that row-level security keeps
+from reading those tables never reads them as "no rule": the stamp refuses the write with
+`writer_coordinator_required` (relationship `unreadable_state`, naming the table), and reads treat every page as
+under a pending prefix, so nothing is shown. The owner (without `FORCE ROW LEVEL SECURITY`) and a role that
+bypasses RLS are not affected, and `gbrain access` rule commands refuse such a role with `permission_denied`. A scoped
+role that writes or serves pages needs these policies; they let it read the rules and lock a source's policy row while
+stamping, but not change either. Row-level security does not cover TRUNCATE or triggers, so the recipe also revokes
+those. A policy that filters these rows hides rules from the role and so reveals the pages under them: keep `USING (true)`. The folder-rule lineage test also reads `slug_rename_history` (every slug a renamed page has had), which renames write; a role that cannot read it reads every page as covered, so a scoped role needs a `USING (true)` policy there like the other tables it writes. The recipe for the three access tables:
+
+<!-- gbrain:access-rls-recipe:begin (applied verbatim by test/access-folder-scoped-role.test.ts) -->
+```sql
+CREATE POLICY access_policy_state_reader ON access_policy_state FOR SELECT TO <writer-role> USING (true);
+CREATE POLICY access_policy_state_stamp_lock ON access_policy_state FOR UPDATE TO <writer-role>
+  USING (true) WITH CHECK (false);
+CREATE POLICY access_rules_reader ON access_rules FOR SELECT TO <writer-role> USING (true);
+CREATE POLICY access_pending_coverage_reader ON access_pending_coverage FOR SELECT TO <writer-role> USING (true);
+REVOKE TRUNCATE, TRIGGER, REFERENCES ON access_policy_state, access_rules, access_pending_coverage FROM <writer-role>;
+```
+<!-- gbrain:access-rls-recipe:end -->
+
 **In engine-sql.** A read in a migrated domain takes a `ScopedRead` when it
 runs through this helper and a `LegacyUnscopedRead` when it runs on the pool
 (`src/core/engine-sql/brands.ts`); the engine obtains the branded executor, so
@@ -699,6 +721,82 @@ the same reason and fix on its `connection` check.
    or removes the new marker when there was none), writes the kernel-v1 marker
    `<data-dir>.gbrain-owner.json`, and starts the 10-minute WAL-repair
    quarantine (`<data-dir>.lock-reap.json`). The next ordinary open succeeds.
+
+## Opening an engine from settings (experimental)
+
+`openEngine(settings)` (`src/core/engine-open.ts`, exported as `gbrain/engine-open`) creates and connects an engine
+from one value, for a host that embeds several brains in one process or keeps its settings somewhere other than
+`~/.gbrain`. It is off by default and refuses unless `settings.embedded_core === true` (`embedded_core_required`).
+The CLI, `gbrain serve` and mounts never call it and behave exactly as before.
+
+```ts
+import { openEngine } from 'gbrain/engine-open';
+
+const engine = await openEngine({
+  embedded_core: true,
+  engine: 'postgres',
+  database: { url, directUrl },        // PGLite: { path }, or none for an in-memory brain
+  pool: { max: 4 },                    // this engine's own pool (default 4), never the db.ts singleton
+  host: { id: hostId },                // required UUID: the persistence host identity
+  writer: { id, credential, lane: 'stdio' },
+  embedding: { model: 'voyage:voyage-4', dimensions: 1024 },
+  ai: { providers: { voyage: { apiKey } }, models: { chat } },
+});
+await engine.initSchema();             // the host migrates; a connect never does
+await engine.disconnect();
+```
+
+What the settings decide, with nothing read from a config file, an environment variable, the home directory or the
+working directory:
+
+- **Connection.** The direct (DDL/session) pool uses only
+  `database.directUrl`, or the route a known pooler URL derives; `GBRAIN_DIRECT_DATABASE_URL` is never consulted.
+  Each URL must be one single-host URL naming its host, user and database (`engine_settings_invalid` otherwise).
+  Both pools pass every connection field to the driver (port 5432 when unnamed; no password when the URL has none),
+  so no `PG*` variable picks the server or credentials. The statement-description cache stays in the process
+  instead of `<home>/cache/pg-types` unless a CLI-path pool to the same database shares the process. PGLite skips the
+  `GBRAIN_PGLITE_SNAPSHOT` fast path.
+- **Host identity.** `hostIdFor(engine)` (`src/core/persistence/identity.ts`) answers `host.id` for the engine and
+  everything sharing its `engineKey`; every host-id read in `src/core` goes through it (two CLI-only sites
+  excepted), and for any other engine it is `localHostId()`. No `host.json` is read or minted; no id refuses
+  `engine_host_missing`. The consumer heartbeat records `embedded:<host-id>`, read as identity given at open.
+- **Writer.** An unauthenticated write uses `settings.writer` for its lane (a remote call needs a `stdio` writer, a
+  local one `cli`), registered in `persistence_local_writers` on first use with the default read/write ceiling. An
+  existing registration keeps its own ceiling, another credential or lane under the id refuses `permission_denied`,
+  and a revoked one is never replaced. Engines that make their first write at the same moment register the writer once;
+  a credential already registered under another id refuses `permission_denied`. No `<brain>.<lane>.json` file is read or minted; with no writer for the lane
+  the write refuses `writer_registration_required`.
+- **Embedding identity.** `initSchema()` seeds a fresh brain from `settings.embedding` (else the built-in default),
+  never from the process gateway, and refuses `engine_embedding_mismatch` on a database that records another model
+  or width.
+- **AI gateway.** Embed, chat, expansion and rerank calls use only `settings.ai` (`providers`: id to
+  `{ apiKey, baseUrl }`; `models`: chat, expansion, reranker) and `settings.embedding`, never a `process.env`
+  key, the config file or the process gateway. An unnamed provider refuses `engine_scope_missing` and nothing is
+  sent. Operations, persistence consumers, minion jobs, `POST /mcp`, `hybridSearch` and the import paths enter
+  their engine's scope; wrap any other direct call in `withEngineScope(engine, fn)`. With an embedded engine open,
+  a call in no scope refuses `engine_scope_required`; `withLocalScope(fn)` (the CLI, serve and jobs enter it) uses
+  the process gateway. Batch shrink, no-key and structured-output memory, usage rows and the alias policy are per
+  engine. Query embeddings are cached per engine until close, unless `cache_namespace` (a host's name for
+  one tenant database) keeps them warm; a new key starts cold.
+- **Read back.** `embeddedSettings(engine)` returns a frozen copy with no secrets.
+- **Close.** `disconnect()` closes the engine for good and drops its settings, even while a reconnect is in flight
+  (any pool that reconnect builds is ended). A later `connect()` or `reconnect()` refuses `engine_closed`; call
+  `openEngine` again instead.
+- **Files.** File ops use `settings.storage` (local, or s3 with an endpoint) and its key `prefix`.
+
+Still process-wide: CLI file storage, transcription, the AI call log and timeouts, `GBRAIN_*` tuning variables (pool lifetime,
+connect and session timeouts, `GBRAIN_PREPARE`, `GBRAIN_DIRECT_POOL_SIZE`, `GBRAIN_DISABLE_DIRECT_POOL`,
+`GBRAIN_RLS_SCOPE_BINDING`, the PGLite close watchdog), `PG*` TLS and tuning
+variables, the connection-events audit log, and operation-level
+config reads (content-sanity screening, schema-pack resolution, the embedding switch on publication). None of them
+picks an engine's database, host identity, writer, embedding identity or AI keys. A source with a git checkout keeps its native coordination lock under the
+process's persistence home.
+
+### Upgrading an embedded host
+
+- Unscoped AI calls refuse `engine_scope_required` even after `configureGateway`; wrap them as above.
+- `openEngine` refuses an unknown settings key, top-level or nested (`engine_settings_invalid` names it).
+- `examples/embedded-two-brains.ts` is a two-brain host on package exports only: `bun examples/embedded-two-brains.ts`.
 
 ## Canonical schema sources
 
@@ -1324,24 +1422,8 @@ and assert `jsonb_typeof` — the assertion PGLite cannot make.
 ## Adding a new engine
 
 1. Create `src/core/<name>-engine.ts` implementing `BrainEngine`
-2. Add to engine factory in `src/core/engine-factory.ts`:
-   ```typescript
-   export async function createEngine(config: EngineConfig): Promise<BrainEngine> {
-     switch (config.engine || 'postgres') {
-       case 'pglite': {
-         const { PGLiteEngine } = await import('./pglite-engine.ts');
-         return new PGLiteEngine();
-       }
-       case 'myengine': {
-         const { MyEngine } = await import('./my-engine.ts');
-         return new MyEngine();
-       }
-       // ...
-     }
-   }
-   ```
-   The factory uses dynamic imports so an engine's dependencies (e.g. the
-   PGLite WASM blob) are only loaded when that engine is selected.
+2. Add a case to `constructEngine` in `src/core/engine-construct.ts`, which `createEngine` and `openEngine`
+   both build through. Its dynamic imports load an engine's dependencies (the PGLite WASM blob) only when selected.
 3. If the engine speaks the Postgres dialect, add a dialect adapter that
    implements `SqlExecutor` (`src/core/engine-sql/executor.ts`) beside
    `dialect-pglite.ts` and `dialect-postgres.ts`, expose it through a private
@@ -1386,10 +1468,6 @@ Every method in `BrainEngine`. The full interface. No optional methods, no featu
 
 ## Future engine ideas
 
-**TursoEngine.** libSQL (SQLite fork) with embedded replicas and HTTP edge access. Would give SQLite's simplicity with cloud sync. Interesting for mobile/edge use cases.
-
-**DuckDBEngine.** Analytical workloads. Bulk exports, embedding analysis, brain-wide statistics. Not for OLTP. Could be a secondary engine for analytics alongside Postgres for operations.
-
-**Custom/Remote.** The interface is clean enough that someone could build an engine backed by any storage: Firestore, DynamoDB, a REST API, even a flat file system. The interface doesn't assume SQL.
-
-Note: there is no SQLite engine. PGLite uses the same SQL as Postgres, so no separate SQLite dialect with FTS5/sqlite-vss translation is needed.
+TursoEngine (libSQL with embedded replicas and edge sync), DuckDBEngine (analytics and bulk exports beside
+Postgres, not OLTP) and custom engines over any store: the interface assumes no SQL. There is no SQLite engine;
+PGLite speaks Postgres SQL, so no FTS5/sqlite-vss dialect is needed.

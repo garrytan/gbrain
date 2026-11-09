@@ -342,18 +342,60 @@ export class PersistenceIpcTransportError extends Error {
   }
 }
 
+/**
+ * GST-1387: a wire error body's recovery contract (canonical code, detail, retryable, fix) restored onto a rebuilt
+ * OperationError, so a refresh fence stays worktree_refreshing with fix.next wait across the owner hop. Only the fence's
+ * fix (read-only, no consent) is carried: a rendered fix drops `ask_user`, and a receipt's fix is rendered on this side.
+ */
+export function restoreRecoveryContract(error: OperationError, body: Record<string, unknown>): void {
+  if (typeof body.code === 'string' && body.code !== error.code) error.canonical = body.code as OperationError['canonical'];
+  if (typeof body.detail === 'string') error.detail = body.detail;
+  if (typeof body.retryable === 'boolean') error.retryable = body.retryable;
+  if (record(body.fix) && body.code === 'worktree_refreshing') { const { next: _next, command: _command, ...fix } = body.fix; error.fix = fix as unknown as Action; }
+}
+
 function remoteOperationError(value: unknown): OperationError {
   if (!record(value) || typeof value.error !== 'string' || typeof value.message !== 'string') {
     throw new Error('Malformed persistence error response.');
   }
   const error = new OperationError(value.error, value.message, typeof value.suggestion === 'string' ? value.suggestion : undefined,
     typeof value.docs === 'string' ? value.docs : undefined);
-  if (typeof value.detail === 'string') error.detail = value.detail;
   if (typeof value.protocol_version === 'number') error.protocolVersion = value.protocol_version;
+  restoreRecoveryContract(error, value);
   if (isWriteReceipt(value.write_request)) error.writeRequest = publicWriteReceipt(value.write_request);
   if (isWriteRequestId(value.request_id)) error.requestId = value.request_id;
   if (isWriteErrorCode(value.write_error)) error.writeError = value.write_error;
+  if (typeof value.why === 'string') error.why = value.why;
+  if (typeof value.reason === 'string') error.reason = value.reason;
+  if (value.contract_version === 1) error.contractVersion = 1;
+  const fix = wireAction(value.fix);
+  if (fix) error.fix = fix;
   return error;
+}
+
+/**
+ * #7707, #8130: the owner sends a refusal's `fix` already rendered (`toJSON`), or as the stored Action when it never loaded the renderer.
+ * Back to an Action, so a delegated refusal prints the same structured fix as the direct path; a value of any other shape is dropped.
+ */
+function wireAction(value: unknown): Action | undefined {
+  if (!record(value) || !Array.isArray(value.consent) || typeof value.actor !== 'string' || typeof value.why !== 'string'
+    || typeof value.requires_exclusive !== 'boolean') return undefined;
+  const argv = Array.isArray(value.argv) && value.argv.every(arg => typeof arg === 'string') ? value.argv as string[] : undefined;
+  const mcp = record(value.mcp) && typeof value.mcp.tool === 'string' && record(value.mcp.arguments) ? value.mcp as unknown as Action['mcp'] : undefined;
+  if (!argv && !mcp) return undefined;
+  const then = value.then === undefined ? undefined : wireAction(value.then);
+  return {
+    ...(value.next === 'ask_user' || value.ask_user === true ? { ask_user: true as const } : {}),
+    ...(argv ? { argv } : {}), ...(mcp ? { mcp } : {}),
+    consent: value.consent as Action['consent'], actor: value.actor as Action['actor'], why: value.why, requires_exclusive: value.requires_exclusive,
+    ...(typeof value.user_message === 'string' ? { user_message: value.user_message } : {}),
+    ...(record(value.verify) ? { verify: value.verify as Action['verify'] } : {}),
+    ...(typeof value.docs === 'string' ? { docs: value.docs } : {}),
+    ...(Array.isArray(value.inputs) ? { inputs: value.inputs as Action['inputs'] } : {}),
+    ...(typeof value.plan_hash === 'string' ? { plan_hash: value.plan_hash } : {}),
+    ...(Array.isArray(value.preview_argv) && value.preview_argv.every(arg => typeof arg === 'string') ? { preview_argv: value.preview_argv as string[] } : {}),
+    ...(then ? { then } : {}),
+  };
 }
 
 /** One bounded exchange. No automatic reconnect or replay after any request bytes are sent. */

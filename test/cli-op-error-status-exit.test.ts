@@ -98,3 +98,26 @@ describe('#4488 in-band {status:error} → CLI exit 1', () => {
     expect(second.stdout).toContain('skipped');
   }, 480_000);
 });
+
+describe('extraction-review with a failed decision → CLI exit 1', () => {
+  test('a partial batch exits 1 although the other decisions landed', async () => {
+    const { createEngine } = await import('../src/core/engine-factory.ts');
+    const { withCoordinatedWrite } = await import('../src/core/persistence/context.ts');
+    const { TEST_WRITE_ATTRIBUTION } = await import('./helpers/write-attribution.ts');
+    const engineConfig = { engine: 'pglite' as const, database_path: join(home, '.gbrain', 'brain.pglite') };
+    const engine = await createEngine(engineConfig);
+    await engine.connect(engineConfig);
+    const fence = '<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n'
+      + '|---|---|---|---|---|---|---|---|---|---|\n| 1 | Batchrowzq5 likes tea | fact | 1.0 | world | medium | 2026-01-02 |\n<!--- gbrain:facts:end -->\n';
+    try {
+      for (const [slug, body] of [['people/exit-good-example', 'Came up in a call.'], ['people/exit-broken-example', `Came up twice.\n\n${fence}`]]) {
+        await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.putPage(slug,
+          { type: 'person', title: 'Exit Example', compiled_truth: body, timeline: '', frontmatter: { provenance: 'auto-extracted', status: 'unverified' } }), TEST_WRITE_ATTRIBUTION));
+      }
+    } finally { await engine.disconnect(); }
+    const r = run(['extraction-review', 'promote', '--slugs', 'people/exit-good-example,people/exit-broken-example', '--json']);
+    expect(JSON.parse(r.stdout)).toMatchObject({ status: 'partial', results: [{ slug: 'people/exit-good-example', status: 'promoted' }, { slug: 'people/exit-broken-example', status: 'failed' }] });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("status 'partial'");
+  }, 480_000);
+});

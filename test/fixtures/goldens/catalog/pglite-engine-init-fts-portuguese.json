@@ -1,6 +1,35 @@
 {
   "golden": {
     "constraints": {
+      "access_group_members.access_group_members_group_id_fkey": "f FOREIGN KEY (group_id) REFERENCES access_groups(id) ON DELETE CASCADE",
+      "access_group_members.access_group_members_member_id_fkey": "f FOREIGN KEY (member_id) REFERENCES access_members(id) ON DELETE CASCADE",
+      "access_group_members.access_group_members_pkey": "p PRIMARY KEY (group_id, member_id)",
+      "access_groups.access_groups_id_check": "c CHECK ((id ~ '^[a-z0-9][a-z0-9._-]{0,63}$'::text))",
+      "access_groups.access_groups_pkey": "p PRIMARY KEY (id)",
+      "access_member_links.access_member_links_external_id_check": "c CHECK (((length(external_id) >= 1) AND (length(external_id) <= 256) AND (external_id ~ '^[!-~]+$'::text)))",
+      "access_member_links.access_member_links_member_id_fkey": "f FOREIGN KEY (member_id) REFERENCES access_members(id) ON DELETE CASCADE",
+      "access_member_links.access_member_links_pkey": "p PRIMARY KEY (system, external_id)",
+      "access_member_links.access_member_links_system_check": "c CHECK ((system ~ '^[a-z][a-z0-9_-]{0,31}$'::text))",
+      "access_members.access_members_id_check": "c CHECK ((id ~ '^[a-z0-9][a-z0-9._-]{0,63}$'::text))",
+      "access_members.access_members_pkey": "p PRIMARY KEY (id)",
+      "access_pending_coverage.access_pending_coverage_pkey": "p PRIMARY KEY (source_id, prefix, reason)",
+      "access_pending_coverage.access_pending_coverage_prefix_check": "c CHECK (((prefix = ''::text) OR ((length(prefix) <= 512) AND (prefix ~ '^([a-z0-9][a-z0-9._-]*/)+$'::text) AND (POSITION(('..'::text) IN (prefix)) = 0))))",
+      "access_pending_coverage.access_pending_coverage_reason_check": "c CHECK ((reason = ANY (ARRAY['pending'::text, 'invalid'::text])))",
+      "access_pending_coverage.access_pending_coverage_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES access_policy_state(source_id) ON DELETE CASCADE",
+      "access_policy_migrations.access_policy_migrations_direction_check": "c CHECK ((direction = ANY (ARRAY['to_git'::text, 'to_database'::text])))",
+      "access_policy_migrations.access_policy_migrations_phase_check": "c CHECK ((phase = ANY (ARRAY['started'::text, 'exported'::text, 'committed'::text, 'switched'::text])))",
+      "access_policy_migrations.access_policy_migrations_pkey": "p PRIMARY KEY (id)",
+      "access_policy_migrations.access_policy_migrations_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES access_policy_state(source_id) ON DELETE CASCADE",
+      "access_policy_revisions.access_policy_revisions_change_kind_check": "c CHECK ((change_kind = ANY (ARRAY['narrowing'::text, 'widening'::text, 'mixed'::text, 'unchanged'::text])))",
+      "access_policy_revisions.access_policy_revisions_pkey": "p PRIMARY KEY (source_id, revision)",
+      "access_policy_revisions.access_policy_revisions_revision_check": "c CHECK ((revision > 0))",
+      "access_policy_revisions.access_policy_revisions_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES access_policy_state(source_id) ON DELETE CASCADE",
+      "access_policy_state.access_policy_state_pkey": "p PRIMARY KEY (source_id)",
+      "access_policy_state.access_policy_state_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "access_rules.access_rules_pkey": "p PRIMARY KEY (source_id, rule_id)",
+      "access_rules.access_rules_prefix_check": "c CHECK (((length(prefix) <= 512) AND (prefix ~ '^([a-z0-9][a-z0-9._-]*/)+$'::text) AND (POSITION(('..'::text) IN (prefix)) = 0)))",
+      "access_rules.access_rules_rule_id_check": "c CHECK ((rule_id ~ '^[a-z0-9][a-z0-9._-]{0,63}$'::text))",
+      "access_rules.access_rules_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES access_policy_state(source_id) ON DELETE CASCADE",
       "access_tokens.access_tokens_min_trust_check": "c CHECK (((min_trust IS NULL) OR (min_trust = ANY (ARRAY['user_confirmed'::text, 'operator_curated'::text, 'tool_observed'::text, 'agent_written'::text, 'unknown'::text, 'external_untrusted'::text]))))",
       "access_tokens.access_tokens_pkey": "p PRIMARY KEY (id)",
       "access_tokens.access_tokens_private_pages_check": "c CHECK ((private_pages = ANY (ARRAY['none'::text, 'granted_sources'::text])))",
@@ -129,6 +158,7 @@
       "git_canonical_brain.git_canonical_brain_pkey": "p PRIMARY KEY (singleton)",
       "git_canonical_brain.git_canonical_brain_singleton_check": "c CHECK ((singleton = 1))",
       "git_canonical_brain.git_canonical_brain_strict_sources_check": "c CHECK ((strict_sources >= 0))",
+      "ingest_applied_captures.ingest_applied_captures_pkey": "p PRIMARY KEY (idempotency_key)",
       "ingest_log.ingest_log_pkey": "p PRIMARY KEY (id)",
       "link_edge_proposals.link_edge_proposals_a_to_page_id_fkey": "f FOREIGN KEY (a_to_page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "link_edge_proposals.link_edge_proposals_b_to_page_id_fkey": "f FOREIGN KEY (b_to_page_id) REFERENCES pages(id) ON DELETE CASCADE",
@@ -353,13 +383,14 @@
       "persistence_local_writers.persistence_local_writers_credential_hash_key": "u UNIQUE (credential_hash)",
       "persistence_local_writers.persistence_local_writers_lane_check": "c CHECK ((lane = ANY (ARRAY['cli'::text, 'stdio'::text])))",
       "persistence_local_writers.persistence_local_writers_pkey": "p PRIMARY KEY (id)",
+      "persistence_requests.persistence_requests_deferred_refresh_id_fkey": "f FOREIGN KEY (deferred_refresh_id) REFERENCES persistence_worktree_refreshes(id)",
       "persistence_requests.persistence_requests_pkey": "p PRIMARY KEY (id)",
       "persistence_requests.persistence_requests_preparation_attempts_check": "c CHECK ((preparation_attempts >= 0))",
       "persistence_requests.persistence_requests_principal_kind_check": "c CHECK ((principal_kind = ANY (ARRAY['oauth_client'::text, 'legacy_token'::text, 'local_cli'::text, 'local_stdio'::text, 'application'::text])))",
       "persistence_requests.persistence_requests_principal_kind_principal_id_request_id_key": "u UNIQUE (principal_kind, principal_id, request_id)",
       "persistence_requests.persistence_requests_protocol_version_check": "c CHECK ((protocol_version = ANY (ARRAY[1, 2])))",
       "persistence_requests.persistence_requests_sequence_key": "u UNIQUE (sequence)",
-      "persistence_requests.persistence_requests_state_check": "c CHECK ((state = ANY (ARRAY['queued'::text, 'running'::text, 'recovering'::text, 'committed'::text, 'conflict'::text, 'failed'::text, 'cancelled'::text])))",
+      "persistence_requests.persistence_requests_state_check": "c CHECK ((state = ANY (ARRAY['queued'::text, 'deferred'::text, 'running'::text, 'recovering'::text, 'committed'::text, 'conflict'::text, 'failed'::text, 'cancelled'::text])))",
       "persistence_requests.persistence_requests_target_kind_check": "c CHECK ((target_kind = ANY (ARRAY['page'::text, 'skill_bundle'::text])))",
       "persistence_requests.persistence_requests_worktree_id_fkey": "f FOREIGN KEY (worktree_id) REFERENCES persistence_worktrees(id)",
       "persistence_source_bindings.persistence_source_bindings_pkey": "p PRIMARY KEY (source_id)",
@@ -387,6 +418,8 @@
       "raw_data.raw_data_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "raw_data.raw_data_page_id_source_key": "u UNIQUE (page_id, source)",
       "raw_data.raw_data_pkey": "p PRIMARY KEY (id)",
+      "reason_purge_tombstones.reason_purge_tombstones_pkey": "p PRIMARY KEY (source_id, commit_sha, path)",
+      "reason_purge_tombstones.reason_purge_tombstones_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "retrieval_event_links.retrieval_event_links_event_id_fkey": "f FOREIGN KEY (event_id) REFERENCES retrieval_events(id) ON DELETE CASCADE",
       "retrieval_event_links.retrieval_event_links_pkey": "p PRIMARY KEY (event_id, source_id, edge_key, to_slug)",
       "retrieval_event_pages.retrieval_event_pages_event_id_fkey": "f FOREIGN KEY (event_id) REFERENCES retrieval_events(id) ON DELETE CASCADE",
@@ -424,6 +457,8 @@
       "slug_aliases.slug_aliases_pkey": "p PRIMARY KEY (id)",
       "slug_aliases.slug_aliases_source_fk": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "slug_aliases.slug_aliases_uniq": "u UNIQUE (source_id, alias_slug)",
+      "slug_rename_history.slug_rename_history_pkey": "p PRIMARY KEY (source_id, old_slug, new_slug)",
+      "slug_rename_history.slug_rename_history_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "source_ingestion_receipts.source_ingestion_receipts_approved_revision_check": "c CHECK ((approved_revision ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'::text))",
       "source_ingestion_receipts.source_ingestion_receipts_check": "c CHECK (((phase = 'COMPLETE'::text) = (outcome = 'complete'::text)))",
       "source_ingestion_receipts.source_ingestion_receipts_check1": "c CHECK (((completed_at IS NOT NULL) = (outcome = 'complete'::text)))",
@@ -516,6 +551,13 @@
       "trust_proposals.trust_proposals_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "trust_proposals.trust_proposals_status_check": "c CHECK ((status = ANY (ARRAY['pending'::text, 'accepted'::text, 'rejected'::text, 'undone'::text, 'superseded'::text])))",
       "trust_proposals.trust_proposals_target_table_check": "c CHECK ((target_table = ANY (ARRAY['facts'::text, 'takes'::text, 'timeline_entries'::text, 'pages'::text])))",
+      "wake_subscriptions.wake_subscriptions_event_check": "c CHECK ((event ~ '^gbrain\\.[a-z][a-z0-9._]{0,47}$'::text))",
+      "wake_subscriptions.wake_subscriptions_pkey": "p PRIMARY KEY (id)",
+      "wake_subscriptions.wake_subscriptions_principal_kind_check": "c CHECK ((principal_kind = ANY (ARRAY['oauth_client'::text, 'legacy_token'::text, 'local_stdio'::text])))",
+      "wake_subscriptions.wake_subscriptions_state_check": "c CHECK ((state = ANY (ARRAY['open'::text, 'delivered'::text, 'dead'::text, 'ended'::text])))",
+      "wake_subscriptions.wake_subscriptions_target_check": "c CHECK (((length(target) >= 1) AND (length(target) <= 128)))",
+      "wake_subscriptions.wake_subscriptions_wake_user_check": "c CHECK ((wake_user ~ '^[0-9a-f]{32}$'::text))",
+      "wake_subscriptions.wake_subscriptions_ws_subscription_id_check": "c CHECK (((length(ws_subscription_id) >= 1) AND (length(ws_subscription_id) <= 200)))",
       "wanted_links.wanted_links_origin_page_id_fkey": "f FOREIGN KEY (origin_page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "wanted_links.wanted_links_pkey": "p PRIMARY KEY (id)",
       "wanted_links.wanted_links_producer_check": "c CHECK ((producer = ANY (ARRAY['body'::text, 'frontmatter'::text])))",
@@ -541,6 +583,15 @@
       "bump_page_generation_clock_fn()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=d3359bcd09cccd881585abd9eee81c3dcf4161d935164f7953f2e9fdef73ed3e",
       "bump_page_generation_fn()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=314d4775d7c90f8ed650ea12ae3687f388f714ed3d30582dc8ff678dfea1dc97",
       "enforce_minion_queue_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=be82640d1979fc81dc812efb78bb3596ef536f656d20750e5e4aa19016bf4784",
+      "gbrain_access_derive_page_readers()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=55923fb552adcdc8e5e3c820a0b4ba11f74748b4478f52de2e1b7506e969ac4d",
+      "gbrain_access_folder_rules(p_source text, p_slug text)": "RETURNS text[] kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=2fcbf1744ede8ffc2ac16972f3d793109543710ecfe13ae9849eced94f347305",
+      "gbrain_access_mark_restricted()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=e45dc26421664fa3d409fba6c612af88905d2df35923f9592bcb759fc1ea618f",
+      "gbrain_access_norm_readers(vals text[])": "RETURNS text[] kind=f lang=sql volatility=i secdef=false config=[search_path=pg_catalog, pg_temp] body_sha256=b536c2604461abac62c90c090d127b71bdda8ed23d43ae25790606a8ee64f769",
+      "gbrain_access_origin_restricted(p_id integer, p_source_id text, p_type text, fm jsonb)": "RETURNS boolean kind=f lang=plpgsql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=d33ef57dcf408ee17d85ce50e05d881c1cd2f4df2ae1424612ad38092d154948",
+      "gbrain_access_pending_covers(p_source text, p_slug text)": "RETURNS boolean kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=3a5530179ad6f056532e398fb4de58610125625e09140340ff138a2e268772a8",
+      "gbrain_access_readers(fm jsonb)": "RETURNS text[] kind=f lang=sql volatility=i secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=18348cb56089106aaec6470076ee652d7ed3bfbcb20e950a24abd52a21e7a380",
+      "gbrain_access_stamp_folder_rules()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=7fb49ce62f4f6153ef0c844a1816f5f5bb7d765b8610ff66fec137283469fc09",
+      "gbrain_access_state_unreadable()": "RETURNS boolean kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=fa6c6edac062270a2fcf9ff3e9c29f16242156e817a3710c273d8da9f5203943",
       "gbrain_advance_page_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=2a431195dc4c4150e3428251d0dec0a685cdc2992525c1b4b54dff103d5d99c9",
       "gbrain_advance_tag_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=810fecb358043c1c5490f7074955f3543a0af4c8e5b3cacb489232bfea6c980a",
       "gbrain_bump_trust_generation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=eb43f514d9784dabdae32a80d97116a9a49f1eeb1dc7a67e832e714ed7fa0a14",
@@ -553,10 +604,11 @@
       "gbrain_forget_page_retrievals()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=b35125db2179fb90ea092804d0acd61b60e58434d7fbf937413324b681ab416c",
       "gbrain_fts_input(t text)": "RETURNS text kind=f lang=sql volatility=i secdef=false config=[search_path=pg_catalog, pg_temp] body_sha256=c73d0dbc333c6dccc9714a6b8d1b7785f48170556b9024002ddca1c80b25d87d",
       "gbrain_graduation_fence()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=cd4642fe8deee2a3c14ef41f53862f0a449b2d8a10e47177bd4f5d2e05ce8803",
+      "gbrain_guard_deferred_request()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=edf066d51ee76d4037663393271883a12d7fdf4f0f01b7d1faa9e979d552c6c6",
       "gbrain_guard_effect_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=aa01528006dd7029eac6808e0233991524c9de9dc14aaf41f44160d67a747042",
       "gbrain_guard_inserted_facts()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=027c16bf0f61101510f54966dfa7d3c5f90112cef52a51861adc36103a0bc02b",
-      "gbrain_guard_protocol_activation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=66b6cd26959d68687e6bec2314d10594bd2e20c5013638cad41c2d872a999eda",
-      "gbrain_guard_request_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=962d9fc19fc77ad54fe532d5003e28cbc428d17522612067975b7703d1fcb0c0",
+      "gbrain_guard_protocol_activation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=bb477ec66ecac06e6edba773a94a2834ef4286a0b9e5cfa8b9b8646e003b0b9e",
+      "gbrain_guard_request_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=2709686143e064b577e2b3c8e3e2b1009d52a836a2bc709f5f003a251eb004d2",
       "gbrain_guard_skill_publication()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=e854c0d058e75a65c3a90127c5c417380975100e83fc34288f6085e786df10a9",
       "gbrain_lease_shared_skill_delivery()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=5e493c1ac8dce8cb025a736629e563437c4b214744137c302c532c20bf7e7acf",
       "gbrain_mark_derivation_scope_entry()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=72ac0027fd37ecc4c72ad2e294ae3a98564736339b9ac917ea5d4112ec3cd35f",
@@ -566,6 +618,7 @@
       "gbrain_refuse_purged_page()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=8aaaf7c22fc9acb4b1e84fe75f11ae6c889949b78de1ef6bdba1db54ef43844e",
       "gbrain_refuse_purged_take()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=4a291b0448ab7a31926aa482b5222e0595d31a6bfad81b851b13e4bf581a0d83",
       "gbrain_refuse_purging_derivation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=0d0afb3e61857f1668f2e7996da1c6aaf269aecaa1bf3763ce90df90e2d66fd3",
+      "gbrain_release_refresh_barrier()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=0474782d352e51a92be5486f0d1eb0245cd6dc70ab6d7320acc685330690db4b",
       "gbrain_require_managed_writer()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=15a834d125e04a6508f114e93e2595800bccf0a8ccfe7e2e23323830580c98a1",
       "gbrain_require_persistence_protocol(required integer)": "RETURNS void kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=af07b7fac60dec0a4fe568217931ac449d32f73b3a53a047b3b02a5f59cb5058",
       "gbrain_snapshot_version_trust()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=a0aa697992ad1777eaba4a1f4d2325dc4f2a98f3ebf9e81325d1b068406ce1cb",
@@ -578,6 +631,33 @@
       "update_page_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=17f46ae9b759422e14ac02baa9cd3756687c2591b297cc941e8a6d3f7c8b1088"
     },
     "grants": {
+      "access_group_members": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "access_groups": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "access_member_links": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "access_members": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "access_pending_coverage": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "access_policy_migrations": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "access_policy_revisions": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "access_policy_state": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "access_rules": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "access_tokens": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -735,6 +815,9 @@
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "git_canonical_brain": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "ingest_applied_captures": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "ingest_log": [
@@ -941,6 +1024,9 @@
       "raw_data": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "reason_purge_tombstones": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "retrieval_event_links": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -990,6 +1076,9 @@
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "slug_aliases": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "slug_rename_history": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "source_ingestion_receipts": [
@@ -1058,6 +1147,9 @@
       "trust_proposals": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "wake_subscriptions": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "wanted_links": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -1069,6 +1161,18 @@
       ]
     },
     "indexes": {
+      "access_group_members_member_idx": "CREATE INDEX access_group_members_member_idx ON public.access_group_members USING btree (member_id)",
+      "access_group_members_pkey": "CREATE UNIQUE INDEX access_group_members_pkey ON public.access_group_members USING btree (group_id, member_id)",
+      "access_groups_pkey": "CREATE UNIQUE INDEX access_groups_pkey ON public.access_groups USING btree (id)",
+      "access_member_links_member_idx": "CREATE INDEX access_member_links_member_idx ON public.access_member_links USING btree (member_id)",
+      "access_member_links_pkey": "CREATE UNIQUE INDEX access_member_links_pkey ON public.access_member_links USING btree (system, external_id)",
+      "access_members_pkey": "CREATE UNIQUE INDEX access_members_pkey ON public.access_members USING btree (id)",
+      "access_pending_coverage_pkey": "CREATE UNIQUE INDEX access_pending_coverage_pkey ON public.access_pending_coverage USING btree (source_id, prefix, reason)",
+      "access_policy_migrations_pkey": "CREATE UNIQUE INDEX access_policy_migrations_pkey ON public.access_policy_migrations USING btree (id)",
+      "access_policy_revisions_operation_idx": "CREATE UNIQUE INDEX access_policy_revisions_operation_idx ON public.access_policy_revisions USING btree (operation_id) WHERE (operation_id IS NOT NULL)",
+      "access_policy_revisions_pkey": "CREATE UNIQUE INDEX access_policy_revisions_pkey ON public.access_policy_revisions USING btree (source_id, revision)",
+      "access_policy_state_pkey": "CREATE UNIQUE INDEX access_policy_state_pkey ON public.access_policy_state USING btree (source_id)",
+      "access_rules_pkey": "CREATE UNIQUE INDEX access_rules_pkey ON public.access_rules USING btree (source_id, rule_id)",
       "access_tokens_pkey": "CREATE UNIQUE INDEX access_tokens_pkey ON public.access_tokens USING btree (id)",
       "access_tokens_token_hash_key": "CREATE UNIQUE INDEX access_tokens_token_hash_key ON public.access_tokens USING btree (token_hash)",
       "belief_commit_marks_pkey": "CREATE UNIQUE INDEX belief_commit_marks_pkey ON public.belief_commit_marks USING btree (publication_id)",
@@ -1120,6 +1224,9 @@
       "core_edit_notices_pkey": "CREATE UNIQUE INDEX core_edit_notices_pkey ON public.core_edit_notices USING btree (id)",
       "decide_calibrations_lookup_idx": "CREATE INDEX decide_calibrations_lookup_idx ON public.decide_calibrations USING btree (slot, provider, model_resolved, created_at DESC)",
       "decide_calibrations_pkey": "CREATE UNIQUE INDEX decide_calibrations_pkey ON public.decide_calibrations USING btree (id)",
+      "decide_proposals_claim_pair_uidx": "CREATE UNIQUE INDEX decide_proposals_claim_pair_uidx ON public.decide_proposals USING btree (source_id, LEAST(new_fact_id, old_fact_id), GREATEST(new_fact_id, old_fact_id)) WHERE (sweep_id ~~ 'claim_conflicts:%'::text)",
+      "decide_proposals_pending_new_idx": "CREATE INDEX decide_proposals_pending_new_idx ON public.decide_proposals USING btree (new_fact_id) WHERE (status = 'pending'::text)",
+      "decide_proposals_pending_old_idx": "CREATE INDEX decide_proposals_pending_old_idx ON public.decide_proposals USING btree (old_fact_id) WHERE (status = 'pending'::text)",
       "decide_proposals_pkey": "CREATE UNIQUE INDEX decide_proposals_pkey ON public.decide_proposals USING btree (id)",
       "decide_proposals_status_created_idx": "CREATE INDEX decide_proposals_status_created_idx ON public.decide_proposals USING btree (status, created_at)",
       "decide_proposals_sweep_id_pair_index_key": "CREATE UNIQUE INDEX decide_proposals_sweep_id_pair_index_key ON public.decide_proposals USING btree (sweep_id, pair_index)",
@@ -1307,6 +1414,8 @@
       "idx_timeline_event_page": "CREATE INDEX idx_timeline_event_page ON public.timeline_entries USING btree (event_page_id) WHERE (event_page_id IS NOT NULL)",
       "idx_timeline_page": "CREATE INDEX idx_timeline_page ON public.timeline_entries USING btree (page_id)",
       "idx_versions_page": "CREATE INDEX idx_versions_page ON public.page_versions USING btree (page_id)",
+      "ingest_applied_captures_applied_at_idx": "CREATE INDEX ingest_applied_captures_applied_at_idx ON public.ingest_applied_captures USING btree (applied_at)",
+      "ingest_applied_captures_pkey": "CREATE UNIQUE INDEX ingest_applied_captures_pkey ON public.ingest_applied_captures USING btree (idempotency_key)",
       "ingest_log_marked_idx": "CREATE INDEX ingest_log_marked_idx ON public.ingest_log USING btree (created_at) WHERE (writer_segment_reader IS TRUE)",
       "ingest_log_pkey": "CREATE UNIQUE INDEX ingest_log_pkey ON public.ingest_log USING btree (id)",
       "ingest_log_unmarked_idx": "CREATE INDEX ingest_log_unmarked_idx ON public.ingest_log USING btree (created_at) WHERE (writer_segment_reader IS NOT TRUE)",
@@ -1403,9 +1512,11 @@
       "pages_dedup_idx": "CREATE INDEX pages_dedup_idx ON public.pages USING btree (source_id, content_hash) WHERE (deleted_at IS NULL)",
       "pages_deleted_at_purge_idx": "CREATE INDEX pages_deleted_at_purge_idx ON public.pages USING btree (deleted_at) WHERE (deleted_at IS NOT NULL)",
       "pages_file_uri_name_idx": "CREATE INDEX pages_file_uri_name_idx ON public.pages USING btree (source_id, regexp_replace(source_uri, '^.*/'::text, ''::text)) WHERE (source_uri ~~ 'file:%'::text)",
+      "pages_folder_rule_ids_gin": "CREATE INDEX pages_folder_rule_ids_gin ON public.pages USING gin (folder_rule_ids) WHERE (folder_rule_ids IS NOT NULL)",
       "pages_generation_idx": "CREATE INDEX pages_generation_idx ON public.pages USING btree (generation)",
       "pages_links_extracted_at_idx": "CREATE INDEX pages_links_extracted_at_idx ON public.pages USING btree (source_id, links_extracted_at)",
       "pages_live_origin_key": "CREATE UNIQUE INDEX pages_live_origin_key ON public.pages USING btree (source_id, source_path) WHERE ((deleted_at IS NULL) AND (source_path IS NOT NULL))",
+      "pages_page_readers_gin": "CREATE INDEX pages_page_readers_gin ON public.pages USING gin (page_readers) WHERE (page_readers IS NOT NULL)",
       "pages_pkey": "CREATE UNIQUE INDEX pages_pkey ON public.pages USING btree (id)",
       "pages_safe_chunk_pending_idx": "CREATE INDEX pages_safe_chunk_pending_idx ON public.pages USING btree (source_id) WHERE (chunker_version < 4)",
       "pages_segmented_body_bytes_idx": "CREATE INDEX pages_segmented_body_bytes_idx ON public.pages USING btree (body_bytes) WHERE (body_storage = 'segmented'::text)",
@@ -1428,14 +1539,17 @@
       "persistence_requests_compactable": "CREATE INDEX persistence_requests_compactable ON public.persistence_requests USING btree (completed_at) WHERE ((recovery IS NULL) AND (NOT compacted) AND (state = ANY (ARRAY['committed'::text, 'conflict'::text, 'failed'::text, 'cancelled'::text])))",
       "persistence_requests_database_pending": "CREATE INDEX persistence_requests_database_pending ON public.persistence_requests USING btree (source_incarnation, sequence) WHERE ((worktree_id IS NULL) AND (state = ANY (ARRAY['queued'::text, 'running'::text, 'recovering'::text])))",
       "persistence_requests_foreground_committed": "CREATE INDEX persistence_requests_foreground_committed ON public.persistence_requests USING btree (worktree_id, sequence) WHERE ((state = 'committed'::text) AND (NOT (COALESCE((intent ->> 'kind'::text), ''::text) ~~ 'managed_sync_%'::text)))",
+      "persistence_requests_open": "CREATE INDEX persistence_requests_open ON public.persistence_requests USING btree (worktree_id, sequence) WHERE (state = ANY (ARRAY['queued'::text, 'deferred'::text, 'running'::text, 'recovering'::text]))",
       "persistence_requests_pending": "CREATE INDEX persistence_requests_pending ON public.persistence_requests USING btree (worktree_id, sequence) WHERE (state = ANY (ARRAY['queued'::text, 'running'::text, 'recovering'::text]))",
       "persistence_requests_pkey": "CREATE UNIQUE INDEX persistence_requests_pkey ON public.persistence_requests USING btree (id)",
       "persistence_requests_principal": "CREATE INDEX persistence_requests_principal ON public.persistence_requests USING btree (principal_kind, principal_id, sequence DESC)",
       "persistence_requests_principal_kind_principal_id_request_id_key": "CREATE UNIQUE INDEX persistence_requests_principal_kind_principal_id_request_id_key ON public.persistence_requests USING btree (principal_kind, principal_id, request_id)",
       "persistence_requests_recovery": "CREATE INDEX persistence_requests_recovery ON public.persistence_requests USING btree (worktree_id, sequence) WHERE (recovery IS NOT NULL)",
+      "persistence_requests_replay_id": "CREATE INDEX persistence_requests_replay_id ON public.persistence_requests USING btree (request_id)",
       "persistence_requests_request_id": "CREATE INDEX persistence_requests_request_id ON public.persistence_requests USING btree (source_id, request_id)",
       "persistence_requests_sequence_key": "CREATE UNIQUE INDEX persistence_requests_sequence_key ON public.persistence_requests USING btree (sequence)",
       "persistence_requests_slug_intent": "CREATE INDEX persistence_requests_slug_intent ON public.persistence_requests USING btree (source_id, slug, sequence) WHERE ((intent IS NOT NULL) AND (NOT compacted))",
+      "persistence_requests_slug_sequence": "CREATE INDEX persistence_requests_slug_sequence ON public.persistence_requests USING btree (source_id, slug, sequence)",
       "persistence_requests_sync_run_committed": "CREATE INDEX persistence_requests_sync_run_committed ON public.persistence_requests USING btree (source_id, ((intent ->> 'runId'::text)), ((intent ->> 'index'::text))) WHERE ((state = 'committed'::text) AND (intent ? 'runId'::text))",
       "persistence_requests_sync_run_open": "CREATE INDEX persistence_requests_sync_run_open ON public.persistence_requests USING btree (worktree_id, ((intent ->> 'runId'::text))) WHERE ((state <> 'committed'::text) AND ((intent ->> 'kind'::text) = ANY (ARRAY['managed_sync_import'::text, 'managed_sync_delete'::text])))",
       "persistence_requests_sync_watermark": "CREATE INDEX persistence_requests_sync_watermark ON public.persistence_requests USING btree (worktree_id, source_incarnation, completed_at DESC) WHERE ((state = 'committed'::text) AND (COALESCE((intent ->> 'kind'::text), ''::text) ~~ 'managed_sync_%'::text))",
@@ -1444,6 +1558,7 @@
       "persistence_topology_changes_principal_id_request_id_key": "CREATE UNIQUE INDEX persistence_topology_changes_principal_id_request_id_key ON public.persistence_topology_changes USING btree (principal_id, request_id)",
       "persistence_topology_recovering": "CREATE INDEX persistence_topology_recovering ON public.persistence_topology_changes USING btree (created_at) WHERE (state = 'recovering'::text)",
       "persistence_worktree_refreshes_active": "CREATE UNIQUE INDEX persistence_worktree_refreshes_active ON public.persistence_worktree_refreshes USING btree (worktree_id) WHERE (state = ANY (ARRAY['draining'::text, 'fenced'::text, 'merged'::text, 'syncing'::text, 'recovery_required'::text]))",
+      "persistence_worktree_refreshes_completed": "CREATE INDEX persistence_worktree_refreshes_completed ON public.persistence_worktree_refreshes USING btree (worktree_id, completed_at DESC) WHERE (state = 'completed'::text)",
       "persistence_worktree_refreshes_pkey": "CREATE UNIQUE INDEX persistence_worktree_refreshes_pkey ON public.persistence_worktree_refreshes USING btree (id)",
       "persistence_worktrees_pkey": "CREATE UNIQUE INDEX persistence_worktrees_pkey ON public.persistence_worktrees USING btree (id)",
       "persistence_writer_protocols_pkey": "CREATE UNIQUE INDEX persistence_writer_protocols_pkey ON public.persistence_writer_protocols USING btree (worktree_id, host_id)",
@@ -1457,6 +1572,7 @@
       "question_evidence_question_idx": "CREATE INDEX question_evidence_question_idx ON public.question_evidence USING btree (question_id, answer_revision)",
       "raw_data_page_id_source_key": "CREATE UNIQUE INDEX raw_data_page_id_source_key ON public.raw_data USING btree (page_id, source)",
       "raw_data_pkey": "CREATE UNIQUE INDEX raw_data_pkey ON public.raw_data USING btree (id)",
+      "reason_purge_tombstones_pkey": "CREATE UNIQUE INDEX reason_purge_tombstones_pkey ON public.reason_purge_tombstones USING btree (source_id, commit_sha, path)",
       "retrieval_event_links_pkey": "CREATE UNIQUE INDEX retrieval_event_links_pkey ON public.retrieval_event_links USING btree (event_id, source_id, edge_key, to_slug)",
       "retrieval_event_pages_pkey": "CREATE UNIQUE INDEX retrieval_event_pages_pkey ON public.retrieval_event_pages USING btree (event_id, source_id, slug)",
       "retrieval_events_pkey": "CREATE UNIQUE INDEX retrieval_events_pkey ON public.retrieval_events USING btree (id)",
@@ -1490,6 +1606,8 @@
       "slug_aliases_canonical_idx": "CREATE INDEX slug_aliases_canonical_idx ON public.slug_aliases USING btree (source_id, canonical_slug)",
       "slug_aliases_pkey": "CREATE UNIQUE INDEX slug_aliases_pkey ON public.slug_aliases USING btree (id)",
       "slug_aliases_uniq": "CREATE UNIQUE INDEX slug_aliases_uniq ON public.slug_aliases USING btree (source_id, alias_slug)",
+      "slug_rename_history_new_idx": "CREATE INDEX slug_rename_history_new_idx ON public.slug_rename_history USING btree (source_id, new_slug)",
+      "slug_rename_history_pkey": "CREATE UNIQUE INDEX slug_rename_history_pkey ON public.slug_rename_history USING btree (source_id, old_slug, new_slug)",
       "source_ingestion_receipts_active": "CREATE INDEX source_ingestion_receipts_active ON public.source_ingestion_receipts USING btree (id) WHERE (outcome = 'incomplete'::text)",
       "source_ingestion_receipts_pkey": "CREATE UNIQUE INDEX source_ingestion_receipts_pkey ON public.source_ingestion_receipts USING btree (id)",
       "source_ingestion_receipts_retention": "CREATE INDEX source_ingestion_receipts_retention ON public.source_ingestion_receipts USING btree (source_id, source_incarnation, completed_at DESC, id DESC) WHERE (outcome = 'complete'::text)",
@@ -1540,6 +1658,10 @@
       "uniq_minion_attachments_job_filename": "CREATE UNIQUE INDEX uniq_minion_attachments_job_filename ON public.minion_attachments USING btree (job_id, filename)",
       "uniq_minion_jobs_idempotency": "CREATE UNIQUE INDEX uniq_minion_jobs_idempotency ON public.minion_jobs USING btree (idempotency_key) WHERE (idempotency_key IS NOT NULL)",
       "uniq_subagent_messages_idx": "CREATE UNIQUE INDEX uniq_subagent_messages_idx ON public.subagent_messages USING btree (job_id, message_idx)",
+      "wake_subscriptions_open_idx": "CREATE INDEX wake_subscriptions_open_idx ON public.wake_subscriptions USING btree (next_attempt_at) WHERE (state = 'open'::text)",
+      "wake_subscriptions_open_unique": "CREATE UNIQUE INDEX wake_subscriptions_open_unique ON public.wake_subscriptions USING btree (wake_user, ws_subscription_id) WHERE (state = 'open'::text)",
+      "wake_subscriptions_pkey": "CREATE UNIQUE INDEX wake_subscriptions_pkey ON public.wake_subscriptions USING btree (id)",
+      "wake_subscriptions_principal_idx": "CREATE INDEX wake_subscriptions_principal_idx ON public.wake_subscriptions USING btree (principal_kind, principal_id, created_at DESC)",
       "wanted_links_pkey": "CREATE UNIQUE INDEX wanted_links_pkey ON public.wanted_links USING btree (id)",
       "wanted_links_reference_unique": "CREATE UNIQUE INDEX wanted_links_reference_unique ON public.wanted_links USING btree (origin_page_id, producer, ref_kind, target_source_id, target_ref)",
       "wanted_links_source_idx": "CREATE INDEX wanted_links_source_idx ON public.wanted_links USING btree (source_id)",
@@ -1616,11 +1738,105 @@
       "timeline_entries_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=timeline_entries.id",
       "trust_allow_rules_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=trust_allow_rules.id",
       "trust_proposals_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=trust_proposals.id",
+      "wake_subscriptions_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=wake_subscriptions.id",
       "wanted_links_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=wanted_links.id",
       "write_gate_holds_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=write_gate_holds.id",
       "write_gate_receipts_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=write_gate_receipts.id"
     },
     "tables": {
+      "access_group_members": {
+        "columns": [
+          "1 group_id text/text NOT NULL",
+          "2 member_id text/text NOT NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "access_groups": {
+        "columns": [
+          "1 id text/text NOT NULL",
+          "2 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "access_member_links": {
+        "columns": [
+          "1 system text/text NOT NULL",
+          "2 external_id text/text NOT NULL",
+          "3 member_id text/text NOT NULL",
+          "4 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "access_members": {
+        "columns": [
+          "1 id text/text NOT NULL",
+          "2 display_name text/text NULL",
+          "3 disabled_at timestamp with time zone/timestamptz NULL",
+          "4 tombstoned_at timestamp with time zone/timestamptz NULL",
+          "5 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "6 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "access_pending_coverage": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 prefix text/text NOT NULL",
+          "3 reason text/text NOT NULL",
+          "4 revision bigint/int8 NULL",
+          "5 detail jsonb/jsonb NULL",
+          "6 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "access_policy_migrations": {
+        "columns": [
+          "1 id text/text NOT NULL",
+          "2 source_id text/text NOT NULL",
+          "3 direction text/text NOT NULL",
+          "4 phase text/text NOT NULL",
+          "5 receipts jsonb/jsonb NOT NULL DEFAULT '{}'::jsonb",
+          "6 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "7 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "access_policy_revisions": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 revision bigint/int8 NOT NULL",
+          "3 rules jsonb/jsonb NOT NULL",
+          "4 digest text/text NOT NULL",
+          "5 change_kind text/text NOT NULL",
+          "6 origin text/text NOT NULL",
+          "7 operation_id text/text NULL",
+          "8 proposed_by text/text NULL",
+          "9 approved_by text/text NULL",
+          "10 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "11 applied_at timestamp with time zone/timestamptz NULL",
+          "12 approved_at timestamp with time zone/timestamptz NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "access_policy_state": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "access_rules": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 rule_id text/text NOT NULL",
+          "3 prefix text/text NOT NULL",
+          "4 readable_by ARRAY/_text NOT NULL",
+          "5 revision bigint/int8 NOT NULL",
+          "6 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "7 created_by text/text NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
       "access_tokens": {
         "columns": [
           "1 id uuid/uuid NOT NULL DEFAULT gen_random_uuid()",
@@ -1638,7 +1854,12 @@
           "13 takes_holders ARRAY/_text NULL",
           "14 grant_revision integer/int4 NOT NULL DEFAULT 0",
           "15 min_trust text/text NULL",
-          "16 private_pages text/text NOT NULL DEFAULT 'none'::text"
+          "16 private_pages text/text NOT NULL DEFAULT 'none'::text",
+          "17 member_id text/text NULL",
+          "18 may_act_for ARRAY/_text NULL",
+          "19 attest_actor text/text NULL",
+          "20 attest_ops ARRAY/_text NULL",
+          "21 attest_sources ARRAY/_text NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -2504,6 +2725,16 @@
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
+      "ingest_applied_captures": {
+        "columns": [
+          "1 idempotency_key text/text NOT NULL",
+          "2 source_id text/text NOT NULL",
+          "3 slug text/text NOT NULL",
+          "4 result jsonb/jsonb NOT NULL",
+          "5 applied_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
       "ingest_log": {
         "columns": [
           "1 id integer/int4 NOT NULL DEFAULT nextval('ingest_log_id_seq'::regclass)",
@@ -2864,7 +3095,12 @@
           "30 takes_holders ARRAY/_text NULL",
           "31 min_trust text/text NULL",
           "32 registered_via text/text NULL",
-          "33 private_pages text/text NOT NULL DEFAULT 'none'::text"
+          "33 private_pages text/text NOT NULL DEFAULT 'none'::text",
+          "34 member_id text/text NULL",
+          "35 may_act_for ARRAY/_text NULL",
+          "36 attest_actor text/text NULL",
+          "37 attest_ops ARRAY/_text NULL",
+          "38 attest_sources ARRAY/_text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -2904,7 +3140,8 @@
           "4 scopes ARRAY/_text NULL",
           "5 expires_at bigint/int8 NULL",
           "6 resource text/text NULL",
-          "7 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+          "7 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "8 grant_type text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -3219,7 +3456,9 @@
           "21 body_storage text/text NOT NULL DEFAULT 'inline'::text",
           "22 body_generation bigint/int8 NULL",
           "23 body_bytes bigint/int8 NULL",
-          "24 content_hash text/text NULL"
+          "24 content_hash text/text NULL",
+          "25 change_reason text/text NULL",
+          "26 successor_pruned boolean/bool NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -3298,7 +3537,10 @@
           "51 truth_lead text/text NULL",
           "52 timeline_lead text/text NULL",
           "53 links_extract_failure jsonb/jsonb NULL",
-          "54 withheld_source_path text/text NULL"
+          "54 withheld_source_path text/text NULL",
+          "55 page_readers ARRAY/_text NULL",
+          "56 folder_rule_ids ARRAY/_text NULL",
+          "57 version_history_gap_at timestamp with time zone/timestamptz NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -3334,7 +3576,8 @@
           "15 version text/text NOT NULL",
           "16 boot_id text/text NULL",
           "17 process_start text/text NULL",
-          "18 segment_reader boolean/bool NULL"
+          "18 segment_reader boolean/bool NULL",
+          "19 capabilities ARRAY/_text NOT NULL DEFAULT '{}'::text[]"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -3462,7 +3705,9 @@
           "43 admitter_segment_reader boolean/bool NULL",
           "44 consumer_segment_reader boolean/bool NULL",
           "45 transient_interruptions integer/int4 NOT NULL DEFAULT 0",
-          "46 next_attempt_at timestamp with time zone/timestamptz NULL"
+          "46 next_attempt_at timestamp with time zone/timestamptz NULL",
+          "47 deferred_refresh_id uuid/uuid NULL",
+          "48 deferred_import_from text/text NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -3513,7 +3758,9 @@
           "12 outcome jsonb/jsonb NOT NULL DEFAULT '{}'::jsonb",
           "13 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "14 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "15 completed_at timestamp with time zone/timestamptz NULL"
+          "15 completed_at timestamp with time zone/timestamptz NULL",
+          "16 barrier_sequence bigint/int8 NULL",
+          "17 released_at timestamp with time zone/timestamptz NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -3638,6 +3885,15 @@
           "5 fetched_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=false force_rls=false"
+      },
+      "reason_purge_tombstones": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 commit_sha text/text NOT NULL",
+          "3 path text/text NOT NULL",
+          "4 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "retrieval_event_links": {
         "columns": [
@@ -3867,6 +4123,15 @@
           "6 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=false force_rls=false"
+      },
+      "slug_rename_history": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 old_slug text/text NOT NULL",
+          "3 new_slug text/text NOT NULL",
+          "4 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "source_ingestion_receipts": {
         "columns": [
@@ -4243,6 +4508,28 @@
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
+      "wake_subscriptions": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('wake_subscriptions_id_seq'::regclass)",
+          "2 event text/text NOT NULL",
+          "3 target text/text NOT NULL",
+          "4 principal_kind text/text NOT NULL",
+          "5 principal_id text/text NOT NULL",
+          "6 member_id text/text NULL",
+          "7 wake_user text/text NOT NULL",
+          "8 ws_subscription_id text/text NOT NULL",
+          "9 state text/text NOT NULL DEFAULT 'open'::text",
+          "10 delivered_marker text/text NULL",
+          "11 attempts integer/int4 NOT NULL DEFAULT 0",
+          "12 next_attempt_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "13 lease_until timestamp with time zone/timestamptz NULL",
+          "14 last_error text/text NULL",
+          "15 expires_at timestamp with time zone/timestamptz NOT NULL",
+          "16 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "17 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
       "wanted_links": {
         "columns": [
           "1 id bigint/int8 NOT NULL DEFAULT nextval('wanted_links_id_seq'::regclass)",
@@ -4304,6 +4591,9 @@
       }
     },
     "triggers": {
+      "access_members.access_members_mark_restricted": "CREATE TRIGGER access_members_mark_restricted AFTER INSERT ON public.access_members FOR EACH ROW EXECUTE FUNCTION gbrain_access_mark_restricted()",
+      "access_pending_coverage.access_pending_coverage_mark_restricted": "CREATE TRIGGER access_pending_coverage_mark_restricted AFTER INSERT ON public.access_pending_coverage FOR EACH ROW EXECUTE FUNCTION gbrain_access_mark_restricted()",
+      "access_rules.access_rules_mark_restricted": "CREATE TRIGGER access_rules_mark_restricted AFTER INSERT ON public.access_rules FOR EACH ROW EXECUTE FUNCTION gbrain_access_mark_restricted()",
       "access_tokens.trust_generation_update": "CREATE CONSTRAINT TRIGGER trust_generation_update AFTER UPDATE ON public.access_tokens DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN ((old.min_trust IS DISTINCT FROM new.min_trust)) EXECUTE FUNCTION gbrain_bump_trust_generation()",
       "config.trust_generation_delete": "CREATE CONSTRAINT TRIGGER trust_generation_delete AFTER DELETE ON public.config DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN ((old.key ~~ 'trust.%'::text)) EXECUTE FUNCTION gbrain_bump_trust_generation()",
       "config.trust_generation_insert": "CREATE CONSTRAINT TRIGGER trust_generation_insert AFTER INSERT ON public.config DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN ((new.key ~~ 'trust.%'::text)) EXECUTE FUNCTION gbrain_bump_trust_generation()",
@@ -4342,6 +4632,9 @@
       "pages.bump_page_generation_clock_trg": "CREATE TRIGGER bump_page_generation_clock_trg AFTER INSERT OR DELETE OR UPDATE ON public.pages FOR EACH STATEMENT EXECUTE FUNCTION bump_page_generation_clock_fn()",
       "pages.bump_page_generation_trg": "CREATE TRIGGER bump_page_generation_trg BEFORE INSERT OR UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION bump_page_generation_fn()",
       "pages.managed_writer_guard": "CREATE TRIGGER managed_writer_guard BEFORE INSERT OR DELETE OR UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_require_managed_writer()",
+      "pages.pages_access_derive_readers": "CREATE TRIGGER pages_access_derive_readers BEFORE INSERT OR UPDATE OF frontmatter, page_readers ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_access_derive_page_readers()",
+      "pages.pages_access_mark_restricted": "CREATE TRIGGER pages_access_mark_restricted AFTER INSERT OR UPDATE OF frontmatter ON public.pages FOR EACH ROW WHEN ((new.frontmatter ? 'readable_by'::text)) EXECUTE FUNCTION gbrain_access_mark_restricted()",
+      "pages.pages_access_stamp_folder_rules": "CREATE TRIGGER pages_access_stamp_folder_rules BEFORE INSERT OR UPDATE OF slug, source_id, folder_rule_ids ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_access_stamp_folder_rules()",
       "pages.pages_clear_atom_scan_state": "CREATE TRIGGER pages_clear_atom_scan_state AFTER UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_clear_atom_page_state()",
       "pages.pages_derivation_scope_delete": "CREATE TRIGGER pages_derivation_scope_delete AFTER UPDATE OF deleted_at ON public.pages FOR EACH ROW WHEN (((old.deleted_at IS NULL) AND (new.deleted_at IS NOT NULL))) EXECUTE FUNCTION gbrain_mark_derivation_scope_entry()",
       "pages.pages_forget_retrievals": "CREATE TRIGGER pages_forget_retrievals AFTER DELETE ON public.pages REFERENCING OLD TABLE AS gbrain_deleted_pages FOR EACH STATEMENT EXECUTE FUNCTION gbrain_forget_page_retrievals()",
@@ -4359,7 +4652,9 @@
       "pages.trust_tier_stamp": "CREATE TRIGGER trust_tier_stamp BEFORE INSERT OR UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_stamp_trust_tier()",
       "persistence_brain.gbrain_protocol_activation": "CREATE TRIGGER gbrain_protocol_activation BEFORE UPDATE ON public.persistence_brain FOR EACH ROW EXECUTE FUNCTION gbrain_guard_protocol_activation()",
       "persistence_effects.gbrain_effect_protocol": "CREATE TRIGGER gbrain_effect_protocol BEFORE INSERT OR DELETE OR UPDATE ON public.persistence_effects FOR EACH ROW EXECUTE FUNCTION gbrain_guard_effect_protocol()",
+      "persistence_requests.gbrain_request_deferred": "CREATE TRIGGER gbrain_request_deferred BEFORE UPDATE OF state ON public.persistence_requests FOR EACH ROW WHEN (((old.state = 'deferred'::text) OR (new.state = 'deferred'::text))) EXECUTE FUNCTION gbrain_guard_deferred_request()",
       "persistence_requests.gbrain_request_protocol": "CREATE TRIGGER gbrain_request_protocol BEFORE INSERT OR DELETE OR UPDATE ON public.persistence_requests FOR EACH ROW EXECUTE FUNCTION gbrain_guard_request_protocol()",
+      "persistence_worktree_refreshes.gbrain_refresh_release": "CREATE TRIGGER gbrain_refresh_release BEFORE UPDATE OF state ON public.persistence_worktree_refreshes FOR EACH ROW WHEN (((new.state = ANY (ARRAY['completed'::text, 'aborted'::text])) AND (old.state <> ALL (ARRAY['completed'::text, 'aborted'::text])))) EXECUTE FUNCTION gbrain_release_refresh_barrier()",
       "shared_skill_delivery_batches.shared_skill_delivery_lease": "CREATE TRIGGER shared_skill_delivery_lease AFTER INSERT OR UPDATE OF revisions ON public.shared_skill_delivery_batches FOR EACH ROW EXECUTE FUNCTION gbrain_lease_shared_skill_delivery()",
       "shared_skill_heads.gbrain_skill_publication": "CREATE TRIGGER gbrain_skill_publication BEFORE INSERT OR DELETE OR UPDATE ON public.shared_skill_heads FOR EACH ROW EXECUTE FUNCTION gbrain_guard_skill_publication()",
       "shared_skill_packs.gbrain_skill_publication": "CREATE TRIGGER gbrain_skill_publication BEFORE INSERT OR DELETE OR UPDATE ON public.shared_skill_packs FOR EACH ROW EXECUTE FUNCTION gbrain_guard_skill_publication()",

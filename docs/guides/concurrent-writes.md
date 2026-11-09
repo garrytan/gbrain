@@ -188,7 +188,7 @@ outcomes and reasons, never values), and `classified` counts the batch:
 
 | Classification | Meaning | Next step |
 | --- | --- | --- |
-| `structurally_additive` | Only additive metadata changed: a `contacts` list with entries appended after every stored entry (order and repeats kept), an activity date that moved forward (`updated`, `last_*`, `*_last_used`), or a field present on one side only. | Preview with `--auto-additive`, then apply. |
+| `structurally_additive` | Only additive metadata changed: a `contacts` list with entries appended after every stored entry (order and repeats kept) or whose stored rows changed only by an activity date moving forward (a row's `last_used`), an activity date that moved forward (`updated`, `last_*`, `*_last_used`), or a field present on one side only. | Preview with `--auto-additive`, then apply. |
 | `additive_with_suggestions` | The above, plus body or timeline lines inserted without changing or removing any stored line. | Read the inserted lines, then preview with `--auto-additive --accept-suggested`. |
 | `review_required` | Stored text changed or was removed; or a policy, privacy, title, type, tag, alias or fence change; or a date that moved backward, changed format or is in the future. | Resolve manually as above, after asking the user. |
 | `formatting_only` | The parsed content already agrees. | Preview; the result is the database content. |
@@ -262,7 +262,7 @@ own `fix` and a link to this section:
 
 | `reason` | Cause | Next step |
 | --- | --- | --- |
-| `file_database_drift` | The file was edited outside a coordinated write, or it is older than the database copy. | Run the `fix` (a reconcile preview), then resolve and apply it as described in [Repair a file/database disagreement](#repair-a-filedatabase-disagreement). |
+| `file_database_drift` | The file was edited outside a coordinated write, or it is older than the database copy. | Run the `fix` (a reconcile preview), then resolve and apply it as described in [Repair a file/database disagreement](#repair-a-filedatabase-disagreement). A source with `persistence.adopt_local_edits.source.<id>` on adopts a one-sided edit for `remember`, `capture` and `add_timeline_entry` instead ([file_database_drift](write-refusals.md#file_database_drift)). |
 | `held_file` | Sync holds the file because it cannot import it. | Run the hold repair in `fix` (for example `gbrain repair frontmatter --source workspace`), as in [held files](repair.md#held-files). |
 | `canonical_file_missing` | The file was removed while lint ran. | Recover the file or import the deletion; reconciliation does not restore missing files. |
 | `revision_changed` | Another write published the page while lint ran. | Nothing; the next cycle lints the current revision. `fix` reads the page as it is now. |
@@ -993,7 +993,11 @@ When `persistence_capacity` warns or fails, or a write is refused with
 
 1. Read the finding: `gbrain doctor --only persistence_capacity --json`.
    `details.resources[]` names the scope, resource, days left and `basis`;
-   `fix` is the reversible unblock.
+   `fix` is the reversible unblock. `details.outstanding[]` lists an
+   outstanding-request cap at 90% or more whose oldest request is over ten
+   minutes old (a healthy drain near the line stays ok), with the sources holding its slots;
+   requests that stopped settling (or wait behind a slow publication) hold them, so when it is the only finding, `fix`
+   is that source's read-only `gbrain sources writer status`, not a raise.
 2. Run the `gbrain config set <key> <value>` it prints on the brain host
    (undo with `gbrain config unset <key>`). Writes resume at once; retry the
    refused write with the same `request_id`.
@@ -1006,7 +1010,7 @@ stored, and compaction frees the window's reservations as receipts age out.
 within `persistence.capacity.warn_days` (default 30), adds the
 `[gbrain notice write_capacity_low]` notice (kind `info`) with the same
 `gbrain config set` command. Write and sync receipts carry it at most once an
-hour per process per scope (a remote client sees only the brain and its own
+hour per engine per scope (a remote client sees only the brain and its own
 principal); `gbrain sync status`, doctor and autopilot cycle output carry it
 every time. `gbrain notices mute write_capacity_low` mutes it on receipts;
 doctor still reports it. When a cap passes

@@ -27,7 +27,7 @@ import { anySignal } from './abort-check.ts';
 import type { GBrainConfig } from './config.ts';
 import { discoverOAuth, mintClientCredentialsToken } from './remote-mcp-probe.ts';
 import { clearTokenCacheFile, dropCachedToken, readCachedToken, tokenCacheKey, writeCachedToken, type CachedToken } from './remote-token-cache.ts';
-import { isWriteErrorCode, isWriteReceipt, isWriteRequestId, publicWriteReceipt } from './persistence/types.ts';
+import { isTerminalWriteState, isWriteErrorCode, isWriteReceipt, isWriteRequestId, publicWriteReceipt, type WriteReceipt } from './persistence/types.ts';
 import { GBRAIN_CLIENT_HEADER, GBRAIN_THIN_CLIENT_NAME } from '../mcp/result-rows.ts';
 import { VERSION } from '../version.ts';
 import { RemoteMcpError, extractResponseMeta, type RemoteMcpErrorDetail } from './remote-mcp-error.ts';
@@ -179,6 +179,10 @@ export function extractToolErrorCode(message: string): string | undefined {
 }
 
 /** Keep only validated public receipt fields from a tool's JSON error body. */
+function isBatchErrorBody(text: string): boolean {
+  try { const body = JSON.parse(text) as { items?: unknown; status?: unknown }; return Array.isArray(body?.items) && body.status === 'error'; } catch { return false; }
+}
+
 export function extractToolErrorDetail(message: string): RemoteMcpErrorDetail {
   const code = extractToolErrorCode(message);
   const detail: RemoteMcpErrorDetail = code ? { code } : {};
@@ -201,6 +205,16 @@ export function extractToolErrorDetail(message: string): RemoteMcpErrorDetail {
     if (isWriteErrorCode(envelope.write_error)) detail.write_error = envelope.write_error;
   } catch { /* Older servers can return plain text; preserve existing code extraction. */ }
   return detail;
+}
+
+/** PR B: a server answers a write deferred behind a refresh as a `status: "pending"` success; the CLI treats it as the pending write it is. */
+function deferredPendingReceipt(res: unknown): WriteReceipt | null {
+  const first = (res as { content?: Array<{ text?: unknown }> } | null)?.content?.[0]?.text;
+  if (typeof first !== 'string' || !/^\s*\{\s*"status"\s*:\s*"pending"/.test(first.slice(0, 64))) return null;
+  try {
+    const body = JSON.parse(first) as { receipt?: unknown };
+    return isWriteReceipt(body.receipt) && !isTerminalWriteState(body.receipt.state) ? publicWriteReceipt(body.receipt) : null;
+  } catch { return null; }
 }
 
 function requireRemoteMcp(config: GBrainConfig | null): NonNullable<GBrainConfig['remote_mcp']> {
@@ -430,6 +444,8 @@ export async function callRemoteTool(
           // block from a newer server never joins the body.
           const first = Array.isArray(res.content) ? (res.content[0] as { text?: unknown } | undefined) : undefined;
           const message = typeof first?.text === 'string' ? first.text : 'unknown tool error';
+          // GST-1387: a remember batch with a failed item is an error whose body keeps every item's receipt; the caller renders it.
+          if (isBatchErrorBody(message)) return res;
           // v0.31.1: extract structured error code (e.g. 'missing_scope') so
           // the dispatcher can produce a pinpoint hint instead of a generic
           // "tool error" message.
@@ -438,6 +454,11 @@ export async function callRemoteTool(
             `Remote tool ${toolName} failed: ${message}`,
             { mcp_url: remote.mcp_url, ...extractToolErrorDetail(message) },
           );
+        }
+        const pending = deferredPendingReceipt(res);
+        if (pending) {
+          throw new RemoteMcpError('tool_error', `Remote tool ${toolName}: request ${pending.request_id} was accepted and publishes after the worktree refresh.`,
+            { mcp_url: remote.mcp_url, code: 'write_pending', write_error: 'write_pending', write_request: pending, request_id: pending.request_id });
         }
         return res;
       } finally {

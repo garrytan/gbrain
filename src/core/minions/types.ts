@@ -283,6 +283,8 @@ export interface MinionJobContext {
   /** Set by runWithJobSpend for a spend-authorized job: its group record and meter key. */
   spend?: JobSpendContext;
   attempts_made: number;
+  /** The job row's idempotency key (null when it was queued without one); ingest_capture records an applied capture under it (GST-1856). */
+  idempotency_key: string | null;
   /** AbortSignal for cooperative cancellation (fires on timeout, cancel, pause, or lock loss). */
   signal: AbortSignal;
   /** Absolute wall-clock deadline (epoch ms) from the claim-time `timeout_at` stamp,
@@ -838,4 +840,20 @@ export interface SubagentResult {
    * completion that `require_writes` must not dead-letter.
    */
   oneshot_skipped?: boolean;
+}
+
+/**
+ * GST-359 C2: the attested actor an agent job belongs to. submit_agent stores it in the accepted grant
+ * (`submission_authority.grant.actor`); every owner-fenced job read and cancel also matches it, so behind one attest
+ * client a job is visible only to the person it was submitted for, and a job without one only to unattested calls.
+ */
+export type JobActor = readonly [string, string, string];
+
+/** The actor of a caller without an attested one. */
+export const NO_JOB_ACTOR: JobActor = ['', '', ''];
+
+/** SQL: the job's accepted actor equals the three parameters starting at `$first`. `alias` is a code-provided table alias. */
+export function jobActorSql(first: number, alias?: string): string {
+  const actor = `${alias ? alias + '.' : ''}submission_authority->'grant'->'actor'`;
+  return ['system', 'external_id', 'member'].map((key, i) => `COALESCE(${actor}->>'${key}', '') = $${first + i}::text`).join(' AND ');
 }

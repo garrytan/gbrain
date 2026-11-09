@@ -102,7 +102,7 @@ The run ends in exactly one outcome:
 
 | Outcome | Exit | Meaning | What to do |
 | --- | --- | --- | --- |
-| `synced` | 0 | The pass converged and stamped (a company-brain source: the cursor reached its target). A pass at a selection other than the configured one adds `selection_scoped` and does not advance `last_commit`. | Nothing. |
+| `synced` | 0 | The pass converged and stamped (a company-brain source: the cursor reached its target). A pass at a selection other than the configured one adds `selection_scoped` and does not advance `last_commit`; a pass that held files a person must decide adds `held_needs_human` (their count in `held_needs_human`). | Nothing; held files wait on a person (`gbrain sync status --source <id>`). |
 | `resumable` | 0 | A deadline, `--timeout` or Ctrl-C stopped it; accepted writes are intact. | Rerun `next.command`; safe in a loop. |
 | `resumable` / `not_converged` | 0 | The pass used its four rounds while another writer kept changing the level; everything it admitted stands. | Rerun `next.command`. After three in a row `next` is a report (`gbrain doctor --json`), not another sync. |
 | `resumable` / `admission_paused` | 0 | `sync.admission` is `imports_only` or `classify_only`. | Ask the user; `gbrain config set sync.admission normal` ends the pause. |
@@ -507,7 +507,8 @@ vars — incident-time escape hatches, not everyday knobs.
    last good revision and is read-only for `put_page` until the file is
    repaired. A hold clears when the file changes, is deleted, or a newer
    gbrain can read it; `gbrain sync --dry-run` lists would-be holds
-   (`would_hold`) without writing anything. The backlog fix is one previewed,
+   (`would_hold`) and counts the files the run would add, modify, soft-delete
+   and rename, without writing anything. The backlog fix is one previewed,
    hash-bound command per kind of hold:
 
    ```bash
@@ -680,6 +681,22 @@ vars — incident-time escape hatches, not everyday knobs.
    means something commits into the checkout outside gbrain: fix that writer
    instead of forcing the checkout
    ([scripts and the managed checkout](shared-checkout-git.md#scripts-and-the-managed-checkout)).
+   When the worktree's Git durability is on, a diverged refresh publishes the
+   local commits itself (`sources.refresh_publish_diverged` unset; `false` turns it
+   off, `true` publishes even with durability off): under its publish lock it scans
+   what those commits add (messages, added lines, merge resolutions) and refuses
+   `publish_secret_found` naming the file, line and rule when one looks like a
+   secret, otherwise it pushes
+   the local commits merged with the upstream in memory, the same publish as
+   `gbrain git commit-push --push-only --keep-checkout` run as a child process
+   with `--scan-secrets` (it skips the checkout's pre-push hook), and fast-forwards
+   to the merge. It never moves the checkout to merge, a conflicting file refuses
+   `integrate_conflict` naming it with nothing pushed (with `gbrain.quarantine`
+   on, the remote's version is published, this machine's is kept under
+   `refs/gbrain/quarantine/`, and the refresh says so), an uncommitted edit to a
+   file the upstream changed refuses `refresh_dirty` before anything is pushed,
+   an upstream rewritten by a force-push (or one gbrain has no earlier record
+   of) still refuses `refresh_diverged`, and `--dry-run` never publishes.
 
    **Say to your agent:** *"Bring my notes source up to date with its remote."*
 

@@ -10,7 +10,7 @@ import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
 import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import type { ToolResult } from './dispatch.ts';
-import { findInvalidParam, schemaInvalidParams, parseStrictParamsMode } from './validate-params.ts';
+import { findInvalidParam, normalizeOptionalParams, schemaInvalidParams, parseStrictParamsMode } from './validate-params.ts';
 import { clampSurface, createStdioSurfaceState, resolveAdvertisedSurface, stdioToolListing, sessionWidenAllowed, surfaceEnvInvalidNotice, type McpAccess, type McpSurface, type SurfaceSource } from './surface.ts';
 import { noticeBlock, renderNotice, type Notice } from '../core/agent-output.ts';
 import { disabledOpsForPublishGates } from './publish-gates.ts';
@@ -18,16 +18,18 @@ import { parseResultRowsMode, resolveResultRowsMode } from './result-rows.ts';
 import { loadConfig } from '../core/config.ts';
 import { requestConfigRows, withRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { gcSessionContextState } from '../core/context/session-state.ts';
-import { installInstructionsResolver, readInstructionContent, resolveMcpInstructions } from './instructions.ts';
+import { installInstructionsResolver, MCP_SERVER_DESCRIPTION, readInstructionContent, resolveMcpInstructions } from './instructions.ts';
 import { instructionReadiness, stdioCapabilityReadiness } from './initialize-context.ts';
 import { STATUS_TOOL_DEF, STATUS_TOOL_NAME, attemptStatusRecovery, statusHeadline, statusInstructionLine, statusModeErrorResult, statusModeOf, statusPayload, statusToolResult } from './status-mode.ts';
 import { installCapabilitiesResource, mcpAdministrationGuidance } from './capabilities.ts';
 import { createSkillResources, type SkillResources } from './skill-resources.ts';
 import { readLocalWriter, verifyLocalWriter } from '../core/persistence/identity.ts';
-import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
+import { ambientOptsFrom } from '../core/facts/writeback-config.ts';
+import { resolveAgentWriteback } from '../core/facts/writeback-settings.ts';
 import { isEngineDegraded, onEngineRecovered } from '../core/degraded-marker.ts';
 import { assertStdioSourceBindable } from './source-preflight.ts';
 import { readOnlyServeSkipsResidentDuties } from '../core/direct-pool-profile.ts';
+import { hookSessionCwd } from '../core/session-cwd.ts';
 
 /**
  * Largest JSON-RPC message the stdio server reads (the SDK default is 10 MiB,
@@ -106,7 +108,7 @@ function deferredBoot(opts: { degraded: boolean }) {
 
 export async function resolveMcpStdioSourceScope(
   engine: BrainEngine,
-  cwd: string = process.cwd(),
+  cwd: string = hookSessionCwd(),
   opts: { warmConfig?: boolean } = {},
 ): Promise<{
   sourceId: string;
@@ -362,13 +364,13 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // F4 status-only mode: never touch the lazy engine at boot (its gated
   // reconnect belongs to tool calls).
   const statusMode = statusModeOf(engine);
-  const writeback = statusMode ? null : await resolveWritebackConfig(engine, config);
+  const writeback = statusMode ? null : (await resolveAgentWriteback(engine, config)).bundle;
   const writebackOpts = writeback ? ambientOptsFrom(writeback, {
     remember: session.allowedOps ? session.allowedOps.has('remember') : true,
     extractFacts: session.allowedOps ? session.allowedOps.has('extract_facts') : true,
   }) : null;
   server = new Server(
-    { name: 'gbrain', version: VERSION },
+    { name: 'gbrain', version: VERSION, description: MCP_SERVER_DESCRIPTION },
     // listChanged: a client that handshakes during DEGRADED mode receives the
     // gate-hidden catalog (stdioVisibleTools fail-closes every publishGateKey
     // op on engine failure) and caches it — recovery sends the notification
@@ -465,7 +467,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     // as local CLI dispatch: GBRAIN_SOURCE, then .gbrain-source, then the
     // non-explicit fallback tiers. Non-explicit tiers may widen to federated
     // local reads; explicit/env/dotfile scopes stay scalar.
-    const sourceScope = await resolveMcpStdioSourceScope(engine, process.cwd(), { warmConfig: OPERATION_MANIFEST.find(o => o.name === name)?.mutating === false });
+    const sourceScope = await resolveMcpStdioSourceScope(engine, hookSessionCwd(), { warmConfig: OPERATION_MANIFEST.find(o => o.name === name)?.mutating === false });
     // v0.28: stdio MCP has no per-token auth (local pipe). Default the
     // takes-holder allow-list to ['world'] so agent-facing callers don't
     // see private hunches via takes_list / takes_search / query. Operators
@@ -493,7 +495,8 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       // stdio stays remote/untrusted.
       transport: 'stdio', inboundFrameBytes: MCP_STDIO_MAX_MESSAGE_BYTES,
       takesHoldersAllowList: ['world'],
-      ...(sessionId ? { sessionId } : {}), ...(hotMemoryOffIn(request.params) ? { hotMemoryOff: true } : {}),
+      ...(sessionId ? { sessionId } : {}), ...(hotMemoryOffIn(request.params) ? { hotMemoryOff: true } : {}), onBehalfOf: { requestMeta: request.params?._meta },
+      mcpCaller: { client: server?.getClientVersion()?.name, meta: request.params?._meta },
       sourceId: sourceScope.sourceId,
       ...(sourceScope.localFederatedSourceIds
         ? { localFederatedSourceIds: sourceScope.localFederatedSourceIds }
@@ -644,10 +647,11 @@ export async function handleToolCall(
   const op = operations.find(o => o.name === tool);
   if (!op) throw opError('unknown_tool', `Unknown tool: ${tool}`, 'Run `gbrain --tools-json` to list the tool names.');
 
-  const validationFailure = findInvalidParam(op, params);
+  const safeParams = normalizeOptionalParams(op, params);
+  const validationFailure = findInvalidParam(op, safeParams);
   if (validationFailure) throw schemaInvalidParams(op, validationFailure, {});
 
-  const ctx = buildOperationContext(engine, params, {
+  const ctx = buildOperationContext(engine, safeParams, {
     remote: false,
     admissionOrigin: 'interactive',
     logger: { info: console.log, warn: console.warn, error: console.error },
@@ -658,5 +662,5 @@ export async function handleToolCall(
       : {}),
   });
 
-  return op.handler(ctx, params);
+  return op.handler(ctx, safeParams);
 }

@@ -57,7 +57,7 @@ into your user-scope skills dir with a local-edit-respecting update lens
 (CLI form: `claude plugin marketplace add garrytan/gbrain` +
 `claude plugin install gbrain@gbrain`.) Prerequisites and behavior match the
 [Codex plugin](CODEX.md#install-as-a-codex-plugin-recommended): the gbrain CLI
-installed (`bun install -g github:garrytan/gbrain#latest-stable`), a brain
+installed (`bun install -g github:garrytan/gbrain#stable`), a brain
 (`gbrain init`), `full` MCP surface with `--source-guard`, and the same
 routing rules (`GBRAIN_SOURCE`/`GBRAIN_BRAIN_ID` env — dotfiles don't apply
 to a plugin-launched serve). Positioning: the plugin is the lightweight
@@ -80,12 +80,16 @@ without output, so each turn gets it once. `GBRAIN_HOOKS=0`, or a recorded `gbra
 ## Option 1: Local (recommended, zero server needed)
 
 ```bash
-claude mcp add gbrain -- "$(command -v gbrain)" serve --surface starter --advertise verbs
-gbrain setup claude-code --instructions-only
+gbrain setup claude-code
 ```
 
-(`gbrain setup claude-code` alone does both, plus hooks and a smoke test.)
-The second line adds the [brain-first instructions](#brain-first-instructions).
+Setup registers `gbrain serve --surface starter --advertise verbs`, adds the
+[brain-first instructions](#brain-first-instructions) and hooks, and runs a
+smoke test; `--no-hooks` skips the hooks. The MCP entry starts serve through
+gbrain's launcher (`<gbrain config dir>/hook-launcher/gbrain-hook`): Claude
+Code starts a stdio server in the session's directory, where a script-mode Bun
+install would load that directory's `bunfig.toml` and `.env`. Don't register
+`gbrain serve` with a bare `claude mcp add` for that reason.
 Claude Code spawns `gbrain serve` as a stdio subprocess. No server, no
 tunnel, no token needed. Works with both PGLite and Supabase engines.
 

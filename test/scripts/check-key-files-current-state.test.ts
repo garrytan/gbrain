@@ -151,8 +151,15 @@ describe("check-key-files-current-state.sh", () => {
     expect(result.stderr).toContain("src/core/example.ts");
   });
 
+  it("leaves README.md uncapped", () => {
+    seedClean();
+    writeDoc("README.md", "x".repeat(60000));
+    const result = run();
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("README.md is");
+  });
+
   it.each([
-    ["README.md", 45000],
     ["docs/architecture/KEY_FILES.md", 10000],
     ["docs/architecture/key-files/engines.md", 60000],
   ] as const)("bounds %s without rejecting the exact cap", (path, cap) => {

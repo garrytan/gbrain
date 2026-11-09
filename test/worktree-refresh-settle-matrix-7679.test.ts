@@ -42,25 +42,30 @@ const refusedWith = async (promise: Promise<unknown>, code: string) => {
   return error!;
 };
 
-test('7c. #7679 state matrix: an interrupted refresh of each kind, settled by the owner scan, a plain refresh and --resume', async () => {
+test('7c. #7679 state matrix: an interrupted refresh of each kind, settled by the owner scan, a plain refresh, --resume and --abandon', async () => {
   // Value: protects=each kind of interrupted refresh row leaves the row section 1.5 names when the owner scan, a plain refresh (adoption) or
   // --resume (resumeHeld) settles it; fails_when=a kind falls through to a sibling's path (an unverified HEAD adopted as the target, a syncing
   // row with an unrelated HEAD completed or refreshed over, a dead drain left standing); why_new=the #7679 tests cover syncing orphans with HEAD at
   // the target only; seam=none; no_claim=a real process death (the crash is a hook throw; the refresh lock is released as on exit).
+  // #7718-#7727, #7729: --abandon rolls back only a row whose checkout never moved (a dead drain, a fence at the start commit) and admits writes
+  // again; a row whose HEAD reached the target refuses refresh_in_progress and stays as it is, and an unrelated HEAD escalates to
+  // recovery_required; fails_when=abandon drops its syncing or at-target guard (files left ahead of the database) or aborts over an unrelated HEAD.
   type Kind = 'draining' | 'fenced_old' | 'fenced_target' | 'fenced_unrelated' | 'merged_target' | 'merged_unrelated' | 'syncing_at_target' | 'syncing_descendant'
-    | 'syncing_unrelated' | 'syncing_unrelated_synced';
-  type Action = 'owner_scan' | 'plain' | 'resume';
+    | 'syncing_unrelated' | 'syncing_unrelated_synced' | 'syncing_lagging';
+  type Action = 'owner_scan' | 'plain' | 'resume' | 'abandon';
   const kinds: Kind[] = ['draining', 'fenced_old', 'fenced_target', 'fenced_unrelated', 'merged_target', 'merged_unrelated', 'syncing_at_target', 'syncing_descendant',
     'syncing_unrelated', 'syncing_unrelated_synced'];
   const stateOf = (kind: Kind) => kind.split('_')[0] as 'draining' | 'fenced' | 'merged' | 'syncing';
   const crashAt = { draining: 'drained', fenced: 'fenced', merged: 'fenced', syncing: 'syncing' } as const;
   // The owner scan's row and moved count; a merged row's bookkeeping leaves it syncing, and a syncing row with an unrelated HEAD waits for --resume.
   const scanned: Record<Kind, [string, number]> = { draining: ['aborted', 1], fenced_old: ['aborted', 1], fenced_target: ['syncing', 1], fenced_unrelated: ['recovery_required', 1],
-    merged_target: ['syncing', 1], merged_unrelated: ['recovery_required', 1], syncing_at_target: ['completed', 1], syncing_descendant: ['syncing', 0], syncing_unrelated: ['syncing', 0], syncing_unrelated_synced: ['syncing', 0] };
-  const cells = kinds.flatMap(kind => (['owner_scan', 'plain', 'resume'] as Action[]).map(action => [kind, action] as [Kind, Action]));
+    merged_target: ['syncing', 1], merged_unrelated: ['recovery_required', 1], syncing_at_target: ['completed', 1], syncing_descendant: ['syncing', 0], syncing_unrelated: ['syncing', 0], syncing_unrelated_synced: ['syncing', 0], syncing_lagging: ['syncing', 0] };
+  // syncing_lagging (HEAD at the target, members still at the start commit) is what the crash at syncing leaves; the other paths cover it in 7e/7d.
+  const cells = [...kinds.flatMap(kind => (['owner_scan', 'plain', 'resume', 'abandon'] as Action[]).map(action => [kind, action] as [Kind, Action])),
+    ['syncing_lagging', 'abandon'] as [Kind, Action]];
   // Test cost (#7782): a cell that leaves the checkout settled (no unfinished refresh, a HEAD the upstream contains, every member synced to it) hands
   // its fixture to the next cell instead of building a brain per cell, so each chain is at most one settled cell and then one unsettled cell.
-  const endsSettled = ([kind, action]: [Kind, Action]) => !kind.includes('_unrelated') && kind !== 'syncing_descendant'
+  const endsSettled = ([kind, action]: [Kind, Action]) => action === 'abandon' ? kind === 'fenced_old' : !kind.includes('_unrelated') && kind !== 'syncing_descendant'
     && !(action === 'owner_scan' && (kind === 'fenced_target' || kind === 'merged_target'));
   const settledCells = cells.filter(endsSettled), unsettledCells = cells.filter(cell => !endsSettled(cell));
   const chains = [...unsettledCells.map((cell, i) => settledCells[i] ? [settledCells[i], cell] : [cell]), ...settledCells.slice(unsettledCells.length).map(cell => [cell])];
@@ -81,7 +86,9 @@ test('7c. #7679 state matrix: an interrupted refresh of each kind, settled by th
     await disposePersistenceConsumer(f.engine);
     const [orphan] = await cellRows();
     // The resident consumer's owner scan may already have settled it; restore what the crash left.
-    await f.engine.executeRaw(`UPDATE persistence_worktree_refreshes SET state=$2,completed_at=NULL WHERE id=$1::uuid`, [orphan.id, stateOf(kind)]);
+    // GST-1674: an _unrelated kind is a merge that ran and was then reset under an unrelated commit, so its row records the merge as started.
+    await f.engine.executeRaw(`UPDATE persistence_worktree_refreshes SET state=$2,completed_at=NULL,outcome=CASE WHEN $3::boolean THEN outcome||'{"merge_started":true}'::jsonb ELSE outcome END WHERE id=$1::uuid`,
+      [orphan.id, stateOf(kind), kind.includes('_unrelated')]);
     if (kind === 'fenced_target' || kind === 'merged_target') git(f.root, 'merge', '-q', '--ff-only', target);
     if (kind === 'syncing_descendant') commitFile(f.root, 'beta/local.md', page('Local', 'Committed on top of the target.'));
     if (kind.includes('_unrelated')) { git(f.root, 'reset', '-q', '--hard', old); commitFile(f.root, 'beta/unrelated.md', page('Unrelated', 'Not the upstream commit.')); }
@@ -102,6 +109,27 @@ test('7c. #7679 state matrix: an interrupted refresh of each kind, settled by th
       expect(await resumeWorktreeRefreshes(f.engine), label).toBe(moved);
       expect(await rows(), label).toEqual([state]);
       expect(f.head(), label).toBe(head);
+      continue;
+    }
+    if (action === 'abandon') {
+      const members = [await f.lastCommit(f.alpha), await f.lastCommit(f.beta)];
+      const run = refreshWorktree(f.engine, f.alpha, { abandon: true });
+      if (kind === 'draining' || kind === 'fenced_old') {
+        expect(await run, label).toMatchObject({ status: 'abandoned', refresh_id: orphan.id, old_head: old, target_head: target });
+        expect(await rows(), label).toEqual(['aborted']);
+        expect(((await cellRows())[0].outcome.refusal as { code: string }).code, label).toBe('refresh_abandoned');
+      } else if (kind === 'fenced_unrelated' || kind === 'merged_unrelated') {
+        const refused = await refusedWith(run, 'refresh_recovery_required');
+        expect(refused.message, label).toContain(head);
+        expect(await rows(), label).toEqual(['recovery_required']);
+      } else {
+        const refused = await refusedWith(run, 'refresh_in_progress');
+        expect(refused.suggestion, label).toContain(`gbrain sources refresh ${f.alpha} --resume`);
+        expect(await rows(), label).toEqual([stateOf(kind)]);
+      }
+      expect(f.head(), label).toBe(head);
+      expect([await f.lastCommit(f.alpha), await f.lastCommit(f.beta)], label).toEqual(members);
+      if (kind === 'draining') expect((await f.put(f.alpha, 'notes/after-abandon', page('After', 'admitted again'))).state ?? 'committed', label).toBe('committed');
       continue;
     }
     const run = refreshWorktree(f.engine, f.alpha, action === 'resume' ? { resume: true } : {});

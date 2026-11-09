@@ -266,8 +266,14 @@ const READ_ONLY_SUBCOMMANDS = new Set(['config get', 'sources list', 'sources st
   'schema active',
   // #6317: trusted-local writer administration reads (owners, running claims, consumers, movement); `sources writer claim|transfer|deactivate` stay mutating.
   'sources writer status', 'sources writer movement',
+  // #8662: the commit-push dry run resolves the checkout, branch and lock and prints them; it stages and commits nothing.
+  'git commit-push --dry-run',
   // #6650: the terminal-failure drill-down and the sync operator status only read receipts and cursors.
   'sources writer failures', 'sync status',
+  // GBRA-218: the member listing only reads the members table (the verify step of access_member_* refusals).
+  'access member list',
+  // GBRA-218 A2: folder-rule status and listing only read the policy tables and the committed file.
+  'access rule status', 'access rule list',
   // GBRA-130 A-25: `--failed` lists held propose_takes pages from the failure ledger; it never extracts or writes.
   'takes propose --failed',
   // #6466: `--list` returns before the orchestration lock and never runs an orchestrator or writes the ledger.

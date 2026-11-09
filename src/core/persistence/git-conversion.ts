@@ -39,8 +39,8 @@
  * only a plan with no work left is a completed conversion; otherwise the source stays strict (Git wins) and the
  * remaining categories are reported. `--to mixed` removes the flag and changes nothing else.
  */
-import { lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { chmodSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { SyncOpts, SyncResult } from '../../commands/sync.ts';
 import type { Action } from '../agent-output.ts';
@@ -54,16 +54,16 @@ import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { inlineExportMarkdown, readExportPage, readExportPages, readExportWithdrawals, type ExportSnapshot } from '../export-snapshot.ts';
 import { scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
 import { censusGitGap, type GitGapCensus, type GitGapPage } from '../../commands/sources-git-gap.ts';
-import { compareInlineExportFile, ignoredPaths, readBlobs, type DeclaredClass, type ExportFileComparison } from './git-gap.ts';
+import { compareInlineExportFile, DIRECTION_EVIDENCE, gitTopLevel, ignoredPaths, readBlobs, type DeclaredClass, type DirectionEvidence, type Evidence, type ExportFileComparison } from './git-gap.ts';
 import { commitThroughDoor } from './git-door.ts';
 import { gitRootAhead, pushGitRoot } from './effect-git.ts';
 import { DURABILITY_NOT_ENABLED_REASON, gitDurabilityPolicy } from './git-durability-policy.ts';
-import { currentVerifiedLocalWriter, localHostId } from './identity.ts';
+import { currentVerifiedLocalWriter, hostIdFor } from './identity.ts';
 import { acquireWorktree, getWorktreeBinding, readManagedMode } from './ownership.ts';
 import { inspectDurabilityCheckout } from './git-durability-administration.ts';
 import { classifyGitCheckout } from '../git-checkout.ts';
 import { resolveManagedSyncContext, type ManagedSyncContext } from './sync-discovery.ts';
-import { readShadowLevel } from './sync-pass.ts';
+import { readShadowLevel, type ConversionBinding } from './sync-pass.ts';
 import { isPrivacyClass, type PrivacyClass } from './git-declared.ts';
 import { classifySyncPath } from './sync-classify.ts';
 import { clearGitHold, fileDriftSide, readGitSourceHolds, readSyncImportProvenances, type GitHoldRecord } from './sync-holds.ts';
@@ -73,7 +73,7 @@ import { runPersistenceEffects } from './effects.ts';
 import { faultPoint } from './fault-points.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 import { previewChangedError, previewHash } from './preview-approval.ts';
-import { sha256 } from './digest.ts';
+import { sha256, stableJson } from './digest.ts';
 
 export const CONVERSION_GROUP_MAX = 200;
 /** Adoption candidates whose export view the plan reads per read-only transaction (the census's batch size). */
@@ -107,11 +107,16 @@ type ConversionReporter = (patch: Partial<ConversionProgress>) => void;
 
 export const ADOPT_STATES = ['database_ahead', 'undeclared_database_only', 'worktree_only'] as const;
 export type AdoptState = typeof ADOPT_STATES[number];
-export const GIT_WINS_REASONS = ['git_ahead', 'deleted_by_commit', 'held_deletion', 'held_drift_unknown'] as const;
+/** `file_moved`: content evidence (d4) shows only the file moved since the row's last shared state; `decided`: the owner's decisions file chose Git. */
+export const GIT_WINS_REASONS = ['git_ahead', 'deleted_by_commit', 'held_deletion', 'held_drift_unknown', 'file_moved', 'decided'] as const;
 export type GitWinsReason = typeof GIT_WINS_REASONS[number];
 /** Database content the apply would discard or cannot place, by why: each must be zero before the apply runs. */
+/**
+ * `no_record_both_moved` and `no_record_no_evidence` (d4): a page with no import record whose content evidence shows both
+ * sides moved, or shows nothing; each stays a discard until the owner's decisions file (`--decisions`) decides it.
+ */
 export const DISCARD_CATEGORIES = ['both_moved', 'held_drift_both', 'held_drift_unknown_differs', 'deleted_in_git', 'uncommitted_edit', 'ignored_target', 'unparseable', 'unsafe_path',
-  'segmented_page', 'export_mismatch', 'git_overwrites_database', 'ignore_status_unknown'] as const;
+  'segmented_page', 'export_mismatch', 'git_overwrites_database', 'ignore_status_unknown', 'no_record_both_moved', 'no_record_no_evidence'] as const;
 export type DiscardCategory = typeof DISCARD_CATEGORIES[number];
 /** A private, alias-private or lineage-private page whose row still records a file: committed at HEAD, or absent from it. */
 export const WITHHOLD_KINDS = ['file_committed', 'file_absent'] as const;
@@ -132,11 +137,16 @@ export interface DiscardDetail {
   export_mismatch: Record<string, number>;
   ignore_status_unknown: Record<string, number>;
 }
-/** `disk`: sha256 of the working-tree bytes the preview saw (HEAD's or the export's), null when the file was absent. */
-export interface AdoptItem { id: string; source_id: string; slug: string; revision: string | null; path: string; state: AdoptState; disk: string | null }
+/** `disk`: sha256 of the working-tree bytes the preview saw (HEAD's or the export's), null when the file was absent; `blob`: the committed blob at HEAD, null when none; `evidence`: why a page with no import record is adopted (d4). */
+export interface AdoptItem { id: string; source_id: string; slug: string; revision: string | null; path: string; state: AdoptState; disk: string | null; blob?: string | null;
+  evidence?: DirectionEvidence | 'decided' }
 /** `disk`: sha256 of the working-tree bytes of a committed file the preview saw, null when absent from the disk. */
 export interface WithholdItem { id: string; slug: string; revision: string | null; path: string; kind: WithholdKind; declared: PrivacyClass; disk: string | null }
 interface HoldItem { path: string; code: string; side: string | null; observed_at: string; action: 'git_wins' | 'rescreen' | 'blocked' }
+/** A path whose database version the plan lets Git replace: the page, revision and committed blob (null: Git deletes it) it approved (the admission binding, sync-pass.ts ConversionBinding). */
+export interface GitWinsItem { path: string; reason: GitWinsReason; id: string | null; slug: string | null; revision: string | null; blob: string | null; evidence?: DirectionEvidence }
+/** A page with no import record that the content evidence could not place (no_record_both_moved / no_record_no_evidence): what the owner's review list shows. */
+export interface ReviewItem { id: string; slug: string; path: string; revision: string | null; blob: string | null; evidence: Evidence }
 interface ParkedItem { effect: string; request: string; kind: string; codes: string[]; slugs: string[]; action: 'retry' | 'reclassify' }
 
 export interface GitConversionPreview {
@@ -160,19 +170,124 @@ export interface GitConversionPreview {
   /** What a strict pass would import or delete that no page row loses (files with no row, removals Git committed). */
   index: { imports: number; deletes: number };
   discard: Counted<DiscardCategory> & { detail: DiscardDetail };
+  /**
+   * d4: the pages with no import record by the side content evidence says moved, and the owner's decisions: `applied`
+   * (a decision matched the page's slug, revision, blob and evidence), `stale` (it names the page at another revision,
+   * blob or evidence, so it is not applied) and `unused` (it names no page on the review list); `digest` binds the file.
+   */
+  evidence: Counted<DirectionEvidence>;
+  decisions: { digest: string | null; applied: number; stale: number; unused: number; sample: string[] };
   /** Every item the apply still has to act on (adopt, withhold, git_wins, holds, parked retries, discard); 0 on a converted source. */
   remaining: number;
   preview_hash: string;
   apply: string[];
 }
 
-interface PageRevision { id: string; revision: string | null }
+interface PageRevision { id: string; revision: string | null; blob?: string | null }
 /**
  * `settled`: paths whose Git import replaces nothing (the census reads them equal, or the plan adopts, withholds or accepts
  * them); `compared`: the paths settled because the page read equal to its committed file, with the revision compared.
  */
 export interface GitConversionPlan { preview: GitConversionPreview; context: ManagedSyncContext; adopt: AdoptItem[]; withhold: WithholdItem[]; holds: HoldItem[]; parked: ParkedItem[];
-  settled: Set<string>; compared: Map<string, PageRevision>; incarnation: string }
+  settled: Set<string>; compared: Map<string, PageRevision>; incarnation: string; gitWins: GitWinsItem[]; review: ReviewItem[]; decisions: ConversionDecision[] }
+
+/**
+ * d4: one owner decision of a `--decisions` file, for a page the content evidence could not place. It names the page as the
+ * review list showed it (slug, revision, committed blob, evidence kind) and applies only while the page is still that.
+ * `adopt` writes the database's page to its file; `git_wins` lets the committed file replace the row. A merged body is
+ * written first with gbrain repair file-drift; the page then reads equal and leaves the list.
+ */
+export interface ConversionDecision { slug: string; revision: string | null; blob: string | null; evidence: DirectionEvidence; decision: 'adopt' | 'git_wins' }
+export const DECISIONS_KIND = 'gbrain-conversion-decisions';
+export const APPROVAL_KIND = 'gbrain-conversion-approval';
+const DECISION_VALUES = ['adopt', 'git_wins'] as const;
+
+/**
+ * The review list and decision files hold page names and paths: each is written owner-only (0600) and refused anywhere
+ * under a registered source's root or the Git working tree that holds it, so no sync or commit ever picks one up. Checked
+ * on the native real path of the file's directory and, when the file exists, of the file itself (a symlink into a checkout).
+ */
+export async function assertOutsideSourceRoots(engine: BrainEngine, file: string, flag: string): Promise<string> {
+  const target = resolve(file);
+  let directory: string;
+  try { directory = realpathSync.native(dirname(target)); } catch {
+    throw opError('invalid_params', `${flag} ${file}: its directory does not exist.`, `Pass a path in an existing directory outside every source's checkout, e.g. under ~/.gbrain.`);
+  }
+  const real = join(directory, basename(target));
+  let linked = real;
+  try { linked = realpathSync.native(real); } catch { /* not written yet */ }
+  const roots = await engine.executeRaw<{ id: string; local_path: string }>('SELECT id, local_path FROM sources WHERE local_path IS NOT NULL');
+  for (const root of roots) {
+    let base: string;
+    try { base = realpathSync.native(root.local_path); } catch { base = resolve(root.local_path); }
+    const top = gitTopLevel(base);
+    for (const fence of new Set([base, ...(top ? [top] : [])])) for (const path of new Set([real, linked])) {
+      const inside = relative(fence, path);
+      if (inside !== '' && (inside === '..' || inside.startsWith('..' + sep) || isAbsolute(inside))) continue;
+      throw opError('conversion_file_in_source_root', `${flag} ${file} is inside source ${root.id}'s checkout (${fence}), so it was refused: a review or decisions file names pages and must never be synced or committed.`,
+        `Pass a path outside ${fence} and every other source checkout, e.g. under ~/.gbrain when your home directory is not inside it.`, { docs: DOCS });
+    }
+  }
+  return real;
+}
+
+/** Writes a review list or an approval owner-only (0600), outside every source root, replacing an older one but never through a symlink. */
+export async function writeConversionFile(engine: BrainEngine, file: string, flag: string, value: unknown): Promise<string> {
+  const real = await assertOutsideSourceRoots(engine, file, flag);
+  try { if (lstatSync(real).isSymbolicLink()) throw opError('invalid_params', `${flag} ${file} is a symlink, so it was not written.`, 'Pass the path of a regular file.'); }
+  catch (error) { if (error instanceof OperationError) throw error; }
+  const temp = `${real}.${process.pid}.tmp`;
+  try { writeFileSync(temp, JSON.stringify(value, null, 2) + '\n', { mode: 0o600, flag: 'wx' }); chmodSync(temp, 0o600); renameSync(temp, real); }
+  catch (error) { throw opError('invalid_params', `${flag} ${file} could not be written (${(error as NodeJS.ErrnoException).code ?? 'error'}).`, 'Pass a writable path outside every source checkout, e.g. under ~/.gbrain.'); }
+  finally { rmSync(temp, { force: true }); }
+  return real;
+}
+
+/** Reads a `--decisions` file (the review list with `decision` filled in): entries whose decision is null are skipped. */
+export async function readConversionDecisions(engine: BrainEngine, file: string, sourceId: string): Promise<ConversionDecision[]> {
+  const real = await assertOutsideSourceRoots(engine, file, '--decisions');
+  const bad = (why: string) => opError('invalid_params', `--decisions ${file}: ${why}`, `Fill in "decision" (adopt or git_wins) on entries of the review list gbrain sources canonical ${sourceId} --to git --dry-run --list-out <file> wrote, and pass that file unchanged otherwise.`);
+  let parsed: { kind?: unknown; version?: unknown; source_id?: unknown; pages?: unknown };
+  try { parsed = JSON.parse(readFileSync(real, 'utf8')); } catch { throw bad('it is not JSON.'); }
+  if (parsed?.kind !== DECISIONS_KIND || parsed.version !== 1) throw bad(`it is not a ${DECISIONS_KIND} file (version 1).`);
+  if (parsed.source_id !== sourceId) throw bad(`it is for source ${String(parsed.source_id)}, not ${sourceId}.`);
+  if (!Array.isArray(parsed.pages)) throw bad('it has no pages list.');
+  return decisionEntries(parsed.pages, bad);
+}
+
+/** The decided entries of a decisions list (null decisions skipped), each checked for its fields and decided once. */
+function decisionEntries(pages: unknown[], bad: (why: string) => OperationError): ConversionDecision[] {
+  const out: ConversionDecision[] = [];
+  const seen = new Set<string>();
+  for (const entry of pages as Array<Record<string, unknown>>) {
+    if (entry?.decision == null) continue;
+    const { slug, revision, blob, evidence, decision } = entry;
+    if (typeof slug !== 'string' || !(DECISION_VALUES as readonly unknown[]).includes(decision) || !(DIRECTION_EVIDENCE as readonly unknown[]).includes(evidence)
+      || (revision !== null && typeof revision !== 'string') || (blob !== null && typeof blob !== 'string')) throw bad(`entry ${JSON.stringify(slug)} needs slug, revision, blob, evidence and a decision of adopt or git_wins.`);
+    if (seen.has(slug)) throw bad(`page ${slug} is decided twice.`);
+    seen.add(slug);
+    out.push({ slug, revision: revision as string | null, blob: blob as string | null, evidence: evidence as DirectionEvidence, decision: decision as ConversionDecision['decision'] });
+  }
+  return out;
+}
+
+/**
+ * The review list of a plan (`--list-out`): every page the evidence could not place, ordered newest first by the later of
+ * its database edit and its file's last commit (timestamps only order the list; they never decide a page), each with
+ * `decision: null` for the owner to fill in and pass back as `--decisions`.
+ */
+export async function conversionReviewList(engine: BrainEngine, plan: GitConversionPlan): Promise<{ kind: string; version: 1; source_id: string; head: string | null; pages: unknown[] }> {
+  const ids = plan.review.map(item => item.id);
+  const updated = new Map(ids.length ? (await engine.executeRaw<{ id: string; at: string | Date | null }>(
+    "SELECT id::text, updated_at AS at FROM pages WHERE id = ANY(string_to_array($1::text, ',')::bigint[])", [ids.join(',')])).map(row => [row.id, row.at ? new Date(row.at).getTime() : null]) : []);
+  const pages = plan.review.map(item => {
+    const database = updated.get(item.id) ?? null, file = item.evidence.committed_at === null ? null : item.evidence.committed_at * 1000;
+    return { order: Math.max(database ?? 0, file ?? 0), entry: { slug: item.slug, path: item.path, revision: item.revision, blob: item.blob, evidence: item.evidence.kind,
+      basis: item.evidence.basis, versions_compared: item.evidence.versions, blobs_compared: item.evidence.blobs,
+      database_updated_at: database === null ? null : new Date(database).toISOString(), file_committed_at: file === null ? null : new Date(file).toISOString(), decision: null } };
+  }).sort((a, b) => b.order - a.order).map(row => row.entry);
+  return { kind: DECISIONS_KIND, version: 1, source_id: plan.preview.source_id, head: plan.preview.head, pages };
+}
 
 const counted = <K extends string>(keys: readonly K[]): Counted<K> => ({ count: 0, by: Object.fromEntries(keys.map(key => [key, 0])) as Record<K, number>, sample: [] });
 const bump = (into: Record<string, number>, key: string) => { into[key] = (into[key] ?? 0) + 1; };
@@ -214,7 +329,7 @@ async function assertConversionCheckout(sourceId: string, root: string): Promise
   const state = code === 'git_checkout_required' ? 'is not inside a Git checkout' : 'is a Git checkout with no commit yet';
   const why = 'A git-canonical source commits every page to Git on top of the checkout\'s branch, so its root needs a Git checkout with a first commit.';
   throw opError(code, `Source ${sourceId}'s root ${root} ${state}, so it has nothing to convert into; nothing was read or written. The source stays usable as it is, with the database as its record.`,
-    'Keep the source as it is, or make its root a Git repository with a first commit on the brain host (git init, git add -A, git commit), then preview again.',
+    'Keep the source as it is, or make its root a Git repository with a first commit on the brain host (git init, then echo \'.gbrain-owner*\' >> .git/info/exclude so the ownership marker stays out of Git, git add -A, git commit), then preview again.',
     { why, docs: DOCS, fix: { argv: ['gbrain', 'sources', 'canonical', sourceId, '--to', 'git', '--dry-run', '--json'], consent: [], actor: 'user', requires_exclusive: false,
       why: 'Previews the conversion again once the root has a first commit; read-only.',
       user_message: `Source ${sourceId} has no Git history to convert into. It keeps working as it is. Should its folder become a Git repository with a first commit so it can be converted?` } });
@@ -225,17 +340,21 @@ async function assertConversionCheckout(sourceId: string, root: string): Promise
 /** The context a strict pass reads, for a source whose row does not say so yet. */
 const strictContext = (context: ManagedSyncContext): ManagedSyncContext => ({ ...context, source: { ...context.source, config: { ...context.source.config, canonical: 'git' } } });
 
-/** The read-only plan of `--to git`; its preview is what the CLI prints and the apply binds to. */
-export async function planGitConversion(engine: BrainEngine, sourceId: string): Promise<GitConversionPlan> {
+/**
+ * The read-only plan of `--to git`; its preview is what the CLI prints and the apply binds to. `decisions` (d4, the
+ * owner's `--decisions` file) decide pages the content evidence could not place; each binds the page's slug, revision,
+ * committed blob and evidence kind, and its digest is bound into the preview hash.
+ */
+export async function planGitConversion(engine: BrainEngine, sourceId: string, opts: { decisions?: ConversionDecision[] } = {}): Promise<GitConversionPlan> {
   const binding = await getWorktreeBinding(engine, sourceId);
-  if (binding?.local_path && binding.owner_host_id === localHostId() && binding.state === 'active') await assertConversionCheckout(sourceId, resolve(binding.local_path, binding.relative_path));
+  if (binding?.local_path && binding.owner_host_id === hostIdFor(engine) && binding.state === 'active') await assertConversionCheckout(sourceId, resolve(binding.local_path, binding.relative_path));
   const context = await resolveManagedSyncContext(engine, { sourceId, noPull: true, dryRun: true });
   const pages: GitGapPage[] = [];
   const equal = new Map<string, PageRevision>();
   const mode = await scannerSlugRootMode(engine, sourceId, context.root);
   const exported = new ExportChecks(context.root, mode);
-  const census = await censusGitGap(engine, sourceId, { sample: 0, collect: (page, snapshot) => {
-    if (page.state === 'equal') { if (page.path) equal.set(page.path, { id: page.id, revision: page.revision }); return; }
+  const census = await censusGitGap(engine, sourceId, { sample: 0, evidence: true, collect: (page, snapshot) => {
+    if (page.state === 'equal') { if (page.path) equal.set(page.path, { id: page.id, revision: page.revision, blob: page.headBlob ?? null }); return; }
     pages.push(page);
     if (snapshot && page.state === 'database_ahead' && page.path && !page.segmented) exported.add(page.id, page.path, snapshot);
   } });
@@ -248,9 +367,43 @@ export async function planGitConversion(engine: BrainEngine, sourceId: string): 
   const holdRecords = (await readGitSourceHolds(engine, { sourceIds: [sourceId] }))[0]?.holds ?? [];
   const held = new Map(holdRecords.map(hold => [hold.path, hold]));
   const preview = emptyPreview(sourceId, context, census);
-  const adopt: AdoptItem[] = [], withhold: WithholdItem[] = [], accepted = new Set<string>(), discarded = new Set<string>();
+  const adopt: AdoptItem[] = [], withhold: WithholdItem[] = [], accepted = new Map<string, GitWinsItem>(), discarded = new Set<string>(), review: ReviewItem[] = [];
   const discard = (category: DiscardCategory, path: string) => { tally(preview.discard, category, path); discarded.add(path); };
-  const gitWins = (reason: GitWinsReason, path: string) => { tally(preview.git_wins, reason, path); accepted.add(path); };
+  const gitWins = (reason: GitWinsReason, path: string, page?: { id: string; slug?: string; revision: string | null; blob: string | null; evidence?: DirectionEvidence }) => {
+    tally(preview.git_wins, reason, path);
+    accepted.set(path, { path, reason, id: page?.id ?? null, slug: page?.slug ?? null, revision: page?.revision ?? null, blob: page?.blob ?? null, ...(page?.evidence ? { evidence: page.evidence } : {}) });
+  };
+  const decisions = opts.decisions ?? [];
+  const bySlug = new Map(decisions.map(decision => [decision.slug, decision]));
+  const reviewed = new Set<string>();
+  if (decisions.length) preview.decisions.digest = sha256(Buffer.from(stableJson([...decisions].sort((a, b) => a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0))));
+  /** The owner's decision for a page the evidence could not place, when it names the page as it is now (slug, revision, committed blob, evidence). */
+  const decided = (page: GitGapPage): ConversionDecision['decision'] | null => {
+    reviewed.add(page.slug);
+    const decision = bySlug.get(page.slug);
+    if (!decision) return null;
+    if (decision.revision !== page.revision || decision.blob !== (page.headBlob ?? null) || decision.evidence !== page.evidence!.kind) {
+      preview.decisions.stale++;
+      if (preview.decisions.sample.length < SAMPLE) preview.decisions.sample.push(page.slug);
+      return null;
+    }
+    preview.decisions.applied++;
+    return decision.decision;
+  };
+  /** d4: where content evidence sends a page that differs from its committed file with no import record. */
+  const byEvidence = (page: GitGapPage, path: string, held = false) => {
+    const evidence = page.evidence!;
+    tally(preview.evidence, evidence.kind, path);
+    const subject = { id: page.id, slug: page.slug, revision: page.revision, blob: page.headBlob ?? null, evidence: evidence.kind };
+    if (evidence.kind === 'adopt_db_moved') { candidates.push({ page, state: 'database_ahead', evidence: evidence.kind }); return; }
+    if (evidence.kind === 'git_wins_file_moved') { gitWins('file_moved', path, subject); return; }
+    const decision = decided(page);
+    if (decision === 'adopt') { candidates.push({ page, state: 'database_ahead', evidence: 'decided' }); return; }
+    if (decision === 'git_wins') { gitWins('decided', path, subject); return; }
+    review.push({ id: page.id, slug: page.slug, path, revision: page.revision, blob: page.headBlob ?? null, evidence });
+    // A path sync already holds as an unknown-side drift keeps that category: the evidence did not place it either.
+    discard(held ? 'held_drift_unknown_differs' : evidence.kind === 'both_moved' ? 'no_record_both_moved' : 'no_record_no_evidence', path);
+  };
   const declaredEqual = await equalDeclaredPaths(engine, sourceId, root, mode,
     pages.filter(page => page.state === 'declared_database_only' && page.path && page.headBlob && !page.segmented));
   preview.declared.committed_equal = declaredEqual.size;
@@ -258,13 +411,13 @@ export async function planGitConversion(engine: BrainEngine, sourceId: string): 
   for (const hold of holds) {
     tally(preview.holds, hold.side ? `${hold.code}:${hold.side}` : hold.code, hold.path);
     if (hold.action === 'blocked') discard('held_drift_both', hold.path);
-    else if (hold.side === 'unknown' && equal.has(hold.path)) gitWins('held_drift_unknown', hold.path);
+    else if (hold.side === 'unknown' && equal.has(hold.path)) gitWins('held_drift_unknown', hold.path, { ...equal.get(hold.path)!, blob: equal.get(hold.path)!.blob ?? null });
   }
 
   const noFile = pages.filter(page => page.state === 'undeclared_database_only' && page.path !== null);
   const provenance = noFile.length ? await readDeletionProvenance(root, noFile.map(page => page.path!)) : new Map();
   const records = noFile.length ? await readSyncImportProvenances(engine, sourceId, incarnation, noFile.map(page => Number(page.id))) : new Map();
-  const candidates: Array<{ page: GitGapPage; state: AdoptState }> = [];
+  const candidates: Array<{ page: GitGapPage; state: AdoptState; evidence?: AdoptItem['evidence'] }> = [];
   for (const page of pages) {
     const path = page.path ?? page.slug;
     const hold = page.path ? held.get(page.path) : undefined;
@@ -286,11 +439,13 @@ export async function planGitConversion(engine: BrainEngine, sourceId: string): 
       case 'unparseable': discard('unparseable', path); bump(preview.discard.detail.unparseable, page.unparseable ?? 'unknown'); continue;
       case 'unsafe_path': discard('unsafe_path', path); continue;
       case 'git_ahead':
-        if (side === 'unknown') discard('held_drift_unknown_differs', path);
+        if (page.evidence && side !== 'both') byEvidence(page, path, side === 'unknown');
+        else if (side === 'unknown') discard('held_drift_unknown_differs', path);
         else if (page.databaseAlsoMoved && side !== 'both') discard('both_moved', path);
-        else if (!page.databaseAlsoMoved) gitWins('git_ahead', path);
+        else if (!page.databaseAlsoMoved) gitWins('git_ahead', path, { id: page.id, slug: page.slug, revision: page.revision, blob: page.headBlob ?? null });
         continue;
       case 'database_ahead':
+        if (page.evidence && side !== 'both') { byEvidence(page, path, side === 'unknown'); continue; }
         if (side === 'unknown') { discard('held_drift_unknown_differs', path); continue; }
         if (side === 'both') continue;
         candidates.push({ page, state: 'database_ahead' });
@@ -299,21 +454,23 @@ export async function planGitConversion(engine: BrainEngine, sourceId: string): 
       case 'undeclared_database_only': {
         if (provenance.get(page.path!)?.kind !== 'deleted_by_commit') { candidates.push({ page, state: 'undeclared_database_only' }); continue; }
         const record = records.get(Number(page.id));
-        if (side === 'deleted') gitWins('held_deletion', path);
-        else if (record?.revision != null && String(record.revision) === String(page.revision)) gitWins('deleted_by_commit', path);
+        const deleted = { id: page.id, slug: page.slug, revision: page.revision, blob: null };
+        if (side === 'deleted') gitWins('held_deletion', path, deleted);
+        else if (record?.revision != null && String(record.revision) === String(page.revision)) gitWins('deleted_by_commit', path, deleted);
         else discard('deleted_in_git', path);
         continue;
       }
       default: continue;
     }
   }
+  for (const decision of decisions) if (!reviewed.has(decision.slug)) { preview.decisions.unused++; if (preview.decisions.sample.length < SAMPLE) preview.decisions.sample.push(decision.slug); }
   await planAdoption(engine, sourceId, root, candidates, exported, preview, adopt, discard);
   const parked = await readParked(engine, sourceId);
   for (const item of parked) for (const code of item.codes) preview.parked_effects.by_code[`${item.kind}:${code}`] = (preview.parked_effects.by_code[`${item.kind}:${code}`] ?? 0) + 1;
   preview.parked_effects.count = parked.length;
   preview.parked_effects.retry = parked.filter(item => item.action === 'retry').length;
   preview.parked_effects.reclassify = parked.filter(item => item.action === 'reclassify').length;
-  const settled = new Set([...equal.keys(), ...declaredEqual, ...adopt.map(item => item.path), ...withhold.map(item => item.path), ...accepted]);
+  const settled = new Set([...equal.keys(), ...declaredEqual, ...adopt.map(item => item.path), ...withhold.map(item => item.path), ...accepted.keys()]);
   const placed = new Set([...settled, ...discarded]);
   const unplaced = holds.filter(hold => !placed.has(hold.path));
   for (const hold of unplaced) bump(preview.holds.unplaced.by, hold.side ? `${hold.code}:${hold.side}` : hold.code);
@@ -324,7 +481,10 @@ export async function planGitConversion(engine: BrainEngine, sourceId: string): 
   preview.withhold.groups = Math.ceil(withhold.filter(item => item.kind === 'file_committed').length / CONVERSION_GROUP_MAX);
   preview.remaining = preview.adopt.count + preview.withhold.count + preview.git_wins.count + preview.holds.count + preview.parked_effects.retry + preview.discard.count;
   preview.preview_hash = previewHash({ source: sourceId, incarnation, to: 'git', strict: preview.strict, head: preview.head, states: census.states, declared: census.declared,
-    adopt: adopt.map(item => [item.id, item.revision, item.path, item.state, item.disk]), git_wins: [...accepted].sort(),
+    adopt: adopt.map(item => [item.id, item.revision, item.path, item.state, item.disk]), git_wins: [...accepted.keys()].sort(),
+    // d4: bound only when a page had no import record, so the hash of a plan with none is the one earlier releases gave.
+    evidence: preview.evidence.count ? pages.flatMap(page => page.evidence ? [[page.id, page.revision, page.headBlob ?? null, page.evidence.kind, page.evidence.blob, page.evidence.version]] : []) : undefined,
+    decisions: preview.decisions.digest ?? undefined,
     // ignore_status_unknown is bound only when present, so the hash of a plan with no such path is the one earlier releases gave.
     discard: preview.discard.by.ignore_status_unknown ? preview.discard.by : { ...preview.discard.by, ignore_status_unknown: undefined },
     // Bound only when present, so the hash of a plan with nothing to withhold is the one earlier releases gave.
@@ -333,14 +493,15 @@ export async function planGitConversion(engine: BrainEngine, sourceId: string): 
     holds: holds.map(hold => [hold.path, hold.code, hold.side, hold.observed_at]), parked: parked.map(item => [item.effect, item.action, item.codes]), index: preview.index });
   preview.apply = ['gbrain', 'sources', 'canonical', sourceId, '--to', 'git', '--apply', '--expect', preview.preview_hash];
   const compared = new Map([...equal, ...pages.flatMap(page => page.path && declaredEqual.has(page.path) ? [[page.path, { id: page.id, revision: page.revision }] as const] : [])]);
-  return { preview, context, adopt, withhold, holds, parked, settled, compared, incarnation };
+  return { preview, context, adopt, withhold, holds, parked, settled, compared, incarnation, gitWins: [...accepted.values()], review, decisions };
 }
 
 function emptyPreview(sourceId: string, context: ManagedSyncContext, census: GitGapCensus): GitConversionPreview {
   return { status: 'preview', source_id: sourceId, to: 'git', strict: context.source.config?.canonical === 'git', head: census.head, pages: census.pages, equal: census.states.equal,
     adopt: { ...counted(ADOPT_STATES), action: 'commit_through_door', groups: 0 }, declared: { ...counted<string>([]), action: 'none', committed_equal: 0 },
     git_wins: { ...counted(GIT_WINS_REASONS), action: 'index_committed_blob' }, withhold: { ...counted(WITHHOLD_KINDS), action: 'commit_removal_and_withhold', groups: 0 }, holds: { ...counted<string>([]), action: 'clear', unplaced: { count: 0, by: {} } },
-    parked_effects: { count: 0, retry: 0, reclassify: 0, by_code: {} }, index: { imports: 0, deletes: 0 }, discard: emptyDiscard(), remaining: 0, preview_hash: '', apply: [] };
+    parked_effects: { count: 0, retry: 0, reclassify: 0, by_code: {} }, index: { imports: 0, deletes: 0 }, discard: emptyDiscard(), evidence: counted(DIRECTION_EVIDENCE),
+    decisions: { digest: null, applied: 0, stale: 0, unused: 0, sample: [] }, remaining: 0, preview_hash: '', apply: [] };
 }
 
 /** A hold's fate: a held deletion or an unknown-side drift goes to Git (planGitConversion discards the drift when its row differs), a both-sides drift is database content Git would discard, the rest re-screen. */
@@ -370,7 +531,7 @@ class ExportChecks {
  * database_ahead page's export view is the one the census compared; the other candidates are read ADOPTION_BATCH at a
  * time in read-only transactions (#7617).
  */
-async function planAdoption(engine: BrainEngine, sourceId: string, root: string, candidates: Array<{ page: GitGapPage; state: AdoptState }>, exported: ExportChecks,
+async function planAdoption(engine: BrainEngine, sourceId: string, root: string, candidates: Array<{ page: GitGapPage; state: AdoptState; evidence?: AdoptItem['evidence'] }>, exported: ExportChecks,
   preview: GitConversionPreview, adopt: AdoptItem[], discard: (category: DiscardCategory, path: string) => void): Promise<void> {
   if (!candidates.length) return;
   const status = await ignoredPaths(root, candidates.map(({ page }) => page.path!))
@@ -385,7 +546,7 @@ async function planAdoption(engine: BrainEngine, sourceId: string, root: string,
     });
     batch.forEach((page, i) => exported.add(page.id, page.path!, snapshots[i]!));
   }
-  for (const { page, state } of candidates) {
+  for (const { page, state, evidence } of candidates) {
     const path = page.path!;
     // A target Git cannot check (beyond a symlink, outside the checkout, a timed-out check) is never written; the census
     // declares an ignored path with no file git_ignored, so ignored_target is a path whose rules changed since it read them.
@@ -406,7 +567,7 @@ async function planAdoption(engine: BrainEngine, sourceId: string, root: string,
       bump(preview.discard.detail.uncommitted_edit, page.worktree ?? 'unknown');
       continue;
     }
-    adopt.push({ id: page.id, source_id: sourceId, slug: page.slug, revision: page.revision, path, state, disk: disk ? sha256(disk) : null });
+    adopt.push({ id: page.id, source_id: sourceId, slug: page.slug, revision: page.revision, path, state, disk: disk ? sha256(disk) : null, blob: page.headBlob ?? null, ...(evidence ? { evidence } : {}) });
     tally(preview.adopt, state, path);
   }
 }
@@ -485,7 +646,8 @@ async function planIndex(engine: BrainEngine, context: ManagedSyncContext, previ
 }
 
 export interface GitConversionResult {
-  status: 'converted' | 'incomplete';
+  /** `delta` (item 7): an approved apply committed only the unchanged adoptions and withholds; `delta` lists the rest. */
+  status: 'converted' | 'incomplete' | 'delta';
   source_id: string;
   head: string | null;
   committed: { groups: number; pages: number; commits: string[] };
@@ -499,6 +661,10 @@ export interface GitConversionResult {
   closing_passes: number;
   /** The plan after the flag was set and the strict passes ran: nothing left on a completed conversion. */
   after: GitConversionPreview;
+  /** Item 3: paths a strict pass held because their database version moved since the plan (or no plan item covered it). */
+  reclassified: string[];
+  /** Item 7: what an approved apply left unapplied, by reason, for the owner. */
+  delta?: { count: number; by: Record<string, number>; items: ConversionDeltaItem[] };
 }
 
 /**
@@ -518,63 +684,212 @@ const blockedError = (preview: GitConversionPreview): OperationError => {
       user_message: `Converting ${preview.source_id} to git-canonical would lose database content in ${categories.join(', ')}. Each path needs a decision before conversion can run.` } });
 };
 
+/**
+ * Item 6: where a failed apply left the source, for the operator's recovery. `mode` is the source's canonical flag when it
+ * stopped; `commits` the door commits it made (each group's sha as commitThroughDoor returned it); `push` their push
+ * state; `accepted` the writes that landed (pages adopted and withheld, holds cleared, pages the strict passes wrote);
+ * `rollback` the non-destructive steps back to mixed: a strict source re-derives from Git, then `--to mixed` removes the
+ * flag. Nothing is rewritten: the adopted pages' files already hold the database's bytes.
+ */
+export interface ConversionRecovery { mode: 'mixed' | 'git'; phase: ConversionPhase; commits: string[]; push: ConversionPush | null;
+  accepted: { adopted: number; withheld: number; holds_cleared: number; pass_writes: number }; reclassified: string[]; rollback: string[][] }
+const RECOVERY = Symbol('gbrain.conversion_recovery');
+/** The recovery report a failed apply attached to its error, if any. */
+export const conversionRecovery = (error: unknown): ConversionRecovery | undefined => error && typeof error === 'object' ? (error as { [RECOVERY]?: ConversionRecovery })[RECOVERY] : undefined;
+
+/** The non-destructive rollback of a source in `mode`: re-derive a strict source from Git, then return it to mixed. */
+export function conversionRollback(sourceId: string, mode: 'mixed' | 'git'): string[][] {
+  return mode === 'git' ? [['gbrain', 'sources', 'reindex', sourceId, '--from-git', '--dry-run'], ['gbrain', 'sources', 'canonical', sourceId, '--to', 'mixed', '--dry-run']] : [];
+}
+
 /** The apply of `--to git` (see the header). Throws preview_changed or git_conversion_blocked before writing anything. */
 export async function applyGitConversion(engine: BrainEngine, sourceId: string, expect: string,
-  opts: { noEmbed?: boolean; noExtract?: boolean; onProgress?: (progress: ConversionProgress) => void } = {}): Promise<GitConversionResult> {
+  opts: { noEmbed?: boolean; noExtract?: boolean; onProgress?: (progress: ConversionProgress) => void; decisions?: ConversionDecision[]; decisionsFile?: string } = {}): Promise<GitConversionResult> {
+  const plan = await planGitConversion(engine, sourceId, { decisions: opts.decisions });
+  if (plan.preview.preview_hash !== expect) throw previewChangedError(expect, `gbrain sources canonical ${sourceId} --to git --dry-run${opts.decisionsFile ? ` --decisions ${opts.decisionsFile}` : ''}`);
+  return runConversion(engine, plan, expect, opts);
+}
+
+/** The plan items an approval binds, by identity, each with the fingerprint that must still hold for it to apply (item 7). */
+function approvalItems(plan: GitConversionPlan): Record<string, string> {
+  const items: Record<string, string> = {};
+  for (const item of plan.adopt) items[`adopt:${item.path}`] = JSON.stringify([item.id, item.slug, item.revision, item.blob ?? null, item.evidence ?? null, item.state, item.disk]);
+  for (const item of plan.gitWins) items[`git_wins:${item.path}`] = JSON.stringify([item.id, item.slug, item.revision, item.blob, item.evidence ?? null, item.reason]);
+  for (const item of plan.withhold) items[`withhold:${item.path}`] = JSON.stringify([item.id, item.slug, item.revision, item.kind, item.declared, item.disk]);
+  for (const hold of plan.holds) items[`hold:${hold.path}`] = JSON.stringify([hold.code, hold.side, hold.action]);
+  for (const item of plan.parked) items[`parked:${item.effect}`] = JSON.stringify([item.action, item.codes]);
+  return items;
+}
+
+/**
+ * Item 7: an owner's approval of a plan, bound to the categories and to each page's slug, revision, committed blob and
+ * evidence rather than to HEAD. Written by `--approval-out` (0600, outside every source root) and applied with `--approved`.
+ */
+export interface ConversionApproval { kind: typeof APPROVAL_KIND; version: 1; source_id: string; incarnation: string; head: string | null; preview_hash: string;
+  categories: Record<string, Record<string, number>>; decisions: ConversionDecision[]; items: Record<string, string> }
+
+export function conversionApproval(plan: GitConversionPlan): ConversionApproval {
+  const p = plan.preview;
+  return { kind: APPROVAL_KIND, version: 1, source_id: p.source_id, incarnation: plan.incarnation, head: p.head, preview_hash: p.preview_hash,
+    categories: { adopt: p.adopt.by, git_wins: p.git_wins.by, withhold: p.withhold.by, holds: p.holds.by, evidence: p.evidence.by, discard: p.discard.by },
+    decisions: plan.decisions, items: approvalItems(plan) };
+}
+
+export async function readConversionApproval(engine: BrainEngine, file: string, sourceId: string): Promise<ConversionApproval> {
+  const real = await assertOutsideSourceRoots(engine, file, '--approved');
+  const bad = (why: string) => opError('invalid_params', `--approved ${file}: ${why}`, `Write the approval with gbrain sources canonical ${sourceId} --to git --dry-run --approval-out <file> and pass it unchanged.`);
+  let parsed: ConversionApproval;
+  try { parsed = JSON.parse(readFileSync(real, 'utf8')); } catch { throw bad('it is not JSON.'); }
+  if (parsed?.kind !== APPROVAL_KIND || parsed.version !== 1 || typeof parsed.items !== 'object' || parsed.items === null || Array.isArray(parsed.items) || !Array.isArray(parsed.decisions)) throw bad(`it is not a ${APPROVAL_KIND} file (version 1).`);
+  if (parsed.source_id !== sourceId) throw bad(`it is for source ${String(parsed.source_id)}, not ${sourceId}.`);
+  return { ...parsed, decisions: decisionEntries(parsed.decisions, bad) };
+}
+
+/** One item of an approved apply that stays unapplied: changed or new since the approval, a discard, or a decision the approval did not hold. */
+export interface ConversionDeltaItem { item: string; reason: 'changed' | 'new' | 'new_decision' | `discard:${DiscardCategory}` }
+
+/**
+ * Item 7: applies an approval across time. The apply plans again with the approval's decisions and compares each item with
+ * the approved one. With no difference the whole plan applies as `--expect` would. Otherwise only the unchanged adoptions
+ * and withholds are committed, nothing else (no hold is cleared, no strict pass runs, the flag is not set), and every
+ * changed or new item, every discard and every decision the approval did not hold is returned as the delta for the owner.
+ */
+export async function applyApprovedConversion(engine: BrainEngine, sourceId: string, approval: ConversionApproval,
+  opts: { noEmbed?: boolean; noExtract?: boolean; onProgress?: (progress: ConversionProgress) => void; decisions?: ConversionDecision[] } = {}): Promise<GitConversionResult> {
+  const plan = await planGitConversion(engine, sourceId, { decisions: approval.decisions });
+  if (plan.incarnation !== approval.incarnation) throw opError('source_changed', `Source ${sourceId} was replaced since the approval, so nothing was applied.`,
+    `Preview again with gbrain sources canonical ${sourceId} --to git --dry-run --approval-out <file> and have the owner approve it.`);
+  const approved = new Map(approval.decisions.map(decision => [decision.slug, JSON.stringify(decision)]));
+  const delta: ConversionDeltaItem[] = (opts.decisions ?? []).filter(decision => approved.get(decision.slug) !== JSON.stringify(decision))
+    .map(decision => ({ item: `decision:${decision.slug}`, reason: 'new_decision' as const }));
+  const current = approvalItems(plan);
+  for (const [item, fingerprint] of Object.entries(current)) if (approval.items[item] !== fingerprint) delta.push({ item, reason: approval.items[item] === undefined ? 'new' : 'changed' });
+  for (const item of Object.keys(approval.items)) if (current[item] === undefined) delta.push({ item, reason: 'changed' });
+  for (const category of DISCARD_CATEGORIES) if (plan.preview.discard.by[category]) delta.push({ item: `discard:${category}`, reason: `discard:${category}` });
+  if (!delta.length) return runConversion(engine, plan, plan.preview.preview_hash, opts);
+  const unchanged = (kind: string, path: string) => current[`${kind}:${path}`] === approval.items[`${kind}:${path}`];
+  const partial = { ...plan, adopt: plan.adopt.filter(item => unchanged('adopt', item.path)), withhold: plan.withhold.filter(item => unchanged('withhold', item.path)) };
+  const progress: ConversionProgress = { phase: 'adopt', groups_committed: 0, scanned: 0, total: partial.adopt.length };
+  const report: ConversionReporter = patch => { Object.assign(progress, patch); opts.onProgress?.({ ...progress }); };
+  const previewCommand = `gbrain sources canonical ${sourceId} --to git --dry-run --approval-out <file>`;
+  const recovery: ConversionRecovery = { mode: plan.preview.strict ? 'git' : 'mixed', phase: 'adopt', commits: [], push: null,
+    accepted: { adopted: 0, withheld: 0, holds_cleared: 0, pass_writes: 0 }, reclassified: [], rollback: [] };
+  let committed: GitConversionResult['committed'], withheld: GitConversionResult['withheld'], push: ConversionPush;
+  try {
+    committed = await adoptGroups(engine, partial, previewCommand, report, recovery.commits);
+    recovery.accepted.adopted = committed.pages;
+    report({ phase: 'withhold', scanned: 0, total: partial.withhold.length });
+    withheld = await withholdGroups(engine, partial, previewCommand, groups => report({ scanned: progress.scanned + groups.pages, groups_committed: committed.groups + groups.commits }), recovery.commits);
+    recovery.accepted.withheld = withheld.pages;
+    push = await pushConversion(engine, plan.context);
+  } catch (error) { throw await withRecovery(engine, sourceId, error, recovery, progress); }
+  const by: Record<string, number> = {};
+  for (const item of delta) by[item.reason] = (by[item.reason] ?? 0) + (item.reason.startsWith('discard:') ? plan.preview.discard.by[item.reason.slice(8) as DiscardCategory] : 1);
+  return { status: 'delta', source_id: sourceId, head: plan.preview.head, committed, withheld, holds_cleared: 0, parked: { retried: 0, reclassified: 0 }, push, closing_passes: 0,
+    after: (await planGitConversion(engine, sourceId, { decisions: approval.decisions })).preview, reclassified: [], delta: { count: Object.values(by).reduce((a, b) => a + b, 0), by, items: delta } };
+}
+
+/** The apply proper, on a plan already bound (by its hash or by an approval). */
+async function runConversion(engine: BrainEngine, plan: GitConversionPlan, expect: string,
+  opts: { noEmbed?: boolean; noExtract?: boolean; onProgress?: (progress: ConversionProgress) => void }): Promise<GitConversionResult> {
+  const sourceId = plan.preview.source_id;
   const previewCommand = `gbrain sources canonical ${sourceId} --to git --dry-run`;
-  const plan = await planGitConversion(engine, sourceId);
-  if (plan.preview.preview_hash !== expect) throw previewChangedError(expect, previewCommand);
-  if (plan.preview.discard.count) throw blockedError(plan.preview);
   const progress: ConversionProgress = { phase: 'adopt', groups_committed: 0, scanned: 0, total: plan.adopt.length };
   const report: ConversionReporter = patch => { Object.assign(progress, patch); opts.onProgress?.({ ...progress }); };
-  report({});
-  const committed = await adoptGroups(engine, plan, previewCommand, report);
-  report({ phase: 'withhold', scanned: 0, total: plan.withhold.length });
-  const withheld = await withholdGroups(engine, plan, previewCommand, groups => report({ scanned: progress.scanned + groups.pages, groups_committed: committed.groups + groups.commits }));
-  report({ push: await pushConversion(engine, plan.context) });
-  const parked = await settleParked(engine, sourceId, plan.parked);
-  report({ phase: 'recheck', scanned: 0, total: 0 });
-  // The planned holds are cleared only once this check passes, so a refusal keeps them: a held path is judged as the
-  // strict pass will see it once its hold is cleared. A page the plan settled as equal to its file is judged again once it
-  // moved since (its equality no longer holds).
-  const held = new Set(plan.holds.map(hold => hold.path));
-  const moved = await movedSincePlan(engine, sourceId, plan.compared);
-  const recheck = await readShadowLevel(engine, { sourceId, full: true, context: strictContext(plan.context) });
-  const preview = { ...plan.preview, discard: emptyDiscard() };
-  for (const entry of recheck?.paths ?? []) {
-    const path = sourcePath(recheck!.scope, entry.path);
-    if (plan.settled.has(path) && !moved.has(path)) continue;
-    const result = held.has(path) ? classifySyncPath({ ...entry.state, hold: null }, { strict: true }) : entry.result;
-    if (!result.settled && !result.inFlight && result.gitWins) tally(preview.discard, 'git_overwrites_database', path);
-  }
-  if (preview.discard.count) throw blockedError(preview);
-  report({ phase: 'holds', scanned: 0, total: plan.holds.length });
-  let holdsCleared = 0;
-  for (const hold of plan.holds) {
-    if (await engine.transaction(tx => clearGitHold(tx, { sourceId, incarnation: plan.incarnation, path: hold.path, observedAt: hold.observed_at }))) holdsCleared++;
-    report({ scanned: progress.scanned + 1 });
-  }
-  const processing = { noEmbed: opts.noEmbed, noExtract: opts.noExtract };
-  const planned = recheck?.paths.length ?? 0;
-  const pass = (phase: 'strict_pass_1' | 'strict_pass_2' | 'strict_pass_closing', total = planned) => {
-    report({ phase, scanned: 0, total, ...ROUND_RESET });
-    return strictPass(engine, sourceId, { sourceId, noPull: true, fullRound: phase !== 'strict_pass_closing', ...processing,
-      ...(phase === 'strict_pass_1' ? { canonicalOverride: 'git' as const } : {}), onProgress: passProgress(report) });
-  };
-  passOrThrow(sourceId, 'strict_pass_1', await pass('strict_pass_1'), progress);
-  await faultPoint('conversion:before_flip', { sourceId });
-  await recordConversion(engine, sourceId, plan.incarnation, 'git', expect, plan.preview.head);
-  passOrThrow(sourceId, 'strict_pass_2', await pass('strict_pass_2'), progress);
-  const final = await pushConversion(engine, plan.context);
-  const push = final.reason === 'nothing_to_push' ? progress.push! : final;
-  report({ push });
-  let after = (await planGitConversion(engine, sourceId)).preview, closing = 0;
-  for (; after.strict && after.remaining > 0 && after.remaining === after.git_wins.count && closing < CLOSING_PASSES; closing++) {
-    passOrThrow(sourceId, 'strict_pass_closing', await pass('strict_pass_closing', after.git_wins.count), progress);
-    after = (await planGitConversion(engine, sourceId)).preview;
-  }
-  return { status: after.remaining === 0 ? 'converted' : 'incomplete', source_id: sourceId, head: after.head, committed, withheld, holds_cleared: holdsCleared, parked, push,
-    closing_passes: closing, after };
+  const recovery: ConversionRecovery = { mode: plan.preview.strict ? 'git' : 'mixed', phase: 'adopt', commits: [], push: null,
+    accepted: { adopted: 0, withheld: 0, holds_cleared: 0, pass_writes: 0 }, reclassified: [], rollback: [] };
+  // Item 3: the strict passes may replace a database version only where the plan approved Git replacing that page at that
+  // revision and blob (an adopted page at its planned revision, its blob being the one just committed); any other is held.
+  const binding: ConversionBinding = { expect: new Map<string, { id: string; revision: string | null; blob?: string | null }>([...plan.gitWins.flatMap(item => item.id ? [[item.path, { id: item.id, revision: item.revision, blob: item.blob }] as const] : []),
+    ...plan.adopt.map(item => [item.path, { id: item.id, revision: item.revision, blob: undefined }] as const),
+    ...[...plan.compared].map(([path, page]) => [path, { id: page.id, revision: page.revision, blob: undefined }] as const)]), reclassified: new Set() };
+  try {
+    if (plan.preview.discard.count) throw blockedError(plan.preview);
+    report({});
+    const committed = await adoptGroups(engine, plan, previewCommand, report, recovery.commits);
+    recovery.accepted.adopted = committed.pages;
+    report({ phase: 'withhold', scanned: 0, total: plan.withhold.length }); recovery.phase = 'withhold';
+    const withheld = await withholdGroups(engine, plan, previewCommand, groups => report({ scanned: progress.scanned + groups.pages, groups_committed: committed.groups + groups.commits }), recovery.commits);
+    recovery.accepted.withheld = withheld.pages;
+    report({ push: await pushConversion(engine, plan.context) }); recovery.push = progress.push!;
+    const parked = await settleParked(engine, sourceId, plan.parked);
+    report({ phase: 'recheck', scanned: 0, total: 0 }); recovery.phase = 'recheck';
+    // The planned holds are cleared only once this check passes, so a refusal keeps them: a held path is judged as the
+    // strict pass will see it once its hold is cleared. A page the plan settled as equal to its file is judged again once it
+    // moved since (its equality no longer holds).
+    const held = new Set(plan.holds.map(hold => hold.path));
+    const moved = await movedSincePlan(engine, sourceId, plan.compared);
+    const recheck = await readShadowLevel(engine, { sourceId, full: true, context: strictContext(plan.context) });
+    const preview = { ...plan.preview, discard: emptyDiscard() };
+    for (const entry of recheck?.paths ?? []) {
+      const path = sourcePath(recheck!.scope, entry.path);
+      if (plan.settled.has(path) && !moved.has(path)) continue;
+      const result = held.has(path) ? classifySyncPath({ ...entry.state, hold: null }, { strict: true }) : entry.result;
+      if (!result.settled && !result.inFlight && result.gitWins) tally(preview.discard, 'git_overwrites_database', path);
+    }
+    if (preview.discard.count) throw blockedError(preview);
+    await faultPoint('conversion:after_recheck', { sourceId });
+    report({ phase: 'holds', scanned: 0, total: plan.holds.length }); recovery.phase = 'holds';
+    let holdsCleared = 0;
+    for (const hold of plan.holds) {
+      if (!await engine.transaction(tx => clearGitHold(tx, { sourceId, incarnation: plan.incarnation, path: hold.path, observedAt: hold.observed_at }))) {
+        throw opError('git_conversion_incomplete', `The hold on ${hold.path} of source ${sourceId} changed or was cleared by another run after the conversion was planned, so the apply stopped before any strict pass, with the source still mixed.`,
+          `Preview again with gbrain sources canonical ${sourceId} --to git --dry-run and apply the new hash.`, { docs: DOCS, reason: 'changed_since_preview', detail: 'changed_since_preview', fix: conversionIncompleteFix(sourceId) });
+      }
+      holdsCleared++;
+      recovery.accepted.holds_cleared = holdsCleared;
+      report({ scanned: progress.scanned + 1 });
+    }
+    const processing = { noEmbed: opts.noEmbed, noExtract: opts.noExtract };
+    const planned = recheck?.paths.length ?? 0;
+    const pass = async (phase: 'strict_pass_1' | 'strict_pass_2' | 'strict_pass_closing', total = planned) => {
+      report({ phase, scanned: 0, total, ...ROUND_RESET }); recovery.phase = phase;
+      const result = await strictPass(engine, sourceId, { sourceId, noPull: true, fullRound: phase !== 'strict_pass_closing', ...processing, conversionBinding: binding,
+        ...(phase === 'strict_pass_1' ? { canonicalOverride: 'git' as const } : {}), onProgress: passProgress(report) });
+      recovery.accepted.pass_writes += result.added + result.modified + result.deleted + result.renamed;
+      recovery.reclassified = [...binding.reclassified].sort();
+      return result;
+    };
+    const first = await pass('strict_pass_1');
+    if (binding.reclassified.size) throw changedSincePlan(sourceId, binding.reclassified, 'mixed');
+    passOrThrow(sourceId, 'strict_pass_1', first, progress);
+    await faultPoint('conversion:before_flip', { sourceId });
+    await recordConversion(engine, sourceId, plan.incarnation, 'git', expect, plan.preview.head);
+    recovery.mode = 'git';
+    passOrThrow(sourceId, 'strict_pass_2', await pass('strict_pass_2'), progress);
+    const final = await pushConversion(engine, plan.context);
+    const push = final.reason === 'nothing_to_push' ? progress.push! : final;
+    report({ push }); recovery.push = push;
+    let after = (await planGitConversion(engine, sourceId)).preview, closing = 0;
+    for (; after.strict && after.remaining > 0 && after.remaining === after.git_wins.count && closing < CLOSING_PASSES && !binding.reclassified.size; closing++) {
+      passOrThrow(sourceId, 'strict_pass_closing', await pass('strict_pass_closing', after.git_wins.count), progress);
+      after = (await planGitConversion(engine, sourceId)).preview;
+    }
+    return { status: after.remaining === 0 && !binding.reclassified.size ? 'converted' : 'incomplete', source_id: sourceId, head: after.head, committed, withheld, holds_cleared: holdsCleared, parked, push,
+      closing_passes: closing, after, reclassified: [...binding.reclassified].sort() };
+  } catch (error) { throw await withRecovery(engine, sourceId, error, recovery, progress); }
+}
+
+/** A failed apply's error with its recovery report attached: where it stopped, the mode it left, its commits and the rollback. */
+async function withRecovery(engine: BrainEngine, sourceId: string, error: unknown, recovery: ConversionRecovery, progress: ConversionProgress): Promise<unknown> {
+  if (!error || typeof error !== 'object') return error;
+  recovery.phase = progress.phase;
+  recovery.mode = (await engine.executeRaw<{ strict: boolean }>("SELECT COALESCE(config->>'canonical','')='git' AS strict FROM sources WHERE id=$1", [sourceId]).catch(() => []))[0]?.strict ? 'git' : recovery.mode;
+  recovery.push ??= progress.push ?? null;
+  recovery.rollback = conversionRollback(sourceId, recovery.mode);
+  Object.defineProperty(error, RECOVERY, { value: recovery, configurable: true });
+  return error;
+}
+
+/**
+ * Item 3: a strict pass held pages whose database version moved since the plan (or that no plan item covered) instead of
+ * letting Git overwrite them. Before the flag the source stays mixed; the next preview judges each page again.
+ */
+function changedSincePlan(sourceId: string, paths: ReadonlySet<string>, mode: 'mixed' | 'git'): OperationError {
+  const sample = [...paths].sort().slice(0, SAMPLE);
+  return opError('git_conversion_incomplete', `${paths.size} page(s) of source ${sourceId} changed since the conversion was planned (${sample.join(', ')}${paths.size > sample.length ? ', …' : ''}); the strict pass held them instead of overwriting them, and the conversion stopped there${mode === 'mixed' ? ' with the source still mixed' : ''}.`,
+    `Preview again with gbrain sources canonical ${sourceId} --to git --dry-run: each held page is classified again by its content evidence; apply the new hash.`,
+    { docs: DOCS, reason: 'changed_since_preview', detail: 'changed_since_preview', fix: conversionIncompleteFix(sourceId) });
 }
 
 /**
@@ -671,7 +986,7 @@ function passOrThrow(sourceId: string, phase: ConversionPhase, result: SyncResul
  * tree moved since the preview stops the apply (preview_changed) before anything else changes: the groups already
  * committed hold the bytes the database has, so the rerun preview reads them equal.
  */
-async function adoptGroups(engine: BrainEngine, plan: GitConversionPlan, previewCommand: string, report: ConversionReporter): Promise<GitConversionResult['committed']> {
+async function adoptGroups(engine: BrainEngine, plan: GitConversionPlan, previewCommand: string, report: ConversionReporter, made: string[] = []): Promise<GitConversionResult['committed']> {
   const { context, adopt } = plan;
   const root = context.root;
   const commits: string[] = [];
@@ -692,7 +1007,7 @@ async function adoptGroups(engine: BrainEngine, plan: GitConversionPlan, preview
       }
       for (const file of files) writeAtomically(root, file.path, file.bytes);
       const commit = await commitThroughDoor(root, files.map(file => ({ path: file.path, planned: sha256(file.bytes) })), lock);
-      if (commit) commits.push(commit);
+      if (commit) { commits.push(commit); made.push(commit); }
     } finally { await lock.release(); }
     report({ scanned: start + group.length, groups_committed: commits.length });
     await faultPoint('conversion:group_committed', { sourceId: context.sourceId, round: start / CONVERSION_GROUP_MAX + 1 });
@@ -712,7 +1027,7 @@ async function adoptGroups(engine: BrainEngine, plan: GitConversionPlan, preview
  * the rerun lists only what is left.
  */
 async function withholdGroups(engine: BrainEngine, plan: GitConversionPlan, previewCommand: string,
-  onGroup: (done: { pages: number; commits: number }) => void): Promise<GitConversionResult['withheld']> {
+  onGroup: (done: { pages: number; commits: number }) => void, made: string[] = []): Promise<GitConversionResult['withheld']> {
   const { context } = plan;
   const root = context.root;
   const commits: string[] = [];
@@ -746,7 +1061,7 @@ async function withholdGroups(engine: BrainEngine, plan: GitConversionPlan, prev
         removeConfined(root, target);
       }
       const commit = await commitThroughDoor(root, group.map(item => ({ path: join(root, item.path), planned: null })), lock);
-      if (commit) commits.push(commit);
+      if (commit) { commits.push(commit); made.push(commit); }
       await faultPoint('conversion:withhold_committed', { sourceId: context.sourceId, round: start / CONVERSION_GROUP_MAX + 1 });
     } finally { await lock.release(); }
     onGroup({ pages: group.length, commits: commits.length });
@@ -795,7 +1110,7 @@ async function settleParked(engine: BrainEngine, sourceId: string, parked: Parke
     const result = await retryParkedEffects(engine, sourceId, item.request, false, { parkedOnly: true });
     if ((result?.effects as Array<{ action?: string }> | undefined)?.some(effect => effect.action === 'retry_queued')) retried++;
   }
-  if (retried) await runPersistenceEffects(engine, loadConfig() ?? { engine: engine.kind }, { hostId: localHostId(), limit: 50 });
+  if (retried) await runPersistenceEffects(engine, loadConfig() ?? { engine: engine.kind }, { hostId: hostIdFor(engine), limit: 50 });
   return { retried, reclassified };
 }
 

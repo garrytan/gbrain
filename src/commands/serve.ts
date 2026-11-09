@@ -17,6 +17,7 @@ import { isReadOnlyServeArgs, readOnlyServeSkipsResidentDuties } from '../core/d
 import { onForwardProgress } from '../core/forward-progress.ts';
 import { foregroundWindow } from '../core/foreground-activity.ts';
 import { graduationHandoffRequested, writeServeGraduationEnvelope } from '../core/persistence/graduation-serve-guard.ts';
+import { withLocalScope } from '../core/engine-scope-store.ts';
 import {
   installLoopStallWatchdog,
   resolveServeStallWatchdogMs,
@@ -233,10 +234,15 @@ export async function finishHttpServe(
   exitOnce(0);
 }
 
-export async function runServe(
+/** gbrain serve (stdio and --http) runs in a local scope, so its own AI calls use the process gateway (engine-scope.ts). */
+export function runServe(engine: BrainEngine, args: string[] = [], opts: ServeOptions = {}) {
+  return withLocalScope(() => serveBrain(engine, args, opts));
+}
+
+async function serveBrain(
   engine: BrainEngine,
-  args: string[] = [],
-  opts: ServeOptions = {},
+  args: string[],
+  opts: ServeOptions,
 ) {
   // v0.26+: --http dispatches to the full OAuth 2.1 server (serve-http.ts)
   // with admin dashboard, scope enforcement, SSE feed, and the requireBearerAuth
@@ -245,6 +251,8 @@ export async function runServe(
   // verifyAccessToken with legacy access_tokens fallback (so v0.22.7 callers
   // that used `gbrain auth create` keep working unchanged).
   const isHttp = args.includes('--http');
+  // Wakeshift (docs/guides/wakeshift.md): the 5 s wake drainer for stdio and HTTP alike; a no-op tick while reporting back is off.
+  (await import('../core/wakeshift/drain.ts')).startWakeDrain(engine);
 
   // MEMORY_VERBS v1: tool-surface mode. stdio: GBRAIN_SURFACE > --surface >
   // config `mcp_surface` > 'full'; --http ignores GBRAIN_SURFACE (an HTTP

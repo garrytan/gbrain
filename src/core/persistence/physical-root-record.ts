@@ -8,6 +8,7 @@ import { flushDirectory } from '../fs-durable.ts';
 import { digest, sha256 } from './digest.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 import { OWNERSHIP_MARKER_GLOBS, PHYSICAL_ROOT_MARKER } from './root-metadata.ts';
+import { ownerMarkerMissingError } from './owner-marker.ts';
 
 export { OWNERSHIP_MARKER_GLOBS, PHYSICAL_ROOT_MARKER, isPhysicalRootMetadata } from './root-metadata.ts';
 const RESERVATION_PREFIX = '.gbrain-owner-';
@@ -51,6 +52,27 @@ const uuid = (value: unknown): value is string => typeof value === 'string' && /
 export function physicalRootError(message = 'The physical checkout identity changed or belongs to another owner.'): OperationError {
   return new OperationError('recovery_required', message, 'Use verified writer transfer or source recovery; do not remove ownership markers to claim this path.');
 }
+/** GST-465: an ownership record whose mode lets other users read it (a recursive chmod of a copied brain) proves nothing about its owner. */
+export function ownershipRecordNotPrivateError(): OperationError {
+  const error = physicalRootError('A private ownership record of this checkout is readable by other users, so the checkout identity cannot be verified.');
+  error.detail = 'ownership_record_not_private';
+  error.suggestion = 'On the brain host, gbrain doctor --only foreign_ownership_marker names the record and the chmod 600 that makes it private again. Never remove an ownership record to get past this.';
+  return error;
+}
+/**
+ * Doctor only: an ownership record other users can read, with the mode and the brain and worktree it records, or null when
+ * it is private, absent, not a regular file or not well formed (Windows: always null). Never authority for a write.
+ */
+export function openOwnershipRecord(path: string): { mode: number; brainId: string; worktreeId: string } | null {
+  if (process.platform === 'win32') return null;
+  try {
+    const info = lstatSync(path);
+    if (!info.isFile() || (info.mode & 0o077) === 0 || info.size > 16_384) return null;
+    const value = JSON.parse(readFileSync(path, 'utf8')) as { version?: unknown; brainId?: unknown; worktreeId?: unknown } | null;
+    if (!value || value.version !== 1 || !uuid(value.brainId) || !uuid(value.worktreeId)) return null;
+    return { mode: info.mode & 0o777, brainId: value.brainId, worktreeId: value.worktreeId };
+  } catch { return null; }
+}
 export function physicalRootReservationPath(root: string): string {
   return join(dirname(root), `${RESERVATION_PREFIX}${sha256(root)}.json`);
 }
@@ -60,12 +82,14 @@ function readPrivate(path: string): unknown | null {
     if (lstatSync(path).isSymbolicLink()) throw physicalRootError();
     fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const info = fstatSync(fd);
-    if (!info.isFile() || info.size > 16_384 || process.platform !== 'win32' && (info.mode & 0o077) !== 0) throw physicalRootError();
+    if (!info.isFile() || info.size > 16_384) throw physicalRootError();
+    if (process.platform !== 'win32' && (info.mode & 0o077) !== 0) throw ownershipRecordNotPrivateError();
     const value = JSON.parse(readFileSync(fd, 'utf8'));
     if (!value || typeof value !== 'object') throw physicalRootError();
     return value;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    if (error instanceof OperationError && error.detail === 'ownership_record_not_private') throw error;
     throw physicalRootError('The private physical-checkout identity cannot be verified.');
   } finally { if (fd !== undefined) closeSync(fd); }
 }
@@ -229,6 +253,11 @@ export function physicalRootDirectoryChangedError(): OperationError {
 export function assertPhysicalRootStamp(directory: string, reservation: PhysicalRootReservation): void {
   const value = readPrivate(join(directory, PHYSICAL_ROOT_MARKER)) as PhysicalRootStamp | null;
   const info = statSync(directory, { bigint: true });
+  // #8368: no stamp in a directory the reservation still identifies exactly (device, inode, birth) lost only its marker, and
+  // the plain self-transfer re-creates it. A recreated or staged directory, one whose birth only drifted within tolerance
+  // (the self-transfer compares it exactly), or one the reservation cannot identify keeps the generic refusal.
+  if (value === null && reservation.initialDevice === info.dev.toString() && reservation.initialInode === info.ino.toString()
+    && reservation.initialBirth === info.birthtimeNs.toString()) throw ownerMarkerMissingError();
   if (!value || value.version !== 1 || value.token !== reservation.token || value.brainId !== reservation.brainId || value.worktreeId !== reservation.worktreeId
     || value.root !== reservation.root) throw physicalRootError();
   if (value.inode !== info.ino.toString() || !samePhysicalBirth(value.birth, info.birthtimeNs)) {
@@ -374,5 +403,21 @@ export function assertPhysicalRoot(path: string, identity: { worktreeId: string;
     const reservation = readPhysicalRootReservation(root);
     if (!reservation || reservation.worktreeId !== identity.worktreeId || identity.coordinationPath && reservation.coordinationPath !== identity.coordinationPath) throw physicalRootError();
     assertPhysicalRootStamp(root, reservation);
+    excludeMarkersInLaterCheckout(root);
   } catch (error) { if (error instanceof OperationError) throw error; throw physicalRootError(); }
+}
+/**
+ * #8713: a root stamped before it was a Git checkout (`git init` on a repo-less brain) got no exclude, so an add-all
+ * writer commits its stamp. A verified root inside a checkout whose exclude file lacks a marker glob gets them written.
+ * A root in no checkout costs a few stats and an existing exclude one read; git runs only when one is missing (or the
+ * checkout is a linked worktree, whose exclude git resolves).
+ */
+function excludeMarkersInLaterCheckout(root: string): void {
+  let top = root;
+  while (!existsSync(join(top, '.git'))) { if (dirname(top) === top) return; top = dirname(top); }
+  try {
+    const present = new Set(readFileSync(join(top, '.git', 'info', 'exclude'), 'utf8').split('\n').map(line => line.trim()));
+    if (OWNERSHIP_MARKER_GLOBS.every(glob => present.has(glob))) return;
+  } catch { /* no exclude file yet, or .git is a linked worktree's pointer file */ }
+  excludeOwnershipMarkers([root, dirname(root)]);
 }

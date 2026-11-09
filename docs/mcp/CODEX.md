@@ -59,7 +59,7 @@ branch carries the variant trees already, so enabling is a two-line
 marketplace edit once verified — TODOS.md follow-up).
 
 **Prerequisites.** The plugin cannot ship the gbrain binary; install it once
-(`bun install -g github:garrytan/gbrain#latest-stable` — the npm package
+(`bun install -g github:garrytan/gbrain#stable` — the npm package
 named `gbrain` is unrelated, never `npm install -g gbrain`) and create a
 brain (`gbrain init` — zero-config local PGLite by default). The bundled
 `setup` skill walks both. With no binary, the plugin's MCP server exits with
@@ -118,7 +118,7 @@ signal — if its server isn't working, fix the binary, or remove the plugin.
 
 **Upgrading** has two halves: `codex plugin marketplace upgrade` refreshes
 the plugin snapshot (skills + manifests); the `gbrain-upgrade` skill or a
-`bun install -g github:garrytan/gbrain#latest-stable` re-run refreshes the
+`bun install -g github:garrytan/gbrain#stable` re-run refreshes the
 binary the launcher resolves.
 
 ## Connect without the plugin
@@ -266,7 +266,9 @@ codex mcp remove gbrain
 - The token is a long-lived, full-access secret. Keep `GBRAIN_REMOTE_TOKEN` out of
   version control and prefer a scoped token if your host supports one.
 - Local stdio also works if you run the brain on the same machine:
-  `codex mcp add gbrain -- "$(command -v gbrain)" serve --surface starter --advertise verbs`, the
+  `gbrain setup codex` registers `serve --surface starter --advertise verbs` behind
+  gbrain's launcher, so the session directory's `bunfig.toml` and `.env` never load
+  (`gbrain serve` registered with a bare `codex mcp add` loads them). That is the
   daily-driver tool list every new registration gbrain writes pins (`request_tools`
   reaches the rest; `--surface full` is the opt-in for every operation). A
   `GBRAIN_SURFACE` value in the Codex server entry's `env` table overrides the flag.

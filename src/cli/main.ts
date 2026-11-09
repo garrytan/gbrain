@@ -16,11 +16,12 @@ import {
   readUpdateCache,
   isCacheFresh,
   pendingUpgradeVersion,
-  readSnooze,
-  isSnoozeActive,
+  snoozeHolds,
+  currentReleaseChannel,
   resolveSelfUpgradeMode,
   justUpgradedPath,
 } from '../core/self-upgrade.ts';
+import { maybeEmitChannelNotice } from '../core/release-channel-notice.ts';
 import { loadConfig, loadConfigFileOnly, loadConfigWithEngine, isThinClient, getDbUrlSource, envShadowDetected, MERGED_CONFIG_BY_ENGINE } from '../core/config.ts';
 import {
   classifyPgAccessError as classifyDbAccessError,
@@ -29,6 +30,7 @@ import {
   shouldEmitDbAccessMarker,
 } from '../core/pg-access-classify.ts';
 import { resolveBrainId as resolveBrainIdForDbMarker } from '../core/brain-resolver.ts';
+import { captureHookSessionCwd } from '../core/session-cwd.ts';
 import type { GBrainConfig } from '../core/config.ts';
 import type { AIGatewayConfig } from '../core/ai/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
@@ -45,7 +47,7 @@ import { printCuratedHelp } from './help/render.ts';
 import { OWN_EQUALS_PARSERS, READER_ALIASES, findUnknownFlag, splitFlagEquals } from './flag-equals.ts';
 import { printHelp } from './top-help.ts';
 import { curatedFlagError } from './help/validate.ts';
-import { cliCommandOf, exitCliError, exitOnRepairFailed, unknownFlagError, usageError, writeCliError, writeCliNotice, writeFatalCliError } from './cli-error.ts';
+import { cliCommandOf, exitCliError, exitOnRepairFailed, reportInBandFailure, unknownFlagError, usageError, writeCliError, writeCliNotice, writeFatalCliError } from './cli-error.ts';
 import type { Notice } from '../core/agent-output.ts';
 import { opError, opOwnsSource } from '../core/ops/contract.ts';
 import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
@@ -61,6 +63,7 @@ import { routeCommand } from './command-route.ts';
 import type { CliOptions } from '../core/cli-options.ts';
 import { RemoteMcpError, extractResponseMeta } from '../core/remote-mcp-error.ts';
 import { assertSingleSourceScopeFlag, checkHostHonoredParams, hintAmbientNarrowing, type AmbientSourceBinding } from './source-scope.ts';
+import { formatFindPages, formatStatsBy } from './format-page-lookup.ts';
 import { maybePromptForUpgrade } from '../core/thin-client-upgrade-prompt.ts';
 import { CLI_FLAG_REGISTRY } from '../core/cli-flag-registry.generated.ts';
 import { SEARCH_SUBCOMMANDS, cliHelpRequested } from './subcommands.ts';
@@ -79,7 +82,7 @@ import {
 } from './command-table.ts';
 import { formatRememberResult } from './remember-format.ts';
 import { formatEntityResult, markEntityMiss } from './entity-format.ts';
-import { applyCliOpNotices, captureCapacityNotices, captureOpNotice, captureRetrievalNotices, retrievalIncompleteLine } from './op-notices.ts';
+import { applyCliOpNotices, captureCapacityNotices, captureOpNotice, captureRetrievalNotices, retrievalIncompleteLine, withExplainTargetJson, withRoutedDegradedStamp } from './op-notices.ts';
 import { admitAcrossCliCalls } from '../core/notice-ledger.ts';
 import { searchTimingsDocument, searchTimingsLine, timeCliPhase } from './search-timings.ts';
 
@@ -147,6 +150,7 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   'edge-proposals': async () => (await import('../commands/edge-proposals.ts')).runEdgeProposals as never,
   questions: async () => (await import('../commands/questions.ts')).runQuestions as never, // --help before the engine
   waiting: async () => (await import('../commands/loops.ts')).runWaiting as never,
+  access: async () => (await import('../commands/access.ts')).runAccess as never, // GBRA-218: usage prints before the engine
   // runSources's `--help`/`-h`/undefined-subcommand branch calls printHelp()
   // without ever touching `engine` — safe to dispatch with no brain
   // configured, matching the reader who runs `sources --help` because they
@@ -161,7 +165,7 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   // D3: post-connect records whose handler answers --help before the engine; run through the table.
   advisor: true, anomalies: true, feedback: true, backfill: true, 'book-mirror': true, 'edges-backfill': true, embed: true, features: true,
   founder: true, 'graph-query': true, orphans: true, salience: true, think: true,
-  brainstorm: true, lsd: true, migrate: true, pages: true, pricing: true, 'retrieval-upgrade': true, whoknows: true, core: true, trust: true,
+  brainstorm: true, lsd: true, migrate: true, pages: true, pricing: true, 'retrieval-upgrade': true, whoknows: true, core: true, trust: true, wakeshift: true,
 };
 
 /** Returns true when the command's own help was printed. */
@@ -213,7 +217,7 @@ export const cliAliases = buildCliAliases(OPERATION_MANIFEST, cliOps, CLI_ONLY);
  * blocks a command and NEVER throws (the marker must not break any command).
  * Mode resolution is file-plane only (no DB; thin clients have no local DB).
  */
-function maybeEmitUpdateMarker(command: string): void {
+function maybeEmitUpdateMarker(command: string, args: readonly string[]): void {
   try {
     if (process.env.GBRAIN_SKIP_STARTUP_HOOKS) return;
     // Never run during the test suite: tests spawn the CLI hundreds of times,
@@ -244,17 +248,20 @@ function maybeEmitUpdateMarker(command: string): void {
     const cfg = loadConfigFileOnly();
     const mode = resolveSelfUpgradeMode(cfg);
     if (mode === 'off') return;
+    const channel = currentReleaseChannel();
+    if (!channel) return;
+    maybeEmitChannelNotice({ command, args, cfg });
 
     const now = Date.now();
-    const entry = readUpdateCache();
+    const entry = readUpdateCache(channel);
     if (entry && isCacheFresh(entry, now)) {
       // Shared stale/foreign-cache guard (pendingUpgradeVersion): only nag when
-      // the cached latest is strictly newer than the RUNNING binary, and print
-      // the running version — the cache records whatever binary WROTE it.
-      const latest = pendingUpgradeVersion(VERSION, now);
+      // the channel offers this RUNNING binary a release, and print the running
+      // version — the cache records whatever binary WROTE it.
+      const latest = pendingUpgradeVersion(VERSION, now, channel);
       if (latest) {
-        // notify mode honors a per-version snooze; auto mode ignores it.
-        if (mode === 'notify' && isSnoozeActive(readSnooze(), latest, now)) return;
+        // notify mode honors the channel's time-based snooze; auto mode ignores it.
+        if (mode === 'notify' && snoozeHolds(latest, now, channel)) return;
         // One line, once per COVERAGE_NOTICE_WINDOW_MS across calls under
         // GBRAIN_HOME (a newer latest prints at once, #7147). An agent harness
         // (stderr not a TTY, or GBRAIN_FORCE_UPGRADE_MARKER=1 under a PTY) gets
@@ -316,6 +323,8 @@ async function main() {
 
   let command = args[0];
   installCliRoutingFor(() => command, args);
+  // #8426: a serve the hook launcher started reads the session directory from GBRAIN_HOOK_CWD, before any brain or source resolution.
+  if (command === 'serve') captureHookSessionCwd();
 
   if (!command || command === '--help' || command === '-h') {
     printHelp();
@@ -347,7 +356,7 @@ async function main() {
   // only, fail-open, never blocks. Skips the update path's own commands + sets
   // GBRAIN_SKIP_STARTUP_HOOKS for their children. Runs for every real command.
   if (!helpRequested) {
-    maybeEmitUpdateMarker(command);
+    maybeEmitUpdateMarker(command, args);
 
     // Monthly backup-coverage nag (cache-read-only, bounded by the nag gate;
     // guards + skip set live inside the helper — one place, every call site).
@@ -366,6 +375,7 @@ async function main() {
   command = routed.command;
   let subArgs = routed.subArgs;
   dispatchedCommand = command;
+  if (cliOpts.as !== undefined && !helpRequested) (await import('./as-preview.ts')).refuseAsOutsideOperations(command, subArgs, !CLI_ONLY.has(command) && (cliOps.has(command) || cliAliases.has(command))); // GBRA-218
   {
     const { directPoolProfileForCommand, setDirectPoolProfile } = await import('../core/direct-pool-profile.ts');
     setDirectPoolProfile(directPoolProfileForCommand(command, subArgs));
@@ -518,7 +528,7 @@ async function main() {
     return;
   }
 
-  if (['search', 'query', 'get', 'recall'].includes(command) && await (await import('./cli-socket-client.ts')).maybeServeFromCliSocket(command, subArgs)) return; // warm serve socket (opt-in)
+  if (cliOpts.as === undefined && ['search', 'query', 'get', 'recall'].includes(command) && await (await import('./cli-socket-client.ts')).maybeServeFromCliSocket(command, subArgs)) return; // warm serve socket (opt-in)
   // CLI-only commands
   if (CLI_ONLY.has(command)) {
     const endRead = (await import('./slow-read.ts')).beginCommandRead(command, subArgs); try { await handleCliOnly(command, subArgs); } finally { endRead(); }
@@ -626,7 +636,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
 
   // The live PGLite owner exposes canonical operations over a dedicated
   // local socket. Delegate before opening a competing engine connection.
-  {
+  if (cliOpts.as === undefined) { // GBRA-218: a --as preview runs in this process (the owner socket carries no member identity)
     const { runDelegatedCliOperation } = await import('../commands/persistence-delegate.ts');
     if (await runDelegatedCliOperation(op.name, params, cfgPre, {
       brain: cliOpts.brain, timeoutMs: cliOpts.timeoutMs ?? undefined,
@@ -656,6 +666,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
   // because the import.meta.main seam exits explicitly on every one-shot path.
   const READ_OP_TIMEOUT_MS = 180_000;
   const configSnapshot = op.scope === 'read' ? takeStartupConfigSnapshot(engine) ?? openRequestConfigSnapshot(engine) : null;
+  const asPreview = await (await import('./as-preview.ts')).openAsPreview(engine, cliOpts.as, command); // GBRA-218 local --as <member>
 
   try {
     const { withTimeout, OperationTimeoutError } = await import('../core/timeout.ts');
@@ -678,7 +689,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     let ctx: Awaited<ReturnType<typeof makeContext>>;
     try {
       ctx = await withTimeout(
-        timeCliPhase('context', () => (configSnapshot ? configSnapshot.run(() => makeContext(engine, params, op)) : makeContext(engine, params, op))),
+        timeCliPhase('context', () => (configSnapshot ? configSnapshot.run(() => makeContext(engine, params, op)) : makeContext(engine, params, op)).then(c => asPreview.context(c))),
         wallclockMs,
         `gbrain ${command}: context`,
       );
@@ -694,7 +705,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     if (op.scope === 'read') {
       try {
         rawResult = await withTimeout(
-          configSnapshot!.run(() => withRequestIdentityMemo(() => op.handler(ctx, params))).catch(async (e: unknown) => { // large pages: a segmented page streams to stdout
+          configSnapshot!.run(() => withRequestIdentityMemo(() => asPreview.run(() => op.handler(ctx, params)))).catch(async (e: unknown) => { // large pages: a segmented page streams to stdout
             if (op.name !== 'get_page') throw e;
             const { streamSegmentedGet, SEGMENTED_STREAMED } = await import('./page-render.ts');
             if (await streamSegmentedGet(engine, params, e, writeStdoutFinal)) return SEGMENTED_STREAMED;
@@ -711,7 +722,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
         throw e;
       }
     } else {
-      rawResult = await withRequestIdentityMemo(() => op.handler(ctx, params));
+      rawResult = await withRequestIdentityMemo(() => asPreview.run(() => op.handler(ctx, params)));
       if (op.mutating) await captureCapacityNotices(engine); // #6696 (A4)
     }
     if (op.name === 'get_page' && rawResult === (await import('./page-render.ts')).SEGMENTED_STREAMED) return;
@@ -720,29 +731,15 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     // path's return value so renderers see the same shape they'd see on the
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
     // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
-    const { result, stderr: noticeText } = applyCliOpNotices(normalizeLocalResult(rawResult), params.json === true);
-    const output = formatResult(op.name, result, params);
+    const { result, stderr: noticeText } = applyCliOpNotices(normalizeLocalResult(rawResult), params.json === true, { op: op.name, retrieval: lastRetrievalMeta });
+    const paged = op.name === 'get_page' && await (await import('./page-render.ts')).finishAsOfRead(async p => normalizeLocalResult(await op.handler(ctx, p)) as Record<string, any>, result as Record<string, any>, params, writeStdoutFinal); // GBRA-217
+    const output = paged ? '' : formatResult(op.name, result, params);
     // Awaited delivery (#3423): queued stdout writes past 64KiB lose their
     // tail to a slow pipe reader when the exit grace lapses — see
     // writeStdoutFinal.
     if (output) await writeStdoutFinal(output);
     if (noticeText) process.stderr.write(noticeText);
-    // #4488: an op that reports failure IN-BAND (`{status: 'error'}` — e.g.
-    // put_page over unparseable frontmatter) used to print the envelope and
-    // exit 0, so scripts read a never-written page as success. Echo the error
-    // to stderr and set the failure verdict. No-op statuses ('skipped',
-    // 'unchanged', …) stay exit 0 — a no-op is not a failure.
-    if (
-      typeof result === 'object' && result !== null && !Array.isArray(result) &&
-      (result as { status?: unknown }).status === 'error'
-    ) {
-      const detail = (result as { error?: unknown }).error;
-      console.error(
-        `gbrain ${command}: operation reported status 'error'` +
-        (typeof detail === 'string' && detail ? ` — ${detail}` : '') + '.',
-      );
-      setCliExitVerdict(1);
-    }
+    reportInBandFailure(result, command);
     markEntityMiss(op.name, result);
     maybePrintConceptNudge(op.name, params);
   } catch (e: unknown) {
@@ -835,13 +832,17 @@ async function runThinClientRouted(
     const envelopeMeta = extractResponseMeta(raw);
     if (envelopeMeta?.retrieval) captureRetrievalMeta('retrieval', envelopeMeta.retrieval);
     checkHostHonoredParams(op, params, raw);
-    const result = unpackToolResult(raw);
+    const { result, stderr: stampText } = withRoutedDegradedStamp(op.name, unpackToolResult(raw), envelopeMeta, params.json === true);
+    if (op.name === 'get_page' && await (await import('./page-render.ts')).finishAsOfRead(async p => unpackToolResult(await callRemoteTool(cfg, 'get_page', p, { timeoutMs, signal: sigintController.signal })) as Record<string, any>, // GBRA-217: an older host's
+      result as Record<string, any>, params, writeStdoutFinal, { client: VERSION, host: identityCache.get(cfg.remote_mcp!.mcp_url)?.identity.version ?? null })) return; // reply fails closed
     hintAmbientNarrowing(op, params, result, ambientScope);
     const skew = (await import('../core/search/evidence-delivery.ts')).deliveryVersionSkewWarning(op.name, params, envelopeMeta?.retrieval as Record<string, unknown> | undefined, result);
     if (skew) process.stderr.write(skew + '\n');
     const output = formatResult(op.name, result, params);
     // Awaited delivery (#3423) — same contract as the local-engine path.
     if (output) await writeStdoutFinal(output);
+    if (stampText) process.stderr.write(stampText);
+    reportInBandFailure(result, op.cliHints?.name ?? op.name);
     markEntityMiss(op.name, result);
     maybePrintConceptNudge(op.name, params);
   } catch (e: unknown) {
@@ -1585,13 +1586,13 @@ function describeEmptyRetrieval(): string {
     parts.push(`retrieved ${m.retrieved_count} before trimming`);
   }
   // Ranking-only stages (a skipped reranker) never cause a miss — keep the
-  // "clean miss" verdict honest.
+  // "retrieval healthy" verdict honest.
   const stages = Array.isArray(m.degraded)
     ? [...new Set((m.degraded as Array<{ stage?: string }>).filter(affectsRecall).map(d => d?.stage).filter(Boolean))]
     : [];
   parts.push(stages.length > 0
     ? `degraded: ${stages.join(', ')}`
-    : 'clean miss — no retrieval degradation');
+    : 'retrieval healthy; try the display name or --match hybrid before concluding the brain has nothing');
   return ` (${parts.join('; ')})`;
 }
 
@@ -1672,7 +1673,7 @@ export function formatResult(
         if (incompleteNotice) process.stderr.write(incompleteNotice);
         // --explain --json: the same per-row score_details object MCP `explain: true` returns.
         if (getCliOptions().explain) for (const r of results) r.score_details ??= require('../core/search/explain-formatter.ts').buildScoreDetails(r);
-        return JSON.stringify(searchTimingsDocument(answerId ? results.map(r => ({ ...r, answer_id: answerId })) : results, meta), null, 2) + '\n';
+        return JSON.stringify(withExplainTargetJson(params, meta, searchTimingsDocument(answerId ? results.map(r => ({ ...r, answer_id: answerId })) : results, meta)), null, 2) + '\n';
       }
       // T15/FOV-1: an empty result names its cause when the pipeline told us
       // (degradation stages from _meta.retrieval / the local meta capture) —
@@ -1690,16 +1691,16 @@ export function formatResult(
         // (autocut decision, `degraded: reranker_skipped (no_key)`) render.
         return formatResultsExplain(results, meta ?? undefined);
       }
-      return retrievalIncompleteLine(meta) + results.map(r =>
-        `[${r.score?.toFixed(4) || '?'}] ${r.slug} -- ${require('../core/search/transcript-quote.ts').rowPreview(r, 100)}${r.stale ? ' (stale)' : ''}`,
-      ).join('\n') + '\n';
+      return retrievalIncompleteLine(meta) + results.map(require('./search-row-format.ts').formatSearchRow).join('\n') + '\n';
     }
     case 'get_tags': {
       const tags = result as string[];
       return tags.length > 0 ? tags.join(', ') + '\n' : 'No tags.\n';
     }
+    case 'find_pages': return formatFindPages(result);
     case 'get_stats': {
       const s = result as any;
+      if (Array.isArray(s?.groups)) return formatStatsBy(s);
       const lines = [
         `Pages:     ${s.page_count}`,
         `Chunks:    ${s.chunk_count}`,
@@ -1776,7 +1777,7 @@ export function formatResult(
         const truth = v.compiled_truth ?? v.title ?? '';
         const head = truth.slice(0, VERSION_TRUTH_PREVIEW_CHARS);
         const elided = truth.length > VERSION_TRUTH_PREVIEW_CHARS ? '...' : '';
-        return `#${v.id}  ${v.snapshot_at?.toString().slice(0, 19) || '?'}  ${head}${elided}`;
+        return `#${v.id}  ${v.snapshot_at?.toString().slice(0, 19) || '?'}  ${head}${elided}${typeof v.replaced_because === 'string' ? `\n    changed because: ${v.replaced_because}` : ''}`;
       }).join('\n') + '\n';
     }
     // MEMORY_VERBS v1 [F-E]: human-readable by default; trailing `--json`

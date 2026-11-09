@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS persistence_worktree_refreshes (
 CREATE UNIQUE INDEX IF NOT EXISTS persistence_worktree_refreshes_active
   ON persistence_worktree_refreshes(worktree_id)
   WHERE state IN ('draining','fenced','merged','syncing','recovery_required');
+CREATE INDEX IF NOT EXISTS persistence_worktree_refreshes_completed
+  ON persistence_worktree_refreshes(worktree_id, completed_at DESC) WHERE state='completed';
 `;
 
 export const ACTIVE_REFRESH_STATES = ['draining', 'fenced', 'merged', 'syncing', 'recovery_required'] as const;
@@ -43,6 +45,17 @@ export const ACTIVE_REFRESH_STATES_SQL = "('draining','fenced','merged','syncing
  * read only the database, so a refresh neither waits for them nor stops them.
  */
 export const CHECKOUT_EFFECT_KINDS_SQL = "('git','withdrawal-mirror')";
+
+/**
+ * PR B (docs/designs/REFRESH_WRITE_BARRIER.md): a `deferred` request whose holds are all released is waiting work like a
+ * queued row; one whose refresh is still running, or (GST-1582) whose import has not landed (`sources.last_commit` still
+ * the commit it was held at), is invisible to every claim, head and drain check.
+ */
+export const RELEASED_DEFERRED = (r: string) => `(${r}.state='deferred' AND (${r}.deferred_refresh_id IS NOT NULL OR ${r}.deferred_import_from IS NOT NULL)
+        AND (${r}.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes released
+          WHERE released.id=${r}.deferred_refresh_id AND released.released_at IS NOT NULL))
+        AND (${r}.deferred_import_from IS NULL OR EXISTS (SELECT 1 FROM sources imported
+          WHERE imported.id=${r}.source_id AND COALESCE(imported.last_commit,'')<>${r}.deferred_import_from)))`;
 
 /**
  * Claim predicate for a row aliased `alias` whose `column` (default `worktree_id`) names the worktree: while

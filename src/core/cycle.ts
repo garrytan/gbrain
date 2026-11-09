@@ -83,6 +83,7 @@ export type CyclePhase =
   //    narrative pattern statements + active bias tags. Voice-gated.
   | 'propose_takes' | 'grade_takes' | 'calibration_profile'
   | 'edge_contradictions' // temporal typed edges: LLM flags conflicts, date math closes
+  | 'claim_conflicts' // GBRA-216: keyless typed-claim conflicts filed as decide_proposals (default off)
   // #2653 — drift detection (default OFF; dream.drift.enabled). LLM-judges
   // soft-band takes against recent timeline evidence; report-only in v1
   // (writes reports/drift-<date>; auto_update mutates nothing).
@@ -184,6 +185,7 @@ export const ALL_PHASES: CyclePhase[] = [
   'grade_takes',
   'calibration_profile',
   'edge_contradictions', // temporal typed edges; after extract so it judges fresh relationship state
+  'claim_conflicts', // GBRA-216: keyless typed-claim conflicts; after extract_facts so it reads fresh fence claims
   // #2653 — drift detection. Default OFF (dream.drift.enabled). Runs AFTER
   // the calibration trio (fresh take resolutions) and BEFORE embed so the
   // drift report page gets embedded same-cycle. Report-only in v1.
@@ -356,6 +358,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'drift',
   'standing_questions', // C4: writes pinned answers and question pages.
   'edge_contradictions', // writes proposals and (apply mode) closure lines
+  'claim_conflicts', // writes decide_proposals rows
   // #5876 — writes event pages, projections and the chronicle ledger.
   'chronicle',
   // Lane D — writes facts (fence + index) through facts-absorb jobs.
@@ -586,7 +589,7 @@ export interface CycleOpts {
    * Validated via `assertValidSourceId` in `cycleLockIdFor` (defense-in-depth).
    */
   sourceId?: string;
-  /** #6803: a connector source's cycle (no sync phase) works on its pages changed after this (null: all); see cycle/source-window.ts. */
+  /** #6803, #8573: a source cycle with no sync works on a bounded window of its pages changed after this (null: from its oldest page); see cycle/source-window.ts. */
   sourceChangedSince?: string | null;
   /**
    * #4700 — bare `gbrain dream` may opt the brain's default-like source
@@ -1818,6 +1821,8 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     // System One: decision receipts past decide.receipts.retention_days (reported only when rows were pruned).
     let purgedDecisionReceipts = 0;
     try { purgedDecisionReceipts = await (await import('./ai/decide/store.ts')).pruneReceiptsForCycle(engine); } catch { /* pre-v179 brain */ }
+    // GST-1856: applied-capture records past 90 days (ingestion/applied-captures.ts; 0 on a brain before v296).
+    const purgedAppliedCaptures = await (await import('./ingestion/applied-captures.ts')).purgeStaleAppliedCaptures(engine);
     let purgedFeedback = { events: 0, weights: 0 };
     try { purgedFeedback = await (await import('./feedback/store.ts')).pruneRetrievalFeedback(engine, (await (await import('./feedback/settings.ts')).loadFeedbackSettings(engine)).eventRetentionDays); } catch { /* pre-v207 brain */ }
     return {
@@ -1845,6 +1850,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         purged_batch_retry_audit_files_count: purgedBatchRetryAuditFiles,
         purged_volunteer_events_count: purgedVolunteerEvents,
         ...(purgedDecisionReceipts > 0 ? { purged_decision_receipts_count: purgedDecisionReceipts } : {}),
+        ...(purgedAppliedCaptures > 0 ? { purged_applied_captures_count: purgedAppliedCaptures } : {}),
         ...(purgedFeedback.events + purgedFeedback.weights > 0 ? { purged_retrieval_feedback_events_count: purgedFeedback.events, purged_retrieval_weights_count: purgedFeedback.weights } : {}),
       },
     };
@@ -2390,10 +2396,10 @@ async function runCycleUnscoped(
         const { result, duration_ms } = await timePhase(async () => (await import('./cycle/connector-extract.ts')).runPhaseExtractDatabaseOnly(engine, { dryRun, sourceId: cycleSourceId, timeBudgetMs: CYCLE_STALE_DRAIN_BUDGET_MS }), 'extract');
         phaseResults.push({ ...result, duration_ms });
       } else {
-        // If sync didn't run (phases exclude it) or failed, syncPagesAffected
+        // No sync (or a failed one) and no source window (#8573): syncPagesAffected
         // is undefined → extract falls back to full walk (safe default).
         progress.start('cycle.extract');
-        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, cycleSignal, cycleSourceId), 'extract');
+        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, brainDir, dryRun, sourceWindow?.slugs ?? syncPagesAffected, cycleSignal, cycleSourceId), 'extract');
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -2791,12 +2797,12 @@ async function runCycleUnscoped(
       }
     }
 
-    // Temporal typed edges: proposes (or, certified, applies) closures for live relationships that cannot both hold.
-    if (phases.includes('edge_contradictions')) {
-      checkAborted(cycleSignal);
-      progress.start('cycle.edge_contradictions');
-      const { edgeContradictionsCyclePhase } = await import('./cycle/edge-contradictions.ts');
-      const { result, duration_ms } = await timePhase(() => edgeContradictionsCyclePhase(engine, dryRun), 'edge_contradictions');
+    // Temporal typed edges (proposes or, certified, applies closures for live relationships that cannot both hold), then keyless typed-claim conflicts (GBRA-216); both cover sources with no local path.
+    for (const [phase, run] of [['edge_contradictions', async () => (await import('./cycle/edge-contradictions.ts')).edgeContradictionsCyclePhase(engine, dryRun)],
+      ['claim_conflicts', async () => (await import('./facts/claim-conflicts.ts')).claimConflictsCyclePhase(engine, dryRun)]] as const) {
+      if (!phases.includes(phase)) continue;
+      checkAborted(cycleSignal); progress.start(`cycle.${phase}`);
+      const { result, duration_ms } = await timePhase(run, phase);
       result.duration_ms = duration_ms; phaseResults.push(result); progress.finish();
       await safeYield(opts.yieldBetweenPhases);
     }
@@ -3182,7 +3188,7 @@ async function runCycleUnscoped(
       await engine.updateSourceConfig(opts.sourceId, {
         last_source_cycle_at: nowIso,
         last_full_cycle_at: nowIso,
-        ...sourceCycleWindowStamp(phaseResults, opts.sourceChangedSince, sourceWindow),
+        ...sourceCycleWindowStamp(phaseResults, sourceWindow),
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);

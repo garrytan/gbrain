@@ -88,7 +88,7 @@ describe('normalize→validate order (absence idioms are not unknown keys)', () 
 // 2. warn mode
 // ---------------------------------------------------------------------------
 
-describe('warn mode (default) — accept + _meta.warnings + model-visible block', () => {
+describe('warn mode (default) — accept + _meta.warnings only, never a content block', () => {
   test('unknown key collected with amendment-13 shape and nearest-declared suggestion', async () => {
     const out = await dispatchToolCall(stubEngine('warn'), 'resolve_slugs', {
       partial: 'alice-ex',
@@ -98,12 +98,10 @@ describe('warn mode (default) — accept + _meta.warnings + model-visible block'
     expect(out._meta?.warnings).toEqual([
       { code: 'unknown_param', param: 'partal', suggestion: 'partial' },
     ]);
-    // D8 second-block mechanism carries the grace-period notice.
-    expect(out.content.length).toBe(2);
-    // Agent contract v1: the block rides the notice channel (prefix line), its text kept as `why:`.
-    expect(out.content[1].text).toBe(
-      '[gbrain notice unknown_param kind=info]\nwhy: warning: unknown parameter "partal" ignored — did you mean "partial"? A future release rejects unknown parameters.',
-    );
+    // HARN-15: the warning rides _meta.warnings alone; harnesses store content in the turn, so no block is added.
+    expect(out.content.length).toBe(1);
+    expect(JSON.stringify(out.content)).not.toContain('partal');
+    expect(out._meta?.gbrain_notices).toBeUndefined();
   });
 
   test('unresolved (absent) config defaults to warn', async () => {
@@ -117,9 +115,8 @@ describe('warn mode (default) — accept + _meta.warnings + model-visible block'
     expect(warnings[0].param).toBe('totally_unrelated_key');
     // Nothing within edit distance → no suggestion key at all.
     expect('suggestion' in warnings[0]).toBe(false);
-    expect(out.content[1].text).toBe(
-      '[gbrain notice unknown_param kind=info]\nwhy: warning: unknown parameter "totally_unrelated_key" ignored. A future release rejects unknown parameters.',
-    );
+    expect(out.content.length).toBe(1);
+    expect(JSON.stringify(out.content)).not.toContain('totally_unrelated_key');
   });
 
   test('suggestion candidates are the op\'s DECLARED params only', () => {
@@ -323,18 +320,27 @@ describe('resolveStrictParamsMode (DB > file > warn)', () => {
     getConfig: async () => { throw new Error('no config table'); },
   } as unknown as BrainEngine;
 
-  // The resolver holds the last successfully read DB mode per process
+  // The resolver holds the last successfully read DB mode per engine
   // (adversarial fix: a transient outage must not re-open warn mode) —
   // isolate each case from its neighbors.
   beforeEach(() => resetStrictParamsModeCache());
 
+  /** One engine whose config read answers `state.value`, or fails while `state.down`. */
+  const flakyEngine = (state: { value: unknown; down: boolean }) =>
+    ({ getConfig: async () => { if (state.down) throw new Error('no config table'); return state.value; } } as unknown as BrainEngine);
+
   test('a failed DB read holds the last-known-good DB mode (reject survives an outage)', async () => {
-    expect(await resolveStrictParamsMode(engineWith('reject'), null)).toBe('reject');
+    const state = { value: 'reject' as unknown, down: false };
+    const engine = flakyEngine(state);
+    expect(await resolveStrictParamsMode(engine, null)).toBe('reject');
     // DB now unreadable + file plane says warn → cached reject still wins.
-    expect(await resolveStrictParamsMode(throwingEngine, { engine: 'pglite', mcp: { strict_params: 'warn' } } as never)).toBe('reject');
+    state.down = true;
+    expect(await resolveStrictParamsMode(engine, { engine: 'pglite', mcp: { strict_params: 'warn' } } as never)).toBe('reject');
     // A later successful read of "unset" clears the cache → file plane decides.
-    expect(await resolveStrictParamsMode(engineWith(null), { engine: 'pglite', mcp: { strict_params: 'warn' } } as never)).toBe('warn');
-    expect(await resolveStrictParamsMode(throwingEngine, null)).toBe('warn');
+    state.down = false; state.value = null;
+    expect(await resolveStrictParamsMode(engine, { engine: 'pglite', mcp: { strict_params: 'warn' } } as never)).toBe('warn');
+    state.down = true;
+    expect(await resolveStrictParamsMode(engine, null)).toBe('warn');
   });
 
   test('DB plane wins over the file plane', async () => {
@@ -442,6 +448,12 @@ describe('write operations reject unknown parameters even in warn mode (#5970)',
       expect(out.isError ?? false).toBe(false);
       expect(handlerCalls).toBe(1);
       expect(out._meta?.warnings).toEqual([{ code: 'unknown_param', param: 'limt', suggestion: 'limit' }]);
+      // HARN-15 regression: a read's content carries no notice text for an ignored parameter.
+      const text = out.content.map(c => c.text).join('\n');
+      expect(text).not.toContain('limt');
+      expect(text).not.toContain('unknown_param');
+      expect(text).not.toContain('unknown parameter');
+      expect(text).not.toContain('[gbrain notice');
     } finally {
       searchOp.handler = original;
     }

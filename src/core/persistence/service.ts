@@ -1,4 +1,7 @@
 import { PENDING_IMPORT, pendingImportRefusal } from './pending-import.ts';
+import { deferredWaiting } from './refresh-barrier.ts';
+import { withSupersedes } from './import-deferral.ts';
+import { withAdoptedLocalEdit } from './local-edit-adoption.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { OperationError } from '../ops/contract.ts';
@@ -8,14 +11,17 @@ import { RESIDENT_CONSUMER_KINDS, startConsumerHeartbeat, type ConsumerHeartbeat
 import { enginePoolStats } from '../postgres-engine/pool-stats.ts';
 import { claimOwnerKind, isOneShotCommand } from './claim-phase.ts';
 import { noteDirectPoolLease } from '../direct-pool-profile.ts';
+import { withEngineScope } from '../engine-scope.ts';
 import { preparePageMutation } from './page-prepare.ts';
+import { withChangeReason } from './change-reason.ts';
+import { withValidTimeAdvisory } from './valid-time-advisory.ts';
 import { prepareSemanticPageMutation } from './semantic-pages.ts';
 import { getWriteRequestById, getWriteRequestProgress, receiptFor, type WriteRequestProgress } from './journal.ts';
 import { OWNER_READ_BUDGET_MS, startOwnerRead, type OwnerActivity } from './owner-activity.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { isWriteErrorCode, type WriteReceipt } from './types.ts';
 import { registerPgliteReopen } from '../pglite-lifecycle.ts';
-import { localHostId } from './identity.ts';
+import { hostIdFor } from './identity.ts';
 import { assertMutationProtocol } from './protocol.ts';
 import { writeSwitchOn } from './switches.ts';
 import { pendingWriteHint } from './health.ts';
@@ -25,7 +31,7 @@ import type { PgAccessReason } from '../pg-access-classify.ts';
 import { contentRefusalFromReceipt } from '../import-screen.ts';
 import { fenceIssuesFromDetail, fenceLocationFromDetail } from '../fence-repair/refusal.ts';
 import { withdrawnFromDetail } from '../facts/withdrawal.ts';
-import { heldFileDiagnostic } from './verb-errors.ts';
+import { heldFileDiagnostic, storedCheckoutRefusal } from './verb-errors.ts';
 import { isMissingPageMessage } from './page-identity.ts';
 import { registerPersistenceConsumerConfig } from '../embedding-disabled.ts';
 
@@ -76,6 +82,10 @@ export function registerMutationPreparer(operation: string, prepare: PrepareMuta
  * phase clock, which carries the preparation's cancellation to every preparer's `enterClaimStep` boundaries.
  */
 export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest, cfg: GBrainConfig, signal?: AbortSignal, clock?: ClaimPhaseClock) {
+  // GST-1601: a write prepared again after its page's local edit was adopted names the adoption on its receipt.
+  return withAdoptedLocalEdit(row, await prepareByOperation(e, row, cfg, signal, clock));
+}
+async function prepareByOperation(e: BrainEngine, row: WriteRequest, cfg: GBrainConfig, signal?: AbortSignal, clock?: ClaimPhaseClock) {
   assertMutationProtocol(row);
   enterClaimStep(clock, 'dispatch');
   const registered = preparers.get(row.operation);
@@ -102,6 +112,7 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
   if (row.operation === 'put_page' && row.intent?.kind === 'managed_file_import') return (await import('./import-prepare.ts')).prepareManagedImportMutation(e, row, cfg);
   if (row.operation === 'put_page' && row.intent?.kind === 'managed_file_repair') return (await import('./file-repair.ts')).prepareManagedFileRepairMutation(e, row, cfg);
   if (row.operation === 'remember') return (await import('./memory-mutations.ts')).prepareMemoryMutation(e, row, cfg, signal, clock);
+  if (row.operation === 'forget' || row.operation === 'forget_fact') return (await import('./forget-prepare.ts')).prepareForgetMutation(e, row, cfg, signal);
   if (row.operation === 'loops_close' && row.intent?.kind === 'retire_loop_fact') return (await import('./loop-fact-retirement.ts')).prepareLoopFactRetirement(e, row, cfg);
   if (row.operation === 'decide_proposal') return (await import('../facts/proposal-supersede.ts')).prepareProposalMutation(e, row, cfg);
   if (row.operation === 'trust_owner_page') return (await import('../trust/page-handlers.ts')).prepareTrustOwnerPageMutation(e, row, cfg);
@@ -111,8 +122,8 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
   if (['add_tag','remove_tag','add_timeline_entry'].includes(row.operation)) return prepareSemanticPageMutation(e, row, cfg);
   if (row.operation === 'add_link' || row.operation === 'remove_link') return (await import('./manual-links.ts')).prepareManualLinkMutation(e, row, cfg);
   if (row.operation === 'append_page') return (await import('./page-upload.ts')).withStagedBodyIf(e, row, async () => (await import('./page-append.ts')).prepareAppendMutation(e, row, cfg, signal, clock));
-  if (['put_page','capture','delete_page','restore_page','revert_version','edit_page'].includes(row.operation)) return preparePageMutation(e, row, cfg, undefined, signal,
-    { coordinated: await writeSwitchOn(e, 'single_write_group').catch(() => true), clock, boundedChunkWrites: true });
+  if (['put_page','capture','delete_page','restore_page','revert_version','edit_page'].includes(row.operation)) return withValidTimeAdvisory(row, withChangeReason(row, await withSupersedes(row, await preparePageMutation(e, row, cfg, undefined, signal,
+    { coordinated: await writeSwitchOn(e, 'single_write_group').catch(() => true), clock, boundedChunkWrites: true }))));
   throw new OperationError('unsupported_mutation_protocol', 'No compatible mutation preparer is registered for this operation.', `Request ${row.request_id} (${row.operation}) was accepted by a gbrain version whose preparer this one lacks, so it has not run. Run gbrain upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
 }
 /**
@@ -136,7 +147,7 @@ export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConf
   const full = () => new PersistenceConsumer(engine, config, preparePersistedMutation,
     { drainNotice: kind === 'serve', oneShot, onSettled: row => { recordSettlement(engine); rememberSettled(engine, row.id); for (const listener of settledWaiters.get(engine)?.get(row.id) ?? []) listener(row); } });
   const service: Service = kind !== 'serve' && RESIDENT_CONSUMER_KINDS.includes(kind) && engine.kind === 'postgres'
-    ? { consumer: new WaiterOnlyConsumer(engine, config, full, { kind, hostId: localHostId(), pool: () => enginePoolStats(engine) }), stopping: false }
+    ? { consumer: new WaiterOnlyConsumer(engine, config, full, { kind, hostId: hostIdFor(engine), pool: () => enginePoolStats(engine) }), stopping: false }
     : (() => { const consumer = full(); return { consumer, stopping: false, heartbeat: startConsumerHeartbeat(engine, consumer.hostId,
         // #6317 (C1): the row's pool numbers come from the vendored driver's own queues (postgres-engine/pool-stats.ts).
         { kind, mode: 'full', report: () => ({ restart_required: consumer.restartRequired(), root_barrier_age_ms: consumer.oldestRootBarrierAgeMs(), pool: enginePoolStats(engine) }) }) }; })();
@@ -151,7 +162,8 @@ export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConf
     // An explicit switch to another datastore must not inherit the old brain's config.
     if (sameDatastore) startPersistenceConsumer(engine, config);
   });
-  consumer.start();
+  // The consumer's publications (embeddings included) run in its engine's scope (engine-scope.ts).
+  withEngineScope(engine, () => consumer.start());
   return consumer;
 }
 export async function stopPersistenceConsumer(engine: BrainEngine): Promise<void> {
@@ -232,6 +244,9 @@ export type WriteWait =
 export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config: GBrainConfig,
   opts: { waitMs?: number; signal?: AbortSignal; whileHeldMs?: number } = {}): Promise<WriteWait> {
   if (isTerminal(row)) return { kind: 'terminal', row };
+  // PR B: a write deferred behind a refresh still running (GST-1582: or an import not landed) cannot publish before it ends,
+  // so its pending receipt is returned at once.
+  if (row.state === 'deferred' && await deferredWaiting(engine, row)) return { kind: 'pending', row };
   const consumer = startPersistenceConsumer(engine, config);
   const service = services.get(engine)!;
   const id = row.id;
@@ -256,7 +271,11 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
   let ownerRead: SharedOwnerRead | undefined;
   try {
     while (!service.stopping && !opts.signal?.aborted) {
-      if (handed) { row = handed; handed = undefined; if (isTerminal(row)) return { kind: 'terminal', row }; }
+      if (handed) {
+        row = handed; handed = undefined;
+        if (isTerminal(row)) return { kind: 'terminal', row };
+        if (row.state === 'deferred' && await deferredWaiting(engine, row)) return { kind: 'pending', row };
+      }
       const remaining = deadline - performance.now();
       if (!ownerRead && row.worktree_id && remaining <= OWNER_READ_BUDGET_MS) ownerRead = sharedOwnerRead(engine, row.worktree_id);
       if (remaining <= 0) {
@@ -284,6 +303,7 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
       if (!read.row) continue;
       row = { ...row, ...read.row };
       if (isTerminal(row)) return { kind: 'terminal', row: await getWriteRequestById(engine, id).catch(() => null) ?? row };
+      if (row.state === 'deferred' && await deferredWaiting(engine, row)) return { kind: 'pending', row: await getWriteRequestById(engine, id).catch(() => null) ?? row };
     }
     // A stopped wait settles only what this process can settle at once: one consumer tick (it claims and publishes the
     // request when nothing holds it back) and the request this consumer is still executing. A write that cannot move
@@ -410,6 +430,8 @@ export function writeResponse(row: WriteRequest, hints: { retryAfterMs?: number 
     const pending = pendingImportRefusal(row, row.authority?.remote === true);
     Object.assign(error, { suggestion: pending.suggestion, fix: pending.fix, reason: pending.reason, detail: pending.detail, docs: pending.docs ?? error.docs });
   }
+  const checkout = isTerminal(row) ? storedCheckoutRefusal((row.error_detail as { origin?: unknown } | null | undefined)?.origin, row.source_id, row.slug || null) : undefined;
+  if (checkout) Object.assign(error, { suggestion: checkout.suggestion, fix: checkout.fix, detail: checkout.detail, docs: checkout.docs });
   // #6317 (B1b): a waiter-only process names the owner that publishes for it, so the caller is told who holds the write instead of polling blind.
   if (!isTerminal(row) && hints.waiterOnlyOwner) {
     const owner = hints.waiterOnlyOwner;

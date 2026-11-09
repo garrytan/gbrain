@@ -17,7 +17,7 @@ import { anchorOpResults } from '../search/entity-anchor.ts';
 import { applyQueryArms } from '../search/query-arms.ts';
 import { factRowOutput } from '../search/facts-arm.ts';
 import { resolveSearchDateBounds } from '../search/date-bounds.ts';
-import { loadSearchModeConfig, resolveSearchMode, SOURCE_BOOSTS_KEY } from '../search/mode.ts';
+import { loadSearchModeConfig, parseBoolKnob, resolveSearchMode, SOURCE_BOOSTS_KEY } from '../search/mode.ts';
 import { looksConceptShaped, classifyQueryShape } from '../search/query-intent.ts';
 import {
   gradeRetrievalConfidence,
@@ -29,10 +29,10 @@ import { expandQuery } from '../search/expansion.ts';
 import { dedupResults } from '../search/dedup.ts';
 import { markKeywordHits } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
-import type { HybridSearchMeta, SearchResult } from '../types.ts';
+import type { DegradedStageEntry, HybridSearchMeta, SearchResult } from '../types.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { applySnippetCap, DEFAULT_AGENT_SNIPPET_CHARS, resultChunkCap } from '../search/snippet-cap.ts';
-import { fenceTranscriptRows, neutralizeTranscriptRows, quoteFacts } from '../search/transcript-quote.ts';
+import { fenceTranscriptRows, neutralizeTranscriptRows, quoteFacts, quoteLabel } from '../search/transcript-quote.ts';
 import { scoresFollowRank } from '../search/score-contract.ts';
 import { redactRetrievalOutput } from '../search/output-redaction.ts';
 import { leanRowsKeepId, projectRows, resultRowsFor } from '../search/lean-rows.ts';
@@ -126,6 +126,8 @@ function searchOutput(ctx: OperationContext, p: Record<string, unknown>, results
   if (p.explain === true) for (const r of results) r.score_details = buildScoreDetails(r);
   // #7156: the returned score follows the returned order.
   results = neutralizeTranscriptRows(scoresFollowRank(results), evidence?.delivery.date_header === true);
+  // GST-687: a remote reader also gets rows below the owner's tier quoted (rows carry their stamped trust_tier here).
+  const untrusted = ctx.remote !== false;
   // The shape is reported where it can vary: remote callers, or an explicit `fields`.
   const shown = ctx.remote !== false || p.fields !== undefined ? { rows } : {};
   // Stage timings are read last, after the returned rows are assembled (meta only, never content).
@@ -137,7 +139,7 @@ function searchOutput(ctx: OperationContext, p: Record<string, unknown>, results
   };
   if (!evidence) {
     const output = redactRetrievalOutput(results, { ...meta, ...shown });
-    return emit(output, projectRows(fenceTranscriptRows(applySnippetCap(output.results, resultChunkCap(p.snippet_chars, snippetCap))).map(factRowOutput), rows, lean));
+    return emit(output, projectRows(fenceTranscriptRows(applySnippetCap(output.results, resultChunkCap(p.snippet_chars, snippetCap)), undefined, untrusted).map(factRowOutput), rows, lean));
   }
   // Evidence delivery: explicit snippet_chars wins over the delivered blocks;
   // otherwise the blocks are returned whole (their budget already bounds
@@ -145,9 +147,9 @@ function searchOutput(ctx: OperationContext, p: Record<string, unknown>, results
   const output = redactRetrievalOutput(results, { ...meta, delivery: evidence.delivery, ...shown });
   // An explicit budget's cap holds at this final boundary too (snippet
   // markers and redaction recounted); without one both are no-ops.
-  const capped = capEvidenceToBudget(evidence.explicitSnippet ? capDeliveredSnippets(output.results, snippetCap, output.meta.delivery) : output.results, output.meta.delivery, true);
+  const capped = capEvidenceToBudget(evidence.explicitSnippet ? capDeliveredSnippets(output.results, snippetCap, output.meta.delivery) : output.results, output.meta.delivery, true, untrusted);
   const delivery = output.meta.delivery;
-  return emit(output, projectRows(fenceTranscriptRows(capped, { count: text => countEvidenceTokens(text, delivery.tokenizer), delivery }).map(factRowOutput), rows, lean));
+  return emit(output, projectRows(fenceTranscriptRows(capped, { count: text => countEvidenceTokens(text, delivery.tokenizer), delivery }, untrusted).map(factRowOutput), rows, lean));
 }
 
 /** C1: the per-call row-shape escape hatch shared by `search` and `query` (`detail` is query's low/medium/high). */
@@ -166,6 +168,7 @@ const RETURN_UNIT_PARAM = {
 };
 const RETURN_WINDOW_PARAM = {
   type: 'number' as const,
+  minimum: 1,
   description: 'Window radius 1-3.',
   fullSurfaceOnly: true,
 };
@@ -408,8 +411,11 @@ async function buildRetrievalResponseMeta(
     : undefined;
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
   const excludeSlugPrefixes = resolveHardExcludes();
-  const aliases = (opts.declarations ?? new DeclarationMemo()).scan(results as DeclarationRow[], queryText);
-  const relevance = coverageRelevance(results as SearchResult[], queryText, opts.types, FACT_MATCH_STOPWORDS);
+  const declared = (opts.declarations ?? new DeclarationMemo()).scan(results as DeclarationRow[], queryText);
+  // #8384: a remote reader gets no name a quoted row declares; other_names renders it outside that row's fence.
+  const aliases = ctx.remote === false ? declared
+    : declared.filter(a => !(results as SearchResult[]).some(r => r.slug === a.slug && quoteLabel(r, true) !== null));
+  const relevance = coverageRelevance(results as SearchResult[], queryText, opts.types, FACT_MATCH_STOPWORDS, m?.image_arm === true);
   const readinessScope = { ...scope, excludePrivate, types: opts.types, excludeSlugPrefixes };
   // #6721: these reads depend on nothing but the inputs above, so they run at once: on a pooled Postgres
   // the wall time is the slowest read's round trips, not their sum. The answer-feedback write still runs last.
@@ -418,7 +424,7 @@ async function buildRetrievalResponseMeta(
     timed('readiness', probeProjectionReadiness(ctx.engine, readinessScope).then(async r =>
       [r, r.status === 'projection_pending' ? await countPendingProjections(ctx.engine, readinessScope, relevance) : null] as const)),
     // Facts saved about the entity the query names come first (newest first, one hop through entities they name).
-    timed('entity_facts', opts.entity && ctx.emitResponseMeta ? entitySavedFacts(ctx.engine, opts.entity, { remote: ctx.remote !== false, excludePrivate }) : []),
+    timed('entity_facts', opts.entity && ctx.emitResponseMeta ? entitySavedFacts(ctx.engine, opts.entity, { remote: ctx.remote !== false, excludePrivate, minTrust: scope.minTrust }) : []),
     timed('saved_facts', matchingSavedFacts(ctx, scope, queryText, aliases.flatMap(a => [a.name, a.alias]))),
     timed('held', stampHeldHits(ctx.engine, results as SearchResult[], scope, relevance, ctx).catch(() => ({ coverage: [], couldAffect: 0 }))),
     // GBRA-133 PR 2a.5: per-source freshness from the notifier's cached coverage record (no git call).
@@ -442,7 +448,7 @@ async function buildRetrievalResponseMeta(
   const shownAs = new Map([...factRowIds].map(id => [id, id]));
   for (const f of merged) for (const id of f.collapsed_ids ?? [f.id]) shownAs.set(id, f.id);
   // #8042: a lookup failure withholds saved_facts (degraded stage below) rather than return third-party text unquoted.
-  const quotedFacts = await quoteFacts(ctx.engine, merged).catch(() => null);
+  const quotedFacts = await quoteFacts(ctx.engine, merged, ctx.remote !== false).catch(() => null);
   const savedFacts = (quotedFacts ?? []).map(({ corrected_by, ...f }) => {
     const by = corrected_by === undefined ? undefined : shownAs.get(corrected_by);
     return stripCollapseColumns(by === undefined || by === f.id ? f : { ...f, corrected_by: by });
@@ -453,7 +459,8 @@ async function buildRetrievalResponseMeta(
     ...(pending ? { pending_projection: pending.total } : {}),
     ...(heldTotal ? { held_files: heldTotal } : {}),
     ...(embedding ? { embedding_held: embedding.total } : {}),
-    could_affect: { ...(pending ? { pending_projection: pending.could_affect } : {}), ...(heldTotal && held.couldAffect !== null ? { held_files: held.couldAffect } : {}),
+    could_affect: { ...(pending ? { pending_projection: pending.could_affect } : {}), ...(pending?.could_affect && pending.could_affect_images ? { pending_images: pending.could_affect_images } : {}),
+      ...(heldTotal && held.couldAffect !== null ? { held_files: held.couldAffect } : {}),
       ...(embedding ? { embedding_held: embedding.could_affect } : {}) },
     ...(pending?.capped || embedding?.capped ? { capped: true as const } : {}),
     ...(topHitExact ? { top_hit_exact: true as const } : {}),
@@ -603,20 +610,25 @@ function withExplainTarget(meta: Record<string, unknown>, diagnosis: ExplainTarg
 /** explain_target, after the search: diagnose, refine an unretrieved target with the probe, and emit the fix as a notice. */
 function finishExplainTarget(
   ctx: OperationContext, p: Record<string, unknown>, prep: { trace?: TargetTrace; early?: ExplainTargetDiagnosis } | null,
-  results: SearchResult[], tool: 'search' | 'query',
+  results: SearchResult[], tool: 'search' | 'query', degraded?: HybridSearchMeta['degraded'],
 ): ExplainTargetDiagnosis | undefined {
   if (!prep) return undefined;
   let diag = prep.early;
   if (prep.trace) {
-    const traced = diagnoseTrace(prep.trace, results, { tool, arguments: explainRetryArgs(p) });
-    // A probe finding (no chunks / stale projection / unsealed) explains an unretrieved page better than "no arm found it".
-    diag = traced.state === 'not_retrieved' && prep.early ? { ...prep.early, stages: traced.stages } : traced;
+    const traced = diagnoseTrace(prep.trace, results, { tool, arguments: explainRetryArgs(p) }, degraded);
+    // A probe finding (no chunks / no vectors / stale projection / unsealed) explains an unretrieved page better than
+    // "no arm found it", except "no vectors" when the semantic arm did not run on this call at all (keyless, embed failure).
+    const vectorArmOff = (degraded ?? []).some(d => ['embed_unavailable', 'embed_timeout', 'vector_arm_failed'].includes(d.stage));
+    const probeWins = prep.early && !(prep.early.code === 'target_not_embedded' && vectorArmOff);
+    diag = traced.state === 'not_retrieved' && probeWins ? { ...prep.early!, stages: traced.stages } : traced;
   }
   if (diag?.fix) {
     const notice: Notice = { code: diag.code, kind: 'info', why: diag.why, fix: diag.fix };
     ctx.emitNotice?.(notice);
   }
   if (!diag) return undefined;
+  // #7192: the local CLI renders the fix into its --json object; MCP callers read it from the notice.
+  if (ctx.remote === false) return diag;
   const { fix: _fix, ...wire } = diag;
   return wire as ExplainTargetDiagnosis;
 }
@@ -736,7 +748,8 @@ const search: Operation = {
         if (types?.length === 0) return [];
       }
       const sourceBoosts = resolveBoostMap(undefined, await setup(() => ctx.engine.getConfig(SOURCE_BOOSTS_KEY)));
-      const keywordOpts = { ...readOpts, source_boosts: sourceBoosts, ...(types ? { types } : {}) };
+      const keywordPhrase = parseBoolKnob((await setup(() => ctx.engine.getConfig('search.keyword_phrase'))) ?? undefined) === true;
+      const keywordOpts = { ...readOpts, source_boosts: sourceBoosts, keywordPhrase, ...(types ? { types } : {}) };
       // F2 `match: "keyword"`: page-grain enumeration, no diversity pruning, every page keeps a row.
       // A query that is one entity's name lists records filed under any of its names (the agent no longer walks each alias).
       const names = paging.match === 'keyword' && !paging.cursor ? await setup(() => wholeQueryEntityNames(ctx.engine, queryText, { ...scope, excludePrivate })) : null;
@@ -752,12 +765,15 @@ const search: Operation = {
       }
       const lexicalDone = Promise.withResolvers<void>();
       const keywordCount = page ? null : timings.overlap('keyword_count', startKeywordCount(ctx.engine, queryText, undefined, keywordOpts, lexicalDone.promise));
-      const results = await keepFrontmatterMatches(ctx.engine, (page ? page.rows : dedupResults(await timings.stage('lexical', () => ctx.engine.searchKeyword(queryText, { limit, offset, ...keywordOpts })).finally(lexicalDone.resolve))).map(r => ({ ...r })), where);
+      // GBRA-200: the keyword rank bound (Postgres) is reported here as it is on the hybrid path.
+      let keywordBound: DegradedStageEntry | undefined;
+      const results = await keepFrontmatterMatches(ctx.engine, (page ? page.rows : dedupResults(await timings.stage('lexical', () => ctx.engine.searchKeyword(queryText, { limit, offset, ...keywordOpts,
+        onKeywordIncomplete: reason => { keywordBound = { stage: 'keyword_candidates_incomplete', reason }; } })).finally(lexicalDone.resolve))).map(r => ({ ...r })), where);
       await stampKeywordRows(ctx, results, { ...scope, excludePrivate }, queryText, startedAt, timings);
       // #3800: cap AFTER capture/meta so eval + cache see the real payload.
       return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, null, snippetCap, timings,
-        async rows => withCountMeta(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, null, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, filterHintFor: { op: 'search', p }, timings }),
-          page ?? keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount!), offset + limit)), page !== null);
+        async rows => withCountMeta(withCountMeta(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, null, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, filterHintFor: { op: 'search', p }, timings }),
+          page ?? keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount!), offset + limit)), { meta: {}, degraded: keywordBound }), page !== null);
     }
 
     // Cheap-hybrid (D4/D15): full vector+keyword+RRF+pool+title+alias, but
@@ -804,7 +820,7 @@ const search: Operation = {
     maybeCaptureSearch(ctx, queryText, results, latency_ms, true, capturedMeta);
     // #3800: cap AFTER capture/meta so eval + cache see the real payload.
     return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, capturedMeta, snippetCap, timings,
-      async rows => withCountMeta(withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, capturedMeta, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'search', entity: fanned.entity, filterHintFor: { op: 'search', p }, timings })), ...(fanned.fanout ? { fanout: fanned.fanout } : {}), ...(capped.meta ? { page_cap: capped.meta } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'search')),
+      async rows => withCountMeta(withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, capturedMeta, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'search', entity: fanned.entity, filterHintFor: { op: 'search', p }, timings })), ...(fanned.fanout ? { fanout: fanned.fanout } : {}), ...(capped.meta ? { page_cap: capped.meta } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'search', capturedMeta?.degraded)),
         keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount), offset + limit)));
   },
   scope: 'read', mutating: false,
@@ -1215,7 +1231,7 @@ const query: Operation = {
     // #3800: cap AFTER capture/meta/CRAG so every internal consumer graded
     // and recorded the real payload; only the returned envelope is snipped.
     return evidenceOutput(ctx, p, results, plan, { ...querySourceScope, excludePrivate, detail }, capturedMeta, snippetCap, timings,
-      async rows => withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query', entity: fanned.entity, filterHintFor: { op: 'query', p }, timings })), crag, ...(fanned.fanout ? { fanout: fanned.fanout } : {}), ...(pageCapMeta ? { page_cap: pageCapMeta } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'query')));
+      async rows => withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query', entity: fanned.entity, filterHintFor: { op: 'query', p }, timings })), crag, ...(fanned.fanout ? { fanout: fanned.fanout } : {}), ...(pageCapMeta ? { page_cap: pageCapMeta } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'query', capturedMeta?.degraded)));
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'query', positional: ['query'] },
@@ -1266,7 +1282,7 @@ const assemble_evidence: Operation = {
       detail: p.detail as 'low' | 'medium' | 'high' | undefined,
       caller: { remote: ctx.remote !== false, ...scope, excludePrivate },
     });
-    return { ...out, results: await stampPageTrust(ctx.engine, out.results, scope.minTrust) };
+    return ctx.remote !== false ? out : { ...out, results: await stampPageTrust(ctx.engine, out.results, scope.minTrust) };
   },
 };
 

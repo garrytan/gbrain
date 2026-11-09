@@ -71,6 +71,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'connector_checkpoints',
   'connector_held_items',
   'git_held_files',
+  // GST-1209: live pages stored in segments whose live rows do not cover their body (doctor/checks/segmented-tiling.ts).
+  'segmented_tiling',
   'fence_integrity',
   // GBRA-221: live fence rows on imported pages whose body is outside-authored text (doctor/checks/outside-content-fences.ts).
   'outside_content_fences',
@@ -86,7 +88,19 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'trust_release_unpreviewed_fields',
   'credential_projection_pending',
   'derived_visibility',
+  // GBRA-218: member read access (doctor/checks/member-access.ts).
+  'access_readers_malformed',
+  'access_unknown_readers',
+  'access_recent_narrowings',
+  'access_page_readers_backfill',
+  'access_policy_pending',
+  'access_policy_widening_held',
+  'access_policy_invalid',
+  'access_policy_store_mismatch',
+  // GBRA-231: shared agents (doctor/checks/shared-agent-access.ts).
+  'access_may_act_for_wildcard',
   'extractor_facts_expired',
+  'unwithdrawn_facts',
   'loop_facts_drift',
   'ontology_facts_fenced',
   'orphan_persistence_bindings',
@@ -216,6 +230,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'dirty_age',
   'commits_outside_source_root',
   'quarantined_changes',
+  // PR B: commits in a source checkout that gbrain's commit ledger does not name, and page files left uncommitted (doctor/checks/foreign-writers.ts).
+  'foreign_writers',
   'takes_count',
   'takes_weight_grid',
   // #5836: active facts with no entity (invisible to entity recall and the conflict sweep).
@@ -226,6 +242,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'db_ahead_of_git',
   // Git-canonical G3: how far each strict source's index trails HEAD (doctor/checks/git-index-lag.ts).
   'git_index_lag',
+  // GST-1601: local edits adopted in the last 24 h per source (doctor/checks/local-edit-adoptions.ts).
+  'local_edit_adoptions',
   'edge_validity',
   'text_projection_readiness',
   'timeline_coverage',
@@ -297,6 +315,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   // Cat 41: the provider-use decision gbrain setup recorded; declined = no provider request (discovery, probe).
   'provider_consent',
   'frontmatter_hook',
+  // URL source clones with no record of who added them (url-source-origin.ts).
+  'url_source_origin',
   // F4b: PGLite row-delta planner statistics / Postgres autovacuum ANALYZE lag on the hot tables.
   'planner_stats_stale',
   'alternative_providers',
@@ -393,6 +413,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'pool_budget',
   'progressive_batch_audit_health',
   'queue_health',
+  // Wakeshift PR 1: report-back key, enabled state and dead/id_reused watches (doctor/checks/wakeshift.ts).
+  'wakeshift',
   // #4578: brain-wide maintenance jobs dying at their deadline.
   'global_maintenance_timeouts',
   // GBRA-130 C-6: no completed brain-wide pass while jobs fail or a phase keeps blocking it.

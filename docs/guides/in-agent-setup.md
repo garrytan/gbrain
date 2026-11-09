@@ -47,7 +47,7 @@ Run these commands **inside the agent's computer**. For Grok Bot:
 
 ```bash
 curl --fail --silent --show-error --location \
-  https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/scripts/setup-in-agent.sh \
+  https://raw.githubusercontent.com/garrytan/gbrain/stable/scripts/setup-in-agent.sh \
   --output /tmp/gbrain-setup.sh
 bash /tmp/gbrain-setup.sh --root /workspace/gbrain --harness grok-bot
 ```
@@ -361,7 +361,7 @@ helper and reruns setup with the same root, harness and flags:
 
 ```bash
 curl --fail --silent --show-error --location \
-  https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/scripts/setup-in-agent.sh \
+  https://raw.githubusercontent.com/garrytan/gbrain/stable/scripts/setup-in-agent.sh \
   --output /tmp/gbrain-setup.sh
 bash /tmp/gbrain-setup.sh --root /workspace/gbrain --harness grok-bot --upgrade
 ```

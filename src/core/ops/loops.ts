@@ -20,7 +20,7 @@
  */
 
 import { opError, type Operation, type OperationContext, type OperationError } from './contract.ts';
-import type { Action } from '../agent-output.ts';
+import type { Action, Notice } from '../agent-output.ts';
 import { hostFix, invalidParam, opTransport, paramUse, readFix } from './op-fix.ts';
 import { resolveRequestedScope, sourceScopeOpts } from './context.ts';
 import { validateSourceId } from '../utils.ts';
@@ -69,7 +69,7 @@ interface GoogleSourceFreshness {
 async function googleSourceFreshness(
   ctx: OperationContext,
   scope: { sourceId?: string; sourceIds?: string[] },
-): Promise<{ sources: GoogleSourceFreshness[]; stale: boolean; staleSources: string[] }> {
+): Promise<{ sources: GoogleSourceFreshness[]; stale: boolean; staleSources: string[]; failed?: true }> {
   try {
     const rows = await ctx.engine.executeRaw<{ id: string; last_sync_at: string | null; config: unknown }>(
       `SELECT id, last_sync_at, config FROM sources WHERE archived IS NOT TRUE`,
@@ -101,7 +101,7 @@ async function googleSourceFreshness(
     // Fail TOWARD stale: this surface's invariant is "stale-but-confident is
     // worse than nothing" — a DB error must not present confident output
     // with the stale warning suppressed.
-    return { sources: [], stale: true, staleSources: [] };
+    return { sources: [], stale: true, staleSources: [], failed: true };
   }
 }
 
@@ -410,7 +410,7 @@ const open_loops: Operation = {
   params: {
     group_by: { type: 'string', enum: ['counterparty', 'none'], description: "Default 'counterparty' (ranked groups)." },
     status: { type: 'string', enum: ['open', 'done', 'dropped', 'stale'], description: "Default 'open', except with `id`, where any status matches." },
-    id: { type: 'number', description: 'Fetch the single loop with this id (ids come from earlier open_loops results). Matches any status unless `status` is passed; the source scope still applies, and the grouped view omits `text`.' },
+    id: { type: 'number', minimum: 1, description: 'Fetch the single loop with this id (ids come from earlier open_loops results). Matches any status unless `status` is passed; the source scope still applies, and the grouped view omits `text`.' },
     loop_type: { type: 'string', enum: ['commitment_owed_by_me', 'commitment_owed_to_me', 'unanswered_inbound', 'unanswered_outbound', 'decision_pending'], description: 'Filter to one loop type.' },
     counterparty: { type: 'string', description: 'Filter to one counterparty (slug or email).' },
     limit: { type: 'number', description: 'Grouped: max groups (default 3). Flat: max loops (default 50). The internal fetch is capped at 500 rows; `truncated: true` marks a hit.' },
@@ -485,6 +485,7 @@ const open_loops: Operation = {
     });
     const freshness = await googleSourceFreshness(ctx, scope);
     const noGoogleSources = freshness.sources.length === 0;
+    if (!trusted && noGoogleSources && !freshness.failed && loops.length === 0) ctx.emitNotice?.(noGoogleInScopeNotice(scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : [])));
     const partialStaleSources = freshness.stale ? [] : freshness.staleSources;
     const coverage = await heldCoverage(ctx, freshness.sources, trusted);
     const deepLinks = trusted ? await deepLinksFor(ctx, loops) : new Map<string, string>();
@@ -614,7 +615,8 @@ const open_loops: Operation = {
 };
 
 /**
- * open_loops `id`: absent or null means a list read. Anything else must be a
+ * open_loops `id`: absent or null means a list read (over the tool paths, 0
+ * reads as absent too: `minimum: 1`, GST-927). Anything else must be a
  * positive safe integer. The refusal never echoes the raw value. The digest
  * stays off for a lookup because it describes the open list ("waiting on
  * you", "You are clean"), which is false for a closed or missing loop.
@@ -634,6 +636,18 @@ function grantedSources(ctx: OperationContext): string[] {
 
 function sourcesFix(why: string): Action {
   return readFix(why, { argv: ['gbrain', 'sources', 'list', '--json'], mcp: { tool: 'sources_list', arguments: {} } });
+}
+
+/** #7286: names only the sources this read covered, all inside the grant, so the text is the same whether or not a google source exists outside it. */
+function noGoogleInScopeNotice(readSources: string[]): Notice {
+  return {
+    code: 'loops_no_google_in_scope',
+    kind: 'info',
+    why: `open_loops read only ${readSources.join(', ') || 'none'}, inside this connection's grant, and none of them is a google source, ` +
+      'so it had nothing to read: this is not "inbox clean", and it says nothing about sources outside the grant. ' +
+      "Pass source_id naming a google source this connection is granted, or ask the brain's owner to grant one.",
+    fix: sourcesFix('Lists the sources this connection can read; pass a google one as source_id.'),
+  };
 }
 
 function closeFix(ctx: OperationContext, p: Record<string, unknown>): { fix?: Action } {

@@ -136,6 +136,28 @@ An ordinary page carries no field.
 A body over the page ceiling, or `put_page` content over 24 MiB, has no
 receipt: the write is refused as `request_too_large`.
 
+<a id="adding-to-a-large-page"></a>
+### Adding to or uploading a large page
+
+Don't send a growing page back whole to add a line. `append_page` (CLI
+`gbrain append <slug>`, text from `--file` or stdin) adds text to the end of a
+page in time proportional to the text. It takes a `request_id`, so a retry
+never appends twice, and `expected_tail_sha256` refuses `tail_changed` when
+another writer appended first. `edit_page` on a page stored in segments
+rewrites only the segments a body-text match touches (an edit that reaches the
+header or the timeline marker prepares the whole body instead); `within`
+restricts the match to a range a window read returned.
+
+A page bigger than one request (see the limits below) goes in an upload session:
+`begin_page_upload`, then `upload_page_part` from part 0, then
+`commit_page_upload`, which returns `put_page`'s receipt. `get_page_upload`
+resumes after a lost reply and `abort_page_upload` discards the session.
+On a remote brain, `gbrain put --file`, `gbrain capture --file` and
+`gbrain append` switch to a session when the request is over the connection's
+limit. A session belongs to the connection, source and
+page that began it, its staged bytes count against the `persistence.limits`
+upload quotas, and an idle session expires.
+
 <a id="reading-part-of-a-page"></a>
 ### Reading part of a page
 
@@ -229,10 +251,12 @@ dies).
 `purge_fact` on a page stored in segments, on a source backed by files,
 rewrite its canonical file as they rewrite an inline page's: the file shows the
 row forgotten, or loses the purged row, and holds the bytes `gbrain export`
-writes for the page; the withdrawal's Git effect commits it. The file is
-streamed from the segments into its staging file, one segment at a time, and
-never held whole. Its recovery record names that staging file by path and
-SHA-256 instead of holding the file, so the mirror reserves the file once in
+writes for the page. The file is streamed from the segments into its staging
+file, one segment at a time, and never held whole. `forget` and `forget_fact`
+publish the struck file in their own write, before the withdrawal commits;
+`purge_fact`'s mirror writes it afterwards and its Git effect commits it. The
+mirror's recovery record names that staging file by path and SHA-256 instead
+of holding the file, so the mirror reserves the file once in
 the recovery budget. A mirror interrupted before, during or after writing the
 staging file finishes on the writer's next pass: a staging file a crash cut
 short is discarded and written again.
@@ -273,7 +297,7 @@ wrong with the page.
 | Markdown import and sync (`gbrain import`, `gbrain sync`, the managed sync blob read) | the page ceiling: 256 MiB on Postgres, 128 MiB on PGLite (24 MiB while segmented storage is off); above 24 MiB on a source backed by files, only from the file's own place in the checkout | — |
 | CLI stdin (`gbrain put`, `gbrain capture --stdin`) | 24 MiB (was 5 MB) | `gbrain import` the file |
 | MCP stdio (local agents, `gbrain serve`) | 64 MiB per JSON-RPC message (the MCP SDK default of 10 MiB is raised), so a JSON-escaped page at the ceiling fits | — |
-| MCP over HTTP (`gbrain serve --http`) | 4 MiB request body (the MCP SDK default) | the same: sync or the CLI on the brain host (chunked uploads arrive in a later release) |
+| MCP over HTTP (`gbrain serve --http`) | 4 MiB request body (the MCP SDK default) | an [upload session](#adding-to-a-large-page), or sync or the CLI on the brain host |
 | Legacy HTTP transport | 1 MiB (`GBRAIN_HTTP_MAX_BODY_BYTES`) | the same |
 | `put_pages` batch | 8 MiB per batch | send large pages one per `put_page`, or by file |
 | Persistence journal | 64 MiB of outstanding JSON-escaped write intent per principal (was 32 MiB), 256 MiB per brain | nothing: a second large write waits for the first |
@@ -363,6 +387,9 @@ candidate passages; expansion receives the query; synthesis and LLM extraction
 receive the relevant retrieved content or source text. Self-hosted providers have
 their own deployment boundary. The connected agent's own model also receives
 whatever memory its harness includes in context, even on a keyless GBrain setup.
+Reporting back through Wakeshift (off by default, owner opt-in) sends a watched
+job's id, kind, status and times, never page text, titles or slugs; see
+[what leaves the machine](wakeshift.md#what-leaves-the-machine).
 
 Enable paid capabilities and automatic capture only with consent, using the
 provider's actual data-handling policy. See [installation capabilities](../../INSTALL_FOR_AGENTS.md#step-2-api-keys)
@@ -406,9 +433,27 @@ and [isolated local backup guide](in-agent-setup.md#6-back-up-the-complete-local
 <a id="purge"></a>
 ## Expire versus purge
 
+A write's [reason](page-history.md#reasons) is stored with the page's history
+and, when the page's file reaches Git, in the commit message. A purge removes
+the database copies it covers, but a commit already pushed keeps its message
+text, just as it keeps the file's earlier contents. Purge records those commits
+so no later sync stores the reason again ([purge and
+reasons](page-history.md#purge-and-reasons)).
+
 `forget` **expires**: the fact stops being recalled, cannot be saved again in
 the same source and visibility, and its row is struck in the page's Markdown.
 The text stays in the row, the file, page history and backups.
+
+The struck rows are written first: every page file that carries the claim is
+published in one write (one Git commit on a source that commits through
+gbrain), and the withdrawal commits with it. A forget waits for the source's
+writer like any other write, so while that writer is unavailable the forget is
+accepted and pending, and the fact is still recalled. The withdrawal itself is
+a database row, and only `forget` records one: a page write or sync of a struck
+row imports an expired fact and withdraws nothing, so a brain rebuilt from Git
+can save that claim again until it is forgotten there. A fact saved without an
+entity is a row of the `memory/unattributed` page, so its withdrawal has a file
+too.
 
 Automatic extraction (sync import, `put_page`, `extract_facts`, the sweep)
 skips a candidate whose exact claim was forgotten in that source and visibility

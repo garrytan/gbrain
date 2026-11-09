@@ -1,6 +1,6 @@
 import { funnelPassThrough } from '../funnel.ts';
 import { suffixedSlugDryRun } from '../persistence/suffixed-slug.ts';
-import { AGENT_CONTENT_PARAMS, PAGE_MUTATION_PARAMS, CAPTURE_EVENT_PARAMS, CAPTURE_CLI_PROVENANCE_PARAMS, WRITE_WAIT_PARAM } from '../persistence/params.ts';
+import { AGENT_CONTENT_PARAMS, PAGE_MUTATION_PARAMS, CAPTURE_EVENT_PARAMS, CAPTURE_CLI_PROVENANCE_PARAMS, REASON_PARAM, WRITE_WAIT_PARAM } from '../persistence/params.ts';
 import { assertPurgeParams } from '../persistence/purge-params.ts';
 /**
  * Page CRUD operation cluster — pure move from operations.ts (v0.46.x
@@ -16,19 +16,23 @@ import type { Page } from '../types.ts';
 import { decodeDeepResearchAnchor, decodeDeepResearchId, deepResearchPageUrl } from '../deep-research-id.ts';
 import { PageSnapshotAmbiguousError, type PageSnapshot } from '../page-state/types.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { pageTrustForRead, projectFetchText, projectGetPage, quotesBody, readQuarantined } from './get-page-projection.ts';
+import { neutralizesBody, pageTrustForRead, projectFetchText, projectGetPage, quotedPageMeta, quotesBody, readQuarantined, unverifiedOriginNotice } from './get-page-projection.ts';
 import { assertLargePageAdmission } from '../persistence/large-page-guard.ts';
 import { assertFullReadFits, bodyBytes, fetchWindowResult, GET_PAGE_BODY_PARAMS, inlineBodyBytes, parseBodyRequest, readPartialBody, segmentedFullReadError, authorizedReadPin } from './get-page-body.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { MIN_TRUST_PARAM } from '../eligibility/policy.ts';
 import { getPageKnownAsOf, KNOWN_AS_OF_PARAM } from './known-as-of.ts';
+import { AS_OF_PARAM, getPageAsOf } from './valid-time-read.ts';
+import { currentValidTime } from '../valid-time.ts';
 import { stampRowTrust } from '../eligibility/stamp.ts';
+import { quoteTimelineRows } from './timeline-quote.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { getContentFlag } from '../quarantine.ts';
 import { fileHeldField, readHeldPages } from '../persistence/held-reads.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller } from '../search/private-visibility.ts';
+import { unquoteAnyTranscriptText } from '../search/transcript-quote.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
 import { listPagesPagination, listingTruncatedNotice } from './list-pages-pagination.ts';
 import { OperationError, opError, type Operation, type OperationContext } from './contract.ts';
@@ -93,7 +97,7 @@ const get_page: Operation = {
   name: 'get_page',
   idempotent: true,
   outputRedaction: { exempt: 'explicit page read by slug/id; governed by page visibility, not output redaction (CEO-17 raw-read exception)' },
-  description: 'Read a page; `section` or `grep` reads one part. Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.',
+  description: 'Read a page; `section`/`grep` reads one part. Window selector order: cursor, around_chunk_id, lines, bytes (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.',
   params: {
     slug: { type: 'string', description: 'Page slug.', required: true },
     fuzzy: { type: 'boolean', description: 'Fuzzy match.', fullSurfaceOnly: true },
@@ -107,8 +111,10 @@ const get_page: Operation = {
     include_quarantined: { type: 'boolean', description: 'Admin: quarantined body.', fullSurfaceOnly: true },
     min_trust: MIN_TRUST_PARAM,
     known_as_of: KNOWN_AS_OF_PARAM,
+    as_of: AS_OF_PARAM,
   },
   handler: async (ctx, p) => {
+    if (p.as_of !== undefined) return getPageAsOf(ctx, p);
     if (p.known_as_of !== undefined) return getPageKnownAsOf(ctx, p);
     const slug = p.slug as string;
     const fuzzy = (p.fuzzy as boolean) || false;
@@ -223,29 +229,33 @@ const get_page: Operation = {
     // `content` roughly duplicates compiled_truth + timeline — always emitting
     // it would double every reader's payload for the round-trip minority.
     const timelineEntries = includeTimelineEntries
-      ? await stampRowTrust(ctx.engine, 'timeline_entries', await ctx.engine.getTimeline(page.slug, { ...await readPolicyOpts(ctx, { sourceId: page.source_id }), eligibility: readable.eligibility }), e => e.id) : undefined;
+      ? await quoteTimelineRows(ctx, page.slug, await stampRowTrust(ctx.engine, 'timeline_entries', await ctx.engine.getTimeline(page.slug, { ...await readPolicyOpts(ctx, { sourceId: page.source_id }), eligibility: readable.eligibility }), e => e.id)) : undefined;
     // Read-only, over the same visibility-filtered body the reader gets.
     const lineGrammar = p.grammar_diagnostics !== true ? undefined : await (await import('../line-grammar-report.ts')).grammarDiagnosticsForPage(ctx.engine, page, visibleBody);
     const quarantined = readQuarantined(ctx, page, p.include_quarantined === true); // #6259
+    unverifiedOriginNotice(ctx, page, readable.trust);
     const fenceHeld = (await (await import('../generations/fence.ts')).fenceHoldEntries(ctx.engine, [page.source_id], { slug: page.slug }).catch(() => [])).map(({ source_id: _s, slug: _g, ...hold }) => hold); const fileHeld = { ...(held ? { file_held: fileHeldField(held, isUntrustedReader) } : {}), ...(fenceHeld.length ? { fence_held: fenceHeld } : {}) };
     const segmented = isSegmentedPage(page);
+    // GBRA-217 (B7): a current page not in force today says so; a page with no valid_from / valid_until reads as before.
+    const validTime = currentValidTime(page.frontmatter as Record<string, unknown> | null);
     const pin = authorizedReadPin(ctx, page, snapshot!.bodyGeneration, p.min_trust, () => pageNotFoundError(ctx, slug, { includeDeleted, sourceIdParam }));
     const whole = bodyRequest.mode === 'full'
       || (bodyRequest.mode === 'auto' && !segmented && bodyBytes(visibleBody) <= await inlineBodyBytes(ctx));
     if (!whole) {
-      const partial = await readPartialBody(ctx, { page, visibleBody, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, pin, quote: quotesBody(ctx, page),
+      const partial = await readPartialBody(ctx, { page, visibleBody, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, pin, quote: quotesBody(ctx, page, readable.trust), neutralize: neutralizesBody(ctx, page),
         extras: { ...(quarantined ? { quarantined } : {}), ...(timelineEntries ? { timeline_entries: timelineEntries } : {}), ...fileHeld,
-          ...(resolved_slug ? { resolved_slug } : {}), ...(content_flag ? { content_flag } : {}) } }, bodyRequest);
+          ...(resolved_slug ? { resolved_slug } : {}), ...(content_flag ? { content_flag } : {}), ...(validTime ? { valid_time: validTime } : {}) } }, bodyRequest);
       return lineGrammar ? { ...partial, line_grammar: lineGrammar } : partial;
     }
     if (segmented) throw await segmentedFullReadError(ctx, page, bodyRequest, { ...pin, revision: snapshot!.revision });
     const projected = projectGetPage(visibleBody, {
-      revision: snapshot!.revision, tags, includeContent, contentOnly, resolved_slug, content_flag, quarantined, trust: readable.trust, quote: quotesBody(ctx, page),
+      revision: snapshot!.revision, tags, includeContent, contentOnly, resolved_slug, content_flag, quarantined, trust: readable.trust, quote: quotesBody(ctx, page, readable.trust), neutralize: neutralizesBody(ctx, page),
       ...(timelineEntries ? { timeline_entries: timelineEntries } : {}),
       ...fileHeld,
     });
     if (ctx.remote !== false) await assertFullReadFits(ctx, visibleBody, projected, bodyRequest);
-    return lineGrammar ? { ...projected, line_grammar: lineGrammar } : projected;
+    const withValidTime = validTime ? { ...projected, valid_time: validTime } : projected;
+    return lineGrammar ? { ...withValidTime, line_grammar: lineGrammar } : withValidTime;
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'get', positional: ['slug'] },
@@ -306,14 +316,14 @@ const fetch_page: Operation = {
     const segmented = isSegmentedPage(page);
     const visibleBody = ctx.remote === false || segmented ? page : stripPrivacyFencesForRemoteReader(page);
     const quarantined = readQuarantined(ctx, page, p.include_quarantined === true);
+    unverifiedOriginNotice(ctx, page, readable.trust);
     if (!quarantined?.body_omitted && (segmented || (ctx.remote !== false && bodyBytes(visibleBody) > await inlineBodyBytes(ctx)))) {
       const pin = authorizedReadPin(ctx, page, snapshot!.bodyGeneration, p.min_trust, missing);
-      return fetchWindowResult(ctx, { page, visibleBody: visibleBody as Page, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, extras: {}, pin, quote: quotesBody(ctx, page) }, id, identity ? decodeDeepResearchAnchor(id) : null);
+      return fetchWindowResult(ctx, { page, visibleBody: visibleBody as Page, revision: snapshot!.revision, tags, quarantined, trust: readable.trust, extras: {}, pin, quote: quotesBody(ctx, page, readable.trust), neutralize: neutralizesBody(ctx, page) }, id, identity ? decodeDeepResearchAnchor(id) : null);
     }
-    return {
-      id: identity ? id : page.slug,
-      title: page.title,
-      text: projectFetchText(visibleBody as Page, tags, quarantined, readable.trust, quotesBody(ctx, page)),
+    const meta = quotedPageMeta(page, quotesBody(ctx, page, readable.trust), tags);
+    return { id: identity ? id : page.slug, title: meta.title,
+      text: projectFetchText(visibleBody as Page, tags, quarantined, readable.trust, quotesBody(ctx, page, readable.trust), neutralizesBody(ctx, page)),
       // Pages have no public http home; a stable brain-local URI satisfies
       // the contract's citation slot without inventing a fake web URL.
       url: deepResearchPageUrl(page.source_id, page.slug),
@@ -322,7 +332,7 @@ const fetch_page: Operation = {
         type: page.type,
         source_id: page.source_id,
         updated_at: page.updated_at,
-        tags, ...(quarantined ? { quarantined } : {}), ...readable.trust, ...(quotesBody(ctx, page) ? { quoted: 'transcript' } : {}),
+        tags: meta.tags, ...(quarantined ? { quarantined } : {}), ...readable.trust, ...(quotesBody(ctx, page, readable.trust) ? { quoted: 'transcript' } : {}),
       },
     };
   },
@@ -342,7 +352,7 @@ const put_page: Operation = {
     allow_empty: { type: 'boolean', required: false, description: 'Allow an empty page.', fullSurfaceOnly: true },
     allow_shrink: { type: 'boolean', required: false, description: 'Allow content under half a >256 KB page. To add text use append_page, not a re-put; a page over one request goes by begin_page_upload.', fullSurfaceOnly: true },
     drop_timeline: { type: 'boolean', required: false, description: 'No Timeline in content: delete its entries.', fullSurfaceOnly: true },
-    wait_ms: WRITE_WAIT_PARAM,
+    wait_ms: WRITE_WAIT_PARAM, reason: REASON_PARAM,
     // v0.39.3.0 provenance write-through (WARN-8 + A1 + CV6). Optional fields
     // for trusted local callers (capture CLI, autopilot, dream cycle). Remote
     // MCP callers (ctx.remote !== false) have their values OVERRIDDEN with
@@ -368,6 +378,7 @@ const put_page: Operation = {
       return { dry_run: true, action: 'put_page', slug: p.slug };
     }
     if (ctx.remote !== false && typeof p.slug === 'string') await assertLargePageAdmission(ctx.engine, p.slug, sourceId, p);
+    (await import('../persistence/page-visibility.ts')).assertSubmittedReaders(ctx.remote, p.slug, p.content);
     return submitPageMutation(ctx, { operation: 'put_page', params: p }).then(funnelPassThrough('save')).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
@@ -610,7 +621,7 @@ const list_pages: Operation = {
     // the pages such consumers exist to find.
     const rows = scope.sourceIds?.length === 0 ? [] : await ctx.engine.listPages({
       type: p.type as any,
-      tag: p.tag as string,
+      tag: typeof p.tag === 'string' && ctx.remote !== false ? unquoteAnyTranscriptText(p.tag) : p.tag as string,
       limit: limit + 1,
       offset,
       includeDeleted: (p.include_deleted as boolean) === true,

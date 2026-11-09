@@ -8,7 +8,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   CEILING_PAGES, CEILINGS_MS, ceilingsFor, evaluateScaleGates, importProgressPerFile, RATE_MIN_PAGES, HEADLINE_OP, HOT_TABLES, KEY_PLAN_OPS, phaseLimitsMs, PLANNER_HEALTH_ENFORCED, PLANNER_STATS_MIN_ROWS,
-  rateMeasure, resultHits, verdictLines, type GatePolicy, type RateMeasure, type ScaleReport,
+  RATE_RATIO_MAX, rateMeasure, resultHits, TOTAL_VS_HALF_MAX, verdictLines, type GatePolicy, type RateMeasure, type ScaleReport,
 } from '../../scripts/scale/gates.ts';
 
 const ENFORCE: GatePolicy = { enforce: true, enforcePlanner: PLANNER_HEALTH_ENFORCED, enforceCeilings: false };
@@ -169,6 +169,113 @@ describe('scale gates under --enforce', () => {
       expect(wallMs).toHaveLength(PAGES);
       expect(Number.isNaN(cpuMs[3]!) && Number.isNaN(cpuMs[4]!)).toBe(true);
       expect(wallMs.filter(ms => !Number.isFinite(ms))).toHaveLength(2);
+    });
+  });
+
+  // #7939: one stall (a paused database container, a WAL checkpoint) inside the last tenth carried its mean past the
+  // gate on unrelated PRs. The measure sets aside at most one stall, and only the part of it nothing else in the
+  // import repeats; work that recurs, which is how an import goes quadratic, keeps the plain measure's sensitivity.
+  describe('import rate sets aside one stall and never recurring work (#7939)', () => {
+    const PAGES = 10_000;
+    let state = 7939;
+    const jitter = Array.from({ length: PAGES }, () => {
+      state = (state + 0x6D2B79F5) | 0;
+      let x = Math.imul(state ^ (state >>> 15), 1 | state);
+      x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+      return 0.8 + 0.4 * (((x ^ (x >>> 14)) >>> 0) / 4294967296);
+    });
+    const series = (extra: (i: number) => number, noisy = true) => Array.from({ length: PAGES }, (_, i) => 5 * (noisy ? jitter[i]! : 1) + extra(i));
+    /** Master's measure before #7939: plain means of the first and last tenth, plain total over the halfway sum. */
+    const plainMeasure = (ms: number[]) => {
+      const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+      const round = (n: number) => Math.round(n * 100) / 100;
+      return { rate_ratio: round(sum(ms.slice(-PAGES / 10)) / sum(ms.slice(0, PAGES / 10))), total_vs_half: round(sum(ms) / sum(ms.slice(0, PAGES / 2))) };
+    };
+    const verdict = (m: { rate_ratio: number; total_vs_half: number }) => (m.rate_ratio <= RATE_RATIO_MAX && m.total_vs_half <= TOTAL_VS_HALF_MAX ? 'pass' : 'fail');
+    const stall = (page: number, ms: number) => (i: number) => (i === page ? ms : 0);
+    const rebuild = (every: number, msPerPageSoFar: number, phase = 0) => (i: number) => (i > 0 && (i - phase) % every === 0 ? msPerPageSoFar * i : 0);
+    const alternatingGrowth = (msPerPageSoFar: number) => (i: number) => (Math.floor(i / 100) % 2 ? msPerPageSoFar * i : 0);
+    const linear = (msPerPageSoFar: number) => (i: number) => msPerPageSoFar * i;
+
+    const CASES: Array<[string, 'pass' | 'fail', 'pass' | 'fail', (i: number) => number]> = [
+      ['no regression', 'pass', 'pass', () => 0],
+      ['one 12 s stall at page 9,300', 'fail', 'pass', stall(9300, 12_000)],
+      ['one 30 s stall in the last slice', 'fail', 'pass', stall(9950, 30_000)],
+      ['one 30 s stall in the second half', 'fail', 'pass', stall(7000, 30_000)],
+      ['a rebuild every 200 pages costing 0.5 ms x pages so far', 'fail', 'fail', rebuild(200, 0.5)],
+      ['the same rebuild every 150 pages', 'fail', 'fail', rebuild(150, 0.5)],
+      ['growth only on alternating 100-page blocks', 'fail', 'fail', alternatingGrowth(0.001)],
+      ['a plain O(n) per-page cost', 'fail', 'fail', linear(0.0005)],
+      ['a rebuild once per tenth (every 1,000 pages), one slice per tenth', 'fail', 'fail', rebuild(1000, 0.5)],
+      ['the same rebuild half a tenth later', 'fail', 'fail', rebuild(1000, 0.5, 500)],
+      ['two 12 s stalls in the last tenth', 'fail', 'fail', i => stall(9300, 12_000)(i) + stall(9700, 12_000)(i)],
+      ['a rebuild every 4,000 pages (twice) costing 10 ms x pages so far', 'fail', 'fail', rebuild(4000, 10)],
+      ['a rebuild every 2,000 pages costing 3 ms x pages so far', 'fail', 'fail', rebuild(2000, 3)],
+      ['every page of the last tenth 60% slower', 'fail', 'fail', i => (i >= 9000 ? 3 : 0)],
+    ];
+    test.each(CASES)('%s: before #7939 %s, now %s', (_name, before, now, extra) => {
+      const ms = series(extra);
+      expect(verdict(plainMeasure(ms))).toBe(before);
+      expect(verdict(rateMeasure(ms))).toBe(now);
+    });
+
+    // Equal sensitivity: the smallest amplitude that fails the gate, found by bisection, is the plain measure's to within
+    // 1% (the page-to-page jitter of the slice that is lowered; 0.8% at most here).
+    const failsAt = (measure: (ms: number[]) => { rate_ratio: number; total_vs_half: number }, family: (k: number) => (i: number) => number) => {
+      let lo = 0;
+      let hi = 1;
+      while (verdict(measure(series(family(hi)))) === 'pass') hi *= 2;
+      for (let step = 0; step < 30; step++) {
+        const mid = (lo + hi) / 2;
+        if (verdict(measure(series(family(mid)))) === 'fail') hi = mid; else lo = mid;
+      }
+      return hi;
+    };
+    const RECURRING: Array<[string, (k: number) => (i: number) => number]> = [
+      ['a rebuild every 200 pages', k => rebuild(200, k)],
+      ['a rebuild every 150 pages', k => rebuild(150, k)],
+      ['growth only on alternating 100-page blocks', k => alternatingGrowth(k)],
+      ['a plain O(n) per-page cost', k => linear(k)],
+      ['a rebuild once per tenth', k => rebuild(1000, k)],
+      ['a rebuild once per tenth, half a tenth later', k => rebuild(1000, k, 500)],
+      ['a rebuild every 1,750 pages', k => rebuild(1750, k)],
+      ['a rebuild every 2,000 pages', k => rebuild(2000, k)],
+      ['a rebuild every 3,000 pages', k => rebuild(3000, k)],
+      ['a rebuild every 4,000 pages (twice)', k => rebuild(4000, k)],
+    ];
+    test.each(RECURRING)('%s fails at the same size as under the plain measure', (_name, family) => {
+      const ratio = failsAt(rateMeasure, family) / failsAt(plainMeasure, family);
+      expect(ratio).toBeGreaterThanOrEqual(1);
+      expect(ratio).toBeLessThan(1.01);
+    });
+
+    test('a cost that grows with the brain sets nothing aside: the measure is the plain one', () => {
+      for (const extra of [linear(0.0005), rebuild(1000, 0.5), (i: number) => (i >= 9000 ? 3 : 0)]) {
+        const ms = series(extra, false);
+        expect(rateMeasure(ms).excused).toBeUndefined();
+        expect(rateMeasure(ms)).toMatchObject(plainMeasure(ms));
+      }
+    });
+
+    test('at most one slice is set aside, and only by its margin over the next-largest excess', () => {
+      const ms = series(i => stall(9300, 12_000)(i) + stall(2500, 2_000)(i), false);
+      expect(rateMeasure(ms).excused).toEqual({ ms: 10_000, first_page: 9301, last_page: 9400 });
+    });
+
+    test('a second excess over a quarter of the largest is a recurrence: nothing is set aside', () => {
+      for (const extra of [(i: number) => stall(9300, 12_000)(i) + stall(2500, 5_000)(i), rebuild(4000, 10)]) {
+        const ms = series(extra, false);
+        expect(rateMeasure(ms).excused).toBeUndefined();
+        expect(rateMeasure(ms)).toMatchObject(plainMeasure(ms));
+      }
+    });
+
+    test('the gate message names the stall it set aside', () => {
+      const report = { ...passingReport(), engine: 'postgres' as const };
+      report.import.wall = rateMeasure(series(stall(9300, 12_000), false));
+      const gate = evaluateScaleGates(report, ENFORCE).results.find(r => r.gate === 'import_rate')!;
+      expect(gate.status).toBe('pass');
+      expect(gate.message).toContain('Both ratios leave out one 12000 ms stall in pages 9301-9400 that the rest of the import does not repeat (#7939).');
     });
   });
 

@@ -102,7 +102,7 @@ for (let i = 0; i < files.length; i++) {
 
 const content = `// AUTO-GENERATED — do not edit by hand.
 // Run \`bun run scripts/build-admin-embedded.ts\` to regenerate.
-// Source: admin/dist/ at ${new Date().toISOString().slice(0, 10)}.
+// Source: admin/dist/.
 //
 // Bun resolves the file: imports to a path that works at runtime even
 // inside a compiled binary (\`bun build --compile\`). The manifest maps

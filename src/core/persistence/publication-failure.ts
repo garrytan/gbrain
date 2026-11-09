@@ -58,9 +58,54 @@ export type WithdrawalRefusalDetail = WithdrawalFailureDetail & Pick<Publication
 /** #6696 (A12): the page's recorded canonical file is gone (`prepareFileTarget`); a producer refuses the same write before admission. */
 export const CANONICAL_FILE_MISSING = 'canonical_file_missing';
 export interface CanonicalFileDetail { origin: typeof CANONICAL_FILE_MISSING; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
+/** GST-465: the source's whole canonical checkout is missing on this host (`prepareFileTarget`, `sourceCheckoutMissingRefusal`). */
+export const SOURCE_CHECKOUT_MISSING = 'source_checkout_missing';
+/**
+ * GST-465: refusals of the checkout itself whose detail outlives the receipt, so the caller gets the classified exit
+ * (`storedCheckoutRefusal` in verb-errors.ts): the checkout is missing, was recreated at its recorded path
+ * (`physicalRootDirectoryChangedError`), or holds an ownership record other users can read (`ownershipRecordNotPrivateError`).
+ */
+export const CHECKOUT_REFUSAL_ORIGINS = [SOURCE_CHECKOUT_MISSING, 'physical_root_directory_changed', 'ownership_record_not_private'] as const;
+export type CheckoutRefusalOrigin = typeof CHECKOUT_REFUSAL_ORIGINS[number];
+export interface CheckoutRefusalDetail { origin: CheckoutRefusalOrigin; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
 /** #6693: a page write refused because its file holds a committed change sync has not imported (`pending_import`) or sync holds the file (`sync_held`). */
 export interface PendingImportDetail { origin: 'pending_import' | 'sync_held'; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
-export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail | FenceRefusalDetail | WithdrawalRefusalDetail | OwnerExceptionDetail | CanonicalFileDetail | PendingImportDetail }
+/** GST-1601: the cause of any other source_changed refusal, from its message (verb-errors.ts writeFailureDiagnostic). */
+export const SOURCE_CHANGED_ORIGINS = ['file_database_drift', 'canonical_path_occupied', 'raw_file_changed', 'pinned_git_worktree_conflict', 'unsafe_file_target',
+  'source_binding_changed', 'unbound_source'] as const;
+export type SourceChangedOrigin = typeof SOURCE_CHANGED_ORIGINS[number];
+export interface SourceChangedDetail { origin: SourceChangedOrigin; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
+/**
+ * #8729: a segmented write refused body_staging_expired: the staging it names and, when the flip found the generation it
+ * would publish incomplete, what that generation's rows covered. Fixed identifiers and counts only; owner-only (`staging`
+ * is not a public key), so the receipt names the staging for the owner's drill-down.
+ */
+export interface StagingRefusalDetail {
+  origin: 'body_staging';
+  staging: { staging_id: string; state?: string | null; reason?: 'generation_incomplete'; rows?: number; segment_count?: number; covered_bytes?: number | null; body_bytes?: number };
+  stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null };
+}
+export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail | FenceRefusalDetail | WithdrawalRefusalDetail | OwnerExceptionDetail | CanonicalFileDetail | CheckoutRefusalDetail | PendingImportDetail | SourceChangedDetail | StagingRefusalDetail }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const STAGING_STATES: readonly unknown[] = ['open', 'sealed', 'prepared', 'committed', 'aborted', 'expired'];
+const count = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+
+/** #8729: the bounded detail of a body_staging_expired refusal (engine-sql/page-body.ts), read field by field from its JSON, or undefined. */
+export function stagingFailureDetail(error: Pick<OperationError, 'code' | 'detail'>): StagingRefusalDetail | undefined {
+  if (error.code !== 'body_staging_expired' || typeof error.detail !== 'string') return undefined;
+  let raw: Record<string, unknown> | null;
+  try { raw = JSON.parse(error.detail) as Record<string, unknown> | null; } catch { return undefined; }
+  if (!raw || typeof raw !== 'object' || typeof raw.staging_id !== 'string' || !UUID.test(raw.staging_id)) return undefined;
+  const staging: StagingRefusalDetail['staging'] = { staging_id: raw.staging_id.toLowerCase() };
+  if (raw.state === null || STAGING_STATES.includes(raw.state)) staging.state = raw.state as string | null;
+  if (raw.reason === 'generation_incomplete') {
+    staging.reason = 'generation_incomplete';
+    for (const key of ['rows', 'segment_count', 'body_bytes'] as const) { const n = count(raw[key]); if (n !== undefined) staging[key] = n; }
+    staging.covered_bytes = count(raw.covered_bytes) ?? null;
+  }
+  return { origin: 'body_staging', staging };
+}
 
 const IDENT = /^[A-Za-z_][A-Za-z0-9_.:-]{0,79}$/;
 const ident = (value: unknown) => typeof value === 'string' && IDENT.test(value) ? value : undefined;
@@ -348,9 +393,9 @@ export function ownerBuildMismatch(detail: unknown, cliVersion: string): { owner
 }
 
 /** Stamps which build, host and stage ran the failed attempt. */
-export function withAttempt(failure: PublicationFailure, stage: PublicationStage): PublicationFailure {
+export function withAttempt(failure: PublicationFailure, stage: PublicationStage, engine?: object): PublicationFailure {
   if (!failure.detail) return failure;
-  const stamp = writerStamp();
+  const stamp = writerStamp({ engine });
   return { ...failure, detail: { ...failure.detail, stage, attempt: { consumer_version: stamp.version, consumer_host_id: stamp.hostId } } };
 }
 

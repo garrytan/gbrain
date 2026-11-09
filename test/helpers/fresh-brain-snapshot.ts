@@ -10,6 +10,7 @@
  * - the PGLite datastore directory (binary pages change on any open; its
  *   logical state is the schema/config/row-count part of the snapshot);
  * - lock files and owner records (rewritten with the opener's pid);
+ * - the CLI startup hook's update cache and its one-time channel notice marker;
  * - Bun's install cache under HOME (not gbrain state).
  */
 import { createHash } from 'node:crypto';
@@ -34,7 +35,8 @@ const VOLATILE_FILE = [
   /(^|\/)\.bun(\/|$)/,
   /(^|\/)\.capy(\/|$)/,
   /(^|\/)persistence\/[^/]+\.(cli|stdio|http)\.json$/,
-  /(^|\/)last-update-check$/,
+  /(^|\/)update-check\.[a-z]+\.json$/,
+  /(^|\/)notices\/release-channel-stable$/,
 ];
 
 function walk(root: string, dir: string, skip: string, out: Record<string, string>): void {

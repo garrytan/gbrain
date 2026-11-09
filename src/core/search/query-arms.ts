@@ -4,8 +4,9 @@
  * (`search.entity_anchoring`, default off, search/entity-anchor.ts), fact
  * source pages (`search.fact_source_pages`, default off) and then the facts
  * arm (`search.query_facts_arm`, default on, search/facts-arm.ts), or in its
- * place, for a query with a token budget, the facts block
- * (`search.query_facts_block`, default on) or, with a temporal cue, the
+ * place, for a query whose caller passed a token budget, the facts block
+ * (`search.query_facts_block`, default on; the no-budget evidence plan's
+ * implicit budget does not count, #8411) or, with a temporal cue, the
  * temporal fact reserve (`search.temporal_fact_reserve`, default off). With
  * all off the rows pass through unchanged; the facts block is checked first, so
  * turning it off restores the temporal reserve or the facts arm.
@@ -30,7 +31,8 @@ async function applyFactsStage(engine: BrainEngine, p: Record<string, unknown>, 
   const opts = { sourceId: scope.sourceId, sourceIds: scope.sourceIds, remote: scope.remote, minTrust: scope.minTrust, suppressFlagged: scope.suppressFlagged, queryEmbedding: scope.queryEmbedding, rowCap: scope.rowCap, readScope: scope, tokenBudget };
   const pages = await factSourcePagesEnabled(engine) ? await applyFactSourcePages(engine, query, anchored, opts) : anchored;
   const budget = scope.evidencePlan ? scope.evidenceBudget : tokenBudget;
-  if (budget && await queryFactsBlockEnabled(engine)) return applyFactsBlock(engine, query, pages, { ...opts, budget });
+  const callerBudget = typeof p.token_budget === 'number' && p.token_budget > 0;
+  if (budget && callerBudget && await queryFactsBlockEnabled(engine)) return applyFactsBlock(engine, query, pages, { ...opts, budget });
   if (budget && hasTemporalCue(query) && await temporalFactReserveEnabled(engine)) return applyTemporalFactReserve(engine, query, pages, { ...opts, budget });
   if (!await queryFactsArmEnabled(engine)) return pages;
   return applyFactsArm(engine, query, pages, opts);

@@ -70,6 +70,7 @@ import type { PageBodyPolicy } from './page-body/limits.ts';
 import { parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
 import { assertOriginUnclaimed, isOriginClaimRefusal } from './persistence/origin-guard.ts';
 import { fileBodyMatchesStored, readStoredBody } from './facts/file-body-guard.ts';
+import { currentEngineScope, needsEngineScope, runInEngineScope, withEngineScope } from './engine-scope.ts';
 
 /**
  * #2044 / #4548: row-level, visibility-aware fence merge for one page
@@ -257,6 +258,7 @@ export async function importFromContent(
   opts: {
     /** Coordinator seam: prepare without publishing, then commit under its guarded transaction. */
     prepare?: (prepared: import('./persistence/prepared-import.ts').PreparedContentImport) => Promise<ImportResult>;
+    /** GBRA-217: a sync import's reason from Git and history-gap marker, stamped on the snapshot this import archives. */ history?: import('./page-state/versions.ts').VersionHistory;
     /** #5984, with `prepare`: the coordinator proves the base revision under its page guard, and the caller seals the text projection and checks the read-back (`contentHash`) from its own read after apply; apply skips all three. */
     coordinated?: boolean;
     /** #7172, with `prepare`: the caller forwards `afterCommit` and seals nothing on `projectionPending` (chunk-moves.ts). */
@@ -373,573 +375,576 @@ export async function importFromContent(
   }
   const parsed = (screen as { parsed: ParsedMarkdown }).parsed;
   if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct content import', { sourceId: sourceId ?? 'default' });
-  // Canonicalize only free-prose fields before protected-fence parsing, hidden
-  // row merging, hashing and indexing. Frontmatter identities stay untouched.
-  parsed.title = sanitizeText(parsed.title);
-  parsed.compiled_truth = sanitizeText(parsed.compiled_truth);
-  parsed.timeline = sanitizeText(parsed.timeline);
+  const importScreened = async (): Promise<ImportResult> => {
+    // Canonicalize only free-prose fields before protected-fence parsing, hidden
+    // row merging, hashing and indexing. Frontmatter identities stay untouched.
+    parsed.title = sanitizeText(parsed.title);
+    parsed.compiled_truth = sanitizeText(parsed.compiled_truth);
+    parsed.timeline = sanitizeText(parsed.timeline);
 
-  // #1699/#6259 trust boundary: only the gate and owner-tier paths keep gate-owned markers (import-screen.ts).
-  stripGateOwnedMarkers(parsed, opts);
+    // #1699/#6259 trust boundary: only the gate and owner-tier paths keep gate-owned markers (import-screen.ts).
+    stripGateOwnedMarkers(parsed, opts);
 
-  // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER
-  // parseMarkdown and the size guard, BEFORE content-sanity, hash compute,
-  // chunking, embedding, and DB write — so a registered guardrail sees the
-  // full markdown payload at the exact pre-persist moment. The returned
-  // verdict is intentionally ignored: this seam cannot block or mutate the
-  // ingest. No-op when zero guardrails are registered (OSS default).
-  await runGuardrails({
-    hook: 'file_storage.markdown',
-    content,
-    metadata: {
-      slug,
-      source_id: sourceId ?? 'default',
-      source_path: opts.sourcePath ?? null,
-      source_kind: opts.source_kind ?? null,
-      source_uri: opts.source_uri ?? null,
-      ingested_via: opts.ingested_via ?? null,
-      content_type: 'markdown',
-    },
-  });
-
-  // Content-sanity (#1699) and write-gate (#5575) disposition before the hash (import-screen.ts).
-  const disposition = await settleContentDisposition(engine, parsed, { slug, sourceId, stripped: opts.preserveGateMarkers !== true, ...(opts.writeGate ? { writeGate: opts.writeGate } : {}) });
-  const { quarantined: pageQuarantined, flagged: pageFlagged, flagReason: pageFlagReason } = disposition;
-
-  // v0.39.3.0 CV8 — DB content_hash excludes timestamp-bearing frontmatter
-  // keys so identical body content from `gbrain capture` (which stamps
-  // `captured_at` and `ingested_at` per call) produces a stable hash.
-  // Pre-fix, every capture-cli invocation produced a fresh hash because
-  // the timestamp changed, defeating:
-  //   - the existing.content_hash === hash short-circuit below (every
-  //     capture re-chunked + re-embedded unchanged content — wasted
-  //     embedding spend)
-  //   - the daemon's 24h LRU dedup (separate consumer keyed on same hash)
-  //
-  // We strip ONLY the timestamp keys, not the whole frontmatter object.
-  // Stripping all frontmatter would regress sync: a user adding a tag
-  // would update the frontmatter without changing the body, the hash
-  // would not change, and tag reconciliation would silently no-op
-  // (this function returns early on hash-match).
-  //
-  // v0.42 (#1699): gate-derived quarantine/content_flag/embed_skip markers
-  // carry assessed_at timestamps. They describe the assessment, not source
-  // content, so they must be EXCLUDED from the hash — otherwise re-sync
-  // re-chunks + re-embeds forever (a markup-heavy page keeps chunks, so this
-  // is real, unbounded embedding spend). Same bug class as the captured_at /
-  // ingested_at fix above; the gate re-derives the markers deterministically
-  // on the next import, so dropping them from the hash is safe.
-  // #1035: fetch the existing page BEFORE the hash compute so (a) the type
-  // preservation below participates in the hash (a no-op re-put stays a
-  // hash-match skip) and (b) the hash short-circuit below reuses this row.
-  // Scoped to the exact (source_id, slug) row the writes below target —
-  // engine.putPage defaults to 'default' when sourceId is unset, so the read
-  // mirrors that default instead of matching the slug in ANY source (the
-  // unscoped-check/scoped-write bug class).
-  const existingSnapshot = !opts.prepare ? null : await materializedSnapshot(engine, opts.coordinated && opts.existingSnapshot !== undefined ? opts.existingSnapshot : await engine.readPageSnapshot(slug, { sourceId: sourceId ?? 'default', includeDeleted: true }));
-  const existing = opts.prepare ? existingSnapshot?.page ?? null : await materializedPage(engine, await engine.getPage(slug, { sourceId: sourceId ?? 'default', includeDeleted: true }));
-  if (existing) stabilizeSafetyAssessments(parsed.frontmatter, existing.frontmatter);
-
-  const collisionOwner = collidingSlugOwner(existing, slug, opts.sourceRoot, opts.sourcePath);
-  if (collisionOwner) {
-    process.stderr.write(
-      `[import] slug collision: ${opts.sourcePath} and ${collisionOwner} both map to ${slug} ` +
-      `in source ${sourceId ?? 'default'}; keeping ${collisionOwner}. Rename one file to import both.\n`
-    );
-    return { slug, status: 'skipped', chunks: 0, skip_reason: 'slug_collision' };
-  }
-
-  // #2044 / #4548: remote get_page/fetch intentionally strip non-'world'
-  // facts rows before an untrusted caller ever sees them. A documented
-  // get_page -> edit -> put_page round-trip therefore arrives MISSING rows
-  // the caller structurally could never have seen — their absence is not an
-  // intentional delete. Restore exactly those rows via the row-level,
-  // visibility-aware merge (restoreHiddenFactRows): world-visible rows the
-  // caller saw in full are never restored, so a legitimate edit/deletion of
-  // a visible row — including deleting a pure-world fence outright — is
-  // honored as written (#4554). Trusted local writers see everything, so
-  // the merge never fires for them.
-  // The same hazard covers the `timeline` column (#4546): a Facts fence
-  // below the `<!-- timeline -->` sentinel is a normal placement, and #4547
-  // strips its non-'world' rows for remote readers too — so a round-trip
-  // write-back arrives missing those rows as well. Each column merges
-  // against its own existing counterpart (fences don't migrate between
-  // columns here; splitBody keeps them where the caller wrote them).
-  // #6188 (E7): Tier 1 in place before the hidden-row merge and withdrawal preservation; the hash covers the normalized body.
-  const fences = await applyImportFences({ engine, sourceId: sourceId ?? 'default', slug, mode: opts.fences ?? 'lenient', screened: opts.fenceScreen, screen, parsed, activePack: opts.activePack, remote: opts.remote === true, existing });
-  if (fences.refused) return fences.refused;
-  if (opts.remote === true && existing) {
-    const stored = fenceBody(existing);
-    parsed.compiled_truth = mergeHiddenFactRowsIntoBody(slug, parsed.compiled_truth, stored.compiled_truth);
-    parsed.timeline = mergeHiddenFactRowsIntoBody(slug, parsed.timeline, stored.timeline);
-  }
-  const { assertPreparedFactWithdrawals, preserveWithdrawnFenceRows } = await import('./facts/withdrawal.ts');
-  parsed.compiled_truth = (await preserveWithdrawnFenceRows(engine, sourceId ?? 'default', parsed.compiled_truth, slug)).trim();
-  parsed.timeline = (await preserveWithdrawnFenceRows(engine, sourceId ?? 'default', parsed.timeline, slug)).trim();
-
-  // #1035: absence of an explicit frontmatter `type:` on an EXISTING page
-  // means "preserve the stored type", not "re-infer". Pre-fix, a round-trip
-  // put (get_page → edit body → put_page without `type:`) silently regressed
-  // a curated type to the path-inferred default ('concept' for bare slugs).
-  // Explicit frontmatter type stays an override; new pages still infer. The stored subtype and grandfather stamp are kept too.
-  if (existing) alignWithStored(parsed, existing, false);
-  else resolveParsedSubtype(parsed, existing);
-  // Alias-footgun visibility: an explicit frontmatter `type:` that is an
-  // ALIAS of a canonical pack type (or entirely undeclared) is stored
-  // literally and never re-normalized — different agents can silently file
-  // the same concept under different types/directories. Classify it here
-  // (once per file, aggregated once per type per run by sync/import) so the
-  // misroute class is loud. Purely advisory: the type is still stored as-is.
-  let typeWarning: ImportResult['type_warning'];
-  if (parsed.typeExplicit === true && opts.activePack) {
-    const cls = classifyStoredType(parsed.type, opts.activePack);
-    if (cls.kind === 'alias_of') {
-      typeWarning = { kind: 'alias_of', type: parsed.type, canonical: cls.canonical, directory: cls.directory };
-    } else if (cls.kind === 'undeclared') {
-      typeWarning = { kind: 'undeclared', type: parsed.type };
-    }
-  }
-
-  // #3694: the hash formula lives in ONE place — utils.contentHash — shared
-  // with both engines' putPage fallback, so a page written via putPage and
-  // the same page re-imported by sync produce the SAME hash (pre-fix they
-  // diverged and every putPage→sync roundtrip re-chunked + re-embedded).
-  // The helper strips HASH_EPHEMERAL_FRONTMATTER_KEYS + the tags key from a
-  // frontmatter copy and folds sorted tags in — the exact former inline
-  // formula (byte-parity pinned by test/content-hash-parity-3694.test.ts).
-  // Sort tags in place first to preserve the pre-#3694 downstream behavior
-  // (parsedPage.tags was sorted by the old inline `.sort()` mutation).
-  const suppliedTrustMarker = parsed.frontmatter.trust_tier; // CEO-21: the no-op check also reads the caller's own marker
-  if (opts.prepare) opts.prepareFrontmatter?.(parsed);
-  parsed.tags.sort();
-  const hash = contentHash({
-    title: parsed.title,
-    type: parsed.type,
-    compiled_truth: parsed.compiled_truth,
-    timeline: parsed.timeline,
-    frontmatter: parsed.frontmatter,
-    tags: parsed.tags,
-  });
-
-  const parsedPage: ParsedPage = {
-    type: parsed.type,
-    title: parsed.title,
-    compiled_truth: parsed.compiled_truth,
-    timeline: parsed.timeline || '',
-    frontmatter: parsed.frontmatter,
-    tags: parsed.tags,
-  };
-
-  const originUri = fileOriginUri(existing?.source_uri, opts.sourceRoot, opts.sourcePath);
-  const persistUnchanged = async (refreshBody = false) => {
-    return maintenanceTransaction(engine, async tx => {
-      await assertImportBase(tx, slug, sourceId ?? 'default', existing);
-      if (refreshBody) {
-        const stored = await readStoredBody(tx, sourceId ?? 'default', slug, true);
-        if (!stored || !fileBodyMatchesStored(content, slug, stored)) return false;
-        await tx.refreshPageBody(slug, sourceId ?? 'default', parsed.compiled_truth, parsed.timeline || '', hash);
-      }
-      await refreshSourcePath(tx, slug, sourceId, opts.sourcePath, existing, originUri);
-      if (opts.beforeCommit) await verifyPageReadable(tx, slug, refreshBody ? hash : existing?.content_hash ?? hash, sourceId, 'importFromContent');
-      await opts.beforeCommit?.(tx, slug);
-      return true;
+    // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER
+    // parseMarkdown and the size guard, BEFORE content-sanity, hash compute,
+    // chunking, embedding, and DB write — so a registered guardrail sees the
+    // full markdown payload at the exact pre-persist moment. The returned
+    // verdict is intentionally ignored: this seam cannot block or mutate the
+    // ingest. No-op when zero guardrails are registered (OSS default).
+    await runGuardrails({
+      hook: 'file_storage.markdown',
+      content,
+      metadata: {
+        slug,
+        source_id: sourceId ?? 'default',
+        source_path: opts.sourcePath ?? null,
+        source_kind: opts.source_kind ?? null,
+        source_uri: opts.source_uri ?? null,
+        ingested_via: opts.ingested_via ?? null,
+        content_type: 'markdown',
+      },
     });
-  };
 
-  // Rebuild stale projections without granting --force-rechunk's external-ID dedup override.
-  const needsProjectionRebuild = !opts.prepare && existing && existing.text_projection_revision !== existing.knowledge_revision;
-  const embedSkipChanged = !!existing && isEmbedSkipped(existing.frontmatter) !== isEmbedSkipped(parsed.frontmatter);
-  // #3694 one-time reconcile: a row written by the PRE-fix putPage formula
-  // carries the legacy hash. When the parsed file matches that legacy hash,
-  // the content is unchanged — stamp the canonical hash via the narrow
-  // refreshPageBody UPDATE (no chunk churn, no re-embed, no version snapshot)
-  // and skip. The next import then hits the fast path below.
-  const legacyHashMatch = !!existing && !existing.deleted_at && !opts.prepare && !opts.forceRechunk && !needsProjectionRebuild && !embedSkipChanged
-    && typeof engine.refreshPageBody === 'function' && existing.content_hash === contentHashLegacy({
+    // Content-sanity (#1699) and write-gate (#5575) disposition before the hash (import-screen.ts).
+    const disposition = await settleContentDisposition(engine, parsed, { slug, sourceId, stripped: opts.preserveGateMarkers !== true, ...(opts.writeGate ? { writeGate: opts.writeGate } : {}) });
+    const { quarantined: pageQuarantined, flagged: pageFlagged, flagReason: pageFlagReason } = disposition;
+
+    // v0.39.3.0 CV8 — DB content_hash excludes timestamp-bearing frontmatter
+    // keys so identical body content from `gbrain capture` (which stamps
+    // `captured_at` and `ingested_at` per call) produces a stable hash.
+    // Pre-fix, every capture-cli invocation produced a fresh hash because
+    // the timestamp changed, defeating:
+    //   - the existing.content_hash === hash short-circuit below (every
+    //     capture re-chunked + re-embedded unchanged content — wasted
+    //     embedding spend)
+    //   - the daemon's 24h LRU dedup (separate consumer keyed on same hash)
+    //
+    // We strip ONLY the timestamp keys, not the whole frontmatter object.
+    // Stripping all frontmatter would regress sync: a user adding a tag
+    // would update the frontmatter without changing the body, the hash
+    // would not change, and tag reconciliation would silently no-op
+    // (this function returns early on hash-match).
+    //
+    // v0.42 (#1699): gate-derived quarantine/content_flag/embed_skip markers
+    // carry assessed_at timestamps. They describe the assessment, not source
+    // content, so they must be EXCLUDED from the hash — otherwise re-sync
+    // re-chunks + re-embeds forever (a markup-heavy page keeps chunks, so this
+    // is real, unbounded embedding spend). Same bug class as the captured_at /
+    // ingested_at fix above; the gate re-derives the markers deterministically
+    // on the next import, so dropping them from the hash is safe.
+    // #1035: fetch the existing page BEFORE the hash compute so (a) the type
+    // preservation below participates in the hash (a no-op re-put stays a
+    // hash-match skip) and (b) the hash short-circuit below reuses this row.
+    // Scoped to the exact (source_id, slug) row the writes below target —
+    // engine.putPage defaults to 'default' when sourceId is unset, so the read
+    // mirrors that default instead of matching the slug in ANY source (the
+    // unscoped-check/scoped-write bug class).
+    const existingSnapshot = !opts.prepare ? null : await materializedSnapshot(engine, opts.coordinated && opts.existingSnapshot !== undefined ? opts.existingSnapshot : await engine.readPageSnapshot(slug, { sourceId: sourceId ?? 'default', includeDeleted: true }));
+    const existing = opts.prepare ? existingSnapshot?.page ?? null : await materializedPage(engine, await engine.getPage(slug, { sourceId: sourceId ?? 'default', includeDeleted: true }));
+    if (existing) stabilizeSafetyAssessments(parsed.frontmatter, existing.frontmatter);
+
+    const collisionOwner = collidingSlugOwner(existing, slug, opts.sourceRoot, opts.sourcePath);
+    if (collisionOwner) {
+      process.stderr.write(
+        `[import] slug collision: ${opts.sourcePath} and ${collisionOwner} both map to ${slug} ` +
+        `in source ${sourceId ?? 'default'}; keeping ${collisionOwner}. Rename one file to import both.\n`
+      );
+      return { slug, status: 'skipped', chunks: 0, skip_reason: 'slug_collision' };
+    }
+
+    // #2044 / #4548: remote get_page/fetch intentionally strip non-'world'
+    // facts rows before an untrusted caller ever sees them. A documented
+    // get_page -> edit -> put_page round-trip therefore arrives MISSING rows
+    // the caller structurally could never have seen — their absence is not an
+    // intentional delete. Restore exactly those rows via the row-level,
+    // visibility-aware merge (restoreHiddenFactRows): world-visible rows the
+    // caller saw in full are never restored, so a legitimate edit/deletion of
+    // a visible row — including deleting a pure-world fence outright — is
+    // honored as written (#4554). Trusted local writers see everything, so
+    // the merge never fires for them.
+    // The same hazard covers the `timeline` column (#4546): a Facts fence
+    // below the `<!-- timeline -->` sentinel is a normal placement, and #4547
+    // strips its non-'world' rows for remote readers too — so a round-trip
+    // write-back arrives missing those rows as well. Each column merges
+    // against its own existing counterpart (fences don't migrate between
+    // columns here; splitBody keeps them where the caller wrote them).
+    // #6188 (E7): Tier 1 in place before the hidden-row merge and withdrawal preservation; the hash covers the normalized body.
+    const fences = await applyImportFences({ engine, sourceId: sourceId ?? 'default', slug, mode: opts.fences ?? 'lenient', screened: opts.fenceScreen, screen, parsed, activePack: opts.activePack, remote: opts.remote === true, existing });
+    if (fences.refused) return fences.refused;
+    if (opts.remote === true && existing) {
+      const stored = fenceBody(existing);
+      parsed.compiled_truth = mergeHiddenFactRowsIntoBody(slug, parsed.compiled_truth, stored.compiled_truth);
+      parsed.timeline = mergeHiddenFactRowsIntoBody(slug, parsed.timeline, stored.timeline);
+    }
+    const { assertPreparedFactWithdrawals, preserveWithdrawnFenceRows } = await import('./facts/withdrawal.ts');
+    parsed.compiled_truth = (await preserveWithdrawnFenceRows(engine, sourceId ?? 'default', parsed.compiled_truth, slug)).trim();
+    parsed.timeline = (await preserveWithdrawnFenceRows(engine, sourceId ?? 'default', parsed.timeline, slug)).trim();
+
+    // #1035: absence of an explicit frontmatter `type:` on an EXISTING page
+    // means "preserve the stored type", not "re-infer". Pre-fix, a round-trip
+    // put (get_page → edit body → put_page without `type:`) silently regressed
+    // a curated type to the path-inferred default ('concept' for bare slugs).
+    // Explicit frontmatter type stays an override; new pages still infer. The stored subtype and grandfather stamp are kept too.
+    if (existing) alignWithStored(parsed, existing, false);
+    else resolveParsedSubtype(parsed, existing);
+    // Alias-footgun visibility: an explicit frontmatter `type:` that is an
+    // ALIAS of a canonical pack type (or entirely undeclared) is stored
+    // literally and never re-normalized — different agents can silently file
+    // the same concept under different types/directories. Classify it here
+    // (once per file, aggregated once per type per run by sync/import) so the
+    // misroute class is loud. Purely advisory: the type is still stored as-is.
+    let typeWarning: ImportResult['type_warning'];
+    if (parsed.typeExplicit === true && opts.activePack) {
+      const cls = classifyStoredType(parsed.type, opts.activePack);
+      if (cls.kind === 'alias_of') {
+        typeWarning = { kind: 'alias_of', type: parsed.type, canonical: cls.canonical, directory: cls.directory };
+      } else if (cls.kind === 'undeclared') {
+        typeWarning = { kind: 'undeclared', type: parsed.type };
+      }
+    }
+
+    // #3694: the hash formula lives in ONE place — utils.contentHash — shared
+    // with both engines' putPage fallback, so a page written via putPage and
+    // the same page re-imported by sync produce the SAME hash (pre-fix they
+    // diverged and every putPage→sync roundtrip re-chunked + re-embedded).
+    // The helper strips HASH_EPHEMERAL_FRONTMATTER_KEYS + the tags key from a
+    // frontmatter copy and folds sorted tags in — the exact former inline
+    // formula (byte-parity pinned by test/content-hash-parity-3694.test.ts).
+    // Sort tags in place first to preserve the pre-#3694 downstream behavior
+    // (parsedPage.tags was sorted by the old inline `.sort()` mutation).
+    const suppliedTrustMarker = parsed.frontmatter.trust_tier; // CEO-21: the no-op check also reads the caller's own marker
+    if (opts.prepare) opts.prepareFrontmatter?.(parsed);
+    parsed.tags.sort();
+    const hash = contentHash({
       title: parsed.title,
       type: parsed.type,
       compiled_truth: parsed.compiled_truth,
       timeline: parsed.timeline,
       frontmatter: parsed.frontmatter,
+      tags: parsed.tags,
     });
-  const unchangedAs = async (page: ParsedPage) => !!existing && !existing.deleted_at && !opts.forceRechunk && !needsProjectionRebuild && !embedSkipChanged
-    && !trustMarkerChanged(existing.frontmatter, page.frontmatter) && (existing.content_hash === hash
-      ? !opts.prepare || sameCanonicalImport(existingSnapshot, page)
-      : !legacyHashMatch && await sameContentAnyKeyOrder(engine, existing, existingSnapshot?.tags ?? null, page, sourceId ?? 'default'));
-  const unchanged = await unchangedAs(parsedPage) || (suppliedTrustMarker !== parsed.frontmatter.trust_tier
-    && await unchangedAs({ ...parsedPage, frontmatter: suppliedTrustMarkerView(parsed.frontmatter, suppliedTrustMarker) }));
-  if (existing && unchanged) {
-    // #5050: unchanged content chunked before the safe-chunk fence is re-sealed
-    // projection-only; the canonical write stays a no-op.
-    const reseal = await projectionBelowSafeFence(engine, existing.id);
-    if (opts.prepare) {
-      const result: ImportResult = { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...fences.fields };
-      return opts.prepare({ slug, parsedPage, observedRevision: (existing as typeof existing & { knowledge_revision?: string }).knowledge_revision ?? null,
-        noop: true, result, validate: async () => {},
-        apply: async tx => { if (reseal) await queuePageProjection(tx, sourceId ?? 'default', slug, 'safe_chunk_reseal'); } });
-    }
-    await persistUnchanged();
-    const resealed = reseal ? await resealSafeChunks(engine, slug, sourceId ?? 'default') : null;
-    return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...(resealed ? { resealed } : {}), ...fences.fields };
-  }
 
-  if (existing && legacyHashMatch && bodyStorageOf(existing) === 'segmented') throw pageBodySegmentedError(existing, 'legacy hash reconciliation');
-  if (existing && legacyHashMatch && fileBodyMatchesStored(content, slug, existing) && await persistUnchanged(true)) {
-    const resealed = await projectionBelowSafeFence(engine, existing.id) ? await resealSafeChunks(engine, slug, sourceId ?? 'default') : null;
-    return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...(resealed ? { resealed } : {}), ...fences.fields };
-  }
+    const parsedPage: ParsedPage = {
+      type: parsed.type,
+      title: parsed.title,
+      compiled_truth: parsed.compiled_truth,
+      timeline: parsed.timeline || '',
+      frontmatter: parsed.frontmatter,
+      tags: parsed.tags,
+    };
 
-  // Identity dedup (#1309): move, skip a true duplicate, or index both.
-  // See decideImportIdentity for the posture.
-  const fmId = (parsed.frontmatter as Record<string, unknown> | undefined)?.id;
-  const fmIdStr = typeof fmId === 'string' && fmId.length > 0 ? fmId : null;
-  const identity = opts.forceRechunk ? { kind: 'none' as const } : await decideImportIdentity(engine, {
-    sourceId: sourceId ?? 'default', slug, hash, frontmatterId: fmIdStr, sourcePath: opts.sourcePath, sourceRoot: opts.sourceRoot,
-    body: { title: parsed.title, compiled_truth: parsed.compiled_truth, timeline: parsed.timeline || '' },
-  });
-  if (identity.kind === 'move' && !existing && !opts.prepare
-    && await maintenanceBeliefTransaction(engine, { sourceId: sourceId ?? 'default', slugs: [identity.dupSlug, slug], op: 'import_move' }, tx => tx.updateSlug(identity.dupSlug, slug, { sourceId: sourceId ?? 'default' })) > 0) {
-    process.stderr.write(
-      `[import] ${opts.sourcePath} carries frontmatter.id=${fmIdStr} from moved file ${identity.dupSourcePath}; ` +
-      `renamed ${identity.dupSlug} -> ${slug} in source ${sourceId ?? 'default'}.\n`
-    );
-    return importFromContent(engine, slug, content, opts);
-  }
-  if (identity.kind === 'duplicate') {
-    if (opts.prepare) {
-      const result: ImportResult = { slug: identity.dupSlug, status: 'skipped', chunks: 0, parsedPage, ...fences.fields };
-      return opts.prepare({ slug: identity.dupSlug, parsedPage, observedRevision: (existing as (typeof existing & { knowledge_revision?: string }) | null)?.knowledge_revision ?? null,
-        noop: true, result, validate: async () => {}, apply: async () => {} });
-    }
-    process.stderr.write(
-      `[import] skipping ${opts.sourcePath ?? slug}: identical to ${identity.dupSlug} ` +
-      `(frontmatter.id=${fmIdStr}) in source ${sourceId ?? 'default'}. ` +
-      `Pass --force-rechunk to override.\n`
-    );
-    return { slug: identity.dupSlug, status: 'skipped', chunks: 0, parsedPage, ...fences.fields };
-  }
-  if (identity.kind === 'shared_id') {
-    process.stderr.write(
-      `[import] WARNING: ${opts.sourcePath ?? slug} shares frontmatter.id=${fmIdStr} with ${identity.dupSlug} ` +
-      `but its content differs. Indexing both.\n`
-    );
-  } else if (identity.kind === 'shared_hash') {
-    process.stderr.write(
-      `[import] WARNING: ${opts.sourcePath ?? slug} shares content_hash with ${identity.dupSlug} ` +
-      `(${hash.slice(0, 8)}) but not its frontmatter.id. Indexing both.\n`
-    );
-  }
+    const originUri = fileOriginUri(existing?.source_uri, opts.sourceRoot, opts.sourcePath);
+    const persistUnchanged = async (refreshBody = false) => {
+      return maintenanceTransaction(engine, async tx => {
+        await assertImportBase(tx, slug, sourceId ?? 'default', existing);
+        if (refreshBody) {
+          const stored = await readStoredBody(tx, sourceId ?? 'default', slug, true);
+          if (!stored || !fileBodyMatchesStored(content, slug, stored)) return false;
+          await tx.refreshPageBody(slug, sourceId ?? 'default', parsed.compiled_truth, parsed.timeline || '', hash);
+        }
+        await refreshSourcePath(tx, slug, sourceId, opts.sourcePath, existing, originUri);
+        if (opts.beforeCommit) await verifyPageReadable(tx, slug, refreshBody ? hash : existing?.content_hash ?? hash, sourceId, 'importFromContent');
+        await opts.beforeCommit?.(tx, slug);
+        return true;
+      });
+    };
 
-  // Preserve the importer projection (including fenced code and zero-chunk
-  // dispositions) in the provider-free path used by background rebuilds too.
-  const bodyBytes = Buffer.byteLength(parsed.compiled_truth, 'utf-8') + Buffer.byteLength(parsed.timeline ?? '', 'utf-8');
-  const storage = await stringWriteStorage(engine, bodyBytes, bodyStorageOf(existing));
-  const chunks = storage.storage === 'segmented' ? [] : await prepareFenceAwareMarkdownChunks(engine, sourceId ?? 'default', slug, parsed);
-
-  // Embedding failures propagate unless onPostCommitEmbedding lets the caller
-  // report enrichment separately from the already-persisted content.
-  //
-  // v0.40.3.0 contextual retrieval wrapper (D20-T1 chunk_text separation):
-  // - Resolve effective CR mode via the page/source/global override chain.
-  // - For title tier (free): build the title-only prefix and wrap chunks
-  //   inline at embed time. Per-chunk generated synopsis tier is NOT supported
-  //   on the import path — that's an async backfill via the Minion handler
-  //   (the cost prompt + 10s grace UX from D3 gates spending; inline import
-  //   path takes the cheaper title-only treatment for tokenmax pages here
-  //   and defers per-chunk synopsis to the Minion-driven sweep).
-  // - Stored chunk_text stays canonical; only the embedding input is wrapped.
-  // - Code chunks (chunk_source='fenced_code') bypass wrapping per D20-T4.
-  // Every markdown import records its wrapping convention with the canonical
-  // write, --no-embed included (#5621): later embed passes reproduce the stored
-  // mode, so an unstamped page would stay unwrapped. No provider runs here.
-  // #3885: the real source row applies (a stored `sources set-cr-mode`); the
-  // inline path demotes per_chunk_synopsis to the free title tier.
-  const { mode: effectiveCRMode, corpusGeneration } = await resolveImportContextualMode(engine, sourceId ?? 'default', parsed.frontmatter, opts.prepare !== undefined);
-  // Wave B: a body staged as segments publishes with the generation flip instead of putPage and the chunk replacement.
-  const segmented = storage.policy && storage.storage === 'segmented' ? await stageSegmentedImport(engine, { slug, sourceId: sourceId ?? 'default', existing,
-    page: parsedPage, policy: storage.policy, owner: opts.segmentedOwner, reuse: opts.reuseSegments, baseRevision: (existing as { knowledge_revision?: string } | null)?.knowledge_revision ?? null,
-    chunking: { quarantined: pageQuarantined, corpusGeneration, tier: effectiveCRMode === 'title' ? 'title' : 'none' } }) : null;
-
-  // A13: an edit re-embeds only chunks whose embedding input changed. A stored
-  // vector is reused for a chunk with the same source and text when its
-  // recorded embedding input (#5553: column, model, dimensions, wrapper tier
-  // and exact input) equals the one this import would embed, or, for a vector
-  // recorded before provenance existed, when the input is the raw chunk text
-  // under the same model. The old index must be sealed and neither body may
-  // hold protected fences, so no reused vector can carry a private sibling.
-  // A prepared (persistence) import defers embedding to its effect worker, so
-  // it reuses inside its publication transaction, under the page guard, from
-  // the chunks it is about to replace; only the chunks left without a vector
-  // reach the provider.
-  // A large or segmented page (the hysteresis band too) commits with NULL vectors; the stale
-  // sweep embeds it under the per-page cap and the sampled junk check, so no provider call holds the write.
-  const noEmbed = opts.noEmbed || isEmbedSkipped(parsed.frontmatter);
-  const largePage = isLargePageBytes(bodyBytes) || segmented !== null;
-  const postCommitEmbedding = largePage ? undefined : opts.onPostCommitEmbedding;
-  const reusable = !!existing && !existing.deleted_at && !opts.forceRechunk && !postCommitEmbedding && chunks.length > 0 && bodyStorageOf(existing) !== 'segmented'
-    && !(opts.prepare && modeRequiresSynopsis(effectiveCRMode)) && !hasProtectedBody(`${existing.compiled_truth}\n${existing.timeline ?? ''}`) && !hasProtectedBody(`${parsed.compiled_truth}\n${parsed.timeline ?? ''}`);
-  const reuseCtx = { slug, sourceId: sourceId ?? 'default', title: parsed.title, corpusGeneration, tier: effectiveCRMode === 'title' ? 'title' as const : 'none' as const };
-  const reuseStoredVectors = (exec: BrainEngine, into: ChunkInput[], keepUnembedded = false) => reuseStoredChunkVectors(exec, into, { ...reuseCtx, prepared: !!opts.prepare, keepUnembedded });
-  const reused = reusable && !noEmbed && !opts.prepare ? await reuseStoredVectors(engine, chunks) : new Map<number, number | null>();
-
-  let embeddingPartial: EmbeddingZeroNormError | undefined;
-  const embedChunks = async () => {
-    const pending = chunks.map((_, i) => i).filter(i => !reused.has(i));
-    if (noEmbed || pending.length === 0) return;
-    const prefix =
-      modeRequiresWrapper(effectiveCRMode) && !modeRequiresSynopsis(effectiveCRMode)
-        ? buildContextualPrefix(parsed.title, null)
-        : null;
-    const wrappedTexts = pending.map(i => prefix ? wrapChunkForEmbedding(chunks[i].chunk_text, prefix, chunks[i].chunk_source) : chunks[i].chunk_text);
-    // #4616: store the usable vectors; refused chunks stay NULL for embed --stale.
-    const { vectors: embeddings, refused } = await embedBatchKeepingUsable(wrappedTexts);
-    embeddingPartial = refused;
-    pending.forEach((i, j) => {
-      if (!embeddings[j]) return;
-      chunks[i].embedding = embeddings[j]!;
-      // token_count tracks the wrapped string length so cost reporting
-      // reflects what we actually sent to the embedder.
-      chunks[i].token_count = Math.ceil(wrappedTexts[j].length / 4);
-    });
-  };
-  // An embedding outage never blocks the text write: the page and its chunks
-  // commit with NULL vectors and no embedding signature, and the stale sweep
-  // (`gbrain embed --stale`, sync's embed pass, the cycle) embeds them once
-  // the provider recovers.
-  let embeddingDeferred = largePage && !noEmbed && (chunks.length > 0 || (segmented !== null && !pageQuarantined));
-  if (!opts.onPostCommitEmbedding && !largePage) {
-    try {
-      await embedChunks();
-      if (embeddingPartial) {
-        embeddingDeferred = true;
-        process.stderr.write(`[import] ${slug}: ${embeddingPartial.message} ${embeddingPartial.suggestionFor(slug, sourceId)}\n`);
+    // Rebuild stale projections without granting --force-rechunk's external-ID dedup override.
+    const needsProjectionRebuild = !opts.prepare && existing && existing.text_projection_revision !== existing.knowledge_revision;
+    const embedSkipChanged = !!existing && isEmbedSkipped(existing.frontmatter) !== isEmbedSkipped(parsed.frontmatter);
+    // #3694 one-time reconcile: a row written by the PRE-fix putPage formula
+    // carries the legacy hash. When the parsed file matches that legacy hash,
+    // the content is unchanged — stamp the canonical hash via the narrow
+    // refreshPageBody UPDATE (no chunk churn, no re-embed, no version snapshot)
+    // and skip. The next import then hits the fast path below.
+    const legacyHashMatch = !!existing && !existing.deleted_at && !opts.prepare && !opts.forceRechunk && !needsProjectionRebuild && !embedSkipChanged
+      && typeof engine.refreshPageBody === 'function' && existing.content_hash === contentHashLegacy({
+        title: parsed.title,
+        type: parsed.type,
+        compiled_truth: parsed.compiled_truth,
+        timeline: parsed.timeline,
+        frontmatter: parsed.frontmatter,
+      });
+    const unchangedAs = async (page: ParsedPage) => !!existing && !existing.deleted_at && !opts.forceRechunk && !needsProjectionRebuild && !embedSkipChanged
+      && !trustMarkerChanged(existing.frontmatter, page.frontmatter) && (existing.content_hash === hash
+        ? !opts.prepare || sameCanonicalImport(existingSnapshot, page)
+        : !legacyHashMatch && await sameContentAnyKeyOrder(engine, existing, existingSnapshot?.tags ?? null, page, sourceId ?? 'default'));
+    const unchanged = await unchangedAs(parsedPage) || (suppliedTrustMarker !== parsed.frontmatter.trust_tier
+      && await unchangedAs({ ...parsedPage, frontmatter: suppliedTrustMarkerView(parsed.frontmatter, suppliedTrustMarker) }));
+    if (existing && unchanged) {
+      // #5050: unchanged content chunked before the safe-chunk fence is re-sealed
+      // projection-only; the canonical write stays a no-op.
+      const reseal = await projectionBelowSafeFence(engine, existing.id);
+      if (opts.prepare) {
+        const result: ImportResult = { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...fences.fields };
+        return opts.prepare({ slug, parsedPage, observedRevision: (existing as typeof existing & { knowledge_revision?: string }).knowledge_revision ?? null,
+          noop: true, result, validate: async () => {},
+          apply: async tx => { if (reseal) await queuePageProjection(tx, sourceId ?? 'default', slug, 'safe_chunk_reseal'); } });
       }
-    } catch (err) {
-      embeddingDeferred = true;
-      chunks.forEach((c, i) => { if (!reused.has(i)) { c.embedding = undefined; c.token_count = undefined; } });
+      await persistUnchanged();
+      const resealed = reseal ? await resealSafeChunks(engine, slug, sourceId ?? 'default') : null;
+      return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...(resealed ? { resealed } : {}), ...fences.fields };
+    }
+
+    if (existing && legacyHashMatch && bodyStorageOf(existing) === 'segmented') throw pageBodySegmentedError(existing, 'legacy hash reconciliation');
+    if (existing && legacyHashMatch && fileBodyMatchesStored(content, slug, existing) && await persistUnchanged(true)) {
+      const resealed = await projectionBelowSafeFence(engine, existing.id) ? await resealSafeChunks(engine, slug, sourceId ?? 'default') : null;
+      return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...(resealed ? { resealed } : {}), ...fences.fields };
+    }
+
+    // Identity dedup (#1309): move, skip a true duplicate, or index both.
+    // See decideImportIdentity for the posture.
+    const fmId = (parsed.frontmatter as Record<string, unknown> | undefined)?.id;
+    const fmIdStr = typeof fmId === 'string' && fmId.length > 0 ? fmId : null;
+    const identity = opts.forceRechunk ? { kind: 'none' as const } : await decideImportIdentity(engine, {
+      sourceId: sourceId ?? 'default', slug, hash, frontmatterId: fmIdStr, sourcePath: opts.sourcePath, sourceRoot: opts.sourceRoot,
+      body: { title: parsed.title, compiled_truth: parsed.compiled_truth, timeline: parsed.timeline || '' },
+    });
+    if (identity.kind === 'move' && !existing && !opts.prepare
+      && await maintenanceBeliefTransaction(engine, { sourceId: sourceId ?? 'default', slugs: [identity.dupSlug, slug], op: 'import_move' }, tx => tx.updateSlug(identity.dupSlug, slug, { sourceId: sourceId ?? 'default' })) > 0) {
       process.stderr.write(
-        `[import] ${slug}: embedding failed (${err instanceof Error ? err.message : String(err)}); ` +
-        `text saved, chunks queued for \`gbrain embed --stale\`.\n`
+        `[import] ${opts.sourcePath} carries frontmatter.id=${fmIdStr} from moved file ${identity.dupSourcePath}; ` +
+        `renamed ${identity.dupSlug} -> ${slug} in source ${sourceId ?? 'default'}.\n`
+      );
+      return importFromContent(engine, slug, content, opts);
+    }
+    if (identity.kind === 'duplicate') {
+      if (opts.prepare) {
+        const result: ImportResult = { slug: identity.dupSlug, status: 'skipped', chunks: 0, parsedPage, ...fences.fields };
+        return opts.prepare({ slug: identity.dupSlug, parsedPage, observedRevision: (existing as (typeof existing & { knowledge_revision?: string }) | null)?.knowledge_revision ?? null,
+          noop: true, result, validate: async () => {}, apply: async () => {} });
+      }
+      process.stderr.write(
+        `[import] skipping ${opts.sourcePath ?? slug}: identical to ${identity.dupSlug} ` +
+        `(frontmatter.id=${fmIdStr}) in source ${sourceId ?? 'default'}. ` +
+        `Pass --force-rechunk to override.\n`
+      );
+      return { slug: identity.dupSlug, status: 'skipped', chunks: 0, parsedPage, ...fences.fields };
+    }
+    if (identity.kind === 'shared_id') {
+      process.stderr.write(
+        `[import] WARNING: ${opts.sourcePath ?? slug} shares frontmatter.id=${fmIdStr} with ${identity.dupSlug} ` +
+        `but its content differs. Indexing both.\n`
+      );
+    } else if (identity.kind === 'shared_hash') {
+      process.stderr.write(
+        `[import] WARNING: ${opts.sourcePath ?? slug} shares content_hash with ${identity.dupSlug} ` +
+        `(${hash.slice(0, 8)}) but not its frontmatter.id. Indexing both.\n`
       );
     }
-  }
 
-  // Transaction wraps the canonical DB writes. Every per-page tx call carries the
-  // caller's sourceId so writes target (sourceId, slug) rather than the
-  // schema DEFAULT — required for multi-source brains; harmless ('default')
-  // for single-source callers.
-  const txOpts = { sourceId: sourceId ?? 'default' };
-  let persistedProjection: ProjectionSnapshot | null = null;
-  const [timeZone, mentionPolicy] = await Promise.all([loadBrainTimeZone(engine), readMentionPolicy(engine).catch(() => null)]);
-  let chunkReplacementDeferred = false;
-  const applyPrepared = async (tx: BrainEngine, preimage?: PageSnapshot | null) => {
-    if (!opts.coordinated) await assertImportBase(tx, slug, txOpts.sourceId, existing, reused.size > 0);
-    // #5984: the canonical writes go out in two pipelined waves of mutually independent statements; the
-    // second depends on the first (the page row and its id, the old chunks gone). A failure rolls back the caller's transaction.
-    // v0.29.1 — compute effective_date from frontmatter precedence chain.
-    // Filename comes from importFromFile path (basename) or the slug tail
-    // (put_page MCP op fallback). An undated page falls back to a stable
-    // anchor (fallbackCreatedAt): its stored fallback date, else its file's
-    // timestamp, else now — never the latest write. The result drives the recency boost and since/until
-    // filters when callers opt in; nothing in the default search path
-    // consults it.
-    const filenameForChain = opts.filename ?? slug.split('/').pop() ?? slug;
-    const nowDate = new Date();
-    const { date: effectiveDate, source: effectiveDateSource } = computeEffectiveDate({
-      slug,
-      frontmatter: parsed.frontmatter,
-      filename: filenameForChain,
-      timeZone,
-      updatedAt: existing?.updated_at ?? nowDate,
-      createdAt: fallbackCreatedAt({ existing, fileTimes: opts.fileTimes, now: nowDate }),
-    });
+    // Preserve the importer projection (including fenced code and zero-chunk
+    // dispositions) in the provider-free path used by background rebuilds too.
+    const bodyBytes = Buffer.byteLength(parsed.compiled_truth, 'utf-8') + Buffer.byteLength(parsed.timeline ?? '', 'utf-8');
+    const storage = await stringWriteStorage(engine, bodyBytes, bodyStorageOf(existing));
+    const chunks = storage.storage === 'segmented' ? [] : await prepareFenceAwareMarkdownChunks(engine, sourceId ?? 'default', slug, parsed);
 
-    const demote = !segmented && bodyStorageOf(existing) === 'segmented';
-    // Before the page write: an unpinned version reads the page itself, a demoted one references the generation it retires.
-    if (existing && (!preimage || demote)) await tx.createVersion(slug, preimage ? { ...txOpts, preimage } : txOpts);
-    if (demote) await demoteSegmentedPage(tx, Number(existing!.id));
-    // Every import keeps each stored row that is identical to its new chunk and
-    // writes only the rest, so an edit rewrites only the chunks it changed. The
-    // reuse is re-read here, under the page lock, so a kept row is one this
-    // transaction sees; --no-embed and deferred-embed imports keep vectors too.
-    const fresh = reusable ? chunks.map(chunk => ({ ...chunk })) : chunks;
-    const kept = new Map([...(fresh !== chunks ? await reuseStoredVectors(tx, fresh, true) : [])]
-      .filter((entry): entry is [number, KeptChunkRow] => entry[1] !== null));
-    const keptIds = [...kept.values()].map(row => row.id);
-    // #7172: a kept row whose chunk moved changes index in place; a managed publication over CHUNK_VECTOR_WRITE_BUDGET
-    // vector-index writes deletes the rows it does not keep, commits the page pending and finishes after commit (chunk-moves.ts).
-    const chunkWrites = planImportChunkWrites(fresh, kept, !segmented && !!opts.prepare && opts.boundedChunkWrites === true);
-    const deferChunks = chunkReplacementDeferred = chunkWrites.defer;
-    let written: Page | undefined;
-    await pipelined(tx, [
-      () => assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug),
-      async () => { if (existing && preimage && !demote) await tx.createVersion(slug, { ...txOpts, preimage }); },
-      async () => {
-        if (segmented) return segmented.apply(tx, { type: parsed.type, title: parsed.title, frontmatter: parsed.frontmatter, page_kind: 'markdown',
-          effective_date: effectiveDate, effective_date_source: effectiveDateSource, import_filename: filenameForChain, source_path: opts.sourcePath ?? null,
-          source_kind: opts.source_kind ?? null, source_uri: opts.source_uri ?? originUri, ingested_via: opts.ingested_via ?? null }, { mode: effectiveCRMode, corpusGeneration });
-        written = await tx.putPage(slug, {
-          type: parsed.type,
-          title: parsed.title,
-          compiled_truth: parsed.compiled_truth,
-          timeline: parsed.timeline || '',
-          frontmatter: parsed.frontmatter,
-          content_hash: hash,
-          effective_date: effectiveDate,
-          effective_date_source: effectiveDateSource,
-          import_filename: filenameForChain,
-          // Preserve the repo-relative path for sync's delete/rename handling.
-          source_path: opts.sourcePath ?? null,
-          // v0.39.3.0 provenance write-through (WARN-8). Engine layer applies
-          // COALESCE-preserve UPDATE so omitting these on a later put_page
-          // doesn't erase the original ingestion's audit trail.
-          source_kind: opts.source_kind ?? null,
-          source_uri: opts.source_uri ?? originUri,
-          ingested_via: opts.ingested_via ?? null,
-          // ingested_at is server-stamped at the engine layer when any
-          // provenance write fires; never client-controlled.
-          // Empty-overwrite escape hatch only when the caller vouched (file
-          // import / explicit allow_empty); otherwise the engine guard stays on.
-        }, { ...txOpts, ...(opts.allowEmptyOverwrite === true ? { allowEmptyOverwrite: true } : {}), inline: true,
-          ...(effectiveCRMode !== 'none' ? { contextualRetrieval: { mode: effectiveCRMode, corpusGeneration } } : {}) });
-        // v0.40.3.0: the contextual retrieval state is stamped with the page write (the `none` tier's
-        // stamp, which also clears tier vectors, follows it). Deferred embedders reproduce it; every
-        // chunk row is replaced below. This stamp certifies no vector: embedding_signature stays deferred.
-        if (effectiveCRMode === 'none') await tx.updatePageContextualRetrievalState(slug, sourceId ?? 'default', effectiveCRMode, corpusGeneration);
-      },
-      // Replace every derived row atomically. Only vectors the A13 reuse gate above admitted carry over; a new
-      // seal otherwise inherits nothing from an older index, whose contextual vector may have included a private sibling.
-      async () => segmented ? undefined : keptIds.length ? tx.executeRaw(`DELETE FROM content_chunks WHERE page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = $2)
-        AND NOT (id = ANY($3::int[]))`, [slug, txOpts.sourceId, keptIds]) : tx.deleteChunks(slug, txOpts),
-      // Alias projection and readback share the page commit. A later writer can
-      // no longer turn a successful import into a postcommit verification error.
-      () => writePageAliases(tx, slug, sourceId ?? 'default', parsed, opts.activePack, mentionPolicy),
-    ]);
-    const pageId = segmented?.applied ? segmented.applied.pageId : written && written.deleted_at == null ? written.id : undefined;
-    const deferSeal = opts.coordinated === true && pageId !== undefined && !segmented;
-    await pipelined(tx, [
-      async () => {
-        // Tag reconciliation (A14): frontmatter tags carry tag_source='frontmatter'.
-        // A frontmatter-owned row whose tag left the frontmatter is deleted; rows
-        // explicit adds own ('added': add_tag, enrichment, the code importer) and
-        // legacy NULL rows are never deleted here (#1621: reindex must not wipe
-        // enrichment). A legacy row still in the frontmatter is adopted. Prepared
-        // (managed) imports keep the add-only union their canonical file renders.
-        if (!opts.prepare) await tx.executeRaw(`DELETE FROM tags t USING pages p WHERE p.id = t.page_id AND p.source_id = $1 AND p.slug = $2
-          AND t.tag_source = 'frontmatter' AND NOT (t.tag = ANY($3::text[]))`, [txOpts.sourceId, slug, parsed.tags]);
-        if (pageId !== undefined) return addPageTags(tx, Number(pageId), parsed.tags, opts.prepare ? undefined : 'frontmatter');
-        for (const tag of parsed.tags) await tx.addTag(slug, tag, opts.prepare ? txOpts : { ...txOpts, tagSource: 'frontmatter' });
-      },
-      async () => {
-        if (deferChunks) return;
-        if (chunks.length > 0) {
-          await applyMoveWaves(tx, Number(pageId), chunkWrites.waves);
-          const embeddingColumn = await stampEmbeddingInputs(tx, fresh, null,
-            { title: parsed.title, tier: effectiveCRMode === 'title' ? 'title' : 'none', corpusGeneration });
-          await tx.upsertChunks(slug, kept.size ? fresh.filter((_, i) => !kept.has(i)) : fresh, { ...txOpts, ...(embeddingColumn ? { embeddingColumn } : {}), sealChunkerVersion: MARKDOWN_CHUNKER_VERSION,
-            ...(pageId !== undefined ? { pageId: Number(pageId) } : {}), ...(deferSeal ? { deferSeal: true as const } : {}) });
-          // v0.41.31: stamp embedding provenance when this import actually
-          // embedded (not --no-embed), so a later model/dims swap is detectable
-          // as stale via embed --stale. The deferred/backfill + per-slug embed
-          // paths stamp too; this covers the inline import/sync path.
-          if (!noEmbed && !postCommitEmbedding && !embeddingDeferred) {
-            // D9: signature is null when the gateway is unconfigured — skip the
-            // stamp (a wrong signature is worse than none).
-            const importSig = currentEmbeddingSignature();
-            if (importSig) await tx.setPageEmbeddingSignature(slug, { sourceId, signature: importSig });
-          }
-        } else {
-          // Seal only the completed, full-body sanitized replacement (the upsert above seals its own); a
-          // body-only write or a failed transaction must never certify old stored fragments.
-          if (!deferSeal && !segmented) await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3', [MARKDOWN_CHUNKER_VERSION, txOpts.sourceId, slug]);
-        }
-      },
-    ]);
-    if (!opts.coordinated && !segmented && !deferChunks) await sealPageTextProjection(tx, slug, txOpts.sourceId);
-    if (!opts.coordinated && segmented?.applied?.complete) await sealSegmentedPage(tx, segmented.applied.pageId);
+    // Embedding failures propagate unless onPostCommitEmbedding lets the caller
+    // report enrichment separately from the already-persisted content.
+    //
+    // v0.40.3.0 contextual retrieval wrapper (D20-T1 chunk_text separation):
+    // - Resolve effective CR mode via the page/source/global override chain.
+    // - For title tier (free): build the title-only prefix and wrap chunks
+    //   inline at embed time. Per-chunk generated synopsis tier is NOT supported
+    //   on the import path — that's an async backfill via the Minion handler
+    //   (the cost prompt + 10s grace UX from D3 gates spending; inline import
+    //   path takes the cheaper title-only treatment for tokenmax pages here
+    //   and defers per-chunk synopsis to the Minion-driven sweep).
+    // - Stored chunk_text stays canonical; only the embedding input is wrapped.
+    // - Code chunks (chunk_source='fenced_code') bypass wrapping per D20-T4.
+    // Every markdown import records its wrapping convention with the canonical
+    // write, --no-embed included (#5621): later embed passes reproduce the stored
+    // mode, so an unstamped page would stay unwrapped. No provider runs here.
+    // #3885: the real source row applies (a stored `sources set-cr-mode`); the
+    // inline path demotes per_chunk_synopsis to the free title tier.
+    const { mode: effectiveCRMode, corpusGeneration } = await resolveImportContextualMode(engine, sourceId ?? 'default', parsed.frontmatter, opts.prepare !== undefined);
+    // Wave B: a body staged as segments publishes with the generation flip instead of putPage and the chunk replacement.
+    const segmented = storage.policy && storage.storage === 'segmented' ? await stageSegmentedImport(engine, { slug, sourceId: sourceId ?? 'default', existing,
+      page: parsedPage, policy: storage.policy, owner: opts.segmentedOwner, reuse: opts.reuseSegments, baseRevision: (existing as { knowledge_revision?: string } | null)?.knowledge_revision ?? null,
+      chunking: { quarantined: pageQuarantined, corpusGeneration, tier: effectiveCRMode === 'title' ? 'title' : 'none' } }) : null;
 
-    // v0.19.0 E1 — doc↔impl linking: if this markdown page cites code paths
-    // (e.g. 'src/core/sync.ts:42'), create bidirectional edges to the code
-    // page, all in one statement (addCodeReferenceLinks). An edge whose code
-    // page is missing is skipped — guides imported before their code repo
-    // syncs are common, and the missing edges land later via
-    // `gbrain reconcile-links` (Layer 8 D3, v0.21.0).
-    const codeRefs = extractCodeRefs(sanitizeRemoteBody(parsed.compiled_truth) + '\n' + sanitizeRemoteBody(parsed.timeline || ''));
-    // For doc↔impl edges, both endpoints are within the same source as the
-    // markdown page being imported. Cross-source edges (markdown in one
-    // source, code in another) are skipped as missing — never the pre-fix
-    // cross-product fan-out, which silently wired edges to whichever
-    // same-slug page Postgres returned first across sources.
-    if (codeRefs.length) {
-      await tx.transaction(savepoint => addCodeReferenceLinks(savepoint, slug, sourceId || 'default',
-        codeRefs.map(ref => ({ codeSlug: slugifyCodePath(ref.path), path: ref.path, line: ref.line })))).catch(() => undefined);
-    }
-    if (!opts.coordinated) await verifyPageReadable(tx, slug, hash, sourceId, 'importFromContent');
-    await opts.beforeCommit?.(tx, slug);
-    await disposition.persistReceipt(tx, { existed: !!existing });
-    if (postCommitEmbedding && !noEmbed && chunks.length > 0) {
-      // Capture the complete installed projection before releasing the page
-      // guard. Deferred provider results cannot replace newer text or chunks.
-      persistedProjection = await readProjectionSnapshot(tx, slug, txOpts.sourceId);
-    }
-    if (segmented?.applied) return { pageId, sealed: !opts.coordinated && segmented.applied.complete, segmented: { complete: segmented.applied.complete } };
-    // The reason routes a resident or drain rebuild of this revision to the bounded continuation.
-    if (deferChunks) await queuePageProjection(tx, txOpts.sourceId, slug, DEFERRED_CHUNK_REPLACEMENT);
-    if (deferChunks) return { pageId, sealed: false, projectionPending: true as const };
-    return { pageId, sealed: !opts.coordinated && !opts.beforeCommit, ...(deferSeal ? { chunkerSeal: MARKDOWN_CHUNKER_VERSION } : {}) };
-  };
-  if (opts.prepare) return opts.prepare({
-    slug, parsedPage, observedRevision: (existing as (typeof existing & { knowledge_revision?: string }) | null)?.knowledge_revision ?? null,
-    noop: false, contentHash: hash, result: { slug, status: 'imported', chunks: segmented ? segmented.prepared.rows.chunks : chunks.length, parsedPage,
-      ...(pageQuarantined ? { quarantined: true } : {}), ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}), ...(disposition.gate ? { gate: disposition.gate } : {}), ...fences.fields },
-    validate: tx => assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug),
-    apply: applyPrepared, ...(segmented ? { afterCommit: async (target: BrainEngine) => { await segmented.afterCommit(target); }, segmented }
-      : opts.boundedChunkWrites ? { afterCommit: async (target: BrainEngine) => { if (chunkReplacementDeferred) await continueDeferredProjection(target, txOpts.sourceId, slug); } } : {}),
-  });
-  await withUnmanagedBeliefs(engine, txOpts.sourceId, [slug], 'import', run => maintenanceTransaction(engine, tx => run(tx, () => applyPrepared(tx)), writeTrustOfGate(opts.writeGate)).catch(async (err: unknown) => {
-    await abortSegmentedStaging(engine, segmented?.prepared);
-    // #4287: name the dimension-mismatch rollback instead of letting the bare
-    // pgvector message ("expected N dimensions, not M") surface with no code,
-    // no consequence and no fix. S2: name the registry-ACTIVE column the
-    // write actually targeted (best-effort — plane-agnostic wording when the
-    // registry itself is unreadable).
-    let activeColName: string | undefined;
-    const msg = err instanceof Error ? err.message : String(err);
-    if (/expected \d+ dimensions, not \d+/.test(msg)) {
+    // A13: an edit re-embeds only chunks whose embedding input changed. A stored
+    // vector is reused for a chunk with the same source and text when its
+    // recorded embedding input (#5553: column, model, dimensions, wrapper tier
+    // and exact input) equals the one this import would embed, or, for a vector
+    // recorded before provenance existed, when the input is the raw chunk text
+    // under the same model. The old index must be sealed (no private fence row in a chunk), and on a fenced page
+    // only a vector with a recorded input is reused (#6961); a changed fence chunk has new text and is embedded again.
+    // A prepared (persistence) import defers embedding to its effect worker, so
+    // it reuses inside its publication transaction, under the page guard, from
+    // the chunks it is about to replace; only the chunks left without a vector
+    // reach the provider.
+    // A large or segmented page (the hysteresis band too) commits with NULL vectors; the stale
+    // sweep embeds it under the per-page cap and the sampled junk check, so no provider call holds the write.
+    const noEmbed = opts.noEmbed || isEmbedSkipped(parsed.frontmatter);
+    const largePage = isLargePageBytes(bodyBytes) || segmented !== null;
+    const postCommitEmbedding = largePage ? undefined : opts.onPostCommitEmbedding;
+    const reusable = !!existing && !existing.deleted_at && !opts.forceRechunk && !postCommitEmbedding && chunks.length > 0 && bodyStorageOf(existing) !== 'segmented'
+      && !(opts.prepare && modeRequiresSynopsis(effectiveCRMode));
+    const reuseCtx = { slug, sourceId: sourceId ?? 'default', title: parsed.title, corpusGeneration, tier: effectiveCRMode === 'title' ? 'title' as const : 'none' as const, requireRecordedInput: reusable && (hasProtectedBody(`${existing.compiled_truth}\n${existing.timeline ?? ''}`) || hasProtectedBody(`${parsed.compiled_truth}\n${parsed.timeline ?? ''}`)) };
+    const reuseStoredVectors = (exec: BrainEngine, into: ChunkInput[], keepUnembedded = false) => reuseStoredChunkVectors(exec, into, { ...reuseCtx, prepared: !!opts.prepare, keepUnembedded });
+    const reused = reusable && !noEmbed && !opts.prepare ? await reuseStoredVectors(engine, chunks) : new Map<number, number | null>();
+
+    let embeddingPartial: EmbeddingZeroNormError | undefined;
+    const embedChunks = async () => {
+      const pending = chunks.map((_, i) => i).filter(i => !reused.has(i));
+      if (noEmbed || pending.length === 0) return;
+      const prefix =
+        modeRequiresWrapper(effectiveCRMode) && !modeRequiresSynopsis(effectiveCRMode)
+          ? buildContextualPrefix(parsed.title, null)
+          : null;
+      const wrappedTexts = pending.map(i => prefix ? wrapChunkForEmbedding(chunks[i].chunk_text, prefix, chunks[i].chunk_source) : chunks[i].chunk_text);
+      // #4616: store the usable vectors; refused chunks stay NULL for embed --stale.
+      const { vectors: embeddings, refused } = await embedBatchKeepingUsable(wrappedTexts);
+      embeddingPartial = refused;
+      pending.forEach((i, j) => {
+        if (!embeddings[j]) return;
+        chunks[i].embedding = embeddings[j]!;
+        // token_count tracks the wrapped string length so cost reporting
+        // reflects what we actually sent to the embedder.
+        chunks[i].token_count = Math.ceil(wrappedTexts[j].length / 4);
+      });
+    };
+    // An embedding outage never blocks the text write: the page and its chunks
+    // commit with NULL vectors and no embedding signature, and the stale sweep
+    // (`gbrain embed --stale`, sync's embed pass, the cycle) embeds them once
+    // the provider recovers.
+    let embeddingDeferred = largePage && !noEmbed && (chunks.length > 0 || (segmented !== null && !pageQuarantined));
+    if (!opts.onPostCommitEmbedding && !largePage) {
       try {
-        const { resolveActiveEmbeddingColumnFromEngine } = await import('./search/embedding-column.ts');
-        activeColName = (await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name;
-      } catch { /* keep the plane-agnostic wording */ }
-    }
-    throw decorateEmbeddingDimError(err, slug, activeColName);
-  }));
-  const searchable = await segmented?.afterCommit(engine);
-
-
-  if (postCommitEmbedding && !noEmbed && chunks.length > 0) {
-    postCommitEmbedding(async () => {
-      try {
-        if (!persistedProjection) return { status: 'superseded' };
-        const signature = currentEmbeddingSignature();
         await embedChunks();
-        const installed = await installPageEmbeddings(engine, persistedProjection, chunks, embeddingPartial ? undefined : signature ?? undefined);
-        return { status: installed.complete ? 'embedded' : 'superseded' };
-      } catch {
-        return { status: 'failed', error: 'Page content was saved, but embedding failed. Check the embedding provider and database on the brain host, then run gbrain embed --stale --source <source-id>.' };
+        if (embeddingPartial) {
+          embeddingDeferred = true;
+          process.stderr.write(`[import] ${slug}: ${embeddingPartial.message} ${embeddingPartial.suggestionFor(slug, sourceId)}\n`);
+        }
+      } catch (err) {
+        embeddingDeferred = true;
+        chunks.forEach((c, i) => { if (!reused.has(i)) { c.embedding = undefined; c.token_count = undefined; } });
+        process.stderr.write(
+          `[import] ${slug}: embedding failed (${err instanceof Error ? err.message : String(err)}); ` +
+          `text saved, chunks queued for \`gbrain embed --stale\`.\n`
+        );
       }
-    });
-  }
+    }
 
-  return {
-    slug,
-    status: 'imported',
-    chunks: segmented ? segmented.prepared.rows.chunks : chunks.length,
-    parsedPage,
-    ...(pageQuarantined ? { quarantined: true } : {}),
-    ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}),
-    ...(typeWarning ? { type_warning: typeWarning } : {}),
-    ...(embeddingDeferred ? { embedding_deferred: true } : {}), ...fences.fields, ...(searchable !== undefined ? { searchable } : {}),
+    // Transaction wraps the canonical DB writes. Every per-page tx call carries the
+    // caller's sourceId so writes target (sourceId, slug) rather than the
+    // schema DEFAULT — required for multi-source brains; harmless ('default')
+    // for single-source callers.
+    const txOpts = { sourceId: sourceId ?? 'default' };
+    let persistedProjection: ProjectionSnapshot | null = null;
+    const [timeZone, mentionPolicy] = await Promise.all([loadBrainTimeZone(engine), readMentionPolicy(engine).catch(() => null)]);
+    let chunkReplacementDeferred = false;
+    const applyPrepared = async (tx: BrainEngine, preimage?: PageSnapshot | null) => {
+      if (!opts.coordinated) await assertImportBase(tx, slug, txOpts.sourceId, existing, reused.size > 0);
+      // #5984: the canonical writes go out in two pipelined waves of mutually independent statements; the
+      // second depends on the first (the page row and its id, the old chunks gone). A failure rolls back the caller's transaction.
+      // v0.29.1 — compute effective_date from frontmatter precedence chain.
+      // Filename comes from importFromFile path (basename) or the slug tail
+      // (put_page MCP op fallback). An undated page falls back to a stable
+      // anchor (fallbackCreatedAt): its stored fallback date, else its file's
+      // timestamp, else now — never the latest write. The result drives the recency boost and since/until
+      // filters when callers opt in; nothing in the default search path
+      // consults it.
+      const filenameForChain = opts.filename ?? slug.split('/').pop() ?? slug;
+      const nowDate = new Date();
+      const { date: effectiveDate, source: effectiveDateSource } = computeEffectiveDate({
+        slug,
+        frontmatter: parsed.frontmatter,
+        filename: filenameForChain,
+        timeZone,
+        updatedAt: existing?.updated_at ?? nowDate,
+        createdAt: fallbackCreatedAt({ existing, fileTimes: opts.fileTimes, now: nowDate }),
+      });
+
+      const demote = !segmented && bodyStorageOf(existing) === 'segmented';
+      // Before the page write: an unpinned version reads the page itself, a demoted one references the generation it retires, a segmented one (#8729) sweeps segment rows so never beside the flip.
+      if (existing && (!preimage || demote || segmented)) await tx.createVersion(slug, preimage ? { ...txOpts, ...opts.history, preimage } : { ...txOpts, ...opts.history });
+      if (demote) await demoteSegmentedPage(tx, Number(existing!.id));
+      // Every import keeps each stored row that is identical to its new chunk and
+      // writes only the rest, so an edit rewrites only the chunks it changed. The
+      // reuse is re-read here, under the page lock, so a kept row is one this
+      // transaction sees; --no-embed and deferred-embed imports keep vectors too.
+      const fresh = reusable ? chunks.map(chunk => ({ ...chunk })) : chunks;
+      const kept = new Map([...(fresh !== chunks ? await reuseStoredVectors(tx, fresh, true) : [])]
+        .filter((entry): entry is [number, KeptChunkRow] => entry[1] !== null));
+      const keptIds = [...kept.values()].map(row => row.id);
+      // #7172: a kept row whose chunk moved changes index in place; a managed publication over CHUNK_VECTOR_WRITE_BUDGET
+      // vector-index writes deletes the rows it does not keep, commits the page pending and finishes after commit (chunk-moves.ts).
+      const chunkWrites = planImportChunkWrites(fresh, kept, !segmented && !!opts.prepare && opts.boundedChunkWrites === true);
+      const deferChunks = chunkReplacementDeferred = chunkWrites.defer;
+      let written: Page | undefined;
+      await pipelined(tx, [
+        () => assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug),
+        async () => { if (existing && preimage && !demote && !segmented) await tx.createVersion(slug, { ...txOpts, ...opts.history, preimage }); },
+        async () => {
+          if (segmented) return segmented.apply(tx, { type: parsed.type, title: parsed.title, frontmatter: parsed.frontmatter, page_kind: 'markdown',
+            effective_date: effectiveDate, effective_date_source: effectiveDateSource, import_filename: filenameForChain, source_path: opts.sourcePath ?? null,
+            source_kind: opts.source_kind ?? null, source_uri: opts.source_uri ?? originUri, ingested_via: opts.ingested_via ?? null }, { mode: effectiveCRMode, corpusGeneration });
+          written = await tx.putPage(slug, {
+            type: parsed.type,
+            title: parsed.title,
+            compiled_truth: parsed.compiled_truth,
+            timeline: parsed.timeline || '',
+            frontmatter: parsed.frontmatter,
+            content_hash: hash,
+            effective_date: effectiveDate,
+            effective_date_source: effectiveDateSource,
+            import_filename: filenameForChain,
+            // Preserve the repo-relative path for sync's delete/rename handling.
+            source_path: opts.sourcePath ?? null,
+            // v0.39.3.0 provenance write-through (WARN-8). Engine layer applies
+            // COALESCE-preserve UPDATE so omitting these on a later put_page
+            // doesn't erase the original ingestion's audit trail.
+            source_kind: opts.source_kind ?? null,
+            source_uri: opts.source_uri ?? originUri,
+            ingested_via: opts.ingested_via ?? null,
+            // ingested_at is server-stamped at the engine layer when any
+            // provenance write fires; never client-controlled.
+            // Empty-overwrite escape hatch only when the caller vouched (file
+            // import / explicit allow_empty); otherwise the engine guard stays on.
+          }, { ...txOpts, ...(opts.allowEmptyOverwrite === true ? { allowEmptyOverwrite: true } : {}), inline: true,
+            ...(effectiveCRMode !== 'none' ? { contextualRetrieval: { mode: effectiveCRMode, corpusGeneration } } : {}) });
+          // v0.40.3.0: the contextual retrieval state is stamped with the page write (the `none` tier's
+          // stamp, which also clears tier vectors, follows it). Deferred embedders reproduce it; every
+          // chunk row is replaced below. This stamp certifies no vector: embedding_signature stays deferred.
+          if (effectiveCRMode === 'none') await tx.updatePageContextualRetrievalState(slug, sourceId ?? 'default', effectiveCRMode, corpusGeneration);
+        },
+        // Replace every derived row atomically. Only vectors the A13 reuse gate above admitted carry over; a new
+        // seal otherwise inherits nothing from an older index, whose contextual vector may have included a private sibling.
+        async () => segmented ? undefined : keptIds.length ? tx.executeRaw(`DELETE FROM content_chunks WHERE page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = $2)
+        AND NOT (id = ANY($3::int[]))`, [slug, txOpts.sourceId, keptIds]) : tx.deleteChunks(slug, txOpts),
+        // Alias projection and readback share the page commit. A later writer can
+        // no longer turn a successful import into a postcommit verification error.
+        () => writePageAliases(tx, slug, sourceId ?? 'default', parsed, opts.activePack, mentionPolicy),
+      ]);
+      const pageId = segmented?.applied ? segmented.applied.pageId : written && written.deleted_at == null ? written.id : undefined;
+      const deferSeal = opts.coordinated === true && pageId !== undefined && !segmented;
+      await pipelined(tx, [
+        async () => {
+          // Tag reconciliation (A14): frontmatter tags carry tag_source='frontmatter'.
+          // A frontmatter-owned row whose tag left the frontmatter is deleted; rows
+          // explicit adds own ('added': add_tag, enrichment, the code importer) and
+          // legacy NULL rows are never deleted here (#1621: reindex must not wipe
+          // enrichment). A legacy row still in the frontmatter is adopted. Prepared
+          // (managed) imports keep the add-only union their canonical file renders.
+          if (!opts.prepare) await tx.executeRaw(`DELETE FROM tags t USING pages p WHERE p.id = t.page_id AND p.source_id = $1 AND p.slug = $2
+          AND t.tag_source = 'frontmatter' AND NOT (t.tag = ANY($3::text[]))`, [txOpts.sourceId, slug, parsed.tags]);
+          if (pageId !== undefined) return addPageTags(tx, Number(pageId), parsed.tags, opts.prepare ? undefined : 'frontmatter');
+          for (const tag of parsed.tags) await tx.addTag(slug, tag, opts.prepare ? txOpts : { ...txOpts, tagSource: 'frontmatter' });
+        },
+        async () => {
+          if (deferChunks) return;
+          if (chunks.length > 0) {
+            await applyMoveWaves(tx, Number(pageId), chunkWrites.waves);
+            const embeddingColumn = await stampEmbeddingInputs(tx, fresh, null,
+              { title: parsed.title, tier: effectiveCRMode === 'title' ? 'title' : 'none', corpusGeneration });
+            await tx.upsertChunks(slug, kept.size ? fresh.filter((_, i) => !kept.has(i)) : fresh, { ...txOpts, ...(embeddingColumn ? { embeddingColumn } : {}), sealChunkerVersion: MARKDOWN_CHUNKER_VERSION,
+              ...(pageId !== undefined ? { pageId: Number(pageId) } : {}), ...(deferSeal ? { deferSeal: true as const } : {}) });
+            // v0.41.31: stamp embedding provenance when this import actually
+            // embedded (not --no-embed), so a later model/dims swap is detectable
+            // as stale via embed --stale. The deferred/backfill + per-slug embed
+            // paths stamp too; this covers the inline import/sync path.
+            if (!noEmbed && !postCommitEmbedding && !embeddingDeferred) {
+              // D9: signature is null when the gateway is unconfigured — skip the
+              // stamp (a wrong signature is worse than none).
+              const importSig = currentEmbeddingSignature();
+              if (importSig) await tx.setPageEmbeddingSignature(slug, { sourceId, signature: importSig });
+            }
+          } else {
+            // Seal only the completed, full-body sanitized replacement (the upsert above seals its own); a
+            // body-only write or a failed transaction must never certify old stored fragments.
+            if (!deferSeal && !segmented) await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3', [MARKDOWN_CHUNKER_VERSION, txOpts.sourceId, slug]);
+          }
+        },
+      ]);
+      if (!opts.coordinated && !segmented && !deferChunks) await sealPageTextProjection(tx, slug, txOpts.sourceId);
+      if (!opts.coordinated && segmented?.applied?.complete) await sealSegmentedPage(tx, segmented.applied.pageId);
+
+      // v0.19.0 E1 — doc↔impl linking: if this markdown page cites code paths
+      // (e.g. 'src/core/sync.ts:42'), create bidirectional edges to the code
+      // page, all in one statement (addCodeReferenceLinks). An edge whose code
+      // page is missing is skipped — guides imported before their code repo
+      // syncs are common, and the missing edges land later via
+      // `gbrain reconcile-links` (Layer 8 D3, v0.21.0).
+      const codeRefs = extractCodeRefs(sanitizeRemoteBody(parsed.compiled_truth) + '\n' + sanitizeRemoteBody(parsed.timeline || ''));
+      // For doc↔impl edges, both endpoints are within the same source as the
+      // markdown page being imported. Cross-source edges (markdown in one
+      // source, code in another) are skipped as missing — never the pre-fix
+      // cross-product fan-out, which silently wired edges to whichever
+      // same-slug page Postgres returned first across sources.
+      if (codeRefs.length) {
+        await tx.transaction(savepoint => addCodeReferenceLinks(savepoint, slug, sourceId || 'default',
+          codeRefs.map(ref => ({ codeSlug: slugifyCodePath(ref.path), path: ref.path, line: ref.line })))).catch(() => undefined);
+      }
+      if (!opts.coordinated) await verifyPageReadable(tx, slug, hash, sourceId, 'importFromContent');
+      await opts.beforeCommit?.(tx, slug);
+      await disposition.persistReceipt(tx, { existed: !!existing });
+      if (postCommitEmbedding && !noEmbed && chunks.length > 0) {
+        // Capture the complete installed projection before releasing the page
+        // guard. Deferred provider results cannot replace newer text or chunks.
+        persistedProjection = await readProjectionSnapshot(tx, slug, txOpts.sourceId);
+      }
+      if (segmented?.applied) return { pageId, sealed: !opts.coordinated && segmented.applied.complete, segmented: { complete: segmented.applied.complete } };
+      // The reason routes a resident or drain rebuild of this revision to the bounded continuation.
+      if (deferChunks) await queuePageProjection(tx, txOpts.sourceId, slug, DEFERRED_CHUNK_REPLACEMENT);
+      if (deferChunks) return { pageId, sealed: false, projectionPending: true as const };
+      return { pageId, sealed: !opts.coordinated && !opts.beforeCommit, ...(deferSeal ? { chunkerSeal: MARKDOWN_CHUNKER_VERSION } : {}) };
+    };
+    if (opts.prepare) return opts.prepare({
+      slug, parsedPage, observedRevision: (existing as (typeof existing & { knowledge_revision?: string }) | null)?.knowledge_revision ?? null,
+      noop: false, contentHash: hash, result: { slug, status: 'imported', chunks: segmented ? segmented.prepared.rows.chunks : chunks.length, parsedPage,
+        ...(pageQuarantined ? { quarantined: true } : {}), ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}), ...(disposition.gate ? { gate: disposition.gate } : {}), ...fences.fields },
+      validate: tx => assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug),
+      apply: applyPrepared, ...(segmented ? { afterCommit: async (target: BrainEngine) => { await segmented.afterCommit(target); }, segmented }
+        : opts.boundedChunkWrites ? { afterCommit: async (target: BrainEngine) => { if (chunkReplacementDeferred) await continueDeferredProjection(target, txOpts.sourceId, slug); } } : {}),
+    });
+    await withUnmanagedBeliefs(engine, txOpts.sourceId, [slug], 'import', run => maintenanceTransaction(engine, tx => run(tx, () => applyPrepared(tx)), writeTrustOfGate(opts.writeGate)).catch(async (err: unknown) => {
+      await abortSegmentedStaging(engine, segmented?.prepared);
+      // #4287: name the dimension-mismatch rollback instead of letting the bare
+      // pgvector message ("expected N dimensions, not M") surface with no code,
+      // no consequence and no fix. S2: name the registry-ACTIVE column the
+      // write actually targeted (best-effort — plane-agnostic wording when the
+      // registry itself is unreadable).
+      let activeColName: string | undefined;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/expected \d+ dimensions, not \d+/.test(msg)) {
+        try {
+          const { resolveActiveEmbeddingColumnFromEngine } = await import('./search/embedding-column.ts');
+          activeColName = (await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name;
+        } catch { /* keep the plane-agnostic wording */ }
+      }
+      throw decorateEmbeddingDimError(err, slug, activeColName);
+    }));
+    const searchable = await segmented?.afterCommit(engine);
+
+    if (postCommitEmbedding && !noEmbed && chunks.length > 0) {
+      const importScope = currentEngineScope();
+      postCommitEmbedding(() => runInEngineScope(importScope, async (): Promise<ImportEmbeddingResult> => {
+        try {
+          if (!persistedProjection) return { status: 'superseded' };
+          const signature = currentEmbeddingSignature();
+          await embedChunks();
+          const installed = await installPageEmbeddings(engine, persistedProjection, chunks, embeddingPartial ? undefined : signature ?? undefined);
+          return { status: installed.complete ? 'embedded' : 'superseded' };
+        } catch {
+          return { status: 'failed', error: 'Page content was saved, but embedding failed. Check the embedding provider and database on the brain host, then run gbrain embed --stale --source <source-id>.' };
+        }
+      }));
+    }
+
+    return {
+      slug,
+      status: 'imported',
+      chunks: segmented ? segmented.prepared.rows.chunks : chunks.length,
+      parsedPage,
+      ...(pageQuarantined ? { quarantined: true } : {}),
+      ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}),
+      ...(typeWarning ? { type_warning: typeWarning } : {}),
+      ...(embeddingDeferred ? { embedding_deferred: true } : {}), ...fences.fields, ...(searchable !== undefined ? { searchable } : {}),
+    };
   };
+  return await (needsEngineScope(engine) ? withEngineScope(engine, importScreened) : importScreened());
 }
 
 /**
@@ -1031,10 +1036,12 @@ export async function importFromFile(
     activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> };
     /** Git first-commit date of the file (opt-in, see git-first-commit.ts); an undated page's fallback anchor. */
     firstCommitAt?: Date;
+    /** GBRA-217: a sync import's reason from Git and history-gap marker for the snapshot this import archives. */ history?: import('./page-state/versions.ts').VersionHistory;
     /** Wave B: the segmented-storage policy, read once per command; with the switch on, a Markdown file over the single-string ceiling imports streamed. Absent: it refuses as before. */
     bodyPolicy?: PageBodyPolicy;
   } = {},
 ): Promise<ImportResult> {
+  if (needsEngineScope(engine)) return withEngineScope(engine, () => importFromFile(engine, filePath, relativePath, opts));
   // Defense-in-depth: reject symlinks before reading content.
   const lstat = lstatSync(filePath);
   if (lstat.isSymbolicLink()) {
@@ -1077,7 +1084,7 @@ export async function importFromFile(
   if (isCodeFilePath(relativePath)) {
     return importCodeFile(engine, relativePath, content, {
       noEmbed: opts.noEmbed,
-      sourceId: opts.sourceId,
+      sourceId: opts.sourceId, history: opts.history,
     });
   }
 
@@ -1232,9 +1239,10 @@ export async function importCodeFile(
   engine: BrainEngine,
   relativePath: string,
   content: string,
-  opts: { noEmbed?: boolean; force?: boolean; sourceId?: string;
+  opts: { noEmbed?: boolean; force?: boolean; sourceId?: string; history?: import('./page-state/versions.ts').VersionHistory;
     prepare?: (prepared: import('./persistence/prepared-import.ts').PreparedContentImport) => Promise<ImportResult> } = {},
 ): Promise<ImportResult> {
+  if (needsEngineScope(engine)) return withEngineScope(engine, () => importCodeFile(engine, relativePath, content, opts));
   if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct file import', { sourceId: opts.sourceId ?? 'default' });
   if (opts.prepare && !opts.noEmbed) throw new Error('Coordinated code import requires provider-free preparation.');
   const slug = slugifyCodePath(relativePath);
@@ -1366,7 +1374,7 @@ export async function importCodeFile(
   // under the schema DEFAULT.
   const apply = async (tx: BrainEngine) => {
     await assertImportBase(tx, slug, sourceId ?? 'default', existing);
-    if (existing) await tx.createVersion(slug, txOpts);
+    if (existing) await tx.createVersion(slug, { ...txOpts, ...opts.history });
 
     await tx.putPage(slug, {
       type: 'code' as string,
@@ -1869,6 +1877,7 @@ export async function importImageFile(
   relativePath: string,
   opts: ImportImageOptions = {},
 ): Promise<ImportResult> {
+  if (needsEngineScope(engine)) return withEngineScope(engine, () => importImageFile(engine, filePath, relativePath, opts));
   if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct file import', { sourceId: opts.sourceId ?? 'default' });
   // Defense-in-depth: reject symlinks before reading bytes.
   const lstat = lstatSync(filePath);

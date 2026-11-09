@@ -22,7 +22,7 @@
  *   5. Header overrides: X-Gbrain-Slug is forwarded; X-Gbrain-Source-Id
  *      cannot override the OAuth client's trusted write source
  *   6. Idempotency: same content + same client → job_id returned twice
- *      should match (queue dedup on (client_id, write_source_id, content_hash))
+ *      should match (queue dedup on (client_id, write_source_id, slug, content_hash))
  *
  * Mirrors the spawn + mint pattern from test/e2e/serve-http-oauth.test.ts
  * exactly so future maintainers see one pattern, not two.
@@ -601,7 +601,7 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
     const secondBody = (await second.json()) as { job_id?: number | string };
 
     // Queue idempotency_key:
-    // `ingest:webhook:${clientId}:${writeSourceId}:${contentHash}` — same input
+    // `ingest:webhook:${clientId}:${writeSourceId}:${sha256(slug)}:${contentHash}` — same input
     // and same write source, same key, MinionQueue.add returns the existing job.
     expect(secondBody.job_id).toBe(firstBody.job_id!);
   });

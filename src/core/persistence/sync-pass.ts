@@ -32,7 +32,7 @@ import { sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { colonFileRefusal, COLON_REFUSAL_MESSAGES, readSyncFile, resolveManagedSyncContext, syncExcludePatterns, syncGitAsync, type ManagedSyncContext, type SyncFileRefusal } from './sync-discovery.ts';
 import { isWindowsColonTarget } from './native-file-target.ts';
 import { confirmedSyncDelta } from '../sync-rename-identity.ts';
-import { fileDriftSide, holdBasisMoved, holdRescreenDue, type DeletionCandidate, readGitHoldRetryPaths, readGitSourceHolds, SYNC_IMPORT_PROVENANCE_OP, syncImportParser, syncImportParsers,
+import { FILE_DRIFT_VERSION, fileDriftSide, holdBasisMoved, holdRescreenDue, type DeletionCandidate, readGitHoldRetryPaths, readGitSourceHolds, SYNC_IMPORT_PROVENANCE_OP, syncImportParser, syncImportParsers,
   type GitHoldRecord, type SyncImportParser, type SyncImportProvenance } from './sync-holds.ts';
 import { movedDriftHolds, sameParser } from './sync-prescreen.ts';
 import { sameSyncOrigin, selectOriginClaimant, syncOriginPath, type SyncOriginScope } from './sync-origin.ts';
@@ -85,7 +85,19 @@ export interface PassLevelInput {
   onProgress?: () => void;
   /** Throws once the pass must stop (a job deadline, a lost drain lease): checked at the read's pauses and while its origin history walk runs. */
   assertActive?: () => void;
+  /** The conversion apply's strict passes (SyncOpts.conversionBinding, persistence/git-conversion.ts): the only Git verdicts that may replace a database version. */
+  conversion?: ConversionBinding;
 }
+
+/**
+ * PR A admission binding: the paths (source-root relative) whose database version the conversion plan approved Git
+ * replacing, each with the page, revision and committed blob (null for a deletion; unset when any blob will do, as for a
+ * page the apply itself adopted) it approved. In a pass that carries
+ * it, any other Git verdict that would replace a database version (`gitWins`), or one whose page, revision or blob
+ * moved since the plan, is reclassified as the drift (or held deletion) a mixed pass gives it, so the pass holds the
+ * path instead of overwriting the page; `reclassified` collects those paths for the apply.
+ */
+export interface ConversionBinding { expect: ReadonlyMap<string, { id: string; revision: string | null; blob?: string | null }>; reclassified: Set<string> }
 /** PGLite's keyset page size (design v3.2 §2.1). */
 const PGLITE_KEYSET_ROWS = 2_000;
 /**
@@ -804,7 +816,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
       record: record ? { blobOids: recordBlobOids, revision: recordRevision != null ? String(recordRevision) : null, parserSame: sameParser(pages.parserOf(at!), fp(path)) } : null,
       attested, levelSha256: probe?.rawSha256 ?? null,
       published: !!attested?.hash && probe?.rawSha256 === attested.hash,
-      hold: hold ? { atLevel: holdAtLevel(hold, level, probe?.rawSha256 ?? null) && !moved.has(path), rescreenDue: holdRescreenDue(hold, retry.has(hold.path)), retried: retry.has(hold.path) } : null,
+      hold: hold ? { atLevel: holdAtLevel(hold, level, probe?.rawSha256 ?? null) && !moved.has(path), rescreenDue: holdRescreenDue(hold, retry.has(hold.path)), retried: retry.has(hold.path), ...(unscreenedDrift(hold) ? { unscreened: true } : {}) } : null,
       marker: marker ?? virtualMarker, baseline: needsBaseline ? baselineOf(path) : null,
       spelling: legacySpelling.has(path) ? 'legacy' : twins.has(path),
       episodeUnsatisfied: input.pass ? !!input.pass.episodeFullId && live && (record ? pages.fullEpisode[at!] : undefined) !== input.pass.episodeFullId
@@ -906,7 +918,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
     }
     timings.level_bytes = t();
   }
-
+  if (strict && input.pass?.conversion) bindConversion(paths, scope, input.pass.conversion);
   const kind = syncPassKind({ converged: null, head, parserFp: '', pack: pack?.identity ?? null, selectionFp: '', now: Date.now(), openEpisode: input.full === true, owedTail: false,
     retryRow: retry.size > 0, notConvergedStreak: 0, mismatchStreak: 0, requestNewer: false, openAtStampFinished: false, workingChange: false,
     rescreenDueHold: holds.some(hold => holdRescreenDue(hold, retry.has(hold.path))), full: input.full === true });
@@ -1071,6 +1083,24 @@ async function confirmPages(exec: Exec, input: { kind: 'postgres' | 'pglite'; so
  * #6926, folded into 4b: what a folded checkpoint needs of the round's `I⋈P` (S1): its mark, its page count and its largest
  * page id (a page past it is one the pass created). Null when the round left no marked `I⋈P` (working mode, a failed mark).
  */
+/** See ConversionBinding: an unapproved or moved Git verdict over a database version becomes the hold a mixed pass gives it. */
+function bindConversion(paths: ShadowPath[], scope: string, binding: ConversionBinding): void {
+  for (const [i, entry] of paths.entries()) {
+    const r = entry.result;
+    const gitWins = r.gitWins ?? (r.cls === 'held' && r.action === 'import' ? classifySyncPath({ ...entry.state, hold: null }, { strict: true }).gitWins : undefined);
+    if (!gitWins || r.settled || r.inFlight || (r.action !== 'import' && r.action !== 'delete')) continue;
+    const path = scope && entry.path.startsWith(`${scope}/`) ? entry.path.slice(scope.length + 1) : entry.path;
+    const expected = binding.expect.get(path);
+    if (expected && String(entry.pageId) === expected.id && (entry.revision ?? null) === expected.revision && (expected.blob === undefined || (entry.state.level ?? null) === expected.blob)) continue;
+    binding.reclassified.add(path);
+    const result: SyncClassified = r.action === 'delete'
+      ? { cls: 'delete_drift', settled: false, action: 'hold', side: 'deleted', state: 'file_gone', inFlight: false, classAction: 'repair' }
+      : { cls: 'drift', settled: false, action: 'hold', side: entry.state.record?.revision != null ? 'both' : 'unknown', inFlight: false, classAction: 'repair' };
+    paths[i] = { path: entry.path, slug: entry.slug, pageId: entry.pageId, revision: entry.revision, state: entry.state, result,
+      ...(entry.legacyPageless ? { legacyPageless: entry.legacyPageless } : {}), ...(entry.ambiguousOrigin ? { ambiguousOrigin: entry.ambiguousOrigin } : {}) };
+  }
+}
+
 export function passFoldBase(cache: PassLevelCache): { mark: LevelMark; pages: number; maxId: string } | null {
   const table = cache.pages?.table;
   if (!table || !cache.pages) return null;
@@ -1186,6 +1216,13 @@ function readPresent(root: string, gitPath: string, scope: string): boolean {
   const path = scope ? gitPath.slice(scope.length + 1) : gitPath;
   try { return readSyncFile(root, path) !== null; } catch { return true; }
 }
+
+/**
+ * #7199: a side-`unknown` drift hold written before the drift screen compared the page with the file at the baseline commit
+ * (`drift_version` below FILE_DRIFT_VERSION). The pass that wrote it moved the baseline to the held file, so its one re-screen
+ * (sync-holds.ts holdRescreenDue) also compares the page with the file's earlier committed versions.
+ */
+const unscreenedDrift = (hold: GitHoldRecord) => hold.code === 'file_drift' && fileDriftSide(hold.meta) === 'unknown' && (hold.meta.drift_version ?? 0) < FILE_DRIFT_VERSION;
 
 /** Whether a hold still describes the path at level `L`, in the hold's own domain (a pinned blob, working bytes, or a deletion). */
 function holdAtLevel(hold: GitHoldRecord, level: string | null, diskSha256: string | null): boolean {

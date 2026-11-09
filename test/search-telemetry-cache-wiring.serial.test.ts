@@ -59,7 +59,7 @@ interface Counters {
 
 /** Flush the writer and read the summed counters back from the table. */
 async function readCounters(): Promise<Counters> {
-  await getTelemetryWriter().flush();
+  await getTelemetryWriter(engine).flush();
   const rows = await engine.executeRaw<Counters>(
     `SELECT COALESCE(SUM(count), 0)::int        AS c,
             COALESCE(SUM(cache_hit), 0)::int    AS hit,

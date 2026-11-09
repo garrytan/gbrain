@@ -110,6 +110,7 @@ import { transcriptsOperations } from './ops/transcripts.ts';
 import { connectorsOperations } from './ops/connectors.ts';
 import { sourcesOperations } from './ops/sources.ts';
 import { factsOperations } from './ops/facts.ts';
+import { qmMemoryOperations } from './ops/qm-memory.ts';
 import { purgeOperations } from './ops/purge.ts';
 import { codeIntelOperations } from './ops/code-intel.ts';
 import { embeddingMigrationOperations } from './ops/embedding-migration.ts';
@@ -123,12 +124,15 @@ import { extractionOperations } from './ops/extraction.ts';
 import { entityIdentityOperations } from './ops/entity-identity.ts';
 import { requestToolsOperations } from './ops/request-tools.ts';
 import { noticesOperations } from './ops/notices.ts';
+import { memorySettingsOperations } from './ops/memory-settings.ts';
 import { pageEditOperations } from './ops/page-edit.ts';
 import { pageAppendOperations } from './ops/page-append.ts';
 import { pageBatchOperations } from './ops/page-batch.ts';
 import { pageUploadOperations } from './ops/page-upload.ts';
 import { feedbackOperations } from './ops/feedback.ts';
 import { trustOperations } from './ops/trust.ts';
+import { wakeshiftOperations } from './ops/wakeshift.ts';
+import { findPagesOperations } from './ops/find-pages.ts';
 
 // parseTtlParam moved to ops/facts.ts with the facts cluster; the `remember`
 // verb (verbs.ts) loads it from THIS module at runtime — re-exported so every
@@ -146,7 +150,7 @@ export const operations: Operation[] = [
   ...verbOperations,
   // Page CRUD (get_page, put_page, delete_page, list_pages + the v0.26.5
   // destructive-guard ops restore_page, purge_deleted_pages) — ops/pages.ts
-  ...pagesOperations, ...pageEditOperations, ...pageAppendOperations, ...pageBatchOperations, ...pageUploadOperations,
+  ...pagesOperations, ...findPagesOperations, ...pageEditOperations, ...pageAppendOperations, ...pageBatchOperations, ...pageUploadOperations,
   ...persistenceOperations,
   // Search (search, query) — ops/search.ts; search_exact — ops/search-exact.ts
   ...searchOperations, ...searchExactOperations,
@@ -181,8 +185,8 @@ export const operations: Operation[] = [
   ...filesOperations,
   // Jobs (Minions: submit_job, get_job, list_jobs, cancel_job, retry_job,
   // get_job_progress, pause_job, resume_job, replay_job, send_job_message)
-  // + v0.38 Slice 3 agent lane (submit_agent, get_agent_job) — ops/jobs.ts
-  ...jobsOperations,
+  // + v0.38 Slice 3 agent lane (submit_agent, get_agent_job) — ops/jobs.ts; Wakeshift watches (watch_job, list_watches, unwatch) — ops/wakeshift.ts
+  ...jobsOperations, ...wakeshiftOperations,
   // Orphans (find_orphans) — ops/orphans.ts; rank_entities — ops/graph-rank.ts
   ...orphansOperations, ...graphRankOperations,
   // v0.36.1.0 (T7) — Hindsight calibration wave (get_calibration_profile) —
@@ -212,7 +216,7 @@ export const operations: Operation[] = [
   ...entityIdentityOperations,
   // v0.31: hot memory (extract_facts, recall, context_pack, delta,
   // forget_fact) — ops/facts.ts
-  ...factsOperations, ...purgeOperations,
+  ...factsOperations, ...purgeOperations, ...qmMemoryOperations, ...memorySettingsOperations, // + GST-359 QM memory pair — ops/qm-memory.ts; GBRA-219 memory settings — ops/memory-settings.ts
   // v0.32.6: contradiction probe MCP surface (M3) — ops/insights.ts
   find_contradictions,
   // v0.33: expertise + relationship-proximity routing — ops/insights.ts

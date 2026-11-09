@@ -51,10 +51,13 @@ moving again; ask me only about the ones gbrain will not decide by itself."*
    names the process holding its drain lease (a serve pass, a sync job, a CLI
    sync), with its heartbeat, `progress` and `stalled`; null means nothing is
    syncing it now. Holds are bounded: `holds_summary` counts every hold by
-   code and by state (`needs_human`, `actionable`, `held`), and `holds` lists
-   the first 20, needs-human first. When it leaves rows out, `holds_page`
-   names `next_command`; `--detail` pages 100 at a time, `--hold-state
-   needs_human` lists only the holds a person decides. A `last_error` with
+   code, by state (`needs_human`, `actionable`, `held`) and by `fault_code`
+   (the failure a `page_write_failed` hold recorded, which each such hold
+   also names), and `holds` lists the first 20, needs-human first. When it
+   leaves rows out, `holds_page` names `next_command`; `--detail` pages 100
+   at a time, `--hold-state needs_human` lists only the holds a person
+   decides, and `--slug <slug>` or `--code <code>` (a hold code or a
+   `fault_code`) lists the one hold you are looking for without paging. A `last_error` with
    `superseded` (`by`, `age_seconds`) is history: a later attempt got past
    the phase it failed in, so it drives neither `state` nor `next`.
 2. If `needs_human` is false and nothing committed in the last ten minutes,
@@ -148,6 +151,8 @@ Every hold and error has three fields, from one table
 | `write_gate_rejected` | page | none | yes | always: write_gate.external_mode=reject is the user's setting |
 | `legacy_slug_conflict` | page | none | yes | always: only a person decides which legacy page the file takes over |
 | `settle_mismatch` | page | none | yes | always: the pass cannot tell why the path does not settle |
+| `freeze_page_body_segmented` | page | upgrade | yes | always: a sync path read a page stored in segments whole |
+| `freeze_page_body_rows_unreadable` | page | repair | yes | always: the page's segment rows do not cover its stored body, so no sync can read it |
 | `page_write_failed` | page | upgrade | yes | always: the writer cannot place the failure |
 | `file_unreadable` | page | none | yes | always: only a change to the checkout makes the file readable |
 | `visibility_noncanonical` | page | none | yes | always: only an edit to the file clears it |
@@ -157,6 +162,7 @@ Every hold and error has three fields, from one table
 | `origin_conflict` | page | repair | no | the hold carries a reason (the pages differ, ids conflict or none is the page the path names), or the heal is off |
 | `rename_identity_unreadable` | page | none | yes | always: the file title or id holds characters the database cannot compare |
 | `rename_reconcile_failed` | page | none | yes | always: the old page may be a duplicate |
+| `file_drift_unknown` | page | reconcile | yes | always: the file and the page differ and no import record says which changed |
 | `origin_conflict_decision` | page | none | yes | always: the pages differ, their ids conflict or none is the page the path names |
 | `page_identity_decision` | page | none | yes | always: only a person decides which page the file is |
 | `absent_from_worktree` | page | none | yes | always: only a person decides whether the file comes back or its deletion is committed |
@@ -188,6 +194,7 @@ Every hold and error has three fields, from one table
 | `preparation_systemic` | systemic | upgrade, retry | yes | always |
 | `drain_stalled` | systemic | none | yes | always |
 | `recovery_required` | systemic | none | yes | always |
+| `owner_marker_missing` | systemic | none | yes | always |
 | `owner_unavailable` | systemic | none | yes | always |
 | `writer_coordinator_required` | systemic | none | yes | always |
 | `permission_denied` | systemic | none | yes | always |
@@ -376,7 +383,7 @@ run converges on the next plain sync with no flag.
 |---|---|---|---|
 | `pass_unfinished` | resumable | The newest pass is open or stopped at a deadline. | The plain sync (`resume_argv`); safe to loop. |
 | `pass_interrupted` | resumable | The newest pass is open but no process holds the source's drain lease: its process was killed or crashed (an out-of-memory guard, a timeout) before it ended the pass, so nothing recorded a failure. `live` is null and `interrupted` names the pass, its last write and, when the lock row outlived the process, the holder and the pages it committed. Doctor `managed_sync_blocked` lists it as `pass_interrupted` (warn, then fail after an hour). | The plain sync; if that pass stops the same way, the reason becomes `pass_abandoned`. |
-| `pass_abandoned` | blocked | Two passes in a row never ended: the drain stopped them for making no progress, or their process was killed. The newest open pass counts once no process holds the source's drain lease (#7596; a reader without the lease read counts it once its row has not moved for 5 minutes). | `gbrain doctor --json` and a report with the gbrain version and the newest run's `drain.stall`; another plain sync is likely to stop the same way. |
+| `pass_abandoned` | blocked | Two passes in a row never ended or ended on the same kind of transient stop: the drain stopped them for making no progress, their process was killed, or each hit a statement timeout, a lost connection or write back-pressure (#7982). The newest open pass counts once no process holds the source's drain lease (#7596; a reader without the lease read counts it once its row has not moved for 5 minutes). | `gbrain doctor --json` and a report with the gbrain version and the newest run's `drain.stall`; another plain sync is likely to stop the same way. |
 | `not_converged` | resumable | The pass used its four rounds while another writer kept changing the level. Everything it admitted stands. | The plain sync; after three such passes in a row `next` is `gbrain doctor --json` and a report, because another sync will not change it. |
 | `settle_mismatch` | resumable | A path keeps settling without reading settled. The next pass re-admits it once; after three passes at one level it is a `settle_mismatch` hold that needs a person. | The plain sync, then report the hold. |
 | `deletes_withheld` | blocked | The pass's deletes crossed the mass-delete threshold (#2828) or an absolute cap (#7130: `sync.max_deletes`, default 500; `sync.max_delete_ratio`, default 0.01 above 50 deletes; per source `<key>.source.<id>`). The record's `trip` names which. It wrote one withheld record and synced everything else; no per-page hold is written. | Ask the user: restore the checkout if it is wrong; when the deletion is intended, raise the cap for that source (`gbrain config set sync.max_deletes.source.<id> <n>`) or run `GBRAIN_ALLOW_MASS_RECONCILE=1 gbrain sync --source <id>` on the brain host. `gbrain sync --source <id> --dry-run --json` lists the set and its hash. |
@@ -447,6 +454,21 @@ Dirtiness is read only for candidates: in committed mode the pass reads a
 file's working copy (`Dp`) only when the path would otherwise be admitted, so
 `dirty` counts only those, and a file whose page already matches its commit
 reads `matched` even when its working copy is edited.
+
+## Writes deferred behind a refresh
+
+With `persistence.refresh_barrier` on (off by default), a page write that
+arrives while `gbrain sources refresh` holds its worktree is not refused
+`worktree_refreshing`: it waits in state `deferred` and the caller gets a
+pending receipt. `gbrain sources writer status <id> --json` lists those rows
+with `state: "deferred"` in `requests`, and the `queue` entry for
+`deferred` carries their count and `oldest_age_ms`. They are not stuck while
+the refresh runs: once it completes or aborts they publish in order, and one
+whose file the refresh changed ends `revision_conflict`. A write still waiting
+after `persistence.refresh_barrier_max_wait_ms` ends
+[`refresh_barrier_expired`](write-refusals.md#refresh_barrier_expired) with
+nothing applied: check the refresh, then submit it again with a new request id.
+Before downgrading gbrain, `gbrain upgrade --check-downgrade` must exit 0.
 
 ## See also
 

@@ -1,5 +1,6 @@
 {
   "bump": "patch",
+  "min_gstack_version": "1.94.16.0",
   "queue_mode": "stamp-at-merge",
   "changelog": "CHANGELOG.md",
   "stamp_files": [
@@ -17,5 +18,7 @@
     "<!-- gbrain-template-stamp: {version} -->",
     "<!-- gbrain-runbook-stamp: {version} -->"
   ],
+  "stamp_placeholders": ["TBD"],
+  "review_exclude_paths": ["docs/**", "test/fixtures/goldens/**"],
   "migrations": { "dir": "src/core/schema-migrations", "id": "^v(\\d+)-" }
 }

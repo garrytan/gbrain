@@ -13,7 +13,7 @@ import { assertPersistenceAccepting, waitForWrite, writeResponse } from './servi
 import { digest, requireUuid, sha256, stableJson } from './digest.ts';
 import { mergeReconcile, reconcileCanonical, reconcileDecisions, strictReconcileKeys } from './reconcile-merge.ts';
 import { additiveDecisions, assertAutoDecisions, classifyDrift, type AutoDecision, type DriftClassification } from './reconcile-additive.ts';
-import { assertReconcilePins, readReconcileState, reconcilePreviewAdopts, reconcileReadOptions, staleReconcile, validateReconcileArtifact, type ReconcileArtifact, type ReconcileState } from './reconcile-state.ts';
+import { assertReconcilePins, assertReconcileRevision, readReconcileState, reconcilePreviewAdopts, reconcileReadOptions, staleReconcile, validateReconcileArtifact, type ReconcileArtifact, type ReconcileState } from './reconcile-state.ts';
 import { prepareReconcileResult } from './reconcile-prepare.ts';
 import { assertReconcileOutputPath, assertReconcileSize, manageReconcileBackups, retainReconcileBackup } from './reconcile-backup.ts';
 import type { LocalGrant } from './identity.ts';
@@ -116,6 +116,7 @@ export async function runReconcilePreview(engine: BrainEngine, params: Record<st
   const state = await readReconcileState(engine, sourceId, slug, from?.preconditions.assessment_at,
     { adoptSlugPath: params.adopt_slug_path === true || (from !== undefined && reconcilePreviewAdopts(from)) });
   if (from) assertPreimages(from, state);
+  await assertReconcileRevision(engine, state.snapshot, sourceId, slug);
   const database = reconcileCanonical(state.snapshot.page, state.snapshot.tags);
   const classification = auto ? classifyDrift(state.file, database) : undefined;
   let decisions = reconcileDecisions(params.decisions ?? from?.decisions ?? []);
@@ -145,10 +146,16 @@ export async function runReconcilePreview(engine: BrainEngine, params: Record<st
       sha256(serializePageToMarkdown(state.snapshot.page, state.snapshot.tags)) !== state.pins.raw_file_hash,
     result_digest: preview.result_digest, preview };
 }
+/**
+ * Applies one reconcile preview under its request id. `keep_file_bytes` (`repair file-drift --prefer file`) keeps the canonical
+ * file's bytes plus the protected parts the result keeps from the database (`fileWinsContent`), and refuses `file_wins_rewrite`
+ * at prepare when the result needs any other change. #7974: a pending request accepted before that rule prepares under it, so
+ * it refuses `file_wins_rewrite` instead of rendering the result, writes nothing, and the page is previewed again.
+ */
 export async function runReconcileApply(engine: BrainEngine, params: Record<string, unknown>): Promise<Record<string, unknown>> {
   strictReconcileKeys(params, ['source_id', 'slug', 'preview', 'request_id', 'keep_file_bytes'], ['source_id', 'slug', 'preview', 'request_id']);
   if (params.keep_file_bytes !== undefined && params.keep_file_bytes !== true) throw opError('invalid_params', 'keep_file_bytes is true or absent.',
-    'Pass keep_file_bytes: true to leave a canonical file that already holds the resolved result byte for byte, or omit it.');
+    'Pass keep_file_bytes: true to keep the canonical file\'s bytes and add only the protected parts the result keeps from the database (any other change refuses file_wins_rewrite), or omit it.');
   const { sourceId, slug, authority } = await authorizeReconcile(engine, params.source_id, params.slug);
   const artifact = validateReconcileArtifact(params.preview);
   artifact.decisions = reconcileDecisions(artifact.decisions);

@@ -20,7 +20,7 @@
  * it as "no markers, nothing monitored".
  */
 import type { BrainEngine } from '../engine.ts';
-import { localHostId } from '../persistence/identity.ts';
+import { hostIdFor } from '../persistence/identity.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
@@ -286,7 +286,7 @@ export async function recordSyncerHost(engine: Exec, sourceId: string, hostId: s
  * source's syncer, so this host's resident notifier watches it, and clears the markers that head satisfies. Best effort: a sync never fails on it.
  */
 export async function recordLocalSyncer(engine: Exec, sourceId: string): Promise<void> {
-  try { await recordSyncerHost(engine, sourceId, localHostId()); } catch { /* the notifier reports the source as unrecorded */ }
+  try { await recordSyncerHost(engine, sourceId, hostIdFor(engine)); } catch { /* the notifier reports the source as unrecorded */ }
   // The CLI's re-check (GBRA-133 PR 2a.3): a run that reached a marker's head clears it, whoever ran it.
   try { await pruneSatisfiedMarkers(engine, [sourceId]); } catch { /* the residents' marker scan prunes it */ }
 }

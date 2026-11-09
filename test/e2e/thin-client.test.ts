@@ -368,8 +368,11 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
       for (const key of ['slug', 'page_id', 'title', 'type', 'chunk_text', 'chunk_source', 'score', 'evidence', 'source_id', 'stale']) {
         expect(Object.keys(routedRow)).toContain(key);
       }
-      // Full key-set parity local ↔ routed.
-      expect(Object.keys(routedRow).sort()).toEqual(Object.keys(localRow).sort());
+      // Full key-set parity local ↔ routed. The CLI put stamps the page agent-written, so the routed (remote)
+      // read alone returns it quoted and adds `quoted` (GST-687); the local read returns it as stored.
+      expect(routedRow.quoted).toBe('transcript');
+      expect(localRow.quoted).toBeUndefined();
+      expect(Object.keys(routedRow).filter(k => k !== 'quoted').sort()).toEqual(Object.keys(localRow).sort());
     };
     pinRowParity(runs.hostSearch, runs.clientSearch, 'search');
     pinRowParity(runs.hostQuery, runs.clientQuery, 'query');

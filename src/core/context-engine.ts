@@ -22,6 +22,7 @@ import { backupNagReadOnlyConsult, backupNoticeText, loadBackupStatus } from './
 import { estimateMessageTokens, openClawCoreLane } from './context/openclaw-core.ts';
 import { TURN_CONTEXT_ENVELOPE } from './context/turn-context-envelope.ts';
 import { loadContextModule } from './context/load-warning.ts';
+import { hookSessionCwd } from './session-cwd.ts';
 // Types inlined from openclaw/plugin-sdk to avoid hard dependency during development.
 // At runtime inside OpenClaw, the real SDK is available; these types ensure build compat.
 
@@ -967,7 +968,7 @@ export function createGBrainContextEngine(ctx: {
    */
   resolveEntities?: ReflexResolveEntitiesFn;
 }): ContextEngine {
-  const workspaceDir = ctx.workspaceDir ?? process.cwd();
+  const workspaceDir = ctx.workspaceDir ?? hookSessionCwd();
   // Warm the Postgres connection ahead of the first salient turn (no-op for
   // PGLite/host paths). Fire-and-forget; never blocks engine construction.
   warmReflex();

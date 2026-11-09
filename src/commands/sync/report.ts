@@ -110,7 +110,8 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
       write(`  ${result.added} file(s) imported, ${result.chunksCreated} chunks${result.embedded > 0 ? `, ${result.embedded} pages embedded` : ''}`);
       break;
     case 'dry_run':
-      break; // already printed in performSync
+      if (result.managedCursor) write(`Sync dry run${result.toCommit ? ` to ${result.toCommit.slice(0, 8)}` : ''}: would add ${result.added}, modify ${result.modified}, soft-delete ${result.deleted}, rename ${result.renamed}${result.added + result.modified + result.deleted + result.renamed === 0 ? ' (no syncable changes)' : ''}.`);
+      break;
     case 'blocked_by_failures': {
       if (result.runId || (result.pass && result.failures?.length)) {
         write(result.runId ? `Sync BLOCKED at ${result.toCommit}: committed counts are cumulative for run ${result.runId}.`
@@ -120,6 +121,10 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
         write(retries.length
           ? `  Fix the cause, then run: ${retries.join(' ; ')} (this admits a fresh run after active work drains).`
           : '  Fix the cause, then run gbrain sync --no-pull with the same source and options; it retries the recorded failure and admits a fresh run after active work drains.');
+        break;
+      }
+      if (!result.toCommit) {
+        write(`Sync BLOCKED: ${result.failedFiles ?? 0} file(s) failed to import (named above); fix them, then re-run 'gbrain sync'.`);
         break;
       }
       write(`Sync BLOCKED at ${result.toCommit.slice(0, 8)}: ${result.failedFiles ?? 0} file(s) failed.`);

@@ -1,4 +1,4 @@
-import { currentVerifiedLocalWriter, existingLocalHostId, readLocalWriter } from './identity.ts';
+import { currentVerifiedLocalWriter, existingHostIdFor, readLocalWriter } from './identity.ts';
 import type { Principal, SqlEngine, WriteRequest } from './model.ts';
 import type { BrainEngine } from '../engine.ts';
 import { withWriteAttribution } from './context.ts';
@@ -19,6 +19,21 @@ export interface WriteAttribution {
 }
 
 export { withWriteAttribution };
+
+/**
+ * The HTTP MCP request header a caller uses to say which AI made a write ("Claude Code", "Codex", a job name). The
+ * host knows which agent is calling through one credential; gbrain does not. It is a label the caller declares and
+ * gbrain never verifies: it is stored on the write request and shown as `agent_label` by attribution reads, and
+ * nothing that authorizes (grants, access rules, trust tiers) reads it. Not "writer": that word names the principal
+ * and the write owner (persistence_local_writers, `gbrain sources writer`). Stdio and the local CLI have no request
+ * headers and record none; their principal already names the lane.
+ */
+export const AGENT_LABEL_HEADER = 'X-Gbrain-Agent-Label';
+/** A label safe to store and render, or undefined: 1-120 printable ASCII characters after trimming, else dropped. */
+export function parseAgentLabel(value: string | null | undefined): string | undefined {
+  const text = value?.trim();
+  return text && /^[\x20-\x7e]{1,120}$/.test(text) ? text : undefined;
+}
 
 /** A journaled request publishes as itself. */
 export function requestAttribution(row: Pick<WriteRequest, 'id' | 'principal_kind' | 'principal_id'>): WriteAttribution {
@@ -59,7 +74,7 @@ export async function maintenanceAttribution(engine: SqlEngine): Promise<WriteAt
   try { return principalAttribution({ kind: 'local_cli', id: await registration }); }
   catch {
     installationRegistration.delete(engine);
-    return principalAttribution({ kind: 'application', id: `host:${existingLocalHostId() ?? 'unregistered'}` });
+    return principalAttribution({ kind: 'application', id: `host:${existingHostIdFor(engine) ?? 'unregistered'}` });
   }
 }
 const installationRegistration = new WeakMap<SqlEngine, Promise<string>>();

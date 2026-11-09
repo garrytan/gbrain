@@ -6,6 +6,8 @@ import type { ChunkWindowRequest, ChunkWindowOpts, ChunkWindowPage } from './sea
 import type { KeywordPageWindow } from './search/keyword-statement.ts';
 import type { EmbeddingState, EmbeddingStateCounts, EmbeddingStateRow } from './embedding-state.ts';
 import type { DerivedLinkBatchItem, DerivedLinkOrigin, DerivedLinkReplacementOptions } from './derived-links.ts';
+import type { FindPagesQuery, FoundPages } from './page-find.ts';
+import type { PageCountQuery, PageCounts, TypeGrouper } from './page-counts.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
@@ -590,6 +592,8 @@ export interface FactRow {
   /** #5575: the stored trust tier and write origin (absent on brains before the trust migration). */
   trust_tier?: import('./trust/tier.ts').TrustTier;
   write_origin?: Record<string, unknown> | null;
+  /** The typed claim columns (NewFact.claim_*), each set only when the row stores it. */
+  claim_metric?: string | null; claim_value?: number | null; claim_unit?: string | null; claim_period?: string | null;
 }
 
 /**
@@ -708,8 +712,8 @@ export interface FactListOpts {
   excludePrivate?: boolean;
 }
 
-/** FactListOpts plus the entity the recall cursor reads (listFactsSince, listFactsKeyset) narrow to before LIMIT. */
-export type RecallFactReadOpts = FactListOpts & { entitySlug?: string };
+/** FactListOpts plus the entity (and the page the fact sits on) listFactsSince and listFactsKeyset narrow to before LIMIT. */
+export type RecallFactReadOpts = FactListOpts & { entitySlug?: string; sourceMarkdownSlug?: string };
 
 /** Per-source operational health snapshot consumed by `gbrain doctor`. */
 export interface FactsHealth {
@@ -1058,6 +1062,10 @@ export interface BrainEngine {
    * `filters.includeDeleted: true` to surface them.
    */
   listPages(filters?: PageFilters): Promise<Page[]>;
+  /** #7191: live pages whose slug, source path or title matches a find pattern (SQL in engine-sql/page-lookup.ts). */
+  findPages(query: FindPagesQuery): Promise<FoundPages>;
+  /** #7191: live page counts per (source, type), with distinct-slug totals per type group when `groupTypes` is set. */
+  countPagesBy(query: PageCountQuery, groupTypes?: TypeGrouper): Promise<PageCounts>;
   /**
    * Fuzzy slug resolver.
    *
@@ -2364,13 +2372,13 @@ export interface BrainEngine {
    * embeddings; recency fallback otherwise. `arm: 'keyword'` ranks the same
    * bucket by full-text rank instead (C2 `facts.candidate_fusion`).
    * `attributedTo` (the new fact's speaker) drops rows a different known
-   * speaker asserted before the k cap, in every arm; NULL rows stay candidates.
+   * speaker asserted before the k cap, in every arm; NULL rows stay candidates; `excludeMemberPages` drops member pages.
    */
   findCandidateDuplicates(
     source_id: string,
     entitySlug: string,
     factText: string,
-    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; arm?: 'keyword'; attributedTo?: FactAttribution | null },
+    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; arm?: 'keyword'; attributedTo?: FactAttribution | null; excludeMemberPages?: boolean; onlyPage?: string },
   ): Promise<FactRow[]>;
 
   /**
@@ -2437,8 +2445,8 @@ export interface BrainEngine {
    * without it the bare-slug lookup snapshots whichever row Postgres returns
    * first when the slug exists across multiple sources.
    */
-  /** `preimage` (#5984): the caller's own read of the page under its page guard in this transaction; versioned without a re-read. */
-  createVersion(slug: string, opts?: { sourceId?: string; preimage?: PageSnapshot }): Promise<PageVersion>;
+  /** `preimage` (#5984): the caller's own read of the page under its page guard in this transaction; versioned without a re-read. `reason`/`historyGap` (GBRA-217, sync imports): the snapshot's change reason and the page's history-gap marker. */
+  createVersion(slug: string, opts?: { sourceId?: string; preimage?: PageSnapshot } & import('./page-state/versions.ts').VersionHistory): Promise<PageVersion>;
   /**
    * v0.31.8 (D12 + D16): `opts.sourceId` source-scopes the page-id lookup.
    * When omitted, returns versions for every same-slug page across sources

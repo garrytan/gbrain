@@ -18,6 +18,7 @@ import { parseFactsFence } from '../../src/core/facts-fence.ts';
 import { parseTakesFence } from '../../src/core/takes-fence.ts';
 import { FACT_FENCE_KIND, TAKE_FENCE_KIND, fenceOwnerKey, readFenceBlocks } from '../../src/core/generations/fence.ts';
 import { isRegistryCode } from '../../src/core/error-catalogue.ts';
+import { unquoteTranscriptText } from '../../src/core/search/transcript-quote.ts';
 import { CONNECTOR_SLUG, contextFor, retryingRead, type OpDescriptor, type OpKind, type OpObservation, type World } from './ops.ts';
 
 /**
@@ -27,6 +28,8 @@ import { CONNECTOR_SLUG, contextFor, retryingRead, type OpDescriptor, type OpKin
  * robot brains never queue it, so its seam is exercised by the facts drain.
  * links is queued only for remote (untrusted) page writes; its seam is
  * exercised whenever the generator's put_page runs as a remote caller.
+ * withdrawal-mirror is queued only by a pre-G4 database-first withdrawal an
+ * older gbrain wrote; this binary's forget publishes through the git effect.
  */
 export const EFFECT_SEAMS = {
   git: { op: 'put_page', point: EFFECT_FAULT_POINTS.git },
@@ -223,7 +226,9 @@ export class ReferenceModel {
     for (const [i, d] of batch.entries()) {
       const o = observed[i];
       if (o.status !== 'committed' || !o.values.revision) continue;
-      const slug = d.kind === 'connector_publish' ? CONNECTOR_SLUG : String(d.args.slug ?? d.args.entity ?? '');
+      const slug = d.kind === 'connector_publish' ? CONNECTOR_SLUG
+        : d.kind === 'forget' ? this.facts.get(String((o.raw as { id?: unknown } | undefined)?.id ?? ''))?.entity ?? ''
+        : String(d.args.slug ?? d.args.entity ?? '');
       const [seen] = await this.q<{ n: number }>(`SELECT
         (SELECT count(*)::int FROM pages p WHERE p.source_id=$1 AND p.slug=$2 AND p.knowledge_revision::text=$3)
         + (SELECT count(*)::int FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.source_id=$1 AND p.slug=$2 AND v.knowledge_revision::text=$3) AS n`,
@@ -287,8 +292,9 @@ export class ReferenceModel {
   async recall(actor: string, source: string, entity: string): Promise<string[]> {
     try {
       const r = await this.retrying(() => operationsByName.recall.handler(contextFor(this.world, actor, source),
-        { entity, limit: 100, ...(actor === 'local' ? { source_id: source } : {}) })) as { facts?: { fact?: string }[] };
-      return (r.facts ?? []).map(f => String(f.fact ?? ''));
+        { entity, limit: 100, ...(actor === 'local' ? { source_id: source } : {}) })) as { facts?: { id?: number; fact?: string; quoted?: string }[] };
+      // GST-687: a remote reader gets an agent-written fact quoted; the stored text is what the receipt promised.
+      return (r.facts ?? []).map(f => f.quoted ? unquoteTranscriptText(String(f.fact ?? ''), `fact ${f.id}`) : String(f.fact ?? ''));
     } catch { return []; }
   }
 

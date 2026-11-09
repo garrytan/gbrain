@@ -4,6 +4,7 @@ import { isAbsolute, join, resolve as resolvePath } from 'path';
 import { RESOLVER_FILENAMES, hasResolverFile } from './resolver-filenames.ts';
 import { isPathContained } from './path-confine.ts';
 import { parseSkillFrontmatter } from './skill-frontmatter.ts';
+import { hookSessionCwd } from './session-cwd.ts';
 
 /**
  * Walk up from `startDir` looking for a `skills/` directory that
@@ -14,7 +15,7 @@ import { parseSkillFrontmatter } from './skill-frontmatter.ts';
  * `startDir` is parameterized so tests can run hermetically against
  * fixtures. Default matches the prior `doctor.ts`-private implementation.
  */
-export function findRepoRoot(startDir: string = process.cwd()): string | null {
+export function findRepoRoot(startDir: string = hookSessionCwd()): string | null {
   let dir = startDir;
   for (let i = 0; i < 10; i++) {
     if (hasResolverFile(join(dir, 'skills'))) return dir;
@@ -154,7 +155,7 @@ function resolveWorkspaceSkillsDir(
  * `startDir` + `env` params keep tests hermetic.
  */
 export function autoDetectSkillsDir(
-  startDir: string = process.cwd(),
+  startDir: string = hookSessionCwd(),
   env: NodeJS.ProcessEnv = process.env,
 ): SkillsDirDetection {
   // 0. $GBRAIN_SKILLS_DIR explicit operator override. Safe for all callers
@@ -275,7 +276,7 @@ function isGbrainRepoRoot(dir: string): boolean {
  * blast radius to write-path callers.
  */
 export function autoDetectSkillsDirReadOnly(
-  startDir: string = process.cwd(),
+  startDir: string = hookSessionCwd(),
   env: NodeJS.ProcessEnv = process.env,
 ): SkillsDirDetection {
   if (env.GBRAIN_SKILLS_DIR) {

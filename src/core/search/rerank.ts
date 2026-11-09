@@ -68,6 +68,10 @@ function hashQuery(query: string): string {
 
 function classifyRerankFailure(err: unknown): RerankFailureReason {
   if (err instanceof RerankError) return err.reason;
+  // An embedded engine given no provider for this reranker, or a call that entered no scope while one is open
+  // (engine-gateway.ts): nothing was sent, so a skip.
+  const code = (err as { code?: unknown } | null)?.code;
+  if (code === 'engine_scope_missing' || code === 'engine_scope_required') return 'no_key';
   if (
     err instanceof BudgetExhausted ||
     (err && typeof err === 'object' && (err as { tag?: unknown }).tag === 'BUDGET_EXHAUSTED')

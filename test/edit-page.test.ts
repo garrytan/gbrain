@@ -23,6 +23,7 @@ import { materializedPage } from '../src/core/persistence/segmented-apply.ts';
 import { STARTER_OPS } from '../src/mcp/surface.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import type { Page } from '../src/core/types.ts';
+import { unquoteTranscriptText } from '../src/core/search/transcript-quote.ts';
 
 let engine: PGLiteEngine;
 let fixture: string;
@@ -233,6 +234,7 @@ describe('edit_page protected fences and privacy', () => {
     expect(canonicalAfter).toBe(canonicalBefore.replace('Line two to change.', 'Line two, changed.'));
   });
 
+  // GST-687: an agent-written page reaches a remote reader quoted; the edit surface is the content inside the quote fence.
   test('the edit surface is byte-equal to get_page content for remote and local readers', async () => {
     const bodies = ['Plain body.\n', fencedBody(), `${fencedBody()}\n\n<!-- timeline -->\n\n- 2026-01-02 Example entry`,
       `Body.\n\n<!-- timeline -->\n\n${renderTakesFence([{ rowNum: 1, claim: SECRET_TAKE, kind: 'take', holder: 'people/alice-example', weight: 0.5, active: true } as never])}`];
@@ -241,7 +243,10 @@ describe('edit_page protected fences and privacy', () => {
       await seed(slug, body);
       const snapshot = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
       for (const remote of [true, false]) {
-        expect({ slug, remote, view: editableView(snapshot.page as Page, snapshot.tags, remote) }).toEqual({ slug, remote, view: (await read(slug, remote)).content });
+        const content: string = (await read(slug, remote)).content;
+        const unquoted = unquoteTranscriptText(content, slug);
+        expect({ slug, remote, quoted: unquoted !== content }).toEqual({ slug, remote, quoted: remote });
+        expect({ slug, remote, view: editableView(snapshot.page as Page, snapshot.tags, remote) }).toEqual({ slug, remote, view: unquoted });
       }
       expect(serializePageToMarkdown(snapshot.page as Page, snapshot.tags)).toBe((await read(slug, false)).content);
     }

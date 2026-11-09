@@ -66,6 +66,7 @@ function makeCtx(
     name: 'subagent',
     data: { prompt, model: MODEL, max_turns: 4, system: SYSTEM },
     attempts_made: 0,
+    idempotency_key: null,
     signal,
     deadlineAtMs: null,
     shutdownSignal: new AbortController().signal,

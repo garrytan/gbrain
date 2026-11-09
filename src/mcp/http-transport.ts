@@ -32,15 +32,20 @@ import { CAPABILITIES_URI } from './capabilities.ts';
 import { resolveAuthCapabilities } from '../core/harness/capabilities.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
-import { readInstructionContent, resolveMcpInstructions } from './instructions.ts';
+import { MCP_SERVER_DESCRIPTION, readInstructionContent, resolveMcpInstructions } from './instructions.ts';
 import { httpInstructionTools } from './initialize-context.ts';
-import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
+import { ambientOptsFrom } from '../core/facts/writeback-config.ts';
+import { resolveAgentWriteback } from '../core/facts/writeback-settings.ts';
 import { operations, operationsByName, opAllowedForBoundClient } from '../core/operations.ts';
 import { scopeDeniedError } from '../core/ops/op-fix.ts';
+import { ON_BEHALF_OF_HEADER } from '../core/access/audience.ts';
+import { ACTOR_HEADER, QM_AUDIENCE_HEADER, withAttestRight } from '../core/access/actor-model.ts';
+import { parseAgentLabel, AGENT_LABEL_HEADER } from '../core/persistence/attribution.ts';
+import { qmMemoryToolResult } from '../core/ops/qm-memory.ts';
 import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
-import { dispatchToolCall, requestLogStatusForResult, errorResult } from './dispatch.ts';
+import { audienceRefusal, dispatchToolCall, requestLogStatusForResult, errorResult } from './dispatch.ts';
 import { GBRAIN_CLIENT_HEADER, isGbrainThinClient, resolveResultRowsMode, resultRowsForRequest } from './result-rows.ts';
 import { parseStrictParamsMode } from './validate-params.ts';
 import { filterOpsForSurface, clampSurface, advertisedOps, resolveAdvertisedSurface, type McpSurface } from './surface.ts';
@@ -55,6 +60,7 @@ import { redactUrlsInText } from '../core/url-redact.ts';
 import { authSourcesFromGrant, privatePagesAuth } from '../core/grants/model.ts';
 import { resolveTokenGrant, touchTokenLastUsed } from '../core/grants/legacy-token.ts';
 import { storedMinTrust } from '../core/trust/tier.ts';
+import { tokenMemberBinding } from '../core/access/token-binding.ts';
 export { parseLegacyTokenScope } from '../core/legacy-token-scope.ts';
 
 const DEFAULT_BODY_CAP = 1024 * 1024; // 1 MiB
@@ -100,6 +106,8 @@ interface HttpTransportOptions {
 
 interface AuthResult {
   ok: boolean;
+  /** GBRA-218: why a known token was refused (a member binding that cannot read). */
+  code?: 'access_member_disabled';
   tokenId?: string;
   tokenName?: string;
   /** v0.28: per-token allow-list for takes.holder. Default ['world'] when permissions row absent. */
@@ -179,6 +187,25 @@ function resolveClientIp(req: Request, server: { requestIP: (r: Request) => { ad
   return sock?.address || 'unknown';
 }
 
+/** The 401 body for a refused bearer token; GBRA-218 names a member binding that cannot read. */
+function authFailureBody(code: AuthResult['code']): Record<string, string> {
+  return code === 'access_member_disabled'
+    ? { error: 'invalid_token', code, message: 'This token is bound to a member who is disabled, removed or missing. Ask the brain operator to enable the member or rebind the token (gbrain auth rescope --token <name> --member <id>|none).' }
+    : { error: 'invalid_token', message: 'Bearer token required. Create one: gbrain auth create <name>' };
+}
+
+/**
+ * GST-359 D: a request carrying x-qm-audience (QM's channel audience, not served yet) is refused before any work on
+ * every method that reads or runs a tool: tools/call gets the refusal result, the others a JSON-RPC error. Null otherwise.
+ */
+function qmAudienceRefusal(req: Request, body: { method?: string; params?: any; id?: any }, auth: AuthInfo): { log: string; body: Record<string, unknown> } | null {
+  const { method, params, id } = body;
+  if (req.headers.get(QM_AUDIENCE_HEADER) === null || !['tools/list', 'tools/call', 'resources/list', 'resources/read'].includes(method ?? '')) return null;
+  const op = method === 'tools/call' ? String(params?.name ?? 'unknown') : method!;
+  const refused = audienceRefusal(op, { auth, transport: 'http' });
+  return method === 'tools/call' ? { log: `tools/call:${op}`, body: { jsonrpc: '2.0', id, result: refused.result } } : { log: op, body: { jsonrpc: '2.0', id, error: refused.rpc } };
+}
+
 export async function startHttpTransport(opts: HttpTransportOptions) {
   const { port, engine } = opts;
 
@@ -252,7 +279,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       headers['Vary'] = 'Origin';
       if (preflight) {
         headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS';
-        headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept';
+        headers['Access-Control-Allow-Headers'] = `Content-Type, Authorization, Accept, ${AGENT_LABEL_HEADER}`;
       }
     }
     return headers;
@@ -278,12 +305,15 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       // on the legacy shape is converted on this read. Takes holders fail safe
       // to ['world']; #1336 honors the stored source grant.
       const grant = await resolveTokenGrant(sql, row);
+      const binding = await tokenMemberBinding(sql, row.member_id, row.may_act_for).catch(() => null); // GBRA-218 verify join
+      if (!binding) return { ok: false, code: 'access_member_disabled' };
       const allowList = grant.takesHolders ?? ['world'];
       const { sourceId, allowedSources, hasSourceGrant } = authSourcesFromGrant(grant);
       const auth: AuthInfo = {
         token,
         clientId: rowId,
         principal: { kind: 'legacy_token', id: rowId },
+        ...withAttestRight(binding, row, 'legacy'),
         clientName: rowName,
         scopes: grant.scopes,
         sourceId,
@@ -393,10 +423,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       const auth = await validateToken(req.headers.get('Authorization'));
       if (!auth.ok) {
         logRequest(null, 'unknown', 'auth_failed', Date.now() - startedMs);
-        return Response.json(
-          { error: 'invalid_token', message: 'Bearer token required. Create one: gbrain auth create <name>' },
-          { status: 401, headers: corsHeaders(origin) },
-        );
+        return Response.json(authFailureBody(auth.code), { status: 401, headers: corsHeaders(origin) });
       }
 
       // Post-auth token-id rate limit. Limits runaway authed clients.
@@ -425,7 +452,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       }
 
       const { method, params, id } = body;
-
+      const audienceRefused = qmAudienceRefusal(req, body, auth.auth!); if (audienceRefused) { logRequest(auth.tokenName!, audienceRefused.log, 'error', Date.now() - startedMs); return Response.json(audienceRefused.body, { headers: corsHeaders(origin) }); }
       // initialize
       if (method === 'initialize') {
         logRequest(auth.tokenName!, 'initialize', 'success', Date.now() - startedMs);
@@ -436,13 +463,13 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         // extract_facts is advertised only when the resolved surface can
         // actually call it (OV2-14; a verbs/starter-pinned serve must not
         // order agents to call a tool dispatch will deny).
-        const writeback = await resolveWritebackConfig(engine, fileConfig);
+        const writeback = (await resolveAgentWriteback(engine, fileConfig)).bundle;
         const canWriteOp = (name: string) => hasScope(auth.auth!.scopes, 'write') && (!surfaceAllowedOps || surfaceAllowedOps.has(name));
         return Response.json(
           {
             result: {
               protocolVersion: '2025-03-26',
-              serverInfo: { name: 'gbrain', version: VERSION },
+              serverInfo: { name: 'gbrain', version: VERSION, description: MCP_SERVER_DESCRIPTION },
               capabilities: { tools: {}, resources: {} },
               // #4748: contract (+ opt-in writeback section) + deployment identity.
               instructions: resolveMcpInstructions(fileConfig, process.env, {
@@ -517,7 +544,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           // Frozen v1 pair: `error: permission_denied` stays; `code: insufficient_scope`.
           const denial = scopeDeniedError({ op: toolName, required: [op.scope ?? 'read', ...(op.requiredScopes ?? [])], auth: auth.auth,
             transport: 'http', message: `Tool requires ${op.scope ?? 'read'} scope`, legacy_error: 'permission_denied' });
-          return Response.json({ jsonrpc: '2.0', id, result: errorResult(denial, { remote: true, transport: 'http', auth: auth.auth }, { op: toolName }) },
+          return Response.json({ jsonrpc: '2.0', id, result: qmMemoryToolResult(toolName, errorResult(denial, { remote: true, transport: 'http', auth: auth.auth }, { op: toolName })) },
             { headers: corsHeaders(origin) });
         }
         // v0.28: thread per-token takes-holder allow-list so takes_list /
@@ -541,9 +568,9 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           // backstop keys off this marker.
           transport: 'http', inboundFrameBytes: bodyCap,
           takesHoldersAllowList: auth.takesHoldersAllowList,
-          sourceId: auth.sourceId,
-          ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
-          // #1336: thread the token's federated_read grant so read ops scope
+          sourceId: auth.sourceId, agentLabel: parseAgentLabel(req.headers.get(AGENT_LABEL_HEADER)),
+          ...(localFederated ? { localFederatedSourceIds: localFederated } : {}), onBehalfOf: { header: req.headers.get(ON_BEHALF_OF_HEADER) ?? undefined, requestMeta: params?._meta }, mcpCaller: { client: auth.auth?.clientName, userAgent: req.headers.get('user-agent') ?? undefined, meta: params?._meta },
+          actor: { header: req.headers.get(ACTOR_HEADER) ?? undefined, audience: req.headers.get(QM_AUDIENCE_HEADER) ?? undefined }, // #1336: thread the token's federated_read grant so read ops scope
           // to the operator-granted sources via sourceScopeOpts.
           auth: auth.auth,
           // MEMORY_VERBS v1 [c1/c2]: fail-closed surface enforcement here too.

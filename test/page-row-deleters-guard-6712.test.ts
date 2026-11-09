@@ -39,6 +39,7 @@ const REVIEWED: Record<string, { count: number; why: string }> = {
   'src/core/github-source.ts': { count: 2, why: 'GitHub connector source, not a managed Git checkout' },
   'src/core/google/google-source.ts': { count: 1, why: 'Google connector source' },
   'src/core/google/sweep-shared.ts': { count: 1, why: 'Google connector sweep' },
+  'src/core/connectors/api-source.ts': { count: 1, why: 'Fireflies/Slack connector source, unmanaged only; a managed source deletes through ManagedConnectorSync' },
 };
 
 function scan(pattern: RegExp): Map<string, number[]> {

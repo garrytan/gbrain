@@ -19,7 +19,7 @@ import { cliRenderContext, renderAction, type Action, type RenderedAction } from
 import { claimStateOf } from './claim-phase.ts';
 import { isTerminal, type RequestState } from './model.ts';
 import { sha256 } from './digest.ts';
-import { claimableWriteSql, EARLIER_HEAD, foregroundPrioritySql, SYNC_KIND } from './journal.ts';
+import { claimableWriteSql, EARLIER_DEFERRED, EARLIER_HEAD, foregroundPrioritySql, SYNC_KIND } from './journal.ts';
 import { BACKOFF_ELAPSED } from './transient-retry.ts';
 import { recoveryUpgradeFix, recoveryVersionKnown, type RecoveryTable } from './recovery-version.ts';
 
@@ -110,7 +110,7 @@ export async function readHeadBlockers(engine: BrainEngine, ids: string[], hostI
       (SELECT jsonb_agg(${REQUEST_RECOVERY('b')} ORDER BY b.sequence) FROM persistence_requests b WHERE b.worktree_id=r.worktree_id AND b.recovery IS NOT NULL) AS request_recovery,
       (SELECT jsonb_agg(${REF('e')} ORDER BY e.sequence) FROM persistence_requests e
         WHERE ((r.worktree_id IS NOT NULL AND e.worktree_id=r.worktree_id) OR (r.worktree_id IS NULL AND e.worktree_id IS NULL AND e.source_incarnation=r.source_incarnation))
-        AND ${EARLIER_HEAD('e', 'r', priority, "'{}'::text[]")}) AS earlier,
+        AND (${EARLIER_HEAD('e', 'r', priority, "'{}'::text[]")} OR ${EARLIER_DEFERRED('e', 'r')})) AS earlier,
       (SELECT jsonb_agg(${REF('a')} ORDER BY a.sequence) FROM persistence_requests a WHERE (${priority}) AND ${SYNC_KIND('r')}
         AND a.worktree_id=r.worktree_id AND a.sequence>r.sequence AND a.state IN ('running','recovering') AND NOT ${SYNC_KIND('a')}) AS ahead
     FROM persistence_requests r LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id
@@ -261,8 +261,8 @@ export async function describeHostConsumer(engine: BrainEngine, opts: { signal?:
     const status = persistenceConsumerStatus(engine) as { state: string; consumer_election?: { mode: string } };
     const mode = status.consumer_election?.mode ?? (status.state === 'open' ? 'full' : null);
     if (mode === 'full' || mode === 'promoted') return `self(${mode})`;
-    const { existingLocalHostId } = await import('./identity.ts');
-    const host = existingLocalHostId();
+    const { existingHostIdFor } = await import('./identity.ts');
+    const host = existingHostIdFor(engine);
     const { listHostConsumers } = await import('./consumer-heartbeat.ts');
     const rows = host ? await listHostConsumers(engine, host, opts) : [];
     const owner = rows.find(row => !row.self && (row.mode === 'full' || row.mode === 'promoted') && row.liveness === 'live');

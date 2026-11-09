@@ -203,7 +203,8 @@ export function clearSharedTypes(...pools: unknown[]): void {
  * it) in the same round trip and loads them; a database without a `config`
  * table falls back to `SELECT 1`.
  */
-export async function checkPoolAndLoadSharedTypes(pool: ReturnType<typeof postgres>, url: string): Promise<void> {
+/** `persisted: false` (an engine opened from settings) keeps the shared descriptions in this process and reads no file under the home. */
+export async function checkPoolAndLoadSharedTypes(pool: ReturnType<typeof postgres>, url: string, opts: { persisted?: boolean } = {}): Promise<void> {
   let rows: Array<{ server: string; schema: string | null; database: string | null }>;
   try {
     rows = await pool.unsafe(`SELECT current_setting('server_version_num') AS server, (SELECT value FROM config WHERE key='version') AS schema,
@@ -213,7 +214,7 @@ export async function checkPoolAndLoadSharedTypes(pool: ReturnType<typeof postgr
     await pool`SELECT 1`;
     return;
   }
-  loadSharedParameterTypes(url, String(rows[0]?.server ?? ''), rows[0]?.schema ?? null, rows[0]?.database ?? null);
+  if (opts.persisted !== false) loadSharedParameterTypes(url, String(rows[0]?.server ?? ''), rows[0]?.schema ?? null, rows[0]?.database ?? null);
 }
 
 /**

@@ -112,7 +112,7 @@ const whois: Operation = {
     + 'Never fuzzy: empty matches means no exact match; ambiguous means several.',
   params: {
     query: { type: 'string', required: true, description: "Email address or name, e.g. 'alice@acme-example.com'." },
-    types: { type: 'array', items: { type: 'string' }, description: "Page types; default: the schema pack's entity types." },
+    types: { type: 'array', minItems: 1, items: { type: 'string' }, description: "Page types; default: the schema pack's entity types." },
     source_id: { type: 'string', description: "One source; '__all__' spans your sources." },
   },
   handler: async (ctx, p) => {

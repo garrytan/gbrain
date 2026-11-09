@@ -22,7 +22,7 @@ export const WRITER_HELP = `Usage:
   gbrain sources writer retry-effects <source> --request-id <uuid> [--admin-intent writer_retry_effects --expected-state <admin_state>] [--dry-run] [--json]
   gbrain sources writer retry-effects <source> --parked-pushes [--dry-run] [--json]
   gbrain sources writer retry-effects <source> --parked-code <code> [--dry-run] [--json]
-  gbrain sources writer settle-effects <source> --request-id <uuid>|--parked-code <code> [--unsettle] [--dry-run | --apply --expect <plan_hash>] [--json]
+  gbrain sources writer settle-effects <source> --request-id <uuid>|--parked-code <code> [--unsettle | --retire] [--dry-run | --apply --expect <plan_hash>] [--json]
   gbrain sources writer git-durability <source> --enable|--disable [--pat-file <path>] [administration options] [--dry-run] [--json]
   gbrain sources writer claim <source> --path <directory> [administration options] [--dry-run] [--json]
   gbrain sources writer activate --confirm-quiesced [--cleanup-dead-local-locks] [--shared-skills] [administration options] [--dry-run] [--json]
@@ -111,6 +111,9 @@ former canonical worktree and the fetched remote branch holds the current bytes 
 effect wrote (nothing is fetched). The failure, request and target bytes are kept; doctor and
 retries skip settled effects. Preview first; --apply needs the preview's --expect <plan_hash>.
 --unsettle (previewed and plan-bound the same way) reverses a settlement; both stay in history.
+--retire settles an effect of a former binding that nothing current owes: its source was replaced,
+or each target's page is gone, deleted or past the revision the effect owed; a page still at that
+revision is refused (write it through gbrain, then preview again). Ask the user first.
 lock sets an opt-in, brain-level writer admin lock (config key persistence.writer_admin_lock)
 and unlock clears it; both are local-only, idempotent and print the resulting state.
 While locked, writer claim, activate and transfer (prepare, accept and cancel) are refused with
@@ -152,7 +155,7 @@ export function adminHostConfig<T extends GBrainConfig>(config: T | null | undef
 
 type Group = 'writer' | 'local-writer';
 const GROUP_ARGV: Record<Group, string[]> = { writer: ['gbrain', 'sources', 'writer'], 'local-writer': ['gbrain', 'auth', 'local-writer'] };
-const BARE_FLAGS = ['--json', '--dry-run', '--replace', '--probe', '--confirm-quiesced', '--self-transfer', '--confirm-relocated-root', '--cleanup-dead-local-locks', '--shared-skills', '--enable', '--disable', '--parked-pushes', '--apply', '--unsettle'];
+const BARE_FLAGS = ['--json', '--dry-run', '--replace', '--probe', '--confirm-quiesced', '--self-transfer', '--confirm-relocated-root', '--cleanup-dead-local-locks', '--shared-skills', '--enable', '--disable', '--parked-pushes', '--apply', '--unsettle', '--retire'];
 /** A CLI usage refusal: the exact usage in the suggestion, the group's help as the read-only fix. */
 function invalid(group: Group, message: string, suggestion: string) {
   return opError('invalid_params', message, suggestion, {

@@ -260,7 +260,8 @@ function transientDelay(error: unknown, attempt: number, refreshWaitedMs: number
   if (error instanceof OperationError && error.code === 'worktree_refreshing') {
     if (refreshWaitedMs >= REFRESH_WAIT_MS) return null;
     const hinted = Number(/retry_after_ms=(\d+)/.exec(String(error.detail ?? ''))?.[1]);
-    return Number.isFinite(hinted) && hinted > 0 ? hinted : 1000;
+    // GST-1623: never past the drain's refresh budget, so a long hint ends the wait on time instead of oversleeping it.
+    return Math.min(Number.isFinite(hinted) && hinted > 0 ? hinted : 1000, REFRESH_WAIT_MS - refreshWaitedMs);
   }
   // Admission gave up on lock contention (a concurrent publication holds the shared counters); the frozen request ID is kept.
   if (error instanceof OperationError && error.detail === 'database_contention') return refreshWaitedMs >= REFRESH_WAIT_MS ? null : 1000;
@@ -269,6 +270,9 @@ function transientDelay(error: unknown, attempt: number, refreshWaitedMs: number
   if (!contention && !isRetryableConnError(error) && !isStatementTimeoutError(error) && getCode(error) !== '57014') return null;
   return baseMs * 4 ** (attempt - 1);
 }
+
+/** Test seam: the drain's retry delay for one failed pass. */
+export const _transientDelayForTests = transientDelay;
 
 /** The error's message (or code), with anything that looks like a connection URL removed. */
 function errorText(error: unknown): string {
@@ -370,10 +374,24 @@ function stallText(index: number, total: number | null, stalledMs: number, claim
     + `${seen.consumer ? ` · consumer=${seen.consumer}` : ''}${seen.blocked_by ? ` · blocked_by=${headBlockerText(seen.blocked_by)}` : ''}`;
 }
 
+/**
+ * The in-pass line's age of an unclaimed head. A head that moved since the last read is the writer making progress (it
+ * commits requests queued ahead of this pass, a dead owner's in-flight writes among them), so the age counts from that
+ * read, never from before `floor` (the drain's own last commit). Every head read feeds it, a claimed head's included,
+ * whose line keeps the claim's own step age when it has one.
+ */
+function inPassHeadAge(): (requestId: string | null | undefined, at: number, floor: number, claimAgeMs?: number | null) => number {
+  let seen: { id: string | null | undefined; at: number; since: number } | null = null;
+  return (id, at, floor, claimAgeMs) => {
+    seen = { id, at, since: seen && seen.id !== id ? seen.at : seen?.since ?? floor };
+    return claimAgeMs ?? at - Math.max(floor, seen.since);
+  };
+}
+
 /** Re-enter `pass` until the managed cursor is done, the caller stops it, or it is blocked. */
 export async function runDrain(input: DrainInput): Promise<SyncResult> {
   const clock = input.clock ?? Date.now;
-  const startedAt = clock();
+  const startedAt = clock(), headAge = inPassHeadAge();
   const coop = cooperativeDeadline(input.deadlineAtMs);
   const signal = coop.signal && input.signal ? AbortSignal.any([input.signal, coop.signal]) : coop.signal ?? input.signal;
   /** #6706: the drain's own deadline (not the caller's cancellation) stopped it, so the stop is a resumable report. */
@@ -409,7 +427,7 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
     Promise.resolve().then(() => probe.head!()).then(head => {
       if (!head || !inPass || stall || clock() - lastCommitAt < every || tickAt - lastLine < every) return;
       lastLine = tickAt;
-      serr(stallText(index, total, head.claim?.step_age_ms ?? clock() - lastCommitAt, head.claim, head.head_state, head));
+      serr(stallText(index, total, headAge(head.request_id, clock(), lastCommitAt, head.claim?.step_age_ms), head.claim, head.head_state, head));
     }).catch(() => undefined).finally(() => { readingHead = false; });
   }, every) : null;
   stallLine?.unref?.();
@@ -740,8 +758,8 @@ export function engineStallProbe(engine: BrainEngine, sourceId?: string): StallP
   };
   let budgets: Promise<{ syncMs: number; maintenanceMs: number; ceilingMs: number }> | undefined;
   const describe = async (requestId: string, row: NonNullable<Awaited<ReturnType<typeof read>>>['row']): Promise<Omit<DrainStall, 'stalled_seconds'>> => {
-    const { localHostId } = await import('./identity.ts');
-    const host = localHostId();
+    const { hostIdFor } = await import('./identity.ts');
+    const host = hostIdFor(engine);
     return { request_id: requestId, state: row.state, blocked_reason: row.blocked_reason, head_request_id: row.head_id, head_state: row.head_state,
       ...await headClaimability(engine, { id: row.head_id, state: row.head_state }, host, { timeoutMs: HEAD_READ_TIMEOUT_MS }), consumer: await describeHostConsumer(engine),
       owner_is_this_host: row.owner_host_id === null ? null : row.owner_host_id === host };
@@ -767,18 +785,18 @@ export function engineStallProbe(engine: BrainEngine, sourceId?: string): StallP
     // #6317: the owner's heartbeat row by pid (and nonce when both sides have one); a consumer here that could reclaim a lapsed head.
     async owner(claim) {
       if (claim.owner_pid === null) return null;
-      const { localHostId } = await import('./identity.ts');
+      const { hostIdFor } = await import('./identity.ts');
       const { listHostConsumers } = await import('./consumer-heartbeat.ts');
-      const rows = await listHostConsumers(engine, localHostId()).catch(() => []);
+      const rows = await listHostConsumers(engine, hostIdFor(engine)).catch(() => []);
       const row = rows.find(r => r.pid === claim.owner_pid && (claim.owner_nonce === null || r.nonce === claim.owner_nonce));
       return row ? { kind: row.kind, pid: row.pid, nonce: row.nonce, mode: row.mode, live: row.liveness === 'live', restart_required: row.restart_required, root_barrier_age_ms: row.root_barrier_age_ms } : null;
     },
     async reclaimableHere() {
       const { persistenceConsumerStatus } = await import('./service.ts');
       if (persistenceConsumerStatus(engine).state === 'open') return true;
-      const { localHostId } = await import('./identity.ts');
+      const { hostIdFor } = await import('./identity.ts');
       const { listHostConsumers } = await import('./consumer-heartbeat.ts');
-      return (await listHostConsumers(engine, localHostId()).catch(() => [])).some(row => (row.mode === 'full' || row.mode === 'promoted') && row.liveness === 'live');
+      return (await listHostConsumers(engine, hostIdFor(engine)).catch(() => [])).some(row => (row.mode === 'full' || row.mode === 'promoted') && row.liveness === 'live');
     },
     ...(sourceId ? { async head() {
       const [row] = await engine.executeRaw<{ head_state: string; head_claim_phase: unknown; head_token: string | null; head_lapsed: boolean | null; head_kind: string | null; head_request_id: string | null;
@@ -791,10 +809,10 @@ export function engineStallProbe(engine: BrainEngine, sourceId?: string): StallP
            WHERE e.worktree_id = b.worktree_id AND e.state IN ('queued','running','recovering') ORDER BY (e.state <> 'running'), e.sequence LIMIT 1) h ON true
          WHERE b.source_id = $1`, [sourceId], { timeoutMs: HEAD_READ_TIMEOUT_MS, signal: AbortSignal.timeout(HEAD_READ_TIMEOUT_MS + 500) });
       if (!row) return null;
-      const { localHostId } = await import('./identity.ts');
+      const { hostIdFor } = await import('./identity.ts');
       const bound = { timeoutMs: HEAD_READ_TIMEOUT_MS, signal: AbortSignal.timeout(HEAD_READ_TIMEOUT_MS + 500) };
       return { head_state: row.head_state, request_id: row.head_request_id, write_request_id: row.head_write_request_id, claim: drainClaimOf(row, await (budgets ??= readPreparationBudgets(engine))),
-        ...await headClaimability(engine, { id: row.head_request_id, state: row.head_state }, localHostId(), bound), consumer: await describeHostConsumer(engine, { signal: bound.signal }) };
+        ...await headClaimability(engine, { id: row.head_request_id, state: row.head_state }, hostIdFor(engine), bound), consumer: await describeHostConsumer(engine, { signal: bound.signal }) };
     } } : {}),
   };
 }

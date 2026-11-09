@@ -17,7 +17,7 @@ import { assertPersistenceAccepting, waitForWrite, writeResponse } from '../pers
 import { digest, requireUuid, sha256, stableJson } from '../persistence/digest.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteAuthority, WriteRequest } from '../persistence/model.ts';
-import { localHostId } from '../persistence/identity.ts';
+import { hostIdFor } from '../persistence/identity.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
 import { requestAttribution } from '../persistence/attribution.ts';
 import { normalizeSkillFiles, skillMetadata, skillName, skillPath } from './manifest.ts';
@@ -88,7 +88,7 @@ async function sourceRoot(engine: BrainEngine, sourceId: string, incarnation: st
       `Source ${sourceId} has no active designated canonical owner at this incarnation, so nothing was published. The brain host's operator inspects it with gbrain sources writer status --source ${sourceId} --json; claiming ownership is their decision.`,
       { fix: ownerStatusFix(sourceId, ctx) });
   }
-  if (binding.owner_host_id !== localHostId() || !binding.local_path) {
+  if (binding.owner_host_id !== hostIdFor(engine) || !binding.local_path) {
     throw opError('owner_unavailable', 'The designated owner must prepare this publication.',
       `Source ${sourceId}'s canonical owner is another host (or has no local checkout here), so publish through that host or a connection to its gbrain server. gbrain sources writer status --source ${sourceId} --json names the owner.`,
       { fix: ownerStatusFix(sourceId, ctx) });
@@ -602,7 +602,8 @@ export async function adoptSharedSkillpack(ctx: OperationContext, sourceId: stri
     throw opError('invalid_params', 'No declared skill bundle is available to adopt.',
       `Source ${sourceId}'s skillpack.json declares no skills. Add its skills/ entries to the manifest (or pass the skills explicitly), then adopt again.`);
   }
-  const seed = digest({ request: options.request_id ?? inputs.map(({ expected_revision: _revision, ...input }) => input), sourceId, incarnation: source.incarnation, packId });
+  const payload = inputs.map(({ expected_revision: _revision, ...input }) => input);
+  const seed = digest({ request: options.request_id === undefined ? payload : { id: options.request_id, payload, initial_files: options.initial_files ?? null }, sourceId, incarnation: source.incarnation, packId });
   const requestId = `${seed.slice(0, 8)}-${seed.slice(8, 12)}-4${seed.slice(13, 16)}-a${seed.slice(17, 20)}-${seed.slice(20, 32)}`;
   await initializeLocalPersistence(ctx);
   const prior = await getWriteRequest(ctx.engine, await requestPrincipalForContext(ctx), requestId);

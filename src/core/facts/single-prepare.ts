@@ -10,6 +10,9 @@ import { readSupersessionThreshold } from './supersession-threshold.ts';
 import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
 import { pageNotVisibleError } from '../persistence/page-visibility.ts';
 import { slugUnderBoundPrefixes } from '../ops/context.ts';
+import { ownedPageWithdrawalSubject, onOwnedMemoryPageSql, withdrawalCoversFactSql } from '../access/member-facts.ts';
+import { UNATTRIBUTED_MEMORY_SLUG } from './extract-from-fence.ts';
+import { sameClaimSlot } from './typed-claim.ts';
 
 export type FactCandidate = FactRow & { source_markdown_slug: string | null; row_num: number | null };
 export interface FactDecision { status: 'inserted' | 'duplicate' | 'superseded'; candidate: FactCandidate | null; }
@@ -17,6 +20,14 @@ export interface SingleFactIntent {
   fact: string; kind: FactRow['kind']; visibility: FactRow['visibility']; entity_slug: string | null;
   /** Speaker of the new claim; a fact another known speaker asserted is never its duplicate. */
   attributed_to?: FactAttribution | null;
+  /**
+   * GST-359 C2: the member page a member's fact goes to (access/member-facts.ts). Its duplicates and supersession
+   * candidates are only facts on that page (the writer's own, so the readers filter is not applied to them); a write
+   * with no page_slug never matches a fact on any member page.
+   */
+  page_slug?: string;
+  /** A typed new fact's claim slot (remember): it never supersedes a typed fact in another slot (typed-claim.ts sameClaimSlot). Unset (untyped): not checked. */
+  slot?: { claim_metric: string | null; claim_unit: string | null; claim_period: string | null; valid_from: Date | string };
 }
 /** Preparation time kept back after the embed (a quarter of what is left, at most this): the dedup reads still run. */
 const EMBED_RESERVE_MS = 5_000;
@@ -45,7 +56,7 @@ export async function prepareFactEmbedding(fact: string, signal?: AbortSignal, d
  */
 export async function assertFactNotWithdrawn(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean } = {}): Promise<void> {
   await assertFactNotPurged(engine, sourceId, input);
-  if (await isFactWithdrawn(engine, sourceId, input.visibility, input.fact, input.entity_slug)) throw await factWithdrawnRefusal(engine, sourceId, input, opts);
+  if (await isFactWithdrawn(engine, sourceId, input.visibility, input.fact, input.entity_slug, ownedPageWithdrawalSubject(input.page_slug))) throw await factWithdrawnRefusal(engine, sourceId, input, opts);
 }
 
 /**
@@ -54,27 +65,29 @@ export async function assertFactNotWithdrawn(engine: BrainEngine, sourceId: stri
  * (or that no row backs). It covers the exact normalized claim only.
  */
 export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean } = {}): Promise<OperationError> {
+  // GST-359 D: a member writing to its own member page sees that page's withdrawn rows.
+  const seen = (param: number) => `(${privateProvenanceFilterFragment('f')} OR COALESCE(f.source_markdown_slug = $${param}::text, false))`;
   if (opts.excludePrivate) {
     const [backing] = await engine.executeRaw<{ visible: boolean; hidden: boolean }>(`SELECT
-        COALESCE(bool_or(${privateProvenanceFilterFragment('f')}), false) AS visible,
-        COALESCE(bool_or(NOT (${privateProvenanceFilterFragment('f')})), false) AS hidden
+        COALESCE(bool_or(${seen(5)}), false) AS visible,
+        COALESCE(bool_or(NOT ${seen(5)}), false) AS hidden
       FROM facts f JOIN fact_withdrawals w ON w.source_id=f.source_id AND w.visibility=f.visibility
         AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
-        AND (w.subject='*' OR w.subject=COALESCE(f.entity_slug,'*'))
+        AND ${withdrawalCoversFactSql('w', 'f')}
       WHERE f.source_id=$1 AND f.visibility=$2 AND f.expired_at IS NOT NULL
-        AND gbrain_fact_fingerprint(f.fact)=gbrain_fact_fingerprint($3) AND (w.subject='*' OR w.subject=$4::text)`,
-    [sourceId, input.visibility, input.fact, input.entity_slug]);
+        AND gbrain_fact_fingerprint(f.fact)=gbrain_fact_fingerprint($3) AND (w.subject='*' OR w.subject=$4::text OR w.subject=$5::text)`,
+    [sourceId, input.visibility, input.fact, input.entity_slug, ownedPageWithdrawalSubject(input.page_slug)]);
     if (backing?.hidden && !backing.visible) return pageNotVisibleError();
   }
   const [row] = await engine.executeRaw<{ subject: string; withdrawn_at: string; visibility: 'world' | 'private' }>(`SELECT w.subject,w.visibility,w.withdrawn_at::text AS withdrawn_at
     FROM fact_withdrawals w LEFT JOIN facts f ON f.source_id=w.source_id AND f.visibility=w.visibility AND f.expired_at IS NOT NULL
-      AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact)) AND (w.subject='*' OR w.subject=COALESCE(f.entity_slug,'*'))
+      AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact)) AND ${withdrawalCoversFactSql('w', 'f')}
     WHERE w.source_id=$1 AND w.visibility=$2 AND w.fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
-      AND (w.subject='*' OR w.subject=$4::text)
+      AND (w.subject='*' OR w.subject=$4::text OR w.subject=$6::text)
     GROUP BY w.subject,w.visibility,w.withdrawn_at
-    HAVING $5::boolean=false OR COALESCE(bool_or(${privateProvenanceFilterFragment('f')}), false) OR NOT COALESCE(bool_or(f.id IS NOT NULL), false)
+    HAVING $5::boolean=false OR COALESCE(bool_or(${seen(6)}), false) OR NOT COALESCE(bool_or(f.id IS NOT NULL), false)
     ORDER BY (w.subject<>'*') DESC, w.withdrawn_at DESC LIMIT 1`,
-  [sourceId, input.visibility, input.fact, input.entity_slug, opts.excludePrivate === true]);
+  [sourceId, input.visibility, input.fact, input.entity_slug, opts.excludePrivate === true, ownedPageWithdrawalSubject(input.page_slug)]);
   const error = verbError('invalid_params', FACT_WITHDRAWN_MESSAGE, FACT_WITHDRAWN_SUGGESTION);
   if (row) error.withdrawn = { at: new Date(row.withdrawn_at).toISOString(), subject: row.subject === '*' ? 'all_entities' : row.subject, visibility: row.visibility };
   return error;
@@ -99,11 +112,11 @@ export async function readCandidateFusion(engine: BrainEngine): Promise<Candidat
  * under `interleave` the cosine and keyword arms merged round-robin by fact id
  * and cut to the same k, so the decision still scores at most k rows.
  */
-export async function listSupersessionCandidates(engine: BrainEngine, sourceId: string, entitySlug: string, fact: string, embedding: Float32Array, embeddingModel?: string | null, fusion?: CandidateFusion, attributedTo?: FactAttribution | null): Promise<FactRow[]> {
+export async function listSupersessionCandidates(engine: BrainEngine, sourceId: string, entitySlug: string, fact: string, embedding: Float32Array, embeddingModel?: string | null, fusion?: CandidateFusion, attributedTo?: FactAttribution | null, scope: { excludeMemberPages?: boolean; onlyPage?: string } = {}): Promise<FactRow[]> {
   const k = SUPERSESSION_CANDIDATE_K;
-  const cosine = await engine.findCandidateDuplicates(sourceId, entitySlug, fact, { embedding, embeddingModel, k, attributedTo });
+  const cosine = await engine.findCandidateDuplicates(sourceId, entitySlug, fact, { embedding, embeddingModel, k, attributedTo, ...scope });
   if ((fusion ?? await readCandidateFusion(engine)) !== 'interleave') return cosine;
-  const keyword = await engine.findCandidateDuplicates(sourceId, entitySlug, fact, { embedding, embeddingModel, k, arm: 'keyword', attributedTo });
+  const keyword = await engine.findCandidateDuplicates(sourceId, entitySlug, fact, { embedding, embeddingModel, k, arm: 'keyword', attributedTo, ...scope });
   return interleaveFusion([cosine, keyword], row => row.id, k);
 }
 
@@ -115,13 +128,16 @@ export async function decideSingleFact(engine: BrainEngine, sourceId: string, in
   const [exact] = await engine.executeRaw<FactCandidate>(`SELECT * FROM facts WHERE source_id=$1
     AND entity_slug IS NOT DISTINCT FROM $2 AND visibility=$3 AND expired_at IS NULL
     AND (valid_until IS NULL OR valid_until>now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($4)
-    AND ($5::text IS NULL OR attributed_to IS NULL OR attributed_to=$5)${opts.excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}
-    ORDER BY id LIMIT 1`, [sourceId, input.entity_slug, input.visibility, input.fact, input.attributed_to ?? null]);
+    AND ($5::text IS NULL OR attributed_to IS NULL OR attributed_to=$5)${opts.excludePrivate && !input.page_slug ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}
+    AND ${input.page_slug ? 'source_markdown_slug=$6' : `($6::text IS NULL AND NOT ${onOwnedMemoryPageSql('facts')})`}
+    ORDER BY id LIMIT 1`, [sourceId, input.entity_slug, input.visibility, input.fact, input.attributed_to ?? null, input.page_slug ?? null]);
   if (exact) return { status: 'duplicate', candidate: { ...exact, id: Number(exact.id) } };
   if (embedding && input.entity_slug) {
-    const candidates = await listSupersessionCandidates(engine, sourceId, input.entity_slug, input.fact, embedding, embeddingModel, undefined, input.attributed_to ?? null);
-    const metadata = await engine.executeRaw<{ id: number; source_markdown_slug: string | null; row_num: number | null; trust_tier: FactRow['trust_tier'] }>(
-      `SELECT id,source_markdown_slug,row_num,trust_tier FROM facts WHERE source_id=$1 AND id=ANY($2::int[])${opts.excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`,
+    const candidates = await listSupersessionCandidates(engine, sourceId, input.entity_slug, input.fact, embedding, embeddingModel, undefined, input.attributed_to ?? null,
+      input.page_slug ? { onlyPage: input.page_slug } : { excludeMemberPages: true });
+    const metadata = await engine.executeRaw<{ id: number; source_markdown_slug: string | null; row_num: number | null; trust_tier: FactRow['trust_tier'];
+      claim_metric: string | null; claim_unit: string | null; claim_period: string | null }>(
+      `SELECT id,source_markdown_slug,row_num,trust_tier,claim_metric,claim_unit,claim_period FROM facts WHERE source_id=$1 AND id=ANY($2::int[])${opts.excludePrivate && !input.page_slug ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`,
       [sourceId, candidates.map(c => c.id)]);
     let candidate: FactCandidate | null = null;
     let score = -1;
@@ -133,7 +149,8 @@ export async function decideSingleFact(engine: BrainEngine, sourceId: string, in
       // side effect. Cross-page supersession requires a separate multi-page op.
       if (!c.embedding || c.visibility !== input.visibility || c.expired_at ||
         c.valid_until && new Date(c.valid_until).getTime() <= Date.now() ||
-        c.source_markdown_slug && c.source_markdown_slug !== input.entity_slug) continue;
+        (input.page_slug ? c.source_markdown_slug !== input.page_slug : c.source_markdown_slug && c.source_markdown_slug !== input.entity_slug) ||
+        input.slot && c.claim_metric && !sameClaimSlot(input.slot, c)) continue;
       const next = cosineSimilarity(embedding, c.embedding);
       if (next > score) { score = next; candidate = c; }
     }
@@ -171,14 +188,17 @@ export async function replacementVisibility(engine: BrainEngine, sourceId: strin
  */
 export async function decideReplacement(engine: BrainEngine, sourceId: string, input: SingleFactIntent, targetId: number,
   opts: { pageSlug: string; remote: boolean; lock?: boolean; excludePrivate?: boolean; slugPrefixes?: string[] | null }): Promise<FactDecision> {
+  // GST-359: a member's write may replace a fact on its own member page (the page this write goes to), private or not.
+  const ownPage = input.page_slug && input.page_slug === opts.pageSlug ? input.page_slug : null;
   const notFound = () => verbError('not_found', `No fact with id "${targetId}" to replace.`,
     'Pass the fact_id of an active fact from recall (facts[].fact_id) about the same entity, or omit replaces to save a new fact.');
   const [target] = await engine.executeRaw<FactCandidate & { withdrawn: boolean }>(`SELECT f.*,
       EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
         AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
-        AND (w.subject='*' OR w.subject=COALESCE(f.entity_slug,'*'))) AS withdrawn
-    FROM facts f WHERE f.id=$1 AND f.source_id=$2${opts.excludePrivate ? ` AND ${privateProvenanceFilterFragment('f')}` : ''}${opts.lock ? ' FOR UPDATE OF f' : ''}`, [targetId, sourceId]);
-  if (!target || (opts.remote && target.visibility !== 'world')) throw notFound();
+        AND ${withdrawalCoversFactSql('w', 'f')}) AS withdrawn
+    FROM facts f WHERE f.id=$1 AND f.source_id=$2${!opts.excludePrivate ? '' : ownPage ? ` AND (f.source_markdown_slug = $3 OR ${privateProvenanceFilterFragment('f')})` : ` AND ${privateProvenanceFilterFragment('f')}`}${opts.lock ? ' FOR UPDATE OF f' : ''}`,
+    opts.excludePrivate && ownPage ? [targetId, sourceId, ownPage] : [targetId, sourceId]);
+  if (!target || (opts.remote && target.visibility !== 'world' && !(ownPage && target.source_markdown_slug === ownPage))) throw notFound();
   // #5913 [R2]: a slug-bound writer learns nothing about a fact outside its prefixes; the answer is the missing-id one.
   if (opts.slugPrefixes && [target.entity_slug, target.source_markdown_slug].some(slug => slug && !slugUnderBoundPrefixes(opts.slugPrefixes!, slug))) throw notFound();
   if (target.visibility !== input.visibility) {
@@ -203,7 +223,9 @@ export async function decideReplacement(engine: BrainEngine, sourceId: string, i
     throw verbError('invalid_params', `replaces_entity_mismatch: fact #${targetId} is about ${target.entity_slug ?? 'no entity'}, not ${input.entity_slug ?? 'no entity'}.`,
       'Pass the same entity as the fact being replaced, or forget the old fact and remember the new one separately.');
   }
-  if (candidate.source_markdown_slug && candidate.source_markdown_slug !== opts.pageSlug) {
+  // GBRA-190 G4: a fact saved without an entity is a row of memory/unattributed; linking it strikes that row in the same write.
+  const linking = target.entity_slug == null && input.entity_slug != null && candidate.source_markdown_slug === UNATTRIBUTED_MEMORY_SLUG;
+  if (candidate.source_markdown_slug && candidate.source_markdown_slug !== opts.pageSlug && !linking) {
     const derived = String(candidate.source ?? '').startsWith('cli:extract-conversation-facts');
     throw verbError('invalid_params', `replaces_cross_page: fact #${targetId} lives on page ${candidate.source_markdown_slug}${derived ? ', extracted from that conversation page' : ''}.`,
       derived ? replacesDerivedSuggestion(sourceId, candidate.source_markdown_slug) : 'Forget the old fact, then remember the new one.');

@@ -28,6 +28,11 @@ export const WRITE_SWITCHES = {
    * (consumer-election.ts) instead of starting their own. Off by default until Phase 0's preregistered reading sets it.
    */
   single_consumer: { key: 'persistence.single_consumer', env: 'GBRAIN_SINGLE_CONSUMER', defaultOn: false },
+  /**
+   * Convergence PR B: a page write that meets a worktree refresh is admitted `deferred` and publishes after the refresh, instead
+   * of being refused `worktree_refreshing`. Off by default; turned on per brain once every routed producer polls its receipts.
+   */
+  refresh_barrier: { key: 'persistence.refresh_barrier', env: 'GBRAIN_REFRESH_BARRIER', defaultOn: false },
 } as const;
 export type WriteSwitch = keyof typeof WRITE_SWITCHES;
 export type WriteSwitches = Record<WriteSwitch, boolean>;

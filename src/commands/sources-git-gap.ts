@@ -19,15 +19,15 @@ import { OperationError } from '../core/ops/contract.ts';
 import { cliRenderContext, toAgentError } from '../core/agent-output.ts';
 import { readExportPages, readExportWithdrawals, type ExportSnapshot, type ExportWithdrawal } from '../core/export-snapshot.ts';
 import { RestoreTargetError, restoreFilePath } from '../core/restore-target.ts';
-import { privatePagesFilterFragment, readHonorAliases } from '../core/search/private-visibility.ts';
+import { privacyPartSql, readHonorAliases } from '../core/search/private-visibility.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
 import { sourceMirrorReadOnly } from '../core/persistence/mirror-read-only.ts';
 import { isSourceDbOnlySlug } from '../core/persistence/source-storage.ts';
 import { GIT_HOLD_OP, readSyncImportProvenances } from '../core/persistence/sync-holds.ts';
 import { DERIVED_LINK_SOURCES } from '../core/persistence/twin-merge.ts';
 import { scannerSlugRootMode, scannerSourcePath } from '../core/write-through.ts';
-import { compareInlineExportFile, compareSegmentedExportBlob, DECLARED_CLASSES, declaredDatabaseOnly, ignoredPaths, readBlobs, readHeadTree, worktreeBlobOid,
-  type DeclaredClass, type ExportFileComparison, type HeadTree, type TreeBlob, type UnparseableReason } from '../core/persistence/git-gap.ts';
+import { compareInlineExportFile, compareSegmentedExportBlob, DECLARED_CLASSES, declaredDatabaseOnly, DIRECTION_EVIDENCE, ignoredPaths, readBlobs, readDirectionEvidence, readHeadTree, worktreeBlobOid,
+  type DeclaredClass, type DirectionEvidence, type Evidence, type ExportFileComparison, type HeadTree, type TreeBlob, type UnparseableReason } from '../core/persistence/git-gap.ts';
 
 const USAGE = 'Usage: gbrain sources git-gap <source-id> [--sample <n>] [--json]';
 export const GIT_GAP_DOCS = 'docs/designs/GIT_CANONICAL_MEMORY.md#the-git-gap-census';
@@ -42,9 +42,12 @@ export type WorktreeState = typeof WORKTREE_STATES[number];
 export interface GitGapPage { id: string; slug: string; revision: string | null; path: string | null; state: PageState; segmented: boolean;
   declared?: DeclaredClass; worktree?: WorktreeState; headBlob?: string; databaseAlsoMoved?: boolean; unparseable?: UnparseableReason;
   /** A declared page: whether its row records a file (`source_path`), and the size of its committed blob. */
-  recordsFile?: boolean; headSize?: number }
+  recordsFile?: boolean; headSize?: number;
+  /** A page that differs from its committed file with no import record, read with `evidence`: which side moved (persistence/git-gap.ts readDirectionEvidence). */
+  evidence?: Evidence }
 
-export interface GitGapSample { slug: string; path: string; state: PageState; fields?: string[]; declared?: DeclaredClass; basis?: 'import_record' | 'no_import_record'; worktree?: WorktreeState }
+export interface GitGapSample { slug: string; path: string; state: PageState; fields?: string[]; declared?: DeclaredClass; basis?: 'import_record' | 'no_import_record'; worktree?: WorktreeState;
+  evidence?: DirectionEvidence }
 
 export interface GitGapCensus {
   status: 'census';
@@ -54,13 +57,24 @@ export interface GitGapCensus {
   head: string | null;
   /** False when a doctor budget stopped the page scan; the counts cover the pages read so far. */
   complete: boolean;
+  /** Pages the scan read; equals `live_pages` only when `complete`. */
   pages: number;
+  /** The source's live pages, counted in SQL before the scan, so a partial scan's `pages` reads against the whole source. */
+  live_pages: number;
   states: Record<PageState, number>;
   declared: Record<DeclaredClass, number>;
   /** Declared pages whose file is still committed at HEAD (for example a page that turned private). */
   declared_with_head_blob: number;
-  /** database_ahead pages with no import record, so the side that moved is unknown (see the design doc). */
+  /**
+   * Pages that differ from their committed file with no import record. Without `evidence` they are all database_ahead and
+   * the side that moved is unknown; with it, `direction_evidence` splits them.
+   */
   database_ahead_without_import_record: number;
+  /**
+   * d4: those pages by the side content evidence says moved (adopt_db_moved and no_evidence are database_ahead,
+   * git_wins_file_moved is git_ahead, both_moved is git_ahead with the database also moved); null when evidence was not read.
+   */
+  direction_evidence: Record<DirectionEvidence, number> | null;
   /** git_ahead pages whose row also moved since its last import: both sides changed. */
   git_ahead_database_also_moved: number;
   /** Pages of a source without a checkout that are not declared. Since G7a such a source is declared `database_only_source`, so this stays 0; kept for readers of the JSON. */
@@ -109,8 +123,8 @@ type Key = { id: string; slug: string; source_id: string; source_path: string | 
 const zeros = <K extends string>(keys: readonly K[]) => Object.fromEntries(keys.map(key => [key, 0])) as Record<K, number>;
 
 function emptyCensus(sourceId: string, root: string | null, head: HeadTree | null): GitGapCensus {
-  return { status: 'census', source_id: sourceId, checkout: root, head: head?.commit ?? null, complete: true, pages: 0, states: zeros(PAGE_STATES),
-    declared: zeros(DECLARED_CLASSES), declared_with_head_blob: 0, database_ahead_without_import_record: 0, git_ahead_database_also_moved: 0, not_compared: 0,
+  return { status: 'census', source_id: sourceId, checkout: root, head: head?.commit ?? null, complete: true, pages: 0, live_pages: 0, states: zeros(PAGE_STATES),
+    declared: zeros(DECLARED_CLASSES), declared_with_head_blob: 0, database_ahead_without_import_record: 0, direction_evidence: null, git_ahead_database_also_moved: 0, not_compared: 0,
     worktree: root ? zeros(WORKTREE_STATES) : null,
     rows_without_git_home: { facts_unfenced: 0, facts_fence_page_missing: 0, facts_on_pages_without_file: { undeclared: 0, declared: 0 },
       links: { total: 0, by_link_source: {} }, timeline_on_pages_without_file: { undeclared: 0, declared: 0 } },
@@ -123,8 +137,12 @@ interface Checkout { root: string; head: HeadTree; mode: Awaited<ReturnType<type
 
 const refuse = (message: string, suggestion: string) => new OperationError('storage_error', message, suggestion, GIT_GAP_DOCS);
 
-/** `collect` receives each classified page, with the export snapshot the census compared for a database_ahead or git_ahead page. */
-export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: { sample: number; deadlineAt?: number; collect?: GitGapCollect }): Promise<GitGapCensus> {
+/**
+ * `collect` receives each classified page, with the export snapshot the census compared for a database_ahead or git_ahead
+ * page (a page read with `evidence` comes without it, after the scan). `evidence` (d4) reads which side moved for the
+ * pages that differ with no import record, in one history walk after the scan; a scan the deadline stopped reads none.
+ */
+export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: { sample: number; deadlineAt?: number; collect?: GitGapCollect; evidence?: boolean }): Promise<GitGapCensus> {
   await resolveSourceId(engine, sourceId, undefined, { skipLocalSignals: true });
   const [source] = await engine.executeRaw<{ local_path: string | null; incarnation: string }>('SELECT local_path, incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
   const root = source?.local_path && existsSync(source.local_path) ? source.local_path : null;
@@ -140,6 +158,9 @@ export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: 
     checkout = { root, head, mode: await scannerSlugRootMode(engine, sourceId, root), scope };
   }
   const census = emptyCensus(sourceId, root, checkout?.head ?? null);
+  const [live] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND deleted_at IS NULL', [sourceId]);
+  census.live_pages = Number(live?.n ?? 0);
+  const pending: Unrecorded[] = [];
   // G7a: a source with no checkout is a database-only source, one declared class for all its pages (outside strict mode).
   const policy = { mirror, databaseOnlySource: root === null, dbOnly: (slug: string) => root !== null && isSourceDbOnlySlug(root, slug, 'refuse'), ignored: new Set<string>() };
   for (let cursor = '0'; ;) {
@@ -147,13 +168,17 @@ export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: 
     const done = await engine.transaction(async tx => {
       await tx.executeRaw('SET TRANSACTION READ ONLY');
       const batch = await tx.executeRaw<Key>(`SELECT id::text, slug, source_id, source_path, octet_length(source_path) AS source_path_bytes, source_uri, withheld_source_path, type, frontmatter,
-          database_only_reason, body_storage='segmented' AS segmented, knowledge_revision::text AS revision, NOT ${privatePagesFilterFragment('pages')} AS lineage_private
+          database_only_reason, body_storage='segmented' AS segmented, knowledge_revision::text AS revision, NOT ${privacyPartSql('pages')} AS lineage_private
         FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND pages.id > $2::bigint ORDER BY pages.id LIMIT ${BATCH}`, [sourceId, cursor]);
-      if (batch.length) { await censusBatch(tx, batch, census, { checkout, policy, incarnation: source!.incarnation, sample: opts.sample, collect: opts.collect }); cursor = batch[batch.length - 1]!.id; }
+      if (batch.length) {
+        await censusBatch(tx, batch, census, { checkout, policy, incarnation: source!.incarnation, sample: opts.sample, collect: opts.collect, pending: opts.evidence ? pending : undefined });
+        cursor = batch[batch.length - 1]!.id;
+      }
       return batch.length < BATCH;
     });
     if (done) break;
   }
+  if (pending.length) await settleUnrecorded(engine, census, checkout!, pending, { sample: opts.sample, collect: opts.collect, read: census.complete });
   await engine.transaction(async tx => {
     await tx.executeRaw('SET TRANSACTION READ ONLY');
     await countSourceRows(tx, census);
@@ -164,7 +189,34 @@ export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: 
 export type GitGapCollect = (page: GitGapPage, snapshot?: ExportSnapshot) => void;
 
 interface BatchContext { checkout: Checkout | null; policy: { mirror: boolean; databaseOnlySource: boolean; dbOnly: (slug: string) => boolean; ignored: Set<string> }; incarnation: string; sample: number;
-  collect?: GitGapCollect }
+  collect?: GitGapCollect; pending?: Unrecorded[] }
+
+/** A page that differs from its committed file with no import record, kept for the evidence read after the scan. */
+interface Unrecorded { key: Key; rel: string; path: string; blob: TreeBlob; worktree: WorktreeState; fields: string[] }
+
+/**
+ * d4: the side each unrecorded page moved on, from content evidence (readDirectionEvidence), counted and collected as
+ * its state. With `read` false (a scan the deadline stopped) no evidence is read and each stays database_ahead, as before.
+ */
+async function settleUnrecorded(engine: BrainEngine, census: GitGapCensus, checkout: Checkout, pending: Unrecorded[],
+  opts: { sample: number; collect?: GitGapCollect; read: boolean }): Promise<void> {
+  const evidence = opts.read ? await readDirectionEvidence(engine, { sourceId: census.source_id, root: checkout.root, gitRoot: checkout.head.gitRoot, scope: checkout.scope,
+    tip: checkout.head.commit!, format: checkout.head.format, mode: checkout.mode,
+    subjects: pending.map(item => ({ id: item.key.id, slug: item.key.slug, revision: item.key.revision, rel: item.rel, importPath: scannerSourcePath(checkout.root, item.path, checkout.mode),
+      segmented: item.key.segmented === true, blob: item.blob })) }) : null;
+  if (evidence) census.direction_evidence = zeros(DIRECTION_EVIDENCE);
+  for (const item of pending) {
+    const found = evidence?.get(item.key.id);
+    const state: PageState = found?.kind === 'git_wins_file_moved' || found?.kind === 'both_moved' ? 'git_ahead' : 'database_ahead';
+    const databaseAlsoMoved = found?.kind === 'both_moved';
+    census.states[state]++;
+    census.database_ahead_without_import_record++;
+    if (found) census.direction_evidence![found.kind]++;
+    if (databaseAlsoMoved) census.git_ahead_database_also_moved++;
+    opts.collect?.(collected(item.key, item.rel, state, { worktree: item.worktree, headBlob: item.blob.oid, databaseAlsoMoved, ...(found ? { evidence: found } : {}) }));
+    note(census, opts.sample, { slug: item.key.slug, path: item.rel, state, fields: item.fields, basis: 'no_import_record', worktree: item.worktree, ...(found ? { evidence: found.kind } : {}) });
+  }
+}
 
 const collected = (key: Key, path: string | null, state: PageState, extra: Partial<GitGapPage> = {}): GitGapPage =>
   ({ id: key.id, slug: key.slug, revision: key.revision, path, state, segmented: key.segmented === true, ...extra });
@@ -254,7 +306,7 @@ async function compareBatch(tx: BrainEngine, compare: Array<{ key: Key; path: st
   if (!blobs) throw refuse(`Git could not read committed files of the checkout at ${checkout.root}.`,
     `Nothing changed. Check the checkout with git -C ${checkout.root} fsck, then rerun gbrain sources git-gap ${sourceId}.`);
   const withdrawals: ExportWithdrawal[] = await readExportWithdrawals(tx, sourceId);
-  const differs: Array<{ key: Key; rel: string; blob: TreeBlob; worktree: WorktreeState; fields: string[]; snapshot: ExportSnapshot }> = [];
+  const differs: Array<{ key: Key; path: string; rel: string; blob: TreeBlob; worktree: WorktreeState; fields: string[]; snapshot: ExportSnapshot }> = [];
   const snapshots = await readExportPages(tx, compare.map(item => item.key), withdrawals);
   for (const [i, item] of compare.entries()) {
     const snapshot = snapshots[i]!;
@@ -274,6 +326,7 @@ async function compareBatch(tx: BrainEngine, compare: Array<{ key: Key; path: st
   for (const item of differs) {
     const record = records.get(Number(item.key.id));
     const imported = [record?.blob_oid, record?.disk_blob_oid].filter((oid): oid is string => typeof oid === 'string' && oid.length > 0);
+    if (!imported.length && ctx.pending) { ctx.pending.push({ key: item.key, rel: item.rel, path: item.path, blob: item.blob, worktree: item.worktree, fields: item.fields }); continue; }
     const gitMoved = imported.length > 0 && !imported.includes(item.blob.oid);
     const state: PageState = gitMoved ? 'git_ahead' : 'database_ahead';
     census.states[state]++;
@@ -329,11 +382,12 @@ async function countSourceRows(tx: BrainEngine, census: GitGapCensus): Promise<v
 const counts = (record: Record<string, number>) => Object.entries(record).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`).join(', ') || 'none';
 
 export function describeGitGap(census: GitGapCensus): string {
-  const lines = [`Git gap of source ${census.source_id} (read-only): ${census.pages} live page(s)${census.head ? `, compared with HEAD ${census.head.slice(0, 12)}` : ''}.`];
+  const lines = [`Git gap of source ${census.source_id} (read-only): ${census.complete ? `${census.pages} live page(s)` : `PARTIAL, ${census.pages} of ${census.live_pages} live page(s) read`}${census.head ? `, compared with HEAD ${census.head.slice(0, 12)}` : ''}.`];
   if (!census.checkout) lines.push(`The source has no checkout: a database-only source, so its page(s) are declared database_only_source and none were compared.`);
   else if (!census.head) lines.push('The checkout has no commit yet, so no page has a committed file.');
   lines.push(`Pages: ${counts(census.states)}.`, `Declared database-only: ${counts(census.declared)}${census.declared_with_head_blob ? ` (${census.declared_with_head_blob} still committed at HEAD)` : ''}.`);
-  if (census.database_ahead_without_import_record) lines.push(`${census.database_ahead_without_import_record} database_ahead page(s) have no import record, so the side that moved is unknown.`);
+  if (census.database_ahead_without_import_record && census.direction_evidence) lines.push(`${census.database_ahead_without_import_record} differing page(s) have no import record; by content evidence: ${counts(census.direction_evidence)}.`);
+  else if (census.database_ahead_without_import_record) lines.push(`${census.database_ahead_without_import_record} database_ahead page(s) have no import record, so the side that moved is unknown.`);
   if (census.git_ahead_database_also_moved) lines.push(`${census.git_ahead_database_also_moved} git_ahead page(s) also changed in the database since their last import.`);
   if (census.worktree) lines.push(`Working tree against HEAD: ${counts(census.worktree)}.`);
   const rows = census.rows_without_git_home;
@@ -343,9 +397,9 @@ export function describeGitGap(census: GitGapCensus): string {
     + `(+${rows.timeline_on_pages_without_file.declared} declared).`);
   lines.push(`Open sync holds: ${counts(census.holds)}. Parked effect targets: ${census.parked_effects.map(p => `${p.kind} ${p.code} ${p.targets}`).join(', ') || 'none'}.`);
   for (const item of census.sample) {
-    lines.push(`  ${item.state}${item.declared ? ` (${item.declared})` : ''}: ${item.slug} (${item.path})${item.fields ? ` fields ${item.fields.join(', ')}` : ''}${item.worktree ? ` worktree ${item.worktree}` : ''}`);
+    lines.push(`  ${item.state}${item.declared ? ` (${item.declared})` : ''}${item.evidence ? ` (${item.evidence})` : ''}: ${item.slug} (${item.path})${item.fields ? ` fields ${item.fields.join(', ')}` : ''}${item.worktree ? ` worktree ${item.worktree}` : ''}`);
   }
-  if (!census.complete) lines.push('PARTIAL: the scan stopped at its time budget, so the counts cover only the pages read.');
+  if (!census.complete) lines.push(`PARTIAL: the scan stopped at its time budget after ${census.pages} of ${census.live_pages} live page(s), so the counts cover only the pages read.`);
   lines.push(census.next);
   return lines.join('\n');
 }
@@ -355,7 +409,7 @@ export async function runSourcesGitGap(engine: BrainEngine, args: string[]): Pro
   if (args.includes('--help') || args.includes('-h')) { console.log(`${USAGE}\nRead-only: compares each page of the source with its committed file at HEAD (${GIT_GAP_DOCS}).`); return; }
   try {
     const parsed = parseGitGapArgs(args);
-    const census = await censusGitGap(engine, parsed.sourceId, { sample: parsed.sample });
+    const census = await censusGitGap(engine, parsed.sourceId, { sample: parsed.sample, evidence: true });
     console.log(json ? JSON.stringify(census) : describeGitGap(census));
   } catch (error) {
     if (!(error instanceof OperationError)) throw error;

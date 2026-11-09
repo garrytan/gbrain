@@ -41,14 +41,17 @@ export const ARTIFACTS: Artifact[] = [
   { name: 'schema migrations bundle', regen: ['bun', 'run', 'scripts/build-schema-migrations.ts'], check: ['bash', 'scripts/check-schema-migrations-fresh.sh'] },
   { name: 'error-code registry docs', regen: ['bun', 'scripts/build-error-codes.ts'], check: ['bun', 'scripts/build-error-codes.ts', '--check'] },
   { name: 'agent operator protocol blocks', regen: ['bun', 'scripts/build-agent-protocol.ts'], check: ['bun', 'scripts/build-agent-protocol.ts', '--check'] },
+  { name: 'lookup table copies', regen: ['bun', 'scripts/build-lookup-table.ts'], check: ['bun', 'scripts/build-lookup-table.ts', '--check'] },
   { name: 'harness adapter reference', regen: ['bun', 'run', 'scripts/build-harness-docs.ts'], check: ['bun', '-e', HARNESS_DOCS_CHECK] },
   { name: 'operation manifest', regen: ['bun', 'run', 'scripts/build-operation-manifest.ts'], check: [...BUN_TEST, 'test/operation-manifest.test.ts'] },
   { name: 'MCP tool catalog', regen: ['bun', 'run', 'scripts/generate-tool-catalog.ts'], check: ['bash', 'scripts/check-tool-catalog-fresh.sh'] },
   { name: 'skills manifest', regen: ['bun', 'run', 'scripts/generate-skills-manifest.ts'], check: ['bash', 'scripts/check-skills-manifest-fresh.sh'] },
+  { name: 'bundled skills module', regen: ['bun', 'run', 'scripts/generate-bundled-skills.ts'], check: ['bun', 'run', 'scripts/generate-bundled-skills.ts', '--check'] },
   { name: 'eval metric glossary', regen: ['bun', 'run', 'scripts/generate-metric-glossary.ts'], check: ['bash', 'scripts/check-eval-glossary-fresh.sh'] },
   { name: 'CLI flag registry', regen: ['bun', 'run', 'scripts/generate-flag-registry.ts'], check: [...BUN_TEST, 'test/generate-flag-registry.test.ts'] },
   { name: 'plugin tree + persona variants', regen: ['bun', 'run', 'scripts/generate-plugin-tree.ts', '--out', 'plugin', '--variants-out', 'plugin-variants'], check: ['bash', 'scripts/check-plugin-tree.sh'] },
   { name: 'structural suites manifest', regen: ['bun', 'scripts/classify-tests.ts'], check: ['bun', 'scripts/classify-tests.ts', '--check'] },
+  { name: 'QM memory-provider contract', regen: ['bun', 'scripts/build-qm-memory-contract.ts'], check: ['bun', 'scripts/build-qm-memory-contract.ts', '--check'] },
   { name: 'llms.txt + llms-full.txt', regen: ['bun', 'run', 'scripts/build-llms.ts'], check: [...BUN_TEST, 'test/build-llms.test.ts'] },
 ];
 

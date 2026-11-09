@@ -18,7 +18,7 @@ import { resolve } from 'node:path';
 import type { Action } from '../agent-output.ts';
 import { OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { localHostId } from '../persistence/identity.ts';
+import { hostIdFor } from '../persistence/identity.ts';
 import { inspectPersistenceBrain } from '../persistence/managed-mode.ts';
 import { previewChangedError, previewHash } from '../persistence/preview-approval.ts';
 import { storedManifestScope, worktreeManifest, type StoredWorktreeManifest } from '../persistence/worktree-manifest.ts';
@@ -63,7 +63,7 @@ async function verdicts(engine: Parameters<RepairHandler['plan']>[0], scope: Rep
     if (!row || !ownedContentReceipt(row.value, row.brain_id, stale.sourceId, row.incarnation)) continue;
     const base = { source_id: stale.sourceId, key: row.key, raw: row.value };
     const was = `the receipt names ${stale.receiptRoot ?? 'no root'}`;
-    if (row.owner_host_id !== localHostId()) { out.push({ ...base, class: 'not_owner_host', detail: `${was}; run this repair on the owner host, which can read its root`, fix: statusFix(stale.sourceId) }); continue; }
+    if (row.owner_host_id !== hostIdFor(engine)) { out.push({ ...base, class: 'not_owner_host', detail: `${was}; run this repair on the owner host, which can read its root`, fix: statusFix(stale.sourceId) }); continue; }
     const next = rootIdentity(resolve(row.worktree_root, row.relative_path));
     if (!next) { out.push({ ...base, class: 'root_missing', detail: `${was}; the owner binding's root ${resolve(row.worktree_root, row.relative_path)} cannot be read`, fix: statusFix(stale.sourceId) }); continue; }
     if (rootIdentity(stale.localPath)?.root !== next.root) {

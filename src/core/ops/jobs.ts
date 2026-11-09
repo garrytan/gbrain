@@ -1,5 +1,7 @@
 import { prepareRemoteJob, prepareRemoteAgent, assertRemoteJobControl } from '../minions/submission-authority.ts';
 import type { MinionJob } from '../minions/types.ts';
+import { jobActorSql, NO_JOB_ACTOR, type JobActor } from '../minions/types.ts';
+import { currentCallerAccess } from '../search/private-visibility.ts';
 
 function publicJob(job: MinionJob) {
   const { submission_authority: _authority, ...visible } = job;
@@ -80,7 +82,7 @@ import {
  *     `data->>'__owner_client_id'`. Missing identity → permission_denied
  *     (fail closed, mirroring get_agent_job).
  */
-function agentOwnerFence(ctx: OperationContext, opName: string): string | null {
+export function agentOwnerFence(ctx: OperationContext, opName: string): string | null {
   if (ctx.remote === false) return null;
   const scopes = ctx.auth?.scopes;
   if (scopes && hasScope(scopes, 'admin')) return null;
@@ -106,7 +108,7 @@ function getJobFix(id: unknown, why: string): Action {
 }
 
 /** A1 frozen pair: a missing job keeps `error: invalid_params` and reports `code: not_found`. */
-function jobNotFound(message: string): OperationError {
+export function jobNotFound(message: string): OperationError {
   return opError('not_found', message,
     'No job with that id is visible to this caller (jobs owned by another client read as missing). List jobs to find the right id.',
     { legacy_error: 'invalid_params', fix: listJobsFix('Lists the jobs this caller can see, with their ids and status.') });
@@ -124,10 +126,10 @@ function jobStateError(id: unknown, message: string, need: string): OperationErr
  * design (anti-enumeration): both throw the SAME error the unfenced path
  * throws for a missing id.
  */
-async function assertJobOwned(ctx: OperationContext, id: number, owner: string): Promise<void> {
+export async function assertJobOwned(ctx: OperationContext, id: number, owner: string): Promise<void> {
   const rows = await ctx.engine.executeRaw<{ id: number }>(
-    `SELECT id FROM minion_jobs WHERE id = $1 AND data->>'__owner_client_id' = $2`,
-    [id, owner],
+    `SELECT id FROM minion_jobs WHERE id = $1 AND data->>'__owner_client_id' = $2 AND ${jobActorSql(3)}`,
+    [id, owner, ...callerJobActor()],
   );
   if (rows.length === 0) {
     throw jobNotFound(`Job not found: ${id}`);
@@ -346,6 +348,15 @@ function delegationDenied(ctx: OperationContext, error: Error & { reasons: strin
 //      protected-name guard. Bindings are enforced PER-OP, not per-name.
 //   3. The dispatcher is the subagent handler with the gateway-native loop
 //      (agent.use_gateway_loop is auto-on for submit_agent jobs).
+/**
+ * GST-359 C2: the caller's attested actor, matched against a job's accepted grant (jobActorSql in minions/types.ts). A remote
+ * agent job never coalesces (queue.add coalesces application jobs only), so two people's submissions stay two jobs.
+ */
+function callerJobActor(): JobActor {
+  const actor = currentCallerAccess().actor;
+  return actor ? [actor.system, actor.external_id, actor.member] : NO_JOB_ACTOR;
+}
+
 const submit_agent: Operation = {
   name: 'submit_agent',
   idempotent: false,
@@ -573,8 +584,9 @@ const get_agent_job: Operation = {
          FROM minion_jobs j
         WHERE j.id = $1
           AND j.name = 'subagent'
-          AND j.data->>'__owner_client_id' = $2`,
-      [id, clientId],
+          AND j.data->>'__owner_client_id' = $2
+          AND ${jobActorSql(3, 'j')}`,
+      [id, clientId, ...callerJobActor()],
     );
     if (rows.length === 0) {
       // Uniform envelope: foreign-owned and nonexistent ids are
@@ -699,7 +711,7 @@ const list_jobs: Operation = {
       try {
         const page = await listFinishedSince(ctx.engine, String(p.finished_since), {
           queue: p.queue as string | undefined, name: p.name as string | undefined, limit: (p.limit as number) || 50,
-          ...(owner !== null ? { ownerClientId: owner } : {}),
+          ...(owner !== null ? { ownerClientId: owner, ownerActor: callerJobActor() } : {}),
         });
         return { jobs: await project(page.jobs), next_cursor: page.next_cursor };
       } catch (e) {
@@ -715,7 +727,7 @@ const list_jobs: Operation = {
         status: p.status as string | undefined, queue: p.queue as string | undefined, name: p.name as string | undefined, limit,
         ...(p.cursor !== undefined && p.cursor !== null ? { cursor: String(p.cursor) } : {}),
         // #4098: SQL-side ownership fence for agent-scoped callers.
-        ...(owner !== null ? { ownerClientId: owner } : {}),
+        ...(owner !== null ? { ownerClientId: owner, ownerActor: callerJobActor() } : {}),
       });
     } catch (e) {
       if (e instanceof JobListCursorError) throw invalidParam(ctx, 'list_jobs', 'cursor', `list_jobs: ${e.message}`, { example: '1792000000000000:42' });
@@ -749,7 +761,7 @@ const cancel_job: Operation = {
     // #4098: the owner predicate rides the recursive cancel's CTE seed — a
     // fenced caller can cancel only roots it owns (descendants of an owned
     // root cascade as usual). Foreign and missing ids share one envelope.
-    const cancelled = await queue.cancelJob(p.id as number, owner !== null ? { ownerClientId: owner } : undefined);
+    const cancelled = await queue.cancelJob(p.id as number, owner !== null ? { ownerClientId: owner, ownerActor: callerJobActor() } : undefined);
     if (!cancelled) throw jobStateError(p.id, `Cannot cancel job ${p.id} (may already be in terminal status)`, 'Only waiting, active, delayed or paused jobs can be cancelled.');
     // private_queue_owner_token is a capability credential (lease renewal /
     // attach), not job data — never expose it over MCP envelopes.

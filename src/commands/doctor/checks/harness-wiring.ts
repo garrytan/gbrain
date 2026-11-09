@@ -24,6 +24,7 @@
  * Doctor seeds nothing; the only file it removes is a status marker whose
  * process is gone.
  */
+import type { SkillsIndexState, SkillsIndexView } from '../../../core/setup/skills-block.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
@@ -34,7 +35,7 @@ import { verifiedStatusMarkers } from '../../../core/serve-http-status-marker.ts
 import { agentProcessMarker } from '../../../core/interaction.ts';
 import { resolveGbrainBin } from '../../../core/gbrain-bin.ts';
 import { enabledPluginLanes } from '../../../core/bootstrap/plugin-lanes.ts';
-import { claudeConfigDir, opencodeProjectConfigPath } from '../../../core/bootstrap/host-specs.ts';
+import { claudeConfigDir, claudeUserSettingsPath, opencodeProjectConfigPath } from '../../../core/bootstrap/host-specs.ts';
 import { readReceipt } from '../../../core/bootstrap/format.ts';
 import { resolveGbrainHome } from '../../../core/gbrain-home.ts';
 import type { Action } from '../../../core/agent-output.ts';
@@ -42,7 +43,11 @@ import type { Check } from '../../doctor.ts';
 import { checkError, doctorVerify, infoCheck } from '../check-fix.ts';
 import type { DoctorContext, DoctorEntry } from '../context.ts';
 import { VERSION } from '../../../version.ts';
-import { TURN_HOOK_NATIVE_INSPECT, inspectTurnHook, turnHookFix, type TurnHookState } from '../../../core/setup/turn-hook-check.ts';
+import { TURN_HOOK_NATIVE_INSPECT, hookLauncherProblem, inspectTurnHook, turnHookFix, type HookLauncherProblem, type TurnHookState } from '../../../core/setup/turn-hook-check.ts';
+import { localSetupRecords } from '../../../core/setup/local-receipts.ts';
+import { launcherLaneFindings, setupRerunArgv } from '../../../core/setup/launcher-lanes.ts';
+import { readSetupReceipt } from '../../../core/setup/claude-code.ts';
+import { readCodexSetupReceipt } from '../../../core/setup/codex.ts';
 import { brainFirstTarget, inspectBrainFirst, isBrainFirstHarness, readBrainFirstLedger, renderBrainFirstBlock, type BrainFirstAccess } from '../../../core/setup/brain-first.ts';
 
 export const HARNESS_SMOKE_TIMEOUT_MS = 15_000;
@@ -444,6 +449,45 @@ export function withInstructionBlocks(check: Check, views: InstructionBlockView[
   return { name: NAME, status: 'warn', message, details, fix };
 }
 
+const SKILLS_INDEX_PROBLEM: Record<Exclude<SkillsIndexState, 'current'>, string> = {
+  launcher_missing: 'names a gbrain that is no longer there, so every skill load fails',
+  ledger_unreadable: 'record cannot be read',
+  stale: 'indexes an older set of bundled skills',
+  absent: 'is gone from the file',
+  no_file: 'is gone (the file was deleted)',
+  damaged: 'has hand-edited markers',
+};
+
+/**
+ * GBRA-194 sibling of withInstructionBlocks: the spring-loaded skills index
+ * (src/core/setup/skills-block.ts) for every harness the ledger has it on.
+ * A stale, absent or damaged index is informational (a stale index still
+ * loads skills by name), so the message names the refresh command and the
+ * status is unchanged. Two states break every load or every later change and
+ * turn `ok` into a warn with a fix: the recorded launcher is gone, or the
+ * ledger cannot be read.
+ */
+export function withSkillsIndex(check: Check, views: SkillsIndexView[]): Check {
+  if (views.length === 0) return check;
+  const details = { ...(check.details ?? {}), skills_index: views };
+  const off = views.filter((v) => v.state !== 'current');
+  if (off.length === 0) return { ...check, details };
+  const notes = off.map((v) => v.state === 'ledger_unreadable'
+    ? `the skills index ${SKILLS_INDEX_PROBLEM.ledger_unreadable}: ${v.refresh}`
+    : `the ${v.harness} skills index in ${v.path} ${SKILLS_INDEX_PROBLEM[v.state as Exclude<SkillsIndexState, 'current'>]}; refresh with \`${v.refresh}\``);
+  const message = `${check.message} Skills index: ${notes.join('; ')}.`;
+  const broken = off.find((v) => v.state === 'launcher_missing' || v.state === 'ledger_unreadable');
+  if (!broken || check.status !== 'ok') return { ...check, message, details };
+  const fix: Action = broken.state === 'ledger_unreadable'
+    ? { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME),
+      why: 'gbrain will not guess which skills indexes and permission rules it owns from a ledger it cannot read.',
+      user_message: `The gbrain skills record cannot be read: ${broken.refresh}` }
+    : { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(NAME),
+      why: `The skills index in ${broken.path} names a gbrain that is no longer there, so the agent cannot load any skill it lists.`,
+      user_message: `The ${broken.harness} skills index points at a gbrain that was moved or uninstalled. Run: ${broken.refresh}, with the absolute path of the gbrain you use now.` };
+  return { name: NAME, status: 'warn', message, details, fix };
+}
+
 /** The setup command that rewrites exactly this block: same file, same connection name and surface. A project file needs its own directory, so the user runs it there. */
 function repairArgv(v: InstructionBlockView): Action {
   const access = v.access;
@@ -501,11 +545,69 @@ export function withTurnHooks(check: Check, views: InstructionBlockView[], hooks
   return { name: NAME, status: 'warn', message, details: { ...details, code: 'turn_hook_not_loaded', turn_hook_reason: bad.state }, fix };
 }
 
-/** Registration read (full run) or registration read + smoke (`--only harness_wiring`), plus the brain-first block and its per-turn hook. */
+/**
+ * The first setup or turn-rule hook that would let a session directory's
+ * bunfig.toml or .env load (#8424): Claude Code user scope, every project a
+ * setup receipt or a CLAUDE.local.md block names, and Codex; then the stdio
+ * MCP entries and the bootstrap and harness lanes (#8426, #8428). Files only.
+ */
+export function hookLauncherProblems(views: InstructionBlockView[]): HookLauncherProblem | null {
+  const projects = new Set([
+    ...localSetupRecords().filter((r) => r.harness === 'claude-code' && r.scope === 'project' && r.projectDir).map((r) => r.projectDir!),
+    ...views.filter((v) => v.harness === 'claude-code' && basename(v.path) === 'CLAUDE.local.md').map((v) => dirname(v.path)),
+  ]);
+  return hookLauncherProblem('claude-code') ?? [...projects].map((projectDir) => hookLauncherProblem('claude-code', { projectDir })).find((p) => p !== null) ?? hookLauncherProblem('codex')
+    ?? launcherLaneFindings()[0] ?? null;
+}
+
+/** The setup command that rewrites the lane's hooks through the launcher; a project install or a foreign file needs the user. */
+export function hookLauncherFix(p: HookLauncherProblem): Action {
+  const project = p.harness === 'claude-code' && p.source !== claudeUserSettingsPath() ? dirname(dirname(p.source)) : null;
+  const setupHarness = p.lane === 'setup' && p.harness !== 'opencode' ? p.harness : null;
+  const record = setupHarness ? localSetupRecords().find((r) => r.harness === setupHarness && r.status === 'installed' && (p.receiptPath ? r.path === p.receiptPath : project ? r.projectDir === project : r.scope !== 'project')) : undefined;
+  const receipt = record && (() => { try { return (setupHarness === 'claude-code' ? readSetupReceipt(record.path) : readCodexSetupReceipt(record.path)).setup; } catch { return null; } })();
+  const argv = receipt && setupHarness ? setupRerunArgv(setupHarness, receipt, project ?? undefined)
+    : ['gbrain', 'setup', p.harness, ...(p.lane === 'turn-rule' ? ['--instructions-only'] : []), ...(record && record.name !== 'gbrain' ? ['--name', record.name] : []), ...(project ? ['--scope', 'project'] : [])];
+  const why = "Rewrites gbrain's hooks to start gbrain from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session opens there. `gbrain post-upgrade` refreshes Claude Code's user-scope setup hooks too; it never rewrites a Codex file.";
+  // gbrain setup codex rewrites the shared hooks.json and recomputes its trust, which can re-enable or newly trust a group, so only the user runs it.
+  const codexTrust = '`gbrain setup codex` rewrites the Codex hooks.json and its trust entries, so run it yourself';
+  const verify = doctorVerify(NAME);
+  if (p.rerun) {
+    const run = `${p.rerunFrom ? `from ${p.rerunFrom}, ` : ''}run: ${p.rerun.join(' ')}`;
+    const laneWhy = `Rewrites the entry to start gbrain from its own launcher directory, so a repository's bunfig.toml or .env never runs when a session or MCP server starts there.${p.harness === 'codex' && p.rerun[1] === 'setup' ? " gbrain setup codex repeats the install's recorded decisions and re-trusts setup's own hook groups." : ''}`;
+    if (p.reason === 'foreign') return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. Remove that file (gbrain did not write it), then ${run}` };
+    if (p.edited) return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. Remove or rewrite that entry in ${p.source} (setup never overwrites an edit), then ${run}` };
+    if (p.setupOwned && p.harness === 'codex') return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. ${codexTrust}: ${p.rerun.join(' ')}` };
+    if (p.setupOwned) return { argv: p.rerun, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify, why: laneWhy };
+    return { consent: [], actor: 'user', requires_exclusive: false, verify, why: laneWhy, user_message: `${p.detail}. To move it onto gbrain's launcher, ${p.lane === 'mcp' && p.owner === 'none' ? `remove that entry from ${p.source} (gbrain does not rewrite it), then ` : ''}${run}` };
+  }
+  if (p.reason === 'foreign') return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove that file (gbrain did not write it), then run: ${argv.join(' ')}` };
+  if (p.edited) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. Remove or rewrite that entry in ${p.source} (setup never overwrites an edit), then ${project ? `from ${project}, ` : ''}run: ${argv.join(' ')}` };
+  if (project) return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `gbrain's hooks for ${project} start gbrain in the session's directory. From ${project}, run: ${argv.join(' ')}` };
+  if (p.harness === 'codex') return { consent: [], actor: 'user', requires_exclusive: false, verify, why, user_message: `${p.detail}. ${codexTrust}: ${argv.join(' ')}` };
+  return { argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify, why };
+}
+
+/**
+ * A hook that lets the session directory's bunfig.toml or .env load turns an ok
+ * check into a warn (code hook_session_cwd). A warn or fail keeps its own code
+ * and fix, with the launcher fix in details.hook_launcher_fix.
+ */
+export function withHookLaunchers(check: Check, problem: HookLauncherProblem | null): Check {
+  if (!problem) return check;
+  const message = `${check.message} Hook launcher: ${problem.detail}.`;
+  const details = { ...(check.details ?? {}), hook_launcher: problem };
+  const fix = hookLauncherFix(problem);
+  if (check.status === 'fail' || (check.status === 'warn' && check.fix)) return { ...check, message, details: { ...details, hook_launcher_fix: fix } };
+  return { name: NAME, status: 'warn', message, details: { ...details, code: 'hook_session_cwd', hook_launcher_reason: problem.reason }, fix };
+}
+
+/** Registration read (full run) or registration read + smoke (`--only harness_wiring`), plus the brain-first block, its per-turn hook and the hook launcher. */
 export async function harnessWiringCheck(opts: { smoke: boolean }): Promise<Check> {
   const regs = readHarnessRegistrations();
+  const { skillsIndexViews } = await import('../../../core/setup/skills-block.ts');
   const views = instructionBlockViews(regs);
-  return withSurfaceNote(withTurnHooks(withInstructionBlocks(await registrationCheck(opts, regs), views), views, turnHookViews(views)), regs);
+  return withSkillsIndex(withHookLaunchers(withSurfaceNote(withTurnHooks(withInstructionBlocks(await registrationCheck(opts, regs), views), views, turnHookViews(views)), regs), hookLauncherProblems(views)), skillsIndexViews());
 }
 
 /**

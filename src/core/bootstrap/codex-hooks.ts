@@ -113,14 +113,19 @@ function shellQuote(arg: string): string {
  * invocation and only /bin/sh ever parses the POSIX script. The outer sh's
  * $0 is the gbrain binary (no nested quoting of the path); the grandchild
  * inherits GBRAIN_BIN/GBRAIN_PAYLOAD through the env-prefix assignments.
+ * With `launcher` (src/core/setup/hook-launcher.ts) the outer $0 is the
+ * launcher and $1 the binary, so the grandchild starts gbrain from the
+ * launcher's directory instead of the session's.
  */
-export function buildCodexSessionEndCommand(gbrainBin: string): string {
-  const script =
-    't="$(mktemp)"; cat >"$t"; GBRAIN_PAYLOAD="$t" GBRAIN_BIN="$0" nohup sh -c ' +
-    `'"$GBRAIN_BIN" ${CODEX_HOOK_OWNERSHIP_TOKEN} <"$GBRAIN_PAYLOAD"; rm -f "$GBRAIN_PAYLOAD"' >/dev/null 2>&1 &`;
+export function buildCodexSessionEndCommand(gbrainBin: string, launcher?: string): string {
+  const script = launcher
+    ? 't="$(mktemp)"; cat >"$t"; GBRAIN_PAYLOAD="$t" GBRAIN_HOOK_LAUNCHER="$0" GBRAIN_BIN="$1" nohup sh -c ' +
+      `'"$GBRAIN_HOOK_LAUNCHER" "$GBRAIN_BIN" ${CODEX_HOOK_OWNERSHIP_TOKEN} <"$GBRAIN_PAYLOAD"; rm -f "$GBRAIN_PAYLOAD"' >/dev/null 2>&1 &`
+    : 't="$(mktemp)"; cat >"$t"; GBRAIN_PAYLOAD="$t" GBRAIN_BIN="$0" nohup sh -c ' +
+      `'"$GBRAIN_BIN" ${CODEX_HOOK_OWNERSHIP_TOKEN} <"$GBRAIN_PAYLOAD"; rm -f "$GBRAIN_PAYLOAD"' >/dev/null 2>&1 &`;
   // Embed the script into an outer single-quoted argument: ' → '\'' works
   // identically in POSIX shells AND fish (escaped-quote outside quotes).
-  return `sh -c '${script.replace(/'/g, "'\\''")}' ${shellQuote(gbrainBin)}`;
+  return `sh -c '${script.replace(/'/g, "'\\''")}' ${[...(launcher ? [launcher] : []), gbrainBin].map(shellQuote).join(' ')}`;
 }
 
 /** Compact JSON with recursively-sorted keys — codex's canonical form. */
@@ -183,6 +188,8 @@ export interface WriteCodexHooksResult {
  */
 export function writeCodexHooks(opts: {
   gbrainBin: string;
+  /** The trusted-directory launcher the capture starts gbrain through (src/core/setup/hook-launcher.ts), never the session's directory (#8428). */
+  hookLauncher?: string;
   hooksPath?: string;
   configPath?: string;
 }): WriteCodexHooksResult {
@@ -204,7 +211,7 @@ export function writeCodexHooks(opts: {
   }
   const hooks = (doc.hooks && typeof doc.hooks === 'object' && !Array.isArray(doc.hooks) ? doc.hooks : {}) as NonNullable<HooksJson['hooks']>;
   const sessionEnd = Array.isArray(hooks[SESSION_END_EVENT]) ? hooks[SESSION_END_EVENT]! : [];
-  const command = buildCodexSessionEndCommand(opts.gbrainBin);
+  const command = buildCodexSessionEndCommand(opts.gbrainBin, opts.hookLauncher);
   const ourGroup = { hooks: [{ type: 'command', command, timeout: SESSION_END_TIMEOUT_SEC }] };
   // Fresh install appends LAST; a re-run replaces our group IN PLACE — a
   // strip-then-append would shift every foreign group sitting after ours
@@ -372,13 +379,13 @@ const SETUP_EVENT_SPECS: Record<CodexSetupEvent, { stateName: string; timeout: n
 
 export interface CodexHookGroup { hooks: Array<{ type: 'command'; command: string; timeout: number }> }
 
-/** Setup's group for one event (or the turn-rule lane's, src/core/setup/turn-hook.ts). `env` is POSIX `env` (any $SHELL parses it); the values pin this install. */
-export function codexSetupHookGroup(gbrainBin: string, event: CodexSetupEvent, env: { GBRAIN_HOME?: string; GBRAIN_SOURCE?: string }, lane = 'setup'): CodexHookGroup {
+/** Setup's group for one event (or the turn-rule lane's, src/core/setup/turn-hook.ts). `env` is POSIX `env` (any $SHELL parses it); the values pin this install. `launcher`: the trusted-directory hook launcher gbrain starts through (src/core/setup/hook-launcher.ts). */
+export function codexSetupHookGroup(gbrainBin: string, event: CodexSetupEvent, env: { GBRAIN_HOME?: string; GBRAIN_SOURCE?: string }, lane = 'setup', launcher?: string): CodexHookGroup {
   const assignments = [`GBRAIN_HOOK_LANE=${lane}`, ...(env.GBRAIN_HOME ? [`GBRAIN_HOME=${env.GBRAIN_HOME}`] : []), ...(env.GBRAIN_SOURCE ? [`GBRAIN_SOURCE=${env.GBRAIN_SOURCE}`] : [])];
   const spec = SETUP_EVENT_SPECS[event];
   const command = event === 'SessionEnd'
-    ? ['env', ...assignments].map(shellQuote).join(' ') + ' ' + buildCodexSessionEndCommand(gbrainBin)
-    : ['env', ...assignments, gbrainBin, 'hook', spec.subcommand, '--harness', 'codex'].map(shellQuote).join(' ');
+    ? ['env', ...assignments].map(shellQuote).join(' ') + ' ' + buildCodexSessionEndCommand(gbrainBin, launcher)
+    : ['env', ...assignments, ...(launcher ? [launcher] : []), gbrainBin, 'hook', spec.subcommand, '--harness', 'codex'].map(shellQuote).join(' ');
   return { hooks: [{ type: 'command', command, timeout: spec.timeout }] };
 }
 

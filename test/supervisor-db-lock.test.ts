@@ -32,6 +32,7 @@ function snap(over: Partial<LockSnapshot>): LockSnapshot {
     ttl_expired: false,
     last_refreshed_at: new Date(),
     ms_since_last_refresh: 0,
+    db_now: new Date(),
     ...over,
   };
 }

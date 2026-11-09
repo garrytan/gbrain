@@ -8,6 +8,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operations } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/operations.ts';
+import { fenceTranscriptText } from '../src/core/search/transcript-quote.ts';
 
 let engine: PGLiteEngine;
 const get_tags = operations.find(o => o.name === 'get_tags')!;
@@ -33,7 +34,8 @@ afterAll(async () => { await engine.disconnect(); });
 
 describe('get_tags respects page visibility for remote callers', () => {
   test('world page tags are visible to remote callers', async () => {
-    expect(await get_tags.handler(ctxOf(true), { slug: 'notes/world' })).toEqual(['world-tag']);
+    // #8384: the page carries no trust declaration (`unknown`), so a remote reader gets its tags quoted.
+    expect(await get_tags.handler(ctxOf(true), { slug: 'notes/world' })).toEqual([fenceTranscriptText('world-tag', 'notes/world')]);
   });
 
   test('a private page returns no tags to a remote caller', async () => {

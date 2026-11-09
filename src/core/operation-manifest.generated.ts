@@ -14,7 +14,8 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "remember",
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Save facts with provenance; set `entity` (the subject) or recall misses it. Branch on `status`; write_pending: poll get_write_request.",
+    "description": "Save {fact, provenance (required: source), `entity` (subject; recall needs it)} or items[]. Branch on `status`; write_pending: poll get_write_request.",
+    "callShape": "A valid call: {\"fact\": \"<one claim>\", \"entity\": \"<subject-slug>\", \"provenance\": \"<where you learned it, with the date>\"}; several: items: [{fact, entity, provenance}, ...]. provenance (where the fact came from) is required.",
     "params": {
       "source_id": {
         "type": "string",
@@ -98,6 +99,26 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "replaces": {
         "type": "string",
         "description": "fact_id this fact replaces (same entity, or none).",
+        "fullSurfaceOnly": true
+      },
+      "claim_metric": {
+        "type": "string",
+        "description": "Typed claim metric, e.g. mrr (with claim_value).",
+        "fullSurfaceOnly": true
+      },
+      "claim_value": {
+        "type": "number",
+        "description": "Typed claim value (finite number).",
+        "fullSurfaceOnly": true
+      },
+      "claim_unit": {
+        "type": "string",
+        "description": "Typed claim unit, e.g. USD.",
+        "fullSurfaceOnly": true
+      },
+      "claim_period": {
+        "type": "string",
+        "description": "Typed claim period, e.g. monthly.",
         "fullSurfaceOnly": true
       }
     },
@@ -240,7 +261,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "explicit page read by slug/id; governed by page visibility, not output redaction (CEO-17 raw-read exception)"
     },
-    "description": "Read a page; `section` or `grep` reads one part. Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
+    "description": "Read a page; `section`/`grep` reads one part. Window selector order: cursor, around_chunk_id, lines, bytes (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
     "params": {
       "slug": {
         "type": "string",
@@ -313,6 +334,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "around_chunk_id": {
         "type": "number",
+        "minimum": 1,
         "description": "Window around a search hit chunk_id.",
         "fullSurfaceOnly": true
       },
@@ -328,6 +350,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "max_bytes": {
         "type": "number",
+        "minimum": 1,
         "description": "Window bytes (40000).",
         "fullSurfaceOnly": true
       },
@@ -357,7 +380,8 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "context": {
         "type": "number",
-        "description": "With grep: paragraphs of context either side (default 1, max 5).",
+        "appliesWith": "grep",
+        "description": "Applies only with grep (ignored without it): paragraphs of context either side (default 1, max 5).",
         "fullSurfaceOnly": true
       },
       "include_deleted": {
@@ -401,6 +425,10 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "fullSurfaceOnly": true,
         "description": "Recorded time: the page as this brain had recorded it at this ISO 8601 instant (2026-10-01T12:00:00Z), from the belief ledger. Not as_of, which is valid time (a date)."
+      },
+      "as_of": {
+        "type": "string",
+        "description": "YYYY-MM-DD: edition in force then. No valid_time in reply: current page."
       }
     },
     "scope": "read",
@@ -476,6 +504,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "wait_ms": {
         "type": "number",
         "description": "Commit wait ms (0-30000, default 5000)."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Why this change, one line (max 500 chars); kept in page history.",
+        "fullSurfaceOnly": true
       },
       "source_kind": {
         "type": "string",
@@ -850,6 +883,47 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "area": "pages"
   },
   {
+    "name": "find_pages",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "retrieval",
+    "description": "Find pages by name or path (what ls/find would answer), sorted by slug. pattern: a glob ('people/*acme*') matched against slug or source path, a slug prefix ('companies/acme'), or a plain name ('acme', a case-insensitive substring of the title or the slug's last segment). Returns slug, source_id, type, title, source_path and updated_at per page, total matches in scope, and complete (false when limit cut the list).",
+    "params": {
+      "pattern": {
+        "type": "string",
+        "required": true,
+        "description": "Glob, slug prefix or name."
+      },
+      "type": {
+        "type": "string",
+        "description": "Page type, or several comma-separated."
+      },
+      "types": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Page types, e.g. ['person']."
+      },
+      "limit": {
+        "type": "number",
+        "description": "Max rows (default 50; max 500, remote 100)."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "One source, or '__all__'."
+      }
+    },
+    "scope": "read",
+    "cliHints": {
+      "name": "find",
+      "positional": [
+        "pattern"
+      ]
+    },
+    "area": "pages"
+  },
+  {
     "name": "edit_page",
     "idempotent": true,
     "outputRedaction": {
@@ -911,6 +985,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "request_id": {
         "type": "string",
         "description": "Reuse only to retry."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Why this change, one line (max 500 chars); kept in page history.",
+        "fullSurfaceOnly": true
       }
     },
     "mutating": true,
@@ -1013,6 +1092,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
             "drop_timeline": {
               "type": "boolean",
               "description": "Content without a Timeline section deletes its dated entries."
+            },
+            "reason": {
+              "type": "string",
+              "description": "Why this change, one line (max 500 chars); kept in page history.",
+              "fullSurfaceOnly": true
             }
           }
         }
@@ -1260,6 +1344,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
+        "minimum": 1,
         "default": 25,
         "description": "1-100 slugs (default 25)."
       },
@@ -1375,6 +1460,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "return_window": {
         "type": "number",
+        "minimum": 1,
         "description": "Window radius 1-3.",
         "fullSurfaceOnly": true
       },
@@ -1496,6 +1582,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "return_window": {
         "type": "number",
+        "minimum": 1,
         "description": "Window radius 1-3.",
         "fullSurfaceOnly": true
       },
@@ -1677,6 +1764,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "return_window": {
         "type": "number",
+        "minimum": 1,
         "description": "Window radius 1-3.",
         "fullSurfaceOnly": true
       },
@@ -1784,6 +1872,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "types": {
         "type": "array",
+        "minItems": 1,
         "items": {
           "type": "string"
         },
@@ -1795,6 +1884,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
+        "minimum": 1,
         "description": "Matching pages to return (default 100, max 1000)."
       },
       "after": {
@@ -1803,6 +1893,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "max_seconds": {
         "type": "number",
+        "exclusiveMinimum": 0,
         "description": "Scan budget in seconds (default 30, max 120)."
       },
       "min_trust": {
@@ -2156,6 +2247,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
+        "minimum": 1,
         "description": "Rows per call (default 500, max 5000)."
       },
       "cursor": {
@@ -2226,6 +2318,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
+        "minimum": 1,
         "description": "≤5000"
       },
       "cursor": {
@@ -2291,6 +2384,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "hops": {
         "type": "array",
+        "minItems": 1,
         "description": "≤3 typed hops, e.g. [{\"link_type\":\"founded\",\"toward\":\"subject\"}]; toward: object|subject.",
         "items": {
           "type": "object",
@@ -2338,6 +2432,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
+        "minimum": 1,
         "description": "Rows per page (default 50, max 100)."
       },
       "offset": {
@@ -2471,8 +2566,21 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Brain statistics (page count, chunk count, etc.) — remote callers see counters confined to their source grant.",
-    "params": {},
+    "description": "Brain statistics (page count, chunk count, etc.) — remote callers see counters confined to their source grant. Pass by (source, type or source,type), since or collapse_aliases for live page counts per group instead, with distinct-slug totals so cross-source twins are not double counted.",
+    "params": {
+      "by": {
+        "type": "string",
+        "description": "Group page counts: 'source', 'type' or 'source,type'."
+      },
+      "since": {
+        "type": "string",
+        "description": "Effective date on/after: YYYY-MM-DD or 7d/2w/1y."
+      },
+      "collapse_aliases": {
+        "type": "boolean",
+        "description": "Merge near-duplicate type names; lists each group's member types."
+      }
+    },
     "scope": "admin",
     "cliHints": {
       "name": "stats"
@@ -2508,6 +2616,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "only": {
         "type": "array",
+        "minItems": 1,
         "items": {
           "type": "string"
         },
@@ -2535,7 +2644,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "full page version snapshots by slug; a page read governed by visibility like get_page (CEO-17)"
     },
-    "description": "Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest 20 versions by default. Pass include_body: true for each version's compiled_truth and timeline, and a larger limit (at most 100 over MCP) for older versions. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). revert_version takes the id field.",
+    "description": "Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest 20 versions by default. Pass include_body: true for each version's compiled_truth and timeline, and a larger limit (at most 100 over MCP) for older versions. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). replaced_because is the reason given for the write that replaced the snapshot (null when none was given). revert_version takes the id field.",
     "params": {
       "slug": {
         "type": "string",
@@ -2544,6 +2653,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
+        "minimum": 1,
         "description": "Return only the newest N versions (a positive integer). Default 20; MCP callers are capped at 100."
       },
       "include_body": {
@@ -2557,6 +2667,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "diff": {
         "type": "boolean",
+        "actsWhenTrue": true,
         "fullSurfaceOnly": true,
         "description": "With known_as_of: each version also carries a unified diff from the version before it."
       },
@@ -2606,6 +2717,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "number",
         "required": true,
         "description": "Numeric version id to revert to, as returned by get_versions. Not a version NUMBER offset — pass the id field."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Why this change, one line (max 500 chars); kept in page history.",
+        "fullSurfaceOnly": true
       }
     },
     "mutating": true,
@@ -2669,14 +2785,17 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "fact": {
         "type": "number",
+        "minimum": 1,
         "description": "Attribute this fact id (a fact about or fenced on the page) instead of the page."
       },
       "take": {
         "type": "number",
+        "minimum": 1,
         "description": "Attribute the take at this row number of the page's takes table."
       },
       "timeline": {
         "type": "number",
+        "minimum": 1,
         "description": "Attribute this timeline entry id of the page."
       },
       "versions": {
@@ -2721,6 +2840,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "params": {
       "schema_version": {
         "type": "number",
+        "minimum": 1,
         "description": "2 for the source-qualified catalog.",
         "fullSurfaceOnly": true
       },
@@ -2768,6 +2888,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "params": {
       "schema_version": {
         "type": "number",
+        "minimum": 1,
         "description": "2 for an exact canonical revision.",
         "fullSurfaceOnly": true
       },
@@ -3503,6 +3624,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
+        "minimum": 1,
         "description": "How many chunk_index positions to return (a positive integer). Default 50; MCP callers are capped at 500."
       }
     },
@@ -3524,6 +3646,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "types": {
         "type": "array",
+        "minItems": 1,
         "items": {
           "type": "string"
         },
@@ -3657,6 +3780,77 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     },
     "scope": "admin",
     "localOnly": true,
+    "area": "files"
+  },
+  {
+    "name": "file_register",
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Record the files row for an object the host already stored at the path file_upload would use (<page_slug>/<filename>, or unsorted/<first 8 hash chars>-<filename>), after reading it back and matching its size and SHA-256. Use when an embedded host writes bytes to storage itself. Runs only on an engine opened from settings; registering the same path again updates its row.",
+    "params": {
+      "storage_path": {
+        "type": "string",
+        "required": true,
+        "description": "Where the host stored the object; must be the file_upload layout for page_slug, filename and content_hash"
+      },
+      "filename": {
+        "type": "string",
+        "required": true
+      },
+      "content_hash": {
+        "type": "string",
+        "required": true,
+        "description": "SHA-256 of the bytes, 64 lowercase hex characters"
+      },
+      "size_bytes": {
+        "type": "integer",
+        "required": true
+      },
+      "page_slug": {
+        "type": "string",
+        "description": "Page the file belongs to"
+      },
+      "mime_type": {
+        "type": "string"
+      }
+    },
+    "mutating": true,
+    "scope": "admin",
+    "localOnly": true,
+    "cliOnly": {
+      "argv": [
+        "gbrain",
+        "files",
+        "verify"
+      ]
+    },
+    "area": "files"
+  },
+  {
+    "name": "file_verify",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Check files rows against the storage backend. Without storage_path, lists up to 100 rows (optionally one page's) with whether each object is present; with it, reads that object back and says whether its size and SHA-256 match the row. Runs only on an engine opened from settings. A backend that fails the check is store_unavailable, never a file reported missing.",
+    "params": {
+      "storage_path": {
+        "type": "string",
+        "description": "Read back and hash this one object"
+      },
+      "slug": {
+        "type": "string",
+        "description": "List only this page's files"
+      }
+    },
+    "scope": "admin",
+    "localOnly": true,
+    "cliOnly": {
+      "argv": [
+        "gbrain",
+        "files",
+        "verify"
+      ]
+    },
     "area": "files"
   },
   {
@@ -4021,6 +4215,83 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "area": "jobs"
   },
   {
+    "name": "watch_job",
+    "mutating": true,
+    "idempotent": true,
+    "writeInference": "non_content",
+    "outputRedaction": {
+      "exempt": "watch bookkeeping: job ids, states and times, never retrieved brain text"
+    },
+    "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn or keep working. The wake names the job and says to call get_job for the result; it carries no page text. Agent-scoped tokens watch only jobs they own. If no wake arrives, call wait_job.",
+    "params": {
+      "id": {
+        "type": "number",
+        "required": true,
+        "description": "Job ID (from submit_job, submit_agent or list_jobs)."
+      },
+      "session_key": {
+        "type": "string",
+        "description": "This conversation's session_key, from an earlier result (a secret token, or a handle such as claude-code#2). Keep it to this conversation; don't share or log it."
+      },
+      "harness": {
+        "type": "string",
+        "description": "The program you're running in: codex, claude-code, cursor (local CLI or IDE), cursor-cloud (Cursor cloud agent), grok-bot, copilot-cli, opencode, antigravity, openclaw (even when it runs your turns in Codex), hermes, chatgpt, or your program's name if it isn't listed"
+      },
+      "conversation_id": {
+        "type": "string",
+        "description": "Your own ID for this conversation, if your program gives you one. Cursor and Grok Bot: the output of `printenv CURSOR_CONVERSATION_ID`. Codex and Antigravity send it automatically; others leave it empty"
+      }
+    },
+    "scope": "admin",
+    "agentCallable": true,
+    "publishGateKey": "mcp.publish_wakeshift",
+    "cliHints": {
+      "hidden": true
+    },
+    "area": "jobs"
+  },
+  {
+    "name": "list_watches",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": {
+      "exempt": "watch bookkeeping: job ids, states and times, never retrieved brain text"
+    },
+    "description": "List the jobs this connection is watching through Wakeshift (open watches, plus ones that ended in the last day) with their state: open, delivered, dead or ended.",
+    "params": {},
+    "scope": "admin",
+    "agentCallable": true,
+    "publishGateKey": "mcp.publish_wakeshift",
+    "cliHints": {
+      "hidden": true
+    },
+    "area": "jobs"
+  },
+  {
+    "name": "unwatch",
+    "mutating": true,
+    "idempotent": true,
+    "writeInference": "non_content",
+    "outputRedaction": {
+      "exempt": "watch bookkeeping: job ids, states and times, never retrieved brain text"
+    },
+    "description": "Stop watching a job: ends this connection's open Wakeshift watches on it, so no wake comes for it. Returns how many ended (0 when none was open).",
+    "params": {
+      "job": {
+        "type": "number",
+        "required": true,
+        "description": "Job ID you passed to watch_job."
+      }
+    },
+    "scope": "admin",
+    "agentCallable": true,
+    "publishGateKey": "mcp.publish_wakeshift",
+    "cliHints": {
+      "hidden": true
+    },
+    "area": "jobs"
+  },
+  {
     "name": "find_orphans",
     "mutating": false,
     "idempotent": true,
@@ -4041,6 +4312,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
+        "minimum": 1,
         "description": "Rows per page (default 100, max 1000); total_orphans counts every orphan, complete says whether this page holds the rest, and next_cursor (or next_offset) names the next page."
       },
       "offset": {
@@ -4082,6 +4354,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "types": {
         "type": "array",
+        "minItems": 1,
         "items": {
           "type": "string"
         },
@@ -4101,6 +4374,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
+        "minimum": 1,
         "description": "Rows to return (default 20, max 100)."
       }
     },
@@ -4311,6 +4585,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "min_n": {
         "type": "number",
+        "minimum": 1,
         "description": "Trusted local CLI only: groups with fewer resolved predictions are flagged low_n (default 10)"
       }
     },
@@ -5464,17 +5739,40 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "List unverified auto-extracted entity stubs awaiting owner review (the quarantine lane from extract_entities). Promote or reject them with extraction_review.",
+    "description": "List what waits for review: unverified auto-extracted entity stubs (pending; promote or reject them with extraction_review), facts saved without an entity (unattributed; relink each with remember entity + replaces, never forget first), and, when include names it, recently created entity pages whose name is one edit or one acronym letter from another entity (possible_duplicates; flag only, never merged).",
     "params": {
       "limit": {
         "type": "number",
         "required": false,
-        "description": "Max rows (default 100, cap 500)."
+        "description": "Max rows per list (default 100 for pending, 50 for the others; cap 500)."
       },
       "offset": {
         "type": "number",
         "required": false,
-        "description": "Pagination offset."
+        "description": "Pagination offset for pending."
+      },
+      "include": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "required": false,
+        "description": "Lists to return: pending, unattributed, possible_duplicates. Default pending and unattributed."
+      },
+      "unattributed_offset": {
+        "type": "number",
+        "required": false,
+        "description": "Pagination offset for unattributed (its next_offset)."
+      },
+      "possible_duplicates_cursor": {
+        "type": "string",
+        "required": false,
+        "description": "Continuation for possible_duplicates (its next_cursor)."
+      },
+      "since_days": {
+        "type": "number",
+        "required": false,
+        "description": "possible_duplicates: entity pages created in the last N days (default 30)."
       }
     },
     "scope": "read",
@@ -5487,12 +5785,12 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "extraction_review",
     "idempotent": false,
     "outputRedaction": "no_stored_text",
-    "description": "Promote or reject unverified auto-extracted entity stubs (batch). Promote flips `status` to verified (provenance kept for audit); reject soft-deletes the stub. Owner-only: this op is refused for any non-local caller. (The markers are ordinary frontmatter — the boundary against rewriting them wholesale is put_page write authz, same as for any page.)",
+    "description": "Decide on review rows (batch). promote flips an unverified auto-extracted stub's `status` to verified (provenance kept for audit); reject soft-deletes the stub; distinct records that each of slugs is a different entity from of (`distinct_from` frontmatter), so possible_duplicates stops pairing them. Every decision writes through the page door: Git first on a source with a repository, the database on a repo-less source. Owner-only: this op is refused for any non-local caller. (The markers are ordinary frontmatter — the boundary against rewriting them wholesale is put_page write authz, same as for any page.)",
     "params": {
       "action": {
         "type": "string",
         "required": true,
-        "description": "'promote' or 'reject'."
+        "description": "'promote', 'reject' or 'distinct'."
       },
       "slugs": {
         "type": "array",
@@ -5500,7 +5798,12 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "items": {
           "type": "string"
         },
-        "description": "Stub slugs to act on (batch)."
+        "description": "Slugs to act on (batch)."
+      },
+      "of": {
+        "type": "string",
+        "required": false,
+        "description": "distinct only: the existing entity page each of slugs is not the same as."
       }
     },
     "mutating": true,
@@ -5778,6 +6081,12 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         ],
         "description": "Lowest trust tier to return (the connection floor still applies).",
         "fullSurfaceOnly": true
+      },
+      "max_chars": {
+        "type": "integer",
+        "minimum": 200,
+        "description": "Cap on fact (then results) text, 200-12000; whole items only, truncated says if cut.",
+        "fullSurfaceOnly": true
       }
     },
     "scope": "read",
@@ -6046,6 +6355,10 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "source_id": {
         "type": "string",
         "description": "Source holding the fact (default: the routed source)."
+      },
+      "reason_scan_limit": {
+        "type": "number",
+        "description": "Check only the newest N commits for change reasons quoting the claim (after a reason_purge_scan_capped refusal, with the user's choice); older commits are not tombstoned."
       }
     },
     "mutating": true,
@@ -6126,6 +6439,177 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "name": "unpurge-page",
       "hidden": true
     }
+  },
+  {
+    "name": "memory_recall",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": {
+      "exempt": "renders its own bounded text: fact text passes the retrieval redactor before the max_chars cut"
+    },
+    "description": "Facts for the person this call serves, one per line: their own recent facts first, then facts matching query. Never page bodies. For QM; agents use recall.",
+    "params": {
+      "query": {
+        "type": "string",
+        "required": true,
+        "description": "What the turn is about; ranks the facts."
+      },
+      "max_chars": {
+        "type": "integer",
+        "description": "Text cap in UTF-16 code units, 200-12000 (default 6000)."
+      },
+      "acting_user": {
+        "type": "string",
+        "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",
+        "fullSurfaceOnly": true
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Read this one source as its audience (a shared scope): never the person's own facts.",
+        "fullSurfaceOnly": true
+      },
+      "source_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Read only these sources as their audience (a shared scope): never the person's own facts.",
+        "fullSurfaceOnly": true
+      }
+    },
+    "scope": "read",
+    "annotations": {
+      "title": "memory_recall (QM memory read)",
+      "readOnlyHint": true
+    },
+    "area": "memory"
+  },
+  {
+    "name": "memory_write",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Save facts for the person this call serves, readable by them alone. Needs an attested person. The same idempotency_key replays the first receipt. For QM; agents use remember.",
+    "params": {
+      "facts": {
+        "type": "array",
+        "required": true,
+        "description": "1-20 facts.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "fact": {
+              "type": "string",
+              "required": true,
+              "description": "One claim."
+            },
+            "provenance": {
+              "type": "string",
+              "required": true,
+              "description": "Where it came from (<=200 chars)."
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "event",
+                "preference",
+                "commitment",
+                "belief",
+                "fact"
+              ],
+              "description": "Default fact."
+            },
+            "valid_from": {
+              "type": "string",
+              "description": "When it became true (ISO 8601)."
+            }
+          }
+        }
+      },
+      "idempotency_key": {
+        "type": "string",
+        "required": true,
+        "description": "1-128 visible ASCII characters; the same key replays this write."
+      },
+      "acting_user": {
+        "type": "string",
+        "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",
+        "fullSurfaceOnly": true
+      },
+      "source_id": {
+        "type": "string",
+        "description": "One of this credential's scope sources: save on its shared memory/scope page.",
+        "fullSurfaceOnly": true
+      }
+    },
+    "scope": "write",
+    "annotations": {
+      "title": "memory_write (QM memory write)",
+      "idempotentHint": true
+    },
+    "area": "memory"
+  },
+  {
+    "name": "get_memory_settings",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Memory writeback settings: the mode agents follow, the exact rule text, every mode's rule, background capture state, and whether you may change it.",
+    "params": {},
+    "scope": "read",
+    "area": "memory-settings",
+    "cliHints": {
+      "name": "memory-settings"
+    }
+  },
+  {
+    "name": "set_memory_writeback",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Change the brain-wide writeback mode agents are told to follow (inherit uses the operator's setting). Admin scope and the operator's grant required; background capture is not changed.",
+    "params": {
+      "mode": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "inherit",
+          "off",
+          "salient",
+          "all"
+        ],
+        "description": "inherit | off | salient | all."
+      },
+      "dry_run": {
+        "type": "boolean",
+        "description": "Preview the change; writes nothing."
+      }
+    },
+    "scope": "admin",
+    "area": "memory-settings",
+    "publishGateKey": "mcp.publish_memory_settings"
+  },
+  {
+    "name": "memory_conversation_mode",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Use when the user says \"save everything from here\" (all) or \"stop saving\" (off): returns this conversation's memory rule. Stores nothing.",
+    "params": {
+      "mode": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "brain",
+          "off",
+          "salient",
+          "all"
+        ],
+        "description": "all | salient | off (explicit saves only) | brain (this brain's mode)."
+      }
+    },
+    "scope": "write",
+    "area": "memory-settings"
   },
   {
     "name": "find_contradictions",
@@ -6672,7 +7156,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "skill catalog files are installed instructions read verbatim; redaction would corrupt approved revisions"
     },
-    "description": "Run SkillOpt against a single skill. Admin scope and remote skill allowlist required. shared_skill stages an exact catalog revision privately and requires explicit skill_editor and put_skill grants; only accepted body changes publish through the original revision CAS. Rate-limited per-skill via DB lock.",
+    "description": "Run SkillOpt against a single skill; its iterative loop (optimizer_mode \"reflect\") is deprecated. Admin scope and remote skill allowlist required. shared_skill stages an exact catalog revision privately and requires explicit skill_editor and put_skill grants; only accepted body changes publish through the original revision CAS. Rate-limited per-skill via DB lock.",
     "params": {
       "skill_name": {
         "type": "string",
@@ -6718,6 +7202,14 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "dry_run": {
         "type": "boolean",
         "description": "Preview: models plan, strict verdict and cost estimate, no LLM calls"
+      },
+      "optimizer_mode": {
+        "type": "string",
+        "enum": [
+          "one-shot-rewrite",
+          "reflect"
+        ],
+        "description": "Default one-shot-rewrite: one gated rewrite. reflect runs the iterative edit loop, which is deprecated (removed on or after 2026-12-03) and emits the skillopt_loop_deprecated notice."
       },
       "shared_skill": {
         "type": "boolean",
@@ -6776,6 +7268,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "id": {
         "type": "number",
+        "minimum": 1,
         "description": "Fetch the single loop with this id (ids come from earlier open_loops results). Matches any status unless `status` is passed; the source scope still applies, and the grouped view omits `text`."
       },
       "loop_type": {

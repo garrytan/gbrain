@@ -12,15 +12,19 @@
  * is the one its last sync import produced (the database has not moved since) is `behind`; one the database moved since
  * is `database_moved` and not reported (file-drift's territory); one with no record (or a record without a revision) is
  * `unproven`, listed apart. Not reported either: held paths (the hold already says it), paths with no blob at the
- * checkpoint, non-Markdown pages, declared database-only pages, and paths that changed between the checkpoint and HEAD
- * (the next sync imports them).
+ * checkpoint, non-Markdown pages, declared database-only pages, paths sync does not read (`not_eligible`: outside the
+ * source's scope, matched by `sync.exclude`, hidden, outside the sync strategy or a reserved skillpack path), and paths
+ * that changed between the checkpoint and HEAD (the next sync imports them).
  *
  * Bounded: the checkpoint tree is listed once (and HEAD's only when it differs), pages are read in id batches of
- * ROWS_BEHIND_BATCH in read-only transactions, committed blobs are read in bounded `cat-file --batch` calls, and a blob
- * over the sync read bound (SYNC_READ_BOUND, the page ceiling) is never read: its row is reported with the
- * `file_too_large` refusal sync would hold it with. The deadline is checked before each batch and before each row's
- * content comparison and confirmation (`complete: false`; `pages` and `counts` cover the rows decided before
- * `stopped_at`, the page id the scan stopped at). `confirmUnproven: false` (doctor) counts rows with no import record
+ * ROWS_BEHIND_BATCH in read-only transactions, and a blob over the sync read bound (SYNC_READ_BOUND, the page ceiling) is
+ * never read: its row is reported with the `file_too_large` refusal sync would hold it with. #8093: a batch's committed
+ * blobs and export pages are read and compared in chunks of at most ROWS_BEHIND_BATCH_BYTES (one blob when a single one
+ * is larger), each chunk's buffers dropped once it is compared, and the differing rows keep at most that many bytes for
+ * their confirmation (the rest re-read their blob there). The deadline is checked before the per-source tree reads,
+ * before each batch and before each row's content comparison and confirmation (`complete: false`; `pages` and
+ * `counts` cover the rows decided before `stopped_at`, the page id the scan stopped at); no chunk is read after it
+ * passes. The confirmation's screen config and the export withdrawals are read once the first batch starts. `confirmUnproven: false` (doctor) counts rows with no import record
  * from the content comparison alone, without running the importer's confirmation.
  * Applies only on the owner host of a managed source with a checkout and a checkpoint; everything else, a repo-less
  * brain included, is `not_applicable` with its reason. Read-only. Readers: doctor `sync_rows_behind_checkpoint` and
@@ -34,7 +38,8 @@ import { canonicalPath, sourceContext } from '../ghost-pages.ts';
 import { privatePagesFilterFragment, readHonorAliases } from '../search/private-visibility.ts';
 import { scannerSourcePath } from '../write-through.ts';
 import { managedPersistenceEnabled } from './ownership.ts';
-import { compareInlineExportFile, compareSegmentedExportBlob, declaredDatabaseOnly, readBlobs, readHeadTree, type ExportFileComparison, type TreeBlob } from './git-gap.ts';
+import { compareInlineExportFile, compareSegmentedExportBlob, declaredDatabaseOnly, DIRECTION_EVIDENCE, readBlobs, readDirectionEvidence, readHeadTree,
+  type DirectionEvidence, type Evidence, type EvidenceSubject, type ExportFileComparison, type TreeBlob } from './git-gap.ts';
 import { prepareRepairPublication, repairScreenConfig } from './file-repair.ts';
 import { SYNC_READ_BOUND } from './sync-blobs.ts';
 import { heldGitPaths, readSyncImportProvenances } from './sync-holds.ts';
@@ -43,6 +48,8 @@ import { METAFILE_HEAD_BYTES } from '../sync.ts';
 import { isSourceDbOnlySlug } from './source-storage.ts';
 
 export const ROWS_BEHIND_BATCH = 256;
+/** #8093: the committed-blob bytes one chunk of a batch reads, and the bytes the batch's differing rows keep for confirmation. */
+export const ROWS_BEHIND_BATCH_BYTES = 64 * 1024 * 1024;
 /** Rows one scan lists per class; counts go on past it (`truncated`). */
 export const ROWS_BEHIND_LIST_LIMIT = 1000;
 export const ROWS_BEHIND_DOCS = 'docs/guides/repair.md#rows-behind';
@@ -71,6 +78,8 @@ export interface RowBehind {
   overlay?: true;
   /** The digest of the page the import of the checkpoint bytes publishes (`prepareRepairPublication`). */
   digest?: string;
+  /** A row with no import record, scanned with `evidence`: which side moved since the row and its file last agreed (d4, git-gap.ts readDirectionEvidence). */
+  evidence?: Evidence;
 }
 
 export interface RowsBehindScan {
@@ -83,14 +92,18 @@ export interface RowsBehindScan {
   complete: boolean;
   /** The page id the deadline stopped the scan at (not compared), or null. */
   stopped_at: number | null;
-  /** Live file-backed pages decided. */
+  /** Live file-backed pages decided; equals `live_pages` only when `complete`. */
   pages: number;
+  /** The source's live file-backed pages, counted in SQL before the scan, so a partial scan's `pages` reads against the whole source. */
+  live_pages: number;
   behind: RowBehind[];
   unproven: RowBehind[];
   /** More rows than ROWS_BEHIND_LIST_LIMIT in a class; `behind_count` / `unproven_count` keep counting. */
   truncated: boolean;
   behind_count: number;
   unproven_count: number;
+  /** d4: `unproven_count` split by content evidence (they sum to it); null when the scan read no evidence. */
+  unproven_by: Record<DirectionEvidence, number> | null;
   counts: Partial<Record<RowsBehindSkip, number>>;
 }
 
@@ -98,12 +111,14 @@ type Key = { id: string; slug: string; source_id: string; source_path: string; s
   frontmatter: unknown; database_only_reason: string | null; segmented: boolean; lineage_private: boolean; revision: string };
 
 const empty = (sourceId: string, status: RowsBehindScan['status'], reason?: string): RowsBehindScan => ({ source_id: sourceId, status, ...(reason ? { reason } : {}),
-  checkpoint: null, head: null, complete: status !== 'unknown', stopped_at: null, pages: 0, behind: [], unproven: [], truncated: false, behind_count: 0, unproven_count: 0, counts: {} });
+  checkpoint: null, head: null, complete: status !== 'unknown', stopped_at: null, pages: 0, live_pages: 0, behind: [], unproven: [], truncated: false, behind_count: 0, unproven_count: 0,
+  unproven_by: null, counts: {} });
 
 const isMarkdown = (path: string) => /\.mdx?$/i.test(path);
 
+/** `evidence` (d4): read which side moved for every unproven row once the scan completes (`unproven_by`, each row's `evidence`). */
 export async function scanRowsBehind(engine: BrainEngine, sourceId: string,
-  opts: { deadlineAt?: number; confirmUnproven?: boolean; now?: () => number } = {}): Promise<RowsBehindScan> {
+  opts: { deadlineAt?: number; confirmUnproven?: boolean; now?: () => number; batchBytes?: number; evidence?: boolean } = {}): Promise<RowsBehindScan> {
   if (!(await managedPersistenceEnabled(engine))) return empty(sourceId, 'not_applicable', 'not_managed');
   const context = await sourceContext(engine, sourceId);
   if (!context.ok) return empty(sourceId, context.status, context.reason);
@@ -111,6 +126,9 @@ export async function scanRowsBehind(engine: BrainEngine, sourceId: string,
   if (!source?.last_commit) return empty(sourceId, 'not_applicable', 'no_checkpoint');
   const root = context.root;
   try { isSourceDbOnlySlug(root, '', 'refuse'); } catch { return empty(sourceId, 'unknown', 'invalid_source_config'); }
+  const now = opts.now ?? Date.now;
+  const late = () => opts.deadlineAt !== undefined && now() >= opts.deadlineAt;
+  if (late()) return { ...empty(sourceId, 'known'), checkpoint: source.last_commit, complete: false };
   const checkpoint = await readHeadTree(root, source.last_commit);
   if (!checkpoint?.commit) return { ...empty(sourceId, 'unknown', 'checkpoint_unreadable'), checkpoint: source.last_commit };
   const headRead = await readHeadTree(root, 'HEAD');
@@ -122,14 +140,17 @@ export async function scanRowsBehind(engine: BrainEngine, sourceId: string,
   const { eligible, metafileHeads } = await loadSyncEligibility(engine, { root, gitRoot: checkpoint.gitRoot, sourceId, source: { last_commit: source.last_commit, config: source.config ?? {} } });
   const policy = { mirror: false, databaseOnlySource: false, dbOnly: (slug: string) => isSourceDbOnlySlug(root, slug, 'refuse'), ignored: new Set<string>() };
   const scan: RowsBehindScan = { ...empty(sourceId, 'known'), checkpoint: checkpoint.commit, head: head.commit };
+  const [live] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL', [sourceId]);
+  scan.live_pages = Number(live?.n ?? 0);
+  const subjects: EvidenceSubject[] = [];
   const count = (why: RowsBehindSkip) => { scan.counts[why] = (scan.counts[why] ?? 0) + 1; };
-  const now = opts.now ?? Date.now;
-  const late = () => opts.deadlineAt !== undefined && now() >= opts.deadlineAt;
-  const screen = await repairScreenConfig(engine, sourceId);
-  const withdrawals: ExportWithdrawal[] = await readExportWithdrawals(engine, sourceId);
+  const batchBytes = opts.batchBytes ?? ROWS_BEHIND_BATCH_BYTES;
+  let screen: Awaited<ReturnType<typeof repairScreenConfig>> | undefined;
+  let withdrawals: ExportWithdrawal[] | undefined;
   const incarnation = context.owner.source_incarnation;
   for (let cursor = '0'; ;) {
     if (late()) { scan.complete = false; break; }
+    const exportWithdrawals = withdrawals ??= await readExportWithdrawals(engine, sourceId);
     let stop: number | null = null;
     const skipped: Array<[number, RowsBehindSkip]> = [];
     const skip = (id: string, why: RowsBehindSkip) => { skipped.push([Number(id), why]); };
@@ -174,37 +195,57 @@ export async function scanRowsBehind(engine: BrainEngine, sourceId: string,
         if (head !== checkpoint && head.blobs.get(gitPath(row.rel))?.oid !== row.blob.oid) { skip(row.key.id, 'changed_after_checkpoint'); continue; }
         compare.push(row);
       }
-      const readable = compare.filter(row => row.blob.size <= SYNC_READ_BOUND);
-      const bytes = await readBlobs(root, readable.filter(row => !row.key.segmented).map(row => row.blob));
-      if (!bytes) throw new Error(`Git could not read committed files of source ${sourceId} at ${checkpoint.commit}`);
-      const snapshots = await readExportPages(tx, readable.map(row => row.key), withdrawals);
-      const byId = new Map(snapshots.map(snapshot => [String(snapshot.page.id), snapshot]));
-      for (const row of compare) {
-        if (late()) { stop = Number(row.key.id); break; }
-        const recordState: RowBehind['record'] = records.get(Number(row.key.id))?.revision != null ? 'recorded' : 'none';
-        if (row.blob.size > SYNC_READ_BOUND) { candidates.push({ ...row, record: recordState, content: null, compared: null }); continue; }
-        const snapshot = byId.get(row.key.id);
-        if (!snapshot) continue;
-        const compared = row.key.segmented ? await compareSegmentedExportBlob(tx, snapshot, withdrawals, row.blob, checkpoint.format)
-          : compareInlineExportFile(bytes.get(row.blob.oid)!, scannerSourcePath(root, `${root}/${row.rel}`, context.mode), snapshot);
-        if (compared.state === 'equal') { skip(row.key.id, 'current'); continue; }
-        candidates.push({ ...row, record: recordState, content: bytes.get(row.blob.oid) ?? null, compared });
+      const blobBytes = (row: (typeof compare)[number]) => row.blob.size > SYNC_READ_BOUND || row.key.segmented ? 0 : row.blob.size;
+      let kept = 0;
+      for (let start = 0; start < compare.length && stop === null;) {
+        let end = start, total = 0;
+        while (end < compare.length && (end === start || total + blobBytes(compare[end]!) <= batchBytes)) total += blobBytes(compare[end++]!);
+        const chunk = compare.slice(start, end);
+        start = end;
+        const readable = chunk.filter(row => row.blob.size <= SYNC_READ_BOUND);
+        const bytes = await readBlobs(root, readable.filter(row => !row.key.segmented).map(row => row.blob));
+        if (!bytes) throw new Error(`Git could not read committed files of source ${sourceId} at ${checkpoint.commit}`);
+        const snapshots = await readExportPages(tx, readable.map(row => row.key), exportWithdrawals);
+        const byId = new Map(snapshots.map(snapshot => [String(snapshot.page.id), snapshot]));
+        for (const row of chunk) {
+          if (late()) { stop = Number(row.key.id); break; }
+          const recordState: RowBehind['record'] = records.get(Number(row.key.id))?.revision != null ? 'recorded' : 'none';
+          if (row.blob.size > SYNC_READ_BOUND) { candidates.push({ ...row, record: recordState, content: null, compared: null }); continue; }
+          const snapshot = byId.get(row.key.id);
+          if (!snapshot) continue;
+          const compared = row.key.segmented ? await compareSegmentedExportBlob(tx, snapshot, exportWithdrawals, row.blob, checkpoint.format)
+            : compareInlineExportFile(bytes.get(row.blob.oid)!, scannerSourcePath(root, `${root}/${row.rel}`, context.mode), snapshot);
+          if (compared.state === 'equal') { skip(row.key.id, 'current'); continue; }
+          const content = bytes.get(row.blob.oid) ?? null;
+          const keep = content !== null && kept + content.length <= batchBytes;
+          if (keep) kept += content.length;
+          candidates.push({ ...row, record: recordState, content: keep ? Buffer.from(content) : null, compared });
+        }
       }
       return batch.length < ROWS_BEHIND_BATCH;
     });
     for (const candidate of candidates) {
       if (stop !== null && Number(candidate.key.id) >= stop) break;
       if (late()) { stop = Number(candidate.key.id); break; }
-      const row = candidate.record === 'none' && opts.confirmUnproven === false ? unconfirmedRow(candidate) : await confirm(engine, sourceId, root, screen, candidate);
+      const row = candidate.record === 'none' && opts.confirmUnproven === false ? unconfirmedRow(candidate)
+        : await confirm(engine, sourceId, root, screen ??= await repairScreenConfig(engine, sourceId), candidate);
       if (typeof row === 'string') { count(row); continue; }
       const list = row.record === 'recorded' ? scan.behind : scan.unproven;
       if (row.record === 'recorded') scan.behind_count++; else scan.unproven_count++;
+      if (row.record !== 'recorded' && opts.evidence) subjects.push({ id: candidate.key.id, slug: candidate.key.slug, revision: candidate.key.revision, rel: candidate.rel,
+        importPath: scannerSourcePath(root, `${root}/${candidate.rel}`, context.mode), segmented: candidate.key.segmented === true, blob: candidate.blob });
       if (list.length < ROWS_BEHIND_LIST_LIMIT) list.push(row); else scan.truncated = true;
     }
     for (const [id, why] of skipped) if (stop === null || id < stop) count(why);
     scan.pages += stop === null ? ids.length : ids.filter(id => id < stop!).length;
     if (stop !== null) { scan.complete = false; scan.stopped_at = stop; break; }
     if (done) break;
+  }
+  if (opts.evidence && scan.complete) {
+    const evidence = await readDirectionEvidence(engine, { sourceId, root, gitRoot: checkpoint.gitRoot, scope, tip: checkpoint.commit, format: checkpoint.format, mode: context.mode, subjects });
+    scan.unproven_by = Object.fromEntries(DIRECTION_EVIDENCE.map(kind => [kind, 0])) as Record<DirectionEvidence, number>;
+    for (const subject of subjects) scan.unproven_by[evidence.get(subject.id)!.kind]++;
+    for (const row of scan.unproven) { const found = evidence.get(String(row.page_id)); if (found) row.evidence = found; }
   }
   return scan;
 }

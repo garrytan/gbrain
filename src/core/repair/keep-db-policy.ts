@@ -25,7 +25,7 @@ import { trustedCliRequired } from '../ops/op-fix.ts';
 import { isKeepDbSlug, loadStorageConfig } from '../storage-config.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
 import { readDriftSkips, releaseDriftSkip } from '../persistence/drift-conflicts.ts';
-import { localHostId, readLocalWriter, withVerifiedLocalRegistration } from '../persistence/identity.ts';
+import { readLocalWriter, withVerifiedLocalRegistration, hostIdFor } from '../persistence/identity.ts';
 import { getWriteRequest } from '../persistence/journal.ts';
 import { admitReconcileArtifact, authorizeReconcile, type ReconcileArtifact } from '../persistence/reconcile.ts';
 import { reconcileBackupRetained } from '../persistence/reconcile-backup.ts';
@@ -110,7 +110,7 @@ export async function freezeKeepDbReconcile(engine: BrainEngine, input: KeepDbFr
   if (!(cls === 'keep_db' || (cls === 'db_ahead' && sub === 'db_only' && keepDbWrite))) return { refused: 'not_keep_db' };
   if (input.mode !== 'committed' || input.dirty !== 'clean') return { refused: 'not_committed_clean' };
   let policy: KeepDbPolicy | null;
-  try { policy = await readKeepDbPolicy(engine, input.sourceId, localHostId()); } catch { return { refused: 'storage_config_error' }; }
+  try { policy = await readKeepDbPolicy(engine, input.sourceId, hostIdFor(engine)); } catch { return { refused: 'storage_config_error' }; }
   if (!policy || !isKeepDbSlug(input.slug, policy.keep_db)) return { refused: 'outside_keep_db' };
   if (await sourceMirrorReadOnly(engine, input.sourceId)) return { refused: 'mirror_read_only' };
   let preview: ReconcileArtifact;

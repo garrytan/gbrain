@@ -66,8 +66,13 @@ CHECKS=(
   # ── heavy (longest-first) ──
   "typecheck"
   "check:admin-build"
+  # #7126: src/admin-embedded.ts embeds exactly the committed admin/dist; the
+  # admin build above writes a throwaway directory, so it cannot catch this.
+  "check:admin-embedded"
   "check:wasm"
   "check:pglite-embedded"
+  # gbrain's bundled skills survive bun build --compile byte-identical (GBRA-194).
+  "check:skills-embedded"
   # HEIC + AVIF decoders survive bun build --compile (~0.6s: the smoketest
   # bundles a handful of modules, not the CLI).
   "check:image-decoders"
@@ -153,6 +158,7 @@ CHECKS=(
   "check:pin-doc-privacy"
   "check:worker-lock-renewal-shape"
   "check:bootstrap-tag"
+  "check:install-ref"
   "check:plugin-tree"
   "check:skill-refs"
   # Previously reachable ONLY from the deleted check:all (i.e. never run):
@@ -181,12 +187,18 @@ CHECKS=(
   # Wave 18b: a missing column/table reads as "pre-migration" only when the
   # handler names it (isMissingSchemaObject); broad predicates are allowlisted.
   "check:schema-error-predicates"
+  # Trunk Dynamic CI: the filter runs only on pull_request and every gated job
+  # keeps the fail-open !cancelled() && != 'false' form.
+  "check:dynamic-ci"
   # #4992: subprocess launches go through src/core/spawn.ts (windowsHide
   # default); NOT_YET_MIGRATED is a ratchet that only shrinks.
   "check:windows-hide"
   # Goal (a) (refactor wave 1): engine SQL only shrinks; baseline
   # scripts/engine-sql-baseline.tsv.
   "check:engine-sql-ratchet"
+  # GBRA-248 W1: world reads in src/core (loadConfig, env, fs, module state,
+  # spawn, process hooks) only fall; baseline scripts/core-world-reads-baseline.tsv.
+  "check:core-world-reads"
   # GBRA-161: derived-retire writers only shrink; reviewed ceilings in
   # docs/architecture/derived-census.tsv.
   "check:derived-census"
@@ -199,6 +211,8 @@ CHECKS=(
   # CQ3 / EO17 (refactor wave 1): engine-sql splices only constant text, no
   # composed $n, no expanded IN lists.
   "check:engine-sql-dynamic"
+  # GBRA-218: the remote-privacy relaxations are read only in private-visibility.ts.
+  "check:remote-privacy-reads"
   # EO4 (refactor wave 1): RLS read brands stay unforgeable; brand factories
   # importable only from their allowlists (never src/core/ops/**).
   "check:engine-sql-brands"

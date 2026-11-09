@@ -340,6 +340,24 @@ export const derivedVisibilityEntry: DoctorEntry = {
   run: runDerivedVisibility,
 };
 
+/**
+ * GST-1209 follow-up: damaged segmented pages are their own entry with their own budget, so a default run reports the
+ * finding even when the wave checks of timeline_history run out of theirs (and never serves an older entry's last known result for it).
+ */
+async function runSegmentedTiling(ctx: DoctorContext): Promise<Check[]> {
+  ctx.progress.heartbeat('segmented_tiling');
+  const { segmentedTilingCheck } = await import('./segmented-tiling.ts');
+  const checks: Check[] = [];
+  checks.push(await segmentedTilingCheck(connectedEngine(ctx), ctx.orphanRatioSourceId ? [ctx.orphanRatioSourceId] : undefined));
+  return checks;
+}
+
+export const segmentedTilingEntry: DoctorEntry = {
+  name: 'segmented_tiling',
+  emits: ['segmented_tiling'],
+  run: runSegmentedTiling,
+};
+
 export const timelineHistoryEntry: DoctorEntry = {
   name: 'timeline_history',
   emits: [
@@ -355,6 +373,7 @@ export const timelineHistoryEntry: DoctorEntry = {
     'connector_held_items',
     'git_held_files',
     'frontmatter_hook',
+    'url_source_origin',
     'orphan_persistence_bindings',
     'foreign_ownership_marker',
     'coordination_lock_location',
@@ -373,6 +392,7 @@ export const timelineHistoryEntry: DoctorEntry = {
     'generation_held',
     'generation_pending',
     'extractor_facts_expired',
+    'unwithdrawn_facts',
     'conversation_label_facts',
     'conversation_outcomes_stale',
     'captured_facts_active',

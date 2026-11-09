@@ -22,7 +22,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { CONSUMER_LAPSED_MS } from './consumer-heartbeat.ts';
-import { existingLocalHostId } from './identity.ts';
+import { existingHostIdFor } from './identity.ts';
 
 /** An owner with no live consumer and no activity for this long reads as stale. */
 export const OWNER_STALE_MS = 24 * 60 * 60 * 1000;
@@ -53,11 +53,11 @@ export async function ownerActivity(engine: BrainEngine, worktreeIds: readonly s
         (SELECT max(x.completed_at) FROM sources s CROSS JOIN LATERAL (SELECT r.completed_at FROM persistence_requests r
           WHERE r.worktree_id=w.id AND r.source_incarnation=s.incarnation AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
           ORDER BY r.completed_at DESC LIMIT 1) x)) AS last_active,
-      (SELECT min(r.created_at) FROM persistence_requests r WHERE r.worktree_id=w.id AND r.state IN ('queued','running','recovering')) AS oldest_open
+      (SELECT min(r.created_at) FROM persistence_requests r WHERE r.worktree_id=w.id AND r.state IN ('queued','deferred','running','recovering')) AS oldest_open
     FROM persistence_worktrees w
     WHERE w.id::text = ANY($1::text[]) AND w.owner_host_id IS NOT NULL`, [ids, CONSUMER_LAPSED_MS],
     { signal: engine.kind === 'postgres' ? opts.signal : undefined });
-  const local = existingLocalHostId();
+  const local = existingHostIdFor(engine);
   for (const row of rows) {
     const lastActive = row.last_active === null ? null : new Date(row.last_active).toISOString();
     const self = local === row.owner_host_id;

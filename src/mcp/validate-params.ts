@@ -16,6 +16,7 @@ import type { Operation } from '../core/operations.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { GBrainConfig } from '../core/config.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
+import { engineKey } from '../core/engine-key.ts';
 import type { OperationError } from '../core/ops/contract.ts';
 import { invalidParam } from '../core/ops/op-fix.ts';
 import type { Action } from '../core/agent-output.ts';
@@ -35,6 +36,7 @@ export function findInvalidParam(op: Operation, params: Record<string, unknown>)
       const expected = def.type;
       if (expected === 'string' && typeof val !== 'string') return fail(`Parameter "${key}" must be a string`);
       if (expected === 'number' && typeof val !== 'number') return fail(`Parameter "${key}" must be a number`);
+      if (expected === 'integer' && !Number.isInteger(val)) return fail(`Parameter "${key}" must be a whole number`);
       if (expected === 'boolean' && typeof val !== 'boolean') return fail(`Parameter "${key}" must be a boolean`);
       if (expected === 'object' && (typeof val !== 'object' || Array.isArray(val))) return fail(`Parameter "${key}" must be an object`);
       if (expected === 'array' && !Array.isArray(val)) return fail(`Parameter "${key}" must be an array`);
@@ -86,7 +88,7 @@ function retryWithValidParam(op: Operation, failure: ParamValidationFailure, par
   const def = op.params[failure.param];
   if (!def || params[failure.param] === undefined || params[failure.param] === null) return undefined;
   const value = def.enum?.length ? (def.default !== undefined && def.enum.includes(String(def.default)) ? def.default : def.enum[0])
-    : def.type === 'number' ? (typeof def.default === 'number' ? def.default : 10)
+    : def.type === 'number' || def.type === 'integer' ? (typeof def.default === 'number' ? def.default : 10)
       : def.type === 'boolean' ? (typeof def.default === 'boolean' ? def.default : true)
         : undefined;
   if (value === undefined) return undefined;
@@ -107,8 +109,10 @@ function retryWithValidParam(op: Operation, failure: ParamValidationFailure, par
 
 /**
  * Normalize the absent-idioms real MCP clients send for OPTIONAL params
- * before validation and dispatch: `null` (any type) and `''` (string-typed
- * params) become "not provided".
+ * before validation and dispatch: `null` (any type), `''` (string-typed
+ * params) and the schema-ruled-out empty values in `isAbsentValue` (GST-927)
+ * become "not provided"; then a param declared `appliesWith` another one that
+ * is absent is dropped too (get_page `context` without `grep`).
  *
  * Why: non-Claude models routinely fill optional params with `""` or `null`
  * instead of omitting them. `validateParams` already reads null as absent
@@ -126,20 +130,46 @@ function retryWithValidParam(op: Operation, failure: ParamValidationFailure, par
  *     handler exactly as before.
  *   - Type-mismatched junk is untouched — `limit: ""` keeps its loud
  *     "must be a number" error rather than silently succeeding.
+ *   - A value inside the param's valid range is never dropped, except that an
+ *     `appliesWith` param is dropped whatever its value when its partner is
+ *     absent, because it has no effect then. Nothing is dropped from a param
+ *     that declares none of these: the result is always a call the caller
+ *     could have sent by leaving the argument out.
  *   - Undeclared keys are untouched (they were already ignored).
  * Copy-on-write: callers' param objects are never mutated.
  */
 export function normalizeOptionalParams(op: Operation, params: Record<string, unknown>): Record<string, unknown> {
   let out: Record<string, unknown> | null = null;
-  for (const [key, def] of Object.entries(op.params)) {
-    if (def.required) continue;
-    const val = params[key];
-    const isAbsentIdiom = val === null || (val === '' && def.type === 'string');
-    if (!isAbsentIdiom) continue;
+  const drop = (key: string) => {
     if (out === null) out = { ...params };
     delete out[key];
+  };
+  for (const [key, def] of Object.entries(op.params)) {
+    if (!def.required && isAbsentValue(op, def, params[key])) drop(key);
+  }
+  for (const [key, def] of Object.entries(op.params)) {
+    const current = out ?? params;
+    if (!def.required && def.appliesWith && current[key] !== undefined && current[def.appliesWith] === undefined) drop(key);
   }
   return out ?? params;
+}
+
+/**
+ * GST-927: a value that can only mean "not provided" for this param's schema. `null` anywhere and `''` on a string
+ * (GST-923), plus the empty values GPT-style callers fill in that the schema rules out: 0 below a numeric range that
+ * excludes it, `[]` where the list must be non-empty, `{}` where a read op's object requires a member, and `false` on a
+ * flag that acts only when true. Every other value, including any value inside the valid range, is kept.
+ */
+function isAbsentValue(op: Operation, def: Operation['params'][string], val: unknown): boolean {
+  if (val === null) return true;
+  if (val === '') return def.type === 'string';
+  if (val === 0) return (def.minimum ?? 0) > 0 || (def.exclusiveMinimum ?? -1) >= 0;
+  if (val === false) return def.actsWhenTrue === true;
+  if (Array.isArray(val)) return val.length === 0 && (def.minItems ?? 0) >= 1;
+  if (typeof val === 'object' && def.type === 'object' && op.mutating === false) {
+    return Object.keys(val as object).length === 0 && Object.values(def.properties ?? {}).some(member => member.required);
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +192,7 @@ export const UNKNOWN_PARAM_ALLOWLIST: ReadonlySet<string> = new Set(['_meta', 'd
  */
 const PARAM_ALIAS_HINTS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   add_timeline_entry: { content: 'detail', text: 'detail', body: 'detail' },
+  remember: { facts: 'items', text: 'fact' },
 };
 
 /**
@@ -203,10 +234,10 @@ export function findUnknownParams(op: Operation, params: Record<string, unknown>
 }
 
 /**
- * Render the model-visible warn-mode notice lines (one per unknown key) that
- * dispatch appends as an extra text content block on the RESULT — the same
- * D8 second-block mechanism that carries empty-retrieval loudness, so the
- * grace period actually corrects clients instead of warning into a void.
+ * The warn-mode notice lines (one per unknown key) hosts before GST-900 appended
+ * as an extra content block. Dispatch no longer sends it (the warning lives in
+ * `_meta.warnings` only, so harnesses never store it in a turn); it stays the
+ * reference for the old-host block `ignoredRemoteParams` still parses.
  */
 export function buildUnknownParamWarnBlock(warnings: UnknownParamWarning[]): string {
   return warnings
@@ -227,7 +258,7 @@ export function parseStrictParamsMode(v: unknown): StrictParamsMode | null {
  * Dual-plane resolution for `mcp.strict_params`: DB plane (`engine.getConfig`)
  * wins, file plane (`config.mcp.strict_params`) is the fallback, absent or
  * unparseable on both = 'warn' (the grace-period default). A failed DB read
- * holds the LAST successfully resolved DB mode (per process) before falling
+ * holds the LAST successfully resolved DB mode (per engine) before falling
  * to the file plane — a transient config outage on a reject-mode server must
  * not silently re-open the warn-mode grace period. Validation posture never
  * takes a tool call down. Resolved once per dispatch (amendment 12);
@@ -236,11 +267,11 @@ export function parseStrictParamsMode(v: unknown): StrictParamsMode | null {
  * (stdio + the legacy bearer transport resolve once at startup — restart to
  * flip there, deliberate).
  */
-let lastKnownDbStrictMode: StrictParamsMode | null = null;
+let lastKnownDbStrictMode = new WeakMap<object, StrictParamsMode | null>();
 
 /** Test seam: clear the last-known-good DB mode between cases. */
 export function resetStrictParamsModeCache(): void {
-  lastKnownDbStrictMode = null;
+  lastKnownDbStrictMode = new WeakMap();
 }
 
 export async function resolveStrictParamsMode(
@@ -249,12 +280,13 @@ export async function resolveStrictParamsMode(
 ): Promise<StrictParamsMode> {
   try {
     const dbMode = parseStrictParamsMode(await engine.getConfig('mcp.strict_params'));
-    lastKnownDbStrictMode = dbMode;
+    lastKnownDbStrictMode.set(engineKey(engine), dbMode);
     if (dbMode) return dbMode;
   } catch {
     // Engine without a config table / transient error: last-known-good DB
     // mode wins; with no prior successful read, the file plane decides.
-    if (lastKnownDbStrictMode) return lastKnownDbStrictMode;
+    const lastKnown = lastKnownDbStrictMode.get(engineKey(engine));
+    if (lastKnown) return lastKnown;
   }
   return parseStrictParamsMode(config?.mcp?.strict_params) ?? 'warn';
 }
