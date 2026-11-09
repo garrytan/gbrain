@@ -1037,11 +1037,14 @@ export async function deleteChunks(exec: SqlExecutor, slug: string, opts?: { sou
     const sourceId = opts?.sourceId ?? 'default';
     // Source-qualify the page-id subquery; slugs are only unique per source.
     // Removing chunks voids the text projection seal that certified them; a
-    // writer that reinstalls the projection seals it again (#8502).
+    // writer that reinstalls the projection seals it again (#8502). The page
+    // row is locked before any chunk row (the DELETE needs its id), the order
+    // every writer takes them in, so this never deadlocks against one.
     await exec.run(sqlFragment`
-      WITH gone AS (
+      WITH page AS (SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId} FOR UPDATE),
+      gone AS (
         DELETE FROM content_chunks
-        WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId})
+        WHERE page_id = (SELECT id FROM page)
         RETURNING page_id
       )
       UPDATE pages SET text_projection_revision = NULL
