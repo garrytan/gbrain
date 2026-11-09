@@ -4654,7 +4654,7 @@ More: [docs/guides/skill-resolver.md#skill_resolver_config_invalid](../../docs/g
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| config.json exists but cannot be read or parsed, so the skill resolver lane stays silent and setup writes none of its keys (the file is never rewritten). | The request itself was wrong or no longer matches the brain; nothing was changed. | Fix or move <gbrain home>/config.json (it must be a JSON object), then run gbrain doctor --only skill_resolver. Run: gbrain doctor --only skill_resolver --json | agent | `repeat the read that failed` | 1 | no |
+| config.json exists but cannot be read or parsed, so the skill resolver lane stays silent and setup writes none of its keys (the file is never rewritten). | The request itself was wrong or no longer matches the brain; nothing was changed. | Fix or move config.json in the gbrain config directory (GBRAIN_HOME/.gbrain, else ~/.gbrain; it must be a JSON object), then run gbrain doctor --only skill_resolver. Run: gbrain doctor --only skill_resolver --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_resolver_config_unreadable](../../docs/guides/skill-resolver.md#skill_resolver_config_unreadable)
 
