@@ -518,14 +518,16 @@ function skippedPathsError(root: string, skipped: SkippedPath[], result: CommitP
     ({ argv, consent: [], actor: 'agent', requires_exclusive: false, why: 'Clears the flag so git sees the edit on disk; the file keeps its bytes.', ...(then ? { then } : {}) }), last);
   const pages = managed ? skipped.filter(s => isSyncable(s.path)) : [];
   if (managed && pages.length) {
-    const put: Action = { argv: ['gbrain', 'put', '<slug>'], mcp: { tool: 'put_page', arguments: { slug: '<slug>', content: '<the page file>' } },
+    const source = managed.sourceId ? { argv: ['--source-id', managed.sourceId], mcp: { source_id: managed.sourceId } } : { argv: [], mcp: {} };
+    const put: Action = { argv: ['gbrain', 'put', ...source.argv, '<slug>'],
+      mcp: { tool: 'put_page', arguments: { slug: '<slug>', ...source.mcp, content: '<the page file>' } },
       inputs: [{ name: 'slug', how: `Each listed page path without its .md extension; pass the file's content on stdin: ${pages.slice(0, 5).map(s => s.path).join(', ')}` }],
       consent: [], actor: 'agent', requires_exclusive: false,
       why: 'put_page saves the page through the owner, which writes the file, commits only that path and pushes it.',
       verify: { argv: ['gbrain', 'sources', 'writer', 'status', managed.sourceId ?? '<source>', '--json'] } };
     return opError('writer_coordinator_required',
       `${root} is the managed canonical worktree${managed.sourceId ? ` of source ${managed.sourceId}` : ''}, and git did not commit ${skipped.length} named path(s): ${list}. ${rest}`,
-      `${clears.length ? `First, with the user's agreement, clear the flags (${clearCommand}), since the owner's own Git step cannot see a flagged edit either. ` : ''}Then save those pages through gbrain (put_page, edit_page or capture; on the CLI, gbrain put with the page slug and the page on stdin): the persistence owner commits and pushes them. Never commit page files around it.`,
+      `${clears.length ? `First, with the user's agreement, clear the flags (${clearCommand}), since the owner's own Git step cannot see a flagged edit either. ` : ''}Then save those pages through gbrain (put_page, edit_page or capture; on the CLI, gbrain put${managed.sourceId ? ` --source-id ${managed.sourceId}` : ''} with the page slug and the page on stdin): the persistence owner commits and pushes them. Never commit page files around it.`,
       { docs, detail,
         why: 'The persistence owner is the only Git writer of pages in a managed worktree; a page file written there directly and left uncommitted is neither in Git nor in the database, so reporting success would lose the write silently.',
         fix: { ...(chain(clears, put) ?? put), ask_user: true,
