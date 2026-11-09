@@ -145,3 +145,45 @@ test('attributes outside the range and diff settings never hide a secret or a ga
   expect(widened.message).toContain('.gbrain-scan-allow (changes what the scan sees, ');
   expect(remoteTip(noprefix)).toBe(noprefix.base);
 });
+
+test('a NUL byte past the first 8000 bytes of a text file never hides a secret in it', () => {
+  const r = repo('late-nul');
+  commit(r.root, 'notes.md', `Deploy token ${token}\n${'x'.repeat(10_000)}\0tail\n`);
+  const error = refused(() => publish(r.root));
+  expect(error.code).toBe('publish_secret_found');
+  expect(error.message).toContain('notes.md:1 (');
+  expect(remoteTip(r)).toBe(r.base);
+});
+
+test('a repository log encoding never hides a secret in a commit message', () => {
+  const r = repo('encoding');
+  git(r.root, 'config', 'i18n.logOutputEncoding', 'UTF-16LE');
+  commit(r.root, 'page.md', 'a page\n', `rotate ${token}`);
+  expect(refused(() => publish(r.root)).message).toContain('(commit message):1 (');
+  expect(remoteTip(r)).toBe(r.base);
+});
+
+test('a root commit merged in from unrelated history is scanned whatever log.showRoot says', () => {
+  const r = repo('showroot');
+  git(r.root, 'config', 'log.showRoot', 'false');
+  git(r.root, 'checkout', '-q', '--orphan', 'imported');
+  git(r.root, 'rm', '-rqf', '.');
+  commit(r.root, 'imported.md', `Deploy token ${token}\n`);
+  git(r.root, 'checkout', '-q', 'main');
+  git(r.root, 'merge', '-q', '--allow-unrelated-histories', '--no-edit', 'imported');
+  expect(refused(() => publish(r.root)).message).toContain('imported.md:1 (');
+  expect(remoteTip(r)).toBe(r.base);
+});
+
+test('commits the scan cannot read refuse with their own code, not as secrets to remove', () => {
+  const r = repo('unreadable');
+  commit(r.root, 'notes.md', 'plain text\n');
+  const blob = git(r.root, 'rev-parse', 'HEAD:notes.md');
+  git(r.root, 'rm', '-q', 'notes.md'); git(r.root, 'commit', '-qm', 'drop notes');
+  rmSync(join(r.root, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
+  const error = refused(() => publish(r.root));
+  expect(error.code).toBe('publish_scan_unreadable');
+  expect(error.message).toContain('Nothing was pushed.');
+  expect(error.message).not.toContain('look like secrets');
+  expect(remoteTip(r)).toBe(r.base);
+});
