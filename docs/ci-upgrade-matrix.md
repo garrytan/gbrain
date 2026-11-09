@@ -92,6 +92,11 @@ The old release's updater must only ever see the candidate:
   objects and holds only the fixture refs (`master`, `latest-stable`,
   `stable`, the old tag and `v<candidate version>`), so `git ls-remote`
   lists the candidate as the newest release.
+- **Release channel**: every cell process runs with
+  `GBRAIN_RELEASE_CHANNEL=alpha`. The fixture publishes no stable evidence
+  record, so a release that defaults to stable (v0.60.606.0 on) would refuse
+  `stable_invalid` instead of upgrading to the candidate; older releases read
+  no such variable and already follow every release.
 - **Bun's tarball fetch**: `GITHUB_API_URL` points at the fixture's loopback
   server, which answers `/repos/garrytan/gbrain/tarball/<ref>` with
   `git archive` of the ref's commit.

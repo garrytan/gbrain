@@ -41,6 +41,19 @@ export interface CellSpec {
 
 export interface Step { name: string; ok: boolean; ms: number; exit?: number | null; detail?: string; log?: string }
 
+/**
+ * Every cell process follows the alpha channel (every published release). The fixture publishes the candidate as the
+ * newest release and never a stable evidence record, so a from-version that defaults to stable (v0.60.606.0 on, #8726)
+ * would refuse with stable_invalid instead of upgrading to the build under test. Releases before that read no
+ * GBRAIN_RELEASE_CHANNEL and already follow every release; it outranks self_upgrade.channel on the ones that read it.
+ */
+export const CELL_RELEASE_CHANNEL_ENV: Readonly<Record<string, string>> = { GBRAIN_RELEASE_CHANNEL: 'alpha' };
+
+/** The refs the fixture serves while the old release upgrades: the candidate everywhere, the from-version's own tag kept. */
+export function upgradeRefs(from: { tag: string; sha: string }, candidate: { version: string; sha: string }): Record<string, string> {
+  return { HEAD: candidate.sha, 'latest-stable': candidate.sha, stable: candidate.sha, [from.tag]: from.sha, ['v' + candidate.version]: candidate.sha };
+}
+
 export const cellId = (s: { from: { tag: string }; engine: string; keys: string; brain: string }) => [s.from.tag, s.engine, s.keys, s.brain].join('__');
 
 const SEED_WORD = 'zephyrquartz';
@@ -95,6 +108,7 @@ export async function runCell(spec: CellSpec): Promise<Record<string, unknown>> 
     GIT_CONFIG_GLOBAL: join(dir, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1',
     HTTPS_PROXY: fx.proxyUrl, HTTP_PROXY: fx.proxyUrl, https_proxy: fx.proxyUrl, http_proxy: fx.proxyUrl,
     NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost', NODE_EXTRA_CA_CERTS: fx.caFile, GITHUB_API_URL: fx.apiUrl,
+    ...CELL_RELEASE_CHANNEL_ENV,
     ...(mock ? { VOYAGE_API_KEY: 'pa-upgrade-matrix-mock-not-a-key' } : {}),
   };
 
@@ -195,8 +209,7 @@ export async function runCell(spec: CellSpec): Promise<Record<string, unknown>> 
     const oldServe = processes.serve!;
 
     // ── 2. the old release's own updater, seeing only the candidate ───────
-    const candidateTag = 'v' + spec.candidate.version;
-    fx.setRefs({ HEAD: spec.candidate.sha, 'latest-stable': spec.candidate.sha, stable: spec.candidate.sha, [spec.from.tag]: spec.from.sha, [candidateTag]: spec.candidate.sha });
+    fx.setRefs(upgradeRefs(spec.from, spec.candidate));
     const switchedAt = fx.requests.length;
     let up = await gbrain('upgrade', ['upgrade'], { timeoutMs: 900_000 });
     if (up.code === 3 && /restart_refused|--stop-mcp/.test(up.stdout + up.stderr)) {

@@ -6,12 +6,12 @@
 import { describe, expect, test } from 'bun:test';
 import { PGlite } from '@electric-sql/pglite';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveFromVersions, type Release } from '../../scripts/upgrade-matrix/versions.ts';
 import { parseFixturePath, startGithubFixture } from '../../scripts/upgrade-matrix/github-fixture.ts';
-import { compareInstalledTree } from '../../scripts/upgrade-matrix/cell.ts';
+import { CELL_RELEASE_CHANNEL_ENV, compareInstalledTree, upgradeRefs } from '../../scripts/upgrade-matrix/cell.ts';
 import { diffCatalog, diffContent, takeSnapshot, type Query } from '../../scripts/upgrade-matrix/snapshot.ts';
 import { CHECKS, doctorVerdict, judgeCell, loadKnownExceptions, summarize, validateKnownExceptions, type CellSummary } from '../../scripts/upgrade-matrix/verdict.ts';
 import { buildSummary, type Plan } from '../../scripts/upgrade-matrix.ts';
@@ -122,6 +122,36 @@ describe('GitHub fixture', () => {
       rmSync(work, { recursive: true, force: true }); rmSync(src.dir, { recursive: true, force: true });
     }
   }, 60_000);
+
+  test('the cell pins the alpha channel, so an updater that defaults to stable upgrades to the candidate instead of refusing stable_invalid', async () => {
+    const src = gitRepo(), work = mkdtempSync(join(tmpdir(), 'um-ch-'));
+    const fx = await startGithubFixture({ source: src.dir, mirrorDir: join(work, 'mirror.git'), archiveDir: join(work, 'archives'), certDir: join(work, 'certs') });
+    try {
+      fx.setRefs(upgradeRefs({ tag: 'v0.0.1', sha: src.first }, { version: '0.0.2', sha: src.second }));
+      const home = join(work, 'home');
+      mkdirSync(join(home, '.gbrain'), { recursive: true });
+      writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: join(home, '.gbrain', 'brain.pglite'), self_upgrade: { mode: 'notify', channel: 'stable' } }));
+      writeFileSync(join(work, 'gitconfig'), '[url "' + fx.mirror + '"]\n\tinsteadOf = https://github.com/garrytan/gbrain\n');
+      const dryRun = async (extra: Record<string, string>) => {
+        const p = Bun.spawn([process.execPath, join(import.meta.dir, '..', '..', 'src', 'cli.ts'), 'upgrade', '--dry-run', '--json'], {
+          cwd: home, stdout: 'pipe', stderr: 'pipe',
+          env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home, GBRAIN_HOME: home, TMPDIR: work, NO_COLOR: '1', GIT_CONFIG_GLOBAL: join(work, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1',
+            HTTPS_PROXY: fx.proxyUrl, https_proxy: fx.proxyUrl, NO_PROXY: '127.0.0.1,localhost', NODE_EXTRA_CA_CERTS: fx.caFile, GITHUB_API_URL: fx.apiUrl, ...extra },
+        });
+        const [stdout, stderr] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
+        return { code: await p.exited, out: stdout + stderr };
+      };
+      const unpinned = await dryRun({});
+      expect(unpinned.code).not.toBe(0);
+      expect(unpinned.out).toContain('stable_invalid');
+      const pinned = await dryRun({ ...CELL_RELEASE_CHANNEL_ENV });
+      expect(pinned.code, pinned.out).toBe(0);
+      expect(JSON.parse(pinned.out.slice(pinned.out.indexOf('{'), pinned.out.lastIndexOf('}') + 1))).toMatchObject({ dry_run: true, channel: 'alpha', channel_source: 'env', action: 'install_method_update' });
+    } finally {
+      fx.stop();
+      rmSync(work, { recursive: true, force: true }); rmSync(src.dir, { recursive: true, force: true });
+    }
+  }, 120_000);
 
   test('compareInstalledTree finds an installed file that differs from the commit, and one that is missing', () => {
     const src = gitRepo(), installed = mkdtempSync(join(tmpdir(), 'um-inst-'));
