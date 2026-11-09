@@ -587,7 +587,7 @@ describe('ConnectionManager — a direct pool that opens after retire()/disconne
     else process.env.GBRAIN_DISABLE_DIRECT_POOL = originalKillSwitch;
   });
 
-  const POOLER_URL = 'postgresql://postgres.abc:p@aws-0-us-east-1.pooler.supabase.com:6543/db';
+  const POOLER_URL = 'postgresql://postgres.abc:PASSWORD@aws-0-us-east-1.pooler.supabase.com:6543/db';
   type Pool = ReturnType<typeof ConnectionManager.prototype.read>;
   type Internals = { initDirectPool: () => Promise<Pool>; _directPool: Pool | null };
   const unreachable = () => Object.assign(new Error('getaddrinfo ENOTFOUND db.abc.supabase.co'), { code: 'ENOTFOUND' });
