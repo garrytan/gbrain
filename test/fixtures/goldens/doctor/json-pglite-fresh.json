@@ -1099,6 +1099,13 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "elapsed_ms": "<volatile>",
+          "message": "Skipped (PGLite is always UTF8)",
+          "name": "database_encoding",
+          "status": "ok"
+        },
+        {
           "category": "meta",
           "elapsed_ms": "<volatile>",
           "message": "Version <latest> (latest: <latest>)",

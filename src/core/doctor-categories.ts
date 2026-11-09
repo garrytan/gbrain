@@ -436,6 +436,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'rls',
   // #7632: every gbrain function that pins a search_path ends it with pg_temp.
   'function_search_path',
+  // A Postgres brain whose server_encoding is not UTF8 (doctor/checks/database-encoding.ts).
+  'database_encoding',
   'rls_event_trigger',
   'search_mode',
   'decide_health',
