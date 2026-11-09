@@ -3652,6 +3652,26 @@ More: [docs/guides/repair.md#projection-owner-resident](../../docs/guides/repair
 |---|---|---|---|---|---|---|
 | The catalog adoption is accepted but not fully committed. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
+### publish_scan_unreadable
+
+<a id="publish_scan_unreadable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An automatic publish could not read its local commits in full to scan them for secrets (a missing or corrupt object, git output the scan does not recognise, or the 300 s budget); no secret was reported and nothing was pushed. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/shared-checkout-git.md#publish_scan_unreadable](../../docs/guides/shared-checkout-git.md#publish_scan_unreadable)
+
+### publish_secret_found
+
+<a id="publish_secret_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An automatic publish found values that look like secrets (or text too large to scan) in the commits it was about to push; nothing was pushed. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-checkout-git.md#publish_secret_found](../../docs/guides/shared-checkout-git.md#publish_secret_found)
+
 ### pull_blocked_local_changes
 
 <a id="pull_blocked_local_changes"></a>
