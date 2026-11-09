@@ -4,6 +4,7 @@
  * linked sibling worktree of the same repository keeps its own hooks. In-memory PGLite and real git repositories.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -170,3 +171,34 @@ test('the install is worktree-local: a linked sibling keeps its hooks and commit
   expect(error?.code).toBe('git_unavailable');
   expect((await sourcesGuard(f.engine, { sourceId: f.alpha, action: 'status', mode: 'default' })).installed).toBe(false);
 }), 120_000);
+
+test('GST-1623: the owner-path hook fails closed when git cannot name the git dir, and still passes a foreign git dir', () => {
+  const root = mkdtempSync(join(tmpdir(), 'gbrain-guard-closed-'));
+  try {
+    const repo = join(root, 'repo');
+    mkdirSync(repo);
+    git(repo, 'init', '-q', '-b', 'main');
+    const hooks = join(repo, '.git', 'gbrain-hooks');
+    mkdirSync(hooks, { recursive: true });
+    const real = execFileSync('sh', ['-c', 'command -v git']).toString().trim();
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'git'), `#!/bin/sh\nfor a in "$@"; do [ "$a" = --absolute-git-dir ] && exit 128; done\nexec ${real} "$@"\n`, { mode: 0o755 });
+    const msg = join(root, 'msg');
+    writeFileSync(msg, 'subject\n');
+    for (const mode of ['default', 'enforce'] as const) {
+      const hook = join(hooks, `prepare-commit-msg-${mode}`);
+      writeFileSync(hook, renderGuardHook(mode), { mode: 0o755 });
+      const run = (path: string, cwd: string) => spawnSync('bash', [hook, msg], { cwd, env: { ...process.env, PATH: path, GBRAIN_COMMIT_GUARD: '' }, encoding: 'utf8' });
+      const failed = run(`${bin}:${process.env.PATH}`, repo);
+      expect(failed.status).toBe(1);
+      expect(failed.stderr).toContain('could not resolve');
+      const other = join(root, `other-${mode}`);
+      mkdirSync(other);
+      git(other, 'init', '-q', '-b', 'main');
+      expect(run(process.env.PATH!, other).status).toBe(0);
+      expect(run(process.env.PATH!, repo).status).toBe(1);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+

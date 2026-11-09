@@ -681,13 +681,16 @@ vars — incident-time escape hatches, not everyday knobs.
    means something commits into the checkout outside gbrain: fix that writer
    instead of forcing the checkout
    ([scripts and the managed checkout](shared-checkout-git.md#scripts-and-the-managed-checkout)).
-   When local commits there are expected (automations committing alongside a
-   sibling checkout that pushes the same branch), the user can give standing
-   consent with `gbrain config set sources.refresh_publish_diverged true`
-   (default off): a diverged refresh then pushes the local commits merged with
-   the upstream in memory, the same publish as
+   When the worktree's Git durability is on, a diverged refresh publishes the
+   local commits itself (`sources.refresh_publish_diverged` unset; `false` turns it
+   off, `true` publishes even with durability off): under its publish lock it scans
+   what those commits add (messages, added lines, merge resolutions) and refuses
+   `publish_secret_found` naming the file, line and rule when one looks like a
+   secret, otherwise it pushes
+   the local commits merged with the upstream in memory, the same publish as
    `gbrain git commit-push --push-only --keep-checkout` run as a child process
-   (it skips the checkout's pre-push hook), and fast-forwards to the merge. It never moves the checkout to merge, a conflicting file refuses
+   with `--scan-secrets` (it skips the checkout's pre-push hook), and fast-forwards
+   to the merge. It never moves the checkout to merge, a conflicting file refuses
    `integrate_conflict` naming it with nothing pushed (with `gbrain.quarantine`
    on, the remote's version is published, this machine's is kept under
    `refs/gbrain/quarantine/`, and the refresh says so), an uncommitted edit to a

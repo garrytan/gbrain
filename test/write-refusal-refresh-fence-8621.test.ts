@@ -52,6 +52,7 @@ afterAll(async () => {
 afterEach(() => _setRefreshFenceWaitForTests(null));
 
 const each = async (fn: (f: RefreshFixture) => Promise<void>) => { for (const engine of engines) await withRefreshFixture(engine, fn); };
+const retryAfter = (body: Record<string, any>) => Number(/^retry_after_ms=(\d+)$/.exec(String(body.detail))?.[1]);
 const PERSON = '---\ntitle: Alice Example\ntype: person\n---\nAlice is a person.\n';
 
 /** An entity page on the managed source, committed and synced through a completed refresh. */
@@ -84,7 +85,10 @@ test('remember items: a batch the fence refused entirely is an MCP error with a 
     const before = await f.requestCount();
     const out = await call(f, 'remember', { items: [{ fact: 'alice-example likes tea', entity: 'people/alice-example', provenance: 'test' }] });
     expect(out.isError).toBe(true);
-    expect(out.body).toMatchObject({ error: 'unavailable', code: 'worktree_refreshing', retryable: true, detail: 'retry_after_ms=1000' });
+    expect(out.body).toMatchObject({ error: 'unavailable', code: 'worktree_refreshing', retryable: true });
+    expect(out.body.detail).toMatch(/^retry_after_ms=\d+$/);
+    // GST-1582: derived from the refresh's state, at least the fenced phases' 2 s floor (refresh-retry-hint-gst1582.test.ts).
+    expect(retryAfter(out.body)).toBeGreaterThanOrEqual(2000);
     expect(out.body.message).toContain('items[0]');
     expect(out.body.message).toContain('None of the 1 item(s) was saved');
     expect(out.body.fix.next).toBe('wait');
@@ -112,7 +116,9 @@ test('put_page past the wait cap is refused retryable with fix.next wait and ret
     const out = await call(f, 'put_page', { slug: 'notes/capped', content: page('Capped', 'refused after the cap') });
     expect(performance.now() - started).toBeGreaterThanOrEqual(250);
     expect(out.isError).toBe(true);
-    expect(out.body).toMatchObject({ error: 'worktree_refreshing', code: 'worktree_refreshing', class: 'retryable', retryable: true, detail: 'retry_after_ms=1000' });
+    expect(out.body).toMatchObject({ error: 'worktree_refreshing', code: 'worktree_refreshing', class: 'retryable', retryable: true });
+    expect(out.body.detail).toMatch(/^retry_after_ms=\d+$/);
+    expect(retryAfter(out.body)).toBeGreaterThanOrEqual(2000);
     expect(out.body.fix.next).toBe('wait');
     expect(out.body.message).toContain('waited');
     expect(await f.requestCount()).toBe(before);

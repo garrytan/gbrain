@@ -29,7 +29,7 @@ beforeEach(async () => { await resetPgliteState(engine); await engine.setConfig(
 
 const BODY = `Acme Example shipped the beta in 2026. ${'A substantive project record with names, dates and decisions. '.repeat(5)}`;
 function ctx(job: { id: number; data: Record<string, unknown> }, signal = new AbortController().signal): MinionJobContext {
-  return { id: job.id, name: 'facts-absorb', data: job.data, attempts_made: 0, signal, deadlineAtMs: null, shutdownSignal: signal,
+  return { id: job.id, name: 'facts-absorb', data: job.data, attempts_made: 0, idempotency_key: null, signal, deadlineAtMs: null, shutdownSignal: signal,
     updateProgress: async () => {}, updateTokens: async () => {}, log: async () => {}, isActive: async () => true, readInbox: async () => [] } as MinionJobContext;
 }
 async function queued(slug: string) {

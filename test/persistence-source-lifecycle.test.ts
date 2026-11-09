@@ -15,7 +15,8 @@ import { admitWrite, claimNextWrite } from '../src/core/persistence/journal.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { runManagedSourceClone } from '../src/core/persistence/topology-clone.ts';
-import { addSource, removeSource } from '../src/core/sources-ops.ts';
+import { addSource, lfsDownloadsOff, removeSource } from '../src/core/sources-ops.ts';
+import { managedSourceAddInput } from '../src/core/persistence/managed-sources.ts';
 import { softDeleteSource, restoreSource } from '../src/core/destructive-guard.ts';
 import { topologyDirectoryBytes } from '../src/core/persistence/topology-filesystem.ts';
 import { topologyPrincipal } from '../src/core/persistence/topology-locks.ts';
@@ -365,6 +366,34 @@ test('remote URL changes during clone preparation refuse publication',()=>fixtur
   expect(readFileSync(join(root,'example.md'),'utf8')).toContain('Canonical');
   const counters=await engine.executeRaw<{key:string;outstanding_count:string;intent_bytes:string;recovery_bytes:string}>('SELECT key,outstanding_count::text,intent_bytes::text,recovery_bytes::text FROM persistence_counters');
   for(const counter of counters){expect(counter.outstanding_count).toBe('0');expect(counter.intent_bytes).toBe('0');expect(counter.recovery_bytes).toBe('0');}
+}),60_000);
+
+
+test('a reclone of a source a remote caller added by URL clones with git-lfs downloads and hooks off',()=>fixture(async(_home,source,root)=>{
+  const seen:Array<{skipLfs?:boolean}|undefined>=[];
+  for(const addedByRemote of [true,false]){
+    await engine.executeRaw('UPDATE sources SET config=$2::text::jsonb WHERE id=$1',[source,JSON.stringify({managed_clone:true,remote_url:'https://example.invalid/brain.git',...(addedByRemote?{added_by_remote_caller:true}:{})})]);
+    const input={operation:'reclone' as const,sourceId:source,requestId:randomUUID()};
+    const result=await runManagedSourceClone(engine,input,await topologyPrincipal(engine),input.requestId,{...input,requestId:undefined,dryRun:undefined},{
+      clone:async(_url,stage,_budget,options)=>{seen.push(options);cpSync(root,stage,{recursive:true,filter:path=>!isPhysicalRootMetadata(basename(path))});},
+    });
+    expect(result).toMatchObject({state:'committed'});
+  }
+  expect(seen.map(options=>options?.skipLfs===true)).toEqual([true,false]);
+}),60_000);
+
+test('a managed add by a remote caller clones with git-lfs downloads and hooks off and records it for later reclones',()=>fixture(async(_home,_source,root)=>{
+  const seen:Array<{skipLfs?:boolean}|undefined>=[];
+  for(const [id,addedByRemoteCaller] of [['remote-a',true],['local-a',false]] as const){
+    const input={...managedSourceAddInput({id,remoteUrl:'https://example.invalid/brain.git',addedByRemoteCaller}),requestId:randomUUID()};
+    const result=await runManagedSourceClone(engine,input,await topologyPrincipal(engine),input.requestId,{...input,requestId:undefined,dryRun:undefined},{
+      clone:async(_url,stage,_budget,options)=>{seen.push(options);cpSync(root,stage,{recursive:true,filter:path=>!isPhysicalRootMetadata(basename(path))});},
+    });
+    expect(result).toMatchObject({state:'committed'});
+    const [row]=await engine.executeRaw<{config:unknown}>('SELECT config FROM sources WHERE id=$1',[id]);
+    expect(lfsDownloadsOff(row!.config)).toBe(addedByRemoteCaller);
+  }
+  expect(seen.map(options=>options?.skipLfs===true)).toEqual([true,false]);
 }),60_000);
 
 });

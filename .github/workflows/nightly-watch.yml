@@ -57,6 +57,7 @@ on:
       - OSV-Scanner
       - CI health
       - TLA+ specs
+      - Stable daily
     types: [completed]
     branches: [master]
   workflow_dispatch:

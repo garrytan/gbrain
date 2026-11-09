@@ -12,7 +12,7 @@ import { eachStoredTimelineRow, extractTimelineFromContent, hasExtractorDetail, 
   type ExtractedTimelineEntry } from '../timeline-extract.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { sanitizeForJsonb } from '../batch-rows.ts';
-import { bodyUnread } from '../page-body/page-shape.ts';
+import { bodyUnread, isSegmentedPage } from '../page-body/page-shape.ts';
 import { bodyBlocks, detachedValue, type BodyBlock } from '../page-body/segment-blocks.ts';
 import { TakesFenceScan, takesFromRuns } from '../page-body/segment-takes.ts';
 import { openFenceRuns } from '../page-body/segment-facts.ts';
@@ -29,6 +29,7 @@ import { propagateFactLowering } from '../trust/propagation.ts';
 import { loadWriteGateConfig } from '../trust/gate-outcomes.ts';
 import { fenceOwnerKey, readFenceBlocks, TAKE_FENCE_KIND } from '../generations/fence.ts';
 import { projectFactFenceGeneration } from '../generations/adapters/fact-rows.ts';
+import { fenceRowKeys, moveKeptRows, pageFenceRowKeys } from '../generations/fence-evidence.ts';
 import { projectTakeFenceGeneration } from '../generations/adapters/take-rows.ts';
 import { linksFenceProjectionRows, projectLinksFence } from '../links-fence-projection.ts';
 
@@ -675,6 +676,13 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
   const fenceLinks = projectFences && !bodyUnread(page) ? await linksFenceProjectionRows(engine, sourceId, page) : null;
   const storedRows = prior ? await storedTimeline(engine, prior.page.id) : [];
   const prior_ = prior ? await priorView(engine, prior.page, slug, storedRows) : null;
+  // #8819: the fence rows of the body this write replaces, read at the observed revision, for the fact generation's evidence.
+  // An inline body parses without a statement; a segmented one is read from its segments only when the page has positioned facts.
+  const priorFenceKeys = !prior || !projectFences ? null
+    : !isSegmentedPage(prior.page) ? fenceRowKeys(prior.page, slug, sourceId)
+    : (await engine.executeRaw(`SELECT 1 FROM facts WHERE source_id=$1 AND source_markdown_slug=$2
+        AND row_num IS NOT NULL AND COALESCE(source,'') NOT LIKE 'cli:extract-conversation-facts%' LIMIT 1`, [sourceId, slug])).length
+      ? await pageFenceRowKeys(engine, prior.page, slug, sourceId) : null;
   const { timeline, exactIncoming, pinned } = classifyTimeline(storedRows, page, prior_?.rows ?? null, slug, writer, policy);
   const deletionRows = pinned.filter(row => row.action === 'delete')
     .map(({ id, date, source, summary, detail, state }) => ({ id, date, source, summary, detail, removed: state === 'removed' || state === 'removed_marked' }));
@@ -729,13 +737,14 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     // Conversation-extractor rows share the page coordinate without a fence
     // (#1928, as in the extract_facts reconcile); their replay owns them. A
     // fence row that takes one of their row numbers wins that position.
+    // #8819: only the rows the fact generation found a fence held (`retireIds`) expire.
     const incoming = JSON.stringify(factRows.map(f => ({ row_num: f.row_num, fact: f.fact, visibility: f.visibility })));
-    const expireFacts = () => tx.executeRaw(`UPDATE facts f SET expired_at=COALESCE(expired_at,now()),row_num=NULL
-      WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num IS NOT NULL
+    const expireFacts = (ids: number[]) => () => tx.executeRaw(`UPDATE facts f SET expired_at=COALESCE(expired_at,now()),row_num=NULL
+      WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num IS NOT NULL AND f.id=ANY($4::bigint[])
       AND (COALESCE(f.source,'') NOT LIKE 'cli:extract-conversation-facts%'
         OR EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS c(row_num integer) WHERE c.row_num=f.row_num))
       AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS n(row_num integer,fact text,visibility text)
-        WHERE n.row_num=f.row_num AND n.fact=f.fact AND n.visibility=f.visibility)`, [sourceId, slug, incoming]);
+        WHERE n.row_num=f.row_num AND n.fact=f.fact AND n.visibility=f.visibility)`, [sourceId, slug, incoming, ids]);
     // #6574: every fence row's fields refresh in one statement, not one round trip per row.
     const fieldRows = JSON.stringify([...new Map(factRows.map(fact => [fact.row_num, fact])).values()].map(fact => ({ row_num: fact.row_num, kind: fact.kind, notability: fact.notability,
       context: fact.context, valid_from: fact.valid_from?.toISOString() ?? null, valid_until: fact.valid_until?.toISOString() ?? null,
@@ -804,15 +813,18 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
       // GBRA-161 PR 2: the fact and take generations decide first. A held one (its fence absent from this body) retires and
       // overwrites nothing, so its rows stay as they are; every row a published one retires is recorded with its before-state.
       const factGeneration = await step('fact_generation', () => projectFactFenceGeneration(tx, { sourceId, slug, read: fenceReads.facts, incoming, rows: factRows,
-        writer: 'projection' }));
+        writer: 'projection', prior: priorFenceKeys }));
       const factsHeld = factGeneration.state === 'held';
+      // #8819: a row the fence never held stays active; a fence row claiming its number takes it, and the row moves past the page's rows.
+      const kept = factsHeld ? [] : factGeneration.kept;
+      if (kept.length) await step('fact_kept', () => moveKeptRows(tx, sourceId, slug, kept, factRows.map(f => f.row_num)));
       const takesHeld = (await step('take_generation', () => projectTakeFenceGeneration(tx, { sourceId, slug, pageId: id, read: fenceReads.takes,
         takes: projectedTakes, gone: takeRowsGone.filter(n => !heldRowNums.has(n)), writer: 'projection' }))).state === 'held';
       // #5575: rows more trusted than the writer are never expired by it, and new rows pass the write gate (trust/fence-guard.ts).
       // The timeline rows are independent of the fact and take rows, so they ride in the first pipeline. The expire uses the
       // generation's retire predicate under the page lock, so it runs only when that generation found rows to retire.
-      const guard = factsHeld ? { rows: [] as typeof factRows, finish: async () => [] as string[] } : await step('timeline', () => guardFenceRows(tx, { sourceId, slug, incoming, rows: factRows, cfg: loadWriteGateConfig },
-        () => pipelined(tx, factGeneration.retiring ? [expireFacts, ...timelineRows] : timelineRows)));
+      const guard = factsHeld ? { rows: [] as typeof factRows, finish: async () => [] as string[] } : await step('timeline', () => guardFenceRows(tx, { sourceId, slug, incoming, rows: factRows, cfg: loadWriteGateConfig, kept },
+        () => pipelined(tx, factGeneration.retiring ? [expireFacts(factGeneration.retireIds), ...timelineRows] : timelineRows)));
       if (factsHeld) await step('timeline', () => pipelined(tx, timelineRows));
       if (guard.rows.length) await step('facts', () => tx.insertFacts(guard.rows, { source_id: sourceId })); // gbrain-allow-direct-insert: canonical fence projection shares the journal publication transaction
       const contested = await step('fact_trust', () => guard.finish(tx));

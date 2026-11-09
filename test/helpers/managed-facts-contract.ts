@@ -117,7 +117,7 @@ export async function exerciseManagedFacts(engine: BrainEngine, scenario: Case):
         expect(jobs[0].data.persistence_request_id).toBeDefined();
         const worker = new MinionWorker(engine, { queue: 'fixture' });
         await registerBuiltinHandlers(worker, engine, { quiet: true });
-        const job: MinionJobContext = { id: Number(jobs[0].id), name: 'facts-absorb', data: jobs[0].data, attempts_made: 0,
+        const job: MinionJobContext = { id: Number(jobs[0].id), name: 'facts-absorb', data: jobs[0].data, attempts_made: 0, idempotency_key: null,
           signal: new AbortController().signal, deadlineAtMs: null, shutdownSignal: new AbortController().signal,
           updateProgress: async () => {}, updateTokens: async () => {}, log: async () => {}, isActive: async () => true, readInbox: async () => [] };
         if (scenario === 'worker_revoked') await engine.executeRaw('UPDATE oauth_clients SET deleted_at=now() WHERE client_id=$1', [clientId]);

@@ -1359,7 +1359,7 @@ for (const kind of backends) {
       }
       const controller = new AbortController();
       const result = await makeEmbedBackfillHandler(engine)({
-        id: 1, name: 'embed-backfill', data: { sourceId: 'default' }, attempts_made: 0,
+        id: 1, name: 'embed-backfill', data: { sourceId: 'default' }, attempts_made: 0, idempotency_key: null,
         signal: controller.signal, shutdownSignal: controller.signal, deadlineAtMs: Date.now() + 60_000,
         isActive: async () => true, updateProgress: async () => {}, updateTokens: async () => {},
         log: async () => {}, readInbox: async () => [],

@@ -14,6 +14,7 @@ import { preparationBudgetMs } from './preparation-budget.ts';
 import { readWriteSwitchSnapshot } from './switches.ts';
 import { DATABASE_REFUSAL_HINT, DATABASE_TRIGGER_HINT, ownerExceptionHint, unknownOriginHint } from './connector-errors.ts';
 import { readQueuedHeadBlockers } from './head-blocker.ts';
+import { SOURCE_CHANGED_ORIGINS } from './publication-failure.ts';
 
 export const WRITER_NEXT_ACTIONS: Record<string, string> = {
   unexpected_staging_bytes: 'Keep the worktree blocked and retain its staging files and recovery capacity. Compare the recorded staging size and hash, then reconcile unexpected bytes explicitly before retrying; never discard unverified staging files.',
@@ -175,7 +176,7 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
   const failures = await engine.executeRaw<{ request_id: string; operation: string; source_id: string; state: WriteRequestState;
     error_code: string | null; error_detail: Record<string, unknown>; completed_at: Date | string | null }>(
     `SELECT request_id,operation,source_id,state,error_code,error_detail,completed_at FROM persistence_requests
-    WHERE error_detail IS NOT NULL AND COALESCE(error_detail->>'origin','')<>'fence' ORDER BY sequence DESC LIMIT 20`);
+    WHERE error_detail IS NOT NULL AND NOT COALESCE(error_detail->>'origin','')=ANY($1::text[]) ORDER BY sequence DESC LIMIT 20`, [['fence', ...SOURCE_CHANGED_ORIGINS]]);
   const limits = await readJournalLimits(engine);
   // #6278: the budgets, ceiling, attempt limit and switch in effect, next to every running blocker's step age.
   const snapshot = await readWriteSwitchSnapshot(engine).catch(() => null);

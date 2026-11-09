@@ -128,6 +128,8 @@ export interface WriteRequest {
   state: RequestState;
   /** The refresh a deferred write was admitted behind; kept after it drains, so its claim runs the refresh-change check. */
   deferred_refresh_id?: string | null;
+  /** GST-1582: the source's last imported commit ('' for none) when a claimed write was held for an import; kept after it lands. */
+  deferred_import_from?: string | null;
   execution_token: string | null;
   claim_expires_at: Date | string | null;
   recovery: RecoveryRecord | null;
