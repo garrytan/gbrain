@@ -625,6 +625,12 @@ describe('ConnectionManager — a direct pool that opens after retire()/disconne
         expect((cm as unknown as Internals)._directPool).toBeNull();
         expect(cm.isKillSwitchActive()).toBe(false);
         expect(attempts).toBe(route === 'direct' ? 1 : 2);
+        if (shutdown === 'disconnect') {
+          const next = fakePool();
+          (cm as unknown as Internals).initDirectPool = async () => next as unknown as Pool;
+          expect(await cm.ddl()).toBe(next as unknown as Pool);
+          expect(next.ends).toBe(0);
+        }
       }, 20000);
     }
 
