@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.625.0] - 2026-11-09
 
 **`gbrain upgrade` no longer consults the ClawHub registry; a large Google address book, and a large source's removal, can now finish.** Advisory: an unofficial package on the ClawHub registry shares the name gbrain. `gbrain upgrade`, and autopilot's unattended self-upgrade, treated any install it could not otherwise classify (for example a release binary run under its published file name, `gbrain-linux-x64`) as a ClawHub install whenever the `clawhub` CLI was on the host, and ran `clawhub update gbrain`, which installs whatever the registry resolves for that name from any publisher. Upgrade now never runs it: a compiled binary is recognised whatever its file name, and an install it cannot classify prints the manual steps. When Google's People sync token expires, the contacts re-list now checkpoints after every page and resumes there, so a large address book no longer restarts from page one in every sync job and Calendar and Gmail sync again. A managed `gbrain sources remove` or `purge` of a large source now deletes its pages in bounded batches under the 5-second statement bound instead of one cascading statement that could never finish, and a rerun resumes. The secret scanner also catches keys right after terminal color codes, `\xNN` and `\UXXXXXXXX` escapes and quoted-printable `=3D`, and redacts a bearer token containing an escaped slash in full.
 
