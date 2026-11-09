@@ -36,6 +36,7 @@ import { sha256 } from './digest.ts';
 import { existingHostIdFor } from './identity.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { staleMirrorPage } from './mirror-read-only.ts';
+import { isOriginTwinPage } from './origin-twins.ts';
 import { prepareFileTarget } from './page-prepare.ts';
 import { readReconcileState } from './reconcile-state.ts';
 import { reconcileCanonical } from './reconcile-merge.ts';
@@ -85,15 +86,19 @@ export async function liveFileDrift(engine: BrainEngine, sourceId: string, slug:
   const root = join(binding.local_path, binding.relative_path);
   // GBRA-133 (#7931): a stale mirror page publishes database-only but reconciles against the file at its slug path.
   // #7974: it is compared as reconcile reads it; a slug path that reading cannot settle (several spellings) is unknown.
-  if (await staleMirrorPage(engine, sourceId, page.page)) {
+  // GBRA-108: so is an origin twin with no recorded file. Sync imports the file at its slug path into it (and holds it
+  // file_drift when they differ), so the drift is read from that file as repair file-drift adopts it. A slug-path file
+  // another live page records is that page's (sync imports it there), so the twin stays database-only.
+  const twin = !page.page.source_path && await isOriginTwinPage(engine, sourceId, slug);
+  if (twin || await staleMirrorPage(engine, sourceId, page.page)) {
     try {
-      const state = await readReconcileState(engine, sourceId, slug);
+      const state = await readReconcileState(engine, sourceId, slug, undefined, { adoptSlugPath: twin });
       const agrees = classifyDrift(state.file, reconcileCanonical(state.snapshot.page, state.snapshot.tags)).verdict === 'no_drift';
       return { still_present: !agrees, reason: agrees ? 'agrees' : 'file_database_drift', db_revision: state.snapshot.revision,
         path: relative(state.root, state.path).split(sep).join('/'), file_hash: sha256(state.raw) };
     } catch (error) {
       if (!(error instanceof OperationError)) return { still_present: null, reason: 'error' };
-      if (error.detail === 'canonical_file_missing') return { still_present: false, reason: 'database_only', db_revision: page.revision };
+      if (error.detail === 'canonical_file_missing' || twin && error.detail === 'shared_origin') return { still_present: false, reason: 'database_only', db_revision: page.revision };
       return { still_present: null, reason: typeof error.detail === 'string' ? error.detail : error.code };
     }
   }
