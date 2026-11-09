@@ -984,7 +984,8 @@ off), the resident consumer's compaction pass also compacts receipts older than
 7 days, oldest first, up to 100 a pass: settled page writes, and the refusals
 of producers that write again from current content (maintenance pages and
 managed sync, file import, reconcile and file repair page writes). Job
-receipts (`submit_job`), connector writes and every other refusal keep their
+receipts (`submit_job`), a subagent's own page writes (a deferred synthesis
+postprocess compares them with the page), connector writes and every other refusal keep their
 intent until the retention window (a caller's replayable refusal until a
 later write resolves it): `gbrain repair failed-writes` replays a caller's
 refused write from it, conversation facts resubmit a frozen

@@ -29,7 +29,11 @@ const recordedAt = new WeakMap<object, number>();
 export async function runCompactionPass(engine: BrainEngine, opts: { hostId: string; notice?: boolean; now?: number }): Promise<CompactionRecord> {
   const result = await compactWriteReceiptsDetailed(engine);
   await yieldToEventLoop();
-  const early = await housekeepReceipts(engine);
+  // A housekeeping error never skips the reservation sweep or the pass record: it is counted and the pass carries on.
+  const early = await housekeepReceipts(engine).catch((error: unknown): ReceiptCompactionResult => {
+    process.stderr.write(`[persistence] phase=housekeeping error=${getCode(error) ?? (error instanceof Error ? error.message : String(error))}\n`);
+    return { compacted: 0, freed_bytes: 0, skipped_by_reason: { housekeeping_error: 1 } };
+  });
   for (const [reason, n] of Object.entries(early.skipped_by_reason)) result.skipped_by_reason[reason] = (result.skipped_by_reason[reason] ?? 0) + n;
   await yieldToEventLoop();
   const swept = await sweepCompactedReservations(engine);
@@ -50,13 +54,15 @@ export async function runCompactionPass(engine: BrainEngine, opts: { hostId: str
 
 /**
  * What housekeeping may compact early (GBRA-108). Settled receipts, except `submit_job` ones (atom retries, generation
- * members and synthesis postprocess read their committed intents) and connector writes (a later retry's `retryOf` resolves
+ * members and synthesis postprocess read their committed intents), a subagent's own writes (`restrictedNamespace`: a deferred
+ * synthesis postprocess compares the child's committed content with the page) and connector writes (a later retry's `retryOf` resolves
  * an earlier refusal). Refused receipts only where the producer writes again from current content and nothing reads the
  * intent: managed sync, file import, reconcile and file repair page writes, and maintenance pages. Every other refusal keeps
  * its intent until the retention window: a caller's write (`gbrain repair failed-writes` replays it), conversation facts
  * (the frozen extraction), atom members, connector items (their held-retry pointer).
  */
-const EARLY_SQL = (r: string) => `((${r}.state IN ('committed','cancelled') AND ${r}.operation<>'submit_job' AND COALESCE(${r}.intent->>'kind','') NOT LIKE 'connector_%')
+const EARLY_SQL = (r: string) => `((${r}.state IN ('committed','cancelled') AND ${r}.operation<>'submit_job' AND COALESCE(${r}.intent->>'kind','') NOT LIKE 'connector_%'
+        AND COALESCE(${r}.authority->>'restrictedNamespace','')<>'true')
       OR (${r}.state IN ('failed','conflict') AND ((${r}.operation='put_page' AND (${r}.intent->>'kind' LIKE 'managed_sync_%'
         OR ${r}.intent->>'kind' IN ('managed_file_import','canonical_reconcile','managed_file_repair')))
         OR (${r}.operation='submit_job' AND ${r}.intent->>'kind'='managed_maintenance_page'))))`;

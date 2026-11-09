@@ -10,7 +10,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withAdmissionOrigin } from '../src/core/persistence/admission-origin.ts';
-import { runCompactionPass } from '../src/core/persistence/compaction-pass.ts';
+import { LAST_COMPACTION_KEY, runCompactionPass } from '../src/core/persistence/compaction-pass.ts';
+import { readWriterDiagnostics } from '../src/core/persistence/diagnostics.ts';
 import { __resetCapacityNoticesForTests, capacityNotices } from '../src/core/persistence/capacity-snapshot.ts';
 import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
 import { RECEIPT_TARGET_KEY, readJournalLimits } from '../src/core/persistence/limits.ts';
@@ -84,7 +85,7 @@ for (const kind of testBackends()) {
 
     check('above the target, housekeeping compacts settled receipts and re-derivable producer refusals older than a week, and keeps every intent a replay or retry reads', async engine => {
       const requests = await requestFixture(engine);
-      const slugs = ['old-committed', 'old-failed', 'old-conflict', 'old-maintenance-failed', 'old-sync-failed', 'old-facts-failed', 'old-job-committed', 'young-committed'];
+      const slugs = ['old-committed', 'old-failed', 'old-conflict', 'old-maintenance-failed', 'old-sync-failed', 'old-facts-failed', 'old-job-committed', 'old-subagent-committed', 'young-committed'];
       for (const slug of slugs) await requests.publish(await requests.admit(slug));
       await settleEffects(engine);
       const [failed] = await engine.executeRaw<{ id: string }>("SELECT id FROM persistence_requests WHERE slug='old-failed'");
@@ -98,6 +99,8 @@ for (const kind of testBackends()) {
       // A producer that recovers from its refused intent (the frozen extraction), and a settled job whose intent later runs read.
       await editRequest(engine, await id('old-facts-failed'), `operation='submit_job',state='failed',error_code='example_failure',intent=intent||'{"kind":"managed_conversation_facts"}'::jsonb`);
       await editRequest(engine, await id('old-job-committed'), `operation='submit_job',intent=intent||'{"kind":"managed_atom_page"}'::jsonb`);
+      // A subagent's own page write: a deferred synthesis postprocess compares its committed content with the page.
+      await editRequest(engine, await id('old-subagent-committed'), `authority=authority||'{"restrictedNamespace":true}'::jsonb`);
       await age(engine, 10);
       await raw(engine, "UPDATE persistence_requests SET completed_at=now()-interval '2 days' WHERE slug='young-committed'");
       // Under the target (the default) nothing inside the 30-day retention is touched.
@@ -119,6 +122,7 @@ for (const kind of testBackends()) {
       expect(rows['old-sync-failed']).toMatchObject({ compacted: true, has_intent: false });
       expect(rows['old-facts-failed']).toMatchObject({ compacted: false, has_intent: true });
       expect(rows['old-job-committed']).toMatchObject({ compacted: false, has_intent: true });
+      expect(rows['old-subagent-committed']).toMatchObject({ compacted: false, has_intent: true });
       expect(rows['old-failed']).toMatchObject({ compacted: false, has_intent: true });
       expect(rows['old-conflict']).toMatchObject({ compacted: false, has_intent: true });
       expect(rows['young-committed']).toMatchObject({ compacted: false, has_intent: true });
@@ -126,7 +130,7 @@ for (const kind of testBackends()) {
 
     check('the retention pass keeps a refused caller write that failed-writes can still replay until a later request resolves it', async engine => {
       const requests = await requestFixture(engine);
-      for (const slug of ['drifted', 'guarded', 'resolved', 'other-failure']) await requests.publish(await requests.admit(slug));
+      for (const slug of ['drifted', 'guarded', 'resolved', 'other-failure', 'no-code-failure']) await requests.publish(await requests.admit(slug));
       await settleEffects(engine);
       const id = async (slug: string) => (await engine.executeRaw<{ id: string }>('SELECT id FROM persistence_requests WHERE slug=$1 ORDER BY sequence LIMIT 1', [slug]))[0]!.id;
       // Refusals `gbrain repair failed-writes` replays: a file/database drift and a writer guard on a caller's own page write.
@@ -135,6 +139,8 @@ for (const kind of testBackends()) {
       await editRequest(engine, await id('resolved'), "state='conflict',error_code='source_changed'");
       // A refusal failed-writes does not replay.
       await editRequest(engine, await id('other-failure'), "state='failed',error_code='example_failure'");
+      // A refusal with no recorded code is not one failed-writes replays either (the predicate is NULL, not true).
+      await editRequest(engine, await id('no-code-failure'), "state='failed',error_code=NULL");
       await age(engine, 40);
       // A later committed write of the page resolves its refusal.
       const later = await requests.admit('resolved');
@@ -148,6 +154,7 @@ for (const kind of testBackends()) {
       expect(first('guarded')).toMatchObject({ compacted: false, has_intent: true });
       expect(first('resolved')).toMatchObject({ compacted: true });
       expect(first('other-failure')).toMatchObject({ compacted: true });
+      expect(first('no-code-failure')).toMatchObject({ compacted: true });
       // Explicitly dropping it stays the operator's call (gbrain repair receipt-compaction --include-failures).
     });
 
@@ -212,6 +219,25 @@ for (const kind of testBackends()) {
       // A new settled receipt is something housekeeping can act on again.
       await requests.publish(await requests.admit('d'));
       expect((await checkPersistenceCapacity(engine)).status).toBe('warn');
+    });
+
+    check('a housekeeping error still runs the reservation sweep and records the pass', async engine => {
+      const requests = await requestFixture(engine);
+      await requests.publish(await requests.admit('page'));
+      await raw(engine, "INSERT INTO config (key,value) VALUES ($1,'not-a-number') ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value", [RECEIPT_TARGET_KEY]);
+      // Past the hourly record interval, so the pass records even though it compacted nothing.
+      const pass = await runCompactionPass(engine, { hostId: 'host-a', now: Date.now() + 2 * 60 * 60_000 });
+      expect(pass.skipped_by_reason).toMatchObject({ housekeeping_error: 1 });
+      expect(JSON.parse((await engine.getConfig(LAST_COMPACTION_KEY))!)).toMatchObject({ host_id: 'host-a', skipped_by_reason: { housekeeping_error: 1 } });
+    });
+
+    check('writer status lists only the limits that are set, never an unset cap as null', async engine => {
+      const listed = async () => JSON.parse(JSON.stringify((await readWriterDiagnostics(engine)).limits)) as Record<string, unknown>;
+      const limits = await listed();
+      expect(Object.values(limits).every(value => typeof value === 'number')).toBe(true);
+      expect(limits).not.toHaveProperty('brainTerminalBytes');
+      await engine.setConfig('persistence.limits.brain_terminal_bytes', '5000000');
+      expect(await listed()).toMatchObject({ brainTerminalBytes: 5_000_000 });
     });
 
     check('the reconciliation backup listing names no count bound while the id cap is unset, and the cap once set', async engine => {
