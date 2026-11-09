@@ -881,8 +881,6 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted page identity changed.');
   const observedRevision = snapshot?.revision ?? null;
   const activePack = pack?.manifest;
-  // A new page written over a soft-deleted one starts clean: it takes none of the deleted page's tags, timeline rows or
-  // facts (the delete recorded them in the page's history; restore_page is how the old page comes back).
   const replacesTombstone = snapshot?.page.deleted_at != null && (row.operation === 'put_page' || row.operation === 'capture');
   if (row.operation === 'put_page' && snapshot && !snapshot.page.deleted_at && typeof p.content === 'string'
     && `${snapshot.page.compiled_truth}\n${snapshot.page.timeline ?? ''}`.trim()) {
@@ -902,8 +900,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   let content = edited?.content ?? preparedIntent?.content ?? p.content as string;
   const privateRequest = privateRequestGuarded(row.operation, p.kind) && typeof content === 'string' ? readPrivateRequest(content, () => parseMarkdown(content as string, row.slug, { activePack }).frontmatter) : null;
   if (privateRequest) assertPrivateRequestAllowed(row, content as string, privateRequest.frontmatter);
-  let versionTags: string[] | undefined = preparedIntent?.tags;
-  if (replacesTombstone && typeof content === 'string') versionTags = parseMarkdown(content, row.slug, { activePack }).tags;
+  let versionTags: string[] | undefined = replacesTombstone && typeof content === 'string' ? parseMarkdown(content, row.slug, { activePack }).tags : preparedIntent?.tags;
   // A replacement/restore publishes a live page. Only a recorded version may
   // explicitly restore a tombstone; legacy versions leave this state unchanged.
   let targetDeleted = false;
@@ -1161,8 +1158,9 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
 }
 
 /**
- * A put over a soft-deleted page: expire (not delete) the active facts the deleted page held, and those about it that no
- * live page holds, so the new page does not inherit them. Facts other live pages hold about the slug stay theirs.
+ * A put over a soft-deleted page starts clean: it takes its tags from its own content only, skips the deleted page's
+ * timeline rows, and here expires (never deletes) the active facts the deleted page held and those about it that no live
+ * page holds. Facts other live pages hold about the slug stay theirs; restore_page is how the old page comes back.
  */
 async function retireTombstoneFacts(tx: BrainEngine, sourceId: string, slug: string): Promise<void> {
   await tx.executeRaw(`UPDATE facts f SET expired_at = now(), row_num = NULL

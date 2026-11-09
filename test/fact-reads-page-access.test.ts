@@ -100,14 +100,6 @@ function factReads(slug: string): Array<[string, string, Record<string, unknown>
   ];
 }
 
-async function setUpEngine(kind: 'pglite' | 'postgres'): Promise<{ engine: BrainEngine; close: () => Promise<void> }> {
-  if (kind === 'postgres') return isolatedPersistencePostgres(process.env.DATABASE_URL!);
-  const engine = new PGLiteEngine();
-  await engine.connect({ engine: 'pglite' } as never);
-  await engine.initSchema();
-  return { engine, close: () => engine.disconnect() };
-}
-
 const PAGES = {
   restricted: { slug: 'people/vesper-example', fm: 'readable_by: [alice-example]', canary: 'canaryobsrestricted' },
   private: { slug: 'people/quiet-example', fm: 'visibility: private', canary: 'canaryobsprivate' },
@@ -138,7 +130,14 @@ for (const kind of testBackends()) {
     beforeAll(async () => {
       configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: DIMS, env: { OPENAI_API_KEY: 'test' } });
       __setEmbedTransportForTests((async ({ values }: { values: string[] }) => ({ embeddings: values.map(vectorFor) })) as never);
-      ({ engine, close } = await setUpEngine(kind));
+      if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
+      else {
+        const pglite = new PGLiteEngine();
+        await pglite.connect({ engine: 'pglite' } as never);
+        await pglite.initSchema();
+        engine = pglite;
+        close = () => pglite.disconnect();
+      }
       __resetPrivateVisibilityCacheForTests();
       await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [SRC]);
       for (const key of Object.keys(PAGES) as PageKey[]) {
@@ -237,19 +236,26 @@ for (const kind of testBackends()) {
   }
 
   describe(`a deleted page takes its facts, timeline and tags with it (${kind})`, () => {
-    beforeAll(() => {
+    let engine: BrainEngine;
+    let close: () => Promise<void>;
+    beforeAll(async () => {
       configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: DIMS, env: { OPENAI_API_KEY: 'test' } });
       __setEmbedTransportForTests((async ({ values }: { values: string[] }) => ({ embeddings: values.map(vectorFor) })) as never);
-    });
-    afterAll(() => { __setEmbedTransportForTests(null); resetGateway(); });
+      if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
+      else {
+        const pglite = new PGLiteEngine();
+        await pglite.connect({ engine: 'pglite' } as never);
+        await pglite.initSchema();
+        engine = pglite;
+        close = () => pglite.disconnect();
+      }
+    }, 240_000);
+    afterAll(async () => { __setEmbedTransportForTests(null); resetGateway(); await close?.(); }, 60_000);
 
     test('repo-less source: hidden while deleted for local and remote readers, back unchanged on restore, not inherited by a new page', async () => {
-      const { engine, close } = await setUpEngine(kind);
-      try {
-        __resetPrivateVisibilityCacheForTests();
-        await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-b', 'source-b') ON CONFLICT (id) DO NOTHING");
-        await deletedPageScenario(engine, 'source-b', true);
-      } finally { await close(); }
+      __resetPrivateVisibilityCacheForTests();
+      await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-b', 'source-b') ON CONFLICT (id) DO NOTHING");
+      await deletedPageScenario(engine, 'source-b', true);
     }, 240_000);
 
     test('managed source: the same', async () => {

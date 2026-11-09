@@ -2013,8 +2013,7 @@ export class PostgresEngine implements BrainEngine {
     const scope = opts?.sourceIds && opts.sourceIds.length
       ? sql`AND source_id = ANY(${opts.sourceIds})`
       : sql`AND (${opts?.sourceId ?? null}::text IS NULL OR source_id = ${opts?.sourceId ?? null})`;
-    // Page-visibility gate on the provenance and entity pages, applied BEFORE DISTINCT ON
-    // so the untrusted caller resolves the newest value they may see; a deleted page's observations are hidden for everyone.
+    // Provenance/entity page gates and the deleted-page hide, BEFORE DISTINCT ON: the caller gets the newest value they may see.
     const privacy = sql.unsafe(`AND ${deletedPageProjectionHiddenSql('facts', 'facts')}${opts?.excludePrivate ? ` AND ${privateFactFilterForCaller('facts')}` : ''}`);
     const visibility = opts?.visibility ? sql`AND visibility = ANY(${opts.visibility})` : sql``;
     const rows = await sql<OntologyValue[]>`
