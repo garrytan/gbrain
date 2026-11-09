@@ -18,7 +18,7 @@
  * canonical manifest, and converting the checkout rewrites its files, which this does not do. Without git-lfs files a
  * clone with these settings has the same tracked bytes, so the stored manifest needs no change.
  */
-import { existsSync, realpathSync } from 'node:fs';
+import { closeSync, existsSync, fchmodSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { BrainEngine } from './engine.ts';
 import { execFileSync } from './spawn.ts';
@@ -115,21 +115,33 @@ function lockDownGaps(root: string): string[] {
 /**
  * Writes the clone-time lock-down (`LFS_OFF_CLONE_CONFIG`) into the repository's shared config (`--git-common-dir`, so a linked
  * worktree's repository gets it too), without running Git in the checkout, then reads back what Git uses there and throws when a
- * worktree-scoped or included setting still overrides a key. Each key's existing values are removed before its one value is
- * written, so a key that held several ends with the clone-time value. `progress` says how far it got: `started` before the first write,
- * `written` once every key is in the file.
+ * worktree-scoped or included setting still overrides a key. Like Git, it takes `config.lock` beside the config's real path
+ * first, copies the config into it (mode kept), writes the keys there and renames it over the config in one step, so a failure part way leaves the config as it was; each key's existing values are removed
+ * before its one value is written, so a key that held several ends with the clone-time value. `progress` says how far it got:
+ * `written` once the config holds every key.
  */
-function lockDownCheckout(root: string, progress: { state: 'none' | 'started' | 'written' | 'done' }): void {
+function lockDownCheckout(root: string, progress: { state: 'none' | 'written' | 'done' }): void {
   const commonDir = hardenedGitSync(root, ['rev-parse', '--git-common-dir'], GIT_LIMITS);
   if (!commonDir.ok) throw new Error(`Git could not locate the repository of ${root}.`);
-  const file = join(resolve(root, commonDir.stdout.toString('utf8').replace(/\n$/, '')), 'config');
-  progress.state = 'started';
-  const options = { cwd: dirname(file), env: hardenedGitEnvironment(), stdio: 'pipe', timeout: GIT_LIMITS.timeoutMs } as const;
-  for (const [key, value] of LOCK_DOWN) {
-    try { execFileSync('git', ['config', '--file', file, '--unset-all', key], options); }
-    catch (error) { if ((error as { status?: number }).status !== 5) throw error; }
-    execFileSync('git', ['config', '--file', file, key, value], options);
+  const file = realpathSync(join(resolve(root, commonDir.stdout.toString('utf8').replace(/\n$/, '')), 'config'));
+  const staged = `${file}.lock`;
+  let lock: number;
+  try { lock = openSync(staged, 'wx'); }
+  catch (error) {
+    if ((error as { code?: string }).code === 'EEXIST') throw new Error(`${staged} exists, so another Git process is writing that config (or one stopped and left the file).`);
+    throw error;
   }
+  try {
+    try { fchmodSync(lock, statSync(file).mode & 0o7777); writeFileSync(lock, readFileSync(file)); }
+    finally { closeSync(lock); }
+    const options = { cwd: dirname(file), env: hardenedGitEnvironment(), stdio: 'pipe', timeout: GIT_LIMITS.timeoutMs } as const;
+    for (const [key, value] of LOCK_DOWN) {
+      try { execFileSync('git', ['config', '--file', staged, '--unset-all', key], options); }
+      catch (error) { if ((error as { status?: number }).status !== 5) throw error; }
+      execFileSync('git', ['config', '--file', staged, key, value], options);
+    }
+    renameSync(staged, file);
+  } catch (error) { rmSync(staged, { force: true }); throw error; }
   progress.state = 'written';
   const gaps = lockDownGaps(root);
   if (gaps.length) throw new Error(`Git in the checkout at ${root} still reads another value for ${gaps.join(', ')} (a worktree-scoped or included config overrides ${file}).`);
@@ -199,7 +211,7 @@ export async function recordSourceOrigin(engine: BrainEngine, ids: string[], opt
   const locks = opts.apply && await managedPersistenceEnabled(engine)
     ? { ...await import('./persistence/topology-locks.ts'), ...await import('./persistence/topology-transaction.ts') } : null;
   for (const id of [...new Set(ids)]) {
-    const lockDown: { state: 'none' | 'started' | 'written' | 'done' } = { state: 'none' };
+    const lockDown: { state: 'none' | 'written' | 'done' } = { state: 'none' };
     try {
       const [row] = await engine.executeRaw<SourceRowLike>('SELECT id, local_path, config, archived FROM sources WHERE id=$1', [id]);
       const early = check(row, id, opts.origin);
@@ -235,8 +247,7 @@ export async function recordSourceOrigin(engine: BrainEngine, ids: string[], opt
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const lockdown = lockDown.state === 'done' ? ' Its checkout already has git-lfs downloads and hooks off.'
-        : lockDown.state === 'written' ? " The lock-down settings were already written to its repository's .git/config, but Git does not use them there yet."
-        : lockDown.state === 'started' ? " Its checkout's .git/config may already hold part of the git-lfs and hooks lock-down; running this again writes all of it." : '';
+        : lockDown.state === 'written' ? " The lock-down settings were already written to its repository's .git/config, but Git does not use them there yet." : '';
       const unchanged = lockdown ? `the record was not written.${lockdown}` : 'nothing changed.';
       const code = (error as { code?: string }).code;
       results.push(code === 'write_pending'
