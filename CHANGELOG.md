@@ -10,6 +10,15 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**`gbrain repair file-drift` no longer offers to adopt an untracked or gitignored file into an origin-twin page.** v0.60.629.0 taught the drift preview to read an origin twin with no recorded file against the file at its slug path, but only where sync admits that path. It didn't check that sync reads the file at all. Sync imports from the HEAD commit (and the working tree only with `sync.include_working_tree` or a detached HEAD, never an ignored file), so a slug-path file that Git doesn't track, or that `.gitignore` lists, is never imported or held. The preview still reported it as drift: it offered `--prefer file` to copy a possibly private, ignored file into the database, maintenance writes to the page were refused as drift, and doctor `maintenance_write_drift` counted it. Such a twin now stays `database_only`. An untracked file that sync does read from the working tree is still read as drift.
+
+### Itemized changes
+
+- `src/core/persistence/drift-conflicts.ts`: `twinReading` reads `adopt` only when sync reads the slug-path file: committed at HEAD, or, when sync reads the working tree, not ignored by Git.
+- Tests: `test/repair-file-drift-origin-twin-gbra108.test.ts` (PGLite, managed source, real git): an untracked slug-path file and a gitignored one under `sync.include_working_tree` stay `database_only` with no sync hold, and an untracked file sync reads from the working tree still reads drift while sync holds it.
+
 ## [0.60.629.0] - 2026-11-09
 
 **`gbrain repair file-drift` now agrees with sync on a held origin-twin page.** A legacy page left as an origin twin with no recorded file (no import record) could be held `file_drift` by sync while `repair file-drift --slug <slug>` reported `no_drift`. The hold's own suggested fix couldn't clear it, and scripts that use the preview as a drift check passed falsely. The preview now reads such a twin against its slug-path file, the same way sync imports it, and lists it with an apply command.
