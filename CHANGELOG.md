@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**The write-refusal guide and the upgrade notice now say what happens to a webhook capture of a page the revision backfill has not reached (follow-up to GST-2112).** Since v0.60.627.0, `POST /ingest` with `X-Gbrain-Slug` answers such a capture 409 `revision_backfill_pending` and stores and queues nothing, so the capture exists only with its sender; an `ingest_capture` job already in the queue refuses at write time and ends `dead` with its body kept. Neither was written down. `docs/guides/write-refusals.md` and the v0.60.627.0 upgrade notice row now say it, with the recovery: `gbrain apply-migrations --force-schema` on the brain host, then send a capture that got the 409 again and re-run a dead job with `gbrain jobs retry <id>`. The E2E runner also gives `test/e2e/source-retire-batched-postgres.test.ts` (60,000 pages) the 4x per-file budget: on a loaded CI runner it ran past the 180 s cap and was killed with its third test in flight and no failed assertion.
+
+### Itemized changes
+
+- `docs/guides/write-refusals.md`: the `revision_backfill_pending` row covers the 409 at `POST /ingest` and the dead `ingest_capture` job, with the resend and `gbrain jobs retry <job id>` recovery.
+- `src/core/behavior-change-notice.ts`: the `ingest_keeps_readers_gst2112` row names the 409 and its recovery.
+- `scripts/run-e2e.sh`: `source-retire-batched-postgres.test.ts` joins the 4x per-file budget list. No test or assertion changed.
+
 ## [0.60.627.0] - 2026-11-09
 
 **A webhook capture can no longer drop a page's readers (GST-2112).** `POST /ingest` wrote through a trusted local path whose only check was that the sender could read the page, so a member-bound token granted a source could replace a page whose `readable_by` named it with a body that named no readers, and every caller could then read the page. The route and the `ingest_capture` job now apply the remote `put_page` readers rule: a body that drops `readable_by` from a page that names readers, or names readers that leave out the sender, is refused `readable_by_invalid` (403 at the route, nothing queued; at write time for a job already queued). The job binds its write to the revision it checked, so readers added between the check and the write refuse the write with `revision_conflict` and the retry refuses `readable_by_invalid`. A capture already queued from a member-bound credential whose write source is `default` is refused `permission_denied` at write time, as the route refuses it before queueing. Bodies that keep the readers, and pages without readers, import as before.
