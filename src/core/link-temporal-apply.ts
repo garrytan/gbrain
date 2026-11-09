@@ -152,13 +152,16 @@ export async function writeManualTransitions(
   return inserted.length;
 }
 
-/** remove_link companion: drop manual dated statements for the removed relationship(s). */
-export async function removeManualTransitions(tx: Tx, rel: { from: string; to: string; linkType?: string; sourceId: string }): Promise<void> {
+/**
+ * remove_link companion: drop manual dated statements for the removed relationship(s). `databaseOnly` keeps the
+ * statements a links fence projected (origin_page_id set), which belong to the fence's rows, not to a database-only edge.
+ */
+export async function removeManualTransitions(tx: Tx, rel: { from: string; to: string; linkType?: string; sourceId: string; databaseOnly?: boolean }): Promise<void> {
   const keys = await tx.executeRaw<RelationshipKey>(
     `DELETE FROM link_transitions lt USING pages f, pages t
       WHERE f.id = lt.from_page_id AND t.id = lt.to_page_id AND f.slug = $1 AND t.slug = $2
         AND f.source_id = $3 AND t.source_id = $3 AND lt.producer = 'manual'
-        AND ($4::text IS NULL OR lt.link_type = $4)
-      RETURNING lt.from_page_id, lt.to_page_id, lt.link_type`, [rel.from, rel.to, rel.sourceId, rel.linkType ?? null]);
+        AND ($4::text IS NULL OR lt.link_type = $4) AND (NOT $5::boolean OR lt.origin_page_id IS NULL)
+      RETURNING lt.from_page_id, lt.to_page_id, lt.link_type`, [rel.from, rel.to, rel.sourceId, rel.linkType ?? null, rel.databaseOnly === true]);
   if (keys.length) await refreshRelationships(tx, keys);
 }
