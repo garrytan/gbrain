@@ -152,6 +152,7 @@ export async function requireEmbedBackfillConsent(engine: BrainEngine, opts: {
     risk: 'Spends money with the embedding provider. Keyword search keeps working without it.',
     user_message: `Generating the missing embeddings sends your page text to the embedding provider and costs money (${est === null ? 'cost unknown in advance' : `about $${est.toFixed(4)}`}). OK to run it?`,
     argv: ceiling ? [...opts.argv, '--max-usd', ceiling] : opts.argv,
+    max_usd_approves: opts.scope.perPage === true,
     ...(opts.preview_argv ? { preview_argv: opts.preview_argv } : {}),
     est_usd: est,
     args: opts.args,

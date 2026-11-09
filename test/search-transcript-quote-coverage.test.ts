@@ -28,7 +28,7 @@ import { prepareMarkdownChunks } from '../src/core/markdown-chunks.ts';
 import { runThink } from '../src/core/think/index.ts';
 import { getBrainHotMemoryMeta } from '../src/core/facts/meta-hook.ts';
 import { recordDerivationInputs } from '../src/core/facts/derivation-inputs.ts';
-import { readWholePageMarkdown } from '../src/cli/page-render.ts';
+import { readWholePageMarkdown, REMOTE_PAGE_WINDOW_BYTES } from '../src/cli/page-render.ts';
 import { beliefBrain, beliefEngineCase, beliefPage } from './helpers/belief-ledger.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -321,7 +321,7 @@ for (const backend of testBackends()) {
 
     test('a thin client pages a large chat page whole, equal to the stored markdown', async () => {
       const slug = 'slack/source-a-large-2026-10-02';
-      const lines = Array.from({ length: 12_000 }, (_, i) => `**alice-example** (2026-10-02 9:00 AM): line ${i} of the long channel day, padded to a realistic width`);
+      const lines = Array.from({ length: Math.ceil(REMOTE_PAGE_WINDOW_BYTES * 1.5 / 100) }, (_, i) => `**alice-example** (2026-10-02 9:00 AM): line ${i} of the long channel day, padded to a realistic width`);
       await engine.putPage(slug, { type: 'slack', title: 'Large channel day', compiled_truth: lines.join('\n\n'), timeline: '', frontmatter: {} });
       const local = await operationsByName.get_page!.handler(localCtx(), { slug, include_content: true }) as { content: string };
       const paged = await readWholePageMarkdown(async p => remoteJson(await dispatchToolCall(engine, 'get_page', p, { ...remote, thinClient: true } as never)), { slug });

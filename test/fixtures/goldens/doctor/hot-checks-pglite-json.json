@@ -4192,6 +4192,19 @@
           {
             "category": "brain",
             "details": {
+              "chunker_version": 5,
+              "count": "exact",
+              "informational": true,
+              "pages_pending": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every inline page with a bulleted timeline is chunked at bullet boundaries.",
+            "name": "inline_timeline_chunks",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "auto_repair": {
                 "active": false,
                 "enabled": true,
@@ -9320,6 +9333,19 @@
             "elapsed_ms": "<volatile>",
             "message": "The config file disables embeddings and the database holds no vectors.",
             "name": "embedding_plane_disagreement",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "chunker_version": 5,
+              "count": "exact",
+              "informational": true,
+              "pages_pending": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every inline page with a bulleted timeline is chunked at bullet boundaries.",
+            "name": "inline_timeline_chunks",
             "status": "ok"
           },
           {
