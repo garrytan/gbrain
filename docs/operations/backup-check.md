@@ -157,6 +157,23 @@ self-throttle to once per `backup.check_interval_days`. The monthly recompute
 can add a few seconds to one local advisor/doctor run (the 500-root probe cap
 bounds it).
 
+### Host-managed PostgreSQL recovery
+
+An operator with an external PostgreSQL and canonical Markdown backup can
+attach recovery evidence for the host's non-Git `default` source. Write an
+owner-only `backup/external-recovery.json` under the brain directory **after**
+an isolated restore of the exact remote encrypted snapshot and verification
+of its canonical files. The v1 receipt carries `version: 1`,
+`scope: "postgres_and_canonical_files"`, `source_id: "default"`, the
+`brain_id` and `source_incarnation`, the matching `remote_commit` and
+`restored_commit` SHA-1s, `snapshot_at` and `restore_verified_at` UTC dates,
+and `verification: "remote_cipher_decrypted_restore"`. Never write key
+material, archive paths, or restored content into this receipt.
+
+Doctor checks the receipt's file owner and mode, brain/source identity and
+36-hour snapshot window. It keeps the separate Git verdict and never treats
+this proof as coverage for other repositories or credentials.
+
 ## Config + kill switches
 
 ```

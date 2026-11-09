@@ -14,6 +14,7 @@
  *
  */
 
+import { externalRecoveryChanged, readExternalRecovery } from './external-recovery.ts';
 import { existsSync } from 'node:fs';
 
 import { VERSION } from '../../version.ts';
@@ -385,6 +386,20 @@ export async function computeBackupCoverage(
     }
   }
 
+  // External restore evidence is an alternative for a non-Git canonical
+  // source only. Never clear a failed or unverified repository probe.
+  const externalAsset = assets.find(asset =>
+    asset.kind === 'source_repo' && asset.id === 'default' && asset.detail === 'not_a_git_repo',
+  );
+  if (opts.localGitProbes && externalAsset && operatingOnHostBrain()) {
+    const external = await readExternalRecovery(engine, now.getTime());
+    if (external) {
+      externalAsset.external_recovery = external;
+      externalAsset.state = 'ok';
+      externalAsset.detail = 'external_postgres_and_files';
+    }
+  }
+
   const totals = {
     assets: assets.length,
     no_remote: assets.filter((a) => a.state === 'no_remote').length,
@@ -392,6 +407,7 @@ export async function computeBackupCoverage(
     failing: assets.filter((a) => a.state === 'failing').length,
     configured_repos: assets.filter(a => a.configured_remote === true).length,
     recoverable_repos: assets.filter(isVerifiedRecoverable).length,
+    ...(externalAsset?.external_recovery ? { externally_verified_sources: 1 } : {}),
     remote_timeouts: assets.filter(isRemoteTimeout).length,
     pages_at_risk: pagesAtRisk,
   };
@@ -460,7 +476,14 @@ export async function getBackupStatus(
   const remoteDue = opts.localGitProbes === true && opts.verifyRemoteRefs === true
     && (!Number.isFinite(remoteAge) || remoteAge < 0 || remoteAge > BACKUP_VERIFICATION_MAX_AGE_MS
       || (remoteAge >= BACKUP_CONTINUATION_THROTTLE_MS && hasPendingRepoEvidence(cached, nowMs)));
-  if (!opts.forceRefresh && cached && !isBackupStatusStale(cached, nowMs) && !remoteDue) return currentBackupEvidence(cached, nowMs);
+  const cachedProof = cached?.assets.find(asset => asset.external_recovery)?.external_recovery;
+  const currentProof = hostBrain && opts.localGitProbes && cachedProof
+    ? await readExternalRecovery(engine, nowMs) : null;
+  const externalDue = cached && opts.localGitProbes &&
+    (externalRecoveryChanged(cached.checked_at, !!cachedProof) ||
+      (!!cachedProof && (!currentProof || cachedProof.snapshot_at !== currentProof.snapshot_at ||
+        cachedProof.restore_verified_at !== currentProof.restore_verified_at)));
+  if (!opts.forceRefresh && cached && !isBackupStatusStale(cached, nowMs) && !remoteDue && !externalDue) return currentBackupEvidence(cached, nowMs);
   try {
     const fresh = await computeBackupCoverage(engine, { ...opts, previousStatus: cached ?? undefined });
     if (fresh.degraded && cached) return currentBackupEvidence({ ...cached, degraded: true }, nowMs);

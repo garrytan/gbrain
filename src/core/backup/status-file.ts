@@ -52,6 +52,8 @@ import {
 export const BACKUP_STATUS_SCHEMA_VERSION = 'gbrain-backup-status-v2' as const;
 export const BACKUP_NAG_SCHEMA_VERSION = 'gbrain-backup-nag-v1' as const;
 
+import { externalRecoveryCurrent, type ExternalRecoveryEvidence } from './external-recovery.ts';
+
 export type BackupAssetKind = 'source_repo' | 'bootstrap_workspace' | 'harness_skills' | 'db_only' | 'db_content' | 'connector';
 export type BackupAssetState = 'ok' | 'no_remote' | 'unpushed' | 'dirty' | 'failing' | 'info' | 'unknown';
 export type BackupComputedBy = 'cli' | 'advisor' | 'doctor' | 'serve' | 'spawn' | 'sync';
@@ -70,6 +72,7 @@ export interface BackupAssetVerdict {
    * mechanical fix exists. */
   fix_argv?: string[] | null;
   configured_remote?: boolean;
+  external_recovery?: ExternalRecoveryEvidence;
   verification?: {
     state: 'verified' | 'not_checked' | 'unavailable' | 'missing_ref' | 'mismatch' | 'budget_exhausted' | 'stale';
     /** Why an `unavailable` probe failed: its full slot (`backup.remote_timeout_ms`, default 2 s) ran out, or git exited with an error. */
@@ -88,6 +91,7 @@ export interface BackupTotals {
   failing: number;
   /** Git-backed assets that would survive a disk loss (recovery statement). */
   recoverable_repos: number;
+  externally_verified_sources?: number;
   /** Pages at risk on disk loss (db_only + undeclared DB-only signal). */
   pages_at_risk: number;
   configured_repos?: number;
@@ -159,6 +163,7 @@ export function isRemoteTimeout(a: BackupAssetVerdict): boolean {
  * currentBackupEvidence and the doctor message both read this.
  */
 export function assetBlocksRecovery(a: BackupAssetVerdict): boolean {
+  if (a.external_recovery) return false;
   return isRepoAsset(a) ? !isVerifiedRecoverable(a) : a.state === 'no_remote' || a.state === 'unpushed' || a.state === 'failing';
 }
 
@@ -192,6 +197,10 @@ export function currentBackupEvidence(s: BackupStatus, now = Date.now()): Backup
   const statusAge = now - Date.parse(s.checked_at);
   const stale = isBackupStatusStale(s, now) || !Number.isFinite(statusAge) || statusAge < 0;
   const assets = s.assets.map(a => {
+    if (a.external_recovery && (s.degraded || stale || !externalRecoveryCurrent(a.external_recovery, now))) {
+      const { external_recovery: _expired, ...rest } = a;
+      return { ...rest, state: 'unknown' as const, detail: 'not_a_git_repo' };
+    }
     if (a.verification?.state !== 'verified') return a;
     const age = now - Date.parse(a.verification.checked_at ?? '');
     if (!s.degraded && Number.isFinite(age) && age >= 0 && age <= BACKUP_VERIFICATION_MAX_AGE_MS && !stale) return a;
@@ -203,8 +212,10 @@ export function currentBackupEvidence(s: BackupStatus, now = Date.now()): Backup
     ...s,
     assets,
     recovery_scope: BACKUP_RECOVERY_SCOPE,
-    totals: { ...s.totals, recoverable_repos: recoverable },
-    overall: s.degraded || stale || repos.length > recoverable || s.totals.no_remote > 0 || s.totals.unpushed > 0 || s.totals.failing > 0 ? 'warn' : s.overall,
+    totals: { ...s.totals, recoverable_repos: recoverable,
+      ...(s.totals.externally_verified_sources !== undefined
+        ? { externally_verified_sources: assets.filter(asset => asset.external_recovery).length } : {}) },
+    overall: s.degraded || stale || repos.some(assetBlocksRecovery) || s.totals.no_remote > 0 || s.totals.unpushed > 0 || s.totals.failing > 0 ? 'warn' : s.overall,
   };
 }
 

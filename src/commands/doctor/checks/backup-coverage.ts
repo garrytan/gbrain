@@ -123,10 +123,12 @@ function toCheck(s: BackupStatus, now?: number): Check {
       ...(fix ? { fix } : { fix_unavailable_reason: 'operator_judgement' as const }),
     };
   }
+  const external = s.totals.externally_verified_sources
+    ? ' One canonical source has a fresh verified external PostgreSQL and Markdown restore.' : '';
   return {
     name: 'backup_coverage',
     status: 'ok',
-    message: `${s.totals.recoverable_repos} knowledge repo(s) have verified remote commits; last checked ${backupCacheAge(s, now)}. Git does not cover the full database.`,
+    message: `${s.totals.recoverable_repos} knowledge repo(s) have verified remote commits; last checked ${backupCacheAge(s, now)}. Git does not cover the full database.${external}`,
     details,
   };
 }

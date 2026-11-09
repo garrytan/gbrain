@@ -91,6 +91,7 @@ src/core/background-work.ts	process_env	1	W6: settings plane out of the core
 src/core/backoff.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/backup/archive.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/backup/coverage.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/backup/external-recovery.ts	fs_import	1	Host-only owner, mode, and no-follow verification of the external recovery proof; W7 moves it to local app.
 src/core/backup/preflight.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/backup/private-path.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/backup/private-path.ts	process_env	3	W6: settings plane out of the core
