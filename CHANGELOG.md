@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**`gbrain repair file-drift` now agrees with sync on a held origin-twin page.** A legacy page left as an origin twin with no recorded file (no import record) could be held `file_drift` by sync while `repair file-drift --slug <slug>` reported `no_drift`. The hold's own suggested fix couldn't clear it, and scripts that use the preview as a drift check passed falsely. The preview now reads such a twin against its slug-path file, the same way sync imports it, and lists it with an apply command.
+
+### Itemized changes
+
+- `src/core/persistence/drift-conflicts.ts`: `liveFileDrift` reads an adoptable origin twin with no recorded file against its slug-path file. A twin in a read-only mirror source, or whose slug path no file can import as, keeps `database_only`. A twin under a declared db_only path, which sync holds but no repair can adopt, reads `unknown` (`db_only_slug_path`) instead of passing as `no_drift`.
+- `src/core/persistence/reconcile-state.ts`: the slug-path adoption check moves into one exported `adoptableSlugOrigin`, which reconcile and the drift preview now share. Reconcile's behaviour is unchanged.
+- Applying either side to such a twin binds the slug-path file as its `source_path` and clears `origin_twin`. Maintenance writes to a twin whose slug-path file differs are now refused as drift, like any drifted page.
+- Tests: `test/repair-file-drift-origin-twin-gbra108.test.ts` (PGLite, managed source, real git): a legacy page with no import record held by sync, previewed and applied for both `--prefer database` and `--prefer file`, after which a re-sync clears the hold; also mirror-read-only, db_only, non-importable slug path, missing file and shared-origin cases.
+
 ## [0.60.623.0] - 2026-11-09
 
 **The brain owner's own agents now read the whole personal brain, and pages stamped `access: private` by default can be cleared in reviewed batches.** On a single-user brain, writer templates stamped `access: private` on ordinary research and ops pages, and every remote caller got `not_found` for them, the owner's own agent included. `gbrain access owner set <member>` now names the owner (config `access.owner_member`, database state, so repo-less brains work the same). Every token, OAuth client or stdio server bound to that member reads `visibility: private` pages, privacy-alias pages, derived and pinned-question pages and private facts through `get_page`, `search`, `query`, `recall` and the other page reads, within its source grant. `readable_by` and folder rules still bind it, a shared-room audience gets no relaxation, and other members, unbound and public callers read exactly as before. `gbrain repair private-labels` previews the existing labels with counts per category, keeps real restrictions, and clears the over-stamped ones in reviewed, recorded, reversible batches. The bulk-ingestion page template no longer writes an `access:` line, and docs/guides/access-designations.md defines every designation.
