@@ -12,7 +12,9 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**OpenClaw setups stop breaking each other, and upgrades stop breaking OpenClaw.** Six fixes for people running gbrain with OpenClaw. Setting up one agent's workspace no longer rewrites or removes the per-turn brain rule every other agent on the same gateway relies on. Background turns (heartbeats, cron, finished commands) no longer get told to answer. `gbrain upgrade` no longer reinstalls gbrain in a way OpenClaw refuses to load as a plugin. `gbrain doctor` stops failing on skills another tool put in the workspace. The OpenClaw guide now leads with an install route that works and documents OpenClaw's own remote MCP connection.
+**OpenClaw setups stop breaking each other, upgrades stop breaking OpenClaw, and four other harness fixes land.** Six fixes for people running gbrain with OpenClaw. Setting up one agent's workspace no longer rewrites or removes the per-turn brain rule every other agent on the same gateway relies on. Background turns (heartbeats, cron, finished commands) no longer get told to answer. `gbrain upgrade` no longer reinstalls gbrain in a way OpenClaw refuses to load as a plugin. `gbrain doctor` stops failing on skills another tool put in the workspace. The OpenClaw guide now leads with an install route that works and documents OpenClaw's own remote MCP connection.
+
+Four more harness fixes: a per-turn hook you paste into Hermes by hand now counts, `gbrain setup claude-code --instructions-only` writes the per-turn rule hook on Windows, `request_tools` stops promising tools a stdio session cannot call, and `gbrain schema show --source` reads that source's pack.
 
 - `gbrain setup openclaw --workspace <dir>` leaves the gateway-shared turn-rule plugin alone when it would name another server, and `--no-instructions` there no longer removes it, or the brain-first block in other workspaces' `AGENTS.md`, for every agent; it says how to change it for all agents instead and exits 0. A plugin an older gbrain wrote for the same server is rewritten (reported by @Masashi-Ono0611, #8401).
 - OpenClaw heartbeat, cron and exec-completion turns get the brain-first rule without its closing "answer and finish" sentence, so they stop inviting replies nobody asked for (reported by @Masashi-Ono0611, #8440).
@@ -20,6 +22,10 @@ identifiers and attribution are available in the pre-removal Git revision
 - `gbrain upgrade` reinstalls a Bun global install with `--backend=copyfile`, and its recovery commands say the same, so an install OpenClaw loads as a plugin keeps loading after an upgrade (reported by @Masashi-Ono0611, #8663).
 - The OpenClaw guide marks the ClawHub bundle route as not available: the ClawHub package named `gbrain` is an unofficial old build that fails to install. It leads with the stdio route (reported by @Masashi-Ono0611, #8470).
 - `gbrain agent register --harness openclaw` no longer says OpenClaw has no remote MCP client, and the OpenClaw guide documents connecting over streamable HTTP with `openclaw mcp login` (reported by @Masashi-Ono0611, #8747).
+- When your `config.yaml` already has a `hooks:` section, `gbrain setup hermes` prints the `pre_llm_call` entry for you to add. Once you paste it, `gbrain doctor` now sees it (and still reports it untrusted until Hermes approves it) instead of calling it missing (reported by @Masashi-Ono0611, #8857).
+- `gbrain setup claude-code --instructions-only`, doctor's turn-hook repair and the hook-launcher refresh now write the per-turn rule hook for a Windows gbrain binary (`C:\...\gbrain.exe`) instead of skipping it with "no absolute gbrain binary was found". The hook names its paths in Git Bash's `/c/...` form, which is how Claude Code runs hooks on Windows. Codex runs hooks on Windows without a POSIX shell, so it still gets the printed step, now with that reason (reported by @Masashi-Ono0611, #8451).
+- On a stdio session started at a narrower surface (`gbrain serve --surface starter`), `request_tools {tools: [...]}` lists only the tools the session can call. A tool outside it comes back with its schema, `listed: false` and a note to call `request_tools {"surface":"full"}` first, instead of a promise that it is in your tool list (reported by @Masashi-Ono0611, #8734).
+- `gbrain schema show --source <id>` shows that source's own pack (its per-source override, else the brain-wide pack) instead of failing with `Unknown pack: <id>`. A pack you name still wins (reported by @Masashi-Ono0611, #8900).
 
 ### Itemized changes
 
@@ -510,7 +516,7 @@ An agent on a harness that lists MCP tools as one line and shows parameters only
 ### Itemized changes
 
 - `src/mcp/validate-params.ts`, `src/mcp/dispatch.ts`: an unknown `facts` on `remember` suggests `items` and an unknown `text` suggests `fact`; the refusal then appends the operation's `callShape`, a valid call as JSON with placeholder values (`<one claim>`, `<subject-slug>`, `<where you learned it, with the date>`) that says provenance is required. `callShape` is a new optional `Operation` field; only `remember` sets it.
-- `src/core/verbs.ts`: `remember`'s description opens with the call itself, `{fact, provenance (required: source), \`entity\` (subject; recall needs it)} or items[]`, inside the 117 characters a one-line tool listing keeps. A missing `fact` quotes the same placeholder call instead of an example without provenance, and the missing- and empty-provenance refusals quote its provenance placeholder instead of a realistic source an agent could copy.
+- `src/core/verbs.ts`: `remember`'s description opens with the call itself, `{fact, provenance (required: source), `entity` (subject; recall needs it)} or items[]`, inside the 117 characters a one-line tool listing keeps. A missing `fact` quotes the same placeholder call instead of an example without provenance, and the missing- and empty-provenance refusals quote its provenance placeholder instead of a realistic source an agent could copy.
 - `src/core/remember-batch.ts`: an item that carries `text` is told to rename it to `fact`.
 
 ## [0.60.585.0] - 2026-11-05
@@ -4802,23 +4808,23 @@ Duplicate facts reported by @mikez93 (#7043). Hot-memory dedupe reported by @ben
 | Situation | Before | Now |
 |---|---|---|
 | Unmanaged extract_atoms writes an origin's atoms | atoms, provenance edges and the completion stamp written separately; a failed write could leave a provisional atom | one generation: they land together or not at all, and the atoms a complete re-extraction no longer produces retire in the same transaction (versioned, stamped, restorable) |
-| A re-extraction returns nothing, keeps under half the atoms, changes more than 64, or a mass retirement runs | retired whatever the result dropped | held: nothing changes, doctor \`generation_held\` warns, and the held result records why (\`generations.shrink_floor\`, \`generations.max_items\`, the retirement valve); an empty result retires only with proof the input is gone |
-| A producer whose input or generation moved while it worked | wrote over the newer state | fenced (\`generation_fenced\`), nothing written |
+| A re-extraction returns nothing, keeps under half the atoms, changes more than 64, or a mass retirement runs | retired whatever the result dropped | held: nothing changes, doctor `generation_held` warns, and the held result records why (`generations.shrink_floor`, `generations.max_items`, the retirement valve); an empty result retires only with proof the input is gone |
+| A producer whose input or generation moved while it worked | wrote over the newer state | fenced (`generation_fenced`), nothing written |
 | An atom from before this release | retired when a re-extraction left it out | retired only when the extraction reproduces it or a retained page version the extractor wrote shows it unedited; a hand-written or hand-edited atom stays live |
-| Undoing a retirement | not possible after the purge | \`gbrain repair generations --kind atom --since 30d\` previews restoring what a generation replaced; \`--mode release-held --held\` previews publishing a held result once |
+| Undoing a retirement | not possible after the purge | `gbrain repair generations --kind atom --since 30d` previews restoring what a generation replaced; `--mode release-held --held` previews publishing a held result once |
 
 ### What to watch for after you upgrade
 
-- Migration v265 adds the ledger tables (\`derived_generations\`, \`derived_generation_items\`, \`derived_generation_valve\`, \`derived_generation_attempts\`). It writes no existing data.
-- \`gbrain repair generations\` is explicit-only and preview-bound: run it without \`--apply\`, show the preview, then \`--apply --expect <hash> --yes\`. A restore refuses a key whose items were edited since; a refused key exits non-zero and is listed.
-- Doctor adds \`generation_retirements\` and \`generation_held\`. Five \`generations.*\` settings are bounded at set time, and the derived purge hold now follows \`generations.restore_days\` (default 30).
+- Migration v265 adds the ledger tables (`derived_generations`, `derived_generation_items`, `derived_generation_valve`, `derived_generation_attempts`). It writes no existing data.
+- `gbrain repair generations` is explicit-only and preview-bound: run it without `--apply`, show the preview, then `--apply --expect <hash> --yes`. A restore refuses a key whose items were edited since; a refused key exits non-zero and is listed.
+- Doctor adds `generation_retirements` and `generation_held`. Five `generations.*` settings are bounded at set time, and the derived purge hold now follows `generations.restore_days` (default 30).
 
 ### Itemized changes
 
-- \`src/core/generations/\`: \`plan.ts\` (the pure replace-or-hold decision and typed empty-result proofs), \`publish.ts\` (page then key locks, replay, fence, one attributed activation that versions, stamps and retires), \`repair.ts\` (\`gbrain repair generations\`), \`proofs.ts\`, \`config.ts\` and the atom adapter.
-- Migration v265 (\`derived-generations\`); page and fact purges scrub ledger preimages in the same transaction.
-- \`bun run check:derived-census [--prune]\` (in verify) fails on a new retire or delete of derived rows outside the primitive.
-- Tests on PGLite and Postgres: \`test/pathological/g1-generations\`, \`g1-generation-probes\`, \`g1-atom-generations\` and \`g1-generation-crash\` (SIGKILL at each publish fault point).
+- `src/core/generations/`: `plan.ts` (the pure replace-or-hold decision and typed empty-result proofs), `publish.ts` (page then key locks, replay, fence, one attributed activation that versions, stamps and retires), `repair.ts` (`gbrain repair generations`), `proofs.ts`, `config.ts` and the atom adapter.
+- Migration v265 (`derived-generations`); page and fact purges scrub ledger preimages in the same transaction.
+- `bun run check:derived-census [--prune]` (in verify) fails on a new retire or delete of derived rows outside the primitive.
+- Tests on PGLite and Postgres: `test/pathological/g1-generations`, `g1-generation-probes`, `g1-atom-generations` and `g1-generation-crash` (SIGKILL at each publish fault point).
 
 ## [0.60.388.0] - 2026-10-23
 
@@ -33391,7 +33397,7 @@ On a real 306-skill agent with a list-format `RESOLVER.md`:
 ### Things to watch
 
 - **Skill names in list format must be kebab-lowercase** (`gift-advisor`, `flight-tracker`). Bold names that start with an uppercase letter (`**MyTool**`) are silently skipped by the new parser. This is the trade that kills the prose-bullet false-positive class (`- **Note**: see [link]` in a real AGENTS.md no longer gets parsed as a skill row). If a skill stops appearing after upgrade, lowercase the name.
-- **The path suffix is parsed but stripped.** A list entry like `- **quality**: lint -> \`skills/conventions/quality.md\`` produces `skills/quality/SKILL.md` (derived from the name), NOT the explicit path. Two downstream consumers (`routing-eval.ts` and the manifest check) assume the `skills/<name>/SKILL.md` shape; honoring the explicit path would silently break their coverage. For non-conventional skill paths, use the table format (which has always supported them).
+- **The path suffix is parsed but stripped.** A list entry like `- **quality**: lint -> `skills/conventions/quality.md`` produces `skills/quality/SKILL.md` (derived from the name), NOT the explicit path. Two downstream consumers (`routing-eval.ts` and the manifest check) assume the `skills/<name>/SKILL.md` shape; honoring the explicit path would silently break their coverage. For non-conventional skill paths, use the table format (which has always supported them).
 - **Mixed table + list in one file works.** The v0.31.7 multi-resolver merge (skillpack `skills/RESOLVER.md` + workspace `../AGENTS.md`) folds both shapes into one unified entry stream, deduped by skillPath.
 
 ### Itemized changes
@@ -38197,7 +38203,7 @@ A correctness wave. Five user-visible bugs closed; one structural CI guard added
 #### Bootstrap structural fix
 - Seven new probes in `applyForwardReferenceBootstrap` (both engines): `files.source_id`, `files.page_id`, `oauth_clients.source_id`, `oauth_clients.federated_read`, `sources.archived`, `sources.archived_at`, `sources.archive_expires_at`.
 - Bootstrap now accepts the DDL connection from `initSchema` and runs probes inside the advisory-lock scope (Codex pre-landing review P1).
-- New MIGRATIONS-source introspection contract test in `test/schema-bootstrap-coverage.test.ts`: parses `src/core/migrate.ts` for every `ALTER TABLE ... ADD COLUMN`, asserts each (table, column) pair is covered by the bootstrap OR by the schema blob's CREATE TABLE bodies. Catches the column-only forward-reference class (sources.archived* shape) that the pre-existing CREATE INDEX parser couldn't see. Source-text introspection covers all three migration shapes: top-level `sql:`, `sqlFor.{postgres,pglite}` overrides, and handler-body `engine.runMigration(N, \`ALTER TABLE ...\`)`.
+- New MIGRATIONS-source introspection contract test in `test/schema-bootstrap-coverage.test.ts`: parses `src/core/migrate.ts` for every `ALTER TABLE ... ADD COLUMN`, asserts each (table, column) pair is covered by the bootstrap OR by the schema blob's CREATE TABLE bodies. Catches the column-only forward-reference class (sources.archived* shape) that the pre-existing CREATE INDEX parser couldn't see. Source-text introspection covers all three migration shapes: top-level `sql:`, `sqlFor.{postgres,pglite}` overrides, and handler-body `engine.runMigration(N, `ALTER TABLE ...`)`.
 - Pre-existing parser bug in `parseBaseTableColumns` fixed: now strips SQL line comments (`-- ...`) and block comments (`/* ... */`) before identifying column names. Pre-fix, any column preceded by a comment line inside the CREATE TABLE body was silently dropped (e.g. `page_kind`, `deleted_at`, `emotional_weight`, `effective_date` — all dropped from coverage).
 
 #### Walker correctness
@@ -42208,7 +42214,7 @@ in this release.
   `/admin/api/health-indicators`.
 - **`probeLiveness(sql, engineName, version, timeoutMs)`** (new exported
   helper in `src/commands/serve-http.ts`). Mirror of `probeHealth()`'s
-  shape: races `sql\`SELECT 1\`` against `HEALTH_TIMEOUT_MS`, returns the
+  shape: races `sql`SELECT 1`` against `HEALTH_TIMEOUT_MS`, returns the
   same `ProbeHealthResult` tagged-union, single finally-block
   `clearTimeout` discipline.
 
@@ -45507,7 +45513,7 @@ If you maintain a downstream OpenClaw fork, see `docs/UPGRADING_DOWNSTREAM_AGENT
 
 ### Itemized changes
 
-**Part A ... `gbrain check-resolvable` reaches 0 warnings.** Drop `"citation audit"` from `skills/maintain/SKILL.md` frontmatter; the trigger lives only on `citation-fixer` now. RESOLVER.md gains a citation-audit disambiguation row pointing both skills so agents still pick the right one. RESOLVER.md broadens query triggers (`"who is"`, `"background on"`, `"notes on"`) and `query/SKILL.md` mirrors them in its frontmatter. `skills/enrich/SKILL.md` replaces the inlined citation rules block with `> **Convention:** see \`skills/conventions/quality.md\`` (the format `extractDelegationTargets` recognizes). Routing-eval fixtures for `citation-fixer` rewritten to embed `"fix citations"` so substring matching passes.
+**Part A ... `gbrain check-resolvable` reaches 0 warnings.** Drop `"citation audit"` from `skills/maintain/SKILL.md` frontmatter; the trigger lives only on `citation-fixer` now. RESOLVER.md gains a citation-audit disambiguation row pointing both skills so agents still pick the right one. RESOLVER.md broadens query triggers (`"who is"`, `"background on"`, `"notes on"`) and `query/SKILL.md` mirrors them in its frontmatter. `skills/enrich/SKILL.md` replaces the inlined citation rules block with `> **Convention:** see `skills/conventions/quality.md`` (the format `extractDelegationTargets` recognizes). Routing-eval fixtures for `citation-fixer` rewritten to embed `"fix citations"` so substring matching passes.
 
 **Part B ... frontmatter-guard library + CLI + doctor + migration + skill + pre-commit hook.**
 
@@ -45726,7 +45732,7 @@ If your brain's biggest directories are chat dumps, daily logs, or X archives, s
 #### Source-aware retrieval
 
 - New module `src/core/search/source-boost.ts` ships the default boost map (`originals/` 1.5, `concepts/` 1.3, `writing/` 1.4, `people/companies/deals/` 1.2, `daily/` 0.8, `media/x/` 0.7, `openclaw/chat/` 0.5) and the four default hard-exclude prefixes (`test/`, `archive/`, `attachments/`, `.raw/`). Both knobs override via env (`GBRAIN_SOURCE_BOOST`, `GBRAIN_SEARCH_EXCLUDE`) or per-call SearchOpts.
-- New module `src/core/search/sql-ranking.ts` is a pair of pure SQL-fragment builders shared between Postgres and PGLite engines. `buildSourceFactorCase` emits a longest-prefix-match CASE expression and returns literal `'1.0'` when `detail === 'high'` so temporal queries bypass source-boost. `buildHardExcludeClause` emits `NOT (col LIKE 'p1%' OR col LIKE 'p2%')` ... OR-chain wrapped in NOT, never `NOT LIKE ALL/ANY` (those don't express set-exclusion). LIKE meta-character escape covers `%`, `_`, AND `\` (backslash matters because it's Postgres LIKE's default escape char). Single-quote doubling renders SQL-injection-style inputs inert.
+- New module `src/core/search/sql-ranking.ts` is a pair of pure SQL-fragment builders shared between Postgres and PGLite engines. `buildSourceFactorCase` emits a longest-prefix-match CASE expression and returns literal `'1.0'` when `detail === 'high'` so temporal queries bypass source-boost. `buildHardExcludeClause` emits `NOT (col LIKE 'p1%' OR col LIKE 'p2%')` ... OR-chain wrapped in NOT, never `NOT LIKE ALL/ANY` (those don't express set-exclusion). LIKE meta-character escape covers `%`, `_`, AND `` (backslash matters because it's Postgres LIKE's default escape char). Single-quote doubling renders SQL-injection-style inputs inert.
 - `src/core/postgres-engine.ts` and `src/core/pglite-engine.ts` ... three methods wired: `searchKeyword` (chunk-grain CTE → DISTINCT ON page dedup, multiplies ts_rank by source-factor), `searchKeywordChunks` (the chunk-grain anchor primitive used by Cathedral II two-pass retrieval, also gets source-boost so the anchor pool is dampened on chat dirs), and `searchVector` (becomes a two-stage CTE: pure-distance HNSW inner ORDER BY, source-boost re-rank in outer SELECT, innerLimit scales with offset to preserve pagination).
 - `src/core/types.ts` ... SearchOpts gains two fields: `exclude_slug_prefixes?: string[]` (additive over defaults + env) and `include_slug_prefixes?: string[]` (subtractive opt-back-in).
 
@@ -47840,7 +47846,7 @@ No migration, no schema change, no data touch. If you're on Postgres and haven't
 - Contributed by @sunnnybala.
 
 **postgres-engine statement_timeout scoping (#158)**
-- `src/core/postgres-engine.ts` — `searchKeyword` and `searchVector` rewritten to `sql.begin(async (tx) => { await tx\`SET LOCAL statement_timeout = ...\`; ... })`. GUC dies with the transaction; pool reuse is safe.
+- `src/core/postgres-engine.ts` — `searchKeyword` and `searchVector` rewritten to `sql.begin(async (tx) => { await tx`SET LOCAL statement_timeout = ...`; ... })`. GUC dies with the transaction; pool reuse is safe.
 - `test/postgres-engine.test.ts` — 5 regression tests including a source-level guardrail grep against the production file (not a test fixture) asserting no bare `SET statement_timeout` outside `sql.begin`.
 - Contributed by @garagon.
 
@@ -48159,7 +48165,7 @@ Minions was a job queue. Now it's an agent runtime. Everything your orchestrator
 
 - **`removeOnComplete` / `removeOnFail`.** BullMQ convenience. Completed jobs don't bloat your `minion_jobs` table forever. Opt in per-job, the `child_done` message survives because it lives in the *parent's* inbox, not the child's.
 
-- **Attachment manifest.** New `minion_attachments` table for binary payloads attached to jobs. Validation catches path traversal (`../`, `/`, `\`, null byte), oversize (5 MiB default, raiseable), invalid base64, and duplicate filenames per job. DB-level `UNIQUE (job_id, filename)` defends against concurrent addAttachment races. `storage_uri TEXT` column forward-compat for future S3 offload.
+- **Attachment manifest.** New `minion_attachments` table for binary payloads attached to jobs. Validation catches path traversal (`../`, `/`, ``, null byte), oversize (5 MiB default, raiseable), invalid base64, and duplicate filenames per job. DB-level `UNIQUE (job_id, filename)` defends against concurrent addAttachment races. `storage_uri TEXT` column forward-compat for future S3 offload.
 
 - **Cooperative AbortSignal.** Pause or cascade-cancel clears the job's `lock_token`, the running handler's next lock renewal fails and fires `ctx.signal.abort()`. Handlers that respect AbortSignal stop cleanly. Handlers that ignore it get dead-lettered by the DB-side `handleTimeouts`, either way, the row status is correct.
 
