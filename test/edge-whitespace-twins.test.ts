@@ -13,6 +13,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
+import postgres from '#postgres';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { EDGE_WHITESPACE, edgeTrimSql } from '../src/core/edge-whitespace.ts';
@@ -27,6 +28,7 @@ import {
   PRIVACY_ALIASES, __resetPrivateVisibilityCacheForTests, isPrivacyPrivatePage, privacyAliasSql,
   privatePagesFilterFastForCaller, privatePagesFilterForCaller, privatePagesFilterFragment, privatePagesFilterFragmentFast,
 } from '../src/core/search/private-visibility.ts';
+import { assertSafeE2eDatabaseUrl } from './helpers/db-guard.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 
@@ -61,6 +63,34 @@ test('EDGE_WHITESPACE is exactly what String.prototype.trim strips', () => {
   }
   expect(EDGES.sort()).toEqual(stripped.sort());
 });
+
+test('edgeTrimSql is ASCII SQL with no Unicode escape above U+007F', () => {
+  const sql = edgeTrimSql('v');
+  expect(/^[\x20-\x7e]*$/.test(sql)).toBe(true);
+  expect(sql.match(/\\u[0-9a-f]{4}/gi)?.filter(e => parseInt(e.slice(2), 16) > 0x7f) ?? []).toEqual([]);
+});
+
+test.skipIf(!process.env.DATABASE_URL)('edgeTrimSql runs on SQL_ASCII and LATIN1 databases and trims their ASCII edges', async () => {
+  assertSafeE2eDatabaseUrl(process.env.DATABASE_URL!);
+  const admin = postgres(process.env.DATABASE_URL!, { max: 1, prepare: false });
+  try {
+    for (const encoding of ['SQL_ASCII', 'LATIN1']) {
+      const name = `gbrain_test_edges_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
+      await admin.unsafe(`CREATE DATABASE ${name} TEMPLATE template0 ENCODING '${encoding}' LC_COLLATE 'C' LC_CTYPE 'C'`);
+      const url = new URL(process.env.DATABASE_URL!); url.pathname = `/${name}`;
+      const db = postgres(url.toString(), { max: 1, prepare: false });
+      try {
+        const [row] = await db.unsafe(`SELECT current_setting('server_encoding') AS encoding, ${edgeTrimSql('v')} AS t FROM (VALUES ($1::text)) AS x(v)`, ['\t a b \n\r']);
+        expect({ encoding: row!.encoding, t: row!.t }).toEqual({ encoding, t: 'a b' });
+      } finally {
+        await db.end();
+        await admin.unsafe(`DROP DATABASE ${name} WITH (FORCE)`);
+      }
+    }
+  } finally {
+    await admin.end();
+  }
+}, 60_000);
 
 describe.each(testBackends())('%s', (backend) => {
   const engine = () => engines.find(e => e.name === backend)!.engine;
