@@ -92,13 +92,16 @@ export function filterPagesToWindow<T extends DatedPage>(pages: T[], window: Tem
   return { kept, dropped, droppedOutOfWindow: dropped.length, undatedKept };
 }
 
-/** A window's trajectory points: those inside it plus each metric's latest reading before it, the value in force when it opens (GST-731). */
-export function trajectoryPointsInWindow<T extends { valid_from: Date; metric: string | null }>(points: T[], window: TemporalWindow): { kept: T[]; excluded: number } {
+/** A window's trajectory points: those inside it plus each metric's latest reading before it, the value in force when it opens, unless its validity ended by then (GST-731). */
+export function trajectoryPointsInWindow<T extends { valid_from: Date; valid_until: Date | null; metric: string | null }>(points: T[], window: TemporalWindow): { kept: T[]; excluded: number } {
   const inForce = new Map<string, T>();
   for (const point of points) {
     if (point.metric === null || window.startMs === null || point.valid_from.getTime() >= window.startMs) continue;
     const prior = inForce.get(point.metric);
     if (!prior || point.valid_from >= prior.valid_from) inForce.set(point.metric, point);
+  }
+  for (const [metric, point] of inForce) {
+    if (point.valid_until !== null && point.valid_until.getTime() <= window.startMs!) inForce.delete(metric);
   }
   const kept = points.filter(point => {
     const ms = point.valid_from.getTime();

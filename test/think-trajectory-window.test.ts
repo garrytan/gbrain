@@ -14,14 +14,14 @@ import { importFromContent } from '../src/core/import-file.ts';
 
 let engine: PGLiteEngine;
 
-async function seedCompany(slug: string, title: string, readings: Array<[string, string, string, number]>) {
+async function seedCompany(slug: string, title: string, readings: Array<[string, string, string, number, string?]>) {
   await importFromContent(engine, slug, `---\ntype: company\ntitle: ${title}\n---\n# ${title}\n\n${title} is a company. Dated metric readings live in the facts index.\n`, { noEmbed: true });
   await engine.executeRaw(`UPDATE pages SET effective_date = '2026-11-01T00:00:00Z' WHERE slug = $1`, [slug]);
-  for (const [since, text, metric, value] of readings) {
+  for (const [since, text, metric, value, until] of readings) {
     await engine.executeRaw(
-      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, valid_from, source, claim_metric, claim_value)
-       VALUES ('default', $1, $2, 'fact', 'private', $3, 'test', $4, $5)`,
-      [slug, text, `${since}T00:00:00Z`, metric, value],
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, valid_from, valid_until, source, claim_metric, claim_value)
+       VALUES ('default', $1, $2, 'fact', 'private', $3, $4, 'test', $5, $6)`,
+      [slug, text, `${since}T00:00:00Z`, until ? `${until}T00:00:00Z` : null, metric, value],
     );
   }
 }
@@ -79,5 +79,20 @@ describe('runThink: a month named in the question keeps the trajectory', () => {
     expect(user).toContain('<trajectory entity="companies/foundry-example"');
     expect(user).toContain('2026-01-10');
     expect(user).not.toContain('2026-04-15');
+  });
+
+  test('a reading whose validity ended before the month opens is not carried in', async () => {
+    await seedCompany('companies/lapsed-example', 'Lapsed Example', [
+      ['2026-02-01', 'MRR is $20K', 'mrr', 20000, '2026-04-10'],
+      ['2026-01-15', 'ARR is $250K', 'arr', 250000],
+      ['2026-03-01', 'ARR is $300K', 'arr', 300000, '2026-03-31'],
+      ['2026-07-01', 'ARR is $500K', 'arr', 500000],
+    ]);
+    const { user } = await thinkPrompt('What was the revenue of Lapsed Example in April 2026?');
+    expect(user).toContain('<trajectory entity="companies/lapsed-example"');
+    expect(user).toContain('2026-02-01');
+    expect(user).not.toContain('2026-03-01');
+    expect(user).not.toContain('2026-01-15');
+    expect(user).not.toContain('2026-07-01');
   });
 });
