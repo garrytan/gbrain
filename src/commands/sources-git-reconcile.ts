@@ -20,6 +20,7 @@ import { gitTopLevel } from '../core/persistence/git-gap.ts';
 import { sourceConfigHasRemoteUrl } from '../core/sources-load.ts';
 import { isSyncDisabledConfig } from '../core/sync-policy.ts';
 import { OperationError } from '../core/ops/contract.ts';
+import { classifyItemFailure, type ClassifiedItemFailure } from '../core/item-failure.ts';
 import { existingHostIdFor } from '../core/persistence/identity.ts';
 import { getWorktreeBinding, managedPersistenceEnabled } from '../core/persistence/ownership.ts';
 import { REFRESH_PUBLISH_DIVERGED_KEY, refreshWorktree } from '../core/persistence/worktree-refresh.ts';
@@ -38,6 +39,14 @@ export interface SourceReconcile {
 
 export interface ReconcileOptions { sourceIds?: string[]; dryRun?: boolean; waitMs?: number; sleep?: (ms: number) => Promise<void>; childTimeoutMs?: number }
 
+const refreshBusy = (error: unknown) => error instanceof OperationError && error.code === 'refresh_in_progress';
+
+function groupRefusal(error: unknown, failure: ClassifiedItemFailure): Pick<SourceReconcile, 'status' | 'error'> {
+  if (!(error instanceof OperationError)) return { status: failure.class === 'transient' ? 'failed' : 'needs_user', error: { code: failure.code, message: failure.message } };
+  return { status: RETRYABLE.has(error.code) ? 'failed' : 'needs_user',
+    error: { code: error.code, message: error.message, ...(error.suggestion ? { suggestion: error.suggestion } : {}), ...(error.fix ? { fix: error.fix } : {}) } };
+}
+
 async function reconcileManaged(engine: BrainEngine, sourceId: string, root: string, publish: boolean, opts: ReconcileOptions): Promise<Omit<SourceReconcile, 'sources' | 'root' | 'managed'>> {
   const level = await fetchLevel(root, gitReader(root));
   if (!level) return { status: 'no_upstream', ahead: 0, behind: 0 };
@@ -52,7 +61,7 @@ async function reconcileManaged(engine: BrainEngine, sourceId: string, root: str
       return { status: done.published ? 'published' : 'fast_forwarded', ahead: level.ahead, behind: level.behind, sha: done.target_head ?? undefined, refresh_id: done.refresh_id,
         ...(done.published ? { integrated: done.published.integrated } : {}) };
     } catch (error) {
-      if (!(error instanceof OperationError) || error.code !== 'refresh_in_progress' || Date.now() >= deadline) throw error;
+      if (!refreshBusy(error) || Date.now() >= deadline) throw error;
       await sleep(2000);
       const again = await fetchLevel(root, gitReader(root));
       if (again && !again.ahead && !again.behind) return { status: 'in_sync', ahead: 0, behind: 0, sha: again.target };
@@ -94,10 +103,10 @@ export async function reconcileSources(engine: BrainEngine, opts: ReconcileOptio
           ...(publishSetting === null && !cloned ? { unpublishedReason: `gbrain did not clone this checkout for the source (no recorded remote, or the source folder is not the repository root); publish it with gbrain git commit-push --push-only --scan-secrets --path ${group.root}, or set ${REFRESH_PUBLISH_DIVERGED_KEY} true to publish such checkouts automatically` } : {}) });
       out.push({ ...entry, ...result });
     } catch (error) {
-      if (!(error instanceof OperationError)) throw error;
+      const failure = classifyItemFailure(error);
+      if (!(error instanceof OperationError) && failure.scope === 'run') throw error;
       const { cloned: _cloned, ...entry } = group;
-      out.push({ ...entry, status: RETRYABLE.has(error.code) ? 'failed' : 'needs_user', ahead: 0, behind: 0,
-        error: { code: error.code, message: error.message, ...(error.suggestion ? { suggestion: error.suggestion } : {}), ...(error.fix ? { fix: error.fix } : {}) } });
+      out.push({ ...entry, ahead: 0, behind: 0, ...groupRefusal(error, failure) });
     }
   }
   return out;

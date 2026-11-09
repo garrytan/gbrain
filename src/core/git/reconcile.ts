@@ -101,6 +101,8 @@ export async function commitPushChild(root: string, args: string[], timeoutMs = 
     'Retry: a reconcile of a level checkout reports in_sync.', { retryable: true });
 }
 
+const remoteMovedUnderPush = (error: unknown) => error instanceof OperationError && error.code === 'push_unconfirmed' && /after --expect-remote/.test(error.message);
+
 export async function reconcileCheckout(root: string, opts: ReconcileCheckoutOptions = {}): Promise<CheckoutReconcile> {
   if (classifyGitCheckout(root) === 'not_git') return { root, status: 'no_repo', ahead: 0, behind: 0 };
   return withReconcileLock(root, opts.waitMs ?? 300_000, () => reconcileLocked(root, opts));
@@ -131,7 +133,7 @@ async function reconcileLocked(root: string, opts: ReconcileCheckoutOptions): Pr
       return { root, status: pushed.checkout === 'lagging' ? 'lagging' : 'published', ahead, behind, ...(typeof pushed.sha === 'string' ? { sha: pushed.sha } : {}),
         integrated: Number(pushed.integrated) || 0, ...(typeof pushed.lagging_reason === 'string' ? { reason: pushed.lagging_reason } : {}) };
     } catch (error) {
-      if (attempt >= MOVED_REMOTE_ATTEMPTS || !(error instanceof OperationError) || error.code !== 'push_unconfirmed' || !/after --expect-remote/.test(error.message)) throw error;
+      if (attempt >= MOVED_REMOTE_ATTEMPTS || !remoteMovedUnderPush(error)) throw error;
     }
   }
 }

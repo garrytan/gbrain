@@ -203,9 +203,16 @@ test('managed worktree: Git durability on publishes through refresh and a repeat
   }
 })(), 240_000);
 
+let plain: PGLiteEngine;
+beforeAll(async () => { plain = new PGLiteEngine(); await plain.connect({}); await plain.initSchema(); }, 60_000);
+afterAll(async () => { await plain.disconnect(); });
+const resetPlain = async () => {
+  await plain.executeRaw(`DELETE FROM sources WHERE id <> 'default'`);
+  await plain.unsetConfig(REFRESH_PUBLISH_DIVERGED_KEY);
+};
+
 test('a brain whose sources have no Git checkout reports no_repo', async () => {
-  const engine = new PGLiteEngine();
-  await engine.connect({}); await engine.initSchema();
+  const engine = plain;
   try {
     const path = join(dir, 'plain-source');
     mkdirSync(path, { recursive: true });
@@ -217,12 +224,11 @@ test('a brain whose sources have no Git checkout reports no_repo', async () => {
     console.log = (...args: unknown[]) => { printed.push(args.join(' ')); };
     try { await runSources(engine, ['git-reconcile', 'plain-source', '--json']); } finally { console.log = log; }
     expect(JSON.parse(printed.join('\n'))).toEqual({ results: [{ sources: [], root: '', managed: false, status: 'no_repo', ahead: 0, behind: 0 }], exit: 0 });
-  } finally { await engine.disconnect(); }
+  } finally { await resetPlain(); }
 }, 60_000);
 
 test('with automatic publishing turned off, local commits stay unpublished while a checkout behind still fast-forwards', async () => {
-  const engine = new PGLiteEngine();
-  await engine.connect({}); await engine.initSchema();
+  const engine = plain;
   try {
     const r = repo('optout');
     await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::jsonb)', ['optout-source', r.root, JSON.stringify({ remote_url: r.remote })]);
@@ -236,12 +242,11 @@ test('with automatic publishing turned off, local commits stay unpublished while
     await engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, '');
     expect(await reconcileAll(engine)).toMatchObject([{ sources: ['optout-source'], status: 'published', ahead: 1 }]);
     expect(tip(r)).toBe(local);
-  } finally { await engine.disconnect(); }
+  } finally { await resetPlain(); }
 }, 120_000);
 
 test('a checkout gbrain did not clone for the source is never published by default; a sync-disabled or missing source is skipped', async () => {
-  const engine = new PGLiteEngine();
-  await engine.connect({}); await engine.initSchema();
+  const engine = plain;
   try {
     const r = repo('foreign');
     mkdirSync(join(r.root, 'notes'), { recursive: true });
@@ -259,5 +264,24 @@ test('a checkout gbrain did not clone for the source is never published by defau
     await engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, 'true');
     expect(await reconcileAll(engine, ['inside-a-repo'])).toMatchObject([{ status: 'published', ahead: 1 }]);
     expect(tip(r)).not.toBe(before);
-  } finally { await engine.disconnect(); }
+  } finally { await resetPlain(); }
+}, 120_000);
+
+test('a checkout that fails with a plain error is reported for that checkout and the other checkouts still reconcile', async () => {
+  const engine = plain;
+  const broken = repo('plain-error'), healthy = repo('plain-healthy');
+  try {
+    await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$4::jsonb),($3,$3,$5,$6::jsonb)',
+      ['broken-source', broken.root, 'healthy-source', JSON.stringify({ remote_url: broken.remote }), healthy.root, JSON.stringify({ remote_url: healthy.remote })]);
+    commit(broken.root, 'notes/stuck.md', 'stuck\n');
+    const local = commit(healthy.root, 'notes/mine.md', 'mine\n');
+    chmodSync(join(broken.root, '.git'), 0o555);
+    const results = await reconcileAll(engine);
+    expect(results.find(r => r.sources.includes('broken-source'))).toMatchObject({ status: 'failed', error: { message: expect.stringContaining('EACCES') } });
+    expect(results.find(r => r.sources.includes('healthy-source'))).toMatchObject({ status: 'published', ahead: 1 });
+    expect(tip(healthy)).toBe(local);
+  } finally {
+    chmodSync(join(broken.root, '.git'), 0o755);
+    await resetPlain();
+  }
 }, 120_000);
