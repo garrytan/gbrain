@@ -10,6 +10,15 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Two regressions that shipped without a test now have one.** v0.60.58.0 sent one Postgres round trip per member of a bulk sync group (#5984), and v0.60.554.0 shipped a compiled binary whose admin UI could not load its JavaScript bundle. Both were caught by users, not CI. A Postgres unit test now holds a bulk group page to its statement budget, and the native and release builds now start the compiled binary and load the admin UI with every asset it references.
+
+### Itemized changes
+
+- `test/managed-sync-bulk-round-trips-5984.test.ts` (Postgres unit arm, registered in `test/postgres-unit-arms.txt`): a managed bulk sync of a multi-member group stays within 27 publication and 74 run statements per page (measured 24.2 and about 67); a probe adding 4 statements per member fails it.
+- `scripts/native/compiled-admin-smoke.ts`: starts the compiled `gbrain` binary's HTTP server, fetches `/admin/` and every same-origin script and stylesheet the page loads, and fails unless each returns 200 with a JavaScript or CSS content type (the SPA fallback answered the missing bundle with `text/html`). It runs in `.github/workflows/native-locks.yml` and `.github/workflows/release.yml`, pinned by `test/release-workflow.test.ts`.
+
 ## [0.60.620.0] - 2026-11-09
 
 **A diverged managed checkout now publishes its local commits on refresh by default when Git durability is on, after a secret scan of those commits.** Commits a script made with plain `git commit` in a managed checkout used to strand there whenever the remote moved: every `gbrain sources refresh` refused `refresh_diverged` and asked the user, unless `sources.refresh_publish_diverged` was set to `true`. With the setting unset, a worktree whose Git durability is on (`gbrain sources writer git-durability <source> --enable`, or the legacy hook) now publishes them itself: the local commits merged with the upstream in memory, never a rebase or force-push, then the fast-forward. The publish child scans, under its publish lock and for the exact commits it pushes, what they add: commit messages, added lines (including a value a later commit removed) and merge-commit conflict resolutions. A value that looks like a secret, added text too large to scan, or a commit that changes `.gbrain-scan-allow` or a `.gitattributes` refuses the new `publish_secret_found` naming the file, line, rule and commit, never the value, with nothing pushed; commits the scan cannot read in full refuse `publish_scan_unreadable` instead. The rewritten-upstream refusal and the `--expect-remote` bound are unchanged. `false` turns it off; `true` still publishes with durability off.
