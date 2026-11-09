@@ -266,7 +266,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
             const refusal = factsRefusal('revision_conflict', 'A claim was forgotten after these facts were prepared.', row,
               `A claim in this group was forgotten in source ${row.source_id} after the facts were prepared, so none of these facts were published; the forgotten claim stays withdrawn.`);
             refusal.withdrawn = (await factWithdrawnRefusal(tx, row.source_id, entry.fact)).withdrawn
-              ?? (await factWithdrawnRefusal(tx, row.source_id, { ...entry.fact, visibility: 'world' })).withdrawn;
+              ?? (await factWithdrawnRefusal(tx, row.source_id, { ...entry.fact, visibility: entry.fact.visibility === 'world' ? 'private' : 'world' })).withdrawn;
             throw refusal;
           }
         }

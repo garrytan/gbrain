@@ -141,5 +141,26 @@ for (const kind of testBackends()) {
       expect(pack).toContain('CTX-NO-ORIGIN');
       for (const marker of HIDDEN) expect(pack).not.toContain(marker);
     }, 60_000);
+
+    test('find_orphans ignores, for a remote caller, outbound links leaving the grant and links authored outside it', async () => {
+      const ISLAND = 'topics/island-out-example';
+      const FOREIGN_AUTHORED = 'topics/foreign-authored-example';
+      for (const slug of [ISLAND, FOREIGN_AUTHORED]) {
+        await engine.putPage(slug, { type: 'note' as never, title: slug, compiled_truth: `${slug} body.`, timeline: '', frontmatter: {} }, { sourceId: A });
+      }
+      const link = (from: [string, string], to: [string, string], origin: [string, string] | null) => engine.executeRaw(
+        `INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, origin_page_id)
+         SELECT f.id, t.id, 'related', 'CTX-ORPHAN-PROBE', 'markdown', (SELECT o.id FROM pages o WHERE o.source_id = $5 AND o.slug = $6)
+           FROM pages f JOIN pages t ON t.source_id = $3 AND t.slug = $4
+          WHERE f.source_id = $1 AND f.slug = $2`,
+        [from[0], from[1], to[0], to[1], origin?.[0] ?? null, origin?.[1] ?? null]);
+      await link([A, ISLAND], [B, 'companies/beta-example'], null);
+      await link([A, 'notes/live-origin-example'], [A, FOREIGN_AUTHORED], [B, 'notes/bob-example']);
+      const remote = async (mode: string) => ((await remoteOp('find_orphans', { mode })) as { orphans: Array<{ slug: string }> }).orphans.map(o => o.slug);
+      expect(await remote('islanded')).toContain(ISLAND);
+      expect(await remote('inbound')).toContain(FOREIGN_AUTHORED);
+      expect((await engine.findOrphanPages({ sourceId: A })).map(r => r.slug)).not.toContain(ISLAND);
+      expect((await engine.findOrphanPages({ sourceId: A, mode: 'inbound' })).map(r => r.slug)).not.toContain(FOREIGN_AUTHORED);
+    }, 60_000);
   });
 }

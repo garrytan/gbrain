@@ -253,6 +253,21 @@ describe('managed automatic extraction meets a withdrawn claim (#6506)', () => {
       expect(calls).toBe(1);
     });
   }, 180_000);
+
+  test('a world claim forgotten at private visibility between preparation and locked validation still names the withdrawal', async () => {
+    await onEachEngine('race-private', async engine => {
+      const s = await managedSource(engine);
+      installFaultHook(async (point, detail) => {
+        if (point !== 'consumer:prepared' || detail.operation !== 'extract_facts' || detail.sourceId !== s.sourceId) return;
+        await engine.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash) VALUES($1,'private',$2,gbrain_fact_fingerprint($3)) ON CONFLICT DO NOTHING`,
+          [s.sourceId, SLUG, WITHDRAWN]);
+      });
+      await expect(s.extract([WITHDRAWN, NOVEL], randomUUID())).rejects.toMatchObject({ code: 'revision_conflict' });
+      expect(await s.active()).toEqual([]);
+      const journal = await s.journal();
+      expect(journal[0].error_detail).toMatchObject({ origin: 'withdrawal', withdrawn: { subject: SLUG, visibility: 'private' } });
+    });
+  }, 180_000);
 });
 
 describe('a claim forgotten at world visibility stays forgotten after the default visibility narrows', () => {

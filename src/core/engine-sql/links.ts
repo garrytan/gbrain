@@ -537,7 +537,7 @@ export async function findOrphanPages(exec: LegacyUnscopedRead, opts?: {
     // for the local operator: a page in source X linked FROM source Y is reachable,
     // so NOT an orphan of X. Do NOT add `src.source_id = p.source_id` here — that
     // would be the stricter intra-source-only definition we deliberately reject.
-    // `scopeInbound` (remote callers) counts only referrers inside the same scope.
+    // `scopeInbound` (remote callers) counts only links whose other endpoint and live origin are inside the same scope.
     const sourceFilter =
       opts?.sourceIds && opts.sourceIds.length > 0
         ? sqlFragment`AND p.source_id = ANY(${opts.sourceIds}::text[])`
@@ -555,7 +555,7 @@ export async function findOrphanPages(exec: LegacyUnscopedRead, opts?: {
             FROM links l
             JOIN pages tgt ON tgt.id = l.to_page_id
             WHERE l.from_page_id = p.id
-              AND tgt.deleted_at IS NULL ${opts?.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('tgt')} AND ${privateLinkOriginFilterForCaller('l')}`) : sqlFragment``}
+              AND tgt.deleted_at IS NULL ${opts?.scopeInbound ? sourceScope('tgt', opts) : sqlFragment``} ${opts?.scopeInbound ? liveOriginFilter('l', opts) : sqlFragment``} ${opts?.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('tgt')} AND ${privateLinkOriginFilterForCaller('l')}`) : sqlFragment``}
           )`
         : sqlFragment``;
     const rows = (await exec.run(sqlFragment`
@@ -574,7 +574,7 @@ export async function findOrphanPages(exec: LegacyUnscopedRead, opts?: {
           FROM links l
           JOIN pages src ON src.id = l.from_page_id
           WHERE l.to_page_id = p.id
-            AND src.deleted_at IS NULL ${opts?.scopeInbound ? sourceScope('src', opts) : sqlFragment``} ${opts?.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('src')} AND ${privateLinkOriginFilterForCaller('l')}`) : sqlFragment``}
+            AND src.deleted_at IS NULL ${opts?.scopeInbound ? sourceScope('src', opts) : sqlFragment``} ${opts?.scopeInbound ? liveOriginFilter('l', opts) : sqlFragment``} ${opts?.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('src')} AND ${privateLinkOriginFilterForCaller('l')}`) : sqlFragment``}
         )
         ${outboundFilter}
       ORDER BY p.slug
@@ -641,7 +641,7 @@ function bfsWalkCtes(w: {
       )`;
 }
 
-const SCOPED_SOURCE_COLUMNS = { src: 'src.source_id', p: 'p.source_id', p2: 'p2.source_id', p3: 'p3.source_id', pf: 'pf.source_id', pt: 'pt.source_id' } as const;
+const SCOPED_SOURCE_COLUMNS = { src: 'src.source_id', tgt: 'tgt.source_id', p: 'p.source_id', p2: 'p2.source_id', p3: 'p3.source_id', pf: 'pf.source_id', pt: 'pt.source_id' } as const;
 
 function sourceScope(alias: keyof typeof SCOPED_SOURCE_COLUMNS, opts?: { sourceId?: string; sourceIds?: string[] }) {
   const column = trustedSql(SCOPED_SOURCE_COLUMNS[alias]);
