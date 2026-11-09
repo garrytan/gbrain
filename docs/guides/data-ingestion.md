@@ -94,8 +94,9 @@ children spawned under a desktop or gateway turn, which inherit the parent's
 source). The importer reads that metadata and drops the automated sessions
 before anything is rendered, with no model call: they never become pages and
 never reach `--facts`. By default it drops what Hermes hides from its own
-session history (`subagent` incl. delegate children, `kanban`, `tool`); `cron`
-and a hook's custom source are kept until you name them. A compression
+session history (`subagent` incl. delegate children, `kanban`, `tool`); `cron`,
+`oneshot` (a `hermes chat -q` question) and a hook's custom source are kept
+until you name them. A compression
 continuation or a branch is a conversation and always imports: only the
 marker, never `parent_session_id`, identifies a sub-agent child.
 
