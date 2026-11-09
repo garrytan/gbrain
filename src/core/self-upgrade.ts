@@ -293,7 +293,7 @@ export function gateOnTargetRuntime(
 
 /**
  * Whether this install method + platform/arch can apply an upgrade unattended.
- * `bun` / `bun-link` / `clawhub` delegate to their package managers; `binary`
+ * `bun` / `bun-link` delegate to their package managers; `binary`
  * self-updates via atomic rename ONLY where a release asset is published —
  * today that's darwin-arm64 and linux-x64 (see `.github/workflows/release.yml`).
  * Other binary platform/arch combos (darwin-x64, linux-arm64, win32) have no
@@ -307,7 +307,6 @@ export function canSelfUpdate(
   switch (installMethod) {
     case 'bun':
     case 'bun-link':
-    case 'clawhub':
       return true;
     case 'binary':
       return (platform === 'darwin' && arch === 'arm64') || (platform === 'linux' && arch === 'x64');

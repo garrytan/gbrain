@@ -12,7 +12,7 @@
  *   the original command on the stale in-memory binary.
  * - D2 — Exclusive non-blocking advisory lock around the prompt; loser no-ops.
  * - D5 — Re-read `gbrain --version` post-upgrade to verify the binary actually
- *   advanced. `gbrain upgrade` returns 0 even on bun/clawhub catch-and-print
+ *   advanced. `gbrain upgrade` returns 0 even on bun catch-and-print
  *   paths and on the `binary` install ("not yet implemented").
  * - D6 — Gate on both stdin AND stdout TTY; prompt writes to stderr.
  * - D7 — When `bannerSuppressed()` is true, emit nothing about upgrades.

@@ -35,7 +35,7 @@ import { withDefaultChatPhase } from '../ai/chat-usage.ts';
 import { AIConfigError } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
-import { resolveThinkWindow } from './temporal-window.ts';
+import { resolveThinkWindow, trajectoryPointsInWindow } from './temporal-window.ts';
 import { resolveThinkTemporalContext } from './temporal-context.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { deliverEvidence, effectivePlan, resolveEvidencePlan, EVIDENCE_BLOCK_CHAR_CAP, THINK_RETURN_UNIT_CONFIG_KEY, type DeliveryMeta } from '../search/evidence-delivery.ts';
@@ -740,7 +740,7 @@ export async function runThink(
       const trajIntent = thinkDecide ? await thinkDecide.trajectoryIntent(classifyIntent(opts.question)) : classifyIntent(opts.question);
       if (trajIntent === 'temporal' || trajIntent === 'knowledge_update') {
         const { extractCandidateEntities } = await import('./entity-extract.ts');
-        const retrievedSlugs = gather.pages.map(p => p.slug);
+        const retrievedSlugs = [...gather.pages.map(p => p.slug), ...gather.outsideWindowSlugs];
         const candidates = extractCandidateEntities(opts.question, retrievedSlugs);
         if (candidates.length > 0) {
           const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
@@ -782,13 +782,9 @@ export async function runThink(
                   if (err instanceof OperationTimeoutError) return [];
                   throw err;
                 });
-                const boundedPoints = window ? points.filter(point => {
-                  const ms = point.valid_from.getTime();
-                  const outside = (window.startMs !== null && ms < window.startMs)
-                    || (window.endMs !== null && ms > window.endMs);
-                  if (outside) trajectoryExcludedCount++;
-                  return !outside;
-                }) : points;
+                const windowed = window ? trajectoryPointsInWindow(points, window) : { kept: points, excluded: 0 };
+                trajectoryExcludedCount += windowed.excluded;
+                const boundedPoints = windowed.kept;
                 if (boundedPoints.length === 0) return null;
                 trajectoryFactIds.push(...boundedPoints.map(point => point.fact_id));
                 const fmt = formatTrajectoryBlock(boundedPoints, resolved.slug, {
