@@ -178,6 +178,20 @@ describe('base recording and whole-skill update', () => {
     expect(read(env, 'other/SKILL.md')).toBe(V1['other/SKILL.md']);
   });
 
+  test('a shared dependency whose first skill fails is written by the next skill that needs it', async () => {
+    const env = setup({ sharedDeps: ['skills/conventions'], first: { ...V1, 'conventions/a.md': 'a v1\n' } });
+    await scaffold(env);
+    release(env.gbrainRoot, { ...V2, 'conventions/b.md': 'b v2\n' });
+    const result = await update(env, { validate: (_root, slug) => (slug === 'demo' ? ['forced failure'] : []) });
+    expect(outcome(result, 'demo').result).toBe('failed');
+    expect(outcome(result, 'other').result).toBe('updated');
+    expect(read(env, 'conventions/b.md')).toBe('b v2\n');
+    const [journal] = listJournals(env.backups);
+    await runSkillpackRestore({ id: journal!.id, statePath: env.statePath, backups: env.backups });
+    expect(existsSync(join(env.ws, 'skills', 'conventions/b.md'))).toBe(false);
+    expect(read(env, 'other/SKILL.md')).toBe(V1['other/SKILL.md']);
+  });
+
   test('a pinned skill is skipped until unpinned', async () => {
     const env = setup();
     await scaffold(env);

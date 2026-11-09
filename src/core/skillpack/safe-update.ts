@@ -358,14 +358,13 @@ export async function runSkillpackUpdate(opts: UpdateOptions): Promise<UpdateRes
     records: loadState({ statePath: opts.statePath }).roots?.[opts.skillsRoot] ?? {},
     acceptHistorical: opts.acceptHistorical === true, noDiff: opts.noDiff === true,
   };
-  const claimed = new Set<string>();
-  const outcomes = slugs.map(slug => classifySkill(ctx, slug)).map((o): SkillOutcome => {
-    if (o.result !== 'would_update') return o;
-    const files = o.files.filter(f => !(f.sharedDep && f.state !== 'unchanged' && claimed.has(f.rel)));
-    for (const f of files) if (f.sharedDep && f.state !== 'unchanged') claimed.add(f.rel);
+  const outcomes = slugs.map(slug => classifySkill(ctx, slug));
+  const withoutShared = (o: SkillOutcome, taken: Set<string>): SkillOutcome => {
+    const files = o.files.filter(f => !(f.sharedDep && f.state !== 'unchanged' && taken.has(f.rel)));
     const changes = files.filter(f => f.state !== 'unchanged').map(f => f.rel);
     return changes.length ? { ...o, files, changes } : { ...o, files, changes, result: 'current' };
-  });
+  };
+  const claim = (o: SkillOutcome, taken: Set<string>) => { for (const f of o.files) if (f.sharedDep && f.state !== 'unchanged') taken.add(f.rel); };
   const base = {
     dry_run: opts.dryRun === true, skills_root: opts.skillsRoot,
     history: history.ok ? { verified: true } : { verified: false, reason: history.reason },
@@ -373,7 +372,14 @@ export async function runSkillpackUpdate(opts: UpdateOptions): Promise<UpdateRes
   };
   const updatable = outcomes.filter(o => o.result === 'would_update');
   if (opts.dryRun || updatable.length === 0) {
-    return { ...base, journal: null, summary: summarize(outcomes), skills: outcomes, restore_command: null };
+    const claimed = new Set<string>();
+    const preview = outcomes.map(o => {
+      if (o.result !== 'would_update') return o;
+      const planned = withoutShared(o, claimed);
+      claim(planned, claimed);
+      return planned;
+    });
+    return { ...base, journal: null, summary: summarize(preview), skills: preview, restore_command: null };
   }
   removeStaleStages(opts.skillsRoot);
   const journal: Journal = {
@@ -387,9 +393,24 @@ export async function runSkillpackUpdate(opts: UpdateOptions): Promise<UpdateRes
   writeJournal(journal, backups);
   const apply: ApplyContext = { opts, journal, backups, validate: opts.validate ?? defaultValidator(opts.skillsRoot) };
   const results: SkillOutcome[] = [];
+  const written = new Set<string>();
   for (const outcome of outcomes) {
     const js = journal.skills.find(s => s.slug === outcome.slug);
-    results.push(js ? await applySkill(apply, outcome, js) : outcome);
+    if (!js) {
+      results.push(outcome);
+      continue;
+    }
+    const planned = withoutShared(outcome, written);
+    if (planned.result !== 'would_update') {
+      journal.skills = journal.skills.filter(s => s !== js);
+      writeJournal(journal, backups);
+      results.push(planned);
+      continue;
+    }
+    js.files = js.files.filter(file => planned.changes.includes(file.rel));
+    const result = await applySkill(apply, planned, js);
+    if (result.result === 'updated') claim(planned, written);
+    results.push(result);
   }
   journal.status = 'complete';
   writeJournal(journal, backups);
@@ -455,7 +476,7 @@ export async function setSkillPinned(skillsRoot: string, slug: string, pinned: b
     if ((record?.pinned === true) === pinned) return { state: null, result: false };
     const { pinned: _old, ...rest } = record ?? { files: {}, recorded_at: new Date().toISOString() };
     if (pinned) root[slug] = { ...rest, pinned: true };
-    else if (Object.keys(rest.files).length) root[slug] = rest;
+    else if (Object.keys(rest.files ?? {}).length) root[slug] = rest;
     else delete root[slug];
     return { state: { ...state, roots: { ...state.roots, [skillsRoot]: root } }, result: true };
   }, { statePath: opts.statePath });

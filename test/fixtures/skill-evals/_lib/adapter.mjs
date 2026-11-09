@@ -26,6 +26,7 @@ const LEDGER = process.env.EVAL_LEDGER;
 const CAP = Number(process.env.EVAL_SPEND_CAP ?? "0");
 const spent = () => (LEDGER && existsSync(LEDGER) ? readFileSync(LEDGER, "utf8").split("\n").filter(Boolean).reduce((s, l) => s + (JSON.parse(l).costUsd ?? 0), 0) : 0);
 if (CAP && spent() >= CAP) { console.error(`SPEND_CAP: ${spent().toFixed(2)} >= ${CAP} USD; stopping before another session`); process.exit(3); }
+if (CAP && !model.startsWith("claude-") && !PRICES[model]) { console.error(`SPEND_CAP: no price for ${model}, so its sessions cannot count against the cap; add it to PRICES`); process.exit(2); }
 
 const home = join(work, ".home");
 mkdirSync(home, { recursive: true });
