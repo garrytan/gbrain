@@ -6,6 +6,7 @@ import type { AudiencePrincipal } from '../access/audience.ts';
 import { parseStoredActor, storedActorIdentity } from '../access/actor.ts';
 import { hasReaders, normalizePrincipal, normalizeReaders, readersAllow, NOBODY } from '../access/principals.ts';
 import { catalogueError } from '../error-catalogue.ts';
+import { grantFromClient, grantFromRow, grantFromTokenRow } from '../grants/model.ts';
 import type { SqlEngine, WriteAuthority } from './model.ts';
 
 /** Publication uses fresh policy, independent of the read-side telemetry cache (read through the resolver). */
@@ -139,6 +140,37 @@ export async function remoteReadersChecked<T extends { parsedPage: { frontmatter
   const acting = authority.actingFor;
   assertRemoteReadersValid(after, await writerIdentities(engine, authority), Array.isArray(acting) ? acting : acting ? [`member:${acting.member}`] : undefined);
   return prepared;
+}
+
+/**
+ * GST-2051: the member a remote write's credential is bound to, as `member:<id>`, when that credential holds no source
+ * grant (it writes to `default`, a source no operator chose for it and every no-grant credential reads); null for a
+ * local, unbound, attested or audience write, or a credential an operator granted sources. Read live from the stored
+ * principal, so a binding or grant changed after submission takes effect at preparation.
+ */
+export async function ungrantedMemberWriter(engine: SqlEngine, authority: WriteAuthority): Promise<string | null> {
+  const { principal } = authority;
+  if (!authority.remote || authority.actingFor || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return null;
+  const member = (await memberIdentityFor(engine, authority)).find(p => p.startsWith('member:'));
+  if (!member) return null;
+  const [row] = principal.kind === 'legacy_token'
+    ? await engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL', [principal.id])
+    : await engine.executeRaw<Record<string, unknown>>('SELECT * FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL', [principal.id]);
+  if (!row) return null;
+  const grant = principal.kind === 'legacy_token' ? grantFromTokenRow(row) : grantFromClient(grantFromRow(row));
+  return grant.sources.kind === 'default' ? member : null;
+}
+
+/**
+ * GST-2051: the readers a page written by an ungranted member writer (ungrantedMemberWriter) keeps when its content
+ * names none: the stored page's readers when it has them, else the writer alone for a page this write creates. An
+ * existing page with no readers stays as it is. Only ever narrows: a page naming readers is left to the caller.
+ */
+export function ungrantedWriterReaders(writer: string | null, frontmatter: Record<string, unknown>, stored: { frontmatter?: unknown; deleted_at?: unknown } | null | undefined): void {
+  if (!writer || hasReaders(frontmatter)) return;
+  const live = stored && stored.deleted_at == null ? stored : null;
+  if (live && hasReaders(live.frontmatter)) frontmatter.readable_by = (live.frontmatter as Record<string, unknown>).readable_by;
+  else if (!live) frontmatter.readable_by = [writer];
 }
 
 /** The one refusal a remote writer gets for a target it may not see; other visibility refusals reuse it verbatim. */

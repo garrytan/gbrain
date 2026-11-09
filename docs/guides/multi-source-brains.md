@@ -245,6 +245,18 @@ who may read it, before any member's bot connects:
 
   The first id is the token's write source, so a member's saved memories land
   in their own private source.
+
+  A credential bound to a member (`--member`) with no `--sources` has no write
+  source of its own and writes to `default`, which every credential without a
+  source grant reads. A page such a credential creates is therefore written
+  with `readable_by: [member:<id>]`, readable only by that member (and the
+  local CLI); rewriting it without `readable_by` keeps those readers, and the
+  member shares it by naming readers (`readable_by: [alice-example,
+  group:team-a]`). An edit to an existing page that names no readers leaves it
+  shared. `POST /ingest` refuses such a credential. Before this release those
+  pages named no readers, so other members and unbound tokens read them:
+  check pages a member wrote with `gbrain access who-can-read <slug>` and add
+  `readable_by` on the brain host to any that should stay private.
 - **Let each member read their own private pages (optional).** Remote
   reads hide every `visibility: private` page by default, even in a granted
   source. To let a member's agent read the private pages in the sources its
