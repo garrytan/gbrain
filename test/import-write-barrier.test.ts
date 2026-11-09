@@ -24,7 +24,7 @@ import { PersistenceConsumer } from '../src/core/persistence/consumer.ts';
 import { getWriteRequestById } from '../src/core/persistence/journal.ts';
 import { resetWriteSwitches } from '../src/core/persistence/switches.ts';
 import { _setRefreshFenceWaitForTests } from '../src/core/persistence/admission-retry.ts';
-import { _resetRefreshBarrierCacheForTests, deferredBacklog, expireDeferredWrites } from '../src/core/persistence/refresh-barrier.ts';
+import { _resetRefreshBarrierCacheForTests, _setAfterImportExpiryScanForTests, deferredBacklog, expireDeferredWrites } from '../src/core/persistence/refresh-barrier.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
@@ -33,7 +33,9 @@ import { refreshWorktree, resumeWorktreeRefreshes } from '../src/core/persistenc
 import { readLedger } from '../src/core/git/commit-ledger.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { replayImportedRemembers } from '../src/core/repair/failed-writes.ts';
+import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { commitFile, git, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
@@ -137,15 +139,19 @@ test('a blind put_page onto a file awaiting import is held pending, lands after 
   expect((await deferredBacklog(f.engine)).count).toBe(0);
 }), 180_000);
 
-test('a capture onto a file awaiting import lands after the import', () => each(async f => {
-  foreignCommit(f, 'one.md', page('Alpha one', IMPORTED));
+test('a capture onto a file awaiting import lands after the import and names the imported revision it replaced', () => each(async f => {
+  const imported = foreignCommit(f, 'one.md', page('Alpha one', IMPORTED));
   const out = await local(f, 'capture', { slug: 'one', content: 'Captured while the import waited.' });
   expect(out.pending).toBe(true);
   const held = await requestRow(f, out.receipt.request_id);
   expect(held.state).toBe('deferred');
   await importNow(f);
-  expect((await settle(f, held)).state).toBe('committed');
+  const done = await settle(f, held);
+  expect(done.state).toBe('committed');
   expect(file(f, 'one.md')).toContain('Captured while the import waited.');
+  const supersedes = (done.outcome as { supersedes?: { slug: string; revision: unknown; commit: string } }).supersedes;
+  expect(supersedes).toMatchObject({ slug: 'one', commit: imported });
+  expect(supersedes!.revision).toBeTruthy();
 }), 180_000);
 
 const PERSON = '---\ntitle: Alice Example\ntype: person\n---\nAlice is a person.\n';
@@ -320,6 +326,49 @@ test('a write while a refresh is in recovery_required waits behind it and lands 
   expect(file(f, 'notes/during-recovery.md')).toContain('Accepted while the refresh awaited recovery.');
 }), 180_000);
 
+test.skipIf(!backends.includes('postgres'))('an import expiry that overlaps a fence waits on the brain row instead of deadlocking with it', () => each(async f => {
+  if (f.engine.kind !== 'postgres') return;
+  foreignCommit(f, 'one.md', page('Alpha one', IMPORTED));
+  const out = await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Held past its limit.') });
+  const held = await requestRow(f, out.receipt.request_id);
+  expect(held.state).toBe('deferred');
+  await disposePersistenceConsumer(f.engine);
+  await maxWait(f, 1);
+  try {
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const owner = await ownerHost(f);
+    let holding!: () => void; const held1 = new Promise<void>(resolve => { holding = resolve; });
+    let fenceIs!: (rows: Array<{ pid: number }>) => void; const fencePid = new Promise<Array<{ pid: number }>>(resolve => { fenceIs = resolve; });
+    let waiting!: () => void; const expiryWaits = new Promise<void>(resolve => { waiting = resolve; });
+    // fenceDraining's order (lockTopologyRows): the brain row FOR UPDATE, then the worktree, then the sources.
+    const fence = f.engine.transaction(async tx => {
+      await tx.executeRaw("SELECT set_config('lock_timeout','10s',true)");
+      await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+      fenceIs(await tx.executeRaw<{ pid: number }>('SELECT pg_backend_pid() AS pid'));
+      holding();
+      await expiryWaits;
+      await tx.executeRaw('SELECT 1 FROM sources WHERE id=$1 FOR UPDATE', [f.alpha]);
+    });
+    await held1;
+    const expiry = expireDeferredWrites(f.engine, owner);
+    const [{ pid }] = await fencePid;
+    let blocked = false;
+    for (let i = 0; i < 400 && !blocked; i++) {
+      const [w] = await f.engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))', [pid]);
+      blocked = Number(w!.n) > 0;
+      if (!blocked) await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    waiting();
+    const [fenced, expired] = await Promise.allSettled([fence, expiry]);
+    expect(fenced.status === 'rejected' ? String(fenced.reason) : 'fence committed').toBe('fence committed');
+    expect(expired.status === 'fulfilled' ? expired.value.map(row => row.id) : String(expired.reason)).toEqual([held.id]);
+    expect(blocked).toBe(true);
+  } finally {
+    await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
+  }
+  expect(await getWriteRequestById(f.engine, held.id)).toMatchObject({ state: 'failed', error_code: 'pending_import_expired' });
+}), 180_000);
+
 test('a write held for an import is never passed by a later write to the same page', () => each(async f => {
   await durable(f);
   const before = await f.lastCommit(f.alpha);
@@ -345,6 +394,7 @@ test('a write held for an import is never passed by a later write to the same pa
   expect(await f.lastCommit(f.alpha)).not.toBe(before);
   await settle(f, held);
   if (second.pending) await settle(f, later);
+  expect((await requestRow(f, first.receipt.request_id)).state).toBe('committed');
   // Writes to one page commit in admission order: the later write is the last to commit, so the earlier one never lands on top of it.
   const versions = (await f.engine.executeRaw<{ body: string }>(
     `SELECT compiled_truth AS body FROM (SELECT v.compiled_truth, v.id FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.source_id=$1 AND p.slug=$2
@@ -395,5 +445,62 @@ test.skipIf(!backends.includes('postgres'))('a held write whose import lands whi
   expect(await getWriteRequestById(f.engine, held.id)).not.toMatchObject({ state: 'failed' });
   expect((await settle(f, held)).state).toBe('committed');
   expect(file(f, 'one.md')).toContain('Held, then released by the import.');
+}), 180_000);
+
+
+test('a write held for an import never takes the capacity the import needs', () => each(async f => {
+  await f.engine.setConfig('persistence.limits.principal_outstanding', '1');
+  try {
+    foreignCommit(f, 'one.md', page('Alpha one', IMPORTED));
+    const out = await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Mine, held while the cap is full.') });
+    expect(out.pending).toBe(true);
+    const held = await requestRow(f, out.receipt.request_id);
+    expect(held.state).toBe('deferred');
+    await importNow(f);
+    expect(await f.lastCommit(f.alpha)).toBe(git(f.root, 'rev-parse', 'HEAD'));
+    expect((await settle(f, held)).state).toBe('committed');
+    expect(file(f, 'one.md')).toContain('Mine, held while the cap is full.');
+  } finally {
+    await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.limits.principal_outstanding'");
+  }
+}), 180_000);
+
+
+test('a write held for an import never takes the capacity a bulk import group needs', () => each(async f => {
+  await f.engine.setConfig('persistence.limits.principal_outstanding', '2');
+  try {
+    for (const name of ['one', 'two', 'three']) foreignCommit(f, `${name}.md`, page(`Alpha ${name}`, IMPORTED));
+    const out = await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Mine, held while a bulk group imports.') });
+    const held = await requestRow(f, out.receipt.request_id);
+    expect(held.state).toBe('deferred');
+    await performManagedSync(f.engine, { sourceId: f.alpha, noPull: true, noEmbed: true,
+      bulk: { enabled: true, reason: null, size: 16, maxTxnMs: 15_000, maxTxnExplicit: false } } as never);
+    expect(await f.lastCommit(f.alpha)).toBe(git(f.root, 'rev-parse', 'HEAD'));
+    expect((await settle(f, held)).state).toBe('committed');
+  } finally {
+    await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.limits.principal_outstanding'");
+  }
+}), 180_000);
+
+test('GST-1623: an import and a new hold between the expiry scan and its lock never expire the new hold', () => each(async f => {
+  foreignCommit(f, 'one.md', page('Alpha one', IMPORTED));
+  const out = await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Mine, held again after an import.') });
+  const held = await requestRow(f, out.receipt.request_id);
+  expect(held.state).toBe('deferred');
+  await maxWait(f, 1);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const next = foreignCommit(f, 'one.md', page('Alpha one', 'A second commit, not imported yet.'));
+  _setAfterImportExpiryScanForTests(async rows => {
+    expect(rows.map(row => row.id)).toEqual([held.id]);
+    await f.engine.transaction(tx => withCoordinatedWrite(tx, [f.alpha], () => tx.executeRaw('UPDATE sources SET last_commit=$2 WHERE id=$1', [f.alpha, next]), TEST_WRITE_ATTRIBUTION));
+    await f.engine.executeRaw("UPDATE persistence_requests SET deferred_import_from=$2,updated_at=now() WHERE id=$1::uuid", [held.id, next]);
+  });
+  try {
+    expect(await expireDeferredWrites(f.engine, await ownerHost(f))).toEqual([]);
+  } finally {
+    _setAfterImportExpiryScanForTests(null);
+    await f.engine.executeRaw("DELETE FROM config WHERE key='persistence.refresh_barrier_max_wait_ms'");
+  }
+  expect(await getWriteRequestById(f.engine, held.id)).toMatchObject({ state: 'deferred', deferred_import_from: next });
 }), 180_000);
 

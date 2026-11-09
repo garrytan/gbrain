@@ -44,7 +44,9 @@ ${enforce ? `${GUARD_ENFORCE_MARKER}
 [ "\${${GUARD_BYPASS_ENV}:-}" = off ] && exit 0
 [ "\${2:-}" = merge ] && exit 0
 ${owner ? `# git worktree add copies config.worktree, so a worktree added after the install inherits this hooks path: only the owner worktree is guarded.
-[ "$(cd "$(git rev-parse --absolute-git-dir)" && pwd -P)" = "$(cd "$(dirname "$0")/.." && pwd -P)" ] || exit 0
+# GST-1623: a git dir git cannot name fails closed; only a hook that belongs to another git dir passes.
+_gd="$(git rev-parse --absolute-git-dir 2>/dev/null)" && [ -n "$_gd" ] && _gd="$(cd "$_gd" && pwd -P)" || { echo "gbrain commit guard: could not resolve this checkout's git dir, so the commit was refused; nothing changed." >&2; exit 1; }
+[ "$_gd" = "$(cd "$(dirname "$0")/.." && pwd -P)" ] || exit 0
 ` : ''}for _op in ${enforce ? 'MERGE_HEAD' : 'MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply sequencer'}; do
   [ -e "$(git rev-parse --git-path "$_op")" ] && exit 0
 done

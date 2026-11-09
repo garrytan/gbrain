@@ -55,6 +55,7 @@ import { googleFileModesRepair } from './google-file-modes.ts';
 import { staleAtomsRepair } from './stale-atoms.ts';
 import { atomsRestoreRepair } from './atoms-restore.ts';
 import { extractorFactsRepair } from './extractor-facts.ts';
+import { unwithdrawnFactsRepair } from './unwithdrawn-facts.ts';
 import { conversationLabelsRepair } from './conversation-labels.ts';
 import { capturedFactsRepair } from './captured-facts.ts';
 import { agentSessionFactsRepair, agentSessionFlagArgs } from './agent-session-facts.ts';
@@ -228,6 +229,14 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + '(a committed write of the page completed in the same transaction, by an older consumer); --include-ambiguous widens the hashed set to facts '
       + 'without that evidence. Preview-bound: --apply --expect <hash> restores exactly the previewed set; a fact that changed since reports '
       + 'changed_since_preview and stays expired. Superseded, withdrawn and duplicated facts are never restored. Database-only; no page is rewritten.',
+  },
+  'unwithdrawn-facts': {
+    handler: unwithdrawnFactsRepair, embeds: 'none', checks: ['unwithdrawn_facts'], explicit_only: true, preview_bound: true,
+    summary: 'Restore facts a facts-fence generation retired although no fence of their page ever held them (#8819), first generations included. '
+      + 'Restores the original fact ids and recorded lifecycle from the generation ledger; a fact a fence held (a genuine withdrawal), a withdrawn, '
+      + 'superseded or duplicated fact is never restored; --include-ambiguous adds facts of pages whose version history has a gap. Preview-bound: '
+      + '--apply --expect <hash> restores exactly the previewed set, bound to each page\'s revision; a changed page or fact reports changed_since_preview. '
+      + 'Database-only; no page is rewritten.',
   },
   'conversation-labels': {
     handler: conversationLabelsRepair, embeds: 'none', checks: ['conversation_label_facts'], explicit_only: true, consent: 'destructive',

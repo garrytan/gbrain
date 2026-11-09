@@ -9,7 +9,7 @@
 > gbrainio workspace new         # pick a plan in the browser
 > curl -fsSL https://bun.sh/install | bash   # skip if Bun 1.4.4+ is installed
 > export PATH="$HOME/.bun/bin:$PATH"
-> bun install -g github:garrytan/gbrain#latest-stable   # the gbrain CLI only; no local brain
+> bun install -g github:garrytan/gbrain#stable   # the gbrain CLI only; no local brain
 > # Claude Code (an existing gbrain entry is kept):
 > (claude mcp get gbrain >/dev/null 2>&1 || claude mcp add --transport http --scope user gbrain https://gbrain.io/mcp) && gbrain setup claude-code --instructions-only
 > # Codex (an existing gbrain entry is kept):
@@ -31,7 +31,7 @@ The paths below are the manual equivalents. Pick one; mix later if needed.
 Already running [OpenClaw](https://github.com/garrytan/openclaw) or [Hermes](https://github.com/garrytan/hermes)?
 
 ```bash
-bun install -g github:garrytan/gbrain#latest-stable
+bun install -g github:garrytan/gbrain#stable
 gbrain init --pglite --no-embedding   # keyless; no server
 gbrain skillpack scaffold --harness openclaw --workspace <ws>   # OpenClaw: the five-skill brain-first core
 gbrain skillpack scaffold --all       # Hermes or any other workspace: every bundled skill (skills/manifest.json)
@@ -73,7 +73,7 @@ See the [agent upgrade steps](../INSTALL_FOR_AGENTS.md#upgrade).
 No agent platform, just shell + MCP-aware editor.
 
 ```bash
-bun install -g github:garrytan/gbrain#latest-stable
+bun install -g github:garrytan/gbrain#stable
 gbrain init --pglite --no-embedding
 ```
 

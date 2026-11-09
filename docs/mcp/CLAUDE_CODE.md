@@ -57,7 +57,7 @@ into your user-scope skills dir with a local-edit-respecting update lens
 (CLI form: `claude plugin marketplace add garrytan/gbrain` +
 `claude plugin install gbrain@gbrain`.) Prerequisites and behavior match the
 [Codex plugin](CODEX.md#install-as-a-codex-plugin-recommended): the gbrain CLI
-installed (`bun install -g github:garrytan/gbrain#latest-stable`), a brain
+installed (`bun install -g github:garrytan/gbrain#stable`), a brain
 (`gbrain init`), `full` MCP surface with `--source-guard`, and the same
 routing rules (`GBRAIN_SOURCE`/`GBRAIN_BRAIN_ID` env — dotfiles don't apply
 to a plugin-launched serve). Positioning: the plugin is the lightweight
