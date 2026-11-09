@@ -5,8 +5,10 @@
  * publish its pages unstamped there, readable by another member's no-grant token and by an unbound token.
  * 1. Protects: a page such a credential creates in a federated source names its member as its only reader, so another
  *    member and an unbound token (reading the federated set as the HTTP transports do) get page_not_found and no
- *    search, query, recall or list_pages hit, and POST /ingest refuses it. A non-federated source keeps the audience
- *    its grants give it (no stamp), and a member-bound write cannot land in a source outside its grant.
+ *    search, query, recall or list_pages hit, and POST /ingest refuses it. The same holds for a streamed upload over the
+ *    single-string ceiling, and a write whose source config cannot be read is refused rather than published unstamped.
+ *    A non-federated source keeps the audience its grants give it (no stamp), and a member-bound write cannot land in a
+ *    source outside its grant.
  * 2. Fails when: a member-bound put_page into a federated source lands without readers, or a write leaves its source.
  * 3. Existing coverage (access-ungranted-member-writes) only writes to `default`.
  * 4. Real seams: tokens minted by the token service and bound with SQL, verified by the serve --http verifier, read
@@ -16,7 +18,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import express from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
@@ -31,6 +33,9 @@ import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
+const MiB = 1024 ** 2;
+const PART_CHARS = 3_900_000;
+const sha = (text: string) => createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
 const FEDERATED = 'source-a';
 const ISOLATED = 'source-b';
 const marker = (tag: string) => 'fedmember' + tag + randomUUID().slice(0, 8);
@@ -47,7 +52,7 @@ for (const kind of testBackends()) {
       const auth = await provider().verifyAccessToken(tokens[who]) as unknown as AuthInfo;
       const sourceId = auth.sourceId ?? 'default';
       const localFederatedSourceIds = await noGrantFederatedScope(engine, auth.hasSourceGrant, sourceId);
-      const out = await dispatchToolCall(engine, op, { ...params }, { remote: true, transport: 'http', auth, sourceId, takesHoldersAllowList: ['world'],
+      const out = await dispatchToolCall(engine, op, { ...params }, { remote: true, transport: 'http', auth, sourceId, takesHoldersAllowList: ['world'], inboundFrameBytes: 4 * MiB,
         ...(localFederatedSourceIds ? { localFederatedSourceIds } : {}) });
       const text = out.content.map(c => c.text).join('\n');
       let json: Record<string, unknown> = {};
@@ -143,6 +148,56 @@ for (const kind of testBackends()) {
         await engine.executeRaw(`UPDATE sources SET config = config || '{"federated": true}'::jsonb WHERE id = 'default'`);
       }
     }, 240_000);
+
+    test('a member-bound write is refused when the source config cannot be read, not published unstamped', async () => {
+      const canary = marker('unreadable');
+      const slug = 'notes/alice-unreadable-' + canary;
+      const target = engine as unknown as { executeRaw: (this: BrainEngine, sql: string, ...rest: unknown[]) => Promise<unknown> };
+      const original = Object.getPrototypeOf(engine).executeRaw as typeof target.executeRaw;
+      let rejected = 0;
+      target.executeRaw = function (sql, ...rest) {
+        if (/^\s*SELECT id, config(, archived)? FROM sources\b/.test(sql)) { rejected++; return Promise.reject(new Error('sources unreadable (test fixture)')); }
+        return original.call(this, sql, ...rest);
+      };
+      let put: Awaited<ReturnType<typeof call>>;
+      try {
+        put = await call('alice-a', 'put_page', { slug, content: note('Alice unreadable', 'Alice unreadable code ' + canary + '.'), request_id: randomUUID() });
+      } finally {
+        delete (target as Partial<typeof target>).executeRaw;
+      }
+      expect({ rejected: rejected > 0, isError: put.isError }).toEqual({ rejected: true, isError: true });
+      expect(await stored(slug, FEDERATED)).toBeUndefined();
+      expect(await reads('public', slug, canary, FEDERATED)).toEqual(none);
+    }, 240_000);
+
+    test('a streamed upload over the single-string ceiling into a federated source is kept to its member', async () => {
+      await engine.executeRaw("INSERT INTO config (key, value) VALUES ('write_gate.agent_mode', 'off') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value");
+      try {
+        const canary = marker('upload');
+        const slug = 'notes/alice-upload-' + canary;
+        const filler = 'We agreed to ship the review checklist first and revisit pricing next week. '.repeat(64) + '\n\n';
+        const text = '# Alice upload ' + canary + '\n\n' + filler.repeat(Math.ceil(25 * MiB / filler.length)) + 'Alice upload code ' + canary + '.';
+        const begin = await call('alice-a', 'begin_page_upload', { slug, mode: 'create', total_bytes: Buffer.byteLength(text), sha256: sha(text), request_id: randomUUID() });
+        expect(begin.isError).toBe(false);
+        for (let part = 0, at = 0; at < text.length; part++, at += PART_CHARS) {
+          const piece = text.slice(at, at + PART_CHARS);
+          expect((await call('alice-a', 'upload_page_part', { upload_id: begin.json.upload_id, part, text: piece, part_sha256: sha(piece) })).isError).toBe(false);
+        }
+        let commit = await call('alice-a', 'commit_page_upload', { upload_id: begin.json.upload_id, wait_ms: 30_000 });
+        for (let attempt = 0; commit.json.code === 'write_pending' && attempt < 40; attempt++) commit = await call('alice-a', 'commit_page_upload', { upload_id: begin.json.upload_id, wait_ms: 30_000 });
+        expect({ isError: commit.isError, state: commit.json.state }).toEqual({ isError: false, state: 'committed' });
+        const [row] = await engine.executeRaw<{ body_storage: string; page_readers: string[] | null }>(
+          'SELECT body_storage, page_readers FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [FEDERATED, slug]);
+        expect(row).toEqual({ body_storage: 'segmented', page_readers: ['member:alice-example'] });
+        expect((await call('alice-a', 'list_pages', {})).text).toContain(slug);
+        for (const who of ['bob', 'public']) {
+          expect((await call(who, 'list_pages', {})).text).not.toContain(slug);
+          expect((await call(who, 'get_page', { slug, source_id: FEDERATED })).json.code).toBe('page_not_found');
+        }
+      } finally {
+        await engine.executeRaw("DELETE FROM config WHERE key = 'write_gate.agent_mode'");
+      }
+    }, 900_000);
 
     test('a member-bound write cannot leave the source its grant names', async () => {
       const canary = marker('wrong');
