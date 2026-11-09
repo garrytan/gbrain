@@ -413,4 +413,69 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
     expect(localConfig(root, 'lfs.fetchexclude')).toBe('*');
     expect(await config('source-a')).toEqual(URL_CONFIG);
   }), 60_000);
+
+  const effective = (root: string, key: string) => {
+    try { return execFileSync('git', ['-C', root, 'config', '--get', key], { encoding: 'utf8', stdio: 'pipe' }).trim(); } catch { return null; }
+  };
+
+  test('a worktree-scoped setting that overrides the lock-down is refused write_failed, naming the key, and the record is not written', () => brain(async () => {
+    const root = defaultCloneDir('source-a');
+    repoAt(root, { 'example.md': 'Canonical\n' });
+    git(['-C', root, 'config', 'extensions.worktreeConfig', 'true']);
+    git(['-C', root, 'config', '--worktree', 'core.hooksPath', '/example/hooks']);
+    await insert('source-a', root, URL_CONFIG);
+    const [result] = (await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: true, remote: false })).results;
+    expect(result).toMatchObject({ source_id: 'source-a', status: 'refused', code: 'write_failed' });
+    expect(result!.reason).toContain('core.hooksPath');
+    expect(result!.reason).toContain('already written');
+    expect(effective(root, 'core.hooksPath')).toBe('/example/hooks');
+    expect(await config('source-a')).toEqual(URL_CONFIG);
+  }), 60_000);
+
+  test('a linked worktree gets the lock-down in the config Git reads for it', () => brain(async home => {
+    const main = join(home, 'main-checkout'), root = defaultCloneDir('source-a');
+    repoAt(main, { 'example.md': 'Canonical\n' });
+    mkdirSync(dirname(root), { recursive: true });
+    git(['-C', main, 'worktree', 'add', '-q', '-b', 'source-a', root]);
+    await insert('source-a', root, URL_CONFIG);
+    expect((await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: true, remote: false })).results[0]).toMatchObject({ status: 'recorded' });
+    expect([effective(root, 'lfs.fetchexclude'), effective(root, 'core.hooksPath'), effective(root, 'lfs.locksverify')]).toEqual(['*', '/dev/null', 'false']);
+  }), 60_000);
+
+  test('--remote --apply locks down a source recorded as remote before the lock-down existed, then reports already_recorded', () => brain(async () => {
+    const root = defaultCloneDir('source-a');
+    repoAt(root, { 'example.md': 'Canonical\n' });
+    await insert('source-a', root, { ...URL_CONFIG, added_by_remote_caller: true });
+    const preview = (await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: false, remote: false })).results[0]!;
+    expect(preview).toMatchObject({ status: 'would_record' });
+    expect(effective(root, 'core.hooksPath')).toBeNull();
+    const applied = (await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: true, remote: false })).results[0]!;
+    expect(applied).toMatchObject({ status: 'recorded' });
+    expect(applied.reason).toContain('already recorded');
+    expect([effective(root, 'lfs.fetchexclude'), effective(root, 'core.hooksPath'), effective(root, 'lfs.locksverify')]).toEqual(['*', '/dev/null', 'false']);
+    expect(await config('source-a')).toEqual({ ...URL_CONFIG, added_by_remote_caller: true });
+    expect((await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: true, remote: false })).results[0]).toMatchObject({ status: 'already_recorded' });
+  }), 60_000);
+
+  test('lfs_unknown tells a corrupt .git and a safe.directory refusal apart from a directory outside its own repository', () => brain(async () => {
+    const root = defaultCloneDir('source-a');
+    repoAt(root, { 'example.md': 'Canonical\n' });
+    await insert('source-a', root, URL_CONFIG);
+    writeFileSync(join(root, '.git', 'config'), '[core\n');
+    const corrupt = (await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: false, remote: false })).results[0]!;
+    expect(corrupt).toMatchObject({ code: 'lfs_unknown' });
+    expect(corrupt.reason).toContain('Git could not list or read');
+    expect(corrupt.reason).not.toContain('not the top level');
+    const original = childProcess.spawnSync;
+    const patched = spyOn(childProcess, 'spawnSync').mockImplementation(((file: string, args?: readonly string[], options?: object) => {
+      if (file === 'git' && args?.includes('--show-toplevel'))
+        return { pid: 0, output: [], stdout: Buffer.from(''), stderr: Buffer.from(`fatal: detected dubious ownership in repository at '${root}'\n`), status: 128, signal: null };
+      return original(file, args as string[], options as never);
+    }) as typeof childProcess.spawnSync);
+    let unsafe: Awaited<ReturnType<typeof recordSourceOrigin>>;
+    try { unsafe = await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: false, remote: false }); }
+    finally { patched.mockRestore(); }
+    expect(unsafe.results[0]).toMatchObject({ code: 'lfs_unknown' });
+    expect(unsafe.results[0]!.reason).toContain('another user owns it');
+  }), 60_000);
 });

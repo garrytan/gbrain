@@ -57,7 +57,7 @@ export async function urlSourcesWithoutOrigin(engine: BrainEngine): Promise<Arra
   return rows.filter(row => originState(row) === 'unknown').map(row => ({ id: row.id, local_path: row.local_path! }));
 }
 
-type LfsState = { state: 'none' | 'tracked' | 'declared' } | { state: 'unknown'; cause: 'missing' | 'not_top_level' | 'git_failed' };
+type LfsState = { state: 'none' | 'tracked' | 'declared' } | { state: 'unknown'; cause: 'missing' | 'not_top_level' | 'unsafe_owner' | 'git_failed' };
 const GIT_LIMITS = { timeoutMs: 30_000, maxBytes: 64 * 1024 * 1024 };
 const sameDirectory = (a: string, b: string): boolean => { try { return realpathSync.native(a) === realpathSync.native(b); } catch { return false; } };
 const declaresLfs = (attributes: string): boolean => attributes.split('\n')
@@ -74,8 +74,11 @@ const declaresLfs = (attributes: string): boolean => attributes.split('\n')
 function lfsTracked(root: string): LfsState {
   if (!existsSync(root)) return { state: 'unknown', cause: 'missing' };
   const gitFailed = { state: 'unknown', cause: 'git_failed' } as const;
-  const top = hardenedGitSync(root, ['rev-parse', '--show-toplevel'], GIT_LIMITS);
-  if (!top.ok) return top.reason === 'exit' ? { state: 'unknown', cause: 'not_top_level' } : gitFailed;
+  const top = hardenedGitSync(root, ['rev-parse', '--show-toplevel'], { ...GIT_LIMITS, stderr: true });
+  if (!top.ok) {
+    if (/not a git repository/i.test(top.stderr ?? '')) return { state: 'unknown', cause: 'not_top_level' };
+    return /dubious ownership/i.test(top.stderr ?? '') ? { state: 'unknown', cause: 'unsafe_owner' } : gitFailed;
+  }
   if (!sameDirectory(top.stdout.toString('utf8').replace(/\n$/, ''), root)) return { state: 'unknown', cause: 'not_top_level' };
   const listed = hardenedGitSync(root, ['ls-files', '-z', '--cached', '--', ':(attr:filter=lfs)'], GIT_LIMITS);
   if (!listed.ok) return gitFailed;
@@ -99,16 +102,33 @@ function lfsTracked(root: string): LfsState {
   return { state: 'none' };
 }
 
-/** Writes the clone-time lock-down (`LFS_OFF_CLONE_CONFIG`) into the checkout's own .git/config, without running Git in the checkout. */
-function lockDownCheckout(root: string): void {
-  const gitDir = hardenedGitSync(root, ['rev-parse', '--absolute-git-dir'], GIT_LIMITS);
-  if (!gitDir.ok) throw new Error(`Git could not locate the repository of ${root}`);
-  const file = join(gitDir.stdout.toString('utf8').replace(/\n$/, ''), 'config');
-  for (const setting of LFS_OFF_CLONE_CONFIG.filter((_, at) => at % 2 === 1)) {
-    const at = setting.indexOf('=');
-    execFileSync('git', ['config', '--file', file, setting.slice(0, at), setting.slice(at + 1)],
-      { cwd: dirname(file), env: hardenedGitEnvironment(), stdio: 'pipe', timeout: GIT_LIMITS.timeoutMs });
-  }
+const LOCK_DOWN = LFS_OFF_CLONE_CONFIG.filter((_, at) => at % 2 === 1).map(setting => [setting.slice(0, setting.indexOf('=')), setting.slice(setting.indexOf('=') + 1)] as const);
+
+/** The lock-down keys whose value Git reads in the checkout (worktree config and includes counted) is not the clone-time one. */
+function lockDownGaps(root: string): string[] {
+  return LOCK_DOWN.filter(([key, value]) => {
+    try { return execFileSync('git', ['-C', root, 'config', '--get', key], { env: hardenedGitEnvironment(), stdio: 'pipe', timeout: GIT_LIMITS.timeoutMs }).toString('utf8').replace(/\n$/, '') !== value; }
+    catch { return true; }
+  }).map(([key]) => key);
+}
+
+/**
+ * Writes the clone-time lock-down (`LFS_OFF_CLONE_CONFIG`) into the repository's shared config (`--git-common-dir`, so a linked
+ * worktree's repository gets it too), without running Git in the checkout, then reads back what Git uses there and throws when a
+ * worktree-scoped or included setting still overrides a key. `progress` says how far it got: `started` before the first write,
+ * `written` once every key is in the file.
+ */
+function lockDownCheckout(root: string, progress: { state: 'none' | 'started' | 'written' | 'done' }): void {
+  const commonDir = hardenedGitSync(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'], GIT_LIMITS);
+  if (!commonDir.ok) throw new Error(`Git could not locate the repository of ${root}.`);
+  const file = join(commonDir.stdout.toString('utf8').replace(/\n$/, ''), 'config');
+  progress.state = 'started';
+  for (const [key, value] of LOCK_DOWN)
+    execFileSync('git', ['config', '--file', file, key, value], { cwd: dirname(file), env: hardenedGitEnvironment(), stdio: 'pipe', timeout: GIT_LIMITS.timeoutMs });
+  progress.state = 'written';
+  const gaps = lockDownGaps(root);
+  if (gaps.length) throw new Error(`Git in the checkout at ${root} still reads another value for ${gaps.join(', ')} (a worktree-scoped or included config overrides ${file}).`);
+  progress.state = 'done';
 }
 
 export interface RecordOriginResult {
@@ -132,6 +152,7 @@ function lfsRefusal(id: string, root: string): RecordOriginResult | null {
   const unconfirmed = 'so gbrain cannot confirm that no file is tracked with git-lfs; nothing changed.';
   if (lfs.cause === 'missing') return refusal(id, 'lfs_unknown', `Source ${id}'s checkout at ${root} is missing, ${unconfirmed} Restore the checkout, then run this again.`);
   if (lfs.cause === 'not_top_level') return refusal(id, 'lfs_unknown', `Source ${id}'s clone directory ${root} is not the top level of its own Git repository (Git resolves it to an enclosing repository, or to none), ${unconfirmed} Check what that directory holds before you run this again.`);
+  if (lfs.cause === 'unsafe_owner') return refusal(id, 'lfs_unknown', `Git refuses to read source ${id}'s checkout at ${root} because another user owns it (safe.directory), ${unconfirmed} Check who owns that checkout, then run this again as that user or after fixing its ownership.`);
   return refusal(id, 'lfs_unknown', `Git could not list or read source ${id}'s checkout at ${root}, ${unconfirmed} Check that git works in that checkout, then run this again.`);
 }
 
@@ -169,29 +190,32 @@ export async function recordSourceOrigin(engine: BrainEngine, ids: string[], opt
   const locks = opts.apply && await managedPersistenceEnabled(engine)
     ? { ...await import('./persistence/topology-locks.ts'), ...await import('./persistence/topology-transaction.ts') } : null;
   for (const id of [...new Set(ids)]) {
-    const lockDown: { state: 'none' | 'started' | 'done' } = { state: 'none' };
+    const lockDown: { state: 'none' | 'started' | 'written' | 'done' } = { state: 'none' };
     try {
       const [row] = await engine.executeRaw<SourceRowLike>('SELECT id, local_path, config, archived FROM sources WHERE id=$1', [id]);
       const early = check(row, id, opts.origin);
-      if (early) { results.push(early); continue; }
+      const relock = remote && early?.status === 'already_recorded' && originState(row!) === 'remote' && existsSync(row!.local_path!) && lockDownGaps(row!.local_path!).length > 0;
+      if (early && !relock) { results.push(early); continue; }
       const lfs = remote ? lfsRefusal(id, row!.local_path!) : null;
       if (lfs) { results.push(lfs); continue; }
       if (!opts.apply) {
-        results.push({ source_id: id, status: 'would_record', reason: `Source ${id} would be recorded as added by ${recordedAs}${remote ? '; git-lfs downloads and hooks would be turned off in its checkout now, and every later reclone clones that way' : ''}.` });
+        results.push({ source_id: id, status: 'would_record', reason: relock
+          ? `Source ${id} is already recorded as added by a remote caller, but its checkout still has git-lfs downloads or hooks on; they would be turned off now.`
+          : `Source ${id} would be recorded as added by ${recordedAs}${remote ? '; git-lfs downloads and hooks would be turned off in its checkout now, and every later reclone clones that way' : ''}.` });
         continue;
       }
       const write = async (tx: BrainEngine): Promise<RecordOriginResult> => {
         const [locked] = await tx.executeRaw<SourceRowLike>('SELECT id, local_path, config, archived FROM sources WHERE id=$1 FOR UPDATE', [id]);
         const config = locked ? parseSourceConfig(locked.config) : {};
-        if (check(locked, id, opts.origin) || locked!.local_path !== row!.local_path || config.remote_url !== parseSourceConfig(row!.config).remote_url)
+        const again = check(locked, id, opts.origin);
+        if ((again && !(relock && again.status === 'already_recorded')) || (!again && relock) || locked!.local_path !== row!.local_path || config.remote_url !== parseSourceConfig(row!.config).remote_url)
           return refusal(id, 'source_changed', `Source ${id} changed while its origin was being recorded; nothing changed. Run the preview again.`);
         if (remote) {
           const lfsNow = lfsRefusal(id, locked!.local_path!);
           if (lfsNow) return lfsNow;
-          lockDown.state = 'started';
-          lockDownCheckout(locked!.local_path!);
-          lockDown.state = 'done';
+          lockDownCheckout(locked!.local_path!, lockDown);
         }
+        if (relock) return { source_id: id, status: 'recorded', reason: `Source ${id} was already recorded as added by a remote caller; its checkout now has git-lfs downloads and hooks off too.` };
         await tx.executeRaw('UPDATE sources SET config=$2::text::jsonb WHERE id=$1',
           [id, JSON.stringify(normalizeSourceConfig({ ...config, added_by_remote_caller: remote }))]);
         return { source_id: id, status: 'recorded', reason: `Source ${id} is recorded as added by ${recordedAs}${remote ? '; its checkout now has git-lfs downloads and hooks off, and every later reclone clones that way' : ''}.` };
@@ -202,6 +226,7 @@ export async function recordSourceOrigin(engine: BrainEngine, ids: string[], opt
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const lockdown = lockDown.state === 'done' ? ' Its checkout already has git-lfs downloads and hooks off.'
+        : lockDown.state === 'written' ? " The lock-down settings were already written to its repository's .git/config, but Git does not use them there yet."
         : lockDown.state === 'started' ? " Its checkout's .git/config may already hold part of the git-lfs and hooks lock-down; running this again writes all of it." : '';
       const unchanged = lockdown ? `the record was not written.${lockdown}` : 'nothing changed.';
       const code = (error as { code?: string }).code;

@@ -2842,7 +2842,15 @@ in the existing checkout's own `.git/config` now (`lfs.fetchexclude=*`,
 two choices: a reclone happens only when a checkout is lost or replaced, so
 without it the checkout would keep fetching git-lfs objects from the endpoint
 its repository names, and keep running hooks, while doctor already reads
-green. Only `.git/config` changes, never a tracked file; a gbrain frontmatter
+green. The settings go into the repository's shared config (the one
+`git rev-parse --git-common-dir` names, so a linked worktree gets them too),
+and the command then reads back the values Git uses in the checkout: when a
+worktree-scoped or included setting still overrides one, it refuses
+`write_failed`, names the key, and says the settings were already written.
+A source already recorded as remote whose checkout lacks the lock-down (one
+recorded before this) gets it on `--remote --apply` and reports `recorded`;
+one that has it stays `already_recorded`, and the record is never removed.
+Only `.git/config` changes, never a tracked file; a gbrain frontmatter
 hook wired through `core.hooksPath` stops running there, as on any clone a
 remote caller adds. `--local` records a local add and changes no checkout, and
 doctor stops listing either. Each apply re-reads the source inside one
@@ -2873,7 +2881,9 @@ refuses, writing nothing:
   and the reason names which cause applies: the checkout is missing (restore
   it, then run this again); the clone directory is not the top level of its
   own Git repository, because Git resolves it to an enclosing repository or to
-  none (check what the directory holds); or Git could not list or read it. A
+  none (check what the directory holds); Git refuses the checkout because
+  another user owns it (`safe.directory`); or Git could not list or read it
+  (for example a corrupt `.git`). A
   clone of an empty repository (no commit yet) has no committed attributes,
   so it is not refused.
 - `custom_clone_dir`: the clone sits where only the local CLI can clone.
