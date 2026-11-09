@@ -316,6 +316,7 @@ src/core/generations/fence.ts	storedBlocks	field	NONE	reads the fence block stri
 src/core/generations/repair.ts	releaseManaged	field	INLINE	assertInlineBody refuses a segmented origin page before the managed release reads its body to bind the origin
 src/core/google/loops-extract.ts	runLoopsExtract	field	STREAM	tail slice(-12000) of a getPage body; per-job: segmented page: getter throws page_body_segmented
 src/core/google/sweep-shared.ts	withStoredFactsFence	field	INLINE	asserts inline (assertInlineBody); importRendered refuses a segmented page first
+src/core/handoff/store.ts	storedFields	field	INLINE	handoff pages (threads, delegations, agents) are written whole by the handoff ops; assertInlineBody refuses a segmented one with page_body_segmented
 src/core/import-file.ts	applyImportTransaction	call:putPage	SEGW	lane 1d file (streaming ingest); code/image pages inline
 src/core/import-file.ts	importCodeFile	call:putPage	SEGW	lane 1d file (streaming ingest); code/image pages inline
 src/core/import-file.ts	importFromContent	call:contentHash	META	lane 1d file
