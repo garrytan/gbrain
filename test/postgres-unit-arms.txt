@@ -582,6 +582,7 @@ test/sync-storage-invalid-8007.test.ts
 test/sync-tree-reuse-gbra133.test.ts
 test/sync-unblock-repair-error-gbra130.test.ts
 test/sync-uncommitted-origin-7130.test.ts
+test/sync-unknown-drift-history-rescreen.test.ts
 test/sync-unknown-drift-rescreen-gbra133.test.ts
 test/sync-unreadable-file-gbra130.test.ts
 test/sync-waiver-budget.test.ts
