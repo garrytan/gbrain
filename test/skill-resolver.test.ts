@@ -29,6 +29,7 @@ import { acquireLease, holdsLease, releaseLease, tryAcquireLease } from '../src/
 import { commitSession, gcSessions, loadSession, sessionKey } from '../src/core/skills/resolver/session.ts';
 import { catalogFile } from '../src/core/skills/resolver/paths.ts';
 import { STAT_CHECK_SLICE } from '../src/core/skills/resolver/resolve.ts';
+import { RACY_MTIME_MS } from '../src/core/skills/resolver/build.ts';
 
 const scratch: string[] = [];
 afterAll(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
@@ -654,6 +655,22 @@ describe('freshness and errors', () => {
     const r = await resolveSkills({ message: 'deploy' }, { home, env: { GBRAIN_SKILLS_NO_AUTOREBUILD: '1' } });
     expect(r.output.meta.index_stale).toBe(true);
     expect(existsSync(catalogFile(home, 'c', 'stale.stamp'))).toBe(false);
+  });
+
+  test('a build publishes no stat from the current mtime tick, so a skill added right after it is still caught', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    const file = skillDir(root, 'deploy', { name: 'deploy', description: 'Ship it' });
+    const tick = Date.now() / 1000;
+    utimesSync(root, tick, tick);
+    utimesSync(file, tick, tick);
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const done = Date.now();
+    const fp = JSON.parse(readFileSync(catalogFile(home, 'c', 'fingerprint.json'), 'utf8')) as { fingerprint: { dirs: [string, number][]; files: [string, number, number][] } };
+    const stats = [...fp.fingerprint.dirs.map(d => d[1]), ...fp.fingerprint.files.map(f => f[2])];
+    for (const m of stats) expect(done - m).toBeGreaterThanOrEqual(RACY_MTIME_MS);
+    skillDir(root, 'reports', { name: 'reports', description: 'Write reports' });
+    expect((await resolveSkills({ message: 'deploy' }, { home })).output.meta.index_stale).toBe(true);
   });
 
   test('a gbrain upgrade marks the index stale; a newer receipt schema or a corrupt index refuses with the rebuild command', async () => {

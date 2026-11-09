@@ -26,7 +26,7 @@ import { BLOCK_TOKEN_CAP, BLOCK_TOKENIZER, HARNESSES, renderBlock, type BlockLin
 import { dirFingerprintSlice, listCatalogs, readReceipt, type BuildReceipt } from './build.ts';
 import { readResolverSettings, validateSessionTokenBudget } from './config.ts';
 import { ResolverError } from './errors.ts';
-import { ensureDir, writeFileDurable } from './fsutil.ts';
+import { ensureDir, writeFileAtomic, writeFileDurable } from './fsutil.ts';
 import { IndexReader, RANKER_ID, RANKER_VERSION } from './index-format.ts';
 import { assertCatalogName, catalogFile, logsDir, resolverHome } from './paths.ts';
 import { isAcknowledgement, mentionsSkill, rankIndex, reasonText, type RankResult } from './rank.ts';
@@ -193,7 +193,7 @@ function loadCatalog(home: string, name: string, now: number, autoRebuild: boole
     else if (!(last?.verdict === 'fresh' && last.cursor === 0 && age < STAT_CHECK_INTERVAL_MS)) {
       const slice = dirFingerprintSlice(home, name, last?.verdict === 'fresh' ? last.cursor : 0, STAT_CHECK_SLICE);
       stale = slice.changed ? 'source_changed' : null;
-      try { writeFileDurable(stamp, JSON.stringify({ verdict: slice.changed ? 'stale' : 'fresh', cursor: slice.changed ? 0 : slice.next })); } catch { /* read-only home: check again next turn */ }
+      try { writeFileAtomic(stamp, JSON.stringify({ verdict: slice.changed ? 'stale' : 'fresh', cursor: slice.changed ? 0 : slice.next })); } catch { /* read-only home: check again next turn */ }
     }
   }
   if (stale && autoRebuild) { try { writeFileDurable(catalogFile(home, name, 'stale.stamp'), `${JSON.stringify({ reason: stale })}\n`); } catch { /* best effort */ } }

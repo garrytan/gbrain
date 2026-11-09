@@ -144,9 +144,33 @@ async function readSource(input: BuildInput): Promise<SourceRead> {
 
 interface Prepared { records: SkillRecord[]; skipped: SkippedSkill[]; source: SourceRead; routing: BuildReceipt['catalog']['routing']; catalog_hash: string }
 
+/**
+ * File mtimes come from a coarse clock (one kernel tick, 4 ms on most Linux
+ * hosts), so an edit in the tick a build stats an entry keeps that entry's
+ * mtime and the stat tier never sees it. A build whose newest stat is under
+ * this old waits it out and reads the source again, so every published stat
+ * predates the tick any later edit lands in.
+ */
+export const RACY_MTIME_MS = 25;
+const RACY_REREADS = 2;
+
+function newestStat(source: SourceRead, routing: [string, number, number] | undefined): number {
+  let newest = routing?.[2] ?? -Infinity;
+  for (const [, m] of source.fingerprint?.dirs ?? []) if (m > newest) newest = m;
+  for (const [, , m] of source.fingerprint?.files ?? []) if (m > newest) newest = m;
+  return newest;
+}
+
 async function prepare(input: BuildInput): Promise<Prepared> {
-  const source = await readSource(input);
-  const routingInfo = input.routing ? applyRouting(source.skills, input.routing) : null;
+  let source = await readSource(input);
+  let routingInfo = input.routing ? applyRouting(source.skills, input.routing) : null;
+  for (let reread = 0; source.fingerprint && reread < RACY_REREADS; reread++) {
+    const wait = newestStat(source, routingInfo?.stat) + RACY_MTIME_MS - Date.now();
+    if (wait <= 0) break;
+    await new Promise(r => setTimeout(r, wait));
+    source = await readSource(input);
+    routingInfo = input.routing ? applyRouting(source.skills, input.routing) : null;
+  }
   const records = [...source.skills].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const scope = input.scope ?? 'user';
   return {

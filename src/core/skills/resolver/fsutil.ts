@@ -15,6 +15,19 @@ export function ensureDir(dir: string): void {
 }
 
 export function writeFileDurable(path: string, data: string | Uint8Array, mode = 0o600): void {
+  replaceFile(path, data, mode, true);
+}
+
+/**
+ * The same atomic replace without the fsyncs, for a hint a reader can lose:
+ * the turn path's last-check stamp. A cloud disk's fsync can stall for tens
+ * of milliseconds, which a 50 ms hook deadline cannot absorb every turn.
+ */
+export function writeFileAtomic(path: string, data: string | Uint8Array, mode = 0o600): void {
+  replaceFile(path, data, mode, false);
+}
+
+function replaceFile(path: string, data: string | Uint8Array, mode: number, sync: boolean): void {
   const dir = dirname(path);
   const tmp = join(dir, `.${basename(path)}.tmp-${randomBytes(6).toString('hex')}`);
   const fd = openSync(tmp, 'wx', mode);
@@ -22,7 +35,7 @@ export function writeFileDurable(path: string, data: string | Uint8Array, mode =
     const buf = typeof data === 'string' ? Buffer.from(data, 'utf8') : data;
     let off = 0;
     while (off < buf.length) off += writeSync(fd, buf, off, buf.length - off);
-    fsyncSync(fd);
+    if (sync) fsyncSync(fd);
   } catch (e) {
     closeSync(fd);
     try { unlinkSync(tmp); } catch { /* gone */ }
@@ -35,7 +48,7 @@ export function writeFileDurable(path: string, data: string | Uint8Array, mode =
     try { unlinkSync(tmp); } catch { /* gone */ }
     throw e;
   }
-  flushDirectory(dir, { bestEffort: true });
+  if (sync) flushDirectory(dir, { bestEffort: true });
 }
 
 /** The first `max` bytes of a file, plus its full size. */
