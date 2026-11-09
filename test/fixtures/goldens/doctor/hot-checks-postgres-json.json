@@ -1194,7 +1194,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 178/178 public tables",
+            "message": "RLS enabled on 181/181 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -1215,14 +1215,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1441 column(s) verified against live schema",
+            "message": "1468 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 178 table(s) the applied migrations create exist.",
+            "message": "All 181 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -4195,6 +4195,65 @@
           {
             "category": "brain",
             "details": {
+              "database_tier_ceiling_bytes": 268435456,
+              "docs": "docs/architecture/key-files/large-page-writes.md",
+              "engine": "postgres",
+              "git_first_floor": "<version>",
+              "index_consumer": true,
+              "sources": [
+                {
+                  "git_first": "off",
+                  "held_heads": 0,
+                  "history": "no_checkout",
+                  "off_reason": "not_strict",
+                  "pending_heads": 0,
+                  "source_id": "default",
+                  "strict": false
+                },
+                {
+                  "git_first": "off",
+                  "held_heads": 0,
+                  "history": "no_checkout",
+                  "off_reason": "not_strict",
+                  "pending_heads": 0,
+                  "source_id": "notes",
+                  "strict": false
+                },
+                {
+                  "git_first": "off",
+                  "held_heads": 0,
+                  "history": "no_checkout",
+                  "off_reason": "not_strict",
+                  "pending_heads": 0,
+                  "source_id": "plain",
+                  "strict": false
+                }
+              ],
+              "spool_free_bytes": "<volatile>",
+              "unsplit_ceiling_bytes": 25165824,
+              "writers_below_floor": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No source is strict (git-canonical); pages up to 268435456 bytes are stored on the database tier.",
+            "name": "large_pages",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "chunker_version": 5,
+              "count": "exact",
+              "informational": true,
+              "pages_pending": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every inline page with a bulleted timeline is chunked at bullet boundaries.",
+            "name": "inline_timeline_chunks",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "auto_repair": {
                 "active": false,
                 "enabled": true,
@@ -6316,7 +6375,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 178/178 public tables",
+            "message": "RLS enabled on 181/181 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -6337,14 +6396,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1441 column(s) verified against live schema",
+            "message": "1468 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 178 table(s) the applied migrations create exist.",
+            "message": "All 181 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -9324,6 +9383,65 @@
             "elapsed_ms": "<volatile>",
             "message": "The config file disables embeddings and the database holds no vectors.",
             "name": "embedding_plane_disagreement",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "database_tier_ceiling_bytes": 268435456,
+              "docs": "docs/architecture/key-files/large-page-writes.md",
+              "engine": "postgres",
+              "git_first_floor": "<version>",
+              "index_consumer": true,
+              "sources": [
+                {
+                  "git_first": "off",
+                  "held_heads": 0,
+                  "history": "no_checkout",
+                  "off_reason": "not_strict",
+                  "pending_heads": 0,
+                  "source_id": "default",
+                  "strict": false
+                },
+                {
+                  "git_first": "off",
+                  "held_heads": 0,
+                  "history": "no_checkout",
+                  "off_reason": "not_strict",
+                  "pending_heads": 0,
+                  "source_id": "notes",
+                  "strict": false
+                },
+                {
+                  "git_first": "off",
+                  "held_heads": 0,
+                  "history": "no_checkout",
+                  "off_reason": "not_strict",
+                  "pending_heads": 0,
+                  "source_id": "plain",
+                  "strict": false
+                }
+              ],
+              "spool_free_bytes": "<volatile>",
+              "unsplit_ceiling_bytes": 25165824,
+              "writers_below_floor": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No source is strict (git-canonical); pages up to 268435456 bytes are stored on the database tier.",
+            "name": "large_pages",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "chunker_version": 5,
+              "count": "exact",
+              "informational": true,
+              "pages_pending": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every inline page with a bulleted timeline is chunked at bullet boundaries.",
+            "name": "inline_timeline_chunks",
             "status": "ok"
           },
           {
