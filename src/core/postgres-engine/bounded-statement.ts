@@ -103,6 +103,7 @@ export async function runDeadlineRead<T>(conn: Sql, deadlineAt: number, run: (tx
       gauge.release('reserved');
     };
     const stuck = setTimeout(() => { reserved.discard(); settle(); }, Math.max(deadlineAt - Date.now(), settleMs));
+    stuck.unref?.();
     void reserved.unsafe('COMMIT').execute().then(settle, settle);
   }
 }
