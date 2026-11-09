@@ -48,6 +48,13 @@ describe('#8266 a bearer token with an escaped slash is redacted whole', () => {
     expect(redactFindings(line).text.includes(token)).toBe(false);
   });
 
+  test('a bare echo of an escaped token, written with a plain slash, is redacted too', () => {
+    const [head, tail] = [alnum(24), alnum(24)];
+    const out = redactFindings(`{"h":"Bearer ${head}\\/${tail}"}\nlater: ${head}/${tail} end`).text;
+    expect(out).not.toContain(head);
+    expect(out).not.toContain(tail);
+  });
+
   test('the token still ends at an escaped newline or quote', () => {
     const tok = alnum(40);
     expect(redactFindings(`{"h":"Bearer ${tok}\\nnext"}`).text).toBe('{"h":"Bearer <REDACTED:bearer>\\nnext"}');

@@ -83,6 +83,24 @@ test('a dry run or a refused remove/purge deletes no page', () => fixture(async 
   expect(await registered()).toBe(1);
 }), 60_000);
 
+test('a lock wait stops the remove with write_pending instead of shrinking the batch; the retry resumes at full size', () => fixture(async () => {
+  await engine.executeRaw('CREATE SEQUENCE retire_lock_seq');
+  await engine.executeRaw(`CREATE FUNCTION retire_lock_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    IF nextval('retire_lock_seq') = 1 THEN RAISE EXCEPTION 'canceling statement due to lock timeout' USING ERRCODE = 'lock_not_available'; END IF;
+    RETURN NULL; END $$`);
+  await engine.executeRaw('CREATE TRIGGER retire_lock AFTER DELETE ON pages FOR EACH STATEMENT EXECUTE FUNCTION retire_lock_fn()');
+  try {
+    const requestId = randomUUID();
+    const remove = () => runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: source, confirmDestructive: true, requestId });
+    await expect(remove()).rejects.toMatchObject({ code: 'write_pending', reason: 'lock_timeout' });
+    expect(await pages(source)).toBe(PAGES);
+    expect(await remove()).toMatchObject({ state: 'committed', operation: 'remove', pages_deleted: PAGES });
+    expect(await pages(source)).toBe(0);
+  } finally {
+    for (const sql of ['DROP TRIGGER IF EXISTS retire_lock ON pages', 'DROP FUNCTION IF EXISTS retire_lock_fn()', 'DROP SEQUENCE IF EXISTS retire_lock_seq']) await engine.executeRaw(sql);
+  }
+}), 60_000);
+
 test('an interrupted batch keeps the committed batches and the same request_id resumes to completion', () => fixture(async () => {
   await engine.executeRaw('CREATE TABLE retire_fail(armed boolean NOT NULL, seen integer NOT NULL)');
   await engine.executeRaw(`CREATE FUNCTION retire_fail_fn() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE n integer; BEGIN

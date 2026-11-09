@@ -186,7 +186,8 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     // #7702/#8905: a remove or purge first deletes the source's pages in bounded batches, each its own transaction behind
     // the final transaction's preconditions; any precondition that would refuse or replay stops batching and the final
     // transaction reports it. Committed batches are durable, so a retry with the same request_id resumes. A batch that
-    // hits the statement bound is retried at half the size, so heavy pages still fit.
+    // hits the statement bound is retried at half the size, so heavy pages still fit; a lock wait or a busy writer stops
+    // the run with write_pending instead, and the retry resumes at full size.
     let retiredPages=0;
     try{
     const retireBatch=async(limit:number):Promise<number|null>=>{ try{ return await topologyTransaction(engine,async tx=>{
@@ -206,7 +207,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         retiredPages+=gone.length;
         return gone.length;
       }); }catch(error){
-        if(error instanceof OperationError&&error.code==='write_pending'&&limit>1) return null;
+        if(error instanceof OperationError&&error.code==='write_pending'&&error.reason==='statement_timeout'&&limit>1) return null;
         throw error;
       } };
     if(['remove','purge'].includes(input.operation)&&input.confirmDestructive&&!missingCheckout&&!admission)

@@ -1322,6 +1322,8 @@ function addEchoValue(into: EchoDictionary, pattern: string, value: string): voi
   for (const claimedBy of into.values()) if (VENDOR_ECHO_PATTERNS.has(claimedBy) === vendor) used++;
   if (used >= (vendor ? ECHO_MAX_UNIQUE_VENDOR : ECHO_MAX_UNIQUE)) return;
   into.set(value, pattern);
+  const unescaped = value.replaceAll('\\/', '/');
+  if (unescaped !== value) addEchoValue(into, pattern, unescaped);
 }
 
 /**

@@ -98,7 +98,9 @@ export async function sweepContacts(
     // list from page 1, once.
     let pageToken = resumeToken;
     if (resumeToken) deps.log('[google] contacts full re-list resuming at its checkpointed page');
-    for (let pages = 0; pages < pageBudget && !listed; pages++) {
+    // A failing contact not yet held freezes the cursor before its page, so while blocked the run lists to the end, as
+    // it did before the budget: every later contact still lands in this run.
+    for (let pages = 0; (pages < pageBudget || blocked) && !listed; pages++) {
       let page;
       try {
         page = await people.listConnectionsPage(pageToken, signal);

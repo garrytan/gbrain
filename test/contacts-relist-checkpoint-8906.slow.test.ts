@@ -197,6 +197,23 @@ describe('contacts full re-list checkpoints (#8906)', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 240_000);
+test('a contact that keeps failing transiently does not hide the contacts past the page budget: a blocked run lists to the end', async () => {
+    const { dir, cfg } = await googleSource();
+    await engine.executeRaw(`CREATE FUNCTION relist_fail_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.title = 'Person c00200 Example' THEN RAISE EXCEPTION 'injected transient contact failure'; END IF; RETURN NEW; END $$`);
+    await engine.executeRaw('CREATE TRIGGER relist_fail BEFORE INSERT ON pages FOR EACH ROW EXECUTE FUNCTION relist_fail_fn()');
+    try {
+      const api = peopleApi(12);
+      expect((await sync(cfg, api.fetchImpl)).status).toBe('partial');
+      expect(api.served).toEqual(Array.from({ length: 12 }, (_, i) => 'p' + (i + 1)));
+      expect(await personPages()).toBe(2_399);
+      expect(relistOf(dir)?.page_token).toBe('p2');
+      expect(readGoogleState(dir).contacts_sync_token).toBeNull();
+    } finally {
+      for (const sql of ['DROP TRIGGER IF EXISTS relist_fail ON pages', 'DROP FUNCTION IF EXISTS relist_fail_fn()']) await engine.executeRaw(sql);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
 test('--full ignores a saved re-list checkpoint and the page budget: it lists from page 1 to the end before recording last_full_at', async () => {
     const { dir, cfg } = await googleSource();
     try {
