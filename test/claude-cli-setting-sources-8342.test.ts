@@ -60,6 +60,28 @@ describe('claude-cli keeps the user\'s own settings and CLAUDE.md out of the chi
     expect(settingSources(await stub(`${SETTING_SOURCES_MIN_VERSION} (Claude Code)`).call())).toBe('');
   });
 
+  test('a --version that ignores SIGTERM is killed at 5 s, runs in the clean cwd, and the call goes on', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-setting-sources-hang-'));
+    dirs.push(dir);
+    const bin = join(dir, 'claude');
+    writeFileSync(bin, [
+      '#!/bin/sh',
+      `if [ "$1" = "--version" ]; then pwd > "${dir}/probe-cwd"; trap '' TERM; sleep 30; echo '2.1.316 (Claude Code)'; exit 0; fi`,
+      'cat > /dev/null',
+      `: > "${dir}/argv"`,
+      `for a in "$@"; do printf '[%s]\\n' "$a" >> "${dir}/argv"; done`,
+      `echo '${JSON.stringify(SUCCESS)}'`,
+    ].join('\n') + '\n');
+    chmodSync(bin, 0o755);
+    const started = Date.now();
+    await withEnv({ GBRAIN_CLAUDE_CLI_BIN: bin }, () => new ClaudeCliLanguageModel('claude-sonnet-5-5').doGenerate({
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Reply OK' }] }],
+    } as LanguageModelV2CallOptions));
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(settingSources(readFileSync(join(dir, 'argv'), 'utf8').trimEnd().split('\n').map((l) => l.slice(1, -1)))).toBeNull();
+    expect(readFileSync(join(dir, 'probe-cwd'), 'utf8').trim()).not.toBe(process.cwd());
+  }, 30_000);
+
   test('an older or unreadable version keeps today\'s argv', async () => {
     for (const line of ['2.1.313 (Claude Code)', '2.0.60 (Claude Code)', 'not a version']) {
       const argv = await stub(line).call();

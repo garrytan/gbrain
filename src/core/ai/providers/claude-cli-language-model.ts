@@ -354,10 +354,10 @@ export function oldClaudeCliMessage(version: string | null): string {
   return `claude CLI ${MIN_CLAUDE_CLI_VERSION} or newer required (found ${version ?? 'an unknown version'}); upgrade Claude Code`;
 }
 
-/** `claude --version`'s version number, or null. Only called after a failed
- * run, so the extra spawn never sits on the success path. */
+/** `claude --version`'s version number, or null, run like a real call (clean
+ * cwd, scrubbed env) and killed outright after 5 s. */
 function claudeCliVersion(env: NodeJS.ProcessEnv): string | null {
-  const r = spawnSync(claudeBin(), ['--version'], { encoding: 'utf8', timeout: 5_000, env });
+  const r = spawnSync(claudeBin(), ['--version'], { encoding: 'utf8', timeout: 5_000, killSignal: 'SIGKILL', cwd: ensureCleanCwd(), env });
   return /\d+\.\d+\.\d+/.exec(typeof r.stdout === 'string' ? r.stdout : '')?.[0] ?? null;
 }
 
@@ -366,27 +366,20 @@ function claudeCliVersion(env: NodeJS.ProcessEnv): string | null {
  * the argv above. */
 export const SETTING_SOURCES_MIN_VERSION = '2.1.314';
 
-const settingSourcesProbes = new Map<string, Promise<boolean>>();
+const settingSourcesByBin = new Map<string, boolean>();
 
-/** Whether the CLI at `bin` is SETTING_SOURCES_MIN_VERSION or newer: one
+/** Whether the configured CLI is SETTING_SOURCES_MIN_VERSION or newer: one
  * `claude --version` per binary per process; false when it cannot be read. */
-function takesNoSettingSources(bin: string): Promise<boolean> {
-  let probe = settingSourcesProbes.get(bin);
-  if (!probe) {
-    probe = new Promise((resolve) => {
-      let stdout = '';
-      const child = spawn(bin, ['--version'], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 });
-      child.stdout.on('data', (chunk) => { stdout += String(chunk); });
-      child.on('error', () => resolve(false));
-      child.on('close', () => {
-        const found = /(\d+)\.(\d+)\.(\d+)/.exec(stdout)?.slice(1).map(Number);
-        const min = SETTING_SOURCES_MIN_VERSION.split('.').map(Number);
-        resolve(!!found && (found[0]! - min[0]! || found[1]! - min[1]! || found[2]! - min[2]!) >= 0);
-      });
-    });
-    settingSourcesProbes.set(bin, probe);
+function takesNoSettingSources(env: NodeJS.ProcessEnv): boolean {
+  const bin = claudeBin();
+  let known = settingSourcesByBin.get(bin);
+  if (known === undefined) {
+    const found = claudeCliVersion(env)?.split('.').map(Number);
+    const min = SETTING_SOURCES_MIN_VERSION.split('.').map(Number);
+    known = !!found && (found[0]! - min[0]! || found[1]! - min[1]! || found[2]! - min[2]!) >= 0;
+    settingSourcesByBin.set(bin, known);
   }
-  return probe;
+  return known;
 }
 
 /**
@@ -406,14 +399,13 @@ export function thinkingDisabledBelowFloor(maxOutputTokens: number | undefined):
  * the parsed `--output-format json` envelope. Aborts propagate to SIGTERM on
  * the child.
  */
-async function runClaude(
+function runClaude(
   systemPrompt: string,
   userPrompt: string,
   model: string,
   signal?: AbortSignal,
   maxOutputTokens?: number,
 ): Promise<ClaudeRun> {
-  const noSettingSources = await takesNoSettingSources(claudeBin());
   return new Promise((resolve, reject) => {
     // #6424: forward the call's output cap. The inline --settings env sits
     // above the user's settings.json env block, so both carry it.
@@ -446,10 +438,6 @@ async function runClaude(
       // subscription login (credentials are not settings). Accepted by every
       // CLI that accepts the flags above.
       '--settings', settings,
-      // #8342: load no settings source, so the user's own ~/.claude/CLAUDE.md,
-      // memory and settings.json never steer this call. Unlike --bare this
-      // keeps the subscription login.
-      ...(noSettingSources ? ['--setting-sources', ''] : []),
     ];
     if (systemPrompt) {
       args.push('--system-prompt', systemPrompt);
@@ -484,6 +472,10 @@ async function runClaude(
     if (hermeticConfigDir) env.CLAUDE_CONFIG_DIR = hermeticConfigDir;
     if (outputCap) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = outputCap;
     if (thinkingOff) env.MAX_THINKING_TOKENS = '0';
+    // #8342: load no settings source, so the user's own ~/.claude/CLAUDE.md,
+    // memory and settings.json never steer this call. Unlike --bare this
+    // keeps the subscription login.
+    if (takesNoSettingSources(env)) args.push('--setting-sources', '');
     const child = spawn(claudeBin(), args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: ensureCleanCwd(),
