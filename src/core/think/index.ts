@@ -740,7 +740,7 @@ export async function runThink(
       const trajIntent = thinkDecide ? await thinkDecide.trajectoryIntent(classifyIntent(opts.question)) : classifyIntent(opts.question);
       if (trajIntent === 'temporal' || trajIntent === 'knowledge_update') {
         const { extractCandidateEntities } = await import('./entity-extract.ts');
-        const retrievedSlugs = gather.pages.map(p => p.slug);
+        const retrievedSlugs = [...gather.pages.map(p => p.slug), ...gather.outsideWindowSlugs];
         const candidates = extractCandidateEntities(opts.question, retrievedSlugs);
         if (candidates.length > 0) {
           const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
@@ -782,9 +782,17 @@ export async function runThink(
                   if (err instanceof OperationTimeoutError) return [];
                   throw err;
                 });
+                // A metric's latest reading before the window is the value in force when it opens (GST-731), so it stays.
+                const inForce = new Map<string, { fact_id: number; valid_from: Date }>();
+                if (window?.startMs != null) {
+                  for (const point of points) {
+                    const prior = point.metric === null ? undefined : inForce.get(point.metric);
+                    if (point.metric !== null && point.valid_from.getTime() < window.startMs && (!prior || point.valid_from >= prior.valid_from)) inForce.set(point.metric, point);
+                  }
+                }
                 const boundedPoints = window ? points.filter(point => {
                   const ms = point.valid_from.getTime();
-                  const outside = (window.startMs !== null && ms < window.startMs)
+                  const outside = (window.startMs !== null && ms < window.startMs && inForce.get(point.metric ?? '')?.fact_id !== point.fact_id)
                     || (window.endMs !== null && ms > window.endMs);
                   if (outside) trajectoryExcludedCount++;
                   return !outside;

@@ -80,16 +80,16 @@ export function resolvePageDateMs(page: DatedPage): number | null {
 
 export function filterPagesToWindow<T extends DatedPage>(pages: T[], window: TemporalWindow) {
   const kept: T[] = [];
-  let droppedOutOfWindow = 0;
+  const dropped: T[] = [];
   let undatedKept = 0;
   for (const page of pages) {
     const ms = resolvePageDateMs(page);
     if (ms === null) { undatedKept++; kept.push(page); continue; }
     if ((window.startMs !== null && ms < window.startMs) || (window.endMs !== null && ms > window.endMs)) {
-      droppedOutOfWindow++;
+      dropped.push(page);
     } else kept.push(page);
   }
-  return { kept, droppedOutOfWindow, undatedKept };
+  return { kept, dropped, droppedOutOfWindow: dropped.length, undatedKept };
 }
 
 // PR #5086 (@tarush1989), wave 14 P3.17: a window from exactly one explicit date in the question.

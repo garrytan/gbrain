@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**`think` keeps an entity's trajectory when the question names a month.** A question such as "What was the MRR of acme-example in April 2026?" bounds think's evidence to April (PR #5086), and that window used to cost the trajectory block twice over: a metric whose readings fall before and after April (March and June) injected nothing, although the March reading was the value in force all April; and an entity page last edited outside April was dropped from the gathered pages, so when the question's noun phrase ("the acme-example team") did not resolve on its own, no entity was found. Each metric's latest reading before the window now joins the readings inside it, and pages the window drops still name the entities whose trajectory is read; they stay out of the evidence. BrainBench Cat 25's hermetic gate goes from 4 of 6 probes (FAIL) to 6 of 6 (PASS).
+
+### Itemized changes
+
+- `src/core/think/index.ts`: the trajectory window filter keeps each metric's latest point before the window start (events are not carried); candidate entities come from the gathered pages plus the pages the window dropped.
+- `src/core/think/gather.ts`: `ThinkGatherResult.outsideWindowSlugs` lists the pages the window dropped.
+- `src/core/think/temporal-window.ts`: `filterPagesToWindow` also returns the dropped pages.
+- Tests: `test/think-trajectory-window.test.ts` (a month with no reading of its own gets the March reading and not January's or June's; an entity page dated outside the month still routes its trajectory). Each test fails with its own fix reverted.
+
 ## [0.60.620.0] - 2026-11-09
 
 **A diverged managed checkout now publishes its local commits on refresh by default when Git durability is on, after a secret scan of those commits.** Commits a script made with plain `git commit` in a managed checkout used to strand there whenever the remote moved: every `gbrain sources refresh` refused `refresh_diverged` and asked the user, unless `sources.refresh_publish_diverged` was set to `true`. With the setting unset, a worktree whose Git durability is on (`gbrain sources writer git-durability <source> --enable`, or the legacy hook) now publishes them itself: the local commits merged with the upstream in memory, never a rebase or force-push, then the fast-forward. The publish child scans, under its publish lock and for the exact commits it pushes, what they add: commit messages, added lines (including a value a later commit removed) and merge-commit conflict resolutions. A value that looks like a secret, added text too large to scan, or a commit that changes `.gbrain-scan-allow` or a `.gitattributes` refuses the new `publish_secret_found` naming the file, line, rule and commit, never the value, with nothing pushed; commits the scan cannot read in full refuse `publish_scan_unreadable` instead. The rewritten-upstream refusal and the `--expect-remote` bound are unchanged. `false` turns it off; `true` still publishes with durability off.
