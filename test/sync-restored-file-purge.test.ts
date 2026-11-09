@@ -227,6 +227,29 @@ for (const backend of testBackends()) {
       expect((await page(engine, A))?.deleted_at).toBeNull();
       expect(await status(engine)).toEqual({ state: 'synced', reason: 'nothing_pending' });
     }, { setup, databaseUrl }), 300_000);
+
+    test("the upgrade's first sync brings back a sync-deleted page but leaves a page a person deleted deleted, though Git holds its file", () => managedBrain(async ({ engine, ctx, root }) => {
+      await sync(engine);
+      await personDelete(engine, ctx, USER);
+      if (git(root, 'status', '--porcelain', '--', `${USER}.md`)) commit(root, `remove ${USER}`);
+      git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'revert', '--no-edit', git(root, 'log', '-1', '--format=%H', '--', `${USER}.md`));
+      fileKept(root, USER);
+      await removeAndSync(engine, root, [A]);
+      git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'revert', '--no-edit', 'HEAD');
+      // What an older version's pass left: converged at the restored HEAD under its own fingerprint, both pages deleted beside their files.
+      const head = git(root, 'rev-parse', 'HEAD');
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys = jsonb_set(jsonb_set(completed_keys, '{0,obligations,converged,target}', to_jsonb($2::text)),
+        '{0,obligations,converged,selection_fp}', '"older-version"') WHERE op=$1`, [MANAGED_SYNC_PASS_OP, head]);
+      await engine.executeRaw("UPDATE sources SET last_commit=$1 WHERE id='default'", [head]);
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      expect((await page(engine, A))?.deleted_at).not.toBeNull();
+      expect((await page(engine, USER))?.deleted_at).not.toBeNull();
+      await sync(engine);
+      expect((await page(engine, A))?.deleted_at).toBeNull();
+      expect((await page(engine, USER))?.deleted_at).not.toBeNull();
+      fileKept(root, USER);
+    }, { setup, databaseUrl }), 300_000);
   });
 
   describe(`${backend}: the retention purge never removes a file that is committed`, () => {
