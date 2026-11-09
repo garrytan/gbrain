@@ -290,6 +290,32 @@ export async function pruneRetrievalFeedback(engine: BrainEngine, retentionDays:
   return { events: Number(events[0]?.n ?? 0), weights: Number(weights[0]?.n ?? 0) };
 }
 
+/**
+ * #8821: a hard-deleted page's slug leaves its source's retrieval logs, ratings and weights (as a page key or either
+ * end of a `from|type|to` edge key) and the captured eval candidates whose results came from that source. Runs inside
+ * the purge's transaction; returns rows touched per store, keyed as the purge receipt names them.
+ */
+export async function scrubPurgedSlugs(
+  engine: Pick<BrainEngine, 'executeRaw'>,
+  sourceId: string,
+  slugs: readonly string[],
+): Promise<Record<string, number>> {
+  if (!slugs.length) return {};
+  const edgeNames = (key: string) => `EXISTS (SELECT 1 FROM unnest($2::text[]) AS s(slug) WHERE starts_with(${key}, s.slug || '|') OR right(${key}, length(s.slug) + 1) = '|' || s.slug)`;
+  const count = async (sql: string) => (await engine.executeRaw(sql, [sourceId, [...slugs]])).length;
+  return {
+    retrieval_event_pages: await count('DELETE FROM retrieval_event_pages WHERE source_id = $1 AND slug = ANY($2::text[]) RETURNING 1'),
+    retrieval_event_links: await count(`DELETE FROM retrieval_event_links WHERE source_id = $1 AND (to_slug = ANY($2::text[]) OR ${edgeNames('edge_key')}) RETURNING 1`),
+    retrieval_feedback: await count(`DELETE FROM retrieval_feedback WHERE source_id = $1
+      AND ((element_kind = 'page' AND element_key = ANY($2::text[])) OR (element_kind = 'link' AND ${edgeNames('element_key')})) RETURNING 1`),
+    retrieval_weights: await count(`DELETE FROM retrieval_weights WHERE source_id = $1
+      AND ((element_kind = 'page' AND element_key = ANY($2::text[])) OR (element_kind = 'link' AND ${edgeNames('element_key')})) RETURNING 1`),
+    'eval_candidates.retrieved_slugs': await count(`UPDATE eval_candidates
+      SET retrieved_slugs = ARRAY(SELECT s FROM unnest(retrieved_slugs) WITH ORDINALITY AS u(s, n) WHERE s <> ALL($2::text[]) ORDER BY n)
+      WHERE $1 = ANY(source_ids) AND retrieved_slugs && $2::text[] RETURNING 1`),
+  };
+}
+
 export async function resetRetrievalWeights(
   engine: BrainEngine,
   opts: { sourceId?: string; slug?: string },

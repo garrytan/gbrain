@@ -60,11 +60,12 @@ import { pageChangeReasons, requestsRecordingReasons, stripPageGitNotes } from '
 import { assertHeldPageKeys } from '../page-state/guards.ts';
 import { noteBelief } from '../belief/ledger.ts';
 import { appendPurgeIntent } from '../belief/purge-mirror.ts';
+import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { appendDerivedHidden, bumpPurgeEpoch, derivedBeliefTargets, derivedStreamSlugs, pageLifetimesOf, pagePurgeClaims, redactCarryingFields, redactPurgedKeys, registerLiveCarriers,
   sourceHasBeliefEvents, type LedgerPurgeReport } from '../belief/purge.ts';
 
 export const PURGE_RESIDUALS = 'Removed from live stores: the page row with its chunks, versions, takes, timeline, links and raw data, the facts filed on it (tombstoned), '
-  + 'its take proposals, open loops and core notices, stored write intents for the slug and its attached file records. Still out of reach: the brain repository\'s '
+  + 'its take proposals, open loops and core notices, the retrieval feedback and captured eval results naming the slug, stored write intents for the slug and its attached file records. Still out of reach: the brain repository\'s '
   + 'git history and every other clone or remote, Markdown exports and compiled context files, backups, provider copies (embeddings, decisions), and deleted rows '
   + 'in database pages and the write-ahead log until vacuum. Rotate any exposed credential.';
 
@@ -324,6 +325,7 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
   removed.page_aliases = await count('DELETE FROM page_aliases WHERE source_id=$1 AND slug=$2 RETURNING 1', [sourceId, slug]);
   removed.slug_aliases = await count('DELETE FROM slug_aliases WHERE source_id=$1 AND canonical_slug=$2 RETURNING 1', [sourceId, slug]);
   removed.slug_rename_history = await count('DELETE FROM slug_rename_history WHERE source_id=$1 AND new_slug=$2 RETURNING 1', [sourceId, slug]);
+  Object.assign(removed, await scrubPurgedSlugs(tx, sourceId, [slug]));
   // #6511 [R2]: the preparation sweep's targets, plus the tail past its ceiling and the rows pending at scan time, re-tested here.
   const recheck = await lookup('tail_recheck', () => recheckRequestsCarrying(tx, sourceId, needles, prepared.sweep,
     { exclude: row.id, beforePending: () => faultPoint('purge:pending_recheck', { requestId: row.request_id, sourceId, operation: row.operation }) }));
