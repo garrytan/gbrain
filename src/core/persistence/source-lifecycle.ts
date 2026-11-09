@@ -281,6 +281,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         pagesDeleted=Number(impact.count);
         await tx.executeRaw('DELETE FROM sources WHERE id=$1 AND incarnation=$2::uuid',[input.sourceId,incarnation]);
         await tx.executeRaw('DELETE FROM persistence_source_bindings WHERE source_id=$1 AND source_incarnation=$2::uuid',[input.sourceId,incarnation]);
+        await tx.executeRaw("DELETE FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1",[input.sourceId]);
       }
       const contentReceipts=input.operation==='rebind'?await rebindContentReceipts(tx,worktrees,hostIdFor(tx),relocated?undefined:[input.sourceId]):[];
       await advanceTopology(tx,worktrees);
