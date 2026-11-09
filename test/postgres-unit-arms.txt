@@ -70,6 +70,7 @@ test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
 test/derived-link-reconciliation.test.ts
 test/direct-pool-profile.test.ts
+test/doctor-attest-read-shared-scope.test.ts
 test/doctor-frontmatter-holds.test.ts
 test/doctor-image-embedding-coverage.test.ts
 test/doctor-keyword-plan-6495.test.ts
@@ -455,6 +456,7 @@ test/purge-missing-cache-6911.test.ts
 test/purge-read-surfaces.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
 test/qm-memory-tools.test.ts
+test/qm-scope-read.test.ts
 test/qm-scope-writes.test.ts
 test/read-meta-diag.test.ts
 test/reason-trailers-gbra217.test.ts
