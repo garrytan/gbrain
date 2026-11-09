@@ -172,7 +172,7 @@ CODE INDEXING (v0.19.0 / v0.20.0 Cathedral II)
   code-callees <symbol>              What does this symbol call? (v0.20.0 A1)
   query <q> --lang <l>               Filter hybrid search to one language (v0.20.0)
   query <q> --symbol-kind <k>        Filter to symbol type (function|class|method|...) (v0.20.0)
-  reconcile-links [--dry-run]        Batch-recompute doc↔impl edges (v0.20.0)
+  reconcile-links [--source id] [--dry-run] Batch-recompute doc↔impl edges in one source
   reindex-code [--source id] [--yes] [--force] Explicit code-page reindex (v0.20.0; --force re-chunks unchanged pages)
   reindex-search-vector [--dry-run] [--yes] [--json]
                                 Recreate FTS triggers + backfill under
