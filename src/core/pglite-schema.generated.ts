@@ -1381,11 +1381,16 @@ CREATE TABLE IF NOT EXISTS embedding_spend (
 );
 CREATE INDEX IF NOT EXISTS embedding_spend_window ON embedding_spend (source_id, at);
 CREATE INDEX IF NOT EXISTS embedding_spend_page ON embedding_spend (page_id, at) WHERE kind = 'tail';
-DO \$rls\$ BEGIN
+DO \$rls\$
+DECLARE target TEXT;
+BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE page_embedding_progress ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE embedding_batches ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE embedding_spend ENABLE ROW LEVEL SECURITY;
+    FOREACH target IN ARRAY ARRAY['page_embedding_progress','embedding_batches','embedding_spend'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                 WHERE n.nspname = current_schema() AND c.relname = target AND c.relkind = 'r' AND NOT c.relrowsecurity) THEN
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', target);
+      END IF;
+    END LOOP;
   END IF;
 END \$rls\$;
 CREATE TABLE IF NOT EXISTS chronicle_page_state (
