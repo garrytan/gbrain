@@ -84,6 +84,23 @@ describe('resolveSessionSpeaker', () => {
       .toEqual({ kind: 'agent', principal: 'agent-launched', source: 'detected' });
     expect(resolveSessionSpeaker({ env: {}, ancestry: () => [WORKER] })).toEqual({ kind: 'owner' });
   });
+
+  test('#8080: a Remote Control session is the owner\'s; a worker it launches is still an agent\'s', () => {
+    const session: AncestorProcess = { pid: 30, args: ['/usr/local/bin/claude', '--print', '--sdk-url', 'https://api.example.com/sessions/s1', '--input-format', 'stream-json'] };
+    for (const sub of ['remote-control', 'rc', 'remote', 'sync', 'bridge']) {
+      expect(detectAgentLaunched([session, { pid: 31, args: ['/usr/local/bin/claude', sub, '--spawn=worktree'] }])).toBe(false);
+    }
+    const nodeHost: AncestorProcess = { pid: 32, args: ['node', '/x/node_modules/@anthropic-ai/claude-code/cli.js', 'remote-control'] };
+    expect(detectAgentLaunched([session, nodeHost])).toBe(false);
+    expect(resolveSessionSpeaker({ env: {}, ancestry: () => [session, nodeHost] })).toEqual({ kind: 'owner' });
+    expect(detectAgentLaunched([WORKER, SHELL, session, nodeHost])).toBe(true);
+    expect(detectAgentLaunched([{ pid: 4, args: ['/opt/codex', 'exec', 'task'] }, session, nodeHost])).toBe(true);
+    expect(detectAgentLaunched([WORKER, { pid: 33, args: ['/usr/local/bin/claude', '--remote-control'] }])).toBe(true);
+    expect(detectAgentLaunched([WORKER, { pid: 34, args: ['/usr/local/bin/claude', '--verbose', 'remote-control'] }])).toBe(true);
+    expect(detectAgentLaunched([WORKER, { pid: 35, args: ['/usr/local/bin/claude', '-p', 'remote-control'] }])).toBe(true);
+    expect(detectAgentLaunched([WORKER, { pid: 36, args: ['/opt/codex', 'remote-control'] }])).toBe(true);
+    expect(detectAgentLaunched([WORKER, { pid: 37, args: ['/usr/local/bin/claude', 'sync'] }])).toBe(true);
+  });
 });
 
 describe('hook banking with a session speaker', () => {

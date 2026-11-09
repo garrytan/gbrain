@@ -310,7 +310,9 @@ GBRAIN_SESSION_AGENT=fleet-worker claude -p "$(render-brief task-42)"
 as agent-launched when its harness process runs headless (`claude -p` or
 `--print`, `codex exec`) and another `claude` or `codex` process is one of
 its ancestors. Its claims are saved as agent `agent-launched`'s. A headless
-session you start yourself from a terminal is still yours. Detection reads the
+session you start yourself from a terminal is still yours, and so is a session
+a `claude remote-control` server hosts for you (a worker that session launches
+is still agent-launched). Detection reads the
 process table and can miss a launcher that detaches its workers, and it never
 fires for a launcher that is not itself claude or codex (a cron job, a script
 or a daemon running `claude -p`). For those the variable is the only signal,
