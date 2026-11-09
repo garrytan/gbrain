@@ -7705,8 +7705,8 @@ vars — incident-time escape hatches, not everyday knobs.
 
    `gbrain sources git-reconcile` does this for every source checkout on the
    host at once: a managed checkout goes through the refresh above; a checkout
-   gbrain cloned for the source (a recorded remote URL, the source folder at the
-   repository root) publishes its local commits the same way (secret scan,
+   gbrain cloned for the source (`gbrain sources add --url`, the source folder
+   at the repository root) publishes its local commits the same way (secret scan,
    rewrite check, merge in memory, bound to the upstream it checked so a
    force-push in between refuses) and fast-forwards when it is only behind. Any
    other checkout, such as a source folder inside a repository gbrain did not
