@@ -38,6 +38,31 @@ const base: TerminalInput = { source_id: 'src', slug: 'notes/a', operation: 'put
   blocked_reason: null, compacted: false };
 
 describe('classifyTerminal', () => {
+  // #7646: a fault no sync and no caller retries must not advertise a retry; a compacted put_page (intent kind gone, so it may be
+  // a reconcile or managed write) gets the inspect, never the resubmit advice.
+  test('safe_actions follow the fix on non-sync faults, and a compacted put_page gets the inspect only', () => {
+    const stalled = { ...base, error_code: 'preparation_stalled' };
+    const live = classifyTerminal(stalled)!;
+    expect(live.safe_actions).toEqual(['retry', 'upgrade']);
+    expect(live.action.why).toContain('resubmit the same put_page with a new request_id');
+    const compacted = classifyTerminal({ ...stalled, compacted: true, intent_kind: null })!;
+    expect(compacted.action.argv).toEqual(['gbrain', 'sources', 'writer', 'status', '--source', 'src', '--json']);
+    expect(compacted.action.why).not.toContain('resubmit');
+    expect(compacted.safe_actions).toEqual(['none']);
+    const facts = classifyTerminal({ ...stalled, operation: 'extract_facts' })!;
+    expect(facts.action.why).toContain('it was not part of a sync');
+    expect(facts.safe_actions).toEqual(['none']);
+    expect(classifyTerminal({ ...stalled, operation: 'submit_job' })!.safe_actions).toEqual(['retry', 'upgrade']);
+  });
+
+  test('a retryable fault on a caller-submitted loop, proposal, trust or relink write keeps its resubmit advice', () => {
+    for (const operation of ['loops_close', 'decide_proposal', 'trust_owner_page', 'trust_release', 'relink_facts']) {
+      const verdict = classifyTerminal({ ...base, error_code: 'preparation_stalled', operation })!;
+      expect(verdict.action.why).toContain(`resubmit the same ${operation} with a new request_id`);
+      expect(verdict.safe_actions).toEqual(['retry', 'upgrade']);
+    }
+  });
+
   test('routes storage_error by origin, and an origin-less compacted one is diagnosis_required', () => {
     expect(classifyTerminal({ ...base, error_code: 'storage_error', error_detail: { origin: 'owner_exception', error_class: 'TypeError' } }))
       .toMatchObject({ category: 'owner_exception', defect: true, needs_human: true });
@@ -470,6 +495,8 @@ for (const kind of testBackends()) describe(`the aggregate, doctor and the drill
       if (rows.status !== 'ok') throw new Error('unknown');
       expect(rows.rows!.length).toBe(g.rows);
       expect(rows.rows!.map(r => r.operation)).toEqual(['put_page']);
+      // #7646: a consumer that re-queries with the group's filter object gets the same rows as its drill-down.
+      expect(g.filter).toMatchObject({ operation: 'put_page' });
     }
   });
 
