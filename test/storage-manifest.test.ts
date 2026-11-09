@@ -9,7 +9,7 @@
  *   - the write guard: put_page and remember into the shelf are refused storage_source_managed, a forged parameter
  *     does not open it, and the storage verbs still write;
  *   - storage_get refuses a stored card that fails the card rules (a hand-edited card file with a command field)
- *     with storage_record_invalid, locally and remotely, without echoing the value;
+ *     with storage_record_invalid, locally and remotely, without echoing the value, and its revision repairs it;
  *   - register never overwrites (storage_card_exists); update binds to the revision it read (storage_revision_conflict
  *     carries the current one) and records a restore newest first;
  *   - register and update refuse remote callers; the shelf is not federated, so a remote connection reads cards only
@@ -160,6 +160,10 @@ describe('storage shelf on a repo-less brain', () => {
       expect({ code: r?.code, reason: r?.reason }).toEqual({ code: 'storage_record_invalid', reason: 'schema' });
       expect(r!.message).not.toContain('example.invalid');
     }
+    const refused = await operationsByName.storage_get!.handler(ctx(), { id: 'edited-item' }).then(() => null, (e: { detail?: string; suggestion?: string }) => e);
+    expect(refused?.suggestion).toContain(`gbrain storage-update edited-item --expected-revision ${refused?.detail}`);
+    await call('storage_update', { id: 'edited-item', expected_revision: refused!.detail, patch: { restore: { skill: 'restore-data', args: { id: 'edited-item' } } } });
+    expect((await call('storage_get', { id: 'edited-item' })).card.restore).toEqual({ skill: 'restore-data', args: { id: 'edited-item' } });
   }, 30_000);
 
   test('register never overwrites; update binds to its revision and records restores newest first', async () => {

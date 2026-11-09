@@ -47,7 +47,7 @@ export async function storageManifestCheck(engine: BrainEngine): Promise<Check> 
       ? { ask_user: true, consent: [], actor: 'user', requires_exclusive: false, docs: DOCS, why: 'Only the user knows where the shelf repository went (moved, deleted, or on another machine).',
         user_message: `The storage shelf's Git directory is missing: ${missingDirs.join(', ')}. Restore it from its push remote or a backup to the same path, then run gbrain doctor --only storage_manifest again.` }
       : invalid.length
-        ? agentFix(['gbrain', 'storage-get', invalid[0]!, '--json'], 'Read-only: shows the card so it can be fixed with gbrain storage-update and its revision.', NAME, { docs: DOCS })
+        ? agentFix(['gbrain', 'storage-get', invalid[0]!, '--json'], 'Read-only: names what the card breaks and its revision, so it can be fixed with gbrain storage-update.', NAME, { docs: DOCS })
         : agentFix(['gbrain', 'storage', 'adopt', ...(first && first !== 'default' ? ['--source', first] : []), '--json'], 'Read-only preview: the card each interim record maps to and the fields a card refuses; it writes nothing.', NAME, { docs: DOCS });
     return { name: NAME, status: 'warn', message: `Storage shelf: ${problems.join('; ')}.`, details, fix };
   } catch (error) {

@@ -20,7 +20,7 @@ async function principalLabel(ctx: OperationContext): Promise<string> {
   const principal = await requestPrincipalForContext(ctx);
   return `${principal.kind}:${principal.id}`;
 }
-import { cardContent, cardFromPage, cardPage, parseCardInput, STATUSES, STORES, withRestore, type Card, type CardInput, ORIGINS } from '../storage-manifest/schema.ts';
+import { cardFromPage, cardPage, parseCardInput, STATUSES, STORES, withRestore, type Card, type CardInput, ORIGINS } from '../storage-manifest/schema.ts';
 import { ensureStorageSource, storageDoorContext, STORAGE_SOURCE_ID } from '../storage-manifest/source.ts';
 import { findCards, listCards, type CardFilters } from '../storage-manifest/find.ts';
 
@@ -158,9 +158,12 @@ const storage_get: Operation = {
       throw opError('not_found', `No card ${id} on the storage shelf.`, 'Search with storage_find and the words people would use for the item; it lists the closest cards when nothing matches.',
         { fix: readFix('Finds cards by phrase, with the closest cards when nothing matches.', { argv: ['gbrain', 'storage-find', id, '--json'], mcp: { tool: 'storage_find', arguments: { query: id } } }) });
     }
-    if (!cardContent(found.card)) {
-      throw opError('storage_record_invalid', `Card ${id} on the storage shelf fails the card rules, so it is not served; nothing was changed.`,
-        'Ask the owner to correct the card (gbrain doctor --only storage_manifest lists the invalid cards), then read it again.', { reason: 'schema' });
+    const { registered_by: _by, origin: _origin, ...content } = found.card;
+    try { parseCardInput(content); } catch (error) {
+      if (!(error instanceof OperationError)) throw error;
+      throw opError('storage_record_invalid', `Card ${id} on the storage shelf fails the card rules, so it is not served (${error.message})`,
+        `Correct it with gbrain storage-update ${id} --expected-revision ${found.revision} --patch '<the fields to replace, as JSON>'; the patch is validated like a new card.`,
+        { reason: 'schema', detail: found.revision });
     }
     return { card: found.card, revision: found.revision, updated_at: found.updated_at, source_id: STORAGE_SOURCE_ID, registered_by: found.card.registered_by, origin: found.card.origin };
   },
