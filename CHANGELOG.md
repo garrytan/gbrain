@@ -24,7 +24,7 @@ Two unmanaged Google cases ended as held items that only a person could clear: a
 
 - Existing pages of forwarded emails keep their cut body until the thread changes again. Nothing is rewritten on upgrade.
 - Old Gmail threads already imported through the change feed stay in the brain and keep updating when they change. Shrinking the window or a full sync does not remove them.
-- When 50 item refreshes are already waiting for one GitHub source, a new item event is refused with HTTP 429 `webhook_backlog_full` instead of being acknowledged and dropped. Redeliver it from the webhook's Recent Deliveries, or let the next sweep catch it.
+- At 50 waiting item jobs for one GitHub source, a GitHub webhook for an item event that no waiting job covers now gets HTTP 429 `webhook_backlog_full` (`Retry-After: 30`), where it used to get 202 while the event was dropped. Redeliver it from the webhook's Recent Deliveries, or let the next sweep catch it.
 
 ### Itemized changes
 
