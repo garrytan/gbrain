@@ -128,8 +128,8 @@ test/frontmatter-reserved-keys-6454.test.ts
 test/g4-forget-fence-edit.test.ts
 test/gated-hold-strict-page-gst2535.test.ts
 test/get-chunks-paging.test.ts
-test/git-canonical-conversion-evidence-d4.test.ts
 test/ghost-pages-git-canonical-7967.test.ts
+test/git-canonical-conversion-evidence-d4.test.ts
 test/git-canonical-conversion-g8a.test.ts
 test/git-canonical-conversion-live-writer.test.ts
 test/git-canonical-conversion-no-checkout-7885.test.ts
@@ -334,6 +334,7 @@ test/migration-0-53-host-move-7900.test.ts
 test/migration-persistence-foreground-committed-index.test.ts
 test/migration-persistence-request-id-index.test.ts
 test/migration-persistence-request-slug-index.test.ts
+test/mirror-readonly-write-through-7098.test.ts
 test/notifier-passed-freshness-marker-7941.test.ts
 test/notifier-retry-unwatched-gst2515.test.ts
 test/on-commit-embedding.serial.test.ts
@@ -496,6 +497,7 @@ test/persistence-write-interrupted.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
+test/physical-root-copied-brain-fix-7671.test.ts
 test/privacy-label-ignored.test.ts
 test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
