@@ -22,13 +22,12 @@
  *   The subprocess is spawned from a dedicated tmpdir so claude-cli's
  *   CLAUDE.md auto-discovery has no local files to find. `--system-prompt`
  *   replaces the default system prompt; `--disable-slash-commands` skips
- *   skill resolution. User-level ~/.claude/CLAUDE.md still loads because
- *   the only way to skip it is `--bare`, which forces ANTHROPIC_API_KEY
- *   auth and defeats the whole point of this provider. The ~42k cached
- *   tokens from user-level instructions are accepted as a cost-trivial
- *   trade-off on the subscription path. #4119: when those user-level
- *   instructions must NOT leak into a measurement (SkillOpt rollouts),
- *   set GBRAIN_CLAUDE_CLI_HERMETIC_CONFIG — see resolveHermeticConfigDir.
+ *   skill resolution. On a CLI at SETTING_SOURCES_MIN_VERSION or newer,
+ *   `--setting-sources ""` keeps user-level ~/.claude/CLAUDE.md, memory and
+ *   settings out of the child (#8342) without `--bare`, which forces
+ *   ANTHROPIC_API_KEY auth; an older CLI still loads them. #4119: to isolate
+ *   the whole config dir (SkillOpt rollouts), set
+ *   GBRAIN_CLAUDE_CLI_HERMETIC_CONFIG — see resolveHermeticConfigDir.
  *
  * doStream is not yet implemented; the model declares no streaming. Callers
  * (gateway.toolLoop primarily) use doGenerate.
@@ -362,6 +361,34 @@ function claudeCliVersion(env: NodeJS.ProcessEnv): string | null {
   return /\d+\.\d+\.\d+/.exec(typeof r.stdout === 'string' ? r.stdout : '')?.[0] ?? null;
 }
 
+/** Oldest claude CLI that gets `--setting-sources ""` (#8342): 2.1.314 fixed
+ * an excluded settings file still supplying some settings. Older CLIs keep
+ * the argv above. */
+export const SETTING_SOURCES_MIN_VERSION = '2.1.314';
+
+const settingSourcesProbes = new Map<string, Promise<boolean>>();
+
+/** Whether the CLI at `bin` is SETTING_SOURCES_MIN_VERSION or newer: one
+ * `claude --version` per binary per process; false when it cannot be read. */
+function takesNoSettingSources(bin: string): Promise<boolean> {
+  let probe = settingSourcesProbes.get(bin);
+  if (!probe) {
+    probe = new Promise((resolve) => {
+      let stdout = '';
+      const child = spawn(bin, ['--version'], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 });
+      child.stdout.on('data', (chunk) => { stdout += String(chunk); });
+      child.on('error', () => resolve(false));
+      child.on('close', () => {
+        const found = /(\d+)\.(\d+)\.(\d+)/.exec(stdout)?.slice(1).map(Number);
+        const min = SETTING_SOURCES_MIN_VERSION.split('.').map(Number);
+        resolve(!!found && (found[0]! - min[0]! || found[1]! - min[1]! || found[2]! - min[2]!) >= 0);
+      });
+    });
+    settingSourcesProbes.set(bin, probe);
+  }
+  return probe;
+}
+
 /**
  * #6918: Claude Code thinks by default on Claude 5 models, and the API needs
  * thinking.budget_tokens of at least 1024 and below max_tokens, so a call
@@ -379,13 +406,14 @@ export function thinkingDisabledBelowFloor(maxOutputTokens: number | undefined):
  * the parsed `--output-format json` envelope. Aborts propagate to SIGTERM on
  * the child.
  */
-function runClaude(
+async function runClaude(
   systemPrompt: string,
   userPrompt: string,
   model: string,
   signal?: AbortSignal,
   maxOutputTokens?: number,
 ): Promise<ClaudeRun> {
+  const noSettingSources = await takesNoSettingSources(claudeBin());
   return new Promise((resolve, reject) => {
     // #6424: forward the call's output cap. The inline --settings env sits
     // above the user's settings.json env block, so both carry it.
@@ -418,6 +446,10 @@ function runClaude(
       // subscription login (credentials are not settings). Accepted by every
       // CLI that accepts the flags above.
       '--settings', settings,
+      // #8342: load no settings source, so the user's own ~/.claude/CLAUDE.md,
+      // memory and settings.json never steer this call. Unlike --bare this
+      // keeps the subscription login.
+      ...(noSettingSources ? ['--setting-sources', ''] : []),
     ];
     if (systemPrompt) {
       args.push('--system-prompt', systemPrompt);
