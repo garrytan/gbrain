@@ -1,6 +1,6 @@
 import { afterAll, expect } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { brainFirstLedgerPath } from '../../src/core/setup/brain-first.ts';
 
 const read = (path: string): string | null => { try { return readFileSync(path, 'utf8'); } catch { return null; } };
 
@@ -10,9 +10,7 @@ const read = (path: string): string | null => { try { return readFileSync(path, 
  * each install its own GBRAIN_HOME with withEnv (#8434).
  */
 export function guardInheritedInstructionLedger(): void {
-  const home = process.env.GBRAIN_HOME;
-  if (!home) return;
-  const ledger = join(home, '.gbrain', 'agent-instructions.json');
+  const ledger = brainFirstLedgerPath();
   const before = read(ledger);
   afterAll(() => expect(read(ledger), `${ledger} changed during this file`).toBe(before));
 }
