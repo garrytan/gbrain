@@ -107,6 +107,22 @@ function isPostgresPollOutage(error: unknown): boolean {
     /^connect ENOENT \/.*\/\.s\.PGSQL\.\d+$/.test(getMessage(error));
 }
 
+async function recoverPollConnectionError(
+  engine: BrainEngine,
+  site: 'promoteDelayed' | 'claim',
+  error: unknown,
+  ownsExecutions: boolean,
+): Promise<boolean> {
+  const retryable = isRetryableConnError(error);
+  if (!retryable && (engine.kind !== 'postgres' || !isPostgresPollOutage(error))) return false;
+  // A shutdown code can belong to one backend. Let the driver reopen that
+  // connection while jobs are active instead of closing their shared pool.
+  if (retryable || !ownsExecutions) {
+    await reconnectEngineAfterConnError(engine, site, error);
+  }
+  return true;
+}
+
 /**
  * Read accurate RSS from /proc/self/status (RssAnon + RssShmem).
  *
@@ -807,13 +823,10 @@ export class MinionWorker extends EventEmitter {
           }
           const msg = e instanceof Error ? e.message : String(e);
           console.error('Promotion error:', msg);
-          // issue #1491: a retryable pool/connection loss during promotion used
-          // to be logged and ignored, leaving the worker in a repeated
-          // "Promotion error: No database connection" loop until a later path
-          // happened to reconnect or crash. Promotion is a standalone UPDATE
-          // from delayed→waiting, so after a connection failure we can safely
-          // rebuild the worker-owned pool before continuing to claim work.
-          await this.recoverPollConnectionError('promoteDelayed', e);
+          // Promotion is a standalone update. Recover the polling connection
+          // before continuing to claim work so a disconnected pool does not
+          // keep the worker in the promotion error loop from #1491.
+          await recoverPollConnectionError(this.engine, 'promoteDelayed', e, this.executions.size > 0);
         }
 
         if (!this.running) break;
@@ -875,7 +888,7 @@ export class MinionWorker extends EventEmitter {
             // job (invisible active job, no renewal, later stall). So instead:
             // reconnect once and let the NEXT poll tick re-claim against a live
             // pool. Non-retryable errors propagate (real bug → PM restart).
-            if (!await this.recoverPollConnectionError('claim', e)) throw e;
+            if (!await recoverPollConnectionError(this.engine, 'claim', e, this.executions.size > 0)) throw e;
             const msg = e instanceof Error ? e.message : String(e);
             console.error(`[worker] claim hit a connection error; retry on next tick: ${msg}`);
             await new Promise(resolve => setTimeout(resolve, this.opts.pollInterval));
@@ -1055,17 +1068,6 @@ export class MinionWorker extends EventEmitter {
     this.idleWaiter.wake('stop');
     this.wakeDrain?.stop(); this.wakeDrain = null;
     try { this.eldHistogram?.disable(); } catch { /* fail-open */ }
-  }
-
-  private async recoverPollConnectionError(site: 'promoteDelayed' | 'claim', error: unknown): Promise<boolean> {
-    const retryable = isRetryableConnError(error);
-    if (!retryable && (this.engine.kind !== 'postgres' || !isPostgresPollOutage(error))) return false;
-    // A shutdown code can belong to one backend. Let the driver reopen that
-    // connection while jobs are active instead of closing their shared pool.
-    if (retryable || this.executions.size === 0) {
-      await this.reconnectAfterConnectionError(site, error);
-    }
-    return true;
   }
 
   /**
