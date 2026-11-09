@@ -40,7 +40,9 @@ function context(): OperationContext {
 
 async function seed() {
   await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('source-b', 'source-b') ON CONFLICT DO NOTHING`);
-  for (const slug of [SLUG, OTHER]) await importFromContent(engine, slug, `---\ntitle: ${slug}\ntype: note\n---\n# ${slug}\n\nBody text.\n`, { noEmbed: true, sourceId: 'default' });
+  for (const sourceId of ['default', 'source-b']) for (const slug of [SLUG, OTHER]) {
+    await importFromContent(engine, slug, `---\ntitle: ${slug}\ntype: note\n---\n# ${slug}\n\nBody text.\n`, { noEmbed: true, sourceId });
+  }
   await insertRetrievalEvents(engine, [{ id: 'event-a', client_id: 'local', op: 'query', links: [
     { source_id: 'default', edge_key: EDGE, to_slug: OTHER }, { source_id: 'source-b', edge_key: EDGE, to_slug: OTHER }], pages: [
     { source_id: 'default', slug: SLUG, content_hash: null, rank: 1, cited: true },
@@ -105,15 +107,44 @@ describe('#8821 a page purge removes the slug from the retrieval logs and eval c
     expect(await residue()).toEqual(ONLY_SOURCE_B);
     await untouched();
   }, 60_000);
+
+  test('a feedback write still queued when the purge commits does not bring the slug back', async () => {
+    const snapshot = await engine.readPageSnapshot(SLUG, { sourceId: 'default' });
+    await withEnv({ GBRAIN_HOME: home }, () => operations.find(o => o.name === 'delete_page')!.handler(context(),
+      { slug: SLUG, purge: true, request_id: randomUUID(), expected_revision: snapshot!.revision }));
+    await insertRetrievalEvents(engine, [{ id: 'event-late', client_id: 'local', op: 'query',
+      links: [{ source_id: 'default', edge_key: EDGE, to_slug: OTHER }],
+      pages: [{ source_id: 'default', slug: SLUG, content_hash: null, rank: 1, cited: true }, { source_id: 'default', slug: OTHER, content_hash: null, rank: 2, cited: false }] }]);
+    await applyRatings(engine, { eventId: 'event-late', clientId: 'local', signal: 'explicit', alpha: 0.2, targets: [
+      { kind: 'page', source_id: 'default', key: SLUG, rating: 5, content_hash: null }, { kind: 'link', source_id: 'default', key: EDGE, rating: 5, content_hash: null }] });
+    expect(await residue()).toEqual(ONLY_SOURCE_B);
+    expect(await engine.executeRaw(`SELECT 1 FROM retrieval_event_pages WHERE event_id='event-late' AND slug=$1`, [OTHER])).toHaveLength(1);
+  }, 60_000);
+
+  test('a federated capture keeps a slug that another of its sources still has a page for', async () => {
+    await engine.logEvalCandidate({ tool_name: 'query', query: 'federated', retrieved_slugs: [SLUG, OTHER], retrieved_chunk_ids: [],
+      source_ids: ['default', 'source-b'], expand_enabled: false, detail: null, detail_resolved: null, vector_enabled: false, expansion_applied: false,
+      latency_ms: 1, remote: false, job_id: null, subagent_id: null });
+    const snapshot = await engine.readPageSnapshot(SLUG, { sourceId: 'default' });
+    const result = await withEnv({ GBRAIN_HOME: home }, () => operations.find(o => o.name === 'delete_page')!.handler(context(),
+      { slug: SLUG, purge: true, request_id: randomUUID(), expected_revision: snapshot!.revision })) as Record<string, any>;
+    expect(await engine.executeRaw(`SELECT retrieved_slugs FROM eval_candidates WHERE query = 'federated'`)).toEqual([{ retrieved_slugs: [SLUG, OTHER] }]);
+    const stores = new Map((result.receipt.stores as Array<{ store: string; status: string }>).map(s => [s.store, s.status]));
+    expect(stores.get('eval_candidates.retrieved_slugs')).toBe('deleted');
+  }, 60_000);
 });
 
 test('#8821 a recorded tombstone the belief ledger expires scrubs the same rows', () => beliefBrain(async b => {
   await b.put(SLUG, beliefPage({ title: 'Alice', prose: 'Body of the page.' }));
+  await b.put(OTHER, beliefPage({ title: 'Acme', prose: 'Body of the other page.' }));
   await b.engine.executeRaw(`UPDATE pages SET deleted_at = now() - interval '100 hours' WHERE source_id = $1 AND slug = $2`, [b.sourceId, SLUG]);
   await insertRetrievalEvents(b.engine, [{ id: 'event-b', client_id: 'local', op: 'query', links: [{ source_id: b.sourceId, edge_key: EDGE, to_slug: OTHER }],
     pages: [{ source_id: b.sourceId, slug: SLUG, content_hash: null, rank: 1, cited: true }] }]);
   await applyRatings(b.engine, { eventId: 'event-b', clientId: 'local', signal: 'explicit', alpha: 0.2,
     targets: [{ kind: 'page', source_id: b.sourceId, key: SLUG, rating: 5, content_hash: null }] });
+  for (const table of ['retrieval_event_pages', 'retrieval_event_links', 'retrieval_feedback', 'retrieval_weights']) {
+    expect(await b.engine.executeRaw(`SELECT 1 FROM ${table} WHERE source_id = $1`, [b.sourceId])).toHaveLength(1);
+  }
   const purged = await purgeDeletedPagesCoordinated(b.engine, 72);
   expect(purged.slugs).toContain(SLUG);
   for (const table of ['retrieval_event_pages', 'retrieval_event_links', 'retrieval_feedback', 'retrieval_weights']) {
