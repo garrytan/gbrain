@@ -9,8 +9,9 @@
  */
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { liveFileDrift } from '../src/core/persistence/drift-conflicts.ts';
@@ -141,3 +142,45 @@ test('an origin twin whose slug path no file can import as stays database-only',
   await legacyTwin(engine, tx => tx.executeRaw("UPDATE pages SET slug='notes/Alpha-Example' WHERE source_id='default' AND slug=$1", [SLUG]));
   expect(await liveFileDrift(engine, 'default', 'notes/Alpha-Example')).toMatchObject(DATABASE_ONLY);
 }, { setup: setupRepo }), 120000);
+
+test('an origin twin whose slug-path file sync.exclude screens out stays database-only, and sync holds nothing for it', () => managedBrain(async ({ engine, root }) => {
+  await legacyTwin(engine);
+  await engine.setConfig('sync.exclude', 'notes/');
+  await externalEdit(engine, root);
+  expect(await holds(engine)).toEqual([]);
+  expect(await liveFileDrift(engine, 'default', SLUG)).toMatchObject(DATABASE_ONLY);
+}, { setup: setupRepo }), 120000);
+
+test('an origin twin whose slug-path file another live page names only by file URI is unknown, never no_drift, while sync holds it', () => managedBrain(async ({ engine, root }) => {
+  const uri = pathToFileURL(join(realpathSync(root), PATH)).href;
+  await legacyTwin(engine, tx => tx.executeRaw("UPDATE pages SET source_path=NULL, source_uri=$1 WHERE source_id='default' AND slug='notes/keeper-example'", [uri]));
+  git(root, 'rm', '-q', 'notes/keeper-example.md');
+  await externalEdit(engine, root);
+  expect(await holds(engine)).toEqual([{ code: 'file_drift', path: PATH }]);
+  expect(await liveFileDrift(engine, 'default', SLUG)).toMatchObject({ still_present: null, reason: 'shared_origin' });
+  const planned = await preview(engine, 'database');
+  expect(planned.affected).toBe(0);
+  expect(planned.listing).toEqual([{ item: `default:${SLUG}`, class: 'unknown', detail: 'shared_origin' }]);
+}, { setup: ({ root }) => { setupRepo({ root }); writeFileSync(join(root, 'notes', 'keeper-example.md'), FILE); git(root, 'add', '-A'); git(root, 'commit', '-qm', 'keeper'); } }), 120000);
+
+/** Two files that both import as the twin's slug, neither spelled exactly `<slug>.md`. */
+function ambiguousSlugPath(root: string): void {
+  git(root, 'mv', PATH, 'notes/Alpha-Example.md');
+  writeFileSync(join(root, 'notes', 'ALPHA-EXAMPLE.md'), FILE);
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'two spellings');
+}
+
+test('an origin twin whose slug path several files import as reads as prepareFileTarget does, not slug_path_ambiguous', () => managedBrain(async ({ engine, root }) => {
+  await legacyTwin(engine);
+  ambiguousSlugPath(root);
+  await performManagedSync(engine, { ...OPTS, full: true });
+  expect((await holds(engine)).filter(hold => hold.code === 'file_drift')).toEqual([]);
+  expect(await liveFileDrift(engine, 'default', SLUG)).toMatchObject(DATABASE_ONLY);
+}, { setup: setupRepo }), 120000);
+
+test('an origin twin under a declared db_only path reads db_only_slug_path even when several files import as its slug', () => managedBrain(async ({ engine, root }) => {
+  await legacyTwin(engine);
+  ambiguousSlugPath(root);
+  expect(await liveFileDrift(engine, 'default', SLUG)).toMatchObject({ still_present: null, reason: 'db_only_slug_path' });
+}, { setup: ({ root }) => { setupRepo({ root }); writeFileSync(join(root, 'gbrain.yml'), 'storage:\n  db_only:\n    - notes/\n'); git(root, 'add', '-A'); git(root, 'commit', '-qm', 'db_only'); } }), 120000);

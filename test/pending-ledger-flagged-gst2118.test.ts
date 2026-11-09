@@ -9,9 +9,10 @@
  */
 import { afterAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { commitWriteThroughFile } from '../src/core/brain-repo-durability.ts';
 import { commitPathsLocked, notePending, pendingWriteThroughStillDirty, readPendingWriteThrough } from '../src/core/git/commit-push.ts';
 import { runCli } from './helpers/cli-spawn.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -51,8 +52,12 @@ const ledger = (brain: string) => readPendingWriteThrough(brain).map(e => e.path
 test('a flagged write-through file is not committed and stays in the pending ledger, where doctor dirty_age sees it', async () => {
   const brain = fixture('locked-flagged');
   writeFlagged(brain, 'people/alice-example.md');
-  const sha = await withEnv(identity, async () => commitPathsLocked(brain, [join(brain, 'people', 'alice-example.md')], 'gbrain: write-through people/alice-example', { lockWaitMs: 1000 }));
-  expect(sha).toBeNull();
+  const thrown = await withEnv(identity, async () => {
+    try { commitPathsLocked(brain, [join(brain, 'people', 'alice-example.md')], 'gbrain: write-through people/alice-example', { lockWaitMs: 1000 }); } catch (e) { return e as { code?: string; detail?: string }; }
+    return null;
+  });
+  expect(thrown?.code).toBe('commit_paths_skipped');
+  expect(JSON.parse(thrown!.detail!).committed).toBeNull();
   expect(headBlob(brain, 'people/alice-example.md')).toContain('First version.');
   expect(ledger(brain)).toEqual(['people/alice-example.md']);
   expect(pendingWriteThroughStillDirty(brain).map(e => e.path)).toEqual(['people/alice-example.md']);
@@ -90,8 +95,12 @@ test('a write-through to a skip-worktree file git add refuses stays in the ledge
   git(brain, 'update-index', '--skip-worktree', '--', 'people/alice-example.md');
   writeFileSync(join(brain, 'people', 'alice-example.md'), page('Hidden', 'A write-through edit git add refuses.'));
   writeFileSync(join(brain, 'people', 'bob-example.md'), page('Bob', 'Second version.'));
-  const sha = await withEnv(identity, async () => commitPathsLocked(brain, [join(brain, 'people', 'alice-example.md'), join(brain, 'people', 'bob-example.md')], 'gbrain: write-through', { lockWaitMs: 1000 }));
-  expect(sha).not.toBeNull();
+  const thrown = await withEnv(identity, async () => {
+    try { commitPathsLocked(brain, [join(brain, 'people', 'alice-example.md'), join(brain, 'people', 'bob-example.md')], 'gbrain: write-through', { lockWaitMs: 1000 }); } catch (e) { return e as { code?: string; detail?: string }; }
+    return null;
+  });
+  expect(thrown?.code).toBe('commit_paths_skipped');
+  expect(JSON.parse(thrown!.detail!).committed).toBe(git(brain, 'rev-parse', 'HEAD'));
   expect(headBlob(brain, 'people/bob-example.md')).toContain('Second version.');
   expect(headBlob(brain, 'people/alice-example.md')).toContain('First version.');
   expect(ledger(brain)).toEqual(['people/alice-example.md']);
@@ -116,6 +125,27 @@ test('commit-push --pending fails commit_paths_skipped on a flagged pending file
   expect(git(brain, 'rev-parse', 'HEAD')).toBe(before);
   expect(ledger(brain)).toEqual(['people/alice-example.md']);
 }, 60_000);
+
+test('page write-through end to end: a flagged page is reported not committed, nothing is undone, the ledger keeps it, and the next write-through commits it', async () => {
+  const brain = fixture('write-through-flagged');
+  const alice = join(brain, 'people', 'alice-example.md');
+  writeFlagged(brain, 'people/alice-example.md');
+  const before = git(brain, 'rev-parse', 'HEAD');
+  const first = await withEnv(identity, async () => commitWriteThroughFile(brain, alice, 'people/alice-example'));
+  expect(first).toBe(false);
+  expect(git(brain, 'rev-parse', 'HEAD')).toBe(before);
+  expect(git(brain, 'diff', '--cached', '--name-only')).toBe('');
+  expect(readFileSync(alice, 'utf8')).toContain('A write-through edit git add does not see.');
+  expect(ledger(brain)).toEqual(['people/alice-example.md']);
+  expect(pendingWriteThroughStillDirty(brain).map(e => e.path)).toEqual(['people/alice-example.md']);
+  writeFileSync(join(brain, 'people', 'bob-example.md'), page('Bob', 'Second version.'));
+  const next = await withEnv(identity, async () => commitWriteThroughFile(brain, join(brain, 'people', 'bob-example.md'), 'people/bob-example'));
+  expect(next).toBe(true);
+  expect(headBlob(brain, 'people/bob-example.md')).toContain('Second version.');
+  expect(headBlob(brain, 'people/alice-example.md')).toContain('A write-through edit git add does not see.');
+  expect(git(brain, 'diff', '--cached', '--name-only')).toBe('');
+  expect(ledger(brain)).toEqual([]);
+});
 
 test('control: an ordinary pending file is committed by --pending and the ledger settles empty', async () => {
   const brain = fixture('pending-ok', true);
