@@ -524,6 +524,7 @@ test/sync-apply-held-deletions-gbra133.test.ts
 test/sync-capacity-preflight.test.ts
 test/sync-checkpoint-moved-6834.test.ts
 test/sync-classic-drift-7199.test.ts
+test/sync-concurrent-write-deleted-hold-8751.test.ts
 test/sync-disabled-cycle-window.test.ts
 test/sync-discovery-legacy-origin-7130.test.ts
 test/sync-drain-claims.test.ts
