@@ -11,11 +11,13 @@
  */
 import { afterAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { commitAndPush } from '../src/core/git/commit-push.ts';
+import { scanRange } from '../src/core/git/range-secret-scan.ts';
 import { SCAN_MAX_FILE_BYTES } from '../src/core/secret-scan.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const dir = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-guarded-publish-')));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -186,4 +188,36 @@ test('commits the scan cannot read refuse with their own code, not as secrets to
   expect(error.message).toContain('Nothing was pushed.');
   expect(error.message).not.toContain('look like secrets');
   expect(remoteTip(r)).toBe(r.base);
+});
+
+test('a token in a commit message that declares UTF-16 is still found in its raw bytes', () => {
+  const r = repo('utf16-message');
+  git(r.root, 'config', 'i18n.commitEncoding', 'UTF-16LE');
+  commit(r.root, 'page.md', 'a page\n', `rotate ${token}`);
+  expect(refused(() => publish(r.root)).message).toContain('(commit message):1 (');
+  expect(remoteTip(r)).toBe(r.base);
+});
+
+test('a commit message in an encoding the scan cannot decode refuses as unreadable, not as too large', () => {
+  const r = repo('utf7-message');
+  git(r.root, 'config', 'i18n.commitEncoding', 'UTF-7');
+  commit(r.root, 'page.md', 'a page\n', 'plain message');
+  const error = refused(() => publish(r.root));
+  expect(error.code).toBe('publish_scan_unreadable');
+  expect(error.message).not.toContain('too large to scan');
+  expect(remoteTip(r)).toBe(r.base);
+});
+
+test('every git call the scan makes ignores the system gitattributes file', async () => {
+  const r = repo('nosystem');
+  commit(r.root, 'notes.md', 'plain\n');
+  const bin = join(dir, 'git-spy'), log = join(dir, 'git-spy.log');
+  const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\nprintf '%s\\n' "\${GIT_ATTR_NOSYSTEM:-unset}" >> '${log}'\nexec '${real}' "$@"\n`, { mode: 0o755 });
+  const scan = await withEnv({ PATH: `${bin}:${process.env.PATH}` }, async () => scanRange(r.root, 'refs/remotes/origin/main', 'HEAD'));
+  expect(scan.unreadable).toBeUndefined();
+  const calls = readFileSync(log, 'utf8').trim().split('\n');
+  expect(calls.length).toBeGreaterThan(3);
+  expect(calls.filter(value => value !== '1')).toEqual([]);
 });

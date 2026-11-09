@@ -7,7 +7,8 @@
  * Findings carry the path, line, rule, fingerprint and commit, never the matched value.
  *
  * Only plumbing reads the commits (`rev-list`, `cat-file commit`, one `diff-tree --stdin --root --cc`), so no log, diff or
- * encoding setting changes what is read, and replace refs are off. The diff streams to a private temporary file and is
+ * encoding setting changes what is read, and replace refs and the system attributes file are off. A message that declares
+ * an encoding other than UTF-8 is also scanned as its raw bytes, and one the scan cannot decode makes the result unreadable. The diff streams to a private temporary file and is
  * read in chunks, so memory stays bounded. Binary detection is git's own (a NUL in a blob's first 8000 bytes), with
  * attributes read from the empty tree: a file git still calls binary is checked by its own bytes when its old side was
  * not empty or attributes could still apply, and a text file is then scanned whole. Added text over the scan cap is
@@ -47,7 +48,7 @@ function run(root: string, args: string[], deadline: number, opts: { input?: str
   const timeout = deadline - Date.now();
   if (timeout <= 0) throw new Unreadable('the scan ran past its time budget');
   return spawnSync('git', ['-C', root, ...args], { input: opts.input ?? '', stdio: ['pipe', opts.out ?? 'pipe', 'pipe'], timeout,
-    maxBuffer: opts.maxBuffer ?? 64 * 1024 * 1024, env: gitChildEnv({ ...GIT_ENV, ...GIT_READ_ENV, LC_ALL: 'C', GIT_NO_REPLACE_OBJECTS: '1' }) });
+    maxBuffer: opts.maxBuffer ?? 64 * 1024 * 1024, env: gitChildEnv({ ...GIT_ENV, ...GIT_READ_ENV, LC_ALL: 'C', GIT_NO_REPLACE_OBJECTS: '1', GIT_ATTR_NOSYSTEM: '1' }) });
 }
 function must(r: Run, what: string): Buffer {
   if (r.error || r.status !== 0) {
@@ -117,11 +118,18 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
       const object = must(raw, 'cat-file commit');
       const split = object.indexOf('\n\n');
       const encoding = /^encoding (.+)$/m.exec(object.subarray(0, split < 0 ? object.length : split).toString('latin1'))?.[1]?.trim() ?? 'utf-8';
+      const bytes = split < 0 ? Buffer.alloc(0) : object.subarray(split + 2);
       let message: string;
-      try { message = new TextDecoder(encoding).decode(split < 0 ? Buffer.alloc(0) : object.subarray(split + 2)); } catch {
-        scan.unscanned.push({ path: MESSAGE_PATH, commit }); continue;
+      try { message = new TextDecoder(encoding).decode(bytes); } catch {
+        throw new Unreadable(`commit ${commit.slice(0, 12)} declares message encoding ${JSON.stringify(encoding.slice(0, 40))}, which the scan cannot decode`);
       }
+      const before = scan.findings.length;
       scanned(MESSAGE_PATH, commit, message);
+      if (/^utf-?8$/i.test(encoding)) continue;
+      const seen = new Set(scan.findings.slice(before).map(f => `${f.line}:${f.fingerprint}`));
+      for (const f of scanText(bytes.toString('latin1'), { allowlist })) {
+        if (!seen.has(`${f.line}:${f.fingerprint}`)) scan.findings.push({ path: MESSAGE_PATH, commit, line: f.line, pattern: f.pattern, fingerprint: f.fingerprint });
+      }
     }
 
     const neutral = attributesNeutral(root, deadline);
