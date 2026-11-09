@@ -18,7 +18,7 @@ The regressions: v0.60.58.0 sent one Postgres round trip per member of a bulk sy
 
 ### Itemized changes
 
-- `src/core/ops/known-as-of.ts`: `get_page {known_as_of}` sets aside the arguments that shape a current read (window selectors, `section`, `grep`, `context`, `include_content`, `content_only`, `include_timeline_entries`, `view`, `max_bytes`, `fuzzy` and the rest) and returns `set_aside {ignored, note}`; only `body: outline|window` refuses `invalid_params`, with the same keep-only-what-applies `fix`.
+- `src/core/ops/known-as-of.ts`: `get_page {known_as_of}` sets aside the arguments that shape a current read (window selectors, `section`, `grep`, `context`, `include_content`, `content_only`, `include_timeline_entries`, `view`, `max_bytes`, `fuzzy` and the rest) and returns `set_aside {ignored, note}`; only `body: outline|window` and `include_quarantined: true` refuse `invalid_params`, with the same keep-only-what-applies `fix`.
 - `src/core/ops/links.ts`: `traverse_graph` with `hops` walks the chain with `depth`, `link_type` and `direction` set aside and named in `set_aside`; malformed hops still refuse.
 - `src/core/behavior-change-notice.ts`: one row for the changed refusals.
 - Docs: `docs/guides/multi-hop.md`, the key-files rows for `known-as-of.ts` and `links.ts`.
