@@ -12,12 +12,12 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**Four harness fixes: Hermes, Windows, request_tools and schema show.** A per-turn hook you paste into Hermes by hand now counts, Windows Claude Code installs get the per-turn rule hook, `request_tools` stops promising tools a stdio session cannot call, and `gbrain schema show --source` reads that source's pack.
+**Four harness fixes: Hermes, Windows, request_tools and schema show.** A per-turn hook you paste into Hermes by hand now counts, `gbrain setup claude-code --instructions-only` writes the per-turn rule hook on Windows, `request_tools` stops promising tools a stdio session cannot call, and `gbrain schema show --source` reads that source's pack.
 
 ### Itemized changes
 
 - **Hermes:** when your `config.yaml` already has a `hooks:` section, `gbrain setup hermes` prints the `pre_llm_call` entry for you to add. Once you paste it, `gbrain doctor` now sees it (and still reports it untrusted until Hermes approves it) instead of calling it missing (reported by @Masashi-Ono0611, #8857).
-- **Windows:** `gbrain setup claude-code` and the other install paths now write the per-turn rule hook for a Windows gbrain binary (`C:\...\gbrain.exe`) instead of skipping it with "no absolute gbrain binary was found". The hook names its paths in Git Bash's `/c/...` form, which is how Claude Code runs hooks on Windows. Codex runs hooks on Windows without a POSIX shell, so it still gets the printed step, now with that reason (reported by @Masashi-Ono0611, #8451).
+- **Windows:** `gbrain setup claude-code --instructions-only`, doctor's turn-hook repair and the hook-launcher refresh now write the per-turn rule hook for a Windows gbrain binary (`C:\...\gbrain.exe`) instead of skipping it with "no absolute gbrain binary was found". The hook names its paths in Git Bash's `/c/...` form, which is how Claude Code runs hooks on Windows. Codex runs hooks on Windows without a POSIX shell, so it still gets the printed step, now with that reason (reported by @Masashi-Ono0611, #8451).
 - **request_tools:** on a stdio session started at a narrower surface (`gbrain serve --surface starter`), `request_tools {tools: [...]}` lists only the tools the session can call. A tool outside it comes back with its schema, `listed: false` and a note to call `request_tools {"surface":"full"}` first, instead of a promise that it is in your tool list (reported by @Masashi-Ono0611, #8734).
 - **Schema packs:** `gbrain schema show --source <id>` shows that source's own pack (its per-source override, else the brain-wide pack) instead of failing with `Unknown pack: <id>`. A pack you name still wins (reported by @Masashi-Ono0611, #8900).
 
