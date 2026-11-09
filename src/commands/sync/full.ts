@@ -534,7 +534,7 @@ async function reconcileFullSyncDeletes(
           try {
             const r = await writePageThrough(engine, slug, { sourceId: sid, expectedFileBytes: null });
             if (r.written) { reExported++; continue; }
-            if (r.skipped === 'disabled_by_config' || r.skipped === 'url_clone') continue;
+            if (r.skipped === 'disabled_by_config' || r.skipped === 'mirror_read_only' || r.skipped === 'url_clone') continue;
             if (r.skipped === 'file_changed') throw new OperationError('file_database_drift', 'The checkout file exists; re-export only restores absent files.', `If the file holds the newer edit, run gbrain sync --source ${sid} to import it; otherwise ask the user which version to keep.`);
             if (r.error) throw new Error(r.error);
             if (r.skipped === 'over_push_scan_cap') {
