@@ -83,8 +83,8 @@ function urlParams(url: string): URLSearchParams {
 export function resolvePgTls(url: string, opts: Record<string, unknown> = {}, env: Env = processEnv()): PgTlsResolution {
   if ('ssl' in opts && opts.ssl !== undefined) return { source: 'option', mode: typeof opts.ssl === 'string' ? opts.ssl : String(opts.ssl === false ? 'disable' : 'custom') };
   const params = urlParams(url);
-  const explicit = params.get('sslmode') ?? params.get('ssl') ?? (params.get('sslrootcert') === 'system' ? 'verify-full' : null);
-  if (explicit !== null) return { source: 'url', mode: explicit === 'false' ? 'disable' : explicit };
+  const explicit = params.get('sslmode') || params.get('ssl') || (params.get('sslrootcert') === 'system' ? 'verify-full' : '');
+  if (explicit) return { source: 'url', mode: explicit === 'false' ? 'disable' : explicit };
   if (env.PGSSL) return { source: 'env', mode: env.PGSSL };
   const hosts = pgConnectHosts(url, opts, env);
   if (hosts.length > 0 && hosts.every(isLoopbackPgHost)) return { source: 'loopback', mode: 'driver-default' };

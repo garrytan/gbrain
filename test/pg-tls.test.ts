@@ -92,6 +92,13 @@ describe('resolvePgTls', () => {
     expect(driverSsl(base + '?sslrootcert=system')).toBe('verify-full');
   });
 
+  test('an empty ssl or sslmode value is no choice: the TLS default still applies', () => {
+    const base = 'postgres://u:p@db.example.com:5432/x';
+    expect(resolvePgTls(base + '?ssl=', {}, NO_ENV).source).toBe('default');
+    expect(driverSsl(base + '?ssl=')).toBe('require');
+    expect(resolvePgTls(base + '?sslmode=', {}, NO_ENV).source).toBe('default');
+  });
+
   test('an explicit mode on a loopback URL is never weakened', () => {
     expect(driverSsl('postgres://u:p@localhost:5432/x?sslmode=verify-full')).toBe('verify-full');
   });
