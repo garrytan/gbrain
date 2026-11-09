@@ -5062,6 +5062,7 @@ off until the user opts in, and paid enrichment is a separate choice.
 | Webhook setup, external event processing | `skills/webhook-transforms/SKILL.md` |
 | "Spawn agent", "background task", "parallel tasks", "steer agent", "pause/resume agent", "gbrain jobs submit", "submit a gbrain job", "submit a shell job", "shell job" | `skills/minion-orchestrator/SKILL.md` |
 | "present options", "ask before proceeding", "choice gate", "user decision" | `skills/ask-user/SKILL.md` |
+| "check my agent inbox", "delegate this to another agent", "hand this off to", "send this to a few agents", "pick up the project from", "save my place", "which agent should take this" | `skills/agent-inbox/SKILL.md` (work handed between agent apps through `threads/` and `delegations/` pages) |
 | "keeps timing out", "ETIMEDOUT", "why is this data stale", "freshness alert" | `skills/measure-before-you-fix/SKILL.md` |
 | "draft in voice", "write this as", "make this sound like", "ghostwrite" | `skills/draft-in-voice/SKILL.md` |
 | "context audit", "context diet", "system prompt audit", "prompt compression" | `skills/context-audit/SKILL.md` |
@@ -5114,6 +5115,7 @@ When multiple skills could match:
 8. "Why is X slow/stale" measurement-first ops triage → measure-before-you-fix; code debugging ("why is this function broken") → investigate (GStack)
 9. GBrain MCP server/client OAuth, dashboard login, or client permissions → mcp-access; importing chat account history (including "chatgpt oauth") → chat-connectors. An existing hosted endpoint does not require local initialization.
 10. "connect <agent> to my brain" when the brain runs on the user's own machine and is not already reachable → remote-mcp (publish over Tailscale), then mcp-access / hosted access for the intended harness's native OAuth or private machine handoff. When the brain is ALREADY served over HTTPS by other means or hosted elsewhere, use mcp-access / hosted access against that endpoint; no `gbrain mcp expose`. "connect my chatgpt" / "connect my claude account" (pull an account's chat history INTO the brain) → chat-connectors; "connect gmail" / "connect google" → google-loops.
+11. Work handed between separate agent apps that share this brain (Claude, ChatGPT, Grok Bot, your OpenClaw: delegate, inbox, pick up a thread) → agent-inbox; background jobs or subagents inside one gbrain host (`gbrain jobs submit`, "spawn agent") → minion-orchestrator.
 
 ## Conventions (cross-cutting)
 

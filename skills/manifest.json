@@ -250,6 +250,11 @@
       "description": "Reusable choice-gate pattern for presenting users with 2-4 options and stopping execution until they respond. Platform-agnostic (Telegram buttons, Discord, CLI, OpenClaw clarify tool)."
     },
     {
+      "name": "agent-inbox",
+      "path": "agent-inbox/SKILL.md",
+      "description": "Hand work between agent apps through the brain: heartbeat, delegation inbox, claim with a lease, thread pickup, log turns, complete or release; delegate, fan out, find a thread another app started, save your place."
+    },
+    {
       "name": "functional-area-resolver",
       "path": "functional-area-resolver/SKILL.md",
       "description": "Compress an agent's routing file (RESOLVER.md or AGENTS.md) by replacing skill-per-row tables with functional-area dispatcher entries. Two-layer dispatch keeps every sub-skill reachable at ~50% of the file size."

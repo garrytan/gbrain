@@ -1,5 +1,5 @@
 {
-  "RESOLVER.md": "587768c702e0badf5e7d6201cd5902b7313b218e5663ab527e3a8365f5c438ee",
+  "RESOLVER.md": "a2dd326acb70006fb59dd6b0dab4a18b5a1b80ea9cd925828850467eabe519ea",
   "_AGENT_README.md": "ab51e36e9a0b53f4d0609294b0556444399147834932d9c1acfdc7aa367c70b8",
   "_brain-filing-rules.json": "4e6ecee2d94867d146583d60bf98dccdd9205bb70793af56fe1397a2b258ae0d",
   "_brain-filing-rules.md": "ff42b331bce542d708f97ff0a73ff0fb5664b46ee9b1862a5478b15dc637487e",
@@ -7,6 +7,7 @@
   "_output-rules.md": "0722ec2ecea7f9fa2f065cf12dfe1347956a9709d29898bf9fe95e875c64b800",
   "academic-verify/SKILL.md": "485839f3f35ddebeb99dacc901deed4b5c7c6c7f7c8367a444b8a427530e75a5",
   "academic-verify/routing-eval.jsonl": "90d894a9829d9936e6ac7a6507e4de67ad26e46a1fe13b7a34e7dec1c0d887dd",
+  "agent-inbox/SKILL.md": "85f57d54b1d18a32fcec481a3e565490c80419867d080761950bcf219fa0bc91",
   "archive-crawler/SKILL.md": "d93174bfc276ce78c1d6283c213b7c7006978075603d7d333c7e345fd63da979",
   "archive-crawler/routing-eval.jsonl": "a90c607d69737adf58771d1b986c5a7d9d11f5303df7de4c7def74aa2c86a2f5",
   "article-enrichment/SKILL.md": "84b2a3792c5e7e2ccf8b6fd32b2c850a8514f5ed5459a5664ba0780720f5ce09",
@@ -95,7 +96,7 @@
   "idea-lineage/routing-eval.jsonl": "ee2e00704b9accb7dd58bb8f126a3bc04a2c40be499180fa505dbf6d5061cd41",
   "ingest/SKILL.md": "1acc220ce6e9e65876fa2ccede6ce11f9c75457feb6695ef904955f8debecaae",
   "maintain/SKILL.md": "6faf40cb944a0deb7d032e41f44b66f05fe0ebe8178bd84d3cf05e2f766f6127",
-  "manifest.json": "357aa185d380f0a357cb15cd513317e290cbc5fcf5ca4e3860b0e829fdcbf1e4",
+  "manifest.json": "f451eed733594aff302dedea50fa19224b69b790bbf8b623ee1d3d2730e176cf",
   "mcp-access/SKILL.md": "1bc16338b89f476aa8c24ffec79c989fa60716793998af264d357f7886d2bc96",
   "measure-before-you-fix/SKILL.md": "11906da29a1a31976b13d4796b686d9a9981825737846a85f32d88bf431b9b36",
   "measure-before-you-fix/routing-eval.jsonl": "0661df9974a9cfe31216d574b1db0ef341945c2eb844ebf4ab6920fcbbc90d6c",
