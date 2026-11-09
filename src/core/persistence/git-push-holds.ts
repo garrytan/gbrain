@@ -79,7 +79,7 @@ function gitPushFix(hold: Omit<GitPushHold, 'fix'>): Action {
     ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
     argv: ['git', '-C', hold.root, 'fsck'],
     why: 'Read-only: names missing or corrupt objects in the unpublished commits, the usual reason the secret scan cannot read them.',
-    user_message: `The secret scan could not read the unpublished commits in ${hold.root} (or the remote has no such branch), so ${held} Git backup(s) of page writes in source ${hold.source_id} are held and nothing was pushed (nothing is lost; the database has every write). Check the checkout with git fsck and fix what it reports? Afterwards run gbrain sources writer retry-effects ${hold.source_id} --parked-pushes.`,
+    user_message: `The secret scan could not read the unpublished commits in ${hold.root} (or the remote no longer has the checkout's upstream branch, which git -C ${hold.root} ls-remote --heads shows), so ${held} Git backup(s) of page writes in source ${hold.source_id} are held and nothing was pushed (nothing is lost; the database has every write). Check the checkout with git fsck and fix what it reports? Afterwards run gbrain sources writer retry-effects ${hold.source_id} --parked-pushes.`,
     verify: statusVerify(hold.source_id), docs: 'docs/guides/shared-checkout-git.md#publish_scan_unreadable',
   };
   if (hold.parked && hold.former_worktree) return {

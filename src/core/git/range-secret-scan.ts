@@ -31,6 +31,8 @@ export interface RangeScan {
   findings: RangeSecretFinding[]; unscanned: Array<{ path: string; commit: string }>; gate_changes: Array<{ path: string; commit: string }>;
   /** Set when the commits could not be read completely; the other lists are then partial. */
   unreadable?: string;
+  /** Set with `unreadable` when the reason is the time budget, so a caller with a short budget can scan again elsewhere. */
+  timed_out?: true;
 }
 
 /** The commit message as `path` in a finding. */
@@ -42,19 +44,20 @@ const CONFIG = ['-c', 'core.quotePath=false', '-c', 'core.attributesFile=/dev/nu
 const DIFF = ['diff-tree', '--stdin', '-r', '-p', '--root', '--cc', '--no-renames', '--no-ext-diff', '--no-textconv', '--no-color',
   '--full-index', '--src-prefix=a/', '--dst-prefix=b/', '--unified=0'];
 
-class Unreadable extends Error {}
+class Unreadable extends Error { constructor(message: string, readonly timedOut = false) { super(message); } }
 
 type Run = ReturnType<typeof spawnSync>;
 function run(root: string, args: string[], deadline: number, opts: { input?: string; out?: number; maxBuffer?: number } = {}): Run {
   const timeout = deadline - Date.now();
-  if (timeout <= 0) throw new Unreadable('the scan ran past its time budget');
+  if (timeout <= 0) throw new Unreadable('the scan ran past its time budget', true);
   return spawnSync('git', ['-C', root, ...args], { input: opts.input ?? '', stdio: ['pipe', opts.out ?? 'pipe', 'pipe'], timeout,
     maxBuffer: opts.maxBuffer ?? 64 * 1024 * 1024, env: gitChildEnv({ ...GIT_ENV, ...GIT_READ_ENV, LC_ALL: 'C', GIT_NO_REPLACE_OBJECTS: '1', GIT_ATTR_NOSYSTEM: '1' }) });
 }
 function must(r: Run, what: string): Buffer {
   if (r.error || r.status !== 0) {
-    const why = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT' ? 'timed out' : String(r.stderr ?? '').trim() || r.error?.message || `exit ${r.status}`;
-    throw new Unreadable(`git ${what} failed: ${why.slice(0, 300)}`);
+    const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT';
+    const why = timedOut ? 'timed out' : String(r.stderr ?? '').trim() || r.error?.message || `exit ${r.status}`;
+    throw new Unreadable(`git ${what} failed: ${why.slice(0, 300)}`, timedOut);
   }
   return r.stdout as Buffer;
 }
@@ -219,7 +222,7 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
     }
     return scan;
   } catch (e) {
-    if (e instanceof Unreadable) return { ...scan, unreadable: e.message };
+    if (e instanceof Unreadable) return { ...scan, unreadable: e.message, ...(e.timedOut ? { timed_out: true as const } : {}) };
     throw e;
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -246,7 +249,7 @@ export function rangeSecretRefusal(root: string, base: string, target: string, s
     ...scan.gate_changes.map(g => `${g.path} (changes what the scan sees, ${g.commit.slice(0, 7)})`)];
   return opError('publish_secret_found',
     `${named.length} item(s) in the local commits ${base}..${target.slice(0, 12)} look like secrets or could not be scanned: ${named.slice(0, 10).join(', ')}${named.length > 10 ? ', ...' : ''}. Nothing was pushed.`,
-    'Remove the value from those commits (rewriting unpushed local commits is the user\'s call), or add a false positive\'s fingerprint to .gbrain-scan-allow, then retry. Never publish them with a command that skips this scan.',
+    `Remove the value from those commits (rewriting unpushed local commits is the user's call), or add a false positive's fingerprint to .gbrain-scan-allow, then retry. Never publish them with a command that skips this scan.${scan.gate_changes.length ? ` A commit that changes .gbrain-scan-allow or a .gitattributes is never published automatically, because it changes what the scan sees: review it and push it yourself (git -C ${root} push), then retry.` : ''}`,
     { detail: JSON.stringify(scan),
       fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
         argv: ['git', '-C', root, 'log', '--stat', `${base}..${target}`],

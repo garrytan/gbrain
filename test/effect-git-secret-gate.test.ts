@@ -77,7 +77,7 @@ const remoteTip = (c: Checkout) => git(c.remote, 'rev-parse', 'refs/heads/main')
 const childEnv = (c: Checkout) => ({ GBRAIN_HOME: join(c.home, 'home'), GBRAIN_JOB_CHILD_CLI: c.cli, GBRAIN_GIT_ALLOW_FILE_TRANSPORT: '1',
   DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined });
 async function refusal(run: Promise<unknown>) {
-  try { await run; } catch (e) { return e as { code: string; message: string; suggestion?: string; detail?: string; fix?: { user_message?: string; ask_user?: boolean } }; }
+  try { await run; } catch (e) { return e as { code: string; message: string; suggestion?: string; detail?: string; fix?: { user_message?: string; ask_user?: boolean; argv?: string[] } }; }
   throw new Error('expected publish_secret_found');
 }
 
@@ -133,8 +133,40 @@ describe('#8896 pushGitRoot scans the commits it publishes', () => {
     const error = await withEnv(childEnv(c), () => refusal(pushGitRoot(c.root)));
     expect(error.code).toBe('publish_scan_unreadable');
     expect(error.message).toContain('origin has no branch main');
+    expect(error.fix?.argv).toEqual(['git', '-C', c.root, 'ls-remote', '--heads', '--', 'origin']);
+    expect(error.fix?.user_message).not.toContain('fsck');
     expect(() => git(c.remote, 'rev-parse', '--verify', 'refs/heads/main')).toThrow();
   }, 60_000);
+
+  test('a commit changing .gitattributes is held and the user is told to review and push it', async () => {
+    const c = checkout();
+    const before = remoteTip(c);
+    scriptCommit(c.root, '.gitattributes', '*.md binary\n');
+    const error = await withEnv(childEnv(c), () => refusal(pushGitRoot(c.root)));
+    expect(error.code).toBe('publish_secret_found');
+    expect(error.message).toContain('.gitattributes (changes what the scan sees');
+    expect(error.suggestion).toContain('never published automatically');
+    expect(error.suggestion).toContain(`git -C ${c.root} push`);
+    expect(remoteTip(c)).toBe(before);
+  }, 60_000);
+
+  test('a scan past the in-process budget moves to the keep-checkout publish, which still refuses a secret', async () => {
+    const c = checkout();
+    const before = remoteTip(c);
+    scriptCommit(c.root, 'notes/deploy.md', `Deploy token ${token}\n`);
+    const error = await withEnv(childEnv(c), () => refusal(pushGitRoot(c.root, undefined, 0)));
+    expect(error.code).toBe('publish_secret_found');
+    expect(error.message).toContain('notes/deploy.md:1 (');
+    expect(remoteTip(c)).toBe(before);
+  }, 120_000);
+
+  test('a scan past the in-process budget moves to the keep-checkout publish, which pushes a clean commit', async () => {
+    const c = checkout();
+    scriptCommit(c.root, 'notes/page.md', 'A clean page\n');
+    const pushed = await withEnv(childEnv(c), () => pushGitRoot(c.root, undefined, 0));
+    expect(pushed.push).toBe('committed');
+    expect(remoteTip(c)).toBe(git(c.root, 'rev-parse', 'HEAD').trim());
+  }, 120_000);
 
   test('commits the scan cannot read in full hold the push as publish_scan_unreadable, nothing pushed', async () => {
     const c = checkout();
