@@ -63,20 +63,26 @@ type History = Array<{ id: number | null; compiled_truth: string; timeline: stri
 /**
  * The newest body whose fence holds the claim (at any row number: a later re-add counts), when the body after it has
  * no fence of that kind at all; `removed` when the body after it kept the fence without the claim (an edit, a forget
- * strike or a takes_remove reservation after any re-add), or when it is the page as it is now; null when no stored
+ * strike or a takes_remove reservation after any re-add), when any later body holds an explicit empty fence of that kind
+ * (the user's answer for every row the section ever held), or when it is the page as it is now; null when no stored
  * version holds it.
  */
 function lostIn(history: History, fence: 'facts' | 'takes', holds: (body: string) => ParsedFact | ParsedTake | undefined) {
   let held: { version_id: number; cell: ParsedFact | ParsedTake } | null = null;
   let next: 'absent' | 'fence' | null = null;
+  let emptied = false;
   for (const body of history) {
-    const cell = holds(`${body.compiled_truth}\n${body.timeline ?? ''}`);
+    const text = `${body.compiled_truth}\n${body.timeline ?? ''}`;
+    const cell = holds(text);
     if (cell) {
       if (body.id === null) return 'removed' as const;
-      held = { version_id: body.id, cell }; next = null;
-    } else if (held && next === null) next = hasFence(body, fence) ? 'fence' : 'absent';
+      held = { version_id: body.id, cell }; next = null; emptied = false;
+    } else if (held) {
+      if (next === null) next = hasFence(body, fence) ? 'fence' : 'absent';
+      if (hasFence(body, fence) && (fence === 'facts' ? parseFactsFence(text).facts.length : parseTakesFence(text).takes.length) === 0) emptied = true;
+    }
   }
-  return !held ? null : next === 'absent' ? held : 'removed' as const;
+  return !held ? null : next === 'absent' && !emptied ? held : 'removed' as const;
 }
 
 /** Every lost row of the selected sources, grouped by page with the numbers they take, and the count of each reason a row is not listed. */

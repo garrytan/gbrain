@@ -2075,6 +2075,20 @@ the whole section on purpose, or an edit may have lost it: ask which.
   write retires every row on it. For facts it is:
 
 ```markdown
+## Facts
+
+<!--- gbrain:facts:begin -->
+
+| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |
+|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|
+<!--- gbrain:facts:end -->
+```
+
+A page with no file changes through `get_page` (`include_content: true`) and
+`put_page` with that revision as `expected_revision`; `edit_page` refuses to
+write fence markers. Neither outcome is a default, and nothing changes until the
+user chooses.
+
 ### Lost fence rows
 
 A page rewrite that drops its `## Facts` or takes section is safe on its
@@ -2099,7 +2113,8 @@ claim is on the page now, and page history shows the row in a section that
 then vanished before the retirement. A row you removed by editing a section
 that stayed in place, a row retired by an explicit empty section, and a
 forgotten fact are never listed, and neither is a row you re-added after the
-loss and then removed again. A section you rebuilt by hand without a row
+loss and then removed again, or any row of a page where you wrote an empty
+section after the loss. A section you rebuilt by hand without a row
 leaves the same records as the bug, so read the preview with the user before
 applying it. `gbrain repair generations --mode restore`
 does not cover this case, because the retiring write published a fence that
@@ -2112,20 +2127,6 @@ changed since the preview is skipped and asks for a new preview. A restored
 fact is a new facts row at the trust tier the expired one had (the expired row
 stays as history). It is explicit-only and nothing runs on upgrade: show the
 user the preview before running the apply.
-
-## Facts
-
-<!--- gbrain:facts:begin -->
-
-| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |
-|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|
-<!--- gbrain:facts:end -->
-```
-
-A page with no file changes through `get_page` (`include_content: true`) and
-`put_page` with that revision as `expected_revision`; `edit_page` refuses to
-write fence markers. Neither outcome is a default, and nothing changes until the
-user chooses.
 
 ### Extractor facts
 

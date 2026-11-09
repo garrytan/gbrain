@@ -131,6 +131,13 @@ for (const backend of testBackends()) {
         expect((await repair(engine)).affected).toBe(0);
       }, opts), 180_000);
 
+      test('a lost row is not listed once the user wrote an explicit empty section after the loss', () => managedBrain(async ({ engine, ctx }) => {
+        await loseRows(ctx);
+        await put(ctx, PAGE(`Alice v4.\n\n${emptyFenceBlock('facts')}\n${emptyFenceBlock('takes')}`));
+        await put(ctx, PAGE(`Alice v5.\n\n${FACTS(ROW(3, B))}\n${TAKES([3, TB])}`));
+        expect((await repair(engine)).affected).toBe(0);
+      }, opts), 180_000);
+
       test('an apply after the page changed restores nothing and asks for a new preview', () => managedBrain(async ({ engine, ctx }) => {
         await loseRows(ctx);
         const preview = await repair(engine);
