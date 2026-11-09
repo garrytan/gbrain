@@ -4383,6 +4383,7 @@
           "text: string",
           "unit: string | null",
           "valid_from: Date",
+          "valid_until: Date | null",
           "value: number | null"
         ],
         "name": "TrajectoryPoint"
