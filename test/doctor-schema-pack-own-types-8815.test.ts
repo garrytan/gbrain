@@ -3,7 +3,9 @@
  * lacks as user schema drift, so a custom pack copied from gbrain-base-v2
  * before it declared gbrain's own page types (`extract_receipt`, `code`,
  * #6818) warned `page_type_undeclared` about pages gbrain itself writes.
- * Those types are exempt; a user's own undeclared type still warns.
+ * Pages gbrain wrote are exempt, judged by how they were written (a code
+ * importer page, a dream_generated receipt under extracts/), not by type
+ * name: a user's Markdown page typed `code` or `extract_receipt` still warns.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -11,6 +13,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { checkSchemaPackConsistency } from '../src/commands/doctor/schema-pack-checks.ts';
 import { writeReceipt } from '../src/core/extract/receipt-writer.ts';
+import { importCodeFile, importFromContent } from '../src/core/import-file.ts';
 import { emptyHome, withEnv } from './helpers/with-env.ts';
 
 const PACK = `api_version: gbrain-schema-pack-v1
@@ -51,7 +54,7 @@ const consistency = () => withEnv({ GBRAIN_HOME: home, GBRAIN_SCHEMA_PACK: undef
 
 test('gbrain-owned page types are not undeclared drift on a pack that predates them; a user type still is', async () => {
   await writeReceipt(engine, { kind: 'links', source_id: 'default', run_id: 'a1b2c3d4e5f6789abcdef', round: 'full', extracted_at: '2026-05-27T14:30:00.000Z', total_rows: 3, cost_usd: 0 });
-  await engine.putPage('src/example.ts', { type: 'code', title: 'example.ts', compiled_truth: 'export const x = 1;' }, { sourceId: 'default' });
+  await importCodeFile(engine, 'src/example.ts', 'export const x = 1;\n', { noEmbed: true });
   const own = await consistency();
   expect(own.message).not.toContain('extract_receipt');
   expect(own.message).not.toContain("'code'");
@@ -62,4 +65,20 @@ test('gbrain-owned page types are not undeclared drift on a pack that predates t
   expect(user.status).toBe('warn');
   expect(user.message).toContain('custom_fixture');
   expect(user.message).not.toContain('extract_receipt');
+});
+
+test('a user Markdown page typed like a gbrain page is still undeclared drift', async () => {
+  await engine.executeRaw('DELETE FROM pages');
+  await writeReceipt(engine, { kind: 'links', source_id: 'default', run_id: 'b1c2d3e4f5a6789abcdef', round: 'full', extracted_at: '2026-05-27T14:30:00.000Z', total_rows: 3, cost_usd: 0 });
+  await importCodeFile(engine, 'src/example.ts', 'export const x = 1;\n', { noEmbed: true });
+  expect((await consistency()).status).toBe('ok');
+
+  await importFromContent(engine, 'notes/snippet', '---\ntitle: Snippet\ntype: code\n---\nA pasted snippet.\n', { noEmbed: true });
+  const code = await consistency();
+  expect(code.status).toBe('warn');
+  expect(code.message).toContain("'code' (1)");
+
+  await importFromContent(engine, 'notes/receipt-like', '---\ntitle: Receipt like\ntype: extract_receipt\n---\nA user note.\n', { noEmbed: true });
+  const receipt = await consistency();
+  expect(receipt.message).toContain("'extract_receipt' (1)");
 });
