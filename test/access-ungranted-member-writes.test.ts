@@ -125,7 +125,16 @@ for (const kind of testBackends()) {
       for (const who of ['bob', 'public', 'alice']) expect((await call(who, 'get_page', { slug: derived })).json.code).toBe('page_not_found');
       const control = 'notes/derived-shared-' + canary;
       await importFromContent(engine, control, ['---', 'type: note', 'title: Control ' + canary, 'derived_from: [' + SHARED_PAGE + ']', '---', '# Control', '', 'Control code ' + canary + '.'].join('\n'), { sourceId: 'default', noEmbed: true });
-      expect((await call('bob', 'get_page', { slug: control })).json.code).toBeUndefined();
+      const read = await call('bob', 'get_page', { slug: control, include_content: true });
+      expect({ isError: read.isError, body: read.text.includes('Control code ' + canary + '.') }).toEqual({ isError: false, body: true });
+    }, 240_000);
+
+    test('another member or an unbound token writing a slug the member created gets page_not_found and changes nothing', async () => {
+      const canary = marker('claim');
+      const slug = 'notes/alice-claim-' + canary;
+      expect((await call('alice', 'put_page', { slug, content: note('Alice claim', 'Alice ' + canary + '.') })).isError).toBe(false);
+      for (const who of ['bob', 'public']) expect((await call(who, 'put_page', { slug, content: note('Other claim', who + ' ' + canary + '.') })).json.code).toBe('page_not_found');
+      expect(await stored(slug)).toMatchObject({ page_readers: ['member:alice-example'], body: expect.stringContaining('Alice ' + canary) });
     }, 240_000);
 
     test('a token granted --sources default and an OAuth client at its registration default are kept to their member too', async () => {

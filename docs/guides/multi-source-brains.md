@@ -260,7 +260,9 @@ who may read it, before any member's bot connects:
   writer included. A page teammates should read (a shared `people/` or
   `companies/` page, or a page in a folder a rule scopes to a group) names its
   readers when it is created; otherwise the first member to create a slug
-  keeps it. Before this release those
+  keeps it, and every other remote credential writing that slug gets
+  `page_not_found` until the operator adds `readable_by` on the brain host.
+  Before this release those
   pages named no readers, so other members and unbound tokens read them:
   check pages a member wrote with `gbrain access who-can-read <slug>` and add
   `readable_by` on the brain host to any that should stay private.
