@@ -51,8 +51,10 @@ export async function sweepContacts(
   // recorded) is unusable, so the sweep lists fully once and then records the
   // new token with the mask it was minted under.
   const maskChanged = state.contacts_person_fields !== CONTACT_PERSON_FIELDS;
-  // #8906: a full re-list that a deadline or the page budget stopped resumes at its checkpointed page.
-  const resumeToken = state.contacts_relist?.person_fields === CONTACT_PERSON_FIELDS ? state.contacts_relist.page_token : null;
+  // #8906: a full re-list that a deadline or the page budget stopped resumes at its checkpointed page. --full lists
+  // from page 1 to the end in one run, as it did before the checkpoint.
+  const resumeToken = !deps.opts.full && state.contacts_relist?.person_fields === CONTACT_PERSON_FIELDS ? state.contacts_relist.page_token : null;
+  const pageBudget = deps.opts.full ? Infinity : CONTACT_RELIST_PAGES_PER_RUN;
   const syncToken = deps.opts.full || maskChanged || resumeToken ? null : state.contacts_sync_token;
   if (maskChanged && state.contacts_sync_token && !deps.opts.full && !resumeToken) deps.log('[google] contacts field mask changed; full re-list');
   let groupNames: Record<string, string> | null = null;
@@ -95,7 +97,7 @@ export async function sweepContacts(
     // list from page 1, once.
     let pageToken = resumeToken;
     if (resumeToken) deps.log('[google] contacts full re-list resuming at its checkpointed page');
-    for (let pages = 0; pages < CONTACT_RELIST_PAGES_PER_RUN && !listed; pages++) {
+    for (let pages = 0; pages < pageBudget && !listed; pages++) {
       let page;
       try {
         page = await people.listConnectionsPage(pageToken, signal);

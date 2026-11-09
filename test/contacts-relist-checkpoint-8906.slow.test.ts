@@ -197,4 +197,21 @@ describe('contacts full re-list checkpoints (#8906)', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 240_000);
+test('--full ignores a saved re-list checkpoint and the page budget: it lists from page 1 to the end before recording last_full_at', async () => {
+    const { dir, cfg } = await googleSource();
+    try {
+      seedState(dir, { contacts_sync_token: null, contacts_person_fields: CONTACT_PERSON_FIELDS, contacts_relist: { page_token: 'p3', person_fields: CONTACT_PERSON_FIELDS } });
+      const api = peopleApi(11);
+      await withEnv({ GBRAIN_HOME: mkdtempSync(join(tmpdir(), 'gbrain-home-8906-')), GBRAIN_TEST_8906_TOKEN: 'synthetic-fixture-token' }, () =>
+        runGoogleSync(engine, 'gsrc', cfg, { sourceId: 'gsrc', full: true, noEmbed: true, noExtract: true, noSchemaPack: true }, api.fetchImpl));
+      expect(api.served).toEqual(Array.from({ length: 11 }, (_, i) => 'p' + (i + 1)));
+      const state = readGoogleState(dir);
+      expect(state.contacts_sync_token).toBe('ppl-new');
+      expect(relistOf(dir)).toBeNull();
+      expect(state.last_full_at).toBeTruthy();
+      expect(await personPages()).toBe(2_200);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
 });
