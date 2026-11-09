@@ -14,6 +14,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { checkSchemaPackConsistency } from '../src/commands/doctor/schema-pack-checks.ts';
 import { writeReceipt } from '../src/core/extract/receipt-writer.ts';
 import { importCodeFile, importFromContent } from '../src/core/import-file.ts';
+import { runRetypeCore } from '../src/core/schema-pack/retype.ts';
+import type { OperationContext } from '../src/core/operations.ts';
 import { emptyHome, withEnv } from './helpers/with-env.ts';
 
 const PACK = `api_version: gbrain-schema-pack-v1
@@ -81,4 +83,19 @@ test('a user Markdown page typed like a gbrain page is still undeclared drift', 
   await importFromContent(engine, 'notes/receipt-like', '---\ntitle: Receipt like\ntype: extract_receipt\n---\nA user note.\n', { noEmbed: true });
   const receipt = await consistency();
   expect(receipt.message).toContain("'extract_receipt' (1)");
+});
+
+test('a code importer page retyped to an undeclared type is drift', async () => {
+  await engine.executeRaw('DELETE FROM pages');
+  await importCodeFile(engine, 'src/example.ts', 'export const x = 1;\n', { noEmbed: true });
+  expect((await consistency()).status).toBe('ok');
+  const ctx = { engine, config: {}, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: false } as unknown as OperationContext;
+  const retyped = await withEnv({ GBRAIN_HOME: home, GBRAIN_SCHEMA_PACK: undefined }, () =>
+    runRetypeCore(ctx, { rules: [{ from_type: 'code', to_type: 'custom_fixture' }], apply: true, sourceId: 'default' }));
+  expect(retyped.total_applied).toBe(1);
+  const [page] = await engine.executeRaw<{ type: string; page_kind: string }>("SELECT type, page_kind FROM pages WHERE deleted_at IS NULL");
+  expect(page).toEqual({ type: 'custom_fixture', page_kind: 'code' });
+  const drift = await consistency();
+  expect(drift.status).toBe('warn');
+  expect(drift.message).toContain("'custom_fixture' (1)");
 });
