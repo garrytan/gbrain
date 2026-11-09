@@ -12,7 +12,8 @@
  *     session is banked; extraction attributes them to that agent, never to
  *     the owner.
  *   - `off`: nothing from the session is banked.
- *   - `owner`: the turns are the owner's; automatic detection is skipped.
+ *   - `owner`: the turns are the owner's; detection still runs, only to note
+ *     (`speaker_owner_override_detected`) a session it finds agent-launched.
  *   - anything else: agent `agent`, reported as `speaker_label_invalid`.
  * Unset: detection (`detectAgentLaunched`) — a headless harness process
  * (claude `-p`/`--print`, codex `exec`) with a claude or codex process
@@ -21,13 +22,16 @@
  *
  * Sidecar `<sessionId>.speaker.json` (0600, tmp+rename) beside the corpus
  * files, written BEFORE any corpus file of the session; the first record is
- * kept. Its absence means the owner.
+ * kept. Its absence means the owner. A resolved speaker that differs from the
+ * record is noted as `speaker_mismatch` (#8080), never rewritten; an agent in
+ * a session the owner already banked banks nothing (`speaker_mismatch`), since
+ * a sidecar would re-attribute the owner's banked turns.
  */
 
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { spawnSync } from '../spawn.ts';
 import { basename, dirname, join } from 'node:path';
-import { corpusFileSessionId, speakerFileName } from './corpus-segments.ts';
+import { corpusFileSessionId, SPEAKER_SIDECAR_SUFFIX, speakerFileName } from './corpus-segments.ts';
 
 export const SESSION_AGENT_ENV = 'GBRAIN_SESSION_AGENT';
 /** Principal recorded for a session detection marked as agent-launched. */
@@ -167,21 +171,49 @@ export function speakerContextNote(principal: string): string {
   return `speaker: agent ${principal}, not the owner`;
 }
 
+/** True when the session already has corpus files in `dir` (banked as the owner's when no sidecar exists). */
+function sessionHasCorpusFiles(dir: string, sessionId: string): boolean {
+  const id = speakerFileName(sessionId).slice(0, -SPEAKER_SIDECAR_SUFFIX.length);
+  try {
+    return readdirSync(dir).some((name) => name.endsWith('.txt') && corpusFileSessionId(name) === id);
+  } catch {
+    return false;
+  }
+}
+
+type BankDecision =
+  { bank: true; reasons: string[] } | { bank: 'skip' | 'failed'; reason: 'capture_opt_out' | 'speaker_write_failed' | 'speaker_mismatch'; reasons: string[] };
+
 /**
  * The hook's banking decision for one event: `bank: true` (an agent speaker
  * is recorded first), `'skip'` (the launcher opted out) or `'failed'` (the
- * marker could not be written, so nothing is banked rather than banking an
- * agent session as the owner's). `reasons` are heartbeat notes.
+ * marker could not be written, or an agent continues a session already banked
+ * as the owner's, so nothing is banked rather than mixing the two). `reasons`
+ * are heartbeat notes; a speaker that differs from the recorded one adds
+ * `speaker_mismatch` (#8080).
  */
-export function bankAsSpeaker(dir: string, sessionId: string, speaker: SessionSpeaker, harness: string):
-  { bank: true; reasons: string[] } | { bank: 'skip' | 'failed'; reason: 'capture_opt_out' | 'speaker_write_failed'; reasons: string[] } {
+export function bankAsSpeaker(dir: string, sessionId: string, speaker: SessionSpeaker, harness: string): BankDecision {
   if (speaker.kind === 'skip') return { bank: 'skip', reason: 'capture_opt_out', reasons: [] };
-  if (speaker.kind === 'owner') return { bank: true, reasons: [] };
+  const recorded = readSpeakerSidecar(dir, sessionId);
+  if (speaker.kind === 'owner') return { bank: true, reasons: recorded ? ['speaker_mismatch'] : [] };
   const reasons = speaker.invalid ? ['speaker_label_invalid'] : [];
+  if (!recorded && sessionHasCorpusFiles(dir, sessionId)) return { bank: 'failed', reason: 'speaker_mismatch', reasons };
+  if (recorded && recorded.principal !== speaker.principal) reasons.push('speaker_mismatch');
   try {
     writeSpeakerSidecar(dir, sessionId, speaker, harness);
   } catch {
     return { bank: 'failed', reason: 'speaker_write_failed', reasons };
   }
   return { bank: true, reasons };
+}
+
+/**
+ * The hook's speaker and banking decision for one event. `owner` from the env
+ * still runs detection, so an inherited override that hides an agent-launched
+ * session is noted (`speaker_owner_override_detected`, #8080).
+ */
+export function hookSpeakerDecision(dir: string, sessionId: string, opts: { env: Env; ancestry?: () => readonly AncestorProcess[] }, harness: string): BankDecision {
+  const decision = bankAsSpeaker(dir, sessionId, resolveSessionSpeaker(opts), harness);
+  const overridden = opts.env[SESSION_AGENT_ENV]?.trim().toLowerCase() === 'owner' && detectAgentLaunched((opts.ancestry ?? readProcessAncestry)());
+  return overridden ? { ...decision, reasons: [...decision.reasons, 'speaker_owner_override_detected'] } : decision;
 }
