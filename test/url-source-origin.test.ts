@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
+import * as childProcess from 'node:child_process';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -378,5 +379,38 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
     expect(report.results[1]!.reason).toContain('connection reset (example)');
     expect(await config('source-b')).toEqual(URL_CONFIG);
     expect(await config('source-c')).toEqual({ ...URL_CONFIG, added_by_remote_caller: false });
+  }), 60_000);
+
+  test('--remote --apply on a managed source whose worktree has an active refresh is refused source_busy and writes nothing', () => brain(async home => {
+    const { source, root } = await managedUrlSource(home, false);
+    const [binding] = await engine.executeRaw<{ worktree_id: string }>('SELECT worktree_id::text FROM persistence_source_bindings WHERE source_id=$1', [source]);
+    await engine.executeRaw(`INSERT INTO persistence_worktree_refreshes(worktree_id,source_ids,principal_id,owner_epoch,topology_generation,state,old_head,target_head,upstream_ref)
+      VALUES($1::uuid,ARRAY[$2::text],$3::uuid,1,1,'draining','a','b','origin/main')`, [binding!.worktree_id, source, randomUUID()]);
+    const [result] = (await recordSourceOrigin(engine, [source], { origin: 'remote', apply: true, remote: false })).results;
+    expect(result).toMatchObject({ source_id: source, status: 'refused', code: 'source_busy' });
+    expect(result!.reason).toContain('refresh');
+    expect(result!.reason).toContain('nothing changed');
+    expect(lfsDownloadsOff(await config(source))).toBe(false);
+    expect(localConfig(root, 'core.hooksPath')).toBeNull();
+  }), 120_000);
+
+  test('a lock-down that fails part way is reported as a partial change to the checkout, and the record is not written', () => brain(async () => {
+    const root = defaultCloneDir('source-a');
+    repoAt(root, { 'example.md': 'Canonical\n' });
+    await insert('source-a', root, URL_CONFIG);
+    const original = childProcess.execFileSync;
+    let writes = 0;
+    const patched = spyOn(childProcess, 'execFileSync').mockImplementation(((file: string, args?: readonly string[], options?: object) => {
+      if (file === 'git' && args?.includes('--file') && ++writes === 2) throw new Error('config write failed (example)');
+      return original(file, args as string[], options as never);
+    }) as typeof childProcess.execFileSync);
+    let report: Awaited<ReturnType<typeof recordSourceOrigin>>;
+    try { report = await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: true, remote: false }); }
+    finally { patched.mockRestore(); }
+    expect(report.results[0]).toMatchObject({ source_id: 'source-a', status: 'refused', code: 'write_failed' });
+    expect(report.results[0]!.reason).toContain('part of the git-lfs and hooks lock-down');
+    expect(report.results[0]!.reason).not.toContain('already has git-lfs downloads and hooks off');
+    expect(localConfig(root, 'lfs.fetchexclude')).toBe('*');
+    expect(await config('source-a')).toEqual(URL_CONFIG);
   }), 60_000);
 });

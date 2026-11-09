@@ -169,7 +169,7 @@ export async function recordSourceOrigin(engine: BrainEngine, ids: string[], opt
   const locks = opts.apply && await managedPersistenceEnabled(engine)
     ? { ...await import('./persistence/topology-locks.ts'), ...await import('./persistence/topology-transaction.ts') } : null;
   for (const id of [...new Set(ids)]) {
-    let lockedDown = false;
+    const lockDown: { state: 'none' | 'started' | 'done' } = { state: 'none' };
     try {
       const [row] = await engine.executeRaw<SourceRowLike>('SELECT id, local_path, config, archived FROM sources WHERE id=$1', [id]);
       const early = check(row, id, opts.origin);
@@ -188,8 +188,9 @@ export async function recordSourceOrigin(engine: BrainEngine, ids: string[], opt
         if (remote) {
           const lfsNow = lfsRefusal(id, locked!.local_path!);
           if (lfsNow) return lfsNow;
+          lockDown.state = 'started';
           lockDownCheckout(locked!.local_path!);
-          lockedDown = true;
+          lockDown.state = 'done';
         }
         await tx.executeRaw('UPDATE sources SET config=$2::text::jsonb WHERE id=$1',
           [id, JSON.stringify(normalizeSourceConfig({ ...config, added_by_remote_caller: remote }))]);
@@ -200,10 +201,15 @@ export async function recordSourceOrigin(engine: BrainEngine, ids: string[], opt
         : await engine.transaction(write));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const lockdown = lockedDown ? ' Its checkout already has git-lfs downloads and hooks off.' : '';
-      results.push((error as { code?: string }).code === 'write_pending'
-        ? refusal(id, 'source_busy', `Another gbrain process (a reclone, refresh or write) holds source ${id}'s worktree locks, so its origin was not recorded; nothing changed. Run this again once that process finishes.`)
-        : refusal(id, 'write_failed', `Recording source ${id}'s origin failed: ${message} The record was not written.${lockdown} The other ids in this run keep their own results; run this again for ${id}.`));
+      const lockdown = lockDown.state === 'done' ? ' Its checkout already has git-lfs downloads and hooks off.'
+        : lockDown.state === 'started' ? " Its checkout's .git/config may already hold part of the git-lfs and hooks lock-down; running this again writes all of it." : '';
+      const unchanged = lockdown ? `the record was not written.${lockdown}` : 'nothing changed.';
+      const code = (error as { code?: string }).code;
+      results.push(code === 'write_pending'
+        ? refusal(id, 'source_busy', `Another gbrain process (a reclone, refresh or write) holds source ${id}'s worktree locks, so its origin was not recorded; ${unchanged} Run this again once that process finishes.`)
+        : code === 'refresh_in_progress'
+          ? refusal(id, 'source_busy', `A refresh of the worktree holding source ${id} is still running, so its origin was not recorded; ${unchanged} Finish it (gbrain sources refresh ${id} --resume), then run this again.`)
+          : refusal(id, 'write_failed', `Recording source ${id}'s origin failed: ${message} The record was not written.${lockdown} The other ids in this run keep their own results; run this again for ${id}.`));
     }
   }
   return { origin: opts.origin, apply: opts.apply, results };
