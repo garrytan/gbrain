@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import * as childProcess from 'node:child_process';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -430,6 +430,22 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
     expect(report.results[0]).toMatchObject({ source_id: 'source-a', status: 'refused', code: 'write_failed' });
     expect(localConfig(root, 'lfs.fetchexclude')).toBe('*');
     expect(existsSync(join(root, '.git', 'config.lock'))).toBe(false);
+  }), 60_000);
+
+  test('the lock-down keeps a group-writable config mode and a symlinked config, as Git does', () => brain(async home => {
+    const root = defaultCloneDir('source-a');
+    repoAt(root, { 'example.md': 'Canonical\n' });
+    const target = join(home, 'shared-config');
+    writeFileSync(target, readFileSync(join(root, '.git', 'config')));
+    chmodSync(target, 0o664);
+    rmSync(join(root, '.git', 'config'));
+    symlinkSync(target, join(root, '.git', 'config'));
+    await insert('source-a', root, URL_CONFIG);
+    expect((await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: true, remote: false })).results[0]).toMatchObject({ status: 'recorded' });
+    expect(lstatSync(join(root, '.git', 'config')).isSymbolicLink()).toBe(true);
+    expect(statSync(target).mode & 0o777).toBe(0o664);
+    expect(localConfig(root, 'core.hooksPath')).toBe('/dev/null');
+    expect(existsSync(`${target}.lock`) || existsSync(join(root, '.git', 'config.lock'))).toBe(false);
   }), 60_000);
 
   test('a config.lock another Git process holds refuses the lock-down write_failed and leaves both files alone', () => brain(async () => {

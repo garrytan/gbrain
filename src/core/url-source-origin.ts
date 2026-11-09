@@ -18,7 +18,7 @@
  * canonical manifest, and converting the checkout rewrites its files, which this does not do. Without git-lfs files a
  * clone with these settings has the same tracked bytes, so the stored manifest needs no change.
  */
-import { existsSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fchmodSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { BrainEngine } from './engine.ts';
 import { execFileSync } from './spawn.ts';
@@ -115,22 +115,25 @@ function lockDownGaps(root: string): string[] {
 /**
  * Writes the clone-time lock-down (`LFS_OFF_CLONE_CONFIG`) into the repository's shared config (`--git-common-dir`, so a linked
  * worktree's repository gets it too), without running Git in the checkout, then reads back what Git uses there and throws when a
- * worktree-scoped or included setting still overrides a key. The keys are written to a copy held as Git's own `config.lock` and
- * renamed over the config in one step, so a failure part way leaves the config as it was; each key's existing values are removed
+ * worktree-scoped or included setting still overrides a key. Like Git, it takes `config.lock` beside the config's real path
+ * first, copies the config into it (mode kept), writes the keys there and renames it over the config in one step, so a failure part way leaves the config as it was; each key's existing values are removed
  * before its one value is written, so a key that held several ends with the clone-time value. `progress` says how far it got:
  * `written` once the config holds every key.
  */
 function lockDownCheckout(root: string, progress: { state: 'none' | 'written' | 'done' }): void {
   const commonDir = hardenedGitSync(root, ['rev-parse', '--git-common-dir'], GIT_LIMITS);
   if (!commonDir.ok) throw new Error(`Git could not locate the repository of ${root}.`);
-  const file = join(resolve(root, commonDir.stdout.toString('utf8').replace(/\n$/, '')), 'config');
+  const file = realpathSync(join(resolve(root, commonDir.stdout.toString('utf8').replace(/\n$/, '')), 'config'));
   const staged = `${file}.lock`;
-  try { writeFileSync(staged, readFileSync(file), { flag: 'wx', mode: statSync(file).mode & 0o777 }); }
+  let lock: number;
+  try { lock = openSync(staged, 'wx'); }
   catch (error) {
     if ((error as { code?: string }).code === 'EEXIST') throw new Error(`${staged} exists, so another Git process is writing that config (or one stopped and left the file).`);
     throw error;
   }
   try {
+    try { fchmodSync(lock, statSync(file).mode & 0o7777); writeFileSync(lock, readFileSync(file)); }
+    finally { closeSync(lock); }
     const options = { cwd: dirname(file), env: hardenedGitEnvironment(), stdio: 'pipe', timeout: GIT_LIMITS.timeoutMs } as const;
     for (const [key, value] of LOCK_DOWN) {
       try { execFileSync('git', ['config', '--file', staged, '--unset-all', key], options); }
