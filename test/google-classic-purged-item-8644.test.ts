@@ -14,13 +14,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { parseGoogleSourceConfig, readGoogleState, runGoogleSync } from '../src/core/google/google-source.ts';
+import type { GoogleSourceState } from '../src/core/google/types.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { unpurgePage } from '../src/core/persistence/page-purge.ts';
 import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { readManagedConnectorState } from '../src/core/persistence/connector-state.ts';
 import { ManagedConnectorSync } from '../src/core/persistence/connector-sync.ts';
-import { contact, createConnectorFixture, json, options, settleConnectorWrites, withGoogleAccount } from './helpers/connector-fixture.ts';
+import { contact, createConnectorFixture, json, options, settleConnectorWrites, sourceCheckpoint, withGoogleAccount } from './helpers/connector-fixture.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -205,6 +206,14 @@ describe('#8938: a purged Gmail thread on a managed Google source', () => {
       await submitPageMutation(ctx(engine, f.id), { operation: 'delete_page', params: { slug: slug!, purge: true, expected_revision: snapshot.revision } });
       await settleConnectorWrites(engine, f.id);
       expect(await loops()).toBe(0);
+      await disposePersistenceConsumer(engine);
+      const graceHold = async () => ((await sourceCheckpoint(engine, f.id)) as { completed_keys: { state?: GoogleSourceState }[] }[])[0]?.completed_keys[0]?.state?.loop_grace_holds?.[THREAD];
+      const hold = { [THREAD]: { due_ms: Date.now() + 30 * 86_400_000, slug, rev: null, spec: { loopType: 'unanswered_inbound', counterpartyEmail: 'alice@example.invalid',
+        summary: 'Contract question', evidence: [{ quote: 'Could you confirm the acme-example contract terms?' }], lastActivityMs: sentAt, openedMs: sentAt } } };
+      await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys = jsonb_set(completed_keys, '{0,state,loop_grace_holds}',
+          COALESCE(completed_keys->0->'state'->'loop_grace_holds', '{}'::jsonb) || $2::text::jsonb, true)
+        WHERE op='managed-connector' AND fingerprint IN (SELECT intent->>'checkpointKey' FROM persistence_requests WHERE source_id=$1)`, [f.id, JSON.stringify(hold)]);
+      expect((await graceHold())?.spec?.summary).toBe('Contract question');
 
       historyId = '5010';
       changed = [THREAD];
@@ -221,6 +230,7 @@ describe('#8938: a purged Gmail thread on a managed Google source', () => {
       expect(state.last_failure).toBeNull();
       expect(state.last_run).toMatchObject({ purged_skipped: 1 });
       await disposePersistenceConsumer(engine);
+      expect(await graceHold()).toBeUndefined();
 
       // A render the session's screen misses is admitted and refused by the pages guard at publication; that skip is
       // reported as purged too, so the thread still yields no loop.
