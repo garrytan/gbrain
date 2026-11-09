@@ -60,6 +60,7 @@ export async function retryWriteAdmission<T>(requestId: string, attempt: (remain
       if (isStalePlanError(error) ? ++stale > STALE_PLAN_RETRIES : !['40001', '40P01', '55P03', '57014'].includes(code ?? '')) throw error;
       const remaining = deadline - performance.now();
       if (remaining <= 25) {
+        if (isStalePlanError(error)) throw error;
         const unavailable = new OperationError('storage_error', 'Write admission is temporarily blocked by database contention.',
           `Retry the same operation, arguments, and request_id ${requestId}. No queued receipt has been confirmed.`);
         unavailable.writeError = 'storage_error';

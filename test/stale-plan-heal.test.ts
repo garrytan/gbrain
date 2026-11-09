@@ -17,6 +17,8 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
+import net from 'node:net';
+import type { AddressInfo } from 'node:net';
 import postgres from '#postgres';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { retryWriteAdmission, STALE_PLAN_RETRIES } from '../src/core/persistence/admission-retry.ts';
@@ -112,6 +114,58 @@ describe.skipIf(!url)('a prepared SELECT * after another connection changes its 
       expect(await caught(preparedInTx())).toMatchObject({ code: '0A000' });
       expect(Array.from(await inTx() as Iterable<{ id: number }>)[0]!.id).toBe(1);
     } finally { await unnamed.end({ timeout: 1 }); }
+  });
+
+  /** A TCP relay to the database that can hold the server's answers back, to deliver one connection's reply late. */
+  async function relay() {
+    const target = new URL(url!);
+    let held: Array<string | Buffer> | null = null;
+    let client: net.Socket | null = null;
+    const sockets: net.Socket[] = [];
+    const server = net.createServer(c => {
+      client = c;
+      const s = net.connect(Number(target.port || 5432), target.hostname);
+      sockets.push(c, s);
+      c.on('data', d => s.write(d));
+      s.on('data', d => { if (held) held.push(d); else c.write(d); });
+      c.on('close', () => s.destroy()); s.on('close', () => c.destroy());
+      c.on('error', () => {}); s.on('error', () => {});
+    });
+    const port = await new Promise<number>(resolve => server.listen(0, '127.0.0.1', () => resolve((server.address() as AddressInfo).port)));
+    const relayed = new URL(url!); relayed.hostname = '127.0.0.1'; relayed.port = String(port);
+    return {
+      url: relayed.toString(),
+      hold() { held = []; },
+      release() { const out = held ?? []; held = null; for (const d of out) client!.write(d); },
+      close() { for (const s of sockets) s.destroy(); server.close(); },
+    };
+  }
+
+  test('a statement described before the change but answered after the pool healed is not kept as prepared', async () => {
+    const { select, alter } = await setup(1, CHANGES[0][1]);
+    const types = new Map();
+    const late = await relay();
+    const a = postgres(url!, { max: 1, shared_types: types, onnotice: () => {} });
+    const b = postgres(late.url, { max: 1, shared_types: types, onnotice: () => {} });
+    try {
+      expect(Array.from(await a.unsafe(select, [1], { prepare: true }) as Iterable<{ id: number }>)[0]!.id).toBe(1);
+      await b.unsafe('SELECT 1');
+      late.hold();
+      const described = b.unsafe(select, [1], { prepare: true }).execute();
+      await new Promise(resolve => setTimeout(resolve, 300));
+      await alter();
+      expect(Array.from(await a.unsafe(select, [1], { prepare: true }) as Iterable<{ id: number }>)[0]!.id).toBe(1);
+      const unrelated = b.unsafe('SELECT 2 AS n').execute();
+      late.release();
+      await described;
+      await unrelated;
+      const inTx = await caught(b.begin(tx => tx.unsafe(select, [1], { prepare: true })));
+      expect(inTx).toBeNull();
+    } finally {
+      await a.end({ timeout: 1 });
+      await b.end({ timeout: 1 });
+      late.close();
+    }
   });
 
   for (const [name, change] of CHANGES) {

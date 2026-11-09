@@ -1,5 +1,5 @@
 diff --git a/cjs/src/connection.js b/vendor/postgres/cjs/src/connection.js
-index 07f6716..1c709f4 100644
+index 07f6716..848e9e5 100644
 --- a/cjs/src/connection.js
 +++ b/vendor/postgres/cjs/src/connection.js
 @@ -20,6 +20,7 @@
@@ -10,7 +10,7 @@ index 07f6716..1c709f4 100644
      , noop = () => { /* noop */ }
  
  const retryRoutines = new Set([
-@@ -28,6 +29,15 @@
+@@ -28,6 +29,16 @@
    'transformAssignedExpr'
  ])
  
@@ -19,14 +19,15 @@ index 07f6716..1c709f4 100644
 +// only on the connection that failed, so each pooled connection failed once, and inside a transaction the caller saw
 +// the failure. The first one in the process starts a new plan generation: each connection drops its prepared
 +// statements before it builds its next query, and prepares them again. Only a statement this connection had cached
-+// starts one: a fresh statement that fails this way (a pooler mapping it onto an older server-side statement) is not
-+// healed by preparing again.
++// in the current generation starts one: not one already in flight when another connection started it, and not a
++// fresh statement that fails this way (a pooler mapping it onto an older server-side statement), which preparing
++// again cannot heal.
 +let planGeneration = 0
 +
  const errorFields = {
    83  : 'severity_local',    // S
    86  : 'severity',          // V
-@@ -49,7 +59,7 @@
+@@ -49,7 +60,7 @@
    82  : 'routine'            // R
  }
  
@@ -35,7 +36,7 @@ index 07f6716..1c709f4 100644
    const {
      sslnegotiation,
      ssl,
-@@ -64,6 +74,7 @@
+@@ -64,6 +75,7 @@
      onnotify,
      onparameter,
      max_pipeline,
@@ -43,7 +44,7 @@ index 07f6716..1c709f4 100644
      keep_alive,
      backoff,
      target_session_attrs
-@@ -75,9 +86,14 @@
+@@ -75,9 +87,14 @@
        , idleTimer = timer(end, options.idle_timeout)
        , lifeTimer = timer(end, options.max_lifetime)
        , connectTimer = timer(connectTimedOut, options.connect_timeout)
@@ -58,7 +59,7 @@ index 07f6716..1c709f4 100644
      , errorResponse = null
      , result = new Result()
      , incoming = Buffer.alloc(0)
-@@ -86,6 +102,7 @@
+@@ -86,6 +103,7 @@
      , statements = {}
      , statementId = Math.random().toString(36).slice(2)
      , statementCount = 1
@@ -66,7 +67,7 @@ index 07f6716..1c709f4 100644
      , closedTime = 0
      , remaining = 0
      , hostIndex = 0
-@@ -95,6 +112,9 @@
+@@ -95,6 +113,9 @@
      , rows = 0
      , serverSignature = null
      , nextWriteTimer = null
@@ -76,7 +77,7 @@ index 07f6716..1c709f4 100644
      , terminated = false
      , incomings = null
      , results = null
-@@ -105,11 +125,19 @@
+@@ -105,11 +126,19 @@
      , ended = null
      , nonce = null
      , query = null
@@ -96,7 +97,7 @@ index 07f6716..1c709f4 100644
      connect(query) {
        initial = query
        reconnect()
-@@ -143,11 +171,13 @@
+@@ -143,11 +172,13 @@
    }
  
    async function cancel({ pid, secret }, resolve, reject) {
@@ -112,7 +113,7 @@ index 07f6716..1c709f4 100644
      } catch (error) {
        reject(error)
      }
-@@ -163,22 +193,174 @@
+@@ -163,22 +194,174 @@
      if (q.cancelled)
        return
  
@@ -293,11 +294,12 @@ index 07f6716..1c709f4 100644
      }
    }
  
-@@ -232,13 +414,19 @@
+@@ -232,13 +415,20 @@
      q.prepare = options.prepare && ('prepare' in q.options ? q.options.prepare : true)
      q.string = string
      q.signature = q.prepare && types + string
 +    statementGeneration !== planGeneration && (statements = {}, statementGeneration = planGeneration)
++    q.generation = statementGeneration
      q.onlyDescribe && (delete statements[q.signature])
      q.parameters = q.parameters || parameters
      q.prepared = q.prepare && q.signature in statements
@@ -315,7 +317,7 @@ index 07f6716..1c709f4 100644
  
      typeof options.debug === 'function' && options.debug(id, string, parameters, types)
    }
-@@ -295,10 +483,11 @@
+@@ -295,10 +485,11 @@
  
    /* c8 ignore next 3 */
    function drain() {
@@ -328,7 +330,7 @@ index 07f6716..1c709f4 100644
      if (incomings) {
        incomings.push(x)
        remaining -= x.length
-@@ -330,6 +519,9 @@
+@@ -330,6 +521,9 @@
        remaining = 0
        incomings = null
      }
@@ -338,7 +340,7 @@ index 07f6716..1c709f4 100644
    }
  
    async function connect() {
-@@ -366,6 +558,7 @@
+@@ -366,6 +560,7 @@
      try {
        statements = {}
        needsTypes = options.fetch_types
@@ -346,7 +348,7 @@ index 07f6716..1c709f4 100644
        statementId = Math.random().toString(36).slice(2)
        statementCount = 1
        lifeTimer.start()
-@@ -379,20 +572,35 @@
+@@ -379,20 +574,35 @@
    }
  
    function error(err) {
@@ -382,7 +384,7 @@ index 07f6716..1c709f4 100644
    function queryError(query, err) {
      if (query.reserve)
        return query.reject(err)
-@@ -437,20 +645,53 @@
+@@ -437,20 +647,53 @@
      incoming = Buffer.alloc(0)
      remaining = 0
      incomings = null
@@ -438,7 +440,7 @@ index 07f6716..1c709f4 100644
      closedTime = performance.now()
      hadError && options.shared.retries++
      delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
-@@ -459,6 +700,10 @@
+@@ -459,6 +702,10 @@
  
    /* Handlers */
    function handle(xs, x = xs[0]) {
@@ -449,7 +451,7 @@ index 07f6716..1c709f4 100644
      (
        x === 68 ? DataRow :                   // D
        x === 100 ? CopyData :                 // d
-@@ -489,6 +734,39 @@
+@@ -489,6 +736,39 @@
      )(xs)
    }
  
@@ -489,7 +491,7 @@ index 07f6716..1c709f4 100644
    function DataRow(x) {
      let index = 7
      let length
-@@ -533,13 +811,26 @@
+@@ -533,13 +813,26 @@
    }
  
    function ReadyForQuery(x) {
@@ -503,7 +505,7 @@ index 07f6716..1c709f4 100644
        if (errorResponse) {
 +        // GBrain: a failed statement describes again next time instead of trusting shared parameter types.
 +        query.sharedTypes && options.shared_types.delete(query.typesKey)
-+        query.prepared && errorResponse.routine === 'RevalidateCachedQuery' && planGeneration++
++        query.prepared && query.generation === planGeneration && errorResponse.routine === 'RevalidateCachedQuery' && planGeneration++
          query.retried
            ? errored(query.retried)
 -          : query.prepared && retryRoutines.has(errorResponse.routine)
@@ -517,7 +519,7 @@ index 07f6716..1c709f4 100644
        } else {
          query.resolve(results || result)
        }
-@@ -547,9 +838,16 @@
+@@ -547,9 +840,16 @@
        errored(errorResponse)
      }
  
@@ -534,7 +536,7 @@ index 07f6716..1c709f4 100644
  
      if (initial) {
        if (target_session_attrs) {
-@@ -559,28 +857,54 @@
+@@ -559,28 +859,54 @@
            return terminate()
        }
  
@@ -595,10 +597,13 @@ index 07f6716..1c709f4 100644
          : connection.reserved()
        : ending
          ? terminate()
-@@ -630,7 +954,11 @@
+@@ -629,8 +955,13 @@
+     for (let i = 0; i < length; ++i)
        !query.statement.types[i] && (query.statement.types[i] = x.readUInt32BE(7 + i * 4))
  
-     query.prepare && (statements[query.signature] = query.statement)
+-    query.prepare && (statements[query.signature] = query.statement)
++    // GBrain (GST-2260): a statement built before this connection's plan generation moved stays out of its new map.
++    query.prepare && query.generation === statementGeneration && (statements[query.signature] = query.statement)
 +    // GBrain: only built-in parameter types are shared; a database's own types may be recreated under a new oid.
 +    query.typesKey && query.statement.types.every(t => t > 0 && t < 16384)
 +      && options.shared_types.set(query.typesKey, query.statement.types.slice())
@@ -607,7 +612,7 @@ index 07f6716..1c709f4 100644
    }
  
    function RowDescription(x) {
-@@ -767,15 +1095,23 @@
+@@ -767,15 +1098,23 @@
  
    async function fetchArrayTypes() {
      needsTypes = false
@@ -639,7 +644,7 @@ index 07f6716..1c709f4 100644
    }
  
    function addArrayType(oid, typarray) {
-@@ -821,7 +1157,16 @@
+@@ -821,7 +1160,16 @@
    function retry(q, error) {
      delete statements[q.signature]
      q.retried = error
@@ -657,7 +662,7 @@ index 07f6716..1c709f4 100644
    }
  
    function NotificationResponse(x) {
-@@ -1039,6 +1384,59 @@
+@@ -1039,6 +1387,59 @@
    return buffer
  }
  
@@ -1295,7 +1300,7 @@ index 0578284..e80a868 100644
  
    return '$' + (types.push(
 diff --git a/src/connection.js b/vendor/postgres/src/connection.js
-index 1b1cccd..c5130e8 100644
+index 1b1cccd..64f43ba 100644
 --- a/src/connection.js
 +++ b/vendor/postgres/src/connection.js
 @@ -20,6 +20,7 @@
@@ -1306,7 +1311,7 @@ index 1b1cccd..c5130e8 100644
      , noop = () => { /* noop */ }
  
  const retryRoutines = new Set([
-@@ -28,6 +29,15 @@
+@@ -28,6 +29,16 @@
    'transformAssignedExpr'
  ])
  
@@ -1315,14 +1320,15 @@ index 1b1cccd..c5130e8 100644
 +// only on the connection that failed, so each pooled connection failed once, and inside a transaction the caller saw
 +// the failure. The first one in the process starts a new plan generation: each connection drops its prepared
 +// statements before it builds its next query, and prepares them again. Only a statement this connection had cached
-+// starts one: a fresh statement that fails this way (a pooler mapping it onto an older server-side statement) is not
-+// healed by preparing again.
++// in the current generation starts one: not one already in flight when another connection started it, and not a
++// fresh statement that fails this way (a pooler mapping it onto an older server-side statement), which preparing
++// again cannot heal.
 +let planGeneration = 0
 +
  const errorFields = {
    83  : 'severity_local',    // S
    86  : 'severity',          // V
-@@ -49,7 +59,7 @@
+@@ -49,7 +60,7 @@
    82  : 'routine'            // R
  }
  
@@ -1331,7 +1337,7 @@ index 1b1cccd..c5130e8 100644
    const {
      sslnegotiation,
      ssl,
-@@ -64,6 +74,7 @@
+@@ -64,6 +75,7 @@
      onnotify,
      onparameter,
      max_pipeline,
@@ -1339,7 +1345,7 @@ index 1b1cccd..c5130e8 100644
      keep_alive,
      backoff,
      target_session_attrs
-@@ -75,9 +86,14 @@
+@@ -75,9 +87,14 @@
        , idleTimer = timer(end, options.idle_timeout)
        , lifeTimer = timer(end, options.max_lifetime)
        , connectTimer = timer(connectTimedOut, options.connect_timeout)
@@ -1354,7 +1360,7 @@ index 1b1cccd..c5130e8 100644
      , errorResponse = null
      , result = new Result()
      , incoming = Buffer.alloc(0)
-@@ -86,6 +102,7 @@
+@@ -86,6 +103,7 @@
      , statements = {}
      , statementId = Math.random().toString(36).slice(2)
      , statementCount = 1
@@ -1362,7 +1368,7 @@ index 1b1cccd..c5130e8 100644
      , closedTime = 0
      , remaining = 0
      , hostIndex = 0
-@@ -95,6 +112,9 @@
+@@ -95,6 +113,9 @@
      , rows = 0
      , serverSignature = null
      , nextWriteTimer = null
@@ -1372,7 +1378,7 @@ index 1b1cccd..c5130e8 100644
      , terminated = false
      , incomings = null
      , results = null
-@@ -105,11 +125,19 @@
+@@ -105,11 +126,19 @@
      , ended = null
      , nonce = null
      , query = null
@@ -1392,7 +1398,7 @@ index 1b1cccd..c5130e8 100644
      connect(query) {
        initial = query
        reconnect()
-@@ -143,11 +171,13 @@
+@@ -143,11 +172,13 @@
    }
  
    async function cancel({ pid, secret }, resolve, reject) {
@@ -1408,7 +1414,7 @@ index 1b1cccd..c5130e8 100644
      } catch (error) {
        reject(error)
      }
-@@ -163,22 +193,174 @@
+@@ -163,22 +194,174 @@
      if (q.cancelled)
        return
  
@@ -1589,11 +1595,12 @@ index 1b1cccd..c5130e8 100644
      }
    }
  
-@@ -232,13 +414,19 @@
+@@ -232,13 +415,20 @@
      q.prepare = options.prepare && ('prepare' in q.options ? q.options.prepare : true)
      q.string = string
      q.signature = q.prepare && types + string
 +    statementGeneration !== planGeneration && (statements = {}, statementGeneration = planGeneration)
++    q.generation = statementGeneration
      q.onlyDescribe && (delete statements[q.signature])
      q.parameters = q.parameters || parameters
      q.prepared = q.prepare && q.signature in statements
@@ -1611,7 +1618,7 @@ index 1b1cccd..c5130e8 100644
  
      typeof options.debug === 'function' && options.debug(id, string, parameters, types)
    }
-@@ -295,10 +483,11 @@
+@@ -295,10 +485,11 @@
  
    /* c8 ignore next 3 */
    function drain() {
@@ -1624,7 +1631,7 @@ index 1b1cccd..c5130e8 100644
      if (incomings) {
        incomings.push(x)
        remaining -= x.length
-@@ -330,6 +519,9 @@
+@@ -330,6 +521,9 @@
        remaining = 0
        incomings = null
      }
@@ -1634,7 +1641,7 @@ index 1b1cccd..c5130e8 100644
    }
  
    async function connect() {
-@@ -366,6 +558,7 @@
+@@ -366,6 +560,7 @@
      try {
        statements = {}
        needsTypes = options.fetch_types
@@ -1642,7 +1649,7 @@ index 1b1cccd..c5130e8 100644
        statementId = Math.random().toString(36).slice(2)
        statementCount = 1
        lifeTimer.start()
-@@ -379,20 +572,35 @@
+@@ -379,20 +574,35 @@
    }
  
    function error(err) {
@@ -1678,7 +1685,7 @@ index 1b1cccd..c5130e8 100644
    function queryError(query, err) {
      if (query.reserve)
        return query.reject(err)
-@@ -437,20 +645,53 @@
+@@ -437,20 +647,53 @@
      incoming = Buffer.alloc(0)
      remaining = 0
      incomings = null
@@ -1734,7 +1741,7 @@ index 1b1cccd..c5130e8 100644
      closedTime = performance.now()
      hadError && options.shared.retries++
      delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
-@@ -459,6 +700,10 @@
+@@ -459,6 +702,10 @@
  
    /* Handlers */
    function handle(xs, x = xs[0]) {
@@ -1745,7 +1752,7 @@ index 1b1cccd..c5130e8 100644
      (
        x === 68 ? DataRow :                   // D
        x === 100 ? CopyData :                 // d
-@@ -489,6 +734,39 @@
+@@ -489,6 +736,39 @@
      )(xs)
    }
  
@@ -1785,7 +1792,7 @@ index 1b1cccd..c5130e8 100644
    function DataRow(x) {
      let index = 7
      let length
-@@ -533,13 +811,26 @@
+@@ -533,13 +813,26 @@
    }
  
    function ReadyForQuery(x) {
@@ -1799,7 +1806,7 @@ index 1b1cccd..c5130e8 100644
        if (errorResponse) {
 +        // GBrain: a failed statement describes again next time instead of trusting shared parameter types.
 +        query.sharedTypes && options.shared_types.delete(query.typesKey)
-+        query.prepared && errorResponse.routine === 'RevalidateCachedQuery' && planGeneration++
++        query.prepared && query.generation === planGeneration && errorResponse.routine === 'RevalidateCachedQuery' && planGeneration++
          query.retried
            ? errored(query.retried)
 -          : query.prepared && retryRoutines.has(errorResponse.routine)
@@ -1813,7 +1820,7 @@ index 1b1cccd..c5130e8 100644
        } else {
          query.resolve(results || result)
        }
-@@ -547,9 +838,16 @@
+@@ -547,9 +840,16 @@
        errored(errorResponse)
      }
  
@@ -1830,7 +1837,7 @@ index 1b1cccd..c5130e8 100644
  
      if (initial) {
        if (target_session_attrs) {
-@@ -559,28 +857,54 @@
+@@ -559,28 +859,54 @@
            return terminate()
        }
  
@@ -1891,10 +1898,13 @@ index 1b1cccd..c5130e8 100644
          : connection.reserved()
        : ending
          ? terminate()
-@@ -630,7 +954,11 @@
+@@ -629,8 +955,13 @@
+     for (let i = 0; i < length; ++i)
        !query.statement.types[i] && (query.statement.types[i] = x.readUInt32BE(7 + i * 4))
  
-     query.prepare && (statements[query.signature] = query.statement)
+-    query.prepare && (statements[query.signature] = query.statement)
++    // GBrain (GST-2260): a statement built before this connection's plan generation moved stays out of its new map.
++    query.prepare && query.generation === statementGeneration && (statements[query.signature] = query.statement)
 +    // GBrain: only built-in parameter types are shared; a database's own types may be recreated under a new oid.
 +    query.typesKey && query.statement.types.every(t => t > 0 && t < 16384)
 +      && options.shared_types.set(query.typesKey, query.statement.types.slice())
@@ -1903,7 +1913,7 @@ index 1b1cccd..c5130e8 100644
    }
  
    function RowDescription(x) {
-@@ -767,15 +1095,23 @@
+@@ -767,15 +1098,23 @@
  
    async function fetchArrayTypes() {
      needsTypes = false
@@ -1935,7 +1945,7 @@ index 1b1cccd..c5130e8 100644
    }
  
    function addArrayType(oid, typarray) {
-@@ -821,7 +1157,16 @@
+@@ -821,7 +1160,16 @@
    function retry(q, error) {
      delete statements[q.signature]
      q.retried = error
@@ -1953,7 +1963,7 @@ index 1b1cccd..c5130e8 100644
    }
  
    function NotificationResponse(x) {
-@@ -1039,6 +1384,59 @@
+@@ -1039,6 +1387,59 @@
    return buffer
  }
  

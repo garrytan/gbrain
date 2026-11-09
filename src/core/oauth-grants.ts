@@ -9,7 +9,7 @@ import { generateToken, hashToken } from './utils.ts';
 import { hasScope, parseScopeString } from './scope.ts';
 import { TOKEN_TTL_MAX_SECONDS, intersectGrantedScopes } from './grants/model.ts';
 import { safeHexEqual } from './timing-safe.ts';
-import { retryOnStalePlan } from './retry-matcher.ts';
+import { isStalePlanError } from './retry-matcher.ts';
 import { clientHoldsAuthorization, GrantError, recordFirstConsentInTransaction } from './grants/service.ts';
 
 export type OAuthTransaction = <T>(fn: (sql: SqlQuery) => Promise<T>) => Promise<T>;
@@ -129,12 +129,21 @@ export class OAuthGrants {
   private async locked<T>(clientId: string, fn: (sql: SqlQuery, row: ClientRow) => Promise<T>): Promise<T> {
     const options = this.options;
     if (!options.transaction) throw new ServerError('OAuth grant transactions are unavailable');
-    // GST-2260: every caller's callback is database work only, so a transaction a stale plan aborted runs again.
-    return retryOnStalePlan(() => options.transaction!(async sql => {
+    // GST-2260: a stale plan on the client read runs the transaction again. That read comes before the callback writes
+    // anything, so the second run is safe even when the caller's transaction is not a real one (mcp-provision).
+    let entered = false;
+    const run = () => options.transaction!(async sql => {
       const [row] = await sql`SELECT * FROM oauth_clients WHERE client_id = ${clientId} FOR UPDATE`;
+      entered = true;
       assertActive(row);
       return fn(sql, row);
-    }));
+    });
+    try {
+      return await run();
+    } catch (error) {
+      if (entered || !isStalePlanError(error)) throw error;
+      return run();
+    }
   }
 
   private prune(): void {

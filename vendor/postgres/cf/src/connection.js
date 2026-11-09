@@ -36,8 +36,9 @@ const retryRoutines = new Set([
 // only on the connection that failed, so each pooled connection failed once, and inside a transaction the caller saw
 // the failure. The first one in the process starts a new plan generation: each connection drops its prepared
 // statements before it builds its next query, and prepares them again. Only a statement this connection had cached
-// starts one: a fresh statement that fails this way (a pooler mapping it onto an older server-side statement) is not
-// healed by preparing again.
+// in the current generation starts one: not one already in flight when another connection started it, and not a
+// fresh statement that fails this way (a pooler mapping it onto an older server-side statement), which preparing
+// again cannot heal.
 let planGeneration = 0
 
 const errorFields = {
@@ -417,6 +418,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
     q.string = string
     q.signature = q.prepare && types + string
     statementGeneration !== planGeneration && (statements = {}, statementGeneration = planGeneration)
+    q.generation = statementGeneration
     q.onlyDescribe && (delete statements[q.signature])
     q.parameters = q.parameters || parameters
     q.prepared = q.prepare && q.signature in statements
@@ -823,7 +825,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
       if (errorResponse) {
         // GBrain: a failed statement describes again next time instead of trusting shared parameter types.
         query.sharedTypes && options.shared_types.delete(query.typesKey)
-        query.prepared && errorResponse.routine === 'RevalidateCachedQuery' && planGeneration++
+        query.prepared && query.generation === planGeneration && errorResponse.routine === 'RevalidateCachedQuery' && planGeneration++
         query.retried
           ? errored(query.retried)
           : query.prepared && retryRoutines.has(errorResponse.routine) && !query.cancelled
@@ -955,7 +957,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
     for (let i = 0; i < length; ++i)
       !query.statement.types[i] && (query.statement.types[i] = x.readUInt32BE(7 + i * 4))
 
-    query.prepare && (statements[query.signature] = query.statement)
+    // GBrain (GST-2260): a statement built before this connection's plan generation moved stays out of its new map.
+    query.prepare && query.generation === statementGeneration && (statements[query.signature] = query.statement)
     // GBrain: only built-in parameter types are shared; a database's own types may be recreated under a new oid.
     query.typesKey && query.statement.types.every(t => t > 0 && t < 16384)
       && options.shared_types.set(query.typesKey, query.statement.types.slice())
