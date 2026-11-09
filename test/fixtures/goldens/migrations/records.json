@@ -51,7 +51,7 @@
       "PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX": "4759eaf319a6ad8d99aae7648acb6556745ed7cba051175273e2f46927c77d52",
       "PERSISTENCE_SYNC_RUN_INDEXES": "e1b12613c5fd2facb850e6857b0bddcf49b2478ec258fa226fe15e71e55df9c1",
       "PERSISTENCE_SYNC_WATERMARK_INDEX": "93523954a30e8483717f07ec97a3e0cd062b15d8a60cc759281054b06c23bb40",
-      "PINNED_FUNCTION_NAMES": "1360b0f7505577cae08292cdd89e0fb841fc02d460d68eb0185fcd8ae4df92a4",
+      "PINNED_FUNCTION_NAMES": "a82342bf92b7c225f1022635756bd9b8536f0bd0d4cd69f8faa752d7ee376458",
       "PLANNER_REPAIR_TABLES": "008725595e099adba279d4292661eb4a59930b777c35db43c340220f7f12e093",
       "TABLES": "3fc77a0fccb525f9b791098f9eae27b19adaa3f5dadbabcff2a719137cbc3ef8",
       "TOKEN_TTL_MAX_SECONDS": "f4a45bec6ec0bacc859dc57732ceb76cec7eb72f242b5a6c89d47190d0525ab4",
@@ -4896,8 +4896,8 @@
         "idempotent": true,
         "name": "git_first_strict_path",
         "sql": {
-          "length": 3817,
-          "sha256": "725bb35df2faa2407612f420cec62bf875b4667735cb3a7b996c9603d23f3b04"
+          "length": 3826,
+          "sha256": "7aa75aa815419400d1515a1a096b09aac599334c4f9b1a309991a72a7fbf0f83"
         },
         "sqlFor": "absent",
         "transaction": false,
