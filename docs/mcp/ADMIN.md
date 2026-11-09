@@ -264,11 +264,22 @@ person's facts ([QM guide](../guides/qm.md)); `forget` and `forget_fact` withdra
 only a fact on the person's own page (also for a credential bound to a member).
 A request carrying `x-qm-audience` is refused (`audience_not_supported`). Not attestable yet, because what they
 read or write is not yet kept to the person: `list_write_conflicts`, `capture`,
-`extract_facts` and `takes_add|update|resolve|supersede`.
+`extract_facts`, `takes_add|update|resolve|supersede`, and the direct page writes
+`add_timeline_entry`, `add_link`, `put_page` and `edit_page`, which wait for owner-approved
+proposals. An `--attest-ops` list that already names one of these is refused for it
+(`actor_not_attested`, reason `op_not_attested`), and a queued attested write of one fails when it publishes.
 An attested read sees what that person sees, private facts included, and gbrain
 cannot tell who else reads the answer. Use the attest client only for QM's
 personal-scope memory route: never register it as a model-callable MCP connector
 or route it to shared scopes ([QM guide](../guides/qm.md#set-up-on-the-brain-host)).
+An attested read that names `source_id` or `source_ids` (`get_page`, `entity`, `whois`, `get_backlinks`,
+`get_timeline`, `find_experts`, `volunteer_context`, `query`, `memory_recall`) reads those sources as their
+audience, never as the person; `--attest-read person` makes such reads run as the person, and `--attest-read scope`
+also refuses every call that names no person (`actor_required`) ([QM guide](../guides/qm.md#reads-that-name-sources)).
+A source bound to a member (`gbrain access member source add <member> <source>`, trusted local CLI only) is personal:
+an attested call reads its grant minus personal sources bound to anyone else, a read that names sources as their
+audience reads none, and a hidden source is refused like one outside the grant. Binding never widens a grant
+([QM guide](../guides/qm.md#each-persons-own-sources)).
 `gbrain access check --token <name>` shows the
 result ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
 

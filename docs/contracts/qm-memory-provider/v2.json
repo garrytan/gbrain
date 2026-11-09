@@ -23,9 +23,13 @@
       "memory_write"
     ],
     "deferred_ops": [
+      "add_link",
+      "add_timeline_entry",
       "capture",
+      "edit_page",
       "extract_facts",
       "list_write_conflicts",
+      "put_page",
       "takes_add",
       "takes_resolve",
       "takes_supersede",

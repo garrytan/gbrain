@@ -98,7 +98,7 @@ export async function listMembers(engine: BrainEngine, opts: { includeRemoved?: 
   return rows.map(toRecord);
 }
 
-async function existingMember(engine: BrainEngine, raw: unknown, action: string): Promise<MemberRecord> {
+export async function existingMember(engine: BrainEngine, raw: unknown, action: string): Promise<MemberRecord> {
   const id = assertAccessId(raw);
   const member = await getMember(engine, id);
   if (member) return member;
@@ -289,10 +289,10 @@ export function parseMemberFlag(raw: string): string | null {
   return raw.trim() === 'none' ? null : assertAccessId(raw);
 }
 
-/** GST-359 C1: attestActor names the system whose actor header this credential may send (null clears it and attestOps). */
+/** GST-359 C1: attestActor names the system whose actor header this credential may send (null clears it, attestOps and attestRead). */
 /** GST-1113: attestSources lists the scope sources an attested memory_write may name (null clears it; access/attest-sources.ts). */
-export interface BindingPatch { member?: string | null; mayActFor?: string[] | null; attestActor?: string | null; attestOps?: string[] | null; attestSources?: string[] | null }
-export interface BindingResult { member: string | null; may_act_for: string[] | null; attest_actor?: string; attest_ops?: string[] | null; attest_sources?: string[] | null; changed: boolean }
+export interface BindingPatch { member?: string | null; mayActFor?: string[] | null; attestActor?: string | null; attestOps?: string[] | null; attestSources?: string[] | null; attestRead?: 'person' | 'scope' | null }
+export interface BindingResult { member: string | null; may_act_for: string[] | null; attest_actor?: string; attest_ops?: string[] | null; attest_sources?: string[] | null; attest_read?: 'person' | 'scope' | null; changed: boolean }
 
 function attestRefused(message: string, suggestion: string): OperationError {
   return opError('invalid_params', message, suggestion, { why: 'Only a credential bound to no member that authenticates as itself (a client-credentials client with a secret, or a legacy token) may name the people a trusted system serves.' });
@@ -310,8 +310,8 @@ export async function bindCredential(engine: BrainEngine, target: { kind: 'token
   // GST-1113: lock the credential row first and read it under the lock (grant rescopes lock it first too), so a
   // concurrent rescope commits before or after this change, never between its checks and its write.
   return engine.transaction(async tx => {
-    const [before] = await tx.executeRaw<{ member_id: string | null; may_act_for: string[] | null; attest_actor: string | null; attest_ops: string[] | null; attest_sources: string[] | null; grant_types?: string[] | null; confidential?: boolean }>(
-      `SELECT member_id, may_act_for, attest_actor, attest_ops, attest_sources${target.kind === 'client' ? ', grant_types, client_secret_hash IS NOT NULL AS confidential' : ''} FROM ${table} WHERE ${key} = $1 FOR UPDATE`, [target.id]);
+    const [before] = await tx.executeRaw<{ member_id: string | null; may_act_for: string[] | null; attest_actor: string | null; attest_ops: string[] | null; attest_sources: string[] | null; attest_read: 'person' | 'scope' | null; grant_types?: string[] | null; confidential?: boolean }>(
+      `SELECT member_id, may_act_for, attest_actor, attest_ops, attest_sources, attest_read${target.kind === 'client' ? ', grant_types, client_secret_hash IS NOT NULL AS confidential' : ''} FROM ${table} WHERE ${key} = $1 FOR UPDATE`, [target.id]);
     if (!before) {
       throw opError('invalid_params', `No ${target.kind === 'token' ? 'token' : 'OAuth client'} "${target.id}" exists.`,
         target.kind === 'token' ? 'List tokens with gbrain auth list.' : 'List clients with gbrain auth clients --json.');
@@ -321,9 +321,12 @@ export async function bindCredential(engine: BrainEngine, target: { kind: 'token
     const attestActor = patch.attestActor === undefined ? before.attest_actor : patch.attestActor;
     const attestOps = attestActor === null ? null : patch.attestOps === undefined ? before.attest_ops : patch.attestOps;
     const attestSources = attestActor === null ? null : patch.attestSources === undefined ? before.attest_sources : patch.attestSources?.length ? [...new Set(patch.attestSources)].sort() : null;
+    const attestRead = attestActor === null ? null : patch.attestRead === undefined ? before.attest_read : patch.attestRead;
     const what = target.kind === 'token' ? 'This token' : `OAuth client ${target.id}`;
     if (patch.attestOps != null && attestActor === null) throw attestRefused('--attest-ops needs the attest right.', 'Pass --attest-actor qm with it.');
     if (patch.attestSources != null && attestActor === null) throw attestRefused('--attest-sources needs the attest right.', 'Pass --attest-actor qm with it.');
+    if (patch.attestRead != null && attestActor === null) throw attestRefused('--attest-read needs the attest right.', 'Pass --attest-actor qm with it.');
+    if (attestSources && attestRead === 'person') throw attestRefused(`${what} lists scope sources (--attest-sources), so the sources it names are read as the scope, never as the person.`, 'Drop --attest-read person, or use a separate credential for the person\'s own conversations.');
     // GST-1113: a credential that writes scope memory runs only the memory operations as a person, never a general read.
     const outside = attestSources ? (attestOps ?? DEFAULT_ATTEST_OPS).filter(op => !SCOPE_ATTEST_OPS.has(op)) : [];
     if (outside.length) throw attestRefused(`${what} lists scope sources (--attest-sources), so its attested operations stay within ${[...SCOPE_ATTEST_OPS].join(', ')}; ${outside.join(', ')} is not.`, 'Drop those operations (--attest-ops), or use a separate credential for them.');
@@ -339,17 +342,17 @@ export async function bindCredential(engine: BrainEngine, target: { kind: 'token
     }
     let changed = member !== before.member_id || JSON.stringify(mayActFor ?? null) !== JSON.stringify(before.may_act_for ?? null)
       || attestActor !== before.attest_actor || JSON.stringify(attestOps ?? null) !== JSON.stringify(before.attest_ops ?? null)
-      || JSON.stringify(attestSources ?? null) !== JSON.stringify(before.attest_sources ?? null);
+      || JSON.stringify(attestSources ?? null) !== JSON.stringify(before.attest_sources ?? null) || (attestRead ?? null) !== (before.attest_read ?? null);
     if (changed || patch.attestSources != null) {
       // GST-1113: the scope-source checks, the marks and the binding commit together, under this row's lock and then the
       // marked sources' row locks. A restated list also re-marks a listed source that lost its mark.
       if (await applyAttestSources(tx, target, attestSources ?? null, before.attest_sources ?? null, opts)) changed = true;
       if (!opts.dryRun) {
-        await tx.executeRaw(`UPDATE ${table} SET member_id = $2, may_act_for = $3::text[], attest_actor = $4, attest_ops = $5::text[], attest_sources = $6::text[] WHERE ${key} = $1`,
-          [target.id, member, mayActFor, attestActor, attestOps, attestSources]);
+        await tx.executeRaw(`UPDATE ${table} SET member_id = $2, may_act_for = $3::text[], attest_actor = $4, attest_ops = $5::text[], attest_sources = $6::text[], attest_read = $7 WHERE ${key} = $1`,
+          [target.id, member, mayActFor, attestActor, attestOps, attestSources, attestRead ?? null]);
       }
     }
-    return { member, may_act_for: mayActFor ?? null, ...(attestActor ? { attest_actor: attestActor, attest_ops: attestOps ?? null, attest_sources: attestSources ?? null } : {}), changed };
+    return { member, may_act_for: mayActFor ?? null, ...(attestActor ? { attest_actor: attestActor, attest_ops: attestOps ?? null, attest_sources: attestSources ?? null, attest_read: attestRead ?? null } : {}), changed };
   });
 }
 

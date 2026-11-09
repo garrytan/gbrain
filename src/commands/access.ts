@@ -3,6 +3,7 @@
  *
  *   gbrain access member add|disable|enable|rm|list <id> [--name N] [--groups a,b] [--bind-token <name>]
  *   gbrain access member link <id> --qm <canonical id> | unlink --qm <canonical id> | links [--member <id>]
+ *   gbrain access member source add|remove|list <member> [<source>]
  *   gbrain access group add|rm|list <group> [--members a,b]
  *   gbrain access who-can-read <slug> [--source <id>]
  *   gbrain access check --token <name>|--client <id> [--as a,b]
@@ -23,6 +24,7 @@ import { isPrivacyPrivatePage } from '../core/search/private-visibility.ts';
 import { identityFor, normalizePrincipal, normalizeReaders, readersAllow } from '../core/access/principals.ts';
 import { mayActForCovers, singleMemberAudience, type AudiencePrincipal } from '../core/access/audience.ts';
 import { linkMember, listMemberLinks, unlinkMember } from '../core/access/actor.ts';
+import { bindMemberSource, listMemberSources, unbindMemberSource } from '../core/access/member-sources.ts';
 import { clearOwner, ownerMemberId, ownerView, setOwner, type OwnerView } from '../core/access/owner.ts';
 import {
   addGroup, addMember, assertAccessId, disableMember, enableMember, getMember, legacyTokenByName, listGroups, listMembers,
@@ -41,6 +43,13 @@ Members and groups:
                                              An attested QM call naming that person reads and writes as <id>
   gbrain access member unlink --qm <canonical id> [--dry-run]
   gbrain access member links [--member <id>] Canonical ids are compared exactly (no case folding)
+  gbrain access member source add <id> <source> [--dry-run]
+                                             Personal source: attested calls for anyone else, and scope
+                                             reads, stop reading it (hide-only, inside each grant)
+  gbrain access member source remove <id> <source> [--yes]
+                                             Preview first; removing the last binding makes it readable
+                                             again to every attested person whose credential grants it
+  gbrain access member source list [<id>]
   gbrain access group add <group> [--members a,b]
   gbrain access group rm <group> [--members a,b] [--yes]
                                              With --members, removes those members; otherwise previews
@@ -243,8 +252,10 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
     case 'unlink':
     case 'links':
       return memberLinksCmd(engine, sub, args, json, id);
+    case 'source':
+      return memberSourceCmd(engine, args, json);
     default:
-      throw usageError(`Unknown access member subcommand: ${sub ?? '(none)'}.`, 'Use add, disable, enable, rm, list, link, unlink or links (gbrain access --help).');
+      throw usageError(`Unknown access member subcommand: ${sub ?? '(none)'}.`, 'Use add, disable, enable, rm, list, link, unlink, links or source (gbrain access --help).');
   }
 }
 
@@ -261,6 +272,41 @@ async function memberLinksCmd(engine: BrainEngine, sub: 'link' | 'unlink' | 'lin
   const r = sub === 'link' ? await linkMember(engine, id, 'qm', externalId, { dryRun }) : await unlinkMember(engine, 'qm', externalId, { dryRun });
   return print(json, r, () => [`${r.applied ? (sub === 'link' ? 'Linked' : 'Unlinked') : `Would ${sub}`} ${r.link.system}:${r.link.external_id} ${sub === 'link' ? '->' : 'from'} ${r.link.member_id}`,
     r.applied ? 'Takes effect on the next attested call.' : `Apply without --dry-run.`]);
+}
+
+/** GBRA-284: personal sources, bound to the member they belong to (database only, repo-less or not). */
+async function memberSourceCmd(engine: BrainEngine, args: string[], json: boolean): Promise<void> {
+  const [sub, member, source] = positionals(args);
+  switch (sub) {
+    case 'add': {
+      if (!member || !source) throw usageError('access member source add needs a member and a source.', 'gbrain access member source add <id> <source> [--dry-run]');
+      const r = await bindMemberSource(engine, member, source, { dryRun: args.includes('--dry-run') });
+      return print(json, r, () => [
+        `${r.applied ? 'Bound' : r.changed ? 'Would bind' : 'Already bound:'} ${r.binding.source_id} to ${r.binding.member_id}`,
+        `  Owners of ${r.binding.source_id}: ${r.owners.join(', ')}`,
+        `  Attested calls for anyone else, and every scope read, stop reading ${r.binding.source_id}; it is read only where a credential already grants it.`,
+        ...(r.changed && !r.applied ? ['Apply without --dry-run.'] : r.applied ? ['Takes effect on the next attested call.'] : [])]);
+    }
+    case 'remove': {
+      if (!member || !source) throw usageError('access member source remove needs a member and a source.', 'gbrain access member source remove <id> <source> [--yes]');
+      const yes = args.includes('--yes');
+      const r = await unbindMemberSource(engine, member, source, { apply: yes });
+      return print(json, r, () => [
+        `${yes ? 'Unbound' : 'Would unbind'} ${r.binding.source_id} from ${r.binding.member_id}`,
+        r.still_personal
+          ? `  ${r.binding.source_id} stays personal (owners: ${r.owners.join(', ')}).`
+          : `  ${r.binding.source_id} stops being personal: every attested person whose credential grants it reads it again.`,
+        ...(yes ? [] : [`Apply with: gbrain access member source remove ${r.binding.member_id} ${r.binding.source_id} --yes`])]);
+    }
+    case 'list': {
+      const bindings = await listMemberSources(engine, member ? { member } : {});
+      return print(json, { bindings }, () => bindings.length
+        ? ['Personal sources:', ...bindings.map(b => `  ${b.source_id} -> ${b.member_id}`)]
+        : ['No personal sources. Bind one: gbrain access member source add <id> <source>']);
+    }
+    default:
+      throw usageError(`Unknown access member source subcommand: ${sub ?? '(none)'}.`, 'Use add, remove or list (gbrain access --help).');
+  }
 }
 
 function ownerLines(v: OwnerView): string[] {

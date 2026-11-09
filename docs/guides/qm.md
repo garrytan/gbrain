@@ -18,6 +18,10 @@ gbrain access member link alice-example --qm U0ALICE            # the canonical 
 Add `forget` with `--attest-ops forget,get_write_request,memory_recall,memory_write` if QM
 should withdraw facts; an attested `forget` reaches only facts on the person's own
 page, and any other id is `not_found`.
+Direct page writes (`add_timeline_entry`, `add_link`, `put_page`, `edit_page`) are not
+attestable: a person's words reach a shared page only through an owner-approved proposal,
+which is not served yet. `--attest-ops` refuses them, and a list that already names one
+is refused for it on every call (`actor_not_attested`, reason `op_not_attested`).
 A client whose `bound_slug_prefixes` do not cover `memory/members/<member>` is refused
 (`permission_denied`) when it saves for that member.
 Links and the right are database state, so a repo-less brain works the same; where
@@ -30,6 +34,56 @@ register the client as a model-callable MCP connector in QM, and don't route it 
 shared scopes (channels, groups, projects, teams, the org): either can show one
 person's private facts to a whole room. Shared conversations wait for
 `x-qm-audience` (wave 2).
+
+### Reads that name sources
+
+An attested call to `get_page`, `entity`, `whois`, `get_backlinks`, `get_timeline`,
+`find_experts`, `volunteer_context`, `query` or `memory_recall` that names `source_id`
+or `source_ids` reads those sources as their audience, never as the person: the
+person's restricted pages and their member page read as missing, a source outside
+the grant is refused, and `__all__` or `all_sources` is refused (`invalid_params`).
+`volunteer_context` refuses `stats: true` there. List the ops a client needs with
+`--attest-ops`. `context_pack` is not a scope read yet, so keep it off a client that
+serves shared turns.
+
+Set how each client reads named sources with `--attest-read`:
+
+```bash
+gbrain auth rescope --client <room_client_id> --attest-read scope    # every call must name a person
+gbrain auth rescope --client <dm_client_id> --attest-read person     # named sources, read as the person
+```
+
+`scope` also refuses any call that names no person (`actor_not_attested`, reason
+`actor_required`), so the client never reads as itself. `person` is for a client that
+serves only one person's own conversations, so a client with `--attest-sources` refuses it; a `person` client that reads a source a
+room client reads is flagged by `gbrain doctor` (`attest_read_shared_scope`). Unset
+(`none`) reads named sources as the scope and still serves calls that name no person.
+
+### Each person's own sources
+
+A client reads only the sources its credential is granted, usually the default
+source, so facts in a member's own DM or member source are not recalled until the
+client is granted that source. Grant the client every DM source and bind each one to
+its member, so a person reads their own and nobody else's:
+
+```bash
+gbrain auth rescope --client <client_id> --sources source-a,dm-alice-example,dm-bob-example
+gbrain access member source add alice-example dm-alice-example
+gbrain access member source add bob-example dm-bob-example
+gbrain access member source list
+```
+
+A bound source is personal. An attested call reads its credential's grant minus every
+personal source bound to someone else: alice-example's unnamed `memory_recall` reads
+source-a and dm-alice-example, never dm-bob-example. A read that names sources as
+their audience (the reads above, unless the client is `--attest-read person`) reads
+no personal source, not even the speaker's own, so a room never reads a DM. A hidden
+source named in `source_id` or `source_ids` is refused exactly like a source outside
+the grant (`permission_denied`). Binding only hides inside the grant: a source the
+credential is not granted stays unreadable. Unattested calls and member-bound
+credentials are unchanged. `gbrain access member source remove <member> <source>`
+previews first and says whether the source stays personal; `--yes` applies. Bindings
+are database state, so a repo-less brain works the same.
 
 ## What the tools do
 
@@ -45,7 +99,8 @@ person's private facts to a whole room. Shared conversations wait for
   one line: line breaks and control characters in it become spaces. Ranking is
   keyword-only on a keyless brain. A call that names sources (`source_id`,
   `source_ids`, narrowed inside the credential's grant) reads as that scope,
-  never as the person: no own facts first and no fact from any member page.
+  never as the person: no own facts first and no fact from any member page
+  (unless the client is set `--attest-read person`; see below).
   Name the shared scope on a shared turn; leave sources out only for the
   person's own conversations.
 - `memory_write {facts, idempotency_key}` saves 1-20 facts on

@@ -99,6 +99,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'access_policy_store_mismatch',
   // GBRA-231: shared agents (doctor/checks/shared-agent-access.ts).
   'access_may_act_for_wildcard',
+  // GST-1158 F3: attest credentials that read a shared-scope source as the person (doctor/checks/attest-read-access.ts).
+  'attest_read_shared_scope',
   'extractor_facts_expired',
   'unwithdrawn_facts',
   'loop_facts_drift',

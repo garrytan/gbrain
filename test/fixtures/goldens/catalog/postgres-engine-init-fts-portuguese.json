@@ -10,6 +10,8 @@
       "access_member_links.access_member_links_member_id_fkey": "f FOREIGN KEY (member_id) REFERENCES access_members(id) ON DELETE CASCADE",
       "access_member_links.access_member_links_pkey": "p PRIMARY KEY (system, external_id)",
       "access_member_links.access_member_links_system_check": "c CHECK ((system ~ '^[a-z][a-z0-9_-]{0,31}$'::text))",
+      "access_member_sources.access_member_sources_member_id_fkey": "f FOREIGN KEY (member_id) REFERENCES access_members(id) ON DELETE CASCADE",
+      "access_member_sources.access_member_sources_pkey": "p PRIMARY KEY (member_id, source_id)",
       "access_members.access_members_id_check": "c CHECK ((id ~ '^[a-z0-9][a-z0-9._-]{0,63}$'::text))",
       "access_members.access_members_pkey": "p PRIMARY KEY (id)",
       "access_pending_coverage.access_pending_coverage_pkey": "p PRIMARY KEY (source_id, prefix, reason)",
@@ -644,6 +646,9 @@
       "access_member_links": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "access_member_sources": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "access_members": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -1167,6 +1172,8 @@
       "access_groups_pkey": "CREATE UNIQUE INDEX access_groups_pkey ON public.access_groups USING btree (id)",
       "access_member_links_member_idx": "CREATE INDEX access_member_links_member_idx ON public.access_member_links USING btree (member_id)",
       "access_member_links_pkey": "CREATE UNIQUE INDEX access_member_links_pkey ON public.access_member_links USING btree (system, external_id)",
+      "access_member_sources_pkey": "CREATE UNIQUE INDEX access_member_sources_pkey ON public.access_member_sources USING btree (member_id, source_id)",
+      "access_member_sources_source_idx": "CREATE INDEX access_member_sources_source_idx ON public.access_member_sources USING btree (source_id)",
       "access_members_pkey": "CREATE UNIQUE INDEX access_members_pkey ON public.access_members USING btree (id)",
       "access_pending_coverage_pkey": "CREATE UNIQUE INDEX access_pending_coverage_pkey ON public.access_pending_coverage USING btree (source_id, prefix, reason)",
       "access_policy_migrations_pkey": "CREATE UNIQUE INDEX access_policy_migrations_pkey ON public.access_policy_migrations USING btree (id)",
@@ -1768,6 +1775,14 @@
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
+      "access_member_sources": {
+        "columns": [
+          "1 member_id text/text NOT NULL",
+          "2 source_id text/text NOT NULL",
+          "3 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
       "access_members": {
         "columns": [
           "1 id text/text NOT NULL",
@@ -1860,7 +1875,8 @@
           "18 may_act_for ARRAY/_text NULL",
           "19 attest_actor text/text NULL",
           "20 attest_ops ARRAY/_text NULL",
-          "21 attest_sources ARRAY/_text NULL"
+          "21 attest_sources ARRAY/_text NULL",
+          "22 attest_read text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -3112,7 +3128,8 @@
           "35 may_act_for ARRAY/_text NULL",
           "36 attest_actor text/text NULL",
           "37 attest_ops ARRAY/_text NULL",
-          "38 attest_sources ARRAY/_text NULL"
+          "38 attest_sources ARRAY/_text NULL",
+          "39 attest_read text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
