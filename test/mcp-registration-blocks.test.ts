@@ -29,12 +29,13 @@ describe('openclawThinClientBlock', () => {
     expect(block).toContain('--oauth-client-secret sekret_xyz789');
   });
 
-  test('states the honesty note: scoped-CLI path, no native remote MCP, stdio grants FULL local DB access', () => {
+  test('states the honesty note: scoped-CLI path, OpenClaw\'s native remote MCP is its own OAuth route, stdio grants FULL local DB access', () => {
     const block = openclawThinClientBlock(OPTS);
     expect(block).toContain(
       'Your OpenClaw reaches the brain through the scoped gbrain CLI (search/query/recall/put);',
     );
-    expect(block).toContain("native remote MCP isn't supported yet");
+    expect(block).not.toContain("isn't supported yet");
+    expect(block).toContain("OpenClaw's native remote MCP client (streamable HTTP + `openclaw mcp login`) is the other scoped");
     expect(block).toContain('the stdio config in docs/mcp/OPENCLAW.md grants');
     expect(block).toContain('FULL local DB access and does not use this client.');
   });

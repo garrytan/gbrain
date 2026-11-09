@@ -5,8 +5,10 @@
 > [INSTALL_FOR_AGENTS.md](../../INSTALL_FOR_AGENTS.md); the README covers the
 > bootstrap and connect paths.
 
-Connect with [Option 2](#option-2-openclaw-mcp-add) (stdio). Option 1's ClawHub
-bundle is not available yet.
+Connect with [Option 2](#option-2-openclaw-mcp-add) (stdio) when the brain runs on
+the gateway's machine, or with
+[OpenClaw's own MCP client](#remote-brain-openclaws-mcp-client-over-https) when it
+runs elsewhere. Option 1's ClawHub bundle is not available yet.
 
 ## Option 1: ClawHub bundle plugin (not available yet)
 
@@ -77,6 +79,27 @@ plus `request_tools`, which reaches every other tool; drop the
 Leave `GBRAIN_SOURCE` unset in the MCP env unless you deliberately want
 single-source retrieval: a pin scopes every tool (search, `get_brain_identity`
 counts, …) to that one source, and nothing warns on reads.
+
+## Remote brain: OpenClaw's MCP client over HTTPS
+
+When the brain runs on another machine, OpenClaw connects to its MCP endpoint
+itself, over streamable HTTP with OAuth. That grant is scoped and revocable on
+the brain host, while the stdio route above gives the gateway full local
+database access.
+
+```bash
+openclaw mcp add gbrain --url https://<brain-host>/mcp --transport streamable-http --auth oauth
+openclaw mcp login gbrain
+openclaw mcp doctor gbrain --probe
+```
+
+`openclaw mcp login` runs the browser sign-in (on a headless host it prints a
+`--code` command to finish with). OpenClaw registers its client through dynamic
+client registration, so the brain owner turns that on and approves the consent
+([native OAuth path](../guides/hosted-harness-access.md#native-oauth-path),
+[self-service registration](ADMIN.md#self-service-dynamic-registration)). Until
+the login succeeds, OpenClaw leaves the server out of agent turns. Publish the
+endpoint with `gbrain mcp expose` ([remote MCP](../guides/remote-mcp.md)).
 
 ## Brain-first instructions
 
