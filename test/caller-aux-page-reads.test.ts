@@ -68,18 +68,32 @@ describe('#8395 auxiliary page reads follow the caller', () => {
 
   test('strict entity resolution and refusal candidates', async () => {
     await as('alice', true, async () => {
-      expect(await resolveStrictEntityReference(engine, SRC, ALICE, { excludePrivate: true })).toEqual({ slug: ALICE, arm: 'exact_page' });
-      expect(await entityReferenceCandidates(engine, SRC, 'Alice Example', { excludePrivate: true })).toContain(ALICE);
-      expect((await resolveStrictEntityReference(engine, SRC, BOB, { excludePrivate: true })).slug).toBeNull();
-      expect((await resolveStrictEntityReference(engine, SRC, SECRET, { excludePrivate: true })).slug).toBeNull();
+      expect(await resolveStrictEntityReference(engine, SRC, ALICE, { excludePrivate: true, forCaller: true })).toEqual({ slug: ALICE, arm: 'exact_page' });
+      expect(await entityReferenceCandidates(engine, SRC, 'Alice Example', { excludePrivate: true, forCaller: true })).toContain(ALICE);
+      expect((await resolveStrictEntityReference(engine, SRC, BOB, { excludePrivate: true, forCaller: true })).slug).toBeNull();
+      expect((await resolveStrictEntityReference(engine, SRC, SECRET, { excludePrivate: true, forCaller: true })).slug).toBeNull();
     });
     await as('alice', false, async () => {
-      expect((await resolveStrictEntityReference(engine, SRC, SECRET, { excludePrivate: true })).slug).toBe(SECRET);
+      expect((await resolveStrictEntityReference(engine, SRC, SECRET, { excludePrivate: true, forCaller: true })).slug).toBe(SECRET);
     });
     await as('bob', true, async () => {
-      expect((await resolveStrictEntityReference(engine, SRC, ALICE, { excludePrivate: true })).slug).toBeNull();
-      expect(await entityReferenceCandidates(engine, SRC, 'Alice Example', { excludePrivate: true })).not.toContain(ALICE);
+      expect((await resolveStrictEntityReference(engine, SRC, ALICE, { excludePrivate: true, forCaller: true })).slug).toBeNull();
+      expect(await entityReferenceCandidates(engine, SRC, 'Alice Example', { excludePrivate: true, forCaller: true })).not.toContain(ALICE);
     });
+  });
+
+  test('derived decisions without forCaller keep the plain privacy fragment, even with the read hatch open', async () => {
+    const prior = process.env.GBRAIN_REMOTE_PRIVATE_PAGES;
+    process.env.GBRAIN_REMOTE_PRIVATE_PAGES = '1';
+    try {
+      __resetPrivateVisibilityCacheForTests();
+      expect((await resolveStrictEntityReference(engine, SRC, SECRET, { excludePrivate: true })).slug).toBeNull();
+      expect(await entityReferenceCandidates(engine, SRC, 'Carol Example', { excludePrivate: true })).not.toContain(SECRET);
+      expect((await resolveStrictEntityReference(engine, SRC, SECRET, { excludePrivate: true, forCaller: true })).slug).toBe(SECRET);
+    } finally {
+      if (prior === undefined) delete process.env.GBRAIN_REMOTE_PRIVATE_PAGES; else process.env.GBRAIN_REMOTE_PRIVATE_PAGES = prior;
+      __resetPrivateVisibilityCacheForTests();
+    }
   });
 
   test('retrieval pointers, pull counterparties and brief edits', async () => {
