@@ -274,7 +274,7 @@ export function withCallerAccess<T>(access: Partial<CallerAccess>, fn: () => T):
     satisfiedRuleIds: satisfied.length && satisfied.every(validQualifiedRuleId) ? Object.freeze([...new Set(satisfied)].sort()) : Object.freeze([]),
     folderCoverage: Object.freeze([...(access.folderCoverage ?? base.folderCoverage)].map(c => Object.freeze({ source_id: c.source_id, prefix: c.prefix }))),
     privateReadableSources: sources.length && sources.every(isValidSourceId) ? Object.freeze([...new Set(sources)]) : Object.freeze([]),
-    hidePrivate: access.hidePrivate ?? base.hidePrivate,
+    hidePrivate: access.hidePrivate ?? (fresh ? true : base.hidePrivate),
     owner: access.owner ?? (fresh ? false : base.owner),
     applyRemoteReadPolicy: access.applyRemoteReadPolicy ?? base.applyRemoteReadPolicy,
     restricted: access.restricted ?? base.restricted,

@@ -27,6 +27,7 @@ import { runRepairCommand } from '../src/commands/repair.ts';
 import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { EXPLICIT_REPAIR_REGISTRY, PREVIEW_BOUND_REPAIR_REGISTRY, repairRunner, repairSpec } from '../src/core/repair/registry.ts';
 import { resolveRepairScope } from '../src/core/repair/core.ts';
+import { classifyPrivateLabel } from '../src/core/repair/private-labels.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { withCoordinatedWrite, withTrustBackfill } from '../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
@@ -314,4 +315,15 @@ describe('repair private-labels keeps the trust tier', () => {
       await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     }
   });
+});
+
+test('a page with declared lineage keeps its label whatever its type, so its origin decides who reads it', () => {
+  const lineage: Array<Record<string, unknown>> = [
+    { access: 'private', derived_from: 'notes/origin' },
+    { access: 'private', derived_from: ['notes/origin.md', 'notes/other'] },
+    { access: 'private', visibility: 'private', derived_from: 'notes/origin' },
+    { access: 'private', source_slug: 'notes/origin' },
+  ];
+  for (const frontmatter of lineage) expect(classifyPrivateLabel({ type: 'note', frontmatter, git: false })).toEqual({ keep: 'derived' });
+  expect(classifyPrivateLabel({ type: 'note', frontmatter: { access: 'private' }, git: false })).toEqual({ clear: 'alias', removed: { access: 'private' } });
 });

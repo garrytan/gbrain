@@ -5,7 +5,8 @@
  *
  *   KEEP (counted, never changed)
  *     pinned_question      pinned_question in frontmatter, or type question
- *     derived              an atom, a synthesized concept or a life-chronicle event;
+ *     derived              an atom, a page with derived_from or source_slug, a synthesized
+ *                          concept or a life-chronicle event;
  *                          its privacy follows its origin (gbrain repair visibility owns it)
  *     strong_alias         access restricted or confidential, or a private confidentiality value
  *     explicit_visibility  visibility: private with no access: private (a deliberate writer or connector)
@@ -79,7 +80,7 @@ export function classifyPrivateLabel(row: Pick<LabelRow, 'type' | 'frontmatter' 
   const aliased = Object.entries(PRIVACY_ALIASES).some(([key, values]) => values.includes(value(key) ?? ''));
   if (!(fm.visibility === 'private' || (fm.visibility == null && aliased))) return null;
   if (Object.hasOwn(fm, 'pinned_question') || row.type === 'question') return { keep: 'pinned_question' };
-  if (row.type === 'atom' || (row.type === 'concept' && fm.synthesized_by != null)
+  if (row.type === 'atom' || Object.hasOwn(fm, 'derived_from') || Object.hasOwn(fm, 'source_slug') || (row.type === 'concept' && fm.synthesized_by != null)
     || (row.type === 'event' && typeof fm.captured_via === 'string' && fm.captured_via.startsWith('life-chronicle:'))) return { keep: 'derived' };
   const access = value('access');
   if (access === 'restricted' || access === 'confidential' || PRIVACY_ALIASES.confidentiality!.includes(value('confidentiality') ?? '')) return { keep: 'strong_alias' };

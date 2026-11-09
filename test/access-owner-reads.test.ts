@@ -21,7 +21,7 @@ import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
+import { __resetPrivateVisibilityCacheForTests, currentCallerAccess, withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { clearOwner, ownerView, setOwner } from '../src/core/access/owner.ts';
 import { bindCredential } from '../src/core/access/members.ts';
 import { accessCheck } from '../src/commands/access.ts';
@@ -205,3 +205,10 @@ for (const kind of testBackends()) {
     });
   });
 }
+
+test('a fresh identity nested under the owner hides private pages unless it says otherwise', () => {
+  const nested = withCallerAccess({ identity: ['member:owner-example'], hidePrivate: false, owner: true }, () =>
+    withCallerAccess({ identity: ['member:bob-example'] }, () => currentCallerAccess()));
+  expect(nested.owner).toBe(false);
+  expect(nested.hidePrivate).toBe(true);
+});
