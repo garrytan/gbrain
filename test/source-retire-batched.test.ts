@@ -15,6 +15,7 @@ import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { runManagedSourceLifecycle, SOURCE_RETIRE_BATCH_PAGES } from '../src/core/persistence/source-lifecycle.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { journalLimitKey } from '../src/core/persistence/limits.ts';
 
 let engine: PGLiteEngine;
 
@@ -104,5 +105,37 @@ test('an interrupted batch keeps the committed batches and the same request_id r
     expect(await registered()).toBe(0);
   } finally {
     for (const sql of ['DROP TRIGGER IF EXISTS retire_fail ON pages', 'DROP FUNCTION IF EXISTS retire_fail_fn()', 'DROP TABLE IF EXISTS retire_fail']) await engine.executeRaw(sql);
+  }
+}), 60_000);
+
+test('a remove refuses before deleting when the receipt quota is spent, and a CLI writer revoked mid-run stops it at the next batch', () => fixture(async () => {
+  const [brain] = await engine.executeRaw<{ n: string }>("SELECT lifetime_ids::text AS n FROM persistence_counters WHERE key='brain'");
+  await engine.executeRaw('INSERT INTO config(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value', [journalLimitKey('brainLifetimeIds'), brain?.n ?? '0']);
+  await expect(runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: source, confirmDestructive: true })).rejects.toMatchObject({ code: 'write_quota_exhausted' });
+  expect(await pages(source)).toBe(PAGES);
+  await engine.executeRaw('DELETE FROM config WHERE key=$1', [journalLimitKey('brainLifetimeIds')]);
+  const revoke = "CREATE FUNCTION retire_revoke_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN UPDATE persistence_local_writers SET revoked_at=now() WHERE lane='cli'; RETURN NULL; END $$";
+  await engine.executeRaw(revoke);
+  await engine.executeRaw('CREATE TRIGGER retire_revoke AFTER DELETE ON pages FOR EACH STATEMENT EXECUTE FUNCTION retire_revoke_fn()');
+  try {
+    await expect(runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: source, confirmDestructive: true }))
+      .rejects.toMatchObject({ code: 'permission_denied', suggestion: expect.stringContaining(`already deleted ${SOURCE_RETIRE_BATCH_PAGES} page(s)`) });
+    expect(await pages(source)).toBe(PAGES - SOURCE_RETIRE_BATCH_PAGES);
+    expect(await registered()).toBe(1);
+  } finally {
+    for (const sql of ['DROP TRIGGER IF EXISTS retire_revoke ON pages', 'DROP FUNCTION IF EXISTS retire_revoke_fn()']) await engine.executeRaw(sql);
+  }
+}), 60_000);
+
+test('a batch that hits the statement bound is retried at half the size until it fits', () => fixture(async () => {
+  await engine.executeRaw(`CREATE FUNCTION retire_bound_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    IF (SELECT count(*) FROM gone) > 100 THEN RAISE EXCEPTION 'canceling statement due to statement timeout' USING ERRCODE = 'query_canceled'; END IF; RETURN NULL; END $$`);
+  await engine.executeRaw('CREATE TRIGGER retire_bound AFTER DELETE ON pages REFERENCING OLD TABLE AS gone FOR EACH STATEMENT EXECUTE FUNCTION retire_bound_fn()');
+  try {
+    expect(await runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: source, confirmDestructive: true }))
+      .toMatchObject({ state: 'committed', operation: 'remove', pages_deleted: PAGES });
+    expect(await pages(source)).toBe(0);
+  } finally {
+    for (const sql of ['DROP TRIGGER IF EXISTS retire_bound ON pages', 'DROP FUNCTION IF EXISTS retire_bound_fn()']) await engine.executeRaw(sql);
   }
 }), 60_000);
