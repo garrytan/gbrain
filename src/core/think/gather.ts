@@ -66,6 +66,8 @@ export interface ThinkGatherResult {
   takes: TakeHit[];
   /** Graph nodes — slugs reachable from anchor within graphDepth. Empty when no anchor. */
   graphSlugs: string[];
+  /** Pages the search found that the window dropped as dated outside it: not evidence, but still who the question is about (GST-731). */
+  outsideWindowSlugs: string[];
   /**
    * Machine-stable warning codes for per-stream failures (D6: code-only on the
    * wire; the raw error text goes to stderr/server logs). Lets MCP/remote
@@ -164,6 +166,7 @@ export async function runGather(
   });
 
   let windowDiagnostic: ThinkGatherResult['diagnostics']['window'];
+  let outsideWindowSlugs: string[] = [];
   // GBRA-200: a degraded page search (keyword-only fallback, a cut arm) is reported, never silent.
   const searchDegraded = new Set<string>();
   const onMeta = (m: HybridSearchMeta) => { for (const d of m.degraded ?? []) if (affectsRecall(d)) searchDegraded.add(d.stage); };
@@ -200,6 +203,7 @@ export async function runGather(
     const combined = [...hybrid, ...floor].filter(page => !seen.has(page.slug) && !!seen.add(page.slug));
     const filtered = filterPagesToWindow(combined, window);
     windowDiagnostic = { dropped: filtered.droppedOutOfWindow, undatedKept: filtered.undatedKept };
+    outsideWindowSlugs = filtered.dropped.map(page => page.slug);
     return filtered.kept.slice(0, gatherLimit);
   }) : hybridSearch(engine, opts.question, {
     limit: gatherLimit,
@@ -314,6 +318,7 @@ export async function runGather(
     pages: pages.slice(0, gatherLimit),
     takes: fusedTakes,
     graphSlugs,
+    outsideWindowSlugs,
     warnings,
     diagnostics: {
       pagesFromHybrid,

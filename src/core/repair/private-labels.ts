@@ -34,7 +34,8 @@
  * <gbrain home>/repair/private-labels/<brain_id>.jsonl, src/commands/repair-private-labels.ts),
  * and --class restore plans from its lines: each recorded page still live and still
  * without those keys gets them back (preview-bound the same way, with its own line).
- * An apply or a restore preview without a ledger is refused.
+ * An apply or a restore preview without a ledger is refused. A git-publish clear is not fully undone: restore re-adds
+ * the label and the file leaves the checkout, but the commits that held it keep the page's content.
  */
 import type { BrainEngine } from '../engine.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
@@ -140,15 +141,19 @@ async function planClear(engine: BrainEngine, scope: RepairScope, selection: Sel
 /** The ledger's latest line per page decides: a removal whose page is live and still lacks every removed key is restorable. */
 async function planRestore(engine: BrainEngine, scope: RepairScope, selection: Selection, ledger: PrivateLabelsLedger) {
   const { lines, unreadable } = ledger;
-  const latest = new Map<string, LedgerLine>();
+  // A page's latest clear decides; a later restored line is not proof, since a restore accepted pending can still fail.
+  const pages = new Set<string>();
+  const latestRemoval = new Map<string, LedgerLine>();
   for (const line of lines) {
-    if (line.brain_id === scope.brain_id && scope.source_ids.includes(line.source_id)) latest.set(`${line.source_id}:${line.page_id}`, line);
+    if (line.brain_id !== scope.brain_id || !scope.source_ids.includes(line.source_id)) continue;
+    pages.add(`${line.source_id}:${line.page_id}`);
+    if (line.removed) latestRemoval.set(`${line.source_id}:${line.page_id}`, line);
   }
-  const removals = [...latest.values()].filter(line => line.removed);
+  const removals = [...latestRemoval.values()];
   const live = removals.length ? await engine.executeRaw<LabelRow>(`SELECT id, source_id, slug, type, frontmatter, knowledge_revision::text AS revision, COALESCE(body_bytes, 0) AS chars
     FROM pages WHERE id = ANY($1::integer[]) AND deleted_at IS NULL`, [removals.map(line => line.page_id)], bounded) : [];
   const byId = new Map(live.map(row => [Number(row.id), row]));
-  const counts = { restorable: 0, already_restored: latest.size - removals.length, page_gone: 0 };
+  const counts = { restorable: 0, already_restored: pages.size - removals.length, page_gone: 0 };
   const entries: Approved[] = [];
   for (const line of removals) {
     const page = byId.get(line.page_id);
@@ -223,10 +228,13 @@ export const privateLabelsRepair: RepairHandler = {
         : 'Clearing a label widens what remote callers that are not the brain owner can read: each cleared page becomes readable remotely (readable_by and folder rules still apply). '
           + 'Undo with: gbrain repair private-labels --class restore',
       ...(gitPublish && selection.class === 'git-publish' ? [`${gitPublish} page(s) of class git-publish live in git-canonical sources, where private pages are database-only; `
-        + 'clearing commits each listed page into its source\'s Git history for the first time.'] : []),
+        + 'clearing commits each listed page into its source\'s Git history for the first time. That part is one-way: --class restore re-adds the label and removes the file '
+        + 'from the checkout, but every earlier commit, and any remote it was pushed to, keeps the page\'s content.'] : []),
       ...(gitPublish && selection.class !== 'git-publish' ? [`${gitPublish} page(s) of class git-publish (git-canonical sources) carry the same label and are not in this preview: `
         + 'private pages there are database-only, so clearing commits each into its source\'s Git history for the first time. Preview them by name: gbrain repair private-labels --class git-publish'] : []),
       ...(planned.unreadable ? [`${planned.unreadable} ledger line(s) could not be read and are not planned.`] : []),
+      ...(restore && !Object.values(before).some(Boolean) ? [`The ledger ${ledger!.path} has no line for brain ${scope.brain_id} in this scope. Restore reads only the ledger on the host `
+        + 'and GBRAIN_HOME that ran the clear; run it there.'] : []),
     ];
     return { items: toItems(window, hash), preview_hash: hash, residuals: {}, warnings,
       listing: window.map(entry => ({ item: `${entry.source_id}:${entry.slug}`, class: entry.class,
@@ -263,11 +271,21 @@ export const privateLabelsRepair: RepairHandler = {
         if (authority) await publishMaintenancePage(ctx.engine, authority, entry.slug, content, { expectedRevision: snapshot.revision, requestId, keepTrust: true });
         else if (!await importAtRevision(ctx.engine, entry, snapshot.revision, content, opts?.embed === true)) return changed;
       } catch (error) {
-        if (acceptedPendingReceipt(error)) item.ledger.record(line);
+        if (acceptedPendingReceipt(error)) {
+          try { item.ledger.record(line); } catch (ledgerError) {
+            ctx.logger?.warn?.(`private-labels: ${entry.source_id}:${entry.slug} was accepted but its ledger line was not saved (${ledgerError instanceof Error ? ledgerError.message : String(ledgerError)}). `
+              + `Keep these values to undo it by hand: ${describeLabels(entry.labels)}.`);
+          }
+        }
         throw error;
       }
-      item.ledger.record(line);
-      return { applied: true, outcome: entry.mode === 'clear' ? 'cleared' : 'restored', detail: { ledger: item.ledger.path } };
+      const outcome = entry.mode === 'clear' ? 'cleared' : 'restored';
+      try { item.ledger.record(line); } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { applied: true, outcome, reason: `The page was written but its ledger line was not saved (${message}). Keep these values to undo it by hand: ${describeLabels(entry.labels)}.`,
+          detail: { ledger: item.ledger.path, ledger_error: message, labels: entry.labels } };
+      }
+      return { applied: true, outcome, detail: { ledger: item.ledger.path } };
     } finally {
       if (item.last && item.hash) await clearApprovedSet(ctx.engine, { command: 'private-labels', hash: item.hash });
     }

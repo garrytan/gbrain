@@ -107,7 +107,9 @@ Pinned-question pages are the owner's own and read as private. The owner reads t
 add --prefix <folder>/ --readers <list>` does the same for a folder. This is the boundary between people in a
 shared brain, and it binds the owner too: the owner reads such a page only when listed. No grant, hatch or owner
 binding relaxes it. Use it for a page that belongs to specific people in a shared brain; a single-user brain needs
-none. The page's writers set it; widening a folder rule waits for `gbrain access apply`. See
+none. The page's writers set it; widening a folder rule waits for `gbrain access apply`. A credential bound to a
+member with `default` as its write source gets it on the pages it creates there (`readable_by: [member:<id>]`),
+except the owner's, whose new pages stay shared (`POST /ingest` still refuses both). See
 [company brain, Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape).
 
 ### Fact visibility (`private` | `world`)
@@ -123,6 +125,11 @@ and are never wider than their page. Remote `recall` returns private facts to th
 database, so a repo-less brain works the same. The owner relaxation applies to a credential bound to that member
 when it speaks for itself (no audience, or an audience of the owner alone); never to a shared-room audience or an
 attested call. `gbrain access owner clear` turns it off.
+
+One owner credential both reads every private page and writes new `default` pages that other members read, so an
+owner agent can copy private content into a shared page. A prompt planted in a page that agent reads can ask it to.
+Bind only agents you trust with the whole brain as the owner; give every other agent its own member, whose new pages
+stay kept to it.
 
 ## Related
 

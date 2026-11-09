@@ -691,6 +691,7 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
     const rows = (await exec.run<{
       id: number;
       valid_from: Date;
+      valid_until: Date | null;
       claim_metric: string | null;
       claim_value: number | null;
       claim_unit: string | null;
@@ -701,7 +702,7 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
       source_markdown_slug: string | null;
       embedding: string | null;
     }>(sqlFragment`
-      SELECT id, valid_from,
+      SELECT id, valid_from, valid_until,
              claim_metric, claim_value, claim_unit, claim_period,
              event_type,
              fact, source_session, source_markdown_slug,
@@ -725,6 +726,7 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
     return [...rows].reverse().map(r => ({
       fact_id: Number(r.id),
       valid_from: r.valid_from instanceof Date ? r.valid_from : new Date(r.valid_from as unknown as string),
+      valid_until: r.valid_until === null ? null : r.valid_until instanceof Date ? r.valid_until : new Date(r.valid_until as unknown as string),
       metric: r.claim_metric,
       value: r.claim_value === null ? null : Number(r.claim_value),
       unit: r.claim_unit,

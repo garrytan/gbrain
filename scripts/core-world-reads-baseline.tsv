@@ -1152,6 +1152,7 @@ src/core/trust/proposals.ts	module_collection	1	W6: per-engine state, or mark as
 src/core/uncommitted-deletions.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/url-clone.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/url-source-origin.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/url-source-origin.ts	spawn_import	1	W7: process-wide effects move to src/cli (git config --file writes the clone lock-down into an existing checkout)
 src/core/utils.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/verbs/usage-log.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/wakeshift/config.ts	fs_import	1	stays: the Wakeshift key and HMAC secret are host files (0600) by design, never engine settings (docs/guides/wakeshift.md#the-key)
