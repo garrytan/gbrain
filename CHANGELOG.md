@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**The merge queue can now land several ready PRs at once without weakening any merge check.** `bun run merge-queue` stacks queue entries: each entry's branch already contains the entries ahead of it and is stamped with its place in line (master VERSION + 1, + 2, ...), so full-ci runs on every entry in parallel, each on the exact tree master will have when it lands. Landing still happens one entry at a time, as a merge commit at the pinned head, after a landing-tree check (`git merge-tree` of master and the head writes the head's own tree) and with every check green on that head; the master push reuses the entry's full-ci run. `land` waits for master's push runs and Release's ci-gate before returning, so no release is superseded. A failed entry is fixed in place (`refresh`) or dropped (`rebuild --drop`), and the entries behind it move to fresh branches without a force-push.
+
+### Itemized changes
+
+- `scripts/merge-queue.ts` (new): `plan`, `build`, `status`, `verify`, `land`, `refresh`, `rebuild`; `bun run merge-queue`.
+- `scripts/release-restamp.ts`, `scripts/lib/restamp.ts`: `release:restamp` now resolves BEHAVIOR_CHANGES rows that both sides appended at the same place (base rows first), the conflict almost every pair of queued PRs hit; any other conflict still stops.
+- Docs: `docs/RELEASING.md` (Stacked merge queue; restamp step 3), `docs/ci-event-parity.md` (master-push reuse for stacked entries), `docs/architecture/key-files/ci-health-and-test-guards.md`.
+- Tests: `test/scripts/merge-queue.test.ts` (three stacked entries landing in order, each refusal, a red master push freezing the queue, fix in place, a rebuild that drops an entry), `test/scripts/release-restamp.test.ts` (appended-rows resolution).
+
 ## [0.60.620.0] - 2026-11-09
 
 **A diverged managed checkout now publishes its local commits on refresh by default when Git durability is on, after a secret scan of those commits.** Commits a script made with plain `git commit` in a managed checkout used to strand there whenever the remote moved: every `gbrain sources refresh` refused `refresh_diverged` and asked the user, unless `sources.refresh_publish_diverged` was set to `true`. With the setting unset, a worktree whose Git durability is on (`gbrain sources writer git-durability <source> --enable`, or the legacy hook) now publishes them itself: the local commits merged with the upstream in memory, never a rebase or force-push, then the fast-forward. The publish child scans, under its publish lock and for the exact commits it pushes, what they add: commit messages, added lines (including a value a later commit removed) and merge-commit conflict resolutions. A value that looks like a secret, added text too large to scan, or a commit that changes `.gbrain-scan-allow` or a `.gitattributes` refuses the new `publish_secret_found` naming the file, line, rule and commit, never the value, with nothing pushed; commits the scan cannot read in full refuse `publish_scan_unreadable` instead. The rewritten-upstream refusal and the `--expect-remote` bound are unchanged. `false` turns it off; `true` still publishes with durability off.

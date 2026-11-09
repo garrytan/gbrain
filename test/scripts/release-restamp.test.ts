@@ -21,7 +21,7 @@ import { dirname, join } from 'node:path';
 import { main } from '../../scripts/release-restamp.ts';
 import {
   COLLISION_DOCS, OTHER_STAMPED_FILES, RESTAMP_DOCS, STAMPS, findLeftoverRefs, migrationPayloadKey, nextPatchVersion,
-  rebuildChangelog, renumberMigrationText, resolveVersionOnlyHunks, splitChangelog,
+  rebuildChangelog, renumberMigrationText, resolveAppendedLines, resolveVersionOnlyHunks, splitChangelog,
 } from '../../scripts/lib/restamp.ts';
 
 const REPO = join(import.meta.dir, '..', '..');
@@ -454,6 +454,15 @@ describe('release:restamp helpers', () => {
     expect(resolveVersionOnlyHunks(versionOnly)).toEqual({ text: '{\n  "version": "0.1.1.0",\n}\n', unresolved: 0 });
     const real = '<<<<<<< HEAD\n"dep": "1"\n=======\n"dep": "2"\n>>>>>>> origin/master\n';
     expect(resolveVersionOnlyHunks(real).unresolved).toBe(1);
+  });
+
+  test('rows both sides appended at one place resolve base rows first; an edited row stays conflicted', () => {
+    const appended = "rows = [\n  a,\n<<<<<<< ours\n  branch_row,\n||||||| base\n=======\n  master_row,\n>>>>>>> theirs\n];\n";
+    expect(resolveAppendedLines(appended)).toEqual({ text: 'rows = [\n  a,\n  master_row,\n  branch_row,\n];\n', unresolved: 0 });
+    const edited = '<<<<<<< ours\n  a2,\n||||||| base\n  a,\n=======\n  a3,\n>>>>>>> theirs\n';
+    expect(resolveAppendedLines(edited).unresolved).toBe(1);
+    const noBase = '<<<<<<< ours\n  x,\n=======\n  y,\n>>>>>>> theirs\n';
+    expect(resolveAppendedLines(noBase)).toEqual({ text: noBase, unresolved: 1 });
   });
 
   test('renumbering changes only the export name and the version literal', () => {

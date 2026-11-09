@@ -189,6 +189,7 @@
     "check:structural-manifest": "bash scripts/check-structural-manifest.sh",
     "regen:all": "bun scripts/regen-all.ts",
     "release:restamp": "bun scripts/release-restamp.ts",
+    "merge-queue": "bun scripts/merge-queue.ts",
     "check:regen-all": "bun scripts/regen-all.ts --check",
     "check:orphan-modules": "node scripts/check-orphan-modules.mjs",
     "check:test-placeholders": "node scripts/check-test-placeholders.mjs",

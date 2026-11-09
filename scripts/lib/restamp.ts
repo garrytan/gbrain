@@ -357,3 +357,38 @@ export function resolveVersionOnlyHunks(text: string): { text: string; unresolve
   }
   return { text: out.join('\n'), unresolved };
 }
+
+/**
+ * Resolve diff3 conflict hunks in which both sides only added lines at the same place (an empty base section),
+ * such as two branches each appending a BEHAVIOR_CHANGES row: theirs (the base being merged in, the earlier
+ * release) first, then ours. Any other hunk stays in place and counts as unresolved.
+ */
+export function resolveAppendedLines(text: string): { text: string; unresolved: number } {
+  const lines = text.split('\n');
+  const out: string[] = [];
+  let unresolved = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i]!.startsWith('<<<<<<< ')) {
+      out.push(lines[i]!);
+      continue;
+    }
+    const start = i;
+    const side: Record<'ours' | 'base' | 'theirs', string[]> = { ours: [], base: [], theirs: [] };
+    let section: 'ours' | 'base' | 'theirs' = 'ours';
+    let sawBase = false;
+    for (i++; i < lines.length && !lines[i]!.startsWith('>>>>>>> '); i++) {
+      const l = lines[i]!;
+      if (section === 'ours' && l.startsWith('||||||| ')) {
+        section = 'base';
+        sawBase = true;
+      } else if (section !== 'theirs' && l === '=======') section = 'theirs';
+      else side[section].push(l);
+    }
+    if (sawBase && side.base.length === 0) out.push(...side.theirs, ...side.ours);
+    else {
+      unresolved++;
+      out.push(...lines.slice(start, i + 1));
+    }
+  }
+  return { text: out.join('\n'), unresolved };
+}

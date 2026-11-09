@@ -134,6 +134,50 @@ queued commit against `master`.
   actually merged (`gh pr view <n> --json state,mergedAt`) before tagging,
   announcing or starting dependent work.
 
+## Stacked merge queue
+
+`bun run merge-queue` (`scripts/merge-queue.ts`) lands ready PRs through a queue
+whose entries already contain every entry ahead of them, so full-ci runs on all
+of them at once, each on the exact tree master will have when it lands. The
+merge coordinator runs it; owners never stamp a queued PR themselves.
+
+| Command | What it does |
+|---|---|
+| `plan <pr>...` | Prints the versions and branch names new entries would get behind the queue tail. Writes nothing. |
+| `build <pr>...` | For each owner PR: a queue branch `mq/<version>-pr<N>` at the owner's head, then `release:restamp --base <branch of the entry ahead>` (master for the first), push, a queue PR with the `full-ci` label. |
+| `status` | Each live entry with its head, `full-suite` / `e2e-full-suite`, receipt and whether its owner pushed since. |
+| `verify <queue-pr>` | The merge checks for Q1: the landing-tree check, VERSION = master + 1, the owner head unchanged and included, CHANGELOG additive, every check green on the exact head, mergeable clean, the ship receipt on the head. |
+| `land <queue-pr>` | `verify`, then the REST merge (`merge_method=merge`, `sha=<head>`), then waits for master's Test and E2E push runs and Release's ci-gate. |
+| `refresh <queue-pr>` | Fix in place: merges the owner's new head into the entry, then the entry ahead into each entry behind. Versions stay. |
+| `rebuild <queue-pr> [--drop <pr>] [--first <pr>]` | Rebuilds that entry and the tail on fresh branch names (`-r2`, ...) with versions shifted, then closes the queue PRs it replaced. |
+
+- **Order.** The queue is the version order of the `mq/` branches not yet on
+  master. Entry i gets master VERSION + i PATCH and the next migration numbers
+  after the entry ahead. `land` refuses anything but the first entry.
+- **Stamps.** Restamping against the entry ahead touches only the lines this
+  entry added, so earlier entries' CHANGELOG sections and `since:` rows keep
+  their versions. `build` and `refresh` refuse a head that changed them.
+- **Landing-tree check.** `git merge-tree --write-tree origin/master <head>` must
+  print `<head>^{tree}`, which proves the merge lands exactly the tree full-ci
+  tested. The master push then reuses that run
+  ([master-push reuse](ci-event-parity.md#master-push-reuse)).
+- **One landing at a time.** Master pushes cancel each other's runs, and a
+  cancelled push run marks its release superseded, so `land` returns only after
+  the push runs and Release's ci-gate finish. Red freezes the queue.
+- **CI self-attestation files.** An entry that changes one of
+  `scripts/pregate-remote-gate.sh`'s attested paths goes last; nothing is built
+  behind it until it lands.
+- **Failures.** If the owner can push a fix within 30 minutes, push it to the
+  owner branch and run `refresh`; otherwise `rebuild <its queue PR> --drop <owner PR>`.
+  A rebuild never force-pushes: the entries behind a dropped one already
+  contain its commits, so they move to new branches.
+- **Owner PRs.** They stay based on master. Landing a queue PR puts the owner's
+  head on master, which marks the owner PR merged.
+
+GitHub's native merge queue is not used: it is available only for repositories
+owned by an organization, and its queue commits cannot carry per-PR version
+stamps.
+
 ## CHANGELOG + VERSION are branch-scoped
 
 **VERSION and CHANGELOG describe what THIS branch adds vs master, not how we got
@@ -198,8 +242,10 @@ and the commit it would make, and changes nothing.
 3. Merges `origin/master` with a merge commit. Version-only hunks in the stamp
    files, `CHANGELOG.md` and generated files (migration registry,
    `migrations/records.json`, `llms*.txt`, plugin trees, the template repo,
-   `bun.lock`) resolve mechanically; any other conflict stops with the file
-   list.
+   `bun.lock`) resolve mechanically, and so do BEHAVIOR_CHANGES rows both
+   sides appended at the same place in `src/core/behavior-change-notice.ts`
+   (the base's rows first, then the branch's); any other conflict stops with
+   the file list.
 4. Sets VERSION to master's `MAJOR.MINOR.(PATCH+1).0` and rewrites every
    required row of the CLAUDE.md "Version locations" table: VERSION,
    `package.json`, the three plugin manifests, the BOOTSTRAP runbook stamp,

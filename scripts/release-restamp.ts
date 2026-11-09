@@ -32,12 +32,13 @@
  * Exit: 0 done (or nothing to change), 1 stopped (FAIL/Why/Fix/See printed), 2 usage.
  * Docs: docs/RELEASING.md#release-restamp
  */
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
   BEHAVIOR_NOTICE_FILE, COLLISION_DOCS, MIGRATION_FILE_RE, MIGRATIONS_DIR, RESTAMP_DOCS, RestampError, STAMPS,
   branchEntrySections, fail, findLeftoverRefs, isGenerated, migrationPayloadKey, nextPatchVersion, parseAddedLines,
-  isVersionToken, planRenumber, rebuildChangelog, renumberMigrationText, resolveVersionOnlyHunks, restampSinceLines, restampTodoLines, stampTbdSince, versionOfHeader,
+  isVersionToken, planRenumber, rebuildChangelog, renumberMigrationText, resolveAppendedLines, resolveVersionOnlyHunks, restampSinceLines, restampTodoLines, stampTbdSince, versionOfHeader,
   type BranchMigration, type ChangelogSection, type LeftoverRef, type Renumber,
 } from './lib/restamp.ts';
 import { offlineEnv } from './regen-all.ts';
@@ -268,6 +269,13 @@ function merge(ctx: Ctx, state: State): void {
   for (const f of conflicted) {
     if (f === 'CHANGELOG.md') {
       ctx.write(f, ctx.git('show', `${state.masterRef}:CHANGELOG.md`));
+    } else if (f === BEHAVIOR_NOTICE_FILE) {
+      const r = resolveAppendedLines(diff3(ctx, f));
+      if (r.unresolved > 0) {
+        genuine.push(f);
+        continue;
+      }
+      ctx.write(f, r.text);
     } else if (isGenerated(f)) {
       if (!ctx.gitOk('checkout', '--theirs', '--', f)) {
         genuine.push(f);
@@ -296,6 +304,21 @@ function merge(ctx: Ctx, state: State): void {
   }
   ctx.git('commit', '--no-edit', '--quiet');
   ctx.log(`restamp: merged ${state.masterRef} with a merge commit (${conflicted.length} conflict(s) resolved mechanically).`);
+}
+
+/** The conflicted file re-merged from its index stages with diff3 markers, so an empty base section is visible. */
+function diff3(ctx: Ctx, path: string): string {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-restamp-diff3-'));
+  try {
+    const stages = ['2', '1', '3'].map((s) => {
+      const file = join(dir, s);
+      writeFileSync(file, ctx.git('show', `:${s}:${path}`));
+      return file;
+    });
+    return Bun.spawnSync(['git', 'merge-file', '-p', '--diff3', '-L', 'ours', '-L', 'base', '-L', 'theirs', ...stages], { cwd: ctx.root, stdout: 'pipe', stderr: 'pipe' }).stdout.toString();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function finishMerge(ctx: Ctx, state: State): void {
