@@ -54,6 +54,27 @@ describe('parseTtlShorthand (pure leaf)', () => {
     expect(res.validUntil.toISOString()).toBe('2030-01-02T00:00:00.000Z');
   });
 
+  test('out-of-range durations return a typed error instead of an invalid Date', () => {
+    for (const raw of ['100000001d', `${'9'.repeat(400)}s`]) {
+      expect(parseTtlShorthand(raw)).toEqual({ ok: false, code: 'unparseable', input: raw });
+    }
+  });
+
+  test('duration at the Date ceiling accounts for the current timestamp', () => {
+    const clock = spyOn(Date, 'now').mockReturnValue(1_000);
+    try {
+      const valid = parseTtlShorthand('8639999999999s');
+      expect(valid.ok).toBe(true);
+      if (!valid.ok || !valid.validUntil) throw new Error('expected valid date');
+      expect(valid.validUntil.getTime()).toBe(8_640_000_000_000_000);
+      expect(parseTtlShorthand('8640000000000s')).toEqual({
+        ok: false, code: 'unparseable', input: '8640000000000s',
+      });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   test('date-only ISO values must be valid calendar dates', () => {
     expect(parseTtlShorthand('2026-02-30')).toEqual({
       ok: false,

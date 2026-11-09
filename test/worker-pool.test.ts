@@ -486,3 +486,47 @@ describe('runSlidingPool — worker slot index passed to onItem', () => {
     expect(slotsSeen.size).toBe(5);
   });
 });
+
+describe('runSlidingPool callback failure shutdown', () => {
+  for (const callback of ['onError', 'failureLabel'] as const) {
+    test(`${callback} failure joins siblings and prevents new claims`, async () => {
+      const failure = new Error(`${callback} failed`);
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const claimed: number[] = [];
+      let siblingFinished = false;
+      let settled = false;
+      const outcome = runSlidingPool({
+        items: [0, 1, 2, 3], workers: 2,
+        onItem: async item => {
+          claimed.push(item);
+          if (item === 0) { await Promise.resolve(); throw new Error('item failed'); }
+          await gate;
+          siblingFinished = true;
+        },
+        [callback]: () => { throw failure; },
+      }).then(() => { settled = true; return null; }, error => { settled = true; return error; });
+      // Drain microtasks while the sibling remains deterministically blocked.
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      const settledBeforeRelease = settled;
+      release();
+      expect(await outcome).toBe(failure);
+      expect(settledBeforeRelease).toBe(false);
+      expect(siblingFinished).toBe(true);
+      expect(claimed).toEqual([0, 1]);
+    });
+  }
+});
+
+describe('runSlidingPool must-abort precedence', () => {
+  test('a throwing failureLabel does not replace a BudgetExhausted error', async () => {
+    const budget = Object.assign(new Error('cap exhausted'), { tag: 'BUDGET_EXHAUSTED' as const });
+    const outcome = await runSlidingPool({
+      items: [0, 1, 2], workers: 1,
+      onItem: async item => { if (item === 0) throw budget; },
+      failureLabel: () => { throw new Error('label failed'); },
+    }).then(() => null, error => error);
+    expect(outcome).toBe(budget);
+    expect(isMustAbortError(outcome)).toBe(true);
+  });
+});

@@ -1,4 +1,5 @@
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, spyOn } from 'bun:test';
+import * as os from 'os';
 import { shouldProceed, preflight, complete, getThrottleState, _resetForTest } from '../src/core/backoff.ts';
 
 describe('backoff', () => {
@@ -45,6 +46,32 @@ describe('backoff', () => {
     expect(state.activeProcesses).toBe(1);
   });
 
+  test('missing CPU metrics still enforce concurrent process limit', async () => {
+    const load = spyOn(os, 'loadavg').mockReturnValue([0, 0, 0]);
+    const cfg = { memoryStopPct: Infinity };
+    try {
+      expect(await preflight('a', cfg)).toBe(true);
+      expect(await preflight('b', cfg)).toBe(true);
+      expect(await preflight('c', cfg)).toBe(false);
+      expect(getThrottleState().activeProcesses).toBe(2);
+    } finally {
+      load.mockRestore();
+      _resetForTest();
+    }
+  });
+
+  test('missing CPU metrics still enforce memory limit', () => {
+    const load = spyOn(os, 'loadavg').mockReturnValue([0, 0, 0]);
+    try {
+      const blocked = shouldProceed({ memoryStopPct: 0 });
+      expect(blocked.proceed).toBe(false);
+      expect(blocked.reason).toContain('Memory');
+      expect(shouldProceed({ memoryStopPct: Infinity }).proceed).toBe(true);
+    } finally {
+      load.mockRestore();
+    }
+  });
+
   test('complete does not go below zero', () => {
     complete();
     complete();
@@ -83,12 +110,7 @@ describe('backoff', () => {
       loadStopPct: 0.0,
       memoryStopPct: 0.0,
     });
-    const loadAvg = require('os').loadavg();
-    if (loadAvg[0] === 0 && loadAvg[1] === 0 && loadAvg[2] === 0) {
-      expect(result.memoryUsed).toBeGreaterThan(0);
-    } else {
-      expect(result.proceed).toBe(false);
-    }
+    expect(result.proceed).toBe(false);
   });
 
   test('preflight returns boolean', async () => {

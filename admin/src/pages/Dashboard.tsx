@@ -35,12 +35,9 @@ export function DashboardPage() {
       } catch {}
     };
     es.onerror = () => {
-      setSseStatus('disconnected');
-      setTimeout(() => {
-        setSseStatus('connecting');
-        es.close();
-        // Reconnect handled by browser EventSource auto-retry
-      }, 3000);
+      // EventSource retries transient failures itself. Closing it here
+      // permanently disables that recovery and freezes the live feed.
+      setSseStatus(es.readyState === EventSource.CLOSED ? 'disconnected' : 'connecting');
     };
 
     // #5061: both calls are full-table aggregates on Postgres; a background tab stops polling.

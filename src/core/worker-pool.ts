@@ -241,10 +241,10 @@ export async function runSlidingPool<T>(opts: SlidingPoolOpts<T>): Promise<Slidi
         // error is rethrown after the join (see the function doc).
         if (isMustAbortError(err)) {
           result.aborted = true;
-          result.errored++;
-          result.failures.push({ idx, label: labelFn(item), error: err });
           if (!mustAbort.failure) mustAbort.failure = { error: err };
           localAbort.abort();
+          result.errored++;
+          result.failures.push({ idx, label: labelFn(item), error: err });
           return;
         }
         result.errored++;
@@ -262,7 +262,12 @@ export async function runSlidingPool<T>(opts: SlidingPoolOpts<T>): Promise<Slidi
 
   try {
     await Promise.all(
-      Array.from({ length: workerCount }, (_, w) => worker(w)),
+      Array.from({ length: workerCount }, (_, w) => worker(w).catch(error => {
+        // Policy/label callbacks can throw outside the item-error handler.
+        // Stop claims immediately, but join every sibling before rejecting.
+        if (!mustAbort.failure) mustAbort.failure = { error };
+        localAbort.abort();
+      })),
     );
   } finally {
     if (opts.signal) opts.signal.removeEventListener('abort', onCallerAbort);
