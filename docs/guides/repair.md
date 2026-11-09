@@ -2848,7 +2848,8 @@ and the command then reads back the values Git uses in the checkout: when a
 worktree-scoped or included setting still overrides one, it refuses
 `write_failed`, names the key, and says the settings were already written.
 A source already recorded as remote whose checkout lacks the lock-down (one
-recorded before this) gets it on `--remote --apply` and reports `recorded`;
+recorded before this) gets it on `--remote --apply` and reports `recorded`,
+even when its files now use git-lfs (no `lfs_tracked` refusal for it);
 one that has it stays `already_recorded`, and the record is never removed.
 Only `.git/config` changes, never a tracked file; a gbrain frontmatter
 hook wired through `core.hooksPath` stops running there, as on any clone a

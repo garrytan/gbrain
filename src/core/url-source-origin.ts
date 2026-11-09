@@ -124,7 +124,7 @@ function lockDownCheckout(root: string, progress: { state: 'none' | 'started' | 
   const file = join(resolve(root, commonDir.stdout.toString('utf8').replace(/\n$/, '')), 'config');
   progress.state = 'started';
   for (const [key, value] of LOCK_DOWN)
-    execFileSync('git', ['config', '--file', file, key, value], { cwd: dirname(file), env: hardenedGitEnvironment(), stdio: 'pipe', timeout: GIT_LIMITS.timeoutMs });
+    execFileSync('git', ['config', '--file', file, '--replace-all', key, value], { cwd: dirname(file), env: hardenedGitEnvironment(), stdio: 'pipe', timeout: GIT_LIMITS.timeoutMs });
   progress.state = 'written';
   const gaps = lockDownGaps(root);
   if (gaps.length) throw new Error(`Git in the checkout at ${root} still reads another value for ${gaps.join(', ')} (a worktree-scoped or included config overrides ${file}).`);
@@ -141,15 +141,19 @@ export interface RecordOriginResult {
 
 const refusal = (id: string, code: NonNullable<RecordOriginResult['code']>, reason: string): RecordOriginResult => ({ source_id: id, status: 'refused', code, reason });
 
-/** The refusal a `--remote` record gets when the checkout is not known to be free of git-lfs, or null. */
-function lfsRefusal(id: string, root: string): RecordOriginResult | null {
+/**
+ * The refusal a `--remote` record gets when the checkout is not known to be free of git-lfs, or null. A `relock` (a source
+ * already recorded as remote) keeps its record whatever its files hold, so only a checkout Git cannot place refuses it.
+ */
+function lfsRefusal(id: string, root: string, relock: boolean): RecordOriginResult | null {
   const lfs = lfsTracked(root);
+  if (relock && lfs.state !== 'unknown') return null;
   const why = 'A clone with git-lfs downloads off holds pointer files where this checkout holds their content, so its next reclone would not match the canonical manifest, '
     + `and converting the checkout rewrites its files, which this command does not do; nothing changed. If the source should not keep these files, check that nothing in its checkout is unpushed or only local, then remove it (gbrain sources remove ${id} --confirm-destructive).`;
   if (lfs.state === 'tracked') return refusal(id, 'lfs_tracked', `Source ${id} tracks files with git-lfs. ${why}`);
   if (lfs.state === 'declared') return refusal(id, 'lfs_tracked', `A committed .gitattributes in source ${id} declares a git-lfs filter (filter=lfs), so a reclone would store matching files with git-lfs. ${why}`);
   if (lfs.state !== 'unknown') return null;
-  const unconfirmed = 'so gbrain cannot confirm that no file is tracked with git-lfs; nothing changed.';
+  const unconfirmed = relock ? 'so gbrain cannot turn git-lfs downloads and hooks off in it; nothing changed.' : 'so gbrain cannot confirm that no file is tracked with git-lfs; nothing changed.';
   if (lfs.cause === 'missing') return refusal(id, 'lfs_unknown', `Source ${id}'s checkout at ${root} is missing, ${unconfirmed} Restore the checkout, then run this again.`);
   if (lfs.cause === 'not_top_level') return refusal(id, 'lfs_unknown', `Source ${id}'s clone directory ${root} is not the top level of its own Git repository (Git resolves it to an enclosing repository, or to none), ${unconfirmed} Check what that directory holds before you run this again.`);
   if (lfs.cause === 'unsafe_owner') return refusal(id, 'lfs_unknown', `Git refuses to read source ${id}'s checkout at ${root} because another user owns it (safe.directory), ${unconfirmed} Check who owns that checkout, then run this again as that user or after fixing its ownership.`);
@@ -196,7 +200,7 @@ export async function recordSourceOrigin(engine: BrainEngine, ids: string[], opt
       const early = check(row, id, opts.origin);
       const relock = remote && early?.status === 'already_recorded' && originState(row!) === 'remote' && existsSync(row!.local_path!) && lockDownGaps(row!.local_path!).length > 0;
       if (early && !relock) { results.push(early); continue; }
-      const lfs = remote ? lfsRefusal(id, row!.local_path!) : null;
+      const lfs = remote ? lfsRefusal(id, row!.local_path!, relock) : null;
       if (lfs) { results.push(lfs); continue; }
       if (!opts.apply) {
         results.push({ source_id: id, status: 'would_record', reason: relock
@@ -211,7 +215,7 @@ export async function recordSourceOrigin(engine: BrainEngine, ids: string[], opt
         if ((again && !(relock && again.status === 'already_recorded')) || (!again && relock) || locked!.local_path !== row!.local_path || config.remote_url !== parseSourceConfig(row!.config).remote_url)
           return refusal(id, 'source_changed', `Source ${id} changed while its origin was being recorded; nothing changed. Run the preview again.`);
         if (remote) {
-          const lfsNow = lfsRefusal(id, locked!.local_path!);
+          const lfsNow = lfsRefusal(id, locked!.local_path!, relock);
           if (lfsNow) return lfsNow;
           lockDownCheckout(locked!.local_path!, lockDown);
         }
