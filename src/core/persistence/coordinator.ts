@@ -29,6 +29,9 @@ import { withFilesystemPublication } from './filesystem-guard.ts';
 import { mayReprepare } from './semantic.ts';
 import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
 import { queuePublicationEffects } from './effect-journal.ts';
+import { deferredReplayRefusal } from './refresh-barrier.ts';
+import { holdForImport } from './import-deferral.ts';
+import { adoptionCommitLanded, adoptLocalEdit } from './local-edit-adoption.ts';
 import { timePublicationStep } from './publication-timing.ts';
 import type { AppendedRange, GitCommitNote } from './effect-model.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
@@ -38,13 +41,13 @@ import { assertRecoveryStagingAbsent, cleanupRecoveryStaging, recoveryStagingFil
 import { assertManagedFilesystemWrite } from './filesystem-guard.ts';
 import { beforeStagePath, fileContentBytes, fileContentHash, hashDescriptor, hashFile, isStreamedContent, LARGE_FILE_MIN_BYTES, stageBeforeCopy, stageStreamedContent, type StreamedFileContent } from './large-file.ts';
 import { declarePublication, publicationTransaction } from './publication-deadline.ts';
-import { PAGE_CHANGED_DURING_PREPARATION_MESSAGE } from './verb-errors.ts';
+import { PAGE_CHANGED_DURING_PREPARATION_MESSAGE, writeFailureDiagnostic } from './verb-errors.ts';
 import { assertMutationProtocol, assertSharedSkillPersistence, declareDurablePersistence, isPersistenceDeclaration, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, publishStagedBundleFile, stageBundleFile, type MutationFile } from './bundle-files.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { landedCommit, PENDING_IMPORT, SYNC_HELD } from './pending-import.ts';
-import { CANONICAL_FILE_MISSING, CHECKOUT_REFUSAL_ORIGINS, type CheckoutRefusalOrigin, databaseRefusal, ownerExceptionFailure, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
+import { CANONICAL_FILE_MISSING, CHECKOUT_REFUSAL_ORIGINS, type CheckoutRefusalOrigin, SOURCE_CHANGED_ORIGINS, type SourceChangedDetail, type SourceChangedOrigin, databaseRefusal, ownerExceptionFailure, stagingFailureDetail, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
 import { SYNC_CURSOR_REPLACED, SYNC_PASS_SUPERSEDED } from './sync-checkpoint-replaced.ts';
 import { fenceFailureDetail } from '../fence-repair/refusal.ts';
 import { withdrawalFailureDetail } from '../facts/withdrawal.ts';
@@ -220,6 +223,11 @@ async function stageLargeFiles(engine: BrainEngine, row: WriteRequest, file: Pag
 // Effect recovery uses the same confined durable publication primitive, under
 // its own recovery record and native root capability.
 export { fileHash as persistenceFileHash, publishFile as publishPersistenceFile };
+/** GST-1601: the closed cause of a source_changed refusal (verb-errors.ts writeFailureDiagnostic), absent when its message names none. */
+function sourceChangedDetail(message: string): SourceChangedDetail | undefined {
+  const { reason } = writeFailureDiagnostic('source_changed', message);
+  return (SOURCE_CHANGED_ORIGINS as readonly string[]).includes(reason) ? { origin: reason as SourceChangedOrigin } : undefined;
+}
 function requestError(error: unknown): PublicationFailure {
   if (error instanceof OperationError) {
     // #6188: a typed fence refusal keeps its location in the bounded detail, which outlives receipt compaction.
@@ -227,7 +235,9 @@ function requestError(error: unknown): PublicationFailure {
       ?? (error.detail === CANONICAL_FILE_MISSING ? { origin: CANONICAL_FILE_MISSING } : undefined)
       ?? ((CHECKOUT_REFUSAL_ORIGINS as readonly unknown[]).includes(error.detail) ? { origin: error.detail as CheckoutRefusalOrigin } : undefined)
       // #6693: a refusal on a page whose file awaits import or is held by sync; the replay after import selects on it.
-      ?? (error.code === 'source_changed' && (error.reason === PENDING_IMPORT || error.reason === SYNC_HELD) ? { origin: error.reason } : undefined);
+      ?? (error.code === 'source_changed' && (error.reason === PENDING_IMPORT || error.reason === SYNC_HELD) ? { origin: error.reason } : undefined)
+      ?? stagingFailureDetail(error)
+      ?? (error.code === 'source_changed' ? sourceChangedDetail(error.message) : undefined);
     return { code: error.code, message: error.message, ...(detail ? { detail } : {}) };
   }
   const refusal = databaseRefusal(error);
@@ -385,7 +395,14 @@ export async function finishUnpublishedFailure(engine: BrainEngine, row: WriteRe
   stage: PublicationStage = 'publication'): Promise<WriteRequest> {
   const charged = await releaseChargedInterruption(engine, row, error, stage);
   if (charged) return charged;
-  const failure = withAttempt(requestError(error), stage, engine);
+  // GST-1601: with persistence.adopt_local_edits on for the source, a one-sided local edit is adopted and the write prepared again.
+  const adoption = await adoptLocalEdit(engine, row, error);
+  if (adoption && 'released' in adoption) return adoption.released;
+  if (adoption && 'claimLost' in adoption) return adoption.claimLost;
+  const failure = withAttempt(requestError(adoption?.error ?? error), stage, engine);
+  // GST-1582: with the refresh barrier on, a write refused because its file awaits an import waits for that import instead.
+  const held = failure.code === 'source_changed' ? await holdForImport(engine, row, error) : null;
+  if (held) return held;
   if (mayReprepare(row, failure) || transientDatabaseFailure(error)) {
     await releaseUnpublishedClaim(engine, row, transientDatabaseFailure(error) ? 'database_contention' : 'revision_changed_repreparing');
     return (await getWriteRequestById(engine, row.id))!;
@@ -530,6 +547,9 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         return (await getWriteRequestById(engine, row.id))!;
       }
     }
+    // PR B: a write deferred behind a refresh publishes only when its credential still holds and the refresh changed none of its files.
+    const deferredRefusal = await deferredReplayRefusal(engine, row, files);
+    if (deferredRefusal) return await engine.transaction(tx => completeWrite(tx, row, deferredRefusal.state, {}, deferredRefusal.failure));
     releaseCapacity = tryAcquirePublicationCapacity(engine);
     if (!releaseCapacity) {
       await releaseUnpublishedClaim(engine, row, 'writer_pool_capacity');
@@ -849,6 +869,8 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
       // Withdrawal is authoritative DB state and is never rolled back here.
       const failure: PublicationFailure | undefined = terminalError ?? (current.error_code ? {code:current.error_code,message:current.error_message ?? 'Publication failed before database completion.',
         ...(current.error_detail ? { detail: current.error_detail as unknown as PublicationFailureDetail } : {})} : undefined);
+      // #8767: so is a local edit adoption's own commit (local-edit-adoption.ts), on a failure and on the requeued replay.
+      landed ??= await adoptionCommitLanded(tx, current, binding);
       // G7b: a door commit that landed before its row is named on the receipt, whatever the replay's outcome.
       const kept = landed ? { persistence: { git_state: 'committed', git_commit: landed, landed_before_row: true } } : null;
       if (failure) return completeWrite(tx, current, failureState(failure.code), kept ?? {}, failure);

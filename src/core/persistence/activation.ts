@@ -243,7 +243,7 @@ export async function activatePersistence(engine: BrainEngine, opts: { confirmQu
       await tx.executeRaw('LOCK TABLE gbrain_cycle_locks IN SHARE ROW EXCLUSIVE MODE');
       const legacyLocks = await inspectLegacyWriterLocks(tx);
       if (legacyLocks.some(row => !opts.cleanupDeadLocalLocks || row.liveness !== 'dead_eligible')) throw quiescence();
-      if ((await tx.executeRaw(`SELECT id FROM persistence_requests WHERE state IN ('queued','running','recovering') OR recovery IS NOT NULL LIMIT 1`)).length
+      if ((await tx.executeRaw(`SELECT id FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL LIMIT 1`)).length
         || (await tx.executeRaw('SELECT id FROM persistence_effects WHERE recovery IS NOT NULL LIMIT 1')).length) throw await notQuiescedError(tx, quiescence().message, { queuedEffects: false });
       if (opts.dryRun) return { enabled: false, activated: false, filesystem_sources: bindings.length, native_lock: native, legacy_locks: legacyLocks, drift_audit: driftAudit, git_durability: gitDurabilityListing(bindings), ...await gitDurabilityWarnings(bindings), ...databaseOnlyListing };
       for (const row of legacyLocks) {

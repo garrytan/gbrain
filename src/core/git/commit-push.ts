@@ -27,12 +27,14 @@
  */
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { scanRange } from './range-secret-scan.ts';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { execFileSync } from '../spawn.ts';
 import { gitChildEnv, literalPathspecs } from '../git-env.ts';
 import { GIT_ENV, GIT_ENV_AUTH, GIT_SSRF_SUBCOMMAND_FLAGS, durableSsrfFlags } from '../git-transport.ts';
 import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesystemRootFor, type ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
 import { acquireNativeLock, acquireNativeLockSync, type NativeLockSyncHandle } from '../persistence/native-lock.ts';
+import { recordCommit, recordIntent } from './commit-ledger.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { shellQuote } from '../agent-output.ts';
 
@@ -79,6 +81,12 @@ export interface CommitPushResult {
   no_remote?: true;
   /** Conflicted files where the remote held a version this checkout had already replaced: this checkout's version was published. */
   superseded_remote_paths?: string[];
+  /** A managed canonical worktree: the named paths were committed (or had no change) and nothing was pushed. */
+  managed?: true;
+  /** Managed only: commits on the branch its upstream lacks as last fetched; null when no fetched upstream can be read. */
+  unpublished?: number | null;
+  /** Managed only: the branch's configured upstream (`origin/main`); null when it names none. */
+  upstream?: string | null;
 }
 
 export interface PullResult {
@@ -114,10 +122,14 @@ export interface CommitPushOptions {
   branch?: string;
   /** Push-only: never advance the checkout and skip its pre-push hook (a managed canonical worktree; see the header). */
   keepCheckout?: boolean;
+  /** Before pushing, scan what the commits the upstream lacks add (messages, added lines, merge resolutions) and refuse `publish_secret_found` on a finding: the gate for automatic publishes of commits gbrain did not write. */
+  scanSecrets?: boolean;
   /** Commit the pending write-through files (`--pending`) instead of named paths. */
   pending?: boolean;
   /** Commit and publish files outside the configured source root(s): the user's explicit choice, or gbrain's own scaffolding at the checkout root. */
   allowOutsideSourceRoot?: boolean;
+  /** `--base <path>=<blob>`: the blob (or `absent`) each named path had at HEAD when the writer read it; a moved one refuses `commit_base_moved`. */
+  bases?: Map<string, string>;
 }
 
 export type Resolution = { kind: 'ours' } | { kind: 'theirs' } | { kind: 'file'; path: string };
@@ -133,13 +145,14 @@ interface Ctx {
 
 interface GitRun { code: number; stdout: string; stderr: string }
 
-function git(root: string, args: string[], opts: { auth?: boolean; timeoutMs?: number; env?: NodeJS.ProcessEnv; input?: string } = {}): GitRun {
+function git(root: string, args: string[], opts: { auth?: boolean; timeoutMs?: number; env?: NodeJS.ProcessEnv; input?: string; maxBuffer?: number } = {}): GitRun {
   const base = opts.auth ? { ...GIT_ENV_AUTH } : { ...GIT_ENV };
   try {
     const stdout = execFileSync('git', ['-C', root, ...args], {
       stdio: ['pipe', 'pipe', 'pipe'],
       input: opts.input ?? '',
       timeout: opts.timeoutMs ?? 60_000,
+      ...(opts.maxBuffer ? { maxBuffer: opts.maxBuffer } : {}),
       env: gitChildEnv({ ...base, LC_ALL: 'C', LANGUAGE: 'C', ...opts.env }),
     }).toString();
     return { code: 0, stdout, stderr: '' };
@@ -417,7 +430,19 @@ function restoreIndex(root: string, rel: string[], before: string[]): void {
   if (records.length) withIndexRetry(root, ['update-index', '-z', '--index-info'], 'index restore', undefined, records.map(l => `${l}\0`).join(''));
 }
 
-interface CommitScope { roots: string[]; lockPath: string; markHeld: boolean }
+interface CommitScope { roots: string[]; lockPath: string; markHeld: boolean; bases?: ReadonlyMap<string, string> }
+
+/** `--base` keyed by the repository-relative path it names; each must also be a committed path. */
+function scopeBases(root: string, opts: CommitPushOptions, rel: string[]): Map<string, string> | undefined {
+  if (!opts.bases?.size) return undefined;
+  const scoped = new Map<string, string>();
+  for (const [path, blob] of opts.bases) {
+    const [key] = scopePaths(root, [path], opts.cwd ?? process.cwd());
+    if (!key || !rel.includes(key)) throw opError('commit_paths_invalid', `--base names ${path}, which is not one of the paths to commit.`, 'Name every --base path after -- as well.');
+    scoped.set(key, blob);
+  }
+  return scoped;
+}
 
 /**
  * Stage and commit exactly `rel` (the caller holds the commit lock). Refused
@@ -428,6 +453,12 @@ interface CommitScope { roots: string[]; lockPath: string; markHeld: boolean }
 function commitPaths(root: string, rel: string[], message: string, scope: CommitScope): string | null {
   const outside = rel.filter(p => !insideSourceRoots(p, scope.roots));
   if (outside.length) throw outsideRootError(root, scope.roots, outside, 'Refusing to commit');
+  for (const [path, base] of scope.bases ?? []) {
+    const head = git(root, ['rev-parse', '--verify', '-q', `HEAD:${path}`]).stdout.trim() || 'absent';
+    if (head !== base) throw opError('commit_base_moved', `${path} changed at HEAD since the writer read it (base ${base}, HEAD ${head}).`,
+      `Nothing was staged or committed. Read ${path} at HEAD again (git -C ${root} show HEAD:${path}), redo the change on it, and rerun with --base ${path}=${head}.`,
+      { detail: JSON.stringify({ path, base, head }), docs: 'docs/guides/shared-checkout-git.md#base-check' });
+  }
   const swept = stagedPaths(root).filter(p => !rel.includes(p) && rel.some(spec => covers(spec, p)));
   if (swept.length) {
     const list = `${swept.slice(0, 10).join(', ')}${swept.length > 10 ? ', ...' : ''}`;
@@ -452,12 +483,15 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
     const env = { [COMMIT_VIA_ENV]: scope.lockPath, ...(scope.markHeld ? { [COMMIT_LOCK_ENV]: scope.lockPath } : {}) };
     // #7759: literal per path, never git's global --literal-pathspecs: Git exports that to the commit's hooks, where a
     // guard's glob pathspec ('*.json') then matches nothing and lets the commit through.
+    recordIntent(root, { writer: 'commit_push', head_before: git(root, ['rev-parse', '--verify', '--quiet', 'HEAD']).stdout.trim() || null, message });
     const commit = withIndexRetry(root, ['commit', '--only', '-m', message, '--', ...literalPathspecs(paths)], 'git commit', env);
     if (commit.code !== 0) {
       throw opError('git_unavailable', `git commit failed in ${root}; the paths were unstaged again and keep their bytes.`,
         `${commit.stderr.trim().slice(0, 300)} A missing git identity (user.name, user.email) or a refusing pre-commit hook are common causes.`);
     }
-    return gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD');
+    const sha = gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD');
+    recordCommit(root, { sha, writer: 'commit_push' });
+    return sha;
   } catch (e) {
     try { restoreIndex(root, rel, before); } catch { /* the index lock outlasted the retries; the error below still stands */ }
     throw e;
@@ -709,6 +743,7 @@ function integrate(root: string, local: string, remote: string): Integration {
     for (const p of step.conflicts) conflicts.add(p);
     for (const p of step.structural) structural.add(p);
     acc = gitOk(root, ['commit-tree', '--no-gpg-sign', step.tree!, '-p', acc, '-m', 'gbrain: replay'], 'commit-tree');
+    recordCommit(root, { sha: acc, writer: 'replay', ref: null });
   }
   return { tree: treeOf(root, acc), conflicts: [...conflicts], structural: [...structural], skipped };
 }
@@ -814,7 +849,9 @@ function buildMerge(ctx: Ctx, ours: string, theirs: string, tree: string, skippe
   const remote = `${ctx.remote}/${ctx.mergeRef.replace(/^refs\/heads\//, '')}`;
   const note = skipped.length
     ? ['-m', `Left out ${skipped.length} local commit(s) whose patch ${remote} already has: ${skipped.slice(0, 20).map(s => s.slice(0, 12)).join(' ')}${skipped.length > 20 ? ' ...' : ''}`] : [];
-  return gitOk(ctx.root, ['commit-tree', tree, '-p', ours, '-p', theirs, '-m', `gbrain: merge ${remote} into ${ctx.branch}`, ...note, ...extra.flatMap(m => ['-m', m])], 'commit-tree');
+  const sha = gitOk(ctx.root, ['commit-tree', tree, '-p', ours, '-p', theirs, '-m', `gbrain: merge ${remote} into ${ctx.branch}`, ...note, ...extra.flatMap(m => ['-m', m])], 'commit-tree');
+  recordCommit(ctx.root, { sha, writer: 'merge', ref: null });
+  return sha;
 }
 
 function fetchTracking(ctx: Ctx): string | null {
@@ -992,6 +1029,32 @@ function assertLocalCommitsInsideRoots(ctx: Ctx, target: string, roots: string[]
         docs: 'docs/guides/shared-checkout-git.md#source-roots' } });
 }
 
+/** The automatic-publish secret gate: scan what the commits in trackingRef..target add (the exact range this publish pushes, under its lock). */
+function assertNoSecretsInRange(ctx: Ctx, target: string): void {
+  const scan = scanRange(ctx.root, ctx.trackingRef, target);
+  if (scan.unreadable !== undefined) {
+    throw opError('publish_scan_unreadable', `The secret scan could not read the local commits ${ctx.trackingRef}..${target.slice(0, 12)} (${scan.unreadable}). No secret was reported. Nothing was pushed.`,
+      `The publish pushes only commits it has read in full. Check the checkout with git fsck in ${ctx.root} (a missing or corrupt object, a full disk, or a git too slow for the 300 s budget), fix what it reports, then retry. Never publish with a command that skips this scan.`,
+      { detail: JSON.stringify({ unreadable: scan.unreadable }), fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
+        argv: ['git', '-C', ctx.root, 'fsck'],
+        why: 'Read-only: names missing or corrupt objects in the unpublished commits, the usual reason the scan cannot read them.',
+        user_message: `The secret scan could not read the unpublished commits in ${ctx.root}, so nothing was pushed. Check the checkout with git fsck and fix what it reports?`,
+        docs: 'docs/guides/shared-checkout-git.md#publish_scan_unreadable' } });
+  }
+  if (!scan.findings.length && !scan.unscanned.length && !scan.gate_changes.length) return;
+  const named = [...scan.findings.map(f => `${f.path}:${f.line} (${f.pattern}, ${f.commit.slice(0, 7)})`), ...scan.unscanned.map(u => `${u.path} (too large to scan, ${u.commit.slice(0, 7)})`),
+    ...scan.gate_changes.map(g => `${g.path} (changes what the scan sees, ${g.commit.slice(0, 7)})`)];
+  throw opError('publish_secret_found',
+    `${named.length} item(s) in the local commits ${ctx.trackingRef}..${target.slice(0, 12)} look like secrets or could not be scanned: ${named.slice(0, 10).join(', ')}${named.length > 10 ? ', ...' : ''}. Nothing was pushed.`,
+    'Remove the value from those commits (rewriting unpushed local commits is the user\'s call), or add a false positive\'s fingerprint to .gbrain-scan-allow, then retry. Never publish them with a command that skips this scan.',
+    { detail: JSON.stringify(scan),
+      fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
+        argv: ['git', '-C', ctx.root, 'log', '--stat', `${ctx.trackingRef}..${target}`],
+        why: 'Lists the unpublished commits the scan refused; read-only. A secret pushed to the remote stays in its history.',
+        user_message: `Unpublished commits in ${ctx.root} hold ${named.length || 'some'} item(s) that look like secrets or could not be scanned (${named.slice(0, 3).join(', ')}). Nothing was pushed. Remove them from those commits, or confirm a false positive so it can be allowlisted by fingerprint?`,
+        docs: 'docs/guides/shared-checkout-git.md#publish_secret_found' } });
+}
+
 /** Advance the shared checkout (caller holds the commit lock) with a real compare-and-swap: fast-forward only, hooks off, never autostash. */
 function advanceLocked(root: string, target: string, expectedHead: string): { checkout: CheckoutState; reason?: string } {
   const head = git(root, ['rev-parse', 'HEAD']).stdout.trim();
@@ -1068,7 +1131,10 @@ function commitManagedPaths(root: string, opts: CommitPushOptions, managed: Mana
     throw opError('commit_paths_invalid', `${where}: commit-push there only commits the paths you name.`,
       `Run gbrain git commit-push with only -m and the page paths after --; gbrain sources refresh${managed.sourceId ? ` ${managed.sourceId}` : ''} brings remote commits in.`);
   }
-  return commitPathsOnly(root, opts, where, configuredSourceRoots(root), 'Leave the checkout to its owner; gbrain sources writer status names its state.');
+  const result = commitPathsOnly(root, opts, where, configuredSourceRoots(root), 'Leave the checkout to its owner; gbrain sources writer status names its state.');
+  const counted = git(root, ['rev-list', '--count', '@{upstream}..HEAD']);
+  const upstream = git(root, ['for-each-ref', '--format=%(upstream:short)', `refs/heads/${result.branch}`]).stdout.trim();
+  return { ...result, managed: true, unpublished: counted.code === 0 ? Number(counted.stdout.trim()) : null, upstream: upstream || null };
 }
 
 /** A checkout with no Git remote at all: no remote is configured and the branch names none (a named but missing remote is refused by resolveCtx). A git command that fails is not proof of "no remote". */
@@ -1102,7 +1168,7 @@ function commitPathsOnly(root: string, opts: CommitPushOptions, where: string, r
   let committed: string | null;
   try {
     assertNoOperationInProgress(root);
-    committed = commitPaths(root, rel, opts.message.trim(), { roots, lockPath: lock.lockPath, markHeld: true });
+    committed = commitPaths(root, rel, opts.message.trim(), { roots, lockPath: lock.lockPath, markHeld: true, bases: scopeBases(root, opts, rel) });
   } finally {
     lock.release();
   }
@@ -1135,7 +1201,7 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
     const lock = acquireCommitLock(root, opts.lockWaitMs);
     try {
       assertNoOperationInProgress(root);
-      committed = rel.length ? commitPaths(root, rel, opts.message!.trim(), { roots: opts.allowOutsideSourceRoot ? [''] : roots, lockPath: lock.lockPath, markHeld: true }) : null;
+      committed = rel.length ? commitPaths(root, rel, opts.message!.trim(), { roots: opts.allowOutsideSourceRoot ? [''] : roots, lockPath: lock.lockPath, markHeld: true, bases: scopeBases(root, opts, rel) }) : null;
       settlePending(root);
     } finally {
       lock.release();
@@ -1167,6 +1233,7 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
       const head = gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD');
       const target = start && !isAncestor(root, start, head) ? start : head;
       if (!opts.allowOutsideSourceRoot) assertLocalCommitsInsideRoots(ctx, target, roots);
+      if (opts.scanSecrets) assertNoSecretsInRange(ctx, target);
       const published = publish(ctx, target, resolutions, expectRemote, cwd);
       if (!elsewhere) rmSync(absGitPath(root, CONFLICT_STATE_NAME), { force: true });
       const moved = published.sha === head || elsewhere || opts.keepCheckout ? { checkout: 'unchanged' as const } : advanceWithLock(root, published.sha, head, onlyWhenClean, opts.lockWaitMs);

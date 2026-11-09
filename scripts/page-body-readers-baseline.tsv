@@ -304,6 +304,9 @@ src/core/generations/adapters/single-page.ts	publishSinglePage	field	NONE	hashes
 src/core/generations/adapters/single-page.ts	singlePageAdapter	field	NONE	restoreItem reads the body field of a ledger preimage JSON copy; segmented and oversize pages have no preimage
 src/core/generations/adapters/single-page.ts	writePage	call:putPage	SEGW	writes a single-item derived page (dream summary, think synthesis, drift report) from the writer's proposed content or a ledger preimage; a segmented live page is held segmented_unsupported by the generation before any write
 src/core/generations/adapters/single-page.ts	writePage	field	INLINE	passes the proposed content's compiled_truth to putPage; no stored page body is read (the prior page is versioned by createVersion)
+src/core/generations/fence-evidence.ts	factsFenceHeld	sql	INLINE	page_versions rows that hold a body copy (compiled_truth IS NOT NULL); a segmented version has none, is not read, and marks the evidence incomplete
+src/core/generations/fence-evidence.ts	fenceRowKeys	field	INLINE	inline arm only: a segmented body yields no rows here (pageFenceRowKeys reads it from its marker segments)
+src/core/generations/fence-evidence.ts	pageFenceRowKeys	field	INLINE	inline arm; a segmented page reads its fence from its marker segments (segmentedFactsFenceView)
 src/core/generations/fence-restore.ts	planFenceRestore	call:serializePageToMarkdown	INLINE	a segmented page is refused segmented_unsupported before the page is serialized for the guarded restore write
 src/core/generations/fence-restore.ts	planFenceRestore	field	INLINE	a segmented page is refused segmented_unsupported before its fence blocks are read
 src/core/generations/fence.ts	fenceInput	field	NONE	reads the fence block strings of a FenceRead (already parsed), never a stored page body
@@ -452,11 +455,15 @@ src/core/persistence/file-wins-content.ts	appendedParts	field	INLINE	compares th
 src/core/persistence/file-wins-content.ts	fileWinsContent	field	INLINE	compares the parsed canonical file with the reconcile result (ParsedPage strings readReconcileState builds through wholeBodySnapshot: a segmented page up to 24 MiB is read whole, a larger one refuses first); no page row is read
 src/core/persistence/forget-prepare.ts	prepareForgetMutation	call:serializePageToMarkdown	INLINE	a segmented page's struck file streams through unreadPageFile (its segments under the ledger plus the withdrawal) and returns before this render
 src/core/persistence/forget-prepare.ts	prepareForgetMutation	field	INLINE	the inline body materializedPage returns; a segmented page streams through unreadPageFile and returns before this read
+src/core/persistence/git-gap.ts	readDirectionEvidence	field	INLINE	direction evidence (d4) compares inline page_versions bodies only: segmented versions are skipped, and a segmented page is compared by its streamed export blob id (no_evidence otherwise)
+src/core/persistence/git-gap.ts	readDirectionEvidence	sql	INLINE	direction evidence (d4) compares inline page_versions bodies only: segmented versions are skipped, and a segmented page is compared by its streamed export blob id (no_evidence otherwise)
 src/core/persistence/import-prepare.ts	prepareManagedImportMutation	call:serializePageToMarkdown	SEGW	
 src/core/persistence/large-page-guard.ts	assertLargePageAdmission	sql	META	stored size = body_bytes for a segmented page, octet_length of the columns for an inline page
 src/core/persistence/links-maintenance.ts	extractManagedStaleLinks	field	NONE	not the page body: result.timeline counter
 src/core/persistence/links-maintenance.ts	formatManagedStaleExtraction	field	NONE	not the page body: result.timeline counter
 src/core/persistence/links-preparation.ts	prepareAutomaticLinks	field	STREAM	reads the incoming parsed page, not a stored body
+src/core/persistence/local-edit-adoption.ts	staleEditorSave	field	INLINE	#8755 stale editor save: adoptionIntent refuses a segmented page before and assertInlineBody asserts it; the equality with earlier versions is an md5 match in SQL, and the row check needs the whole current body and the newest inline version (rows can sit anywhere, and inline versions carry no content_hash)
+src/core/persistence/local-edit-adoption.ts	staleEditorSave	sql	INLINE	#8755 stale editor save: adoptionIntent refuses a segmented page before and assertInlineBody asserts it; the equality with earlier versions is an md5 match in SQL, and the row check needs the whole current body and the newest inline version (rows can sit anywhere, and inline versions carry no content_hash)
 src/core/persistence/loop-fact-retirement.ts	prepareLoopFactRetirement	call:serializePageToMarkdown	SEGW	
 src/core/persistence/loop-fact-retirement.ts	prepareLoopFactRetirement	field	SEGW	
 src/core/persistence/manual-links.ts	prepareManualLinkMutation	call:serializePageToMarkdown	SEGW	wholeBodySnapshot first: a segmented page within 24 MiB is read back whole, a larger one refuses
@@ -595,6 +602,7 @@ src/core/repair/timeline.ts	removedRowIds	field	STREAM
 src/core/repair/timeline.ts	scanTimelineHistory	sql	STREAM	
 src/core/repair/timeline.ts	timelineRepair	call:serializePageToMarkdown	SEGW	
 src/core/repair/timeline.ts	timelineRepair	field	STREAM	
+src/core/repair/unwithdrawn-facts.ts	classifyUnwithdrawnFacts	sql	INLINE	reads compiled_truth and timeline of inline pages only (NULL for a segmented page, whose fence pageFenceRowKeys reads from its segments)
 src/core/repair/visibility.ts	applyFactItem	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read and its fenced fact is left for the owner
 src/core/repair/visibility.ts	applyFactItem	field	INLINE	inline pages only: a segmented page returns before the read and its fenced fact is left for the owner
 src/core/repair/visibility.ts	planAliases	sql	META	

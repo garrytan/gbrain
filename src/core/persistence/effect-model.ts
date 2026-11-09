@@ -33,6 +33,21 @@ export function fenceRepairCommit(path: string, classes: readonly string[], tier
 export function contentRepairCommit(path: string, receipt: Pick<ContentRepairReceipt, 'tier' | 'confidence'>): GitCommitNote {
   return { subject: contentRepairCommitSubject(path), line: `${safe(path)} (frontmatter_slug_conflict)`, trailers: [contentRepairTrailer(receipt)] };
 }
+/** GST-1601: the trailer key of an adopted local edit's commit; its values ride the commit-ledger line (`adopted`). */
+export const ADOPTED_TRAILER_KEY = 'gbrain-adopted';
+/**
+ * GST-1601 an adopted local edit's note: subject `gbrain: adopt local edit to <path>`, trailers
+ * `gbrain-adopted: <path>: worktree blob <blob> over revision <revision>` and `gbrain-author: unknown` (nobody coordinated the edit).
+ */
+export function localEditAdoptionCommit(path: string, blob: string, revision: string): GitCommitNote {
+  return { subject: `gbrain: adopt local edit to ${safe(path)}`, line: `${safe(path)} (adopted local edit)`,
+    trailers: [`${ADOPTED_TRAILER_KEY}: ${safe(path)}: worktree blob ${blob} over revision ${revision}`, 'gbrain-author: unknown'] };
+}
+/** The `gbrain-adopted:` values among a commit's notes, for its ledger line. */
+export function adoptedBy(trailers: Iterable<string>): string[] {
+  const key = `${ADOPTED_TRAILER_KEY}: `;
+  return [...trailers].filter(trailer => trailer.startsWith(key)).map(trailer => trailer.slice(key.length));
+}
 /** `rule`: for `git_target_ignored`, the .gitignore rule that excludes the file (`<file>:<line>: <pattern>`). */
 export interface ParkedTarget { slug?: string; error_code: string; rule?: string }
 /** #7423 / #7378: a settled target: under a declared db_only dir (`declared`), or its current bytes proved on the fetched remote (effect-settle.ts). */

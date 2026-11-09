@@ -8,7 +8,7 @@ can load, and Google source files other local users can read. `gbrain repair`
 fixes those and the other kinds listed in
 [What each kind fixes](#what-each-kind-fixes). Every run is a preview unless
 you pass `--apply`.
-The explicit-only kinds, among them `google-file-modes`, `stale-atoms`, `atoms-restore`, `extractor-facts`,
+The explicit-only kinds, among them `google-file-modes`, `stale-atoms`, `atoms-restore`, `extractor-facts`, `unwithdrawn-facts`,
 `captured-facts`, `agent-session-facts`, `redacted-facts`, `loop-facts`, `ontology-facts`, `orphan-children`, `failed-writes`, `frontmatter`, `managed-sync-orphans`, `content-receipt-root`, `stuck-recovery`, `aliases`, `rename-identity` and `segmented-mirror`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
 `gbrain doctor --remediation-plan` lists the same kinds as repair steps, and
 `gbrain doctor --remediate --yes --include-repairs --expect <plan_hash>` runs them under a budget
@@ -125,8 +125,8 @@ gives each a fresh row number); it never deletes or rewrites a page.
 | `--limit <n>` | Repair at most `n` items per kind in this run (a positive integer; with `--all`, up to `n` for each kind). Rerun the same command to continue. |
 | `--no-embed` | `safe-chunks` and `contextual-mode`: skip the embedding provider. Run `gbrain embed --stale` later. `timeline` and `visibility` pages are re-embedded by their publication either way. |
 | `--all` | Run every automatic kind in order. Explicit-only kinds are listed with their preview command, never run. |
-| `--expect <hash>` | Explicit-only kinds: apply exactly the set the preview printed under this hash. Required with `--apply` for `stale-atoms`, `atoms-restore`, `extractor-facts`, `captured-facts`, `redacted-facts`, `loop-facts`, `failed-writes`, `frontmatter`, `managed-sync-orphans` and `content-receipt-root`. |
-| `--include-ambiguous` | `extractor-facts`, `captured-facts` and `agent-session-facts`: widen the hashed set to `ambiguous` facts. `frontmatter`: add interpretive file changes. Pass it to both the preview and the apply. See [Extractor facts](#extractor-facts), [Captured facts](#captured-facts) and [Frontmatter](#frontmatter). |
+| `--expect <hash>` | Explicit-only kinds: apply exactly the set the preview printed under this hash. Required with `--apply` for `stale-atoms`, `atoms-restore`, `extractor-facts`, `unwithdrawn-facts`, `captured-facts`, `redacted-facts`, `loop-facts`, `failed-writes`, `frontmatter`, `managed-sync-orphans` and `content-receipt-root`. |
+| `--include-ambiguous` | `extractor-facts`, `unwithdrawn-facts`, `captured-facts` and `agent-session-facts`: widen the hashed set to `ambiguous` facts. `frontmatter`: add interpretive file changes. Pass it to both the preview and the apply. See [Extractor facts](#extractor-facts), [Captured facts](#captured-facts) and [Frontmatter](#frontmatter). |
 | `--only <path>`, `--skip <path>` | `frontmatter` only: select source-relative files (repeatable). The hash covers the selection, so pass the same flags to the apply. |
 | `--diff` | `frontmatter` only: print every per-file diff instead of one sample per class (`--json` always carries all of them). |
 | `--yes` | `frontmatter --apply` only: the user agreed to the previewed file changes (destructive consent). Without it a terminal asks, and a run without a terminal exits 3 with the consent payload. |
@@ -145,7 +145,7 @@ work behind exits 0, so scripts should also check `results[].complete`.
 | --- | --- | --- | --- |
 | `timeline` | `timeline_history` | Re-saves each page with its current body through a revision-bound `put_page`. The save writes each database-only timeline entry back into the page as a bullet preceded by `<!-- gbrain:materialized v1 <hash> -->`. | `kept_unrenderable_rows`: entries that would change if written as a bullet (for example an empty source). They stay in the database. |
 | `visibility` | `derived_visibility` | Stamps an explicit `visibility` on extracted atoms and synthesized concepts. An atom takes its origin page's visibility; transcript atoms and atoms whose origin is gone become `private`; a concept takes the strictest visibility of its input atoms. A concept input found only through an atom's `concepts:` list counts as private. Atoms are repaired before concepts. It never loosens an explicit value: `private` stays `private`, and `world` can only become `private`. A missing value is stamped with the origin's value, which is `world` when the origin page is public. | `concepts_without_lineage`: concepts whose inputs cannot be found. They stay as they are, and remote readers already treat a missing visibility as private. `atoms_origin_gone_to_private` counts atoms made private because their origin page no longer exists. |
-| `request-indexes` | `persistence_request_indexes` | Creates a missing request-table index (the managed sync checkpoint pair, the purge slug index, the dream postprocess request-id index, the write claims' foreground-commit index), or drops an INVALID one (left by an interrupted concurrent build) and rebuilds it, on a brain whose schema version is already current. Postgres builds each index `CONCURRENTLY`, one at a time, so writes continue; PGLite builds inline. It changes no user data, takes no journal admission and runs brain-wide (`--source` does not narrow it). See [managed sync request indexes](#request-indexes). | `building`: an index another session is still building; it is never dropped. |
+| `request-indexes` | `persistence_request_indexes` | Creates a missing request-table index (the managed sync checkpoint pair, the purge slug index, the dream postprocess request-id index, the write claims' foreground-commit index, the failed-writes replay and page-sequence indexes), or drops an INVALID one (left by an interrupted concurrent build) and rebuilds it, on a brain whose schema version is already current. Postgres builds each index `CONCURRENTLY`, one at a time, so writes continue; PGLite builds inline. It changes no user data, takes no journal admission and runs brain-wide (`--source` does not narrow it). See [managed sync request indexes](#request-indexes). | `building`: an index another session is still building; it is never dropped. |
 | `connector-fences` | none (a `connector_fence_below_timeline` refusal names it) | Moves a facts or takes fence that sits below the timeline sentinel of a Google or GitHub page into the page body through a revision-bound `put_page`, so the connector's next re-render carries the fence instead of refusing. Then re-attempt the held item with `gbrain sources retry-held <source>`. | `kept_ambiguous_pages`: pages whose fences are duplicated, unbalanced or unparseable. Move the fence by hand: read the page, place the fence above the `<!-- timeline -->` line, and save it with the current `expected_revision`. |
 | `take-supersession` | none | Rebuilds `takes.superseded_by` for supersession chains written before the pointer moved onto the old fence row (#5886). Each struck take is linked to the row that replaced it only from evidence: a committed `takes_supersede` receipt, a stored `superseded_by`, or a row carrying the old `superseded by #<own row>` pointer with exactly one possible predecessor. The pointer is written onto the old row (`<source>; superseded by #N`) and stale self-pointers are dropped through a revision-bound `put_page`; a page whose fence is already right but whose stored pointers differ is reprojected without a page write. See [take supersession](#take-supersession). | `ambiguous_pages` / `ambiguous_rows`: pages where a new row has two or more possible predecessors, or where evidence conflicts. The preview lists each with its candidates and the manual edit; nothing on them changes. `unparsed_pages`: pages whose takes fence does not parse cleanly. |
 | `accepted-takes` | none | Explicit-only, preview-bound. Restores takes that accepting a held strike-through or kind change removed on v0.60.253.0 (`gbrain trust confirm tp<id>` ran a `takes_remove` instead of applying the change). It restores only what the records prove: the accepted proposal, the `takes_remove` receipt bound to it, the page version that receipt archived (the row the accept should have applied) and the reservation row still holding its number. `--apply --expect <hash>` republishes each page with that row through a revision-bound `put_page`. See [accepted takes](#accepted-takes). | `version_missing` (the archived version was pruned), `row_number_in_use` (the number holds a take again), `page_missing`, `fence_unreadable`. A grade or resolution the database alone held is not in any record and is not restored. |
@@ -164,7 +164,7 @@ work behind exits 0, so scripts should also check `results[].complete`.
 | `file-drift` | `maintenance_write_drift` | Explicit-only, preview-bound. Resolves pages whose canonical file differs from the database copy (`source_changed` / `file_database_drift`) through canonical reconciliation, preferring the file or the database copy within reconcile's protections. `--all-drifted` refuses mixed drift classes unless `--class` keeps one; `--only`/`--skip` narrow by canonical file path glob. Opt-in `storage.keep_db` lets the owner host's resident consumer resolve drift under declared prefixes with the database copy. A page whose file is gone from the last commit: `--prefer database` recreates the file, `--prefer file` soft-deletes the page ([deleted canonical files](#deleted-canonical-files)). See [file drift](#file-drift). | Protected metadata, the tag union and protected takes or private fact rows, listed per page as `exceptions`; pages changed after the preview (`changed_since_preview`). |
 | `ghost-pages` | `ghost_pages` | Explicit-only, preview-bound, destructive consent. Soft-deletes live pages whose canonical file is missing on the owner host (ghost pages: every write refuses `canonical_file_missing` and no sync can import a file that is not there), through `delete_page` bound to the previewed owner, path and revision. `--apply --expect <hash> --yes`. See [ghost pages](#ghost-pages). | Declared db_only and never-filed derived pages (never listed); a page whose file came back before the apply (`file_restored`); pages changed after the preview (`changed_since_preview`). |
 | `uncommitted-deletions` | `uncommitted_sync_deletions` | Explicit-only, preview-bound, consent. Restores soft-deleted pages a managed sync removed before #7130 although Git never held their recorded file (`.gitignore` excludes it, or no commit holds it and it is not on the disk), one `restore_page` with `detach` each, published database-only: the page comes back live, forgets its recorded file, and no file is written. `--apply --expect <hash> --yes`. See [uncommitted deletions](#uncommitted-deletions). | Pages another writer deleted (listed, restored only with `--include-ambiguous`); tombstones whose file Git once committed or that is on the disk again; paths Git could not answer for (`unknown`); purged pages (only a backup brings them back). |
-| `rows-behind` | `sync_rows_behind_checkpoint` | Explicit-only, preview-bound. Re-imports live pages of a managed source whose row holds an older version of its file than the sync checkpoint (`sources.last_commit`) says was imported, with no hold (#8071), from the file as committed at the checkpoint, through the managed file repair (no file is written). A file whose import is refused, or that is over the sync read bound, is held with that code instead. `--source <id>`, then `--apply --expect <hash>`. See [rows behind the checkpoint](#rows-behind). | Rows with no import record (`excluded:unproven`, joined with `--include-ambiguous`), rows with an uncommitted working-tree edit (`excluded:worktree_differs`), rows whose import would keep page data the file does not carry (`excluded:import_overlay`); rows that moved after the preview (`changed_since_preview`). |
+| `rows-behind` | `sync_rows_behind_checkpoint` | Explicit-only, preview-bound. Re-imports live pages of a managed source whose row holds an older version of its file than the sync checkpoint (`sources.last_commit`) says was imported, with no hold (#8071), from the file as committed at the checkpoint, through the managed file repair (no file is written). A file whose import is refused, or that is over the sync read bound, is held with that code instead. `--source <id>`, then `--apply --expect <hash>`. See [rows behind the checkpoint](#rows-behind). | Rows with no import record (`excluded:unproven`, joined with `--include-ambiguous`; one whose older version equals its committed file, so the database moved since, never joins: `excluded:database_moved`, nor one whose page and file both moved: `excluded:both_moved`), rows with an uncommitted working-tree edit (`excluded:worktree_differs`), rows whose import would keep page data the file does not carry (`excluded:import_overlay`); rows that moved after the preview (`changed_since_preview`). |
 | `receipt-compaction` | `persistence_capacity` (terminal bytes) | Explicit-only, preview-bound, destructive consent. Compacts terminal write receipts now instead of on the idle maintenance tick (#6696): the intent and error message are dropped, the outcome, error code and detail stay, and the unused reservation returns to the receipt-bytes counters. `--older-than <72h\|30d>` is floored at the configured retention unless `--force`; committed receipts only unless `--include-failures`. No admission, so it runs at a full cap. See [receipt compaction](#receipt-compaction). | `failures_kept`: failed, conflict and cancelled receipts left without `--include-failures`. Receipts of a run whose sync cursor is still open, and the newest sync receipt of each worktree, are never listed. |
 | `aliases` | `dangling_aliases` (orphaned rows) | Explicit-only. Deletes free-text page aliases and slug redirects whose target page has no row at all (a page purged before purge removed its aliases, #6619, or a hard-deleted page), each target rechecked under its page lock; a coordinated maintenance write on a managed brain. A redirect from an old name of a page that still exists is never touched. See [aliases](#aliases). | `soft_deleted_target`: aliases of a soft-deleted page, kept for `gbrain restore` and removed when the page is purged. |
 | `rename-identity` | `rename_identity_downgrades` | Explicit-only, preview-bound, destructive consent. For an inexact Git rename that sync split into a delete plus an add (#6729): carries the old page's identity (id, version history, timeline, links, facts, aliases) onto the new slug, imports the new file onto it as an edit and retires the provisional page; or, with `--close`, settles the pair and moves nothing. `--slug <new-slug>` (and `--from <old-slug>`) names one pair; `--apply --expect <hash> --yes`. See [rename identity](#rename-identity). | `fact_rows_collide` (a fence row of the old page the new file does not keep with the same claim); `managed_remedy_unavailable` (a carry on a managed source; `--close` is the remedy there); pages changed after the preview (`changed_since_preview`). |
@@ -267,7 +267,9 @@ reads to find the newest foreground commit of a worktree (without it the
 claims after a restart can overrun their claim phase on a large request table,
 so the write queue grows and sync never commits), and
 `persistence_requests_request_id`, which dream synthesis uses to
-find each child's committed page. When that lookup, or a postprocess request
+find each child's committed page, and (#8707) `persistence_requests_replay_id`
+and `persistence_requests_slug_sequence`, which `gbrain repair failed-writes`
+reads to find replay attempts and the later requests of a page. When that lookup, or a postprocess request
 read, still hits the statement timeout, the synthesis pass is deferred rather
 than failed: the phase warns `postprocessing deferred`, the pages stay
 unstamped, and the next pass finishes them without another synthesis call. After
@@ -1632,8 +1634,13 @@ The preview writes nothing. Each row in the set has one action:
   [held files](#held-files) steps clear it.
 
 Listed but left out of the set: rows with no import record
-(`excluded:unproven`, joined with `--include-ambiguous`, which replaces any
-database-only edit those rows hold), rows whose
+(`excluded:unproven`, joined with `--include-ambiguous`), rows with no import
+record whose older version equals the committed file, so the database moved
+since and a re-import would replace that edit (`excluded:database_moved`, never
+joined; `gbrain repair file-drift --source <id> --slug <slug> --prefer database`
+keeps it), rows with no import record whose page and file both moved since the
+last state they shared (`excluded:both_moved`, never joined; `gbrain repair
+file-drift --source <id> --slug <slug>` decides each one), rows whose
 working-tree file differs from the committed one (`excluded:worktree_differs`:
 commit the edit and sync), and rows whose import would keep page data the
 file does not carry (`excluded:import_overlay`; resolve them with
@@ -2131,6 +2138,53 @@ The preview warns, naming the host, when a consumer older than v0.60.11.0
 published writes after `writer_version_cutoff`: an old consumer expires
 restored facts again. Upgrade and restart it first.
 
+<a id="unwithdrawn-facts"></a>
+### Unwithdrawn facts
+
+Before this fix, a page write or an `extract_facts` run retired every fact row
+attached to the page with a row number that the page's `## Facts` fence did not
+hold. That included rows that were never in the fence, such as facts a
+`put_page` writer attached to the page, so a write that changed nothing in the
+fence could expire them (`expired_at` set, `row_num` cleared, no
+`superseded_by`). When that was the page's first facts-fence generation,
+`gbrain repair generations --kind fact_fence` has no earlier generation to
+return to. `gbrain repair unwithdrawn-facts` restores these rows from the
+before-state the generation ledger recorded. It is explicit-only and
+preview-bound. On an unmanaged brain, with or without a repository, the
+`extract_facts` reconcile still treats a numbered row its fence lacks as drift
+and would retire a restored row again, so the preview lists those candidates
+as `excluded:unmanaged_reconcile` and restores none.
+
+```bash
+gbrain doctor                                   # unwithdrawn_facts
+gbrain repair unwithdrawn-facts                 # preview: every candidate with its class
+gbrain repair unwithdrawn-facts --apply --expect <hash>
+gbrain doctor
+```
+
+A candidate is a fact a facts-fence generation retired that is still exactly as
+the retirement left it: expired at that generation's instant, row number
+cleared, same claim and visibility, not superseded. Conversation-extractor
+facts are left to [Extractor facts](#extractor-facts).
+
+| Class | Meaning | Restored |
+| --- | --- | --- |
+| `evidenced` | No fence of the page ever held the fact: no facts-fence generation recorded it, and neither the page nor any stored version of it carries it at the same row number, claim and visibility. | By `--apply --expect <hash>` |
+| `ambiguous` | The page's version history has a gap (pruned versions, or an import that consumed several commits), or it has more stored versions than one preview reads, so an earlier fence holding the fact cannot be ruled out. | Only with `--include-ambiguous` and that preview's hash |
+| `excluded:<reason>` | Page missing or deleted, superseded, withdrawn (`forget`, including a forget on the member or scope memory page it sits on), changed since the retirement, held by a fence (`fence_held`: an edit of the fence removed it, a genuine withdrawal), a claim the page's fence states (`fence_states_claim`), an active fact with the same text and entity already on the page at any visibility, another candidate with the same text and entity at the same or a narrower visibility (`duplicate_candidate`; a private copy comes back before a world one), or an unmanaged brain (`unmanaged_reconcile`). | Never |
+
+The preview binds each page's revision. If the page was written after the
+preview, the apply restores nothing for it and reports
+`changed_since_preview`; preview again. A fact that changed since the preview
+reports `changed_since_preview` and stays expired. A restored fact keeps its id
+and gets back its recorded `expired_at` (cleared), `valid_until`,
+`superseded_by` and consolidation marks, at its recorded row number, or at a
+fresh number above the page's rows when a fence row has taken it. No page or
+file is written. Each page publishes one database-only
+`managed_maintenance_restore_unwithdrawn_facts` request. Page writes and
+managed `extract_facts` runs from this release on keep these rows active,
+except a row whose claim the page's fence now states, which still retires.
+
 <a id="conversation-labels"></a>
 ### Conversation labels
 
@@ -2599,7 +2653,11 @@ receipt alone: an unpinned `remember` (`unpinned_target`) and a `put_page`
 whose page changed after the revision the caller read (`revision_superseded`, which
 the preview classes `superseded`). The
 preview changes no page content, but it records an approval checkpoint for its
-replay set, which `--apply --expect <hash>` reads.
+replay set, which `--apply --expect <hash>` reads. The preview reads the write
+journal in a few set reads whatever the number of refused writes (#8707); a read
+the database ends at its statement timeout stops it with
+[`repair_preview_timeout`](troubleshooting.md#repair-preview-timeout) and a fix,
+nothing saved.
 
 **Say to your agent:** *"Preview which refused writes gbrain can replay, show
 me the list, then apply after I agree."* The agent runs `gbrain repair
@@ -2752,6 +2810,57 @@ since the preview. Preview again and approve the new hash. Undo by copying the b
 the file. It is explicit-only and never runs from `--all`, doctor's
 remediation plan, the maintenance cycle or an upgrade.
 
+<a id="url-source-origin"></a>
+### URL source origin
+
+A URL source a remote caller (an MCP client) adds records that on its row, and
+every later reclone of it, managed or not, clones with git-lfs downloads and
+hooks off; a URL source the local operator adds records that too, so doctor
+never asks about it. URL sources added before that record existed carry none, and nothing
+stored tells a remote caller's add from the local operator's: both wrote the
+same row and cloned into the default clone directory (`$GBRAIN_HOME/clones/<id>`).
+Their reclones use the clone settings of a local add. Doctor
+`url_source_origin` (read-only, `warn`) lists them and says it cannot tell who
+added them. A clone outside the default directory is not listed: only the local
+CLI can choose that directory. A brain with no URL sources, such as a fresh
+keyless brain, has nothing to list.
+
+**Say to your agent:** *"Show me the URL sources gbrain can't place, and record
+the ones I say a remote caller added."*
+
+```bash
+gbrain doctor --only url_source_origin --json                  # lists the sources, asks who added them
+gbrain sources record-origin <id>... --remote                   # preview: would_record / refused, writes nothing
+gbrain sources record-origin <id>... --remote --apply           # records the ids the user named
+gbrain sources record-origin <id>... --local --apply            # records the rest as local adds
+```
+
+`--remote` writes the same record a remote add writes, so the next reclone
+clones with git-lfs downloads and hooks off; `--local` records a local add, and
+doctor stops listing either. Each apply re-reads the source inside one
+transaction and refuses `source_changed` if it moved since the check. Without
+git-lfs files a clone with these settings holds the same tracked bytes, so the
+stored writer manifest needs no change and the reclone verifies as before.
+`--remote` refuses, writing nothing:
+
+- `lfs_tracked`: the checkout tracks files with git-lfs (any tracked path with
+  `filter=lfs`, or a committed `.gitattributes` that names `filter=lfs`; a
+  reclone gets only the committed attributes, so clone-local ones do not count).
+  An apply inspects the checkout again under the row lock before it writes. A clone with git-lfs downloads off holds pointer files where
+  this checkout holds their content, so its next reclone would stop at
+  `writer_manifest_mismatch`, and converting the checkout rewrites its files,
+  which this command does not do. If the source should not keep those files,
+  check that nothing in its checkout is unpushed or only local, then remove it
+  with `gbrain sources remove <id> --confirm-destructive`.
+- `lfs_unknown`: the checkout is missing or Git cannot list it, so gbrain
+  cannot confirm it has no git-lfs files. Restore the checkout and run it again.
+- `custom_clone_dir`: the clone sits where only the local CLI can clone.
+- `recorded_remote` (`--local`): the source is already recorded as a remote
+  add; this command never removes that record.
+
+It runs only from the trusted local CLI on the brain host; no MCP operation
+reaches it, and nothing records an origin on upgrade.
+
 <a id="file-drift"></a>
 ### File drift
 
@@ -2794,7 +2903,11 @@ trust, source and scan fields) stays as the database holds it, tags are the
 union of both sides, and protected takes and private fact rows are kept as
 stored. Each page's preview lists `exceptions`, the places where the result
 differs from the preferred side and why (`protected_metadata`, `scan_state`,
-`tags_union`, `protected_takes_or_private_facts`).
+`tags_union`, `protected_takes_or_private_facts`). Pages stored in segments
+(`pages.segmented_storage`) resolve the same way and stay segmented. A page
+the apply would refuse is listed `refused` in the preview, and every refused
+row or apply outcome prints its next step as `fix:` (with its consent), or a
+read-only preview of that page alone when the refusal names none.
 
 <a id="file-drift-globs"></a>`--only <path>` and `--skip <path>` (both repeatable) narrow any selection by
 the page's canonical file path, relative to the source. A value with no `*`
@@ -2876,7 +2989,9 @@ One preview resolves one Decision, so a selection that spans several sides or
 deleted states refuses [`file_drift_mixed_selection`](error-codes.md#file_drift_mixed_selection),
 and a deleted side refuses without `--state`
 ([`file_drift_state_required`](error-codes.md#file_drift_state_required)):
-the two `--prefer` values do opposite things in each state.
+the two `--prefer` values do opposite things in each state. `--held`, `--side`,
+`--state`, `--cursor` and `--provenance` always need `--prefer`: without it
+the command refuses with the usage line instead of running the bare survey.
 
 | State | `--prefer database` | `--prefer file` |
 |---|---|---|
@@ -3979,6 +4094,7 @@ Then recover what doctor names, in this order (skip a step whose check is ok):
 | `[gbrain] warning: OPENAI_API_KEY in this process's environment differs from openai_api_key …`; doctor `embedding_key_source` warns | `embedding_key_source` ([provider key source](#embedding-key-source)) | `gbrain doctor` (`embedding_key_source`) | remove the variable and restart that process, or `gbrain config unset openai_api_key` | the warning no longer prints; `gbrain doctor` shows `embedding_key_source` ok | user (owns the key) | `credentials` |
 | `The OpenAI embedding provider rejected its key (HTTP 401)` | [`embedding_auth_failed`](write-refusals.md#embedding_auth_failed) | `gbrain doctor` (`embedding_key_source`, `embedding_provider`) | the printed fix for the key source in effect, then `gbrain embed --stale` | `gbrain doctor` shows `embedding_provider` ok | user (owns the key) | `credentials`; `paid` for `embed --stale` |
 | Conversation facts missing from recall after managed writes | `extractor_facts_expired` | `gbrain repair extractor-facts` | `gbrain repair extractor-facts --apply --expect <hash>` (ambiguous: add `--include-ambiguous` to both) | `gbrain doctor` | brain host, after the user agrees | `destructive` (rewrites expired facts) |
+| Facts missing from recall after a page write or `extract_facts` run, although no fence of their page held them; doctor `unwithdrawn_facts` warns | `unwithdrawn_facts` ([unwithdrawn facts](#unwithdrawn-facts)) | `gbrain repair unwithdrawn-facts` | `gbrain repair unwithdrawn-facts --apply --expect <hash>` (ambiguous: add `--include-ambiguous` to both) | `gbrain doctor` | brain host, after the user agrees | none |
 | Recall returns conversation facts such as "Date said …" or "Attendees said …", or facts dated 1970-01-01; doctor `conversation_label_facts` warns; the upgrade banner prints `conversation_label_facts: N (explicit_kind_required; …)` | `gbrain repair conversation-labels` (ambiguous: add `--include-ambiguous`) | `gbrain repair conversation-labels --apply --expect <hash> --yes`, then the printed `gbrain extract-conversation-facts --slugs … --dry-run` | `gbrain doctor --only conversation_label_facts --json` | brain host, after the user agrees | `destructive` (retires facts; no model calls) |
 
 
@@ -4137,7 +4253,7 @@ Each heading below is the `docs` anchor a refusal carries.
 
 ### Explicit-only repair kinds
 
-`google-file-modes`, `stale-atoms`, `extractor-facts`, `captured-facts`, `agent-session-facts`,
+`google-file-modes`, `stale-atoms`, `extractor-facts`, `unwithdrawn-facts`, `captured-facts`, `agent-session-facts`,
 `loop-facts`, `ontology-facts`, `file-drift`, `missing-tables`, `segmented-mirror` and `secret-spans` run only when named: `gbrain repair <kind>` previews, and
 `gbrain repair <kind> --apply` applies (every kind but `google-file-modes`
 also needs `--expect <hash>`, so it applies exactly the previewed set; `google-file-modes` re-checks each file's owner,
@@ -4168,7 +4284,7 @@ saved preview is older than 7 days, or the selection no longer matches it (for
 hash." Re-run the printed preview command and apply with the new hash. It
 applies to `gbrain jobs authorize-legacy --select`, `gbrain jobs cancel
 --select`, `gbrain repair stale-atoms`, `gbrain repair extractor-facts`,
-`gbrain repair captured-facts`, `gbrain repair agent-session-facts` and `gbrain repair loop-facts`.
+`gbrain repair unwithdrawn-facts`, `gbrain repair captured-facts`, `gbrain repair agent-session-facts` and `gbrain repair loop-facts`.
 
 ### Recovery bundle unsupported
 

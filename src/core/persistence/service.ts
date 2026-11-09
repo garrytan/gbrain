@@ -1,4 +1,7 @@
 import { PENDING_IMPORT, pendingImportRefusal } from './pending-import.ts';
+import { deferredWaiting } from './refresh-barrier.ts';
+import { withSupersedes } from './import-deferral.ts';
+import { withAdoptedLocalEdit } from './local-edit-adoption.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { OperationError } from '../ops/contract.ts';
@@ -79,6 +82,10 @@ export function registerMutationPreparer(operation: string, prepare: PrepareMuta
  * phase clock, which carries the preparation's cancellation to every preparer's `enterClaimStep` boundaries.
  */
 export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest, cfg: GBrainConfig, signal?: AbortSignal, clock?: ClaimPhaseClock) {
+  // GST-1601: a write prepared again after its page's local edit was adopted names the adoption on its receipt.
+  return withAdoptedLocalEdit(row, await prepareByOperation(e, row, cfg, signal, clock));
+}
+async function prepareByOperation(e: BrainEngine, row: WriteRequest, cfg: GBrainConfig, signal?: AbortSignal, clock?: ClaimPhaseClock) {
   assertMutationProtocol(row);
   enterClaimStep(clock, 'dispatch');
   const registered = preparers.get(row.operation);
@@ -115,8 +122,8 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
   if (['add_tag','remove_tag','add_timeline_entry'].includes(row.operation)) return prepareSemanticPageMutation(e, row, cfg);
   if (row.operation === 'add_link' || row.operation === 'remove_link') return (await import('./manual-links.ts')).prepareManualLinkMutation(e, row, cfg);
   if (row.operation === 'append_page') return (await import('./page-upload.ts')).withStagedBodyIf(e, row, async () => (await import('./page-append.ts')).prepareAppendMutation(e, row, cfg, signal, clock));
-  if (['put_page','capture','delete_page','restore_page','revert_version','edit_page'].includes(row.operation)) return withValidTimeAdvisory(row, withChangeReason(row, await preparePageMutation(e, row, cfg, undefined, signal,
-    { coordinated: await writeSwitchOn(e, 'single_write_group').catch(() => true), clock, boundedChunkWrites: true })));
+  if (['put_page','capture','delete_page','restore_page','revert_version','edit_page'].includes(row.operation)) return withValidTimeAdvisory(row, withChangeReason(row, await withSupersedes(row, await preparePageMutation(e, row, cfg, undefined, signal,
+    { coordinated: await writeSwitchOn(e, 'single_write_group').catch(() => true), clock, boundedChunkWrites: true }))));
   throw new OperationError('unsupported_mutation_protocol', 'No compatible mutation preparer is registered for this operation.', `Request ${row.request_id} (${row.operation}) was accepted by a gbrain version whose preparer this one lacks, so it has not run. Run gbrain upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
 }
 /**
@@ -237,6 +244,9 @@ export type WriteWait =
 export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config: GBrainConfig,
   opts: { waitMs?: number; signal?: AbortSignal; whileHeldMs?: number } = {}): Promise<WriteWait> {
   if (isTerminal(row)) return { kind: 'terminal', row };
+  // PR B: a write deferred behind a refresh still running (GST-1582: or an import not landed) cannot publish before it ends,
+  // so its pending receipt is returned at once.
+  if (row.state === 'deferred' && await deferredWaiting(engine, row)) return { kind: 'pending', row };
   const consumer = startPersistenceConsumer(engine, config);
   const service = services.get(engine)!;
   const id = row.id;
@@ -261,7 +271,11 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
   let ownerRead: SharedOwnerRead | undefined;
   try {
     while (!service.stopping && !opts.signal?.aborted) {
-      if (handed) { row = handed; handed = undefined; if (isTerminal(row)) return { kind: 'terminal', row }; }
+      if (handed) {
+        row = handed; handed = undefined;
+        if (isTerminal(row)) return { kind: 'terminal', row };
+        if (row.state === 'deferred' && await deferredWaiting(engine, row)) return { kind: 'pending', row };
+      }
       const remaining = deadline - performance.now();
       if (!ownerRead && row.worktree_id && remaining <= OWNER_READ_BUDGET_MS) ownerRead = sharedOwnerRead(engine, row.worktree_id);
       if (remaining <= 0) {
@@ -289,6 +303,7 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
       if (!read.row) continue;
       row = { ...row, ...read.row };
       if (isTerminal(row)) return { kind: 'terminal', row: await getWriteRequestById(engine, id).catch(() => null) ?? row };
+      if (row.state === 'deferred' && await deferredWaiting(engine, row)) return { kind: 'pending', row: await getWriteRequestById(engine, id).catch(() => null) ?? row };
     }
     // A stopped wait settles only what this process can settle at once: one consumer tick (it claims and publishes the
     // request when nothing holds it back) and the request this consumer is still executing. A write that cannot move

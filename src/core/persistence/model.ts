@@ -2,7 +2,8 @@ import type { BrainEngine } from '../engine.ts';
 import { assertRecoveryVersion } from './recovery-version.ts';
 
 export type Principal = { kind: 'oauth_client' | 'legacy_token' | 'local_cli' | 'local_stdio' | 'application'; id: string };
-export type RequestState = 'queued' | 'running' | 'recovering' | 'committed' | 'conflict' | 'failed' | 'cancelled';
+/** `deferred` (PR B, docs/designs/REFRESH_WRITE_BARRIER.md): admitted during a worktree refresh, unclaimable until it is released. */
+export type RequestState = 'queued' | 'deferred' | 'running' | 'recovering' | 'committed' | 'conflict' | 'failed' | 'cancelled';
 export interface WriteAuthority {
   /** The caller's self-declared agent label (X-Gbrain-Agent-Label). Unverified text: nothing authorizes on it. */
   agentLabel?: string;
@@ -23,6 +24,8 @@ export interface WriteAuthority {
   actingFor?: string[] | { system: string; external_id: string; member: string };
   /** GST-359 D: the attested operation this write serves when it differs from the stored one (memory_write as remember). */
   attestedOp?: string;
+  /** GST-1113: the scope source an attested memory_write named instead of the principal's own; publication re-checks attest_sources. */
+  attestedSource?: string;
   databaseOnlyReason?: 'subagent_sandbox' | 'disabled_by_config' | 'no_repo_configured' | 'connector_database' | 'unbound_source' | 'overwrite_restore' | 'detached';
   autoLinkTrusted?: boolean;
   restrictedNamespace?: boolean;
@@ -123,6 +126,10 @@ export interface WriteRequest {
   authority: WriteAuthority;
   sequence: string | number;
   state: RequestState;
+  /** The refresh a deferred write was admitted behind; kept after it drains, so its claim runs the refresh-change check. */
+  deferred_refresh_id?: string | null;
+  /** GST-1582: the source's last imported commit ('' for none) when a claimed write was held for an import; kept after it lands. */
+  deferred_import_from?: string | null;
   execution_token: string | null;
   claim_expires_at: Date | string | null;
   recovery: RecoveryRecord | null;

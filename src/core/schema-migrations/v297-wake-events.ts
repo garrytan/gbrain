@@ -17,8 +17,8 @@ import type { Migration } from './types.ts';
 // Operational state, never brain content: a repo-less brain gets it
 // unchanged, and it stays empty unless the owner turned reporting back on.
 // Nothing is rewritten on upgrade. No schema.sql mirror, like v290.
-export const v291: Migration = {
-  version: 291,
+export const v297: Migration = {
+  version: 297,
   name: 'wake_events',
   idempotent: true,
   sql: `

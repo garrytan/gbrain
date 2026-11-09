@@ -102,7 +102,7 @@
     "test:profile": "bash scripts/profile-tests.sh",
     "test:serial": "bash scripts/run-serial-tests.sh",
     "test:convergence": "GBRAIN_TEST_CONVERGENCE=1 bun --no-env-file test --timeout=3600000 test/sync-convergence.serial.test.ts",
-    "test:tla": "bash scripts/spec/tlc.sh && bun scripts/spec/mutants.ts",
+    "test:tla": "bash scripts/spec/tlc.sh && bun scripts/spec/mutants.ts drain-lease && bun scripts/spec/mutants.ts refresh-barrier",
     "ci:local": "bash scripts/ci-local.sh",
     "ci:local:diff": "bash scripts/ci-local.sh --diff",
     "ci:ubicloud": "bun run scripts/ci-ubicloud.ts",
@@ -116,6 +116,7 @@
     "check:batch-audit-site": "bash scripts/check-batch-audit-site.sh",
     "check:worker-lock-renewal-shape": "bash scripts/check-worker-lock-renewal-shape.sh",
     "check:bootstrap-tag": "bash scripts/check-bootstrap-tag.sh",
+    "check:install-ref": "bun scripts/check-install-ref.ts",
     "check:bootstrap-templates": "bash scripts/check-bootstrap-templates.sh",
     "check:source-id-projection": "bash scripts/check-source-id-projection.sh",
     "check:privacy": "bash scripts/check-privacy.sh",
@@ -251,7 +252,7 @@
     "bun": ">=1.4.4"
   },
   "license": "MIT",
-  "version": "0.60.590.0",
+  "version": "0.60.620.0",
   "overrides": {
     "@ai-sdk/provider-utils": "4.0.56",
     "@hono/node-server": "^2.0.5",

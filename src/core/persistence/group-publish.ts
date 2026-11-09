@@ -500,7 +500,9 @@ function seam(name: PublicationBoundary, row: WriteRequest): Promise<void> {
 export async function publishSingleWrite(engine: BrainEngine, row: WriteRequest, prepared: PreparedMutation, hostId = hostIdFor(engine), hooks: GroupHooks = {},
   transaction?: TransactionRunner): Promise<WriteRequest> {
   const single: PublicationHooks = hooks.projectionPending ? { projectionPending: hooks.projectionPending } : {};
-  if (engine.kind !== 'postgres' || !singleWrite(row) || !groupable(row, prepared) || !await writeSwitchOn(engine, 'single_write_group').catch(() => true)) {
+  // PR B: a write deferred behind a refresh takes the plain path, whose refresh-change check runs before anything publishes;
+  // GST-1623: so does one held for an import, whose check for a later write that committed first runs there too.
+  if (engine.kind !== 'postgres' || row.deferred_refresh_id || row.deferred_import_from != null || !singleWrite(row) || !groupable(row, prepared) || !await writeSwitchOn(engine, 'single_write_group').catch(() => true)) {
     return publishMutation(engine, row, prepared, hostId, single);
   }
   try { assertMutationProtocol(row); } catch { return publishMutation(engine, row, prepared, hostId, single); }

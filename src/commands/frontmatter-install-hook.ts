@@ -37,6 +37,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { discoverGitRoot } from '../core/sync-git.ts';
+import { gitChildEnv } from '../core/git-env.ts';
 
 const HOOK_BANNER = '# gbrain frontmatter pre-commit hook (v0.22.4+)';
 /** One line per guarded subdirectory (root-relative, trailing slash). No lines = whole repo. */
@@ -139,18 +140,20 @@ export interface InstalledFrontmatterHook {
 
 /**
  * The gbrain pre-commit hook guarding `localPath`, read-only: null when the
- * path is outside git, the hook path is a symlink, or no gbrain hook is
- * installed at its root. Doctor and post-upgrade use `current` to recommend
+ * path is outside git, the hook path is a symlink, no gbrain hook is
+ * installed at its root, or the clone has hooks off on purpose (git never runs
+ * the file, and install-hook skips it). Doctor and post-upgrade use `current` to recommend
  * `gbrain frontmatter install-hook --force`.
  */
 export function inspectFrontmatterHook(localPath: string, sourceId?: string): InstalledFrontmatterHook | null {
-  let hookPath: string;
+  let root: string, hookPath: string;
   try {
-    hookPath = hookPaths(resolveHookTarget(localPath).root).hookPath;
+    root = resolveHookTarget(localPath).root;
+    hookPath = hookPaths(root).hookPath;
   } catch {
     return null;
   }
-  if (!existsSync(hookPath)) return null;
+  if (!existsSync(hookPath) || hooksOffInClone(root)) return null;
   const version = frontmatterHookVersion(readFileSync(hookPath, 'utf8'));
   if (version === null) return null;
   const current = version >= FRONTMATTER_HOOK_VERSION;
@@ -260,6 +263,9 @@ export async function runFrontmatterInstallHook(args: string[]): Promise<void> {
         const where = join(target.root, '.githooks', 'pre-commit');
         console.log(`[${src.id}] hook written at ${where}; core.hooksPath left unset — ${hooksPathBlocker(target.root)}`);
         installed++;
+      } else if (result === 'skipped_hooks_off') {
+        console.log(`[${src.id}] skipped — ${hooksPathBlocker(target.root)}`);
+        skipped++;
       } else if (result === 'skipped_existing') {
         console.log(`[${src.id}] existing pre-commit hook found; pass --force to overwrite (.bak created)`);
         skipped++;
@@ -332,7 +338,10 @@ function resolveHookTarget(localPath: string): HookTarget {
   return { root, scope: rel ? `${rel}/` : '' };
 }
 
-type InstallResult = 'installed' | 'installed_unwired' | 'skipped_existing' | 'unchanged';
+type InstallResult = 'installed' | 'installed_unwired' | 'skipped_existing' | 'skipped_hooks_off' | 'unchanged';
+
+/** The core.hooksPath a remote-added URL clone carries (git-remote.ts LFS_OFF_CLONE_CONFIG): hooks off on purpose. */
+const HOOKS_OFF = '/dev/null';
 
 /**
  * `.githooks/` and its `pre-commit` under `root`. Refuses a symlink at either
@@ -398,6 +407,21 @@ function currentHooksPath(root: string): string {
   }
 }
 
+/**
+ * The clone's own config turns hooks off (LFS_OFF_CLONE_CONFIG); a global or system value does not count. Read with
+ * the repository-locating and config variables scrubbed, so an inherited GIT_DIR, GIT_WORK_TREE or GIT_CONFIG* cannot
+ * point the read at another repository or config file.
+ */
+function hooksOffInClone(root: string): boolean {
+  const env = gitChildEnv();
+  delete env.GIT_CONFIG_GLOBAL; delete env.GIT_CONFIG_SYSTEM; delete env.GIT_CONFIG_NOSYSTEM;
+  try {
+    return execFileSync('git', ['-C', root, 'config', '--local', '--get', 'core.hooksPath'], { encoding: 'utf8', env }).trim() === HOOKS_OFF;
+  } catch {
+    return false;
+  }
+}
+
 const samePath = (a: string, b: string): boolean => {
   try { return realpathSync(a) === realpathSync(b); } catch { return a === b; }
 };
@@ -412,6 +436,7 @@ const samePath = (a: string, b: string): boolean => {
  * `.githooks/<hook>` or a live `.git/hooks/<hook>` both block it too.
  */
 export function hooksPathBlocker(root: string): string | null {
+  if (hooksOffInClone(root)) return `hooks are off in this clone's own config (core.hooksPath=${HOOKS_OFF}), and gbrain leaves them off`;
   const current = currentHooksPath(root);
   if (current) {
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- fixed literal tail under the discovered git root
@@ -429,6 +454,7 @@ export function hooksPathBlocker(root: string): string | null {
 
 export function installHook(localPath: string, force: boolean): InstallResult {
   const { root, scope } = resolveHookTarget(localPath);
+  if (hooksOffInClone(root)) return 'skipped_hooks_off';
   const { hooksDir, hookPath } = hookPaths(root);
   mkdirSync(hooksDir, { recursive: true });
 

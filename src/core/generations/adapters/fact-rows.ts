@@ -19,6 +19,7 @@ import { readGenerationsConfig } from '../config.ts';
 import type { GenerationAdapter, GenerationKey, ItemRow } from '../contract.ts';
 import { factRowIdentity, fenceRowKey, FACT_FENCE_KIND, publishFenceGeneration, type FenceGenerationOutcome, type FenceItem, type FenceRead } from '../fence.ts';
 import { activateGeneration, generationKeyLock, itemSetHash, readLiveGeneration, recordHeld } from '../publish.ts';
+import { factsFenceHeld } from '../fence-evidence.ts';
 
 export const CONSOLIDATION_KIND = 'consolidation';
 
@@ -28,7 +29,7 @@ const FACT_PREIMAGE_SQL = `jsonb_build_object('id', f.id, 'row_num', f.row_num, 
   'superseded_by', f.superseded_by, 'consolidated_at', f.consolidated_at, 'consolidated_into', f.consolidated_into, 'attributed_to', f.attributed_to)`;
 
 export type FactPreimage = { id: number; row_num: number | null; fact: string; visibility: string; expired_at: string | null; valid_until: string | null;
-  superseded_by: number | null; consolidated_at: string | null; consolidated_into: number | null; entity_slug: string | null; attributed_to: string | null };
+  superseded_by: number | null; consolidated_at: string | null; consolidated_into: number | null; entity_slug: string | null; attributed_to: string | null; source?: string | null };
 
 /** The fence rows of the new generation (one per row number; a duplicate number keeps its first row, as the reconcile does). */
 export function factFenceItems(rows: ReadonlyArray<{ row_num: number; fact: string; visibility?: string | null }>): FenceItem[] {
@@ -58,20 +59,29 @@ export async function factPreimages(db: BrainEngine, sourceId: string, ids: read
 /**
  * The page publication's fence projection (persistence/canonical-projections.ts): the rows it would expire and detach
  * are those attached to the page that the incoming fence no longer holds at the same number and claim (conversation
- * extractor rows only when a fence row claims their number, #5731). Held: the caller expires nothing.
+ * extractor rows only when a fence row claims their number, #5731). #8819: of the others, only a row some fence of the
+ * page held, or whose claim the incoming fence states, retires (fence-evidence.ts); a row the fence never held is `kept`
+ * active, since no fence edit withdrew it.
+ * Held: the caller expires nothing.
  */
 export async function projectFactFenceGeneration(tx: BrainEngine, input: { sourceId: string; slug: string; read: FenceRead; incoming: string;
-  rows: ReadonlyArray<{ row_num: number; fact: string; visibility?: string | null }>; writer: string }): Promise<FenceGenerationOutcome & { retiring: number }> {
-  const retire = (await tx.executeRaw<{ preimage: FactPreimage }>(`SELECT ${FACT_PREIMAGE_SQL} AS preimage FROM facts f
+  rows: ReadonlyArray<{ row_num: number; fact: string; visibility?: string | null }>; writer: string; prior?: ReadonlySet<string> | null }):
+  Promise<FenceGenerationOutcome & { retiring: number; retireIds: number[]; kept: number[] }> {
+  const candidates = (await tx.executeRaw<{ preimage: FactPreimage }>(`SELECT ${FACT_PREIMAGE_SQL} AS preimage FROM facts f
       WHERE f.source_id=$1 AND f.source_markdown_slug=$2 AND f.row_num IS NOT NULL
         AND (COALESCE(f.source,'') NOT LIKE 'cli:extract-conversation-facts%'
           OR EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS c(row_num integer) WHERE c.row_num=f.row_num))
         AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS n(row_num integer,fact text,visibility text)
           WHERE n.row_num=f.row_num AND n.fact=f.fact AND n.visibility=f.visibility)
-      ORDER BY f.row_num, f.id`, [input.sourceId, input.slug, input.incoming])).map(row => factRetireItem(row.preimage));
+      ORDER BY f.row_num, f.id`, [input.sourceId, input.slug, input.incoming])).map(row => row.preimage);
+  const extractor = (row: FactPreimage) => (row.source ?? '').startsWith('cli:extract-conversation-facts');
+  const { held } = await factsFenceHeld(tx, { sourceId: input.sourceId, slug: input.slug, rows: candidates.filter(row => !extractor(row)), prior: input.prior });
+  const claims = new Set(input.rows.map(row => row.fact));
+  const retire = candidates.filter(row => extractor(row) || held.has(Number(row.id)) || claims.has(row.fact));
   const outcome = await publishFenceGeneration(tx, { kind: FACT_FENCE_KIND, sourceId: input.sourceId, slug: input.slug, read: input.read,
-    items: factFenceItems(input.rows), retire, writer: input.writer });
-  return { ...outcome, retiring: retire.length };
+    items: factFenceItems(input.rows), retire: retire.map(factRetireItem), writer: input.writer });
+  return { ...outcome, retiring: retire.length, retireIds: retire.map(row => Number(row.id)),
+    kept: candidates.filter(row => !retire.includes(row)).map(row => Number(row.id)) };
 }
 
 /**

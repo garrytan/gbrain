@@ -19,12 +19,15 @@
 import { createHash } from 'node:crypto';
 import type { Operation, OperationContext, ParamDef } from './contract.ts';
 import { opError, OperationError } from './contract.ts';
-import { federatedSearchScope } from './context.ts';
+import { federatedSearchScope, parseSourceIdParam } from './context.ts';
+import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
 import type { FactRow } from '../engine.ts';
 import { resolveReadEligibility } from '../eligibility/policy.ts';
-import { currentCallerAccess, resolveExcludePrivatePages } from '../search/private-visibility.ts';
-import { callerMember, memberPageSlug } from '../access/member-facts.ts';
+import { currentCallerAccess, resolveExcludePrivatePages, withCallerAccess, type CallerAccess } from '../search/private-visibility.ts';
+import { callerMember, memberPageSlug, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
+import { markedScopeSources, sourceNotAttested, withoutScopeSources } from '../access/attest-sources.ts';
 import { ACTOR_ARGUMENT, ACTOR_HEADER } from '../access/actor-model.ts';
+import { folderAccessFor } from '../access/caller.ts';
 import { uuidV5 } from '../persistence/preconditions.ts';
 import { isStrictIsoDateTime } from '../utils.ts';
 
@@ -88,7 +91,7 @@ export function isoDate(value: Date | string | null | undefined): string {
 
 const invalid = (message: string, suggestion: string): OperationError => opError('invalid_params', message, suggestion);
 
-function parseMaxChars(raw: unknown): number {
+export function parseMaxChars(raw: unknown): number {
   if (raw === undefined || raw === null) return MEMORY_RECALL_MAX_CHARS.default;
   const { min, max } = MEMORY_RECALL_MAX_CHARS;
   if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < min || raw > max) {
@@ -117,6 +120,49 @@ async function ownRecentFacts(ctx: OperationContext, sources: string[], read: Re
   return lists.flat().sort((a, b) => b.created_at.getTime() - a.created_at.getTime() || b.id - a.id).slice(0, MEMORY_RECALL_ARM_LIMIT);
 }
 
+/**
+ * GST-1094: the caller record of a recall that names sources. It is read as the scope, never as the person: no member
+ * identity, actor or audience, so no member-page fact is admitted and every restricted page is hidden, and privacy is
+ * never relaxed. Folder coverage (pending prefixes, an unreadable rulebook) is read for the call, so it stays fail-closed.
+ */
+const SCOPE_READ_ACCESS: Partial<CallerAccess> = {
+  identity: [], audienceIdentities: [], audience: null, actor: null, satisfiedRuleIds: [], privateReadableSources: [],
+  hidePrivate: true, applyRemoteReadPolicy: false, restricted: true, remotePolicy: { privacyRelaxed: false, restricted: true },
+};
+
+/** The sources a recall reads and whether it names them; a named recall whose sources intersect to none reads nothing. */
+async function recallSources(ctx: OperationContext, p: Record<string, unknown>): Promise<{ sources: string[]; named: boolean }> {
+  const sourceIdParam = parseSourceIdParam(p.source_id, 'memory_recall');
+  const sourceIds = parseSourceIdsParam(ctx, 'memory_recall', p.source_ids);
+  if (sourceIdParam === undefined && sourceIds === undefined) {
+    const scope = federatedSearchScope(ctx, undefined);
+    return { sources: await withoutScopeSources(ctx, [...new Set(scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default'])]), named: false };
+  }
+  const scope = await requestSourceScope(ctx, sourceIdParam, sourceIds);
+  return { sources: [...new Set(scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : []))], named: true };
+}
+
+async function recallFacts(ctx: OperationContext, query: string, maxChars: number, sources: string[], asScope: boolean): Promise<{ facts: RecallFact[]; truncated: boolean; text: string }> {
+  const remote = ctx.remote !== false;
+  const read: ReadPolicy = { excludePrivate: asScope && remote ? true : await resolveExcludePrivatePages(ctx.engine, ctx.remote), eligibility: await resolveReadEligibility(ctx, {}) };
+  const own = asScope || !sources.length ? [] : await ownRecentFacts(ctx, sources, read);
+  const { rankFactsByQuestion } = await import('../facts/question-recall.ts');
+  const ranked = query && sources.length ? (await rankFactsByQuestion(ctx, {
+    question: query, params: { question: query }, factSources: sources, limit: MEMORY_RECALL_ARM_LIMIT, entity: null, sessionId: null, since: null, grep: null,
+    scope: { sourceIds: sources, remote, excludePrivate: read.excludePrivate, minTrust: read.eligibility.floor, suppressFlagged: read.eligibility.suppressFlagged },
+  })).rows : [];
+  const seen = new Set<number>();
+  const rows = [...own, ...ranked].filter(r => !seen.has(r.id) && !!seen.add(r.id));
+  // The date as the database writes it: a driver's timestamp parse reads years 1-99 as 19xx.
+  const written = new Map(rows.length ? (await ctx.engine.executeRaw<{ id: number | string; d: string }>(
+    `SELECT id, to_char(COALESCE(valid_from, created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS d FROM facts WHERE id = ANY($1::bigint[])`, [rows.map(r => r.id)])).map(r => [Number(r.id), r.d]) : []);
+  const plain = rows.map(r => ({ id: String(r.id), text: plainFactText(r.fact), date: isoDate(written.get(Number(r.id)) ?? r.valid_from ?? r.created_at), kind: String(r.kind) }));
+  const { redactRetrievalOutput } = await import('../search/output-redaction.ts');
+  const facts: RecallFact[] = (remote ? redactRetrievalOutput(plain, {}, { uncapped: true }).results : plain).filter(f => f.text);
+  const { kept, text } = boundFactLines(facts.map(f => `- ${f.text} (${f.date}; ${f.kind})`), maxChars);
+  return { facts: facts.slice(0, kept), truncated: kept < facts.length, text };
+}
+
 const memory_recall: Operation = {
   name: 'memory_recall',
   mutating: false,
@@ -127,36 +173,24 @@ const memory_recall: Operation = {
     query: { type: 'string', required: true, description: 'What the turn is about; ranks the facts.' },
     max_chars: { type: 'integer', description: `Text cap in UTF-16 code units, ${MEMORY_RECALL_MAX_CHARS.min}-${MEMORY_RECALL_MAX_CHARS.max} (default ${MEMORY_RECALL_MAX_CHARS.default}).` },
     [ACTOR_ARGUMENT]: actorParam,
+    source_id: { type: 'string', description: 'Read this one source as its audience (a shared scope): never the person\'s own facts.', fullSurfaceOnly: true },
+    source_ids: { ...SOURCE_IDS_PARAM, description: 'Read only these sources as their audience (a shared scope): never the person\'s own facts.', fullSurfaceOnly: true },
   },
   scope: 'read',
   annotations: { title: 'memory_recall (QM memory read)', readOnlyHint: true },
   handler: async (ctx, p) => {
     const { query, maxChars } = recallArguments(p);
-    const scope = federatedSearchScope(ctx, undefined);
-    const sources = [...new Set(scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default'])];
-    const read: ReadPolicy = { excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote), eligibility: await resolveReadEligibility(ctx, {}) };
-    const own = await ownRecentFacts(ctx, sources, read);
-    const { rankFactsByQuestion } = await import('../facts/question-recall.ts');
-    const ranked = query ? (await rankFactsByQuestion(ctx, {
-      question: query, params: { question: query }, factSources: sources, limit: MEMORY_RECALL_ARM_LIMIT, entity: null, sessionId: null, since: null, grep: null,
-      scope: { sourceIds: sources, remote: ctx.remote !== false, excludePrivate: read.excludePrivate, minTrust: read.eligibility.floor, suppressFlagged: read.eligibility.suppressFlagged },
-    })).rows : [];
-    const seen = new Set<number>();
-    const rows = [...own, ...ranked].filter(r => !seen.has(r.id) && !!seen.add(r.id));
-    // The date as the database writes it: a driver's timestamp parse reads years 1-99 as 19xx.
-    const written = new Map(rows.length ? (await ctx.engine.executeRaw<{ id: number | string; d: string }>(
-      `SELECT id, to_char(COALESCE(valid_from, created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS d FROM facts WHERE id = ANY($1::bigint[])`, [rows.map(r => r.id)])).map(r => [Number(r.id), r.d]) : []);
-    const plain = rows.map(r => ({ id: String(r.id), text: plainFactText(r.fact), date: isoDate(written.get(Number(r.id)) ?? r.valid_from ?? r.created_at), kind: String(r.kind) }));
-    const { redactRetrievalOutput } = await import('../search/output-redaction.ts');
-    const facts: RecallFact[] = (ctx.remote === false ? plain : redactRetrievalOutput(plain, {}, { uncapped: true }).results).filter(f => f.text);
-    const { kept, text } = boundFactLines(facts.map(f => `- ${f.text} (${f.date}; ${f.kind})`), maxChars);
-    return { facts: facts.slice(0, kept), truncated: kept < facts.length, text };
+    const { sources, named } = await recallSources(ctx, p);
+    if (!named || ctx.remote === false) return recallFacts(ctx, query, maxChars, sources, named);
+    const { folderCoverage } = await folderAccessFor(ctx.engine, []);
+    return withCallerAccess({ ...SCOPE_READ_ACCESS, folderCoverage }, () => recallFacts(ctx, query, maxChars, sources, true));
   },
 };
 
 /** The request id of fact `index` in a memory_write: uuidv5 of the key under the member's own namespace for fact 0, derived from it after. */
-export async function memoryWriteRequestId(member: string, idempotencyKey: string, index: number): Promise<string> {
-  const root = uuidV5(uuidV5(QM_MEMORY_REQUEST_NAMESPACE, `member:${member}`), idempotencyKey);
+export async function memoryWriteRequestId(member: string, idempotencyKey: string, index: number, scopeSource?: string): Promise<string> {
+  // GST-1113: a scope write keys under (member, source), so one key never replays across sources; '#' is outside member ids.
+  const root = uuidV5(uuidV5(QM_MEMORY_REQUEST_NAMESPACE, scopeSource === undefined ? `member:${member}` : `member:${member}#source:${scopeSource}`), idempotencyKey);
   if (index === 0) return root;
   const { childRequestId } = await import('../remember-batch.ts');
   return childRequestId(root, index);
@@ -212,6 +246,7 @@ const memory_write: Operation = {
     },
     idempotency_key: { type: 'string', required: true, description: '1-128 visible ASCII characters; the same key replays this write.' },
     [ACTOR_ARGUMENT]: actorParam,
+    source_id: { type: 'string', description: `One of this credential's scope sources: save on its shared ${SCOPE_PAGE_SLUG} page.`, fullSurfaceOnly: true },
   },
   scope: 'write',
   annotations: { title: 'memory_write (QM memory write)', idempotentHint: true },
@@ -225,15 +260,22 @@ const memory_write: Operation = {
       throw invalid('idempotency_key must be 1 to 128 visible ASCII characters (no spaces).', 'Send a stable key per write, for example a UUID; the same key replays the same write.');
     }
     const key = p.idempotency_key;
+    const scopeSource = p.source_id === undefined ? undefined : parseSourceIdParam(p.source_id, 'memory_write');
+    if (scopeSource !== undefined && scopeSource === (ctx.auth?.sourceId ?? ctx.sourceId)) {
+      throw opError('invalid_params', `source_id ${scopeSource} is this connection's own source, where the person's member page lives; nothing was saved.`,
+        'Omit source_id to save for the person alone; send source_id only for a shared scope\'s source.', { reason: 'source_is_member_source' });
+    }
+    if (scopeSource !== undefined && (!ctx.auth?.attest?.sources?.includes(scopeSource) || !(await markedScopeSources(ctx.engine, [scopeSource])).has(scopeSource))) throw sourceNotAttested(scopeSource);
+    const writeCtx: OperationContext = scopeSource === undefined ? ctx : { ...ctx, sourceId: scopeSource, attestedSource: scopeSource };
     const parsed = parseFacts(p.facts, actor.external_id);
     // Every fact's replay intent carries the whole batch, so a key reused with more, fewer or other facts is an
     // idempotency_conflict at its first fact, before anything new is written.
     const qm_batch = createHash('sha256').update(JSON.stringify(parsed)).digest('hex');
-    const items = await Promise.all(parsed.map(async (f, i) => ({ ...f, qm_batch, request_id: await memoryWriteRequestId(actor.member, key, i) })));
+    const items = await Promise.all(parsed.map(async (f, i) => ({ ...f, qm_batch, request_id: await memoryWriteRequestId(actor.member, key, i, scopeSource) })));
     const { verbOperations } = await import('../verbs.ts');
     const remember = verbOperations.find(op => op.name === 'remember')!;
     for (const [index, item] of items.entries()) {
-      try { await remember.handler({ ...ctx, attestedOp: 'memory_write', dryRun: true }, item); } catch (e) {
+      try { await remember.handler({ ...writeCtx, attestedOp: 'memory_write', dryRun: true }, item); } catch (e) {
         if (e instanceof OperationError) e.message = `facts[${index}]: ${e.message} Nothing was saved.`;
         throw e;
       }
@@ -245,8 +287,10 @@ const memory_write: Operation = {
     const principal = await requestPrincipalForContext(ctx);
     for (const [index, item] of parsed.entries()) {
       if (await getWriteRequest(ctx.engine, principal, items[index]!.request_id)) continue;
-      const intent = { fact: item.fact as string, kind: (item.kind ?? 'fact') as never, visibility: 'private' as const, entity_slug: null, page_slug: memberPageSlug(actor.member) };
-      try { await assertFactNotWithdrawn(ctx.engine, ctx.sourceId ?? 'default', intent, { excludePrivate }); } catch (e) {
+      const intent = scopeSource === undefined
+        ? { fact: item.fact as string, kind: (item.kind ?? 'fact') as never, visibility: 'private' as const, entity_slug: null, page_slug: memberPageSlug(actor.member) }
+        : { fact: item.fact as string, kind: (item.kind ?? 'fact') as never, visibility: 'world' as const, entity_slug: null, page_slug: SCOPE_PAGE_SLUG };
+      try { await assertFactNotWithdrawn(ctx.engine, writeCtx.sourceId ?? 'default', intent, { excludePrivate }); } catch (e) {
         if (e instanceof OperationError) e.message = `facts[${index}]: ${e.message} Nothing was saved.`;
         throw e;
       }
@@ -255,7 +299,7 @@ const memory_write: Operation = {
     const saved: Array<{ request_id: string; fact_id?: string; pending?: true }> = [];
     for (const [index, item] of items.entries()) {
       try {
-        const out = await remember.handler({ ...ctx, attestedOp: 'memory_write' }, item) as { id?: string | number } | null;
+        const out = await remember.handler({ ...writeCtx, attestedOp: 'memory_write' }, item) as { id?: string | number } | null;
         saved.push({ request_id: item.request_id, ...(out?.id !== undefined ? { fact_id: String(out.id) } : {}) });
       } catch (e) {
         if (e instanceof OperationError && e.writeError === 'write_pending') { saved.push({ request_id: item.request_id, pending: true }); continue; }
@@ -278,7 +322,7 @@ const memory_write: Operation = {
 /**
  * A successful memory_recall or memory_write result as QM reads it: the model's text alone in `content` (notices stay
  * in `_meta.gbrain_notices`, so memory_recall's text stays within max_chars) and the result in `structuredContent`.
- * A refusal keeps its JSON text block and gains `structuredContent.error` (code, message, reason, fix), as the actor
+ * A refusal keeps its JSON text block and gains `structuredContent.error` (code, message, reason, detail, fix), as the actor
  * refusals carry it, so QM classifies every error from structuredContent. Dry runs and every other tool pass through.
  */
 export function qmMemoryToolResult<T extends { content: Array<{ type: 'text'; text: string }>; isError?: boolean; structuredContent?: Record<string, unknown> }>(name: string, out: T): T {
@@ -288,7 +332,7 @@ export function qmMemoryToolResult<T extends { content: Array<{ type: 'text'; te
   if (out.isError) {
     if (out.structuredContent || !result || typeof result !== 'object') return out;
     const env = result as Record<string, unknown>;
-    return { ...out, structuredContent: { error: { code: env.code, message: env.message, ...(env.reason ? { reason: env.reason } : {}), ...(env.write_error ? { write_error: env.write_error } : {}), ...(env.fix ? { fix: env.fix } : {}) } } };
+    return { ...out, structuredContent: { error: { code: env.code, message: env.message, ...(env.reason ? { reason: env.reason } : {}), ...(env.detail ? { detail: env.detail } : {}), ...(env.write_error ? { write_error: env.write_error } : {}), ...(env.fix ? { fix: env.fix } : {}) } } };
   }
   if (!result || typeof result !== 'object' || 'dry_run' in result) return out;
   const { text, ...structured } = result as Record<string, unknown>;
@@ -301,3 +345,15 @@ export function unlinkedRecallResult(): { content: Array<{ type: 'text'; text: s
 }
 
 export const qmMemoryOperations: Operation[] = [memory_recall, memory_write];
+
+/**
+ * GST-900: recall's max_chars, memory_recall's bound on recall's text: the fact texts, then the results' chunk texts,
+ * one per line, keep the whole items that fit; the first item that would cross the cap ends both lists, with no
+ * marker. `truncated` says whether anything was cut and `total` counts the facts kept.
+ */
+export function boundRecallChars<T extends { facts: Array<{ fact: string }>; total: number; results?: Array<{ chunk?: unknown }> }>(out: T, maxChars: number): T & { truncated: boolean } {
+  const lines = [...out.facts.map(f => f.fact), ...(out.results ?? []).map(r => String(r.chunk ?? ''))];
+  const { kept } = boundFactLines(lines, maxChars);
+  const facts = out.facts.slice(0, kept);
+  return { ...out, facts, total: facts.length, ...(out.results ? { results: out.results.slice(0, Math.max(0, kept - out.facts.length)) } : {}), truncated: kept < lines.length };
+}

@@ -291,7 +291,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "mode=notify",
+            "message": "mode=notify; channel=stable (config)",
             "name": "self_upgrade_health",
             "status": "ok"
           },
@@ -1226,7 +1226,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 174 table(s) the applied migrations create exist.",
+            "message": "All 175 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -1583,6 +1583,14 @@
                 {
                   "name": "persistence_requests_foreground_committed",
                   "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_replay_id",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_slug_sequence",
+                  "state": "valid"
                 }
               ],
               "repair": "request-indexes"
@@ -1796,6 +1804,18 @@
             "elapsed_ms": "<volatile>",
             "message": "No outdated gbrain frontmatter pre-commit hook is installed.",
             "name": "frontmatter_hook",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "count": 0,
+              "docs": "docs/guides/repair.md#url-source-origin",
+              "sources": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every URL source clone records who added it, or was cloned where only the local CLI can clone.",
+            "name": "url_source_origin",
             "status": "ok"
           },
           {
@@ -2060,6 +2080,20 @@
             "elapsed_ms": "<volatile>",
             "message": "No conversation-extractor fact is left expired by the pre-v0.60.11.0 projection.",
             "name": "extractor_facts_expired",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "ambiguous": 0,
+              "docs": "docs/guides/repair.md#unwithdrawn-facts",
+              "evidenced": 0,
+              "excluded": 0,
+              "repair": "unwithdrawn-facts"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No fact is left retired by a facts-fence generation that no fence withdrew.",
+            "name": "unwithdrawn_facts",
             "status": "ok"
           },
           {
@@ -2958,6 +2992,71 @@
             "elapsed_ms": "<volatile>",
             "message": "1 Git checkout(s) track no ownership marker (markers on disk stay untracked and are denied on push).",
             "name": "tracked_ownership_marker",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "dirty": [
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fences/deterministic.md",
+                  "state": "modified"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fences/untracked.md",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/image.png",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/null-bytes.md",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/null-in-frontmatter.md",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/untracked-yaml.md",
+                  "state": "untracked"
+                }
+              ],
+              "dirty_count": 6,
+              "dirty_warn_after_minutes": 30,
+              "foreign": [],
+              "partial": false,
+              "partial_reasons": [],
+              "unconfirmed": [],
+              "unknown": [],
+              "window": [
+                {
+                  "common": "<home>/notes-src/.git",
+                  "from": null,
+                  "ledger": false,
+                  "ledger_start": null,
+                  "oldest_reflog": "<ts>",
+                  "to": "<ts>",
+                  "uncovered": 4
+                }
+              ]
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every locally created commit in the covered window of 1 repository is in gbrain's commit ledger, and no page file waits uncommitted for more than 30 minutes. A repository gbrain has not committed in yet has no ledger, so its window is empty.",
+            "name": "foreign_writers",
             "status": "ok"
           },
           {
@@ -3976,6 +4075,7 @@
                     "mirror_source": 0,
                     "private": 0
                   },
+                  "live_pages": 19,
                   "pages": 19,
                   "source_id": "notes",
                   "states": {
@@ -4001,7 +4101,7 @@
               "timeout_ms": "<volatile>"
             },
             "elapsed_ms": "<volatile>",
-            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
+            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 19 live page(s), 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
             "name": "db_ahead_of_git",
             "status": "ok"
           },
@@ -4015,6 +4115,17 @@
             "elapsed_ms": "<volatile>",
             "message": "No source is strict (git-canonical), so no index trails a commit.",
             "name": "git_index_lag",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "docs": "docs/guides/write-refusals.md#file_database_drift",
+              "sources": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No local edit was adopted in the last 24 h.",
+            "name": "local_edit_adoptions",
             "status": "ok"
           },
           {
@@ -5277,7 +5388,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "mode=notify",
+            "message": "mode=notify; channel=stable (config)",
             "name": "self_upgrade_health",
             "status": "ok"
           },
@@ -6212,7 +6323,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 174 table(s) the applied migrations create exist.",
+            "message": "All 175 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -6569,6 +6680,14 @@
                 {
                   "name": "persistence_requests_foreground_committed",
                   "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_replay_id",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_slug_sequence",
+                  "state": "valid"
                 }
               ],
               "repair": "request-indexes"
@@ -6782,6 +6901,18 @@
             "elapsed_ms": "<volatile>",
             "message": "No outdated gbrain frontmatter pre-commit hook is installed.",
             "name": "frontmatter_hook",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "count": 0,
+              "docs": "docs/guides/repair.md#url-source-origin",
+              "sources": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every URL source clone records who added it, or was cloned where only the local CLI can clone.",
+            "name": "url_source_origin",
             "status": "ok"
           },
           {
@@ -7046,6 +7177,20 @@
             "elapsed_ms": "<volatile>",
             "message": "No conversation-extractor fact is left expired by the pre-v0.60.11.0 projection.",
             "name": "extractor_facts_expired",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "ambiguous": 0,
+              "docs": "docs/guides/repair.md#unwithdrawn-facts",
+              "evidenced": 0,
+              "excluded": 0,
+              "repair": "unwithdrawn-facts"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No fact is left retired by a facts-fence generation that no fence withdrew.",
+            "name": "unwithdrawn_facts",
             "status": "ok"
           },
           {
@@ -7944,6 +8089,83 @@
             "elapsed_ms": "<volatile>",
             "message": "1 Git checkout(s) track no ownership marker (markers on disk stay untracked and are denied on push).",
             "name": "tracked_ownership_marker",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "dirty": [
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fences/deterministic.md",
+                  "state": "modified"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fences/late.md",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fences/untracked.md",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/image.png",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/late-broken.md",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/null-bytes.md",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/null-in-frontmatter.md",
+                  "state": "untracked"
+                },
+                {
+                  "age_ms": "<volatile>",
+                  "checkout": "<home>/notes-src",
+                  "path": "fm/untracked-yaml.md",
+                  "state": "untracked"
+                }
+              ],
+              "dirty_count": 8,
+              "dirty_warn_after_minutes": 30,
+              "foreign": [],
+              "partial": false,
+              "partial_reasons": [],
+              "unconfirmed": [],
+              "unknown": [],
+              "window": [
+                {
+                  "common": "<home>/notes-src/.git",
+                  "from": null,
+                  "ledger": false,
+                  "ledger_start": null,
+                  "oldest_reflog": "<ts>",
+                  "to": "<ts>",
+                  "uncovered": 4
+                }
+              ]
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every locally created commit in the covered window of 1 repository is in gbrain's commit ledger, and no page file waits uncommitted for more than 30 minutes. A repository gbrain has not committed in yet has no ledger, so its window is empty.",
+            "name": "foreign_writers",
             "status": "ok"
           },
           {
@@ -8962,6 +9184,7 @@
                     "mirror_source": 0,
                     "private": 0
                   },
+                  "live_pages": 19,
                   "pages": 19,
                   "source_id": "notes",
                   "states": {
@@ -8987,7 +9210,7 @@
               "timeout_ms": "<volatile>"
             },
             "elapsed_ms": "<volatile>",
-            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
+            "message": "Informational, nothing to do: the database compared with the commit at HEAD, per source with a Git checkout. notes: 19 live page(s), 11 equal, 4 database_ahead, 4 unparseable. Page detail: gbrain sources git-gap <source-id>.",
             "name": "db_ahead_of_git",
             "status": "ok"
           },
@@ -9001,6 +9224,17 @@
             "elapsed_ms": "<volatile>",
             "message": "No source is strict (git-canonical), so no index trails a commit.",
             "name": "git_index_lag",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "docs": "docs/guides/write-refusals.md#file_database_drift",
+              "sources": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No local edit was adopted in the last 24 h.",
+            "name": "local_edit_adoptions",
             "status": "ok"
           },
           {

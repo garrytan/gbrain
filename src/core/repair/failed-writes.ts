@@ -61,6 +61,10 @@ import { readFactsBackstopJobPage } from '../persistence/effect-facts.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
 import { dispositionOf, PAGE_REMOVAL_OPERATIONS, supersessionOrderSql, supersessionSql } from '../persistence/terminal-classify.ts';
+import { isStatementTimeout } from '../persistence/bounded-reads.ts';
+import { readRequestIndexStates } from '../persistence/checkpoint-validation.ts';
+import { PERSISTENCE_REQUEST_REPLAY_ID_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX } from '../persistence/schema.ts';
+import { StatementDeadlineError, withStatementDeadline } from '../statement-deadline.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
 
 const REPLAYABLE = ['put_page', 'add_timeline_entry', 'remember'];
@@ -162,6 +166,7 @@ function producerCommand(producer: string, sourceId: string): string {
   if (parts.includes('managed_maintenance_expire_captured_facts')) return `gbrain repair captured-facts --source ${sourceId}`;
   if (parts.includes('managed_maintenance_agent_session_facts')) return `gbrain repair agent-session-facts --source ${sourceId}`;
   if (parts.includes('managed_maintenance_restore_extractor_facts')) return `gbrain repair extractor-facts --source ${sourceId}`;
+  if (parts.includes('managed_maintenance_restore_unwithdrawn_facts')) return `gbrain repair unwithdrawn-facts --source ${sourceId}`;
   if (parts.includes('managed_maintenance_restore_redacted_facts')) return `gbrain repair redacted-facts --source ${sourceId}`;
   if (parts.includes('managed_maintenance_conversation_facts')) return `gbrain extract-conversation-facts --source-id ${sourceId} --dry-run`;
   return 'the next `gbrain dream` cycle (or autopilot) produces it again';
@@ -176,16 +181,21 @@ async function failedWrites(engine: BrainEngine, sourceIds: string[], opts: { id
         ELSE r.operation || COALESCE(':' || (r.intent->>'kind'), '') END AS producer
     FROM persistence_requests r
     WHERE r.source_id = ANY($1::text[]) AND NOT r.compacted AND r.intent IS NOT NULL AND (${GUARD_REFUSAL} OR ${DRIFT_REFUSAL}${facts ? ` OR ${FACTS_MOVED_REFUSAL}` : ''})
-      ${facts ? `AND NOT ${FACTS_RECOVERED}` : ''}
       ${id ? 'AND r.id=$3::uuid' : ''}
     ORDER BY r.sequence`, id ? [sourceIds, REPLAYABLE, id] : [sourceIds, REPLAYABLE]);
   if (id) return rows;
+  // #8707: the recovery check reads only the refused fact requests, in one statement. Correlated into the selection above it
+  // ran for every candidate, and the planner walked the request table from each candidate's sequence to the end.
+  const factIds = rows.filter(row => row.operation === 'extract_facts').map(row => row.id);
+  const recovered = new Set(factIds.length ? (await engine.executeRaw<{ id: string }>(
+    `SELECT r.id::text FROM persistence_requests r WHERE r.id = ANY($1::uuid[]) AND ${FACTS_RECOVERED}`, [factIds])).map(row => row.id) : []);
+  const live = rows.filter(row => !recovered.has(row.id));
   // #6429: a replay this command submitted that was refused source_changed is itself a conflict row; the original
   // write stays the candidate (its attempts are read through replayAttempt), so the attempt rows are not listed twice.
   const replays = new Set<string>();
-  const requestIds = new Set(rows.map(row => row.request_id));
-  for (const row of rows) for (let attempt = 0; requestIds.has(replayId(row.id, attempt)); attempt++) replays.add(replayId(row.id, attempt));
-  return rows.filter(row => !replays.has(row.request_id));
+  const requestIds = new Set(live.map(row => row.request_id));
+  for (const row of live) for (let attempt = 0; requestIds.has(replayId(row.id, attempt)); attempt++) replays.add(replayId(row.id, attempt));
+  return live.filter(row => !replays.has(row.request_id));
 }
 
 /**
@@ -307,14 +317,29 @@ async function replayAttempt(engine: BrainEngine, failedId: string): Promise<{ i
   }
 }
 
-/** The newest replay attempt that ended without committing, or null. */
-async function lastFailedAttempt(engine: BrainEngine, failedId: string): Promise<WriteRequest | null> {
-  let last: WriteRequest | null = null;
-  for (let attempt = 0; ; attempt++) {
-    const [prior] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id=$1::uuid', [replayId(failedId, attempt)]);
-    if (!prior || prior.state === 'committed' || !isTerminal(prior)) return last;
-    last = prior;
+/**
+ * #8707: each refused write's replay attempts, walked as `replayAttempt` walks them, with one read per attempt number across
+ * every write: `committed` when the walk stopped at a committed attempt, `lastFailed` the newest attempt before the stop
+ * that ended without committing.
+ */
+async function replayWalks(engine: BrainEngine, failedIds: string[]): Promise<Map<string, { committed: boolean; lastFailed: WriteRequest | null }>> {
+  const walks = new Map<string, { committed: boolean; lastFailed: WriteRequest | null }>();
+  const last = new Map<string, WriteRequest>();
+  let pending = failedIds;
+  for (let attempt = 0; pending.length; attempt++) {
+    const found = new Map<string, WriteRequest>();
+    for (const row of await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id = ANY($1::uuid[])', [pending.map(id => replayId(id, attempt))])) {
+      if (!found.has(String(row.request_id))) found.set(String(row.request_id), row);
+    }
+    const next: string[] = [];
+    for (const id of pending) {
+      const prior = found.get(replayId(id, attempt));
+      if (!prior || prior.state === 'committed' || !isTerminal(prior)) walks.set(id, { committed: prior?.state === 'committed', lastFailed: last.get(id) ?? null });
+      else { last.set(id, prior); next.push(id); }
+    }
+    pending = next;
   }
+  return walks;
 }
 
 /** W4.11: the reconcile step for a page whose file and database differ. */
@@ -341,36 +366,114 @@ async function stillDrifted(engine: BrainEngine, write: FailedWrite): Promise<bo
   }
 }
 
-/** Why a caller write must not be replayed now, or `replay`. */
-async function disposition(engine: BrainEngine, write: FailedWrite): Promise<{ class: Disposition; detail?: string }> {
-  if ((await replayAttempt(engine, write.id)).prior?.state === 'committed') return { class: 'already_written', detail: 'replayed by gbrain repair failed-writes' };
-  const drifted = await lastFailedAttempt(engine, write.id);
-  if (drifted?.error_code === 'source_changed') {
-    const [written] = await engine.executeRaw<{ later: boolean }>(
-      'SELECT updated_at > $3::timestamptz AS later FROM pages WHERE source_id=$1 AND slug=$2', [write.source_id, write.slug, drifted.updated_at]);
-    if (!written?.later && await stillDrifted(engine, write)) return { class: 'file_database_drift', detail: driftDetail(write.source_id, write.slug) };
+type Verdict = { class: Disposition; detail?: string };
+
+/** Later rows of the pages one supersession read may walk; a page's later rows bound each of its writes' walk. */
+const SUPERSESSION_ROWS_PER_READ = 100_000;
+
+/**
+ * The open writes in groups whose supersession reads stay small: each write's read walks the later rows of its page, so
+ * the groups are packed by that count (read once per page), and a write on a page longer than the bound is read alone.
+ */
+async function supersessionBatches(engine: BrainEngine, open: FailedWrite[]): Promise<string[][]> {
+  if (!open.length) return [];
+  const spans = new Map((await engine.executeRaw<{ source_id: string; slug: string; later: number }>(
+    `SELECT p.source_id, p.slug, count(*)::int AS later FROM (SELECT source_id, slug, min(sequence) AS sequence FROM persistence_requests
+      WHERE id = ANY($1::uuid[]) GROUP BY 1, 2) p JOIN persistence_requests c ON c.source_id=p.source_id AND c.slug=p.slug AND c.sequence>p.sequence GROUP BY 1, 2`,
+    [open.map(write => write.id)])).map(row => [`${row.source_id}\0${row.slug}`, row.later]));
+  const batches: string[][] = [];
+  let rows = Infinity;
+  for (const write of open) {
+    const walk = 1 + (spans.get(`${write.source_id}\0${write.slug}`) ?? 0);
+    if (rows + walk > SUPERSESSION_ROWS_PER_READ) { batches.push([]); rows = 0; }
+    batches.at(-1)!.push(write.id);
+    rows += walk;
   }
-  const replace = write.operation === 'put_page';
-  const [later] = await engine.executeRaw<{ state: string; operation: string; same_intent: boolean }>(
-    `SELECT c.state, c.operation, c.digest=r.digest AS same_intent FROM persistence_requests r JOIN persistence_requests c ON ${supersessionSql('r', 'c')}
-      WHERE r.id=$1::uuid ORDER BY ${supersessionOrderSql('r', 'c')} LIMIT 1`, [write.id]);
-  const found = dispositionOf(later);
-  if (found === 'already_written') return { class: 'already_written' };
-  if (found === 'duplicate') return { class: 'duplicate', detail: `a later request with the same intent is ${later!.state}` };
-  if (found === 'superseded') return { class: 'superseded', detail: `a later ${later!.operation} of this page is ${later!.state}` };
-  const read = write.intent.expected_revision;
-  if (replace && typeof read === 'string' && read !== await pageRevision(engine, write.source_id, write.slug)) {
-    return { class: 'superseded', detail: 'the page changed after the revision the caller read' };
+  return batches;
+}
+
+/**
+ * Why each caller write must not be replayed now, or `replay`. #8707: the request-table reads (replay attempts, later
+ * requests of the page) are made for all the writes together, never once per write (the later requests in groups bounded
+ * by their pages' history, `supersessionBatches`), and the file check runs once per page.
+ */
+async function dispositions(engine: BrainEngine, writes: FailedWrite[]): Promise<Map<string, Verdict>> {
+  const verdicts = new Map<string, Verdict>();
+  const walks = await replayWalks(engine, writes.map(write => write.id));
+  const drift = new Map<string, Promise<boolean>>();
+  const open: FailedWrite[] = [];
+  for (const write of writes) {
+    const walk = walks.get(write.id)!;
+    if (walk.committed) { verdicts.set(write.id, { class: 'already_written', detail: 'replayed by gbrain repair failed-writes' }); continue; }
+    const drifted = walk.lastFailed;
+    if (drifted?.error_code === 'source_changed') {
+      const [written] = await engine.executeRaw<{ later: boolean }>(
+        'SELECT updated_at > $3::timestamptz AS later FROM pages WHERE source_id=$1 AND slug=$2', [write.source_id, write.slug, drifted.updated_at]);
+      const page = `${write.source_id}\0${write.slug}`;
+      if (!written?.later && !drift.has(page)) drift.set(page, stillDrifted(engine, write));
+      if (!written?.later && await drift.get(page)) { verdicts.set(write.id, { class: 'file_database_drift', detail: driftDetail(write.source_id, write.slug) }); continue; }
+    }
+    open.push(write);
   }
-  if (write.operation === 'remember' && typeof write.intent.entity_slug !== 'string') {
-    return { class: 'unpinned_target', detail: 'the fact was saved unattributed; replaying would infer its subject again' };
+  const later = new Map<string, { state: string; operation: string; same_intent: boolean }>();
+  for (const ids of await supersessionBatches(engine, open)) {
+    for (const row of await engine.executeRaw<{ id: string; state: string; operation: string; same_intent: boolean }>(
+      `SELECT r.id::text, c.state, c.operation, c.same_intent FROM persistence_requests r CROSS JOIN LATERAL (SELECT c.state, c.operation, c.digest=r.digest AS same_intent
+        FROM persistence_requests c WHERE ${supersessionSql('r', 'c')} ORDER BY ${supersessionOrderSql('r', 'c')} LIMIT 1) c WHERE r.id = ANY($1::uuid[])`, [ids])) later.set(row.id, row);
   }
-  return { class: 'replay' };
+  for (const write of open) {
+    const row = later.get(write.id);
+    const found = dispositionOf(row);
+    const read = write.intent.expected_revision;
+    if (found === 'already_written') verdicts.set(write.id, { class: 'already_written' });
+    else if (found === 'duplicate') verdicts.set(write.id, { class: 'duplicate', detail: `a later request with the same intent is ${row!.state}` });
+    else if (found === 'superseded') verdicts.set(write.id, { class: 'superseded', detail: `a later ${row!.operation} of this page is ${row!.state}` });
+    else if (write.operation === 'put_page' && typeof read === 'string' && read !== await pageRevision(engine, write.source_id, write.slug)) {
+      verdicts.set(write.id, { class: 'superseded', detail: 'the page changed after the revision the caller read' });
+    } else if (write.operation === 'remember' && typeof write.intent.entity_slug !== 'string') {
+      verdicts.set(write.id, { class: 'unpinned_target', detail: 'the fact was saved unattributed; replaying would infer its subject again' });
+    } else verdicts.set(write.id, { class: 'replay' });
+  }
+  return verdicts;
+}
+
+async function disposition(engine: BrainEngine, write: FailedWrite): Promise<Verdict> {
+  return (await dispositions(engine, [write])).get(write.id)!;
 }
 
 function item(write: ApprovedWrite, hash: string, last: boolean): FailedWriteItem {
   return { cursor: { phase: 1, id: Number(write.sequence) }, source_id: write.source_id, slug: write.slug,
     chars: typeof write.intent.content === 'string' ? write.intent.content.length : 0, action: `replay:${write.operation}`, failed: write, hash, last };
+}
+
+/**
+ * #8707: a preview read the server ended at its statement timeout (or a statement deadline refused) becomes a refusal
+ * with the next step instead of `internal_error`. Nothing was saved: the approval checkpoint is written only after every
+ * candidate is classed. When an index the preview reads is not valid, building it is the fix.
+ */
+async function previewTimeoutRefusal(engine: BrainEngine, error: unknown, scope: RepairScope): Promise<unknown> {
+  if (!isStatementTimeout(error) && !(error instanceof StatementDeadlineError)) return error;
+  const command = previewCommand(scope);
+  const argv = ['gbrain', 'repair', 'failed-writes', ...(scope.source_ids.length === 1 ? ['--source', scope.source_ids[0]!] : []), '--json'];
+  const unbuilt = (await withStatementDeadline(null, () => readRequestIndexStates(engine, [PERSISTENCE_REQUEST_REPLAY_ID_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX])).catch(() => []))
+    .filter(index => index.state !== 'valid').map(index => `${index.name} (${index.state})`);
+  const refusal = new OperationError('repair_preview_timeout',
+    'The failed-writes preview stopped: a read of the write journal ran past the database statement timeout. Nothing was saved and no page changed.',
+    unbuilt.length ? `Build the request indexes the preview reads (${unbuilt.join(', ')}) with gbrain repair request-indexes --apply, then run ${command} again.`
+      : `Run ${command} again; if it stops again, raise the statement timeout for that one command on the brain host.`,
+    'docs/guides/troubleshooting.md#repair-preview-timeout');
+  refusal.retryable = false;
+  refusal.why = unbuilt.length
+    ? `Without ${unbuilt.join(' and ')} a lookup of the preview reads the whole request table.`
+    : 'Every preview read is a set read over the request table; on this brain one of them took longer than the statement timeout allows.';
+  refusal.fix = unbuilt.length
+    ? { argv: ['gbrain', 'repair', 'request-indexes', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
+      why: 'Previews the request-table indexes a rebuild would build, without changing anything; its apply command builds them online.',
+      verify: { argv: ['gbrain', 'doctor', '--only', 'persistence_request_indexes', '--json'] }, docs: 'docs/guides/repair.md#request-indexes' }
+    : { argv, consent: [], actor: 'host_admin', requires_exclusive: false, why: 'Re-runs the read-only preview.',
+      user_message: `The preview of refused writes did not finish within the database statement timeout. On the brain host, run ${command} with a longer timeout for that one command (GBRAIN_STATEMENT_TIMEOUT=15min; behind a transaction-mode pooler that setting is dropped, so raise the role's default instead).`,
+      verify: { argv }, docs: 'docs/guides/troubleshooting.md#repair-preview-timeout' };
+  return refusal;
 }
 
 export const failedWritesRepair: RepairHandler = {
@@ -379,35 +482,40 @@ export const failedWritesRepair: RepairHandler = {
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
     const command = previewCommand(scope);
     if (!opts?.apply) {
-      const rows = await failedWrites(engine, scope.source_ids, { facts: true });
-      const extractions = await factExtractions(engine, scope.source_ids, rows);
-      const residuals: Record<string, number> = {};
-      const listing: NonNullable<RepairPlan['listing']> = [];
-      const producers = new Map<string, string>();
-      const replay: ApprovedWrite[] = [];
-      for (const write of rows) {
-        const label = `${write.source_id}:${write.slug} ${write.operation} (${write.state} ${write.created_at}, request ${write.id})`;
-        if (write.producer) {
-          residuals[`producer_owned:${write.producer}`] = (residuals[`producer_owned:${write.producer}`] ?? 0) + 1;
-          const facts = write.operation === 'extract_facts';
-          const run = facts ? await factsRecovery(engine, write, extractions) : producerCommand(write.producer, write.source_id);
-          producers.set(`${write.producer} in ${write.source_id}`, facts ? 'each listed request names the command that recovers its facts' : run);
-          listing.push({ item: label, class: 'producer_owned', detail: facts ? run : `re-run: ${run}` });
-          continue;
+      try {
+        const rows = await failedWrites(engine, scope.source_ids, { facts: true });
+        const extractions = await factExtractions(engine, scope.source_ids, rows);
+        const verdicts = await dispositions(engine, rows.filter(write => !write.producer));
+        const residuals: Record<string, number> = {};
+        const listing: NonNullable<RepairPlan['listing']> = [];
+        const producers = new Map<string, string>();
+        const replay: ApprovedWrite[] = [];
+        for (const write of rows) {
+          const label = `${write.source_id}:${write.slug} ${write.operation} (${write.state} ${write.created_at}, request ${write.id})`;
+          if (write.producer) {
+            residuals[`producer_owned:${write.producer}`] = (residuals[`producer_owned:${write.producer}`] ?? 0) + 1;
+            const facts = write.operation === 'extract_facts';
+            const run = facts ? await factsRecovery(engine, write, extractions) : producerCommand(write.producer, write.source_id);
+            producers.set(`${write.producer} in ${write.source_id}`, facts ? 'each listed request names the command that recovers its facts' : run);
+            listing.push({ item: label, class: 'producer_owned', detail: facts ? run : `re-run: ${run}` });
+            continue;
+          }
+          const verdict = verdicts.get(write.id)!;
+          if (verdict.class === 'replay') replay.push({ ...write, revision: await pageRevision(engine, write.source_id, write.slug), selection: scope.source_ids });
+          else residuals[verdict.class] = (residuals[verdict.class] ?? 0) + 1;
+          listing.push({ item: label, class: verdict.class, ...(verdict.detail ? { detail: verdict.detail } : {}) });
         }
-        const verdict = await disposition(engine, write);
-        if (verdict.class === 'replay') replay.push({ ...write, revision: await pageRevision(engine, write.source_id, write.slug), selection: scope.source_ids });
-        else residuals[verdict.class] = (residuals[verdict.class] ?? 0) + 1;
-        listing.push({ item: label, class: verdict.class, ...(verdict.detail ? { detail: verdict.detail } : {}) });
+        const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
+          'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+        const hash = previewHash({ kind: 'failed-writes-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids },
+          replay: replay.map(write => ({ id: write.id, digest: write.digest, revision: write.revision })) });
+        if (replay.length) await saveApprovedSet<ApprovedWrite>(engine, { command: 'failed-writes', hash }, replay);
+        return { items: replay.map((write, index) => item(write, hash, index === replay.length - 1)), preview_hash: hash, residuals, listing,
+          warnings: [...[...producers].map(([what, run]) => `${what}: produced by gbrain itself, not replayed here; ${run}`),
+            ...(replay.length ? [`This preview recorded an approval checkpoint for its replay set (preview ${hash.slice(0, 12)}), which --apply --expect reads; no page content changed.`] : [])] };
+      } catch (error) {
+        throw await previewTimeoutRefusal(engine, error, scope);
       }
-      const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-        'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
-      const hash = previewHash({ kind: 'failed-writes-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids },
-        replay: replay.map(write => ({ id: write.id, digest: write.digest, revision: write.revision })) });
-      if (replay.length) await saveApprovedSet<ApprovedWrite>(engine, { command: 'failed-writes', hash }, replay);
-      return { items: replay.map((write, index) => item(write, hash, index === replay.length - 1)), preview_hash: hash, residuals, listing,
-        warnings: [...[...producers].map(([what, run]) => `${what}: produced by gbrain itself, not replayed here; ${run}`),
-          ...(replay.length ? [`This preview recorded an approval checkpoint for its replay set (preview ${hash.slice(0, 12)}), which --apply --expect reads; no page content changed.`] : [])] };
     }
     if (!opts.expect) {
       throw new OperationError('invalid_params', 'gbrain repair failed-writes --apply replays only the set a preview printed.',

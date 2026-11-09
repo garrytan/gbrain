@@ -236,7 +236,7 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
-          "message": "mode=notify",
+          "message": "mode=notify; channel=stable (config)",
           "name": "self_upgrade_health",
           "status": "ok"
         },

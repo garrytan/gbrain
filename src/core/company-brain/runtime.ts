@@ -209,7 +209,7 @@ async function execute(engine: BrainEngine, input: CompanyBrainDestination, opts
     }
     const verified = await verifyCompanyBrain(engine, input.sourceId, plan, pack, opts.signal);
     const failures = verified.failures;
-    const [pending] = await engine.executeRaw<{ count: string }>("SELECT count(*)::text AS count FROM persistence_requests WHERE source_id=$1 AND state IN ('queued','running','recovering')", [input.sourceId]);
+    const [pending] = await engine.executeRaw<{ count: string }>("SELECT count(*)::text AS count FROM persistence_requests WHERE source_id=$1 AND state IN ('queued','deferred','running','recovering')", [input.sourceId]);
     const pendingWrites = Number(pending?.count ?? 0);
     if (failures || pendingWrites) {
       receipt = await recordSourceIngestionOutcome(engine, { ...mutation(), outcome: 'incomplete', diagnostic: failures ? 'verification_failed' : 'pending_writes', counts: { verificationFailures: failures, pendingWrites } });
@@ -228,7 +228,7 @@ async function execute(engine: BrainEngine, input: CompanyBrainDestination, opts
           `Another write touched source ${input.sourceId} while it was being verified, so completion was not recorded. Resume with ${resumeCommand(input)} to verify again.`,
           { fix: resumeFix(input, `Re-runs verification for source ${input.sourceId} against its approved commit.`) });
       }
-      const [pending] = await tx.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND state IN ('queued','running','recovering') LIMIT 1", [input.sourceId]);
+      const [pending] = await tx.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND state IN ('queued','deferred','running','recovering') LIMIT 1", [input.sourceId]);
       if (pending) {
         throw opError('pending_writes', 'A pending source write prevents verified completion.',
           `Source ${input.sourceId} has a queued or running write. Check the source's writer, let the write finish, then resume with ${resumeCommand(input)}.`,
