@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.630.0] - 2026-11-09
 
 **`gbrain git commit-push` and `scripts/brain-commit-push.sh` no longer report success when git left a named path uncommitted.** `git add` stages nothing and still exits 0 for a modified file flagged assume-unchanged or skip-worktree and for a file inside a nested Git repository, so the helper answered "nothing to commit" (or pushed the other paths) with exit 0, and the write sat uncommitted with nothing in any log. Now the other named paths are still committed (and, on a classic checkout, pushed), and the run exits 1 naming each skipped path and its reason: `writer_coordinator_required` for a page in a managed canonical worktree, which belongs to the persistence owner (save it through `put_page`), and the new `commit_paths_skipped` for anything else. The helper's own managed-checkout refusal now prints the operator contract (code, why, fix, next) instead of one line.
 
