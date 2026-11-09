@@ -108,7 +108,7 @@ add --prefix <folder>/ --readers <list>` does the same for a folder. This is the
 shared brain, and it binds the owner too: the owner reads such a page only when listed. No grant, hatch or owner
 binding relaxes it. Use it for a page that belongs to specific people in a shared brain; a single-user brain needs
 none. The page's writers set it; widening a folder rule waits for `gbrain access apply`. A credential bound to a
-member with `default` as its write source gets it on the pages it creates there (`readable_by: [member:<id>]`),
+member with `default` or a federated source as its write source gets it on the pages it creates there (`readable_by: [member:<id>]`),
 except the owner's, whose new pages stay shared (`POST /ingest` still refuses both). See
 [company brain, Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape).
 
