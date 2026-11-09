@@ -219,7 +219,7 @@ export async function gitConvergenceCheck(engine: BrainEngine, now = Date.now())
   if (diverged) {
     return { name: 'git_convergence', status, details,
       message: `Git checkouts have not converged with their upstream: ${lines.join(' | ')}. ${diverged.root} is a managed checkout that diverged from its upstream, so gbrain sources refresh refuses (refresh_diverged) until its local commits are published merged with the upstream; details.roots lists each one (sha, author, date, paths). ${remedy}; this compares with the last fetched upstream and does not fetch.${boundNote}`,
-      fix: { ask_user: true, argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', diverged.root, '--json'], consent: [], actor: 'user', requires_exclusive: false,
+      fix: { ask_user: true, argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', diverged.root, '--json'], consent: [], actor: 'user', requires_exclusive: false,
         why: `${diverged.root} holds ${diverged.ahead} commit(s) its upstream lacks while the upstream moved on; this merges the upstream into HEAD in memory, refuses on a conflict, pushes the merge and never moves the checkout, after which gbrain sources refresh fast-forwards. It publishes those commits, so the user reviews them first.`,
         user_message: `${diverged.root} has ${diverged.ahead} local commit(s) that were never pushed (newest ${diverged.unpushed_commits?.[0]?.sha.slice(0, 7) ?? 'unknown'} by ${diverged.unpushed_commits?.[0]?.author ?? 'unknown'}) while its remote moved on. Push them, merged with the remote, so gbrain can bring the checkout up to date?`,
         verify: doctorVerify('git_convergence') } };

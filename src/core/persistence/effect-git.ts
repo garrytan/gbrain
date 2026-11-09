@@ -442,7 +442,8 @@ async function effectCommit(session: GitSession, root: string, prefix: string, s
       ...(supersedes.length ? { supersedes } : {}), ...(adopted.length ? { adopted } : {}) });
     const moved = await git(session, ['update-ref', '-m', `commit: ${paragraphs[0]!.split('\n')[0]}`, 'HEAD', created, head ?? '']);
     if (moved.code === 0) {
-      await git(session, ['maintenance', 'run', '--auto', '--quiet']).catch(() => undefined);
+      const detached = await git(session, ['maintenance', 'run', '--auto', '--quiet', '--detach']).catch(() => null);
+      if (detached?.code === 129) await git(session, ['maintenance', 'run', '--auto', '--quiet']).catch(() => undefined);
       return created;
     }
     if (attempt) return null;

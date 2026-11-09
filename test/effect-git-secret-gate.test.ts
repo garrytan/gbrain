@@ -14,7 +14,7 @@
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -126,6 +126,32 @@ describe('#8896 pushGitRoot scans the commits it publishes', () => {
     expect(error.message).toContain('notes/deploy.md:1 (');
     expect(error.fix?.user_message).toContain('held');
     expect(remoteTip(c)).toBe(base);
+  }, 120_000);
+
+  test('a remote rewound past a published secret that also moved the same file refuses on the secret, never on a conflict whose resolve would publish it', async () => {
+    const c = checkout();
+    const base = remoteTip(c);
+    scriptCommit(c.root, 'notes/deploy.md', `Deploy token ${token}\n`);
+    git(c.root, 'push', '-q');
+    git(c.remote, 'update-ref', 'refs/heads/main', base);
+    const theirs = moveRemote(c, 'notes/page.md');
+    scriptCommit(c.root, 'notes/page.md', 'This machine\'s version\n');
+    const error = await withEnv(childEnv(c), () => refusal(pushGitRoot(c.root)));
+    expect(error.code).toBe('publish_secret_found');
+    expect(error.message).toContain('notes/deploy.md:1 (');
+    expect(remoteTip(c)).toBe(theirs);
+  }, 120_000);
+
+  test('a conflict the scanned publish reports hands back a resolve that still scans', async () => {
+    const c = checkout();
+    const theirs = moveRemote(c, 'notes/page.md');
+    scriptCommit(c.root, 'notes/page.md', 'This machine\'s version\n');
+    const error = await withEnv(childEnv(c), () => refusal(pushGitRoot(c.root)));
+    expect(error.code).toBe('integrate_conflict');
+    expect(error.fix?.argv).toEqual(['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', c.root,
+      '--expect-remote', theirs, '--resolve', 'notes/page.md=<ours|theirs>']);
+    expect(error.suggestion).toContain('--keep-checkout --scan-secrets --expect-remote');
+    expect(remoteTip(c)).toBe(theirs);
   }, 120_000);
 
   test('a remote without the branch (a first push): a clean history creates it', async () => {
@@ -475,5 +501,39 @@ describe('#8896 the Git effect commit is made by plumbing', () => {
     const outcome = await withEnv({ PATH, GBRAIN_HOME: join(home, 'gbrain-home') }, () => commitGitTargets(root, ['notes/a.md']));
     expect(outcome.get('notes/a.md')).toBeInstanceOf(Error);
     expect(git(root, 'rev-parse', 'HEAD').trim()).toBe(before);
+  }, 60_000);
+
+  /** A git that logs each `maintenance` call's arguments and, with `refuseDetach`, rejects --detach the way git before 2.47 does. */
+  function maintenanceGit(home: string, refuseDetach: boolean): { PATH: string; calls: () => string[] } {
+    const path = process.env.PATH ?? '', bin = join(home, 'maint-bin'), log = join(home, 'maintenance.log');
+    mkdirSync(bin);
+    const refuse = refuseDetach ? `; case " $* " in *" --detach "*) echo 'error: unknown option detach' >&2; exit 129;; esac` : '';
+    writeFileSync(join(bin, 'git'), ['#!/bin/sh',
+      `case " $* " in *" maintenance "*) echo "$*" >> '${log}'${refuse};; esac`,
+      `PATH='${path}' exec '${Bun.which('git')!}' "$@"`, ''].join('\n'), { mode: 0o755 });
+    const calls = () => { try { return readFileSync(log, 'utf8').trim().split('\n').map(line => line.slice(line.indexOf('maintenance'))); } catch { return []; } };
+    return { PATH: `${bin}:${path}`, calls };
+  }
+
+  test('the effect commit runs auto maintenance detached, so a repack never runs under the writer lock', async () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-8896-'))); dirs.push(home);
+    const root = join(home, 'brain');
+    repo(root);
+    writeFileSync(join(root, 'notes', 'a.md'), 'After\n');
+    const shim = maintenanceGit(home, false);
+    const outcome = await withEnv({ PATH: shim.PATH, GBRAIN_HOME: join(home, 'gbrain-home') }, () => commitGitTargets(root, ['notes/a.md']));
+    expect(outcome.get('notes/a.md')).toEqual({ git: 'committed' });
+    expect(shim.calls()).toEqual(['maintenance run --auto --quiet --detach']);
+  }, 60_000);
+
+  test('on a git without maintenance --detach the effect commit still runs auto maintenance', async () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-8896-'))); dirs.push(home);
+    const root = join(home, 'brain');
+    repo(root);
+    writeFileSync(join(root, 'notes', 'a.md'), 'After\n');
+    const shim = maintenanceGit(home, true);
+    const outcome = await withEnv({ PATH: shim.PATH, GBRAIN_HOME: join(home, 'gbrain-home') }, () => commitGitTargets(root, ['notes/a.md']));
+    expect(outcome.get('notes/a.md')).toEqual({ git: 'committed' });
+    expect(shim.calls()).toEqual(['maintenance run --auto --quiet --detach', 'maintenance run --auto --quiet']);
   }, 60_000);
 });

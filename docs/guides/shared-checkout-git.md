@@ -290,7 +290,7 @@ commits come in. Four rules keep that checkout able to move:
    `git log --format='%h %an %ad %s' @{upstream}..HEAD` lists the stray
    commits. Fix that writer first, then, after the user agrees, publish the
    stray commits merged with the upstream
-   (`gbrain git commit-push --push-only --keep-checkout --path <checkout>`)
+   (`gbrain git commit-push --push-only --keep-checkout --scan-secrets --path <checkout>`)
    and retry the refresh, as the [refusal](write-refusals.md#refresh_diverged)
    says. Never force the checkout. When local commits there are expected
    (automations committing alongside a sibling checkout that pushes the same
@@ -328,6 +328,9 @@ untouched and nothing is pushed. The error names the files, the local and
 remote commits (in its `detail`), and a question to relay to the user. Until it
 is resolved, every later commit-push from this checkout hits the same
 conflict, even for other files, because the unpushed commit is still waiting.
+A conflict reported by a scanned publish (a Git effect's push, a refresh
+publish) comes only after the secret scan of what the local commits add to the
+remote's current tip passed, and its resolve command keeps `--scan-secrets`.
 
 One kind of conflict settles itself on push. When the remote's version of a
 file is one this checkout already had at that path and later replaced with

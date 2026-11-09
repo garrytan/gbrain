@@ -62,7 +62,7 @@ function gitPushFix(hold: Omit<GitPushHold, 'fix'>): Action {
   const held = hold.retrying + hold.parked;
   if (hold.conflict && hold.root) return {
     ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
-    argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', hold.root, '--expect-remote', hold.conflict.remote,
+    argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', hold.root, '--expect-remote', hold.conflict.remote,
       ...hold.conflict.paths.flatMap(path => ['--resolve', `${path}=<ours|theirs>`])],
     why: 'Choosing which version of a file wins discards the other side; ask the user before resolving.',
     user_message: `This machine and the remote both changed ${hold.conflict.paths.join(', ')} in ${hold.root}, so ${held} Git backup(s) of page writes in source ${hold.source_id} are held (nothing is lost; the database has every write). Which version should win: this machine's (ours) or the remote's (theirs)? Afterwards run gbrain sources writer retry-effects ${hold.source_id} --parked-pushes, then gbrain sources refresh ${hold.source_id}.`,

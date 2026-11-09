@@ -141,6 +141,7 @@ interface Ctx {
   mergeRef: string;
   trackingRef: string;
   keepCheckout?: boolean;
+  scanSecrets?: boolean;
 }
 
 interface GitRun { code: number; stdout: string; stderr: string }
@@ -834,13 +835,13 @@ function conflictError(ctx: Ctx, ours: string, theirs: string, merged: MergeTree
   const compare = `Compare the two versions (this machine's: git show ${local}:<path>; the remote's: git show ${remote}:<path>)`;
   const fix = merged.structural.length
     ? `${preface}The local commit ${local} stays local and the checkout is unchanged. ${merged.structural.map(shellWord).join(', ')} ${merged.structural.length === 1 ? 'is' : 'are'} a file/directory or rename conflict that a per-file choice cannot resolve. ${compare}, then move or remove the local path in a new commit (gbrain git commit-push -m "<msg>" -- <paths>) and rerun gbrain git commit-push --push-only. See docs/guides/shared-checkout-git.md#conflicts.`
-    : `${preface}The local commit ${local} stays local and the checkout is unchanged. ${compare}, then run gbrain git commit-push --push-only${ctx.keepCheckout ? ' --keep-checkout' : ''} --expect-remote ${remote} ${paths.map(p => `--resolve ${shellWord(p)}=ours|theirs`).join(' ')} (ours = this machine's version, theirs = the remote's, or =file:<path> with a merged copy). Until then every push from this checkout reports this conflict. See docs/guides/shared-checkout-git.md#conflicts.`;
+    : `${preface}The local commit ${local} stays local and the checkout is unchanged. ${compare}, then run gbrain git commit-push --push-only${ctx.keepCheckout ? ' --keep-checkout' : ''}${ctx.scanSecrets ? ' --scan-secrets' : ''} --expect-remote ${remote} ${paths.map(p => `--resolve ${shellWord(p)}=ours|theirs`).join(' ')} (ours = this machine's version, theirs = the remote's, or =file:<path> with a merged copy). Until then every push from this checkout reports this conflict. See docs/guides/shared-checkout-git.md#conflicts.`;
   return opError('integrate_conflict', `Local and remote commits both changed ${paths.length} file(s) on ${ctx.branch}; nothing was merged.`, fix,
     { detail: JSON.stringify({ local: ours, remote: theirs, paths, structural: merged.structural, ...(merged.superseded?.length ? { superseded: merged.superseded } : {}) }),
       fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
         why: 'Choosing which version of a file wins discards the other side; ask the user before resolving.',
         user_message: `Both this machine and the remote changed ${paths.join(', ')}. Which version should win, or should they be merged by hand?`,
-        ...(merged.structural.length ? {} : { argv: ['gbrain', 'git', 'commit-push', '--push-only', ...(ctx.keepCheckout ? ['--keep-checkout'] : []), '--path', ctx.root, '--expect-remote', theirs, ...paths.flatMap(p => ['--resolve', `${p}=<ours|theirs>`])] }),
+        ...(merged.structural.length ? {} : { argv: ['gbrain', 'git', 'commit-push', '--push-only', ...(ctx.keepCheckout ? ['--keep-checkout'] : []), ...(ctx.scanSecrets ? ['--scan-secrets'] : []), '--path', ctx.root, '--expect-remote', theirs, ...paths.flatMap(p => ['--resolve', `${p}=<ours|theirs>`])] }),
         docs: 'docs/guides/shared-checkout-git.md#conflicts' } });
 }
 
@@ -970,6 +971,7 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
         continue;
       }
     }
+    if (scanSecrets) assertNoSecretsInRange({ ...ctx, trackingRef: remoteTip }, candidate);
     const raw = integrate(ctx.root, candidate, remoteTip);
     const kept = supersededPaths(ctx.root, candidate, remoteTip, raw, resolutions);
     const merged = kept.length
@@ -1179,7 +1181,7 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
     throw opError('commit_paths_invalid', 'A commit message is required.', 'Pass -m "<message>".');
   }
   const upstream = resolveCtx(root);
-  const ctx = { ...withBranch(upstream, opts.branch), ...(opts.keepCheckout ? { keepCheckout: true } : {}) };
+  const ctx = { ...withBranch(upstream, opts.branch), ...(opts.keepCheckout ? { keepCheckout: true } : {}), ...(opts.scanSecrets ? { scanSecrets: true } : {}) };
   const elsewhere = ctx.mergeRef !== upstream.mergeRef;
   assertNoOperationInProgress(root);
 
