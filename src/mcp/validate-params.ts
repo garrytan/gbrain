@@ -195,6 +195,9 @@ const PARAM_ALIAS_HINTS: Readonly<Record<string, Readonly<Record<string, string>
   remember: { facts: 'items', text: 'fact' },
 };
 
+/** GBRA-431: source-scope spellings edit distance ties or misses (`sources` is as near `source_id` as `source_ids`). */
+const SOURCE_PARAM_ALIASES: Readonly<Record<string, string>> = { source: 'source_id', sourceid: 'source_id', sources: 'source_ids', sourceids: 'source_ids' };
+
 /**
  * `_meta.warnings` entry shape (amendment 13) — documented in
  * docs/protocol/MCP_META_CHANNELS.md. `suggestion` is the nearest DECLARED
@@ -226,11 +229,27 @@ export function findUnknownParams(op: Operation, params: Record<string, unknown>
   const warnings: UnknownParamWarning[] = [];
   for (const key of Object.keys(params)) {
     if (declaredSet.has(key) || UNKNOWN_PARAM_ALLOWLIST.has(key)) continue;
-    const alias = aliases?.[key];
+    const alias = aliases?.[key] ?? SOURCE_PARAM_ALIASES[key.toLowerCase().replace(/[^a-z]/g, '')];
     const nearest = alias && declaredSet.has(alias) ? alias : suggestNearest(key, declared);
     warnings.push({ code: 'unknown_param', param: key, ...(nearest ? { suggestion: nearest } : {}) });
   }
   return warnings;
+}
+
+/** A parameter name that narrows a read's result: a source scope or a type, tag, entity, date, trust or visibility filter. */
+const NARROWING_PARAM_RE = /^(sources?(id|ids|name|names)?|types?|kinds?|tags?|entity|entities|since|until|after|before|mintrust|visibility)$/;
+
+function isNarrowingName(name: string): boolean {
+  return NARROWING_PARAM_RE.test(name.toLowerCase().replace(/[^a-z]/g, ''));
+}
+
+/**
+ * GBRA-431: the unknown keys a read must refuse whatever `mcp.strict_params` says, because ignoring them answers
+ * unnarrowed: a key whose own name, or whose nearest declared param, is a scope or filter (`source` for
+ * `source_id`, `sources` for `source_ids`, `type` for `types`). Other unknown keys keep the warn grace period.
+ */
+export function narrowingUnknownParams(warnings: readonly UnknownParamWarning[]): UnknownParamWarning[] {
+  return warnings.filter(w => isNarrowingName(w.param) || (w.suggestion !== undefined && isNarrowingName(w.suggestion)));
 }
 
 /**

@@ -27,6 +27,7 @@ import {
   resetStrictParamsModeCache,
   parseStrictParamsMode,
   UNKNOWN_PARAM_ALLOWLIST,
+  narrowingUnknownParams,
 } from '../src/mcp/validate-params.ts';
 import { operations, operationsByName } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -480,5 +481,58 @@ describe('write operations reject unknown parameters even in warn mode (#5970)',
     expect(writes).toContain('put_page');
     expect(writes).toContain('remember');
     expect(writes).not.toContain('search');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GBRA-431 — a read rejects a misspelled scope or filter in every mode
+// ---------------------------------------------------------------------------
+
+describe('a read rejects an unknown scope or filter parameter even in warn mode (GBRA-431)', () => {
+  const ops = ['search', 'query', 'list_pages'].map(name => operations.find(o => o.name === name)!);
+
+  async function withCountedHandlers(fn: (calls: () => number) => Promise<void>) {
+    const originals = ops.map(op => op.handler);
+    let handlerCalls = 0;
+    for (const op of ops) op.handler = async () => { handlerCalls += 1; return { results: [] }; };
+    try { await fn(() => handlerCalls); } finally { ops.forEach((op, i) => { op.handler = originals[i]; }); }
+  }
+
+  test('a misspelled source or type filter answers invalid_params naming the declared param, before any read runs', async () => {
+    await withCountedHandlers(async calls => {
+      for (const [op, params, param, suggestion] of [
+        ['search', { query: 'roadmap', source: 'source-a' }, 'source', 'source_id'],
+        ['search', { query: 'roadmap', sources: ['source-a'] }, 'sources', 'source_ids'],
+        ['search', { query: 'roadmap', sourceId: 'source-a' }, 'sourceId', 'source_id'],
+        ['query', { query: 'roadmap', source: 'source-a' }, 'source', 'source_id'],
+        ['query', { query: 'roadmap', type: 'meeting' }, 'type', 'types'],
+        ['list_pages', { source: 'source-a' }, 'source', 'source_id'],
+      ] as const) {
+        for (const mode of ['warn', null] as const) {
+          const out = await dispatchToolCall(stubEngine(mode), op, { ...params }, DISPATCH_OPTS);
+          const env = body(out);
+          expect({ op, param, mode, isError: out.isError, code: env.code, suggestion: env.suggestion })
+            .toEqual({ op, param, mode, isError: true, code: 'invalid_params', suggestion: expect.stringContaining(`Unknown parameter "${param}" — did you mean "${suggestion}"?`) });
+          expect(env.message).not.toContain(param + '"');
+        }
+      }
+      expect(calls()).toBe(0);
+    });
+  });
+
+  test('an unknown parameter that narrows nothing keeps the warn grace period', async () => {
+    await withCountedHandlers(async calls => {
+      const out = await dispatchToolCall(stubEngine('warn'), 'search', { query: 'roadmap', limt: 3 }, DISPATCH_OPTS);
+      expect(out.isError ?? false).toBe(false);
+      expect(calls()).toBe(1);
+    });
+  });
+
+  test('narrowingUnknownParams picks scope and filter names, by the key or by its nearest declared param', () => {
+    expect(narrowingUnknownParams([
+      { code: 'unknown_param', param: 'source' }, { code: 'unknown_param', param: 'Source-IDs' },
+      { code: 'unknown_param', param: 'srcid', suggestion: 'source_id' }, { code: 'unknown_param', param: 'tag' },
+      { code: 'unknown_param', param: 'limt', suggestion: 'limit' }, { code: 'unknown_param', param: 'partal', suggestion: 'partial' },
+    ]).map(w => w.param)).toEqual(['source', 'Source-IDs', 'srcid', 'tag']);
   });
 });
