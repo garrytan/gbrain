@@ -9,10 +9,17 @@
 import type { Operation } from './contract.ts';
 import { clampSearchLimit } from '../engine.ts';
 import { linkReadScopeOpts } from './context.ts';
-import { remoteHiddenPages } from '../persistence/page-visibility.ts';
+import { remoteReadablePages } from '../persistence/page-visibility.ts';
 
-/** An absolute POSIX, home-relative or Windows path token in a source_ref. */
-const HOST_PATH_RE = /(^|\s)(?:~?\/|[A-Za-z]:[\\/])\S*/g;
+/** A file URL or an absolute, home-relative, relative or Windows path token in a free-form source_ref. */
+const HOST_PATH_RE = /(^|\s)(?:file:\/\/|\.{1,2}[\\/]|~?\/|[A-Za-z]:[\\/])\S*/g;
+
+/** A source_ref as a remote reader sees it: a sync row keeps only its commit, an import row names no directory. */
+function remoteSourceRef(sourceType: string, ref: string): string {
+  if (sourceType === 'git_sync') return ref.replace(/^.*?( @ [0-9a-f]+)?$/s, (_m, commit: string | undefined) => `<local path>${commit ?? ''}`);
+  if (sourceType === 'directory') return '<local path>';
+  return ref.replace(HOST_PATH_RE, '$1<local path>');
+}
 
 // --- Ingest Log ---
 
@@ -70,11 +77,11 @@ const get_ingest_log: Operation = {
     if (ctx.remote === false) return rows;
     // GBRA-431: a remote reader sees no slug of a page it cannot read, no row about such pages alone (its summary is
     // about them) and no host filesystem path (a sync row's source_ref names the brain checkout).
-    const hidden = await remoteHiddenPages(ctx.engine, ctx.remote, rows.flatMap(r => (r.pages_updated ?? []).map(slug => ({ source_id: r.source_id, slug }))));
+    const readable = await remoteReadablePages(ctx.engine, rows.flatMap(r => (r.pages_updated ?? []).map(slug => ({ source_id: r.source_id, slug }))));
     return rows.flatMap(r => {
       const pages = r.pages_updated ?? [];
-      const visible = pages.filter(slug => !hidden.has(`${r.source_id}\u0000${slug}`));
-      return pages.length > 0 && visible.length === 0 ? [] : [{ ...r, source_ref: r.source_ref.replace(HOST_PATH_RE, '$1<local path>'), pages_updated: visible }];
+      const visible = pages.filter(slug => readable.has(`${r.source_id}\u0000${slug}`));
+      return pages.length > 0 && visible.length === 0 ? [] : [{ ...r, source_ref: remoteSourceRef(r.source_type, r.source_ref), pages_updated: visible }];
     });
   },
   scope: 'read',

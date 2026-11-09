@@ -105,15 +105,16 @@ export async function remoteTargetHidden(engine: BrainEngine, remote: boolean | 
 }
 
 /**
- * GBRA-431: the (source_id, slug) pairs among `pages` that have a page row (soft-deleted rows included, fail closed)
- * the current remote caller cannot read, keyed `${source_id}\u0000${slug}`. Empty for a trusted local caller.
+ * GBRA-431: the (source_id, slug) pairs among `pages` that name a live page the current remote caller can read, keyed
+ * `${source_id}\u0000${slug}`. A slug with no live page row (never written, deleted, purged or renamed) is not
+ * readable, so a caller of this keeps only what it returns (fail closed). Call for remote callers only.
  */
-export async function remoteHiddenPages(engine: BrainEngine, remote: boolean | undefined, pages: readonly { source_id: string; slug: string }[]): Promise<Set<string>> {
-  if (remote === false || pages.length === 0) return new Set();
+export async function remoteReadablePages(engine: BrainEngine, pages: readonly { source_id: string; slug: string }[]): Promise<Set<string>> {
+  if (pages.length === 0) return new Set();
   const policy = await remoteReadPolicySql(engine, 'p');
   const rows = await engine.executeRaw<{ source_id: string; slug: string }>(`SELECT p.source_id, p.slug FROM pages p
     JOIN unnest($1::text[], $2::text[]) AS t(source_id, slug) ON p.source_id = t.source_id AND p.slug = t.slug
-    WHERE NOT ${policy}`, [pages.map(p => p.source_id), pages.map(p => p.slug)]);
+    WHERE p.deleted_at IS NULL AND ${policy}`, [pages.map(p => p.source_id), pages.map(p => p.slug)]);
   return new Set(rows.map(r => `${r.source_id}\u0000${r.slug}`));
 }
 

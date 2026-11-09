@@ -34,7 +34,7 @@ import { isJunkEntityName } from './entity-name-quality.ts';
 import { followRetirement } from './entities/resolve.ts';
 import { maintenanceTransaction } from './persistence/attribution.ts';
 import { managedPersistenceEnabled } from './persistence/ownership.ts';
-import { pageNotVisibleError, remoteTargetHidden } from './persistence/page-visibility.ts';
+import { remoteTargetHidden } from './persistence/page-visibility.ts';
 import { resolveExcludePrivatePages } from './search/private-visibility.ts';
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
 import { deriveTrust, derivedMaintenanceTransaction, lowerDerivedPage, lowerDerivedPageIn, lowerToDerivedTier } from './trust/taint.ts';
@@ -88,7 +88,7 @@ export interface EnrichmentResult {
    * Why nothing was written: the page is retired and its superseded_by / merged_into chain has no live target (B-9),
    * or both this entity's slug and its hash-tagged slug hold pages that name another entity.
    */
-  skipped_reason?: 'retired_page_unfollowable' | 'entity_slug_taken';
+  skipped_reason?: 'retired_page_unfollowable' | 'entity_slug_taken' | 'page_not_found';
   tier: 1 | 2 | 3;
   backlinkCreated: boolean;
   timelineAdded: boolean;
@@ -297,9 +297,12 @@ async function planEntity(
   let action: 'created' | 'updated' | 'skipped';
 
   if (existingPage) {
-    // GBRA-431: a remote caller never writes onto an entity page it cannot read; it gets the refusal a managed brain's
-    // timeline write gives it.
-    if (ctx && await remoteTargetHidden(engine, ctx.remote, sourceId, slug)) throw pageNotVisibleError();
+    // GBRA-431: a remote caller never writes onto an entity page it cannot read; that entity is skipped as not found
+    // and the rest of the batch still runs.
+    if (ctx && await remoteTargetHidden(engine, ctx.remote, sourceId, slug)) {
+      return { slug, action: 'skipped', skipped_reason: 'page_not_found', tier, backlinkCreated: false, timelineAdded: false,
+        mentionCount, mentionSources, suggestedTier, tierEscalated };
+    }
     // UPDATE path — add timeline entry
     action = 'updated';
   } else {

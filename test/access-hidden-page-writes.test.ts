@@ -141,7 +141,7 @@ for (const kind of testBackends()) {
       expect(await state(MISSING)).toEqual({ raw: null, out_links: 0, in_links: 0, facts: 0, timeline: 0 });
     }, 240_000);
 
-    test('extract_entities treats a source page its caller cannot read as a missing one, and writes onto no entity page it cannot read', async () => {
+    test('extract_entities treats a source page its caller cannot read as a missing one, and skips an entity page it cannot read', async () => {
       const text = 'Carol Example met with Dana Example.';
       const shape = (out: Call) => ({ isError: out.isError, entities: (out.json.entities as Array<Record<string, unknown>> | undefined)?.map(e => ({ slug: e.slug, action: e.action, backlinkCreated: e.backlinkCreated, timelineAdded: e.timelineAdded })) });
       for (const [who, slug] of [['bob', RESTRICTED], ['writer', PRIVATE]] as const) {
@@ -154,8 +154,11 @@ for (const kind of testBackends()) {
       }
       const restricted = await state(RESTRICTED);
       for (const who of ['bob', 'writer']) {
-        const out = await call(who, 'extract_entities', { text: 'Vesper Example joined the planning call.', source_slug: OPEN });
-        expect({ who, isError: out.isError, code: out.json.code }).toEqual({ who, isError: true, code: 'page_not_found' });
+        const out = await call(who, 'extract_entities', { text: 'Vesper Example joined Erin Example on the planning call.', source_slug: OPEN });
+        const entities = out.json.entities as Array<{ slug: string; action: string; skipped_reason?: string; backlinkCreated: boolean }>;
+        expect({ who, isError: out.isError, hidden: entities.find(e => e.slug === RESTRICTED) })
+          .toEqual({ who, isError: false, hidden: expect.objectContaining({ action: 'skipped', skipped_reason: 'page_not_found', backlinkCreated: false }) });
+        expect(entities.some(e => e.slug !== RESTRICTED && e.action !== 'skipped')).toBe(true);
       }
       expect(await state(RESTRICTED)).toEqual(restricted);
       const alice = await call('alice', 'extract_entities', { text: 'Vesper Example joined the planning call.', source_slug: OPEN });
@@ -171,10 +174,16 @@ for (const kind of testBackends()) {
     test('get_ingest_log names no page a remote reader cannot read and no host path; local callers see the row whole', async () => {
       await engine.logIngest({ source_id: SRC, source_type: 'git_sync', source_ref: '/srv/brains/acme-example @ abcdef12', pages_updated: [OPEN, RESTRICTED, PRIVATE, MISSING], summary: 'Sync: +4 ~0 -0' });
       await engine.logIngest({ source_id: SRC, source_type: 'fixture', source_ref: 'ref-hidden-only', pages_updated: [RESTRICTED, PRIVATE], summary: 'Ingested canaryhphidden' });
+      await engine.logIngest({ source_id: SRC, source_type: 'git_sync', source_ref: '/home/alice-example/Mobile Documents/brain @ 0123abcd', pages_updated: [OPEN], summary: 'Sync: +1 ~0 -0' });
+      await engine.logIngest({ source_id: SRC, source_type: 'directory', source_ref: './brain-example', pages_updated: [OPEN], summary: 'Import' });
       const remote = await call('reader', 'get_ingest_log', { limit: 5 });
       expect(remote.isError).toBe(false);
       const row = (JSON.parse(remote.text.split('\n_META_HOT')[0]) as Array<{ source_ref: string; pages_updated: string[] }>).find(r => r.source_ref.endsWith('@ abcdef12'))!;
-      expect({ ref: row.source_ref, pages: row.pages_updated }).toEqual({ ref: '<local path> @ abcdef12', pages: [OPEN, MISSING] });
+      expect({ ref: row.source_ref, pages: row.pages_updated }).toEqual({ ref: '<local path> @ abcdef12', pages: [OPEN] });
+      const refs = (JSON.parse(remote.text.split('\n_META_HOT')[0]) as Array<{ source_ref: string }>).map(r => r.source_ref);
+      expect(refs).toEqual(expect.arrayContaining(['<local path> @ 0123abcd', '<local path>']));
+      expect(remote.text).not.toContain('Mobile Documents');
+      expect(remote.text).not.toContain('brain-example');
       expect(remote.text).not.toContain('canaryhphidden');
       expect((await call('alice', 'get_ingest_log', { limit: 5 })).text).toContain(RESTRICTED);
       const whole = await local('get_ingest_log', { limit: 5 });
