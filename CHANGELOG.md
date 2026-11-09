@@ -16,10 +16,13 @@ identifiers and attribution are available in the pre-removal Git revision
 
 **A source with automatic sync off now walks forward through its pages on a database whose DateStyle is not ISO.** The per-source maintenance window saved its cursor in the session's date style. Under a day-first style such as `German, DMY` or `SQL, DMY`, a cursor dated after the 12th of a month was not a date the cycle handler could read, so it dropped the cursor and the next cycle started again from the source's oldest pages; a source over 2,000 pages never got past its first window. The cursor is now always written as a UTC ISO timestamp with microseconds. A source holding a cursor in the old form may start from its oldest pages one last time; from then on it advances. Reported by @javieraldape (#8771).
 
+**`gbrain dream --drain` stops as no progress when its batches only skip items the backlog keeps counting.** The drain checked for no progress only after a batch that extracted nothing and skipped nothing. A page the phase skips on every batch while the backlog still counts it kept that check from ever running, so the drain ran all 1,000 batches, held the cycle lock for minutes and ended `max_batches` with exit 11, which tells the caller to rerun a stop a rerun cannot clear. A batch that extracts nothing now always rechecks the backlog: when it did not shrink, the drain stops `no_progress` (`atom_drain_no_progress`, exit 1), and skips that do shrink it keep draining. Reported by @h6y3 (#8445).
+
 ### Itemized changes
 
 - `src/core/cycle/unindexed-files.ts`: `details.complete` also requires `errors.length === 0`. Test: `test/unindexed-files.test.ts` (a source whose `.git/HEAD` is unreadable: phase `warn`, one error, `complete: false`).
 - `src/core/cycle/source-window.ts`: the listing instant and the last page's `updated_at` are formatted with `to_char(... AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`. Test: `test/sync-disabled-cycle-window.test.ts` (the real queued handler under `German, DMY` advances window by window; `German`, `SQL` and `Postgres` styles under a +05:45 time zone give ISO UTC cursors with microseconds and the same windows), now also run on Postgres by `test/e2e/sync-disabled-cycle-window-postgres.test.ts`.
+- `src/core/cycle/extract-atoms-drain.ts`: the no-progress recount runs after every batch with `extracted === 0`, not only when `skipped` is also 0. Test: `test/extract-atoms-drain.test.ts` (a skip-only batch over a flat backlog stops `no_progress` after one batch; skip-only batches that shrink the backlog drain).
 
 ## [0.60.620.0] - 2026-11-09
 
