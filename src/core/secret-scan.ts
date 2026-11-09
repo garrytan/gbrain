@@ -200,12 +200,17 @@ const PROVIDER_KEYS_SINCE = '0.60.502.0';
  * in every lane. Each rule gets a twin anchored here, compiled right after it
  * under the same name (attribution order unchanged) and run only on lines
  * holding such an escape, so every other line runs the old pattern list. A
- * backslash or `%` that does not start an escape is not a boundary.
+ * backslash or `%` that does not start an escape is not a boundary. #8266 adds
+ * the forms that also end on a word character: a terminal colour code (raw ESC
+ * or its escaped spellings, parameters bounded at 32), `\\xNN`, `\\UNNNNNNNN`
+ * and quoted-printable `=3D`. A bearer value keeps a JSON-escaped slash (`\\/`)
+ * as one token character, so the tail after it is redacted too.
  */
-const ESCAPE_BOUNDARY = '(?:\\\\(?:[bfnrt]|u[0-9A-Fa-f]{4})|%[0-9A-Fa-f]{2})';
-const ESCAPE_IN_LINE_RE = /\\[bfnrtu]|%[0-9A-Fa-f]{2}/;
+const SGR_BOUNDARY = '(?:\\x1b|\\\\(?:x1[bB]|u001[bB]|033|e))\\[[0-9;]{0,32}m';
+const ESCAPE_BOUNDARY = `(?:${SGR_BOUNDARY}|\\\\(?:[bfnrt]|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})|%[0-9A-Fa-f]{2}|=3[dD])`;
+const ESCAPE_IN_LINE_RE = /\\[bfnrtuxUe0]|%[0-9A-Fa-f]{2}|=3[dD]|\x1b\[/;
 const JWT_VALUE = '(eyJ[A-Za-z0-9_-]{8,4096}\\.[A-Za-z0-9_-]{8,4096}\\.[A-Za-z0-9_-]{8,4096})';
-const BEARER_ANCHOR = '[Bb](?:earer|EARER)\\s+)([A-Za-z0-9._~+/=-]{20,})';
+const BEARER_ANCHOR = '[Bb](?:earer|EARER)\\s+)((?:[A-Za-z0-9._~+/=-]|\\\\/){20,})';
 const BASIC_HEADER = 'authorization\\s{0,16}:\\s{0,16}basic\\s{1,16})([A-Za-z0-9+/=]{4,2048})(?![A-Za-z0-9+/=])';
 const BASIC_BARE = 'basic\\s{1,16})([A-Za-z0-9+/=]{16,2048})(?![A-Za-z0-9+/=])';
 
