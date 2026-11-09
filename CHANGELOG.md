@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.621.0] - 2026-11-09
 
 **The Git effects of page writes no longer publish a script's secret.** A script that commits into a managed checkout with plain `git commit` never passes the write path's secret scan. The refresh publish refused such a commit with `publish_secret_found`, but the next page write's Git effect pushed it anyway: its plain push published every unpublished commit unscanned, and when the remote had moved its keep-checkout publish ran without the scan. Both paths now scan the exact commits they push. A value that looks like a secret, added text too large to scan, a commit that changes `.gbrain-scan-allow` or a `.gitattributes` holds the effects with `publish_secret_found`; commits the scan cannot read in full, or a remote without the branch, hold them with `publish_scan_unreadable`. Nothing is pushed, and the page writes stay safe in the database and in local commits. `gbrain sync status` and doctor name the user's choice: remove the value from those commits, or allowlist a false positive by fingerprint. Then `gbrain sources writer retry-effects <source> --parked-pushes` runs the effects that parked. Every scanned push is also leased on the remote tip it scanned against. Before, a remote rewound past a pushed secret (an admin removing it with a force-push) left a stale tracking ref that hid the commit from the scan, and the next fast-forward put it back; now the scan runs against the remote's real tip.
 
