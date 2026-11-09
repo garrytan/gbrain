@@ -1135,7 +1135,7 @@ async function embedPage(
   let chunks = page.text_projection_revision === snapshot.revision ? origin.chunks : [];
   if (chunks.length === 0) {
     // #4530: the active embedding model's per-input token limit; #5575 ENG-1: the page's fence overlay.
-    const inputs = await prepareProseChunks(page, origin.maxChunkTokens, origin.fenceOverlay);
+    const { chunks: inputs, chunkerVersion } = await prepareProseChunks(page, origin.maxChunkTokens, origin.fenceOverlay, { timelineBullets: origin.timelineBullets });
 
     if (dryRun) {
       // Count what chunking WOULD produce, without writing.
@@ -1153,7 +1153,7 @@ async function embedPage(
           const prepared = attempt++ === 0 ? origin : await readProjectionSnapshot(engine, slug, page.source_id, { allowUnsealed: true, requireLiveSource: true });
           if (!prepared || prepared.snapshot.revision !== snapshot.revision || prepared.snapshot.page.id !== page.id
             || prepared.snapshot.sourceIncarnation !== snapshot.sourceIncarnation) throw new PageRevisionConflictError(snapshot.revision, prepared?.snapshot.revision ?? null);
-          if (prepared.snapshot.page.text_projection_revision !== snapshot.revision || !prepared.chunks.length) await installPageProjection(engine, prepared, inputs, { seal: true });
+          if (prepared.snapshot.page.text_projection_revision !== snapshot.revision || !prepared.chunks.length) await installPageProjection(engine, prepared, inputs, { seal: true, chunkerVersion });
         });
       } catch (error) {
         if (!(error instanceof PageRevisionConflictError)) throw error;
@@ -1577,8 +1577,8 @@ async function healChunklessPages(
   let budgetExceeded = false;
 
   // #4530: the active embedding model's per-input token limit; #5575 ENG-1: the page's fence overlay.
-  const buildInputs = (page: { compiled_truth: string; timeline: string }, maxTokens = resolveMaxChunkTokens(), overlay?: FenceChunkOverlay) =>
-    prepareProseChunks(page, maxTokens, overlay);
+  const buildInputs = (page: { compiled_truth: string; timeline: string }, maxTokens = resolveMaxChunkTokens(), overlay?: FenceChunkOverlay, timelineBullets = false) =>
+    prepareProseChunks(page, maxTokens, overlay, { timelineBullets });
   // BUDGET_MS === null means catch-up: no wall-clock cap on this sweep,
   // mirroring the main stale loop's own --catch-up handling below.
   const overBudget = (): boolean => BUDGET_MS != null && Date.now() - startedAt > BUDGET_MS;
@@ -1604,7 +1604,7 @@ async function healChunklessPages(
           // dryRun never writes, so there's no live-refetch race to close —
           // chunk the listed snapshot directly (matches embedPage's own
           // dry-run, which chunks whatever getPage returned at call time).
-          const inputs = await buildInputs(page);
+          const { chunks: inputs } = await buildInputs(page);
           // Whitespace-only content (SQL prefilter is `<> ''`, not
           // trim-aware) chunks to nothing — matches embedPage's contract.
           if (inputs.length === 0) continue;
@@ -1617,12 +1617,12 @@ async function healChunklessPages(
 
         const prepared = await observed(activePacer, () => readProjectionSnapshot(engine, page.slug, page.source_id, { allowUnsealed: true, requireLiveSource: true }));
         if (!prepared || prepared.chunks.length > 0) continue;
-        const inputs = await buildInputs(prepared.snapshot.page, prepared.maxChunkTokens, prepared.fenceOverlay);
+        const { chunks: inputs, chunkerVersion } = await buildInputs(prepared.snapshot.page, prepared.maxChunkTokens, prepared.fenceOverlay, prepared.timelineBullets);
         if (inputs.length === 0) continue;
 
         await observed(activePacer, () => engine.transaction(async tx => {
           await assertOwned?.(tx);
-          await installPageProjection(tx, prepared, inputs, { seal: true });
+          await installPageProjection(tx, prepared, inputs, { seal: true, chunkerVersion });
         }));
         pagesHealed++;
         try {

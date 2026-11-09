@@ -276,6 +276,7 @@ src/core/fence-repair/import-step.ts	applyImportFences	field	STREAM
 src/core/fence-repair/import-step.ts	hiddenFenceRows	field	STREAM	
 src/core/fence-repair/import-step.ts	resolveImportFences	field	STREAM	
 src/core/fence-repair/import-step.ts	settleImportFences	field	STREAM	
+src/core/fence-repair/import-step.ts	settleFenceRegion	field	NONE	the FencePage of one streamed fence region and its Tier 1 step, never a stored page
 src/core/fence-repair/import-step.ts	storedPageStep	field	STREAM	
 src/core/fence-repair/normalize.ts	withSections	field	STREAM	
 src/core/fence-repair/page-checks.ts	sectionsOf	field	STREAM	
@@ -335,7 +336,7 @@ src/core/link-temporal-evidence.ts	deriveTemporalEvidence	field	STREAM
 src/core/links-fence.ts	linksFenceSection	field	SEGW	callers pass a page read whole (wholeBodySnapshot) or skip a segmented body they did not read
 src/core/links-fence.ts	readPageLinksFence	field	SEGW	callers pass a page read whole (wholeBodySnapshot) or skip a segmented body they did not read
 src/core/markdown-chunks.ts	overlaidChunks	field	STREAM	
-src/core/markdown-chunks.ts	prepareFenceAwareMarkdownChunks	call:prepareMarkdownChunks	STREAM	
+src/core/markdown-chunks.ts	prepareFenceAwareMarkdownChunks	call:prepareMarkdownChunkSet	STREAM	
 src/core/markdown-chunks.ts	prepareFenceAwareMarkdownChunks	field	STREAM	
 src/core/markdown.ts	parseMarkdown	field	STREAM	
 src/core/markdown.ts	serializePageToMarkdown	call:serializeMarkdown	SEGW	
@@ -409,7 +410,7 @@ src/core/page-state/materialize.ts	materializePageSnapshot	call:contentHash	META
 src/core/page-state/materialize.ts	materializePageSnapshot	field	SEGW	assertInlineBody before the UPDATE
 src/core/page-state/materialize.ts	materializePageSnapshot	sql	SEGW	assertInlineBody before the UPDATE
 src/core/page-state/projection-schema.ts	PAGE_SEARCH_VECTOR_TRIGGER_SQL	sql	STREAM	trigger DDL: the search vector reads timeline for inline rows and timeline_lead for segmented rows (lane 1a)
-src/core/page-state/projections.ts	preparePageProjection	call:prepareMarkdownChunks	STREAM	
+src/core/page-state/projections.ts	preparePageProjection	call:prepareMarkdownChunkSet	STREAM	
 src/core/page-state/projections.ts	readGuardedProjectionSnapshot	field	STREAM	
 src/core/page-state/projections.ts	sealImportedPage	field	STREAM	
 src/core/page-state/projections.ts	sealPageTextProjection	field	STREAM	

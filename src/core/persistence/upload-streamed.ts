@@ -25,11 +25,7 @@ import { pageGateTrust, stampPageTrustMarker, storedPageTier } from '../trust/pa
 import type { WriteTrust } from '../trust/tier.ts';
 import { sizeStateField } from '../page-embedding-budget.ts';
 import { coreMarking } from '../core-memory.ts';
-import { TAKES_FENCE_BEGIN } from '../takes-fence.ts';
-import { isSegmentedPage } from '../page-body/page-shape.ts';
-import { inlineRegions } from '../page-body/tail-digest.ts';
-import { segmentedFactsFenceView } from '../page-body/segment-facts.ts';
-import { parseFactsFence, type FactsFenceParseResult } from '../facts-fence.ts';
+import { hiddenFenceContent } from '../page-body/streamed-fences.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import { bodyStagingGoneError } from '../engine-sql/page-body.ts';
@@ -49,25 +45,14 @@ const text = (value: unknown) => (typeof value === 'string' ? value : null);
  * put_page keeps, for a remote writer, the takes fence and the non-world facts rows remote reads hide
  * (preserveProtectedTakes, mergeHiddenFactRowsIntoBody) and refuses to drop timeline rows its content omits
  * (assertTimelineNotOmitted); all compare whole bodies. Streamed, this refuses instead: a remote replace over the
- * ceiling of a page holding a takes fence, a facts fence with a non-world row (or one that does not parse), or timeline
- * rows (unless drop_timeline), is `upload_protected_content`. Bounded: one probe of the live manifest and of
- * timeline_entries, and the facts fence alone (segmentedFactsFenceView reads only the runs holding a fence marker).
+ * ceiling of a page whose remote reads hide a takes fence or facts rows (`hiddenFenceContent`: every takes region, a
+ * facts region with a non-world row or that does not parse, an unclosed fence's tail, quoted or not), or holding
+ * timeline rows (unless drop_timeline), is `upload_protected_content`. Bounded: one probe of timeline_entries, and of a
+ * segmented body only the segments holding a fence region.
  */
 async function assertNothingHiddenDropped(engine: BrainEngine, row: WriteRequest, snapshot: PageSnapshot, p: Record<string, unknown>): Promise<void> {
-  const [found] = await engine.executeRaw<{ has_takes: boolean; has_timeline: boolean }>(`SELECT
-      EXISTS (SELECT 1 FROM page_body_manifest m JOIN pages pg ON pg.id = m.page_id WHERE m.page_id = $1 AND m.staging_id IS NULL
-        AND m.gen_from <= pg.body_generation AND (m.gen_to IS NULL OR m.gen_to > pg.body_generation)
-        AND m.protected_regions @> '[{"kind":"takes"}]'::jsonb) AS has_takes,
-      EXISTS (SELECT 1 FROM timeline_entries WHERE page_id = $1) AS has_timeline`, [Number(snapshot.page.id)]);
-  const segmented = isSegmentedPage(snapshot.page);
-  const inline = segmented ? null : await inlineRegions(engine, Number(snapshot.page.id));
-  const fences = inline ? Object.values(inline).map(region => parseFactsFence(region))
-    : Object.values(await segmentedFactsFenceView(engine, { id: Number(snapshot.page.id), slug: row.slug, source_id: row.source_id }))
-      .filter((value): value is FactsFenceParseResult => typeof value === 'object' && value !== null && 'facts' in value);
-  const hiddenFacts = fences.some(fence => fence.warnings.length > 0 || fence.facts.some(fact => fact.visibility !== 'world'));
-  const reason = found?.has_takes || (inline && Object.values(inline).some(region => region.includes(TAKES_FENCE_BEGIN))) ? 'takes'
-    : hiddenFacts ? 'facts'
-    : found?.has_timeline && p.drop_timeline !== true ? 'timeline' : null;
+  const [found] = await engine.executeRaw<{ has_timeline: boolean }>('SELECT EXISTS (SELECT 1 FROM timeline_entries WHERE page_id = $1) AS has_timeline', [Number(snapshot.page.id)]);
+  const reason = await hiddenFenceContent(engine, Number(snapshot.page.id)) ?? (found?.has_timeline && p.drop_timeline !== true ? 'timeline' : null);
   if (!reason) return;
   throw opError('upload_protected_content', reason === 'takes'
     ? `Page ${row.slug} holds a takes fence that remote reads hide, and a remote replace over ${PAGE_MAX_BYTES} bytes cannot carry it over, so nothing was written.`
@@ -110,7 +95,7 @@ export async function prepareStreamedUpload(engine: BrainEngine, row: WriteReque
     const stat = await lstat(path);
     if (stat.size !== ref.bytes) throw bodyStagingGoneError(row.slug, ref.staging_id, null);
     stagedUploadWork.streamed++;
-    result = await importStreamedMarkdownFile(engine, path, `${row.slug}.md`, { sourceId: row.source_id, noEmbed: true, inferFrontmatter: false,
+    result = await importStreamedMarkdownFile(engine, path, `${row.slug}.md`, { sourceId: row.source_id, noEmbed: true, inferFrontmatter: false, remote,
       content: { provenance: { source_kind: text(p.source_kind), source_uri: text(p.source_uri), ingested_via: text(p.ingested_via) },
         ...(remote ? { writer: {
           gate: async (frontmatter: Record<string, unknown>) => {
@@ -149,6 +134,7 @@ export async function prepareStreamedUpload(engine: BrainEngine, row: WriteReque
   const mutation: PreparedMutation = { observedRevision: prepared.observedRevision, noop: prepared.noop, ...(pageTrust ? { trust: pageTrust } : {}),
     ...await pageDatabaseOnlyPublication(engine, row, undefined),
     ...(prepared.afterCommit ? { afterCommit: prepared.afterCommit } : {}),
+    validate: tx => prepared.validate(tx),
     apply: async (tx, preimage) => {
       await prepared.apply(tx, preimage);
       const final = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });

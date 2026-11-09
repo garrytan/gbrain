@@ -25,7 +25,7 @@ import { readEntryState } from './entry-state.ts';
 import { ContentHashStream } from './content-hash-stream.ts';
 import type { StoredRegion } from './segmenter.ts';
 import type { BodyRegion, JsonObject, ManifestRow } from './types.ts';
-import { assertGenerationTiles } from './body-tiling.ts';
+import { assertGenerationTiles, readTiledManifest } from './body-tiling.ts';
 import { deleteRewrittenDerivations } from './segment-derive.ts';
 
 /** Rewrites one fence (the text of a stored facts or takes region, markers included), given the body region holding it; called in body order. */
@@ -195,6 +195,17 @@ export async function rewriteLiveSegmentedFences(tx: BrainEngine, pageId: number
   if (applied.complete) await sealSegmentedPage(tx, pageId);
   const derivations = await deleteRewrittenDerivations(tx, pageId, rows, units);
   return { replaced: replacedShas(rows, units), sealed: applied.complete, derivations };
+}
+
+/**
+ * Each facts and takes region of a segmented page's live body, in body order, joined across forced cuts as
+ * `rewriteLiveSegmentedFences` joins it (refusing past FENCE_MAX_BYTES), read only where a segment holds one; nothing
+ * is written.
+ */
+export async function readLiveSegmentedFences(engine: BrainEngine, pageId: number, visit: (fence: string, at: { region: BodyRegion }) => void | Promise<void>): Promise<void> {
+  const [page] = await engine.executeRaw<{ source_id: string }>('SELECT source_id FROM pages WHERE id=$1', [pageId]);
+  if (!page) return;
+  await changedUnits(engine, page.source_id, (await readTiledManifest(engine, pageId)).rows, async (fence, at) => { await visit(fence, at); return fence; });
 }
 
 const MANIFEST_COLUMNS = `page_id,occurrence_id,seq,region,source_id,sha256,byte_start,byte_len,line_start,line_count,cut_kind,entry_state,

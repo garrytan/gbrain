@@ -34,7 +34,8 @@ export function isSegmentedPage(page: BodyShape): boolean {
  * True when the page's body fields are still the throwing getters: a segmented
  * page that was not read back as strings (`materializedPage` leaves a body over
  * the single-string ceiling unread). Such a body was written by the streamed
- * import, which holds files with facts or takes fences.
+ * import, which checks its facts and takes fences one region at a time
+ * (streamed-fences.ts), so it can hold fences.
  */
 export function bodyUnread(page: object): boolean {
   return Object.getOwnPropertyDescriptor(page, 'compiled_truth')?.get !== undefined;
@@ -47,7 +48,11 @@ export function withoutBody<T extends object>(page: T): Omit<T, SegmentedBodyFie
   return copy as Omit<T, SegmentedBodyField>;
 }
 
-/** The stored body a fence merge reads: an unread body holds no facts or takes fences, so it reads as empty. */
+/**
+ * The stored body a fence merge reads; an unread body reads as empty. A remote write, the only caller whose merge
+ * restores hidden rows, first refuses a page whose unread body holds hidden takes or facts rows
+ * (streamed-fences.ts `assertNoHiddenFenceRows`), so the empty read loses nothing.
+ */
 export function fenceBody(page: { compiled_truth: string; timeline?: string | null }): { compiled_truth: string; timeline: string } {
   return bodyUnread(page) ? { compiled_truth: '', timeline: '' } : { compiled_truth: page.compiled_truth, timeline: page.timeline ?? '' };
 }

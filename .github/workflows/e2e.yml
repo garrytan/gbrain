@@ -30,6 +30,12 @@ on:
 permissions:
   contents: read
 
+# Event parity (docs/TESTING.md#event-parity): named exception (#7782). The nightly E2E schedule runs every
+# conversation facts property seed range; every other event runs the fixed sample
+# (PROPERTY_SAMPLE, test/helpers/conversation-facts-property-cases.ts).
+env:
+  GBRAIN_TEST_PROPERTY_SEEDS: ${{ github.event_name == 'schedule' && 'all' || '' }}
+
 # Cancel a superseded run when a newer commit lands on the same PR/branch.
 # PR number for pull_request events (fork-safe), github.ref fallback for
 # push runs. Scheduled runs get their own `-nightly` group (as in test.yml):

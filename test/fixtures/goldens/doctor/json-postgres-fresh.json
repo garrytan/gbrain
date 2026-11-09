@@ -3578,6 +3578,19 @@
         {
           "category": "brain",
           "details": {
+            "chunker_version": 5,
+            "count": "exact",
+            "informational": true,
+            "pages_pending": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Every inline page with a bulleted timeline is chunked at bullet boundaries.",
+          "name": "inline_timeline_chunks",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "docs": "docs/guides/write-refusals.md#invalid_fence",
             "model_repair": {
               "max_usd_per_day": 1,

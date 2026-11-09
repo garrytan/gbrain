@@ -107,6 +107,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'foreign_ownership_marker',
   'coordination_lock_location',
   'safe_index_pending',
+  // Inline pages whose bulleted timeline the pre-bullet chunker sealed (doctor/checks/inline-timeline-chunks.ts).
+  'inline_timeline_chunks',
   'self_capture',
   'brain_score',
   // W1: belief ledger coverage intervals, drift, orphan lifetimes and unsafe restores.

@@ -10,9 +10,12 @@
  *    commits with `searchable: 'pending'` on its receipt (#7106: a new page over
  *    4 MiB is projected after commit) and seals once the build the owner tracks
  *    ends (the consumer's stop waits for it); an edit or a rename with an edit
- *    is sealed when it commits. A file the
- *    streamed path refuses (a facts fence) is held `file_too_large` and the
- *    run checkpoints, as before. A dry run lists the file as screened only by
+ *    is sealed when it commits. A file with a facts fence imports with the
+ *    fence (GBRA-95: fences are checked one region at a time); a file the
+ *    streamed path refuses (an unclosed fence whose tail passes the
+ *    FENCE_MAX_BYTES bound) is held `file_too_large` and the run checkpoints. A remote (source-scoped admin) sync of
+ *    a page whose remote reads hide a row, here a private row of a quoted facts fence, refuses `page_body_segmented`
+ *    instead of dropping it. A dry run lists the file as screened only by
  *    its owner (`page_body_segmented`), not as a hold. With the switch off the
  *    hold is unchanged. The crash window: managed-sync-streamed-crash.test.ts.
  * 2. Fails when: managed sync holds such a file, the journal carries its body,
@@ -34,10 +37,16 @@ import { performManagedSync } from '../../src/core/persistence/sync-run.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { readGitSourceHolds } from '../../src/core/persistence/sync-holds.ts';
 import { sha256 } from '../../src/core/persistence/digest.ts';
+import { getWriteRequestById } from '../../src/core/persistence/journal.ts';
+import { prepareManagedSyncMutation } from '../../src/core/persistence/sync-prepare.ts';
+import type { GBrainConfig } from '../../src/core/config.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { conversationPage } from '../helpers/conversation-page.ts';
 import { reconstructedPage } from '../helpers/segmented-page-checks.ts';
+import { parseFactsFence } from '../../src/core/facts-fence.ts';
+import { withCoordinatedWrite } from '../../src/core/persistence/context.ts';
+import { TEST_WRITE_ATTRIBUTION } from '../helpers/write-attribution.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-sync-streamed-'));
 const engines: BrainEngine[] = [];
@@ -183,18 +192,82 @@ describe('managed sync over the single-string ceiling', () => {
     }
   }), 600_000);
 
-  test('a file the streamed path refuses (a facts fence) is held file_too_large and the run checkpoints', async () => withEnv(env, async () => {
+  test('a fenced file imports with its fence; a file the streamed path refuses (an unclosed fence past the bound) is held file_too_large and the run checkpoints', async () => withEnv(env, async () => {
     for (const engine of engines) {
       await engine.setConfig('pages.segmented_storage', 'on');
-      const fenced = `${huge.trimEnd()}\n\n## Facts\n\n<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|---|---|---|---|---|---|---|---|---|\n| 1 | Example fact | fact | 1.0 | world | high | | | test | |\n<!--- gbrain:facts:end -->\n`;
-      const f = await fixture(engine, { 'notes/fenced.md': fenced, 'notes/small.md': '---\ntitle: Small\n---\nA small note.\n' });
+      const row = '| 1 | Example fact | fact | 1.0 | world | high | | | test | |';
+      const fenced = `${huge.trimEnd()}\n\n## Facts\n\n<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|---|---|---|---|---|---|---|---|---|\n${row}\n<!--- gbrain:facts:end -->\n`;
+      const unclosed = `---\ntitle: Unclosed\ntype: note\n---\n\n## Facts\n\n<!--- gbrain:facts:begin -->\n${huge.slice(huge.indexOf('\n---\n') + 5)}`;
+      const f = await fixture(engine, { 'notes/fenced.md': fenced, 'notes/unclosed.md': unclosed, 'notes/small.md': '---\ntitle: Small\n---\nA small note.\n' });
       const result = await sync(engine, { sourceId: f.sourceId });
       expect(result.status).toBe('first_sync');
       const holds = (await readGitSourceHolds(engine, { sourceIds: [f.sourceId] }))[0]?.holds ?? [];
-      expect(holds.map(hold => [hold.path, hold.code])).toEqual([['notes/fenced.md', 'file_too_large']]);
-      expect(holds[0]!.message).toContain('facts and takes fences');
-      expect(await engine.getPage('notes/fenced', { sourceId: f.sourceId })).toBeNull();
+      expect(holds.map(hold => [hold.path, hold.code])).toEqual([['notes/unclosed.md', 'file_too_large']]);
+      expect(holds[0]!.message).toContain('-byte bound one fence is normalized and checked against withdrawals within');
+      expect(await engine.getPage('notes/unclosed', { sourceId: f.sourceId })).toBeNull();
+      const stored = await reconstructedPage(engine, 'notes/fenced', f.sourceId);
+      expect(stored.page.body_storage).toBe('segmented');
+      expect(stored.body.compiled_truth).toContain(row);
       expect(await engine.getPage('notes/small', { sourceId: f.sourceId })).not.toBeNull();
+      await disposePersistenceConsumer(engine);
+    }
+  }), 600_000);
+
+  test('a remote sync over a page whose remote reads hide a row (a private row of a quoted facts fence) refuses page_body_segmented', async () => withEnv(env, async () => {
+    for (const engine of engines) {
+      await engine.setConfig('pages.segmented_storage', 'on');
+      const quoted = `${huge.trimEnd()}\n\nAn example:\n\n\`\`\`\n<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|---|---|---|---|---|---|---|---|---|\n| 1 | Example fact | fact | 1.0 | private | high | | | test | |\n<!--- gbrain:facts:end -->\n\`\`\`\n`;
+      const f = await fixture(engine, { 'notes/quoted.md': quoted });
+      expect((await sync(engine, { sourceId: f.sourceId })).status).toBe('first_sync');
+      expect((await reconstructedPage(engine, 'notes/quoted', f.sourceId)).body.compiled_truth).toContain('| 1 | Example fact |');
+      // An edit, so the latest request names the existing page (a create's request names none).
+      writeFileSync(join(f.root, 'notes/quoted.md'), `${quoted}\nAn edit.\n`);
+      commit(f.repo);
+      expect((await sync(engine, { sourceId: f.sourceId })).status).toBe('synced');
+      const [request] = await engine.executeRaw<{ id: string }>(`SELECT id::text AS id FROM persistence_requests WHERE source_id=$1 AND slug='notes/quoted'
+        AND intent->>'kind'='managed_sync_import' ORDER BY sequence DESC LIMIT 1`, [f.sourceId]);
+      const row = (await getWriteRequestById(engine, request!.id))!;
+      // The same file admitted against the current page for a remote (source-scoped admin) writer: the stored private row would be dropped.
+      const current = (await engine.readPageSnapshot('notes/quoted', { sourceId: f.sourceId }))!;
+      const remote = { ...row, intent: { ...(row.intent as Record<string, unknown>), expected_revision: current.revision }, authority: { ...row.authority, remote: true } } as typeof row;
+      const refused = await prepareManagedSyncMutation(engine, remote, { engine: engine.kind } as GBrainConfig)
+        .then(() => null, (error: { code?: string }) => error.code ?? String(error));
+      expect(refused).toBe('page_body_segmented');
+      await disposePersistenceConsumer(engine);
+    }
+  }), 600_000);
+
+  test('a rename with an edit keeps a withdrawal scoped to the old slug: the row stays withdrawn and the withdrawal moves with the page', async () => withEnv(env, async () => {
+    for (const engine of engines) {
+      await engine.setConfig('pages.segmented_storage', 'on');
+      const claim = 'Prefers the window seat';
+      const fenced = `${huge.trimEnd()}
+
+## Facts
+
+<!--- gbrain:facts:begin -->
+| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | ${claim} | preference | 1.0 | world | high | | | test | |
+<!--- gbrain:facts:end -->
+`;
+      const f = await fixture(engine, { 'notes/seat.md': fenced });
+      expect((await sync(engine, { sourceId: f.sourceId })).status).toBe('first_sync');
+      const before = await reconstructedPage(engine, 'notes/seat', f.sourceId);
+      await engine.transaction(tx => withCoordinatedWrite(tx, [f.sourceId], () => tx.executeRaw(
+        `INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash) VALUES ($1,'world','notes/seat',gbrain_fact_fingerprint($2))`, [f.sourceId, claim]), TEST_WRITE_ATTRIBUTION));
+      git(f.repo, 'mv', 'notes/seat.md', 'notes/aisle.md');
+      writeFileSync(join(f.root, 'notes/aisle.md'), `${fenced}
+**alice-example**: a remark after the move.
+`);
+      commit(f.repo);
+      // The publication moves the old slug's withdrawals to the new slug before it imports: its own move is no concurrent change.
+      expect(await sync(engine, { sourceId: f.sourceId })).toMatchObject({ status: 'synced', renamed: 1 });
+      const moved = await reconstructedPage(engine, 'notes/aisle', f.sourceId);
+      expect(moved.page.id).toBe(before.page.id);
+      expect(moved.body.compiled_truth).toContain('a remark after the move');
+      expect(parseFactsFence(moved.body.compiled_truth).facts.map(fact => [fact.claim, fact.forgotten])).toEqual([[claim, true]]);
+      expect(await engine.executeRaw('SELECT subject FROM fact_withdrawals WHERE source_id=$1', [f.sourceId])).toEqual([{ subject: 'notes/aisle' }]);
       await disposePersistenceConsumer(engine);
     }
   }), 600_000);
