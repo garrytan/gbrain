@@ -448,7 +448,7 @@ describe('runUpgrade target verification (#4366)', () => {
     }
   });
 
-  test('bun global install: `bun update gbrain` runs in the bun global root', async () => {
+  test('bun global install: `bun update --backend=copyfile gbrain` runs in the bun global root', async () => {
     const { home, stdout } = await runUpgradeAgainstFakeInstall({
       observedVersion: OLD,
       driverDir: join('global', 'node_modules', 'gbrain', 'src'),
@@ -461,7 +461,7 @@ describe('runUpgrade target verification (#4366)', () => {
     try {
       expect(stdout).toContain('Detected install method: bun');
       const calls = readFileSync(join(home, 'calls.log'), 'utf-8').trim().split('\n');
-      expect(calls).toEqual([`${realpathSync(join(home, 'global'))}|update gbrain`]);
+      expect(calls).toEqual([`${realpathSync(join(home, 'global'))}|update --backend=copyfile gbrain`]);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

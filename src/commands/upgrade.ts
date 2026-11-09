@@ -120,13 +120,13 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
       if (pinned) { if (pinned === 'refused') return; upgraded = pinned === 'installed'; break; }
       if (checkBunFloor && refuseForBunFloor(await readPackageTarget(globalGbrainSpec(bunGlobalRoot)), opts.targetVersion)) return;
       try {
-        execFileSync('bun', ['update', 'gbrain'], { cwd: bunGlobalRoot, env: upgradeEnv, stdio: 'inherit', timeout: 120_000 });
+        execFileSync('bun', ['update', BUN_BACKEND, 'gbrain'], { cwd: bunGlobalRoot, env: upgradeEnv, stdio: 'inherit', timeout: 120_000 });
         upgraded = true;
       } catch {
         if (installedDespiteFailure(oldVersion)) upgraded = true;
         else {
           console.error('Upgrade failed. Try running manually:');
-          console.error(`  cd ${bunGlobalRoot} && bun update gbrain`);
+          console.error(`  cd ${bunGlobalRoot} && bun update ${BUN_BACKEND} gbrain`);
         }
       }
       break;
@@ -200,7 +200,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
     default:
       console.error('Could not detect installation method.');
       console.log('Try one of:');
-      console.log('  bun update gbrain');
+      console.log(`  bun update ${BUN_BACKEND} gbrain`);
       console.log('  clawhub update gbrain');
       console.log('  Download from https://github.com/garrytan/gbrain/releases');
   }
@@ -428,14 +428,14 @@ async function installStableRelease(method: string, target: { version: string; c
   const bun = (bunArgs: string[]) => execFileSync('bun', bunArgs, { env: ctx.upgradeEnv, stdio: cliChildStdio(), timeout: 300_000 });
   try {
     bun(['remove', '-g', 'gbrain']);
-    bun(['add', '-g', spec]);
+    bun(['add', '-g', BUN_BACKEND, spec]);
     return 'installed';
   } catch {
     if (installedDespiteFailure(ctx.oldVersion)) return 'installed';
     console.error(`Installing ${spec} failed. Restoring gbrain ${ctx.oldVersion}...`);
-    try { bun(['add', '-g', `github:${GBRAIN_GITHUB_REPO}#v${ctx.oldVersion}`]); console.error(`Restored gbrain ${ctx.oldVersion}.`); }
+    try { bun(['add', '-g', BUN_BACKEND, `github:${GBRAIN_GITHUB_REPO}#v${ctx.oldVersion}`]); console.error(`Restored gbrain ${ctx.oldVersion}.`); }
     catch { console.error(`Restore failed. Reinstall by hand: ${bunReinstallCommand(`#v${target.version}`)}`); }
-    recordUpgradeError({ phase: ctx.phase ?? 'stable-reinstall', fromVersion: ctx.oldVersion, toVersion: target.version, error: `bun add -g ${spec} failed`, recover: bunReinstallCommand(`#v${target.version}`) });
+    recordUpgradeError({ phase: ctx.phase ?? 'stable-reinstall', fromVersion: ctx.oldVersion, toVersion: target.version, error: `bun add -g ${BUN_BACKEND} ${spec} failed`, recover: bunReinstallCommand(`#v${target.version}`) });
     setCliExitVerdict(1);
     return 'failed';
   }
@@ -559,6 +559,13 @@ export function resolveBunGlobalRoot(): string {
 }
 
 /**
+ * #8659: Bun's default backend hardlinks package files from its cache on Linux, and OpenClaw refuses a hardlinked
+ * plugin manifest, so a global install OpenClaw loads as a plugin stopped loading after every upgrade. Every global
+ * reinstall, and each hint that repeats one, copies the files instead.
+ */
+const BUN_BACKEND = '--backend=copyfile';
+
+/**
  * #5034 / B-NEW-5: reinstall the global Bun package at `ref` by removing it
  * first. An in-place `bun add -g` / `bun install --global` tag swap over an
  * existing global install fails with DependencyLoop on Bun 1.3 and, on Bun
@@ -567,7 +574,7 @@ export function resolveBunGlobalRoot(): string {
  */
 export function bunReinstallCommand(ref: string): string {
   const tag = /^#(v\d[\w.]*)$/.exec(ref)?.[1];
-  const remove = `bun remove -g gbrain && bun add -g github:${GBRAIN_GITHUB_REPO}${ref}`;
+  const remove = `bun remove -g gbrain && bun add -g ${BUN_BACKEND} github:${GBRAIN_GITHUB_REPO}${ref}`;
   return tag ? `${releaseTagProbeCommand(tag)} && ${remove}` : remove;
 }
 
@@ -633,13 +640,13 @@ export function planPinnedReinstall(requested: string | null, oldVersion: string
  */
 export function reinstallHintLines(version: string, oldVersion: string, platform: NodeJS.Platform = process.platform): string[] {
   const tag = `v${version}`;
-  const restore = `If the add fails, restore ${oldVersion} with: bun add -g github:${GBRAIN_GITHUB_REPO}#v${oldVersion}`;
+  const restore = `If the add fails, restore ${oldVersion} with: bun add -g ${BUN_BACKEND} github:${GBRAIN_GITHUB_REPO}#v${oldVersion}`;
   if (platform !== 'win32') return [bunReinstallCommand(`#${tag}`), restore];
   return [
     'Run these one at a time, and stop if the first one fails (the tag is not published yet):',
     releaseTagProbeCommand(tag),
     'bun remove -g gbrain',
-    `bun add -g github:${GBRAIN_GITHUB_REPO}#${tag}`,
+    `bun add -g ${BUN_BACKEND} github:${GBRAIN_GITHUB_REPO}#${tag}`,
     restore,
   ];
 }
