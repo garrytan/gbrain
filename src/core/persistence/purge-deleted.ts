@@ -187,6 +187,11 @@ export interface PurgeSelection {
   writers: Record<string, boolean>;
 }
 
+/** What keeps an expired tombstone of page `page` (source `source`) out of every managed purge: an archived source, or the rename-recovery, restorable-atom or derived-retirement hold. */
+export function purgeHoldsSql(page: string, source: string): string {
+  return `NOT ${source}.archived AND ${identityDowngradePurgeHold(page)} AND ${atomRetirementPurgeHold(page)} AND ${derivedRetirementPurgeHold(page)}`;
+}
+
 export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean } = {}): Promise<PurgeSelection> {
   if (!await managedPersistenceEnabled(engine)) {
     const parked = (await recordedTombstones(engine, String(Math.max(0, Math.floor(olderThanHours)))))
@@ -206,7 +211,7 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
   const rows = await engine.executeRaw<{ id: number | string; source_id: string; slug: string; cutoff: string; deleted_us: string }>(
     `SELECT p.id, p.source_id, p.slug, (now() - ($1 || ' hours')::interval)::text AS cutoff,
       floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text AS deleted_us FROM pages p JOIN sources s ON s.id = p.source_id
-      WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND NOT s.archived AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')} AND ${derivedRetirementPurgeHold('p')}
+      WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${purgeHoldsSql('p', 's')}
       ORDER BY p.deleted_at ASC, p.source_id ASC, p.slug ASC`, [String(hours)]);
   const states = new Map<string, { state: string; physical_error?: string }>();
   if (rows.length) for (const source of (await writerOnboardingPreflight(engine)).sources) states.set(source.source_id, source);

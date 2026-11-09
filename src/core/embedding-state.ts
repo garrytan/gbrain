@@ -50,6 +50,7 @@ import { DEFAULT_BYTES_BLOCK } from './content-sanity.ts';
 import { loadConfig } from './config.ts';
 import { embeddingEnablement } from './readiness.ts';
 import { VERSION } from '../version.ts';
+import { chunkGenerationFilter } from './search/safe-chunks.ts';
 
 export type EmbeddingState = 'embedded' | 'pending' | 'keyword_only' | 'quarantined' | 'empty' | 'deleted_page_chunks' | 'chunkless_healable';
 
@@ -128,6 +129,7 @@ export async function readEmbeddingState(engine: BrainEngine, opts: { mode: 'ops
   const counts = raw.counts;
   const pending = counts.pending ?? 0;
   const threshold = await effectiveBlockThreshold(engine);
+  const purgeable = raw.deleted_overdue ? Math.min(raw.deleted_overdue, await purgeableDeletedChunks(engine, opts)) : 0;
   return {
     status: 'known',
     basis: raw.basis,
@@ -145,7 +147,8 @@ export async function readEmbeddingState(engine: BrainEngine, opts: { mode: 'ops
       ? { basis: 'estimated', ratio: ratio(counts.embedded, pending) }
       : { basis: 'exact', embedded: raw.eligible_embedded, eligible: raw.eligible_embedded + pending, ratio: ratio(raw.eligible_embedded, pending) },
     keyword_only: { reason: 'embed_skip', pages: raw.embed_skip_pages, marker_bytes: raw.embed_skip_marker_bytes, threshold_bytes: threshold },
-    deleted_page_chunks: { within_window: (counts.deleted_page_chunks ?? 0) - raw.deleted_overdue, past_window: raw.deleted_overdue, window_hours: DELETED_PAGE_PURGE_WINDOW_HOURS },
+    deleted_page_chunks: { within_window: (counts.deleted_page_chunks ?? 0) - raw.deleted_overdue, past_window: raw.deleted_overdue,
+      purgeable, held: raw.deleted_overdue - purgeable, window_hours: DELETED_PAGE_PURGE_WINDOW_HOURS },
     unstamped_pending: { count: raw.unstamped_pending, created_at_lower_bound: raw.unstamped_created_at_min?.toISOString() ?? null, writer_version: VERSION },
   };
 }
@@ -153,6 +156,17 @@ export async function readEmbeddingState(engine: BrainEngine, opts: { mode: 'ops
 function ratio(embedded: number | undefined, pending: number): number | null {
   const total = (embedded ?? 0) + pending;
   return total === 0 ? null : Math.round(((embedded ?? 0) / total) * 10_000) / 10_000;
+}
+
+/** #7825: chunks past the window that `gbrain pages purge-deleted` would remove, under the purge's own holds (`purgeHoldsSql`); counted as the classifier counts them. */
+async function purgeableDeletedChunks(engine: BrainEngine, opts: { mode: 'ops' | 'full'; sourceIds?: string[] }): Promise<number> {
+  const { purgeHoldsSql } = await import('./persistence/purge-deleted.ts');
+  const [row] = await engine.executeRaw<{ n: string | number }>(`SELECT count(*)::bigint AS n
+      FROM pages p JOIN sources s ON s.id = p.source_id JOIN content_chunks cc ON cc.page_id = p.id
+     WHERE p.deleted_at < now() - make_interval(hours => $1::int) AND ${purgeHoldsSql('p', 's')}
+       ${opts.mode === 'full' ? `AND ${chunkGenerationFilter('p', 'cc')}` : ''}${opts.sourceIds ? ' AND p.source_id = ANY($2::text[])' : ''}`,
+    opts.sourceIds ? [DELETED_PAGE_PURGE_WINDOW_HOURS, opts.sourceIds] : [DELETED_PAGE_PURGE_WINDOW_HOURS]);
+  return Number(row?.n ?? 0);
 }
 
 /** The effective `content_sanity.bytes_block` the import gate applies (env > file > DB > default, capped at the page ceiling). */

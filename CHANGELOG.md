@@ -12,11 +12,15 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**Thirteen dream-cycle fixes: managed brains stop reporting phantom work and false failures, symbol-edge resolution stops rewriting chunks on markdown-only brains, and rejected takes stay rejected (#8137).**
+**Twenty-one dream-cycle, doctor, repair and maintenance fixes: managed brains stop reporting phantom work and false failures, checks that claimed ok without measuring now say so, purging a page drops its held fence generations, and rejected takes stay rejected (#8137).**
 
 On a brain with no code, `resolve_symbol_edges` used to stamp up to 2,000 chunks per source on every run, each one a non-HOT row update on the largest table. It now skips sources with no symbol edges and walks only chunks that own one, and code-graph readiness waits on the same chunks. Several phases also misreported their own results: a drain window closing at the wrong moment read as a non-retryable `atom_drain_no_progress`, an accepted concept publication still committing failed the whole concept phase, and the managed conversation-facts backfill printed "0 facts inserted" while its facts were still publishing. Each now reports what actually happened.
 
+`doctor embedding_state` warned that thousands of deleted-page chunks were overdue and recommended a brain-wide irreversible purge that would remove almost none of them, because the purge holds derived retirements for 30 days. It now counts overdue chunks with the purge's own predicates and reports held chunks as information. `autopilot --status` and doctor's `global_maintenance_stalled` could keep a stalled verdict for up to a day after a clean pass; the pass now refreshes it.
+
 ### Itemized changes
+
+Dream cycle (#8326):
 
 - Managed `gbrain extract --stale` counts pages waiting on an attendee's person page (`skipped_attendance_incomplete`) apart from pages edited during extraction (#6820).
 - Extract receipts no longer write the reserved `type` key into frontmatter, so doctor's `stale_frontmatter_keys` stops gaining a page every run (#7058).
@@ -31,6 +35,17 @@ On a brain with no code, `resolve_symbol_edges` used to stamp up to 2,000 chunks
 - On a managed brain, a concept publication still pending after its wait is reported as `publication_pending` (warn) instead of failing the phase; the next run reuses it (#7547).
 - The managed conversation-facts backfill reports how many pages are still publishing instead of a bare "0 facts inserted" (#7500).
 - `propose_takes` drops a claim whose exact text an operator already rejected on the same page, so an unrelated edit no longer puts it back in the queue; reworded claims are still proposed (#7299).
+
+Doctor, repair and maintenance (#8327):
+
+- `doctor raw_provenance` exempts a generated page only when `raw_trace_exempt` is `true`; an explicit `false` no longer hides missing provenance (#8039).
+- `doctor --fast --only <check>` marks the report incomplete when the early stop skipped a selected check (#8114).
+- `doctor maintenance_write_drift` reports unknown (warn) instead of ok when candidates exist but none can be compared on this host (#8115).
+- `gbrain repair <kind> --apply` keeps its approved set when the last approved item fails, so the printed `--expect` command resumes instead of refusing `preview_changed` (#8058).
+- A clean brain-wide maintenance pass refreshes the verdict `autopilot --status` and doctor read, so a stalled warning clears with the pass (#7854).
+- `doctor embedding_state` warns only on deleted-page chunks `gbrain pages purge-deleted` would remove; `deleted_page_chunks` gains `purgeable` and `held` (#7825).
+- Maintenance preflight (dream `lint` and friends) recovers from a device-only physical-root change under the writer lock, as ordinary writes already did; any other identity change still refuses and a busy lock still fails closed (#7760).
+- Purging a deleted page drops that page's held fence generations, which no later write could settle, so doctor `generation_held` no longer warns about a page that no longer exists (#7774).
 
 ## [0.60.620.0] - 2026-11-09
 

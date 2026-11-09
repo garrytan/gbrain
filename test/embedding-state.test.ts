@@ -87,7 +87,7 @@ describe('embedding state classifier (full mode)', () => {
     expect(Object.keys(s.counts).sort()).toEqual([...EMBEDDING_STATES].sort());
     expect(s.unsearchable).toBe(2 + 3 + 1 + 2);
     expect(s.unsearchable_complete).toBe(true);
-    expect(s.deleted_page_chunks).toEqual({ within_window: 1, past_window: 2, window_hours: 72 });
+    expect(s.deleted_page_chunks).toEqual({ within_window: 1, past_window: 2, purgeable: 2, held: 0, window_hours: 72 });
     // The default bytes_block is the 24 MiB page ceiling (large pages Wave A); these markers predate it.
     expect(s.keyword_only).toMatchObject({ reason: 'embed_skip', pages: 2, marker_bytes: 1_300_000, threshold_bytes: PAGE_MAX_BYTES });
     const unstamped = s.unstamped_pending as { count: number; created_at_lower_bound: string | null; writer_version: string };
