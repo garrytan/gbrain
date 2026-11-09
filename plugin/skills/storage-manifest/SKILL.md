@@ -37,6 +37,7 @@ Full guide: `docs/guides/storage-manifest.md`.
   original path, why it was archived, and the restore form `{ skill, args }`.
 - **Find before restore.** `gbrain storage-find "<the user's words>" --json` (MCP `storage_find`), then
   `gbrain storage-get <id> --json` for the copies and the restore form. A miss lists the closest cards: show them.
+  On `storage_record_invalid` the stored card is broken: tell the user and do not restore from it.
 - **Restore through the agent's own restore skill.** Run the skill the card's `restore.skill` names with
   `restore.args`. Cards never carry commands or credentials; the restore skill reads credentials from its own
   environment. gbrain never contacts a store.

@@ -15,6 +15,7 @@ import { normalizeSourceConfig, parseSourceConfig } from '../sources-load.ts';
 import { addSource } from '../sources-ops.ts';
 import { hostRepo, type HostRepoPlan } from '../persistence/hosted-repo.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { syncContentDirectory } from '../sync-applicability.ts';
 
 export { STORAGE_ROLE, STORAGE_SOURCE_ID, storageDoorContext, isStorageDoor, assertStorageSourceWriter } from './door.ts';
 
@@ -24,10 +25,14 @@ export function isStorageRole(config: unknown): boolean {
 
 export interface StorageSourceState { exists: boolean; repoBrain: boolean; role: boolean; hosted: boolean }
 
-/** A repo brain is one with any active source that has a directory (or the legacy sync.repo_path of default); mixed brains count. */
+/**
+ * A repo brain is one with any active source that has a directory (or the legacy sync.repo_path of default); mixed
+ * brains count. The gbrain-owned content directory `gbrain init` creates holds no Git checkout, so it does not count.
+ */
 export async function isRepoBrain(engine: BrainEngine): Promise<boolean> {
-  const rows = await engine.executeRaw<{ ok: number }>('SELECT 1 AS ok FROM sources WHERE archived IS NOT TRUE AND local_path IS NOT NULL AND id <> $1 LIMIT 1', [STORAGE_SOURCE_ID]);
-  return rows.length > 0 || !!(await engine.getConfig('sync.repo_path'));
+  const rows = await engine.executeRaw<{ id: string; local_path: string }>('SELECT id, local_path FROM sources WHERE archived IS NOT TRUE AND local_path IS NOT NULL AND id <> $1', [STORAGE_SOURCE_ID]);
+  for (const row of rows) if (!await syncContentDirectory(engine, { sourceId: row.id, repoPath: row.local_path })) return true;
+  return !!(await engine.getConfig('sync.repo_path'));
 }
 
 export async function storageSourceState(engine: BrainEngine): Promise<StorageSourceState> {

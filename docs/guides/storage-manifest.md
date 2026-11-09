@@ -30,7 +30,8 @@ carry commands or credentials, and gbrain never contacts a store. After the rest
 
 ## Repo-less brains and brains with a Git checkout
 
-On a repo-less brain the database is the record: the first `storage-register` (or `gbrain storage init`) creates the
+On a repo-less brain, including a fresh keyless install whose content directory (created by `gbrain init`) holds no
+Git checkout, the database is the record: the first `storage-register` (or `gbrain storage init`) creates the
 `storage` source, database-only and not federated, and every verb works there.
 
 On a brain with a Git checkout, Git stays the parent. `gbrain storage init --dir <absolute path> --dry-run` previews a
