@@ -105,12 +105,25 @@ describe('#8395 auxiliary page reads follow the caller', () => {
   test('retrieval pointers, pull counterparties and brief edits', async () => {
     for (const who of ['alice', 'bob'] as const) {
       await as(who, true, async () => {
-        const block = await resolveEntitiesToPointers(engine, SRC, [{ query: 'Alice Example', display: 'Alice Example' }] as never, { excludePrivate: true });
+        const block = await resolveEntitiesToPointers(engine, SRC, [{ query: 'Alice Example', display: 'Alice Example' }] as never, { excludePrivate: true, forCaller: true });
         expect(block?.pointers.some(p => p.slug === ALICE) ?? false).toBe(who === 'alice');
-        expect((await resolvePullCounterparty(engine, SRC, ALICE, { excludePrivate: true }))?.slug ?? null).toBe(who === 'alice' ? ALICE : null);
+        expect((await resolvePullCounterparty(engine, SRC, ALICE, { excludePrivate: true, forCaller: true }))?.slug ?? null).toBe(who === 'alice' ? ALICE : null);
         const brief = await assembleBrief(engine, { trigger: 'pull', local: false, counterparties: [{ slug: ALICE, source_id: SRC, display: 'Alice Example', confidence: 1 }], clock: { now: Date.now(), stopAt: Date.now() + 30_000 } });
         expect(brief?.text.includes('Timeline note for Alice Example') ?? false).toBe(who === 'alice');
       });
     }
+  }, 30_000);
+
+  test('local retrieval pointers, pull counterparties and briefs keep the plain privacy fragment, even with the read hatch open', async () => {
+    await withEnv({ GBRAIN_REMOTE_PRIVATE_PAGES: '1' }, async () => {
+      __resetPrivateVisibilityCacheForTests();
+      const block = await resolveEntitiesToPointers(engine, SRC, [{ query: 'Carol Example', display: 'Carol Example' }] as never, { excludePrivate: true });
+      expect(block?.pointers.some(p => p.slug === SECRET) ?? false).toBe(false);
+      expect((await resolvePullCounterparty(engine, SRC, SECRET, { excludePrivate: true }))?.slug ?? null).toBe(null);
+      const brief = await assembleBrief(engine, { trigger: 'pull', local: true, counterparties: [{ slug: SECRET, source_id: SRC, display: 'Carol Example', confidence: 1 }], clock: { now: Date.now(), stopAt: Date.now() + 30_000 } });
+      expect(brief?.text.includes('Timeline note for Carol Example') ?? false).toBe(false);
+      expect((await resolvePullCounterparty(engine, SRC, SECRET, { excludePrivate: true, forCaller: true }))?.slug ?? null).toBe(SECRET);
+    });
+    __resetPrivateVisibilityCacheForTests();
   }, 30_000);
 });
