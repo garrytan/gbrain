@@ -154,6 +154,18 @@ describe('#8896 pushGitRoot scans the commits it publishes', () => {
     expect(remoteTip(c)).toBe(theirs);
   }, 120_000);
 
+  test('a scanned publish whose push the remote keeps rejecting hands back a rerun that still scans', async () => {
+    const c = checkout();
+    const theirs = moveRemote(c, 'notes/other.md');
+    scriptCommit(c.root, 'notes/page.md', 'A clean local page\n');
+    writeFileSync(join(c.remote, 'hooks', 'pre-receive'), '#!/bin/sh\nexit 1\n');
+    chmodSync(join(c.remote, 'hooks', 'pre-receive'), 0o755);
+    const error = await withEnv(childEnv(c), () => refusal(pushGitRoot(c.root)));
+    expect(error.code).toBe('push_unconfirmed');
+    expect(`${error.message} ${error.suggestion ?? ''}`).toContain('gbrain git commit-push --push-only --keep-checkout --scan-secrets');
+    expect(remoteTip(c)).toBe(theirs);
+  }, 120_000);
+
   test('a remote without the branch (a first push): a clean history creates it', async () => {
     const c = checkout();
     scriptCommit(c.root, 'notes/page.md', 'A clean page\n');

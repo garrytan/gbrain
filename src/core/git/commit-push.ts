@@ -999,7 +999,7 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
   }
   if (remoteContains(ctx, candidate)) return onRemote();
   throw opError('push_unconfirmed', `The commit is durable locally but no push to ${ctx.remote}/${ctx.mergeRef.replace(/^refs\/heads\//, '')} was confirmed.`,
-    `git push failed (network, credentials, branch protection, or a remote that kept moving): ${lastError.slice(0, 500) || 'no detail'}. Rerun gbrain git commit-push --push-only once the remote is reachable; never git pull --rebase in this checkout.`,
+    `git push failed (network, credentials, branch protection, or a remote that kept moving): ${lastError.slice(0, 500) || 'no detail'}. Rerun gbrain git commit-push --push-only${ctx.keepCheckout ? ' --keep-checkout' : ''}${ctx.scanSecrets ? ' --scan-secrets' : ''} once the remote is reachable; never git pull --rebase in this checkout.`,
     { detail: candidate, retryable: true });
 }
 
@@ -1032,7 +1032,7 @@ function assertLocalCommitsInsideRoots(ctx: Ctx, target: string, roots: string[]
     `A commit made without gbrain git commit-push (for example a cron's git add plus git commit) can carry files other writers had staged. Show the user git show --stat ${offending[0].sha.slice(0, 12)}; if they want it published as is, rerun with --allow-outside-source-root. See docs/guides/shared-checkout-git.md#source-roots.`,
     { detail: JSON.stringify({ roots, commits: offending }),
       fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
-        argv: ['gbrain', 'git', 'commit-push', '--push-only', '--allow-outside-source-root', '--path', ctx.root],
+        argv: ['gbrain', 'git', 'commit-push', '--push-only', ...(ctx.keepCheckout ? ['--keep-checkout'] : []), ...(ctx.scanSecrets ? ['--scan-secrets'] : []), '--allow-outside-source-root', '--path', ctx.root],
         why: 'These commits change files that are not the brain\'s; publishing them can overwrite other projects\' or writers\' work on the remote.',
         user_message: `Local commit(s) ${shas} change files outside the brain's folder (${files.slice(0, 5).join(', ')}${files.length > 5 ? ', ...' : ''}). Publish them anyway?`,
         docs: 'docs/guides/shared-checkout-git.md#source-roots' } });
@@ -1211,7 +1211,7 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
       return { outcome: 'push_deferred', sha: null, committed, branch: ctx.branch, remote: ctx.remote, paths: rel, integrated: 0, checkout: 'unchanged' };
     }
     throw opError('push_unconfirmed', `${committed ? 'The commit is durable locally, but another' : 'Another'} publish held this checkout's push lock for ${Math.round(waitMs / 1000)}s.`,
-      `The running publish was asked to push HEAD too once it finishes. Rerun gbrain git commit-push --push-only to confirm; never git pull --rebase in this checkout.`,
+      `The running publish was asked to push HEAD too once it finishes. Rerun gbrain git commit-push --push-only${ctx.keepCheckout ? ' --keep-checkout' : ''}${ctx.scanSecrets ? ' --scan-secrets' : ''} to confirm; never git pull --rebase in this checkout.`,
       { detail: committed ?? '', retryable: true });
   }
 

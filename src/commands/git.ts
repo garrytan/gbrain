@@ -250,7 +250,7 @@ export async function runGit(args: string[]): Promise<number> {
       const upstream = result.upstream;
       const state = !upstream ? `${result.branch} has no upstream`
         : result.unpublished === 0 ? `${result.branch} is on ${upstream} as last fetched`
-        : `${result.unpublished ?? 'an unknown number of'} commit(s) on ${result.branch} ${result.unpublished === null ? 'may not be' : 'are not'} on ${upstream} as last fetched; a managed checkout publishes through its owner (gbrain git commit-push --push-only --keep-checkout --path ${repo} publishes them)`;
+        : `${result.unpublished ?? 'an unknown number of'} commit(s) on ${result.branch} ${result.unpublished === null ? 'may not be' : 'are not'} on ${upstream} as last fetched; a managed checkout publishes through its owner (gbrain git commit-push --push-only --keep-checkout --scan-secrets --path ${repo} publishes them)`;
       emit(json, { ...result, repo }, `${result.committed ? `committed ${result.committed.slice(0, 7)} on ${result.branch}` : 'nothing to commit'}; not pushed: ${state}`);
       return 0;
     }
