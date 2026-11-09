@@ -34,9 +34,10 @@ const SKILLS = JSON.stringify([
 ]);
 
 describe('routing', () => {
-  test('only skills index and skills resolve route to the resolver', () => {
+  test('only skills index, skills resolve and skills library route to the resolver', () => {
     expect(routeCommand('skills', ['index', 'build']).command).toBe('skill-resolver');
     expect(routeCommand('skills', ['resolve', '--text', 'x']).command).toBe('skill-resolver');
+    expect(routeCommand('skills', ['library', '--json']).command).toBe('skill-resolver');
     expect(routeCommand('skills', []).command).toBe('skills');
     expect(routeCommand('skills', ['--json']).command).toBe('skills');
     expect(routeCommand('skills', ['list']).command).toBe('skills');

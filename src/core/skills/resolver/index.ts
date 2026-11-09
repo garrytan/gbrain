@@ -11,7 +11,9 @@
  * docs/schemas/skill-resolver.v1.*.json.
  */
 export { buildSkillIndex, catalogStatus, listCatalogs, removeSkillIndex, sessionStatus, type BuildInput, type BuildReceipt, type CatalogStatus } from './build.ts';
-export { resolveSkills, normalizeTurnInput, errorTurnOutput, SCHEMA_VERSION, type Explain, type ResolveOptions, type ResolveResult, type Suggestion, type TurnInput, type TurnOutput } from './resolve.ts';
+export { resolveSkills, normalizeTurnInput, errorTurnOutput, SCHEMA_VERSION, type Explain, type MatchStrength, type ResolveOptions, type ResolveResult, type Suggestion, type TurnInput, type TurnOutput } from './resolve.ts';
+export { commitSessionAsync, type TurnDelta } from './session.ts';
+export { VERSION as GBRAIN_VERSION } from '../../../version.ts';
 export { ResolverError, type ResolverErrorCode } from './errors.ts';
 export { HARNESSES, BLOCK_TOKEN_CAP } from './block.ts';
 export { resolverHome } from './paths.ts';

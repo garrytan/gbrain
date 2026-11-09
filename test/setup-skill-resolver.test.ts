@@ -204,6 +204,8 @@ describe('the engine boundary with resolver-only settings', () => {
     const load = () => withEnv({ GBRAIN_HOME: dir, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, () => loadConfig());
     write({ skills: { resolver: { enabled: true, harnesses: ['claude-code'] } } });
     expect(await load()).toBeNull();
+    write({ autopilot: { incremental_extract_include_frontmatter: true }, skills: { resolver: { enabled: true } } });
+    expect((await load())?.autopilot?.incremental_extract_include_frontmatter).toBe(true);
     write({ engine: 'pglite', database_path: join(dir, '.gbrain', 'brain.pglite'), skills: { resolver: { enabled: true, harnesses: ['claude-code'] } } });
     expect((await load())?.engine).toBe('pglite');
     write({ remote_mcp: { issuer_url: 'https://brain.example.invalid', mcp_url: 'https://brain.example.invalid/mcp', oauth_client_id: 'client-a' }, skills: { resolver: { enabled: true } } });

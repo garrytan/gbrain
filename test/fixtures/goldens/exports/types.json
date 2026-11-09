@@ -8772,9 +8772,23 @@
       },
       {
         "kind": "variable",
+        "name": "GBRAIN_VERSION",
+        "signature": [
+          "string"
+        ]
+      },
+      {
+        "kind": "variable",
         "name": "HARNESSES",
         "signature": [
           "readonly [\"openclaw\", \"claude-code\", \"codex\", \"hermes\", \"qm\"]"
+        ]
+      },
+      {
+        "kind": "type",
+        "name": "MatchStrength",
+        "signature": [
+          "\"body\" | \"name\" | \"description\" | \"named\" | \"triggers\" | \"routing\""
         ]
       },
       {
@@ -8848,6 +8862,7 @@
         "members": [
           "catalog: string",
           "id: string",
+          "match_strength: MatchStrength",
           "name: string",
           "path?: string | undefined",
           "reason: string",
@@ -8855,6 +8870,16 @@
           "summary: string"
         ],
         "name": "Suggestion"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "reset: boolean",
+          "resuggested: string[]",
+          "suggested: string[]",
+          "tokens: number"
+        ],
+        "name": "TurnDelta"
       },
       {
         "kind": "interface",
@@ -8906,6 +8931,13 @@
         "name": "catalogStatus",
         "signature": [
           "(name: string, opts?: { home?: string; }) => Promise<CatalogStatus>"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "commitSessionAsync",
+        "signature": [
+          "(home: string, key: string, delta: TurnDelta) => Promise<boolean>"
         ]
       },
       {

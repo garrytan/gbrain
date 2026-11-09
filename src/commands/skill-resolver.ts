@@ -1,7 +1,7 @@
 /**
- * `gbrain skills index build|status|remove` and `gbrain skills resolve`:
- * the skill resolver's CLI (library: src/core/skills/resolver/). The router
- * (src/cli/command-route.ts) sends these two `skills` subcommands here
+ * `gbrain skills index build|status|remove`, `gbrain skills resolve` and
+ * `gbrain skills library`: the skill resolver's CLI (library:
+ * src/core/skills/resolver/). The router (src/cli/command-route.ts) sends these `skills` subcommands here
  * before any engine or brain is touched; plain `gbrain skills` keeps
  * listing skills through `list_skills`.
  *
@@ -13,13 +13,14 @@
  * an unknown flag or catalog name), with the agent-protocol refusal.
  */
 import { appendFileSync } from 'node:fs';
+import { join, resolve as resolvePath } from 'node:path';
 import { exitCliError, usageError, writeCliError } from '../cli/cli-error.ts';
 import { readStdinBounded } from '../core/interaction.ts';
 import { opError } from '../core/ops/contract.ts';
 import type { RegistryCode } from '../core/error-registry.ts';
 import {
   buildSkillIndex, catalogStatus, listCatalogs, removeSkillIndex, resolveSkills, resolverHome, sessionStatus,
-  ResolverError, HARNESSES, errorTurnOutput, type BuildInput, type TurnInput,
+  ResolverError, HARNESSES, errorTurnOutput, GBRAIN_VERSION, type BuildInput, type TurnInput,
 } from '../core/skills/resolver/index.ts';
 
 const HELP_INDEX = `Usage: gbrain skills index <build|status|remove> [options]
@@ -69,6 +70,18 @@ and no brain connection is needed.
   --json               the turn output document (docs/schemas/skill-resolver.v1.turn-output.json)
 
 Guide: docs/guides/skill-resolver.md
+`;
+
+const HELP_LIBRARY = `Usage: gbrain skills library [--out <file.mjs>] [--json]
+
+Write the skill resolver library, built from this gbrain's own source, as one
+dependency-free ES module that Node imports (default: GBRAIN_HOME/lib/gbrain-skill-resolver.mjs),
+and print its path, sha256 and gbrain version. Run it again after each upgrade.
+
+  --out <file.mjs>   write it here instead
+  --json             {path, sha256, bytes, gbrain_version}
+
+Guide: docs/guides/skill-resolver.md#library
 `;
 
 const CMD = 'skills';
@@ -251,9 +264,27 @@ async function runResolve(args: string[]): Promise<void> {
   if (out.error && !failOpen) process.exit(1);
 }
 
+async function runLibrary(args: string[]): Promise<void> {
+  const p = parseFlags(args, ['--out'], ['--json'], HELP_LIBRARY);
+  if (p.positionals.length) usage(`Unexpected argument "${p.positionals[0]}".`, 'Pass the file with --out <file.mjs>.');
+  const json = p.bools.has('--json');
+  const out = one(p, '--out');
+  if (out !== undefined && !out.endsWith('.mjs')) usage('--out must name a .mjs file.', 'Example: gbrain skills library --out ./gbrain-skill-resolver.mjs');
+  try {
+    const { buildResolverLibrary, LIBRARY_FILE } = await import('./skill-resolver-library.ts');
+    const built = await buildResolverLibrary(out ? resolvePath(out) : join(resolverHome(), 'lib', LIBRARY_FILE));
+    const doc = { ...built, gbrain_version: GBRAIN_VERSION };
+    await write(json ? `${JSON.stringify(doc)}\n` : `Wrote ${doc.path} (gbrain ${doc.gbrain_version}, ${doc.bytes} bytes)\nsha256 ${doc.sha256}\n`);
+  } catch (e) {
+    if (!(e instanceof ResolverError)) throw e;
+    runtimeFailure(e, json);
+  }
+}
+
 export async function runSkillResolver(args: string[]): Promise<void> {
   const [sub, ...rest] = args;
   if (sub === 'index') return runIndex(rest);
   if (sub === 'resolve') return runResolve(rest);
-  process.stdout.write(`${HELP_RESOLVE}\n${HELP_INDEX}`);
+  if (sub === 'library') return runLibrary(rest);
+  process.stdout.write(`${HELP_RESOLVE}\n${HELP_INDEX}\n${HELP_LIBRARY}`);
 }

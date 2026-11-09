@@ -54,7 +54,10 @@ export interface TurnInput {
   reset_session?: boolean;
 }
 
-export interface Suggestion { id: string; name: string; score: number; summary: string; reason: string; path?: string; catalog: string }
+/** The strongest way a suggestion matched the turn: named in it, then by field. A body-only match is the weakest. */
+export type MatchStrength = 'named' | 'name' | 'triggers' | 'routing' | 'description' | 'body';
+const STRENGTH_FIELDS = ['name', 'triggers', 'routing', 'description', 'body'] as const;
+export interface Suggestion { id: string; name: string; score: number; summary: string; reason: string; match_strength: MatchStrength; path?: string; catalog: string }
 export interface TurnError { code: string; message: string; fix: { suggestion: string; command?: string } }
 export interface TurnOutput {
   schema_version: 1;
@@ -344,7 +347,9 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
     const suggestions: Suggestion[] = kept.map(x => {
       const m = metaOf(x.c, x.doc);
       const namesOnly = lines.find(l => l.id === m.id)!.namesOnly;
-      return { id: m.id, name: m.name, score: round4(x.score), summary: namesOnly ? '' : m.summary, reason: x.explicit ? `named in the turn; ${reasonText(ranks[x.c]!.matchedFields(x.doc).fields)}` : reasonText(ranks[x.c]!.matchedFields(x.doc).fields), ...(m.path ? { path: m.path } : {}), catalog: loaded[x.c]!.name };
+      const fields = ranks[x.c]!.matchedFields(x.doc).fields;
+      const match_strength: MatchStrength = x.explicit ? 'named' : STRENGTH_FIELDS.find(f => fields[f]?.length) ?? 'body';
+      return { id: m.id, name: m.name, score: round4(x.score), summary: namesOnly ? '' : m.summary, reason: x.explicit ? `named in the turn; ${reasonText(fields)}` : reasonText(fields), match_strength, ...(m.path ? { path: m.path } : {}), catalog: loaded[x.c]!.name };
     });
     const out: TurnOutput = { ...base, budget_exhausted: exhausted, suggestions, block: r.block, block_tokens: r.tokens, deduped };
     let explain: Explain | undefined;

@@ -133,7 +133,10 @@ Within v1, changes are additive only.
 `no_skill` is true only for an acknowledgement from a small multilingual list
 (`no_skill_reason: "ack"`) or when no word of the turn is in the catalog
 (`"no_match"`). There is no score threshold: a weak match is still
-suggested. A skill named in the turn (`$name`, `@name`, a leading `/name`,
+suggested, and each suggestion's `match_strength` says how it matched
+(`named` in the turn, else the first of `name`, `triggers`, `routing`,
+`description`, `body`) so an adapter can set its own floor, for example
+dropping body-only matches. A skill named in the turn (`$name`, `@name`, a leading `/name`,
 "the name skill", or its full id) ranks first.
 
 ### Exit codes and fail-open
@@ -234,16 +237,30 @@ pull requests that touch the resolver.
 ## Library
 
 `import { buildSkillIndex, resolveSkills } from 'gbrain/skill-resolver'` for
-Bun. Node adapters use `gbrain-skill-resolver.mjs` from the release assets: one
-dependency-free ES module (build it locally with
-`bun scripts/build-skill-resolver-bundle.ts --out <file.mjs>`). The CLI JSON
-contract stays the primary interface.
+Bun. Node adapters load one dependency-free ES module built from the same
+source as the CLI:
+
+- `gbrain skills library --json` writes it from the installed gbrain to
+  `GBRAIN_HOME/lib/gbrain-skill-resolver.mjs` (`--out <file.mjs>` for another
+  path) and prints `{path, sha256, bytes, gbrain_version}`. Run it again
+  after each upgrade; the module exports `GBRAIN_VERSION` so an adapter can
+  see a skew. A compiled binary has no source to build from and refuses with
+  `skill_source_unreadable`.
+- Each release attaches `gbrain-skill-resolver.mjs` and
+  `gbrain-skill-resolver.mjs.sha256` (`sha256sum -c` format), smoke-tested
+  under Node before publishing.
+
+The CLI JSON contract stays the primary interface.
 
 ```ts
 const r = await resolveSkills({ message, session_id, harness: 'codex' }, { catalogs: ['codex-user'], failOpen: true });
-inject(r.output.block);
+inject(r.output.suggestions.filter(s => s.match_strength !== 'body').length ? r.output.block : '');
 await r.commit();
 ```
+
+On an event loop that must not block, commit with async I/O instead:
+`if (r.pending) await commitSessionAsync(home, r.pending.key, r.pending.delta)`
+(same file, lease and rules as `commit()`).
 
 ## Error codes
 
@@ -286,7 +303,10 @@ several catalogs and pass them together.
 
 ### skill_source_unreadable
 
-A `--dir` or `--routing` path does not exist or cannot be read.
+A `--dir` or `--routing` path does not exist or cannot be read, or
+`gbrain skills library` ran from a compiled binary, which carries no source to
+build the Node library from: download the release's `gbrain-skill-resolver.mjs`
+and its `.sha256` instead.
 
 ### skill_source_invalid
 

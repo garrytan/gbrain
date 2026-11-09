@@ -63,7 +63,7 @@ jobs:
           # can repair it.
           assets="$(gh release view "v$version" --repo "$GITHUB_REPOSITORY" \
             --json assets --jq '[.assets[].name] | sort | join(",")' 2>/dev/null || true)"
-          if [ "$assets" = "gbrain-darwin-arm64,gbrain-linux-x64,gbrain-skill-resolver.mjs" ]; then
+          if [ "$assets" = "gbrain-darwin-arm64,gbrain-linux-x64,gbrain-skill-resolver.mjs,gbrain-skill-resolver.mjs.sha256" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Release v$version already published with all assets — nothing to do."
           else
@@ -180,7 +180,7 @@ jobs:
   skill-resolver-bundle:
     # GBRA-377: the skill resolver library as one dependency-free ES module for
     # Node adapters (docs/guides/skill-resolver.md#library). Built from the gated
-    # SHA and smoke-tested under Node before it is attached.
+    # SHA and smoke-tested under Node before it is attached with its sha256.
     needs: [version, ci-gate]
     if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'
     runs-on: ubuntu-latest
@@ -202,7 +202,9 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: gbrain-skill-resolver.mjs
-          path: bundle/gbrain-skill-resolver.mjs
+          path: |
+            bundle/gbrain-skill-resolver.mjs
+            bundle/gbrain-skill-resolver.mjs.sha256
 
   release:
     needs: [version, ci-gate, build, skill-resolver-bundle]
@@ -218,6 +220,9 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           path: artifacts
+      - name: Check the skill resolver bundle against its sha256
+        working-directory: artifacts/gbrain-skill-resolver.mjs
+        run: sha256sum -c gbrain-skill-resolver.mjs.sha256
       - name: Extract CHANGELOG entry for release notes
         # env-bound, not inlined into the script: VERSION comes from master so
         # it isn't attacker-reachable today, but a `${{ }}` inside `run:` is
@@ -241,6 +246,7 @@ jobs:
             artifacts/gbrain-darwin-arm64/gbrain-darwin-arm64
             artifacts/gbrain-linux-x64/gbrain-linux-x64
             artifacts/gbrain-skill-resolver.mjs/gbrain-skill-resolver.mjs
+            artifacts/gbrain-skill-resolver.mjs/gbrain-skill-resolver.mjs.sha256
       # [C1 = D6-A] `latest-stable` is the alpha channel's ref: the alpha
       # update check follows it, and so does anyone who pins it by hand. The
       # install surfaces (the README paste block, the BOOTSTRAP_FOR_AGENTS.md

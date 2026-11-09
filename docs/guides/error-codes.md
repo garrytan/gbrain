@@ -4702,7 +4702,7 @@ More: [docs/guides/skill-resolver.md#skill_source_invalid](../../docs/guides/ski
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A --dir or --routing path does not exist or cannot be read, so nothing was built. | The request itself was wrong or no longer matches the brain; nothing was changed. | Pass an existing directory (or file) you can read. | agent | `repeat the read that failed` | 1 | no |
+| A --dir or --routing path (or, for `gbrain skills library`, gbrain's own source in a compiled binary) does not exist or cannot be read, so nothing was built. | The request itself was wrong or no longer matches the brain; nothing was changed. | Pass an existing directory (or file) you can read; for the Node library from a compiled binary, download the release asset. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_source_unreadable](../../docs/guides/skill-resolver.md#skill_source_unreadable)
 

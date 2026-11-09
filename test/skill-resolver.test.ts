@@ -83,6 +83,22 @@ describe('tokenizer', () => {
 });
 
 describe('turn rules', () => {
+  test('each suggestion carries its match strength: named, then the strongest matched field, body-only last', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', [
+      { id: 'x:alpha', name: 'alpha', description: 'Rotate the zorvek keys' },
+      { id: 'x:beta', name: 'beta', description: 'Other work', triggers: ['zorvek rollout'] },
+      { id: 'x:gamma', name: 'gamma', description: 'Other work', routing: ['zorvek audit'] },
+      { id: 'x:delta', name: 'delta', description: 'Other work', body: 'Step one: check the zorvek dashboard.' },
+      { id: 'x:zorvek', name: 'zorvek', description: 'Other work' },
+    ]);
+    const r = await resolveSkills({ message: 'zorvek', top_k: 8 }, { home });
+    const by = Object.fromEntries(r.output.suggestions.map(s => [s.id, s.match_strength]));
+    expect(by).toEqual({ 'x:zorvek': 'name', 'x:beta': 'triggers', 'x:gamma': 'routing', 'x:alpha': 'description', 'x:delta': 'body' });
+    const named = await resolveSkills({ message: 'use the delta skill for zorvek' }, { home });
+    expect(named.output.suggestions[0]).toMatchObject({ id: 'x:delta', match_strength: 'named' });
+  });
+
   test('ack and no_match are the only no_skill results; short imperatives and CJK turns are ranked', async () => {
     const home = tmp();
     await jsonCatalog(home, 'c', [...BASIC, { id: 'x:minutes', name: 'minutes', description: '会议纪要 整理' }]);
@@ -355,7 +371,7 @@ describe('block', () => {
     const root = tmp('skres-dir-');
     const p = skillDir(root, 'deploy', { name: 'deploy', description: 'Ship a service to production' });
     await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
-    const lines: Record<string, string> = { 'claude-code': 'Skill tool', 'codex': 'open the SKILL.md at its path', 'hermes': 'skill_view(name)', 'openclaw': 'skills_read', 'qm': 'action read' };
+    const lines: Record<string, string> = { 'claude-code': 'Skill tool', 'codex': 'open the SKILL.md at its path', 'hermes': 'skill_view(name)', 'openclaw': 'skills_read({name}) using its name', 'qm': 'action read' };
     for (const [h, needle] of Object.entries(lines)) {
       const r = await resolveSkills({ message: 'deploy acme-example-secret-words', harness: h }, { home });
       expect(r.output.block).toContain(needle);

@@ -997,11 +997,13 @@
       ],
       "./skill-resolver": [
         "BLOCK_TOKEN_CAP",
+        "GBRAIN_VERSION",
         "HARNESSES",
         "ResolverError",
         "SCHEMA_VERSION",
         "buildSkillIndex",
         "catalogStatus",
+        "commitSessionAsync",
         "errorTurnOutput",
         "listCatalogs",
         "normalizeTurnInput",

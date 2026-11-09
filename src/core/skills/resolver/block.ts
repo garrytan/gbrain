@@ -17,7 +17,7 @@ export type Harness = (typeof HARNESSES)[number];
 export const BLOCK_TOKENIZER = 'gbrain-estimate-tokens-v1';
 
 const LOAD_LINES: Record<Harness | 'default', string> = {
-  'openclaw': 'To use one, read it with skills_read (by its path, or its id) before acting.',
+  'openclaw': 'To use one, read it with skills_read({name}) using its name before acting.',
   'claude-code': 'To use one, load it with the Skill tool (by its id) before acting.',
   'codex': 'To use one, open the SKILL.md at its path and follow it.',
   'hermes': 'To use one, load it with skill_view(name) using its id before acting.',

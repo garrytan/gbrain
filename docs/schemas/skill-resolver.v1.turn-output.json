@@ -48,6 +48,7 @@
         "score",
         "summary",
         "reason",
+        "match_strength",
         "catalog"
       ],
       "properties": {
@@ -71,6 +72,17 @@
         "reason": {
           "type": "string",
           "description": "The matched fields and terms."
+        },
+        "match_strength": {
+          "enum": [
+            "named",
+            "name",
+            "triggers",
+            "routing",
+            "description",
+            "body"
+          ],
+          "description": "The strongest way it matched: named in the turn, else the first matched field of name, triggers, routing, description, body. An adapter that wants a floor drops body-only (or description-only) suggestions."
         },
         "path": {
           "type": "string",
