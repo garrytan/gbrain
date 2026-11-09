@@ -352,7 +352,7 @@ fail-closed and tested:
   (federated grant array > scalar source floor > nothing). A caller without a
   grant for a source cannot read its pages, chunks, or edges.
 - **Facts visibility** — facts carry `private`/`world` visibility; remote
-  callers see `world` only.
+  callers see `world` only, except the brain owner's `recall`.
 - **Takes holders** — per-token allow-lists (`gbrain auth permissions <token>
   set-takes-holders ...`) scope which held takes a remote caller sees.
 - **Write-side slug fences** — a client bound to slug prefixes can only write
@@ -371,9 +371,12 @@ The exact frontmatter value `private` hides that concrete page row;
 derived pages: an extracted atom or synthesized concept with no `visibility`
 is private, an atom whose origin page is private is hidden, and so is a
 synthesized concept built from a private atom. Trusted local CLI callers
-retain access. Operator settings can opt out of private-page
+retain access, and so does a credential bound to the brain owner
+(`gbrain access owner set <member>`). Operator settings can opt out of private-page
 filtering, so source grants remain an independent boundary: keep content in an
 ungranted source when remote callers must have no access to that source.
+Every designation, who reads it and when to use it:
+[access designations](../guides/access-designations.md).
 
 ## Further reading
 
