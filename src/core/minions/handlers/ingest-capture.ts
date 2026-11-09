@@ -111,7 +111,7 @@ function webhookPrincipal(writer: unknown): Principal | undefined {
  * scope page, and never a page the writer cannot read (another member's readable_by page, a private page). A job with
  * no stored writer is checked as a guest, which reads no restricted page.
  */
-export async function assertWebhookWriterMayReplace(engine: BrainEngine, writer: unknown, sourceId: string, slug: string, content?: string): Promise<void> {
+export async function assertWebhookWriterMayReplace(engine: BrainEngine, writer: unknown, sourceId: string, slug: string, content?: string): Promise<string | null | undefined> {
   const target = validateSlug(slug);
   assertMemberPageWriter({ remote: true }, target, 'ingest_capture');
   assertScopePageWriter({ remote: true }, target, 'ingest_capture');
@@ -121,8 +121,10 @@ export async function assertWebhookWriterMayReplace(engine: BrainEngine, writer:
   if (content === undefined) return;
   // GST-2112: the capture writes through a trusted local path, so apply the remote put_page readers rule here: a body
   // never drops readable_by from a page that names readers, and the readers it names keep the writer.
+  // The returned revision binds the write to the frontmatter checked here.
   const stored = await engine.readPageSnapshot(target, { sourceId, includeDeleted: true });
-  await remoteReadersChecked(engine, authority, stored?.page.frontmatter, { parsedPage: { frontmatter: parseMarkdown(content, target).frontmatter } });
+  await remoteReadersChecked(engine, authority, stored?.page.frontmatter, { parsedPage: { frontmatter: parseMarkdown(content, target + '.md', { validate: true }).frontmatter } });
+  return stored?.revision ?? null;
 }
 
 export function makeIngestCaptureHandler(engine: BrainEngine) {
@@ -278,8 +280,8 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     if (applied) return applied;
 
     const webhookWrite = untrustedPayload && event.source_kind === 'webhook' && !isTombstone;
-    const checkWriter = (sid: string) => webhookWrite ? assertWebhookWriterMayReplace(engine, data.writer, sid, slug, event.content) : Promise.resolve();
-    await checkWriter(sourceId ?? 'default');
+    const checkWriter = (sid: string) => webhookWrite ? assertWebhookWriterMayReplace(engine, data.writer, sid, slug, event.content) : Promise.resolve(undefined);
+    let checkedRevision = await checkWriter(sourceId ?? 'default');
     const door = (operation: 'put_page' | 'delete_page', sid: string, params: Record<string, unknown>) => submitPageMutation(
       { engine, config: { engine: engine.kind } as OperationContext['config'], remote: false, dryRun: false, sourceId: sid, logger: { info() {}, warn() {}, error() {} } },
       { operation, params: { ...params, slug, source_id: sid } });
@@ -381,7 +383,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     // whole write rolls back (null) and the stored result is returned. The FK retry's first transaction rolls its record back too.
     const importAs = async (sid: string | undefined) => {
       try {
-        return await importFromContent(engine, slug, event.content, { ...importOpts, sourceId: sid, ...(appliedKey ? { beforeCommit: async (tx: BrainEngine) => {
+        return await importFromContent(engine, slug, event.content, { ...importOpts, sourceId: sid, ...(checkedRevision !== undefined ? { expectedBaseRevision: checkedRevision } : {}), ...(appliedKey ? { beforeCommit: async (tx: BrainEngine) => {
           if (!await recordAppliedCapture(tx, appliedKey, sid ?? 'default', slug, captured('imported', 0))) throw new CaptureAlreadyApplied();
         } } : {}) });
       } catch (err) {
@@ -396,7 +398,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       // The sources row can vanish (ON DELETE CASCADE) between the pre-check and this write.
       if (sourceId !== undefined && isPagesSourceFkViolation(err)) {
         sourceFallback = { requested: sourceId, effective: 'default', reason: 'fk_violation' };
-        await checkWriter('default');
+        checkedRevision = await checkWriter('default');
         result = await importAs(undefined);
       } else {
         throw err;

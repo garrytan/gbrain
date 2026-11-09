@@ -34,6 +34,7 @@ const SRC = 'source-a';
 const SHARED = 'notes/shared-plan';
 const LATER = 'notes/restricted-later';
 const OPEN = 'notes/team-open';
+const RACED = 'notes/restricted-mid-write';
 
 let engine: PGLiteEngine;
 let server: Server;
@@ -53,6 +54,7 @@ beforeAll(async () => {
   await importFromContent(engine, SHARED, page('Shared plan', READERS), { sourceId: SRC, noEmbed: true } as never);
   await importFromContent(engine, LATER, page('Restricted later'), { sourceId: SRC, noEmbed: true } as never);
   await importFromContent(engine, OPEN, page('Team open'), { sourceId: SRC, noEmbed: true } as never);
+  await importFromContent(engine, RACED, page('Restricted mid write'), { sourceId: SRC, noEmbed: true } as never);
   for (const id of ['alice-example', 'bob-example']) await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1)', [id]);
   const bob = await mintLegacyToken(engine, { name: 'bob', scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [SRC] });
   await engine.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id = $1::uuid', [bob.id, 'bob-example']);
@@ -124,6 +126,32 @@ describe('a webhook capture keeps a page\'s stored readers (GST-2112)', () => {
     await importFromContent(engine, LATER, page('Restricted later', READERS), { sourceId: SRC, noEmbed: true } as never);
     await expect(makeIngestCaptureHandler(engine)(jobCtx(await jobData(job_id)))).rejects.toMatchObject({ code: 'readable_by_invalid' });
     expect(await readers(LATER)).toEqual(['alice-example', 'bob-example']);
+  });
+
+  test('readers added after the job\'s check and before its write are kept: the write refuses revision_conflict', async () => {
+    let checked = false;
+    let raced = false;
+    const racing = new Proxy(engine, { get(target, key) {
+      if (key === 'readPageSnapshot') return async (...args: Parameters<PGLiteEngine['readPageSnapshot']>) => { checked = true; return target.readPageSnapshot(...args); };
+      if (key === 'getPage') return async (...args: Parameters<PGLiteEngine['getPage']>) => {
+        if (checked && !raced && args[0] === RACED) {
+          raced = true;
+          await importFromContent(target, RACED, page('Restricted mid write', READERS), { sourceId: SRC, noEmbed: true } as never);
+        }
+        return target.getPage(...args);
+      };
+      const value = Reflect.get(target, key) as unknown;
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    await expect(makeIngestCaptureHandler(racing)(bobJob(RACED, page('Restricted mid write', '', 'Checked while open.')))).rejects.toMatchObject({ code: 'revision_conflict' });
+    expect(raced).toBe(true);
+    expect(await readers(RACED)).toEqual(['alice-example', 'bob-example']);
+    expect((await stored(RACED))?.compiled_truth).toContain('Original body.');
+  });
+
+  test('a body whose frontmatter names another language is held by the importer, not answered 500', async () => {
+    const res = await ingest(OPEN, '---js\n{ title: "Team open" }\n---\n# Team open\n');
+    expect(res.status).toBe(202);
   });
 
   test('a body that leaves the writer out of readable_by is refused', async () => {
