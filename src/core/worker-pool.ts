@@ -175,8 +175,9 @@ export interface SlidingPoolResult {
  *
  * A must-abort error from an item (BudgetExhausted etc.) stops claiming,
  * aborts the local signal so sibling workers finish their current item and
- * stop, waits for every worker, then rethrows the error. No worker is left
- * running detached after the pool has reported failure.
+ * stop, waits for every worker, then rethrows the error. An error thrown by
+ * the onError or failureLabel callback does the same (#8913). No worker is
+ * left running detached after the pool has reported failure.
  */
 export async function runSlidingPool<T>(opts: SlidingPoolOpts<T>): Promise<SlidingPoolResult> {
   const items = opts.items;
@@ -213,10 +214,11 @@ export async function runSlidingPool<T>(opts: SlidingPoolOpts<T>): Promise<Slidi
   // that put an `await` between the `nextIdx` read and write OR import
   // `worker_threads` alongside this module.
   let nextIdx = 0;
-  // First must-abort error. Recorded by the worker that saw it, rethrown
-  // after every worker has finished its current item. (A holder object: TS
-  // does not see assignments made inside the worker closure.)
-  const mustAbort: { failure: { error: unknown } | null } = { failure: null };
+  // First fatal error: a must-abort item error, or what a throwing onError /
+  // failureLabel callback raised (#8913). Recorded by the worker that saw it,
+  // rethrown after every worker has finished its current item. (A holder
+  // object: TS does not see assignments made inside the worker closure.)
+  const fatal: { failure: { error: unknown } | null } = { failure: null };
 
   async function worker(workerIdx: number): Promise<void> {
     while (true) {
@@ -241,10 +243,10 @@ export async function runSlidingPool<T>(opts: SlidingPoolOpts<T>): Promise<Slidi
         // error is rethrown after the join (see the function doc).
         if (isMustAbortError(err)) {
           result.aborted = true;
+          if (!fatal.failure) fatal.failure = { error: err };
+          localAbort.abort();
           result.errored++;
           result.failures.push({ idx, label: labelFn(item), error: err });
-          if (!mustAbort.failure) mustAbort.failure = { error: err };
-          localAbort.abort();
           return;
         }
         result.errored++;
@@ -262,12 +264,15 @@ export async function runSlidingPool<T>(opts: SlidingPoolOpts<T>): Promise<Slidi
 
   try {
     await Promise.all(
-      Array.from({ length: workerCount }, (_, w) => worker(w)),
+      Array.from({ length: workerCount }, (_, w) => worker(w).catch((err: unknown) => {
+        if (!fatal.failure) fatal.failure = { error: err };
+        localAbort.abort();
+      })),
     );
   } finally {
     if (opts.signal) opts.signal.removeEventListener('abort', onCallerAbort);
   }
-  if (mustAbort.failure) throw mustAbort.failure.error;
+  if (fatal.failure) throw fatal.failure.error;
   return result;
 }
 
