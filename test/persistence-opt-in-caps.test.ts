@@ -14,6 +14,8 @@ import { runCompactionPass } from '../src/core/persistence/compaction-pass.ts';
 import { __resetCapacityNoticesForTests, capacityNotices } from '../src/core/persistence/capacity-snapshot.ts';
 import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
 import { RECEIPT_TARGET_KEY, readJournalLimits } from '../src/core/persistence/limits.ts';
+import { manageReconcileBackups } from '../src/core/persistence/reconcile-backup.ts';
+import type { WriteAuthority } from '../src/core/persistence/model.ts';
 import { checkPersistenceCapacity } from '../src/commands/doctor/checks/persistence-capacity.ts';
 import { editRequest, freshBrainFactory, requestFixture } from './helpers/persistence-request-fixture.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -190,6 +192,34 @@ for (const kind of testBackends()) {
       expect(warning.message).not.toContain('persistence.limits.');
       expect(warning.fix).toMatchObject({ actor: 'host_admin', argv: ['gbrain', 'repair', 'receipt-compaction', '--json'] });
       expect(warning.details).toMatchObject({ housekeeping: { target_bytes: 1, over_target: true } });
+    });
+
+    check('compacted receipts alone above the target: housekeeping has nothing to take and doctor stays ok', async engine => {
+      const requests = await requestFixture(engine);
+      for (const slug of ['a', 'b', 'c']) await requests.publish(await requests.admit(slug));
+      await settleEffects(engine);
+      await age(engine, 40);
+      await engine.setConfig(RECEIPT_TARGET_KEY, '0');
+      await runCompactionPass(engine, { hostId: 'host-a' });
+      expect((await receipts(engine)).every(r => r.compacted)).toBe(true);
+      // What compacted receipts keep for idempotency never shrinks, so it alone passing the target is nothing to act on.
+      expect(await brainBytes(engine)).toBeGreaterThan(1);
+      await engine.setConfig(RECEIPT_TARGET_KEY, '1');
+      const doctor = await checkPersistenceCapacity(engine);
+      expect(doctor.status).toBe('ok');
+      expect(doctor.details).toMatchObject({ housekeeping: { target_bytes: 1, compactable_bytes: 0, over_target: false } });
+      expect(await runCompactionPass(engine, { hostId: 'host-a' })).toMatchObject({ compacted: 0 });
+      // A new settled receipt is something housekeeping can act on again.
+      await requests.publish(await requests.admit('d'));
+      expect((await checkPersistenceCapacity(engine)).status).toBe('warn');
+    });
+
+    check('the reconciliation backup listing names no count bound while the id cap is unset, and the cap once set', async engine => {
+      const authority = { version: 1, principal: { kind: 'cli', id: 'opt-in-caps' }, remote: false, sourceId: 'default' } as unknown as WriteAuthority;
+      const listing = async () => JSON.parse(JSON.stringify(await manageReconcileBackups(engine, authority, 'people/example', { action: 'list' })));
+      expect((await listing()).capacity).toEqual({ max_retained_bytes: 1024 ** 3 });
+      await engine.setConfig('persistence.limits.brain_lifetime_ids', '5000');
+      expect((await listing()).capacity).toEqual({ max_retained_bytes: 1024 ** 3, max_retained_count: 5000 });
     });
   });
 }

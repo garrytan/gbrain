@@ -978,8 +978,8 @@ gbrain doctor --only persistence_capacity,persistence_request_growth --json
 
 Receipt storage grows with the retention window times the admission rate,
 plus about 4 KiB per compacted receipt, which keeps its request ID replayable.
-While the brain's reserved receipt bytes pass
-`persistence.housekeeping.receipt_target_bytes` (default 8 GiB; 0 turns it
+While receipts not yet compacted (terminal, held by no recovery) reserve more
+than `persistence.housekeeping.receipt_target_bytes` (default 8 GiB; 0 turns it
 off), the resident consumer's compaction pass also compacts receipts older than
 7 days, oldest first, up to 100 a pass: settled page writes, and the refusals
 of producers that write again from current content (maintenance pages and
@@ -990,7 +990,10 @@ later write resolves it): `gbrain repair failed-writes` replays a caller's
 refused write from it, conversation facts resubmit a frozen
 extraction, atom retries and connector held-item retries read it. Receipts
 with unfinished effects, an open sync or a recovery are kept as before. An explicit `persistence.receipt_retention_days`
-is the operator's choice, and housekeeping leaves it alone.
+is the operator's choice, and housekeeping leaves it alone. Compacted
+receipts never count toward the target: nothing can shrink them further, so a
+large brain whose compacted receipts alone pass 8 GiB is not held above it.
+On a brain that several hosts write to, these defaults hold once every one of them runs this version: an older gbrain still enforces its old caps and its 30-day retention, and the `gbrain config set persistence.limits.*` that its `write_quota_exhausted` refusal suggests would turn a cap on for every host, so upgrade the other hosts instead of raising it.
 
 While storage stays above the target, `persistence_capacity` warns the brain
 host's operator (`actor: host_admin`) with the read-only

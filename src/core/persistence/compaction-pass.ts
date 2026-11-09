@@ -14,7 +14,7 @@ import type { BrainEngine } from '../engine.ts';
 import { compactReceipt, compactWriteReceiptsDetailed, NEWEST_SYNC_RECEIPT_EXCLUSION, OPEN_SYNC_CURSOR_EXCLUSION, yieldToEventLoop, type ReceiptCompactionResult } from './journal.ts';
 import { getCode } from '../retry-matcher.ts';
 import type { WriteRequest } from './model.ts';
-import { HOUSEKEEPING_FLOOR_DAYS, readReceiptTargetBytes, RECEIPT_RETENTION_KEY } from './limits.ts';
+import { HOUSEKEEPING_FLOOR_DAYS, readCompactableReceiptBytes, readReceiptTargetBytes, RECEIPT_RETENTION_KEY } from './limits.ts';
 import { sweepCompactedReservations } from './receipt-true-up.ts';
 
 export const LAST_COMPACTION_KEY = 'persistence.maintenance.last_compaction';
@@ -61,7 +61,7 @@ const EARLY_SQL = (r: string) => `((${r}.state IN ('committed','cancelled') AND 
         OR ${r}.intent->>'kind' IN ('managed_file_import','canonical_reconcile','managed_file_repair')))
         OR (${r}.operation='submit_job' AND ${r}.intent->>'kind'='managed_maintenance_page'))))`;
 /**
- * GBRA-108: while the brain's reserved receipt bytes pass `persistence.housekeeping.receipt_target_bytes` and the retention is
+ * GBRA-108: while receipts not yet compacted reserve more than `persistence.housekeeping.receipt_target_bytes` and the retention is
  * the default, one batch of receipts older than HOUSEKEEPING_FLOOR_DAYS that `EARLY_SQL` admits compacts early, oldest first.
  * An explicit retention is the operator's and is kept, and every exclusion of the retention pass applies (`compactReceipt`
  * rechecks state, age, effects and sync under its lock; operation and intent never change once a request ends).
@@ -72,6 +72,7 @@ export async function housekeepReceipts(engine: BrainEngine): Promise<ReceiptCom
     `SELECT (SELECT value FROM config WHERE key=$1) AS retention,(SELECT terminal_bytes::text FROM persistence_counters WHERE key='brain') AS used,
       to_char((now()-($2::double precision*interval '1 day')) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cutoff`, [RECEIPT_RETENTION_KEY, HOUSEKEEPING_FLOOR_DAYS])]);
   if (!state || state.retention !== null || target === 0 || Number(state.used ?? 0) <= target) return result;
+  if (await readCompactableReceiptBytes(engine) <= target) return result;
   const states = ['committed', 'cancelled', 'failed', 'conflict'];
   const rows = await engine.executeRaw<Pick<WriteRequest, 'id' | 'principal_kind' | 'principal_id'>>(`SELECT id,principal_kind,principal_id FROM persistence_requests r
     WHERE state=ANY($1::text[]) AND recovery IS NULL AND NOT compacted AND completed_at < $2::timestamptz

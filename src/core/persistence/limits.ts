@@ -9,7 +9,7 @@ export const RETAINED_RECEIPT_BYTES = 4096;
 export const RECEIPT_RETENTION_KEY = 'persistence.receipt_retention_days';
 export const DEFAULT_RECEIPT_RETENTION_DAYS = 30;
 /**
- * GBRA-108: while the brain's reserved receipt bytes pass this target, housekeeping compacts settled receipts and re-derivable
+ * GBRA-108: while receipts not yet compacted reserve more than this target (`readCompactableReceiptBytes`), housekeeping compacts settled receipts and re-derivable
  * producer refusals older than HOUSEKEEPING_FLOOR_DAYS instead of waiting out the default retention (compaction-pass.ts
  * `EARLY_SQL`; an explicit retention is kept as set), and doctor tells the host operator. 0 turns both off. Never a write refusal.
  */
@@ -19,6 +19,16 @@ export const HOUSEKEEPING_FLOOR_DAYS = 7;
 export async function readReceiptTargetBytes(engine:SqlEngine):Promise<number> {
   const [row]=await engine.executeRaw<{value:string}>('SELECT value FROM config WHERE key=$1',[RECEIPT_TARGET_KEY]);
   return row ? parseJournalConfigValue(RECEIPT_TARGET_KEY,row.value) : DEFAULT_RECEIPT_TARGET_BYTES;
+}
+/**
+ * The reserved bytes the receipt target counts: terminal receipts not yet compacted that no recovery holds (the rows of the
+ * persistence_requests_compactable index). A compacted receipt keeps about 1-4 KB so its request id stays idempotent and never
+ * shrinks further, so counting those would keep a large brain above the target forever with nothing left to compact.
+ */
+export async function readCompactableReceiptBytes(engine:SqlEngine):Promise<number> {
+  const [row]=await engine.executeRaw<{bytes:string}>(`SELECT COALESCE(SUM(terminal_reservation),0)::text AS bytes FROM persistence_requests
+    WHERE recovery IS NULL AND NOT compacted AND state IN ('committed','conflict','failed','cancelled')`);
+  return Number(row?.bytes ?? 0);
 }
 
 export function journalLimitKey(key:keyof JournalLimits):string {
