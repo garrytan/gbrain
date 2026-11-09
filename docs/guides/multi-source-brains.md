@@ -246,8 +246,9 @@ who may read it, before any member's bot connects:
   The first id is the token's write source, so a member's saved memories land
   in their own private source.
 
-  A credential bound to a member (`--member`) with no `--sources` has no write
-  source of its own and writes to `default`, which every credential without a
+  A credential bound to a member (`--member`) whose write source is `default`
+  (a token with no `--sources` or with `--sources default`, or an OAuth client
+  left at its registration default) writes where every credential without a
   source grant reads. A page such a credential creates is therefore written
   with `readable_by: [member:<id>]`, readable only by that member (and the
   local CLI); rewriting it without `readable_by` keeps those readers, and the

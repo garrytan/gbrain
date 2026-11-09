@@ -1,6 +1,6 @@
 /**
  * GST-2051 (HARN-64): a credential bound to a member with no source grant writes to the `default` source, which every
- * no-grant credential reads. Before the fix a page it created there was readable by any other member and by an unbound
+ * no-grant credential reads (so does an OAuth client at its registration default, or a token granted --sources default). Before the fix a page it created there was readable by any other member and by an unbound
  * token on get_page, search, query, recall and list_pages.
  * 1. Protects: a page such a credential creates names its member as its only reader (readable_by), so another member
  *    and an unbound token get the canonical page_not_found and no search, query, recall or list_pages hit; the writer
@@ -47,7 +47,7 @@ const note = (title: string, body: string, readers = '') =>
   ['---', 'type: note', 'title: ' + title, ...(readers ? ['readable_by: ' + readers] : []), '---', '# ' + title, '', body].join('\n');
 
 for (const kind of testBackends()) {
-  describe('writes from a member-bound credential with no source grant (' + kind + ', repo-less)', () => {
+  describe('writes to default from a member-bound credential (' + kind + ', repo-less)', () => {
     let engine: BrainEngine;
     let close: () => Promise<void>;
     const tokens: Record<string, string> = {};
@@ -90,8 +90,12 @@ for (const kind of testBackends()) {
       await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [PRIVATE_SRC]);
       await importFromContent(engine, SHARED_PAGE, note('Team shared', 'Shared agenda.'), { sourceId: 'default', noEmbed: true });
       for (const id of ['alice-example', 'bob-example']) await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1)', [id]);
+      // An OAuth client as registration leaves it (source_id default, federated_read {default}), bound to alice.
+      await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris, grant_types, scope, token_endpoint_auth_method,
+        client_id_issued_at, source_id, federated_read, member_id) VALUES ('alice-client', 'x', 'alice-client', '{}', '{client_credentials}', 'read write',
+        'client_secret_post', 0, 'default', '{default}', 'alice-example')`);
       for (const [name, member, sourceGrant] of [['alice', 'alice-example', undefined], ['bob', 'bob-example', undefined], ['public', null, undefined],
-        ['alice-documented', 'alice-example', [PRIVATE_SRC, 'default']]] as const) {
+        ['alice-documented', 'alice-example', [PRIVATE_SRC, 'default']], ['alice-default-grant', 'alice-example', ['default']]] as const) {
         const minted = await mintLegacyToken(engine, { name, scopes: ['read', 'write'], takesHolders: ['world'], ...(sourceGrant ? { sourceGrant: [...sourceGrant] } : {}) });
         tokens[name] = minted.token;
         if (member) await engine.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id = $1::uuid', [minted.id, member]);
@@ -109,6 +113,24 @@ for (const kind of testBackends()) {
       expect(await reads('public', slug, canary)).toEqual(none);
       expect((await call('bob', 'get_page', { slug })).json.code).toBe('page_not_found');
       expect((await reads('alice', slug, canary)).get_page).toBe(true);
+    }, 240_000);
+
+    test('a token granted --sources default and an OAuth client at its registration default are kept to their member too', async () => {
+      const canary = marker('grant');
+      const slug = 'notes/alice-grant-' + canary;
+      expect((await call('alice-default-grant', 'put_page', { slug, content: note('Alice grant', 'Alice grant code ' + canary + '.') })).isError).toBe(false);
+      expect((await stored(slug)).page_readers).toEqual(['member:alice-example']);
+      expect(await reads('bob', slug, canary)).toEqual(none);
+      const clientCanary = marker('client');
+      const clientSlug = 'notes/alice-client-' + clientCanary;
+      const auth = { token: '', clientId: 'alice-client', clientName: 'alice-client', principal: { kind: 'oauth_client', id: 'alice-client' }, scopes: ['read', 'write'],
+        member: { id: 'alice-example', groups: [] }, sourceId: 'default', allowedSources: ['default'] } as unknown as AuthInfo;
+      const out = await dispatchToolCall(engine, 'put_page', { slug: clientSlug, content: note('Alice client', 'Alice client code ' + clientCanary + '.'), request_id: randomUUID() },
+        { remote: true, transport: 'http', auth, sourceId: 'default', takesHoldersAllowList: ['world'] });
+      expect(out.isError === true).toBe(false);
+      expect((await stored(clientSlug)).page_readers).toEqual(['member:alice-example']);
+      expect(await reads('bob', clientSlug, clientCanary)).toEqual(none);
+      expect(await reads('public', clientSlug, clientCanary)).toEqual(none);
     }, 240_000);
 
     test('the writer rewrites its page without readable_by and the readers carry; naming readers widens it', async () => {
@@ -165,7 +187,7 @@ for (const kind of testBackends()) {
         const [before] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM minion_jobs WHERE name = 'ingest_capture'");
         const refused = await ingest('alice', note('Alice ingest', 'Ingest ' + marker('ingest') + '.'));
         expect(refused.status).toBe(403);
-        expect(await refused.json()).toMatchObject({ error: 'permission_denied', message: expect.stringContaining('no source grant') });
+        expect(await refused.json()).toMatchObject({ error: 'permission_denied', message: expect.stringContaining('write source is default') });
         const [after] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM minion_jobs WHERE name = 'ingest_capture'");
         expect(after.n).toBe(before.n);
         const granted = await ingest('alice-documented', note('Alice doc ingest', 'Ingest ' + marker('ingestdoc') + '.'));
@@ -178,7 +200,7 @@ for (const kind of testBackends()) {
 }
 
 for (const kind of testBackends()) {
-  describe('writes from a member-bound credential with no source grant (' + kind + ', repo brain)', () => {
+  describe('writes to default from a member-bound credential (' + kind + ', repo brain)', () => {
     let engine: BrainEngine;
     let close: () => Promise<void>;
     const home = mkdtempSync(join(tmpdir(), 'gbrain-gst2051-' + kind + '-'));

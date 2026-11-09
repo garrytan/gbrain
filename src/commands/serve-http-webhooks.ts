@@ -31,7 +31,7 @@ import { NO_SOURCES } from '../core/source-id.ts';
 import { noSourceGrantError } from '../core/ops/context.ts';
 import { renderAction } from '../core/agent-output.ts';
 import { assertWebhookWriterMayReplace } from '../core/minions/handlers/ingest-capture.ts';
-import { ungrantedMemberWriter } from '../core/persistence/page-visibility.ts';
+import { defaultSourceMemberWriter } from '../core/persistence/page-visibility.ts';
 import type { WriteAuthority } from '../core/persistence/model.ts';
 import { validateSlug } from '../core/utils.ts';
 
@@ -301,6 +301,21 @@ function verifyWebhookSig(secret: unknown, sigHeader: string, payload: Buffer): 
   return matches && keyed;
 }
 
+/**
+ * GST-2051: a member-bound credential writing to default would publish where every no-grant credential reads; the capture
+ * job cannot keep the page to the member, so POST /ingest refuses it (answering res) and put_page, which does, stays open.
+ */
+async function refusedDefaultSourceMember(engine: BrainEngine, authInfo: AuthInfo, res: Response): Promise<boolean> {
+  if (!authInfo.principal || !await defaultSourceMemberWriter(engine, { remote: true, principal: authInfo.principal as WriteAuthority['principal'], sourceId: authInfo.sourceId ?? 'default' })) return false;
+  res.status(403).json({
+    error: 'permission_denied',
+    message: 'POST /ingest is unavailable to a credential bound to a member whose write source is default: its pages would land where other members ' +
+      'and unbound credentials read. Write through the MCP put_page op, which keeps a new page to its member, ' +
+      'or ask the brain operator to grant this credential its own write source (gbrain auth rescope --sources <private-source>,default).',
+  });
+  return true;
+}
+
 /** POST /ingest (OAuth write scope) and POST /webhooks/github (per-source HMAC), in registration order. */
 export function mountWebhooks(app: Express, ctx: ServeHttpContext): void {
   mountIngest(app, ctx);
@@ -394,17 +409,7 @@ async function handleIngest(
       fix: renderAction(refusal.fix!, { transport: 'http', isCallable: () => false, preapproved: () => false }) });
     return;
   }
-  // GST-2051: a member-bound credential with no source grant would publish to default, which every no-grant credential
-  // reads; the capture job cannot keep the page to the member, so the route refuses and put_page (which does) stays open.
-  if (authInfo.principal && await ungrantedMemberWriter(engine, { remote: true, principal: authInfo.principal } as WriteAuthority)) {
-    res.status(403).json({
-      error: 'permission_denied',
-      message: 'POST /ingest is unavailable to a credential bound to a member with no source grant: its pages would land in the default source, ' +
-        'which other members and unbound credentials read. Write through the MCP put_page op, which keeps a new page to its member, ' +
-        'or ask the brain operator to grant this credential its own write source (gbrain auth rescope --sources <private-source>,default).',
-    });
-    return;
-  }
+  if (await refusedDefaultSourceMember(engine, authInfo, res)) return;
   if (authInfo.allowedOperations != null || authInfo.grantProjectionDegraded) {
     res.status(403).json({
       error: 'permission_denied',
