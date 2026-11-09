@@ -16,7 +16,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ### Itemized changes
 
-- `src/core/edge-whitespace.ts` (new): `EDGE_WHITESPACE`, exactly what JavaScript's `trim()` strips, `edgeTrimSql()`, and an ASCII-only lowercase for TypeScript and SQL.
+- `src/core/edge-whitespace.ts` (new): `EDGE_WHITESPACE`, exactly what JavaScript's `trim()` strips, `edgeTrimSql()`, and an ASCII-only lowercase for TypeScript and SQL. The generated SQL is plain ASCII, so it also runs on a Postgres database whose encoding is not UTF8; there the SQL side trims ASCII whitespace only.
 - `src/core/search/private-visibility.ts`: `privacyAliasSql` trims and lowercases like the row-side check; `privatePagesFilterFragmentFast` and the caller fast path send question and `pinned_question` pages to the full check.
 - `src/core/persistence/git-declared.ts`: `privacyClass` runs the lineage check for question pages too, so a question page built from a private input stays out of Git, as remote reads already hide it.
 - `src/core/trust/channel.ts`, `src/core/trust/backfill.ts`: the frontmatter trust caps and the backfill's extractor marker trim the same whitespace as the TypeScript caps; the transcript-harness cap lowercases ASCII on both sides.
