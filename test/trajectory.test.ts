@@ -14,6 +14,7 @@ function point(args: {
   return {
     fact_id: args.id,
     valid_from: new Date(args.date),
+    valid_until: null,
     metric: args.metric ?? 'net_income',
     value: args.value,
     unit: 'USD',

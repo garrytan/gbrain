@@ -49,6 +49,20 @@ identifiers and attribution are available in the pre-removal Git revision
 - `src/commands/export.ts`, `src/core/export-stage.ts`, `src/core/export-snapshot.ts`: segmented pages are planned in the snapshot and streamed after it under renewed export pins.
 - `src/core/engine-sql/chunks.ts`, `src/core/ops/chunks.ts`: keyset `get_chunks` walk with a generation-bound cursor; `src/core/page-state/versions.ts` prunes by generation ranges (migration `page_body_manifest_closed_index`).
 - `src/core/embedding-ledger.ts` (new, migration `embedding_progress_ledger`), `src/core/minions/handlers/embed-page.ts` (new), `src/commands/embed-target.ts` (new): exactly-once paid embedding batches, the source spend ledger, the tail allowance and the `embed-page` job; `gbrain embed <slug> --max-usd N` approves a capped page.
+## [0.60.622.0] - 2026-11-09
+
+**`think` keeps an entity's trajectory when the question names a month.** A question such as "What was the MRR of acme-example in April 2026?" bounds think's evidence to April (PR #5086), and that window used to cost the trajectory block twice over: a metric whose readings fall before and after April (March and June) injected nothing, although the March reading was the value in force all April; and an entity page last edited outside April was dropped from the gathered pages, so when the question's noun phrase ("the acme-example team") did not resolve on its own, no entity was found. Each metric's latest reading before the window now joins the readings inside it, unless its `valid_until` ended by the time the window opens, and pages the window drops still name the entities whose trajectory is read; they stay out of the evidence. BrainBench Cat 25's hermetic gate goes from 4 of 6 probes (FAIL) to 6 of 6 (PASS).
+
+**A purge no longer waits behind a refresh.** With `persistence.refresh_barrier` on, a write that arrives during a `gbrain sources refresh` is held as `deferred`. When that write would publish a staged body holding the claim being purged, `gbrain forget <id> --purge` refused `purge_blocked_pending_recovery` ("is publishing") until the refresh released or the barrier expired, up to 15 minutes, so leaked content stayed in the brain that long. A deferred write has not been claimed, so the purge now cancels it with `purged_content`, as it already did a queued one; a running or recovering write still refuses.
+
+### Itemized changes
+
+- `src/core/think/temporal-window.ts`: `trajectoryPointsInWindow` keeps the points inside the window plus each metric's latest point before its start when that point is still valid at the start (events are not carried); `filterPagesToWindow` also returns the dropped pages.
+- `src/core/think/gather.ts`: `ThinkGatherResult.outsideWindowSlugs` lists the pages the window dropped.
+- `src/core/engine-sql/facts.ts`, `src/core/engine.ts`: `findTrajectory` points carry `valid_until` (the MCP `find_trajectory` wire shape is unchanged).
+- `src/core/think/index.ts`: the trajectory step filters through `trajectoryPointsInWindow`, and its candidate entities come from the gathered pages plus the pages the window dropped.
+- `src/core/persistence/intent-redaction.ts`: `cancelRequestsHoldingStagings` treats a `deferred` request like a `queued` one (GST-1602).
+- Tests: `test/refresh-barrier-purge-gst1602.test.ts` (PGLite and Postgres: a put_page deferred behind a real paused refresh, publishing a staged body that holds the claim; the purge commits, the write ends `cancelled`/`purged_content`, the staging is aborted and its parts deleted, and after the refresh releases the write stays cancelled with its counters released; it fails `purge_blocked_pending_recovery` with the fix reverted); `test/think-trajectory-window.test.ts` (a month with no reading of its own gets the March reading and not January's or June's; an entity page dated outside the month still routes its trajectory). Each test fails with its own fix reverted.
 
 ## [0.60.621.0] - 2026-11-09
 

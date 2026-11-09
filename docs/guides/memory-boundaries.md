@@ -507,9 +507,11 @@ What one purge does, in one transaction:
   stored page body and from every saved page version, then rebuilds that page's
   chunks; the canonical file is rewritten by the owner and committed as
   `gbrain: purge fact <hash8>` (no claim text in the commit);
-- redacts stored write intents that carry the claim (a pending write blocks
-  the purge with `purge_blocked_pending_recovery` until it finishes; retry with
-  the same request id), deletes legacy query-cache rows and drops the fact's
+- redacts stored write intents that carry the claim (a write that is running
+  or recovering blocks the purge with `purge_blocked_pending_recovery` until it
+  finishes; retry with the same request id; a write still queued, or deferred
+  behind a `gbrain sources refresh`, whose staged body holds the claim is
+  cancelled with `purged_content` instead), deletes legacy query-cache rows and drops the fact's
   rewording-review rows (close active matches are returned first as
   `similar_active`);
 - hides rows a model derived from the fact (through the derivation edges
