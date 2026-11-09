@@ -23,6 +23,7 @@ test/access-members.test.ts
 test/access-on-behalf-of.test.ts
 test/access-page-indexes-online.test.ts
 test/access-qm-actor.test.ts
+test/access-ungranted-member-writes.test.ts
 test/access-writes.test.ts
 test/activation-unbound-rooted-6449.test.ts
 test/adopt-local-edit.test.ts
