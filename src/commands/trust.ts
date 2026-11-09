@@ -166,8 +166,8 @@ async function acceptAll(backend: TrustBackend, args: string[], json: boolean): 
   // A contradiction has no single accept: each of its commands decides it differently, so --accept-all leaves it for the owner.
   const contradictions = review.items.filter(item => item.kind === 'contradiction')
     .map(item => ({ ref: item.ref, reason: 'contradiction', next: 'Decide it with one of its commands: gbrain trust review --kind contradiction' }));
-  const flagged = review.items.filter(item => item.kind === 'flagged_page').map(item => ({ ref: item.ref, reason: 'confirm_on_its_own', next: `gbrain trust confirm ${item.ref}` }));
-  const inputs = review.items.filter(item => item.kind !== 'contradiction' && item.kind !== 'flagged_page')
+  const flagged = review.items.filter(item => item.kind === 'flagged_page' || item.flagged).map(item => ({ ref: item.ref, reason: 'confirm_on_its_own', next: `gbrain trust confirm ${item.ref}` }));
+  const inputs = review.items.filter(item => item.kind !== 'contradiction' && item.kind !== 'flagged_page' && !item.flagged)
     .map(item => ({ action: item.kind === 'hold' ? 'release' : 'confirm', ref: item.ref, source: item.source_id } as OwnerActionInput));
   const skipLines = () => { for (const s of contradictions) console.log(`${s.ref}: skipped (a contradiction; ${s.next})`); };
   if (inputs.length === 0 && flagged.length === 0) {
@@ -211,8 +211,9 @@ async function acceptAll(backend: TrustBackend, args: string[], json: boolean): 
     for (const f of failed) console.log(`${f.ref}: not applied (${(f.error as { message?: string }).message ?? String(f.error)})`);
     for (const s of skipped) console.log(`${s.ref}: skipped, ${why(s.reason)}${'error' in s ? ` (${(s.error as { message?: string }).message ?? String(s.error)})` : ''}; run ${s.next} on its own`);
   }
-  if (failed.length || skipped.length) setCliExitVerdict(1);
+  if (failed.length) setCliExitVerdict(1);
   else if (pending.length && (!acceptPendingRequested(getCliOptions().acceptPending) || uncovered > 0)) setCliExitVerdict(PENDING_WRITE_EXIT_CODE);
+  else if (skipped.length) setCliExitVerdict(1);
 }
 
 /** Renders a refusal through the shared CLI envelope with its contract exit code (3 for consent refusals). */

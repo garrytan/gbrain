@@ -405,8 +405,9 @@ the page's `channel`, `chat` or `conversation` frontmatter, a leading
 channel. The warning goes to stderr (an `[AGENT]` block when stdout is not a
 terminal) and into the `notices` or `warnings` list of a `--json` result.
 It never changes a grant or an exit code. A credential holding
-`--may-act-for` is not flagged: its reads follow the audience its harness
-names.
+`--may-act-for` is not flagged. Its reads follow the audience its harness
+names, and a call that names no audience reads the credential's full grant, so
+the harness must name one on every call.
 
 `gbrain doctor --only unscoped_multi_user_token` runs the same detection over
 every active token and OAuth client, and over the local agents setup wired: it
@@ -422,7 +423,8 @@ Fix it with today's commands:
   `gbrain mcp grant <name> --source <source> --federated-read <source>`. Keep
   a channel's source out of unscoped reads with `gbrain sources unfederate <id>`.
 - For a local stdio agent, set `GBRAIN_SOURCE=<source>` in its MCP server
-  environment.
+  environment and run `gbrain sources unfederate <source>`: the pin covers
+  reads that name no source, and a federated sibling source stays nameable.
 - When the chat sits in one source, a source grant cannot separate it: mark
   the pages nobody else may see `visibility: private`. That hides them from
   the agent only while its access may not read private pages.
@@ -434,8 +436,9 @@ Fix it with today's commands:
   `gbrain auth create <name> --member <id>`) and put `readable_by` on pages
   only some people may read. One agent in a shared channel instead uses a
   credential made with `gbrain auth create <name> --may-act-for <members>`,
-  and its harness names each request's audience (see
-  [above](#inspect-clients-and-edit-access)). Never bind a shared agent's credential to one
+  and its harness names each request's audience on every call (see
+  [above](#inspect-clients-and-edit-access)); a call that names none reads the
+  credential's full grant. Never bind a shared agent's credential to one
   person: it then reads as that person for everyone who talks to it.
 
 ## Dashboard API keys

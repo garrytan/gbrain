@@ -141,7 +141,7 @@ function reach(reasons: readonly ExposureReason[], census: ChatCensus | null | u
 
 /** The per-person setup: a credential per person, or one shared agent reading as each request's audience. */
 const PER_PERSON = 'Per-person access: give each person\'s agent its own credential bound to them (gbrain access member add <id>, then gbrain auth create <name> --member <id>) and put readable_by on pages only some people may read; '
-  + 'one agent in a shared channel instead uses a credential made with gbrain auth create <name> --may-act-for <members>, and its harness names each request\'s audience. '
+  + 'one agent in a shared channel instead uses a credential made with gbrain auth create <name> --may-act-for <members>, and its harness names each request\'s audience on every call: a call that names none reads the credential\'s full grant. '
   + 'Never bind a shared agent\'s credential to one person: it then reads as that person for everyone who talks to it.';
 
 /**
@@ -152,7 +152,7 @@ export function remedyText(s: ExposureSubject, census?: ChatCensus | null): stri
   const steps: string[] = [];
   if (splitBySource(census)) {
     steps.push(s.kind === 'stdio'
-      ? 'pin the agent to one audience\'s source by setting GBRAIN_SOURCE=<source> in its MCP server environment'
+      ? 'pin the agent to one audience\'s source by setting GBRAIN_SOURCE=<source> in its MCP server environment and running gbrain sources unfederate <source> (a federated sibling source stays nameable)'
       : `grant one audience's source only (${narrowArgv(s, census)!.join(' ')}; a new harness grant: gbrain mcp grant <name> --source <source> --federated-read <source>)`);
     steps.push('keep a channel\'s source out of unscoped reads (gbrain sources unfederate <id>)');
   } else {

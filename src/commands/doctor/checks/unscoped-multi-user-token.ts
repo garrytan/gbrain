@@ -12,7 +12,8 @@
  * harness (or of Claude Code with a chat-channel plugin). A bot harness with
  * no such chat in reach is reported as information, so a brain with nothing
  * to separate yet is not marked unhealthy. A credential holding --may-act-for
- * is skipped: its reads follow the audience its harness names.
+ * is skipped: the per-person fix names it, and its notice says a call that
+ * names no audience reads its full grant.
  * A remote caller (run_doctor only) gets counts, never credential names.
  */
 import { grantFromClient, grantFromRow, grantFromTokenRow, type PrincipalGrant } from '../../../core/grants/model.ts';

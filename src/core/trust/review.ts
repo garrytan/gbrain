@@ -57,6 +57,8 @@ export interface TrustReviewItem {
   commands: Partial<Record<TrustReviewCommand, string[]>>;
   /** Contradiction items: who runs each command, the consent it needs, whether it can be undone and how. */
   command_meta?: Partial<Record<TrustReviewCommand, TrustReviewCommandMeta>>;
+  /** A proposal whose target page the write gate flagged as an instruction: accepting it confirms that page, so accept-all skips it. */
+  flagged?: true;
 }
 
 export type TrustReviewCommand = 'confirm' | 'drop' | 'release' | 'revert' | 'repair' | 'explain' | 'supersede' | 'forget';
@@ -260,9 +262,12 @@ export async function buildTrustReview(engine: BrainEngine, filter: TrustReviewF
   if (wants(filter, 'proposal') || wants(filter, 'lowered_page') || (filter.kind && PROPOSAL_ACTIONS.includes(filter.kind))) {
     const action = filter.kind && PROPOSAL_ACTIONS.includes(filter.kind) ? filter.kind as TrustProposalAction
       : filter.kind === 'lowered_page' ? 'lower_page' : undefined;
+    const [gate] = await engine.executeRaw<{ t: string | null }>(`SELECT to_regclass('write_gate_receipts')::text AS t`);
     for (const p of await listTrustProposals(engine, { status: 'pending', sourceId: filter.sourceId, action, since: filter.since, limit: 1000 })) {
       if (filter.kind === 'proposal' && p.action === 'lower_page') continue;
-      items.push(proposalItem(p, await pageOf(engine, p), p.action === 'lower_page' && await loweredByUnknownMarker(engine, p)));
+      const flagged = !!gate?.t && p.target_table === 'pages'
+        && (await engine.executeRaw(`SELECT 1 FROM pages p WHERE p.id = $1 AND ${activationSuppressedSql('pages', 'p')}`, [p.target_id])).length > 0;
+      items.push({ ...proposalItem(p, await pageOf(engine, p), p.action === 'lower_page' && await loweredByUnknownMarker(engine, p)), ...(flagged ? { flagged: true as const } : {}) });
     }
   }
   if (wants(filter, 'preference')) items.push(...await standingPreferences(engine, filter));

@@ -486,6 +486,11 @@ describe('review, explain and accept-all (CEO-2, DX-10, DX-15, DX-16)', () => {
       expect(renderTrustReview(review)).toContain('1 flagged page(s)');
       expect((await buildTrustReview(engine, { sourceId: b.sourceId, kind: 'flagged_page' })).items.map(i => i.ref)).toEqual([ref]);
       expect((await buildTrustReview(engine, { sourceId: b.sourceId, kind: 'flagged_page', since: new Date(Date.now() + 60_000) })).items).toEqual([]);
+      const loweredRef = lowered.trust_lowered.proposal_ref;
+      expect(review.items.find(i => i.ref === loweredRef)?.flagged).toBe(true);
+      await ownerPage(b, 'notes/lowered-plain-example', 'Owner.');
+      const plain = await run(b.agent, 'put_page', { slug: 'notes/lowered-plain-example', content: page('Owner', 'Lunch moved to one.'), force: true });
+      expect((await buildTrustReview(engine, { sourceId: b.sourceId })).items.find(i => i.ref === plain.trust_lowered.proposal_ref)?.flagged).toBeUndefined();
 
       const io = typesToken();
       const original = console.log;
@@ -497,8 +502,12 @@ describe('review, explain and accept-all (CEO-2, DX-10, DX-15, DX-16)', () => {
       expect(io.prompt()).toContain('Accept 1 item(s)');
       expect(io.prompt()).toContain(`${ref} skipped: a page flagged as instructions is confirmed only after you read it`);
       expect(out).toContain(`${ref}: skipped, a page flagged as instructions is confirmed only after you read it; run gbrain trust confirm ${ref} on its own`);
+      expect(io.prompt()).toContain(`${loweredRef.padEnd(6)} skipped: a page flagged as instructions is confirmed only after you read it`);
+      expect(out).toContain(`${loweredRef}: skipped, a page flagged as instructions is confirmed only after you read it; run gbrain trust confirm ${loweredRef} on its own`);
       expect(code).toBe(1);
       expect((await pageRow(b, 'notes/flagged-a-example')).trust_tier).toBe('agent_written');
+      expect((await pageRow(b, 'notes/lowered-flag-example')).trust_tier).not.toBe('user_confirmed');
+      expect((await pageRow(b, 'notes/lowered-plain-example')).trust_tier).toBe('user_confirmed');
       typesToken();
       await ownerDo(b, { action: 'confirm', ref });
       expect((await pageRow(b, 'notes/flagged-a-example')).trust_tier).toBe('user_confirmed');
@@ -538,10 +547,12 @@ describe('review, explain and accept-all (CEO-2, DX-10, DX-15, DX-16)', () => {
       { name: 'pending beside accepted', h8: 'released', env: {}, exit: 10 },
       { name: 'pending beside failed', h8: 'fails', env: {}, exit: 1 },
       { name: 'pending with --accept-pending', h8: 'released', env: { GBRAIN_ACCEPT_PENDING: '1' }, exit: 0 },
+      { name: 'pending beside a skipped flagged page', h8: 'released', env: {}, exit: 10, flagged: true },
     ] as const;
     for (const c of cases) {
       const backend = {
-        review: async () => ({ items: [{ kind: 'hold', ref: 'h7', source_id: 'default' }, { kind: 'hold', ref: 'h8', source_id: 'default' }] }),
+        review: async () => ({ items: [{ kind: 'hold', ref: 'h7', source_id: 'default' }, { kind: 'hold', ref: 'h8', source_id: 'default' },
+          ...('flagged' in c ? [{ kind: 'flagged_page', ref: 'p:default/notes/flagged-example', source_id: 'default' }] : [])] }),
         explain: async () => [],
         preview: async (input: OwnerActionInput) => ({ action: 'release', ref: input.ref, token: input.ref, command: `gbrain trust release ${input.ref}`, raises: true, binding: `b-${input.ref}`, summary: `Release held fact ${input.ref}` }),
         apply: async (input: OwnerActionInput) => {
