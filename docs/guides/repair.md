@@ -2075,6 +2075,41 @@ the whole section on purpose, or an edit may have lost it: ask which.
   write retires every row on it. For facts it is:
 
 ```markdown
+### Lost fence rows
+
+A page rewrite that drops its `## Facts` or takes section is safe on its
+own: the section's rows stay live, held `fence_absent`, until you put the
+section back or write an empty one. Before this release, a later `remember`,
+`takes add`, fact extraction or `gbrain facts relink` on that page built a
+new section holding only its own rows, and the next ordinary write (a tag, a
+timeline entry, an append, a get and put) read that section as your answer:
+the held facts expired and the held takes were deleted. Those writers now put
+the held rows back into the section they create. `gbrain repair
+lost-fence-rows` brings back the rows an older gbrain already lost.
+
+```bash
+gbrain repair lost-fence-rows --json                      # preview; writes nothing
+gbrain repair lost-fence-rows --source <id> --json        # one source
+gbrain repair lost-fence-rows --apply --expect <hash> --yes
+```
+
+A row is listed only when the records prove this shape: a facts or takes
+generation retired it without an empty-section proof, no row with the same
+claim is on the page now, and page history shows the row in a section that
+then vanished before the retirement. A row you removed by editing a section
+that stayed in place, a row retired by an explicit empty section, and a
+forgotten fact are never listed. `gbrain repair generations --mode restore`
+does not cover this case, because the retiring write published a fence that
+parsed; this kind reads page history instead.
+
+Each row comes back byte for byte from the newest page version that held it,
+at its old row number when that number is free. The apply republishes each
+page through one revision-bound page write that adds only those rows; a page
+changed since the preview is skipped and asks for a new preview. A restored
+fact is a new facts row at the trust tier the expired one had (the expired row
+stays as history). It is explicit-only and nothing runs on upgrade: show the
+user the preview before running the apply.
+
 ## Facts
 
 <!--- gbrain:facts:begin -->
