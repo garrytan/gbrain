@@ -70,18 +70,19 @@ export async function segmentedLivePage(engine: Pick<BrainEngine, 'executeRaw'>,
  * files within the ceiling) that compare against or merge into the stored
  * body. A body above the single-string ceiling is returned as is: any step
  * that reads it refuses with `page_body_segmented` (its throwing getters), so
- * such a page is rewritten only by a streamed import.
+ * such a page is rewritten only by a streamed import. `generation` reads that body generation (a snapshot's) instead
+ * of the live one.
  */
-export async function materializedPage<T extends Page>(engine: BrainEngine, page: T): Promise<T>;
-export async function materializedPage<T extends Page>(engine: BrainEngine, page: T | null): Promise<T | null>;
-export async function materializedPage<T extends Page>(engine: BrainEngine, page: T | null): Promise<T | null> {
+export async function materializedPage<T extends Page>(engine: BrainEngine, page: T, generation?: number): Promise<T>;
+export async function materializedPage<T extends Page>(engine: BrainEngine, page: T | null, generation?: number): Promise<T | null>;
+export async function materializedPage<T extends Page>(engine: BrainEngine, page: T | null, generation?: number): Promise<T | null> {
   if (!page || bodyStorageOf(page) !== 'segmented' || typeof Object.getOwnPropertyDescriptor(page, 'compiled_truth')?.value === 'string') return page;
   const bytes = (page as { body_bytes?: number | string | null }).body_bytes
     ?? (await engine.executeRaw<{ body_bytes: string }>('SELECT body_bytes::text AS body_bytes FROM pages WHERE id=$1', [page.id]))[0]?.body_bytes;
   if (Number(bytes ?? 0) > PAGE_MAX_BYTES) return page;
   const copy: Record<string, unknown> = { body_storage: 'segmented' };
   for (const key of Object.keys(page)) if (!BODY_KEYS.has(key)) copy[key] = (page as Record<string, unknown>)[key];
-  Object.assign(copy, await materializeSegmentedBody(engine, Number(page.id), page.source_id));
+  Object.assign(copy, await materializeSegmentedBody(engine, Number(page.id), page.source_id, generation === undefined ? {} : { generation }));
   return copy as T;
 }
 
@@ -94,10 +95,12 @@ export function segmentedOverCeiling(page: { body_storage?: string | null; body_
  * `materializedPage` over a snapshot (null passes through), with the read-back body under the snapshot's withdrawal
  * ledger, as readPageSnapshot gives an inline page's body: a facts row the ledger withdraws is struck (or, purged,
  * dropped), so the body a write merges into or the drift check compares a file with is the one an inline page has.
+ * The body is the snapshot's generation (#8492), never one published after it; when that generation's rows are
+ * gone the read refuses `page_body_rows_unreadable`.
  */
 export async function materializedSnapshot(engine: BrainEngine, snapshot: PageSnapshot | null): Promise<PageSnapshot | null> {
   if (!snapshot || bodyStorageOf(snapshot.page) !== 'segmented') return snapshot;
-  const page = await materializedPage(engine, snapshot.page);
+  const page = await materializedPage(engine, snapshot.page, snapshot.bodyGeneration);
   if (page === snapshot.page) return snapshot;
   Object.assign(page, await overlayCanonicalBodies(engine.executeRaw.bind(engine), page.compiled_truth, page.timeline ?? '', snapshot.withdrawals,
     { sourceId: page.source_id, marker: snapshot.globalPurges }));
