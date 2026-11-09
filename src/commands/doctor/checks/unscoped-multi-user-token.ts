@@ -1,6 +1,7 @@
 /**
  * GST-363 `unscoped_multi_user_token` (read-only, warn): credentials and local
- * agents that can read chat from several channels with no per-person scope.
+ * agents that can read chat from several channels and read the same pages
+ * whoever talks to their agent (unbound, or bound to one member).
  * An agent several people talk to through one such grant may answer one
  * person with another person's messages (HARN-13 host-harness pilot). The
  * detection is src/core/grants/shared-exposure.ts, the same module the install
@@ -9,8 +10,9 @@
  * Warns only when chat from MULTI_CHANNEL_MIN+ channels is in reach of an
  * active legacy token, a live OAuth client, or the stdio server of a wired bot
  * harness (or of Claude Code with a chat-channel plugin). A bot harness with
- * no such chat in reach is reported as information, so a brain that cannot
- * act on it before per-member keys (gbrain#7812) is not marked unhealthy.
+ * no such chat in reach is reported as information, so a brain with nothing
+ * to separate yet is not marked unhealthy. A credential holding --may-act-for
+ * is skipped: its reads follow the audience its harness names.
  * A remote caller (run_doctor only) gets counts, never credential names.
  */
 import { grantFromClient, grantFromRow, grantFromTokenRow, type PrincipalGrant } from '../../../core/grants/model.ts';
@@ -32,10 +34,13 @@ async function runUnscopedMultiUserToken(ctx: DoctorContext): Promise<Check[]> {
     return memo.get(key)!;
   };
   const credentials: Array<{ subject: ExposureSubject; grant: PrincipalGrant }> = [];
+  const actsForAudience = (row: Record<string, unknown>) => Array.isArray(row.may_act_for) && row.may_act_for.length > 0;
   for (const row of await engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE revoked_at IS NULL ORDER BY created_at, id')) {
+    if (actsForAudience(row)) continue;
     credentials.push({ subject: { kind: 'legacy_token', name: String(row.name) }, grant: grantFromTokenRow(row) });
   }
   for (const row of await engine.executeRaw<Record<string, unknown>>('SELECT * FROM oauth_clients WHERE deleted_at IS NULL ORDER BY client_id')) {
+    if (actsForAudience(row)) continue;
     const grant = grantFromRow(row);
     credentials.push({ subject: { kind: 'oauth_client', id: grant.clientId, name: grant.clientName || undefined }, grant: grantFromClient(grant) });
   }
@@ -66,11 +71,11 @@ async function runUnscopedMultiUserToken(ctx: DoctorContext): Promise<Check[]> {
     const bots = local.map(f => f.subject.kind === 'stdio' ? f.subject.harness : '').filter(Boolean);
     if (bots.length) {
       checks.push({ name: 'unscoped_multi_user_token', status: 'ok', severity: 'info', readiness_state: 'ok',
-        message: `${bots.join(', ')} serve${bots.length === 1 ? 's' : ''} a chat agent from this brain with no per-person scope; no chat from several channels is in its reach now. `
+        message: `${bots.join(', ')} serve${bots.length === 1 ? 's' : ''} a chat agent from this brain that reads the same pages whoever talks to it; no chat from several channels is in its reach now. `
           + 'Scope the agent before you add channel or DM pages (this check reports it then).',
         details: { local: details(local) } });
     } else {
-      checks.push({ name: 'unscoped_multi_user_token', status: 'ok', message: 'No credential or local agent can read chat from several channels without a per-person scope.' });
+      checks.push({ name: 'unscoped_multi_user_token', status: 'ok', message: 'No credential or local agent that reads the same pages for everyone can read chat from several channels.' });
     }
     return checks;
   }
@@ -78,8 +83,8 @@ async function runUnscopedMultiUserToken(ctx: DoctorContext): Promise<Check[]> {
   checks.push({
     name: 'unscoped_multi_user_token', status: 'warn',
     message: ctx.remote
-      ? `${flagged.length} credential(s) can read chat from several channels with no per-person scope, so an agent several people use may answer one person with another person's messages. Ask the brain host's operator to run gbrain doctor --only ${NOTICE_CODE}.`
-      : `${flagged.length} credential(s) or local agent(s) can read chat from several channels with no per-person scope: ${first.label} reaches ${first.census.channels} channels in ${first.census.chat_sources.join(', ')}`
+      ? `${flagged.length} credential(s) can read chat from several channels and read the same pages whoever talks to their agent, so an agent several people use may answer one person with another person's messages. Ask the brain host's operator to run gbrain doctor --only ${NOTICE_CODE}.`
+      : `${flagged.length} credential(s) or local agent(s) can read chat from several channels and read the same pages whoever talks to their agent: ${first.label} reaches ${first.census.channels} channels in ${first.census.chat_sources.join(', ')}`
         + `${flagged.length > 1 ? `, and ${flagged.length - 1} more in details.flagged` : ''}. An agent several people use may answer one person with another person's messages.`,
     details: ctx.remote ? { flagged_count: flagged.length } : { flagged: details(flagged) },
     ...(ctx.remote ? {} : { fix: exposureFix(first.subject, first.census) }),

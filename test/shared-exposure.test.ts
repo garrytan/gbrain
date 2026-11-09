@@ -142,19 +142,26 @@ describe('signals and the warning', () => {
     const one = sharedTokenNotice({ kind: 'oauth_client', id: 'c1' }, { census: within })!;
     expect(one.why).toContain('the chat sits in one source (default), so a source grant cannot separate it');
     expect(one.why).not.toContain('auth rescope');
-    expect(one.why).toContain('the fix is a member-bound token, not per-call narrowing');
-    expect(split.why).toContain('the fix is a member-bound or rescoped token (gbrain auth rescope …), not per-call narrowing');
+    expect(one.why).toContain('the fix is per-person access, not per-call narrowing');
+    expect(split.why).toContain('the fix is a narrower grant (gbrain auth rescope …) or per-person access, not per-call narrowing');
+    expect(one.why).toContain('gbrain auth create <name> --may-act-for <members>');
     expect(one.fix!.argv).toBeUndefined();
     for (const n of [split, one]) {
-      expect(n.why).toContain('visibility: private');
+      expect(n.why).toContain('visibility: private (hidden from this agent unless its access may read private pages)');
+      expect(n.why).not.toContain('hidden from every remote caller');
+      expect(n.why).toMatch(/reads the same pages whoever talks to its agent/);
+      expect(n.why).not.toContain('not scoped to a person');
       expect(n.why).toContain('source_ids narrows only the call that sends it, so recall, list_pages or any read without it reads the token\'s full grant');
       expect(n.why).not.toContain('narrow single calls');
-      expect(n.why).toContain('Per-member keys arrive with gbrain#7812 and are not in this version.');
-      expect(n.why).not.toContain('gbrain access');
+      expect(n.why).toContain('gbrain access member add <id>, then gbrain auth create <name> --member <id>');
+      expect(n.why).toContain('Never bind a shared agent\'s credential to one person: it then reads as that person for everyone who talks to it.');
+      expect(n.why).not.toContain('gbrain#7812');
       expect(n.user_message).toBe(n.fix!.user_message);
     }
     const bot = sharedTokenNotice({ kind: 'stdio', harness: 'hermes' }, { harness: 'hermes' })!;
     expect(bot.why).toContain('GBRAIN_SOURCE=<source>');
+    expect(bot.why).toContain('gbrain auth create <name> --member <id>');
+    expect(exposureFix({ kind: 'stdio', harness: 'hermes' }).why).not.toContain('cannot tell');
     expect(sharedTokenNotice({ kind: 'stdio', harness: 'claude-code' }, { harness: 'claude-code' })).toBeNull();
     expect(exposureFix({ kind: 'stdio', harness: 'hermes' }).argv).toBeUndefined();
   });
@@ -219,6 +226,22 @@ describe('doctor unscoped_multi_user_token', () => {
     const warn = await doctor({}, home);
     expect(warn.status).toBe('warn');
     expect(warn.message).toContain('The gbrain access hermes uses reaches 2 channels');
+  });
+
+  test('a credential holding may_act_for is not flagged; a member-bound one still is', async () => {
+    await reset();
+    await chat('chats/a', '#alpha, Jul 2');
+    await chat('chats/b', '#beta, Jul 2');
+    await engine.executeRaw("INSERT INTO access_members (id) VALUES ('alice-example') ON CONFLICT DO NOTHING");
+    const bound = await token('alice-bot');
+    await engine.executeRaw("UPDATE access_tokens SET member_id = 'alice-example' WHERE id = $1", [bound.principal.id]);
+    const shared = await token('channel-bot');
+    await engine.executeRaw("UPDATE access_tokens SET may_act_for = ARRAY['member:alice-example']::text[] WHERE id = $1", [shared.principal.id]);
+    const check = await doctor();
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('1 credential(s)');
+    expect(check.message).toContain('The token "alice-bot" reaches 2 channels');
+    expect(JSON.stringify(check.details)).not.toContain('channel-bot');
   });
 
   test('a brain with no chat and no credentials is ok', async () => {

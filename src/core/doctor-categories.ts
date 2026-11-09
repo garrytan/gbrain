@@ -432,7 +432,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'legacy_token_null_scope',
   // D4: grants whose operation snapshot or stored surface keeps operations their scopes allow out of reach.
   'grant_new_ops_available',
-  // GST-363: credentials or local bot agents reading chat from several channels with no per-person scope.
+  // GST-363: credentials or local bot agents reading chat from several channels the same way for everyone who talks to their agent.
   'unscoped_multi_user_token',
   'reranker_health',
   'rls',

@@ -126,7 +126,7 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
       console.log(`Revoke with: gbrain auth revoke "${name}" (or gbrain auth revoke --id <id> from auth list)`);
       console.log(`Change its grants: gbrain auth rescope --token "${name}" --takes-holders world,garry (or --sources, --operations)`);
       const grant = { principal: { kind: 'legacy_token' as const, id: row!.id }, scopes: opts.scopes ?? ['read', 'write', 'admin'], sources: { kind: 'default' as const } };
-      writeExposureNotice(sharedTokenNotice({ kind: 'legacy_token', name }, { census: await credentialCensus(engine, grant) }));
+      if (!opts.binding?.mayActFor?.length) writeExposureNotice(sharedTokenNotice({ kind: 'legacy_token', name }, { census: await credentialCensus(engine, grant) }));
     });
   } catch (e: any) {
     if (e instanceof OperationError) exitCliError(e, 'auth');
@@ -809,7 +809,7 @@ async function registerClient(name: string, args: string[]) {
       }
       if (bound) console.log(bindingLine(bound));
       const grant = await readClientGrant(engine, registered.clientId).then(grantFromClient).catch(() => null);
-      if (grant) writeExposureNotice(sharedTokenNotice({ kind: 'oauth_client', id: registered.clientId, name }, { census: await credentialCensus(engine, grant) }));
+      if (grant && !binding.patch?.mayActFor?.length) writeExposureNotice(sharedTokenNotice({ kind: 'oauth_client', id: registered.clientId, name }, { census: await credentialCensus(engine, grant) }));
     });
   } catch (e: any) {
     if (e instanceof OperationError) exitCliError(e, 'auth');

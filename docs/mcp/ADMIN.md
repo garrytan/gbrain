@@ -377,11 +377,12 @@ then apply the same flags without `--dry-run`.
 
 ## One token, several people
 
-A credential has no per-person scope until per-member keys arrive
-(gbrain#7812). An agent that several people talk to (a Slack, Telegram or
-Discord bot, a shared OpenClaw or Hermes, Claude Code with a chat-channel
-plugin) reads everything its one grant reaches, so it can answer one person
-with pages only another person may read. In a measured multi-user pilot with
+A credential reads the same pages whoever talks to its agent: an unbound one
+everything its grant reaches, one bound to a member what that member may read.
+An agent that several people talk to (a Slack, Telegram or Discord bot, a
+shared OpenClaw or Hermes, Claude Code with a chat-channel plugin) through
+such a credential can answer one person with pages only another person may
+read. In a measured multi-user pilot with
 one unscoped bot token, telling the agent that gbrain was live lowered pass
 rates by 9 to 21 points, and every added cross-scope failure cited a channel
 page the bot grant returned.
@@ -403,7 +404,9 @@ the page's `channel`, `chat` or `conversation` frontmatter, a leading
 `#name` in its title, or else its source; every DM page counts as its own
 channel. The warning goes to stderr (an `[AGENT]` block when stdout is not a
 terminal) and into the `notices` or `warnings` list of a `--json` result.
-It never changes a grant or an exit code.
+It never changes a grant or an exit code. A credential holding
+`--may-act-for` is not flagged: its reads follow the audience its harness
+names.
 
 `gbrain doctor --only unscoped_multi_user_token` runs the same detection over
 every active token and OAuth client, and over the local agents setup wired: it
@@ -421,13 +424,19 @@ Fix it with today's commands:
 - For a local stdio agent, set `GBRAIN_SOURCE=<source>` in its MCP server
   environment.
 - When the chat sits in one source, a source grant cannot separate it: mark
-  the pages nobody else may see `visibility: private` (hidden from every
-  remote caller while `search.remote_private_pages` stays off).
+  the pages nobody else may see `visibility: private`. That hides them from
+  the agent only while its access may not read private pages.
 - Don't rely on `source_ids`: it narrows only the call that sends it, so
   recall, list_pages or any read without it reads the token's full grant.
-  The fix is a member-bound or rescoped token (`gbrain auth rescope …`).
-
-Per-member keys arrive with gbrain#7812.
+  The fix is a narrower grant (`gbrain auth rescope …`) or per-person access.
+- Per-person access: give each person's agent its own credential bound to
+  them (`gbrain access member add <id>`, then
+  `gbrain auth create <name> --member <id>`) and put `readable_by` on pages
+  only some people may read. One agent in a shared channel instead uses a
+  credential made with `gbrain auth create <name> --may-act-for <members>`,
+  and its harness names each request's audience (see
+  [above](#inspect-clients-and-edit-access)). Never bind a shared agent's credential to one
+  person: it then reads as that person for everyone who talks to it.
 
 ## Dashboard API keys
 

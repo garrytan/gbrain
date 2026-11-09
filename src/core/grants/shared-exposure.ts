@@ -1,9 +1,12 @@
 /**
- * GST-363 (HARN-13 host-harness pilot, harness-evals#145): one credential with
- * no per-person scope, serving an agent that several people talk to, lets the
- * agent answer one person with pages only another person may read. Until
- * per-member keys ship (gbrain#7812) gbrain cannot tell people apart, so the
- * install routes and doctor warn instead. Nothing here changes a grant.
+ * GST-363 (HARN-13 host-harness pilot, harness-evals#145): one credential that
+ * reads the same pages whoever talks to its agent (unbound, or bound to one
+ * member), serving an agent that several people talk to, lets the agent answer
+ * one person with pages only another person may read. The install routes and
+ * doctor warn and name the per-person setups (a credential bound to each
+ * person, or --may-act-for with a per-request audience). Nothing here changes a
+ * grant. A credential holding --may-act-for is not flagged: its reads follow
+ * the audience its harness names.
  *
  * A serve is likely multi-user when any signal holds:
  *  - `bot_harness`: the harness is a channel or bot agent (BOT_HARNESSES);
@@ -162,9 +165,14 @@ function reach(reasons: readonly ExposureReason[], census: ChatCensus | null | u
   return parts.join('; ');
 }
 
+/** The per-person setup: a credential per person, or one shared agent reading as each request's audience. */
+const PER_PERSON = 'Per-person access: give each person\'s agent its own credential bound to them (gbrain access member add <id>, then gbrain auth create <name> --member <id>) and put readable_by on pages only some people may read; '
+  + 'one agent in a shared channel instead uses a credential made with gbrain auth create <name> --may-act-for <members>, and its harness names each request\'s audience. '
+  + 'Never bind a shared agent\'s credential to one person: it then reads as that person for everyone who talks to it.';
+
 /**
- * Today's fixes, chosen by where the chat lives, then the per-member keys
- * gbrain#7812 adds. One string so every route prints the same commands.
+ * Today's fixes, chosen by where the chat lives, then the per-person setup.
+ * One string so every route prints the same commands.
  */
 export function remedyText(s: ExposureSubject, census?: ChatCensus | null): string {
   const steps: string[] = [];
@@ -176,8 +184,8 @@ export function remedyText(s: ExposureSubject, census?: ChatCensus | null): stri
   } else {
     steps.push(`the chat sits in one source (${census!.chat_sources[0]}), so a source grant cannot separate it`);
   }
-  steps.push('mark pages nobody else may see visibility: private (hidden from every remote caller while search.remote_private_pages stays off)');
-  return `Fix: ${steps.join('; ')}. source_ids narrows only the call that sends it, so recall, list_pages or any read without it reads the token's full grant; the fix is ${splitBySource(census) ? 'a member-bound or rescoped token (gbrain auth rescope …)' : 'a member-bound token'}, not per-call narrowing. Per-member keys arrive with gbrain#7812 and are not in this version.`;
+  steps.push('mark pages nobody else may see visibility: private (hidden from this agent unless its access may read private pages)');
+  return `Fix: ${steps.join('; ')}. source_ids narrows only the call that sends it, so recall, list_pages or any read without it reads the token's full grant; the fix is ${splitBySource(census) ? 'a narrower grant (gbrain auth rescope …) or per-person access' : 'per-person access'}, not per-call narrowing. ${PER_PERSON}`;
 }
 
 export function exposureFix(s: ExposureSubject, census?: ChatCensus | null): Action {
@@ -190,7 +198,7 @@ export function exposureFix(s: ExposureSubject, census?: ChatCensus | null): Act
       why: 'Narrowing the grant limits what the agent can show anyone to one audience\'s source; the secret is unchanged.', user_message: message };
   }
   return { ask_user: true, consent: [], actor: 'user', requires_exclusive: false, docs: DOCS, verify,
-    why: 'gbrain cannot tell the people in a chat apart yet; scoping this agent is the user\'s choice of source, private pages or a narrower deployment.', user_message: message };
+    why: 'Scoping this agent is the user\'s choice: a credential per person, a shared-channel audience, one source, private pages or a narrower deployment.', user_message: message };
 }
 
 /** The install-time warning. Null when no signal holds. */
@@ -200,8 +208,8 @@ export function sharedTokenNotice(s: ExposureSubject, input: { harness?: string;
   const fix = exposureFix(s, input.census);
   return {
     code: NOTICE_CODE, kind: 'safety', fix, user_message: fix.user_message,
-    why: `WARNING: ${subjectLabel(s)} is not scoped to a person (${reach(reasons, input.census, input.channelPlugins)}). `
-      + 'An agent using it can read every page that grant reaches, so when several people talk to the agent it may answer one person with another person\'s messages. '
+    why: `WARNING: ${subjectLabel(s)} reads the same pages whoever talks to its agent (${reach(reasons, input.census, input.channelPlugins)}). `
+      + 'An agent using it shows everyone what it can read, so when several people talk to the agent it may answer one person with another person\'s messages. '
       + remedyText(s, input.census),
   };
 }

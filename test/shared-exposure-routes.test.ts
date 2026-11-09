@@ -116,8 +116,12 @@ describe('brain routes on a repo-less keyless brain', () => {
     const token = await runCli(['auth', 'create', 'team-bot'], { env: b.env, cwd: b.root });
     expect(token.stdout).toMatch(/gbrain_[0-9a-f]+/);
     expect(token.stdout).not.toContain(CODE);
-    expect(token.stderr).toContain('The token "team-bot" is not scoped to a person (it reads chat from 2 channels in default)');
+    expect(token.stderr).toContain('The token "team-bot" reads the same pages whoever talks to its agent (it reads chat from 2 channels in default)');
     expect(token.stderr).toContain('the chat sits in one source (default)');
+    expect((await runCli(['access', 'member', 'add', 'alice-example'], { env: b.env, cwd: b.root })).exitCode).toBe(0);
+    const audience = await runCli(['auth', 'create', 'channel-bot', '--may-act-for', 'alice-example'], { env: b.env, cwd: b.root });
+    expect(audience.stdout).toMatch(/gbrain_[0-9a-f]+/);
+    expect(audience.stderr).not.toContain(CODE);
     const client = await runCli(['auth', 'register-client', 'team-client'], { env: b.env, cwd: b.root });
     expect(client.stdout).toContain('Client ID:');
     expect(client.stderr).toContain(CODE);
