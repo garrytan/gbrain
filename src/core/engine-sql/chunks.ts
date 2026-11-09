@@ -801,7 +801,10 @@ export async function listStaleChunks(exec: ScopedRead, column: string, opts?: {
 
 /**
  * Shared chunkless-page-with-content predicate. Excludes quarantined pages,
- * which are chunkless by design. An embed_skip page is not: every write keeps
+ * which are chunkless by design, and pages whose current revision's text
+ * projection is sealed (#8473): the writer chunked that revision to nothing,
+ * as for a body holding only a protected takes fence, so a heal cannot
+ * produce a chunk. An embed_skip page is not excluded: every write keeps
  * its chunks for keyword search (#6722), so one with none (an older gbrain's
  * size skip, or a backfill rewrite that never landed) is drift the safety net
  * chunks; its chunks get no vectors (#7174).
@@ -815,6 +818,7 @@ function chunklessPagesWhere(opts?: { sourceId?: string }): SqlFragment {
     // body columns are NULL; its body_bytes says it has one.
     sqlFragment`(p.compiled_truth <> '' OR p.timeline <> '' OR (p.body_storage = 'segmented' AND p.body_bytes > 0))`,
     sqlFragment`${trustedSql(QUARANTINE_FILTER_FRAGMENT)}`,
+    sqlFragment`(p.text_projection_revision IS DISTINCT FROM p.knowledge_revision OR COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`,
     sqlFragment`NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)`,
   ];
   if (opts?.sourceId) conds.push(sqlFragment`p.source_id = ${opts.sourceId}`);
@@ -871,7 +875,7 @@ function chunkEmbeddingState(column: string): SqlFragment {
       ELSE 'keyword_only' END`;
 }
 
-/** A live page with no chunk row: quarantined, healable with a body (`chunklessPagesWhere`, embed_skip included: #7174), else empty. */
+/** A live page with no chunk row: quarantined, healable with a body (`chunklessPagesWhere`, embed_skip included: #7174), else empty (no body, or a sealed projection with no chunks: #8473). */
 function chunklessPageState(): SqlFragment {
   return sqlFragment`CASE
       WHEN NOT ${trustedSql(QUARANTINE_FILTER_FRAGMENT)} THEN 'quarantined'
