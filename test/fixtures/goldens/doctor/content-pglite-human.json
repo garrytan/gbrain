@@ -29,7 +29,7 @@
       "  [OK] skill_conformance: 1/1 skills pass",
       "  [OK] skill_brain_first: 1 skill(s) compliant or exempt",
       "  [OK] skills_manifest_integrity: No skills.lock.json in <home>/skills — integrity check not applicable",
-      "  [WARN] skill_currency: 64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
+      "  [WARN] skill_currency: 65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, agent-inbox, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, … +57 more. Add them with `gbrain skillpack sync`.",
       "  [OK] skill_preconditions: no installed skills declare preconditions",
       "  [OK] memorable_relay_health: memorable relay off (default)",
       "  [OK] memory_writeback: ambient writeback off (default): Stop-hook turn capture is off, but the compaction harvest and SessionEnd transcripts still extract (installing the harness hooks opted into them; stop them: gbrain config set memory.auto_writeback off). Enable: gbrain config set memory.auto_writeback salient",

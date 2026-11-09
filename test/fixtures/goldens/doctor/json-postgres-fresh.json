@@ -87,6 +87,7 @@
             "drifted": [],
             "new": [
               "academic-verify",
+              "agent-inbox",
               "archive-crawler",
               "article-enrichment",
               "ask-user",
@@ -154,7 +155,7 @@
           },
           "elapsed_ms": "<volatile>",
           "fix_unavailable_reason": "unstructured",
-          "message": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
+          "message": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, agent-inbox, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, … +57 more. Add them with `gbrain skillpack sync`.",
           "name": "skill_currency",
           "status": "warn"
         },
@@ -3986,7 +3987,7 @@
       "tier": "standard",
       "top_issues": [
         {
-          "fix": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
+          "fix": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, agent-inbox, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, … +57 more. Add them with `gbrain skillpack sync`.",
           "name": "skill_currency",
           "status": "warn",
           "tier": "symptom"
