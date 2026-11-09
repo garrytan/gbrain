@@ -13,6 +13,7 @@
 # themselves from scripts/postgres-arm-weights.json.
 test/access-as.test.ts
 test/access-binding.test.ts
+test/access-federated-member-writes.test.ts
 test/access-folder-lock-order.test.ts
 test/access-folder-multiconn.test.ts
 test/access-folder-rules.test.ts
@@ -144,6 +145,7 @@ test/import-frontmatter-key-order-5158.test.ts
 test/import-inline-chunk-keep.test.ts
 test/import-revision-concurrency.test.ts
 test/import-write-barrier.test.ts
+test/ingest-capture-keeps-readers.test.ts
 test/init-cold-home-embedding.test.ts
 test/keyword-statement-timeout-knob-6495.test.ts
 test/keyword-timeout-negative-cache-6495.test.ts
