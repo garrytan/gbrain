@@ -944,8 +944,10 @@ bun run publish:clawhub      # clawhub package publish . --family bundle-plugin
 ```
 
 `build:all` compiles only those two targets; the full binary matrix ships
-through the GitHub release job above. ClawHub users upgrade with
-`clawhub update gbrain`, which `gbrain upgrade` runs for ClawHub installs.
+through the GitHub release job above. `gbrain upgrade` never runs
+`clawhub update gbrain` (#8464): that command updates a ClawHub *skill* named
+gbrain from any publisher, and we publish none, so it would install someone
+else's package.
 
 ## Plugin dist tree (codex/claude lanes)
 
