@@ -111,6 +111,7 @@
     "typecheck": "node --max-old-space-size=6144 node_modules/typescript/bin/tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/gbrain-typecheck.tsbuildinfo",
     "check:jsonb": "bash scripts/check-jsonb-pattern.sh",
     "check:jsonb-params": "node scripts/check-jsonb-params.mjs",
+    "check:request-state-lists": "node scripts/check-request-state-lists.mjs",
     "check:search-path": "bash scripts/check-search-path.sh",
     "check:no-double-retry": "bash scripts/check-no-double-retry.sh",
     "check:batch-audit-site": "bash scripts/check-batch-audit-site.sh",

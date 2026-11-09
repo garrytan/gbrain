@@ -1,6 +1,7 @@
 import type { BrainEngine, ReservedConnection } from '../engine.ts';
 import { withoutCallerAccess } from '../search/private-visibility.ts';
 import { withEngineScope } from '../engine-scope.ts';
+import { isPublishedRequestState } from './request-states.ts';
 import type { GBrainConfig } from '../config.ts';
 import { claimableWriteSql, foregroundPrioritySql, claimGroupFollowers, claimNextLaneHead, claimNextWrite, publicationGroupKey, syncGroup, floorPreparationAttempts, hasClaimableWrite, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim, vacuumPersistenceQueues, independentGroup, sweepSegmentStorage, yieldToEventLoop } from './journal.ts';
 import { expireDeferredWrites, overdueDeferredWorkSql } from './refresh-barrier.ts';
@@ -874,7 +875,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     // claim on its root is plain FIFO, so a stream of writes cannot starve the sync side.
     if (isTerminal(row) && this.passedSync.delete(row.id) && row.state === 'committed') this.owesSyncTurn.add(row.worktree_id ?? `db:${row.source_incarnation}`);
     try { this.opts.onSettled?.(row); } catch (error) { this.report(error); }
-    return isTerminal(row);
+    // Wave C: a write published to Git whose index step is still running (`indexing`) is progress, as a terminal one is.
+    return isPublishedRequestState(row.state);
   }
   /** #6278: abandoned preparations past the ceiling have reached this process's cap; it claims nothing more until it restarts. */
   restartRequired(): boolean { return this.zombies.size >= (this.opts.zombieCap ?? DEFAULT_ZOMBIE_CAP) || this.stuckPublications.size > 0; }
@@ -1159,7 +1161,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       if (done.state === 'committed' && row.worktree_id && !String(row.intent?.kind).startsWith('managed_sync_')) {
         this.foregroundCounts.set(row.worktree_id, this.foregroundCompletions(row.worktree_id) + 1);
       }
-      return settled ? isTerminal(done) : this.settled(done);
+      return settled ? isPublishedRequestState(done.state) : this.settled(done);
     } catch (error) {
       if (preparationActive && budget !== undefined && prep.late()) observation.deadline_exceeded = true;
       // #6278: a bounded read the server ended inside the budget (a shorter session lock_timeout) reports the deadline itself.
@@ -1194,8 +1196,9 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       const lane = laneOf(row);
       if (await claimedHeadOrder(this.engine, row, lane !== null) === 'wait') { await releaseUnpublishedClaim(this.statements, row, 'group_member_waiting'); return false; }
       const group = publicationGroupKey(row);
-      // A managed import batch also groups on PGLite: its members share one transaction's guards there too.
-      if (!group || this.engine.kind !== 'postgres' && !group.startsWith('import:')) return this.execute(row, root);
+      // A managed import batch and an atom generation also group on PGLite: an import's members share one transaction's
+      // guards there too, and a generation (creates, activation, retirements) publishes whole or not at all, as on Postgres.
+      if (!group || this.engine.kind !== 'postgres' && !group.startsWith('import:') && !group.startsWith('generation:')) return this.execute(row, root);
       // #6007: a put_pages or import batch publishes in groups of at most PAGE_BATCH_GROUP_MAX pages.
       const charged = (row.transient_interruptions ?? 0) > 0;
       const followers = charged ? [] : await claimGroupFollowers(this.engine, row, group, syncGroup(group) ? 63 : PAGE_BATCH_GROUP_MAX - 1);

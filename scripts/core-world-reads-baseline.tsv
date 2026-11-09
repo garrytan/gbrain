@@ -631,6 +631,7 @@ src/core/persistence/context.ts	als_store	1	W2: engine scope (decision E) replac
 src/core/persistence/coordination-lock.ts	process_env	2	W6: settings plane out of the core
 src/core/persistence/coordinator.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/coordinator.ts	module_collection	1	W6: per-engine state, or mark as a constant table
+src/core/persistence/coordinator.ts	process_env	1	W6: settings plane out of the core (Wave C 1H-a: GBRAIN_PUBLICATION_DOOR_BOUND_MS overrides the publication door bound)
 src/core/persistence/deactivation.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/detached-pages.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/detached-pages.ts	spawn_import	1	W7: process-wide effects move to src/cli
@@ -657,6 +658,7 @@ src/core/persistence/git-declared.ts	spawn_import	1	W7: process-wide effects mov
 src/core/persistence/git-door.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/git-door.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/persistence/git-durability-administration.ts	fs_import	1	W5: repo-less persistence for hosts
+src/core/persistence/git-first-gate.ts	module_collection	1	W6: per-engine state, or mark as a constant table (Wave C 1H-a: the segmented-writer gate cache, a WeakMap keyed by engine)
 src/core/persistence/git-gap.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/graduation-custody.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/graduation-custody.ts	module_collection	2	W6: per-engine state, or mark as a constant table
@@ -685,6 +687,7 @@ src/core/persistence/import-mutations.ts	process_env	1	W6: settings plane out of
 src/core/persistence/import-prepare.ts	fs_import	2	W5: repo-less persistence for hosts
 src/core/persistence/import-reads.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/persistence/index-lock-reclaim.ts	fs_import	1	W5: repo-less persistence for hosts
+src/core/persistence/index-split-page.ts	fs_import	1	W5: repo-less persistence for hosts (Wave C 1I-a: reads the committed blob from the canonical checkout)
 src/core/persistence/ipc.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/journal.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/persistence/journal.ts	process_env	1	W6: settings plane out of the core
@@ -701,6 +704,7 @@ src/core/persistence/origin-guard.ts	fs_import	1	W5: repo-less persistence for h
 src/core/persistence/origin-twins.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/ownership.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/ownership.ts	process_env	2	W6: settings plane out of the core
+src/core/persistence/page-append.ts	fs_import	1	W5: repo-less persistence for hosts (Wave C 1H-a: reads the canonical file of a git-first append)
 src/core/persistence/page-mutations.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/page-prepare.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/page-purge.ts	module_collection	3	W6: per-engine state, or mark as a constant table
@@ -797,6 +801,7 @@ src/core/persistence/topology-recovery.ts	module_collection	1	W6: per-engine sta
 src/core/persistence/topology-transaction.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/persistence/unbound-pages.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/unindexed-files.ts	spawn_import	1	W7: process-wide effects move to src/cli
+src/core/persistence/upload-spool.ts	fs_import	1	W5: repo-less persistence for hosts (Wave C 1H-a: the upload spool lives on the owner host)
 src/core/persistence/upload-streamed.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/worktree-lease.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/worktree-lease.ts	module_collection	6	W6: per-engine state, or mark as a constant table
@@ -807,7 +812,7 @@ src/core/persistence/worktree-refresh.ts	load_config	1	W6: settings plane out of
 src/core/persistence/worktree-refresh.ts	module_collection	2	W6: per-engine state, or mark as a constant table; +1 #7731: the owner scan's unreadable-HEAD log throttle, keyed by refresh id and pruned each scan like laggingSyncing
 src/core/persistence/worktree-refresh.ts	process_env	7	W6: settings plane out of the core
 src/core/persistence/write-wait.ts	load_config	2	W6: settings plane out of the core
-src/core/persistence/write-wait.ts	process_env	3	W6: settings plane out of the core
+src/core/persistence/write-wait.ts	process_env	4	W6: settings plane out of the core (+1 Wave C 1I-a: GBRAIN_WAIT_INDEXED_MS beside the write wait)
 src/core/pg-access-classify.ts	process_env	1	W6: settings plane out of the core
 src/core/pg-type-cache.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/pg-type-cache.ts	module_collection	2	W6: per-engine state, or mark as a constant table

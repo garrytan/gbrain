@@ -109,6 +109,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'safe_index_pending',
   // Inline pages whose bulleted timeline the pre-bullet chunker sealed (doctor/checks/inline-timeline-chunks.ts).
   'inline_timeline_chunks',
+  // Wave C 1H-a (T-DX7): readiness for the git-first strict path (doctor/checks/large-pages.ts).
+  'large_pages',
   'self_capture',
   'brain_score',
   // W1: belief ledger coverage intervals, drift, orphan lifetimes and unsafe restores.

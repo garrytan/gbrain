@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // check-orphan-modules.mjs — transitive-reachability guard for src/ modules.
 //
-// Walks static `from '...'`, dynamic `import('...')`, and `require('...')`
+// Walks static `from '...'`, bare `import '...'`, dynamic `import('...')`, and `require('...')`
 // RELATIVE specifiers from the runtime entrypoints (CLI, MCP server, plugin
 // engines, embedded admin) plus every package.json `exports` target, and
 // fails when a src/**/*.ts module is unreachable and not on the reasoned
@@ -150,8 +150,8 @@ function main() {
     process.exit(2);
   }
 
-  // Relative-specifier extraction: static, dynamic, and require forms.
-  const IMPORT_RE = /(?:from\s+|import\(\s*|require\(\s*)['"](\.[^'"]+)['"]/g;
+  // Relative-specifier extraction: static, bare side-effect, dynamic, and require forms.
+  const IMPORT_RE = /(?:from\s+|import\s+|import\(\s*|require\(\s*)['"](\.[^'"]+)['"]/g;
   const resolveSpec = (fromFile, spec, allowOutsideSrc) => {
     const base = join(root, dirname(fromFile), spec);
     for (const cand of [base, `${base}.ts`, join(base, 'index.ts')]) {

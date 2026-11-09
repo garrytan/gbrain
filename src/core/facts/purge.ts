@@ -19,6 +19,8 @@
  * as `gbrain: purge fact <hash8>`; verification then probes each store.
  */
 
+import { hostIdFor } from '../persistence/identity.ts';
+import { removeSpool, spooledStagingsHoldingClaim } from '../persistence/upload-spool.ts';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
@@ -160,7 +162,7 @@ export async function stagingsHoldingClaim(engine: BrainEngine, sourceId: string
       OR (${liveStagingSql('s')} AND EXISTS (SELECT 1 FROM page_body_staging_texts r JOIN page_segment_texts t ON t.source_id=r.source_id AND t.sha256=r.sha256
         WHERE r.staging_id=s.id AND (strpos(lower(convert_from(t.body,'UTF8')),$2)>0 OR strpos(lower(convert_from(t.body,'UTF8')),$4)>0))))
     ORDER BY s.id`, [sourceId, claim.toLowerCase(), claim, escapeFenceCell(claim).toLowerCase()])).map(row => row.id),
-  ...await stagingsWithClaimAcrossParts(engine, sourceId, claim)])].sort();
+  ...await stagingsWithClaimAcrossParts(engine, sourceId, claim), ...await spooledStagingsHoldingClaim(engine, sourceId, claim, hostIdFor(engine))])].sort();
   return { stagings, held: await findRequestsHoldingStagings(engine, sourceId, stagings) };
 }
 
@@ -381,6 +383,8 @@ export async function purgeSegmentStorage(tx: BrainEngine, sourceId: string, cla
     staged.push(...(await tx.executeRaw<{ page_id: number | null }>(`UPDATE page_body_stagings SET state='aborted',updated_at=now()
       WHERE id=ANY($1::uuid[]) AND state<>'committed' RETURNING page_id`, [plan.stagings])).flatMap(row => row.page_id === null ? [] : [Number(row.page_id)]));
     parts = (await tx.executeRaw('DELETE FROM page_body_staging_parts WHERE staging_id=ANY($1::uuid[]) RETURNING 1', [plan.stagings])).length;
+    // Wave C (ceo-r3-outside-5): an aborted spooled session's file goes with its parts; a file on another host goes with that host's sweep.
+    for (const id of plan.stagings) await removeSpool(tx, id, hostIdFor(tx));
   }
   for (const pageId of new Set([...pageIds, ...staged])) await tx.sweepSegments({ pageId });
   // The cached view digests (sizes and sha256 of a read view) of the rewritten bodies describe pre-purge text.

@@ -123,6 +123,9 @@ test('Q3: every strict writer is classified when it prepares; a managed import, 
     writeFileSync(join(input, 'secret.md'), page('Imported secret', 'Private.', 'visibility: private\n'));
     expect(await outcome(importManagedFile(engine, join(input, 'cached.md'), 'cache/imported.md', { sourceId: 'default', noEmbed: true }))).toMatchObject({ thrown: 'git_home_required' });
     expect(await outcome(importManagedFile(engine, join(input, 'secret.md'), 'notes/imported-secret.md', { sourceId: 'default', noEmbed: true }))).toMatchObject({ thrown: 'git_private_commit_refused' });
+    // Wave C (spec §3.5): the refused page's blob was never pre-hashed into the object store.
+    const secretBlob = git(root, 'hash-object', '--', join(input, 'secret.md')).trim();
+    expect(() => git(root, 'cat-file', '-e', secretBlob)).toThrow();
     expect(head(root)).toBe(before);
     for (const rel of ['cache/imported.md', 'notes/imported-secret.md']) expect(existsSync(join(root, rel))).toBe(false);
     expect(await row(engine, 'cache/imported')).toBeNull();

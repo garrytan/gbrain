@@ -1718,7 +1718,7 @@ CREATE TABLE IF NOT EXISTS persistence_requests (
     intent jsonb,
     authority jsonb NOT NULL,
     sequence bigserial NOT NULL UNIQUE,
-    state text NOT NULL DEFAULT 'queued' CHECK (state IN ('queued','running','recovering','committed','conflict','failed','cancelled')),
+    state text NOT NULL DEFAULT 'queued' CHECK (state IN ('queued','running','recovering','indexing','committed','conflict','failed','cancelled')),
     execution_token uuid,
     claim_expires_at timestamptz,
     recovery jsonb,
@@ -1948,6 +1948,57 @@ BEGIN
     AND EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                 WHERE n.nspname = current_schema() AND c.relname = 'git_canonical_brain' AND c.relkind = 'r' AND NOT c.relrowsecurity) THEN
     ALTER TABLE git_canonical_brain ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+
+-- Wave C 1H git-first strict write path (migration v275; src/core/persistence/git-first.ts).
+CREATE TABLE IF NOT EXISTS page_pending_heads (
+  source_id    TEXT        NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  slug         TEXT        NOT NULL,
+  page_id      INTEGER     REFERENCES pages(id) ON DELETE CASCADE,
+  request_id   UUID        NOT NULL,
+  commit_oid   TEXT        NOT NULL,
+  head_oid     TEXT        NOT NULL,
+  path         TEXT        NOT NULL,
+  revision     UUID        NOT NULL,
+  body_bytes   BIGINT      NOT NULL CHECK (body_bytes >= 0),
+  body_sha256  BYTEA       NOT NULL CHECK (octet_length(body_sha256) = 32),
+  tail_sha256  BYTEA       CHECK (tail_sha256 IS NULL OR octet_length(tail_sha256) = 32),
+  title        TEXT,
+  type         TEXT,
+  frontmatter  JSONB,
+  lead_text    TEXT,
+  access_state TEXT        NOT NULL DEFAULT 'world' CHECK (access_state IN ('world','private')),
+  hold_code    TEXT,
+  queued_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, slug)
+);
+CREATE INDEX IF NOT EXISTS page_pending_heads_request ON page_pending_heads (request_id);
+CREATE TABLE IF NOT EXISTS page_upload_spools (
+  staging_id UUID        PRIMARY KEY REFERENCES page_body_stagings(id) ON DELETE CASCADE,
+  host_id    UUID        NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  removed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS page_upload_spools_present ON page_upload_spools (host_id) WHERE removed_at IS NULL;
+CREATE TABLE IF NOT EXISTS page_upload_spool_parts (
+  staging_id UUID    NOT NULL REFERENCES page_upload_spools(staging_id) ON DELETE CASCADE,
+  part_no    INTEGER NOT NULL CHECK (part_no >= 0),
+  byte_start BIGINT  NOT NULL CHECK (byte_start >= 0),
+  byte_len   INTEGER NOT NULL CHECK (byte_len BETWEEN 1 AND 4194304),
+  sha256     BYTEA   NOT NULL CHECK (octet_length(sha256) = 32),
+  PRIMARY KEY (staging_id, part_no)
+);
+DO \$rls\$
+DECLARE target text;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    FOREACH target IN ARRAY ARRAY['page_pending_heads','page_upload_spools','page_upload_spool_parts'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                 WHERE n.nspname = current_schema() AND c.relname = target AND c.relkind = 'r' AND NOT c.relrowsecurity) THEN
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', target);
+      END IF;
+    END LOOP;
   END IF;
 END \$rls\$;
 -- Verified text projection work (migration 153).

@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 294,
+    "count": 295,
     "gaps": [
       17,
       18,
@@ -98,7 +98,7 @@
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 299,
+    "latest": 300,
     "records": [
       {
         "handler": {
@@ -2292,8 +2292,8 @@
         "idempotent": true,
         "name": "durable_concurrent_persistence",
         "sql": {
-          "length": 15743,
-          "sha256": "c6a64dd7451000894ce425095a465e8c403cd45f989e8f5419109a8360d51484"
+          "length": 15754,
+          "sha256": "ecdd1b8f70670ce829b12c2fd220e40e2223c0c0ef78896f9872052d172761d5"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -4882,6 +4882,27 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 299
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "migrationStatementTimeoutMs",
+            "runMigrationStatement",
+            "withSchemaLockTimeout"
+          ],
+          "sha256": "d3ac24263d0d5dfea030b469eca13a8f1d4f86edab064a3d6d4087ed7bb329cb"
+        },
+        "idempotent": true,
+        "name": "git_first_strict_path",
+        "sql": {
+          "length": 3817,
+          "sha256": "725bb35df2faa2407612f420cec62bf875b4667735cb3a7b996c9603d23f3b04"
+        },
+        "sqlFor": "absent",
+        "transaction": false,
+        "verify": "absent",
+        "version": 300
       }
     ],
     "versions": [
@@ -5178,7 +5199,8 @@
       296,
       297,
       298,
-      299
+      299,
+      300
     ]
   },
   "normalizer": "migrations-record-v1"

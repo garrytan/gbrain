@@ -33,12 +33,14 @@ import { schemaAdmissionRefusal } from './schema-admission.ts';
 import { CAPACITY_VERIFY } from './capacity-verify.ts';
 import { readManagedMode } from './managed-mode.ts';
 import { hostIdFor } from './identity.ts';
+import { sweepUploadSpools } from './upload-spool.ts';
+import { PUBLISHED_STATES_SQL } from './request-states.ts';
 import { MANAGED_SYNC_PASS_OP } from './sync-pass-row.ts';
 import { BACKOFF_ELAPSED } from './transient-retry.ts';
 import { segmentWriteScope } from '../page-body/ingest.ts';
 import { sameAttestedActor } from '../access/member-facts.ts';
 import {
-  isTerminal, principalKey, requestPrincipal, recoveryFiles,
+  isPublished, isTerminal, principalKey, requestPrincipal, recoveryFiles,
   type JournalLimits, type Principal, type RecoveryRecord, type RequestState,
   type SqlEngine, type WriteAuthority, type WriteRequest,
 } from './model.ts';
@@ -1006,7 +1008,7 @@ export async function prepareRecoveries(engine: BrainEngine, members: { row: Wri
 /** Clears the resolved recovery records of a committed group in one transaction; a record that changed is cleared on its own. */
 export async function clearResolvedRecoveries(engine: BrainEngine, rows: WriteRequest[],
   transaction: <T>(fn: (tx: BrainEngine) => Promise<T>) => Promise<T> = fn => engine.transaction(fn)): Promise<void> {
-  const resolved = rows.filter(row => row.recovery && isTerminal(row));
+  const resolved = rows.filter(row => row.recovery && isPublished(row));
   if (resolved.length < 2) { for (const row of resolved) await clearResolvedRecovery(engine, row.id, row, transaction); return; }
   for (const row of resolved) for (const file of recoveryFiles(row.recovery!)) assertRecoveryStagingAbsent(file);
   const worktree = resolved[0]!.worktree_id;
@@ -1035,7 +1037,7 @@ export async function reclaimReleasedWrite(engine: BrainEngine, id: string, leas
 }
 
 /** In the SAME transaction as page publication. Counters are always before request locks. */
-export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'committed' | 'conflict' | 'failed' | 'cancelled',
+export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'committed' | 'indexing' | 'conflict' | 'failed' | 'cancelled',
   outcome: Record<string, unknown>, error?: { code: string; message: string; detail?: unknown },
   /** #5984: the caller's transaction already declared the protocol, set synchronous_commit, locked these counters and this row FOR UPDATE. */
   locked?: WriteRequest): Promise<WriteRequest> {
@@ -1051,7 +1053,7 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
   if (!current) throw opError('not_found', 'Write request not found.',
     `The journal row of request ${row.request_id} in source ${row.source_id} disappeared before its completion was recorded, so no outcome was saved. Inspect the source's requests with the command in fix before submitting anything again.`,
     { fix: ownerStatusFix(row.source_id) });
-  if (isTerminal(current)) return current;
+  if (isPublished(current)) return current;
   // G7b: a strict write whose door commit landed before its row keeps naming that commit when it ends without committing.
   const landed = (current.outcome as { persistence?: { landed_before_row?: boolean } } | null)?.persistence;
   if (state !== 'committed' && landed?.landed_before_row === true && !('persistence' in outcome)) outcome = { ...outcome, persistence: landed };
@@ -1071,11 +1073,11 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
       COALESCE(bool_or(state<>'committed'),false) AS unfinished FROM persistence_effects WHERE request_id=$1::uuid),
     done AS (UPDATE persistence_requests SET state=$2,outcome=$3::text::jsonb,
       error_code=$4,error_message=$5,error_detail=COALESCE($8::text::jsonb,error_detail),completed_at=now(),updated_at=now(),claim_expires_at=NULL,blocked_reason=NULL,
-      consumer_version=CASE WHEN $2='committed' THEN $6 ELSE consumer_version END,
-      consumer_host_id=CASE WHEN $2='committed' THEN $7::uuid ELSE consumer_host_id END,
-      consumer_segment_reader=CASE WHEN $2='committed' THEN true ELSE consumer_segment_reader END,
-      published_at=CASE WHEN $2='committed' THEN now() ELSE published_at END,
-      preparation_attempts=CASE WHEN $2='committed' THEN 0 ELSE preparation_attempts END,
+      consumer_version=CASE WHEN $2 IN ('committed','indexing') THEN $6 ELSE consumer_version END,
+      consumer_host_id=CASE WHEN $2 IN ('committed','indexing') THEN $7::uuid ELSE consumer_host_id END,
+      consumer_segment_reader=CASE WHEN $2 IN ('committed','indexing') THEN true ELSE consumer_segment_reader END,
+      published_at=CASE WHEN $2 IN ('committed','indexing') THEN now() ELSE published_at END,
+      preparation_attempts=CASE WHEN $2 IN ('committed','indexing') THEN 0 ELSE preparation_attempts END,
       terminal_reservation=CASE WHEN (SELECT unfinished FROM effects) THEN terminal_reservation
         ELSE LEAST(terminal_reservation,$12::bigint+(SELECT bytes FROM effects)) END
       WHERE id=$1::uuid AND $9::bigint+(SELECT bytes FROM effects)<=terminal_reservation RETURNING *),
@@ -1118,14 +1120,14 @@ const PURGED_REFUSAL = /^purged_content:|which the owner purged; it was not impo
 export async function clearResolvedRecovery(engine: BrainEngine, id: string, known?: WriteRequest,
   transaction: <T>(fn: (tx: BrainEngine) => Promise<T>) => Promise<T> = fn => engine.transaction(fn)): Promise<void> {
   const row = known ?? await getWriteRequestById(engine, id);
-  if (!row?.recovery || !isTerminal(row)) return;
+  if (!row?.recovery || !isPublished(row)) return;
   if (known) for (const file of recoveryFiles(row.recovery)) assertRecoveryStagingAbsent(file);
   await transaction(async tx => {
     const keys = ['brain', ...(row.worktree_id ? [`worktree:${row.worktree_id}`] : [])];
     if (known) {
       // The settings, the counter lock and the clear of the exact known record are sent together.
       const [, , [cleared]] = await pipelined(tx, [() => declareDurablePersistence(tx), () => lockCounters(tx, keys), () => tx.executeRaw(`WITH locked AS (SELECT id,recovery_bytes FROM persistence_requests WHERE id=$1::uuid AND recovery=$3::text::jsonb
-          AND state IN ('committed','conflict','failed','cancelled') FOR UPDATE),
+          AND state IN ${PUBLISHED_STATES_SQL} FOR UPDATE),
         released AS (UPDATE persistence_counters SET recovery_bytes=recovery_bytes-(SELECT recovery_bytes FROM locked) WHERE key=ANY($2::text[]) AND EXISTS (SELECT 1 FROM locked))
         UPDATE persistence_requests r SET recovery=NULL,recovery_bytes=0,blocked_reason=NULL FROM locked WHERE r.id=locked.id RETURNING r.id`,
       [id, keys, JSON.stringify(row.recovery)])]) as [unknown, unknown, unknown[]];
@@ -1135,7 +1137,7 @@ export async function clearResolvedRecovery(engine: BrainEngine, id: string, kno
       await lockCounters(tx, keys);
     }
     const [locked] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [id]);
-    if (!locked?.recovery || !isTerminal(locked)) return;
+    if (!locked?.recovery || !isPublished(locked)) return;
     for (const file of recoveryFiles(locked.recovery)) assertRecoveryStagingAbsent(file);
     await tx.executeRaw(`WITH released AS (UPDATE persistence_counters SET recovery_bytes=recovery_bytes-$3 WHERE key=ANY($2::text[]))
       UPDATE persistence_requests SET recovery=NULL,recovery_bytes=0,blocked_reason=NULL WHERE id=$1::uuid`, [id, keys, Number(locked.recovery_bytes)]);
@@ -1194,6 +1196,8 @@ export async function sweepSegmentStorage(engine: BrainEngine): Promise<void> {
   const [row] = await engine.executeRaw<{ present: boolean }>(
     'SELECT EXISTS (SELECT 1 FROM page_body_stagings) OR EXISTS (SELECT 1 FROM page_segment_texts) AS present');
   if (!row?.present) return;
+  // Wave C (ceo-r3-native-4): this host's spool files of ended or lapsed upload sessions go first, so expiry below releases them.
+  await sweepUploadSpools(engine, hostIdFor(engine));
   if (!await readManagedMode(engine)) { await engine.sweepSegments({ expireStagings: true }); return; }
   const owned = await engine.executeRaw<{ source_id: string }>(`SELECT s.source_id FROM persistence_source_bindings s
     JOIN persistence_worktrees w ON w.id=s.worktree_id WHERE w.owner_host_id=$1::uuid AND w.state='active'`, [hostIdFor(engine)]);

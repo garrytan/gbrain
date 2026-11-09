@@ -172,6 +172,11 @@ export async function fileAtCommit(root: string, commit: string, path: string): 
   return gitRead(root, ['show', `${commit}:./${relative(root, path).split(sep).join('/')}`]).catch(() => null);
 }
 
+/** Whether `commit` is HEAD or an ancestor of it in `root`; false when it is not, or Git cannot tell. */
+export async function isAncestor(root: string, commit: string): Promise<boolean> {
+  return gitRead(root, ['merge-base', '--is-ancestor', commit, 'HEAD']).then(() => true, () => false);
+}
+
 /** The commit HEAD names in `root`, or null on an unborn branch or when Git cannot read it. */
 export async function headCommit(root: string, signal?: AbortSignal): Promise<string | null> {
   return quiet(gitRead(root, ['rev-parse', '--verify', '--quiet', 'HEAD'], signal), signal);

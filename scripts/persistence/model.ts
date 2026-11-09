@@ -37,7 +37,7 @@ export const EFFECT_SEAMS = {
   'withdrawal-mirror': { op: 'forget', point: EFFECT_FAULT_POINTS['withdrawal-mirror'] },
   'facts-backstop': { op: 'put_page', point: EFFECT_FAULT_POINTS['facts-backstop'] },
   links: { op: 'put_page', point: EFFECT_FAULT_POINTS.links },
-} as const satisfies Record<EffectKind, { op: OpKind; point: FaultPoint }>;
+} as const satisfies Record<Exclude<EffectKind, 'index-split-page'>, { op: OpKind; point: FaultPoint }>;
 
 /** Non-error outcomes a sync or connector run reports as its status (not error codes). */
 const EXTERNAL_RESULT_CODES = new Set(['blocked_by_failures', 'dry_run']);
