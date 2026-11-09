@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A running `gbrain serve`, worker or autopilot no longer fails writes after another process changes a table's columns (GST-2260).** When `gbrain apply-migrations` or an upgrade in another process added, renamed or dropped a column, every pooled connection that had already prepared a `SELECT *` or `RETURNING *` on that table failed its next run with "cached plan must not change result type". Outside a transaction the driver quietly prepared the statement again, but inside one the error had already aborted the transaction, so the caller saw it: a `put_page` came back `internal_error`, or was accepted and then failed at publication, once for each statement on each pooled connection. Now the first such error makes every connection in the process prepare its statements again before its next query, the write paths re-run the transaction it aborted, and so do an OAuth token grant and a minion job's completion or failure record. Pools that do not prepare statements (transaction-mode pooler URLs, `prepare: false`) and PGLite are unchanged.
+
+### Itemized changes
+
+- `vendor/postgres` (`patches/postgres@3.4.9.patch`): the first `RevalidateCachedQuery` error starts a process-wide plan generation; each connection drops its prepared statements before it builds its next query.
+- `src/core/retry-matcher.ts`: `isStalePlanError` (SQLSTATE 0A000 with routine `RevalidateCachedQuery`, never the code alone) and `retryOnStalePlan`, one more run for a transaction that does only database work.
+- `src/core/persistence/admission-retry.ts`, `src/core/persistence/coordinator.ts`: write admission retries a stale plan within its existing budget, and publication and effects release a claim it aborted, as they do for contention.
+- `src/core/oauth-grants.ts`, `src/core/minions/queue.ts`: the client-locked OAuth grant transaction and `completeJob` / `failJob` run once more after a stale plan.
+- Tests: `test/stale-plan-heal.test.ts` (Postgres; listed in `test/postgres-unit-arms.txt`).
+
 ## [0.60.627.0] - 2026-11-09
 
 **A webhook capture can no longer drop a page's readers (GST-2112).** `POST /ingest` wrote through a trusted local path whose only check was that the sender could read the page, so a member-bound token granted a source could replace a page whose `readable_by` named it with a body that named no readers, and every caller could then read the page. The route and the `ingest_capture` job now apply the remote `put_page` readers rule: a body that drops `readable_by` from a page that names readers, or names readers that leave out the sender, is refused `readable_by_invalid` (403 at the route, nothing queued; at write time for a job already queued). The job binds its write to the revision it checked, so readers added between the check and the write refuse the write with `revision_conflict` and the retry refuses `readable_by_invalid`. A capture already queued from a member-bound credential whose write source is `default` is refused `permission_denied` at write time, as the route refuses it before queueing. Bodies that keep the readers, and pages without readers, import as before.
