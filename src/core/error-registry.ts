@@ -985,6 +985,7 @@ export const NOTICE_CODES = {
   local_transcripts: { kind: 'info', summary: 'The brain host keeps recent session transcripts that page reads never return and this connection cannot read; the fix is the CLI read (`gbrain transcripts recent --json`).' },
   synthesis_keyless: { kind: 'info', summary: 'think returned gathered evidence without synthesis because no chat-model key is configured (by design on a keyless brain).' },
   think_not_saved: { kind: 'info', summary: 'think save/take persist only for the local CLI, so this answer was not saved.' },
+  model_override_ignored: { kind: 'info', summary: 'A remote think named a model the brain host does not allow for remote callers (think.remote_models) or cannot run, so the host think model answered instead.' },
   onboard_opportunities: { kind: 'coaching', summary: 'Onboarding checks found work that would improve this brain (gbrain onboard --check lists it).' },
   onboard_stale_chunks: { kind: 'coaching', summary: 'This search could not match chunks that have no embedding; the remedy is an embedding backfill (paid, ask first).' },
   onboard_link_coverage: { kind: 'coaching', summary: 'Few people/company pages have incoming links, so backlinks and graph answers are thin; the remedy is link extraction.' },

@@ -296,6 +296,30 @@ export function keylessThinkNotice(): Notice {
   };
 }
 
+/** GBRA-437: a remote think's `model` was not used; the host's think model answered instead. */
+export function modelOverrideIgnoredNotice(reason: 'not_allowed' | 'unusable'): Notice {
+  return {
+    code: 'model_override_ignored',
+    kind: 'info',
+    dedupe_key: reason,
+    why: reason === 'not_allowed'
+      ? 'This brain runs think on its own configured model for remote callers, so the requested model was not used; the answer came from the host think model (modelUsed names it). Omit model, or ask the brain owner to allow it on the brain host.'
+      : 'The requested model is allowed for remote callers on this brain but cannot run there right now, so the host think model answered instead (modelUsed names it).',
+    ...(reason === 'not_allowed' ? {
+      fix: {
+        argv: ['gbrain', 'config', 'set', 'think.remote_models', '<models>'],
+        consent: ['paid'],
+        actor: 'host_admin',
+        why: 'think.remote_models is a comma-separated list of models remote callers may pick for think; every think answer is a paid call on the host\'s key.',
+        user_message: 'This brain answers remote think calls with its own configured model. The owner can allow another model on the brain host with gbrain config set think.remote_models <models>.',
+        inputs: [{ name: 'models', how: 'The current think.remote_models value plus the requested model, comma-separated.' }],
+        verify: { argv: ['gbrain', 'config', 'get', 'think.remote_models'] },
+        requires_exclusive: false,
+      },
+    } : {}),
+  };
+}
+
 /** think with save/take over MCP: persistence is local-CLI only, so `saved_slug` is null. */
 export function thinkNotSavedNotice(): Notice {
   return {

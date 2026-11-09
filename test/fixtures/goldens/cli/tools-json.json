@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 282967,
-    "stdoutSha256": "73f135de04ba7cceced4d9fd952b23aaefd7fb4cad5ebdf3dce1aca953c70f84",
+    "stdoutBytes": 283062,
+    "stdoutSha256": "af67ca2411680ead817ea10538a37e5c3e71c10d54fb03c483ee966a9d1b7f54",
     "toolNames": [
       "remember",
       "entity",
@@ -5286,7 +5286,7 @@
               "type": "string"
             },
             "model": {
-              "description": "Model override (alias or full id). Falls through models.think → models.default → GBRAIN_MODEL → opus.",
+              "description": "Model override (alias or full id). Falls through models.think → models.default → GBRAIN_MODEL → opus. Remote callers get the host think model unless the host lists this one in think.remote_models.",
               "type": "string"
             },
             "question": {

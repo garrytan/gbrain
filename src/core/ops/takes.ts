@@ -296,6 +296,25 @@ function thinkModelError(ctx: OperationContext, e: unknown): unknown {
     `Nothing was synthesized. Omit ${name} to use the configured think model (models.think, then models.default), or pass a model id this brain can reach.`);
 }
 
+export const THINK_REMOTE_MODELS_KEY = 'think.remote_models';
+
+/**
+ * GBRA-437: a remote caller's think model. The host's own think model and any model the host
+ * lists in think.remote_models run; anything else runs the host model and reports why.
+ */
+async function remoteThinkModel(engine: OperationContext['engine'], requested: string | undefined): Promise<{ model?: string; ignored?: 'not_allowed' | 'unusable' }> {
+  if (!requested) return {};
+  const [{ resolveModel }, { normalizeModelId }, { probeChatModel }] = await Promise.all([
+    import('../model-config.ts'), import('../model-id.ts'), import('../ai/gateway.ts'),
+  ]);
+  const resolve = async (cliFlag?: string) => normalizeModelId(await resolveModel(engine, { cliFlag, configKey: 'models.think', tier: 'deep', fallback: 'opus' }));
+  const [wanted, host, listed] = await Promise.all([resolve(requested), resolve(), engine.getConfig(THINK_REMOTE_MODELS_KEY)]);
+  if (wanted === host) return {};
+  const allowed = await Promise.all((listed ?? '').split(',').map(m => m.trim()).filter(Boolean).map(m => resolve(m)));
+  if (!allowed.includes(wanted)) return { ignored: 'not_allowed' };
+  return probeChatModel(wanted).ok ? { model: wanted } : { ignored: 'unusable' };
+}
+
 const think: Operation = {
   name: 'think',
   idempotent: false,
@@ -308,7 +327,7 @@ const think: Operation = {
     rounds: { type: 'number', description: 'Multi-pass: 1 (default). Round-loop scaffolding is in place; gap-driven retrieval ships in v0.29.' },
     save: { type: 'boolean', description: 'Persist a synthesis page (local-CLI only; ignored for MCP)' },
     take: { type: 'boolean', description: 'Append a take row to the anchor page (requires anchor)' },
-    model: { type: 'string', description: 'Model override (alias or full id). Falls through models.think → models.default → GBRAIN_MODEL → opus.' },
+    model: { type: 'string', description: 'Model override (alias or full id). Falls through models.think → models.default → GBRAIN_MODEL → opus. Remote callers get the host think model unless the host lists this one in think.remote_models.' },
     since: { type: 'string', description: 'Start of temporal window (YYYY-MM-DD or YYYY-MM). Omit both bounds and a question naming one explicit date (2026-09-15, 2026-09, September 2026) is bounded to it; the result says window_source.' },
     until: { type: 'string', description: 'End of temporal window' },
     reference_date: { type: 'string', description: 'YYYY-MM-DD the question\'s relative time words resolve against (default: today in brain.timezone).' },
@@ -327,21 +346,21 @@ const think: Operation = {
     // forwards to findTrajectory. CLI callers don't go through this op
     // and get default scope + remote=false from runThink's CLI path.
     const thinkScope = thinkSourceScopeOpts(ctx);
+    const requestedModel = p.model ? String(p.model) : undefined;
+    const thinkModel = remote ? await remoteThinkModel(ctx.engine, requestedModel) : { model: requestedModel };
     const { runThink, persistSynthesis } = await import('../think/index.ts');
     const result = await runThink(ctx.engine, {
       question: String(p.question),
       // #3734: MCP think must populate the question vector for takes retrieval.
       embedQuestion: (q) => embedQueryWithPrefix(ctx.engine, q),
       anchor: p.anchor ? String(p.anchor) : undefined,
-      rounds: typeof p.rounds === 'number' ? (p.rounds as number) : undefined,
+      rounds: remote ? 1 : typeof p.rounds === 'number' ? (p.rounds as number) : undefined,
       save: safeSave,
       take: safeTake,
-      model: p.model ? String(p.model) : undefined,
-      // #1698 (C3): a remote caller that explicitly supplies a model gets the same
-      // hard-error-on-unresolvable behavior as the CLI (loud op error envelope),
-      // instead of silently degrading to a no-LLM stub answer. No model param →
-      // false → configured/default model keeps its graceful path.
-      modelExplicit: !!p.model,
+      model: thinkModel.model,
+      // #1698: the local CLI hard-errors on an unusable explicit model. A remote
+      // model is already resolved against the host's allow-list above, so it never errors.
+      modelExplicit: !remote && !!requestedModel,
       since: p.since ? String(p.since) : undefined,
       until: p.until ? String(p.until) : undefined,
       ...(typeof p.reference_date === 'string' ? { referenceDate: p.reference_date } : {}),
@@ -398,8 +417,12 @@ const think: Operation = {
     }
 
     // F8: the explanations the CLI formatter prints, as model-visible notices.
-    const { keylessThinkNotice, thinkNotSavedNotice } = await import('../interop-notices.ts');
+    const { keylessThinkNotice, thinkNotSavedNotice, modelOverrideIgnoredNotice } = await import('../interop-notices.ts');
     if (result.synthesis_status === 'no_llm') ctx.emitNotice?.(keylessThinkNotice());
+    if (thinkModel.ignored && result.synthesis_status !== 'no_llm') {
+      result.warnings.push(`MODEL_OVERRIDE_IGNORED:${thinkModel.ignored}`);
+      ctx.emitNotice?.(modelOverrideIgnoredNotice(thinkModel.ignored));
+    }
     if (remote && (Boolean(p.save) || Boolean(p.take))) ctx.emitNotice?.(thinkNotSavedNotice());
     const { recordThinkAnswer, feedbackMetaFields } = await import('../feedback/record.ts');
     const feedbackMeta = feedbackMetaFields(await recordThinkAnswer(ctx, 'think', result));
