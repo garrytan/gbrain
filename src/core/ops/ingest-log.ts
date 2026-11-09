@@ -9,6 +9,10 @@
 import type { Operation } from './contract.ts';
 import { clampSearchLimit } from '../engine.ts';
 import { linkReadScopeOpts } from './context.ts';
+import { remoteHiddenPages } from '../persistence/page-visibility.ts';
+
+/** An absolute POSIX, home-relative or Windows path token in a source_ref. */
+const HOST_PATH_RE = /(^|\s)(?:~?\/|[A-Za-z]:[\\/])\S*/g;
 
 // --- Ingest Log ---
 
@@ -59,9 +63,18 @@ const get_ingest_log: Operation = {
     // can carry another source's private context, so an unscoped remote read
     // is a cross-source leak.
     const scope = ctx.remote !== false ? linkReadScopeOpts(ctx) : {};
-    return ctx.engine.getIngestLog({
+    const rows = await ctx.engine.getIngestLog({
       limit: clampSearchLimit(p.limit as number | undefined, 20, 50),
       ...(scope.sourceIds ? { sourceIds: scope.sourceIds } : scope.sourceId ? { sourceIds: [scope.sourceId] } : {}),
+    });
+    if (ctx.remote === false) return rows;
+    // GBRA-431: a remote reader sees no slug of a page it cannot read, no row about such pages alone (its summary is
+    // about them) and no host filesystem path (a sync row's source_ref names the brain checkout).
+    const hidden = await remoteHiddenPages(ctx.engine, ctx.remote, rows.flatMap(r => (r.pages_updated ?? []).map(slug => ({ source_id: r.source_id, slug }))));
+    return rows.flatMap(r => {
+      const pages = r.pages_updated ?? [];
+      const visible = pages.filter(slug => !hidden.has(`${r.source_id}\u0000${slug}`));
+      return pages.length > 0 && visible.length === 0 ? [] : [{ ...r, source_ref: r.source_ref.replace(HOST_PATH_RE, '$1<local path>'), pages_updated: visible }];
     });
   },
   scope: 'read',
