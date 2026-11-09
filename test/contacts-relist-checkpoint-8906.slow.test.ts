@@ -214,4 +214,18 @@ test('--full ignores a saved re-list checkpoint and the page budget: it lists fr
       rmSync(dir, { recursive: true, force: true });
     }
   }, 240_000);
+test('--full drops a saved re-list checkpoint even when it stops before writing its own, so the next sync starts at page 1', async () => {
+    const { dir, cfg } = await googleSource();
+    try {
+      seedState(dir, { contacts_sync_token: null, contacts_person_fields: CONTACT_PERSON_FIELDS, contacts_relist: { page_token: 'p3', person_fields: CONTACT_PERSON_FIELDS } });
+      const controller = new AbortController();
+      const api = peopleApi(4, { onList: () => controller.abort() });
+      await withEnv({ GBRAIN_HOME: mkdtempSync(join(tmpdir(), 'gbrain-home-8906-')), GBRAIN_TEST_8906_TOKEN: 'synthetic-fixture-token' }, () =>
+        runGoogleSync(engine, 'gsrc', cfg, { sourceId: 'gsrc', full: true, noEmbed: true, noExtract: true, noSchemaPack: true, signal: controller.signal }, api.fetchImpl)).catch(() => {});
+      expect(api.requests.map((r) => r.pageToken)).toEqual([null]);
+      expect(relistOf(dir)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

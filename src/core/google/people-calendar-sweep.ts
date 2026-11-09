@@ -55,6 +55,7 @@ export async function sweepContacts(
   // from page 1 to the end in one run, as it did before the checkpoint.
   const resumeToken = !deps.opts.full && state.contacts_relist?.person_fields === CONTACT_PERSON_FIELDS ? state.contacts_relist.page_token : null;
   const pageBudget = deps.opts.full ? Infinity : CONTACT_RELIST_PAGES_PER_RUN;
+  if (deps.opts.full) state.contacts_relist = null;
   const syncToken = deps.opts.full || maskChanged || resumeToken ? null : state.contacts_sync_token;
   if (maskChanged && state.contacts_sync_token && !deps.opts.full && !resumeToken) deps.log('[google] contacts field mask changed; full re-list');
   let groupNames: Record<string, string> | null = null;
