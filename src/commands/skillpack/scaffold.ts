@@ -29,7 +29,8 @@ import { SkillpackManifestError } from '../../core/skillpack/manifest-v1.ts';
 import { VERSION } from '../../version.ts';
 import { findGbrainOrDie, resolveWorkspace } from './shared.ts';
 import { consentGate } from '../../core/consent-cli.ts';
-import { botHarnessForWorkspace, sharedTokenNotice, writeExposureNotice } from '../../core/grants/shared-exposure.ts';
+import { sharedTokenNotice, writeExposureNotice } from '../../core/grants/shared-exposure.ts';
+import { botHarnessForWorkspace } from '../shared-exposure-local.ts';
 
 export async function cmdScaffold(args: string[]): Promise<void> {
   // Harness lane (cathedral-7): `--harness <h>` installs a persona-curated

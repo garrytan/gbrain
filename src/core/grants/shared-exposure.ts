@@ -14,12 +14,10 @@
  *  - `multi_channel_chat`: the read set holds remote-visible chat pages from
  *    MULTI_CHANNEL_MIN or more distinct channels (every DM page counts alone).
  *
- * Every input is a database row or a harness config file, never git, so a
- * repo-less brain is covered the same way as a repo brain.
+ * Every input is a database row or a harness config file (read by
+ * src/commands/shared-exposure-local.ts), never git, so a repo-less brain is
+ * covered the same way as a repo brain.
  */
-import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { cliRenderContext, renderNotice, type Action, type Notice } from '../agent-output.ts';
 import { renderCliNotices } from '../agent-markers.ts';
@@ -28,7 +26,6 @@ import { hasScope } from '../scope.ts';
 import { localFederatedSourceIds, resolveSourceWithTier } from '../source-resolver.ts';
 import { privatePagesFilterFragmentFast, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { pageTypesForAllowed } from '../facts/conversation-types.ts';
-import { claudeConfigDir } from '../bootstrap/host-specs.ts';
 import type { PrincipalGrant } from './model.ts';
 
 export const NOTICE_CODE = 'unscoped_multi_user_token';
@@ -43,29 +40,6 @@ const DOCS = 'docs/mcp/ADMIN.md#one-token-several-people';
 export type ExposureReason = 'bot_harness' | 'channel_plugin' | 'multi_channel_chat';
 /** `chat_sources`: the read sources that hold chat; channels across 2+ of them can be split by source grants, within one they cannot. */
 export interface ChatCensus { sources: string[]; chat_pages: number; channels: number; chat_sources: string[] }
-
-/** The chat-channel plugins Claude Code has enabled (settings.json `enabledPlugins`, `<name>@<marketplace>: true`). */
-export function claudeCodeChannelPlugins(configDir = claudeConfigDir()): string[] {
-  const path = join(configDir, 'settings.json');
-  if (!existsSync(path)) return [];
-  try {
-    const enabled = (JSON.parse(readFileSync(path, 'utf8')) as { enabledPlugins?: Record<string, unknown> }).enabledPlugins ?? {};
-    return Object.entries(enabled).filter(([key, on]) => on === true && CHANNEL_PLUGINS.includes(key.split('@')[0]!.toLowerCase())).map(([key]) => key);
-  } catch {
-    return [];
-  }
-}
-
-/** The bot harness whose home holds this workspace (OpenClaw's ~/.openclaw*, Hermes's $HERMES_HOME or ~/.hermes), or null. */
-export function botHarnessForWorkspace(workspace: string | null | undefined, home = homedir()): string | null {
-  if (!workspace) return null;
-  const path = resolve(workspace);
-  const under = (dir: string) => path === dir || path.startsWith(dir + sep);
-  const hermesHome = process.env.HERMES_HOME?.trim() ? resolve(process.env.HERMES_HOME.trim().replace(/^~(?=$|\/)/, home)) : join(home, '.hermes');
-  if (under(hermesHome)) return 'hermes';
-  const first = relative(home, path).split(sep)[0] ?? '';
-  return first === '.openclaw' || first.startsWith('.openclaw-') ? 'openclaw' : null;
-}
 
 /**
  * The sources a credential reads with no per-call source_ids, as dispatch

@@ -13,9 +13,10 @@ import { runSources } from '../src/commands/sources.ts';
 import { insertUnifiedToken } from '../src/core/token-mint.ts';
 import { grantFromTokenRow } from '../src/core/grants/model.ts';
 import {
-  BOT_HARNESSES, CHAT_PAGE_TYPES, botHarnessForWorkspace, chatChannelCensus, claudeCodeChannelPlugins, credentialReadSources,
+  BOT_HARNESSES, CHAT_PAGE_TYPES, chatChannelCensus, credentialReadSources,
   exposureFix, exposureReasons, sharedTokenNotice, stdioReadSources,
 } from '../src/core/grants/shared-exposure.ts';
+import { botHarnessForWorkspace, claudeCodeChannelPlugins } from '../src/commands/shared-exposure-local.ts';
 import { unscopedMultiUserTokenEntry } from '../src/commands/doctor/checks/unscoped-multi-user-token.ts';
 import { categorizeCheck } from '../src/core/doctor-categories.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';

@@ -16,8 +16,9 @@
  * A remote caller (run_doctor only) gets counts, never credential names.
  */
 import { grantFromClient, grantFromRow, grantFromTokenRow, type PrincipalGrant } from '../../../core/grants/model.ts';
-import { BOT_HARNESSES, NOTICE_CODE, chatChannelCensus, claudeCodeChannelPlugins, credentialReadSources, exposureFix, exposureReasons,
+import { BOT_HARNESSES, NOTICE_CODE, chatChannelCensus, credentialReadSources, exposureFix, exposureReasons,
   stdioReadSources, subjectLabel, type ChatCensus, type ExposureSubject } from '../../../core/grants/shared-exposure.ts';
+import { claudeCodeChannelPlugins } from '../../shared-exposure-local.ts';
 import { readBrainFirstLedger } from '../../../core/setup/brain-first.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';

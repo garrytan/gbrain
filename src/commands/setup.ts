@@ -31,7 +31,8 @@ import { inspectTurnHook, TURN_HOOK_NATIVE_INSPECT, turnHookFix, verifyTurnHook,
 import { opError, OperationError } from '../core/ops/contract.ts';
 import { cliRenderContext, renderCliError, renderNotice, type Action, type Notice } from '../core/agent-output.ts';
 import { writeCliNotices } from '../core/interop-notices.ts';
-import { claudeCodeChannelPlugins, renderedExposure, sharedTokenNotice, writeExposureNotice } from '../core/grants/shared-exposure.ts';
+import { renderedExposure, sharedTokenNotice, writeExposureNotice } from '../core/grants/shared-exposure.ts';
+import { claudeCodeChannelPlugins } from './shared-exposure-local.ts';
 import { setupFirstRunNotices } from './init-first-run.ts';
 import { hostedOptionMuted, hostedOptionNotice, writeHostedOption } from '../core/onboard/hosted-option.ts';
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
