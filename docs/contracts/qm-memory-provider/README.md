@@ -14,7 +14,9 @@ a person's own DM, read as that person (`query`, `get_page`, `get_timeline`,
 served input schema and a frozen result shape: the fields every success carries,
 with other fields allowed and ignored. `get_write_request` freezes the write-request
 states, and a state not listed means unknown, not published. v3 also adds each
-`memory_recall` fact's `arm` (`own` or `ranked`). None of the v3 tools is a
+`memory_recall` fact's `arm` (`own` or `ranked`), and `memory_recall`'s `query_keep`:
+`tail` ranks a query over 2,000 characters on its end instead of its start, and a
+call that sends it gets `query_truncated`. None of the v3 tools is a
 default attested operation (only `get_write_request` is): the brain operator lists
 each one in the client's `--attest-ops`. No v3 tool is marked as a shared-scope
 read yet; a later version adds those markings.

@@ -108,10 +108,18 @@ export function parseMaxChars(raw: unknown): number {
   return raw;
 }
 
-/** memory_recall's arguments, checked before any read (and before an unlinked person's empty answer): query and max_chars. */
-export function recallArguments(p: Record<string, unknown> | undefined): { query: string; maxChars: number } {
+/**
+ * memory_recall's arguments, checked before any read (and before an unlinked person's empty answer): query, max_chars and
+ * query_keep. A query over MEMORY_RECALL_QUERY_CHARS is ranked on its head (v1) or, with query_keep tail (v3, #8694), on
+ * its tail; query_keep also reports the cut as queryTruncated.
+ */
+export function recallArguments(p: Record<string, unknown> | undefined): { query: string; maxChars: number; queryTruncated?: boolean } {
   if (typeof p?.query !== 'string') throw invalid('query is required and must be a string.', 'Pass what the turn is about as query.');
-  return { query: p.query.trim().slice(0, MEMORY_RECALL_QUERY_CHARS), maxChars: parseMaxChars(p.max_chars) };
+  const keep = p.query_keep ?? undefined;
+  if (keep !== undefined && keep !== 'head' && keep !== 'tail') throw invalid('query_keep must be "head" or "tail".', `Omit query_keep to rank a long query on its first ${MEMORY_RECALL_QUERY_CHARS} characters, or send "tail" to rank it on its last ${MEMORY_RECALL_QUERY_CHARS}.`);
+  const query = p.query.trim();
+  const kept = keep === 'tail' ? query.slice(-MEMORY_RECALL_QUERY_CHARS) : query.slice(0, MEMORY_RECALL_QUERY_CHARS);
+  return { query: kept, maxChars: parseMaxChars(p.max_chars), ...(keep === undefined ? {} : { queryTruncated: kept.length < query.length }) };
 }
 
 type ReadPolicy = { excludePrivate: boolean; eligibility: Awaited<ReturnType<typeof resolveReadEligibility>> };
@@ -180,6 +188,7 @@ const memory_recall: Operation = {
   params: {
     query: { type: 'string', required: true, description: 'What the turn is about; ranks the facts.' },
     max_chars: { type: 'integer', description: `Text cap in UTF-16 code units, ${MEMORY_RECALL_MAX_CHARS.min}-${MEMORY_RECALL_MAX_CHARS.max} (default ${MEMORY_RECALL_MAX_CHARS.default}).` },
+    query_keep: { type: 'string', enum: ['head', 'tail'], description: `Which end of a query over ${MEMORY_RECALL_QUERY_CHARS} characters ranks the facts: head (the default) or tail. Sending it adds query_truncated.`, fullSurfaceOnly: true },
     [ACTOR_ARGUMENT]: actorParam,
     source_id: { type: 'string', description: 'Read this one source as its audience (a shared scope): never the person\'s own facts.', fullSurfaceOnly: true },
     source_ids: { ...SOURCE_IDS_PARAM, description: 'Read only these sources as their audience (a shared scope): never the person\'s own facts.', fullSurfaceOnly: true },
@@ -187,11 +196,12 @@ const memory_recall: Operation = {
   scope: 'read',
   annotations: { title: 'memory_recall (QM memory read)', readOnlyHint: true },
   handler: async (ctx, p) => {
-    const { query, maxChars } = recallArguments(p);
+    const { query, maxChars, queryTruncated } = recallArguments(p);
     const { sources, named } = await recallSources(ctx, p);
-    if (!named || ctx.remote === false) return recallFacts(ctx, query, maxChars, sources, named);
+    const cut = queryTruncated === undefined ? {} : { query_truncated: queryTruncated };
+    if (!named || ctx.remote === false) return { ...await recallFacts(ctx, query, maxChars, sources, named), ...cut };
     const { folderCoverage } = await folderAccessFor(ctx.engine, []);
-    return withCallerAccess({ ...SCOPE_READ_ACCESS, folderCoverage }, () => recallFacts(ctx, query, maxChars, sources, true));
+    return { ...await withCallerAccess({ ...SCOPE_READ_ACCESS, folderCoverage }, () => recallFacts(ctx, query, maxChars, sources, true)), ...cut };
   },
 };
 
@@ -362,11 +372,21 @@ export const qmMemoryOperations: Operation[] = [memory_recall, memory_write];
 /**
  * GST-900: recall's max_chars, memory_recall's bound on recall's text: the fact texts, then the results' chunk texts,
  * one per line, keep the whole items that fit; the first item that would cross the cap ends both lists, with no
- * marker. `truncated` says whether anything was cut and `total` counts the facts kept.
+ * marker. `truncated` says whether anything was cut and `total` counts the facts kept; `facts_groups` and
+ * `entity_unspecified` keep only the facts and entities still delivered.
  */
-export function boundRecallChars<T extends { facts: Array<{ fact: string }>; total: number; results?: Array<{ chunk?: unknown }> }>(out: T, maxChars: number): T & { truncated: boolean } {
+export function boundRecallChars<T extends { facts: Array<{ id?: unknown; fact: string }>; total: number; results?: Array<{ chunk?: unknown }>;
+  facts_groups?: Array<{ source_id: string; entity_slug: string | null; fact_ids: string[] }>;
+  entity_unspecified?: { candidates: Array<{ source_id: string; entity_slug: string }> } }>(out: T, maxChars: number): T & { truncated: boolean } {
   const lines = [...out.facts.map(f => f.fact), ...(out.results ?? []).map(r => String(r.chunk ?? ''))];
   const { kept } = boundFactLines(lines, maxChars);
   const facts = out.facts.slice(0, kept);
-  return { ...out, facts, total: facts.length, ...(out.results ? { results: out.results.slice(0, Math.max(0, kept - out.facts.length)) } : {}), truncated: kept < lines.length };
+  const bounded = { ...out, facts, total: facts.length, ...(out.results ? { results: out.results.slice(0, Math.max(0, kept - out.facts.length)) } : {}), truncated: kept < lines.length };
+  if (facts.length === out.facts.length || !out.facts_groups) return bounded;
+  const ids = new Set(facts.map(f => String(f.id)));
+  const facts_groups = out.facts_groups.map(g => ({ ...g, fact_ids: g.fact_ids.filter(id => ids.has(id)) })).filter(g => g.fact_ids.length);
+  const named = new Set(facts_groups.filter(g => g.entity_slug !== null).map(g => g.source_id + '\u0000' + g.entity_slug));
+  const candidates = out.entity_unspecified?.candidates.filter(c => named.has(c.source_id + '\u0000' + c.entity_slug)) ?? [];
+  const { entity_unspecified: _cut, ...rest } = bounded;
+  return { ...rest, facts_groups, ...(out.entity_unspecified && candidates.length >= 2 ? { entity_unspecified: { ...out.entity_unspecified, candidates } } : {}) } as T & { truncated: boolean };
 }

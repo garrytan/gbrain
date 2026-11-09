@@ -54,6 +54,14 @@
             "type": "integer",
             "description": "Text cap in UTF-16 code units, 200-12000 (default 6000)."
           },
+          "query_keep": {
+            "type": "string",
+            "description": "Which end of a query over 2000 characters ranks the facts: head (the default) or tail. Sending it adds query_truncated.",
+            "enum": [
+              "head",
+              "tail"
+            ]
+          },
           "acting_user": {
             "type": "string",
             "description": "Set by the trusted system: equal to the x-qm-actor header, or omit."
@@ -1121,7 +1129,7 @@
       "query_chars_ranked": 2000,
       "own_recent_window_hours": 24
     },
-    "arguments_checked": "query and max_chars are checked before any read, also for an unlinked person (invalid_params); a longer query is ranked on its first 2000 characters and never refused (recall's question is refused over 2000: invalid_params reason question_too_long)",
+    "arguments_checked": "query, max_chars and query_keep are checked before any read, also for an unlinked person (invalid_params); a longer query is never refused (recall's question is refused over 2000: invalid_params reason question_too_long) and is ranked on its first 2000 characters, or on its last 2000 with query_keep tail; a call that sends query_keep gets structuredContent.query_truncated, true when the query was cut",
     "content": {
       "line": "- <fact> (<YYYY-MM-DD>; <kind>)",
       "never": [
@@ -1148,6 +1156,7 @@
         }
       ],
       "truncated": "boolean",
+      "query_truncated": "boolean, only when the call sent query_keep",
       "code": "actor_unlinked (only on unlinked_recall)"
     },
     "arm": "own: the person's own fact from the last 24 hours; ranked: matched by query (a fact found both ways is own); a call that names sources answers ranked rows only",

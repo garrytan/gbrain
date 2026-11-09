@@ -347,6 +347,8 @@ Install commands now name `stable` (`bun install -g github:garrytan/gbrain#stabl
 | Attested `context_pack` | JSON in `content` | `content` is the rendered pack text; the rest of the result is in `structuredContent` |
 | Attested personal read over the result cap once `structuredContent` is counted | sent | refused whole with `result_too_large` |
 | `memory_recall` fact rows | `{id, text, date, kind}` | add `arm`: `own` or `ranked`; no score |
+| `memory_recall` query over 2,000 characters | ranked on its first 2,000 characters, cut silently | the same by default; `query_keep: "tail"` (v3) ranks its last 2,000, so a turn after a long preamble still ranks, and sending `query_keep` adds `query_truncated` (#8694) |
+| `recall` with `max_chars` that cuts facts | `facts_groups` and `entity_unspecified` could still name the facts left out | they name only the facts and entities delivered |
 | The same tools without `x-qm-actor` | as above | unchanged |
 
 **An attested call can no longer write pages directly: `add_timeline_entry`, `add_link`, `put_page` and `edit_page` are not attestable.** They write to pages that everyone who reads the page sees, so a trusted system acting as one person could put that person's words in front of a whole audience with no one approving them. They now wait for owner-approved proposals, the way `capture` and take writes already do. An operator whose `--attest-ops` list names one of them sees `gbrain auth rescope` refuse the list, and each attested call to it is refused (`actor_not_attested`, reason `op_not_attested`); a queued attested write of one fails when it publishes. Unattested calls, and credentials bound to a member, are unchanged. `v2.json` lists the new deferred operations; `v1.json` is unchanged.

@@ -30,6 +30,8 @@ export const QM_CONTRACT_PATHS: Record<QmContractVersion, string> = {
 export const QM_CONTRACT_PATH = QM_CONTRACT_PATHS[1];
 /** The arguments v1 publishes per tool, frozen: later arguments appear from v2 on. */
 const V1_PARAMS: Record<string, readonly string[]> = { memory_recall: ['query', 'max_chars', 'acting_user'], memory_write: ['facts', 'idempotency_key', 'acting_user'] };
+/** The arguments v2 publishes per tool, frozen: #8694's query_keep appears from v3 on. */
+const V2_PARAMS: Record<string, readonly string[]> = { memory_recall: [...V1_PARAMS.memory_recall!, 'source_id', 'source_ids'], memory_write: [...V1_PARAMS.memory_write!, 'source_id'] };
 /** The deferred operations v1 published, frozen: GST-1158 F9 deferred more from v2 on. */
 const V1_DEFERRED_OPS: readonly string[] = ['capture', 'extract_facts', 'list_write_conflicts', 'takes_add', 'takes_resolve', 'takes_supersede', 'takes_update'];
 /** Catalogue summaries v1 published before they changed, frozen. */
@@ -142,7 +144,8 @@ const V2_REASON_FIXES: Partial<typeof ACTOR_REASON_FIXES> = {
 function toolEntry(name: string, version: QmContractVersion) {
   const op = operations.find(o => o.name === name);
   if (!op) throw new Error(name + ' is not in the operation registry');
-  const params = Object.entries(op.params).filter(([k]) => version > 1 || V1_PARAMS[name]!.includes(k));
+  const frozen = version === 1 ? V1_PARAMS[name] : version === 2 ? V2_PARAMS[name] : undefined;
+  const params = Object.entries(op.params).filter(([k]) => !frozen || frozen.includes(k));
   return {
     name, description: op.description, scope: op.scope ?? 'read', mutating: op.mutating === true,
     input_schema: { type: 'object', properties: Object.fromEntries(params.map(([k, v]) => [k, paramDefToSchema(v)])),
@@ -181,13 +184,15 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
     } } : {}),
     memory_recall: {
       limits: { max_chars: { ...MEMORY_RECALL_MAX_CHARS, whole_number: true, unit: 'UTF-16 code units (JavaScript string length)' }, query_chars_ranked: MEMORY_RECALL_QUERY_CHARS, own_recent_window_hours: OWN_RECENT_WINDOW_HOURS },
-      arguments_checked: v2
+      arguments_checked: v3
+        ? `query, max_chars and query_keep are checked before any read, also for an unlinked person (invalid_params); a longer query is never refused (recall's question is refused over ${QUESTION_MAX_CHARS}: invalid_params reason question_too_long) and is ranked on its first ${MEMORY_RECALL_QUERY_CHARS} characters, or on its last ${MEMORY_RECALL_QUERY_CHARS} with query_keep tail; a call that sends query_keep gets structuredContent.query_truncated, true when the query was cut`
+        : v2
         ? `query and max_chars are checked before any read, also for an unlinked person (invalid_params); a longer query is ranked on its first ${MEMORY_RECALL_QUERY_CHARS} characters and never refused (recall's question is refused over ${QUESTION_MAX_CHARS}: invalid_params reason question_too_long)`
         : 'query and max_chars are checked before any read, also for an unlinked person (invalid_params)',
       content: { line: '- <fact> (<YYYY-MM-DD>; <kind>)', never: ['page bodies', 'fence markers', 'heading markers', 'line breaks or control characters inside a fact'], bounded_by: 'max_chars: as many whole lines as fit; facts left out set structuredContent.truncated, with no marker line, because every line is one fact' },
       order: ['own facts from the last ' + OWN_RECENT_WINDOW_HOURS + ' hours, newest first', 'facts the person may read, ranked by query'],
       ranking: 'keyword-only unless an embedding provider is configured (no embedding call on a keyless brain)',
-      structured_content: { facts: [{ id: 'string', text: 'string', date: 'YYYY-MM-DD', kind: 'string', ...(v3 ? { arm: '"own" | "ranked"' } : {}) }], truncated: 'boolean', code: 'actor_unlinked (only on unlinked_recall)' },
+      structured_content: { facts: [{ id: 'string', text: 'string', date: 'YYYY-MM-DD', kind: 'string', ...(v3 ? { arm: '"own" | "ranked"' } : {}) }], truncated: 'boolean', ...(v3 ? { query_truncated: 'boolean, only when the call sent query_keep' } : {}), code: 'actor_unlinked (only on unlinked_recall)' },
       ...(v3 ? { arm: 'own: the person\'s own fact from the last ' + OWN_RECENT_WINDOW_HOURS + ' hours; ranked: matched by query (a fact found both ways is own); a call that names sources answers ranked rows only' } : {}),
       ...(v2 ? { scope_read: {
         arguments: ['source_id', 'source_ids'],

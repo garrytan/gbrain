@@ -6458,6 +6458,15 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "integer",
         "description": "Text cap in UTF-16 code units, 200-12000 (default 6000)."
       },
+      "query_keep": {
+        "type": "string",
+        "enum": [
+          "head",
+          "tail"
+        ],
+        "description": "Which end of a query over 2000 characters ranks the facts: head (the default) or tail. Sending it adds query_truncated.",
+        "fullSurfaceOnly": true
+      },
       "acting_user": {
         "type": "string",
         "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",

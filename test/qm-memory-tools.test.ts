@@ -32,7 +32,7 @@ import { __resetHotMemoryCacheForTests, getBrainHotMemoryMeta } from '../src/cor
 import { addMember, bindCredential } from '../src/core/access/members.ts';
 import { attestRightOf, linkedMember, linkMember } from '../src/core/access/actor.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { boundFactLines, isoDate, memoryWriteRequestId, plainFactText, MEMORY_RECALL_MAX_CHARS } from '../src/core/ops/qm-memory.ts';
+import { boundFactLines, boundRecallChars, isoDate, memoryWriteRequestId, plainFactText, MEMORY_RECALL_MAX_CHARS } from '../src/core/ops/qm-memory.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { operations } from '../src/core/operations.ts';
 import { startHttpTransport } from '../src/mcp/http-transport.ts';
@@ -72,6 +72,24 @@ describe('memory_recall text bounds (pure)', () => {
       expect(text.split('\n')).toEqual(lines.slice(0, kept));
       expect(lines.slice(0, kept + 1).join('\n').length).toBeGreaterThan(max);
     }
+  });
+
+  test('a max_chars cut drops the cut facts from facts_groups and entity_unspecified, never naming a fact it left out (#8465 note)', () => {
+    const fact = (id: number, entity: string) => ({ id, fact: 'Fact ' + id + ' about ' + entity + ' ' + 'ledger detail '.repeat(10) });
+    const facts = [fact(1, 'acme-example'), fact(2, 'beta-example'), fact(3, 'gamma-example')];
+    const group = (id: number, entity: string) => ({ source_id: 'source-a', entity_slug: 'companies/' + entity, fact_ids: [String(id)], top_relevance: 1 / id });
+    const out = { facts, total: 3, facts_groups: [group(1, 'acme-example'), group(2, 'beta-example'), group(3, 'gamma-example')],
+      entity_unspecified: { candidates: ['acme-example', 'beta-example', 'gamma-example'].map(e => ({ source_id: 'source-a', entity_slug: 'companies/' + e })), suggestion: 'Ask which one.' } };
+    const two = boundRecallChars(out, facts[0]!.fact.length + 1 + facts[1]!.fact.length);
+    expect(two.facts.map(f => f.id)).toEqual([1, 2]);
+    expect(two.facts_groups.map(g => g.fact_ids)).toEqual([['1'], ['2']]);
+    expect(two.entity_unspecified?.candidates.map(c => c.entity_slug)).toEqual(['companies/acme-example', 'companies/beta-example']);
+    const one = boundRecallChars(out, facts[0]!.fact.length + 1);
+    expect(one.facts.map(f => f.id)).toEqual([1]);
+    expect(one.facts_groups.map(g => g.fact_ids)).toEqual([['1']]);
+    expect('entity_unspecified' in one).toBe(false);
+    const whole = boundRecallChars(out, 12_000);
+    expect({ groups: whole.facts_groups, unspecified: whole.entity_unspecified, truncated: whole.truncated }).toEqual({ groups: out.facts_groups, unspecified: out.entity_unspecified, truncated: false });
   });
 
   test('a list that fits is returned whole with no tail; an empty list is empty text', () => {
@@ -291,6 +309,18 @@ for (const kind of testBackends()) {
         expect({ code: unattested.json.code, reason: unattested.json.reason }).toEqual({ code: 'actor_not_attested', reason: 'actor_required' });
       }
       expect(await factRows('canaryemptyrefused')).toHaveLength(0);
+    }, 120_000);
+
+    test('source_id "" or null, as a model fills an optional argument, reads as omitted on recall and write (#8465 note)', async () => {
+      for (const empty of ['', null]) {
+        const filled = await recall(alice, 'budget ledger', { source_id: empty });
+        const omitted = await recall(alice, 'budget ledger');
+        expect({ isError: filled.isError, code: filled.json.code, text: filled.text }).toEqual({ isError: omitted.isError, code: omitted.json.code, text: omitted.text });
+        const saved = await call(alice, 'memory_write', { facts: [{ fact: 'Empty source id write canaryemptysource' + (empty === null ? 'null' : 'blank'), provenance: 'x' }], idempotency_key: randomUUID(), source_id: empty }, { writeWaitMs: 30_000 });
+        expect(saved.structured?.status ?? saved.text).toBe('committed');
+      }
+      const rows = await factRows('canaryemptysource');
+      expect(rows.map(r => r.source_markdown_slug)).toEqual(['memory/members/alice-example', 'memory/members/alice-example']);
     }, 120_000);
 
     test('a squatted member page (readers beyond its member) takes no memory_write, and its receipt is not left behind', async () => {
@@ -786,6 +816,30 @@ for (const kind of testBackends()) {
       expect(out.text).toContain('canarylongquery');
       const tailOnly = await recall(alice, 'filler words that pad the question '.repeat(60) + ' harbor ledger budget');
       expect(tailOnly.isError).toBe(false);
+    }, 60_000);
+
+    test('query_keep "tail" ranks a long query on its last 2,000 characters and reports the cut in query_truncated; without it the v1 head cut is unchanged (#8694, v3)', async () => {
+      await engine.insertFact({ fact: 'The harbor tea supplier is canarytailquery', kind: 'fact', entity_slug: null, source: 'test', visibility: 'world' }, { source_id: SRC });
+      const preamble = 'You are the provider preamble for this turn and you follow the house style. '.repeat(30);
+      const turn = ' which harbor tea supplier canarytailquery';
+      try {
+        resetGateway();
+        configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: DIMS, env: {} });
+        const tail = await recall(bob, preamble + turn, { query_keep: 'tail' });
+        expect(tail.isError).toBe(false);
+        expect(tail.text).toContain('canarytailquery');
+        expect(tail.structured?.query_truncated).toBe(true);
+        const head = await recall(bob, preamble + turn);
+        expect(head.text).not.toContain('canarytailquery');
+        expect('query_truncated' in (head.structured ?? {})).toBe(false);
+        expect((await recall(bob, preamble + turn, { query_keep: 'head' })).structured?.query_truncated).toBe(true);
+        expect((await recall(bob, turn, { query_keep: 'tail' })).structured?.query_truncated).toBe(false);
+        const bad = await recall(bob, turn, { query_keep: 'middle' });
+        expect({ isError: bad.isError, code: bad.json.code }).toEqual({ isError: true, code: 'invalid_params' });
+      } finally {
+        resetGateway();
+        keyedEmbeddings();
+      }
     }, 60_000);
 
     test('a keyless brain ranks by keyword and makes no embedding call', async () => {

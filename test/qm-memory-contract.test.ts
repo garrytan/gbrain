@@ -85,11 +85,14 @@ describe('QM memory-provider contract v2 (GST-1094 scope read, GST-900)', () => 
     expect(QM_CONTRACT_PATHS[1].endsWith(join('docs', 'contracts', 'qm-memory-provider', 'v1.json'))).toBe(true);
   });
 
-  test('the tool schemas are the ones MCP serves', () => {
+  test('the tool schemas are the ones MCP serves, restricted to v2\'s arguments (v3 adds query_keep)', () => {
     const served = buildToolDefs(operations.filter(o => o.name === 'memory_recall' || o.name === 'memory_write'));
     for (const tool of fixture.tools) {
       const def = served.find(d => d.name === tool.name)!;
-      expect({ description: tool.description, ...tool.input_schema }).toEqual({ description: def.description, ...def.inputSchema });
+      const servedKeys = Object.keys(def.inputSchema.properties as Record<string, unknown>);
+      expect(servedKeys.filter(k => !(k in tool.input_schema.properties))).toEqual(tool.name === 'memory_recall' ? ['query_keep'] : []);
+      const properties = Object.fromEntries(Object.entries(def.inputSchema.properties as Record<string, unknown>).filter(([k]) => k in tool.input_schema.properties));
+      expect({ description: tool.description, ...tool.input_schema }).toEqual({ description: def.description, ...def.inputSchema, properties });
     }
   });
 
@@ -133,20 +136,36 @@ describe('QM memory-provider contract v3 (GST-1158 F1: personal tools, frozen re
     expect(readFileSync(QM_CONTRACT_PATHS[3], 'utf8')).toBe(renderQmMemoryContract(3));
   });
 
-  test('it keeps everything v2 has; only the version, recall\'s fact rows and the error list grow', () => {
+  test('it keeps everything v2 has; only the version, recall\'s fact rows, query_keep and the error list grow', () => {
     expect(fixture.version).toBe(3);
     for (const key of Object.keys(v2)) {
-      if (key === 'version' || key === 'memory_recall' || key === 'errors') continue;
+      if (key === 'version' || key === 'memory_recall' || key === 'errors' || key === 'tools') continue;
       expect(fixture[key]).toEqual(v2[key]);
     }
-    const { structured_content: recallShape, arm: _arm, ...recallRest } = fixture.memory_recall;
-    const { structured_content: v2Shape, ...v2Rest } = v2.memory_recall;
+    const withoutKeep = (tools: Array<{ name: string; input_schema: { properties: Record<string, unknown> } }>) => tools.map(t => {
+      const { query_keep: _keep, ...properties } = t.input_schema.properties;
+      return { ...t, input_schema: { ...t.input_schema, properties } };
+    });
+    expect(withoutKeep(fixture.tools)).toEqual(v2.tools);
+    const { structured_content: recallShape, arm: _arm, arguments_checked: _checked, ...recallRest } = fixture.memory_recall;
+    const { structured_content: v2Shape, arguments_checked: _v2Checked, ...v2Rest } = v2.memory_recall;
     expect(recallRest).toEqual(v2Rest);
-    expect({ ...recallShape, facts: [{ ...recallShape.facts[0], arm: undefined }] }).toEqual({ ...v2Shape, facts: [{ ...v2Shape.facts[0], arm: undefined }] });
+    const { query_truncated: _cut, ...recallShapeV2 } = recallShape;
+    expect({ ...recallShapeV2, facts: [{ ...recallShape.facts[0], arm: undefined }] }).toEqual({ ...v2Shape, facts: [{ ...v2Shape.facts[0], arm: undefined }] });
     expect(fixture.errors.shape).toEqual(v2.errors.shape);
     for (const code of v2.errors.codes) expect(fixture.errors.codes.find((c: { code: string }) => c.code === code.code)).toBeDefined();
     expect(v2.personal_tools).toBeUndefined();
     expect(v2.memory_recall.structured_content.facts[0].arm).toBeUndefined();
+  });
+
+  test('memory_recall publishes query_keep head|tail and query_truncated only when it is sent (#8694); v2 has neither', () => {
+    const recall = fixture.tools.find((t: { name: string }) => t.name === 'memory_recall');
+    expect(recall.input_schema.properties.query_keep).toMatchObject({ type: 'string', enum: ['head', 'tail'] });
+    expect(recall.input_schema.required).toEqual(['query']);
+    expect(fixture.memory_recall.structured_content.query_truncated).toBe('boolean, only when the call sent query_keep');
+    expect(fixture.memory_recall.arguments_checked).toContain('on its last 2000 with query_keep tail');
+    expect(v2.tools.find((t: { name: string }) => t.name === 'memory_recall').input_schema.properties.query_keep).toBeUndefined();
+    expect(v2.memory_recall.structured_content.query_truncated).toBeUndefined();
   });
 
   test('memory_recall fact rows carry their arm, own or ranked, and no score', () => {

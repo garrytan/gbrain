@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 282967,
-    "stdoutSha256": "73f135de04ba7cceced4d9fd952b23aaefd7fb4cad5ebdf3dce1aca953c70f84",
+    "stdoutBytes": 283280,
+    "stdoutSha256": "15699b963218128d3b3716ea40b8286c9e286678cb893205ceb960eb83efd11b",
     "toolNames": [
       "remember",
       "entity",
@@ -7426,6 +7426,7 @@
           "acting_user": "string?",
           "max_chars": "integer?",
           "query": "string",
+          "query_keep": "string?",
           "source_id": "string?",
           "source_ids": "array?"
         },
@@ -7442,6 +7443,14 @@
             },
             "query": {
               "description": "What the turn is about; ranks the facts.",
+              "type": "string"
+            },
+            "query_keep": {
+              "description": "Which end of a query over 2000 characters ranks the facts: head (the default) or tail. Sending it adds query_truncated.",
+              "enum": [
+                "head",
+                "tail"
+              ],
               "type": "string"
             },
             "source_id": {

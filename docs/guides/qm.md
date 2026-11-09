@@ -104,7 +104,9 @@ until a writer publishes them.
 On success the result is in `structuredContent`, and `content` holds only the text
 for the model. Each fact in `structuredContent.facts` carries `arm`: `own` (the
 person's own recent fact) or `ranked` (matched by `query`); a recall that names
-sources has only `ranked` rows. An attested call to a v3 personal tool also gets its
+sources has only `ranked` rows. A query over 2,000 characters is ranked on its start;
+send `query_keep: "tail"` when QM puts its preamble ahead of the turn, and read
+`query_truncated` to tell a cut query from a short one. An attested call to a v3 personal tool also gets its
 result in `structuredContent` (a list as `structuredContent.results`), while
 `content` keeps the JSON; `context_pack`'s `content` is its rendered text alone. The
 same tools called without `x-qm-actor` answer as before, with no `structuredContent`.
