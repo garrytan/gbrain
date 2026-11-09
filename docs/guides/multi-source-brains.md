@@ -254,7 +254,13 @@ who may read it, before any member's bot connects:
   local CLI); rewriting it without `readable_by` keeps those readers, and the
   member shares it by naming readers (`readable_by: [alice-example,
   group:team-a]`). An edit to an existing page that names no readers leaves it
-  shared. `POST /ingest` refuses such a credential. Before this release those
+  shared. `POST /ingest` refuses such a credential. Pages derived from such a
+  page (extracted atoms, chronicle events, `derived_from` pages, and a
+  synthesized concept that uses it) are readable by no remote caller, the
+  writer included. A page teammates should read (a shared `people/` or
+  `companies/` page, or a page in a folder a rule scopes to a group) names its
+  readers when it is created; otherwise the first member to create a slug
+  keeps it. Before this release those
   pages named no readers, so other members and unbound tokens read them:
   check pages a member wrote with `gbrain access who-can-read <slug>` and add
   `readable_by` on the brain host to any that should stay private.

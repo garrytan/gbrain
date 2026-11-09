@@ -115,6 +115,19 @@ for (const kind of testBackends()) {
       expect((await reads('alice', slug, canary)).get_page).toBe(true);
     }, 240_000);
 
+    test('a page derived from its page follows the rule for pages with readers: no remote caller reads it, the writer included', async () => {
+      const canary = marker('origin');
+      const slug = 'notes/alice-origin-' + canary;
+      expect((await call('alice', 'put_page', { slug, content: note('Alice origin', 'Alice origin code ' + canary + '.') })).isError).toBe(false);
+      const derived = 'notes/derived-' + canary;
+      await importFromContent(engine, derived, ['---', 'type: note', 'title: Derived ' + canary, 'derived_from: [' + slug + ']', '---', '# Derived', '', 'Derived code ' + canary + '.'].join('\n'), { sourceId: 'default', noEmbed: true });
+      expect((await stored(derived)).page_readers).toBeNull();
+      for (const who of ['bob', 'public', 'alice']) expect((await call(who, 'get_page', { slug: derived })).json.code).toBe('page_not_found');
+      const control = 'notes/derived-shared-' + canary;
+      await importFromContent(engine, control, ['---', 'type: note', 'title: Control ' + canary, 'derived_from: [' + SHARED_PAGE + ']', '---', '# Control', '', 'Control code ' + canary + '.'].join('\n'), { sourceId: 'default', noEmbed: true });
+      expect((await call('bob', 'get_page', { slug: control })).json.code).toBeUndefined();
+    }, 240_000);
+
     test('a token granted --sources default and an OAuth client at its registration default are kept to their member too', async () => {
       const canary = marker('grant');
       const slug = 'notes/alice-grant-' + canary;
