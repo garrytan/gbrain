@@ -16,7 +16,7 @@ import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts'
 import { renderCapacityMetrics } from '../src/commands/serve-http-metrics.ts';
 import { NOTICE_CODES } from '../src/core/error-registry.ts';
 import { readCapacityForecast } from '../src/core/persistence/capacity-forecast.ts';
-import { recommendedLimit } from '../src/core/persistence/limits.ts';
+import { oneYearCapacity, recommendedLimit } from '../src/core/persistence/limits.ts';
 import { editRequest, freshBrainFactory, requestFixture } from './helpers/persistence-request-fixture.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -123,6 +123,31 @@ for (const kind of testBackends()) {
       const used = row('terminal_bytes').used;
       const ceiling = recommendedLimit('terminal_bytes', used, 1, { perDay: Number(gross) / 7, netPerDay: Number(gross) / 7 }, forecast.retention_days);
       expect(row('terminal_bytes').recommended_limit).toBeLessThanOrEqual(ceiling);
+    });
+
+    check('after a burst the admission refusal names the same one-year value as doctor (GST-2107)', async engine => {
+      await engine.setConfig('persistence.limits.principal_outstanding', '5000');
+      await engine.setConfig('persistence.limits.brain_outstanding', '5000');
+      const fixture = await requestFixture(engine);
+      const ids: string[] = [];
+      for (let i = 0; i < 1101; i++) ids.push((await fixture.admit(`dense-${i}`)).id);
+      // One admission before the window, 100 over the week before the last day, then 1,000 in the last hour: the latest
+      // 1,000 admissions are all burst, while the 7-day mean is 1,100 / 7 a day.
+      await engine.transaction(async tx => {
+        await declarePersistenceProtocol(tx);
+        await tx.executeRaw("UPDATE persistence_requests SET created_at=now()-interval '10 days' WHERE id=$1::uuid", [ids[0]]);
+        await tx.executeRaw("UPDATE persistence_requests SET created_at=now()-interval '2 days' WHERE id=ANY($1::uuid[])", [ids.slice(1, 101)]);
+      });
+      await engine.setConfig('persistence.limits.principal_lifetime_ids', '1101');
+      const refusal = await fixture.admit('one-more').then(() => null, (error: { code?: string; fix?: { argv?: string[] } }) => error);
+      expect(refusal).toMatchObject({ code: 'write_quota_exhausted', reason: 'lifetime_ids' });
+      const forecast = await readCapacityForecast(engine);
+      const doctor = forecast.rows.find(r => r.scope.startsWith('principal:') && r.resource === 'lifetime_ids')!;
+      expect(doctor.recommended_limit).toBe(Math.ceil(1101 + (1100 / 7) * 365));
+      expect(Number(refusal!.fix!.argv!.at(-1))).toBe(doctor.recommended_limit);
+      const principal = forecast.rows.find(r => r.scope.startsWith('principal:'))!.scope;
+      const terminal = forecast.rows.find(r => r.scope === principal && r.resource === 'terminal_bytes')!;
+      expect(await oneYearCapacity(engine, principal, 'TerminalBytes', terminal.used, terminal.limit)).toBe(terminal.recommended_limit);
     });
 
     check('writes within a minute share one snapshot; the next minute reads again', async engine => {

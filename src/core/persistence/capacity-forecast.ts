@@ -24,7 +24,7 @@ import type { SqlEngine } from './model.ts';
 import { DEFAULT_JOURNAL_LIMITS, type JournalLimits } from './model.ts';
 import { DEFAULT_RECEIPT_RETENTION_DAYS, journalLimitKey, parseJournalConfigValue, readJournalLimits, RECEIPT_RETENTION_KEY, recommendedLimit } from './limits.ts';
 import { BACKGROUND_PAUSE_KEY, backgroundPauseShare } from './admission-origin.ts';
-import { COMPACTED_HEADROOM_BYTES } from './receipt-bytes.ts';
+import { COMPACTED_RECEIPT_BYTES_SQL } from './receipt-bytes.ts';
 
 export const CAPACITY_WARN_DAYS_KEY = 'persistence.capacity.warn_days';
 export const CAPACITY_FAIL_DAYS_KEY = 'persistence.capacity.fail_days';
@@ -134,8 +134,7 @@ async function principalDays(engine: SqlEngine, key: string, net: string): Promi
   return rows.map(row => toDay({ ...row, scope: key }));
 }
 
-const NET_SQL = (r: string, e: string) => `LEAST(${r}.terminal_reservation,octet_length(${r}.authority::text)+COALESCE(octet_length(${r}.outcome::text),0)
-  +COALESCE(octet_length(${r}.error_detail::text),0)+COALESCE(octet_length(${r}.client_request_id),0)+COALESCE(${e}.bytes,0)+${COMPACTED_HEADROOM_BYTES})`;
+const NET_SQL = COMPACTED_RECEIPT_BYTES_SQL;
 
 /** The configured days-to-exhaustion thresholds every capacity finding uses. */
 export async function readCapacityThresholds(engine: SqlEngine): Promise<{ warnDays: number; failDays: number }> {

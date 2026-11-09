@@ -18,8 +18,9 @@ identifiers and attribution are available in the pre-removal Git revision
 
 - `src/core/persistence/capacity-snapshot.ts`: `write_capacity_low` says the write was saved and names doctor's read-only check (actor `agent`) as its fix, with no cap raise in the notice.
 - `src/core/persistence/capacity-forecast.ts`: `recommended_limit` (doctor `persistence_capacity`, the notice snapshot, `gbrain sync status` and `/metrics`) covers one more year at the 7-day mean gross and net rates instead of the larger of the mean and the last 24 hours.
+- `src/core/persistence/limits.ts`: `oneYearCapacity` (every `write_quota_exhausted`, `write_quota_insufficient` and background-pause refusal, and doctor's fallback) uses the scope's 7-day window over the forecast's window length while the scope admitted anything that week, and keeps the latest-1,000 sample for a scope idle all week; the compacted-size SQL moves to `receipt-bytes.ts` so both reads count the same net bytes.
 - Docs: `docs/guides/write-refusals.md` (`write_capacity_low` row), `docs/guides/concurrent-writes.md` (the notice, the mean-rate value, and returning a raised `persistence.receipt_retention_days` to the default before raising a cap), `docs/guides/repair.md` (unset the 90-day retention once a failed-writes recovery is done), `docs/architecture/key-files/core-persistence-capacity.md`.
-- Tests: `test/persistence-capacity-notices.test.ts` (the notice's fix and wording; a burst of 28 admissions in the last day over a 10-a-day week recommends the mean-rate value, ids exactly and receipt bytes under the mean-rate ceiling).
+- Tests: `test/persistence-capacity-notices.test.ts` (the notice's fix and wording; a burst of 28 admissions in the last day over a 10-a-day week recommends the mean-rate value, ids exactly and receipt bytes under the mean-rate ceiling; after 1,000 admissions in one hour on a 100-a-week principal, a real `write_quota_exhausted` refusal names exactly the value doctor recommends, ids and receipt bytes, on PGLite and Postgres).
 
 ## [0.60.620.0] - 2026-11-09
 
