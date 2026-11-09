@@ -28,7 +28,8 @@ const FENCED = `l.origin_field='${LINKS_FENCE_ORIGIN_FIELD}' AND l.origin_page_i
  * A manual dated statement belongs to the relationship (to, type), not to one fence row, so the rows that share a
  * relationship share its statements: each start is paired with an end on or after it, and the pairs go to those rows in
  * source order. Every statement is rendered back, so the new section projects the same dates, and no row ends before it
- * starts, which would refuse the write.
+ * starts, which would refuse the write. A relationship with more pairs than kept rows (a row removed while the section
+ * was gone leaves its statements) refuses `invalid_params` instead of choosing which statements to drop.
  */
 async function keptLinksFenceRows(engine: BrainEngine, pageId: number): Promise<LinksFenceRow[]> {
   const [edges, statements] = await Promise.all([
@@ -49,8 +50,13 @@ async function keptLinksFenceRows(engine: BrainEngine, pageId: number): Promise<
       const at = starts.findLastIndex(start => start <= end);
       pairs.push({ ...(at === -1 ? {} : { validFrom: starts.splice(at, 1)[0] }), validUntil: end });
     }
-    dates.set(relationship, [...pairs, ...starts.map((validFrom): Dates => ({ validFrom }))]
-      .sort((a, b) => (a.validFrom ?? a.validUntil!).localeCompare(b.validFrom ?? b.validUntil!)));
+    const stated = [...pairs, ...starts.map((validFrom): Dates => ({ validFrom }))];
+    const rows = edges.filter(edge => key(edge.to_page_id, edge.type) === relationship);
+    if (stated.length > rows.length) {
+      const fix = `Add the page's ## Links section with edit_page, one row per source of ${rows[0]!.to} with that row's own valid_from and valid_until, then submit add_link again.`;
+      throw opError('invalid_params', `The link to ${rows[0]!.to} (${rows[0]!.type || 'untyped'}) has ${stated.length} dated statements but only ${rows.length} kept row${rows.length === 1 ? '' : 's'} on this page, so the links section was not re-created. ${fix}`, fix);
+    }
+    dates.set(relationship, stated.sort((a, b) => (a.validFrom ?? a.validUntil!).localeCompare(b.validFrom ?? b.validUntil!)));
   }
   return edges.map(edge => ({ to: edge.to, type: edge.type, source: edge.source, context: edge.context ?? '',
     ...(dates.get(key(edge.to_page_id, edge.type))!.shift() ?? {}) }));

@@ -105,6 +105,24 @@ for (const backend of testBackends()) {
         await fileHolds(engine, root, [ACME.to, ACME.to, BETA.to]);
       }, opts), 180_000);
 
+      test('more dated statements than kept rows for a page and type: add_link refuses, names the link, and every statement survives', () => managedBrain(async ({ engine, ctx }) => {
+        const byDate = <T extends { kind: string; on: string }>(rows: T[]) => [...rows].sort((a, b) => `${a.kind}${a.on}`.localeCompare(`${b.kind}${b.on}`));
+        const current = { to: ACME.to, type: 'works_at', source: 'manual', validFrom: '2022-01-01', context: 'current stint' };
+        await seed(ctx);
+        await put(ctx, ALICE, PERSON(`Alice v1.\n\n${SECTION([current, { ...ACME_PAST, source: 'crm-import' }])}`));
+        await put(ctx, ALICE, PERSON('Alice v2, rewritten by an agent without the links section.\n'));
+        await op(ctx, 'remove_link', { from: ALICE, to: ACME.to, link_type: 'works_at', link_source: 'crm-import' });
+        const stated = byDate(await transitions(engine));
+        expect(stated.map(row => row.on)).toEqual(['2021-01-01', '2020-01-01', '2022-01-01']);
+        const before = (await engine.readPageSnapshot(ALICE, { sourceId: 'default' }))!.revision;
+        const refusal = addLink(ctx, BETA);
+        await expect(refusal).rejects.toMatchObject({ code: 'invalid_params', message: expect.stringMatching(new RegExp(`${ACME.to}.*edit_page`)) });
+        expect((await engine.readPageSnapshot(ALICE, { sourceId: 'default' }))!.revision).toBe(before);
+        expect(byDate(await transitions(engine))).toEqual(stated);
+        expect(await edges(engine)).toEqual([edgeOf(current)]);
+        expect(readPageLinksFence((await engine.readPageSnapshot(ALICE, { sourceId: 'default' }))!.page).state).toBe('absent');
+      }, opts), 180_000);
+
       test('a link removed with remove_link while the section is gone stays removed after a later add_link', () => managedBrain(async ({ engine, ctx, root }) => {
         await seed(ctx);
         await put(ctx, ALICE, PERSON(`Alice v1.\n\n${SECTION([ACME])}`));
