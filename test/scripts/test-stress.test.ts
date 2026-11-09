@@ -134,6 +134,13 @@ describe('test:stress runner', () => {
     expect(reason).toBeNull();
   });
 
+  test('a schedule-only conversation facts property seed range is not stressed outside the nightly schedule (#7782)', async () => {
+    const file = 'test/large-pages/conversation-facts-property-seeds-05-06.test.ts';
+    const reason = await withEnv({ GBRAIN_TEST_PROPERTY_SEEDS: undefined }, () => skipReason(file));
+    expect(reason).toContain('schedule-only property seed range');
+    expect(await withEnv({ GBRAIN_TEST_PROPERTY_SEEDS: 'all' }, () => skipReason(file))).toBeNull();
+  });
+
   test('test/e2e/pgbouncer-teardown.test.ts is pooler-owned in this repository', async () => {
     const reason = await withEnv({ GBRAIN_PGBOUNCER_URL: undefined }, () => skipReason('test/e2e/pgbouncer-teardown.test.ts'));
     expect(reason).toContain('PgBouncer fixture');
