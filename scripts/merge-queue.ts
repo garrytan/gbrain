@@ -2,9 +2,13 @@
 /**
  * bun run merge-queue — the stacked merge queue (docs/RELEASING.md#stacked-merge-queue).
  *
- *   bun run merge-queue plan <pr>...              versions and order for new entries behind the queue tail; writes nothing
- *   bun run merge-queue build <pr>...             append entries: queue branch mq/<version>-pr<N>, restamped onto the
- *                                                 entry ahead (or master), pushed, queue PR opened with the full-ci label
+ *   bun run merge-queue plan <pr>... [--stack <branch>]...
+ *                                                 versions and order for new entries behind the queue tail; writes nothing
+ *   bun run merge-queue build <pr>... [--stack <branch>]...
+ *                                                 append entries: queue branch mq/<version>-pr<N>, restamped onto the
+ *                                                 entry ahead (or master), pushed, queue PR opened with the full-ci label;
+ *                                                 --stack names a hand-built stack (owner branches in landing order) to
+ *                                                 build behind instead, while no mq/ entry is live
  *   bun run merge-queue status                    every live entry: head, full-suite / e2e-full-suite, receipt
  *   bun run merge-queue verify <queue-pr>         the merge checks for the first entry, the landing-tree check included
  *   bun run merge-queue land <queue-pr>           verify, merge (merge commit at the pinned head), then wait for the
@@ -233,6 +237,40 @@ function plan(ctx: Ctx, owners: number[], after: { base: string; version: string
   });
 }
 
+/** The entry a queue branch would sit behind: the branch, its VERSION and whether it changes the CI self-attestation files. */
+function entryAt(ctx: Ctx, branch: string): { base: string; version: string; isCi: boolean } {
+  const ref = `refs/remotes/origin/${branch}`;
+  return { base: branch, version: (ctx.git.show(ref, 'VERSION') ?? '').trim(), isCi: touchesSelfAttestation(ctx.git, ref).length > 0 };
+}
+
+function fetchBranches(ctx: Ctx, branches: string[]): void {
+  ctx.git.run('fetch', '--quiet', 'origin', ...branches.map((b) => `+refs/heads/${b}:refs/remotes/origin/${b}`));
+}
+
+/** The tail of a hand-built stack: owner branches in landing order, each containing the one before it and stamped one PATCH above it; branches already on master are skipped. */
+function handStack(ctx: Ctx, branches: string[]): { base: string; version: string; isCi: boolean } {
+  if (liveEntries(ctx.git).length) stop('--stack names a hand-built stack, but mq/ entries are live', 'drop --stack and build behind the queue tail');
+  fetchBranches(ctx, branches);
+  let after = { base: 'master', version: masterVersion(ctx), isCi: false };
+  for (const b of branches) {
+    const ref = `refs/remotes/origin/${b}`;
+    if (ctx.git.ok('merge-base', '--is-ancestor', ref, MASTER)) continue;
+    if (after.isCi) stop(`${b} sits behind ${after.base}, which changes the CI self-attestation files`, 'an entry that changes them goes last; land it first');
+    if (after.base !== 'master' && !ctx.git.ok('merge-base', '--is-ancestor', `refs/remotes/origin/${after.base}`, ref)) stop(`${b} does not contain ${after.base}`, 'list the stack in landing order, each branch built on the one before it');
+    const next = entryAt(ctx, b);
+    if (next.version !== nextPatchVersion(after.version)) stop(`${b} is stamped ${next.version || 'nothing'}; behind ${after.base} (${after.version}) it should be ${nextPatchVersion(after.version)}`, 'stamp the hand-built stack in landing order first');
+    after = next;
+  }
+  return after;
+}
+
+/** Q1's base: the hand-built branch its queue note names until that branch lands, then master. */
+function firstBase(ctx: Ctx, meta: Note | null): string {
+  if (!meta || meta.base === 'master' || ctx.git.ok('merge-base', '--is-ancestor', meta.baseHead, MASTER)) return 'master';
+  fetchBranches(ctx, [meta.base]);
+  return meta.base;
+}
+
 function tail(ctx: Ctx): { base: string; version: string; isCi: boolean } {
   const last = liveEntries(ctx.git).at(-1);
   if (!last) return { base: 'master', version: masterVersion(ctx), isCi: false };
@@ -343,6 +381,7 @@ function verifyProblems(ctx: Ctx, e: Live, first: Live, expectHead?: string, vmG
     if (owner.isCrossRepository || owner.author !== ctx.gh.repoOwner()) p.push(`owner #${e.owner} is a contributor PR (${owner.author})`);
     if (owner.headRefOid !== e.meta.ownerHead) p.push(`owner #${e.meta.owner} pushed after inclusion (${owner.headRefOid.slice(0, 12)}); refresh to fix in place, or rebuild --drop`);
     if (!ctx.git.ok('merge-base', '--is-ancestor', e.meta.ownerHead, e.head)) p.push(`owner head ${e.meta.ownerHead} is not in the entry`);
+    if (e.index === 0 && firstBase(ctx, e.meta) !== 'master') p.push(`it is built on the hand-built entry ${e.meta.base}, which has not landed yet`);
   }
   const dropped = ctx.git.run('diff', '--numstat', MASTER, e.head, '--', 'CHANGELOG.md').trim().split(/\s+/)[1];
   if (dropped && dropped !== '0') p.push(`CHANGELOG.md drops ${dropped} line(s) of master's`);
@@ -358,20 +397,20 @@ function verifyProblems(ctx: Ctx, e: Live, first: Live, expectHead?: string, vmG
 }
 
 /** Entries for owners not already queued, behind the tail. */
-function planNew(ctx: Ctx, owners: number[]): Planned[] {
+function planNew(ctx: Ctx, owners: number[], stack: string[]): Planned[] {
   const queued = liveEntries(ctx.git).find((e) => owners.includes(e.owner));
   if (queued) stop(`#${queued.owner} is already queued as ${queued.branch}`, 'refresh that entry instead, or rebuild it');
-  return plan(ctx, owners, tail(ctx));
+  return plan(ctx, owners, stack.length ? handStack(ctx, stack) : tail(ctx));
 }
 
-function cmdPlan(ctx: Ctx, owners: number[]): void {
+function cmdPlan(ctx: Ctx, owners: number[], stack: string[]): void {
   fetchAll(ctx);
-  planNew(ctx, owners).forEach((p, i) => ctx.log(`PLAN: +${i + 1} #${p.owner.number} ${p.branch} version=${p.version} base=${p.base}`));
+  planNew(ctx, owners, stack).forEach((p, i) => ctx.log(`PLAN: +${i + 1} #${p.owner.number} ${p.branch} version=${p.version} base=${p.base}`));
 }
 
-function cmdBuild(ctx: Ctx, owners: number[]): void {
+function cmdBuild(ctx: Ctx, owners: number[], stack: string[]): void {
   fetchAll(ctx);
-  for (const p of planNew(ctx, owners)) {
+  for (const p of planNew(ctx, owners, stack)) {
     buildEntry(ctx, p);
     fetchAll(ctx);
   }
@@ -503,7 +542,7 @@ function cmdRefresh(ctx: Ctx, n: number): void {
     if (!wt.ok('merge-base', '--is-ancestor', owner.headRefOid, 'HEAD') && sh(['git', 'merge', '--no-ff', '--no-edit', owner.headRefOid], dir, ctx.opts.env).code !== 0) {
       stop(`merging #${e.meta.owner}'s new head into ${e.branch} conflicts in ${dir}`, 'resolve and commit there, push the branch (no force), then rerun refresh');
     }
-    const base = e.index === 0 ? 'master' : entries[e.index - 1]!.branch;
+    const base = e.index === 0 ? firstBase(ctx, e.meta) : entries[e.index - 1]!.branch;
     const baseRef = base === 'master' ? MASTER : `refs/remotes/origin/${base}`;
     const ownerMoved = owner.headRefOid !== e.meta.ownerHead;
     const landsClean = base === 'master' && landingTree(wt, MASTER, 'HEAD') === wt.run('rev-parse', 'HEAD^{tree}').trim();
@@ -532,7 +571,9 @@ function cmdRebuild(ctx: Ctx, n: number, drop: number[], first: number | null): 
   const owners = [...(first !== null ? [first] : []), ...replaced.map((e) => e.owner).filter((o) => !drop.includes(o))];
   const round = Math.max(...replaced.map((e) => parseBranch(e.branch)!.round)) + 1;
   const ahead = entries[from.index - 1];
-  const after = ahead ? { base: ahead.branch, version: ahead.version, isCi: touchesSelfAttestation(ctx.git, ahead.head).length > 0 } : { base: 'master', version: masterVersion(ctx), isCi: false };
+  const hand = ahead ? 'master' : firstBase(ctx, from.meta);
+  const after = ahead ? { base: ahead.branch, version: ahead.version, isCi: touchesSelfAttestation(ctx.git, ahead.head).length > 0 }
+    : hand !== 'master' ? entryAt(ctx, hand) : { base: 'master', version: masterVersion(ctx), isCi: false };
   const built: number[] = [];
   for (const p of plan(ctx, owners, after, round)) {
     built.push(buildEntry(ctx, p));
@@ -607,8 +648,9 @@ export function ghCli(repo: string, cwd: string, env?: Record<string, string | u
 }
 
 const USAGE = `Usage: bun run merge-queue <command> [--repo owner/name]
-  plan <pr>...                      versions and order for new entries behind the queue tail
-  build <pr>...                     append entries behind the queue tail
+  plan <pr>... [--stack <branch>]...  versions and order for new entries behind the queue tail
+                                    (or behind a hand-built stack of owner branches, in landing order)
+  build <pr>... [--stack <branch>]... append entries behind the queue tail (or that stack)
   status                            every live entry
   verify <queue-pr> [--expect-head <sha>] [--vm-gate-tree <tree>]
   land <queue-pr> [--expect-head <sha>] [--vm-gate-tree <tree>] [--timeout-minutes 45]
@@ -623,6 +665,7 @@ const FLAGS: Record<string, { commands: string[]; valid: RegExp }> = {
   '--timeout-minutes': { commands: ['land'], valid: /^[1-9]\d*$/ },
   '--drop': { commands: ['rebuild'], valid: /^#?\d+$/ },
   '--first': { commands: ['rebuild'], valid: /^#?\d+$/ },
+  '--stack': { commands: ['plan', 'build'], valid: /^[\w.-]+(?:\/[\w.-]+)*$/ },
 };
 
 /** Positional PR numbers and validated flag values, or null when anything is unknown, malformed or misplaced. */
@@ -639,7 +682,7 @@ export function parseArgs(cmd: string, rest: string[]): { nums: number[]; flags:
     const spec = FLAGS[a];
     const value = rest[++i];
     if (!spec || !spec.commands.includes(cmd) || value === undefined || !spec.valid.test(value)) return null;
-    if (flags.has(a) && a !== '--drop') return null;
+    if (flags.has(a) && a !== '--drop' && a !== '--stack') return null;
     flags.set(a, [...(flags.get(a) ?? []), value.replace(/^#/, '')]);
   }
   const counts: Record<string, (n: number) => boolean> = { plan: (n) => n > 0, build: (n) => n > 0, status: (n) => n === 0 };
@@ -669,8 +712,8 @@ export function main(argv: string[], opts: Opts = {}): number {
   const n = args.nums[0]!;
   try {
     switch (cmd) {
-      case 'plan': cmdPlan(ctx, args.nums); return 0;
-      case 'build': cmdBuild(ctx, args.nums); return 0;
+      case 'plan': cmdPlan(ctx, args.nums, args.flags.get('--stack') ?? []); return 0;
+      case 'build': cmdBuild(ctx, args.nums, args.flags.get('--stack') ?? []); return 0;
       case 'status': cmdStatus(ctx); return 0;
       case 'verify': return cmdVerify(ctx, n, one('--expect-head'), one('--vm-gate-tree')) ? 0 : 1;
       case 'land': return cmdLand(ctx, n, one('--expect-head'), one('--vm-gate-tree'), Number(one('--timeout-minutes') ?? 45) * 60_000) ? 0 : 1;

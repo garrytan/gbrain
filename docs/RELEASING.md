@@ -143,8 +143,8 @@ merge coordinator runs it; owners never stamp a queued PR themselves.
 
 | Command | What it does |
 |---|---|
-| `plan <pr>...` | Prints the versions and branch names new entries would get behind the queue tail. Writes nothing. |
-| `build <pr>...` | For each owner PR: a queue branch `mq/<version>-pr<N>` at the owner's head, then `release:restamp --base <branch of the entry ahead>` (master for the first), push, a queue PR with the `full-ci` label. |
+| `plan <pr>... [--stack <branch>]...` | Prints the versions and branch names new entries would get behind the queue tail. Writes nothing. |
+| `build <pr>... [--stack <branch>]...` | For each owner PR: a queue branch `mq/<version>-pr<N>` at the owner's head, then `release:restamp --base <branch of the entry ahead>` (master for the first), push, a queue PR with the `full-ci` label. |
 | `status` | Each live entry with its head, `full-suite` / `e2e-full-suite`, receipt and whether its owner pushed since. |
 | `verify <queue-pr> [--vm-gate-tree <tree>]` | The merge checks for Q1: the landing-tree check, VERSION = master + 1, the owner head unchanged and included, CHANGELOG additive, every check green on the exact head (`Test/full-suite` and `E2E Tests/e2e-full-suite` from the newest run of each workflow), mergeable clean, the ship receipt on the head. |
 | `land <queue-pr> [--vm-gate-tree <tree>]` | `verify`, a fresh landing-tree check, then the REST merge (`merge_method=merge`, `sha=<head>`). It then checks that the merge commit's tree is the gated tree and waits for master's Test and E2E push runs and Release's ci-gate. |
@@ -186,6 +186,11 @@ merge coordinator runs it; owners never stamp a queued PR themselves.
   owner branch and run `refresh`; otherwise `rebuild <its queue PR> --drop <owner PR>`.
   A rebuild never force-pushes: the entries behind a dropped one already
   contain its commits, so they move to new branches.
+- **Behind a hand-built stack.** While no `mq/` entry is live, `--stack` lists
+  the owner branches of a stack built by hand, in landing order. Each must
+  contain the one before it and carry one PATCH more (branches already on
+  master are skipped). New entries are built behind the last one, and the first
+  of them stays on that base, and refuses to land, until the stack has landed.
 - **Owner PRs.** They stay based on master. Landing a queue PR puts the owner's
   head on master, which marks the owner PR merged.
 

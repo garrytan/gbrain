@@ -16,10 +16,10 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ### Itemized changes
 
-- `scripts/merge-queue.ts` (new): `plan`, `build`, `status`, `verify`, `land`, `refresh`, `rebuild`; `bun run merge-queue`.
+- `scripts/merge-queue.ts` (new): `plan`, `build`, `status`, `verify`, `land`, `refresh`, `rebuild`; `bun run merge-queue`. `plan` and `build` take `--stack <branch>...` to extend a stack built by hand.
 - `scripts/release-restamp.ts`, `scripts/lib/restamp.ts`: `release:restamp` now resolves BEHAVIOR_CHANGES rows that both sides appended at the same place (base rows first), the conflict almost every pair of queued PRs hit; any other conflict still stops.
 - Docs: `docs/RELEASING.md` (Stacked merge queue; restamp step 3), `docs/ci-event-parity.md` (master-push reuse for stacked entries), `docs/architecture/key-files/ci-health-and-test-guards.md`.
-- Tests: `test/scripts/merge-queue.test.ts` (three stacked entries landing in order, each refusal, a red master push freezing the queue, fix in place, a rebuild that drops an entry), `test/scripts/release-restamp.test.ts` (appended-rows resolution).
+- Tests: `test/scripts/merge-queue.test.ts` (three stacked entries landing in order, an entry behind a hand-built stack, each refusal, a red master push freezing the queue, fix in place, a rebuild that drops an entry), `test/scripts/release-restamp.test.ts` (appended-rows resolution).
 
 ## [0.60.620.0] - 2026-11-09
 

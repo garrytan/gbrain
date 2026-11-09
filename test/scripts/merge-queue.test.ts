@@ -265,6 +265,41 @@ describe('merge-queue build', () => {
   }, 180_000);
 });
 
+describe('merge-queue --stack', () => {
+  test('extends a hand-built stack: versions follow its tail, verify waits until it lands, mq/ entries and a broken chain refuse', () => {
+    const fx = fixture();
+    ownerBranch(fx, 1, 'src/a.ts');
+    ownerBranch(fx, 2, 'src/b.ts');
+    ownerBranch(fx, 3, 'src/c.ts', { migration: [209, 'three_gadgets'] });
+    git(fx.work, 'checkout', '-q', 'owner-2');
+    const env = { ...process.env, GBRAIN_RESTAMP_STEPS: STEPS, GBRAIN_RESTAMP_CHECKS: CHECKS, GBRAIN_RESTAMP_DATE: '2026-11-09', GBRAIN_RESTAMP_PR_TITLE: 'fix(area): change' };
+    expect(releaseRestamp(['--base', 'owner-1'], { cwd: fx.work, env, log: () => {} })).toBe(0);
+    git(fx.work, 'push', '-q', 'origin', 'owner-2');
+    expect(show(fx, 'refs/heads/owner-2', 'VERSION').trim()).toBe('0.1.2.0');
+
+    const broken = mq(fx, ['plan', '3', '--stack', 'owner-2', '--stack', 'owner-1']);
+    expect(broken.code).toBe(1);
+    expect(broken.out).toContain('owner-2 is stamped 0.1.2.0; behind master (0.1.0.0) it should be 0.1.1.0');
+    expect(mq(fx, ['plan', '3', '--stack', 'owner-1', '--stack', 'owner-2']).out).toContain('PLAN: +1 #3 mq/0.1.3.0-pr3 version=0.1.3.0 base=owner-2');
+    expect(mq(fx, ['build', '3', '--stack', 'owner-1', '--stack', 'owner-2']).code).toBe(0);
+    const q = 'mq/0.1.3.0-pr3';
+    expect(isAncestor(fx.origin, 'refs/heads/owner-2', q)).toBe(true);
+    expect(show(fx, q, 'VERSION').trim()).toBe('0.1.3.0');
+    expect(git(fx.origin, 'ls-tree', '--name-only', `${q}:${DIR}`)).toContain('v209-three-gadgets.ts');
+    expect(readNote(fx.gh.notes(queuePr(fx, q)))!.base).toBe('owner-2');
+    ownerBranch(fx, 4, 'src/d.ts');
+    expect(mq(fx, ['plan', '4', '--stack', 'owner-2']).out).toContain('but mq/ entries are live');
+
+    const early = mq(fx, ['verify', String(queuePr(fx, q))]);
+    expect(early.code).toBe(1);
+    expect(early.out).toContain('built on the hand-built entry owner-2, which has not landed yet');
+    fx.gh.merge(1, rev(fx.origin, 'refs/heads/owner-1'), 'v0.1.1.0 change 1', '');
+    fx.gh.merge(2, rev(fx.origin, 'refs/heads/owner-2'), 'v0.1.2.0 change 2', '');
+    expect(mq(fx, ['refresh', String(queuePr(fx, q))]).out).toContain('(unchanged)');
+    expect(mq(fx, ['verify', String(queuePr(fx, q))]).code).toBe(0);
+  }, 180_000);
+});
+
 describe('merge-queue verify and land', () => {
   test('lands in order: only Q1 may land, each later landing tree is the gated tree, owner PRs show merged', () => {
     const fx = threeEntries();
