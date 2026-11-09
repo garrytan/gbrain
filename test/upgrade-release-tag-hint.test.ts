@@ -87,7 +87,8 @@ async function runPinnedUpgrade(gitShim: string, targetVersion: string): Promise
   writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'gbrain', repository: 'github:garrytan/gbrain' }));
   const driver = join(pkgDir, 'driver.ts');
   writeFileSync(driver, `import { runUpgrade } from '${REPO}/src/commands/upgrade.ts';\nawait runUpgrade(['--swap-only', '--no-bun-floor-check'], { targetVersion: '${targetVersion}' });\n`);
-  const env: Record<string, string | undefined> = { ...process.env, HOME: home, GBRAIN_HOME: home, PATH: `${bin}:${process.env.PATH}` };
+  // The alpha channel: a stable install resolves its target from the evidence record (test/upgrade-stable-channel.test.ts).
+  const env: Record<string, string | undefined> = { ...process.env, HOME: home, GBRAIN_HOME: home, PATH: `${bin}:${process.env.PATH}`, GBRAIN_RELEASE_CHANNEL: 'alpha' };
   delete env.BUN_INSTALL;
   const proc = Bun.spawn([process.execPath, 'run', driver], { cwd: REPO, env, stdout: 'pipe', stderr: 'pipe' });
   const stderr = await new Response(proc.stderr).text();

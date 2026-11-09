@@ -17,8 +17,9 @@ import {
 } from './state.ts';
 import { bunSpawn, bunSpawnSync } from '../spawn.ts';
 import { MINIMUM_BUN_VERSION, bunVersionMeets } from '../runtime-version.ts';
+import { INSTALL_RAW_BASE } from '../install-ref.ts';
 
-const SETUP_HELPER_URL = 'https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/scripts/setup-in-agent.sh';
+const SETUP_HELPER_URL = `${INSTALL_RAW_BASE}/scripts/setup-in-agent.sh`;
 
 export interface AgentSetupOptions {
   root: string;

@@ -362,6 +362,11 @@ export async function preparePageAdmission(ctx: OperationContext,
         'Drop kind, preview and backup_reference from put_page; reconciling a canonical file runs through gbrain sources reconcile on the brain host.');
     }
   }
+  // #8765 review: a managed_sync_ kind marks managed sync's own rows, so no page write may carry one (a capture's event kind).
+  if (typeof input.params.kind === 'string' && input.params.kind.startsWith('managed_sync_')) {
+    throw new OperationError('invalid_params', `kind ${input.params.kind} is reserved for managed sync, so nothing was written.`,
+      'Use another kind, or drop kind.');
+  }
   const bodyRefKind = (input.params.body_ref as { kind?: unknown } | null | undefined)?.kind;
   const staged = input.stagedBody === true && ['put_page', 'append_page'].includes(input.operation) && bodyRefKind === 'staging';
   const imported = input.managedFileImport === true && input.operation === 'put_page' && bodyRefKind === 'input_file';

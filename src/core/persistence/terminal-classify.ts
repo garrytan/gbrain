@@ -407,7 +407,7 @@ export const PAGE_REMOVAL_OPERATIONS: readonly string[] = ['delete_page', 'purge
  * write, a later committed connector retry whose recorded `retryOf` lineage reaches it (connectorRetrySql). `r` must
  * expose `id`. Literal strings only; NULL-safe for a compacted `c` (no intent).
  */
-export function supersessionSql(r: string, c: string): string {
+export function supersessionSql(r: string, c: string, rKind?: string): string {
   const removals = PAGE_REMOVAL_OPERATIONS.map(op => `'${op}'`).join(',');
   return `(${c}.source_id=${r}.source_id AND ${c}.slug=${r}.slug AND ${c}.sequence>${r}.sequence AND (
     (${c}.digest=${r}.digest AND ${c}.state IN ('committed','failed','queued','running','recovering'))
@@ -416,7 +416,7 @@ export function supersessionSql(r: string, c: string): string {
       AND COALESCE((SELECT k.intent->>'kind' FROM persistence_requests k WHERE k.id=${r}.id),'managed_sync_checkpoint')='managed_sync_checkpoint'
       AND COALESCE(${c}.intent->>'kind','managed_sync_checkpoint')='managed_sync_checkpoint')
     OR (${r}.operation='put_page' AND ${c}.state='failed' AND ${c}.operation='put_page' AND COALESCE(NOT (${c}.intent ? 'kind'), false))
-    OR ${connectorRetrySql(r, c)}))`;
+    OR ${connectorRetrySql(r, c, rKind)}))`;
 }
 
 /** Hops a connector retry's `retryOf` lineage is followed back; a longer chain leaves the refusal unresolved (fail closed). */
@@ -432,8 +432,8 @@ const UUID_TEXT = `'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}
  * intent kind, at a lower sequence, within CONNECTOR_RETRY_LINEAGE_MAX_DEPTH hops. Another refusal of the same item with
  * no recorded link is not proof. Each hop is one lookup on the (principal_kind, principal_id, request_id) unique index.
  */
-function connectorRetrySql(r: string, c: string): string {
-  return `(${r}.operation='submit_job' AND ${c}.operation='submit_job' AND ${c}.state='committed' AND COALESCE(${c}.intent ? 'retryOf', false)
+function connectorRetrySql(r: string, c: string, rKind?: string): string {
+  return `(${r}.operation='submit_job' AND ${c}.operation='submit_job' AND ${c}.state='committed'${rKind ? ` AND ${rKind} IN (${CONNECTOR_WRITE_KINDS})` : ''} AND COALESCE(${c}.intent ? 'retryOf', false)
       AND EXISTS (SELECT 1 FROM persistence_requests k, persistence_requests cc WHERE k.id=${r}.id AND cc.sequence=${c}.sequence
         AND k.intent->>'kind' IN (${CONNECTOR_WRITE_KINDS})
         AND cc.intent->>'kind'=k.intent->>'kind' AND cc.principal_kind=k.principal_kind AND cc.principal_id=k.principal_id

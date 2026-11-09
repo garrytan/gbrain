@@ -2771,6 +2771,8 @@ CREATE TABLE IF NOT EXISTS persistence_worktree_refreshes (
 CREATE UNIQUE INDEX IF NOT EXISTS persistence_worktree_refreshes_active
   ON persistence_worktree_refreshes(worktree_id)
   WHERE state IN ('draining','fenced','merged','syncing','recovery_required');
+CREATE INDEX IF NOT EXISTS persistence_worktree_refreshes_completed
+  ON persistence_worktree_refreshes(worktree_id, completed_at DESC) WHERE state='completed';
 -- END GENERATED from src/core/persistence/worktree-refresh-schema.ts (WORKTREE_REFRESH_SCHEMA_SQL)
 
 -- BEGIN GENERATED from src/core/company-brain/receipt-schema.ts (SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL). Edit that file, then run: bun run build:schema

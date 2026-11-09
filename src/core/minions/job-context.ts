@@ -30,6 +30,7 @@ export function buildJobContext(
     data: job.data,
     submission_authority: job.submission_authority,
     attempts_made: job.attempts_made,
+    idempotency_key: job.idempotency_key,
     signal,
     deadlineAtMs: job.timeout_at != null ? job.timeout_at.getTime() : null,
     shutdownSignal,

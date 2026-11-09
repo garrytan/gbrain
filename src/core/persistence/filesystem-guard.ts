@@ -73,7 +73,7 @@ export function assertManagedFilesystemWrite(path: string): void {
   throw error;
 }
 /** #7988: a Git-metadata marker whose checkout encloses registered roots but tracks none of them. */
-function staleEnclosingMarker(managed: ManagedFilesystemRoot): boolean {
+export function staleEnclosingMarker(managed: ManagedFilesystemRoot): boolean {
   if (basename(managed.evidence) !== 'gbrain-managed.json') return false;
   const roots = registeredManagedRootRecords().map(record => record.root).filter(root => root !== managed.root && encloses(managed.root, root));
   return roots.length > 0 && roots.every(root => checkoutGitMetadata(root) !== dirname(managed.evidence));
