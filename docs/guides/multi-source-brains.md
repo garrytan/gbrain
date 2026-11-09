@@ -113,7 +113,14 @@ Every source row stores `config.federated: boolean` in its JSONB config.
 The seeded `default` source is `federated=true` so single-source brains
 behave as you'd expect — every page appears in search.
 
-Flip later with `gbrain sources federate <id>` / `unfederate <id>`.
+Flip later with `gbrain sources federate <id>` / `unfederate <id>`. Federating
+a source (or restoring it, which re-federates) lets every connection with no
+source grant read it, including pages a member-bound credential wrote there
+without `readable_by`. The command still federates, and it lists the pages a
+remote token or OAuth client wrote there without readers (count, a few slugs
+with the member each credential is bound to now, `pages_exposed` under `--json`)
+with `gbrain access who-can-read` to check one and `gbrain access rule add` to
+keep a folder to its member.
 
 ### An unscoped connection whose sources hold no pages
 
