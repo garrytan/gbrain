@@ -364,14 +364,12 @@ const recall: Operation = {
     )];
     const scalarSource = factSources.length === 1 ? factSources[0] : undefined;
 
-    // Visibility filter: remote callers see world-only unless their token
-    // grants elevated visibility (future-proofing; v0.31 ships world-only
-    // for remote, all for local CLI).
+    // Visibility filter: remote callers see world-only facts; the local CLI and (GST-2059) the brain owner see all.
+    const { resolveExcludePrivatePages, callerIsOwner } = await import('../search/private-visibility.ts');
     const visibility =
-      ctx.remote === false
+      ctx.remote === false || callerIsOwner()
         ? undefined
         : ['world'] as ('private' | 'world')[];
-    const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote); // #4352: fact and page arms alike
     const eligibility = await resolveReadEligibility(ctx, { minTrust: p.min_trust }); // #5575 floor + quarantine/rederive hiding
 
