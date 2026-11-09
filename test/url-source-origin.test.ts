@@ -457,6 +457,29 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
     expect((await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: true, remote: false })).results[0]).toMatchObject({ status: 'already_recorded' });
   }), 60_000);
 
+  test('a source recorded as remote whose remote later committed a git-lfs rule still gets the lock-down, not an lfs_tracked refusal', () => brain(async () => {
+    const root = defaultCloneDir('source-a');
+    repoAt(root, { 'example.md': 'Canonical\n', '.gitattributes': '*.bin filter=lfs diff=lfs merge=lfs -text\n' });
+    await insert('source-a', root, { ...URL_CONFIG, added_by_remote_caller: true });
+    expect((await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: false, remote: false })).results[0]).toMatchObject({ status: 'would_record' });
+    const applied = (await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: true, remote: false })).results[0]!;
+    expect(applied).toMatchObject({ status: 'recorded' });
+    expect(applied.reason).not.toContain('sources remove');
+    expect([effective(root, 'lfs.fetchexclude'), effective(root, 'core.hooksPath'), effective(root, 'lfs.locksverify')]).toEqual(['*', '/dev/null', 'false']);
+    expect(await config('source-a')).toEqual({ ...URL_CONFIG, added_by_remote_caller: true });
+  }), 60_000);
+
+  test('a shared config that already holds several values for a lock-down key gets one clone-time value, so the record is written', () => brain(async () => {
+    const root = defaultCloneDir('source-a');
+    repoAt(root, { 'example.md': 'Canonical\n' });
+    git(['-C', root, 'config', '--add', 'lfs.fetchexclude', 'docs/*']);
+    git(['-C', root, 'config', '--add', 'lfs.fetchexclude', 'media/*']);
+    await insert('source-a', root, URL_CONFIG);
+    expect((await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: true, remote: false })).results[0]).toMatchObject({ status: 'recorded' });
+    expect(execFileSync('git', ['-C', root, 'config', '--get-all', 'lfs.fetchexclude'], { encoding: 'utf8' }).trim()).toBe('*');
+    expect(await config('source-a')).toEqual({ ...URL_CONFIG, added_by_remote_caller: true });
+  }), 60_000);
+
   test('lfs_unknown tells a corrupt .git and a safe.directory refusal apart from a directory outside its own repository', () => brain(async () => {
     const root = defaultCloneDir('source-a');
     repoAt(root, { 'example.md': 'Canonical\n' });
