@@ -278,7 +278,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "mode=notify",
+            "message": "mode=notify; channel=stable (config)",
             "name": "self_upgrade_health",
             "status": "ok"
           },
@@ -1194,7 +1194,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 173/173 public tables",
+            "message": "RLS enabled on 174/174 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -1222,7 +1222,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 173 table(s) the applied migrations create exist.",
+            "message": "All 174 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -1799,6 +1799,18 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "details": {
+              "count": 0,
+              "docs": "docs/guides/repair.md#url-source-origin",
+              "sources": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every URL source clone records who added it, or was cloned where only the local CLI can clone.",
+            "name": "url_source_origin",
+            "status": "ok"
+          },
+          {
             "category": "brain",
             "details": {
               "bindings": [],
@@ -2073,6 +2085,20 @@
             "elapsed_ms": "<volatile>",
             "message": "No conversation-extractor fact is left expired by the pre-v0.60.11.0 projection.",
             "name": "extractor_facts_expired",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "ambiguous": 0,
+              "docs": "docs/guides/repair.md#unwithdrawn-facts",
+              "evidenced": 0,
+              "excluded": 0,
+              "repair": "unwithdrawn-facts"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No fact is left retired by a facts-fence generation that no fence withdrew.",
+            "name": "unwithdrawn_facts",
             "status": "ok"
           },
           {
@@ -3017,6 +3043,7 @@
               "dirty_warn_after_minutes": 30,
               "foreign": [],
               "partial": false,
+              "partial_reasons": [],
               "unconfirmed": [],
               "unknown": [],
               "window": [
@@ -4091,6 +4118,17 @@
             "elapsed_ms": "<volatile>",
             "message": "No source is strict (git-canonical), so no index trails a commit.",
             "name": "git_index_lag",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "docs": "docs/guides/write-refusals.md#file_database_drift",
+              "sources": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No local edit was adopted in the last 24 h.",
+            "name": "local_edit_adoptions",
             "status": "ok"
           },
           {
@@ -5351,7 +5389,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "mode=notify",
+            "message": "mode=notify; channel=stable (config)",
             "name": "self_upgrade_health",
             "status": "ok"
           },
@@ -6267,7 +6305,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 173/173 public tables",
+            "message": "RLS enabled on 174/174 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -6295,7 +6333,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 173 table(s) the applied migrations create exist.",
+            "message": "All 174 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -6872,6 +6910,18 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "details": {
+              "count": 0,
+              "docs": "docs/guides/repair.md#url-source-origin",
+              "sources": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every URL source clone records who added it, or was cloned where only the local CLI can clone.",
+            "name": "url_source_origin",
+            "status": "ok"
+          },
+          {
             "category": "brain",
             "details": {
               "bindings": [],
@@ -7146,6 +7196,20 @@
             "elapsed_ms": "<volatile>",
             "message": "No conversation-extractor fact is left expired by the pre-v0.60.11.0 projection.",
             "name": "extractor_facts_expired",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "ambiguous": 0,
+              "docs": "docs/guides/repair.md#unwithdrawn-facts",
+              "evidenced": 0,
+              "excluded": 0,
+              "repair": "unwithdrawn-facts"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No fact is left retired by a facts-fence generation that no fence withdrew.",
+            "name": "unwithdrawn_facts",
             "status": "ok"
           },
           {
@@ -8102,6 +8166,7 @@
               "dirty_warn_after_minutes": 30,
               "foreign": [],
               "partial": false,
+              "partial_reasons": [],
               "unconfirmed": [],
               "unknown": [],
               "window": [
@@ -9176,6 +9241,17 @@
             "elapsed_ms": "<volatile>",
             "message": "No source is strict (git-canonical), so no index trails a commit.",
             "name": "git_index_lag",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "docs": "docs/guides/write-refusals.md#file_database_drift",
+              "sources": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No local edit was adopted in the last 24 h.",
+            "name": "local_edit_adoptions",
             "status": "ok"
           },
           {

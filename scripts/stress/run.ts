@@ -362,11 +362,23 @@ export function skipReason(file: string): string | null {
   const owner = OWNING_WORKFLOWS.find(w => { const p = join(ROOT, '.github/workflows', w); return existsSync(p) && readFileSync(p, 'utf8').includes(file); });
   if (owner) return `every test skipped here: its prerequisite (agent binary or native target) comes from its owning job in .github/workflows/${owner}; not stressed`;
   if (/process\.env\.GBRAIN_PGBOUNCER_URL/.test(text) && !process.env.GBRAIN_PGBOUNCER_URL) {
+    const workflow = readdirSync(join(ROOT, '.github/workflows')).map(w => `.github/workflows/${w}`).find(p => requiresPooler(file, p, workflowJobs));
+    if (workflow) return `every test skipped without the PgBouncer fixture (GBRAIN_PGBOUNCER_URL); its owning pooled job in ${workflow} requires it; not stressed`;
     const scripts = existsSync(join(ROOT, 'scripts')) ? readdirSync(join(ROOT, 'scripts')).filter(s => s.endsWith('.sh')).map(s => `scripts/${s}`) : [];
-    const pooled = [...readdirSync(join(ROOT, '.github/workflows')).map(w => `.github/workflows/${w}`), ...scripts].find(p => { const body = readFileSync(join(ROOT, p), 'utf8'); return body.includes(file) && body.includes('GBRAIN_CI_REQUIRE_PGBOUNCER'); });
-    if (pooled) return `every test skipped without the PgBouncer fixture (GBRAIN_PGBOUNCER_URL); its owning pooled job in ${pooled} requires it; not stressed`;
+    const script = scripts.find(p => requiresPooler(file, p, scriptStatements));
+    if (script) return `every test skipped without the PgBouncer fixture (GBRAIN_PGBOUNCER_URL); its owning pooled runner ${script} requires it; not stressed`;
   }
   return null;
+}
+
+/** A workflow's jobs (each top-level key under `jobs:`, env included), so the pooler requirement must be on the job that runs the file. */
+const workflowJobs = (lines: string[]) => lines.reduce<string[][]>((jobs, line) => { if (/^ {2}[\w-]+:/.test(line)) jobs.push([]); jobs.at(-1)?.push(line); return jobs; }, [[]]).map(job => job.join('\n'));
+/** Every two-line neighbourhood of a script, so the pooler requirement must sit beside the file's own test (as at scripts/run-e2e.sh:536-537). */
+const scriptStatements = (lines: string[]) => lines.map((_, i) => lines.slice(Math.max(0, i - 2), i + 3).join('\n'));
+
+function requiresPooler(file: string, path: string, blocks: (lines: string[]) => string[]): boolean {
+  const body = readFileSync(join(ROOT, path), 'utf8');
+  return body.includes(file) && blocks(body.split('\n')).some(block => block.includes(file) && block.includes('GBRAIN_CI_REQUIRE_PGBOUNCER'));
 }
 
 async function stressFile(ctx: RunContext, file: string, profile: Profile, first: number, count: number): Promise<FileResult> {

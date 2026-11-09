@@ -127,11 +127,15 @@ persistence owner is the only Git publisher. Save pages with `put_page`,
 `edit_page`, `remember` or `capture`. For files written there outside gbrain
 (see [files that are not pages](../architecture/topologies.md#files-that-are-not-pages)),
 `gbrain git commit-push -m "<msg>" -- <paths>` commits only the named paths
-under the checkout's commit lock and reports `committed_local`: it never
-fetches, merges, pushes or moves the checkout, and refuses `--pending`,
-`--branch`, `--resolve` and `--allow-outside-source-root` there
-(`commit_paths_invalid`). The commit reaches the remote on the owner's next Git
-publish. `--push-only` without `--keep-checkout` is still refused with
+under the checkout's commit lock and reports `committed_local` (or
+`nothing_to_commit`) with `managed: true`: it never fetches, merges, pushes or
+moves the checkout, and refuses `--pending`, `--branch`, `--resolve` and
+`--allow-outside-source-root` there (`commit_paths_invalid`). Its
+`unpublished` field counts the commits the upstream lacks as last fetched
+(`null` when no fetched upstream can be read), `upstream` names the branch's
+configured upstream (`null` when it has none), and it writes no push-log line. Commits wait for
+the owner's next Git publish; `gbrain git commit-push --push-only --keep-checkout`
+publishes them now. `--push-only` without `--keep-checkout` is still refused with
 `writer_coordinator_required`.
 
 A checkout with no Git remote at all (`git remote` prints nothing and the
@@ -169,11 +173,11 @@ Follow the error's `fix.next` as the
 | --- | --- | --- |
 | `pushed` | 0 | Done. Report the commit; a hosted link to the file works now. |
 | `push_deferred` | 0 | Only with `--require-clean` (the post-commit hook): another push was running in this checkout and was asked to publish HEAD too when it finishes. Nothing to do. |
-| `nothing_to_commit` | 0 | The paths had no change. Any earlier local commit on the branch was still pushed, so nothing is waiting (with `no_remote: true`, nothing is pushed). |
-| `committed_local` | 0 | A managed canonical worktree, or a checkout with no Git remote (`no_remote: true`): the paths were committed locally and nothing was pushed. Report the commit; it reaches a remote on the owner's next publish, or after a remote is added and `--push-only` runs. |
+| `nothing_to_commit` | 0 | The paths had no change. Any earlier local commit on the branch was still pushed, so nothing is waiting (with `no_remote: true` or `managed: true`, nothing is pushed; a managed checkout's `unpublished` counts the commits still waiting). |
+| `committed_local` | 0 | A managed canonical worktree, or a checkout with no Git remote (`no_remote: true`): the paths were committed locally and nothing was pushed (a managed result's `unpublished` counts the commits waiting). Report the commit; it reaches a remote on the owner's next publish, or after a remote is added and `--push-only` runs. |
 | `pushed_checkout_lagging` | 0 | The push landed but this checkout was not advanced; a `[gbrain notice]` names the files that blocked it. Change nothing: the next commit-push or `--pull` catches the checkout up. Never stash or reset to "fix" it. |
 | `commit_lock_busy` | 1 | Another writer held the lock for the whole wait; nothing was committed. Retry once. If it is still busy, tell the user which checkout and lock path the message names and stop. |
-| <a id="checkout_not_a_source"></a>`checkout_not_a_source` | 1 | The checkout commit-push resolved from the working directory (no `--path`) is not one of the brain's source checkouts on this host, typically a wrapper that changed into another repository; nothing was staged. The message lists the brain's checkouts. Tell the user to make the script pass `--path` with the absolute brain checkout. A host whose brain records no source checkout, or a checkout with `gbrain.sourceRoot` set, is never refused this way. |
+| <a id="checkout_not_a_source"></a>`checkout_not_a_source` | 1 | The checkout commit-push resolved from the working directory (no `--path`) is not one of the brain's source checkouts on this host, typically a wrapper that changed into another repository; nothing was staged. The message lists the brain's checkouts. Tell the user to make the script pass `--path` with the absolute brain checkout. A repository that only encloses a source checkout (a brain cloned inside another repository) is not one; a source registered at a subdirectory its checkout tracks is. A host whose brain records no source checkout, or a checkout with `gbrain.sourceRoot` set, is never refused this way. |
 | `commit_paths_invalid` | 1 | No paths, a path outside the checkout, the checkout root itself, or a path git would not stage. Name the explicit files you wrote and rerun. |
 | `commit_prestaged_paths` | 1 | Another writer staged files under a directory you named; nothing was staged or committed. Name your own files explicitly. Unstage the others (`git restore --staged -- <file>`, which keeps their bytes) only after the user agrees. |
 | `commit_outside_source_root` | 1 | The commit, or a local commit about to be published, changes files outside the brain's [source root](#source-roots); nothing was pushed. Show the user `git show --stat <sha>`; rerun with `--allow-outside-source-root` only if they want it published. |
@@ -181,6 +185,8 @@ Follow the error's `fix.next` as the
 | `git_index_stale` | 1 | An `index.lock` older than 10 minutes blocks the checkout. Check that no git command is running there, tell the user, and remove the named lock file only with their agreement. |
 | `git_operation_in_progress` | 1 | A rebase, merge, cherry-pick or revert is unfinished in the checkout. gbrain never aborts it for you. Follow [stuck rebase](#stuck-rebase). |
 | `git_detached_head` | 1 | The checkout is on a detached HEAD or an unborn branch. Check out the branch the remote tracks (`git switch <branch>`), or make the first commit, then rerun. |
+| <a id="publish_secret_found"></a>`publish_secret_found` | 1 | Only with `--scan-secrets` (the publish `gbrain sources refresh` runs on its own): a commit about to be pushed adds a value that looks like a secret, in its message, an added line (even one a later commit removed) or a merge resolution, adds text too large to scan, or changes `.gbrain-scan-allow` or a `.gitattributes` (files that decide what the scan sees); nothing was pushed. The message names each file, line, rule and commit, never the value. Ask the user: remove the value from those unpushed commits, or add a false positive's fingerprint to `.gbrain-scan-allow`, then retry. Never publish them with a command that skips the scan. |
+| <a id="publish_scan_unreadable"></a>`publish_scan_unreadable` | 1 | Only with `--scan-secrets`: the scan could not read the commits about to be pushed in full (a missing or corrupt object, git output it does not recognise, or its 300 s budget), so it reported no secret and nothing was pushed. Run `git fsck` in the checkout, fix what it names, then retry. Never publish with a command that skips the scan. |
 | `integrate_conflict` | 1 | Local and remote commits changed the same file; nothing was merged and the checkout is unchanged. Stop, relay the question to the user, then [resolve](#conflicts). |
 | `push_unconfirmed` | 4 | The commit is durable locally but no push destination confirmed it (network, credentials, branch protection, a remote that kept moving, or another push that held the push lock for the whole wait). Fix what the message names, then run `gbrain git commit-push --push-only`. Never force-push. |
 | `writer_coordinator_required` | 1 | This is a managed worktree. Stop using git for pages; save them through `put_page` and the other gbrain write tools. |
@@ -288,8 +294,9 @@ commits come in. Four rules keep that checkout able to move:
    and retry the refresh, as the [refusal](write-refusals.md#refresh_diverged)
    says. Never force the checkout. When local commits there are expected
    (automations committing alongside a sibling checkout that pushes the same
-   branch), the user can turn on `sources.refresh_publish_diverged` (default
-   off) so each refresh runs that publish itself
+   branch), each refresh runs that publish itself when the worktree's Git durability is
+   on (`sources.refresh_publish_diverged` unset; `false` turns it off, `true` publishes
+   with durability off too), after scanning the local commits for secrets
    ([live sync](live-sync.md)); it never publishes over a rewritten upstream.
 3. **Stop syncing a source before rewriting its history.** Before a
    force-push or `git filter-repo`, run `gbrain sources set-sync <id> off`
@@ -632,6 +639,10 @@ on this host, managed worktrees included, once per repository. It is read-only.
   commit fails the check, naming the newest one:
   `Commit <sha12> (<kind>, "<subject>", <time>) in <checkout> was not made by
   gbrain; route that writer through gbrain git commit-push or a page write`.
+  An older gbrain co-installed on the host (one without the commit ledger)
+  also reads as a foreign writer; a foreign commit whose message carries a
+  `gbrain-*:` trailer is flagged `gbrain_trailer` and named as possibly that,
+  but still fails, since a trailer alone proves nothing.
   Ask the user which job makes such commits before changing anything.
 - **Covered window.** Reflog entries older than the ledger's start (or its
   oldest retained line after rotation) are reported as uncovered, never
@@ -646,8 +657,13 @@ on this host, managed worktrees included, once per repository. It is read-only.
 
 The JSON (`details`) carries the window per repository, every foreign commit
 (sha, kind, ref, time, subject, committer), the unconfirmed ones, ref moves it
-could not read, and at most 20 dirty files with the total count. A brain with
-no Git checkout reports `not_applicable`.
+could not read, and at most 20 dirty files with the total count. Whatever the
+scan could not read leaves it partial (a warning) with the reasons in
+`partial_reasons`: a root inside a Git checkout that git cannot read, source
+roots past the 50-root cap, an unreadable ledger, a `git status` that failed
+or timed out (it gets up to 30 s within doctor's budget), or doctor's budget
+running out. A brain with no Git checkout reports `not_applicable`; a scan
+that skipped a root never does.
 
 ## Limits
 

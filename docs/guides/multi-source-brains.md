@@ -375,6 +375,10 @@ gbrain sources federate <id>
 gbrain sources unfederate <id>
 gbrain sources mirror-readonly <id>
 gbrain sources mirror-writable <id>
+gbrain sources record-origin <id>... --remote|--local [--apply] [--json]
+                               Record who added older URL sources (doctor
+                               url_source_origin); preview unless --apply. See
+                               docs/guides/repair.md#url-source-origin.
 gbrain sources refresh <id> [--dry-run] [--resume|--abandon]   Managed brains: fast-forward the checkout and sync.
 gbrain sources set-strategy <id> <markdown|code|auto>
 gbrain sources set-sync <id> <on|off> [--dry-run] [--expect <on|off>]

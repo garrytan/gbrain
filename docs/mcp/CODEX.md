@@ -59,7 +59,7 @@ branch carries the variant trees already, so enabling is a two-line
 marketplace edit once verified — TODOS.md follow-up).
 
 **Prerequisites.** The plugin cannot ship the gbrain binary; install it once
-(`bun install -g github:garrytan/gbrain#latest-stable` — the npm package
+(`bun install -g github:garrytan/gbrain#stable` — the npm package
 named `gbrain` is unrelated, never `npm install -g gbrain`) and create a
 brain (`gbrain init` — zero-config local PGLite by default). The bundled
 `setup` skill walks both. With no binary, the plugin's MCP server exits with
@@ -118,7 +118,7 @@ signal — if its server isn't working, fix the binary, or remove the plugin.
 
 **Upgrading** has two halves: `codex plugin marketplace upgrade` refreshes
 the plugin snapshot (skills + manifests); the `gbrain-upgrade` skill or a
-`bun install -g github:garrytan/gbrain#latest-stable` re-run refreshes the
+`bun install -g github:garrytan/gbrain#stable` re-run refreshes the
 binary the launcher resolves.
 
 ## Connect without the plugin

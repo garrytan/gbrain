@@ -15,13 +15,18 @@
  *   warn, never written back.
  * - Dirty page files: untracked and unstaged files under the source roots, leaving out paths with a queued or running
  *   git effect and paths in the write-through pending ledger; age is the file's mtime.
+ * - GST-1623: whatever the scan could not read leaves it partial, with the reason (`partial_reasons`): a root inside a Git
+ *   checkout whose probe fails, roots past the scan cap, an unreadable ledger, a git status that failed or timed out
+ *   (given up to 30 s within doctor's budget), doctor's budget itself. A scan that read no repository but skipped one is
+ *   a warn, never not_applicable. A foreign commit whose message carries a `gbrain-*:` trailer is still foreign (a
+ *   trailer is forgeable) but is named as possibly an older gbrain without the commit ledger.
  */
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { join, relative, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { execFileSync } from '../../../core/spawn.ts';
 import { GIT_READ_ENV, gitChildEnv } from '../../../core/git-env.ts';
 import type { Check } from '../../doctor.ts';
-import { readLedger, messageDigest } from '../../../core/git/commit-ledger.ts';
+import { ledgerFiles, readLedger, messageDigest } from '../../../core/git/commit-ledger.ts';
 import { readPendingWriteThrough } from '../../../core/git/commit-push.ts';
 import { GUARD_ENFORCE_MARKER, GUARD_HOOK, OWNER_HOOKS_DIR } from '../../../core/git/commit-guard.ts';
 import { existingHostIdFor } from '../../../core/persistence/identity.ts';
@@ -37,22 +42,34 @@ export const FOREIGN_DIRTY_WARN_MS = 30 * 60_000;
 const MAX_REFLOG_ENTRIES = 5_000;
 const MAX_RANGE_COMMITS = 500;
 const GIT_TIMEOUT_MS = 5_000;
+const STATUS_TIMEOUT_MAX_MS = 30_000;
 const MAX_ROOTS = 50;
 const MAX_LISTED = 20;
 const ZERO = /^0+$/;
+const BUDGET_REASON = 'doctor\'s time budget ran out';
 
 export type ForeignKind = 'plain' | 'amend' | 'rewrite' | 'plumbing';
-export interface ForeignCommit { sha: string; kind: ForeignKind; guard_bypassed: boolean; ref: string; time: string; subject: string; committer: string; checkout: string }
+export interface ForeignCommit { sha: string; kind: ForeignKind; guard_bypassed: boolean; gbrain_trailer: boolean; ref: string; time: string; subject: string; committer: string; checkout: string }
 interface Candidate { sha: string; kind: ForeignKind; ref: string; time: number; gitDir: string | null; checkout: string }
 interface Checkout { top: string; gitDir: string; source_ids: string[]; roots: string[] }
 interface Repo { common: string; checkouts: Map<string, Checkout> }
 interface Reflog { file: string; ref: string; gitDir: string | null }
 interface Entry { old: string; next: string; time: number; message: string }
 
-function git(root: string, args: string[], input?: string): string | null {
-  try { return execFileSync('git', ['-C', root, ...args], { stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'], input, timeout: GIT_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024, env: gitChildEnv(GIT_READ_ENV) }).toString(); }
-  catch { return null; }
+function gitRun(root: string, args: string[], input?: string, timeout = GIT_TIMEOUT_MS): { out: string | null; timedOut: boolean } {
+  try { return { out: execFileSync('git', ['-C', root, ...args], { stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'], input, timeout, maxBuffer: 32 * 1024 * 1024, env: gitChildEnv(GIT_READ_ENV) }).toString(), timedOut: false }; }
+  catch (error) { const e = error as { code?: string; signal?: string }; return { out: null, timedOut: e.code === 'ETIMEDOUT' || e.signal === 'SIGTERM' }; }
 }
+const git = (root: string, args: string[], input?: string): string | null => gitRun(root, args, input).out;
+/** Whether `root` or an ancestor holds a `.git` entry: a checkout git should have answered for (reconcile-state.ts insideGitCheckout). */
+function insideGitCheckout(root: string): boolean {
+  for (let dir = resolve(root); ; dir = dirname(dir)) {
+    if (existsSync(join(dir, '.git'))) return true;
+    if (dirname(dir) === dir) return false;
+  }
+}
+/** A commit message whose trailer paragraph (its last) carries a `gbrain-*:` trailer gbrain writes (repair, supersedes, adopted). */
+const gbrainTrailer = (message: string) => /^gbrain-[a-z][a-z-]*:\s/m.test(message.trim().split(/\n[ \t]*\n/).at(-1) ?? '');
 const canonical = (path: string) => { try { return realpathSync(path); } catch { return resolve(path); } };
 
 /** Porcelain creation kind of a reflog message; 'excluded' for moves that create nothing locally; 'other' for the rest. */
@@ -109,7 +126,7 @@ function checkoutOf(repo: Repo, gitDir: string | null): string {
   return [...repo.checkouts.values()][0]!.top;
 }
 
-async function repositories(engine: BrainEngine): Promise<Repo[]> {
+async function repositories(engine: BrainEngine): Promise<{ repos: Repo[]; skipped: string[] }> {
   const roots = new Map<string, string[]>(await sourceRoots(engine));
   try {
     const hostId = existingHostIdFor(engine);
@@ -124,10 +141,16 @@ async function repositories(engine: BrainEngine): Promise<Repo[]> {
     }
   } catch { /* an embedded engine without a host id, or a brain without the managed tables */ }
   const repos = new Map<string, Repo>();
+  const skipped: string[] = [];
+  if (roots.size > MAX_ROOTS) skipped.push(`${roots.size - MAX_ROOTS} source root(s) past the ${MAX_ROOTS}-root scan cap were not scanned`);
   for (const [root, ids] of [...roots].slice(0, MAX_ROOTS)) {
     if (!existsSync(root)) continue;
-    const out = git(root, ['rev-parse', '--show-toplevel', '--absolute-git-dir'])?.split('\n');
-    if (!out?.[0] || !out[1]) continue;
+    const probe = gitRun(root, ['rev-parse', '--show-toplevel', '--absolute-git-dir']);
+    const out = probe.out?.split('\n');
+    if (!out?.[0] || !out[1]) {
+      if (probe.timedOut || insideGitCheckout(root)) skipped.push(`${root} could not be read as a Git checkout (git rev-parse ${probe.timedOut ? `timed out after ${GIT_TIMEOUT_MS / 1000} s` : 'failed'})`);
+      continue;
+    }
     const [top, gitDir] = [out[0], out[1]];
     let common = gitDir;
     try { common = resolve(gitDir, readFileSync(join(gitDir, 'commondir'), 'utf8').trim()); } catch { /* the main git dir */ }
@@ -140,7 +163,7 @@ async function repositories(engine: BrainEngine): Promise<Repo[]> {
     repo.checkouts.set(top, entry);
     repos.set(key, repo);
   }
-  return [...repos.values()];
+  return { repos: [...repos.values()], skipped };
 }
 
 /** Paths gbrain is about to commit: queued or running git effects, absolute. */
@@ -161,10 +184,12 @@ async function pendingEffectPaths(engine: BrainEngine): Promise<Set<string>> {
 
 interface Dirty { path: string; checkout: string; state: 'untracked' | 'modified' | 'deleted' | 'unmerged'; age_ms: number }
 
-function dirtyFiles(c: Checkout, skip: Set<string>, now: number): Dirty[] | null {
+/** The dirty page files of one checkout, or why git status could not list them. `timeout` is the caller's share of doctor's budget. */
+function dirtyFiles(c: Checkout, skip: Set<string>, now: number, timeout: number): Dirty[] | { failed: string } {
   const specs = c.roots.includes('') ? ['.'] : c.roots.map(r => `:(literal)${r}`);
-  const raw = git(c.top, ['status', '--porcelain=v2', '-z', '--untracked-files=all', '--', ...specs]);
-  if (raw === null) return null;
+  const status = gitRun(c.top, ['status', '--porcelain=v2', '-z', '--untracked-files=all', '--', ...specs], undefined, timeout);
+  const raw = status.out;
+  if (raw === null) return { failed: status.timedOut ? `git status timed out after ${Math.round(timeout / 1000)} s in ${c.top} (a large checkout: run git status there to list its files)` : `git status failed in ${c.top}` };
   const pending = new Set(readPendingWriteThrough(c.top).map(e => canonical(join(c.top, e.path))));
   const fields = raw.split('\0');
   const out: Dirty[] = [];
@@ -203,8 +228,13 @@ interface RepoReport {
   uncovered: number; foreign: ForeignCommit[]; unconfirmed: ForeignCommit[]; unknown: { ref: string; old: string; new: string; time: string }[];
 }
 
-function scanRepo(repo: Repo, deadline: number): { report: RepoReport; partial: boolean } {
-  const ledger = readLedger(repo.common);
+function scanRepo(repo: Repo, deadline: number): { report: RepoReport; partial: boolean; reason?: string } {
+  let ledger: ReturnType<typeof readLedger>;
+  try { ledger = readLedger(repo.common); }
+  catch (error) {
+    const report: RepoReport = { common: repo.common, checkouts: [...repo.checkouts.keys()], ledger: false, window_from: null, ledger_start: null, oldest_reflog: null, uncovered: 0, foreign: [], unconfirmed: [], unknown: [] };
+    return { report, partial: true, reason: `the commit ledger in ${ledgerFiles(repo.common).dir} could not be read (${(error as NodeJS.ErrnoException).code ?? (error as Error).message}), so no commit there was attributed` };
+  }
   const ledgered = new Set<string>();
   const intents: { head_before: string | null; msg: string; t: number; who: string; resolved: boolean }[] = [];
   let start: number | null = null;
@@ -278,7 +308,7 @@ function scanRepo(repo: Repo, deadline: number): { report: RepoReport; partial: 
       if (parents.length > 1) continue;
       const ct = Number(f[2]);
       const guard = c.kind === 'plain' ? enforceGuardSince(c.gitDir) : null;
-      const commit: ForeignCommit = { sha: c.sha, kind: c.kind, guard_bypassed: guard !== null && guard <= ct * 1000, ref: c.ref, time: new Date(ct * 1000).toISOString(), subject: f[4]!, committer: f[3]!, checkout: c.checkout };
+      const commit: ForeignCommit = { sha: c.sha, kind: c.kind, guard_bypassed: guard !== null && guard <= ct * 1000, gbrain_trailer: gbrainTrailer(f[5]!), ref: c.ref, time: new Date(ct * 1000).toISOString(), subject: f[4]!, committer: f[3]!, checkout: c.checkout };
       const digest = messageDigest(f[5]!);
       const matched = intents.some(t => !t.resolved && t.head_before === (parents[0] ?? null) && t.msg === digest && ct * 1000 >= t.t - 1000 && ct * 1000 - t.t <= UNCONFIRMED_WINDOW_MS);
       (matched ? report.unconfirmed : report.foreign).push(commit);
@@ -295,8 +325,8 @@ async function runForeignWriters(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
   ctx.progress.heartbeat('foreign_writers');
   const engine = connectedEngine(ctx);
-  const repos = await repositories(engine);
-  if (!repos.length) {
+  const { repos, skipped } = await repositories(engine);
+  if (!repos.length && !skipped.length) {
     checks.push(infoCheck('foreign_writers', 'Not applicable: no registered source on this host is a Git checkout, so there are no commits to attribute (the database is the record on a repo-less brain).', 'not_applicable'));
     return checks;
   }
@@ -305,18 +335,22 @@ async function runForeignWriters(ctx: DoctorContext): Promise<Check[]> {
   const skip = await pendingEffectPaths(engine);
   const reports: RepoReport[] = [];
   const dirty: Dirty[] = [];
-  let partial = false;
+  const reasons = [...skipped];
+  const budget = () => { if (Date.now() <= deadline) return false; if (!reasons.includes(BUDGET_REASON)) reasons.push(BUDGET_REASON); return true; };
   for (const repo of repos) {
-    if (Date.now() > deadline) { partial = true; break; }
+    if (budget()) break;
     const scanned = scanRepo(repo, deadline);
     reports.push(scanned.report);
-    partial ||= scanned.partial;
+    if (scanned.reason) reasons.push(scanned.reason);
+    else if (scanned.partial && !reasons.includes(BUDGET_REASON)) reasons.push(BUDGET_REASON);
     for (const c of repo.checkouts.values()) {
-      if (Date.now() > deadline) { partial = true; break; }
-      const found = dirtyFiles(c, skip, now);
-      if (found === null) partial = true; else dirty.push(...found);
+      if (budget()) break;
+      const timeout = Number.isFinite(deadline) ? Math.max(GIT_TIMEOUT_MS, Math.min(STATUS_TIMEOUT_MAX_MS, deadline - Date.now())) : GIT_TIMEOUT_MS;
+      const found = dirtyFiles(c, skip, now, timeout);
+      if (Array.isArray(found)) dirty.push(...found); else reasons.push(found.failed);
     }
   }
+  const partial = reasons.length > 0;
   const isOld = (d: Dirty) => d.age_ms > FOREIGN_DIRTY_WARN_MS;
   dirty.sort((a, b) => Number(isOld(b)) - Number(isOld(a)) || a.checkout.localeCompare(b.checkout) || a.path.localeCompare(b.path));
   const foreign = reports.flatMap(r => r.foreign).sort((a, b) => b.time.localeCompare(a.time) || a.sha.localeCompare(b.sha));
@@ -325,23 +359,25 @@ async function runForeignWriters(ctx: DoctorContext): Promise<Check[]> {
   const old = dirty.filter(isOld).sort((a, b) => b.age_ms - a.age_ms);
   const details = {
     window: reports.map(r => ({ common: r.common, from: r.window_from, to: new Date(now).toISOString(), ledger_start: r.ledger_start, oldest_reflog: r.oldest_reflog, uncovered: r.uncovered, ledger: r.ledger })),
-    foreign, unconfirmed, unknown, dirty: dirty.slice(0, MAX_LISTED), dirty_count: dirty.length, dirty_warn_after_minutes: FOREIGN_DIRTY_WARN_MS / 60_000, partial,
+    foreign, unconfirmed, unknown, dirty: dirty.slice(0, MAX_LISTED), dirty_count: dirty.length, dirty_warn_after_minutes: FOREIGN_DIRTY_WARN_MS / 60_000, partial, partial_reasons: reasons,
   };
   const scope = `${repos.length} repositor${repos.length === 1 ? 'y' : 'ies'}${partial ? ' (partial)' : ''}`;
   if (foreign.length) {
     const newest = foreign[0]!;
     const line = `Commit ${newest.sha.slice(0, 12)} (${label(newest)}, "${newest.subject}", ${newest.time}) in ${newest.checkout} was not made by gbrain; route that writer through gbrain git commit-push or a page write`;
+    const trailed = foreign.filter(c => c.gbrain_trailer);
+    const older = trailed.length ? ` ${trailed.length} of them carry a gbrain- commit trailer (${trailed.slice(0, 3).map(c => c.sha.slice(0, 12)).join(', ')}): possibly an older gbrain without the commit ledger, co-installed on this host; upgrade every gbrain that writes to this checkout (a trailer alone does not prove gbrain made the commit).` : '';
     checks.push({ name: 'foreign_writers', status: 'fail', details,
-      message: `${foreign.length} commit(s) in ${scope} were made by a writer outside gbrain: ${foreign.slice(0, 5).map(c => `${c.sha.slice(0, 12)} ${label(c)} by ${c.committer}`).join(', ')}${foreign.length > 5 ? ', ...' : ''}. ${line}.`,
+      message: `${foreign.length} commit(s) in ${scope} were made by a writer outside gbrain: ${foreign.slice(0, 5).map(c => `${c.sha.slice(0, 12)} ${label(c)} by ${c.committer}`).join(', ')}${foreign.length > 5 ? ', ...' : ''}. ${line}.${older}`,
       fix: { ask_user: true, argv: ['git', '-C', newest.checkout, 'show', '--stat', newest.sha], consent: [], actor: 'user', requires_exclusive: false,
-        why: `${line}. A commit made around gbrain skips its writer lock and leaves files no import recorded; finding and rerouting the writer (a cron, a script, an agent running plain git) is the user's call.`,
+        why: `${line}. A commit made around gbrain skips its writer lock and leaves files no import recorded; finding and rerouting the writer (a cron, a script, an agent running plain git, or an older gbrain without the commit ledger) is the user's call.`,
         user_message: `A writer outside gbrain committed ${newest.sha.slice(0, 12)} ("${newest.subject}") in ${newest.checkout} at ${newest.time}. Which job or agent makes these commits, so it can be switched to gbrain git commit-push or a page write?`,
         verify: doctorVerify('foreign_writers') } });
     return checks;
   }
   if (unconfirmed.length || unknown.length || old.length || partial) {
     const parts = [
-      partial ? 'the scan did not finish (doctor\'s time budget, or a git status that failed), so part of the window is unchecked' : '',
+      partial ? `the scan did not finish (${reasons.join('; ')}), so part of the window is unchecked` : '',
       unconfirmed.length ? `${unconfirmed.length} commit(s) match a gbrain intent whose commit line is missing (a crash between git commit and the ledger append): ${unconfirmed.slice(0, 5).map(c => c.sha.slice(0, 12)).join(', ')}; they are not written back to the ledger` : '',
       unknown.length ? `${unknown.length} ref move(s) whose commits could not be read: ${unknown.slice(0, 5).map(u => `${u.ref} -> ${u.new.slice(0, 12)}`).join(', ')}` : '',
       old.length ? `${old.length} page file(s) have been untracked or modified for more than ${FOREIGN_DIRTY_WARN_MS / 60_000} minutes with no gbrain commit pending: ${old.slice(0, 5).map(d => `${d.path} (${d.state}, ${ago(d.age_ms)})`).join(', ')}${old.length > 5 ? ', ...' : ''}` : '',
