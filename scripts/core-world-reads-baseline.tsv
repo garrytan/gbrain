@@ -444,6 +444,8 @@ src/core/git/commit-push.ts	fs_import	1	W7: filesystem boundary moves to the loc
 src/core/git/commit-push.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/git/commit-push.ts	process_env	7	W6: settings plane out of the core
 src/core/git/commit-push.ts	spawn_import	1	W7: process-wide effects move to src/cli
+src/core/git/range-secret-scan.ts	fs_import	1	W7: filesystem boundary moves to the local app (the publish scan streams git output through a private temp file)
+src/core/git/range-secret-scan.ts	spawn_import	1	W7: process-wide effects move to src/cli (the publish scan runs git plumbing)
 src/core/github-app-token.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/github-source.ts	fs_import	2	W7: filesystem boundary moves to the local app
 src/core/github-source.ts	load_config	1	W6: settings plane out of the core

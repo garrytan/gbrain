@@ -16,7 +16,6 @@
  * `.gitattributes`) as a gate change, so callers refuse. Output the parser does not recognise, a git failure or a run
  * past the time budget sets `unreadable` instead of returning a partial result.
  */
-import { spawnSync } from 'node:child_process';
 import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
@@ -24,6 +23,7 @@ import { GIT_READ_ENV, gitChildEnv } from '../git-env.ts';
 import { GIT_ENV } from '../git-transport.ts';
 import { loadWorkspaceAllowlist, pathAllowlisted, SCAN_ALLOW_FILENAME } from '../secret-scan-allowlist.ts';
 import { scanText, SCAN_MAX_FILE_BYTES } from '../secret-scan.ts';
+import { spawnSync } from '../spawn.ts';
 
 export interface RangeSecretFinding { path: string; commit: string; line: number; pattern: string; fingerprint: string }
 export interface RangeScan {
