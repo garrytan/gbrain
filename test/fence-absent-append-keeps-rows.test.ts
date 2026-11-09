@@ -15,11 +15,13 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { parseFactsFence } from '../src/core/facts-fence.ts';
+import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import { parseTakesFence } from '../src/core/takes-fence.ts';
 import { emptyFenceBlock } from '../src/core/generations/fence.ts';
 import { publishManagedEntityFacts } from '../src/core/facts/managed-fact-write.ts';
 import { runFactsRelink } from '../src/core/facts/relink.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { redirectManagedPhantom } from '../src/core/cycle/phantom-redirect-managed.ts';
 import { durableGitRepo } from './helpers/git-publication.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
@@ -124,6 +126,25 @@ for (const backend of testBackends()) {
         expect(await fenceFacts(engine, slug)).toEqual([FACT_A, FACT_B].sort());
         await op(ctx, 'add_tag', { slug, tag: 'example' });
         expect((await facts(engine, slug)).map(f => [f.fact, f.expired])).toEqual([[FACT_A, false], [FACT_B, false]]);
+        expect(await held(engine, slug)).toEqual([]);
+        await checkFileHolds(engine, root, storage, slug, [FACT_A, FACT_B]);
+      }, opts), 180_000);
+
+      test('fact: a phantom redirect into the page keeps the held fact when it re-creates the section', () => managedBrain(async ({ engine, ctx, root }) => {
+        const slug = 'people/alice-example';
+        await put(ctx, slug, PERSON('Alice v1.\n'));
+        await remember(ctx, slug, FACT_A);
+        await put(ctx, slug, PERSON('Alice v2, rewritten by an agent without the facts section.\n'));
+        await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.putPage('alice', { type: 'person', title: 'alice', timeline: '', frontmatter: {},
+          compiled_truth: '# alice\n\n## Facts\n\n<!--- gbrain:facts:begin -->\n\n'
+            + '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|\n'
+            + `| 1 | ${FACT_B} | fact | 1.0 | world | medium | 2026-01-01 |  | chat |  |\n<!--- gbrain:facts:end -->` }, { sourceId: 'default' }), TEST_WRITE_ATTRIBUTION));
+        const phantom = (await engine.readPageSnapshot('alice', { sourceId: 'default' }))!;
+        writeFileSync(join(root, 'alice.md'), serializePageToMarkdown(phantom.page, phantom.tags));
+        expect(await redirectManagedPhantom(engine, phantom.page, slug, 'default')).toEqual({ outcome: 'redirected', canonical: slug });
+        expect(await fenceFacts(engine, slug)).toEqual([FACT_A, FACT_B].sort());
+        await op(ctx, 'add_tag', { slug, tag: 'example' });
+        expect((await facts(engine, slug)).filter(f => !f.expired).map(f => f.fact).sort()).toEqual([FACT_A, FACT_B].sort());
         expect(await held(engine, slug)).toEqual([]);
         await checkFileHolds(engine, root, storage, slug, [FACT_A, FACT_B]);
       }, opts), 180_000);
