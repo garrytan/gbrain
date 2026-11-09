@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A page a member-bound credential creates in a federated source is now readable only by that member.** A token or OAuth client bound to a member (`gbrain auth rescope --member <id>`) and granted `--sources <id>` for a federated source wrote its pages there with no readers. Every credential without a source grant reads `default` plus every federated source, so another member's no-grant token and an unbound token read those pages over `get_page`, `search`, `query`, `recall` and `list_pages`. Such a page is now written with `readable_by: [member:<id>]`, as a page the credential writes to `default` already was, and `POST /ingest` refuses the credential. A write source that is not federated keeps the audience its grants give it. Pages written before the upgrade keep their readers: check them with `gbrain access who-can-read <slug>`.
+
+### Itemized changes
+
+- `src/core/source-resolver.ts`: `noGrantFloorReads` says whether a caller with no source grant reads a source unqualified: `default`, or a source in the federated set `noGrantFederatedScope` threads for that floor. It throws when the sources cannot be read.
+- `src/core/persistence/page-visibility.ts`: `defaultSourceMemberWriter` keys on `noGrantFloorReads` instead of the literal `default`, so a member-bound write to a federated source is stamped too. A source table it cannot read refuses the write instead of publishing the page shared.
+- `src/commands/serve-http-webhooks.ts`: the `POST /ingest` refusal names the credential's write source.
+- Docs: `docs/guides/multi-source-brains.md`, `docs/tutorials/company-brain.md` (Model C), `docs/mcp/ADMIN.md`.
+- Tests: `test/access-federated-member-writes.test.ts` (PGLite, and Postgres with `DATABASE_URL`): a member-bound token granted a federated source creates a page that another member and an unbound token, reading the federated set as the HTTP transports do, cannot read; a non-federated source stays unstamped and out of unbound reads; a member-bound write cannot leave its granted source; `POST /ingest` refuses with nothing queued.
+
 ## [0.60.622.0] - 2026-11-09
 
 **`think` keeps an entity's trajectory when the question names a month.** A question such as "What was the MRR of acme-example in April 2026?" bounds think's evidence to April (PR #5086), and that window used to cost the trajectory block twice over: a metric whose readings fall before and after April (March and June) injected nothing, although the March reading was the value in force all April; and an entity page last edited outside April was dropped from the gathered pages, so when the question's noun phrase ("the acme-example team") did not resolve on its own, no entity was found. Each metric's latest reading before the window now joins the readings inside it, unless its `valid_until` ended by the time the window opens, and pages the window drops still name the entities whose trajectory is read; they stay out of the evidence. BrainBench Cat 25's hermetic gate goes from 4 of 6 probes (FAIL) to 6 of 6 (PASS).

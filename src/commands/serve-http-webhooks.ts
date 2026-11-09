@@ -302,16 +302,18 @@ function verifyWebhookSig(secret: unknown, sigHeader: string, payload: Buffer): 
 }
 
 /**
- * GST-2051: a member-bound credential writing to default would publish where every no-grant credential reads; the capture
- * job cannot keep the page to the member, so POST /ingest refuses it (answering res) and put_page, which does, stays open.
+ * GST-2051: a member-bound credential writing to default or a federated source would publish where every no-grant credential
+ * reads; the capture job cannot keep the page to the member, so POST /ingest refuses it (answering res) and put_page, which
+ * does, stays open.
  */
 async function refusedDefaultSourceMember(engine: BrainEngine, authInfo: AuthInfo, res: Response): Promise<boolean> {
-  if (!authInfo.principal || !await defaultSourceMemberWriter(engine, { remote: true, principal: authInfo.principal as WriteAuthority['principal'], sourceId: authInfo.sourceId ?? 'default' })) return false;
+  const sourceId = authInfo.sourceId ?? 'default';
+  if (!authInfo.principal || !await defaultSourceMemberWriter(engine, { remote: true, principal: authInfo.principal as WriteAuthority['principal'], sourceId })) return false;
   res.status(403).json({
     error: 'permission_denied',
-    message: 'POST /ingest is unavailable to a credential bound to a member whose write source is default: its pages would land where other members ' +
+    message: `POST /ingest is unavailable to a credential bound to a member whose write source is ${sourceId}, which every credential without a source grant reads: its pages would land where other members ` +
       'and unbound credentials read. Write through the MCP put_page op, which keeps a new page to its member, ' +
-      'or ask the brain operator to grant this credential its own write source (gbrain auth rescope --sources <private-source>,default).',
+      'or ask the brain operator to grant this credential its own write source that is not federated (gbrain auth rescope --sources <private-source>,default).',
   });
   return true;
 }
