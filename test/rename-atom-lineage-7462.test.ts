@@ -161,6 +161,19 @@ for (const backend of testBackends()) {
       expect(await looserAtoms('source-b')).toBe(1);
     });
 
+    test('a deleted page at the old slug keeps its unstamped atom private in the lineage repair', async () => {
+      await seedSource('source-h');
+      await note('source-h', 'notes/reused', 'World body.', 'world');
+      expect(await move('source-h', 'notes/reused', 'archive/reused')).toBe('renamed');
+      const reused = await note('source-h', 'notes/reused', 'Private body.', 'private');
+      await engine.putPage('atoms/reused-claim', { type: 'atom', title: 'atoms/reused-claim', compiled_truth: 'Extracted claim.',
+        frontmatter: { source_slug: 'notes/reused', source_hash: reused.content_hash!.slice(0, 16) } }, { sourceId: 'source-h' });
+      await engine.softDeletePage('notes/reused', { sourceId: 'source-h' });
+      const plan = await visibilityRepair.plan(engine, scope('source-h'), null, { apply: false, driftClass: 'lineage' });
+      expect(plan.items.map(entry => [entry.slug, entry.change?.to])).toEqual([['atoms/reused-claim', 'private']]);
+      expect(await readableAtoms('source-h')).toEqual([]);
+    });
+
     test('an alias that is not a rename is not followed', async () => {
       await seedSource('source-c');
       const page = await note('source-c', 'notes/topic', 'Some body.', 'world');

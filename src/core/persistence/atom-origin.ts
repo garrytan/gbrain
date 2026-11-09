@@ -13,11 +13,11 @@ export function renamedSlugSql(sourceIdSql: string, slugSql: string): string {
     WHERE renamed.source_id=${sourceIdSql} AND renamed.alias_slug=${slugSql} AND renamed.notes='rename')`;
 }
 
-/** SQL: the slug atom `a`'s origin page holds now: its `source_slug` while a live page holds it, else the slug a rename moved that page to. */
+/** SQL: the slug atom `a`'s origin page holds now: its `source_slug` while any page row holds it, deleted or not, else the slug a rename moved that page to. A page created later at the old slug, even one deleted since, is never passed over for the renamed page. */
 export function atomOriginSlugSql(a: string): string {
   const slug = `(${a}.frontmatter->>'source_slug')`;
   return `COALESCE(CASE WHEN NOT EXISTS (SELECT 1 FROM pages live_origin WHERE live_origin.source_id=${a}.source_id
-      AND live_origin.slug=${slug} AND live_origin.deleted_at IS NULL) THEN ${renamedSlugSql(`${a}.source_id`, slug)} END, ${slug})`;
+      AND live_origin.slug=${slug}) THEN ${renamedSlugSql(`${a}.source_id`, slug)} END, ${slug})`;
 }
 
 /** SQL array of every slug that may name atom `a`'s origin (its `source_slug` and that slug's rename target), for rules where either page being private makes the atom private. */
