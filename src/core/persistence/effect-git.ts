@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { closeSync, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve as resolvePath, sep } from 'node:path';
 import { execFileBounded } from '../brain-repo-durability.ts';
 import { gitDurabilityPolicy } from './git-durability-policy.ts';
@@ -291,7 +292,7 @@ export function commitMessageArgs(paragraphs: string[], dir: string | (() => str
  * that is provably abandoned is reclaimed and the step retried (#6932).
  */
 export async function commitGitTargets(root: string, relativePaths: string[], signal?: AbortSignal,
-  notes?: ReadonlyMap<string, GitCommitNote>, owner?: GitEffectOwner): Promise<Map<string, GitOutcome | OperationError>> {
+  notes?: ReadonlyMap<string, GitCommitNote>, owner?: GitEffectOwner, expected?: ReadonlyMap<string, string | null>): Promise<Map<string, GitOutcome | OperationError>> {
   const results = new Map<string, GitOutcome | OperationError>();
   await withSession(root, signal, owner, true, async session => {
     // One ls-files, one status, one add and one diff for the group; targets
@@ -379,19 +380,71 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
       result = await git(session, [...(commitPaths.some(path => removed.has(path)) ? NO_FSCACHE : []), 'commit', '--only', ...message, '--', ...literalPathspecs(commitPaths)]);
     } finally { if (messageDir) rmSync(messageDir, { recursive: true, force: true }); }
     if (result.code === 0) {
-      // #8896: the secret scan trusts ledgered page writes, so HEAD is recorded only when its parent is the HEAD this commit
-      // started from: a commit that landed on top in between (a script's plain `git commit`) stays unrecorded and scanned.
-      const head = await git(session, ['rev-list', '--parents', '-n', '1', 'HEAD']);
-      const [sha, ...parents] = head.code === 0 ? head.stdout.trim().split(' ') : [];
+      const wanted = new Map<string, string | null>();
+      for (const c of changed) {
+        const hash = expected?.get(c.requested);
+        if (hash !== undefined && (!wanted.has(c.path) || wanted.get(c.path) === hash)) wanted.set(c.path, hash);
+        else wanted.set(c.path, '');
+      }
+      const own = await ownCommit(session, root, prefix, headBefore, commitPaths, wanted);
       const trailers = [...noted.values()].flatMap(note => note.trailers ?? []);
       const supersedes = supersededBy(trailers), adopted = adoptedBy(trailers);
-      if (sha && parents.join(' ') === (headBefore ?? '')) await recordCommitAsync(root, { sha, writer: 'effect', ...(supersedes.length ? { supersedes } : {}), ...(adopted.length ? { adopted } : {}) });
+      if (own) await recordCommitAsync(root, { sha: own.sha, writer: 'effect', ...(own.verified ? { verified: true } : {}),
+        ...(supersedes.length ? { supersedes } : {}), ...(adopted.length ? { adopted } : {}) });
     }
     const outcome = result.code === 0 ? { git: 'committed' } : gitFailure('Cannot commit the canonical Git target.',
       `git commit failed for ${commitPaths.length} file(s); a missing Git identity (user.name, user.email) in that checkout is one cause to check.`);
     for (const c of changed) results.set(c.requested, outcome);
   });
   return results;
+}
+
+/**
+ * #8896: the commit `commit --only` just made, read with rev-parse under the writer lock, and whether the secret scan may
+ * trust it as a page write. Null (left out of the ledger) unless its only parent is `headBefore` and it changes exactly
+ * `paths`: a script's commit or amend that landed in between differs in one of them. `verified` also needs, for every
+ * path, the sha256 of the bytes the effect wrote (`wanted`; null for a removal, '' for none known) to match the file read
+ * once now, the committed blob to have that read's object id, and HEAD to be unchanged after the checks. Any mismatch,
+ * unknown expectation or git failure leaves the commit scanned.
+ */
+async function ownCommit(session: GitSession, root: string, prefix: string, headBefore: string | null, paths: string[],
+  wanted: ReadonlyMap<string, string | null>): Promise<{ sha: string; verified: boolean } | null> {
+  const head = async () => { const r = await git(session, ['rev-parse', '--verify', '--quiet', 'HEAD']); return r.code === 0 ? r.stdout.trim() : ''; };
+  const sha = await head();
+  if (!sha) return null;
+  const parents = await git(session, ['rev-list', '--parents', '-n', '1', sha]);
+  if (parents.code !== 0 || parents.stdout.trim().split(' ').slice(1).join(' ') !== (headBefore ?? '')) return null;
+  const full = new Set(paths.map(path => prefix + path));
+  const diff = await git(session, ['diff-tree', '--no-commit-id', '--name-only', '-r', '-z', '--no-renames', '--root', sha]);
+  const touched = diff.code === 0 ? diff.stdout.split('\0').filter(Boolean) : null;
+  if (!touched || touched.length !== full.size || !touched.every(path => full.has(path))) return null;
+  if (paths.some(path => wanted.get(path) === '' || !wanted.has(path))) return { sha, verified: false };
+  const format = await git(session, ['rev-parse', '--show-object-format']);
+  const listed = await git(session, ['ls-tree', '-r', '-z', '--full-tree', sha, '--', ...literalPathspecs([...full])]);
+  if (format.code !== 0 || listed.code !== 0) return { sha, verified: false };
+  const blobs = new Map(listed.stdout.split('\0').filter(Boolean).map(entry => {
+    const [mode, type, oid] = entry.slice(0, entry.indexOf('\t')).split(' ');
+    return [entry.slice(entry.indexOf('\t') + 1), mode?.startsWith('100') && type === 'blob' ? oid : ''] as const;
+  }));
+  for (const path of paths) {
+    const hash = wanted.get(path)!, oid = blobs.get(prefix + path);
+    if (hash === null ? oid !== undefined : !oid || fileDigests(join(root, path), format.stdout.trim()) !== `${hash} ${oid}`) return { sha, verified: false };
+  }
+  return { sha, verified: await head() === sha };
+}
+
+/** `<sha256> <git blob id>` of the file's bytes, read once; null when it cannot be read or changes size while read. */
+function fileDigests(path: string, objectFormat: string): string | null {
+  let fd: number;
+  try { fd = openSync(path, 'r'); } catch { return null; }
+  try {
+    const size = fstatSync(fd).size;
+    const content = createHash('sha256'), blob = createHash(objectFormat === 'sha256' ? 'sha256' : 'sha1').update(`blob ${size}\0`);
+    const buffer = Buffer.alloc(1024 * 1024);
+    let read = 0;
+    for (let n; (n = readSync(fd, buffer, 0, buffer.length, null)); read += n) { content.update(buffer.subarray(0, n)); blob.update(buffer.subarray(0, n)); }
+    return read === size ? `${content.digest('hex')} ${blob.digest('hex')}` : null;
+  } finally { closeSync(fd); }
 }
 
 /**
@@ -549,9 +602,11 @@ export const DURABILITY_NOT_ENABLED = { git: 'skipped', reason: 'durability_not_
  * root that is not ahead it completes without a push, as before.
  */
 export async function publishGitEffect(root: string, relativePath: string, signal?: AbortSignal,
-  hardened?: boolean, note?: GitCommitNote, binding?: Pick<WorktreeBinding, 'git_durability'> | null, owner?: GitEffectOwner): Promise<Record<string, unknown>> {
+  hardened?: boolean, note?: GitCommitNote, binding?: Pick<WorktreeBinding, 'git_durability'> | null, owner?: GitEffectOwner,
+  expectedHash?: string | null): Promise<Record<string, unknown>> {
   if (!(hardened ?? (await gitDurabilityPolicy(binding, root)).durable)) return { ...DURABILITY_NOT_ENABLED };
-  const outcome = (await commitGitTargets(root, [relativePath], signal, note ? new Map([[relativePath, note]]) : undefined, owner)).get(relativePath)!;
+  const outcome = (await commitGitTargets(root, [relativePath], signal, note ? new Map([[relativePath, note]]) : undefined, owner,
+    expectedHash === undefined ? undefined : new Map([[relativePath, expectedHash]]))).get(relativePath)!;
   if (outcome instanceof OperationError) throw outcome;
   if (outcome.reason === 'target_absent' && !(await gitRootAhead(root, signal))) return outcome;
   const pushed = await pushGitRoot(root, signal);

@@ -208,7 +208,7 @@ describe('#8896 pushGitRoot scans the commits it publishes', () => {
   test('a commit the ledger records as a page write is not scanned; a commit-push commit still is', async () => {
     const c = checkout();
     const page = scriptCommit(c.root, 'notes/page.md', `Saved note with ${token}\n`);
-    recordCommit(c.root, { sha: page, writer: 'effect', ref: null });
+    recordCommit(c.root, { sha: page, writer: 'effect', ref: null, verified: true });
     expect(await withEnv(childEnv(c), () => pushGitRoot(c.root))).toEqual({ push: 'committed' });
     expect(remoteTip(c)).toBe(page);
     const script = scriptCommit(c.root, 'notes/deploy.md', `Deploy token ${token}\n`);
@@ -220,15 +220,20 @@ describe('#8896 pushGitRoot scans the commits it publishes', () => {
     expect(remoteTip(c)).toBe(page);
   }, 60_000);
 
-  test('a page-write record that adopted an outside edit, or a ledger that cannot be read, leaves the commit scanned', async () => {
+  test('a page-write record that adopted an outside edit, an unverified one, or a ledger that cannot be read, leaves the commit scanned', async () => {
     const c = checkout();
     const adopted = scriptCommit(c.root, 'notes/page.md', `Adopted edit with ${token}\n`);
-    recordCommit(c.root, { sha: adopted, writer: 'effect', ref: null, adopted: ['notes/page.md'] });
+    recordCommit(c.root, { sha: adopted, writer: 'effect', ref: null, verified: true, adopted: ['notes/page.md'] });
     expect((await withEnv(childEnv(c), () => refusal(pushGitRoot(c.root)))).code).toBe('publish_secret_found');
+
+    const e = checkout();
+    const legacy = scriptCommit(e.root, 'notes/page.md', `Saved note with ${token}\n`);
+    recordCommit(e.root, { sha: legacy, writer: 'effect', ref: null });
+    expect((await withEnv(childEnv(e), () => refusal(pushGitRoot(e.root)))).code).toBe('publish_secret_found');
 
     const d = checkout();
     const page = scriptCommit(d.root, 'notes/page.md', `Saved note with ${token}\n`);
-    recordCommit(d.root, { sha: page, writer: 'effect', ref: null });
+    recordCommit(d.root, { sha: page, writer: 'effect', ref: null, verified: true });
     const ledger = join(d.root, '.git', 'gbrain', 'commit-ledger.jsonl');
     rmSync(ledger); mkdirSync(ledger);
     expect((await withEnv(childEnv(d), () => refusal(pushGitRoot(d.root)))).code).toBe('publish_secret_found');
@@ -242,6 +247,24 @@ describe('#8896 pushGitRoot scans the commits it publishes', () => {
     expect(remoteTip(c)).toBe(git(c.root, 'rev-parse', 'HEAD').trim());
   }, 60_000);
 });
+
+/**
+ * A PATH whose `git` runs `step` once (`{git}` in it is the real git), before or after the first call whose arguments
+ * contain `match`. The real git runs with the original PATH, so a git that is itself a PATH-resolving shim never finds
+ * this wrapper again.
+ */
+function racingGit(c: Checkout, match: string, when: 'before' | 'after', step: string): string {
+  const path = process.env.PATH ?? '', real = `PATH='${path}' '${Bun.which('git')!}'`;
+  const bin = join(c.home, 'race-bin'), mark = join(c.home, 'raced');
+  const hook = `if [ ! -f '${mark}' ]; then touch '${mark}'; ${step.replaceAll('{git}', real)}; fi`;
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'git'), ['#!/bin/sh',
+    when === 'before' ? `case " $* " in *" ${match} "*) ${hook};; esac` : '',
+    `${real} "$@"`, 'code=$?',
+    when === 'after' ? `case " $* " in *" ${match} "*) if [ $code -eq 0 ]; then ${hook}; fi;; esac` : '',
+    'exit $code', ''].join('\n'), { mode: 0o755 });
+  return `${bin}:${path}`;
+}
 
 interface ManagedWrite { engine: BrainEngine; sourceId: string; worktreeId: string; runEffects: () => Promise<void>; effect: () => Promise<{ state: string; error_code: string | null }> }
 
@@ -341,18 +364,37 @@ describe('#8896 through the effect worker', () => {
   test('a script commit that lands right after the effect commit is not ledgered as a page write, so its secret holds the push', async () => {
     const c = checkout();
     const before = remoteTip(c);
-    const real = Bun.which('git')!;
-    const bin = join(c.home, 'race-bin'), mark = join(c.home, 'raced');
-    mkdirSync(bin);
-    writeFileSync(join(bin, 'git'), [
-      '#!/bin/sh', `'${real}' "$@"`, 'code=$?',
-      `case " $* " in *" commit --only "*) if [ $code -eq 0 ] && [ ! -f '${mark}' ]; then touch '${mark}';`,
-      `  mkdir -p '${c.root}/scripts-out'; printf 'Deploy token %s\\n' '${token}' > '${c.root}/scripts-out/race.md';`,
-      `  '${real}' -C '${c.root}' add scripts-out/race.md && '${real}' -C '${c.root}' -c core.hooksPath=/dev/null commit -q -m 'script races the effect'; fi;; esac`,
-      'exit $code', ''].join('\n'), { mode: 0o755 });
-    await withEnv({ PATH: `${bin}:${process.env.PATH}` }, () => managedWrite(c, () => {}, async w => {
+    const PATH = racingGit(c, 'commit --only', 'after', `mkdir -p '${c.root}/scripts-out'; printf 'Deploy token %s\\n' '${token}' > '${c.root}/scripts-out/race.md';`
+      + ` {git} -C '${c.root}' add scripts-out/race.md && {git} -C '${c.root}' -c core.hooksPath=/dev/null commit -q -m 'script races the effect'`);
+    await withEnv({ PATH }, () => managedWrite(c, () => {}, async w => {
       await w.runEffects();
       expect(git(c.root, 'log', '-1', '--format=%s').trim()).toBe('script races the effect');
+      expect(await w.effect()).toMatchObject({ error_code: 'publish_secret_found' });
+      expect(remoteTip(c)).toBe(before);
+    }));
+  }, 180_000);
+
+  test('a script amending the effect commit (same parent) is not ledgered as a page write, so its secret holds the push', async () => {
+    const c = checkout();
+    const before = remoteTip(c);
+    const PATH = racingGit(c, 'commit --only', 'after', `mkdir -p '${c.root}/scripts-out'; printf 'Deploy token %s\\n' '${token}' > '${c.root}/scripts-out/race.md';`
+      + ` {git} -C '${c.root}' add scripts-out/race.md && {git} -C '${c.root}' -c core.hooksPath=/dev/null commit -q --amend --no-edit`);
+    await withEnv({ PATH }, () => managedWrite(c, () => {}, async w => {
+      await w.runEffects();
+      expect(git(c.root, 'log', '-1', '--format=%s').trim()).not.toBe('script races the effect');
+      expect(git(c.root, 'show', '--name-only', '--format=', 'HEAD').split('\n')).toContain('scripts-out/race.md');
+      expect(await w.effect()).toMatchObject({ error_code: 'publish_secret_found' });
+      expect(remoteTip(c)).toBe(before);
+    }));
+  }, 180_000);
+
+  test('a page file changed after the effect checked its bytes is not ledgered as verified, so the changed bytes are scanned', async () => {
+    const c = checkout();
+    const before = remoteTip(c);
+    const PATH = racingGit(c, 'add -A', 'before', `printf 'Deploy token %s\\n' '${token}' >> '${c.root}/notes/acme-example.md'`);
+    await withEnv({ PATH }, () => managedWrite(c, () => {}, async w => {
+      await w.runEffects();
+      expect(git(c.root, 'show', 'HEAD:notes/acme-example.md')).toContain(token);
       expect(await w.effect()).toMatchObject({ error_code: 'publish_secret_found' });
       expect(remoteTip(c)).toBe(before);
     }));

@@ -51,8 +51,10 @@ const DIFF = ['diff-tree', '--stdin', '-r', '-p', '--root', '--cc', '--no-rename
 
 /**
  * Ledger writers whose commits hold only page writes: a Git effect's commit and a hosted repository's door commits. A
- * record that adopted a file edited outside gbrain (`adopted`) carries bytes gbrain did not write, so it is scanned, and
- * so is a page-write commit older than the retained ledger or made before it existed.
+ * Git effect's record counts only when `verified` (its sha, parent, paths and blobs were checked against what the effect
+ * wrote; records from releases before that check carry none). A record that adopted a file edited outside gbrain
+ * (`adopted`) carries bytes gbrain did not write, so it is scanned, and so is a page-write commit older than the retained
+ * ledger or made before it existed.
  */
 const PAGE_WRITERS: ReadonlySet<string> = new Set(['effect', 'door', 'hosted_repo']);
 
@@ -68,7 +70,10 @@ function run(root: string, args: string[], deadline: number, opts: { input?: str
 /** The commits the ledger records as page writes; an unreadable ledger reads as none, so everything is scanned. */
 function pageWriteCommits(root: string, deadline: number): Set<string> {
   const common = must(run(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'], deadline), 'rev-parse').toString().trim();
-  try { return new Set(readLedger(common).flatMap(record => record.e === 'commit' && PAGE_WRITERS.has(record.writer) && !record.adopted?.length ? [record.sha] : [])); }
+  try {
+    return new Set(readLedger(common).flatMap(record => record.e === 'commit' && PAGE_WRITERS.has(record.writer) && !record.adopted?.length
+      && (record.writer !== 'effect' || record.verified) ? [record.sha] : []));
+  }
   catch { return new Set(); }
 }
 function must(r: Run, what: string): Buffer {
