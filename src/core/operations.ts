@@ -86,6 +86,7 @@ import { syncStatusOperations } from './ops/sync-status.ts';
 import { rawDataOperations } from './ops/raw-data.ts';
 import { chunksOperations } from './ops/chunks.ts';
 import { whoisOperations } from './ops/whois.ts';
+import { agentThreadOperations } from './ops/agent-threads.ts';
 import { ingestLogOperations } from './ops/ingest-log.ts';
 import { usageOperations } from './ops/usage.ts';
 import { filesOperations } from './ops/files.ts';
@@ -237,6 +238,7 @@ export const operations: Operation[] = [
   ...skilloptOperations,
   // v0.47: open-loop engine (who is waiting on you) — ops/loops.ts
   ...loopsOperations, ...questionsOperations, ...noticesOperations, // + agent contract v1 A6 mute_notice — ops/notices.ts
+  ...agentThreadOperations, // agent handoff: thread pickup (ops/agent-threads.ts)
 ];
 
 // Area taxonomy + output redaction: one finalize step shared with the CLI's

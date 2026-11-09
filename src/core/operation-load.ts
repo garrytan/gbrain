@@ -115,6 +115,8 @@ const OP_AREAS: Record<string, string> = {
   schema_apply_mutations: 'schema', reload_schema_pack: 'schema',
   // discovery
   request_tools: 'discovery',
+  // agent handoff: thread pickup
+  log_turn: 'handoff', update_thread_summary: 'handoff', checkpoint: 'handoff', find_thread: 'handoff', pickup: 'handoff',
 };
 
 const finalized = new WeakSet<Operation>();
