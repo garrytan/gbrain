@@ -27,6 +27,7 @@ import { authorizeFactsBackstop } from './effect-facts.ts';
 import { admitWriteInTransaction, getWriteRequest, getWriteRequestById, receiptFor } from './journal.ts';
 import { assertPersistenceAccepting, awaitWrite, persistenceConsumerConfig, writeResponse } from './service.ts';
 import { MaintenanceWriteWait } from './maintenance-wait.ts';
+import { CONSUMER_LIVE_MS } from './consumer-heartbeat.ts';
 import { digest, requireUuid, sha256 } from './digest.ts';
 import { isTerminal, type WriteAuthority, type WriteRequest } from './model.ts';
 import type { WriteReceipt } from './types.ts';
@@ -389,7 +390,8 @@ export async function resumeManagedFacts(engine: BrainEngine, session: ManagedFa
   const stored = await storedBatch(engine, session);
   if (!stored) return null;
   const files = session.fileRefusalRetry ? await followFileRefusals(engine, session, stored) : stored;
-  const rows = session.inputKeyed ? await followWithdrawalRefusals(engine, session, files) : files;
+  const embedded = session.fileRefusalRetry || session.inputKeyed ? await followEmbeddingRefusals(engine, session, files) : files;
+  const rows = session.inputKeyed ? await followWithdrawalRefusals(engine, session, embedded) : embedded;
   return collectManagedFacts(engine, session, session.entityMoveRetry ? await followEntityMoves(engine, session, rows) : rows);
 }
 
@@ -422,6 +424,30 @@ const isEntityRequest = (row: WriteRequest) => (row.intent?.kind ?? row.outcome?
  */
 async function followFileRefusals(engine: BrainEngine, session: ManagedFactsSession, stored: WriteRequest[]): Promise<WriteRequest[]> {
   return followRefusals(engine, session, stored, 'file-refusal-retry', row => row.error_code === 'source_changed', readmitRefusedFacts);
+}
+
+/**
+ * #8526: the same walk for a batch the write owner's consumer refused `embedding_configuration`, typically because it ran
+ * with a stale embedding config. The worker cannot see that consumer's config, so a follow-up is admitted only once no
+ * full consumer that was already running at the refusal is still live (the owner host's, or any when the rows have no
+ * worktree); until then the stored refusal replays and no follow-up is spent. The retained facts re-enter as #7602's do (readmitMovedFacts: current revision,
+ * retained visibility, an unattributed group kept, a deleted or replaced entity left refused), and admission rechecks the
+ * retained signature against the brain's current config, so after a real model change nothing is admitted. No
+ * extraction runs again.
+ */
+async function followEmbeddingRefusals(engine: BrainEngine, session: ManagedFactsSession, stored: WriteRequest[]): Promise<WriteRequest[]> {
+  return followRefusals(engine, session, stored, 'embedding-retry', row => row.error_code === 'embedding_configuration',
+    async (tx, followUp, refused) => await ownerRestartedSince(tx, refused) ? readmitMovedFacts(tx, followUp, refused) : null);
+}
+
+async function ownerRestartedSince(engine: BrainEngine, refused: WriteRequest[]): Promise<boolean> {
+  const worktrees = [...new Set(refused.map(row => row.worktree_id).filter((id): id is string => !!id))];
+  const since = refused.map(row => new Date(row.completed_at ?? row.updated_at ?? 0).getTime()).reduce((a, b) => Math.max(a, b), 0);
+  const [row] = await engine.executeRaw<{ stale: boolean }>(`SELECT EXISTS (SELECT 1 FROM persistence_consumers c
+    WHERE c.mode IN ('full','promoted') AND c.renewed_at>now()-($2::integer*interval '1 millisecond') AND c.started_at<=$3::timestamptz
+      AND (cardinality($1::uuid[])=0 OR c.host_id IN (SELECT owner_host_id FROM persistence_worktrees WHERE id=ANY($1::uuid[])))) AS stale`,
+  [worktrees, CONSUMER_LIVE_MS, new Date(since).toISOString()]);
+  return !row?.stale;
 }
 
 /**
