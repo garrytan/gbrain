@@ -74,7 +74,7 @@ import { PageRegexBudget } from '../core/schema-pack/redos-guard.ts';
 export { extractTimelineFromContent, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
 import { extractTimelineFromContent, pruneTimelineOrphans, retractRemovedTimelineEntries, segmentedTimelineText, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
-import { addProjectedTimelineBatch, addProjectedTimelineEntry } from '../core/trust/timeline-projection.ts';
+import { addProjectedPageTimeline, addProjectedTimelineBatch } from '../core/trust/timeline-projection.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { pathToSlug, slugifyPath, slugifySegment, readMetafilePagesMode, DEFAULT_METAFILE_PAGES_MODE, type MetafilePagesMode } from '../core/sync.ts';
@@ -1826,17 +1826,10 @@ export async function extractTimelineForSlugs(
       const content = readFileSync(filePath, 'utf-8');
       const entries = extractTimelineFromContent(content, slug);
       await retractRemovedTimelineEntries(engine, slug, sourceId, content);
-      // #6805: one projected batch per page, whatever its timeline length. A batch the database refuses (one bad row
-      // fails the statement) is retried row by row, so the page keeps its other rows and still reports the refusal.
-      try { created += await addProjectedTimelineBatch(engine, entries.map(entry => ({ ...entry, source_id: sourceId })), { auditSite: 'extract.timeline_inc' }); }
-      catch {
-        let refusal: unknown;
-        for (const entry of entries) {
-          try { if (await addProjectedTimelineEntry(engine, entry.slug, { date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail }, { sourceId })) created++; }
-          catch (e) { refusal ??= e; }
-        }
-        if (refusal) throw refusal;
-      }
+      // #6805: one projected batch per page, whatever its timeline length; a missing page fails it like addTimelineEntry.
+      const page = await addProjectedPageTimeline(engine, sourceId, entries, { auditSite: 'extract.timeline_inc' });
+      created += page.created;
+      if (page.refusal !== undefined) throw page.refusal;
       processed.push(slug);
     } catch (e) { errors.push({ slug, error: e instanceof Error ? e.message : String(e) }); }
   }
