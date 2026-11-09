@@ -3298,7 +3298,7 @@ More: [docs/guides/windowed-reads.md#page_body_segmented](../../docs/guides/wind
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The page was deleted or replaced while the operation ran. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+| The page was deleted or replaced while the operation ran. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain get --include-content --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 ### page_not_found
 
@@ -4260,7 +4260,7 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The target changed since it was read; the expected revision no longer matches. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+| The target changed since it was read; the expected revision no longer matches. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain get --include-content --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 ### revision_required
 
@@ -4268,7 +4268,7 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The target already exists and the write named no revision: supply the expected revision read from the page (or the policy epoch) before replacing it. | Without the revision the write cannot tell an intentional replacement from an overwrite of an edit it never saw; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+| The target already exists and the write named no revision: supply the expected revision read from the page (or the policy epoch) before replacing it. | Without the revision the write cannot tell an intentional replacement from an overwrite of an edit it never saw; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain get --include-content --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 ### revision_unavailable
 
