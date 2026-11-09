@@ -2583,6 +2583,13 @@
         },
         {
           "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "No memory proposals await the owner.",
+          "name": "memory_proposals_pending",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
           "details": {
             "conversation": null,
             "fix": "preview links: gbrain facts relink --dry-run",

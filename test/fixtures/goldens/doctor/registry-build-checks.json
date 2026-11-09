@@ -907,6 +907,10 @@
       },
       {
         "category": "brain",
+        "name": "memory_proposals_pending"
+      },
+      {
+        "category": "brain",
         "name": "unlinked_facts"
       },
       {

@@ -27,9 +27,9 @@ They read as the person, their own restricted pages included, so grant them only
 the client that serves the person's own DM, never to a client that serves shared
 rooms.
 Direct page writes (`add_timeline_entry`, `add_link`, `put_page`, `edit_page`) are not
-attestable: a person's words reach a shared page only through an owner-approved proposal,
-which is not served yet. `--attest-ops` refuses them, and a list that already names one
-is refused for it on every call (`actor_not_attested`, reason `op_not_attested`).
+attestable: a person's words reach a shared page only through an owner-approved proposal
+(`memory_propose`, [below](#proposed-writes)). `--attest-ops` refuses them, and a list that
+already names one is refused for it on every call (`actor_not_attested`, reason `op_not_attested`).
 A client whose `bound_slug_prefixes` do not cover `memory/members/<member>` is refused
 (`permission_denied`) when it saves for that member.
 Links and the right are database state, so a repo-less brain works the same; where
@@ -92,6 +92,44 @@ credential is not granted stays unreadable. Unattested calls and member-bound
 credentials are unchanged. `gbrain access member source remove <member> <source>`
 previews first and says whether the source stays personal; `--yes` applies. Bindings
 are database state, so a repo-less brain works the same.
+
+## Proposed writes
+
+`memory_propose` lets QM suggest one timeline entry or one link on a shared page for
+the person it serves. Nothing is written until the brain owner says yes. Grant it with
+`--attest-ops cancel_write_request,get_write_request,memory_propose,memory_recall,memory_write`.
+
+- `memory_propose {kind, target, idempotency_key, expected_revision?, ...}`: `kind: "timeline"`
+  takes `date` (`YYYY-MM-DD`), `summary`, `detail?` and `source?`; `kind: "link"` takes `to`,
+  `link_type?`, `context?`, `valid_from?` and `valid_until?`. A field of the other kind is
+  refused (`invalid_params`, reason `proposal_kind_field`). The person must be able to read the
+  target (and a link's `to` page). The answer is `{status: "awaiting_owner", request_id, kind,
+  target, expires_at}`; the same key from the same person returns that proposal's current
+  status, and the same key with other fields is `idempotency_conflict`.
+- `get_write_request {request_id}` reads the proposal: `awaiting_owner`, then `approved`
+  (with the write's own receipt), `denied` (with the owner's reason), `expired`, `cancelled`,
+  `failed` or `conflict` (the page or the link target changed while it waited). Only the
+  person it was made for reads it; anyone else gets `not_found`.
+- `cancel_write_request {request_id}` withdraws a proposal still awaiting the owner.
+
+The owner reviews on the brain host, never over MCP:
+
+```bash
+gbrain memory-proposals list                       # awaiting your decision, oldest first
+gbrain memory-proposals show <request_id>          # the proposed text, fenced as untrusted transcript text
+gbrain memory-proposals approve <request_id>       # re-checks the person, the grant and the page, then writes it
+gbrain memory-proposals deny <request_id> --reason "<why>"
+```
+
+An approved proposal becomes an ordinary write admitted at approval, under the same
+`request_id`, with the person's member id (never QM's id) in its provenance. Until then the
+text lives only in the `memory_proposals` table: it never reaches git, an export, search or
+recall. `gbrain doctor` (`memory_proposals_pending`) and `gbrain status` show how many wait.
+Limits, all set with `gbrain config set`: `proposals.ttl_hours` (168), `proposals.max_pending_per_actor`
+(10), `proposals.max_pending_per_credential` (50; over either cap is `proposals_pending_limit`),
+`proposals.max_payload_chars` (1,000; over it is `invalid_params`, reason `proposal_too_large`),
+`proposals.max_reason_chars` (500) and `proposals.retention_days` (30: closed proposals are
+deleted after it; awaiting ones expire at their TTL first). A repo-less brain works the same.
 
 ## What the tools do
 

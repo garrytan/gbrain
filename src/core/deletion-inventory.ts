@@ -106,6 +106,7 @@ const ROWS: readonly Row[] = [
   ['mcp_request_log', 'out_of_scope', 'probed_reported', 'token_name agent_name operation status params error_message', 'params error_message'],
   ['mcp_spend_log', 'out_of_scope', 'no_memory_text', 'client_id token_name operation provider model budget_key'],
   ['mcp_spend_reservations', 'out_of_scope', 'no_memory_text', 'client_id model provider status usage_unknown_reason budget_key'],
+  ['memory_proposals', 'out_of_scope', 'probed_reported', 'principal_kind principal_id system external_id member_id source_id kind operation slug to_slug payload payload_digest expected_revision authority state reason decided_by error_code', 'payload reason'],
   ['mention_gazetteer_entries', 'out_of_scope', 'no_memory_text', 'source_id name_norm target_slug'],
   ['mention_index_status', 'out_of_scope', 'no_memory_text', 'source_id state policy_fingerprint error'],
   ['migration_impact_log', 'out_of_scope', 'probed_reported', 'remediation_id metric_name source_id brain_id idempotency_key applied_by details', 'details'],

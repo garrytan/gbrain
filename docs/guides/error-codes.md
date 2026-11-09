@@ -3636,6 +3636,38 @@ More: [docs/guides/repair.md#projection-owner-resident](../../docs/guides/repair
 |---|---|---|---|---|---|---|
 | The current text projection is not ready. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
+### proposal_closed
+
+<a id="proposal_closed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The memory proposal is no longer awaiting the owner (approved, denied, expired, cancelled, failed or in conflict), so it was not approved or denied again. | A proposal is decided once; the decision and the receipt it left stay as they are. | Read how it ended with gbrain memory-proposals show <request_id>; the proposer sends a new proposal if the change is still wanted. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/qm.md#proposed-writes](../../docs/guides/qm.md#proposed-writes)
+
+### proposal_expired
+
+<a id="proposal_expired"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The memory proposal passed its TTL (proposals.ttl_hours) before the owner decided, so nothing was written. | A held proposal is only as current as the page QM showed the person; an old one is closed rather than applied. | The proposer sends a new proposal if the change is still wanted; the operator raises proposals.ttl_hours to give owners longer. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/qm.md#proposed-writes](../../docs/guides/qm.md#proposed-writes)
+
+### proposals_pending_limit
+
+<a id="proposals_pending_limit"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Too many memory proposals already await the owner for this person (proposals.max_pending_per_actor) or this credential (proposals.max_pending_per_credential), so this one was not saved. | The caps keep one system credential from flooding the owner with held text. | Wait for the owner to decide or for a proposal to expire, or cancel one with cancel_write_request; the operator sets the caps. | agent | `repeat the read that failed` | 1 | yes |
+
+Reasons: `actor`, `credential`.
+
+More: [docs/guides/qm.md#proposed-writes](../../docs/guides/qm.md#proposed-writes)
+
 ### provenance_required
 
 <a id="provenance_required"></a>
