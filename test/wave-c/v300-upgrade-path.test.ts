@@ -8,7 +8,8 @@
  * validated, the page keeps its row with indexed_commit NULL (nothing is backfilled), and a second run applies nothing.
  * Head is read after a repeat boot: on master a repeat boot already re-creates bump_page_generation_clock_fn from the blob
  * with a differently formatted body (pinned by test/pglite-upgrade-replay.test.ts), which is not this migration's.
- * Each backend's brain is opened once; each test returns it to head, so the next one starts from head again.
+ * Each backend's brain is opened once; each test returns it to head, so the next one starts from head again. The PGLite
+ * brain opens without GBRAIN_PGLITE_SNAPSHOT: a snapshot-loaded engine skips initSchema, so a boot would migrate nothing.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import postgres from '#postgres';
@@ -21,6 +22,7 @@ import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { catalogGoldenView, flattenGoldenView, pgliteCatalogQuery, postgresCatalogQuery } from '../helpers/schema-catalog.ts';
 import { snapshotCatalog } from '../helpers/schema-diff.ts';
 import { requirePostgresTestDatabase, testBackends } from '../helpers/test-backends.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 const V302 = /page_pending_heads|page_upload_spool|indexed_commit|persistence_requests_state_check/;
 const migration = MIGRATIONS.find(m => m.name === 'git_first_strict_path')!;
@@ -51,7 +53,7 @@ for (const backend of testBackends()) describe(`[${backend}] upgrade path to the
   beforeAll(async () => {
     if (backend === 'pglite') {
       const pglite = new PGLiteEngine();
-      await pglite.connect({});
+      await withEnv({ GBRAIN_PGLITE_SNAPSHOT: undefined }, () => pglite.connect({}));
       engine = pglite;
       catalog = () => flatCatalog(pgliteCatalogQuery(pglite));
     } else {
