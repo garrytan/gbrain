@@ -94,6 +94,8 @@ import { POLICY_KEYS } from './reconcile-additive.ts';
 import { protectedReconcileKey } from './reconcile-merge.ts';
 import { PROTECTED_FRONTMATTER_KEYS } from '../frontmatter-recovery.ts';
 import { preparePagePurge, purgePageInTransaction, type PreparedPagePurge } from './page-purge.ts';
+import { originCommitted } from './sync-markers.ts';
+import { syncDeleteOrigin } from './sync-delete-tombstones.ts';
 import { withTrustKeep } from './context.ts';
 import { isFenceEditWrite, pageGateTrust, pageWriteTrust, recordAgentPageLowering, stampPageTrustMarker, storedPageTier } from '../trust/page-write.ts';
 import { compareTrust, type WriteTrust } from '../trust/tier.ts';
@@ -657,6 +659,19 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
     error.detail = 'shared_origin';
     throw error;
   }
+  // GST-2201: a retention purge never removes a file committed at the source's last commit or at HEAD. A tombstone sync made
+  // from the file's absence waits for the sync that restores it; a person's tombstone is removed database-only and the file stays.
+  // A person's delete that kept the file only because another live page shared it (`write_through.skipped: shared_origin`)
+  // still removes the file once the tombstone owns it alone.
+  const committedFile = purge && p.retention === true && snapshot.page.deleted_at != null && !!file && !shared && excludedPath === null
+    && await originCommitted(engine, row.source_id, snapshot.page.source_path)
+    && (await engine.executeRaw(`SELECT 1 FROM persistence_requests r WHERE r.source_id=$1 AND r.slug=$2 AND (r.page_id IS NULL OR r.page_id=$3) AND r.operation='delete_page'
+      AND r.state='committed' AND r.outcome->'write_through'->>'skipped'='shared_origin' LIMIT 1`, [row.source_id, row.slug, snapshot.page.id])).length === 0;
+  if (committedFile) {
+    const [made] = await engine.executeRaw<{ sync: boolean }>(`SELECT ${syncDeleteOrigin('p')} AS sync FROM pages p WHERE p.id=$1`, [snapshot.page.id]);
+    if (made?.sync) throw pageRefusal('revision_conflict', 'The file of this sync-deleted page is committed again, so the retention purge left the page and the file alone; the next sync restores the page.', row,
+      `Page ${row.slug}'s file is committed in source ${row.source_id}'s checkout.`, pageFix(row.source_id, row.slug));
+  }
   // #6511: the purge's journal sweep runs here, under the preparation budget, never inside the 5 s publication transaction.
   const preparedPurge: PreparedPagePurge | null = purge ? await preparePagePurge(engine, row, snapshot, clock) : null;
   // #6948: a page merged into its duplicate holds that page's body, so an owner purge would tombstone the survivor's content.
@@ -667,7 +682,7 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
     error.detail = 'origin_twin';
     throw error;
   }
-  const prepared: PreparedMutation = { observedRevision, noop, file, ...await pageDatabaseOnlyPublication(engine, row, file),
+  const prepared: PreparedMutation = { observedRevision, noop, file: committedFile ? undefined : file, ...await pageDatabaseOnlyPublication(engine, row, committedFile ? undefined : file),
     // W1: a purge bumps sources.purge_epoch, so it holds the source row exclusively from the start (retention bumps nothing, #26);
     // the derived rows' and cascaded links' streams are locked with the page.
     ...(purge && !preparedPurge?.retention ? { sourceExclusive: true } : {}),
@@ -675,6 +690,7 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
     ...(preparedPurge && !preparedPurge.retention ? { afterCommit: async () => { appendPurgeCommitted(row.id); } } : {}),
     ...(preparedPurge?.derivedSlugs.length ? { additionalPageKeys: preparedPurge.derivedSlugs.map(slug => ({ sourceId: row.source_id, slug })) } : {}),
     ...(excludedPath !== null ? { databaseOnlyReason: 'sync_excluded' as const } : {}), ...(shared ? { databaseOnlyReason: 'shared_origin' as const } : {}),
+    ...(committedFile ? { databaseOnlyReason: 'committed_file' as const } : {}),
     ...(shared ? { validate: async (tx: BrainEngine) => { prepared.databaseOnlyWarning = await validateSharedOrigin(tx, row, shared, sharedRetention); } } : {}),
     apply: async tx => {
       if (purge && excludedPath !== null) await assertStillSyncExcluded(tx, row, excludedPath);

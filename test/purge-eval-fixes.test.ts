@@ -92,6 +92,19 @@ describe('purge eval fixes', () => {
     expect(done.stores.find((s: { store: string }) => s.store === 'persistence_requests')).toMatchObject({ status: 'deleted' });
   }, 60_000);
 
+  test('W3: a page purge leaves no timeline text in its add_timeline_entry receipts, compacted ones included', async () => {
+    await seed();
+    const kept = await call('add_timeline_entry', { slug: 'people/alice-example', date: '2026-02-03', summary: 'Moved house TIMELINE-MARK-ONE', request_id: randomUUID() });
+    const compacted = await call('add_timeline_entry', { slug: 'people/alice-example', date: '2026-02-04', summary: 'Changed banks TIMELINE-MARK-TWO', request_id: randomUUID() });
+    expect([kept.status, compacted.status]).toEqual(['ok', 'ok']);
+    await engine.executeRaw(`UPDATE persistence_requests SET intent=NULL, compacted=true WHERE operation='add_timeline_entry' AND outcome->'entry'->>'summary' LIKE '%MARK-TWO'`);
+    expect(await journalCarries('TIMELINE-MARK')).toBe(2);
+    expect((await purgePage('people/alice-example')).status).toBe('purged');
+    expect(await journalCarries('TIMELINE-MARK')).toBe(0);
+    const outcomes = await engine.executeRaw<{ outcome: { entry: { summary: string }; bullet: string } }>(`SELECT outcome FROM persistence_requests WHERE operation='add_timeline_entry' ORDER BY sequence`);
+    expect(outcomes.map(o => [o.outcome.entry.summary, o.outcome.bullet])).toEqual([['[purged]', '[purged]'], ['[purged]', '[purged]']]);
+  }, 60_000);
+
   test('39-3: remembering a purged claim refuses with purged_content (verb path, local and remote mapping)', async () => {
     const id = await seed();
     await purgeFact(id);

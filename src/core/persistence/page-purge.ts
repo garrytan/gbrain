@@ -46,7 +46,7 @@ import { faultPoint } from './fault-points.ts';
 import { writeOriginDeletedMarker } from './sync-markers.ts';
 import { clearRebuildableCache } from './rebuildable-cache.ts';
 import { carryingNeedles, findRequestsForSlugs, JOURNAL_SWEEP_MATCH_CAP, recheckRequestsCarrying, redactRequestIntents, sweepRequestsCarrying, sweepRequestsForGroups,
-  type JournalSweep } from './intent-redaction.ts';
+  type IntentRedactionTarget, type JournalSweep } from './intent-redaction.ts';
 import { dropPurgedFenceRows } from '../facts/purge-overlay.ts';
 import { isOutcomeMarker, outcomeMarkerSql } from '../facts/audit-sources.ts';
 import { derivedRowsFrom, hideDerivedRows } from '../facts/derivation-inputs.ts';
@@ -327,12 +327,18 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
   // #6511 [R2]: the preparation sweep's targets, plus the tail past its ceiling and the rows pending at scan time, re-tested here.
   const recheck = await lookup('tail_recheck', () => recheckRequestsCarrying(tx, sourceId, needles, prepared.sweep,
     { exclude: row.id, beforePending: () => faultPoint('purge:pending_recheck', { requestId: row.request_id, sourceId, operation: row.operation }) }));
-  const forSlug = await lookup('slug_lookup', async () => [...await findRequestsForSlugs(tx, sourceId, [slug]), ...reasons.length ? await requestsRecordingReasons(tx, sourceId, slug) : []]);
+  // The page's add_timeline_entry receipts keep the entry text in their outcome (`entry`, `bullet`), compacted ones included:
+  // that text is a needle in the page's own requests, as its reasons are.
+  const timeline = await lookup('slug_lookup', () => tx.executeRaw<IntentRedactionTarget & { summary: string | null; bullet: string | null }>(`SELECT id::text AS id, principal_kind, principal_id,
+    outcome->'entry'->>'summary' AS summary, outcome->>'bullet' AS bullet FROM persistence_requests
+    WHERE source_id=$1 AND slug=$2 AND operation='add_timeline_entry' AND outcome ? 'entry' ORDER BY sequence LIMIT 10000`, [sourceId, slug]));
+  const timelineText = [...new Set(timeline.flatMap(t => [t.summary, t.bullet]).map(text => text?.trim() ?? '').filter(Boolean))];
+  const forSlug = await lookup('slug_lookup', async () => [...await findRequestsForSlugs(tx, sourceId, [slug]), ...reasons.length ? await requestsRecordingReasons(tx, sourceId, slug) : [], ...timeline]);
   const own = new Set(forSlug.map(r => r.id));
   const requests = [...new Map([...forSlug, ...prepared.sweep.targets, ...recheck.targets].map(r => [r.id, r])).values()];
   // GBRA-217: the page's reasons are needles in its own requests only, so a short reason never redacts another page's receipt.
   removed.persistence_requests = await lookup('redaction_read', async () => await redactRequestIntents(tx, requests.filter(r => own.has(r.id)), row.id,
-    { skipPending: true, needles: [...needles, ...reasons] }) + await redactRequestIntents(tx, requests.filter(r => !own.has(r.id)), row.id, { skipPending: true, needles }));
+    { skipPending: true, needles: [...needles, ...reasons, ...timelineText] }) + await redactRequestIntents(tx, requests.filter(r => !own.has(r.id)), row.id, { skipPending: true, needles }));
   removed.persistence_effects = await stripPageGitNotes(tx, sourceId, slug);
   const journalSweep = { scanned: prepared.sweep.scanned, ceiling: prepared.sweep.ceiling, watermark: prepared.sweep.watermark ?? null, batch: prepared.sweep.batch ?? 1,
     tail: recheck.tail, pending_rechecked: recheck.pendingRechecked, complete: prepared.sweep.complete && recheck.complete };
