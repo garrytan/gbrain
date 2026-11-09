@@ -1,8 +1,10 @@
 /**
  * GBRA-156: `sources_not_readable`, the refusal of an unscoped remote read
  * that came back empty because its readable sources hold no page it may read
- * (and, for recall and query, no world fact) while other sources hold such
- * pages. Private pages count on neither side when remote reads exclude them.
+ * (and, for recall and query, no active world fact) while other sources hold
+ * such pages. Quarantined pages count on neither side, nor private pages when
+ * remote reads exclude them. The check is one query-independent yes/no about
+ * the brain; it never says another source matches the question.
  *
  * A connection with no source grant (a legacy token minted without --sources,
  * whose hasSourceGrant is false, or an unbound agent stdio connection) reads the default source plus the
@@ -22,6 +24,7 @@ import { opError } from './ops/contract.ts';
 import { federatedSearchScope } from './ops/context.ts';
 import { hostFix } from './ops/op-fix.ts';
 import { privatePagesFilterFragment, resolveExcludePrivatePages } from './search/private-visibility.ts';
+import { quarantineFilterFragment } from './quarantine.ts';
 
 const UNSCOPED_READ_OPS: ReadonlySet<string> = new Set(['search', 'query', 'recall', 'list_pages']);
 
@@ -40,9 +43,11 @@ export async function assertUnscopedReadReachesPages(op: string, params: Record<
     const readable = scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : null);
     if (!readable) return;
     const readableFacts = op === 'recall' || op === 'query'
-      ? ` OR EXISTS (SELECT 1 FROM facts WHERE source_id = ANY($1::text[]) AND visibility = 'world')`
+      ? ` OR EXISTS (SELECT 1 FROM facts WHERE source_id = ANY($1::text[]) AND visibility = 'world'
+                       AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()))`
       : '';
-    const visible = await resolveExcludePrivatePages(ctx.engine, ctx.remote) ? ` AND ${privatePagesFilterFragment('p')}` : '';
+    const visible = ` AND ${quarantineFilterFragment('p')}`
+      + (await resolveExcludePrivatePages(ctx.engine, ctx.remote) ? ` AND ${privatePagesFilterFragment('p')}` : '');
     const [row] = await ctx.engine.executeRaw<{ refuse: boolean }>(
       `SELECT CASE WHEN EXISTS (SELECT 1 FROM pages p WHERE p.source_id = ANY($1::text[]) AND p.deleted_at IS NULL${visible})${readableFacts} THEN false
                    ELSE EXISTS (SELECT 1 FROM pages p JOIN sources s ON s.id = p.source_id

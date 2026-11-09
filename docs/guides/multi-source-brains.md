@@ -125,9 +125,11 @@ empty result that reads like a clean miss.
 
 So an unscoped `search`, `query`, `recall` or `list_pages` from such a
 connection that comes back empty is refused with `sources_not_readable` when
-the sources it reads hold no page at all (for `recall` and `query`, no world fact either)
-while other sources on the brain hold pages. The refusal
-never names a source the connection cannot read. Its fix is host-side: the
+the sources it reads hold no page at all (for `recall` and `query`, no active world fact either)
+while other sources on the brain hold pages. Quarantined pages count on neither
+side. The check is one yes/no about the whole brain, independent of the query:
+whether another source holds pages. It never says another source matches the
+question, and it never names a source or page the connection cannot read. Its fix is host-side: the
 user picks the source these connections should read and the brain host runs
 `gbrain sources federate <source>`, or grants the connection its sources
 (`gbrain auth rescope --token <name> --sources <ids>`).
