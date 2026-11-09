@@ -35,6 +35,7 @@
     "recompute_emotional_weight",
     "extract-atoms-drain",
     "embed-backfill",
+    "embed-page",
     "connector-sync",
     "extract-ner",
     "extract-takes-from-pages",

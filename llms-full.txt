@@ -5819,8 +5819,9 @@ keeps its text in `page_segment_texts`, its layout and headings in
 `page_body_staging_texts`), view sizes in `page_view_digests`, and per-segment
 derivation results (link candidates, window anchors) in `page_segment_derivations`,
 with each page's derivation spend in `page_derivation_spend` and derivation purges
-in progress in `page_segment_derivation_purges` / `page_segment_derivation_purge_pages`.
-gbrain enables RLS on all ten on every schema replay, as it does on `pages` and
+in progress in `page_segment_derivation_purges` / `page_segment_derivation_purge_pages`,
+and the read pins that keep a windowed read on one body generation in `page_read_pins`.
+gbrain enables RLS on all eleven on every schema replay, as it does on `pages` and
 `content_chunks`, so with no policy a role that does not bypass RLS reads no row
 of them. Title search, the source-scoped vector scan, the chunk windows search
 reads around its hits, `get_chunks` and get_page check a chunk of a page stored
@@ -5880,6 +5881,11 @@ CREATE POLICY page_segment_derivation_purges_scope_filter ON page_segment_deriva
 CREATE POLICY page_segment_derivation_purge_pages_scope_filter ON page_segment_derivation_purge_pages
   USING (current_setting('app.scopes', true) = '*'
          OR EXISTS (SELECT 1 FROM page_segment_derivation_purges r WHERE r.request_id = page_segment_derivation_purge_pages.request_id));
+-- A role that pages a segmented page records its read pin here; without a
+-- policy those writes are refused.
+CREATE POLICY page_read_pins_scope_filter ON page_read_pins
+  USING (current_setting('app.scopes', true) = '*'
+         OR EXISTS (SELECT 1 FROM pages p WHERE p.id = page_id));
 
 -- A read role that searches and reads pages. The other tables it reads
 -- (config, timeline_entries, facts, ...) need policies of their own.
@@ -5897,6 +5903,7 @@ ALTER TABLE page_segment_derivations FORCE ROW LEVEL SECURITY;
 ALTER TABLE page_derivation_spend FORCE ROW LEVEL SECURITY;
 ALTER TABLE page_segment_derivation_purges FORCE ROW LEVEL SECURITY;
 ALTER TABLE page_segment_derivation_purge_pages FORCE ROW LEVEL SECURITY;
+ALTER TABLE page_read_pins FORCE ROW LEVEL SECURITY;
 ALTER TABLE content_chunks FORCE ROW LEVEL SECURITY;
 ```
 <!-- gbrain:segmented-rls-recipe:end -->
