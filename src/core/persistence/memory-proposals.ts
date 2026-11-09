@@ -98,7 +98,7 @@ export async function ownerProposal(engine: SqlEngine, requestId: string): Promi
 
 export const proposalClosedError = (row: Pick<MemoryProposal, 'request_id' | 'state'>) => opError('proposal_closed',
   `Proposal ${row.request_id} is ${row.state}; only a proposal awaiting the owner can be approved or denied.`,
-  'Nothing changed. gbrain memory-proposals show <request_id> shows how it ended; the proposer sends a new proposal if the change is still wanted.');
+  `Nothing changed. gbrain memory-proposals show ${row.request_id} shows how it ended; the proposer sends a new proposal if the change is still wanted.`);
 export const proposalExpiredError = (row: Pick<MemoryProposal, 'request_id'>) => opError('proposal_expired',
   `Proposal ${row.request_id} expired before a decision.`,
   'Nothing was written. The proposer sends a new proposal if the change is still wanted; proposals.ttl_hours sets how long one waits.');
