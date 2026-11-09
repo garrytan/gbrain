@@ -56,7 +56,7 @@ afterAll(async () => {
   await engine.disconnect();
 });
 
-const core = () => listCorePages(engine, { sourceIds: [SRC], excludePrivate: true }).then(pages => pages.map(p => p.slug).sort());
+const core = (forCaller = true) => listCorePages(engine, { sourceIds: [SRC], excludePrivate: true, forCaller }).then(pages => pages.map(p => p.slug).sort());
 
 describe('#8395 auxiliary page reads follow the caller', () => {
   test('core memory lists the pages the bound member may read', async () => {
@@ -64,6 +64,19 @@ describe('#8395 auxiliary page reads follow the caller', () => {
     expect(await as('bob', true, core)).toEqual([BOB]);
     expect(await as(null, true, core)).toEqual([]);
     expect(await as('alice', false, core)).toEqual([ALICE, SECRET]);
+  });
+
+  test('local core reads keep the plain privacy fragment, even with the read hatch open', async () => {
+    const prior = process.env.GBRAIN_REMOTE_PRIVATE_PAGES;
+    process.env.GBRAIN_REMOTE_PRIVATE_PAGES = '1';
+    try {
+      __resetPrivateVisibilityCacheForTests();
+      expect(await core(false)).toEqual([]);
+      expect(await core(true)).toEqual([SECRET]);
+    } finally {
+      if (prior === undefined) delete process.env.GBRAIN_REMOTE_PRIVATE_PAGES; else process.env.GBRAIN_REMOTE_PRIVATE_PAGES = prior;
+      __resetPrivateVisibilityCacheForTests();
+    }
   });
 
   test('strict entity resolution and refusal candidates', async () => {
