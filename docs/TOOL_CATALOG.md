@@ -193,7 +193,7 @@ Every non-localOnly operation on the MCP surface: 171 tools across 26 areas. **S
 | `edit_page` | Change part of a page: prefer this over put_page for small changes. | write | yes |  |
 | `fetch` | Fetch the full text of one search result by its opaque, source-qualified `id` (OpenAI deep-research contract: the search/fetch pair). | read |  |  |
 | `find_pages` | Find pages by name or path (what ls/find would answer), sorted by slug. | read |  |  |
-| `get_chunks` | Return a page's indexed content chunks (the units search ranks), in chunk_index order, 50 at a time by default. | read |  |  |
+| `get_chunks` | Return a page's indexed content chunks (the units search ranks), in chunk_index order (document order for a page stored in segments), 50 at a time by default. | read |  |  |
 | `get_page` | Read a page; `section`/`grep` reads one part. | read | yes |  |
 | `get_page_upload` | An upload's state and next_part, to resume after a lost reply. | write |  |  |
 | `get_raw_data` | Retrieve raw data for a page. | read |  |  |
