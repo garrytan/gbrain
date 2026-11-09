@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**GPT-6.1 Sol's recorded-time page reads and typed graph chains now get answers instead of refusals.** Sol fills in every optional argument of a tool call. A `get_page` with `known_as_of` (the page as the brain had recorded it at an instant) arrived beside `include_content: true`, `include_timeline_entries: true`, a one-line `lines` window, `view: "read"` and the rest, and gbrain refused the whole call because a recorded-time read does not serve those arguments. A `traverse_graph` with `hops` arrived beside `depth`, `link_type` and `direction`, and was refused the same way. Sol does not follow the refusal's fix, so in a replay of its recorded calls 178 of 651 `get_page` and `traverse_graph` calls failed on arguments alone. Both calls now run: a recorded-time read returns the whole page as recorded, a chain walks its hops, and the response's `set_aside` names each argument that was ignored and why. `body: outline` or `window` with `known_as_of` still refuses, because that names a read mode the ledger cannot serve.
+
+### Itemized changes
+
+- `src/core/ops/known-as-of.ts`: `get_page {known_as_of}` sets aside the arguments that shape a current read (window selectors, `section`, `grep`, `context`, `include_content`, `content_only`, `include_timeline_entries`, `view`, `max_bytes`, `fuzzy` and the rest) and returns `set_aside {ignored, note}`; only `body: outline|window` refuses `invalid_params`, with the same keep-only-what-applies `fix`.
+- `src/core/ops/links.ts`: `traverse_graph` with `hops` walks the chain with `depth`, `link_type` and `direction` set aside and named in `set_aside`; malformed hops still refuse.
+- `src/core/behavior-change-notice.ts`: one row for the changed refusals.
+- Docs: `docs/guides/multi-hop.md`, the key-files rows for `known-as-of.ts` and `links.ts`.
+- Tests: `test/tool-args-empty-optional-sol.test.ts` replays Sol's shapes on every entry point (MCP remote and local, `gbrain call`, the SkillOpt rollout and write-capture registries, the subagent registry) against a ledger-enabled brain; `test/traverse-graph-hops.test.ts` and `test/get-page-slices.test.ts` assert the set-aside contract where they asserted the refusal.
+
 ## [0.60.626.0] - 2026-11-09
 
 **`gbrain sources record-origin --remote` now locks down the existing checkout too, and on a managed brain it can no longer report success while a reclone still clones with git-lfs on.** On a managed brain the record took only the source row lock, so a reclone that had already read the source, or held its worktree locks, could clone with git-lfs downloads and hooks on after the command said the source was recorded. The record now takes the worktree locks and rows a reclone takes (refusing the id `source_busy` while one runs), and the reclone reads the record under its own locks. `--remote --apply` now also turns git-lfs downloads and hooks off in the existing checkout's `.git/config`, because a reclone only happens when a checkout is lost or replaced, and until then doctor read green while the checkout still fetched git-lfs objects and ran hooks. The git-lfs check now reads a committed `.gitattributes` under a directory whose name holds a tab (it was cut at the tab and skipped), ignores commented-out `filter=lfs` lines, says "declares a git-lfs filter" when a rule only declares one, and records a clone of an empty repository instead of telling the operator to restore an intact checkout. A failed write is reported for its own id instead of ending the run without saying which ids were recorded.
