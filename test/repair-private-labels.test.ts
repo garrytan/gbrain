@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
-import { importFromContent } from '../src/core/import-file.ts';
+import { importFromContent, importFromFile } from '../src/core/import-file.ts';
 import { serializeMarkdown } from '../src/core/markdown.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { runRepairCommand } from '../src/commands/repair.ts';
@@ -38,6 +38,8 @@ import type { OperationContext } from '../src/core/ops/contract.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { privateLabelsLedger } from '../src/commands/repair-private-labels.ts';
 import type { PrivateLabelsLedgerLine } from '../src/core/repair/private-labels.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 
 let engine: PGLiteEngine;
 const dir = mkdtempSync(join(tmpdir(), 'gbrain-private-labels-'));
@@ -564,6 +566,85 @@ describe('repair private-labels restore after a landed restore', () => {
     expect(again.listing ?? []).toEqual([]);
     expect(again.details.counts.before).toEqual({ restorable: 0, already_restored: 0, page_gone: 0, removed_after_restore: 1 });
     expect(again.warnings.some((w: string) => w.includes('removed after a restore landed'))).toBe(true);
+  });
+});
+
+/**
+ * GST-2093: clearing an ordinary origin's label also lifts pages whose only privacy came from it: a derived_from page
+ * (when the origin's visibility: private goes) and a life-chronicle event (which honors the origin's alias). The
+ * preview counts them per window, by category, and warns; a remote non-owner read confirms each count.
+ */
+describe('repair private-labels preview counts the dependents a window exposes', () => {
+  const source = 'source-d';
+  const remoteGet = async (slug: string) => (await dispatchToolCall(engine, 'get_page', { slug }, { remote: true, transport: 'stdio', sourceId: source, takesHoldersAllowList: ['world'] }))
+    .content.map(c => c.text).join(NL);
+
+  test('derived_from pages and chronicle events of the window are counted, the warning names the counts, and the reads agree', async () => {
+    __resetPrivateVisibilityCacheForTests();
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [source]);
+    await seed('meetings/m1', 'note', { access: 'private' }, source);
+    await seed('notes/origin-d', 'note', { access: 'private', visibility: 'private' }, source);
+    await seed('notes/other-private', 'note', { visibility: 'private' }, source);
+    await seed('notes/summary-d', 'note', { derived_from: 'notes/origin-d.md' }, source, 'canarysummaryd lineage page.');
+    await seed('notes/summary-two', 'note', { derived_from: ['notes/origin-d', 'notes/other-private'] }, source, 'canarysummarytwo lineage page.');
+    await seed('events/e1', 'event', { captured_via: 'life-chronicle:test', event: { depth: 'meetings/m1' } }, source, 'canaryeventone chronicle event.');
+    for (const slug of ['notes/summary-d', 'notes/summary-two', 'events/e1']) expect(await remoteGet(slug)).not.toContain('canary');
+
+    const first = await json(['private-labels', '--source', source, '--limit', '1']);
+    expect(first.listing).toEqual([{ item: source + ':meetings/m1', class: 'alias', detail: 'remove access: private' }]);
+    expect(first.details.dependents).toEqual({ derived_from: 0, life_chronicle: 1 });
+    const whole = await json(['private-labels', '--source', source]);
+    expect(whole.listing.map((l: { item: string }) => l.item)).toEqual([source + ':meetings/m1', source + ':notes/origin-d']);
+    expect(whole.details.dependents).toEqual({ derived_from: 1, life_chronicle: 1 });
+    const warning = whole.warnings.find((w: string) => w.includes('page(s) whose only privacy'));
+    expect(warning).toContain('2 page(s)');
+    expect(warning).toContain('1 derived_from');
+    expect(warning).toContain('1 life-chronicle');
+    expect(warning).not.toContain('summary');
+
+    const applied = await json(['private-labels', '--source', source, '--apply', '--expect', whole.preview_hash]);
+    expect(applied.applied).toBe(2);
+    __resetPrivateVisibilityCacheForTests();
+    expect(await remoteGet('notes/summary-d')).toContain('canarysummaryd');
+    expect(await remoteGet('events/e1')).toContain('canaryeventone');
+    expect(await remoteGet('notes/summary-two')).not.toContain('canary');
+    const none = await json(['private-labels', '--source', source]);
+    expect(none.details.dependents).toEqual({ derived_from: 0, life_chronicle: 0 });
+    expect(none.warnings.some((w: string) => w.includes('page(s) whose only privacy'))).toBe(false);
+  });
+});
+
+/**
+ * GST-2128 item 1: on a brain without managed persistence the repair writes only the database, so a page whose file sits
+ * in its source's checkout would get the label back from the file at the next sync or re-import while the ledger says
+ * it was cleared. Such a page is held (outcome file_backed) with the manual fix; a page with no file still clears.
+ */
+describe('repair private-labels on an unmanaged file-backed source', () => {
+  test('a page with a file in the checkout is held and keeps its label through a re-import; a database-only page clears', async () => {
+    const source = 'source-f';
+    const root = join(dir, 'checkout-f');
+    mkdirSync(join(root, 'notes'), { recursive: true });
+    await engine.executeRaw('INSERT INTO sources (id, name, local_path) VALUES ($1, $1, $2) ON CONFLICT (id) DO NOTHING', [source, root]);
+    const file = join(root, 'notes', 'f.md');
+    writeFileSync(file, serializeMarkdown({ access: 'private' }, body('notes/f'), '', { type: 'note' as never, title: 'notes/f', tags: ['t1'] }));
+    expect((await importFromFile(engine, file, 'notes/f.md', { sourceId: source, noEmbed: true })).status).toBe('imported');
+    await seed('notes/dbonly', 'note', { access: 'private' }, source);
+    const preview = await json(['private-labels', '--source', source]);
+    expect(preview.listing.map((l: { item: string }) => l.item)).toEqual([source + ':notes/f', source + ':notes/dbonly']);
+    expect(preview.warnings.some((w: string) => w.includes('1 listed page(s) have a file'))).toBe(true);
+    const applied = await json(['private-labels', '--source', source, '--apply', '--expect', preview.preview_hash]);
+    expect(applied.failed).toEqual([]);
+    expect(applied.applied).toBe(1);
+    expect(applied.outcomes.file_backed).toBe(1);
+    expect(applied.outcome_items.find((o: { item: string }) => o.item === source + ':notes/f').reason).toContain('notes/f.md');
+    expect((await row('notes/f', source)).frontmatter.access).toBe('private');
+    expect('access' in (await row('notes/dbonly', source)).frontmatter).toBe(false);
+    const brain = preview.scope.brain_id;
+    expect(ledgerLines(brain).filter(l => l.source_id === source && l.removed).map(l => l.slug)).not.toContain('notes/f');
+    await importFromFile(engine, file, 'notes/f.md', { sourceId: source, noEmbed: true, forceRechunk: true });
+    expect((await row('notes/f', source)).frontmatter.access).toBe('private');
+    const restore = await json(['private-labels', '--source', source, '--class', 'restore']);
+    expect(restore.listing).toEqual([{ item: source + ':notes/dbonly', class: 'restore', detail: 're-add access: private' }]);
   });
 });
 

@@ -29,6 +29,13 @@
  * keeping the stored tier. readable_by and folder
  * rules are left as they are.
  *
+ * The preview also counts, per window and by category, the pages whose only privacy is a listed
+ * page's label and that the window would expose with it (`dependents`, never slugs): derived_from
+ * pages whose declared origin loses its visibility: private, and life-chronicle events extracted
+ * from a listed page. On a brain without managed persistence a page whose file sits in its source's
+ * checkout is held (`file_backed`): the repair writes only the database there, and the next sync or
+ * re-import would put the label back from the file.
+ *
  * Reversible: the ledger the caller passes (`privateLabelsLedger`; the CLI keeps it at
  * <gbrain home>/repair/private-labels/<brain_id>.jsonl, src/commands/repair-private-labels.ts) is
  * write-ahead. Each item appends an `intent` line with the exact removed (or re-added) values before
@@ -48,8 +55,9 @@ import { withTrustKeep } from '../persistence/context.ts';
 import { maintenancePreflight, publishMaintenancePage } from '../persistence/prepared-maintenance.ts';
 import { importFromContent } from '../import-file.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
+import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
-import { PRIVACY_ALIASES, privacyAliasSql } from '../search/private-visibility.ts';
+import { PRIVACY_ALIASES, privacyAliasSql, privateSnapshotFilterFragment, readHonorAliases } from '../search/private-visibility.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope } from './core.ts';
 
 export type ClearClass = 'alias' | 'alias-and-visibility' | 'git-publish';
@@ -208,6 +216,50 @@ async function planRestore(engine: BrainEngine, scope: RepairScope, selection: S
 }
 
 /**
+ * GST-2093: the pages a window's clears expose besides themselves, by category: a derived_from page (not itself a derived
+ * type) whose declared origins that are visibility: private all lose it in this window, and a life-chronicle event whose
+ * origin (`event.depth`) is a listed page hidden now. Each must not be private by its own fields. Counts only.
+ */
+async function windowDependents(engine: BrainEngine, window: Approved[]): Promise<{ derived_from: number; life_chronicle: number }> {
+  const clears = window.filter(entry => entry.mode === 'clear');
+  if (!clears.length) return { derived_from: 0, life_chronicle: 0 };
+  await readHonorAliases(engine);
+  const declared = (p: string) => `ARRAY(SELECT regexp_replace(declared.slug, '\\.md$', '') FROM jsonb_array_elements_text(
+    CASE WHEN jsonb_typeof(${p}.frontmatter->'derived_from') = 'array' THEN ${p}.frontmatter->'derived_from' ELSE jsonb_build_array(${p}.frontmatter->'derived_from') END) AS declared(slug))`;
+  const [row] = await engine.executeRaw<{ derived_from: number; life_chronicle: number }>(`WITH cleared AS (
+      SELECT * FROM unnest($1::text[], $2::text[], $3::text[]) AS c(source_id, slug, visibility)),
+    lineage AS (SELECT p.source_id, ${declared('p')} AS origins FROM pages p
+      WHERE p.deleted_at IS NULL AND p.source_id = ANY($1::text[]) AND jsonb_typeof(p.frontmatter->'derived_from') IN ('array', 'string')
+        AND p.type NOT IN ('atom', 'question', 'concept', 'event') AND ${privateSnapshotFilterFragment('p')}
+        AND NOT EXISTS (SELECT 1 FROM cleared c WHERE c.source_id = p.source_id AND c.slug = p.slug))
+    SELECT (SELECT count(*)::int FROM lineage l
+        WHERE EXISTS (SELECT 1 FROM cleared c WHERE c.visibility = 'private' AND c.source_id = l.source_id AND c.slug = ANY(l.origins))
+          AND NOT EXISTS (SELECT 1 FROM pages o WHERE o.source_id = l.source_id AND o.slug = ANY(l.origins) AND o.frontmatter->>'visibility' = 'private'
+            AND NOT EXISTS (SELECT 1 FROM cleared c WHERE c.visibility = 'private' AND c.source_id = o.source_id AND c.slug = o.slug))) AS derived_from,
+      (SELECT count(*)::int FROM pages e
+        JOIN cleared c ON c.source_id = e.source_id AND c.slug = e.frontmatter->'event'->>'depth'
+        JOIN pages o ON o.source_id = c.source_id AND o.slug = c.slug AND o.deleted_at IS NULL
+        WHERE e.deleted_at IS NULL AND e.type = 'event' AND e.frontmatter->>'captured_via' LIKE 'life-chronicle:%' AND NOT (e.frontmatter ? 'derived_from')
+          AND ${privateSnapshotFilterFragment('e')} AND NOT ${privateSnapshotFilterFragment('o')}) AS life_chronicle`,
+    [clears.map(entry => entry.source_id), clears.map(entry => entry.slug), clears.map(entry => entry.labels.visibility ?? '')], bounded);
+  return { derived_from: Number(row?.derived_from ?? 0), life_chronicle: Number(row?.life_chronicle ?? 0) };
+}
+
+/**
+ * GST-2128 item 1: on a brain without managed persistence, the pages with a recorded file (`source_path`) in a source that
+ * has a checkout (`local_path`, or `sync.repo_path` for the default source), by page id. This repair writes only the
+ * database there, so the file would put the label back at the next sync or re-import. The core reads no filesystem
+ * (GBRA-248), so a recorded file that is gone still counts, which only holds a page. Empty on a managed brain.
+ */
+async function filesInCheckout(engine: BrainEngine, pageIds: number[]): Promise<Map<number, string>> {
+  if (!pageIds.length || await managedPersistenceEnabled(engine)) return new Map();
+  const rows = await engine.executeRaw<{ id: number; source_id: string; source_path: string; local_path: string | null }>(`SELECT p.id, p.source_id, p.source_path, s.local_path
+    FROM pages p JOIN sources s ON s.id = p.source_id WHERE p.id = ANY($1::integer[]) AND p.source_path IS NOT NULL`, [pageIds], bounded);
+  const repoPath = rows.some(row => row.source_id === 'default' && !row.local_path) ? await engine.getConfig('sync.repo_path') : null;
+  return new Map(rows.flatMap(row => (row.local_path ?? (row.source_id === 'default' ? repoPath : null)) ? [[Number(row.id), row.source_path] as const] : []));
+}
+
+/**
  * Unmanaged brains: the legacy maintenance import (an owner path: no write gate, no trust marker, gate markers kept),
  * under withTrustKeep so the page keeps its stored tier, bound to the previewed revision under the page lock. The revision
  * it wrote; null when the page moved.
@@ -262,6 +314,9 @@ export const privateLabelsRepair: RepairHandler = {
     const hash = previewHash(hashParts(scope, selection, window));
     if (window.length) await saveApprovedSet<Approved>(engine, { command: 'private-labels', hash }, window);
     const gitPublish = restore ? 0 : before['git-publish'] ?? 0;
+    const dependents = restore ? null : await windowDependents(engine, window);
+    const exposed = dependents ? dependents.derived_from + dependents.life_chronicle : 0;
+    const fileBacked = (await filesInCheckout(engine, window.map(entry => entry.page_id))).size;
     const warnings = [
       ...(pastWindow ? [`This preview lists one window of ${window.length} item(s); ${pastWindow} more found past it. Apply this window (or decide not to), then preview again for the next one: ${command}`] : []),
       restore ? 'Restoring re-adds each recorded label, so remote callers that are not the brain owner stop reading these pages again.'
@@ -272,6 +327,11 @@ export const privateLabelsRepair: RepairHandler = {
         + 'from the checkout, but every earlier commit, and any remote it was pushed to, keeps the page\'s content.'] : []),
       ...(gitPublish && selection.class !== 'git-publish' ? [`${gitPublish} page(s) of class git-publish (git-canonical sources) carry the same label and are not in this preview: `
         + 'private pages there are database-only, so clearing commits each into its source\'s Git history for the first time. Preview them by name: gbrain repair private-labels --class git-publish'] : []),
+      ...(exposed ? [`Clearing this window also exposes ${exposed} page(s) whose only privacy is a listed page's label: ${dependents!.derived_from} derived_from page(s) whose `
+        + `declared origin loses visibility: private, ${dependents!.life_chronicle} life-chronicle event(s) extracted from a listed page. Remote callers that are not the brain owner `
+        + 'can read them once this window applies (readable_by and folder rules still apply). To keep one private, give it its own label first; --class restore re-hides them with their origins.'] : []),
+      ...(fileBacked ? [`${fileBacked} listed page(s) have a file in their source's checkout on a brain without managed persistence. This repair writes only the database there, `
+        + 'and the next sync or re-import would put the label back from the file, so the apply holds each (outcome file_backed) with the file to edit.'] : []),
       ...(planned.unreadable ? [`${planned.unreadable} ledger line(s) could not be read and are not planned.`] : []),
       ...(restore && before.removed_after_restore ? [`${before.removed_after_restore} page(s) had their label removed after a restore landed (the page changed since the revision the restore wrote), `
         + 'so they are not listed; re-add the label by hand if that edit was a mistake.'] : []),
@@ -281,7 +341,8 @@ export const privateLabelsRepair: RepairHandler = {
     return { items: toItems(window), preview_hash: hash, residuals: {}, warnings,
       listing: window.map(entry => ({ item: `${entry.source_id}:${entry.slug}`, class: entry.class,
         detail: entry.mode === 'restore' ? `re-add ${describeLabels(entry.labels)}` : entry.labels.visibility ? 'remove access: private, visibility: private' : 'remove access: private' })),
-      details: { counts: { before, after: projected }, window: { size, listed: window.length, pending_past_window: pastWindow, next_preview: command },
+      details: { counts: { before, after: projected }, window: { size, listed: window.length, pending_past_window: pastWindow, next_preview: command, file_backed: fileBacked },
+        ...(dependents ? { dependents } : {}),
         ledger: ledger?.path ?? null, class: selection.class } };
   },
   async apply(ctx, raw, opts): Promise<RepairItemOutcome> {
@@ -304,6 +365,13 @@ export const privateLabelsRepair: RepairHandler = {
     } else {
       if (Object.keys(labels).some(key => Object.hasOwn(frontmatter, key))) return changed;
       next = { ...frontmatter, ...labels };
+    }
+    const file = (await filesInCheckout(ctx.engine, [entry.page_id])).get(entry.page_id);
+    if (file) {
+      return { applied: false, outcome: 'file_backed', detail: { path: file },
+        reason: `${entry.source_id}:${entry.slug} has a file in its source's checkout (${file}); on a brain without managed persistence this repair writes only the database, `
+          + `so the next sync or re-import would undo it from the file. ${entry.mode === 'clear' ? `Remove ${describeLabels(labels)} from that file's frontmatter`
+            : `Add ${describeLabels(labels)} back to that file's frontmatter if it is missing`}, commit it, then run: gbrain sync --source ${entry.source_id}` };
     }
     const authority = await maintenancePreflight(ctx.engine, entry.source_id);
     const requestId = await repairRequestId(ctx, 'private-labels', item, snapshot.revision);
@@ -340,6 +408,8 @@ export const privateLabelsRepair: RepairHandler = {
   render(details) {
     const counts = details.counts as { before: Record<string, number>; after: Record<string, number> } | undefined;
     const line = (values: Record<string, number>) => Object.entries(values).map(([key, value]) => `${key}=${value}`).join(', ');
-    return [...(counts ? [`  before: ${line(counts.before)}`, `  after (this window applied): ${line(counts.after)}`] : []), ...(details.ledger ? [`  ledger: ${String(details.ledger)}`] : [])];
+    const dependents = details.dependents as Record<string, number> | undefined;
+    return [...(counts ? [`  before: ${line(counts.before)}`, `  after (this window applied): ${line(counts.after)}`] : []),
+      ...(dependents ? [`  also exposed by this window: ${line(dependents)}`] : []), ...(details.ledger ? [`  ledger: ${String(details.ledger)}`] : [])];
   },
 };
