@@ -69,7 +69,8 @@ export function harnessOfArgs(args: readonly string[]): 'claude' | 'codex' | nul
 }
 
 function headless(harness: 'claude' | 'codex', args: readonly string[]): boolean {
-  if (harness === 'claude') return args.some((a) => a === '-p' || a === '--print' || a.startsWith('--print='));
+  // A `claude --bg` session is a daemon pre-spawned spare whose subcommand is `bg-spare`; it has no -p.
+  if (harness === 'claude') return args.some((a) => a === '-p' || a === '--print' || a.startsWith('--print=')) || args[1] === 'bg-spare';
   return args.slice(1).some((a) => a === 'exec' || a === 'e');
 }
 
