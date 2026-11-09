@@ -439,6 +439,7 @@ export async function sweepSegments(exec: SqlExecutor, opts: SegmentSweepOptions
         AND (s.hard_expires_at <= ${now} OR s.idle_expires_at <= ${now} AND (s.kind <> 'upload' OR s.state = 'open'))
         AND NOT EXISTS (SELECT 1 FROM persistence_requests r WHERE r.state = ANY(${NON_TERMINAL_REQUEST_STATES}::text[])
                          AND r.intent->'body_ref'->>'staging_id' = s.id::text)
+        AND NOT EXISTS (SELECT 1 FROM page_upload_spools sp WHERE sp.staging_id = s.id AND sp.removed_at IS NULL)
       RETURNING s.id, s.kind, s.principal_kind, s.principal_id, s.reserved_bytes), ${trustedSql(RELEASE_STAGED_CTE)}
       SELECT count(*)::int AS n FROM gone`);
     stagingsExpired = Number(expired[0]?.n ?? 0);

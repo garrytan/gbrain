@@ -1316,6 +1316,16 @@ More: [docs/guides/ambient-recall.md#replay-after-a-degraded-wake](../../docs/gu
 |---|---|---|---|---|---|---|
 | Commit or stash canonical skill edits before optimization. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### disk_space_low
+
+<a id="disk_space_low"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The brain host's disk is too full to hold an upload session on a git-canonical source; parts already stored are kept. | On a strict source an upload spools its parts to a file on the brain host before the door commits them to Git, so the database never holds the bytes. The session needs room for the spool, the publication stage and Git's loose objects; a write that ran out of space mid-part stored nothing more and the session stays resumable. | Free space on the brain host (the detail lists each term of what the upload needs), then resume the upload with the same request_id. | host_admin | `gbrain doctor --json` | 1 | yes |
+
+More: [docs/guides/write-refusals.md#disk_space_low](../../docs/guides/write-refusals.md#disk_space_low)
+
 ### doctor_tier_unavailable
 
 <a id="doctor_tier_unavailable"></a>
@@ -2491,6 +2501,26 @@ More: [docs/designs/GIT_CANONICAL_MEMORY.md#remote-and-hosted-writes](../../docs
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | This local CLI principal already owns another source/destination for this harness. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+### index_held
+
+<a id="index_held"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A strict write's bytes are committed to Git, but deriving the page from the committed blob stopped on a content cause, so the database still shows the previous generation. | The door commit landed (side_effects: committed_in_git), so resending the write would only commit the same bytes again. The hold code names the cause (a missing Git object, a hash mismatch); the page is repaired from Git, not by a new write. | Do not resend the write; the bytes are in Git. Read the hold with gbrain write-request <id>, fix the cause it names, then rebuild the page from its committed head. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#index_held](../../docs/guides/write-refusals.md#index_held)
+
+### index_pending
+
+<a id="index_pending"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The page has a committed write whose index step has not flipped yet, so its rows still describe the previous generation; this write was refused before anything was written. | On a strict source a large write commits to Git first and is indexed from the committed blob afterwards. Applying an edit to the rows before that flip would build on stale content, so the write waits for the index step. | Wait a few seconds, read the page again, then submit the write with a new request_id. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/write-refusals.md#index_pending](../../docs/guides/write-refusals.md#index_pending)
 
 ### insufficient_scope
 

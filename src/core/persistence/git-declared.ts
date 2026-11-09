@@ -204,6 +204,34 @@ export async function assertNoPrivateCommit(tx: BrainEngine, row: WriteRequest, 
   if (privacy) throw privateCommitRefused(row, privacy, row.authority?.remote === true);
 }
 
+/**
+ * Wave C (spec §3.5): whether the door would refuse this strict file publication's incoming head (a private or declared
+ * class), read before the writer lock so a refused page's blob is never pre-hashed into the object store. The checks
+ * under the lock (`assertNoPrivateCommit`, `assertStrictFileTarget`) still decide; this only skips the pre-hash.
+ */
+export async function strictTargetRefuses(engine: BrainEngine, row: WriteRequest, content: string | Uint8Array,
+  binding: Pick<WorktreeBinding, 'canonical_git' | 'local_path' | 'relative_path'>): Promise<boolean> {
+  if (binding.canonical_git !== true || !binding.local_path || syncRow(row)) return false;
+  const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id }).catch(() => null);
+  return !!await strictPageClass(engine, row.source_id, join(binding.local_path, binding.relative_path ?? ''),
+    renderedPageForClass(row.slug, content, snapshot), snapshot?.page ?? null);
+}
+
+/**
+ * Wave C (eng-r3-outside-1, spec §3.1 step 4): the file-publication half of `declareStrictPublication`, judged on the
+ * incoming head (its parsed frontmatter, its slug and the page's prior file) instead of a written row, so a git-first
+ * publication refuses a target Git must not hold before `commit-tree` and writes its rows only after the door commit.
+ */
+export async function assertStrictFileTarget(tx: BrainEngine, row: WriteRequest, prepared: StrictPublication, snapshot: PageSnapshot | null,
+  binding: Pick<WorktreeBinding, 'canonical_git' | 'local_path' | 'relative_path'> | null | undefined): Promise<void> {
+  if (binding?.canonical_git !== true || !binding.local_path || !row.worktree_id || prepared.noop || !prepared.file || prepared.file.content === null || syncRow(row)) return;
+  const remote = row.authority?.remote === true;
+  const root = join(binding.local_path, binding.relative_path ?? '');
+  const declared = await strictPageClass(tx, row.source_id, root, renderedPageForClass(row.slug, prepared.file.content, snapshot), snapshot?.page ?? null);
+  if (isPrivacyClass(declared)) throw privateCommitRefused(row, declared, remote);
+  if (declared) throw gitHomeRequired(row, 'declared_target', remote, declared);
+}
+
 /** For writers with no file form yet (G4, G5): refuses on a strict source, so a database-only row is never written there. */
 export async function assertStrictGitHome(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'slug'>, remote: boolean): Promise<void> {
   const [source] = await engine.executeRaw<{ strict: boolean }>(`SELECT COALESCE(config->>'canonical','')='git' AS strict FROM sources WHERE id=$1`, [row.source_id]);

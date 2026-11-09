@@ -135,6 +135,7 @@ import { inlineTimelineChunksEntry } from './checks/inline-timeline-chunks.ts';
 import { dbAheadOfGitEntry } from './checks/db-ahead-of-git.ts';
 import { gitIndexLagEntry } from './checks/git-index-lag.ts';
 import { localEditAdoptionsEntry } from './checks/local-edit-adoptions.ts';
+import { largePagesEntry } from './checks/large-pages.ts';
 import { syncConfigKeysEntry } from './checks/sync-config-keys.ts';
 import { ghostPagesEntry } from './checks/ghost-pages.ts';
 import { memberAccessEntry } from './checks/member-access.ts';
@@ -327,6 +328,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   // GBRA-248 W0: writes waiting on a long-quiet owner host, and a file plane that disables embeddings over a database with vectors.
   ownerHostStaleEntry,
   embeddingPlaneDisagreementEntry,
+  // Wave C 1H-a (T-DX7): each source's readiness for the git-first strict path and the large-page ceilings.
+  largePagesEntry,
   // Inline pages whose bulleted timeline the pre-bullet chunker sealed (informational, always ok; preview-first reindex).
   inlineTimelineChunksEntry,
   fenceIntegrityEntry,

@@ -150,11 +150,14 @@ export async function fileUploadBody(path: string): Promise<UploadBody> {
   };
 }
 
-async function reportFailure(error: unknown, command: string, json: boolean, requestId: string | undefined): Promise<void> {
+export async function reportFailure(error: unknown, command: string, json: boolean, requestId: string | undefined): Promise<void> {
   const { reportPersistenceCliError } = await import('../../commands/persistence-delegate.ts');
   const receipt = !(error instanceof OperationError) || !!error.writeRequest;
   if (!receipt || !await reportPersistenceCliError(error, json || !!(error as OperationError)?.writeRequest)) setCliExitVerdict(writeCliError(error, command));
-  if (requestId) process.stderr.write(`Retry the same ${command} with --request-id ${requestId}.\n`);
+  // Wave C: an indexing write is committed in Git; resending it would only commit the same bytes again.
+  if (requestId && (error as OperationError | null)?.writeRequest?.state === 'indexing') {
+    process.stderr.write(`The ${command} is committed in Git and is being indexed; do not resend it. Poll gbrain write-request -- ${requestId}.\n`);
+  } else if (requestId) process.stderr.write(`Retry the same ${command} with --request-id ${requestId}.\n`);
 }
 
 const HELP = `Usage: gbrain append <slug> [--file PATH] [options]

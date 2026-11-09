@@ -11,6 +11,7 @@ import { opError, OperationError } from '../ops/contract.ts';
 import { pageBodyBytes } from '../page-body/page-shape.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import type { BrainEngine } from '../engine.ts';
+import { readPendingHead } from './git-first.ts';
 
 /** A replacement under this fraction of the stored body counts as a shrink. */
 export const SHRINK_REFUSE_FRACTION = 0.5;
@@ -35,7 +36,9 @@ export async function assertLargePageAdmission(engine: Pick<BrainEngine, 'execut
   const [row] = await engine.executeRaw<{ bytes: unknown }>(
     `SELECT CASE WHEN body_storage = 'segmented' THEN body_bytes ELSE octet_length(compiled_truth) + COALESCE(octet_length(timeline), 0) END AS bytes
       FROM pages WHERE slug = $1 AND source_id = $2 AND deleted_at IS NULL`, [slug, sourceId]);
-  const stored = Number(row?.bytes ?? 0);
+  // Wave C (ceo-r3-outside-1): a committed head whose index is pending is the stored body; the rows are the generation before it.
+  const pending = await readPendingHead(engine, sourceId, slug);
+  const stored = pending ? pending.body_bytes : Number(row?.bytes ?? 0);
   if (stored <= DEFAULT_INLINE_BODY_BYTES) return;
   if (intent.expected_revision === undefined && intent.force === true) {
     const e = new OperationError('revision_required', `Page ${slug} is ${stored} bytes, over the ${DEFAULT_INLINE_BODY_BYTES}-byte inline read size; replacing it needs expected_revision (force does not apply). Nothing was written.`,

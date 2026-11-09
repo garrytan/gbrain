@@ -61,6 +61,8 @@ import { isWriteRequestId } from './types.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
 import type { ClaimPhaseClock } from './claim-phase.ts';
+import { indexPendingError, readPendingHead } from './git-first.ts';
+import { gitFirstStrictActive } from './git-first-gate.ts';
 
 /** The most text one append_page call carries; a larger append goes through an upload session (mode 'append'). */
 export const APPEND_TEXT_MAX_BYTES = 4 * 1024 * 1024;
@@ -371,6 +373,9 @@ export async function prepareAppendMutation(engine: BrainEngine, row: WriteReque
   signal?.throwIfAborted();
   const intent = row.intent as unknown as AppendIntent;
   const stored = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
+  // Wave C (ceo-r3-outside-1): a committed head whose index is pending is the page's tail; its rows are the generation before it.
+  const pending = await readPendingHead(engine, row.source_id, row.slug);
+  if (pending && pending.request_id !== row.id) throw indexPendingError(row.slug, pending.request_id);
   if (!stored || stored.page.deleted_at) throw pageRefusal('page_not_found', 'Page not found.', row,
     `Page ${row.slug} does not exist in source ${row.source_id} or is deleted, so nothing was appended. Create it with put_page; restore a deleted page with restore_page.`,
     pageFix(row.source_id, row.slug));
@@ -385,7 +390,12 @@ export async function prepareAppendMutation(engine: BrainEngine, row: WriteReque
   };
   const separatorFor = (tail: RegionTail) => intent.separator === 'auto' && tail.bytes.length > 0 && tail.bytes[tail.bytes.length - 1] !== 0x0a ? '\n' : '';
 
-  if (isSegmentedPage(stored.page)) {
+  // Wave C (eng-r3-outside-1): on a strict git-first source an append to an unsplit segmented page composes the whole
+  // file and takes put_page's deferred path below, so its bytes reach Git before any row; the splice would stage the
+  // appended segments in the publication transaction, before the door.
+  const gitFirst = isSegmentedPage(stored.page) && Number((stored.page as { body_bytes?: number | null }).body_bytes ?? 0) + Buffer.byteLength(text, 'utf8') + 1 <= PAGE_MAX_BYTES
+    && await gitFirstStrictActive(engine, row.source_id);
+  if (isSegmentedPage(stored.page) && !gitFirst) {
     let mentionRange: PreparedMutation['mentionRange'];
     const prepared = await prepareSegmentedSpliceMutation(engine, row, stored, { full: appendProbe.fullRewrite, replacements: async page => {
       const region = targetRegion(intent.region, page.bodyBytes > page.truthBytes);

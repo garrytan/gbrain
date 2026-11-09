@@ -33,6 +33,7 @@
  * marker, so its request identity and replay are unchanged; when the group
  * does not commit it takes `publishMutation` like any other member.
  */
+import { isPublishedRequestState } from './request-states.ts';
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
@@ -56,9 +57,10 @@ import { timePublicationStep } from './publication-timing.ts';
 import { assertUnboundPublication, classifyUnboundPage } from './unbound-source.ts';
 import { boundPublication, declarePublication, publicationLeaseMs, publicationTransaction, type PublicationBound } from './publication-deadline.ts';
 import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
-import { commitThroughDoor, doorMarker, sourceCanonicalGit, strictChanged } from './git-door.ts';
+import { commitThroughDoor, doorMarker, prehashDoorFile, sourceCanonicalGit, strictChanged, type PrehashedBlob } from './git-door.ts';
 import { settleGroupCommitNotes } from './change-reason.ts';
-import { assertNoPrivateCommit, declareStrictPublication } from './git-declared.ts';
+import { assertNoPrivateCommit, declareStrictPublication, strictTargetRefuses } from './git-declared.ts';
+import { gitFirstStrictActive } from './git-first-gate.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
 import { withFilesystemPublication } from './filesystem-guard.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
@@ -66,7 +68,7 @@ import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-gu
 import { isStreamedContent } from './large-file.ts';
 import { sharedReadFailure } from './bounded-reads.ts';
 import { chargedInterruption, decoratePublicationOutcome, finishPreparationStalled, finishUnpublishedFailure, pageRecoveryRecord, persistenceFileHash, preparationAbortReason,
-  publicationPostimage, publishMutation, publishPersistenceFile, recoverPublication, releaseChargedInterruption, type PreparedMutation, type PublicationHooks } from './coordinator.ts';
+  publicationPostimage, publishMutation, publishPersistenceFile, recoverPublication, releaseChargedInterruption, runDoorProbe, type PreparedMutation, type PublicationHooks } from './coordinator.ts';
 import { withAttempt } from './publication-failure.ts';
 import { chargedInterruptionDetail, transientInterruption, type TransientInterruption } from './transient-retry.ts';
 import { pipelined } from '../page-state/transactions.ts';
@@ -265,6 +267,13 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
   // lease and publishes beside them; everything else takes it exclusively.
   // With this process's lanes open on the worktree but none publishing, it opens the lease for them to join.
   const beside = !lane && rows.length === 1 && singleWrite(head) && await foregroundPriority(engine);
+  // Wave C (spec §3.5): a strict group stores its members' blobs before it takes the writer lock (git-door.ts rechecks them).
+  const prehashed: Array<PrehashedBlob | null> = [];
+  if (binding.canonical_git === true) for (const [i, member] of prepared.entries()) {
+    const content = member.noop ? null : member.file?.content;
+    prehashed.push((typeof content === 'string' || content instanceof Uint8Array) && !await strictTargetRefuses(engine, rows[i]!, content, binding)
+      ? await prehashDoorFile(binding.local_path, member.file!.path, content) : null);
+  }
   let joined: NativeLockHandle | null, lock: NativeLockHandle | null;
   try {
     joined = beside ? joinWorktreeLease(binding) ?? ((lanePolicy(head.worktree_id)?.effective ?? 1) > 1 ? await acquireWorktreeShared(binding, engine) : null) : null;
@@ -309,6 +318,9 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
     }
     // G2 (git-door.ts): a strict source's members are committed together before the transaction commits.
     strict = files.size > 0 && binding.canonical_git === true;
+    // Wave C (eng-r3-outside-1): with the git-first path on, a strict file member commits through the door before its rows,
+    // which only the single path does (publishMutation); the group hands its members there.
+    if (strict && await gitFirstStrictActive(engine, head.source_id, { strict: true })) return none;
     if (strict) { const door = await doorMarker(binding.local_path); for (const member of files.values()) member.record.door = door; }
     if (files.size) {
       await prepareRecoveries(engine, [...files.values()], transaction, limits);
@@ -420,7 +432,8 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
       if (strict && recorded.size) {
         // GBRA-217: notes are settled after every member applied, so a member a later one made private carries no reason.
         const notes = await settleGroupCommitNotes(tx, [...recorded.keys()].map(i => ({ row: rows[i]!, note: prepared[i]!.file?.commit, outcome: outcomes[i]! })));
-        const commit = await commitThroughDoor(binding.local_path!, [...recorded].map(([i, member], n) => ({ path: member.record.path, planned: member.record.afterHash, note: notes[n] })), lane || joined ? undefined : lock,
+        for (const member of recorded.values()) await runDoorProbe(tx, member.row);
+        const commit = await commitThroughDoor(binding.local_path!, [...recorded].map(([i, member], n) => ({ path: member.record.path, planned: member.record.afterHash, note: notes[n], prehashed: prehashed[i] })), lane || joined ? undefined : lock,
           paths => {
             for (const [i, member] of recorded) {
               const rel = relative(binding.local_path!, member.record.path).split(sep).join('/');
@@ -859,7 +872,7 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
         if (reclaimed) { row = reclaimed; current = reclaimed; }
       }
       if (!current || current.execution_token !== row.execution_token || current.state !== 'running') {
-        if (current && ['committed', 'conflict', 'failed', 'cancelled'].includes(current.state)) { run.settled(current); progressed = true; }
+        if (current && isPublishedRequestState(current.state)) { run.settled(current); progressed = true; }
         else if (!ordered) release = true;
         continue;
       }
@@ -869,7 +882,7 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
       if ('released' in p) { await releaseUnpublishedClaim(engine, row, p.released === 'claim_lost' ? 'claim_lost' : 'group_member_waiting'); if (ordered) release = true; continue; }
       const done = await bounded(() => publishMutation(engine, row, (p as { ok: PreparedMutation }).ok, run.hostId));
       run.settled(done);
-      if (['committed', 'conflict', 'failed', 'cancelled'].includes(done.state)) progressed = true;
+      if (isPublishedRequestState(done.state)) progressed = true;
       else release = true;
     }
     return progressed;

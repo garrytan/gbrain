@@ -29,6 +29,8 @@ import { BRAIN_STAGED_KEY, RELEASE_STAGED_CTE, readUploadLimits, stagedCounterKe
 import type { Principal, SqlEngine, WriteRequest } from './model.ts';
 import { timelineSectionOf } from './timeline-omission.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
+import { hostIdFor } from './identity.ts';
+import { appendSpoolPart, isSpooled, openSpool, removeSpool, spooledParts, spoolPartSha256 } from './upload-spool.ts';
 
 export type UploadMode = 'create' | 'replace' | 'append';
 export type UploadState = 'open' | 'sealed' | 'prepared' | 'committed' | 'aborted' | 'expired';
@@ -153,8 +155,10 @@ export async function readUploadByRequest(exec: SqlEngine, principal: Principal,
 export async function transitionUploads(exec: SqlEngine, state: 'aborted' | 'expired' | 'committed', where: string, params: unknown[],
   opts: { commitRequestId?: string } = {}): Promise<number> {
   const commit = opts.commitRequestId !== undefined ? `, commit_request_id = $${params.length + 1}::uuid` : '';
+  // A spooled session (upload-spool.ts) ends only once its file is gone, so its reservation never outlives a removal it still owes.
+  const spooled = state === 'committed' ? '' : ' AND NOT EXISTS (SELECT 1 FROM page_upload_spools sp WHERE sp.staging_id = s.id AND sp.removed_at IS NULL)';
   const [row] = await exec.executeRaw<{ n: number }>(`WITH gone AS (UPDATE page_body_stagings s SET state = '${state}', updated_at = now()${commit}
-      WHERE s.kind = 'upload' AND s.state = ANY(${LIVE}) AND ${where} RETURNING s.id, s.kind, s.principal_kind, s.principal_id, s.reserved_bytes),
+      WHERE s.kind = 'upload' AND s.state = ANY(${LIVE}) AND ${where}${spooled} RETURNING s.id, s.kind, s.principal_kind, s.principal_id, s.reserved_bytes),
     ${RELEASE_STAGED_CTE}
     SELECT count(*)::int AS n FROM gone`, opts.commitRequestId !== undefined ? [...params, opts.commitRequestId] : params);
   return Number(row?.n ?? 0);
@@ -167,6 +171,7 @@ export async function transitionUploads(exec: SqlEngine, state: 'aborted' | 'exp
 export async function expireIfLapsed(exec: SqlEngine, row: UploadRow): Promise<boolean> {
   if (row.state === 'expired') return true;
   if (!row.lapsed) return false;
+  await removeSpool(exec, row.id, hostIdFor(exec));
   return await transitionUploads(exec, 'expired', `s.id = $1::uuid AND ${LAPSED_SQL}`, [row.id]) > 0;
 }
 
@@ -175,13 +180,18 @@ export async function expireIfLapsed(exec: SqlEngine, row: UploadRow): Promise<b
  * committing. True when it moved (its parts deleted and its bytes released).
  */
 export async function abortUpload(exec: SqlEngine, id: string): Promise<boolean> {
-  return await transitionUploads(exec, 'aborted', `s.id = $1::uuid AND NOT ${REQUEST_HELD_SQL} AND (s.commit_request_id IS NULL
-    OR EXISTS (SELECT 1 FROM persistence_requests r WHERE r.id = s.commit_request_id AND r.state IN ('conflict','failed','cancelled')))`, [id]) > 0;
+  const abortable = `s.id = $1::uuid AND NOT ${REQUEST_HELD_SQL} AND (s.commit_request_id IS NULL
+    OR EXISTS (SELECT 1 FROM persistence_requests r WHERE r.id = s.commit_request_id AND r.state IN ('conflict','failed','cancelled')))`;
+  const [live] = await exec.executeRaw(`SELECT 1 FROM page_body_stagings s WHERE s.kind = 'upload' AND s.state = ANY(${LIVE}) AND ${abortable}`, [id]);
+  if (live) await removeSpool(exec, id, hostIdFor(exec));
+  return await transitionUploads(exec, 'aborted', abortable, [id]) > 0;
 }
 
 export interface UploadReservation {
   id: string; principal: Principal; clientRequestId: string; sourceId: string; sourceIncarnation: string; slug: string;
   pageId: number | null; mode: UploadMode; baseRevision: string | null; totalBytes: number; sha256: string;
+  /** Wave C: spool the parts to a file on this host (a strict source with the git-first path on); remote hides paths. */
+  spool?: { remote: boolean };
 }
 
 /**
@@ -198,6 +208,10 @@ export async function reserveUpload(engine: BrainEngine, input: UploadReservatio
   await engine.transaction(async tx => {
     await tx.executeRaw(ENSURE_COUNTERS_SQL, [all]);
     await tx.executeRaw(LOCK_COUNTERS_SQL, [all]);
+    for (const { id } of await tx.executeRaw<{ id: string }>(`SELECT s.id::text AS id FROM page_body_stagings s JOIN page_upload_spools sp ON sp.staging_id = s.id
+      WHERE s.kind = 'upload' AND s.state = ANY(${LIVE}) AND s.principal_kind = $1 AND s.principal_id = $2 AND sp.removed_at IS NULL AND ${LAPSED_SQL}`, owner)) {
+      await removeSpool(tx, id, hostIdFor(tx));
+    }
     await transitionUploads(tx, 'expired', `s.principal_kind = $1 AND s.principal_id = $2 AND ${LAPSED_SQL}`, owner);
     const [usage] = await tx.executeRaw<{ staged: unknown; brain: unknown; uploads: unknown }>(`SELECT
         COALESCE(SUM(s.reserved_bytes) FILTER (WHERE s.principal_kind = $1 AND s.principal_id = $2), 0)::text AS staged,
@@ -215,6 +229,7 @@ export async function reserveUpload(engine: BrainEngine, input: UploadReservatio
         now() + LEAST($13::bigint, $14::bigint) * interval '1 second', now() + $14::bigint * interval '1 second')`,
     [input.id, input.principal.kind, input.principal.id, input.clientRequestId, input.sourceId, input.sourceIncarnation, input.slug, input.pageId,
       input.mode, input.baseRevision, input.totalBytes, input.sha256, limits.uploadIdleSeconds, limits.uploadMaxSeconds]);
+    if (input.spool) await openSpool(tx, input.id, hostIdFor(tx), input.totalBytes, input.spool.remote);
     await tx.executeRaw(`UPDATE persistence_counters SET
         intent_bytes = CASE key WHEN $1 THEN $4::bigint WHEN $2 THEN $5::bigint ELSE intent_bytes END,
         outstanding_count = CASE key WHEN $3 THEN $6::bigint ELSE outstanding_count END
@@ -223,14 +238,16 @@ export async function reserveUpload(engine: BrainEngine, input: UploadReservatio
 }
 
 export async function partSha256(exec: SqlEngine, stagingId: string, part: number): Promise<string | null> {
+  if (await isSpooled(exec, stagingId)) return spoolPartSha256(exec, stagingId, part);
   const [row] = await exec.executeRaw<{ sha: string }>(`SELECT encode(sha256, 'hex') AS sha FROM page_body_staging_parts WHERE staging_id = $1::uuid AND part_no = $2`, [stagingId, part]);
   return row?.sha ?? null;
 }
 
 /** Stores part `next_part` of the locked session and advances it, restarting its idle deadline (never past the hard one). */
-export async function appendPart(exec: SqlEngine, row: UploadRow, bytes: Buffer, sha256: string): Promise<{ received_bytes: number; next_part: number }> {
+export async function appendPart(exec: SqlEngine, row: UploadRow, bytes: Buffer, sha256: string, remote = true): Promise<{ received_bytes: number; next_part: number }> {
   const limits = await readUploadLimits(exec);
-  await exec.executeRaw(`INSERT INTO page_body_staging_parts (staging_id, part_no, byte_start, byte_len, sha256, body)
+  if (await isSpooled(exec, row.id)) await appendSpoolPart(exec, row.id, row.next_part, row.received_bytes, bytes, sha256, remote);
+  else await exec.executeRaw(`INSERT INTO page_body_staging_parts (staging_id, part_no, byte_start, byte_len, sha256, body)
     VALUES ($1::uuid, $2, $3::bigint, $4, decode($5, 'hex'), $6::bytea)`, [row.id, row.next_part, row.received_bytes, bytes.byteLength, sha256, bytes]);
   const [next] = await exec.executeRaw<{ received_bytes: unknown; next_part: unknown }>(`UPDATE page_body_stagings
     SET received_bytes = received_bytes + $2::bigint, next_part = next_part + 1, updated_at = now(),
@@ -243,6 +260,14 @@ export async function appendPart(exec: SqlEngine, row: UploadRow, bytes: Buffer,
 export async function stagedSha256(exec: SqlEngine, row: Pick<UploadRow, 'id' | 'next_part' | 'received_bytes'>): Promise<string | null> {
   const hash = createHash('sha256');
   let at = 0;
+  if (await isSpooled(exec, row.id)) {
+    for await (const part of spooledParts(exec, row.id, row.received_bytes)) {
+      if (!part) return null;
+      hash.update(part);
+      at += part.byteLength;
+    }
+    return at === row.received_bytes ? hash.digest('hex') : null;
+  }
   for (let part = 0; part < row.next_part; part++) {
     const [stored] = await exec.executeRaw<{ byte_start: unknown; body: Uint8Array }>(`SELECT byte_start, body FROM page_body_staging_parts
       WHERE staging_id = $1::uuid AND part_no = $2`, [row.id, part]);
@@ -278,6 +303,14 @@ export const stagedUploadWork = { wholeTexts: 0, streamed: 0, largestPart: 0 };
 
 /** The staged parts of a body reference in order, one part at a time; null at a gap. */
 export async function* stagedUploadParts(engine: SqlEngine, ref: StagingBodyRef): AsyncIterable<Uint8Array | null> {
+  if (await isSpooled(engine, ref.staging_id)) {
+    for await (const part of spooledParts(engine, ref.staging_id, ref.bytes)) {
+      if (part) stagedUploadWork.largestPart = Math.max(stagedUploadWork.largestPart, part.byteLength);
+      yield part;
+      if (!part) return;
+    }
+    return;
+  }
   for (let part = 0, at = 0; at < ref.bytes; part++) {
     const [stored] = await engine.executeRaw<{ byte_start: unknown; body: Uint8Array }>(
       'SELECT byte_start, body FROM page_body_staging_parts WHERE staging_id = $1::uuid AND part_no = $2', [ref.staging_id, part]);
@@ -325,6 +358,13 @@ export async function withStagedUpload<T extends Publishable>(engine: BrainEngin
     const outcome = await apply(tx, preimage);
     await transitionUploads(tx, 'committed', 's.id = $1::uuid', [ref.staging_id], { commitRequestId: row.id });
     return outcome;
+  };
+  // A spooled session's file goes once its publication committed (the owner sweep removes it if this step is lost).
+  const withAfterCommit = prepared as T & { afterCommit?: (engine: BrainEngine) => Promise<void> };
+  const after = withAfterCommit.afterCommit;
+  withAfterCommit.afterCommit = async target => {
+    await after?.(target);
+    await removeSpool(target, ref.staging_id, hostIdFor(target)).catch(() => undefined);
   };
   return prepared;
 }
