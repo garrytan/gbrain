@@ -18,6 +18,7 @@ import { execFileSync } from '../../../core/spawn.ts';
 import { readPageBodyPolicy } from '../../../core/page-body/limits.ts';
 import { PAGE_MAX_BYTES } from '../../../core/page-size-policy.ts';
 import { gitFirstWriterBlockers, gitFirstWriterFloor, indexSplitPageConsumer } from '../../../core/persistence/git-first-gate.ts';
+import '../../../core/persistence/index-split-page.ts';
 import { persistenceHome } from '../../../core/persistence/identity.ts';
 
 const DOCS = 'docs/architecture/key-files/large-page-writes.md';

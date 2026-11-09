@@ -48,7 +48,7 @@ test('the upload client never suggests resending a write whose receipt is indexi
   } finally {
     (process.stderr as { write: unknown }).write = write;
     (process.stdout as { write: unknown }).write = stdout;
-    process.exitCode = exitCode;
+    process.exitCode = exitCode ?? 0;
   }
   const text = lines.join('');
   expect(text).toContain(`The append is committed in Git and is being indexed; do not resend it. Poll gbrain write-request -- ${requestId}.`);

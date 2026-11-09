@@ -67,6 +67,7 @@ export async function cliRequestContext(engine: BrainEngine, params: Record<stri
     remote: false, admissionOrigin: 'interactive',
     cliOpts: { ...DEFAULT_CLI_OPTIONS, quiet: request.cli.quiet, timeoutMs: request.cli.timeout_ms },
     writeWaitMs: currentCliWriteWait().waitMs,
+    waitIndexedMs: currentCliWriteWait().waitIndexedMs,
     sourceId: sourceId ?? 'default',
     brainId: 'host',
     ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),

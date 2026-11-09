@@ -75,7 +75,7 @@ END $rls$;
 
 export const INDEX_EFFECT_BARRIER_SQL = `
 CREATE OR REPLACE FUNCTION gbrain_index_effect_barrier() RETURNS trigger
-  LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+  LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
   BEGIN
     IF NEW.next_attempt_at IS DISTINCT FROM 'infinity'::timestamptz THEN
       NEW.data := jsonb_set(COALESCE(NEW.data, '{}'::jsonb), '{due_at}', to_jsonb(COALESCE(NEW.next_attempt_at, now())));
