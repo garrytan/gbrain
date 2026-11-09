@@ -160,6 +160,10 @@ jobs:
       - name: Verify persistent writes with the actual release executable
         timeout-minutes: 8
         run: bun scripts/native/cli-persistence-smoke.ts --binary bin/${{ matrix.artifact }}
+      # v0.60.554.0: /admin was blank on installed builds; the release file must serve the page and every asset it loads.
+      - name: Verify the admin UI with the actual release executable
+        timeout-minutes: 5
+        run: bun scripts/native/compiled-admin-smoke.ts --binary bin/${{ matrix.artifact }}
       - name: Smoke-test the compiled binary
         run: |
           chmod +x bin/${{ matrix.artifact }}
