@@ -44,7 +44,7 @@ import { privateRequestRefusal } from '../../persistence/visibility-request.ts';
 import { parseMarkdown } from '../../markdown.ts';
 import { OperationError, type OperationContext } from '../../ops/contract.ts';
 import { submitPageMutation } from '../../persistence/page-mutations.ts';
-import { authorizePageVisibility, excludesPrivateWrites } from '../../persistence/page-visibility.ts';
+import { authorizePageVisibility, excludesPrivateWrites, remoteReadersChecked } from '../../persistence/page-visibility.ts';
 import type { Principal, WriteAuthority } from '../../persistence/model.ts';
 import { assertMemberPageWriter, assertScopePageWriter } from '../../access/member-facts.ts';
 import { validateSlug } from '../../utils.ts';
@@ -111,12 +111,18 @@ function webhookPrincipal(writer: unknown): Principal | undefined {
  * scope page, and never a page the writer cannot read (another member's readable_by page, a private page). A job with
  * no stored writer is checked as a guest, which reads no restricted page.
  */
-export async function assertWebhookWriterMayReplace(engine: BrainEngine, writer: unknown, sourceId: string, slug: string): Promise<void> {
+export async function assertWebhookWriterMayReplace(engine: BrainEngine, writer: unknown, sourceId: string, slug: string, content?: string): Promise<void> {
   const target = validateSlug(slug);
   assertMemberPageWriter({ remote: true }, target, 'ingest_capture');
   assertScopePageWriter({ remote: true }, target, 'ingest_capture');
-  await authorizePageVisibility(engine, { version: 1, principal: webhookPrincipal(writer), remote: true, sourceId, sourceIncarnation: '',
-    scopes: [], operations: null, slugPrefixes: null, excludePrivate: await excludesPrivateWrites(engine, true) } as WriteAuthority, target);
+  const authority = { version: 1, principal: webhookPrincipal(writer), remote: true, sourceId, sourceIncarnation: '',
+    scopes: [], operations: null, slugPrefixes: null, excludePrivate: await excludesPrivateWrites(engine, true) } as WriteAuthority;
+  await authorizePageVisibility(engine, authority, target);
+  if (content === undefined) return;
+  // GST-2112: the capture writes through a trusted local path, so apply the remote put_page readers rule here: a body
+  // never drops readable_by from a page that names readers, and the readers it names keep the writer.
+  const stored = await engine.readPageSnapshot(target, { sourceId, includeDeleted: true });
+  await remoteReadersChecked(engine, authority, stored?.page.frontmatter, { parsedPage: { frontmatter: parseMarkdown(content, target).frontmatter } });
 }
 
 export function makeIngestCaptureHandler(engine: BrainEngine) {
@@ -272,7 +278,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     if (applied) return applied;
 
     const webhookWrite = untrustedPayload && event.source_kind === 'webhook' && !isTombstone;
-    const checkWriter = (sid: string) => webhookWrite ? assertWebhookWriterMayReplace(engine, data.writer, sid, slug) : Promise.resolve();
+    const checkWriter = (sid: string) => webhookWrite ? assertWebhookWriterMayReplace(engine, data.writer, sid, slug, event.content) : Promise.resolve();
     await checkWriter(sourceId ?? 'default');
     const door = (operation: 'put_page' | 'delete_page', sid: string, params: Record<string, unknown>) => submitPageMutation(
       { engine, config: { engine: engine.kind } as OperationContext['config'], remote: false, dryRun: false, sourceId: sid, logger: { info() {}, warn() {}, error() {} } },
@@ -337,6 +343,8 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       let appliedSince: IngestCaptureResult | null = null;
       const put = async (sid: string, request?: string) => {
         const snapshot = await engine.readPageSnapshot(slug, { sourceId: sid, includeDeleted: true });
+        // Checked after the snapshot the write binds to, so readers added before it are seen and any change after it refuses revision_conflict.
+        await checkWriter(sid);
         appliedSince = appliedKey ? await readAppliedCapture<IngestCaptureResult>(engine, appliedKey, journal) : null;
         if (appliedSince) return {};
         return door('put_page', sid, { content: event.content, content_origin: 'tool_output', source_kind: event.source_kind, source_uri: event.source_uri,
