@@ -33,7 +33,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('access_groups', 'security', 'Access groups that readable_by names; carried so grants keep meaning the same people.'),
     carry('access_member_links', 'security', 'Links from attested outside identities (QM actors) to brain members; dropping them would unlink every attested person.'),
     carry('access_member_sources', 'security', 'Personal sources bound to their members; dropping them would let every attested person read every member\'s personal source.'),
-    carry('access_members', 'security', 'Brain members that readable_by member:<id> names; carried so per-page readers stay the same people.'),
+    carry('access_members', 'security', 'Brain members that readable_by member:<id> names, with each declared email; carried so per-page readers stay the same people.'),
     carry('access_pending_coverage', 'security', 'Prefixes that read as nobody while a narrowing stamps or a policy file is invalid; dropping them would reveal pages.'),
     carry('access_policy_migrations', 'operational', 'In-flight folder-policy store switches (git and database) and their receipts.'),
     carry('access_policy_revisions', 'security', 'Folder-policy revision history: desired rules, change class, proposer and approver.'),

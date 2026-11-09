@@ -300,6 +300,7 @@ import { v296 } from './v296-ingest-applied-captures.ts';
 import { v297 } from './v297-attest-read.ts';
 import { v298 } from './v298-access-member-sources.ts';
 import { v299 } from './v299-memory-proposals.ts';
+import { v300 } from './v300-member-email.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -598,4 +599,5 @@ export const MIGRATIONS: Migration[] = [
   v297,
   v298,
   v299,
+  v300,
 ];
