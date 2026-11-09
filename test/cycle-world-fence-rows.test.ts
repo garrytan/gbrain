@@ -39,9 +39,10 @@ for (const backend of testBackends()) {
 
     test('propose_takes: the extractor input and the proposals hold only world rows', async () => {
       const bodies: string[] = [];
-      const extractor: ProposeTakesExtractor = async ({ pageBody }) => {
+      const extractor: ProposeTakesExtractor = async ({ pageBody, existingTakes }) => {
         bodies.push(pageBody);
-        return [WORLD_ROW, PRIVATE_ROW, HIDDEN_TAKE_ROW].filter(row => pageBody.includes(row))
+        const seen = `${pageBody}\n${JSON.stringify(existingTakes)}`;
+        return [WORLD_ROW, PRIVATE_ROW, HIDDEN_TAKE_ROW].filter(row => seen.includes(row))
           .map(row => ({ claim_text: row, kind: 'take' as const, holder: 'world', weight: 0.6 }));
       };
       const ctx: OperationContext = { engine, config: {} as never, logger: { info() {}, warn() {}, error() {} } as never, dryRun: false, remote: false, sourceId: 'default' };

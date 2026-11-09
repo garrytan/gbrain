@@ -22,8 +22,9 @@
  * The same scan backs doctor's `atom_fence_rows` check.
  */
 import type { BrainEngine } from '../engine.ts';
-import { parseFactsFence } from '../facts-fence.ts';
-import { parseTakesFence } from '../takes-fence.ts';
+import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence } from '../facts-fence.ts';
+import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence } from '../takes-fence.ts';
+import { protectedRegions } from '../fence-scan.ts';
 import { publicBody } from '../mentions/aliases.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { OperationError } from '../ops/contract.ts';
@@ -51,12 +52,21 @@ interface ScanOptions { atomId?: number; timeoutMs?: number }
 
 const fold = (text: string) => text.replace(/~~/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
 
+/** Every fence publicBody removes (one quoted in a code block and an unterminated tail included), each closed for parsing. */
+function fenceRegions(body: string, begin: string, end: string): string[] {
+  const { regions, truncatedAt } = protectedRegions(body, [{ begin, end }]);
+  const texts = regions.map(region => body.slice(region.start, region.end));
+  return truncatedAt === -1 ? texts : [...texts, `${body.slice(truncatedAt)}\n${end}`];
+}
+
 /** Claims of the page's facts rows other than world and takes rows held by someone other than world, absent from its world text. */
 function hiddenRows(body: string): Array<HiddenRowMatch & { claim: string }> {
   const world = fold(publicBody(body));
   const rows = [
-    ...parseFactsFence(body).facts.filter(f => f.visibility !== 'world').map(f => ({ kind: 'facts' as const, row: f.rowNum, claim: fold(f.claim) })),
-    ...parseTakesFence(body).takes.filter(t => t.holder !== 'world').map(t => ({ kind: 'takes' as const, row: t.rowNum, claim: fold(t.claim) })),
+    ...fenceRegions(body, FACTS_FENCE_BEGIN, FACTS_FENCE_END).flatMap(text => parseFactsFence(text).facts)
+      .filter(f => f.visibility !== 'world').map(f => ({ kind: 'facts' as const, row: f.rowNum, claim: fold(f.claim) })),
+    ...fenceRegions(body, TAKES_FENCE_BEGIN, TAKES_FENCE_END).flatMap(text => parseTakesFence(text).takes)
+      .filter(t => t.holder !== 'world').map(t => ({ kind: 'takes' as const, row: t.rowNum, claim: fold(t.claim) })),
   ];
   return rows.filter(r => r.claim.length >= MIN_CLAIM_CHARS && !world.includes(r.claim));
 }

@@ -1068,6 +1068,9 @@ class ProposeTakesPhase extends BaseCyclePhase {
       failures.succeed(sourceId, page.slug, ch);
       llmHalt.reset();
       if (attributionChecks) proposals = downgradeAssistantOnlyHolders(proposals, body);
+      const fold = (text: string) => text.replace(/\s+/g, ' ').trim().toLowerCase();
+      const heldTakes = existingTakes.filter(take => take.holder !== 'world').map(take => fold(take.claim)).filter(claim => claim.length >= 12);
+      proposals = proposals.filter(p => !heldTakes.some(claim => fold(p.claim_text).includes(claim)));
 
       // Write proposals to take_proposals. #2138: the idempotency key is
       // per-CLAIM — take_proposals_idempotency_idx folds md5(claim_text) into

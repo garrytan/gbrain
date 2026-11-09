@@ -1995,8 +1995,9 @@ gbrain repair atom-fence-rows --source <id> --apply --expect <hash>
 
 An atom is listed when it is live, page-bound (`source_slug`), stamped
 `visibility: world`, and its title, body or `source_quote` contains (case and
-whitespace folded) the claim of such a row of its live source page, unless the
-page's world text holds the same claim too. Claims shorter than 12 characters
+whitespace folded) the claim of such a row in any fence of its live source page
+a world reader does not see (a fence quoted in a code block included), unless
+the page's world text holds the same claim too. Claims shorter than 12 characters
 are not matched. The preview names each atom with its source page and the
 rows (`facts row 2`, `takes row 1`), never the row text, and changes nothing.
 A source page stored in segments is not read: its world atoms are counted as

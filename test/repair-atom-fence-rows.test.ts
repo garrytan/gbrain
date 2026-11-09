@@ -24,7 +24,7 @@ import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
-import { HIDDEN_TAKE_ROW, PRIVATE_ROW, WORLD_PAGE_BODY, WORLD_ROW } from './helpers/world-fence-page.ts';
+import { FENCES, HIDDEN_TAKE_ROW, PRIVATE_ROW, WORLD_PAGE_BODY, WORLD_ROW } from './helpers/world-fence-page.ts';
 
 interface RepairJson { results: Array<{ affected: number; residuals: Record<string, number>; apply_command: string; applied: number; skipped: number;
   listing?: Array<{ item: string; class: string; detail?: string }>; outcomes?: Record<string, number> }> }
@@ -127,6 +127,22 @@ for (const kind of testBackends()) {
 
       expect((await atomFenceRowsCheck(engine, [sourceId])).status).toBe('ok');
       expect((await repair([])).results[0]!.listing ?? []).toEqual([]);
+    }, 120_000);
+
+    test('a fence quoted in a code block counts as hidden, as it does for a world reader', async () => {
+      const quotedOrigin = 'notes/launch-review-quoted';
+      const quotedAtom = 'atoms/2026-01-01/renewal-terms-quoted';
+      await engine.putPage(quotedOrigin, { type: 'note', title: 'Launch review quoted', compiled_truth: `# Launch review\n\n\`\`\`markdown\n${FENCES}\`\`\`\n`, timeline: '' }, { sourceId });
+      await putAtom(quotedAtom, `Recorded on the page: ${PRIVATE_ROW}.`, { source_slug: quotedOrigin });
+      expect(await remoteGet(quotedOrigin)).not.toContain(PRIVATE_ROW);
+
+      const finding = await atomFenceRowsCheck(engine, [sourceId]);
+      expect(finding.status).toBe('warn');
+      expect(finding.details).toMatchObject({ count: 1 });
+      const listing = (await repair([])).results[0]!.listing!;
+      expect(listing.map(row => ({ item: row.item, class: row.class, detail: row.detail }))).toEqual([
+        { item: `${sourceId}:${quotedAtom}`, class: 'facts', detail: `source page ${quotedOrigin}: facts row 2` },
+      ]);
     }, 120_000);
     test('managed brain: the apply narrows the previewed atom through the coordinator', async () => {
       await managedBrain(async ({ engine: brain }) => {
