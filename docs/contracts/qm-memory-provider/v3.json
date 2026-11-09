@@ -341,6 +341,13 @@
             "explain": {
               "type": "boolean",
               "description": "Include factor breakdown per result (expertise, recency, salience)."
+            },
+            "source_ids": {
+              "type": "array",
+              "description": "Narrow to these sources (omit or [] for all you can read).",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": []
@@ -706,6 +713,17 @@
                 "unknown",
                 "external_untrusted"
               ]
+            },
+            "source_id": {
+              "type": "string",
+              "description": "Read only this source."
+            },
+            "source_ids": {
+              "type": "array",
+              "description": "Narrow to these sources (omit or [] for all you can read).",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
@@ -1042,6 +1060,13 @@
             "days": {
               "type": "number",
               "description": "Stats window in days (default 30; stats mode only)."
+            },
+            "source_ids": {
+              "type": "array",
+              "description": "Narrow to these sources (omit or [] for all you can read).",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": []

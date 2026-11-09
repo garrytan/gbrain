@@ -10,6 +10,35 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**QM, the AI helper that uses gbrain as one of its memories, can now read a person's own brain safely, read shared rooms only as the room's audience, and suggest edits that wait for the brain owner's yes.** This lands the QM internal-provider chain (#8475, #8480, #8557, #8477, #8483, #8479, #8466) as one release. Nothing changes for a brain with no attested (`x-qm-actor`) client: unattested calls and member-bound credentials behave as before, and every new table is database state, so a repo-less brain works the same.
+
+### What changed
+
+| Area | Before | Now |
+|---|---|---|
+| Direct page writes from QM | an attested call could run `add_timeline_entry`, `add_link`, `put_page` and `edit_page` | refused (`actor_not_attested`, reason `op_not_attested`); `--attest-ops` refuses a list that names one, and a queued attested write of one fails when it publishes |
+| Reads that name sources | only `memory_recall` read named sources as their audience | `get_page`, `entity`, `whois`, `get_backlinks`, `get_timeline`, `find_experts`, `volunteer_context` and `query` do too: restricted pages and member pages read as missing, `__all__`/`all_sources` beside a named source is refused |
+| How a client reads named sources | always as the audience | `gbrain auth rescope --attest-read person\|scope\|none`; `scope` also refuses any call that names no person; `gbrain doctor` warns (`attest_read_shared_scope`) when a person client reads a source a scope client reads |
+| A person's own DM sources | every attested caller with the grant read every DM source in it | `gbrain access member source add\|remove\|list` binds a source to its member; an attested call reads its grant minus other members' personal sources, and a scope read reads no personal source at all |
+| QM contract | v1 and v2 | v3 (`docs/contracts/qm-memory-provider/v3.json`) adds the person's own-DM tools with frozen result shapes, `structuredContent` on attested personal reads (re-measured against the result cap), an `arm` (`own`/`ranked`) on each `memory_recall` fact, and an opt-in `memory_recall` `query_keep` (`head`/`tail`) that adds `query_truncated`; v1 and v2 are byte-identical |
+| Suggested edits | none | `memory_propose` holds one timeline entry or one link for the owner; `gbrain memory-proposals list\|show\|approve\|deny` on the brain host decides it, and approval publishes through the normal writer door with the member's id in its provenance |
+| Members | id and name | an operator-declared email (`gbrain access member add\|set --email`), and `gbrain access member link --email <addr> --qm <id>` |
+| Remote owner administration | a shell on the brain host | `gbrain mcp admin attest`, `member-add\|member-set\|member-disable\|member-enable\|members` and `link\|unlink\|links` over the owner-session routes `/admin/api/access/attest`, `/members` and `/member-links`; no OAuth token or MCP tool reaches them |
+
+### Itemized changes
+
+- `src/core/access/actor-model.ts`: the four page writes join `ACTOR_DEFERRED_OPS`; `docs/contracts/qm-memory-provider/v2.json` lists them in `deferred_ops` (a published-contract amendment).
+- `src/core/access/scope-read.ts` (new), `src/mcp/dispatch.ts`: `SCOPE_READ_ACCESS`, `SCOPE_READ_OPS`, `attestedReadMode`; `attest_read` on `access_tokens` and `oauth_clients` (migration v297).
+- `src/core/access/member-sources.ts` (new): `access_member_sources` (migration v298) and `attestedReadScope`, also applied to agent jobs submitted for an attested actor.
+- `src/core/ops/qm-memory.ts`, `scripts/build-qm-memory-contract.ts`: contract v3, `qmMemoryToolResult` for personal tools, recall arms, `query_keep`, and `boundRecallChars` trimming `facts_groups` and `entity_unspecified` to the facts it delivers.
+- `src/core/persistence/memory-proposals.ts` (new), `src/commands/memory-proposals.ts` (new): `memory_proposals` (migration v299), owner review, TTL and retention; a proposed link re-checks its target when it publishes.
+- `src/core/access/members.ts`, `src/core/access/actor.ts`, `src/commands/access.ts`, `src/commands/serve-http-access.ts`, `src/commands/mcp-admin.ts`: member email (migration v300), `linkMemberByEmail`, and the owner HTTP routes with an `access_admin` request-log row per applied change.
+- Inventories: `access_member_sources`, `memory_proposals` and the email column join the deletion and graduation inventories.
+- Docs: `docs/guides/qm.md` (reads that name sources, each person's own sources, proposed writes), `docs/mcp/ADMIN.md`, `docs/architecture/key-files/access.md`.
+- Tests: `test/qm-scope-read.test.ts`, `test/qm-personal-sources.test.ts`, `test/qm-personal-tools.test.ts`, `test/qm-memory-propose.test.ts`, `test/access-members.test.ts`, `test/serve-http-access.test.ts`, `test/mcp-admin-cli.serial.test.ts` (PGLite and Postgres where they touch the database).
+
 ## [0.60.626.0] - 2026-11-09
 
 **`gbrain sources record-origin --remote` now locks down the existing checkout too, and on a managed brain it can no longer report success while a reclone still clones with git-lfs on.** On a managed brain the record took only the source row lock, so a reclone that had already read the source, or held its worktree locks, could clone with git-lfs downloads and hooks on after the command said the source was recorded. The record now takes the worktree locks and rows a reclone takes (refusing the id `source_busy` while one runs), and the reclone reads the record under its own locks. `--remote --apply` now also turns git-lfs downloads and hooks off in the existing checkout's `.git/config`, because a reclone only happens when a checkout is lost or replaced, and until then doctor read green while the checkout still fetched git-lfs objects and ran hooks. The git-lfs check now reads a committed `.gitattributes` under a directory whose name holds a tab (it was cut at the tab and skipped), ignores commented-out `filter=lfs` lines, says "declares a git-lfs filter" when a rule only declares one, and records a clone of an empty repository instead of telling the operator to restore an intact checkout. A failed write is reported for its own id instead of ending the run without saying which ids were recorded.
