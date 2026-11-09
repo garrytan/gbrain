@@ -147,6 +147,18 @@ test('page write-through end to end: a flagged page is reported not committed, n
   expect(ledger(brain)).toEqual([]);
 });
 
+test('a skip-worktree file left in the ledger does not fail a later write-through of another page', async () => {
+  const brain = fixture('skip-later');
+  git(brain, 'update-index', '--skip-worktree', '--', 'people/alice-example.md');
+  writeFileSync(join(brain, 'people', 'alice-example.md'), page('Hidden', 'A write-through edit git add refuses.'));
+  notePending(brain, ['people/alice-example.md']);
+  writeFileSync(join(brain, 'people', 'bob-example.md'), page('Bob', 'Second version.'));
+  const sha = await withEnv(identity, async () => commitPathsLocked(brain, [join(brain, 'people', 'bob-example.md')], 'w', { lockWaitMs: 1000 }));
+  expect(sha).toBe(git(brain, 'rev-parse', 'HEAD').trim());
+  expect(headBlob(brain, 'people/bob-example.md')).toContain('Second version.');
+  expect(ledger(brain)).toEqual(['people/alice-example.md']);
+});
+
 test('control: an ordinary pending file is committed by --pending and the ledger settles empty', async () => {
   const brain = fixture('pending-ok', true);
   writeFileSync(join(brain, 'people', 'alice-example.md'), page('Alice', 'Second version.'));
