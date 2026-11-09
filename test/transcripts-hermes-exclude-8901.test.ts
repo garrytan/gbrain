@@ -573,6 +573,27 @@ describe('runIngest end to end: flag > config key > default, refusal, watermark 
     expect(r.sessionsImported).toBe(ALL_IDS.length - 5);
   }, 60_000);
 
+  // Value: protects=the default, the config key and the explicit-list scope apply on a run that omits --format (the scheduled-run shape, which auto-detects the Hermes store by its SQLite magic); fails_when=hermesPossible tightens to parsed.format === 'hermes', or the fingerprint keys the explicit list only under format 'hermes'; why_new=every other command-level run in this file names --format; seam=none; no_claim=does not cover --all discovery of the store
+  test('without --format the auto-detected Hermes store takes the default, the key and the explicit-list scope', async () => {
+    const path = buildHermesAutomationFixture(scratch());
+    const auto = async (extra: string[]) => JSON.parse((await runCmd([path, '--source', 'default', '--json', '--quiet', ...extra])).out.join('\n')) as TranscriptsIngestResult;
+    const byDefault = await auto(['--dry-run']);
+    expect(byDefault.excludedBySource).toEqual({ subagent: 2, kanban: 2, tool: 1 });
+    await engine.setConfig(cli.HERMES_EXCLUDE_SOURCES_CONFIG_KEY, '["cron"]');
+    const byKey = await auto(['--dry-run']);
+    expect(byKey.excludedBySource).toEqual({ cron: 1 });
+    expect(byKey.sessionsExcluded).toBe(1);
+    // An explicit list is part of the --since last scope on an auto-detected path too:
+    // narrowing it starts a fresh scope that admits the re-admitted delegate sessions.
+    const first = await auto(['--since', 'last', '--exclude-source', 'cron,subagent']);
+    expect(first.sessionsImported).toBe(ALL_IDS.length - 3);
+    for (const id of DELEGATE_IDS) expect(await engine.getPage(slugOf(id), { sourceId: 'default' })).toBeNull();
+    const second = await auto(['--since', 'last', '--exclude-source', 'cron']);
+    expect(second.sessionsFiltered).toBe(0);
+    expect(second.excludedBySource).toEqual({ cron: 1 });
+    for (const id of DELEGATE_IDS) expect(await engine.getPage(slugOf(id), { sourceId: 'default' })).not.toBeNull();
+  }, 120_000);
+
   test('the config key replaces the default and the flag beats the key', async () => {
     await engine.setConfig(cli.HERMES_EXCLUDE_SOURCES_CONFIG_KEY, '["cron"]');
     const byKey = await ingestJson(buildHermesAutomationFixture(scratch()), ['--dry-run']);
@@ -605,6 +626,24 @@ describe('runIngest end to end: flag > config key > default, refusal, watermark 
     // The flag still works around a bad key for one run.
     const r = await ingestJson(path, ['--dry-run', '--exclude-source', 'cron']);
     expect(r.excludedBySource).toEqual({ cron: 1 });
+  }, 60_000);
+
+  // Value: protects=a non-Hermes adapter imports every session although the Hermes exclude set now rides the parse options of every run; fails_when=an adapter or the ingest loop filters on excludeSessionSources generically, or an adapter throws on the unknown option; why_new=the codex runs above point at a SQLite store and stop at detection, so no non-Hermes file is parsed with the set anywhere else; seam=none; no_claim=does not prove Hermes behaviour
+  test('a non-Hermes adapter ignores the exclude set: codex imports the same sessions with and without it', async () => {
+    const codexPath = join(import.meta.dir, 'fixtures', 'transcripts', 'codex-rollout.jsonl');
+    const base = { paths: [codexPath], format: 'codex' as const, sourceId: 'default', ...NO_PATTERNS };
+    const plain = await runTranscriptsIngest(engine, base);
+    const withSet = await runTranscriptsIngest(engine, { ...base, excludeSessionSources: ['cron', 'subagent', 'codex'] });
+    expect(plain.sessionsImported).toBeGreaterThan(0);
+    expect(withSet.sessionsImported).toBe(plain.sessionsImported);
+    expect(withSet.slugsTouched).toEqual(plain.slugsTouched);
+    expect(withSet.sessionsExcluded).toBe(0);
+    expect(withSet.excludedBySource).toEqual(plain.excludedBySource);
+    const { out, err } = await runCmd([codexPath, '--format', 'codex', '--source', 'default', '--dry-run', '--json', '--quiet', '--exclude-source', 'cron']);
+    const viaFlag = JSON.parse(out.join('\n')) as TranscriptsIngestResult;
+    expect(viaFlag.sessionsImported).toBe(plain.sessionsImported);
+    expect(viaFlag.sessionsExcluded).toBe(0);
+    expect(err.join('\n')).toContain('--exclude-source applies to Hermes stores only; ignored for --format codex');
   }, 60_000);
 
   test('a config read failure refuses the run with verdict 1 and writes nothing; the flag skips the read', async () => {
