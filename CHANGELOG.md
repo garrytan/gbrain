@@ -10,6 +10,32 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Five connector fixes: Gmail stays inside its history window, forwards keep their content, GitHub webhooks refresh the item they name, and two Google pages stop getting stuck as held.**
+
+Gmail's change feed reports a thread whenever anything on it changes, a label or a read flag, however old the mail is. gbrain imported every one of them, so a mailbox set to 90 days of history could gain years of old threads. Those threads now stay out, the same way the first backfill keeps them out. Forwarded emails used to be saved with only the note typed above the "Forwarded message" line, or empty, because that line was read as the start of a quoted reply. The forwarded message is now kept.
+
+On a GitHub source with a webhook, a refresh waiting for one issue swallowed the event for any other issue of the same source, and deleting an issue right after editing it refetched the page instead of removing it. Each item event now gets its own refresh or delete.
+
+Two unmanaged Google cases ended as held items that only a person could clear: a page whose checkout file was missing only gbrain's Facts table after one of its facts was forgotten, and an item whose page the owner purged while Google kept listing it. Both now sync cleanly; the purged item is skipped and stays purged.
+
+### Things to watch
+
+- Existing pages of forwarded emails keep their cut body until the thread changes again. Nothing is rewritten on upgrade.
+- Old Gmail threads already imported through the change feed stay in the brain and keep updating when they change. Shrinking the window or a full sync does not remove them.
+- When 50 item refreshes are already waiting for one GitHub source, a new item event is refused with HTTP 429 `webhook_backlog_full` instead of being acknowledged and dropped. Redeliver it from the webhook's Recent Deliveries, or let the next sweep catch it.
+
+### Itemized changes
+
+- `src/core/google/google-source.ts`: `processThread` takes a `cutoffMs`; the history delta and held-thread retries pass `now - g_history_days`, and a thread whose newest message is older is settled without a page and without a hold unless it already has a page, which keeps updating (#8482). Reported and first fixed by @Masashi-Ono0611.
+- `src/core/google/google-render.ts`: `trimQuotedReply` keeps the whole body when a Gmail `---------- Forwarded message ----------` or Apple Mail `Begin forwarded message:` line comes before any reply marker; reply trimming, including a forward quoted inside a reply, is unchanged (#8719). Reported and first fixed by @javieraldape.
+- `src/commands/serve-http-webhooks.ts`: the item idempotency key carries `delete` or `refresh`, the per-source waiting cap is 50 (was 1), and a cap hit answers 429 `webhook_backlog_full` with `Retry-After: 30` unless the waiting job it returns covers the event (the same item and intent, or an explicit source-wide sync for an edit; an automatic freshness sync, which can skip, covers nothing). In `src/core/minions/handlers/sync.ts` an item job that finds another sync of its source running is deferred 30 s at a time without burning an attempt, instead of completing as a source-wide skip, so its refresh or deletion is not lost (#8799). Reported and first fixed by @javieraldape.
+- `src/core/facts/file-body-guard.ts`, `src/core/google/sweep-shared.ts`: `replaceableFile`'s `alsoHeldAs` receives each stored state, so the connector puts back that state's own Facts fence (the live row without the withdrawal overlay, versions with it) (#8645). Reported and first fixed by @Masashi-Ono0611.
+- `src/core/google/sweep-shared.ts`: the unmanaged `importRendered` screens the render against page purge tombstones (`intentCarriesPurgedContent`) before any drift check or temporary write and skips a match with one log line naming `gbrain pages unpurge`; it returns no slug, so the Gmail sweep runs no loop detection or extraction on that thread and drops its grace hold (#8644). Reported and first fixed by @javieraldape.
+- Docs: `docs/guides/github-source.md` (backlog refusal, busy-source retry), `docs/architecture/key-files/google-and-loops.md`, new `docs/architecture/key-files/google-sweeps.md`.
+- Tests: `test/google-gmail-delta-window-8482.test.ts`, `test/google-render-forward-8719.test.ts`, `test/serve-http-github-items-8799.test.ts`, `test/google-withdrawn-fence-carry-8645.test.ts`, `test/google-classic-purged-item-8644.test.ts`, `test/sync-handler-github-item-busy-8799.test.ts`.
+
 ## [0.60.620.0] - 2026-11-09
 
 **A diverged managed checkout now publishes its local commits on refresh by default when Git durability is on, after a secret scan of those commits.** Commits a script made with plain `git commit` in a managed checkout used to strand there whenever the remote moved: every `gbrain sources refresh` refused `refresh_diverged` and asked the user, unless `sources.refresh_publish_diverged` was set to `true`. With the setting unset, a worktree whose Git durability is on (`gbrain sources writer git-durability <source> --enable`, or the legacy hook) now publishes them itself: the local commits merged with the upstream in memory, never a rebase or force-push, then the fast-forward. The publish child scans, under its publish lock and for the exact commits it pushes, what they add: commit messages, added lines (including a value a later commit removed) and merge-commit conflict resolutions. A value that looks like a secret, added text too large to scan, or a commit that changes `.gbrain-scan-allow` or a `.gitattributes` refuses the new `publish_secret_found` naming the file, line, rule and commit, never the value, with nothing pushed; commits the scan cannot read in full refuse `publish_scan_unreadable` instead. The rewritten-upstream refusal and the `--expect-remote` bound are unchanged. `false` turns it off; `true` still publishes with durability off.
