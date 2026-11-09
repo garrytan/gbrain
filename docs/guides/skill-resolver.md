@@ -226,9 +226,10 @@ deletes a catalog; deleting `skill-index/` removes everything.
 
 Preregistered bars: a cold turn (index opened again, ranked, one freshness
 slice) at p95 10 ms with 1,000 skills and 40 ms with 7,500 skills on 2 vCPUs.
-`bun scripts/bench-skill-resolver.ts` measures it; the
-`Skill resolver bench` workflow enforces it on pull requests that touch the
-resolver.
+`bun scripts/bench-skill-resolver.ts` measures it in three rounds of 300 turns
+and judges the median round's p95, so one burst of host stalls on a shared
+runner does not decide it; the `Skill resolver bench` workflow enforces it on
+pull requests that touch the resolver.
 
 ## Library
 

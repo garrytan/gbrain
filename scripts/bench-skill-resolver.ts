@@ -10,7 +10,12 @@
  * invocation does, and runs the turn-path stat freshness check over every
  * skill file (the clock is advanced past the check interval each turn).
  *
- * Usage: bun scripts/bench-skill-resolver.ts [--sizes 1000,7500] [--turns 200] [--json]
+ * Each size runs --rounds rounds of --turns turns and is judged on the median
+ * round's p95, so one burst of host stalls on a shared 2-vCPU runner (one
+ * round at 45 ms beside rounds at 7 ms on the same tree) does not decide the
+ * bar, while a regression that slows every round still fails it.
+ *
+ * Usage: bun scripts/bench-skill-resolver.ts [--sizes 1000,7500] [--turns 200] [--rounds 3] [--json]
  * Exit 1 when a size misses its bar (--no-gate to only report).
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -23,6 +28,7 @@ const args = process.argv.slice(2);
 const opt = (f: string, d: string) => { const i = args.indexOf(f); return i >= 0 && args[i + 1] ? args[i + 1]! : d; };
 const sizes = opt('--sizes', '1000,7500').split(',').map(Number);
 const turns = Number(opt('--turns', '200'));
+const rounds = Number(opt('--rounds', '3'));
 const json = args.includes('--json');
 const gate = !args.includes('--no-gate');
 
@@ -40,7 +46,8 @@ const pick = (seed: number, n: number) => Array.from({ length: n }, (_, k) => VO
 const p95 = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.ceil(0.95 * s.length) - 1)]!; };
 const p50 = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]!; };
 
-const cells: { skills: number; turns: number; build_ms: number; p50_ms: number; p95_ms: number; bar_ms: number | null; pass: boolean }[] = [];
+const cells: { skills: number; turns: number; rounds_p95_ms: number[]; build_ms: number; p50_ms: number; p95_ms: number; bar_ms: number | null; pass: boolean }[] = [];
+const round2 = (x: number) => Math.round(x * 100) / 100;
 for (const n of sizes) {
   const root = mkdtempSync(join(tmpdir(), 'skres-bench-'));
   try {
@@ -56,23 +63,29 @@ for (const n of sizes) {
     await buildSkillIndex({ catalog: 'bench', dirs: [skillsDir] }, { home });
     const buildMs = performance.now() - t0;
     let clock = Date.now();
-    const times: number[] = [];
-    for (let t = 0; t < turns + 10; t++) {
-      clock += 61_000;
-      const message = `please help with ${pick(t * 17 + 5, 6).join(' ')} today`;
-      const s = performance.now();
-      const r = await resolveSkills({ message, session_id: `bench-${t}` }, { home, now: () => clock });
-      const e = performance.now() - s;
-      if (r.output.error) throw new Error(r.output.error.code);
-      if (t >= 10) times.push(e);
+    const all: number[] = [];
+    const roundsP95: number[] = [];
+    for (let round = 0; round < rounds; round++) {
+      const times: number[] = [];
+      for (let t = 0; t < turns + 10; t++) {
+        clock += 61_000;
+        const message = `please help with ${pick(t * 17 + round * 7919 + 5, 6).join(' ')} today`;
+        const s = performance.now();
+        const r = await resolveSkills({ message, session_id: `bench-${round}-${t}` }, { home, now: () => clock });
+        const e = performance.now() - s;
+        if (r.output.error) throw new Error(r.output.error.code);
+        if (t >= 10) times.push(e);
+      }
+      all.push(...times);
+      roundsP95.push(p95(times));
     }
     const bar = BARS_MS[n] ?? null;
-    const p = p95(times);
-    cells.push({ skills: n, turns, build_ms: Math.round(buildMs), p50_ms: Math.round(p50(times) * 100) / 100, p95_ms: Math.round(p * 100) / 100, bar_ms: bar, pass: bar === null || p <= bar });
+    const p = p50(roundsP95);
+    cells.push({ skills: n, turns, rounds_p95_ms: roundsP95.map(round2), build_ms: Math.round(buildMs), p50_ms: round2(p50(all)), p95_ms: round2(p), bar_ms: bar, pass: bar === null || p <= bar });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 }
 if (json) console.log(JSON.stringify({ bench: 'skill-resolver', cpus: navigator.hardwareConcurrency, cells }));
-else for (const c of cells) console.log(`${c.skills} skills: build ${c.build_ms} ms, turn p50 ${c.p50_ms} ms, p95 ${c.p95_ms} ms${c.bar_ms !== null ? ` (bar ${c.bar_ms} ms: ${c.pass ? 'pass' : 'FAIL'})` : ''}`);
+else for (const c of cells) console.log(`${c.skills} skills: build ${c.build_ms} ms, turn p50 ${c.p50_ms} ms, p95 ${c.p95_ms} ms (median of rounds ${c.rounds_p95_ms.join(', ')})${c.bar_ms !== null ? ` (bar ${c.bar_ms} ms: ${c.pass ? 'pass' : 'FAIL'})` : ''}`);
 if (gate && cells.some(c => !c.pass)) process.exit(1);
