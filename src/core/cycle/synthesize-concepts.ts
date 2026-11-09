@@ -44,6 +44,7 @@ import { conceptWriter, type ConceptWrite } from './concept-writes.ts';
 import { readPhaseConfigNumber, SYNTHESIZE_CONCEPTS_BUDGET_KEY, SYNTHESIZE_CONCEPTS_DEFAULT_BUDGET_USD } from './phase-config-values.ts';
 import { ConceptRetryBound, MAX_CONCEPT_ATTEMPTS } from './concept-retry-bound.ts';
 import { ConceptDriftSkips } from '../persistence/drift-conflicts.ts';
+import { throwIfAborted } from '../abort-check.ts';
 
 // Miss policy for the shared resolver (`priceFor`: operator overrides, the
 // claude-cli → Anthropic sibling, canonical rows): assume Sonnet-tier
@@ -129,6 +130,11 @@ export interface SynthesizeConceptsOpts {
    * `heartbeat()`; cycle.ts owns start/finish.
    */
   progress?: ProgressReporter;
+  /**
+   * #7986: the cycle's abort signal (job timeout or cancel, lock loss). Handed to the model call and checked
+   * before each concept's spend and publication, so an aborted run publishes no further concept page.
+   */
+  signal?: AbortSignal;
   /** Test seam: alternative chat function. */
   _chat?: typeof gatewayChat;
   /** Test seam: skip DB query; cluster these atoms directly. */
@@ -346,6 +352,7 @@ export async function runPhaseSynthesizeConcepts(
   const writer = conceptWriter({ engine, maintenance, sourceId: src, importSourceId: opts.sourceId, brainDir: opts.brainDir, writeThrough: conceptFiles !== null,
     retries, publicationDeferred, publicationHeld, linkWarnings, written: countWritten });
   for (const group of atomGroups) {
+    throwIfAborted(opts.signal, 'synthesize_concepts');
     const conceptSlug = `concepts/${group.conceptSlug}`;
     // A concept page this phase did not write belongs to a human (or another
     // writer). Check before any spend; never replace its body.
@@ -426,6 +433,7 @@ export async function runPhaseSynthesizeConcepts(
               },
             ],
             maxTokens: synthMaxOutputTokens,
+            abortSignal: opts.signal,
           });
           // Post-await yield (T3): the LLM call is the main TTL hazard
           // codex flagged. Throttle inside maybeYield bounds the actual
@@ -451,6 +459,7 @@ export async function runPhaseSynthesizeConcepts(
             retries.fail(`${opts.sourceId ?? 'default'}:${conceptSlug}`, memberHash);
           }
         } catch (err) {
+          if (opts.signal?.aborted) throw err;
           const msg = err instanceof Error ? err.message : String(err);
           // #3044 adoption: a whole-run LLM outage must not overwrite
           // existing concept pages with error_fallback stub narratives.
@@ -485,6 +494,7 @@ export async function runPhaseSynthesizeConcepts(
     }
     if (!grandfathered) synthesisModeCounts[synthesisMode]++;
 
+    throwIfAborted(opts.signal, 'synthesize_concepts');
     if (!opts.dryRun) {
       // #5525: tighten-only — a concept already private stays private.
       const prior = await engine.getPage(conceptSlug, { sourceId: src });
@@ -519,6 +529,7 @@ export async function runPhaseSynthesizeConcepts(
     // right cadence (30s instead of every-group).
     await maybeYield();
   }
+  throwIfAborted(opts.signal, 'synthesize_concepts');
   if (maintenance) await writer.flush();
 
   // v0.42 Wave B3: receipt + rollup for synthesize_concepts. Receipt/rollup

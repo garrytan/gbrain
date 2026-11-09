@@ -2623,6 +2623,8 @@ async function runCycleUnscoped(
       } else {
         progress.start('cycle.synthesize_concepts');
         const { runPhaseSynthesizeConcepts } = await import('./cycle/synthesize-concepts.ts');
+        // #7986: same as extract_atoms (#5833): a timeout or lock steal stops the phase before its next concept.
+        const scSignal = cycleSignal ? anyAbortSignal([cycleSignal]) : null;
         const { result, duration_ms } = await racedTimePhase(() => runPhaseSynthesizeConcepts(engine, {
           brainDir: brainDir ?? undefined,
           // #4416: thread the cycle's resolved source into the phase's page/
@@ -2635,7 +2637,8 @@ async function runCycleUnscoped(
           yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase, onStolen),
           // v0.41.19.0 (T4): pass same reporter (not a child).
           progress,
-        }), 'synthesize_concepts');
+          signal: scSignal?.signal,
+        }), 'synthesize_concepts').finally(() => scSignal?.dispose());
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
