@@ -210,7 +210,7 @@ function embedCost(texts: string[], model: string): { calls: number; tokens: num
 function trajectoryBlockBound(): string {
   const field = 'x'.repeat(64);
   const points = Array.from({ length: 100 }, (_, i) => ({
-    fact_id: i, valid_from: new Date('2000-01-01T00:00:00Z'), metric: `${field}${i}`, value: -1.2345678901234567e-300, unit: field, period: field,
+    fact_id: i, valid_from: new Date('2000-01-01T00:00:00Z'), valid_until: null, metric: `${field}${i}`, value: -1.2345678901234567e-300, unit: field, period: field,
     event_type: null, text: 'x'.repeat(600), source_session: null, source_markdown_slug: `chat/s-${'0'.repeat(10)}`, embedding: null,
   }));
   return formatTrajectoryBlock(points, `${field}/${field}`, { intent: 'knowledge_update' }).rendered;
