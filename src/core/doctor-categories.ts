@@ -246,6 +246,10 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'git_index_lag',
   // GST-1601: local edits adopted in the last 24 h per source (doctor/checks/local-edit-adoptions.ts).
   'local_edit_adoptions',
+  // Wave C 1C (G7): each strict source's Git object store and its last maintenance run (doctor/checks/git-repo-health.ts).
+  'git_repo_health',
+  // Wave C 1D: page files held as unsmudged Git LFS pointers (doctor/checks/lfs-page-pointers.ts).
+  'lfs_page_pointers',
   'edge_validity',
   'text_projection_readiness',
   'timeline_coverage',

@@ -37,7 +37,7 @@ export function cliRoutingProvider(currentCommand: () => string | undefined, arg
       if (!thin) {
         try { brain = resolveBrainId(getCliOptions().brain); } catch { /* unresolvable: no brain pin */ }
         const cmd = currentCommand();
-        const flag = cmd ? routingFlagsFor(cmd).source : false;
+        const flag = cmd ? routingFlagsFor(cmd, {}, args.slice(1).find(a => !a.startsWith('-'))).source : false;
         if (flag) {
           const end = args.indexOf('--');
           const head = end === -1 ? args : args.slice(0, end);
