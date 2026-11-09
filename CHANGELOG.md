@@ -10,6 +10,14 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**The OpenClaw guide now shows how to run one bot for several people over DMs, each DM reading only what its sender may read.** A new section in `docs/mcp/OPENCLAW.md` connects the bot over `serve --http` with a read-only token bound to no member, whose `--may-act-for` lists each person and `guest`. A small OpenClaw plugin uses the requester-scoped MCP connection resolver to send each DM sender's member as `X-Gbrain-On-Behalf-Of`; unmapped senders read as `guest`. The section limits the recipe to gateways with no group conversations, lists the gateway settings that keep people's sessions apart, and warns against the private-page relaxations that would show every person the owner's private pages: a `--private-pages granted-sources` grant on the bot, the host hatches, reusing the owner's own token, and clearing `access: private` labels on pages that should stay the owner's. Docs only; no behavior changes. Proposed and first implemented by @exGeni (#8732).
+
+### Itemized changes
+
+- `docs/mcp/OPENCLAW.md`: new section "One bot for several people, in DMs" (brain-host setup, the plugin, what each DM gets, refusals, revocation and the `whoami` check), and a pointer to it from the page's opening.
+
 ## [0.60.620.0] - 2026-11-09
 
 **A diverged managed checkout now publishes its local commits on refresh by default when Git durability is on, after a secret scan of those commits.** Commits a script made with plain `git commit` in a managed checkout used to strand there whenever the remote moved: every `gbrain sources refresh` refused `refresh_diverged` and asked the user, unless `sources.refresh_publish_diverged` was set to `true`. With the setting unset, a worktree whose Git durability is on (`gbrain sources writer git-durability <source> --enable`, or the legacy hook) now publishes them itself: the local commits merged with the upstream in memory, never a rebase or force-push, then the fast-forward. The publish child scans, under its publish lock and for the exact commits it pushes, what they add: commit messages, added lines (including a value a later commit removed) and merge-commit conflict resolutions. A value that looks like a secret, added text too large to scan, or a commit that changes `.gbrain-scan-allow` or a `.gitattributes` refuses the new `publish_secret_found` naming the file, line, rule and commit, never the value, with nothing pushed; commits the scan cannot read in full refuse `publish_scan_unreadable` instead. The rewritten-upstream refusal and the `--expect-remote` bound are unchanged. `false` turns it off; `true` still publishes with durability off.
