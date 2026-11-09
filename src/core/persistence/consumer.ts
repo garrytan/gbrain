@@ -16,7 +16,7 @@ import { ownerExceptionLogText } from './publication-failure.ts';
 import { refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { PROJECTION_RETRY_READY_SQL, rebuildPendingPageProjections } from '../page-state/projections.ts';
 import { advanceProjectionCursor, residentProjectionCursor, residentWindowCtes } from '../page-state/projection-window.ts';
-import { rebuildPendingSegmentedProjections } from '../page-body/projection.ts';
+import { ProjectionListingDeadlineError, rebuildPendingSegmentedProjections } from '../page-body/projection.ts';
 import { publicationConcurrency } from './pool-capacity.ts';
 import { claimedHeadOrder } from './sync-window.ts';
 import { laneClaim, laneOf, laneRoots, laneTask } from './sync-lanes.ts';
@@ -116,8 +116,17 @@ export async function runResidentProjectionInvocation(engine: BrainEngine, hostI
   const pages = writesWaiting ? WRITE_WAITING_PROJECTION_PAGES : RESIDENT_PROJECTION_PAGES;
   // Wave B: queued segmented pages are rebuilt first, through their own route (one segment batch at a time).
   const startedAt = now();
-  await rebuildPendingSegmentedProjections(engine, pages, { deadlineMs: RESIDENT_PROJECTION_BUDGET_MS, now });
-  return rebuildPendingPageProjections(engine, pages, { deadlineMs: Math.max(0, RESIDENT_PROJECTION_BUDGET_MS - (now() - startedAt)), now, retryCooldown: true,
+  try {
+    await rebuildPendingSegmentedProjections(engine, pages, { deadlineMs: RESIDENT_PROJECTION_BUDGET_MS, now });
+  } catch (error) {
+    // No job was selected: leave the queue untouched and retry next invocation.
+    // Storage/permission errors still reach the consumer's normal error path.
+    if (!(error instanceof ProjectionListingDeadlineError)) throw error;
+    return { rebuilt: 0, superseded: 0 };
+  }
+  const remainingMs = RESIDENT_PROJECTION_BUDGET_MS - (now() - startedAt);
+  if (remainingMs <= 0) return { rebuilt: 0, superseded: 0 };
+  return rebuildPendingPageProjections(engine, pages, { deadlineMs: remainingMs, now, retryCooldown: true,
     window: residentProjectionCursor(engine) });
 }
 
