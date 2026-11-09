@@ -17,14 +17,14 @@ async function scoped<T>(root: BrainEngine, tx: BrainEngine, run: (tx: BrainEngi
  * connection. Provider work and clone preparation must run outside this scope.
  * Nested helpers reuse this transaction's permit and its reserved control slot.
  */
-export async function topologyTransaction<T>(engine: BrainEngine, run: (tx: BrainEngine) => Promise<T>): Promise<T> {
+export async function topologyTransaction<T>(engine: BrainEngine, run: (tx: BrainEngine) => Promise<T>, statementTimeout = '5s'): Promise<T> {
   const current = scopes.getStore();
   if (current?.active && (engine === current.root || engine === current.tx)) return current.tx.transaction(tx => scoped(current.root, tx, run));
   const release = tryAcquirePublicationCapacity(engine);
   if (!release) throw new PoolCapacityError();
   try {
     return await engine.transaction(async tx => {
-      await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
+      await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout',$1,true)", [statementTimeout]);
       return scoped(engine, tx, run);
     });
   } catch (error) {

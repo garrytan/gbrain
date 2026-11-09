@@ -300,7 +300,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     if(admission) await admission.after(tx,String(result.source_incarnation));
     const row=await recordTopologyChange(tx,{principal,requestId,intent,operation:input.operation,sourceId:input.sourceId,incarnation:source?.incarnation??String(result.source_incarnation),worktrees},result);
     return topologyReceipt(row);
-    });
+    },['remove','purge'].includes(input.operation)?'15min':undefined);
   },root?.worktree,5000,{relocation:input.operation==='rebind'});
 }
 
