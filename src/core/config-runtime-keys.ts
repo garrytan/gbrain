@@ -11,6 +11,7 @@ export const RUNTIME_READER_CONFIG_KEYS: readonly string[] = [
   'embed.content_drift.pass_interval_hours', // content-drift-sweep.ts: hours between completed content-drift passes, default 24 (0 = every run)
   'facts.absorb_warn_threshold', // doctor facts_extraction_health absorb-refusal warn threshold, default 10 per 24 h
   'think.trajectory_enabled', // think/index.ts: trajectory substrate on temporal intents, default on
+  'cycle.grade_takes.auto_resolve.enabled', // cycle/grade-takes.ts: apply verdicts at or above the 0.95 confidence threshold, default off (#7542)
   'embedding_image_ocr_max_images', 'embedding_image_ocr_max_usd', // import-file.ts image-OCR per-run caps, default 200 images / $1
   'agent.search_snippet_chars', // ops/search.ts subagent snippet cap, default 300 (0 = full text)
   'skillopt.allowed_skills', // JSON array of skills remote callers may optimize (ops/skillopt.ts, shared-skills/optimizer.ts); default deny-all

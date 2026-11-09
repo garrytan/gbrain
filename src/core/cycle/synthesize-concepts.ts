@@ -326,9 +326,11 @@ export async function runPhaseSynthesizeConcepts(
   // a held concept cannot be republished without losing canonical material.
   const publicationDeferred: Array<{ concept: string; reason: string }> = [];
   const publicationHeld: Array<{ concept: string; reason: string }> = [];
+  const publicationPending: Array<{ concept: string; reason: string }> = [];
   const skippedHumanOwned: string[] = [];
   const skippedDeleted: string[] = [];
   const skippedUnchanged: string[] = [];
+  const provenanceRestored: string[] = [];
   const rehashed: string[] = [];
   const keptExistingNarrative: string[] = [];
   const pricingOverrides = await loadPricingOverrides(engine);
@@ -344,7 +346,7 @@ export async function runPhaseSynthesizeConcepts(
     opts.progress?.tick(1, `${conceptsWritten} concepts`);
   };
   const writer = conceptWriter({ engine, maintenance, sourceId: src, importSourceId: opts.sourceId, brainDir: opts.brainDir, writeThrough: conceptFiles !== null,
-    retries, publicationDeferred, publicationHeld, linkWarnings, written: countWritten });
+    retries, publicationDeferred, publicationHeld, publicationPending, linkWarnings, written: countWritten });
   for (const group of atomGroups) {
     const conceptSlug = `concepts/${group.conceptSlug}`;
     // A concept page this phase did not write belongs to a human (or another
@@ -372,16 +374,18 @@ export async function runPhaseSynthesizeConcepts(
     const memberHash = hashFor(hashModel);
     const priorMode = existing?.frontmatter?.synthesis_mode;
     const realNarrative = priorMode === 'llm' || priorMode === 'deterministic_tier';
-    if (existing?.frontmatter?.member_hash === memberHash && realNarrative) {
-      skippedUnchanged.push(conceptSlug);
-      continue;
-    }
     // #7269: rewriting a deterministic page to the template it already holds, at a visibility it already has, would
     // publish nothing new (a page hashed with the model before the fix keeps its body and is not rewritten).
     const priorVisibility: Visibility = existing?.frontmatter?.visibility === 'private' ? 'private' : 'world';
-    if (hashModel === '' && priorMode === 'deterministic_tier' && strictestVisibility([group.visibility, priorVisibility]) === priorVisibility
-      && stripFenceSections(existing!.compiled_truth).trim() === deterministicNarrative(group).trim()) {
+    if ((existing?.frontmatter?.member_hash === memberHash && realNarrative)
+      || (hashModel === '' && priorMode === 'deterministic_tier' && strictestVisibility([group.visibility, priorVisibility]) === priorVisibility
+        && stripFenceSections(existing!.compiled_truth).trim() === deterministicNarrative(group).trim())) {
       skippedUnchanged.push(conceptSlug);
+      // #7548: the cache skips the model, not the member provenance an unchanged concept may have lost.
+      if (!opts.dryRun && !await conceptProvenanceCovers(engine, src, conceptSlug, group.atomSlugs)) {
+        await writer.restoreProvenance({ concept: group.conceptSlug, conceptSlug, atomSlugs: group.atomSlugs, revision: existingSnapshot!.revision });
+        provenanceRestored.push(conceptSlug);
+      }
       continue;
     }
     // #6643 (B1): a drifted concept would only add a conflict receipt per publication; checked live before any spend.
@@ -558,14 +562,15 @@ export async function runPhaseSynthesizeConcepts(
       kind: 'concepts',
       source_id: opts.sourceId ?? 'default',
       cost_delta: estimatedSpendUsd,
-      round_completed_delta: failures.length === 0 && publicationDeferred.length === 0 && publicationHeld.length === 0 ? 1 : 0,
+      round_completed_delta: failures.length === 0 && publicationDeferred.length === 0 && publicationHeld.length === 0 && publicationPending.length === 0 ? 1 : 0,
       halt_delta: failures.length > 0 ? 1 : 0, halt_reason: 'item_error',
     });
   }
 
   return reportDerivedWriteThrough({
     phase: 'synthesize_concepts',
-    status: failures.length > 0 || linkWarnings.length > 0 || publicationDeferred.length > 0 || publicationHeld.length > 0 || skippedFileDrift.length > 0 ? 'warn' : 'ok',
+    status: failures.length > 0 || linkWarnings.length > 0 || publicationDeferred.length > 0 || publicationHeld.length > 0 || publicationPending.length > 0
+      || skippedFileDrift.length > 0 ? 'warn' : 'ok',
     duration_ms: 0,
     summary:
       `synthesize_concepts: ${conceptsWritten} concepts ` +
@@ -580,6 +585,7 @@ export async function runPhaseSynthesizeConcepts(
       (skippedRetryBound.length > 0 ? ` (${skippedRetryBound.length} skipped after ${MAX_CONCEPT_ATTEMPTS} failed attempts on unchanged members)` : '') +
       (publicationDeferred.length > 0 ? ` (${publicationDeferred.length} publication(s) deferred: page changed, retried next run)` : '') +
       (publicationHeld.length > 0 ? ` (${publicationHeld.length} publication(s) held: existing page needs import/repair)` : '') +
+      (publicationPending.length > 0 ? ` (${publicationPending.length} publication(s) held by the writer (pending or contended), finished later or retried next run)` : '') +
       (skippedFileDrift.length > 0 ? ` (${skippedFileDrift.length} skipped before synthesis: canonical file differs from the database; ${driftActions.join('; ')})` : ''),
     details: {
       concepts_written: conceptsWritten,
@@ -593,6 +599,7 @@ export async function runPhaseSynthesizeConcepts(
       skipped_human_owned: skippedHumanOwned,
       skipped_deleted: skippedDeleted,
       skipped_unchanged: skippedUnchanged,
+      provenance_restored: provenanceRestored,
       rehashed,
       kept_existing_narrative: keptExistingNarrative,
       skipped_retry_bound: skippedRetryBound,
@@ -601,6 +608,7 @@ export async function runPhaseSynthesizeConcepts(
       folded_spellings: foldedSpellings,
       publication_deferred: publicationDeferred,
       publication_held: publicationHeld,
+      publication_pending: publicationPending,
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,

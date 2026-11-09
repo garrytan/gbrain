@@ -421,6 +421,8 @@ export async function runExtractAtomsDrain(
           // zero-yield pages shrink the backlog without producing atoms. Only
           // stop when the backlog count genuinely didn't move.
           if (r.extracted === 0 && r.skipped === 0) {
+            // #7826: the window closed before this batch started its first item; that is a window stop, not a stall.
+            if (soft.signal.aborted) { stopped = 'window'; break; }
             const after = await count();
             if (hard.signal.aborted) break;
             if (after !== null) lastCount = after;

@@ -476,6 +476,9 @@ export const DERIVE_PHASE_DB_ONLY_DEFAULTS: readonly string[] = [
   'concepts/',
   'extracts/',
   'dream-cycle-summaries/',
+  // The drift phase's nightly report (cycle/drift.ts) publishes without a
+  // file; only that slug shape, so the rest of a user's reports/ keeps its files.
+  'reports/drift-',
 ];
 
 /**

@@ -2171,7 +2171,7 @@ export async function extractStaleFromDB(
     if (!jsonMode) log(formatManagedStaleExtraction(r, false, false));
     else if (!opts.quiet) process.stdout.write(formatManagedStaleExtraction(r, false, true) + '\n');
     return { linksCreated: r.created, timelineCreated: r.timeline, pagesProcessed: r.pages, staleRemaining: r.remaining + (r.mentions?.remaining ?? 0),
-      ...(r.skipped ? { skippedChanged: r.skipped } : {}), ...(r.mentions ? { mentions: r.mentions } : {}),
+      ...(r.skipped > (r.attendance_skipped ?? 0) ? { skippedChanged: r.skipped - (r.attendance_skipped ?? 0) } : {}), ...(r.attendance_skipped ? { skippedAttendanceIncomplete: r.attendance_skipped } : {}), ...(r.mentions ? { mentions: r.mentions } : {}),
       ...(r.failed ? { linkFailed: r.failed, linkFailures: r.failures } : {}), ...(r.systemic?.length ? { linkSystemic: r.systemic } : {}) };
   }
 
