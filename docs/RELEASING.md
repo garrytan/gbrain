@@ -187,12 +187,25 @@ merge coordinator runs it; owners never stamp a queued PR themselves.
   A rebuild never force-pushes: the entries behind a dropped one already
   contain its commits, so they move to new branches.
 - **A stopped restamp.** When `build`, `refresh` or `rebuild` stops on a
-  restamp conflict, resolve it in the worktree the message names, run
-  `bun run release:restamp --continue` there, then rerun the command: it pushes
-  the resolved entry instead of restamping it again. A rebuild that stopped
-  after pushing some new branches leaves two branches claiming one version, and
-  every command refuses until you delete the newer-round branches it pushed
-  (closing their queue PRs) and rerun the rebuild.
+  restamp conflict, it names the worktree. Resolve the conflict there,
+  `git add` the files and run `bun run release:restamp --continue` there, then
+  rerun the command. `build` (and `rebuild`, which builds each entry the same
+  way) then pushes the resolved commit instead of restamping the owner head
+  again.
+- **A stopped rebuild.** `rebuild` pushes its new branches (`-r2`, ...) one at
+  a time and closes and deletes the entries it replaces only after the last one
+  is built. A stop after the first push leaves both rounds on origin, and every
+  command then refuses: it names a branch whose queue note says it was built on
+  something other than the entry now ahead of it, or two branches claiming one
+  version. To recover, finish any stopped restamp as above, delete the branches
+  the rebuild pushed with the new round number
+  (`git push origin --delete <branch>`), then rerun the same rebuild command.
+- **Pinned queue heads.** The queue note records the head `build` or `refresh`
+  pushed. `verify` and `refresh` refuse a branch whose head differs, so a
+  commit pushed straight to an `mq/` branch never lands; rebuild the entry.
+  Queue worktrees install dependencies with `bun install --frozen-lockfile
+  --ignore-scripts`, so gbrain's postinstall never runs migrations on the
+  coordinator's machine.
 - **Behind a hand-built stack.** While no `mq/` entry is live, `--stack` lists
   the owner branches of a stack built by hand, in landing order. Each must
   contain the one before it and carry one PATCH more (branches already on

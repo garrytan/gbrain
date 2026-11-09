@@ -53,6 +53,7 @@ export const SELF_ATTESTATION_PATHS = [
 /** Check names are <workflow>/<job> for the Actions jobs of the newest run of each workflow and event on a head. */
 export const REQUIRED_FULL_CHECKS = ['Test/full-suite', 'E2E Tests/e2e-full-suite'];
 const POST_MERGE_WORKFLOWS = ['Test', 'E2E Tests'];
+const STOPPED_REBUILD = 'a rebuild stopped partway: delete the branches it pushed with the new round number (git push origin --delete <branch>), then rerun the same rebuild';
 const MASTER = 'refs/remotes/origin/master';
 
 export interface PullRequest { number: number; title: string; body: string; headRefOid: string; headRefName: string; state: string; isCrossRepository: boolean; author: string; labels: string[]; mergeStateStatus: string }
@@ -125,24 +126,25 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-export interface Note { owner: number; ownerHead: string; base: string; baseHead: string }
+export interface Note { head: string; owner: number; ownerHead: string; base: string; baseHead: string }
 
 export function entryBody(e: { owner: number; base: string; version: string; title: string }): string {
   return `Queue entry for #${e.owner}: ${e.title}\n\n#${e.owner}'s head merged onto ${e.base === 'master' ? 'master' : `the queue entry ahead (${e.base})`} and stamped ${e.version} by bun run merge-queue (${DOCS}). Landing this PR marks #${e.owner} merged.`;
 }
 
-/** The queue note: a comment on the queue PR naming the owner head it carries and the base it was built on. */
+/** The queue note: a comment on the queue PR naming the head the queue pushed, the owner head it carries and the base it was built on. */
 export function queueNote(n: Note): string {
-  return `<!-- merge-queue -->\nQueue-Owner-Head: #${n.owner} ${n.ownerHead}\nQueue-Base: ${n.base} ${n.baseHead}`;
+  return `<!-- merge-queue -->\nQueue-Head: ${n.head}\nQueue-Owner-Head: #${n.owner} ${n.ownerHead}\nQueue-Base: ${n.base} ${n.baseHead}`;
 }
 
 /** The newest queue note among a PR's comments. */
 export function readNote(comments: string[]): Note | null {
   for (const body of [...comments].reverse()) {
     if (!body.startsWith('<!-- merge-queue -->')) continue;
+    const h = /^Queue-Head: ([0-9a-f]{40})$/m.exec(body);
     const o = /^Queue-Owner-Head: #(\d+) ([0-9a-f]{40})$/m.exec(body);
     const b = /^Queue-Base: (\S+) ([0-9a-f]{40})$/m.exec(body);
-    if (o && b) return { owner: Number(o[1]), ownerHead: o[2]!, base: b[1]!, baseHead: b[2]! };
+    if (h && o && b) return { head: h[1]!, owner: Number(o[1]), ownerHead: o[2]!, base: b[1]!, baseHead: b[2]! };
   }
   return null;
 }
@@ -190,7 +192,7 @@ export function liveEntries(git: Git): Entry[] {
   const byVersion = new Map<string, Entry & { round: number }>();
   for (const e of all.filter((x) => x.round === newestRound.get(x.owner))) {
     const prev = byVersion.get(e.version);
-    if (prev) stop(`${prev.branch} and ${e.branch} both claim version ${e.version}`, 'a build or rebuild stopped partway: delete the branch that should not be live (git push origin --delete <branch>) and close its queue PR, then rerun the build or rebuild');
+    if (prev) stop(`${prev.branch} and ${e.branch} both claim version ${e.version}`, `two builds took one version, or ${STOPPED_REBUILD}; for two builds, delete the later build's branch (git push origin --delete <branch>) and build that PR again`);
     byVersion.set(e.version, e);
   }
   return [...byVersion.values()].sort((a, b) => compareVersions(a.version, b.version)).map(({ round: _round, ...e }) => e);
@@ -292,8 +294,8 @@ function worktreeFor(ctx: Ctx, branch: string): string {
 function addWorktree(ctx: Ctx, dir: string, branch: string, ref: string): void {
   ctx.git.run('worktree', 'add', '--quiet', '-B', branch, dir, ref);
   const install = ctx.opts.install ?? ((cwd: string) => {
-    const r = sh(['bun', 'install', '--frozen-lockfile'], cwd, ctx.opts.env);
-    if (r.code !== 0) stop(`bun install --frozen-lockfile failed in ${cwd}: ${r.err.trim().split('\n').pop()}`, `fix bun.lock on ${branch}`);
+    const r = sh(['bun', 'install', '--frozen-lockfile', '--ignore-scripts'], cwd, ctx.opts.env);
+    if (r.code !== 0) stop(`bun install --frozen-lockfile --ignore-scripts failed in ${cwd}: ${r.err.trim().split('\n').pop()}`, `fix bun.lock on ${branch}`);
   });
   install(dir);
 }
@@ -332,19 +334,28 @@ function buildEntry(ctx: Ctx, p: Planned): number {
   wt.run('push', '--quiet', 'origin', `${head}:refs/heads/${p.branch}`);
   const n = ctx.gh.openPrForBranch(p.branch)?.number
     ?? ctx.gh.createPr({ head: p.branch, title: `v${p.version} ${plainTitle(p.owner.title)}`, body: entryBody({ owner: p.owner.number, base: p.base, version: p.version, title: plainTitle(p.owner.title) }) });
-  ctx.gh.comment(n, queueNote({ owner: p.owner.number, ownerHead, base: p.base, baseHead }));
+  ctx.gh.comment(n, queueNote({ head, owner: p.owner.number, ownerHead, base: p.base, baseHead }));
   ctx.gh.addLabel(n, 'full-ci');
   ctx.log(`QUEUE_ENTRY: #${n} ${p.branch} version=${p.version} head=${head} owner=#${p.owner.number}@${ownerHead.slice(0, 12)} base=${p.base}@${baseHead.slice(0, 12)}`);
   return n;
 }
 
+/** Live entries with their queue PRs and notes; refuses an entry built on something other than the entry ahead (a stopped rebuild leaves those). */
 function live(ctx: Ctx): Live[] {
-  return liveEntries(ctx.git).map((e, index) => {
+  const entries = liveEntries(ctx.git).map((e, index) => {
     const pr = ctx.gh.openPrForBranch(e.branch);
     if (!pr) stop(`${e.branch} has no open queue PR`, `rebuild it, or delete the branch: git push origin --delete ${e.branch}`);
     const note = readNote(ctx.gh.comments(pr.number).filter((c) => c.author === ctx.gh.repoOwner()).map((c) => c.body));
     return { ...e, pr, meta: note?.owner === e.owner ? note : null, index };
   });
+  for (const e of entries) {
+    if (!e.meta) continue;
+    const ahead = entries[e.index - 1];
+    if (ahead ? e.meta.base !== ahead.branch : e.meta.base.startsWith(BRANCH_PREFIX) && !ctx.git.ok('merge-base', '--is-ancestor', e.meta.baseHead, MASTER)) {
+      stop(`${e.branch} was built on ${e.meta.base}, but ${ahead ? `the entry ahead is ${ahead.branch}` : 'that entry is neither live nor on master'}`, STOPPED_REBUILD);
+    }
+  }
+  return entries;
 }
 
 function find(entries: Live[], n: number): Live {
@@ -388,6 +399,7 @@ function verifyProblems(ctx: Ctx, e: Live, first: Live, expectHead?: string, vmG
   else {
     const owner = ctx.gh.pr(e.owner);
     if (owner.isCrossRepository || owner.author !== ctx.gh.repoOwner()) p.push(`owner #${e.owner} is a contributor PR (${owner.author})`);
+    if (e.meta.head !== e.head) p.push(`${e.branch} head ${e.head} is not the head bun run merge-queue pushed (${e.meta.head}): a commit was pushed straight to the queue branch; rebuild it`);
     if (owner.headRefOid !== e.meta.ownerHead) p.push(`owner #${e.meta.owner} pushed after inclusion (${owner.headRefOid.slice(0, 12)}); refresh to fix in place, or rebuild --drop`);
     if (!ctx.git.ok('merge-base', '--is-ancestor', e.meta.ownerHead, e.head)) p.push(`owner head ${e.meta.ownerHead} is not in the entry`);
     if (e.index === 0 && firstBase(ctx, e.meta) !== 'master') p.push(`it is built on the hand-built entry ${e.meta.base}, which has not landed yet`);
@@ -538,6 +550,7 @@ function cmdRefresh(ctx: Ctx, n: number): void {
   const entries = live(ctx);
   for (const e of entries.slice(find(entries, n).index)) {
     if (!e.meta) stop(`#${e.pr.number} has no queue note`, 'rebuild it');
+    if (e.meta.head !== e.head) stop(`${e.branch} head ${e.head.slice(0, 12)} is not the head bun run merge-queue pushed (${e.meta.head.slice(0, 12)})`, `a commit was pushed straight to the queue branch; rebuild ${e.pr.number}`);
     const dir = worktreeFor(ctx, e.branch);
     if (!existsSync(dir)) addWorktree(ctx, dir, e.branch, e.head);
     const wt = ctx.git.at(dir);
@@ -563,7 +576,7 @@ function cmdRefresh(ctx: Ctx, n: number): void {
     const baseHead = wt.run('rev-parse', baseRef).trim();
     if (head !== e.head) wt.run('push', '--quiet', 'origin', `${head}:refs/heads/${e.branch}`);
     if (head !== e.head || ownerMoved || e.meta.base !== base || e.meta.baseHead !== baseHead) {
-      ctx.gh.comment(e.pr.number, queueNote({ owner: e.meta.owner, ownerHead: owner.headRefOid, base, baseHead }));
+      ctx.gh.comment(e.pr.number, queueNote({ head, owner: e.meta.owner, ownerHead: owner.headRefOid, base, baseHead }));
     }
     ctx.log(`REFRESHED: #${e.pr.number} ${e.branch} head=${head}${head === e.head ? ' (unchanged)' : ''}`);
     fetchAll(ctx);

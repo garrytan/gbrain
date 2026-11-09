@@ -12,7 +12,7 @@
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -199,11 +199,12 @@ const CHECKS = JSON.stringify([
 
 const RESTAMP_ENV = { ...process.env, GBRAIN_RESTAMP_STEPS: STEPS, GBRAIN_RESTAMP_CHECKS: CHECKS, GBRAIN_RESTAMP_DATE: '2026-11-09', GBRAIN_RESTAMP_PR_TITLE: 'fix(area): change' };
 
-function mq(fx: Fx, argv: string[], install: (cwd: string) => void = () => {}): { code: number; out: string } {
+/** install: a stand-in for bun install, or null for the real one. */
+function mq(fx: Fx, argv: string[], install: ((cwd: string) => void) | null = () => {}): { code: number; out: string } {
   const lines: string[] = [];
   const env = { ...RESTAMP_ENV, GBRAIN_MQ_WORKTREES: join(fx.root, 'wt') };
   const code = main(argv, {
-    cwd: fx.work, env, gh: fx.gh, log: (l) => lines.push(l), install, sleep: () => {}, now: () => 0,
+    cwd: fx.work, env, gh: fx.gh, log: (l) => lines.push(l), ...(install ? { install } : {}), sleep: () => {}, now: () => 0,
     restamp: (cwd, args) => releaseRestamp(args, { cwd, env, log: (l) => lines.push(l) }),
   });
   return { code, out: lines.join('\n') };
@@ -241,7 +242,7 @@ describe('merge-queue build', () => {
     const pr3 = fx.gh.pr(queuePr(fx, q3));
     expect(pr3.title).toBe('v0.1.3.0 fix(area): change 3');
     expect(pr3.labels).toEqual(['full-ci']);
-    expect(readNote(fx.gh.notes(pr3.number))).toEqual({ owner: 3, ownerHead: rev(fx.origin, 'refs/heads/owner-3'), base: q2, baseHead: rev(fx.origin, q2) });
+    expect(readNote(fx.gh.notes(pr3.number))).toEqual({ head: rev(fx.origin, q3), owner: 3, ownerHead: rev(fx.origin, 'refs/heads/owner-3'), base: q2, baseHead: rev(fx.origin, q2) });
   }, 120_000);
 
   test('refuses a contributor PR, and an entry changing the CI self-attestation files unless it is last', () => {
@@ -288,6 +289,17 @@ describe('merge-queue build', () => {
     expect(show(fx, q, 'VERSION').trim()).toBe('0.1.2.0');
     expect(isAncestor(fx.origin, 'mq/0.1.1.0-pr1', q)).toBe(true);
   }, 180_000);
+
+  test('installs a queue worktree without lifecycle scripts, so the root postinstall never runs migrations', () => {
+    const fx = fixture();
+    const pkg = `{\n  "name": "fixture",\n  "version": "0.1.1.0",\n  "dependencies": {},\n  "scripts": { "postinstall": "touch postinstall-ran" }\n}\n`;
+    ownerBranch(fx, 1, 'src/a.ts', { extra: { 'package.json': pkg } });
+    const r = mq(fx, ['build', '1'], null);
+    expect(r.out).not.toContain('refused');
+    expect(r.code).toBe(0);
+    expect(existsSync(join(fx.root, 'wt', 'mq-0.1.1.0-pr1', 'node_modules'))).toBe(true);
+    expect(existsSync(join(fx.root, 'wt', 'mq-0.1.1.0-pr1', 'postinstall-ran'))).toBe(false);
+  }, 120_000);
 });
 
 describe('merge-queue --stack', () => {
@@ -430,7 +442,7 @@ describe('merge-queue refresh and rebuild', () => {
     const q1 = queuePr(fx, 'mq/0.1.1.0-pr1');
     ownerBranch(fx, 3, 'src/c.ts', { author: 'outside-dev' });
     const outside = rev(fx.origin, 'refs/heads/owner-3');
-    fx.gh.posted.push({ n: q1, author: 'outside-dev', body: queueNote({ owner: 3, ownerHead: outside, base: 'master', baseHead: rev(fx.origin, 'refs/heads/master') }) });
+    fx.gh.posted.push({ n: q1, author: 'outside-dev', body: queueNote({ head: outside, owner: 3, ownerHead: outside, base: 'master', baseHead: rev(fx.origin, 'refs/heads/master') }) });
     expect(mq(fx, ['refresh', String(q1)]).code).toBe(0);
     expect(isAncestor(fx.origin, outside, 'mq/0.1.1.0-pr1')).toBe(false);
     expect(mq(fx, ['verify', String(q1)]).code).toBe(0);
@@ -492,6 +504,42 @@ describe('merge-queue refresh and rebuild', () => {
     expect(status.out).toContain('mq/0.1.1.0-pr1 and mq/0.1.1.0-pr3-r2 both claim version 0.1.1.0');
   }, 180_000);
 
+  test('a stopped rebuild --drop refuses the queue, so the dropped entry it left behind cannot land', () => {
+    const fx = threeEntries();
+    put(fx.master, { 'src/c.ts': 'export const C = 1;\n' });
+    git(fx.master, 'commit', '-qam', 'master edits src/c.ts');
+    git(fx.master, 'push', '-q', 'origin', 'master');
+    const dropped = queuePr(fx, 'mq/0.1.2.0-pr2');
+    const stopped = mq(fx, ['rebuild', String(queuePr(fx, 'mq/0.1.1.0-pr1')), '--drop', '2']);
+    expect(stopped.code).toBe(1);
+    expect(stopped.out).toContain('release:restamp --base mq/0.1.1.0-pr1-r2 stopped');
+    for (const argv of [['status'], ['land', String(dropped)]]) {
+      const r = mq(fx, argv);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain('mq/0.1.2.0-pr2 was built on mq/0.1.1.0-pr1, but the entry ahead is mq/0.1.1.0-pr1-r2');
+    }
+    expect(fx.gh.merged).toEqual([]);
+  }, 180_000);
+
+  test('verify and refresh refuse a commit pushed straight to a queue branch', () => {
+    const fx = fixture();
+    ownerBranch(fx, 1, 'src/a.ts');
+    expect(mq(fx, ['build', '1']).code).toBe(0);
+    const q = 'mq/0.1.1.0-pr1';
+    const pr = queuePr(fx, q);
+    git(fx.work, 'fetch', '-q', 'origin');
+    git(fx.work, 'checkout', '-q', '-B', 'stray', `origin/${q}`);
+    put(fx.work, { 'src/a.ts': 'export const UNREVIEWED = true;\n' });
+    git(fx.work, 'commit', '-qam', 'pushed straight to the queue branch');
+    git(fx.work, 'push', '-q', 'origin', `stray:refs/heads/${q}`);
+    const verify = mq(fx, ['verify', String(pr)]);
+    expect(verify.code).toBe(1);
+    expect(verify.out).toContain('is not the head bun run merge-queue pushed');
+    const refresh = mq(fx, ['refresh', String(pr)]);
+    expect(refresh.code).toBe(1);
+    expect(refresh.out).toContain('is not the head bun run merge-queue pushed');
+  }, 120_000);
+
   test('refresh installs dependencies in a worktree it has to create', () => {
     const fx = fixture();
     ownerBranch(fx, 1, 'src/a.ts');
@@ -511,9 +559,9 @@ describe('merge-queue helpers', () => {
     expect(parseBranch('capy/mq-thing')).toBeNull();
     expect(['0.60.99.0', '0.60.100.0', '0.60.9.0'].sort(compareVersions)).toEqual(['0.60.9.0', '0.60.99.0', '0.60.100.0']);
     const sha = 'a'.repeat(40);
-    const older = queueNote({ owner: 7, ownerHead: 'b'.repeat(40), base: 'master', baseHead: sha });
-    const newer = queueNote({ owner: 7, ownerHead: sha, base: 'mq/0.1.1.0-pr6', baseHead: sha });
-    expect(readNote([older, 'Queue-Owner-Head: #9 ' + sha, newer, 'a later review comment'])).toEqual({ owner: 7, ownerHead: sha, base: 'mq/0.1.1.0-pr6', baseHead: sha });
+    const older = queueNote({ head: sha, owner: 7, ownerHead: 'b'.repeat(40), base: 'master', baseHead: sha });
+    const newer = queueNote({ head: 'c'.repeat(40), owner: 7, ownerHead: sha, base: 'mq/0.1.1.0-pr6', baseHead: sha });
+    expect(readNote([older, 'Queue-Owner-Head: #9 ' + sha, newer, 'a later review comment'])).toEqual({ head: 'c'.repeat(40), owner: 7, ownerHead: sha, base: 'mq/0.1.1.0-pr6', baseHead: sha });
     expect(readNote(['no note here'])).toBeNull();
   });
 
