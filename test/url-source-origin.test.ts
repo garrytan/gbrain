@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -251,5 +251,132 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
     expect(found.status).toBe('warn');
     expect((found.details as { sources: Array<{ id: string }> }).sources.map(source => source.id)).toEqual(['source-a']);
     expect((await recordSourceOrigin(engine, ['source-a'], { origin: 'local', apply: false, remote: false })).results[0]).toMatchObject({ status: 'would_record' });
+  }), 60_000);
+  /** A repository at root with these committed files and no remote. */
+  function repoAt(root: string, files: Record<string, string>) {
+    git(['init', '-q', '-b', 'main', root]);
+    for (const [path, body] of Object.entries(files)) { mkdirSync(dirname(join(root, path)), { recursive: true }); writeFileSync(join(root, path), body); }
+    git(['-C', root, 'add', '-A']);
+    git(['-C', root, 'commit', '-q', '-m', 'init']);
+  }
+  const localConfig = (root: string, key: string) => {
+    try { return execFileSync('git', ['-C', root, 'config', '--local', '--get', key], { encoding: 'utf8', stdio: 'pipe' }).trim(); } catch { return null; }
+  };
+  const cloneFrom = (bare: string, seen: Array<{ skipLfs: boolean }>) => async (_url: string, stage: string, _budget: number, options: { skipLfs: boolean }) => {
+    seen.push(options);
+    git(['clone', '-q', ...(options.skipLfs ? LFS_OFF_CLONE_CONFIG : []), bare, stage]);
+  };
+  const reclone = async (source: string, hooks: Parameters<typeof runManagedSourceClone>[5]) => {
+    const input = { operation: 'reclone' as const, sourceId: source, requestId: randomUUID() };
+    return runManagedSourceClone(engine, input, await topologyPrincipal(engine), input.requestId, { ...input, requestId: undefined, dryRun: undefined }, hooks);
+  };
+
+  test('--remote --apply takes the reclone lifecycle lock: while a reclone holds it the record is refused source_busy and writes nothing', () => brain(async home => {
+    const { source, root, bare } = await managedUrlSource(home, false);
+    const seen: Array<{ skipLfs: boolean }> = [];
+    let during: Awaited<ReturnType<typeof recordSourceOrigin>> | undefined;
+    const result = await reclone(source, {
+      boundary: async name => { if (name === 'reserved') during = await recordSourceOrigin(engine, [source], { origin: 'remote', apply: true, remote: false }); },
+      clone: cloneFrom(bare, seen),
+    });
+    expect(result).toMatchObject({ state: 'committed' });
+    expect(during!.results).toEqual([expect.objectContaining({ source_id: source, status: 'refused', code: 'source_busy' })]);
+    expect(during!.results[0]!.reason).toContain('nothing changed');
+    expect(lfsDownloadsOff(await config(source))).toBe(false);
+    expect(seen).toEqual([{ skipLfs: false }]);
+    expect(localConfig(root, 'core.hooksPath')).toBeNull();
+  }), 120_000);
+
+  test('a reclone that read the source before a record landed clones with the recorded settings, because it reads them again under its own locks', () => brain(async home => {
+    const { source, root, bare } = await managedUrlSource(home, false);
+    const executeRaw = engine.executeRaw;
+    let recorded: Awaited<ReturnType<typeof recordSourceOrigin>> | undefined;
+    let fired = false;
+    const patched = spyOn(engine, 'executeRaw').mockImplementation((async function (this: BrainEngine, sql: string, params?: unknown[]) {
+      const rows = await executeRaw.call(this, sql, params);
+      if (!fired && this === engine && sql.startsWith('SELECT incarnation,config,last_commit,local_path FROM sources')) {
+        fired = true;
+        recorded = await recordSourceOrigin(engine, [source], { origin: 'remote', apply: true, remote: false });
+      }
+      return rows;
+    }) as typeof engine.executeRaw);
+    const seen: Array<{ skipLfs: boolean }> = [];
+    try {
+      expect(await reclone(source, { clone: cloneFrom(bare, seen) })).toMatchObject({ state: 'committed' });
+    } finally { patched.mockRestore(); }
+    expect(recorded!.results).toEqual([expect.objectContaining({ source_id: source, status: 'recorded' })]);
+    expect(seen).toEqual([{ skipLfs: true }]);
+    expect(localConfig(root, 'core.hooksPath')).toBe('/dev/null');
+  }), 120_000);
+
+  test('--remote --apply turns git-lfs downloads and hooks off in the existing checkout too; the preview changes nothing', () => brain(async home => {
+    const { source, root } = await managedUrlSource(home, false);
+    const preview = await recordSourceOrigin(engine, [source], { origin: 'remote', apply: false, remote: false });
+    expect(preview.results[0]!.reason).toContain('turned off in its checkout');
+    expect(localConfig(root, 'core.hooksPath')).toBeNull();
+    expect((await recordSourceOrigin(engine, [source], { origin: 'remote', apply: true, remote: false })).results[0]).toMatchObject({ status: 'recorded' });
+    expect([localConfig(root, 'lfs.fetchexclude'), localConfig(root, 'core.hooksPath'), localConfig(root, 'lfs.locksverify')]).toEqual(['*', '/dev/null', 'false']);
+  }), 120_000);
+
+  test('--remote reads a committed .gitattributes under a directory whose name holds a tab, so clone-local attributes cannot hide its git-lfs files', () => brain(async () => {
+    const root = defaultCloneDir('source-a');
+    repoAt(root, { 'example.md': 'Canonical\n', 'dir\tname/.gitattributes': '*.bin filter=lfs diff=lfs merge=lfs -text\n', 'dir\tname/blob.bin': 'binary-example' });
+    mkdirSync(join(root, '.git', 'info'), { recursive: true });
+    writeFileSync(join(root, '.git', 'info', 'attributes'), '*.bin -filter\n');
+    await insert('source-a', root, URL_CONFIG);
+    for (const apply of [false, true])
+      expect((await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply, remote: false })).results[0]).toMatchObject({ status: 'refused', code: 'lfs_tracked' });
+    expect(await config('source-a')).toEqual(URL_CONFIG);
+  }), 60_000);
+
+  test('--remote ignores commented-out filter=lfs lines, and says an LFS filter is declared when a committed rule names one that matches no file', () => brain(async () => {
+    repoAt(defaultCloneDir('source-a'), { 'example.md': 'Canonical\n', '.gitattributes': '# *.bin filter=lfs diff=lfs merge=lfs -text\n   # *.psd filter=lfs\n*.md text\n' });
+    repoAt(defaultCloneDir('source-b'), { 'example.md': 'Canonical\n', 'assets/.gitattributes': '*.psd filter=lfs diff=lfs merge=lfs -text\n' });
+    await insert('source-a', defaultCloneDir('source-a'), URL_CONFIG);
+    await insert('source-b', defaultCloneDir('source-b'), URL_CONFIG);
+    const report = await recordSourceOrigin(engine, ['source-a', 'source-b'], { origin: 'remote', apply: false, remote: false });
+    expect(report.results.map(result => result.code ?? result.status)).toEqual(['would_record', 'lfs_tracked']);
+    expect(report.results[1]!.reason).toContain('declares a git-lfs filter');
+    expect(report.results[1]!.reason).not.toContain('tracks files with git-lfs');
+  }), 60_000);
+
+  test('--remote records a clone of an empty repository: an unborn HEAD has no committed attributes, so there is nothing to restore', () => brain(async home => {
+    const bare = join(home, 'empty.git');
+    git(['init', '-q', '--bare', '-b', 'main', bare]);
+    mkdirSync(join(home, 'clones'), { recursive: true });
+    git(['clone', '-q', bare, defaultCloneDir('source-a')]);
+    await insert('source-a', defaultCloneDir('source-a'), URL_CONFIG);
+    expect((await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: true, remote: false })).results[0]).toMatchObject({ status: 'recorded' });
+    expect(lfsDownloadsOff(await config('source-a'))).toBe(true);
+  }), 60_000);
+
+  test('lfs_unknown names its cause: a missing checkout, or a clone directory that is not the top level of its own repository', () => brain(async home => {
+    await insert('source-a', defaultCloneDir('source-a'), URL_CONFIG);
+    const missing = (await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: false, remote: false })).results[0]!;
+    expect(missing).toMatchObject({ code: 'lfs_unknown' });
+    expect(missing.reason).toContain('is missing');
+    git(['init', '-q', home]);
+    mkdirSync(defaultCloneDir('source-a'), { recursive: true });
+    const enclosed = (await recordSourceOrigin(engine, ['source-a'], { origin: 'remote', apply: false, remote: false })).results[0]!;
+    expect(enclosed).toMatchObject({ code: 'lfs_unknown' });
+    expect(enclosed.reason).toContain('not the top level of its own Git repository');
+    expect(enclosed.reason).not.toContain('is missing');
+  }), 60_000);
+
+  test('a write that throws mid-batch is reported for its id, and the ids before and after it keep their own results', () => brain(async () => {
+    for (const id of ['source-a', 'source-b', 'source-c']) await insert(id, defaultCloneDir(id), URL_CONFIG);
+    const transaction = engine.transaction.bind(engine);
+    let calls = 0;
+    const patched = spyOn(engine, 'transaction').mockImplementation(async fn => {
+      if (++calls === 2) throw new Error('connection reset (example)');
+      return transaction(fn);
+    });
+    let report: Awaited<ReturnType<typeof recordSourceOrigin>>;
+    try { report = await recordSourceOrigin(engine, ['source-a', 'source-b', 'source-c'], { origin: 'local', apply: true, remote: false }); }
+    finally { patched.mockRestore(); }
+    expect(report.results.map(result => [result.source_id, result.code ?? result.status])).toEqual([['source-a', 'recorded'], ['source-b', 'write_failed'], ['source-c', 'recorded']]);
+    expect(report.results[1]!.reason).toContain('connection reset (example)');
+    expect(await config('source-b')).toEqual(URL_CONFIG);
+    expect(await config('source-c')).toEqual({ ...URL_CONFIG, added_by_remote_caller: false });
   }), 60_000);
 });

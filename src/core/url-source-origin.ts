@@ -10,17 +10,22 @@
  *
  * `urlSourcesWithoutOrigin` lists the undecided ones for the `url_source_origin` doctor check, read-only.
  * `recordSourceOrigin` (`gbrain sources record-origin`, trusted local CLI only) records the operator's answer:
- * `remote` writes `true`, `local` writes `false`. It previews unless `apply`. `remote` refuses a checkout that tracks
- * files with git-lfs, or one it cannot inspect: a clone with git-lfs downloads off holds pointer files where that
- * checkout holds the files' content, so the next managed reclone would not match the canonical manifest, and
- * converting the checkout rewrites its files, which this does not do. Without git-lfs files a clone with these
- * settings has the same tracked bytes, so the stored manifest needs no change.
+ * `remote` writes `true` and turns git-lfs downloads and hooks off in the existing checkout's own .git/config, the
+ * settings a remote add's clone gets, so the checkout is locked down now rather than at a reclone that may never come;
+ * `local` writes `false`. It previews unless `apply`. `remote` refuses a checkout that tracks files with git-lfs or
+ * declares an LFS filter in a committed .gitattributes, or one it cannot inspect: a clone with git-lfs downloads off
+ * holds pointer files where that checkout holds the files' content, so the next managed reclone would not match the
+ * canonical manifest, and converting the checkout rewrites its files, which this does not do. Without git-lfs files a
+ * clone with these settings has the same tracked bytes, so the stored manifest needs no change.
  */
-import { realpathSync } from 'node:fs';
-import { basename, dirname, resolve } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { BrainEngine } from './engine.ts';
+import { execFileSync } from './spawn.ts';
 import { opError } from './ops/contract.ts';
-import { hardenedGitSync } from './hardened-git.ts';
+import { LFS_OFF_CLONE_CONFIG } from './git-remote.ts';
+import { hardenedGitEnvironment, hardenedGitSync } from './hardened-git.ts';
+import { managedPersistenceEnabled } from './persistence/ownership.ts';
 import { normalizeSourceConfig, parseSourceConfig } from './sources-load.ts';
 import { defaultCloneDir, isOwnedClone } from './url-clone.ts';
 
@@ -52,35 +57,65 @@ export async function urlSourcesWithoutOrigin(engine: BrainEngine): Promise<Arra
   return rows.filter(row => originState(row) === 'unknown').map(row => ({ id: row.id, local_path: row.local_path! }));
 }
 
+type LfsState = { state: 'none' | 'tracked' | 'declared' } | { state: 'unknown'; cause: 'missing' | 'not_top_level' | 'git_failed' };
+const GIT_LIMITS = { timeoutMs: 30_000, maxBytes: 64 * 1024 * 1024 };
+const sameDirectory = (a: string, b: string): boolean => { try { return realpathSync.native(a) === realpathSync.native(b); } catch { return false; } };
+const declaresLfs = (attributes: string): boolean => attributes.split('\n')
+  .some(line => { const rule = line.trim(); return rule !== '' && !rule.startsWith('#') && /(^|\s)filter=lfs(\s|$)/.test(rule); });
+
 /**
- * `none` only when the checkout is its own repository's top level, Git lists it, no tracked path has `filter=lfs` and no
- * committed `.gitattributes` names `filter=lfs`. The committed files decide because a reclone gets only those: clone-local
- * attributes (`info/attributes`, an edited `.gitattributes`) can hide git-lfs paths from the listing. A missing or
- * unreadable checkout, or a directory Git resolves to an enclosing repository, is not known to be free of git-lfs.
+ * `none` only when the checkout is its own repository's top level, Git lists it, no tracked path has `filter=lfs` (`tracked`)
+ * and no committed `.gitattributes` declares `filter=lfs` outside a comment (`declared`). The committed files decide because a
+ * reclone gets only those: clone-local attributes (`info/attributes`, an edited `.gitattributes`) can hide git-lfs paths from
+ * the listing. An unborn HEAD with an empty index (a clone of an empty repository) has no committed attributes. A missing
+ * checkout, a directory Git resolves to an enclosing repository (or none), or a Git read that fails is not known to be free
+ * of git-lfs.
  */
-function lfsTracked(root: string): 'none' | 'tracked' | 'unknown' {
-  const limits = { timeoutMs: 30_000, maxBytes: 64 * 1024 * 1024 };
-  const top = hardenedGitSync(root, ['rev-parse', '--show-toplevel'], limits);
-  if (!top.ok || top.stdout.toString('utf8').trim() !== realpathSync(root)) return 'unknown';
-  const listed = hardenedGitSync(root, ['ls-files', '-z', '--cached', '--', ':(attr:filter=lfs)'], limits);
-  if (!listed.ok) return 'unknown';
-  if (listed.stdout.length) return 'tracked';
-  const tree = hardenedGitSync(root, ['ls-tree', '-r', '-z', '--full-tree', 'HEAD'], limits);
-  if (!tree.ok) return 'unknown';
-  for (const entry of tree.stdout.toString('utf8').split('\0')) {
-    const [meta, path] = entry.split('\t');
-    if (!path || (path !== '.gitattributes' && !path.endsWith('/.gitattributes'))) continue;
-    const blob = hardenedGitSync(root, ['cat-file', 'blob', meta!.split(' ')[2]!], limits);
-    if (!blob.ok) return 'unknown';
-    if (/(^|\s)filter=lfs(\s|$)/m.test(blob.stdout.toString('utf8'))) return 'tracked';
+function lfsTracked(root: string): LfsState {
+  if (!existsSync(root)) return { state: 'unknown', cause: 'missing' };
+  const gitFailed = { state: 'unknown', cause: 'git_failed' } as const;
+  const top = hardenedGitSync(root, ['rev-parse', '--show-toplevel'], GIT_LIMITS);
+  if (!top.ok) return top.reason === 'exit' ? { state: 'unknown', cause: 'not_top_level' } : gitFailed;
+  if (!sameDirectory(top.stdout.toString('utf8').replace(/\n$/, ''), root)) return { state: 'unknown', cause: 'not_top_level' };
+  const listed = hardenedGitSync(root, ['ls-files', '-z', '--cached', '--', ':(attr:filter=lfs)'], GIT_LIMITS);
+  if (!listed.ok) return gitFailed;
+  if (listed.stdout.length) return { state: 'tracked' };
+  const head = hardenedGitSync(root, ['rev-parse', '--verify', '--quiet', 'HEAD'], GIT_LIMITS);
+  if (!head.ok) {
+    const index = head.reason === 'exit' ? hardenedGitSync(root, ['ls-files', '-z', '--cached'], GIT_LIMITS) : null;
+    return index?.ok && !index.stdout.length ? { state: 'none' } : gitFailed;
   }
-  return 'none';
+  const tree = hardenedGitSync(root, ['ls-tree', '-r', '-z', '--full-tree', 'HEAD'], GIT_LIMITS);
+  if (!tree.ok) return gitFailed;
+  for (const entry of tree.stdout.toString('utf8').split('\0')) {
+    const tab = entry.indexOf('\t');
+    const [, type, object] = entry.slice(0, tab).split(' ');
+    const path = entry.slice(tab + 1);
+    if (tab < 0 || type !== 'blob' || (path !== '.gitattributes' && !path.endsWith('/.gitattributes'))) continue;
+    const blob = hardenedGitSync(root, ['cat-file', 'blob', object!], GIT_LIMITS);
+    if (!blob.ok) return gitFailed;
+    if (declaresLfs(blob.stdout.toString('utf8'))) return { state: 'declared' };
+  }
+  return { state: 'none' };
+}
+
+/** Writes the clone-time lock-down (`LFS_OFF_CLONE_CONFIG`) into the checkout's own .git/config, without running Git in the checkout. */
+function lockDownCheckout(root: string): void {
+  const gitDir = hardenedGitSync(root, ['rev-parse', '--absolute-git-dir'], GIT_LIMITS);
+  if (!gitDir.ok) throw new Error(`Git could not locate the repository of ${root}`);
+  const file = join(gitDir.stdout.toString('utf8').replace(/\n$/, ''), 'config');
+  for (const setting of LFS_OFF_CLONE_CONFIG.filter(arg => arg !== '--config')) {
+    const at = setting.indexOf('=');
+    execFileSync('git', ['config', '--file', file, setting.slice(0, at), setting.slice(at + 1)],
+      { cwd: dirname(file), env: hardenedGitEnvironment(), stdio: 'pipe', timeout: GIT_LIMITS.timeoutMs });
+  }
 }
 
 export interface RecordOriginResult {
   source_id: string;
   status: 'would_record' | 'recorded' | 'already_recorded' | 'refused';
-  code?: 'not_found' | 'archived' | 'not_url_clone' | 'custom_clone_dir' | 'recorded_remote' | 'lfs_tracked' | 'lfs_unknown' | 'source_changed';
+  code?: 'not_found' | 'archived' | 'not_url_clone' | 'custom_clone_dir' | 'recorded_remote' | 'lfs_tracked' | 'lfs_unknown' | 'source_changed'
+    | 'source_busy' | 'write_failed';
   reason: string;
 }
 
@@ -89,9 +124,15 @@ const refusal = (id: string, code: NonNullable<RecordOriginResult['code']>, reas
 /** The refusal a `--remote` record gets when the checkout is not known to be free of git-lfs, or null. */
 function lfsRefusal(id: string, root: string): RecordOriginResult | null {
   const lfs = lfsTracked(root);
-  if (lfs === 'tracked') return refusal(id, 'lfs_tracked', `Source ${id} tracks files with git-lfs. A clone with git-lfs downloads off holds pointer files where this checkout holds their content, so its next reclone would not match the canonical manifest, and converting the checkout rewrites its files, which this command does not do; nothing changed. If the source should not keep these files, check that nothing in its checkout is unpushed or only local, then remove it (gbrain sources remove ${id} --confirm-destructive).`);
-  if (lfs === 'unknown') return refusal(id, 'lfs_unknown', `Source ${id}'s checkout is missing or Git could not list it, so gbrain cannot confirm that no file is tracked with git-lfs; nothing changed. Restore the checkout, then run this again.`);
-  return null;
+  const why = 'A clone with git-lfs downloads off holds pointer files where this checkout holds their content, so its next reclone would not match the canonical manifest, '
+    + `and converting the checkout rewrites its files, which this command does not do; nothing changed. If the source should not keep these files, check that nothing in its checkout is unpushed or only local, then remove it (gbrain sources remove ${id} --confirm-destructive).`;
+  if (lfs.state === 'tracked') return refusal(id, 'lfs_tracked', `Source ${id} tracks files with git-lfs. ${why}`);
+  if (lfs.state === 'declared') return refusal(id, 'lfs_tracked', `A committed .gitattributes in source ${id} declares a git-lfs filter (filter=lfs), so a reclone would store matching files with git-lfs. ${why}`);
+  if (lfs.state !== 'unknown') return null;
+  const unconfirmed = 'so gbrain cannot confirm that no file is tracked with git-lfs; nothing changed.';
+  if (lfs.cause === 'missing') return refusal(id, 'lfs_unknown', `Source ${id}'s checkout at ${root} is missing, ${unconfirmed} Restore the checkout, then run this again.`);
+  if (lfs.cause === 'not_top_level') return refusal(id, 'lfs_unknown', `Source ${id}'s clone directory ${root} is not the top level of its own Git repository (Git resolves it to an enclosing repository, or to none), ${unconfirmed} Check what that directory holds before you run this again.`);
+  return refusal(id, 'lfs_unknown', `Git could not list or read source ${id}'s checkout at ${root}, ${unconfirmed} Check that git works in that checkout, then run this again.`);
 }
 
 /** The outcome that needs no checkout inspection, or null when the source can take the record. */
@@ -109,9 +150,12 @@ function check(row: SourceRowLike | undefined, id: string, origin: SourceOrigin)
 }
 
 /**
- * Records who added each named URL source. Preview unless `apply`; each apply re-reads and locks the row, so a source
- * changed since its check is refused `source_changed` and left alone, and a `remote` record inspects the checkout again
- * under that lock. Trusted local CLI only: `remote` must be false.
+ * Records who added each named URL source. Preview unless `apply`. Each apply re-reads and locks the row, so a source changed
+ * since its check is refused `source_changed` and left alone; on a managed brain it first takes the same worktree locks and
+ * rows a reclone takes (`withTopologyLocks`, `lockTopologyRows`), so no reclone runs between the record and the next one,
+ * and one that holds them refuses this id `source_busy`. A `remote` record inspects the checkout again under those locks and
+ * locks it down before the row is written. A throw ends only its own id (`write_failed`); the others keep their results.
+ * Trusted local CLI only: `remote` must be false.
  */
 export async function recordSourceOrigin(engine: BrainEngine, ids: string[], opts: { origin: SourceOrigin; apply: boolean; remote?: boolean })
   : Promise<{ origin: SourceOrigin; apply: boolean; results: RecordOriginResult[] }> {
@@ -120,28 +164,47 @@ export async function recordSourceOrigin(engine: BrainEngine, ids: string[], opt
       fix: { argv: recordOriginArgv(ids, opts.origin), consent: [], actor: 'user', requires_exclusive: false, docs: RECORD_ORIGIN_DOCS,
         why: 'Previews which sources would get the record; only the local operator can say who added a source.' } });
   const results: RecordOriginResult[] = [];
-  const recordedAs = opts.origin === 'remote' ? 'a remote caller' : 'the local operator';
+  const remote = opts.origin === 'remote';
+  const recordedAs = remote ? 'a remote caller' : 'the local operator';
+  const locks = opts.apply && await managedPersistenceEnabled(engine)
+    ? { ...await import('./persistence/topology-locks.ts'), ...await import('./persistence/topology-transaction.ts') } : null;
   for (const id of [...new Set(ids)]) {
-    const [row] = await engine.executeRaw<SourceRowLike>('SELECT id, local_path, config, archived FROM sources WHERE id=$1', [id]);
-    const early = check(row, id, opts.origin);
-    if (early) { results.push(early); continue; }
-    const lfs = opts.origin === 'remote' ? lfsRefusal(id, row!.local_path!) : null;
-    if (lfs) { results.push(lfs); continue; }
-    if (!opts.apply) {
-      results.push({ source_id: id, status: 'would_record', reason: `Source ${id} would be recorded as added by ${recordedAs}${opts.origin === 'remote' ? '; its next reclone clones with git-lfs downloads and hooks off' : ''}.` });
-      continue;
+    let lockedDown = false;
+    try {
+      const [row] = await engine.executeRaw<SourceRowLike>('SELECT id, local_path, config, archived FROM sources WHERE id=$1', [id]);
+      const early = check(row, id, opts.origin);
+      if (early) { results.push(early); continue; }
+      const lfs = remote ? lfsRefusal(id, row!.local_path!) : null;
+      if (lfs) { results.push(lfs); continue; }
+      if (!opts.apply) {
+        results.push({ source_id: id, status: 'would_record', reason: `Source ${id} would be recorded as added by ${recordedAs}${remote ? '; git-lfs downloads and hooks would be turned off in its checkout now, and every later reclone clones that way' : ''}.` });
+        continue;
+      }
+      const write = async (tx: BrainEngine): Promise<RecordOriginResult> => {
+        const [locked] = await tx.executeRaw<SourceRowLike>('SELECT id, local_path, config, archived FROM sources WHERE id=$1 FOR UPDATE', [id]);
+        const config = locked ? parseSourceConfig(locked.config) : {};
+        if (check(locked, id, opts.origin) || locked!.local_path !== row!.local_path || config.remote_url !== parseSourceConfig(row!.config).remote_url)
+          return refusal(id, 'source_changed', `Source ${id} changed while its origin was being recorded; nothing changed. Run the preview again.`);
+        if (remote) {
+          const lfsNow = lfsRefusal(id, locked!.local_path!);
+          if (lfsNow) return lfsNow;
+          lockDownCheckout(locked!.local_path!);
+          lockedDown = true;
+        }
+        await tx.executeRaw('UPDATE sources SET config=$2::text::jsonb WHERE id=$1',
+          [id, JSON.stringify(normalizeSourceConfig({ ...config, added_by_remote_caller: remote }))]);
+        return { source_id: id, status: 'recorded', reason: `Source ${id} is recorded as added by ${recordedAs}${remote ? '; its checkout now has git-lfs downloads and hooks off, and every later reclone clones that way' : ''}.` };
+      };
+      results.push(locks
+        ? await locks.withTopologyLocks(engine, id, bindings => locks.topologyTransaction(engine, async tx => { await locks.lockTopologyRows(tx, id, bindings); return write(tx); }))
+        : await engine.transaction(write));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const lockdown = lockedDown ? ' Its checkout already has git-lfs downloads and hooks off.' : '';
+      results.push((error as { code?: string }).code === 'write_pending'
+        ? refusal(id, 'source_busy', `Another gbrain process (a reclone, refresh or write) holds source ${id}'s worktree locks, so its origin was not recorded; nothing changed. Run this again once that process finishes.`)
+        : refusal(id, 'write_failed', `Recording source ${id}'s origin failed: ${message} The record was not written.${lockdown} The other ids in this run keep their own results; run this again for ${id}.`));
     }
-    results.push(await engine.transaction(async tx => {
-      const [locked] = await tx.executeRaw<SourceRowLike>('SELECT id, local_path, config, archived FROM sources WHERE id=$1 FOR UPDATE', [id]);
-      const config = locked ? parseSourceConfig(locked.config) : {};
-      if (check(locked, id, opts.origin) || locked!.local_path !== row!.local_path || config.remote_url !== parseSourceConfig(row!.config).remote_url)
-        return refusal(id, 'source_changed', `Source ${id} changed while its origin was being recorded; nothing changed. Run the preview again.`);
-      const lfsNow = opts.origin === 'remote' ? lfsRefusal(id, locked!.local_path!) : null;
-      if (lfsNow) return lfsNow;
-      await tx.executeRaw('UPDATE sources SET config=$2::text::jsonb WHERE id=$1',
-        [id, JSON.stringify(normalizeSourceConfig({ ...config, added_by_remote_caller: opts.origin === 'remote' }))]);
-      return { source_id: id, status: 'recorded' as const, reason: `Source ${id} is recorded as added by ${recordedAs}.` };
-    }));
   }
   return { origin: opts.origin, apply: opts.apply, results };
 }
