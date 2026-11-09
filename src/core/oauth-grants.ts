@@ -9,6 +9,7 @@ import { generateToken, hashToken } from './utils.ts';
 import { hasScope, parseScopeString } from './scope.ts';
 import { TOKEN_TTL_MAX_SECONDS, intersectGrantedScopes } from './grants/model.ts';
 import { safeHexEqual } from './timing-safe.ts';
+import { retryOnStalePlan } from './retry-matcher.ts';
 import { clientHoldsAuthorization, GrantError, recordFirstConsentInTransaction } from './grants/service.ts';
 
 export type OAuthTransaction = <T>(fn: (sql: SqlQuery) => Promise<T>) => Promise<T>;
@@ -126,12 +127,14 @@ export class OAuthGrants {
 
   private now(): number { return (this.options.now ?? Date.now)(); }
   private async locked<T>(clientId: string, fn: (sql: SqlQuery, row: ClientRow) => Promise<T>): Promise<T> {
-    if (!this.options.transaction) throw new ServerError('OAuth grant transactions are unavailable');
-    return this.options.transaction(async sql => {
+    const options = this.options;
+    if (!options.transaction) throw new ServerError('OAuth grant transactions are unavailable');
+    // GST-2260: every caller's callback is database work only, so a transaction a stale plan aborted runs again.
+    return retryOnStalePlan(() => options.transaction!(async sql => {
       const [row] = await sql`SELECT * FROM oauth_clients WHERE client_id = ${clientId} FOR UPDATE`;
       assertActive(row);
       return fn(sql, row);
-    });
+    }));
   }
 
   private prune(): void {

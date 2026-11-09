@@ -113,6 +113,31 @@ export function isStatementTimeoutError(err: unknown): boolean {
 }
 
 /**
+ * GST-2260: SQLSTATE 0A000 from RevalidateCachedQuery, "cached plan must not change result type": another session
+ * changed a column of a table a prepared statement reads, so its cached result type no longer holds. The vendored
+ * driver re-prepares every connection's statements after the first one, so the statement succeeds when it runs again;
+ * inside a transaction that means re-running the whole transaction, which this error has already rolled back. Matched
+ * on the routine, never the code alone: other 0A000 errors (an unsupported feature) are permanent.
+ */
+export function isStalePlanError(err: unknown): boolean {
+  return getCode(err) === '0A000' && (err as { routine?: unknown } | null)?.routine === 'RevalidateCachedQuery';
+}
+
+/**
+ * GST-2260: runs `transaction` once more when a stale plan aborted it. The abort rolled back every statement it ran, so
+ * the second run is safe only for a callback that does nothing but database work and in-memory computation: never wrap
+ * one that writes a file, calls the network or changes state that outlives the transaction.
+ */
+export async function retryOnStalePlan<T>(transaction: () => Promise<T>): Promise<T> {
+  try {
+    return await transaction();
+  } catch (error) {
+    if (!isStalePlanError(error)) throw error;
+    return transaction();
+  }
+}
+
+/**
  * SQLSTATE 55P03: lock_not_available.
  * Postgres signals this when `lock_timeout` or `NOWAIT` would block.
  */
