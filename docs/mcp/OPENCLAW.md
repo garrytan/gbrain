@@ -5,9 +5,15 @@
 > [INSTALL_FOR_AGENTS.md](../../INSTALL_FOR_AGENTS.md); the README covers the
 > bootstrap and connect paths.
 
-Two supported shapes, both stdio.
+Connect with [Option 2](#option-2-openclaw-mcp-add) (stdio). Option 1's ClawHub
+bundle is not available yet.
 
-## Option 1: ClawHub bundle plugin
+## Option 1: ClawHub bundle plugin (not available yet)
+
+This project publishes no ClawHub package yet. The package named `gbrain` on
+ClawHub is an unofficial upload of an old 0.10.1 build whose manifest has no
+`id`, so `openclaw plugins install clawhub:gbrain` stops with
+`plugin manifest requires id`. Don't install it; use Option 2.
 
 GBrain ships [`openclaw.plugin.json`](../../openclaw.plugin.json) at the repo
 root. Installing the bundle plugin registers the MCP server for you — the
