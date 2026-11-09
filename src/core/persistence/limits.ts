@@ -1,6 +1,7 @@
 import { opError, type OperationError } from '../ops/contract.ts';
 import { PAGE_BODY_CONFIG_KEYS, pageRecoveryBytes, segmentedPageCeiling } from '../page-body/limits.ts';
 import { DEFAULT_JOURNAL_LIMITS, principalKey, type JournalLimits, type Principal, type SqlEngine } from './model.ts';
+import { engineKey } from '../engine-key.ts';
 import { COMPACTED_HEADROOM_BYTES, COMPACTED_RECEIPT_BYTES_SQL, EFFECT_BYTES_SQL, RECEIPT_RESERVATION_FLOOR } from './receipt-bytes.ts';
 
 /** Fallback compacted receipt size when no receipt is sampled; a compacted put_page measures about 3.9 KB. */
@@ -72,8 +73,8 @@ export function recommendedLimit(resource: CapacityResource, used: number, limit
 const WINDOW_WALK_ROWS = 200_000;
 /**
  * A cumulative cap value that covers one more year, never less than double the current cap. GST-2107: while the scope
- * admitted anything in the last 7 days it uses the window's mean rates over the window `readCapacityForecast` uses
- * (7 days, or the brain's age, at least a day), so an admission refusal names the same value as doctor and one bulk hour
+ * admitted anything in the last 7 days it uses the window's mean rates, source lifecycle changes included, over the window
+ * `readCapacityForecast` uses (7 days, or the brain's age, at least a day), so an admission refusal names the same value as doctor and one bulk hour
  * is not projected for a year. A scope idle for a week is sized from its latest 1,000 admissions, however old. Receipt
  * bytes use measured reservations: what receipts reserve while the retention window holds them, and their compacted size
  * after (`recommendedLimit`).
@@ -81,8 +82,39 @@ const WINDOW_WALK_ROWS = 200_000;
 export async function oneYearCapacity(engine:SqlEngine,scope:string,setting:'LifetimeIds'|'TerminalBytes',used:number,limit:number):Promise<number> {
   const principal=/^principal:([^:]+):(.+)$/.exec(scope);
   const where=principal ? 'WHERE principal_kind=$1 AND principal_id=$2' : '';
-  const [sample]=await engine.executeRaw<{admissions:number;age_seconds:number|null;gross:number|null;net:number|null;
-    window_ids?:number|null;window_gross?:number|null;window_net?:number|null;window_span_days?:number|null;brain_age_days?:number|null}>(`WITH recent AS (
+  const params=principal ? [principal[1],principal[2]] : [];
+  // Refusals run under the counter locks, and a paused background producer is refused on every retry, so a scope's
+  // rates are read once a minute per brain (its oldest request names the brain) rather than walking the window each time.
+  const [oldest]=await engine.executeRaw<{id:string}>('SELECT id::text AS id FROM persistence_requests ORDER BY sequence LIMIT 1');
+  const cache=rateSamples.get(engineKey(engine)) ?? new Map<string,{at:number;brain:string|undefined;sample:RateSample}>();
+  rateSamples.set(engineKey(engine),cache);
+  const hit=cache.get(scope);
+  const sample=hit && hit.brain===oldest?.id && Date.now()-hit.at<RATE_SAMPLE_TTL_MS ? hit.sample : await readRateSample(engine,scope,where,params);
+  if(sample!==hit?.sample) cache.set(scope,{at:Date.now(),brain:oldest?.id,sample});
+  const retention=await readReceiptRetentionDays(engine).catch(()=>DEFAULT_RECEIPT_RETENTION_DAYS);
+  const windowIds=Number(sample.window_ids ?? 0)+Number(sample.topology_ids ?? 0);
+  if(windowIds>0) {
+    // A week busier than the walk reads the walk's own span, so the rate is never diluted over days it did not read.
+    const windowDays=Number(sample.window_ids ?? 0)>=WINDOW_WALK_ROWS ? Math.max(1/24,Number(sample.window_span_days ?? 0)) : Math.min(7,Math.max(1,Number(sample.brain_age_days ?? 7)));
+    const topologyBytes=Number(sample.topology_bytes ?? 0);
+    return setting==='LifetimeIds' ? recommendedLimit('lifetime_ids',used,limit,{perDay:windowIds/windowDays},retention)
+      : recommendedLimit('terminal_bytes',used,limit,{perDay:(Number(sample.window_gross)+topologyBytes)/windowDays,netPerDay:(Number(sample.window_net)+topologyBytes)/windowDays},retention);
+  }
+  const perDay=sample.admissions/Math.max(1/24,(sample.age_seconds ?? 0)/86_400);
+  const measured=(value:number|null|undefined,fallback:number)=>Number.isFinite(Number(value)) && Number(value)>0 ? Number(value) : fallback;
+  return setting==='LifetimeIds' ? recommendedLimit('lifetime_ids',used,limit,{perDay},retention)
+    : recommendedLimit('terminal_bytes',used,limit,{perDay:perDay*measured(sample.gross,RECEIPT_RESERVATION_FLOOR),netPerDay:perDay*measured(sample.net,RETAINED_RECEIPT_BYTES)},retention);
+}
+
+type RateSample={admissions:number;age_seconds:number|null;gross:number|null;net:number|null;window_ids?:number|null;window_gross?:number|null;
+  window_net?:number|null;window_span_days?:number|null;brain_age_days?:number|null;topology_ids?:number|null;topology_bytes?:number|null};
+const RATE_SAMPLE_TTL_MS=60_000;
+const rateSamples=new WeakMap<object,Map<string,{at:number;brain:string|undefined;sample:RateSample}>>();
+
+/** The scope's admission sample and 7-day window; lifecycle changes count for the brain and for the local CLI writer, as in readCapacityForecast. */
+async function readRateSample(engine:SqlEngine,scope:string,where:string,params:string[]):Promise<RateSample> {
+  const topologyWhere=scope==='brain' ? '' : params[0]==='local_cli' ? 'AND principal_id::text=$2' : 'AND false';
+  const [sample]=await engine.executeRaw<RateSample>(`WITH recent AS (
       SELECT id,created_at,terminal_reservation,authority,outcome,error_detail,client_request_id FROM persistence_requests ${where} ORDER BY sequence DESC LIMIT 1000),
     w AS (SELECT * FROM (SELECT id,created_at,terminal_reservation,authority,outcome,error_detail,client_request_id FROM persistence_requests ${where}
       ORDER BY sequence DESC LIMIT ${WINDOW_WALK_ROWS}) walk WHERE created_at>now()-interval '7 days'),
@@ -92,20 +124,11 @@ export async function oneYearCapacity(engine:SqlEngine,scope:string,setting:'Lif
       (SELECT avg(LEAST(terminal_reservation,octet_length(authority::text)+COALESCE(octet_length(outcome::text),0)+COALESCE(octet_length(error_detail::text),0)+${COMPACTED_HEADROOM_BYTES}))::float8 FROM recent) AS net,
       (SELECT count(*)::int FROM w) AS window_ids,(SELECT EXTRACT(EPOCH FROM now()-min(created_at))/86400 FROM w)::float8 AS window_span_days,(SELECT COALESCE(SUM(terminal_reservation),0)::float8 FROM w) AS window_gross,
       (SELECT COALESCE(SUM(${COMPACTED_RECEIPT_BYTES_SQL('w', 'e')}),0)::float8 FROM w LEFT JOIN e ON e.request_id=w.id) AS window_net,
-      (SELECT EXTRACT(EPOCH FROM now()-created_at)/86400 FROM persistence_requests ORDER BY sequence LIMIT 1)::float8 AS brain_age_days`,
-  principal ? [principal[1],principal[2]] : []);
-  const retention=await readReceiptRetentionDays(engine).catch(()=>DEFAULT_RECEIPT_RETENTION_DAYS);
-  const windowIds=Number(sample.window_ids ?? 0);
-  if(windowIds>0) {
-    // A week busier than the walk reads the walk's own span, so the rate is never diluted over days it did not read.
-    const windowDays=windowIds>=WINDOW_WALK_ROWS ? Math.max(1/24,Number(sample.window_span_days ?? 0)) : Math.min(7,Math.max(1,Number(sample.brain_age_days ?? 7)));
-    return setting==='LifetimeIds' ? recommendedLimit('lifetime_ids',used,limit,{perDay:windowIds/windowDays},retention)
-      : recommendedLimit('terminal_bytes',used,limit,{perDay:Number(sample.window_gross)/windowDays,netPerDay:Number(sample.window_net)/windowDays},retention);
-  }
-  const perDay=sample.admissions/Math.max(1/24,(sample.age_seconds ?? 0)/86_400);
-  const measured=(value:number|null|undefined,fallback:number)=>Number.isFinite(Number(value)) && Number(value)>0 ? Number(value) : fallback;
-  return setting==='LifetimeIds' ? recommendedLimit('lifetime_ids',used,limit,{perDay},retention)
-    : recommendedLimit('terminal_bytes',used,limit,{perDay:perDay*measured(sample.gross,RECEIPT_RESERVATION_FLOOR),netPerDay:perDay*measured(sample.net,RETAINED_RECEIPT_BYTES)},retention);
+      (SELECT EXTRACT(EPOCH FROM now()-created_at)/86400 FROM persistence_requests ORDER BY sequence LIMIT 1)::float8 AS brain_age_days,
+      (SELECT count(*)::int FROM persistence_topology_changes WHERE created_at>now()-interval '7 days' ${topologyWhere}) AS topology_ids,
+      (SELECT COALESCE(SUM(terminal_bytes),0)::float8 FROM persistence_topology_changes WHERE created_at>now()-interval '7 days' ${topologyWhere}) AS topology_bytes`,
+  params);
+  return sample!;
 }
 
 /**

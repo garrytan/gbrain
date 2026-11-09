@@ -111,7 +111,7 @@ function lowNotice(rows: CapacityAttention[]): Notice {
   return { code: 'write_capacity_low', kind: 'info',
     why: `This write was saved and writes still work. Write capacity is running low: ${rows.map(describe).join('; ')}; admission refuses only at the cap. `
       + 'gbrain doctor --only persistence_capacity --json reads the forecast and the remedy for the brain host.',
-    fix: { argv: [...VERIFY.argv], consent: [], actor: 'agent', requires_exclusive: false,
+    fix: { argv: [...VERIFY.argv], mcp: VERIFY.mcp, consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Reads which cap is running low, its forecast and the remedy, read-only; nothing needs to change for this write.', verify: VERIFY,
       docs: 'docs/guides/concurrent-writes.md#quota-near-exhaustion' } };
 }
