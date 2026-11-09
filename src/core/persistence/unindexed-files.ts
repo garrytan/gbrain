@@ -50,7 +50,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { SyncOpts } from '../../commands/sync.ts';
 import { spawn } from '../spawn.ts';
-import { gitChildEnv } from '../git-env.ts';
+import { gitChildEnv, literalPathspecs } from '../git-env.ts';
 import { isSyncMetafile, matchesAnyGlob, metafileIsPage, resolveSlugForPath } from '../sync.ts';
 import { screenImportContent } from '../import-screen.ts';
 import { isReservedSkillBundlePath } from '../skill-reserved-paths.ts';
@@ -160,7 +160,7 @@ function visitBlobSlices<T extends TreeBlob>(gitRoot: string, entries: T[], visi
 
 /** The blobs of `target` under `scope` in tree order, after `after`, in batches; the child stops when the consumer does. */
 async function* treeBatches(gitRoot: string, target: string, scope: string, after: string | null, size: number, revisit?: ReadonlySet<string>): AsyncGenerator<TreeEntry[]> {
-  const child = spawn('git', ['-c', 'core.quotepath=false', '--literal-pathspecs', '-C', gitRoot, 'ls-tree', '-r', '-l', '-z', target, ...(scope ? ['--', scope] : [])],
+  const child = spawn('git', ['-c', 'core.quotepath=false', '-C', gitRoot, 'ls-tree', '-r', '-l', '-z', target, ...(scope ? ['--', ...literalPathspecs([scope])] : [])],
     { env: gitChildEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = '';
   child.stderr!.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString('utf8')).slice(0, 2000); });
@@ -288,7 +288,7 @@ export function unindexedBudgetForPages(pages: number): number {
 /** Git paths at or before `cursor` that differ between `from` and `to`; null when Git cannot list them or they number more than `UNINDEXED_REVISIT_CAP`. */
 function changedBefore(gitRoot: string, from: string, to: string, scope: string, cursor: string): Set<string> | null {
   let listed: string;
-  try { listed = syncGit(gitRoot, ['--literal-pathspecs', 'diff-tree', '-r', '-z', '--no-renames', '--name-only', from, to, ...(scope ? ['--', scope] : [])]); } catch { return null; }
+  try { listed = syncGit(gitRoot, ['diff-tree', '-r', '-z', '--no-renames', '--name-only', from, to, ...(scope ? ['--', ...literalPathspecs([scope])] : [])]); } catch { return null; }
   const floor = Buffer.from(cursor, 'utf8');
   const paths = new Set(listed.split('\0').filter(path => path && Buffer.compare(Buffer.from(path, 'utf8'), floor) <= 0));
   return paths.size > UNINDEXED_REVISIT_CAP ? null : paths;

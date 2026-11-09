@@ -291,7 +291,7 @@ describe('door plumbing: the planned state', () => {
     put(root, 'notes/b.md', 'b\n');
     const error = await refusal(publishAt(root, 'notes/b.md', 'door\n')) as { code?: string; fix?: { argv?: string[]; verify?: { argv?: string[] } } };
     expect(error).toMatchObject({ code: 'git_index_conflict' });
-    expect(error.fix).toMatchObject({ argv: ['git', '-C', root, 'restore', '--staged', '--', 'notes/b.md'], verify: { argv: ['git', '-C', root, 'diff', '--cached', '--name-only', '--', 'notes/b.md'] } });
+    expect(error.fix).toMatchObject({ argv: ['git', '-C', root, 'restore', '--staged', '--', ':(literal)notes/b.md'], verify: { argv: ['git', '-C', root, 'diff', '--cached', '--name-only', '--', ':(literal)notes/b.md'] } });
     expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
     expect(git(root, 'rev-parse', ':notes/b.md')).toBe(staged);
     git(root, 'restore', '--staged', '--', 'notes/b.md');

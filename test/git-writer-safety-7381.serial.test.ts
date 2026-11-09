@@ -355,4 +355,24 @@ describe('the helper\'s no-gbrain fallback', () => {
     expect(read(root, 'marker')).toBe(lockPath);
     expect(git(bare, 'show', 'main:x.md')).toBe('via the fallback');
   }, 30_000);
+
+  test('a path with glob characters is a literal pathspec: [ab].md never commits a concurrent edit to a.md (#7792)', () => {
+    const { bare, a } = setup();
+    mkdirSync(join(a, 'scripts'), { recursive: true });
+    writeFileSync(join(a, 'scripts', 'brain-commit-push.sh'), renderCommitPushHelper(), { mode: 0o755 });
+    writeFileSync(join(a, 'a.md'), 'a v1\n');
+    git(a, 'add', 'a.md'); git(a, 'commit', '-qm', 'seed a'); git(a, 'push', '-q', 'origin', 'main');
+    writeFileSync(join(a, 'a.md'), 'a concurrent edit\n');
+    writeFileSync(join(a, '[ab].md'), 'the literal name\n');
+    const run = (...paths: string[]) => spawnSync('bash', [join(a, 'scripts', 'brain-commit-push.sh'), 'glob name', ...paths], {
+      cwd: a, encoding: 'utf8', env: { ...process.env, PATH: '/usr/bin:/bin', GIT_CONFIG_PARAMETERS: "'protocol.file.allow=always'" } });
+    const result = run('[ab].md');
+    expect(result.status).toBe(0);
+    expect(git(a, 'show', '--name-only', '--format=', 'HEAD')).toBe('[ab].md');
+    expect(git(bare, 'show', 'main:[ab].md')).toBe('the literal name');
+    expect(git(bare, 'show', 'main:a.md')).toBe('a v1');
+    expect(status(a)).toBe(' M a.md\n?? scripts/');
+    expect(run('').status).toBe(2);
+    expect(status(a)).toBe(' M a.md\n?? scripts/');
+  }, 30_000);
 });
