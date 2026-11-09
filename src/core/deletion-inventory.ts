@@ -130,7 +130,7 @@ const ROWS: readonly Row[] = [
   ['page_body_stagings', 'swept', 'body_stagings', 'kind principal_kind principal_id source_id slug mode declared_sha256 state'],
   ['page_body_staging_texts', 'swept', 'body_stagings', 'source_id sha256'],
   ['page_derivation_spend', 'out_of_scope', 'no_memory_text', 'family'],
-  ['page_embedding_budget', 'out_of_scope', 'no_memory_text', 'state reason embedding_signature'],
+  ['page_embedding_budget', 'out_of_scope', 'no_memory_text', 'state reason embedding_signature approval_id'],
   ['page_embedding_progress', 'out_of_scope', 'no_memory_text', 'embed_order state'],
   ['page_extraction_state', 'out_of_scope', 'no_memory_text', 'pipeline watermark_sha256 input_truncated'],
   ['page_facts_reconcile', 'out_of_scope', 'no_memory_text', 'outcome'],
