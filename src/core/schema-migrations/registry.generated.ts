@@ -296,6 +296,7 @@ import { v292 } from './v292-refresh-write-barrier.ts';
 import { v293 } from './v293-qm-attest-sources.ts';
 import { v294 } from './v294-refresh-barrier-import-deferral.ts';
 import { v295 } from './v295-refresh-retry-hint-history-index.ts';
+import { v296 } from './v296-ingest-applied-captures.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -590,4 +591,5 @@ export const MIGRATIONS: Migration[] = [
   v293,
   v294,
   v295,
+  v296,
 ];

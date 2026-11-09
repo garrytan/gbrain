@@ -274,6 +274,7 @@ async function makeCrashedCtx(jobId: number, prompt: string, modelId: string): P
     name: 'subagent',
     data: { prompt, model: modelId },
     attempts_made: 1, // crashed once
+    idempotency_key: null,
     signal: abortCtrl.signal,
     deadlineAtMs: null,
     shutdownSignal: shutdownCtrl.signal,

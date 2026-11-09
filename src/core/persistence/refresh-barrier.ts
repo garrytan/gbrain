@@ -59,12 +59,15 @@ const APPENDING_OPERATIONS = ['remember', 'add_timeline_entry'];
  * GST-1623: the refusal of deferred write `row` when a write to its page accepted after it has already committed (an older
  * consumer, which has no EARLIER_DEFERRED in its claim, claimed the later write first), so the deferred one, replayed now,
  * never lands on top of it. Managed sync's own rows are the import the write waited for and do not count; neither does a
- * write that only appends.
+ * write that only appends. A sync row is a `submit_job` with a managed_sync_ kind, or with an imported file once compaction
+ * dropped its intent (#8765 review): a caller cannot make its own write look like one. A connector import names
+ * `connector_database` in its outcome and stays a later write (overwritten-edits.ts MANAGED_IMPORT).
  */
 async function laterWriteRefusal(engine: SqlEngine, row: WriteRequest): Promise<DeferredRefusal | null> {
   if (APPENDING_OPERATIONS.includes(row.operation)) return null;
   const [later] = await engine.executeRaw<{ request_id: string }>(`SELECT r.request_id::text AS request_id FROM persistence_requests r
-    WHERE r.source_id=$1 AND r.slug=$2 AND r.sequence>$3 AND r.state='committed' AND NOT ${SYNC_KIND('r')} ORDER BY r.sequence LIMIT 1`,
+    WHERE r.source_id=$1 AND r.slug=$2 AND r.sequence>$3 AND r.state='committed' AND NOT (r.operation='submit_job'
+      AND (${SYNC_KIND('r')} OR (r.intent IS NULL AND COALESCE(r.outcome->>'imported_file','')='true' AND NOT (r.outcome ? 'connector_database')))) ORDER BY r.sequence LIMIT 1`,
   [row.source_id, row.slug, String(row.sequence)]);
   if (!later) return null;
   return { state: 'conflict', failure: { code: 'revision_conflict', message: `Request ${row.request_id} waited ${row.deferred_refresh_id ? `behind refresh ${row.deferred_refresh_id}` : 'for an import'}, and request ${later.request_id}, accepted after it, has already changed ${row.slug}, so nothing was applied and the later write was not overwritten. Read the page again and submit the change with a new request_id.` } };
