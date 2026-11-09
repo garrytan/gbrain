@@ -36,9 +36,10 @@ export function postgresTlsCheck(url: string, session: SessionTls | null, env: R
   if (hosts.length > 0 && hosts.every(isLoopbackPgHost)) {
     return { name: 'postgres_tls', status: 'ok', message: 'The Postgres host is on this machine; TLS is not required.' };
   }
-  if (!session) return null;
   const tls = resolvePgTls(url, {}, env);
-  if (session.ssl) {
+  const optedOut = tls.mode === 'disable';
+  if (!session && !optedOut) return null;
+  if (session?.ssl && !optedOut) {
     const unverified = tls.mode === 'require' || tls.mode === 'prefer' || tls.mode === 'allow';
     return {
       name: 'postgres_tls', status: 'ok',
@@ -46,7 +47,6 @@ export function postgresTlsCheck(url: string, session: SessionTls | null, env: R
       details: { ssl: true, version: session.version, sslmode: tls.mode },
     };
   }
-  const optedOut = tls.mode === 'disable';
   return {
     name: 'postgres_tls', status: 'warn',
     message: optedOut

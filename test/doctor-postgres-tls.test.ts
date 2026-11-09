@@ -34,6 +34,12 @@ describe('postgres_tls doctor check', () => {
     expect(categorizeCheck('postgres_tls')).toBe('ops');
   });
 
+  test('sslmode=disable warns even when the server reports the session encrypted (a pooler with TLS upstream)', () => {
+    const c = postgresTlsCheck(REMOTE + '?sslmode=disable', { ssl: true, version: 'TLSv1.3' }, {})!;
+    expect(c.status).toBe('warn');
+    expect(c.message).toContain('sslmode=disable');
+  });
+
   test('a session the server reports unencrypted warns even when the URL asked for TLS (a pooler hop)', () => {
     const c = postgresTlsCheck(REMOTE, { ssl: false, version: null }, {})!;
     expect(c.status).toBe('warn');

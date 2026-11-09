@@ -75,17 +75,19 @@ export function pgConnectHosts(url: string, opts: Record<string, unknown> = {}, 
   return raw.split(',').map(stripPort).filter(Boolean);
 }
 
-function urlParams(url: string): URLSearchParams {
-  const q = url.indexOf('?');
-  return new URLSearchParams(q >= 0 ? url.slice(q + 1).split('#')[0] : '');
+/** The URL query as the driver reads it: the fragment dropped, and a repeated key's last value wins. */
+function urlQuery(url: string): Record<string, string> {
+  const withoutFragment = url.split('#')[0] ?? '';
+  const q = withoutFragment.indexOf('?');
+  return Object.fromEntries(new URLSearchParams(q >= 0 ? withoutFragment.slice(q + 1) : ''));
 }
 
 export function resolvePgTls(url: string, opts: Record<string, unknown> = {}, env: Env = processEnv()): PgTlsResolution {
   if ('ssl' in opts && opts.ssl !== undefined) return { source: 'option', mode: typeof opts.ssl === 'string' ? opts.ssl : String(opts.ssl === false ? 'disable' : 'custom') };
-  const params = urlParams(url);
-  const explicit = params.get('sslmode') || params.get('ssl') || (params.get('sslrootcert') === 'system' ? 'verify-full' : '');
+  const query = urlQuery(url);
+  const explicit = query.sslrootcert === 'system' ? 'verify-full' : query.sslmode || query.ssl;
   if (explicit) return { source: 'url', mode: explicit === 'false' ? 'disable' : explicit };
-  if (env.PGSSL) return { source: 'env', mode: env.PGSSL };
+  if (!('ssl' in query) && env.PGSSL) return { source: 'env', mode: env.PGSSL };
   const hosts = pgConnectHosts(url, opts, env);
   if (hosts.length > 0 && hosts.every(isLoopbackPgHost)) return { source: 'loopback', mode: 'driver-default' };
   return { source: 'default', mode: 'require' };

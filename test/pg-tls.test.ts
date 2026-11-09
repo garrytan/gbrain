@@ -99,6 +99,20 @@ describe('resolvePgTls', () => {
     expect(resolvePgTls(base + '?sslmode=', {}, NO_ENV).source).toBe('default');
   });
 
+  test('a repeated parameter is read the way the driver reads it: the last value wins', () => {
+    const base = 'postgres://u:p@db.example.com:5432/x';
+    expect(resolvePgTls(base + '?sslmode=&sslmode=verify-full', {}, NO_ENV)).toEqual({ source: 'url', mode: 'verify-full' });
+    expect(driverSsl(base + '?sslmode=&sslmode=verify-full')).toBe('verify-full');
+    expect(resolvePgTls(base + '?ssl=require&ssl=', {}, NO_ENV).source).toBe('default');
+    expect(driverSsl(base + '?ssl=', {}, { PGSSL: 'verify-full' })).toBe('require');
+  });
+
+  test('a query string inside the URL fragment is not a choice the driver sees', () => {
+    const url = 'postgres://u:p@db.example.com:5432/x#?sslmode=require';
+    expect(resolvePgTls(url, {}, NO_ENV).source).toBe('default');
+    expect(driverSsl(url)).toBe('require');
+  });
+
   test('an explicit mode on a loopback URL is never weakened', () => {
     expect(driverSsl('postgres://u:p@localhost:5432/x?sslmode=verify-full')).toBe('verify-full');
   });
