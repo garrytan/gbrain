@@ -5,6 +5,7 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
+import { withHeldFactsFence } from '../facts/unfenced-facts.ts';
 import { factsFenceEditor, factsFenceSection, parseFactsFence, formatFenceDate } from '../facts-fence.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { wholeBodySnapshot } from './segmented-apply.ts';
@@ -174,7 +175,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
   // #6188 (D20): the entity's stored fence is normalized in this same write; a residual refuses typed `target_fence_malformed`.
   const target = snapshot ? await normalizeTargetFences(engine, { sourceId: row.source_id, slug: row.slug, kind: 'facts', page: snapshot.page }) : null;
   // #6686: the fence is edited in the section it lives in (a lone timeline fence stays below the sentinel); the other section is kept byte for byte.
-  const fenced = { compiled_truth: target?.page.compiled_truth ?? '', timeline: target?.page.timeline ?? '' };
+  const fenced = await withHeldFactsFence(engine, row.source_id, row.slug, { compiled_truth: target?.page.compiled_truth ?? '', timeline: target?.page.timeline ?? '' });
   const section = factsFenceSection(fenced);
   // #6898 follow-up: the fence is parsed once and rendered once for the whole group, not once per fact.
   const fence = factsFenceEditor(fenced, section);
