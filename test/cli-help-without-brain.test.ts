@@ -189,6 +189,14 @@ describe('--help without a configured brain', () => {
     }
   }, 120_000);
 
+  // Value: protects=init --help names the surface the printed registration really pins; fails_when=the help says default full while readiness pins REGISTRATION_SURFACE (starter); why_new=the help line was written before the starter default (#7983 item 5); seam=none; no_claim=the registration argv itself (readiness tests)
+  test('init --help names the registration surface default', async () => {
+    const { REGISTRATION_SURFACE } = await import('../src/core/mcp-registration.ts');
+    const r = await runCli(['init', '--help']);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(`(default: ${REGISTRATION_SURFACE}, listing the memory verbs and request_tools)`);
+  }, 60_000);
+
   test('the known-unfixed set is exactly what it claims', async () => {
     // Concurrently: seven sequential CLI spawns is most of this file's wall
     // clock, and each one is independent (its own temp GBRAIN_HOME).

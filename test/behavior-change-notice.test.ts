@@ -325,6 +325,12 @@ describe('per-release content', () => {
     expect(all.why).toContain(noticeHeader('0', true));
     expect(all.fix?.argv).toEqual(['unset', 'GBRAIN_CHAT_FALLBACK_CHAIN']);
   });
+
+  // Value: protects=the verbs-listing notice only promises the request_tools reveal where it exists; fails_when=the text says a described tool joins the session's list with no transport, and HTTP has no reveal; why_new=#7983 item 7; seam=none; no_claim=the reveal itself (mcp server tests)
+  test('the verbs-listing notice scopes the request_tools reveal to stdio', () => {
+    const text = BEHAVIOR_CHANGES.find(c => c.id === 'registration_lists_verbs_gbra199')!.text as string;
+    expect(text).toContain("on stdio a tool it describes joins the session's list");
+  });
 });
 
 describe('concurrent initializations', () => {

@@ -6,6 +6,7 @@ import {
   RECOVERY_VERSION, type FrontmatterRecovery, type RecoveryKind,
 } from './frontmatter-recovery.ts';
 import { findLineOutsideFencedCode } from './fence-scan.ts';
+import { tagLengthHold } from './tag-limit.ts';
 
 export {
   recoverFrontmatter, RECOVERY_VERSION, PROTECTED_FRONTMATTER_KEYS, IDENTITY_FRONTMATTER_KEYS,
@@ -506,7 +507,7 @@ export function resolveParsedSubtype(
  * file and keeps going instead of failing the whole sync. Defined once here;
  * managed and legacy sync, import and `validate --importable` share it.
  */
-export const HOLD_CODES = ['invalid_frontmatter', 'frontmatter_slug_conflict', 'file_too_large', 'rename_held', 'parser_regression'] as const;
+export const HOLD_CODES = ['invalid_frontmatter', 'frontmatter_slug_conflict', 'file_too_large', 'rename_held', 'parser_regression', 'tag_too_long'] as const;
 export type HoldCode = typeof HOLD_CODES[number];
 export const INVALID_FRONTMATTER_REASONS = ['yaml_parse', 'needs_interpretation', 'ambiguous_identity_key', 'ambiguous_protected_key'] as const;
 export type InvalidFrontmatterReason = typeof INVALID_FRONTMATTER_REASONS[number];
@@ -590,7 +591,7 @@ export function classifyImportHold(parsed: ParsedMarkdown, ctx: {
     return { code: 'frontmatter_slug_conflict', key: 'slug',
       message: ctx.slugConflictMessage?.(parsed.slug, expected) ?? `Frontmatter slug "${parsed.slug}" does not match path-derived slug "${expected}".` };
   }
-  return null;
+  return tagLengthHold(parsed.tags);
 }
 
 /** The NULL_BYTES finding for the first NUL on 1-based `line`. */

@@ -97,6 +97,8 @@ AlphaClaw is the setup harness that manages OpenClaw deployment.
 
 Render will build a Docker container with the harness. First deploy takes about 5 minutes.
 
+**Known issue (October 2026).** On a fresh deploy with AlphaClaw 0.9.37 and OpenClaw 2026.10.x, onboarding can loop on `AUTH_PROFILE_MIGRATION_REQUIRED` and the gateway never starts. The fix is on OpenClaw's main branch ([openclaw/openclaw#187903](https://github.com/openclaw/openclaw/issues/187903)) and ships in its next release; until then, follow that issue.
+
 **Memory matters.** If the instance runs out of memory during install, upgrade to Render Pro. The base tier is too small for GBrain + OpenClaw together. My production instance runs 48 cores and 64GB RAM (about $1,500 a month) but that's overkill for a new setup. Pro tier ($85 a month) is the minimum viable.
 
 ---

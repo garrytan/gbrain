@@ -5,6 +5,7 @@ import { gbrainPath, isThinClient } from '../config.ts';
 import { opError, type OperationContext } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { claimWorktree, getWorktreeBinding, readPersistenceBrain } from '../persistence/ownership.ts';
+import { unboundBindCommand } from '../persistence/unbound-source.ts';
 import { activateSharedSkillPersistence } from '../persistence/skill-activation.ts';
 import { checkedContentRoot } from './setup-files.ts';
 import { DEFAULT_SHARED_PACK_ID, packagedSharedSkillPolicy, packagedSharedSkills } from './setup-bundle.ts';
@@ -132,6 +133,15 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
   receipt.repository_kind = gitProbe?.status === 0 && resolve(gitProbe.stdout.trim()) === root ? 'git' : 'content_directory';
   const existed = existsSync(root);
   if (prior?.root && prior.root !== root) {
+    const bound = existingRoot ? await getWorktreeBinding(ctx.engine, sourceId) !== null : true;
+    if (existingRoot && (!bound || !brain.enabled)) {
+      const claim = ['gbrain', 'sources', 'writer', 'claim', sourceId, '--path', root, '--dry-run', '--json'];
+      const activate = ['gbrain', 'sources', 'writer', 'activate', '--confirm-quiesced', '--shared-skills', '--dry-run', '--json'];
+      const activateStep = `activate writer persistence (preview with ${activate.join(' ')}, then run it without --dry-run with --admin-intent writer_activate --expected-state <admin_state>)`;
+      throw opError('local_conflict', 'The canonical root changed after setup began.',
+        `Content setup for source ${sourceId} began at ${prior.root}, but the source is now registered at ${root} (a host move, transfer or relocation). gbrain repair content-receipt-root lists only sources claimed under activated writer persistence, and this source ${bound ? 'is claimed but persistence is not activated' : 'has no canonical owner'}, so the repair has nothing to list yet. Ask the user, then ${bound ? activateStep : `claim it on this host (preview with ${claim.join(' ')}, then ${unboundBindCommand(sourceId, root)})${brain.enabled ? '' : ` and ${activateStep}`}`}. Then preview gbrain repair content-receipt-root --source ${sourceId}, which lists the step that rebinds the checkpoint, and run the migration again.`,
+        { fix: readFix(bound ? 'Previews activating writer persistence with shared skills, read-only.' : `Previews claiming source ${sourceId}'s registered root on this host, read-only.`, { argv: bound ? activate : claim }) });
+    }
     if (existingRoot) {
       throw opError('local_conflict', 'The canonical root changed after setup began.',
         `Content setup for source ${sourceId} began at ${prior.root}, but the source is now registered at ${root} (a host move, transfer or relocation). Preview gbrain repair content-receipt-root --source ${sourceId}: it lists what proves the new root and the step that rebinds the checkpoint; then run the migration again.`,
