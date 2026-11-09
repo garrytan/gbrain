@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**`gbrain maintain --safe` no longer deletes pages or calls a paid provider.** It used to run the whole dream cycle on the default source, so pages soft-deleted more than 72 hours earlier were purged for good, and the embedding, synthesis and other model phases ran too. The source cycle now runs only free phases that never purge: lint, backlinks, sync, the fence and content repair lanes, unindexed files, extract, extract_facts, symbol edges, emotional weight, consolidate, orphans and schema suggestions. It also holds back `extract_facts` when an embedding provider is set up or the decide conflict slot is on (its conflict sweep calls the decision provider), and the fence and content repair lanes when `fences.repair.llm` has a repair model. The JSON report lists the phases that ran and the ones held back. Old soft-deleted pages are still purged by `gbrain pages purge-deleted` (preview it with `--dry-run`), `gbrain dream` and an installed autopilot, and the paid phases still run from `gbrain dream`.
+
+### Itemized changes
+
+- `src/commands/maintain.ts`: `MAINTAIN_SAFE_PHASES` is the allowlist of free, non-purging phases; `maintainSafePhases` intersects it with the source's own phase list and holds back provider-gated phases (`extract_facts` on an embedding provider or an enabled decide conflict slot, `fence_repair` and `content_repair` on a resolved repair model); the dry-run and applied actions report `phases` and `held_phases`; the help text names `gbrain pages purge-deleted` and `gbrain dream`.
+- `src/core/behavior-change-notice.ts`: one row for the changed `maintain --safe` behavior.
+- `scripts/module-size-limits.tsv`: the notice file's ceiling grows by one for that row.
+- Docs: the `maintain.ts` row in `docs/architecture/key-files/commands-4.md`.
+- Tests: `test/maintain.test.ts`: the allowlist holds no purge or paid phase; each provider holds its phase; a non-default source keeps its subset; on PGLite a page soft-deleted 100 hours ago survives `--safe` and no unsafe phase runs; a keyless brain with the decide conflict slot on holds `extract_facts`.
+
 ## [0.60.626.0] - 2026-11-09
 
 **`gbrain sources record-origin --remote` now locks down the existing checkout too, and on a managed brain it can no longer report success while a reclone still clones with git-lfs on.** On a managed brain the record took only the source row lock, so a reclone that had already read the source, or held its worktree locks, could clone with git-lfs downloads and hooks on after the command said the source was recorded. The record now takes the worktree locks and rows a reclone takes (refusing the id `source_busy` while one runs), and the reclone reads the record under its own locks. `--remote --apply` now also turns git-lfs downloads and hooks off in the existing checkout's `.git/config`, because a reclone only happens when a checkout is lost or replaced, and until then doctor read green while the checkout still fetched git-lfs objects and ran hooks. The git-lfs check now reads a committed `.gitattributes` under a directory whose name holds a tab (it was cut at the tab and skipped), ignores commented-out `filter=lfs` lines, says "declares a git-lfs filter" when a rule only declares one, and records a clone of an empty repository instead of telling the operator to restore an intact checkout. A failed write is reported for its own id instead of ending the run without saying which ids were recorded.
