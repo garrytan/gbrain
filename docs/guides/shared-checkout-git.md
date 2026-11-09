@@ -110,7 +110,8 @@ gbrain git commit-push --pending
 # Stop tracking files and keep them on disk (see "Untrack" below)
 gbrain git commit-push --untrack -m "stop tracking the archive" -- archive-example
 
-# Preview: prints the paths, branch and lock it would use; takes no lock, writes nothing
+# Preview: runs the real run's path checks (a path outside the source root, a sparse-checkout
+# exclusion and the rest refuse here too), prints the paths, branch and lock it would use; takes no lock, writes nothing
 gbrain git commit-push --dry-run -m "people: add alice-example" -- people/alice-example.md
 ```
 
@@ -211,7 +212,7 @@ Follow the error's `fix.next` as the
 | `pushed_checkout_lagging` | 0 | The push landed but this checkout was not advanced; a `[gbrain notice]` names the files that blocked it. Change nothing: the next commit-push or `--pull` catches the checkout up. Never stash or reset to "fix" it. |
 | `commit_lock_busy` | 1 | Another writer held the lock for the whole wait; nothing was committed. Retry once. If it is still busy, tell the user which checkout and lock path the message names and stop. |
 | <a id="checkout_not_a_source"></a>`checkout_not_a_source` | 1 | The checkout commit-push resolved from the working directory (no `--path`) is not one of the brain's source checkouts on this host, typically a wrapper that changed into another repository; nothing was staged. The message lists the brain's checkouts. Tell the user to make the script pass `--path` with the absolute brain checkout. A repository that only encloses a source checkout (a brain cloned inside another repository) is not one; a source registered at a subdirectory its checkout tracks is. A host whose brain records no source checkout, or a checkout with `gbrain.sourceRoot` set, is never refused this way. |
-| `commit_paths_invalid` | 1 | No paths, a path outside the checkout, the checkout root itself, or a path git would not stage. Name the explicit files you wrote and rerun. |
+| `commit_paths_invalid` | 1 | No paths, a path outside the checkout, the checkout root itself, or a path git would not stage (one outside a sparse-checkout definition included). Name the explicit files you wrote and rerun. |
 | <a id="commit_paths_skipped"></a>`commit_paths_skipped` | 1 | Git left a named path out of the commit: a modified file flagged assume-unchanged or skip-worktree (`reason` `assume_unchanged`, `skip_worktree`) or a file inside a nested Git repository (`not_staged`). The other named paths were committed (and, on a classic checkout, pushed); `detail` lists each skipped path, the commit and the pushed head, or the push failure (`publish`) when the push failed too. Check the flags with `git ls-files -v -- <path>`; clear them only after the user agrees, one flag per call (`git update-index --no-assume-unchanged -- <path>`, `git update-index --no-skip-worktree -- <path>`; given both, git clears only the first), and remember skip-worktree is often set on purpose to keep local edits out of commits, or move the file out of the nested repository, then rerun. A skip-worktree file absent from disk (a sparse checkout), a flagged gitlink and ignored files under a named directory are not reported. |
 | `commit_prestaged_paths` | 1 | Another writer staged files under a directory you named; nothing was staged or committed. Name your own files explicitly. Unstage the others (`git restore --staged -- <file>`, which keeps their bytes) only after the user agrees. |
 | `commit_outside_source_root` | 1 | The commit, or a local commit about to be published, changes files outside the brain's [source root](#source-roots); nothing was pushed. Show the user `git show --stat <sha>`; rerun with `--allow-outside-source-root` only if they want it published. |

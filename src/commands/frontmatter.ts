@@ -43,6 +43,7 @@ import {
   type AuditFix,
 } from '../core/brain-writer.ts';
 import { collectGitVisibleFiles } from '../core/git-visible-files.ts';
+import { literalPathspecs } from '../core/git-env.ts';
 import { isMarkdownFilePath, pruneDir, slugifyPath } from '../core/sync.ts';
 import { isPathContained } from '../core/path-confine.ts';
 
@@ -282,13 +283,13 @@ function findBrainRoot(start: string): string {
  */
 function readStagedBlobs(paths: string[], cwd = process.cwd()): { root: string; files: Array<{ rel: string; content: string | null }> } {
   const git = (args: string[], input?: string): Buffer =>
-    execFileSync('git', ['--literal-pathspecs', ...args], { cwd, input, maxBuffer: 1 << 30, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
+    execFileSync('git', args, { cwd, input, maxBuffer: 1 << 30, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
   const root = git(['rev-parse', '--show-toplevel']).toString('utf8').trim();
   const listed = paths.length > 0
-    ? git(['ls-files', '--stage', '--full-name', '-z', '--', ...paths])
+    ? git(['ls-files', '--stage', '--full-name', '-z', '--', ...literalPathspecs(paths)])
     : (() => {
       const names = git(['-C', root, 'diff', '--cached', '--name-only', '-z', '--diff-filter=ACM']).toString('utf8').split('\0').filter(isMarkdownFilePath);
-      return names.length > 0 ? git(['-C', root, 'ls-files', '--stage', '-z', '--', ...names]) : Buffer.alloc(0);
+      return names.length > 0 ? git(['-C', root, 'ls-files', '--stage', '-z', '--', ...literalPathspecs(names)]) : Buffer.alloc(0);
     })();
   const entries = listed.toString('utf8').split('\0').filter(Boolean)
     .map(record => /^\d+ ([0-9a-f]+) (\d)\t(.*)$/s.exec(record))

@@ -352,10 +352,15 @@ case "\${1:-}" in
   *)
     _msg="\${1:?usage: brain-commit-push.sh <message> <path> [paths...]}"; shift
     [ "$#" -gt 0 ] || { echo "refusing a repo-wide commit: pass explicit path(s)" >&2; exit 2; }
-    git add -A -- "$@"
+    _specs=()
+    for _p in "$@"; do
+      [ -n "$_p" ] || { echo "refusing a repo-wide commit: empty path" >&2; exit 2; }
+      _specs+=(":(literal)$_p")
+    done
+    git add -A -- "\${_specs[@]}"
     _commit=()
     _orphans="$(_unindexed "$@")"
-    for _p in "$@"; do printf '%s\\n' "$_orphans" | grep -xF -- "$_p" >/dev/null || _commit+=("$_p"); done
+    for _p in "$@"; do printf '%s\\n' "$_orphans" | grep -xF -- "$_p" >/dev/null || _commit+=(":(literal)$_p"); done
     if [ "\${#_commit[@]}" -eq 0 ] || git diff --cached --quiet -- "\${_commit[@]}"; then echo "nothing to commit"; else git commit --only -m "$_msg" -- "\${_commit[@]}"; fi
     _skipped="$(_unstaged "$@" | sort -u)" ;;
 esac
