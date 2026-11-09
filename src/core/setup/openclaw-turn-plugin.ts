@@ -32,7 +32,7 @@ const DESCRIPTION = 'Puts the GBrain brain-first rule next to every user turn (m
 export function openclawTurnPluginFiles(access: BrainFirstAccess): Record<string, string> {
   const rule = renderBrainFirstTurnRule(access, 'openclaw');
   return {
-    'package.json': `${JSON.stringify({ name: OPENCLAW_TURN_PLUGIN_ID, version: '1.0.0', private: true, type: 'module', openclaw: { extensions: ['./index.js'] } }, null, 2)}\n`,
+    'package.json': `${JSON.stringify({ name: OPENCLAW_TURN_PLUGIN_ID, version: '1.0.0', private: true, type: 'module', openclaw: { extensions: ['./index.js'] }, gbrain: { access } }, null, 2)}\n`,
     'openclaw.plugin.json': `${JSON.stringify({ id: OPENCLAW_TURN_PLUGIN_ID, name: 'GBrain turn rule', description: DESCRIPTION, configSchema: { type: 'object', additionalProperties: false } }, null, 2)}\n`,
     'index.js': [
       '// Managed by gbrain setup openclaw; a re-run rewrites this file. Remove: gbrain setup openclaw --remove',
@@ -69,9 +69,24 @@ const installArgv = (bin: string, dir: string): string[][] => [
 
 const shown = (argv: string[]) => argv.map((a) => (/^[\w./:=@-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`)).join(' ');
 
-/** Write the plugin and install it with OpenClaw's CLI (accepted decision). Never throws. */
-export function syncOpenclawTurnPlugin(opts: { access: BrainFirstAccess; dryRun: boolean; openclawBin?: string | null; run?: Run }): OpenclawTurnPluginOutcome {
+/** The access an installed plugin records in its package.json: undefined with no plugin, null when an older gbrain wrote it without one. */
+function installedAccess(dir: string): BrainFirstAccess | null | undefined {
+  if (!existsSync(join(dir, 'index.js'))) return undefined;
+  try { return (JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { gbrain?: { access?: BrainFirstAccess } }).gbrain?.access ?? null; } catch { return null; }
+}
+
+const named = (a: BrainFirstAccess) => (a.kind === 'mcp' ? `the \`${a.server}\` MCP server` : `\`${a.launcher}\``);
+
+/**
+ * Write the plugin and install it with OpenClaw's CLI (accepted decision). Never throws. Every agent on the gateway gets
+ * the plugin's rule, so a `workspace`-scoped run leaves an installed plugin whose rule would change to another server.
+ */
+export function syncOpenclawTurnPlugin(opts: { access: BrainFirstAccess; dryRun: boolean; workspace?: string; openclawBin?: string | null; run?: Run }): OpenclawTurnPluginOutcome {
   const dir = openclawTurnPluginDir();
+  const installed = opts.workspace ? installedAccess(dir) : undefined;
+  if (installed !== undefined && (!installed || renderBrainFirstTurnRule(installed, 'openclaw') !== renderBrainFirstTurnRule(opts.access, 'openclaw'))) {
+    return { action: 'skip', path: dir, detail: `${dir} left as it is: every agent on this OpenClaw gateway gets its rule, which ${installed ? `names ${named(installed)}` : 'an older gbrain wrote without recording its server'}, so a --workspace run does not rewrite it. To change it for every agent: gbrain setup openclaw --remove --workspace ${opts.workspace}, then run this again` };
+  }
   const files = openclawTurnPluginFiles(opts.access);
   const bin = opts.openclawBin !== undefined ? opts.openclawBin : findOpenclaw();
   const commands = installArgv(bin ?? 'openclaw', dir);
@@ -101,9 +116,10 @@ export function syncOpenclawTurnPlugin(opts: { access: BrainFirstAccess; dryRun:
  * until the uninstall succeeds: `install --link` put it in plugins.load.paths, and OpenClaw refuses a config
  * whose load path is missing.
  */
-export function removeOpenclawTurnPlugin(opts: { dryRun: boolean; openclawBin?: string | null; run?: Run }): OpenclawTurnPluginOutcome {
+export function removeOpenclawTurnPlugin(opts: { dryRun: boolean; workspace?: string; openclawBin?: string | null; run?: Run }): OpenclawTurnPluginOutcome {
   const dir = openclawTurnPluginDir();
   if (!existsSync(dir)) return { action: 'skip', path: dir, detail: `no per-turn rule plugin at ${dir}` };
+  if (opts.workspace) return { action: 'skip', path: dir, detail: `${dir} left in place: every agent on this OpenClaw gateway gets its rule, so opting out one workspace does not remove it. Remove it for every agent with gbrain setup openclaw --remove --workspace ${opts.workspace}` };
   if (opts.dryRun) return { action: 'remove', path: dir, detail: `per-turn rule plugin ${OPENCLAW_TURN_PLUGIN_ID} at ${dir}` };
   const bin = opts.openclawBin !== undefined ? opts.openclawBin : findOpenclaw();
   const uninstall = [bin ?? 'openclaw', 'plugins', 'uninstall', OPENCLAW_TURN_PLUGIN_ID, '--force'];

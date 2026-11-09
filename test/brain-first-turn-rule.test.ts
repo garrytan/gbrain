@@ -314,6 +314,24 @@ describe('per-turn rule: OpenClaw before_prompt_build plugin', () => {
     });
   });
 
+  test('a --workspace run leaves the gateway-shared plugin when it names another server, and never removes it', async () => {
+    await withEnv({ OPENCLAW_STATE_DIR: state(), OPENCLAW_PROFILE: undefined }, async () => {
+      syncOpenclawTurnPlugin({ access, dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run });
+      const index = readFileSync(join(openclawTurnPluginDir(), 'index.js'), 'utf8');
+      const rec = recorder();
+      const other = syncOpenclawTurnPlugin({ access: { kind: 'mcp', server: 'gbrain-a' }, workspace: '/ws/a', dryRun: false, openclawBin: '/bin/openclaw', run: rec.run });
+      expect(other.action).toBe('skip');
+      expect(other.detail).toContain('names the `gbrain` MCP server');
+      expect(readFileSync(join(openclawTurnPluginDir(), 'index.js'), 'utf8')).toBe(index);
+      expect(rec.calls).toEqual([]);
+      expect(syncOpenclawTurnPlugin({ access, workspace: '/ws/a', dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run }).action).toBe('keep');
+      const kept = removeOpenclawTurnPlugin({ workspace: '/ws/a', dryRun: false, openclawBin: '/bin/openclaw', run: rec.run });
+      expect(kept.action).toBe('skip');
+      expect(rec.calls).toEqual([]);
+      expect(readFileSync(join(openclawTurnPluginDir(), 'index.js'), 'utf8')).toBe(index);
+    });
+  });
+
   test('removal keeps the directory OpenClaw still loads when the uninstall fails or openclaw is not on PATH', async () => {
     await withEnv({ OPENCLAW_STATE_DIR: state(), OPENCLAW_PROFILE: undefined }, async () => {
       syncOpenclawTurnPlugin({ access, dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run });

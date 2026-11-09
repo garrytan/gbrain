@@ -280,6 +280,24 @@ describe('brain-first block: placement rules', () => {
     expect(existsSync(join(b.home, '.openclaw', 'gbrain'))).toBe(false);
   });
 
+  test('openclaw --workspace: the gateway-shared plugin is not rewritten for another server name or removed by one workspace opting out', async () => {
+    const b = box();
+    mkdirSync(join(b.home, '.openclaw', 'workspace'), { recursive: true });
+    writeFileSync(join(b.root, 'bin', 'openclaw'), '#!/bin/sh\nexit 0\n');
+    chmodSync(join(b.root, 'bin', 'openclaw'), 0o755);
+    const path = { PATH: `${join(b.root, 'bin')}:${process.env.PATH ?? ''}` };
+    const dir = join(b.home, '.openclaw', 'gbrain', 'gbrain-turn-rule');
+    await setup(b, ['openclaw'], path);
+    const index = read(join(dir, 'index.js'));
+    const ws = join(b.home, 'ws-a');
+    const renamed = await setup(b, ['openclaw', '--workspace', ws, '--name', 'gbrain-a', '--instructions-only'], path);
+    expect(renamed.doc.turn_hook.action).toBe('skip');
+    expect(read(join(dir, 'index.js'))).toBe(index);
+    const declined = await setup(b, ['openclaw', '--workspace', ws, '--no-instructions'], path);
+    expect(declined.doc.turn_hook.action).toBe('skip');
+    expect(read(join(dir, 'index.js'))).toBe(index);
+  });
+
   test('a damaged block is preserved and reported, never guessed through', async () => {
     const b = box();
     const path = join(b.home, '.claude', 'CLAUDE.md');

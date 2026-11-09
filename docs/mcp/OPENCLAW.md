@@ -107,6 +107,8 @@ OpenClaw requires `allowConversationAccess` before a non-bundled plugin's
 and prints those commands to run on the OpenClaw host; restart a running gateway
 afterwards. `--no-instructions` and `--remove` uninstall the plugin and delete
 its directory. A re-run after an upgrade rewrites the plugin with the new text.
+Every agent on the gateway gets the plugin's rule, so a `--workspace` run leaves
+it when it would name another server and `--no-instructions` there keeps it.
 
 OpenClaw lists no gbrain tool after `openclaw mcp set`: the model reaches them
 only through `tool_search`, whose results it frames as external data. With an
