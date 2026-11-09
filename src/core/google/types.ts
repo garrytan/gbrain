@@ -184,6 +184,13 @@ export interface GoogleSourceState {
    */
   contacts_person_fields?: string | null;
   /**
+   * #8906: the full contacts re-list in progress: the `pageToken` of its next
+   * page and the `personFields` mask it was started under, checkpointed after
+   * each page lands so a run stopped by its deadline or page budget resumes
+   * there. Cleared when the list completes; one under another mask is ignored.
+   */
+  contacts_relist?: { page_token: string; person_fields: string; blocked?: boolean } | null;
+  /**
    * #6324: contact-group directory cache (resource name → display name) from
    * the last successful `contactGroups` read; the fallback when the directory
    * cannot be read during a sweep. Never authoritative on its own.

@@ -29,6 +29,7 @@ link it here; never raise the cap.
 | [Commands (1/6)](key-files/commands-1.md) | `agent-logs.ts` to `db-repair.ts` |
 | [Commands (2/6)](key-files/commands-2.md) | `src/commands/doctor.ts` and `src/commands/doctor/` |
 | [Commands (2/6, continued)](key-files/commands-2-continued.md) | `doctor/checks/routing-federation.ts`, `git-convergence.ts`, `keyword-plan.ts`, `dream-retriage.ts` to `embed.ts` |
+| [Doctor tiers and budgets](key-files/doctor-budgets.md) | `doctor/budget.ts`, `checks/ops-sections.ts`, `checks/orphan-estimate.ts`: tiers, `--budget-ms`, entry deadlines, `localProbe` |
 | [Commands (3/6)](key-files/commands-3.md) | `src/commands/engine-status.ts` through `extract.ts` |
 | [Commands (3/6, continued)](key-files/commands-3-continued.md) | `src/commands/extract-timeline-db.ts` through `frontmatter-install-hook.ts` |
 | [Commands (4/6)](key-files/commands-4.md) | `src/commands/frontmatter.ts` through `pages-status.ts` |

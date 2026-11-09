@@ -298,6 +298,7 @@ test/schema-pack/suggest.test.ts	runSuggest — source-text contract (structural
 test/scripts/build-lookup-table.test.ts	build-lookup-table	2	readFileSync
 test/scripts/build-schema-migrations.test.ts	generator diagnostics (FAIL/Why/Fix/See)	9	exec-scan
 test/scripts/build-schema-migrations.test.ts	out-of-order landing check	2	exec-scan
+test/scripts/check-agent-contract-baselines.test.ts	agent-contract baselines	2	readFileSync
 test/scripts/check-core-world-reads.test.ts	check-core-world-reads.ts: the ratchet	5	readFileSync
 test/scripts/check-dynamic-ci.test.ts	check-dynamic-ci.ts	1	exec-scan,readFileSync
 test/scripts/check-function-size.test.ts	check-function-size.ts rules	11	readFileSync
@@ -433,7 +434,7 @@ test/title-fuzzy-index.test.ts	findByTitleFuzzy indexed threshold	2	source-surfa
 test/transcription-injection.test.ts	transcription — command injection (#245)	2	readFileSync
 test/trust-write-gate-drift.test.ts	(file-level)	1	readFileSync
 test/upgrade-post-swap-imports.test.ts	#6604 upgrade post-swap tail	3	readFileSync
-test/upgrade.serial.test.ts	detectInstallMethod — package-install classification (in-process)	4	readFileSync
+test/upgrade.serial.test.ts	detectInstallMethod — package-install classification (in-process)	5	readFileSync
 test/upgrade.serial.test.ts	runUpgrade target verification (#4366)	8	readFileSync
 test/v0_37_fix_wave.serial.test.ts	v0.37 Lane A — defaults sweep	8	source-surface-helper
 test/v0_37_fix_wave.serial.test.ts	v0.37 Lane B — init paths	3	source-surface-helper
