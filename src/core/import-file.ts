@@ -443,7 +443,7 @@ export async function importFromContent(
     // unscoped-check/scoped-write bug class).
     const existingSnapshot = !opts.prepare ? null : await materializedSnapshot(engine, opts.coordinated && opts.existingSnapshot !== undefined ? opts.existingSnapshot : await engine.readPageSnapshot(slug, { sourceId: sourceId ?? 'default', includeDeleted: true }));
     const existing = opts.prepare ? existingSnapshot?.page ?? null : await materializedPage(engine, await engine.getPage(slug, { sourceId: sourceId ?? 'default', includeDeleted: true }));
-    if (opts.expectedBaseRevision !== undefined) assertPageRevision(existing ? { revision: existing.knowledge_revision! } : null, { expectedRevision: opts.expectedBaseRevision ?? undefined });
+    if (opts.expectedBaseRevision !== undefined) assertPageRevision(existing ? { revision: existing.knowledge_revision! } : null, { expectedRevision: opts.expectedBaseRevision });
     if (existing) stabilizeSafetyAssessments(parsed.frontmatter, existing.frontmatter);
 
     const collisionOwner = collidingSlugOwner(existing, slug, opts.sourceRoot, opts.sourcePath);
