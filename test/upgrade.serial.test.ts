@@ -10,7 +10,7 @@ import { VERSION } from '../src/version.ts';
 import { fileURLToPath } from 'node:url';
 
 // Install-method detection runs in-process where it spawns nothing (argv[1] /
-// execPath patched); PATH-shimmed paths (clawhub, bun-link, bun update) run
+// execPath patched); PATH-shimmed paths (bun-link, bun update) run
 // runUpgrade in a subprocess, because Bun snapshots PATH at process start.
 
 describe('upgrade command', () => {
@@ -42,7 +42,7 @@ describe('upgrade command', () => {
 
 describe('detectInstallMethod — package-install classification (in-process)', () => {
   // The node_modules branch spawns nothing, so argv[1] / execPath are patched
-  // in-process (serial file). The bun-link, clawhub and cwd contracts need
+  // in-process (serial file). The bun-link and cwd contracts need
   // PATH shims and live in the subprocess suite below.
   const originalArgv1 = process.argv[1];
   const originalExecPath = process.execPath;
@@ -93,6 +93,29 @@ describe('detectInstallMethod — package-install classification (in-process)', 
     const r = detectFrom({ name: 'gbrain', repository: 'github:garrytan/gbrain' }, 'dist/cli.js', '/opt/bin/gbrain');
     expect(r.method).toBe('bun');
   });
+
+  // #8464: a release asset run under its published name is the compiled binary, found by Bun's virtual entrypoint.
+  for (const [argv1, execPath] of [
+    ['/$bunfs/root/gbrain-linux-x64', '/opt/bin/gbrain-linux-x64'],
+    ['/$bunfs/root/gbrain-darwin-arm64', '/Users/alice-example/Downloads/gbrain-darwin-arm64'],
+    ['B:\\~BUN\\root\\gb.exe', 'C:\\tools\\gb.exe'],
+  ] as const) {
+    test(`a compiled binary named ${execPath} is the binary install`, () => {
+      const cwd = process.cwd();
+      const elsewhere = mkdtempSync(join(tmpdir(), 'gbrain-upgrade-compiled-'));
+      try {
+        process.chdir(elsewhere);
+        process.argv[1] = argv1;
+        Object.defineProperty(process, 'execPath', { value: execPath, configurable: true, writable: true });
+        expect(upgradeModule.detectInstallMethod()).toBe('binary');
+      } finally {
+        process.chdir(cwd);
+        rmSync(elsewhere, { recursive: true, force: true });
+        process.argv[1] = originalArgv1;
+        Object.defineProperty(process, 'execPath', { value: originalExecPath, configurable: true, writable: true });
+      }
+    });
+  }
 });
 
 describe('resolveBunGlobalRoot', () => {
@@ -214,21 +237,27 @@ describe('runUpgrade target verification (#4366)', () => {
    * Build a hermetic fake install under a temp HOME and run runUpgrade in a
    * subprocess (Bun snapshots environ at birth, so PATH shims cannot be
    * injected in-process):
-   *   - a PATH-first `clawhub` shim exiting 0 without changing anything —
-   *     the same successful-no-op shape as `bun update` on an exact-tag Git
-   *     pin (the issue's install);
+   *   - by default a global package install whose PATH `bun` shim exits 0
+   *     without changing anything (`bun update` on an exact-tag Git pin, the
+   *     issue's install);
+   *   - a PATH `clawhub` CLI that answers every command and logs it to
+   *     HOME/clawhub.log, which must never be run (#8464);
    *   - a PATH-first `gbrain` shim that keeps reporting `observedVersion`;
    *   - a pre-seeded upgrade-available marker so cache retention is observable;
    *   - with `binaryResult`, the driver runs under a copy of bun named `gbrain`
    *     (detectInstallMethod keys on execPath's basename) and the driver mocks
-   *     runBinarySelfUpdate to return that result, reaching the binary branch.
+   *     runBinarySelfUpdate to return that result, reaching the binary branch;
+   *   - with `execName`, the driver runs outside any install under a copy of
+   *     bun with that name.
    */
   async function runUpgradeAgainstFakeInstall(opts: {
     observedVersion: string;
     targetVersion?: string;
     binaryResult?: BinarySelfUpdateResult;
-    /** Body of the PATH `clawhub` shim (default: exit 0 for everything). */
+    /** Body of the PATH `clawhub` shim after it logs the call (default: exit 0 for everything). */
     clawhub?: string;
+    /** Run the driver outside any install under a copy of bun with this name. */
+    execName?: string;
     /** Driver directory relative to the fake HOME (default: HOME itself). */
     driverDir?: string;
     /** Shim `git` and `bun` as recorders appending `<cwd>|<args>` to HOME/calls.log. */
@@ -239,7 +268,7 @@ describe('runUpgrade target verification (#4366)', () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-upgrade-target-'));
     const bin = join(home, 'bin');
     mkdirSync(bin);
-    writeFileSync(join(bin, 'clawhub'), `#!/bin/sh\n${opts.clawhub ?? 'exit 0'}\n`);
+    writeFileSync(join(bin, 'clawhub'), `#!/bin/sh\necho "$*" >> "${join(home, 'clawhub.log')}"\n${opts.clawhub ?? 'exit 0'}\n`);
     writeFileSync(join(bin, 'gbrain'), `#!/bin/sh\necho "gbrain ${opts.observedVersion}"\n`);
     chmodSync(join(bin, 'clawhub'), 0o755);
     chmodSync(join(bin, 'gbrain'), 0o755);
@@ -259,10 +288,19 @@ describe('runUpgrade target verification (#4366)', () => {
       formatMarker({ kind: 'upgrade_available', current: OLD, latest: TARGET }) + '\n',
     );
 
-    // The driver lives OUTSIDE the repo so detectInstallMethod() cannot see a
-    // node_modules/.git ancestor and falls through to the clawhub shim.
-    const driverDir = join(home, opts.driverDir ?? '');
+    // The driver lives OUTSIDE the repo so detectInstallMethod() cannot see the
+    // checkout's node_modules/.git ancestor.
+    const globalInstall = opts.driverDir === undefined && !opts.binaryResult && !opts.execName;
+    const driverDir = join(home, globalInstall ? join('global', 'node_modules', 'gbrain', 'src') : opts.driverDir ?? '');
     mkdirSync(driverDir, { recursive: true });
+    if (globalInstall) {
+      writeFileSync(join(home, 'global', 'package.json'), '{}');
+      writeFileSync(join(home, 'global', 'node_modules', 'gbrain', 'package.json'), JSON.stringify({ name: 'gbrain', repository: 'github:garrytan/gbrain' }));
+      if (!opts.recordGitAndBun) {
+        writeFileSync(join(bin, 'bun'), '#!/bin/sh\nexit 0\n');
+        chmodSync(join(bin, 'bun'), 0o755);
+      }
+    }
     opts.setup?.(home);
     const driverPath = join(driverDir, 'driver.ts');
     const mockPrelude = opts.binaryResult
@@ -279,8 +317,8 @@ describe('runUpgrade target verification (#4366)', () => {
         `await runUpgrade(['--swap-only', '--no-bun-floor-check'], t ? { targetVersion: t } : {});\n`,
     );
     let bunExec = process.execPath;
-    if (opts.binaryResult) {
-      bunExec = join(home, 'exec', 'gbrain');
+    if (opts.binaryResult || opts.execName) {
+      bunExec = join(home, 'exec', opts.execName ?? 'gbrain');
       mkdirSync(dirname(bunExec));
       copyFileSync(process.execPath, bunExec);
       chmodSync(bunExec, 0o755);
@@ -388,30 +426,32 @@ describe('runUpgrade target verification (#4366)', () => {
 
   // ── install-method detection + upgrade commands (PATH-shimmed) ──────────
 
-  test('clawhub is detected by running `clawhub --version`, not by PATH presence', async () => {
-    // The shim is ON PATH but fails `--version`: a `which clawhub` probe would
-    // pick it; the real probe falls through to 'unknown'.
-    const { home, stdout, stderr } = await runUpgradeAgainstFakeInstall({
-      observedVersion: OLD,
-      clawhub: '[ "$1" = "--version" ] && exit 1\nexit 0',
+  // #8464: `clawhub update gbrain` installs whatever skill anyone publishes as gbrain, so a working clawhub CLI on
+  // PATH must never become the install method, for a renamed release asset or any other undetected install.
+  for (const execName of ['gbrain-linux-x64', 'bun']) {
+    test(`an undetected install run as ${execName} never runs clawhub, even when the clawhub CLI works`, async () => {
+      const { home, stdout, stderr } = await runUpgradeAgainstFakeInstall({ observedVersion: OLD, execName });
+      try {
+        expect(stdout).toContain('Detected install method: unknown');
+        expect(stderr).toContain('Could not detect installation method.');
+        expect(existsSync(join(home, 'clawhub.log'))).toBe(false);
+        expect(`${stdout}${stderr}`).not.toMatch(/clawhub|\bnpm\b/i);
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
     });
-    try {
-      expect(stdout).toContain('Detected install method: unknown');
-      expect(stderr).toContain('Could not detect installation method.');
-      expect(`${stdout}${stderr}`).not.toMatch(/\bnpm\b/);
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
+  }
 
-  test('a hung `clawhub --version` probe times out instead of wedging upgrade', async () => {
+  test('a hung clawhub CLI on PATH is never probed, so upgrade cannot wedge on it', async () => {
     const started = Date.now();
     const { home, stdout } = await runUpgradeAgainstFakeInstall({
       observedVersion: OLD,
-      clawhub: '[ "$1" = "--version" ] && exec sleep 60\nexit 0',
+      execName: 'gbrain-linux-x64',
+      clawhub: 'exec sleep 60',
     });
     try {
       expect(stdout).toContain('Detected install method: unknown');
+      expect(existsSync(join(home, 'clawhub.log'))).toBe(false);
       expect(Date.now() - started).toBeLessThan(30_000);
     } finally {
       rmSync(home, { recursive: true, force: true });

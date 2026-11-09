@@ -1,0 +1,211 @@
+/**
+ * #8972: a conversation page longer than the judge's window (JUDGE_BODY_CHARS) on the automatic path.
+ *
+ * Protects: a revision whose judge input is unchanged (the tail grew past the window) makes no paid call and writes no
+ * events; a re-judged generation that read every text the live events came from replaces them instead of piling up;
+ * a generation that did not (an edited head, or rows recorded before the judged window was stored) stays additive (#7013).
+ * Fails when: a growing long conversation is judged again on the same window, or each run adds a reworded copy of its
+ * events.
+ * Seams: an injected judge that rewords `what` on every call, as a real model does.
+ */
+import { afterEach, describe, expect, test } from 'bun:test';
+import type { BrainEngine } from '../src/core/engine.ts';
+import type { OperationContext } from '../src/core/ops/contract.ts';
+import { operationsByName } from '../src/core/operations.ts';
+import { runPhaseChronicle } from '../src/core/cycle/chronicle.ts';
+import { JUDGE_BODY_CHARS, type ChronicleJudge, type ChronicleJudgeInput } from '../src/core/chronicle/extract-events.ts';
+import { resetGateway } from '../src/core/ai/gateway.ts';
+import { readChronicleDuplicateEvents } from '../src/core/chronicle/ledger-stats.ts';
+import { managedBrain, type ManagedBrain } from './helpers/managed-brain.ts';
+import { requirePostgresTestDatabase } from './helpers/test-backends.ts';
+
+const databaseUrl = process.env.GBRAIN_TEST_BACKEND === 'postgres' ? requirePostgresTestDatabase() : undefined;
+const brain = (run: (b: ManagedBrain) => Promise<void>) => managedBrain(run, { databaseUrl });
+
+const today = new Date().toISOString().slice(0, 10);
+const SLUG = 'conversations/launch-thread';
+
+/** Chat lines numbered from `from` until the body reaches `chars`. */
+function messages(from: number, chars: number, speaker = 'alice-example'): string {
+  const lines: string[] = [];
+  let n = from;
+  while (lines.join('\n').length < chars) lines.push(`${speaker}: message ${n++} about the beta launch plan and the next steps for it.`);
+  return lines.join('\n');
+}
+const conversation = (body: string, title = 'Launch thread') => `---\ntype: conversation\ntitle: ${title}\ndate: ${today}\n---\n\n${body}`;
+
+async function put(ctx: OperationContext, content: string): Promise<void> {
+  const current = await ctx.engine.readPageSnapshot(SLUG, { sourceId: 'default' });
+  await operationsByName.put_page.handler(ctx, { slug: SLUG, content, ...(current ? { expected_revision: current.revision } : {}) });
+}
+async function settle(engine: BrainEngine) {
+  await engine.executeRaw("UPDATE chronicle_page_state SET next_attempt_at=now()-interval '1 second', decided_at=now()-interval '1 hour' WHERE state='pending'");
+}
+/** Two events per call; the wording of `what` changes on every call, as a model's does. */
+function rewordingJudge() {
+  const inputs: ChronicleJudgeInput[] = [];
+  const judge: ChronicleJudge = async (input) => {
+    inputs.push(input);
+    const n = inputs.length;
+    return { events: [
+      { when: today, who: ['people/alice-example'], what: `Alice agreed to ship the beta (wording ${n})`, kind: 'decision' },
+      { when: today, who: ['people/bob-example'], what: `Bob committed to the launch checklist (wording ${n})`, kind: 'commitment' },
+    ] };
+  };
+  return Object.assign(judge, { inputs });
+}
+async function run(engine: BrainEngine, judge: ChronicleJudge) {
+  await settle(engine);
+  return runPhaseChronicle(engine, { judge });
+}
+async function liveEvents(engine: BrainEngine): Promise<string[]> {
+  return (await engine.executeRaw<{ what: string }>(
+    "SELECT frontmatter->'event'->>'what' AS what FROM pages WHERE type='event' AND deleted_at IS NULL ORDER BY what")).map((r) => r.what);
+}
+async function retiredEvents(engine: BrainEngine): Promise<number> {
+  return (await engine.executeRaw<{ n: number }>(
+    "SELECT count(*)::int AS n FROM pages WHERE type='event' AND deleted_at IS NOT NULL AND frontmatter->>'retired_by'='life-chronicle'"))[0].n;
+}
+async function ledger(engine: BrainEngine) {
+  return (await engine.executeRaw<{ state: string; reason: string | null }>(
+    'SELECT state, reason FROM chronicle_page_state ORDER BY decided_at, updated_at')).map((r) => [r.state, r.reason]);
+}
+async function reservations(engine: BrainEngine): Promise<number> {
+  return (await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM chronicle_judge_reservations'))[0].n;
+}
+
+afterEach(() => { resetGateway(); });
+
+describe('#8972: long conversation pages', () => {
+  test('a tail that grows past the window is not judged again and adds no events', () => brain(async ({ engine, ctx }) => {
+    let body = messages(1, JUDGE_BODY_CHARS + 1_000);
+    await put(ctx, conversation(body));
+    const judge = rewordingJudge();
+    await run(engine, judge);
+    expect(judge.inputs).toHaveLength(1);
+    for (const n of [1, 2, 3]) {
+      body += `\nbob-example: tail message ${n}, well past the judged window.`;
+      await put(ctx, conversation(body));
+      const r = await run(engine, judge);
+      expect(r.details).toMatchObject({ judged: 0, events_written: 0, reasons: { judge_input_unchanged: 1 } });
+    }
+    expect(judge.inputs).toHaveLength(1);
+    expect(await reservations(engine)).toBe(1);
+    expect(await liveEvents(engine)).toEqual(['Alice agreed to ship the beta (wording 1)', 'Bob committed to the launch checklist (wording 1)']);
+    expect(await ledger(engine)).toEqual([['extracted', null], ['skipped', 'judge_input_unchanged'], ['skipped', 'judge_input_unchanged'],
+      ['skipped', 'judge_input_unchanged']]);
+    expect(await readChronicleDuplicateEvents(engine)).toEqual({ pages: 0, surplus: 0 });
+  }), 180_000);
+
+  test('a re-judge of the same window (the title changed) replaces the earlier events', () => brain(async ({ engine, ctx }) => {
+    const body = messages(1, JUDGE_BODY_CHARS + 1_000);
+    await put(ctx, conversation(body));
+    const judge = rewordingJudge();
+    await run(engine, judge);
+    await put(ctx, conversation(`${body}\nbob-example: one more.`, 'Launch thread (renamed)'));
+    const r = await run(engine, judge);
+    expect(judge.inputs).toHaveLength(2);
+    expect(r.details).toMatchObject({ judged: 1, events_written: 2, events_retired: 2 });
+    expect(await liveEvents(engine)).toEqual(['Alice agreed to ship the beta (wording 2)', 'Bob committed to the launch checklist (wording 2)']);
+    expect(await retiredEvents(engine)).toBe(2);
+  }), 180_000);
+
+  test('a short conversation that grows past the window keeps its text in the window: the first truncated run replaces', () => brain(async ({ engine, ctx }) => {
+    const head = messages(1, 5_000);
+    await put(ctx, conversation(head));
+    const judge = rewordingJudge();
+    await run(engine, judge);
+    await put(ctx, conversation(`${head}\n${messages(1_000, JUDGE_BODY_CHARS, 'bob-example')}`));
+    const r = await run(engine, judge);
+    expect(judge.inputs).toHaveLength(2);
+    expect(r.details).toMatchObject({ judged: 1, events_retired: 2 });
+    expect(await liveEvents(engine)).toEqual(['Alice agreed to ship the beta (wording 2)', 'Bob committed to the launch checklist (wording 2)']);
+  }), 180_000);
+
+  test('an edited head moves the window: the new run is judged and stays additive (#7013)', () => brain(async ({ engine, ctx }) => {
+    const body = messages(1, JUDGE_BODY_CHARS + 1_000);
+    await put(ctx, conversation(body));
+    const judge = rewordingJudge();
+    await run(engine, judge);
+    await put(ctx, conversation(`carol-example: an earlier message pasted in at the top.\n${body}`));
+    const r = await run(engine, judge);
+    expect(judge.inputs).toHaveLength(2);
+    expect(r.details).toMatchObject({ judged: 1, events_written: 2, events_retired: 0 });
+    expect(await liveEvents(engine)).toHaveLength(4);
+  }), 180_000);
+
+  test('a row recorded before the upgrade (no judged window) is judged once more, additively, then never again', () => brain(async ({ engine, ctx }) => {
+    let body = messages(1, JUDGE_BODY_CHARS + 1_000);
+    await put(ctx, conversation(body));
+    const judge = rewordingJudge();
+    await run(engine, judge);
+    await engine.executeRaw('UPDATE chronicle_page_state SET judge_input_hash=NULL, judge_window_chars=NULL, judge_window_hash=NULL');
+    for (const n of [1, 2]) {
+      body += `\nbob-example: tail message ${n}.`;
+      await put(ctx, conversation(body));
+      await run(engine, judge);
+    }
+    expect(judge.inputs).toHaveLength(2);
+    expect(await liveEvents(engine)).toHaveLength(4);
+    expect(await retiredEvents(engine)).toBe(0);
+    // Doctor's chronicle_duplicate_events: the pre-upgrade run's two events sit beside the newest run's two.
+    expect(await readChronicleDuplicateEvents(engine)).toEqual({ pages: 1, surplus: 2 });
+  }), 180_000);
+test('a judge that keeps failing on an unchanged window is paid at most the attempt limit across revisions', () => brain(async ({ engine, ctx }) => {
+    let body = messages(1, JUDGE_BODY_CHARS + 1_000);
+    await put(ctx, conversation(body));
+    let calls = 0;
+    const failing: ChronicleJudge = async () => { calls++; return { events: [], failure: 'truncated' }; };
+    await run(engine, failing);
+    for (const n of [1, 2, 3, 4, 5, 6]) {
+      body += `\nbob-example: tail message ${n}.`;
+      await put(ctx, conversation(body));
+      await run(engine, failing);
+    }
+    expect(calls).toBe(5);
+    expect((await ledger(engine)).at(-1)).toEqual(['failed', 'judge_input_failed']);
+    expect(await reservations(engine)).toBe(5);
+  }), 180_000);
+
+  test('events a chronicle retirement removed (a deleted and restored page) are judged again', () => brain(async ({ engine, ctx }) => {
+    const body = messages(1, JUDGE_BODY_CHARS + 1_000);
+    await put(ctx, conversation(body));
+    const judge = rewordingJudge();
+    await run(engine, judge);
+    const revision = async () => (await engine.readPageSnapshot(SLUG, { sourceId: 'default', includeDeleted: true }))!.revision;
+    await operationsByName.delete_page.handler(ctx, { slug: SLUG, expected_revision: await revision() });
+    await run(engine, judge); // the orphan sweep retires the deleted page's events
+    expect(await liveEvents(engine)).toHaveLength(0);
+    await operationsByName.restore_page.handler(ctx, { slug: SLUG, expected_revision: await revision() });
+    await put(ctx, conversation(`${body}\nbob-example: back again.`));
+    await run(engine, judge);
+    expect(judge.inputs).toHaveLength(2);
+    expect(await liveEvents(engine)).toHaveLength(2);
+  }), 180_000);
+
+  test('a privacy change re-judges a page whose text did not change, and its events take the new visibility', () => brain(async ({ engine, ctx }) => {
+    const body = messages(1, 2_000);
+    await put(ctx, conversation(body));
+    const judge = rewordingJudge();
+    await run(engine, judge);
+    await put(ctx, `---\ntype: conversation\ntitle: Launch thread\ndate: ${today}\nvisibility: private\n---\n\n${body}`);
+    await run(engine, judge);
+    expect(judge.inputs).toHaveLength(2);
+    const stamps = await engine.executeRaw<{ visibility: string }>(
+      "SELECT frontmatter->>'visibility' AS visibility FROM pages WHERE type='event' AND deleted_at IS NULL");
+    expect(stamps.map((s) => s.visibility)).toEqual(['private', 'private']);
+  }), 180_000);
+
+  test('a live event no ledger row accounts for keeps a re-judged long page additive', () => brain(async ({ engine, ctx }) => {
+    const body = messages(1, JUDGE_BODY_CHARS + 1_000);
+    await put(ctx, conversation(body));
+    const judge = rewordingJudge();
+    await run(engine, judge);
+    await engine.executeRaw("UPDATE chronicle_page_state SET event_slugs='{}', event_hashes='{}'");
+    await put(ctx, conversation(`${body}\nbob-example: one more.`, 'Launch thread (renamed)'));
+    const r = await run(engine, judge);
+    expect(judge.inputs).toHaveLength(2);
+    expect(r.details).toMatchObject({ judged: 1, events_retired: 0 });
+    expect(await liveEvents(engine)).toHaveLength(4);
+  }), 180_000);
+});

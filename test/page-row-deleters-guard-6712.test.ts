@@ -39,6 +39,7 @@ const REVIEWED: Record<string, { count: number; why: string }> = {
   'src/core/github-source.ts': { count: 2, why: 'GitHub connector source, not a managed Git checkout' },
   'src/core/google/google-source.ts': { count: 1, why: 'Google connector source' },
   'src/core/google/sweep-shared.ts': { count: 1, why: 'Google connector sweep' },
+  'src/core/persistence/source-lifecycle.ts': { count: 1, why: 'managed remove/purge retire batches (#7702/#8905): the whole source is being removed under its topology locks, and the final transaction deletes its row and bindings, ending the incarnation every deletion marker (op_checkpoints, keyed on source, incarnation and origin, with no cascade) is scoped to; the single-transaction cascade these batches split wrote no markers either, and a page an interrupted run left behind is re-imported at worst until the rerun finishes the removal' },
   'src/core/connectors/api-source.ts': { count: 1, why: 'Fireflies/Slack connector source, unmanaged only; a managed source deletes through ManagedConnectorSync' },
 };
 

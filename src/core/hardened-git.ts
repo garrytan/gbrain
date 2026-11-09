@@ -106,7 +106,7 @@ const LOG_SHAPES: ReadonlyArray<readonly string[]> = [REASON_LOG_OPTIONS, HISTOR
  * listed here refuses.
  */
 const ALLOWED_OPTIONS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
-  ['rev-parse', new Set(['--show-toplevel', '--absolute-git-dir', '--verify', '--quiet', '--show-object-format'])],
+  ['rev-parse', new Set(['--show-toplevel', '--absolute-git-dir', '--git-common-dir', '--verify', '--quiet', '--show-object-format'])],
   ['ls-files', new Set(['-s', '--stage', '--eol', '-z', '--cached', '--others', '--exclude-standard'])],
   ['ls-tree', new Set(['-r', '-l', '-z', '--full-tree'])],
   ['cat-file', new Set(['--batch', '--batch-check'])],

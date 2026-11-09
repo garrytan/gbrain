@@ -2,6 +2,7 @@
 
 [Subsystem index](../KEY_FILES.md). Read only the entries relevant to your change.
 Current behavior and load-bearing invariants; history belongs in Git and CHANGELOG.
+The engine-free skill resolver (`src/core/skills/resolver/`, `gbrain skills index|resolve`) has its own page: [skill-resolver.md](skill-resolver.md).
 
 - `skills/conventions/agent-operator-protocol.md` — GENERATED copy of `docs/protocol/AGENT_OPERATOR_v1.md` (`bun run build:agent-protocol`; never hand-edit). It ships inside the skills tree so skill links to the protocol resolve in every copy (skillpack scaffold, harness skill dirs, plugin trees); skills link it relatively and every other repo doc by absolute URL (`scripts/portable-skill-links.ts`).
 

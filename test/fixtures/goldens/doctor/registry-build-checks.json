@@ -226,6 +226,10 @@
         "name": "harness_wiring"
       },
       {
+        "category": "ops",
+        "name": "skill_resolver"
+      },
+      {
         "category": "meta",
         "name": "agent_contract"
       },
@@ -916,6 +920,10 @@
       {
         "category": "brain",
         "name": "chronicle_config_invalid"
+      },
+      {
+        "category": "brain",
+        "name": "chronicle_duplicate_events"
       },
       {
         "category": "brain",
