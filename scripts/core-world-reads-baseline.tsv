@@ -348,6 +348,7 @@ src/core/embedding-dim-check.ts	module_collection	1	W6: per-engine state, or mar
 src/core/embedding-disabled.ts	load_config	1	W6: settings plane out of the core
 src/core/embedding-input-limit.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/embedding-input-limit.ts	process_env	1	W6: settings plane out of the core
+src/core/embedding-ledger.ts	als_store	1	Wave C 1F (#7650): marks a provider call whose spend its segmented batch already reserved, so the source ledger invocation guard books it once; W2: engine scope (decision E) replaces ad hoc async context
 src/core/embedding-migration-worst-case.ts	process_env	2	W6: settings plane out of the core
 src/core/embedding-migration.ts	process_env	3	W6: settings plane out of the core
 src/core/embedding-state.ts	load_config	1	W6: settings plane out of the core
@@ -356,6 +357,7 @@ src/core/engine-connect.ts	module_collection	1	W6: per-engine state, or mark as 
 src/core/engine-connect.ts	process_env	2	W6: settings plane out of the core
 src/core/engine-open.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/engine-scope-store.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
+src/core/engine-sql/chunks.ts	module_collection	1	Wave C 1E (#7638): bounded segmented chunk-count cache in a WeakMap keyed by the engine, so it is per-engine state that goes with its engine; W6: move onto the engine
 src/core/env-number.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/env-number.ts	process_env	1	W6: settings plane out of the core
 src/core/env-trust.ts	fs_import	1	W7: filesystem boundary moves to the local app
