@@ -119,9 +119,9 @@ function lockDownGaps(root: string): string[] {
  * `written` once every key is in the file.
  */
 function lockDownCheckout(root: string, progress: { state: 'none' | 'started' | 'written' | 'done' }): void {
-  const commonDir = hardenedGitSync(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'], GIT_LIMITS);
+  const commonDir = hardenedGitSync(root, ['rev-parse', '--git-common-dir'], GIT_LIMITS);
   if (!commonDir.ok) throw new Error(`Git could not locate the repository of ${root}.`);
-  const file = join(commonDir.stdout.toString('utf8').replace(/\n$/, ''), 'config');
+  const file = join(resolve(root, commonDir.stdout.toString('utf8').replace(/\n$/, '')), 'config');
   progress.state = 'started';
   for (const [key, value] of LOCK_DOWN)
     execFileSync('git', ['config', '--file', file, key, value], { cwd: dirname(file), env: hardenedGitEnvironment(), stdio: 'pipe', timeout: GIT_LIMITS.timeoutMs });
