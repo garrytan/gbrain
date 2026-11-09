@@ -174,7 +174,8 @@ export class GoogleApiClient {
       // #8906: a connections pageToken Google no longer honors (a re-list resumed from its checkpoint).
       if (res.status === 400 && apiHint === 'people') {
         const u = new URL(url);
-        if (u.pathname.endsWith('/people/me/connections') && u.searchParams.get('pageToken')) throw new GoogleCursorExpiredError(res.status, url);
+        const pageTokenRejected = /page[ _]?token/i.test(`${body.error?.message ?? ''} ${JSON.stringify(body.error?.details ?? [])}`);
+        if (u.pathname.endsWith('/people/me/connections') && u.searchParams.get('pageToken') && pageTokenRejected) throw new GoogleCursorExpiredError(res.status, url);
       }
       throw new CredentialError('upstream', `: HTTP ${res.status} on ${apiHint} (${body.error?.message ?? 'no detail'})`);
     }

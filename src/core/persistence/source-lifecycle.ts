@@ -185,12 +185,14 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
       manifests.set(root.worktree,worktreeManifest(root.worktree,{progress:humanManifestProgress(),scope:storedManifestScope(manifests.get(currentRoot))}));
     // #7702/#8905: a remove or purge first deletes the source's pages in bounded batches, each its own transaction behind
     // the final transaction's preconditions; any precondition that would refuse or replay stops batching and the final
-    // transaction reports it. Committed batches are durable, so a retry with the same request_id resumes. A batch that
-    // hits the statement bound is retried at half the size, so heavy pages still fit; a lock wait or a busy writer stops
-    // the run with write_pending instead, and the retry resumes at full size.
+    // transaction reports it. Committed batches are durable, so a retry with the same request_id resumes. A batch
+    // whose DELETE hits the statement bound is retried at half the size, so heavy pages still fit; any other bounded wait
+    // (a lock wait, a busy writer, a slow precondition or commit) stops the run with write_pending, and the retry resumes at
+    // full size. Only committed batches count toward the pages the run reports.
     let retiredPages=0;
     try{
-    const retireBatch=async(limit:number):Promise<number|null>=>{ try{ return await topologyTransaction(engine,async tx=>{
+    let deleting=false;
+    const retireBatch=async(limit:number):Promise<number|null>=>{ deleting=false; try{ const n=await topologyTransaction(engine,async tx=>{
         await assertWriterAdminState(tx,input.expectedAdminState);
         const sources=await lockTopologyRows(tx,input.sourceId,bindings);
         const [source]=await tx.executeRaw<{incarnation:string;archived:boolean;due:boolean}>(
@@ -201,13 +203,15 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         await assertTopologyRequestsSettled(tx,sources,bindings.map(binding=>binding.worktree_id));
         await lockTopologyPrincipal(tx,principal);
         await assertTopologyChangeCapacity(tx,{principal,operation:input.operation,sourceId:input.sourceId});
-        const gone=await withCoordinatedWrite(tx,sources,()=>tx.executeRaw(
-          'DELETE FROM pages WHERE id IN (SELECT id FROM pages WHERE source_id=$1 LIMIT $2) RETURNING id',[input.sourceId,limit]),
-          principalAttribution({kind:'local_cli',id:principal}));
-        retiredPages+=gone.length;
+        const gone=await withCoordinatedWrite(tx,sources,async()=>{
+          deleting=true;
+          const rows=await tx.executeRaw('DELETE FROM pages WHERE id IN (SELECT id FROM pages WHERE source_id=$1 LIMIT $2) RETURNING id',[input.sourceId,limit]);
+          deleting=false;
+          return rows;
+        },principalAttribution({kind:'local_cli',id:principal}));
         return gone.length;
-      }); }catch(error){
-        if(error instanceof OperationError&&error.code==='write_pending'&&error.reason==='statement_timeout'&&limit>1) return null;
+      }); retiredPages+=n; return n; }catch(error){
+        if(deleting&&error instanceof OperationError&&error.code==='write_pending'&&error.reason==='statement_timeout'&&limit>1) return null;
         throw error;
       } };
     if(['remove','purge'].includes(input.operation)&&input.confirmDestructive&&!missingCheckout&&!admission)

@@ -96,11 +96,12 @@ test('Google pagination failure keeps the landed page and resumes at the failed 
     expect((await runGoogleSync(engine, f.id, cfg, options, withGoogleAccount(fetcher))).status).toBe('partial');
     // #8906: the page that landed stays, and the re-list resumes at the page that failed.
     expect(await engine.executeRaw('SELECT slug FROM pages WHERE source_id=$1', [f.id])).toEqual([{ slug: 'people/first-example' }]);
+    expect(cursorOf(await sourceCheckpoint(engine, f.id)).flat().map(({ state }) => state?.contacts_sync_token ?? null)).toEqual([null]);
     fail = false;
     listed.length = 0;
     expect((await runGoogleSync(engine, f.id, cfg, options, withGoogleAccount(fetcher))).added).toBe(1);
     expect(listed).toEqual(['second']);
-    expect((await engine.executeRaw('SELECT slug FROM pages WHERE source_id=$1 ORDER BY slug', [f.id])).map((r: { slug: string }) => r.slug)).toEqual(['people/first-example', 'people/second-example']);
+    expect((await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 ORDER BY slug', [f.id])).map((r) => r.slug)).toEqual(['people/first-example', 'people/second-example']);
     const other = await source(engine, googleConfig);
     expect((await runGoogleSync(engine, other.id, parseGoogleSourceConfig(googleConfig, other.dir), options, withGoogleAccount(fetcher))).added).toBe(2);
     deleted = true;

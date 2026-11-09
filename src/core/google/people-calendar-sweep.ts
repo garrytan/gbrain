@@ -53,14 +53,16 @@ export async function sweepContacts(
   const maskChanged = state.contacts_person_fields !== CONTACT_PERSON_FIELDS;
   // #8906: a full re-list that a deadline or the page budget stopped resumes at its checkpointed page. --full lists
   // from page 1 to the end in one run, as it did before the checkpoint.
-  const resumeToken = !deps.opts.full && state.contacts_relist?.person_fields === CONTACT_PERSON_FIELDS ? state.contacts_relist.page_token : null;
+  const relist = !deps.opts.full && state.contacts_relist?.person_fields === CONTACT_PERSON_FIELDS ? state.contacts_relist : null;
+  const resumeToken = relist?.page_token ?? null;
   const pageBudget = deps.opts.full ? Infinity : CONTACT_RELIST_PAGES_PER_RUN;
   if (deps.opts.full) state.contacts_relist = null;
   const syncToken = deps.opts.full || maskChanged || resumeToken ? null : state.contacts_sync_token;
   if (maskChanged && state.contacts_sync_token && !deps.opts.full && !resumeToken) deps.log('[google] contacts field mask changed; full re-list');
   let groupNames: Record<string, string> | null = null;
   const sweep = () => ({ activePack, summary, countedSlugs, groupNames: groupNames ?? state.contact_groups ?? {} });
-  let blocked = false;
+  // A re-list that passed a failing contact not yet held stays blocked until it ends, so its sync token is never saved.
+  let blocked = relist?.blocked === true;
   // One listed batch through the holds; false when the run was aborted part-way.
   const apply = async (contacts: ContactData[]): Promise<boolean> => {
     groupNames ??= contacts.some((c) => !c.deleted && c.groups.length > 0) ? await resolveContactGroups(deps, people, state) : null;
@@ -98,9 +100,7 @@ export async function sweepContacts(
     // list from page 1, once.
     let pageToken = resumeToken;
     if (resumeToken) deps.log('[google] contacts full re-list resuming at its checkpointed page');
-    // A failing contact not yet held freezes the cursor before its page, so while blocked the run lists to the end, as
-    // it did before the budget: every later contact still lands in this run.
-    for (let pages = 0; (pages < pageBudget || blocked) && !listed; pages++) {
+    for (let pages = 0; pages < pageBudget && !listed; pages++) {
       let page;
       try {
         page = await people.listConnectionsPage(pageToken, signal);
@@ -108,6 +108,7 @@ export async function sweepContacts(
         if (pages > 0 || !resumeToken || !(e instanceof GoogleCursorExpiredError)) throw e;
         deps.log('[google] contacts re-list page token expired; restarting the full re-list from page 1');
         state.contacts_relist = null;
+        blocked = false;
         page = await people.listConnectionsPage(pageToken = null, signal);
       }
       if (!await apply(page.contacts)) return;
@@ -117,9 +118,9 @@ export async function sweepContacts(
         continue;
       }
       pageToken = page.nextPageToken;
-      // A failing contact not yet held keeps the cursor before its page; a managed lease cannot write once aborted.
-      if (blocked || deps.opts.signal?.aborted) continue;
-      state.contacts_relist = { page_token: pageToken, person_fields: CONTACT_PERSON_FIELDS };
+      // A managed lease cannot write once aborted.
+      if (deps.opts.signal?.aborted) continue;
+      state.contacts_relist = { page_token: pageToken, person_fields: CONTACT_PERSON_FIELDS, ...(blocked ? { blocked: true } : {}) };
       await checkpoint();
     }
     if (!listed) deps.log(`[google] contacts full re-list paused after ${CONTACT_RELIST_PAGES_PER_RUN} pages; the next sync resumes it`);
@@ -134,6 +135,8 @@ export async function sweepContacts(
       await applyContact(deps, c, sweep());
     });
   }
+  // A blocked re-list that reached its last page starts over at page 1 next sync, retrying the contact that failed.
+  if (blocked && listed) state.contacts_relist = null;
   if (blocked || !listed) return;
   // Cursor and the mask it was minted under commit together, only after the
   // whole sweep succeeded. A full list that returned no replacement token

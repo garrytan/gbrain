@@ -511,10 +511,14 @@ own cursor without restarting Gmail. A full contacts list (first sync, an
 expired token, `--full`) saves its page cursor after each page and lists at
 most 10 pages (2,000 contacts) per sync, so a large address book finishes
 over several syncs, each resuming where the last stopped, while Calendar and
-Gmail still run every time. A contacts HTTP 400 on a sync-token request that
+Gmail still run every time. A contact that keeps failing does not hold the
+list back: the cursor moves past its page, and once the list ends the next
+sync starts it again from page 1 without saving a sync token, so the contact
+is retried. A contacts HTTP 400 on a sync-token request that
 is not an expiry (a token minted under other request parameters) gets one
 full-list attempt, and a saved page cursor Google no longer accepts (HTTP 400
-or 410) restarts the list from page 1 once; every other HTTP 400 remains an
+or 410, the 400 naming the page token) restarts the list from page 1 once;
+every other HTTP 400 remains an
 upstream failure rather than triggering a re-list.
 
 ## Custody, privacy, spend

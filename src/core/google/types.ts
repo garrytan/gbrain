@@ -189,7 +189,7 @@ export interface GoogleSourceState {
    * each page lands so a run stopped by its deadline or page budget resumes
    * there. Cleared when the list completes; one under another mask is ignored.
    */
-  contacts_relist?: { page_token: string; person_fields: string } | null;
+  contacts_relist?: { page_token: string; person_fields: string; blocked?: boolean } | null;
   /**
    * #6324: contact-group directory cache (resource name → display name) from
    * the last successful `contactGroups` read; the fallback when the directory

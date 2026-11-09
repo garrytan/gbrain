@@ -166,6 +166,19 @@ describe('contacts full re-list checkpoints (#8906)', () => {
     }
   }, 120_000);
 
+  test('a paginated HTTP 400 that does not name the page token propagates: no restart from page 1', async () => {
+    const { dir, cfg } = await googleSource();
+    try {
+      seedState(dir, { contacts_sync_token: null, contacts_person_fields: CONTACT_PERSON_FIELDS, contacts_relist: { page_token: 'gone-page', person_fields: CONTACT_PERSON_FIELDS } });
+      const api = peopleApi(3, { stale: () => json({ error: { code: 400, message: 'Invalid personFields mask path: "unknownField".' } }, 400) });
+      expect((await sync(cfg, api.fetchImpl)).status).toBe('partial');
+      expect(api.requests.map((r) => r.pageToken)).toEqual(['gone-page']);
+      expect(relistOf(dir)?.page_token).toBe('gone-page');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   test('a page token saved under another field mask is not resumed: the re-list starts at page 1', async () => {
     const { dir, cfg } = await googleSource();
     try {
@@ -197,18 +210,26 @@ describe('contacts full re-list checkpoints (#8906)', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 240_000);
-test('a contact that keeps failing transiently does not hide the contacts past the page budget: a blocked run lists to the end', async () => {
+test('a contact that keeps failing transiently keeps the page budget: the cursor moves past it, the finished list saves no sync token, and the next pass retries it', async () => {
     const { dir, cfg } = await googleSource();
     await engine.executeRaw(`CREATE FUNCTION relist_fail_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
       IF NEW.title = 'Person c00200 Example' THEN RAISE EXCEPTION 'injected transient contact failure'; END IF; RETURN NEW; END $$`);
     await engine.executeRaw('CREATE TRIGGER relist_fail BEFORE INSERT ON pages FOR EACH ROW EXECUTE FUNCTION relist_fail_fn()');
     try {
-      const api = peopleApi(12);
+      const api = peopleApi(11);
       expect((await sync(cfg, api.fetchImpl)).status).toBe('partial');
-      expect(api.served).toEqual(Array.from({ length: 12 }, (_, i) => 'p' + (i + 1)));
-      expect(await personPages()).toBe(2_399);
-      expect(relistOf(dir)?.page_token).toBe('p2');
+      expect(api.served).toEqual(Array.from({ length: 10 }, (_, i) => 'p' + (i + 1)));
+      expect(relistOf(dir)).toEqual({ page_token: 'p11', person_fields: CONTACT_PERSON_FIELDS, blocked: true });
+      await sync(cfg, api.fetchImpl);
+      expect(api.served.slice(10)).toEqual(['p11']);
+      expect(await personPages()).toBe(2_199);
       expect(readGoogleState(dir).contacts_sync_token).toBeNull();
+      expect(relistOf(dir)).toBeNull();
+      await engine.executeRaw('DROP TRIGGER relist_fail ON pages');
+      await sync(cfg, api.fetchImpl);
+      expect(api.requests.at(-10)).toEqual({ syncToken: null, pageToken: null });
+      expect(await personPages()).toBe(2_200);
+      expect(relistOf(dir)).toEqual({ page_token: 'p11', person_fields: CONTACT_PERSON_FIELDS });
     } finally {
       for (const sql of ['DROP TRIGGER IF EXISTS relist_fail ON pages', 'DROP FUNCTION IF EXISTS relist_fail_fn()']) await engine.executeRaw(sql);
       rmSync(dir, { recursive: true, force: true });

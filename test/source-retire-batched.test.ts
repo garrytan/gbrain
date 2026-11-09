@@ -101,6 +101,27 @@ test('a lock wait stops the remove with write_pending instead of shrinking the b
   }
 }), 60_000);
 
+test('a bounded wait at COMMIT stops the remove without halving, and only committed batches count', () => fixture(async () => {
+  await engine.executeRaw('CREATE SEQUENCE retire_commit_seq');
+  await engine.executeRaw(`CREATE FUNCTION retire_commit_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    IF nextval('retire_commit_seq') = ${SOURCE_RETIRE_BATCH_PAGES + 1} THEN RAISE EXCEPTION 'canceling statement due to statement timeout' USING ERRCODE = TG_ARGV[0]; END IF;
+    RETURN NULL; END $$`);
+  try {
+    for (const errcode of ['query_canceled', 'lock_not_available']) {
+      await engine.executeRaw('SELECT setval($1, 1, false)', ['retire_commit_seq']);
+      await engine.executeRaw(`CREATE CONSTRAINT TRIGGER retire_commit AFTER DELETE ON pages DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION retire_commit_fn('${errcode}')`);
+      const before = await pages(source);
+      const err = await runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: source, confirmDestructive: true }).then(() => null, (e: Error & { code?: string; suggestion?: string }) => e);
+      await engine.executeRaw('DROP TRIGGER retire_commit ON pages');
+      expect({ errcode, code: err?.code }).toEqual({ errcode, code: 'write_pending' });
+      expect(await pages(source)).toBe(before - SOURCE_RETIRE_BATCH_PAGES);
+      expect(err?.suggestion).toContain(`already deleted ${SOURCE_RETIRE_BATCH_PAGES} page(s)`);
+    }
+  } finally {
+    for (const sql of ['DROP TRIGGER IF EXISTS retire_commit ON pages', 'DROP FUNCTION IF EXISTS retire_commit_fn()', 'DROP SEQUENCE IF EXISTS retire_commit_seq']) await engine.executeRaw(sql);
+  }
+}), 60_000);
+
 test('an interrupted batch keeps the committed batches and the same request_id resumes to completion', () => fixture(async () => {
   await engine.executeRaw('CREATE TABLE retire_fail(armed boolean NOT NULL, seen integer NOT NULL)');
   await engine.executeRaw(`CREATE FUNCTION retire_fail_fn() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE n integer; BEGIN
