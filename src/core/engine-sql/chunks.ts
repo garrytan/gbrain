@@ -127,7 +127,8 @@ export async function upsertChunksOnce(
         if ((await exec.unsafe(invalidation.sql, invalidation.params)).rows.length > 0) break;
       }
       if (chunks.length === 0) {
-        await exec.run(sqlFragment`DELETE FROM content_chunks WHERE page_id = ${pageId}`);
+        await exec.run(sqlFragment`WITH gone AS (DELETE FROM content_chunks WHERE page_id = ${pageId} RETURNING page_id)
+          UPDATE pages SET text_projection_revision = NULL WHERE id = (SELECT page_id FROM gone LIMIT 1) AND text_projection_revision IS NOT NULL`);
         return;
       }
     } else if (chunks.length === 0) return;
@@ -804,7 +805,8 @@ export async function listStaleChunks(exec: ScopedRead, column: string, opts?: {
  * which are chunkless by design, and pages whose current revision's text
  * projection is sealed (#8473): the writer chunked that revision to nothing,
  * as for a body holding only a protected takes fence, so a heal cannot
- * produce a chunk. An embed_skip page is not excluded: every write keeps
+ * produce a chunk. Deleting a page's chunks clears its seal (deleteChunks, an
+ * empty fragment replacement), so a page emptied after sealing stays healable. An embed_skip page is not excluded: every write keeps
  * its chunks for keyword search (#6722), so one with none (an older gbrain's
  * size skip, or a backfill rewrite that never landed) is drift the safety net
  * chunks; its chunks get no vectors (#7174).
@@ -1034,9 +1036,16 @@ export async function listEmbeddingStateRows(exec: ScopedRead, column: string,
 export async function deleteChunks(exec: SqlExecutor, slug: string, opts?: { sourceId?: string }): Promise<void> {
     const sourceId = opts?.sourceId ?? 'default';
     // Source-qualify the page-id subquery; slugs are only unique per source.
+    // Removing chunks voids the text projection seal that certified them; a
+    // writer that reinstalls the projection seals it again (#8502).
     await exec.run(sqlFragment`
-      DELETE FROM content_chunks
-      WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId})
+      WITH gone AS (
+        DELETE FROM content_chunks
+        WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId})
+        RETURNING page_id
+      )
+      UPDATE pages SET text_projection_revision = NULL
+      WHERE id = (SELECT page_id FROM gone LIMIT 1) AND text_projection_revision IS NOT NULL
     `);
   }
 

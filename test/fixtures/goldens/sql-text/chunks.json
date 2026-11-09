@@ -79,8 +79,8 @@
               "string",
               "string"
             ],
-            "sql": "DELETE FROM content_chunks WHERE page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = $2)",
-            "textSha256": "68789189f60510eba7195b82bea7d612a9e2f10c6799178a8d605ea0901482d4"
+            "sql": "WITH gone AS ( DELETE FROM content_chunks WHERE page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = $2) RETURNING page_id ) UPDATE pages SET text_projection_revision = NULL WHERE id = (SELECT page_id FROM gone LIMIT 1) AND text_projection_revision IS NOT NULL",
+            "textSha256": "7a650092284476e1dbedca3f5bec457882002e4444e5dadf9a37eddbee8d1c65"
           }
         ]
       },
@@ -1193,8 +1193,8 @@
             "params": [
               "number"
             ],
-            "sql": "DELETE FROM content_chunks WHERE page_id = $1",
-            "textSha256": "c1aa06e79b30c5c75dcef60a4e4560f6eb57e61586dc7c6a21036577d8dccb9d"
+            "sql": "WITH gone AS (DELETE FROM content_chunks WHERE page_id = $1 RETURNING page_id) UPDATE pages SET text_projection_revision = NULL WHERE id = (SELECT page_id FROM gone LIMIT 1) AND text_projection_revision IS NOT NULL",
+            "textSha256": "83f4e3a978fada158c958a09cfb84641ded612cabd6bf6cc023415842d9de7d0"
           },
           {
             "event": "commit",
