@@ -2,7 +2,7 @@ import { describe, test, expect, afterEach } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { parseMarkdown, serializeMarkdown, splitBody, resolveSourceLocalFilePath, sourceGitScope } from '../src/core/markdown.ts';
+import { explicitMarkdownTitle, parseMarkdown, serializeMarkdown, splitBody, resolveSourceLocalFilePath, sourceGitScope } from '../src/core/markdown.ts';
 
 describe('Markdown Parser', () => {
   test('parses frontmatter + compiled_truth + timeline (explicit sentinel)', () => {
@@ -437,6 +437,31 @@ describe('issue #2446 — body H1 fallback for missing frontmatter title', () =>
     const md = '---\ntype: note\n---\n\n```sh\n# this is a shell comment, not a heading\n```\n\n# Actual Heading\n';
     const parsed = parseMarkdown(md, 'notes/x.md');
     expect(parsed.title).toBe('Actual Heading');
+  });
+
+  // Nested examples must stay hidden until the matching outer closer (#9048).
+  // Simple-fence coverage above cannot catch a boolean toggle; no test seam is needed.
+  test('nested fences hide H1s in both buffered title readers', () => {
+    const examples = [
+      '````markdown\n```sh\n# Example command\n```\n````',
+      '~~~~markdown\n```sh\n# Example command\n```\n~~~~',
+      '```markdown\n```sh\n# Example command\n```` \t',
+      '````markdown\n````info\n# Example command\n````',
+    ];
+    for (const example of examples) {
+      const body = `${example}\n# Actual guide ###\n`;
+      const md = `---\ntype: note\ntags: [example]\n---\n${body}`;
+      const parsed = parseMarkdown(md, 'notes/fence-example.md');
+      expect(parsed.title).toBe('Actual guide');
+      expect(explicitMarkdownTitle(md)).toBe('Actual guide');
+      expect(parsed.compiled_truth).toBe(body.trim());
+      expect(parsed.timeline).toBe('');
+      expect(parsed.type).toBe('note');
+      expect(parsed.tags).toEqual(['example']);
+      const explicit = md.replace('type: note', 'type: note\ntitle: Explicit title');
+      expect(parseMarkdown(explicit).title).toBe('Explicit title');
+      expect(explicitMarkdownTitle(explicit)).toBe('Explicit title');
+    }
   });
 
   test('trailing closing hashes are stripped from the H1', () => {

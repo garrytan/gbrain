@@ -654,8 +654,9 @@ export class BodyScanner {
   private bareCandidate: BareCandidate | null = null;
   private bare: BareSection | null = null;
 
+  private readonly titleWalk: RunWalk = { open: null, mispaired: false };
   private bodyTitle: string | null = null;
-  /** The current line is read for the body H1 title. */
+  /** The current line is read for the body H1 title (fence state before this line). */
   private titleLine = false;
   private readonly embedded = { state: 'start' as 'start' | 'block' | 'done', opener: -1, first: null as string | null, title: '' };
 
@@ -836,7 +837,7 @@ export class BodyScanner {
       const line: Line = { index, start: this.pos, text: '', hasNewline: false, contentStart: null, contentEnd: null };
       const e = this.embedded;
       long = this.long = new LongLine(line, this.quoteWatched(line.start),
-        !this.frontmatterTitle && this.bodyTitle === null && !this.inFence,
+        !this.frontmatterTitle && this.bodyTitle === null && this.titleWalk.open === null,
         !this.frontmatterTitle && e.state === 'block' && e.first === null);
       const carry = this.carry;
       this.carry = [];
@@ -963,14 +964,15 @@ export class BodyScanner {
     const inFence = this.inFence;
     if (toggle) this.inFence = !inFence;
     this.stepBare(line, toggle || inFence, targets);
-    this.titleLine = this.bodyTitle === null && !toggle && !inFence;
+    this.titleLine = this.bodyTitle === null && this.titleWalk.open === null;
     targets.push(this.allWalk);
     return targets;
   }
 
-  /** The rest of the line once it has ended: `fence` is its token for the sentinel walk, `value` its text for the title readers. */
+  /** The rest of the line once it has ended: `fence` is its complete raw-line token, `value` its text for the title readers. */
   private lineEnd(line: Line, fence: Token, value: string | null): void {
     if (!this.decided) stepToken(this.sentinelWalk, fence);
+    stepToken(this.titleWalk, fence);
     if (this.titleLine && value !== null) {
       bodyScanWork.chars += value.length;
       this.bodyTitle = h1TitleLineValue(value);

@@ -22,7 +22,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import fc from 'fast-check';
-import { parseMarkdown, type ParseOpts } from '../../src/core/markdown.ts';
+import { explicitMarkdownTitle, parseMarkdown, type ParseOpts } from '../../src/core/markdown.ts';
 import { scanMarkdownCode, stepFenceWalk, type FenceWalk } from '../../src/core/fence-scan.ts';
 import { FRONTMATTER_HEAD_MAX_BYTES } from '../../src/core/page-body/limits.ts';
 import {
@@ -136,6 +136,68 @@ describe('body scan vs parseMarkdown (whole file within the head bound)', () => 
     const content = '---toml\ntitle = "x"\n---\nbody\n';
     expect(() => scanMarkdownString(content)).toThrow('Unsupported frontmatter language');
     expectAgrees(content, 'notes/x.md', { validate: true });
+  });
+});
+
+// #9048: assert titles independently, since buffered/streamed parity alone can
+// agree on the same wrong boolean fence toggle. Existing parity helpers protect
+// fields, raw regions, flags and ranges; all readers run without a new seam.
+describe('title visibility inside fenced examples', () => {
+  const nested = '````markdown\n```sh\n# Example command\n```\n````\n# Actual guide\n';
+  const long = 'x'.repeat(70_000);
+  const cases: Array<{ name: string; body: string; title: string; front?: string }> = [
+    { name: 'nested backticks', body: nested, title: 'Actual guide' },
+    { name: 'other marker', body: nested.replaceAll('````', '~~~~'), title: 'Actual guide' },
+    { name: 'longer closer', body: '```md\n```sh\n# Hidden\n```` \t\n# Actual guide', title: 'Actual guide' },
+    { name: 'info is not a closer', body: '````md\n````info\n# Hidden\n````\n# Actual guide', title: 'Actual guide' },
+    { name: 'longer info is not a closer', body: '````md\n`````info\n# Hidden\n````\n# Actual guide', title: 'Actual guide' },
+    { name: 'title after sentinel decision', body: 'intro\n<!-- timeline -->\n' + nested, title: 'Actual guide' },
+    { name: 'unclosed nested', body: '````md\n```sh\n# Hidden', title: '' },
+    { name: 'unclosed mispaired', body: '```md\n```sh\n# Hidden', title: '' },
+    { name: 'frontmatter wins', body: nested, front: 'title: Explicit title\n', title: 'Explicit title' },
+    { name: 'embedded rescue', body: '---\ntitle: Embedded title\n---\n````md\n```sh\n# Hidden', title: 'Embedded title' },
+    { name: 'H1 beats embedded', body: '---\ntitle: Embedded title\n---\n' + nested, title: 'Actual guide' },
+    { name: 'empty first H1', body: '#   \n# Later title', title: '' },
+    { name: 'H2 only', body: '## Section', title: '' },
+    { name: 'three spaces', body: '   ```sh\n# Hidden\n   ```\n# Actual guide ###', title: 'Actual guide' },
+    { name: 'four spaces', body: '    ```sh\n# Visible heading', title: 'Visible heading' },
+    { name: 'invalid backtick info', body: '```inline`code\n# Visible heading', title: 'Visible heading' },
+    { name: 'internal raw CR', body: '````markdown\r```sh\n# Visible heading', title: 'Visible heading' },
+    { name: 'CRLF', body: nested.replaceAll('\n', '\r\n'), title: 'Actual guide' },
+    { name: 'long info', body: '````' + long + '\n```sh\n# Hidden\n```\n````\n# Actual guide', title: 'Actual guide' },
+    { name: 'late invalid info', body: '```' + long + '`inline\n# Visible heading', title: 'Visible heading' },
+    { name: 'late internal CR', body: '```' + long + '\rinfo\n# Visible heading', title: 'Visible heading' },
+    { name: 'late unicode separator', body: '```' + long + '\u2028info\n# Visible heading', title: 'Visible heading' },
+    { name: 'long blank closer', body: '````md\n```sh\n# Hidden\n```\n````' + ' '.repeat(70_000) + '\n# Actual guide', title: 'Actual guide' },
+    { name: 'late nonblank closer', body: '````md\n````' + ' '.repeat(70_000) + 'info\n# Hidden\n````\n# Actual guide', title: 'Actual guide' },
+    { name: 'long marker run', body: '`'.repeat(70_000) + 'md\n```sh\n# Hidden\n```\n' + '`'.repeat(70_000) + '\n# Actual guide', title: 'Actual guide' },
+    { name: 'long real H1', body: nested.replace('# Actual guide\n', '# ' + long + ' 😀 ###\n'), title: long + ' 😀' },
+    { name: 'long hidden H1', body: '````md\n```sh\n# ' + long + '\n```\n````\n# Actual guide', title: 'Actual guide' },
+    { name: 'beyond head', body: 'ordinary text\n'.repeat(21_000) + nested, title: 'Actual guide' },
+  ];
+
+  for (const { name, body, title, front = '' } of cases) test(name, () => {
+    const content = `---\ntype: note\ntags: [example]\n${front}---\n${body}`;
+    const path = 'notes/fence-example.md';
+    expect(parseMarkdown(content, path).title).toBe(title || 'Fence Example');
+    expect(explicitMarkdownTitle(content)).toBe(title);
+    const bytes = Buffer.from(content);
+    for (const bound of [1, 11, undefined]) {
+      expectAgrees(content, path, { validate: true }, bound);
+      const whole = scanMarkdownString(content, path, { validate: true }, bound);
+      if (whole.kind !== 'ok') throw new Error('refused title fixture');
+      expect(whole.parsed.title).toBe(title || 'Fence Example');
+      const { text, ...scan } = whole;
+      for (const chunk of [1, 7, 4093]) {
+        const scanner = new BodyScanner(path, { validate: true }, bound);
+        for (let at = 0; at < bytes.length; at += chunk) scanner.push(bytes.subarray(at, at + chunk));
+        const got = scanner.finish();
+        expect(got).toEqual(scan);
+        if (got.kind !== 'ok') throw new Error('refused chunked title fixture');
+        expect(readBodyPieces(got.truth, bytes)).toBe(text.compiled_truth);
+        expect(readBodyPieces(got.timeline, bytes)).toBe(text.timeline);
+      }
+    }
   });
 });
 
