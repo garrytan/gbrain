@@ -22,6 +22,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { databaseOnlyPageSql, isDatabaseOnlyPage } from '../src/core/persistence/unbound-pages.ts';
 import { memberIdentityFor, stdioMemberId, STDIO_MEMBER_KEY } from '../src/core/access/caller.ts';
 import { addMember } from '../src/core/access/members.ts';
+import { privacyClass } from '../src/core/persistence/git-declared.ts';
 import {
   PRIVACY_ALIASES, __resetPrivateVisibilityCacheForTests, isPrivacyPrivatePage, privacyAliasSql,
   privatePagesFilterFastForCaller, privatePagesFilterForCaller, privatePagesFilterFragment, privatePagesFilterFragmentFast,
@@ -130,6 +131,21 @@ describe.each(testBackends())('%s', (backend) => {
       `SELECT p.slug FROM pages p WHERE p.source_id = $1 AND ${filter} ORDER BY p.slug`, [sourceId])).map(r => r.slug);
     expect(await visible(privatePagesFilterFragmentFast('p'))).toEqual(await visible(privatePagesFilterFragment('p')));
     expect(await visible(privatePagesFilterFastForCaller('p'))).toEqual(await visible(privatePagesFilterForCaller('p')));
+  });
+
+  test('privacyClass keeps a question page with a private synthesized input out of Git, as remote reads hide it', async () => {
+    __resetPrivateVisibilityCacheForTests();
+    const sourceId = `lineage-${randomUUID().slice(0, 8)}`;
+    await engine().executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+    const insert = async (slug: string, type: string, frontmatter: Record<string, unknown>) => Number((await engine().executeRaw<{ id: number }>(
+      `INSERT INTO pages(slug,type,title,compiled_truth,source_id,frontmatter) VALUES($1,$2,'T','body',$3,$4::text::jsonb) RETURNING id`,
+      [slug, type, sourceId, JSON.stringify(frontmatter)]))[0]!.id);
+    const input = await insert('atoms/input-example', 'atom', { visibility: 'private' });
+    const question = await insert('questions/q-example', 'question', { visibility: 'world' });
+    await engine().executeRaw("INSERT INTO links (from_page_id,to_page_id,link_type,link_source) VALUES ($1,$2,'synthesized_from','concept-provenance')", [question, input]);
+    const [row] = await engine().executeRaw<{ visible: boolean }>(`SELECT ${privatePagesFilterFragment('p')} AS visible FROM pages p WHERE p.id = $1`, [question]);
+    expect(row!.visible).toBe(false);
+    expect(await privacyClass(engine(), sourceId, { id: question, slug: 'questions/q-example', type: 'question', frontmatter: { visibility: 'world' } })).toBe('lineage_private');
   });
 
   test('the stdio member binding trims like stdioMemberId', async () => {
