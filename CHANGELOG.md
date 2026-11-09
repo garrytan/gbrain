@@ -10,6 +10,26 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**OpenClaw setups stop breaking each other, and upgrades stop breaking OpenClaw.** Six fixes for people running gbrain with OpenClaw. Setting up one agent's workspace no longer rewrites or removes the per-turn brain rule every other agent on the same gateway relies on. Background turns (heartbeats, cron, finished commands) no longer get told to answer. `gbrain upgrade` no longer reinstalls gbrain in a way OpenClaw refuses to load as a plugin. `gbrain doctor` stops failing on skills another tool put in the workspace. The OpenClaw guide now leads with an install route that works and documents OpenClaw's own remote MCP connection.
+
+- `gbrain setup openclaw --workspace <dir>` leaves the gateway-shared turn-rule plugin alone when it would name another server, and `--no-instructions` there no longer removes it for every agent; it says how to change it for all agents instead (reported by @Masashi-Ono0611, #8401).
+- OpenClaw heartbeat, cron and exec-completion turns get the brain-first rule without its closing "answer and finish" sentence, so they stop inviting replies nobody asked for (reported by @Masashi-Ono0611, #8440).
+- `gbrain doctor` reports skills in an OpenClaw workspace that have no resolver rows and no `manifest.json` as warnings, not errors, the way it already treats a foreign `skills/` found from the current directory (reported by @Masashi-Ono0611, #8629).
+- `gbrain upgrade` reinstalls a Bun global install with `--backend=copyfile`, and its recovery commands say the same, so an install OpenClaw loads as a plugin keeps loading after an upgrade (reported by @Masashi-Ono0611, #8663).
+- The OpenClaw guide marks the ClawHub bundle route as not available: the ClawHub package named `gbrain` is an unofficial old build that fails to install. It leads with the stdio route (reported by @Masashi-Ono0611, #8470).
+- `gbrain agent register --harness openclaw` no longer says OpenClaw has no remote MCP client, and the OpenClaw guide documents connecting over streamable HTTP with `openclaw mcp login` (reported by @Masashi-Ono0611, #8747).
+
+### Itemized changes
+
+- `src/core/setup/openclaw-turn-plugin.ts`: the plugin's `package.json` records the access it was written for (`gbrain.access`); `syncOpenclawTurnPlugin({ workspace })` skips an installed plugin whose rule would change or that records none, and `removeOpenclawTurnPlugin({ workspace })` skips; `src/commands/setup.ts` passes `--workspace` (not on `--remove`). The plugin's `before_prompt_build` returns `renderBrainFirstTurnRule(access, 'openclaw', { reply: false })` when `ctx.inputProvenance.kind` is `internal_system`.
+- `src/core/check-resolvable.ts`: the low-confidence `unreachable` downgrade also applies to `openclaw_workspace_*` detection.
+- `src/commands/upgrade.ts`: `bun update`, `bun add -g` (stable, pinned and restore) and `bunReinstallCommand` / `reinstallHintLines` pass `--backend=copyfile`.
+- `src/core/mcp-registration.ts`: `openclawThinClientBlock` names OpenClaw's native remote MCP route.
+- Docs: `docs/mcp/OPENCLAW.md`, `docs/guides/upgrades-auto-update.md`, `TODOS.md`.
+- Tests: `test/brain-first-turn-rule.test.ts`, `test/setup-brain-first.test.ts`, `test/check-resolvable.test.ts`, `test/mcp-registration-blocks.test.ts`, and the upgrade suites that pin the child `bun` argv.
+
 ## [0.60.620.0] - 2026-11-09
 
 **A diverged managed checkout now publishes its local commits on refresh by default when Git durability is on, after a secret scan of those commits.** Commits a script made with plain `git commit` in a managed checkout used to strand there whenever the remote moved: every `gbrain sources refresh` refused `refresh_diverged` and asked the user, unless `sources.refresh_publish_diverged` was set to `true`. With the setting unset, a worktree whose Git durability is on (`gbrain sources writer git-durability <source> --enable`, or the legacy hook) now publishes them itself: the local commits merged with the upstream in memory, never a rebase or force-push, then the fast-forward. The publish child scans, under its publish lock and for the exact commits it pushes, what they add: commit messages, added lines (including a value a later commit removed) and merge-commit conflict resolutions. A value that looks like a secret, added text too large to scan, or a commit that changes `.gbrain-scan-allow` or a `.gitattributes` refuses the new `publish_secret_found` naming the file, line, rule and commit, never the value, with nothing pushed; commits the scan cannot read in full refuse `publish_scan_unreadable` instead. The rewritten-upstream refusal and the `--expect-remote` bound are unchanged. `false` turns it off; `true` still publishes with durability off.
