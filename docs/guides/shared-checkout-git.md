@@ -44,7 +44,9 @@ another writer has half-written.
    instead of skipping silently. The push itself runs under a separate push
    lock, so a slow remote never blocks commits or gbrain's own page writes.
 2. **Commits only the paths you name.** It stages and commits exactly those
-   paths (`git add -A -- <paths>`, `git commit --only -- <paths>`), each
+   paths (`git add -u -- <paths>` for tracked ones, so a deletion under an
+   ignored directory still commits, `git add -A -- <paths>` for new files,
+   then `git commit --only -- <paths>`), each
    marked literal (`:(literal)<path>`), so a name with `*`, `?` or `[` matches
    only itself. The repository's hooks run as they do for a plain
    `git commit`: a pre-commit check that picks files by pattern still sees
