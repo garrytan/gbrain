@@ -34,7 +34,7 @@ import {
   type ChronicleLedgerRow, type ChronicleRunDetails,
 } from '../chronicle/contract.ts';
 import { CHRONICLE_TYPES, RESCUE_SLUG_PREFIXES } from '../chronicle/eligibility.ts';
-import { claimChronicleRow, executeChronicleRow, SAME_INPUT_FAILURES } from '../chronicle/execute.ts';
+import { claimChronicleRow, executeChronicleRow } from '../chronicle/execute.ts';
 import { retireOrphanedChronicleEvents } from '../chronicle/publish.ts';
 import { failExhaustedCampaignRows } from '../chronicle/campaign.ts';
 import { defaultJudge, type ChronicleDropReason, type ChronicleJudge } from '../chronicle/extract-events.ts';
@@ -149,10 +149,9 @@ export async function runPhaseChronicle(engine: BrainEngine, opts: ChroniclePhas
     await pruneChronicleReservations(engine);
     await failExhaustedCampaignRows(engine);
     await engine.executeRaw(
-      `UPDATE chronicle_page_state c SET state='skipped', reason='superseded', next_attempt_at=NULL, updated_at=now(),
-          judge_input_hash=CASE WHEN c.reason = ANY($1::text[]) THEN c.judge_input_hash END
+      `UPDATE chronicle_page_state c SET state='skipped', reason='superseded', next_attempt_at=NULL, updated_at=now()
         WHERE c.state IN ('pending','failed') AND NOT EXISTS (SELECT 1 FROM pages p
-          WHERE p.id=c.page_id AND p.content_hash=c.content_hash AND p.deleted_at IS NULL)`, [SAME_INPUT_FAILURES]);
+          WHERE p.id=c.page_id AND p.content_hash=c.content_hash AND p.deleted_at IS NULL)`);
   }
   const sources = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id')).map((s) => s.id);
   details.sources = sources.length;

@@ -70,6 +70,9 @@ async function ledger(engine: BrainEngine) {
   return (await engine.executeRaw<{ state: string; reason: string | null }>(
     'SELECT state, reason FROM chronicle_page_state ORDER BY decided_at, updated_at')).map((r) => [r.state, r.reason]);
 }
+async function dueRetries(engine: BrainEngine) {
+  await engine.executeRaw("UPDATE chronicle_page_state SET next_attempt_at=now()-interval '1 second' WHERE state='failed' AND next_attempt_at IS NOT NULL");
+}
 async function reservations(engine: BrainEngine): Promise<number> {
   return (await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM chronicle_judge_reservations'))[0].n;
 }
@@ -331,5 +334,35 @@ describe('#8972 fix round: what counts as judged, and what exhausts a page', () 
     await run(engine, judge);
     expect(calls).toBe(4);
   }), 180_000);
-});
+test('transient chat errors before one counted failure do not exhaust the page, and it is judged once the provider recovers', () => brain(async ({ engine, ctx }) => {
+    let body = messages(1, JUDGE_BODY_CHARS + 1_000);
+    await put(ctx, conversation(body));
+    let calls = 0;
+    const flaky: ChronicleJudge = async () => { calls++; return { events: [], failure: calls < 5 ? 'chat_error' : 'truncated' }; };
+    await run(engine, flaky);
+    for (let n = 0; n < 4; n++) { await dueRetries(engine); await run(engine, flaky); }
+    expect(calls).toBe(5);
+    expect((await ledger(engine)).at(-1)).toEqual(['failed', 'judge_truncated']);
+    const judge = rewordingJudge();
+    body += '\nbob-example: the provider is back.';
+    await put(ctx, conversation(body));
+    const r = await run(engine, judge);
+    expect(judge.inputs).toHaveLength(1);
+    expect(r.details).toMatchObject({ judged: 1, events_written: 2 });
+  }), 180_000);
 
+  test('retries of the current revision count toward the attempt limit: unchanged text is paid at most 5 times', () => brain(async ({ engine, ctx }) => {
+    let body = messages(1, JUDGE_BODY_CHARS + 1_000);
+    await put(ctx, conversation(body));
+    let calls = 0;
+    const failing: ChronicleJudge = async () => { calls++; return { events: [], failure: 'truncated' }; };
+    await run(engine, failing);
+    for (let n = 0; n < 3; n++) { await dueRetries(engine); await run(engine, failing); }
+    expect(calls).toBe(4);
+    body += '\nbob-example: tail message 1.';
+    await put(ctx, conversation(body));
+    for (let n = 0; n < 6; n++) { await dueRetries(engine); await run(engine, failing); }
+    expect(calls).toBe(5);
+    expect((await ledger(engine)).at(-1)).toEqual(['failed', 'judge_input_failed']);
+  }), 180_000);
+});

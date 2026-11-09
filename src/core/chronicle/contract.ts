@@ -90,6 +90,9 @@ export interface ChronicleLedgerRow {
    *  starts with the same text. */
   judge_window_chars?: number | null;
   judge_window_hash?: string | null;
+  /** #8972: paid attempts of this row that ended in a failure a re-judge of the same input would repeat (judge_truncated,
+   *  judge_parse_failed, malformed_proposal, budget_exhausted, judge_refused); 0 on rows recorded before the column existed. */
+  judge_input_failures?: number | string | null;
   decided_at: Date | string;
   updated_at: Date | string;
 }
