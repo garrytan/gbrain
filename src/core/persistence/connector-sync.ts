@@ -633,10 +633,11 @@ export class ManagedConnectorSync {
       { source_id: this.sourceId, worktree_id: this.binding.worktree_id, slug }, snapshot, serializePageToMarkdown(snapshot.page, snapshot.tags));
     return snapshot?.page ?? null;
   }
-  async importMarkdown(sourcePath: string, content: string): Promise<{ slug: string; chunks: number; status: 'imported' | 'skipped'; created: boolean }> {
+  /** `purged` marks a skip because the content matches a page purge tombstone (#8938), so the caller derives nothing from it. */
+  async importMarkdown(sourcePath: string, content: string): Promise<{ slug: string; chunks: number; status: 'imported' | 'skipped'; created: boolean; purged?: true }> {
     const slug = slugifyPath(sourcePath);
     const done = await this.submit('connector_v2_import', slug, sourcePath, { content });
-    if (!done.row) return { slug, chunks: 0, status: 'skipped', created: false };
+    if (!done.row) return { slug, chunks: 0, status: 'skipped', created: false, ...(done.purged ? { purged: true as const } : {}) };
     if (done.pending) return { slug, chunks: 0, status: 'imported', created: done.created };
     return { slug, chunks: Number(done.row.outcome?.chunks ?? 0), status: done.row.outcome?.noop ? 'skipped' : 'imported', created: done.row.outcome?.status === 'created' };
   }
@@ -920,7 +921,7 @@ export class ManagedConnectorSync {
     }
   }
   private async submit(kind: ConnectorIntentKind, slug: string, sourcePath: string | null, extra: Partial<ConnectorIntent>):
-    Promise<{ row: WriteRequest | null; pending: boolean; created: boolean }> {
+    Promise<{ row: WriteRequest | null; pending: boolean; created: boolean; purged?: true }> {
     await this.awaitPagePending(slug);
     await this.awaitPageMirror(slug);
     await this.recover(slug);
@@ -980,7 +981,7 @@ export class ManagedConnectorSync {
     // #6831: a replayed purged refusal stays skipped (even under --retry-failed) while its tombstone stands; once the
     // owner cleared it, the item gets one automatic retry through the guarded retry path below.
     if (kind === 'connector_v2_import' && row && purgedRefusal(row) && row.request_id === (this.retryApprovals.get(baseRequestId) ?? baseRequestId)) {
-      if (await this.purgedNow(slug, extra.content)) { this.skipPurged(slug, row); return { row: null, pending: false, created: false }; }
+      if (await this.purgedNow(slug, extra.content)) { this.skipPurged(slug, row); return { row: null, pending: false, created: false, purged: true }; }
       this.autoRetry.add(baseRequestId);
     }
     const automatic = this.autoRetry.has(baseRequestId);
@@ -1043,7 +1044,7 @@ export class ManagedConnectorSync {
       }
       if (kind === 'connector_v2_import' && await this.carriesPurgedPage(slug, extra.content)) {
         this.skipPurged(slug, null);
-        return { row: null, pending: false, created: false };
+        return { row: null, pending: false, created: false, purged: true };
       }
       row = await this.engine.transaction(async tx => {
         await this.assertLease(tx);
@@ -1076,7 +1077,7 @@ export class ManagedConnectorSync {
       return { row, pending: false, created: false };
     }
     if (isTerminal(row)) {
-      if (page && purgedRefusal(row)) { this.skipPurged(slug, row); return { row: null, pending: false, created: false }; }
+      if (page && purgedRefusal(row)) { this.skipPurged(slug, row); return { row: null, pending: false, created: false, purged: true }; }
       if (row.state !== 'committed') this.lastFailedItem = { slug, requestId: row.request_id };
       writeResponse(row);
       this.receipts.push(row.id);

@@ -148,6 +148,7 @@ export async function importRendered(
   if (labels && isPrivatePage(labels)) markdown = withPrivateVisibility(markdown);
   if (deps.managed) {
     const result = await deps.managed.importMarkdown(relPath, markdown);
+    if (result.purged) return null;
     if (result.status === 'imported') {
       summary.pagesAffected.push(result.slug);
       summary.chunksCreated += result.chunks;

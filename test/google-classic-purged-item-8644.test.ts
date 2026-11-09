@@ -5,9 +5,10 @@
  * once the file was removed, and held it after three runs. It is now skipped before any file is written, the run stays
  * clean, and the page stays purged, as on a managed brain (#6831). A skipped Gmail thread is not run through loop
  * detection or extraction either, so the open loops the purge removed do not come back with the thread's text.
+ * #8938: the same holds on a managed source, where the connector session skips the purged render and reports it.
  * Real PGLite and Postgres (when DATABASE_URL is set), the real Google importer and purge, a fake People API.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,7 +17,10 @@ import { parseGoogleSourceConfig, readGoogleState, runGoogleSync } from '../src/
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { unpurgePage } from '../src/core/persistence/page-purge.ts';
 import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
-import { contact, json, options, withGoogleAccount } from './helpers/connector-fixture.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { readManagedConnectorState } from '../src/core/persistence/connector-state.ts';
+import { ManagedConnectorSync } from '../src/core/persistence/connector-sync.ts';
+import { contact, createConnectorFixture, json, options, settleConnectorWrites, withGoogleAccount } from './helpers/connector-fixture.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -24,7 +28,7 @@ import { withEnv } from './helpers/with-env.ts';
 const SOURCE = 'source-a';
 const SLUG = 'people/alice-example';
 const CONFIG = { kind: 'google', g_account: 'owner@example.invalid', g_services: 'contacts', g_access: 'env', g_token_env: 'CONNECTOR_TEST_TOKEN' };
-const ctx = (engine: BrainEngine) => ({ engine, sourceId: SOURCE, config: { engine: engine.kind }, remote: false, dryRun: false,
+const ctx = (engine: BrainEngine, sourceId = SOURCE) => ({ engine, sourceId, config: { engine: engine.kind }, remote: false, dryRun: false,
   logger: { info() {}, warn() {}, error() {} } });
 
 interface Brain { engine: BrainEngine; root: string; path: string; render: string; sync(): ReturnType<typeof runGoogleSync> }
@@ -156,4 +160,79 @@ for (const backend of testBackends()) describe(`[${backend}] #8644: a purged Gma
       });
     } finally { rmSync(root, { recursive: true, force: true }); }
   }, 180_000);
+});
+
+const managed = createConnectorFixture();
+describe('#8938: a purged Gmail thread on a managed Google source', () => {
+  beforeAll(managed.setup, 120_000);
+  afterAll(managed.teardown);
+
+  test('re-delivering the unchanged thread writes no page and no open loop or quote, and skips cleanly', async () => withEnv(managed.env, async () => {
+    for (const engine of managed.engines) {
+      const f = await managed.source(engine, GMAIL_CONFIG);
+      const cfg = parseGoogleSourceConfig(GMAIL_CONFIG, f.dir);
+      const sentAt = Date.now() - 3 * 86_400_000;
+      let historyId = '5000';
+      let changed: string[] = [];
+      const message = { id: '18ff00000000b001', threadId: THREAD, labelIds: ['INBOX'], internalDate: String(sentAt),
+        payload: { mimeType: 'text/plain', headers: [{ name: 'From', value: 'Alice Example <alice@example.invalid>' },
+          { name: 'To', value: GMAIL_CONFIG.g_account }, { name: 'Subject', value: 'Contract question' }],
+        body: { data: b64url('Could you confirm the acme-example contract terms?') } } };
+      const fetch = withGoogleAccount(async (url: string) => {
+        const u = new URL(url);
+        if (u.pathname.endsWith('/settings/sendAs')) return json({ sendAs: [] });
+        if (u.pathname.endsWith('/users/me/profile')) return json({ emailAddress: GMAIL_CONFIG.g_account, historyId: '5000' });
+        if (u.pathname.endsWith('/users/me/messages')) return json({ messages: Number(/after:(\d+)/.exec(u.searchParams.get('q') ?? '')?.[1] ?? 0) * 1000 <= sentAt
+          && sentAt < Number(/before:(\d+)/.exec(u.searchParams.get('q') ?? '')?.[1] ?? Infinity) * 1000 ? [{ id: message.id, threadId: THREAD }] : [] });
+        if (u.pathname.endsWith('/users/me/history')) return json({ historyId, history: u.searchParams.get('startHistoryId') === historyId ? []
+          : [{ id: historyId, messages: changed.map(threadId => ({ id: message.id, threadId })) }] });
+        if (u.pathname.endsWith(`/users/me/threads/${THREAD}`)) return json({ id: THREAD, messages: [message] });
+        throw new Error(`Unexpected Google fixture route: ${url}`);
+      }, GMAIL_CONFIG.g_account);
+      const run = () => runGoogleSync(engine, f.id, cfg, options, withGoogleAccount(fetch, GMAIL_CONFIG.g_account));
+      const loops = async () => (await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM open_loops WHERE source_id=$1 AND thread_id=$2', [f.id, THREAD]))[0]!.n;
+      const quoted = async () => (await engine.executeRaw<{ n: number }>(
+        "SELECT count(*)::int AS n FROM open_loops WHERE source_id=$1 AND (summary ILIKE '%contract%' OR evidence::text ILIKE '%acme-example contract%')", [f.id]))[0]!.n;
+      const livePages = async () => (await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL', [f.id])).map(r => r.slug);
+
+      expect((await run()).status).not.toBe('partial');
+      await settleConnectorWrites(engine, f.id);
+      await disposePersistenceConsumer(engine);
+      const [slug] = await livePages();
+      expect(slug).toBeDefined();
+      expect(await loops()).toBe(1);
+      const snapshot = (await engine.readPageSnapshot(slug!, { sourceId: f.id }))!;
+      await submitPageMutation(ctx(engine, f.id), { operation: 'delete_page', params: { slug: slug!, purge: true, expected_revision: snapshot.revision } });
+      await settleConnectorWrites(engine, f.id);
+      expect(await loops()).toBe(0);
+
+      historyId = '5010';
+      changed = [THREAD];
+      const stderr = spyOn(process.stderr, 'write').mockImplementation(() => true);
+      let replay;
+      try { replay = await run(); } finally { stderr.mockRestore(); }
+      expect(replay.status).not.toBe('partial');
+      await settleConnectorWrites(engine, f.id).catch(() => {});
+      expect(await livePages()).toEqual([]);
+      expect(await loops()).toBe(0);
+      expect(await quoted()).toBe(0);
+      const [row] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text FROM sources WHERE id=$1', [f.id]);
+      const state = await readManagedConnectorState(engine, f.id, row!.incarnation);
+      expect(state.last_failure).toBeNull();
+      expect(state.last_run).toMatchObject({ purged_skipped: 1 });
+      await disposePersistenceConsumer(engine);
+
+      // A render the session's screen misses is admitted and refused by the pages guard at publication; that skip is
+      // reported as purged too, so the thread still yields no loop.
+      historyId = '5020';
+      const screen = spyOn(ManagedConnectorSync.prototype as unknown as { carriesPurgedPage: () => Promise<boolean> }, 'carriesPurgedPage').mockResolvedValue(false);
+      const quiet = spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try { await run(); } finally { quiet.mockRestore(); screen.mockRestore(); }
+      await settleConnectorWrites(engine, f.id).catch(() => {});
+      expect(await livePages()).toEqual([]);
+      expect(await loops()).toBe(0);
+      expect(await quoted()).toBe(0);
+      await disposePersistenceConsumer(engine);
+    }
+  }), 240_000);
 });
