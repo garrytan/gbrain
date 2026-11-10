@@ -354,7 +354,7 @@ test/scripts/promote-stable.test.ts	promote-stable.yml	2	readFileSync
 test/scripts/regen-all.test.ts	regen:all	5	readFileSync
 test/scripts/release-restamp.test.ts	release-restamp --stamp-only	2	readFileSync
 test/scripts/release-restamp.test.ts	release:restamp end to end	15	readFileSync
-test/scripts/release-restamp.test.ts	release:unstamp and merge: direct	5	readFileSync
+test/scripts/release-restamp.test.ts	release:unstamp and merge: direct	6	readFileSync
 test/scripts/require-executed-tests.test.ts	require-executed-tests	9	readFileSync
 test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution coverage	1	readFileSync
 test/scripts/run-verify-parallel.test.ts	run-verify-parallel.sh — no-timeout-binary fallback rc capture (regression)	7	readFileSync

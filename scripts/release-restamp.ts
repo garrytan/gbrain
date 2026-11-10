@@ -461,7 +461,7 @@ function unstampFiles(ctx: Ctx, state: State, masterVersion: string): void {
       `write ${CHANGELOG_FRAGMENT_DIR}/<branch-slug>.md yourself (docs/RELEASING.md#releases-per-batch), commit, then rerun: bun run release:unstamp`);
   }
   const frag = `${CHANGELOG_FRAGMENT_DIR}/${fragmentSlug(ctx.git('rev-parse', '--abbrev-ref', 'HEAD').trim())}.md`;
-  if (ctx.gitOk('cat-file', '-e', `${state.preHead}:${frag}`)) fail(`${frag} already exists`, 'release:unstamp writes the branch\'s entry there and never merges two entries.', `fold your CHANGELOG entry into ${frag} by hand, put CHANGELOG.md back to ${state.masterRef}'s, commit, then rerun`);
+  if (ctx.gitOk('cat-file', '-e', `HEAD:${frag}`)) fail(`${frag} already exists`, 'release:unstamp writes the branch\'s entry there and never merges two entries.', `fold your CHANGELOG entry into ${frag} by hand, put CHANGELOG.md back to ${state.masterRef}'s, commit, then rerun`);
   stampOnly(ctx.root, masterVersion, [state.branchVersion]);
   ctx.write('CHANGELOG.md', ctx.git('show', `${state.masterRef}:CHANGELOG.md`));
   const rows = state.rows ?? [];
