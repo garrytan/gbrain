@@ -10,6 +10,23 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.640.0] - 2026-11-10
+
+**The skill resolver's hook lane is faster and safer at its 50 ms deadline, offers skills again after a Codex compaction, supports Pi and Cursor, and takes per-harness settings.** The hook starts its worker first and skips the CLI dispatcher, so the worker bundle drops from 172 KB to 62 KB and the lane's p90 drops from 58.9 ms to 38.1 ms on a 2-CPU machine (0 of 40 turns over 50 ms, was 7). A turn the deadline ends mid-commit now removes its session temp file and releases the session lease. The resolver stays off by default, lexical-only and fail-open.
+
+### Itemized changes
+
+- Lane speed: the hook fast path (`src/core/skills/resolver/hook-lane.ts`, `hook-worker.ts`, `lane-worker.ts`) starts the worker before reading settings and never loads the CLI dispatcher. That hook process no longer prints the update heartbeat or the backup nag; `GBRAIN_HOOKS=0` and the CLI preflight still apply. A worker that exits before answering is logged as `skill_resolver_internal` at once instead of waiting out the deadline.
+- Deadline: the session commit holds a release handle, so a deadline exit removes the temp file and the `.json.lock` lease it took.
+- Codex compaction: `gbrain setup codex --skill-loading resolve` also writes a `SessionStart` hook (with its trust entry), and a `SessionStart` with `source: "compact"` resets the session's offered skills. An existing install gets the hook on its next setup run.
+- Harnesses: `pi` and `cursor` join the path harnesses (each suggestion carries its SKILL.md path). The turn-input and build-receipt schemas list them.
+- Resolve: `min_match_strength` (`--min-match`) drops weaker suggestions before the cut to `top_k`; exclude lists take up to 1,024 ids (`EXCLUDE_MAX`); `skill_catalog_mismatch` carries `catalog_hash`; a skill the turn names keeps its line after the budget is spent; with no catalog word in the message, `previous_user_message` is ranked instead. `RESOLVER_FEATURES` and `MATCH_STRENGTHS` are exported from `gbrain/skill-resolver`.
+- Config: `skills.resolver.top_k`, `skills.resolver.min_match`, `skills.resolver.pinned` and `skills.resolver.per_harness.<harness>.{top_k,min_match}`, validated by `gbrain config set` (which refuses `per_harness.constructor`). With nothing set, Claude Code and Codex keep 5 suggestions and no floor.
+- Logs: `skill-index/logs/lane-<UTC day>.jsonl` and `resolver-<UTC day>.log`, kept 14 days and capped at 2 MB a day; the old undated file is removed and doctor reads today and yesterday.
+- Library bundle: `gbrain-skill-resolver.mjs` is built with whitespace minification, so the CLI build and the release build have one sha256 whatever the working directory.
+- Bench: `scripts/bench-skill-resolver.ts` runs a discarded warm-up round, then judges the median of nine rounds of 100 cold turns; the bars stay 10 ms at 1,000 skills and 40 ms at 7,500.
+- Tests: `test/skill-resolver-hook-lane.test.ts` (deadline stalls during the lease and after the temp write, Codex compaction, fast path), `test/skill-resolver.test.ts`, `test/skill-resolver-contract.test.ts`, `test/setup-skill-resolver.test.ts`, `test/skill-resolver-packaging.test.ts` (two-directory sha256), `test/skill-resolver-cli.test.ts` and `test/cli-fast-path.test.ts`.
+
 ## [0.60.639.0] - 2026-11-10
 
 **Access hardening: job results, write receipts, the status snapshot and graph edges stay inside the caller's grant; a forgotten fact stays forgotten; transcript redaction, `.env` handling and test databases are tighter.** An agent job, its result and its progress now answer only a caller acting for the same audience the job was submitted with, and write receipts follow the same rule. `get_status_snapshot` lists only the sources a remote caller's grant reads. Link reads, graph walks, entity cards and context packs leave out edges whose authoring page is deleted or, for a source-scoped caller, lives outside the caller's sources. A forgotten fact stays forgotten when the default visibility narrows or extraction runs again, while an explicit `remember` of the same claim still saves it. Transcript redaction also catches credentials assigned to names that end in a `key` word (`STRIPE_KEY=`), a `.env` file in the working directory can no longer set `GBRAIN_SURFACE`, the stale-editor-save check works on any Postgres encoding, and the throwaway test databases publish on loopback only.
