@@ -245,11 +245,12 @@ function isNarrowingName(name: string): boolean {
 
 /**
  * GBRA-431: the unknown keys a read must refuse whatever `mcp.strict_params` says, because ignoring them answers
- * unnarrowed: a key whose own name, or whose nearest declared param, is a scope or filter (`source` for
- * `source_id`, `sources` for `source_ids`, `type` for `types`). Other unknown keys keep the warn grace period.
+ * unnarrowed: a key whose nearest declared param is a scope or filter of this op (`source` for `source_id`, `sources`
+ * for `source_ids`, `type` for `types`). An op that declares no such param cannot narrow, so a scope key sent to it
+ * (a client adding `source_id` to every call) keeps the warn grace period like any other unknown key.
  */
 export function narrowingUnknownParams(warnings: readonly UnknownParamWarning[]): UnknownParamWarning[] {
-  return warnings.filter(w => isNarrowingName(w.param) || (w.suggestion !== undefined && isNarrowingName(w.suggestion)));
+  return warnings.filter(w => w.suggestion !== undefined && isNarrowingName(w.suggestion));
 }
 
 /**
