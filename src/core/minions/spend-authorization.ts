@@ -111,7 +111,7 @@ const usd = (c: number) => Math.round(c) / 100;
 
 /** A group's amounts in USD, for envelopes, `jobs get` and `jobs list --group`. */
 export function groupAmounts(record: SpendAuthorization, spend: GroupSpend) {
-  const spent = spend.committedCents + spend.overdueCents;
+  const spent = spend.committedCents + spend.overdueCents + spend.liveCents;
   return {
     group_id: record.group_id,
     cap_usd: record.cap_usd,
@@ -330,7 +330,7 @@ export async function runWithJobSpend<T>(
       }
       throw (seen.refusal = await spendRefusal(engine, job, record, { kind: 'cost', overdueHolds: true }));
     }
-    return { async settle(usage: Parameters<typeof actualCents>[1]) {
+    return { cancelBeforeDispatch: () => settle(engine, hold.reservationId, 0, call.operation), async settle(usage: Parameters<typeof actualCents>[1]) {
       const c = actualCents(call, usage, pricingOverrides);
       if (c !== null) await settle(engine, hold.reservationId, c, call.operation);
       else await engine.executeRaw(

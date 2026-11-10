@@ -2570,6 +2570,7 @@
       {
         "kind": "interface",
         "members": [
+          "cancelBeforeDispatch?: (() => Promise<void>) | undefined",
           "settle: (usage: AIInvocationUsage | null) => Promise<void>"
         ],
         "name": "AIInvocationPermit"

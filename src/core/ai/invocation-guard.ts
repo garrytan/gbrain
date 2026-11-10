@@ -16,7 +16,11 @@ export interface AIInvocationUsage {
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
 }
-export interface AIInvocationPermit { settle(usage: AIInvocationUsage | null): Promise<void> }
+export interface AIInvocationPermit {
+  settle(usage: AIInvocationUsage | null): Promise<void>;
+  /** Admission failed before provider dispatch; no usage can have occurred. */
+  cancelBeforeDispatch?(): Promise<void>;
+}
 export type AIInvocationGuard = (call: AIInvocation) => Promise<AIInvocationPermit>;
 const guards = new AsyncLocalStorage<AIInvocationGuard>();
 const refused = new WeakSet<object>();
@@ -34,8 +38,23 @@ export function withAIInvocationGuard<T>(guard: AIInvocationGuard, run: () => Pr
     const outer = await parent(call);
     let inner: AIInvocationPermit;
     try { inner = await guard(call); }
-    catch (error) { await outer.settle(null); throw error; }
-    return { settle: async usage => { await outer.settle(usage); await inner.settle(usage); } };
+    catch (error) {
+      if (outer.cancelBeforeDispatch) await outer.cancelBeforeDispatch();
+      else await outer.settle(null);
+      throw error;
+    }
+    return {
+      settle: async usage => { try { await outer.settle(usage); } finally { await inner.settle(usage); } },
+      cancelBeforeDispatch: async () => {
+        try {
+          if (outer.cancelBeforeDispatch) await outer.cancelBeforeDispatch();
+          else await outer.settle(null);
+        } finally {
+          if (inner.cancelBeforeDispatch) await inner.cancelBeforeDispatch();
+          else await inner.settle(null);
+        }
+      },
+    };
   }, run);
 }
 export function withAIInvocationPreflight<T>(preflight: (call: AIInvocation) => Promise<void>, run: () => Promise<T>): Promise<T> {

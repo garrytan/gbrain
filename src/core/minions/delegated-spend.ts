@@ -63,7 +63,7 @@ export function withDelegatedSpend<T>(engine: BrainEngine, snapshot: DelegationS
       estimatedCents: max ?? 0, estimateKnown: max !== null, model: call.model,
       provider: call.model.split(':')[0] || 'unknown', jobId,
       validateAdmission: async tx => { await effectiveDelegation(tx, snapshot, jobId); } });
-    return { async settle(usage) {
+    return { cancelBeforeDispatch: () => settle(engine, hold.reservationId, 0, call.operation), async settle(usage) {
       const cents = actualCents(call, usage, overrides);
       if (cents !== null) await settle(engine, hold.reservationId, cents, call.operation);
       else await engine.executeRaw(

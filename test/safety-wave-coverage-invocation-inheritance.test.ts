@@ -74,3 +74,31 @@ test('inherit without a parent stays isolated from concurrent provider work', as
   ]);
   expect(events).toEqual([['owned:admit', null], ['owned:settle', usage]]);
 });
+
+test('three-level refusal cancels all admitted permits, even if one cleanup fails', async () => {
+  const events: string[] = [];
+  const refused = new Error('inner refused');
+  const cleanupFailed = new Error('outer cleanup failed');
+  const guard = (name: string, fail = false): AIInvocationGuard => async () => ({
+    settle: async () => { events.push(`${name}:settle`); },
+    cancelBeforeDispatch: async () => { events.push(`${name}:cancel`); if (fail) throw cleanupFailed; },
+  });
+  await expect(withAIInvocationGuard(guard('outer', true), () =>
+    withAIInvocationGuard(guard('middle'), () =>
+      withAIInvocationGuard(async () => { throw refused; }, () =>
+        invokeAI(call, async () => { throw new Error('must not dispatch'); }, () => usage), { inherit: true }),
+    { inherit: true }))).rejects.toBe(cleanupFailed);
+  expect(events).toEqual(['outer:cancel', 'middle:cancel']);
+});
+
+test('post-dispatch uncertainty never uses pre-dispatch cancellation', async () => {
+  const events: string[] = [];
+  const timeout = new Error('transport timeout');
+  const guard: AIInvocationGuard = async () => ({
+    cancelBeforeDispatch: async () => { events.push('cancel'); },
+    settle: async value => { events.push(value === null ? 'unknown' : 'measured'); },
+  });
+  await expect(withAIInvocationGuard(guard, () => withAIInvocationGuard(guard, () =>
+    invokeAI(call, async () => { throw timeout; }, () => usage), { inherit: true }))).rejects.toBe(timeout);
+  expect(events).toEqual(['unknown', 'unknown']);
+});
