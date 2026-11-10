@@ -13,7 +13,10 @@
  * Deadline (50 ms from lane entry): the main thread does only async I/O (the
  * config, stdin, the carriers, the commit) and every synchronous step (index
  * and session reads, ranking, rendering) runs in a worker thread
- * (hook-worker.ts) that checks the deadline inside each stage. At the
+ * (hook-worker.ts) that checks the deadline inside each stage. The worker is
+ * started before that I/O (by the CLI's lane fast path, before the lane
+ * module even loads, else at lane entry), so its start-up overlaps it; a turn
+ * that ends before the worker is needed terminates it. At the
  * deadline the main thread prints nothing and exits the process at once,
  * abandoning the worker, and commits no dedupe state: a commit starts only
  * after the block was written, on the main thread, before the deadline.
@@ -45,7 +48,7 @@ import { createHash } from 'node:crypto';
 import { appendFile, mkdir, readFile, realpath, stat, truncate, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { Worker } from 'node:worker_threads';
+import type { Worker } from 'node:worker_threads';
 import { spawn } from '../../spawn.ts';
 import { claudeManagedSettingsPaths, claudeUserSettingsPath, codexHooksPath } from '../../bootstrap/host-specs.ts';
 import { shellWords } from '../../setup/hook-launcher.ts';
@@ -53,7 +56,10 @@ import { isSkillResolverCommand, isSkillResolverEntry } from '../../setup/skill-
 import { assertCatalogName, catalogFile, logsDir, resolverHome } from './paths.ts';
 import { commitSessionAsync, sessionKey, type TurnDelta } from './session.ts';
 import type { TurnOutput } from './resolve.ts';
-import type { LaneWorkerData } from './hook-worker.ts';
+import type { LaneWorkerTurn } from './hook-worker.ts';
+import { startLaneWorker } from './lane-worker.ts';
+
+export { WORKER_SRC_PATH } from './lane-worker.ts';
 
 export const LANE_DEADLINE_MS = 50;
 export const LANE_STDIN_CAP_BYTES = 256 * 1024;
@@ -66,14 +72,6 @@ const CONFIG_CAP_BYTES = 1024 * 1024;
 const SPAWN_INTERVAL_MS = 60_000;
 /** Time kept back from the worker's own deadline for delivery and the commit. */
 const COMMIT_RESERVE_MS = 10;
-/**
- * The worker's entry. A compiled binary bundles src/ under a virtual root
- * (/$bunfs/root/, ~BUN on Windows) and carries hook-worker.ts as a second
- * entrypoint at its src-relative path (every release build passes it); the
- * bundle's own import.meta.url is the binary, so the path is taken from there.
- */
-export const WORKER_SRC_PATH = 'core/skills/resolver/hook-worker.ts';
-const workerEntry = (): string | URL => (/[\\/](\$bunfs|~BUN)[\\/]/.test(import.meta.url) ? Bun.main.replace(/[^\\/]*$/, '') + WORKER_SRC_PATH : new URL('./hook-worker.ts', import.meta.url));
 
 export type LaneHarness = 'claude-code' | 'codex';
 export const userCatalogName = (harness: LaneHarness) => `${harness}-user`;
@@ -219,7 +217,8 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
   try { home = resolverHome(env); } catch { return 0; }
   const deadlineMs = io.deadlineMs ?? (Number(env.GBRAIN_TEST_SKILL_LANE_DEADLINE_MS) || LANE_DEADLINE_MS);
   const elapsed = () => performance.now() - t0;
-  const ctl = { expired: false, worker: null as Worker | null, logged: false };
+  const ctl: LaneCtl = { expired: false, worker: null, logged: false };
+  if (event === 'user-prompt') ctl.worker = startLaneWorker(env);
   const log = (t: Turn) => appendLaneLog(home, { at: new Date().toISOString(), harness, event, outcome: t.outcome, ...(t.code ? { code: t.code } : {}), ms: Math.round(elapsed() * 10) / 10, ...(t.catalogs ? { catalogs: t.catalogs } : {}), ...(t.dropped_chars ? { dropped_chars: t.dropped_chars } : {}) });
 
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -239,7 +238,9 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
   return 0;
 }
 
-async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHarness, home: string, env: NodeJS.ProcessEnv, io: LaneIo, ctl: { expired: boolean; worker: Worker | null; logged: boolean }, elapsed: () => number, deadlineMs: number): Promise<Turn> {
+interface LaneCtl { expired: boolean; worker: Worker | null; logged: boolean }
+
+async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHarness, home: string, env: NodeJS.ProcessEnv, io: LaneIo, ctl: LaneCtl, elapsed: () => number, deadlineMs: number): Promise<Turn> {
   const settings = await readLaneSettings(home, env);
   if (settings.state === 'absent') return { outcome: 'off' };
   if (settings.state === 'unreadable') { ctl.logged = true; return { outcome: 'error', code: 'skill_resolver_config_unreadable' }; }
@@ -272,14 +273,12 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
     else if (project && settings.autoRebuild) await scheduleBuild(home, project.name, ['skills', 'index', 'build', '--catalog', project.name, '--dir', project.dir, '--scope', 'project', '--harness', harness], spawnFn);
   }
 
+  const worker = ctl.worker;
+  if (!worker) return { outcome: 'error', code: 'skill_resolver_internal', catalogs };
   const posted = await new Promise<{ output?: TurnOutput; pending?: { key: string; delta: TurnDelta } | null; error?: { code: string } }>((resolve) => {
-    const worker = new Worker(workerEntry(), {
-      workerData: { input: { message: prompt, harness, ...(sessionId ? { session_id: sessionId } : {}) }, home, catalogs, deadlineMs: Math.max(1, deadlineMs - elapsed() - COMMIT_RESERVE_MS), stall: env.GBRAIN_TEST_SKILL_LANE_STALL } satisfies LaneWorkerData,
-    });
-    ctl.worker = worker;
-    worker.unref();
     worker.once('message', resolve);
     worker.once('error', () => resolve({ error: { code: 'skill_resolver_internal' } }));
+    worker.postMessage({ input: { message: prompt, harness, ...(sessionId ? { session_id: sessionId } : {}) }, home, catalogs, deadlineMs: Math.max(1, deadlineMs - elapsed() - COMMIT_RESERVE_MS) } satisfies LaneWorkerTurn);
   });
   if (posted.error || !posted.output) return { outcome: 'error', code: posted.error?.code ?? 'skill_resolver_internal', catalogs };
   const out = posted.output;

@@ -2,8 +2,11 @@
  * The hook lane's worker thread (hook-lane.ts): every synchronous step of a
  * turn (reading the index and session state, ranking, rendering) runs here,
  * so the lane's main thread keeps an event loop whose deadline timer can
- * always fire. It posts the prepared turn and its pending commit; it never
- * commits: the main thread does, after delivery and before the deadline.
+ * always fire. lane-worker.ts starts it before the lane's own I/O, so its
+ * start-up and module loading overlap the main thread's config, stdin and
+ * carrier reads; the turn arrives as one message. It posts the prepared
+ * turn and its pending commit; it never commits: the main thread does,
+ * after delivery and before the deadline.
  *
  * GBRAIN_TEST_SKILL_LANE_STALL (tests only) forces a slow stage: block
  * (synchronous 10 s busy loop), hang (never answers), late (answers after
@@ -13,9 +16,11 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { resolveSkills } from './resolve.ts';
 
-export interface LaneWorkerData { input: unknown; home: string; catalogs: string[]; deadlineMs: number; stall?: string }
+export interface LaneWorkerData { stall?: string }
+export interface LaneWorkerTurn { input: unknown; home: string; catalogs: string[]; deadlineMs: number }
 
-const { input, home, catalogs, deadlineMs, stall } = workerData as LaneWorkerData;
+const { stall } = (workerData ?? {}) as LaneWorkerData;
+const { input, home, catalogs, deadlineMs } = await new Promise<LaneWorkerTurn>(resolve => parentPort!.once('message', resolve));
 
 if (stall === 'block') { const end = Date.now() + 10_000; while (Date.now() < end) { /* forced synchronous stall */ } }
 if (stall === 'hang') await new Promise(() => {});

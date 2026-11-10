@@ -166,6 +166,28 @@ describe('skill-resolver lane: deadline, measured outside the process', () => {
   }
 });
 
+describe('skill-resolver lane: the CLI fast path keeps the hook contract', () => {
+  test('GBRAIN_HOOKS=0 silences the lane, whether exported or set in the env file the CLI preflight loads', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    const cmd = wired(b, 'claude-code');
+    const turn = { prompt: 'please deploy the widget to staging', session_id: 'sess-off' };
+    const exported = await hook(b, cmd, turn, { ...WIDE, GBRAIN_HOOKS: '0' });
+    expect(exported.exitCode).toBe(0);
+    expect(exported.stdout).toBe('');
+    writeFileSync(join(b.home, '.gbrain', '.env'), 'GBRAIN_HOOKS=0\n');
+    const fromFile = await hook(b, cmd, turn, WIDE);
+    expect(fromFile.exitCode).toBe(0);
+    expect(fromFile.stdout).toBe('');
+    expect(laneLog(b)).toEqual([]);
+    expect(sessions(b)).toEqual([]);
+    rmSync(join(b.home, '.gbrain', '.env'));
+    const on = await hook(b, cmd, turn, WIDE);
+    expect(contextOf(on)).toContain('id: "deploy-widget"');
+  });
+});
+
 describe('skill-resolver lane: fail open', () => {
   test('lane off (no config): prints nothing and writes nothing', async () => {
     const b = box();
