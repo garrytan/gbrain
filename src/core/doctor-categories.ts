@@ -59,6 +59,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'atom_provenance_drift',
   // #7013: atoms an empty managed re-extraction retired that atoms-restore can bring back (doctor/checks/atom-retirements.ts).
   'atom_retirements_restorable',
+  // World atoms that carry an owner-only fence row of their source page (doctor/checks/atom-fence-rows.ts).
+  'atom_fence_rows',
   'captured_facts_active',
   // #8064: owner-attributed capture facts from agent-launched sessions (doctor/checks/agent-session-facts.ts).
   'agent_session_facts',
@@ -100,6 +102,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   // GBRA-231: shared agents (doctor/checks/shared-agent-access.ts).
   'access_may_act_for_wildcard',
   'extractor_facts_expired',
+  'unwithdrawn_facts',
   'loop_facts_drift',
   'ontology_facts_fenced',
   'orphan_persistence_bindings',
@@ -116,6 +119,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'auto_chronicle',
   'auto_chronicle_default_on',
   'chronicle_config_invalid',
+  'chronicle_duplicate_events',
   'facts_drain',
   'fact_take_vectors',
   'code_chunk_metadata',
@@ -311,9 +315,13 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'chat_fallback_chain',
   // Agent operator wave: is an agent harness wired to this brain (registration read; --only adds the smoke test).
   'harness_wiring',
+  // GBRA-377 PR B: the skill-resolver hook lane's hook, catalog freshness and recent error codes; silent when unconfigured (doctor/checks/skill-resolver.ts).
+  'skill_resolver',
   // Cat 41: the provider-use decision gbrain setup recorded; declined = no provider request (discovery, probe).
   'provider_consent',
   'frontmatter_hook',
+  // URL source clones with no record of who added them (url-source-origin.ts).
+  'url_source_origin',
   // F4b: PGLite row-delta planner statistics / Postgres autovacuum ANALYZE lag on the hot tables.
   'planner_stats_stale',
   'alternative_providers',
@@ -433,6 +441,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'rls',
   // #7632: every gbrain function that pins a search_path ends it with pg_temp.
   'function_search_path',
+  // A Postgres brain whose server_encoding is not UTF8 (doctor/checks/database-encoding.ts).
+  'database_encoding',
   'rls_event_trigger',
   'search_mode',
   'decide_health',

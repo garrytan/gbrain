@@ -54,6 +54,7 @@ function fakeJob(data: Record<string, unknown>): MinionJobContext {
     name: 'embed-backfill',
     data,
     attempts_made: 0,
+    idempotency_key: null,
     signal: controller.signal,
     deadlineAtMs: null,
     shutdownSignal: controller.signal,

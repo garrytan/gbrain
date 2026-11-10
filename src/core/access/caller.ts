@@ -13,11 +13,12 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { AuthInfo } from '../ops/contract.ts';
-import { remotePrivacyRelaxed, requestRemotePolicy, type CallerAccess, type FolderCoverage } from '../search/private-visibility.ts';
+import { remotePrivacyRelaxed, requestRemotePolicy, type CallerAccess, type FolderCoverage, type RemotePolicy } from '../search/private-visibility.ts';
 import { ACCESS_ID_RE, identityFor, normalizePrincipal } from './principals.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
+import { edgeTrimSql } from '../edge-whitespace.ts';
 import { GUEST, STDIO_MAY_ACT_FOR_KEY, mayActForCovers, singleMemberAudience, type AudiencePrincipal } from './audience.ts';
 import { parseMayActFor } from './members.ts';
 
@@ -50,7 +51,7 @@ async function liveIdentity(engine: Pick<BrainEngine, 'executeRaw'>, memberSql: 
 export async function memberIdentityFor(engine: Pick<BrainEngine, 'executeRaw'>, auth: Pick<AuthInfo, 'member'> & { principal?: { kind: string; id: string } } | undefined): Promise<string[]> {
   if (auth?.member !== undefined) return auth.member ? identityFor(auth.member.id, auth.member.groups) : [];
   const principal = auth?.principal;
-  if (principal?.kind === 'local_stdio') return liveIdentity(engine, 'SELECT btrim(value) FROM config WHERE key = $1', STDIO_MEMBER_KEY);
+  if (principal?.kind === 'local_stdio') return liveIdentity(engine, `SELECT ${edgeTrimSql('value')} FROM config WHERE key = $1`, STDIO_MEMBER_KEY);
   if (!principal || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return [];
   return liveIdentity(engine, principal.kind === 'legacy_token'
     ? 'SELECT member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'
@@ -194,6 +195,8 @@ export async function resolveAudienceIdentities(engine: Pick<BrainEngine, 'execu
  * an entry outside may_act_for or naming no member), the source grant stays the caller's, and the caller's privacy
  * relaxation (granted_sources, an operator hatch) applies only when the audience is exactly one member: a channel
  * (several entries, a group or a guest) sees no visibility: private page.
+ * GST-2059: a caller bound to the brain owner (config access.owner_member) reads with its privacy relaxed in every
+ * source its grant reads (owner), with no audience or an audience of the owner alone; member access stays.
  */
 export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | undefined, privateSources: readonly string[] | undefined, transport?: string, audience?: readonly AudiencePrincipal[] | null): Promise<Partial<CallerAccess>> {
   const [relaxed, remotePolicy] = await Promise.all([remotePrivacyRelaxed(engine), requestRemotePolicy(engine)]);
@@ -201,32 +204,45 @@ export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | u
   if (audience?.length) {
     const identities = await resolveAudienceIdentities(engine, { auth, transport }, audience);
     const single = singleMemberAudience(audience);
+    const owner = single && audience[0] === `member:${remotePolicy.ownerMember}`
+      && isOwner(await boundIdentity(engine, auth, transport), remotePolicy);
     return {
       identity: identities.length === 1 ? identities[0]! : [],
       audience: [...audience],
       audienceIdentities: identities.length > 1 ? identities : [],
       ...(restricted ? await folderAccessForAll(engine, identities) : { satisfiedRuleIds: [], folderCoverage: [] }),
       privateReadableSources: single ? privateSources ?? [] : [],
-      hidePrivate: single ? !relaxed : true,
+      hidePrivate: single ? !relaxed && !owner : true,
+      owner,
       applyRemoteReadPolicy: false,
       restricted,
       remotePolicy,
     };
   }
-  const identity = !restricted ? []
-    : !auth && transport === 'stdio' ? await stdioMemberIdentity(engine)
-    : await memberIdentityFor(engine, auth);
+  const identity = restricted || remotePolicy.ownerMember ? await boundIdentity(engine, auth, transport) : [];
+  const owner = isOwner(identity, remotePolicy);
   return {
     identity,
     audience: null,
     audienceIdentities: [],
     ...(restricted ? await folderAccessFor(engine, identity) : { satisfiedRuleIds: [], folderCoverage: [] }),
     privateReadableSources: privateSources ?? [],
-    hidePrivate: !relaxed,
+    hidePrivate: !relaxed && !owner,
+    owner,
     applyRemoteReadPolicy: false,
     restricted,
     remotePolicy,
   };
+}
+
+/** The member identity a remote caller's credential (or, unauthenticated over stdio, config mcp.stdio_member) is bound to. */
+async function boundIdentity(engine: BrainEngine, auth: AuthInfo | undefined, transport?: string): Promise<string[]> {
+  return !auth && transport === 'stdio' ? stdioMemberIdentity(engine) : memberIdentityFor(engine, auth);
+}
+
+/** GST-2059: the live identity is the brain owner's (config access.owner_member). Only a live, enabled member has an identity. */
+function isOwner(identity: readonly string[], policy: RemotePolicy): boolean {
+  return !!policy.ownerMember && identity.includes(`member:${policy.ownerMember}`);
 }
 
 /**
@@ -242,7 +258,7 @@ export interface AppliedAccess {
   /** GST-359 C1: present on an attested call (the system that named the person; the id is not echoed). */
   actor?: { system: string };
   policy_rev: Record<string, number> | null;
-  relaxation: 'none' | 'granted_sources' | 'operator';
+  relaxation: 'none' | 'granted_sources' | 'operator' | 'owner';
 }
 
 export async function appliedAccessSummary(engine: Pick<BrainEngine, 'executeRaw'>, auth?: AuthInfo, sourceIds: readonly (string | undefined)[] = []): Promise<AppliedAccess> {
@@ -264,7 +280,7 @@ export async function appliedAccessSummary(engine: Pick<BrainEngine, 'executeRaw
     audience: access.audience ? [...access.audience] : null,
     ...(access.actor ? { actor: { system: access.actor.system } } : {}),
     policy_rev: policyRev,
-    relaxation: !access.hidePrivate ? 'operator' : access.privateReadableSources.length ? 'granted_sources' : 'none',
+    relaxation: access.owner ? 'owner' : !access.hidePrivate ? 'operator' : access.privateReadableSources.length ? 'granted_sources' : 'none',
   };
 }
 

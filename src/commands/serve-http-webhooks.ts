@@ -15,6 +15,9 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { executeRawJsonb } from '../core/sql-query.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
+import { coalesceOnIdempotencyKey } from '../core/minions/idempotency-coalesce.ts';
+import { APPLICATION_AUTHORITY } from '../core/minions/submission-authority.ts';
+import type { MinionJob } from '../core/minions/types.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { ERROR_CATALOGUE } from '../core/error-catalogue.ts';
 import {
@@ -28,7 +31,10 @@ import { NO_SOURCES } from '../core/source-id.ts';
 import { noSourceGrantError } from '../core/ops/context.ts';
 import { renderAction } from '../core/agent-output.ts';
 import { assertWebhookWriterMayReplace } from '../core/minions/handlers/ingest-capture.ts';
+import { defaultSourceMemberWriter } from '../core/persistence/page-visibility.ts';
+import type { WriteAuthority } from '../core/persistence/model.ts';
 import { validateSlug } from '../core/utils.ts';
+import { RevisionBackfillPendingError } from '../core/page-state/types.ts';
 
 /**
  * v0.46: normalize the per-event GitHub webhook payload shape into
@@ -254,6 +260,30 @@ function ingestTargetSlug(callerSlug: string): string {
   return validateSlug(callerSlug);
 }
 
+/**
+ * The job a server before v0.60.609.0 recorded for this capture, or null. Its key had no slug part
+ * (`ingest:webhook:<client>:<write source>:<content hash>`), and a job row keeps its key until `gbrain jobs prune`
+ * removes it, which nothing runs on a schedule, so such a row can answer a retry for as long as the brain keeps it. A
+ * retry that missed it queued a second job, and that job wrote the old body over any edit made since. The row answers
+ * only for the target slug it was queued with: the old key collapsed one body sent to two slugs, which is the dropped
+ * write #8769 fixed. A dead or cancelled row frees its key and answers nothing, as under the current key.
+ */
+async function legacyIngestJob(engine: BrainEngine, clientId: string, writeSourceId: string, contentHash: string, targetSlug: string): Promise<MinionJob | null> {
+  const key = `ingest:webhook:${clientId}:${writeSourceId}:${contentHash}`;
+  return engine.transaction(async (tx) => {
+    const [row] = await tx.executeRaw<{ data: unknown }>('SELECT data FROM minion_jobs WHERE idempotency_key = $1', [key]);
+    if (!row) return null;
+    const data = (typeof row.data === 'string' ? JSON.parse(row.data) : row.data) as { slug?: unknown } | null;
+    let rowSlug = '';
+    try {
+      if (typeof data?.slug === 'string' && data.slug) rowSlug = ingestTargetSlug(data.slug);
+    } catch {
+      return null;
+    }
+    return rowSlug === targetSlug ? coalesceOnIdempotencyKey(tx, key, APPLICATION_AUTHORITY) : null;
+  });
+}
+
 /** Stands in for a missing webhook secret; no source holds it and a match against it is still refused. */
 const THROWAWAY_WEBHOOK_KEY = randomBytes(32);
 
@@ -270,6 +300,23 @@ function verifyWebhookSig(secret: unknown, sigHeader: string, payload: Buffer): 
   const computedHex = createHmac('sha256', keyed ? secret : THROWAWAY_WEBHOOK_KEY).update(payload).digest('hex');
   const matches = /^sha256=[0-9a-f]{64}$/.test(sigHeader) && safeHexEqual(sigHeader.slice('sha256='.length), computedHex);
   return matches && keyed;
+}
+
+/**
+ * GST-2051: a member-bound credential writing to default or a federated source would publish where every no-grant credential
+ * reads; the capture job cannot keep the page to the member, so POST /ingest refuses it (answering res) and put_page, which
+ * does, stays open.
+ */
+async function refusedDefaultSourceMember(engine: BrainEngine, authInfo: AuthInfo, res: Response): Promise<boolean> {
+  const sourceId = authInfo.sourceId ?? 'default';
+  if (!authInfo.principal || !await defaultSourceMemberWriter(engine, { remote: true, principal: authInfo.principal as WriteAuthority['principal'], sourceId })) return false;
+  res.status(403).json({
+    error: 'permission_denied',
+    message: `POST /ingest is unavailable to a credential bound to a member whose write source is ${sourceId}, which every credential without a source grant reads: its pages would land where other members ` +
+      'and unbound credentials read. Write through the MCP put_page op, which keeps a new page to its member, ' +
+      'or ask the brain operator to grant this credential its own write source that is not federated (gbrain auth rescope --sources <private-source>,default).',
+  });
+  return true;
 }
 
 /** POST /ingest (OAuth write scope) and POST /webhooks/github (per-source HMAC), in registration order. */
@@ -365,6 +412,7 @@ async function handleIngest(
       fix: renderAction(refusal.fix!, { transport: 'http', isCallable: () => false, preapproved: () => false }) });
     return;
   }
+  if (await refusedDefaultSourceMember(engine, authInfo, res)) return;
   if (authInfo.allowedOperations != null || authInfo.grantProjectionDegraded) {
     res.status(403).json({
       error: 'permission_denied',
@@ -516,10 +564,10 @@ async function handleIngest(
       return;
     }
     try {
-      await assertWebhookWriterMayReplace(engine, writer, writeSourceId, callerSlug);
+      await assertWebhookWriterMayReplace(engine, writer, writeSourceId, callerSlug, content);
     } catch (err) {
-      if (!(err instanceof OperationError)) throw err;
-      res.status(err.code === 'page_not_found' ? 404 : 403).json({ error: err.code, message: err.message });
+      if (!(err instanceof OperationError) && !(err instanceof RevisionBackfillPendingError)) throw err;
+      res.status(err.code === 'page_not_found' ? 404 : err.code === 'revision_backfill_pending' ? 409 : 403).json({ error: err.code, message: err.message });
       return;
     }
   }
@@ -530,7 +578,8 @@ async function handleIngest(
   const slugKey = targetSlug ? createHash('sha256').update(targetSlug).digest('hex') : '';
   const idempotencyKey = `ingest:webhook:${authInfo.clientId}:${writeSourceId}:${slugKey}:${contentHash}`;
   try {
-    const job = await ingestQueue.add(
+    const legacyJob = await legacyIngestJob(engine, authInfo.clientId, writeSourceId, contentHash, targetSlug);
+    const job = legacyJob ?? await ingestQueue.add(
       'ingest_capture',
       {
         event,
@@ -539,10 +588,12 @@ async function handleIngest(
         ...(writer ? { writer } : {}),
       },
       {
-        // Idempotency: same content from the same client within the
-        // queue's lifetime is a single job. Different content gets
-        // different jobs. Daemon-side dedup catches the 24h window;
-        // the queue-level idempotency catches simultaneous retries.
+        // Idempotency: the same content from the same client to the same
+        // slug is one capture. While its job row exists the queue hands
+        // back that job; the ingest_capture handler applies a capture once
+        // per key for 90 days, even after `gbrain jobs prune` removed its
+        // job row (GST-1856), so a replay never rewrites the page. Different
+        // content gets different jobs. Daemon-side dedup catches the 24h window.
         // The effective write source is part of the key: a client rescoped
         // from source X to Y must land a NEW capture in Y rather than being
         // deduped against its old X-bound job.
@@ -554,7 +605,7 @@ async function handleIngest(
     );
     // At the cap the queue hands back the newest waiting job instead of inserting this capture. Answering 202 with
     // that job id would drop this body without a trace, so the caller is told to retry once the backlog drains.
-    if (job.idempotency_key !== idempotencyKey) {
+    if (!legacyJob && job.idempotency_key !== idempotencyKey) {
       res.setHeader('Retry-After', '30');
       res.status(429).json({
         error: 'ingest_backlog_full',

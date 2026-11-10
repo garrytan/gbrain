@@ -29,6 +29,7 @@ import { jobRefusal } from '../src/core/minions/refusal.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import type { MinionJobContext } from '../src/core/minions/types.ts';
 import { prepareManagedFactsSession, publishManagedFacts, resumeManagedFacts } from '../src/core/persistence/facts-maintenance.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../src/core/persistence/prepared-maintenance.ts';
 import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
@@ -47,7 +48,7 @@ const CLAIM_OTHER = 'Acme-example runs the synthetic onboarding pilot.';
 const CLAIM_SELF = 'The synthetic planning chat set the onboarding launch date.';
 const BODY = 'Notes from a synthetic planning chat about the onboarding checklist and the launch date, kept for the regression.';
 
-afterEach(() => { __setChatTransportForTests(null); resetGateway(); });
+afterEach(() => { __setChatTransportForTests(null); resetGateway(); installFaultHook(undefined); });
 
 async function put(ctx: ManagedBrain['ctx'], slug: string, type: string) {
   const requestId = randomUUID();
@@ -453,6 +454,27 @@ for (const backend of testBackends()) {
       expect(await engine.executeRaw('SELECT visibility FROM facts WHERE fact=$1', [CLAIM_B])).toEqual([{ visibility: published }]);
     }, { databaseUrl }), 120_000);
   }
+
+  test(`#7602 [${backend}]: a claim forgotten at world visibility while its narrowed follow-up publishes stays forgotten`, () => managedBrain(async brain => {
+    const { engine } = brain;
+    const { move, loser } = await setup(brain, 1);
+    const race = raceEntityReads(engine, 1, move);
+    let armed = true;
+    installFaultHook(async (point, detail) => {
+      if (!armed || point !== 'consumer:prepared' || detail.operation !== 'extract_facts') return;
+      const [row] = await engine.executeRaw("SELECT 1 FROM persistence_requests WHERE id=$1::uuid AND slug=$2 AND intent->>'origin' LIKE '%chats/source-loser%'", [detail.writeId, TARGET]);
+      if (!row) return;
+      armed = false;
+      await engine.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash) VALUES('default','world',$1,gbrain_fact_fingerprint($2)) ON CONFLICT DO NOTHING`, [TARGET, CLAIM_B]);
+    });
+    await publishManagedFacts(engine, await loser.session(), loser.backstop, [fact(CLAIM_B)], 'world', loser.slug, { withdrawn: 'skip' }).catch(() => null).finally(race.restore);
+    expect(race.moves()).toBe(1);
+    expect(armed).toBe(false);
+    expect(await engine.executeRaw(`SELECT state, error_code, intent->'facts'->0->>'visibility' AS visibility FROM persistence_requests
+      WHERE operation='extract_facts' AND slug=$1 AND intent->>'origin' LIKE '%chats/source-loser%' ORDER BY sequence`, [TARGET]))
+      .toEqual([{ state: 'conflict', error_code: 'revision_conflict', visibility: 'world' }, { state: 'conflict', error_code: 'revision_conflict', visibility: 'private' }]);
+    expect(await engine.executeRaw('SELECT visibility FROM facts WHERE fact=$1 AND expired_at IS NULL', [CLAIM_B])).toEqual([]);
+  }, { databaseUrl }), 120_000);
 
   // Value: protects=repair failed-writes names the command that produces each guard-refused maintenance facts write again;
   // fails_when=the listing sends a *_facts producer to gbrain extract --stale again (that sweep runs no fact producer), or a repair's

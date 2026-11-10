@@ -1139,6 +1139,13 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "elapsed_ms": "<volatile>",
+          "message": "Skipped (PGLite is always UTF8)",
+          "name": "database_encoding",
+          "status": "ok"
+        },
+        {
           "category": "meta",
           "elapsed_ms": "<volatile>",
           "message": "Version <latest> (latest: <latest>)",
@@ -1148,14 +1155,14 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "1388 column(s) verified against live schema",
+          "message": "1392 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 174 table(s) the applied migrations create exist.",
+          "message": "All 175 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -1628,6 +1635,18 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "count": 0,
+            "docs": "docs/guides/repair.md#url-source-origin",
+            "sources": []
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Every URL source clone records who added it, or was cloned where only the local CLI can clone.",
+          "name": "url_source_origin",
+          "status": "ok"
+        },
+        {
           "category": "brain",
           "details": {
             "bindings": [],
@@ -1837,6 +1856,20 @@
           "category": "brain",
           "details": {
             "by_source": [],
+            "count": 0,
+            "docs": "docs/guides/repair.md#atom-fence-rows",
+            "origin_unread": 0,
+            "repair": "atom-fence-rows"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No world atom carries a fence row its source page shows only to the owner.",
+          "name": "atom_fence_rows",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "by_source": [],
             "docs": "docs/guides/repair.md#generations",
             "items": 0,
             "keys": 0,
@@ -1889,6 +1922,20 @@
           "elapsed_ms": "<volatile>",
           "message": "No conversation-extractor fact is left expired by the pre-v0.60.11.0 projection.",
           "name": "extractor_facts_expired",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "ambiguous": 0,
+            "docs": "docs/guides/repair.md#unwithdrawn-facts",
+            "evidenced": 0,
+            "excluded": 0,
+            "repair": "unwithdrawn-facts"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No fact is left retired by a facts-fence generation that no fence withdrew.",
+          "name": "unwithdrawn_facts",
           "status": "ok"
         },
         {
@@ -2781,6 +2828,7 @@
             "dirty_warn_after_minutes": 30,
             "foreign": [],
             "partial": false,
+            "partial_reasons": [],
             "unconfirmed": [],
             "unknown": [],
             "window": [
@@ -2903,6 +2951,13 @@
           "elapsed_ms": "<volatile>",
           "message": "chronicle.* settings are valid.",
           "name": "chronicle_config_invalid",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "No page holds live events from an earlier extraction run beside its newest one.",
+          "name": "chronicle_duplicate_events",
           "status": "ok"
         },
         {

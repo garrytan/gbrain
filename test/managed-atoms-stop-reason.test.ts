@@ -85,7 +85,7 @@ for (const stop of ['length', 'refusal', 'content_filter'] as const) {
         __setChatTransportForTests(chat);
         const worker = new MinionWorker(engine, { queue: 'fixture' });
         await registerBuiltinHandlers(worker, engine, { quiet: true });
-        const job: MinionJobContext = { id: 951, name: 'extract-atoms-drain', data: { sourceId: 'default', retryRequestId: receipt.request_id }, attempts_made: 0,
+        const job: MinionJobContext = { id: 951, name: 'extract-atoms-drain', data: { sourceId: 'default', retryRequestId: receipt.request_id }, attempts_made: 0, idempotency_key: null,
           signal: new AbortController().signal, deadlineAtMs: null, shutdownSignal: new AbortController().signal,
           updateProgress: async () => {}, updateTokens: async () => {}, log: async () => {}, isActive: async () => true, readInbox: async () => [] };
         const retried = await worker.getHandler('extract-atoms-drain')!(job) as Record<string, unknown>;

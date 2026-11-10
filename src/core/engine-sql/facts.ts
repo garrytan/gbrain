@@ -27,7 +27,7 @@ import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
 import { compileRowNormalizer } from './normalize.ts';
-import { projectionEligibleSql } from '../eligibility/sql.ts';
+import { deletedPageProjectionHiddenSql, projectionEligibleSql } from '../eligibility/sql.ts';
 import { FACT_WITHDRAWAL_STAMP_DEFERRED_SETTING } from '../facts/insert-guard-schema.ts';
 import { privateProvenanceFilterUnderPolicy } from '../search/private-visibility.ts';
 import { factVisibilitySql, onOwnedMemoryPageSql } from '../access/member-facts.ts';
@@ -53,9 +53,9 @@ async function embeddingCast(exec: SqlExecutor, probe: ResolveEmbeddingCast | un
  * silently misses matches outside the newest-N window on high-cardinality
  * entities. Parity with the pglite engine's `_listFacts`.
  */
-/** #5575: the read-eligibility predicate for list reads that pass a policy (eligibility/sql.ts). */
-function eligibilityClause(opts: FactListOpts | undefined) {
-  return opts?.eligibility ? sqlFragment` AND ${trustedSql(projectionEligibleSql('facts', 'facts', opts.eligibility))}` : sqlFragment``;
+/** #5575: the read-eligibility predicate for list reads that pass a policy (eligibility/sql.ts); every read hides a deleted page's facts. */
+function eligibilityClause(opts: Pick<FactListOpts, 'eligibility'> | undefined) {
+  return sqlFragment` AND ${trustedSql(opts?.eligibility ? projectionEligibleSql('facts', 'facts', opts.eligibility) : deletedPageProjectionHiddenSql('facts', 'facts'))}`;
 }
 
 /** GST-359 C2: a visibility list, widened only to the caller's own member-page private facts (access/member-facts.ts). */
@@ -551,7 +551,7 @@ export async function listSupersessions(
       WHERE source_id = ${source_id}
         AND superseded_by IS NOT NULL
         ${since ? sqlFragment`AND COALESCE(expired_at, valid_until) >= ${since}` : sqlFragment``}
-        ${visibilityClause(visibility)}${privacyClause(opts)}${opts?.eligibility ? sqlFragment` AND ${trustedSql(projectionEligibleSql('facts', 'facts', opts.eligibility))}` : sqlFragment``}
+        ${visibilityClause(visibility)}${privacyClause(opts)}${eligibilityClause(opts)}
       ORDER BY COALESCE(expired_at, valid_until) DESC, id DESC
       LIMIT ${limit}
     `)).rows;
@@ -691,6 +691,7 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
     const rows = (await exec.run<{
       id: number;
       valid_from: Date;
+      valid_until: Date | null;
       claim_metric: string | null;
       claim_value: number | null;
       claim_unit: string | null;
@@ -701,7 +702,7 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
       source_markdown_slug: string | null;
       embedding: string | null;
     }>(sqlFragment`
-      SELECT id, valid_from,
+      SELECT id, valid_from, valid_until,
              claim_metric, claim_value, claim_unit, claim_period,
              event_type,
              fact, source_session, source_markdown_slug,
@@ -725,6 +726,7 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
     return [...rows].reverse().map(r => ({
       fact_id: Number(r.id),
       valid_from: r.valid_from instanceof Date ? r.valid_from : new Date(r.valid_from as unknown as string),
+      valid_until: r.valid_until === null ? null : r.valid_until instanceof Date ? r.valid_until : new Date(r.valid_until as unknown as string),
       metric: r.claim_metric,
       value: r.claim_value === null ? null : Number(r.claim_value),
       unit: r.claim_unit,

@@ -32,6 +32,7 @@
  * pages to canonical homes later.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { MinionJobContext } from '../types.ts';
 import type { BrainEngine } from '../../engine.ts';
 import type { IngestionEvent } from '../../ingestion/types.ts';
@@ -41,12 +42,14 @@ import { maintenanceTransaction } from '../../persistence/attribution.ts';
 import { managedPersistenceEnabled } from '../../persistence/ownership.ts';
 import { privateRequestRefusal } from '../../persistence/visibility-request.ts';
 import { parseMarkdown } from '../../markdown.ts';
-import { OperationError, type OperationContext } from '../../ops/contract.ts';
+import { OperationError, opError, type OperationContext } from '../../ops/contract.ts';
 import { submitPageMutation } from '../../persistence/page-mutations.ts';
-import { authorizePageVisibility, excludesPrivateWrites } from '../../persistence/page-visibility.ts';
+import { authorizePageVisibility, defaultSourceMemberWriter, excludesPrivateWrites, remoteReadersChecked } from '../../persistence/page-visibility.ts';
 import type { Principal, WriteAuthority } from '../../persistence/model.ts';
 import { assertMemberPageWriter, assertScopePageWriter } from '../../access/member-facts.ts';
 import { validateSlug } from '../../utils.ts';
+import { REVISION_BACKFILL_PENDING, RevisionBackfillPendingError } from '../../page-state/types.ts';
+import { appliedCaptureRequestPrefix, readAppliedCapture, recordAppliedCapture, saveAppliedCapture } from '../../ingestion/applied-captures.ts';
 
 export interface IngestCaptureResult {
   slug: string;
@@ -71,6 +74,32 @@ export function defaultSlugForEvent(event: IngestionEvent, now: Date = new Date(
   return `inbox/${y}-${m}-${d}-${hashPrefix}`;
 }
 
+/**
+ * A foreign_key_violation (23503, cf. oauth-provider.ts:1053) on the PAGES source FK. SQLSTATE alone is too broad: a
+ * violation from chunks/tags/versions would be misread as "source unavailable" and silently rewritten to the default
+ * partition, masking a real integrity failure.
+ *
+ * Matching any message mentioning "source" is not tight enough to carry a routing decision: many tables reference
+ * sources(id) (files_source_id_fkey, facts_source_id_fkey, code_edges, calibration_profiles, …), so a genuine integrity
+ * failure on one of those would be rewritten as reason:'fk_violation' — exactly the masking this check exists to
+ * prevent. maybeRewriteSourceFkError (commands/capture.ts) can afford the looser match because it only formats a human
+ * hint; here the verdict moves data. Prefer the driver's structured constraint/table fields (postgres.js and PGLite both
+ * expose them) and fall back to the message for wrapped errors.
+ */
+function isPagesSourceFkViolation(err: unknown): boolean {
+  const errMsg = err instanceof Error ? err.message : String(err);
+  const fkErr = err as { code?: string; constraint?: string; table?: string };
+  const namesPagesSourceFk =
+    (typeof fkErr.constraint === 'string' && /^pages_source_id_fk/.test(fkErr.constraint)) ||
+    (fkErr.table === 'pages' && typeof fkErr.constraint === 'string' && fkErr.constraint.includes('source')) ||
+    /pages_source_id_fk/.test(errMsg) ||
+    (errMsg.includes('foreign key constraint') && errMsg.includes('"pages"'));
+  return fkErr?.code === '23503' && namesPagesSourceFk;
+}
+
+/** Rolls back a capture's page write when another run of its idempotency key already recorded the capture (GST-1856). */
+class CaptureAlreadyApplied extends Error {}
+
 /** The token or OAuth client the POST /ingest route stored on the job, or undefined (checked as a guest). */
 function webhookPrincipal(writer: unknown): Principal | undefined {
   const principal = (writer as { principal?: { kind?: unknown; id?: unknown } } | null | undefined)?.principal;
@@ -83,12 +112,29 @@ function webhookPrincipal(writer: unknown): Principal | undefined {
  * scope page, and never a page the writer cannot read (another member's readable_by page, a private page). A job with
  * no stored writer is checked as a guest, which reads no restricted page.
  */
-export async function assertWebhookWriterMayReplace(engine: BrainEngine, writer: unknown, sourceId: string, slug: string): Promise<void> {
+export async function assertWebhookWriterMayReplace(engine: BrainEngine, writer: unknown, sourceId: string, slug: string, content?: string): Promise<string | null | undefined> {
   const target = validateSlug(slug);
   assertMemberPageWriter({ remote: true }, target, 'ingest_capture');
   assertScopePageWriter({ remote: true }, target, 'ingest_capture');
-  await authorizePageVisibility(engine, { version: 1, principal: webhookPrincipal(writer), remote: true, sourceId, sourceIncarnation: '',
-    scopes: [], operations: null, slugPrefixes: null, excludePrivate: await excludesPrivateWrites(engine, true) } as WriteAuthority, target);
+  const authority = { version: 1, principal: webhookPrincipal(writer), remote: true, sourceId, sourceIncarnation: '',
+    scopes: [], operations: null, slugPrefixes: null, excludePrivate: await excludesPrivateWrites(engine, true) } as WriteAuthority;
+  // GST-2051 x GST-2112: POST /ingest refuses a member-bound credential writing to default; a job queued before that
+  // refusal (or before the binding) is refused here at write time, since the capture cannot keep the page to the member.
+  if (authority.principal && await defaultSourceMemberWriter(engine, authority)) {
+    throw opError('permission_denied', `A capture from a credential bound to a member whose write source is ${sourceId}, which every credential without a source grant reads, is refused: its page would land where other members and unbound credentials read.`,
+      'Write through the MCP put_page op, which keeps a new page to its member, or ask the brain operator to grant this credential its own write source that is not federated (gbrain auth rescope --sources <private-source>,default).');
+  }
+  // GST-2112: the snapshot is read before the visibility check, so the revision returned (which binds the write) is
+  // never older than the state the writer was authorized against.
+  const stored = content === undefined ? undefined : await engine.readPageSnapshot(target, { sourceId, includeDeleted: true });
+  await authorizePageVisibility(engine, authority, target);
+  if (content === undefined) return;
+  // The capture writes through a trusted local path, so apply the remote put_page readers rule here: a body never
+  // drops readable_by from a page that names readers, and the readers it names keep the writer.
+  await remoteReadersChecked(engine, authority, stored?.page.frontmatter, { parsedPage: { frontmatter: parseMarkdown(content, target + '.md', { validate: true }).frontmatter } });
+  // A page the revision backfill has not reached has no revision to bind the write to: refused, kept in the job row for `gbrain jobs retry`.
+  if (stored?.revision === REVISION_BACKFILL_PENDING) throw new RevisionBackfillPendingError(null);
+  return stored?.revision ?? null;
 }
 
 export function makeIngestCaptureHandler(engine: BrainEngine) {
@@ -229,13 +275,23 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       if (rows.length > 0) sourceId = event.source_id;
     }
 
-    const webhookWrite = untrustedPayload && event.source_kind === 'webhook' && !isTombstone;
-    const checkWriter = (sid: string) => webhookWrite ? assertWebhookWriterMayReplace(engine, data.writer, sid, slug) : Promise.resolve();
-    await checkWriter(sourceId ?? 'default');
-
     // G6: a managed brain refuses direct writes, so its captures and tombstones go through the door (put_page /
     // delete_page), which publishes the file before the row.
     const managed = await managedPersistenceEnabled(engine);
+    const captured = (status: IngestCaptureResult['status'], chunks: number): IngestCaptureResult => ({ slug, status, chunks,
+      untrusted_payload: untrustedPayload, source_kind: event.source_kind, source_uri: event.source_uri, ...(sourceFallback ? { source_fallback: sourceFallback } : {}) });
+    // GST-1856: a capture applies once per job idempotency key. A later run of the key (a stalled attempt re-run after
+    // its write landed, a POST /ingest replayed after `gbrain jobs prune`) returns the first run's result and writes
+    // nothing, so it never reverts a newer edit. Tombstones and jobs queued without a key keep their old behavior.
+    const appliedKey = !isTombstone && job.idempotency_key ? job.idempotency_key : null;
+    const managedOutcome = (outcome: { noop?: boolean; chunks?: number }) => captured(outcome.noop ? 'skipped' : 'imported', Number(outcome.chunks ?? 0));
+    const journal = managed ? { sourceIds: [...new Set([sourceId ?? 'default', 'default'])], slug: slug.toLowerCase(), result: managedOutcome } : undefined;
+    const applied = appliedKey ? await readAppliedCapture<IngestCaptureResult>(engine, appliedKey, journal) : null;
+    if (applied) return applied;
+
+    const webhookWrite = untrustedPayload && event.source_kind === 'webhook' && !isTombstone;
+    const checkWriter = (sid: string) => webhookWrite ? assertWebhookWriterMayReplace(engine, data.writer, sid, slug, event.content) : Promise.resolve(undefined);
+    let checkedRevision = await checkWriter(sourceId ?? 'default');
     const door = (operation: 'put_page' | 'delete_page', sid: string, params: Record<string, unknown>) => submitPageMutation(
       { engine, config: { engine: engine.kind } as OperationContext['config'], remote: false, dryRun: false, sourceId: sid, logger: { info() {}, warn() {}, error() {} } },
       { operation, params: { ...params, slug, source_id: sid } });
@@ -289,16 +345,28 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       // tool_output stores and gates the capture external_untrusted (#5575 A3), as importOpts does unmanaged.
       // A capture replaces the page as it stands, so it binds to the revision read just before (the door requires one to
       // replace an existing page); a write landing in between refuses revision_conflict and the job retries.
-      const put = async (sid: string) => {
+      // GST-1856: each run of a keyed capture sends a new request_id under the capture's prefix, so the applied check above
+      // finds a committed run in the door's journal even when the worker died before recording it. The id is new per run
+      // because a stall re-run keeps attempts_made and `gbrain jobs retry` resets it: an id reused for an earlier request
+      // that failed would replay that failure instead of writing. Another run of the key can commit after the check above
+      // (a stalled original resuming after its re-run), so the check repeats after the snapshot read: any edit that
+      // snapshot holds then post-dates a committed run, and expected_revision refuses a run committing after it.
+      const requestId = appliedKey ? `${appliedCaptureRequestPrefix(appliedKey)}${job.attempts_made}:${randomUUID()}` : undefined;
+      let appliedSince: IngestCaptureResult | null = null;
+      const put = async (sid: string, request?: string) => {
         const snapshot = await engine.readPageSnapshot(slug, { sourceId: sid, includeDeleted: true });
+        // Checked after the snapshot the write binds to, so readers added before it are seen and any change after it refuses revision_conflict.
+        await checkWriter(sid);
+        appliedSince = appliedKey ? await readAppliedCapture<IngestCaptureResult>(engine, appliedKey, journal) : null;
+        if (appliedSince) return {};
         return door('put_page', sid, { content: event.content, content_origin: 'tool_output', source_kind: event.source_kind, source_uri: event.source_uri,
-          ingested_via: 'ingest_capture', ...(snapshot ? { expected_revision: snapshot.revision } : {}),
+          ingested_via: 'ingest_capture', ...(snapshot ? { expected_revision: snapshot.revision } : {}), ...(request ? { request_id: request } : {}),
           // #2044/#4548: as `remote: untrustedPayload` does unmanaged, an untrusted body keeps the non-world facts rows and takes rows its sender could not see.
           ...(untrustedPayload ? { keep_hidden_rows: true } : {}) });
       };
       let response: Record<string, unknown>;
       try {
-        response = await put(sourceId ?? 'default');
+        response = await put(sourceId ?? 'default', requestId);
       } catch (err) {
         // The door refuses a source that vanished or was archived after the pre-check (the managed form of the FK retry).
         const vanished = sourceId !== undefined && err instanceof OperationError && err.code === 'source_changed'
@@ -306,62 +374,47 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
         if (!vanished || (vanished.length > 0 && vanished[0]?.archived !== true)) throw err;
         sourceFallback = { requested: sourceId!, effective: 'default', reason: vanished.length ? 'archived' : 'fk_violation' };
         await checkWriter('default');
-        response = await put('default');
+        response = await put('default', requestId && `${requestId}:default`);
       }
+      if (appliedSince) return appliedSince;
       if (sourceFallback) {
         console.error(
           `[WARN] ingest_capture: requested source '${sourceFallback.requested}' unavailable ` +
           `(${sourceFallback.reason}); wrote under default`,
         );
       }
-      const outcome = (response.outcome ?? {}) as { noop?: boolean; chunks?: number };
-      return {
-        slug,
-        status: outcome.noop ? 'skipped' : 'imported',
-        chunks: Number(outcome.chunks ?? 0),
-        untrusted_payload: untrustedPayload,
-        source_kind: event.source_kind,
-        source_uri: event.source_uri,
-        ...(sourceFallback ? { source_fallback: sourceFallback } : {}),
-      };
+      // The door answers only a committed write; a pending one throws write_pending and the job retries.
+      const result = managedOutcome((response.outcome ?? {}) as { noop?: boolean; chunks?: number });
+      if (appliedKey) await recordAppliedCapture(engine, appliedKey, sourceFallback ? 'default' : sourceId ?? 'default', slug, result);
+      return result;
     }
 
+    // GST-1856: the record goes in the page write's own transaction; when another run of the key recorded it first, the
+    // whole write rolls back (null) and the stored result is returned. The FK retry's first transaction rolls its record back too.
+    const importAs = async (sid: string | undefined) => {
+      try {
+        return await importFromContent(engine, slug, event.content, { ...importOpts, sourceId: sid, ...(checkedRevision !== undefined ? { expectedBaseRevision: checkedRevision } : {}), ...(appliedKey ? { beforeCommit: async (tx: BrainEngine) => {
+          if (!await recordAppliedCapture(tx, appliedKey, sid ?? 'default', slug, captured('imported', 0))) throw new CaptureAlreadyApplied();
+        } } : {}) });
+      } catch (err) {
+        if (err instanceof CaptureAlreadyApplied) return null;
+        throw err;
+      }
+    };
     let result;
     try {
-      result = await importFromContent(engine, slug, event.content, { ...importOpts, sourceId });
+      result = await importAs(sourceId);
     } catch (err) {
-      // The sources row can vanish (ON DELETE CASCADE) between the pre-check and
-      // this write. 23503 = foreign_key_violation (cf. oauth-provider.ts:1053),
-      // but SQLSTATE alone is too broad: a violation from chunks/tags/versions
-      // would be misread as "source unavailable" and silently rewritten to the
-      // default partition, masking a real integrity failure.
-      //
-      // Match the PAGES source FK specifically. Matching any message mentioning
-      // "source" is not tight enough to carry a routing decision: many tables
-      // reference sources(id) (files_source_id_fkey, facts_source_id_fkey,
-      // code_edges, calibration_profiles, …), so a genuine integrity failure on
-      // one of those would be rewritten as reason:'fk_violation' — exactly the
-      // masking this check exists to prevent. maybeRewriteSourceFkError
-      // (commands/capture.ts) can afford the looser match because it only
-      // formats a human hint; here the verdict moves data. Prefer the driver's
-      // structured constraint/table fields (postgres.js and PGLite both expose
-      // them) and fall back to the message for wrapped errors.
-      const errMsg = err instanceof Error ? err.message : String(err);
-      const fkErr = err as { code?: string; constraint?: string; table?: string };
-      const namesPagesSourceFk =
-        (typeof fkErr.constraint === 'string' && /^pages_source_id_fk/.test(fkErr.constraint)) ||
-        (fkErr.table === 'pages' && typeof fkErr.constraint === 'string' && fkErr.constraint.includes('source')) ||
-        /pages_source_id_fk/.test(errMsg) ||
-        (errMsg.includes('foreign key constraint') && errMsg.includes('"pages"'));
-      const isSourceFk = fkErr?.code === '23503' && namesPagesSourceFk;
-      if (sourceId !== undefined && isSourceFk) {
+      // The sources row can vanish (ON DELETE CASCADE) between the pre-check and this write.
+      if (sourceId !== undefined && isPagesSourceFkViolation(err)) {
         sourceFallback = { requested: sourceId, effective: 'default', reason: 'fk_violation' };
-        await checkWriter('default');
-        result = await importFromContent(engine, slug, event.content, { ...importOpts, sourceId: undefined });
+        checkedRevision = await checkWriter('default');
+        result = await importAs(undefined);
       } else {
         throw err;
       }
     }
+    if (result === null) return (await readAppliedCapture<IngestCaptureResult>(engine, appliedKey!))!;
     const refused = result.refusal?.code === 'visibility_noncanonical';
     if (sourceFallback) {
       console.error(
@@ -374,15 +427,10 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       throw privateRequestRefusal({ slug: result.slug, source_id: sourceFallback ? 'default' : sourceId ?? 'default' }, parseMarkdown(event.content, `${result.slug}.md`).frontmatter);
     }
 
-    return {
-      slug,
-      status: result.status,
-      chunks: result.chunks,
-      untrusted_payload: untrustedPayload,
-      source_kind: event.source_kind,
-      source_uri: event.source_uri,
-      ...(sourceFallback ? { source_fallback: sourceFallback } : {}),
-    };
+    // The final result replaces the provisional one; an import that wrote nothing (no transaction ran) inserts the row here.
+    const final = captured(result.status, result.chunks);
+    if (appliedKey && result.status !== 'error') await saveAppliedCapture(engine, appliedKey, sourceFallback ? 'default' : sourceId ?? 'default', slug, final);
+    return final;
   };
 }
 

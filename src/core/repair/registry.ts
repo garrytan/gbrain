@@ -54,7 +54,9 @@ import { embeddingEffectsRepair } from './embedding-effects.ts';
 import { googleFileModesRepair } from './google-file-modes.ts';
 import { staleAtomsRepair } from './stale-atoms.ts';
 import { atomsRestoreRepair } from './atoms-restore.ts';
+import { atomFenceRowsRepair } from './atom-fence-rows.ts';
 import { extractorFactsRepair } from './extractor-facts.ts';
+import { unwithdrawnFactsRepair } from './unwithdrawn-facts.ts';
 import { conversationLabelsRepair } from './conversation-labels.ts';
 import { capturedFactsRepair } from './captured-facts.ts';
 import { agentSessionFactsRepair, agentSessionFlagArgs } from './agent-session-facts.ts';
@@ -91,7 +93,9 @@ import { factClaimDatesRepair } from './fact-claim-dates.ts';
 import { provenanceRepair } from './provenance.ts';
 import { secretSpansRepair } from './secret-spans.ts';
 import { rowsBehindRepair } from './rows-behind.ts';
+import { privateLabelsRepair, type PrivateLabelsLedger } from './private-labels.ts';
 import { generationsRepair, generationsSelectionArgv, type GenerationsSelection } from '../generations/repair.ts';
+import { lostFenceRowsRepair } from './lost-fence-rows.ts';
 import { restoreDaysHint } from '../generations/config.ts';
 import { ERROR_CATALOGUE, catalogueError } from '../error-catalogue.ts';
 import { shellQuote } from '../shell-quote.ts';
@@ -222,12 +226,28 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'that writes the canonical file back, its request id in the outcome); an atom that changed since reports changed_since_preview and stays deleted. '
       + 'The purge holds these atoms for 30 days after deletion. Runs only when named; never on upgrade.',
   },
+  'atom-fence-rows': {
+    handler: atomFenceRowsRepair, embeds: 'effect', checks: ['atom_fence_rows'], explicit_only: true, preview_bound: true,
+    summary: 'Narrow to private the world atoms whose title, body or source_quote carries the claim of a fence row their source page shows only to the owner '
+      + '(a facts row whose visibility is not world, a takes row whose holder is not world), copied by an extraction that read the whole page. The preview lists '
+      + 'each atom with its source page and the row kinds and numbers, never the row text, and changes nothing. Preview-bound: --apply --expect <hash> sets '
+      + 'visibility: private on exactly the previewed set through a revision-bound put_page; an atom that changed since reports changed_since_preview. '
+      + 'Source pages stored in segments are not read (origin_unread). Runs only when named; never on upgrade.',
+  },
   'extractor-facts': {
     handler: extractorFactsRepair, embeds: 'none', checks: ['extractor_facts_expired'], explicit_only: true,
     summary: 'Restore conversation-extractor facts that the pre-v0.60.11.0 canonical projection expired (#5731). Restores only facts with receipt evidence '
       + '(a committed write of the page completed in the same transaction, by an older consumer); --include-ambiguous widens the hashed set to facts '
       + 'without that evidence. Preview-bound: --apply --expect <hash> restores exactly the previewed set; a fact that changed since reports '
       + 'changed_since_preview and stays expired. Superseded, withdrawn and duplicated facts are never restored. Database-only; no page is rewritten.',
+  },
+  'unwithdrawn-facts': {
+    handler: unwithdrawnFactsRepair, embeds: 'none', checks: ['unwithdrawn_facts'], explicit_only: true, preview_bound: true,
+    summary: 'Restore facts a facts-fence generation retired although no fence of their page ever held them (#8819), first generations included. '
+      + 'Restores the original fact ids and recorded lifecycle from the generation ledger; a fact a fence held (a genuine withdrawal), a withdrawn, '
+      + 'superseded or duplicated fact is never restored; --include-ambiguous adds facts of pages whose version history has a gap. Preview-bound: '
+      + '--apply --expect <hash> restores exactly the previewed set, bound to each page\'s revision; a changed page or fact reports changed_since_preview. '
+      + 'Database-only; no page is rewritten.',
   },
   'conversation-labels': {
     handler: conversationLabelsRepair, embeds: 'none', checks: ['conversation_label_facts'], explicit_only: true, consent: 'destructive',
@@ -643,6 +663,16 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'join only with --include-ambiguous; rows with an uncommitted working-tree edit are left out. --apply --expect <hash> applies exactly that set. '
       + 'Runs only when named; never on upgrade.',
   },
+  'private-labels': {
+    handler: privateLabelsRepair, embeds: 'effect', checks: [], explicit_only: true, preview_bound: true,
+    summary: 'Clear privacy labels writer templates over-stamped on ordinary pages: access: private (and the visibility: private stamped from it) is removed, '
+      + 'which widens what remote callers that are not the brain owner can read. Real restrictions are kept and counted: pinned questions, derived pages '
+      + '(atoms, synthesized concepts, chronicle events), access restricted or confidential, a confidentiality value, and visibility: private with no alias. '
+      + 'The preview lists one window (--limit, default 1000) by class (alias, alias-and-visibility) with every category\'s count before and after; '
+      + '--apply --expect <hash> applies exactly that window, one revision-bound page write each; a bare --apply is refused. Pages in git-canonical sources '
+      + '(git-publish: clearing commits them into Git) run only with --class git-publish. Each cleared label is recorded in '
+      + '~/.gbrain/repair/private-labels/<brain>.jsonl (under $GBRAIN_HOME/.gbrain/ if set), and --class restore re-adds it. Runs only when named; never on upgrade.',
+  },
   'generations': {
     handler: generationsRepair, embeds: 'effect', checks: ['generation_retirements', 'generation_held', 'generation_pending'], explicit_only: true, preview_bound: true, consent: 'destructive',
     consentText: {
@@ -659,6 +689,22 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'One selector bounds the set: --run <id>, --since <ISO-8601|7d>, --key <owner>, --generation <id>, or --held (release-held). The preview lists each key '
       + 'and saves the set under its hash; --apply --expect <hash> --yes applies exactly that set, refusing a key edited since or with no stored preimage. '
       + 'Runs only when named; never on upgrade.',
+  },
+  'lost-fence-rows': {
+    handler: lostFenceRowsRepair, embeds: 'effect', checks: [], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: {
+      what: 'Put the previewed fact and take rows back into their pages\' Facts and Takes sections',
+      why: 'The preview listed each row an older gbrain expired or deleted after a page rewrite dropped its section and a later remember or takes add re-created the section without it; page history holds each row. A section rebuilt by hand without a row looks the same, so check the list.',
+      risk: 'Each listed page is republished through a revision-bound put_page with the rows added and nothing else changed; a page that changed since the preview is skipped. A restored row never gets more trust than it had: a fact comes back at the tier the expired row had, and a take, or a fact with no recorded tier, at the lowest tier. If the page write is left pending, rerun the same apply to finish lowering the tiers. Page history keeps the earlier revision, and a managed source commits the file, so git revert undoes it.',
+      user_message: 'Put the previewed facts and takes back into their pages? Only those rows are added',
+    },
+    summary: 'Restore fact and take rows an older gbrain retired after a page rewrite dropped their Facts or Takes section: the next remember or takes add '
+      + 're-created the section with only its own row, and the write after that expired the facts and deleted the takes. Lists only rows the records '
+      + 'prove: a fence generation retired the row without an empty-section proof, nothing on the page carries it now, and page history holds it in a '
+      + 'section that then vanished before the retirement (a row an edit removed from a section that stayed is a deliberate removal and is not listed). '
+      + 'A section a person rebuilt by hand without a row leaves the same records, so show the user the preview and let them drop what they meant to remove. '
+      + 'Each cell comes back byte for byte from the newest version that held it, at its row number when free. --source narrows. The preview lists each '
+      + 'page; --apply --expect <hash> --yes republishes exactly that set, one revision-bound put_page per page. Runs only when named; never on upgrade.',
   },
 };
 
@@ -745,7 +791,7 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
       slugs?: string[]; noLlm?: boolean; maxLlmUsd?: number; deadline?: number; stop?: AbortSignal; recordDatabaseStops?: boolean;
       prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string; provenance?: string; cursor?: string; progress?: ProgressReporter;
       keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number; generations?: GenerationsSelection; day?: string; rules?: string[];
-      cwdPrefixes?: string[]; sessions?: string[]; principal?: string } = {}): Promise<RepairResult> {
+      cwdPrefixes?: string[]; sessions?: string[]; principal?: string; privateLabelsLedger?: PrivateLabelsLedger } = {}): Promise<RepairResult> {
       const ctx = { engine, config, logger, dryRun: !opts.apply, remote: false, sourceId: scope.source_ids[0], writeWaitMs } as OperationContext;
       const spec = repairSpec(kind, opts.registry);
       return runRepair(ctx, spec.handler, scope, { apply: opts.apply, limit: run.limit, embeddingModel, sourceFlag: run.sourceFlag, spec,
@@ -756,7 +802,7 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
         explicit: run.explicit, expect: run.expect, includeAmbiguous: run.includeAmbiguous, includeCrossEntity: run.includeCrossEntity, only: run.only, skip: run.skip, slugs: run.slugs, noLlm: run.noLlm,
         maxLlmUsd: run.maxLlmUsd, deadline: run.deadline, ...(run.stop ? { stop: run.stop } : {}), ...(run.recordDatabaseStops ? { recordDatabaseStops: true } : {}), prefer: run.prefer, requests: run.requests, allDrifted: run.allDrifted, driftClass: run.driftClass, since: run.since,
         held: run.held, side: run.side, state: run.state, provenance: run.provenance, cursor: run.cursor, progress: run.progress, keep: run.keep, requestId: run.requestId, olderThan: run.olderThan, includeFailures: run.includeFailures, force: run.force, from: run.from, close: run.close, afterPage: run.afterPage, generations: run.generations, day: run.day, rules: run.rules,
-        cwdPrefixes: run.cwdPrefixes, sessions: run.sessions, principal: run.principal });
+        cwdPrefixes: run.cwdPrefixes, sessions: run.sessions, principal: run.principal, privateLabelsLedger: run.privateLabelsLedger });
     },
   };
 }

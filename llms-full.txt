@@ -431,8 +431,8 @@ put_pages with one request_id per batch and wait_ms 25000."*
   immediately and by meaning once its embedding effect finishes.
 - **Request size.** HTTP carries less than the 24 MiB page ceiling:
   `gbrain serve --http` reads at most 4 MiB per request (the MCP SDK
-  default), and the simpler HTTP transport caps a request at
-  `GBRAIN_HTTP_MAX_BODY_BYTES`. A batch goes in smaller `put_pages` calls; a
+  default) and the simpler HTTP transport 1 MiB; `GBRAIN_HTTP_MAX_BODY_BYTES`
+  sets either cap. A batch goes in smaller `put_pages` calls; a
   page over the transport limit goes by file on the brain host (sync,
   `gbrain import` or `gbrain put`), never split by hand. Every limit is in
   [limits per entry point](memory-boundaries.md#large-page-limits).
@@ -1848,6 +1848,7 @@ instead of the CLI (one connection, no per-call startup).
 | Links, dated events, every page of a type | `gbrain backlinks <slug>`, `gbrain timeline <slug>`, `gbrain list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
 | Save a fact the user stated | `gbrain remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
 | Why a page didn't rank | `gbrain query "<q>" --explain-target <slug>` | `query` |
+| Which installed skill fits a request | `gbrain skills resolve --text "<request>" --json` (after `gbrain skills index build`) | none (CLI only) |
 
 Parse `--json` output instead of matching the text; notices go to stderr. Never
 send stderr to `/dev/null`: a refusal there (`no_brain`, `GBRAIN_DB_ACCESS`)
@@ -3084,6 +3085,7 @@ instead of the CLI (one connection, no per-call startup).
 | Links, dated events, every page of a type | `gbrain backlinks <slug>`, `gbrain timeline <slug>`, `gbrain list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
 | Save a fact the user stated | `gbrain remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
 | Why a page didn't rank | `gbrain query "<q>" --explain-target <slug>` | `query` |
+| Which installed skill fits a request | `gbrain skills resolve --text "<request>" --json` (after `gbrain skills index build`) | none (CLI only) |
 
 Parse `--json` output instead of matching the text; notices go to stderr. Never
 send stderr to `/dev/null`: a refusal there (`no_brain`, `GBRAIN_DB_ACCESS`)
@@ -4940,6 +4942,7 @@ instead of the CLI (one connection, no per-call startup).
 | Links, dated events, every page of a type | `gbrain backlinks <slug>`, `gbrain timeline <slug>`, `gbrain list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
 | Save a fact the user stated | `gbrain remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
 | Why a page didn't rank | `gbrain query "<q>" --explain-target <slug>` | `query` |
+| Which installed skill fits a request | `gbrain skills resolve --text "<request>" --json` (after `gbrain skills index build`) | none (CLI only) |
 
 Parse `--json` output instead of matching the text; notices go to stderr. Never
 send stderr to `/dev/null`: a refusal there (`no_brain`, `GBRAIN_DB_ACCESS`)
@@ -5053,7 +5056,7 @@ off until the user opts in, and paid enrichment is a separate choice.
 | "harvest this skill into gbrain", "publish this skill to gbrain", "lift this skill upstream", "share this skill with other gbrain clients", "promote my skill to gbrain" | `skills/skillpack-harvest/SKILL.md` |
 | Post-restart health + auto-fix, "did the container restart break anything", smoke test | `skills/smoke-test/SKILL.md` |
 | `GBRAIN_DB_ACCESS`, "gbrain database error", "gbrain connection refused", "brain database is down", "cannot reach the brain database", "fix gbrain database access", "repair gbrain postgres" | `skills/db-repair/SKILL.md` |
-| Doctor `timeline_history` / `derived_visibility` / unsealed pages, "repair timeline history", "fix atom visibility", "re-seal withheld pages" | Preview with `gbrain repair`, apply one kind with `gbrain repair <kind> --apply` on the brain host after the user agrees. See `docs/guides/repair.md` |
+| Doctor `timeline_history` / `derived_visibility` / `atom_fence_rows` / unsealed pages, "repair timeline history", "fix atom visibility", "re-seal withheld pages" | Preview with `gbrain repair` (or `gbrain repair <kind>` for an explicit-only kind), apply one kind with the `--apply` command its preview prints, on the brain host after the user agrees. See `docs/guides/repair.md` |
 | A page write refused `owner_unavailable` with `detail: unbound_source` (classic Postgres) | Write the file, commit, `gbrain sync --source <id>` (remote: relay to the user); never claim or activate to get one write through. See `skills/conventions/agent-operator-protocol.md` |
 | A write or sync refused with `file_database_drift`, `ambiguous_source_path`, `physical_root_device_changed`, `cursor_processing_options_conflict`, `take_row_collision`, `invalid_source_uri`, `queue_capacity`, or doctor `parked_effects` | Relay the error's `suggestion` command; see `docs/guides/write-refusals.md` before running it |
 | A gbrain command or MCP tool returned an error, exited 3 (`confirmation_required`), 10 or 11, or printed `[AGENT]` / a notice block; "what does this error code mean" | Follow the agent operator protocol, `docs/protocol/AGENT_OPERATOR_v1.md` (read `code`, follow `fix.next`); look a code up offline with `gbrain errors <code>` |
@@ -7686,13 +7689,16 @@ vars — incident-time escape hatches, not everyday knobs.
    means something commits into the checkout outside gbrain: fix that writer
    instead of forcing the checkout
    ([scripts and the managed checkout](shared-checkout-git.md#scripts-and-the-managed-checkout)).
-   When local commits there are expected (automations committing alongside a
-   sibling checkout that pushes the same branch), the user can give standing
-   consent with `gbrain config set sources.refresh_publish_diverged true`
-   (default off): a diverged refresh then pushes the local commits merged with
-   the upstream in memory, the same publish as
+   When the worktree's Git durability is on, a diverged refresh publishes the
+   local commits itself (`sources.refresh_publish_diverged` unset; `false` turns it
+   off, `true` publishes even with durability off): under its publish lock it scans
+   what those commits add (messages, added lines, merge resolutions) and refuses
+   `publish_secret_found` naming the file, line and rule when one looks like a
+   secret, otherwise it pushes
+   the local commits merged with the upstream in memory, the same publish as
    `gbrain git commit-push --push-only --keep-checkout` run as a child process
-   (it skips the checkout's pre-push hook), and fast-forwards to the merge. It never moves the checkout to merge, a conflicting file refuses
+   with `--scan-secrets` (it skips the checkout's pre-push hook), and fast-forwards
+   to the merge. It never moves the checkout to merge, a conflicting file refuses
    `integrate_conflict` naming it with nothing pushed (with `gbrain.quarantine`
    on, the remote's version is published, this machine's is kept under
    `refs/gbrain/quarantine/`, and the refresh says so), an uncommitted edit to a
@@ -8423,7 +8429,8 @@ pins `full`, callable and advertised: in the held-out agent benchmark, listing
 only `starter` or `verbs` lowered task success and saved no tokens. A harness
 that caps its tool count can register `--surface starter` or `--surface verbs`.
 Persist a default for bare `serve` with `gbrain config set mcp_surface verbs`.
-On stdio, `GBRAIN_SURFACE` in the server's env overrides `--surface`; a
+On stdio, `GBRAIN_SURFACE` in the server's env overrides `--surface` (a
+`.env` file in the working directory cannot set it); a
 session widens itself with `request_tools {"surface":"full"}` (see
 `docs/operations/mcp-surface-runbook.md`).
 
@@ -10044,7 +10051,7 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | A command exited 3 (`confirmation_required`) | relay `user_message`; run `fix.command` only after the user agrees | agent, after the user agrees | the payload's `effects` | the fix's `verify` |
 | A scheduled job, workspace script or hook finds nothing in the brain (every lookup empty), or its log shows `no_brain` or `GBRAIN_DB_ACCESS no_url`, while the same command works by hand | the job runs without the brain's config: call gbrain through one wrapper that sets `GBRAIN_HOME` and loads the brain's env file, and stop discarding its stderr ([the wrapper](cron-schedule.md#calling-gbrain-unattended)); `gbrain doctor --only cron_gbrain_home --json` names crontab lines that skip it | agent | none | the job's log shows results, and `gbrain engine status --json` run through the wrapper names the expected `db_url_source` |
 | `gbrain sources refresh` refuses `refresh_not_owner` from cron or a script but works by hand | the caller resolves another gbrain home, so it is another host; the refusal names the identity file, `HOME` and `GBRAIN_HOME` it read. Set the owner's `GBRAIN_HOME` in the wrapper (not `HOME`, which also swaps git credentials); never copy or delete a `host.json` | agent | none | `gbrain sources refresh <id> --dry-run` through the wrapper |
-| `gbrain sources refresh` refuses `refresh_diverged` on every run | something commits into the managed checkout outside gbrain, usually a script that writes files and runs `git commit` without pushing. `git log @{upstream}..HEAD` names the commits; move that writer to `gbrain git commit-push -- <paths>`, then publish the stray commits merged with the upstream (`gbrain git commit-push --push-only --keep-checkout --path <checkout>`) and retry, as the [refusal](write-refusals.md#refresh_diverged) says; never force ([scripts and the managed checkout](shared-checkout-git.md#scripts-and-the-managed-checkout)). When local commits there are expected, the user can instead turn on `sources.refresh_publish_diverged` (default off) so each refresh publishes them itself ([live sync](live-sync.md)) | agent; reconciling after the user agrees | `destructive` when reconciling drops local commits | `gbrain sources refresh <id> --dry-run` |
+| `gbrain sources refresh` refuses `refresh_diverged` on every run | something commits into the managed checkout outside gbrain, usually a script that writes files and runs `git commit` without pushing. `git log @{upstream}..HEAD` names the commits; move that writer to `gbrain git commit-push -- <paths>`, then publish the stray commits merged with the upstream (`gbrain git commit-push --push-only --keep-checkout --path <checkout>`) and retry, as the [refusal](write-refusals.md#refresh_diverged) says; never force ([scripts and the managed checkout](shared-checkout-git.md#scripts-and-the-managed-checkout)). With the worktree's Git durability on, each refresh publishes them itself unless `sources.refresh_publish_diverged` is `false` (the refusal names a durability that is not on, or a value that looks like a secret in the local commits) ([live sync](live-sync.md)) | agent; reconciling after the user agrees | `destructive` when reconciling drops local commits | `gbrain sources refresh <id> --dry-run` |
 | A `--json` caller fails to parse gbrain's output | something other than gbrain wrote to stdout, usually a wrapper or a hook it runs; send that output to a log file or stderr (gbrain's own notices already go to stderr) | agent | none | the same call piped to `jq .` parses |
 | gbrain calls time out from a script or language runtime but finish by hand, or each search takes several seconds | a cold CLI start takes 3–6 s on a pooled Postgres brain: set caller timeouts of at least 10 s in both the shell and the runtime (a runtime exec timeout can override the shell's), and turn on the [warm CLI socket](cli-socket.md). If warm searches stay slow, measure the round trip to the database; one in another region dominates search time | agent; moving the database after the user agrees | none | `GBRAIN_DEBUG=1 gbrain search <query>` prints a `[cli-socket] warm:` line |
 | After a database change some processes still use the old server, or a URL variable silently keeps its old value | a shell-sourced env file has an unquoted `&` (the assignment ends there), or a process kept the environment it started with. Quote every value, keep Postgres URLs to `?sslmode=require` (driver options as variables, such as `GBRAIN_PREPARE=false`), update every URL variable the tooling reads, restart every gbrain process, and prove the switch from the database side ([switching a database](../../INSTALL_FOR_AGENTS.md#switching-a-database)). Never paste `env` output into a transcript while debugging | agent, after the user agrees | none | a row written after the restart appears on the new server |

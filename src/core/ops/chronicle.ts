@@ -9,7 +9,8 @@
 
 import type { Operation, OperationContext } from './contract.ts';
 import type { ChronicleTimelineRow, OntologyValue } from '../types.ts';
-import { readPolicyOpts, sourceScopeOpts } from './context.ts';
+import { readPolicyOpts, requireWritablePage, sourceScopeOpts } from './context.ts';
+import { withFolderRestricted } from '../search/private-visibility.ts';
 import { invalidParam } from './op-fix.ts';
 import { quoteTimelineRows } from './timeline-quote.ts';
 import { quoteFacts, quotePageText, quotesStored, unquoteAnyTranscriptText, unquoteFactText } from '../search/transcript-quote.ts';
@@ -219,7 +220,17 @@ const ontology_propose: Operation = {
     const { resolveVisibilityParam } = await import('../facts/visibility.ts');
     const { coordinatedDatabaseWrite } = await import('../persistence/database-write.ts');
     const entitySlug = String(p.entity);
-    const visibility = await resolveVisibilityParam(ctx.engine, p.visibility);
+    let visibility = await resolveVisibilityParam(ctx.engine, p.visibility);
+    // GBRA-431: a remote caller writes an observation only onto an entity page it can read (a hidden page answers as
+    // put_page's create on it does), and the observation is never wider than that page, as remember and extract_facts.
+    if (ctx.remote !== false) {
+      await requireWritablePage(ctx, entitySlug, 'ontology_propose', 'page', true);
+      const page = await ctx.engine.getPage(entitySlug, { sourceId: ctx.sourceId ?? 'default' });
+      if (page) {
+        const { tightenToPage } = await import('../facts/visibility.ts');
+        visibility = tightenToPage(visibility, await withFolderRestricted(ctx.engine, page));
+      }
+    }
     const merge = (engine: typeof ctx.engine, sourceId: string | undefined) => engine.mergeOntologyFact({
       entitySlug,
       dimension: String(p.dimension),

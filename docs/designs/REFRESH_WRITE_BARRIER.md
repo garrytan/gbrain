@@ -40,6 +40,11 @@ decision with stated preconditions, below), and the soak cell (lane L5).
   (`refreshFenceClear`); `draining` and `syncing` keep claiming so queued work drains.
 - `fenceAndMerge` refuses `refresh_source_changed` when any request, checkout effect or recovery
   record reached the worktree after the drain check.
+- #8828: HEAD that moved past `old_head` under the fence only by gbrain's own commits (every sha in
+  `old_head..HEAD` is in the commit ledger) and that the upstream ref the precheck recorded (still the checkout's `@{upstream}`) holds is the drained writes
+  the writer pushed: the fenced row takes HEAD as `old_head` and the upstream ref as `target_head`
+  (it must hold the precheck's target) before `merge_started`, and the merge goes on. Any other HEAD
+  move refuses `refresh_source_changed`.
 
 ### The barrier sequence
 
@@ -222,6 +227,23 @@ barrier exists to keep, and with the flag on each now waits instead (with it off
   `deferred_refresh_id`, so a consumer from before v294 never claims a row whose import is pending. The receipt reads `queued` with
   `deferred: { pending_import: true }`, and the caller's wait returns pending at once.
 
+**After a refresh that did not complete.** While a refresh runs, its fence refuses the managed sync that would import
+another writer's commit, and only the refresh's own member sync imports in its place. A refresh that ends `aborted`
+(in its own run, by `--abandon`, or rolled back by `--resume` or the owner's scan after its process died) never runs
+it, so a write released from it and then held for that import would wait for some later sync or refresh, indefinitely
+while the checkout stays diverged. GST-1853: while the worktree's newest refresh is `aborted`, every refresh run on the
+owner host (a tick, `--resume`, `--abandon`, even one its precheck refuses `refresh_diverged`) ends, after its own
+locks are released, by running the managed `--no-pull` sync of each member whose `last_commit` is not the checkout
+HEAD and that the run did not already sync, within `sources.refresh_sync_budget_ms` (`syncAfterUnfinishedRefresh`;
+the run lists them in `synced` once each, and a refusal's message names them). A refusal of the run's own arguments,
+`refresh_in_progress` and an unexpected failure skip it. The held writes are then prepared again against the checkout as it is, as above: an
+`expected_revision` put ends `revision_conflict`, a blind put or capture lands and names what it replaced, an append
+applies on top. Releasing them this way, instead of refusing them, gives the caller an answer within the run, and a
+refusal would only be held again on retry while the import stays pending. A member this sync cannot bring to HEAD (its
+drain blocked or out of budget) is named with `gbrain sync --source <id> --no-pull` in `next` (a blocked one also in
+`sync_blocked`) or the refusal's message, and waits for the next run or sync; its held writes stay bound by the wait
+limit below.
+
 **What a blind write replaced.** A held `put_page` or `capture` that replaces content an import brought in names
 it in three places, so the replacement is auditable and recoverable without digging: the receipt's
 `supersedes` (`slug`, `path`, the replaced `revision`, the imported `commit`: the newest commit
@@ -276,9 +298,18 @@ Deferred rows are durable rows; nothing about them lives in process memory.
   - Killed while `fenced`, before the merge started, with HEAD moved past `old_head` on its own line
     (writes that landed while it drained, or a commit gbrain did not make): recovery aborts the row,
     as the live tick would, and its deferred writes commit (GBEV-44, GST-1674).
+  - Killed after the merge started but before HEAD reached the target (a commit landed on `old_head`
+    right before the merge, so git refused the fast-forward): the row also records
+    `outcome.merge_started_at`, and when the reflogs of HEAD and its branch show no move to the target
+    since then, recovery aborts the row the same way and keeps that commit (GST-1674). It reads the
+    last 1 MiB of each reflog file and needs an unbroken old-to-new chain from HEAD back past the merge
+    start (or to the log's first entry). Without a readable reflog, with a gap in the chain, with a
+    tail that ends inside that window, or on a row an older version wrote, it stays `recovery_required`.
+    A reflog read git cannot finish leaves the row `fenced` for the next scan. Refresh git calls
+    drop `GIT_COMMITTER_DATE`, so the merge's reflog entry carries the clock recovery compares with.
   - Killed after the merge, with HEAD at the target or a commit on top of it and no member synced off
     it: recovery records the merge and the next refresh finishes the member syncs, with no `--resume`.
-  - A merge that started and a HEAD that no longer holds the target (a reset and an unrelated commit)
+  - A merge that ran and a HEAD that no longer holds the target (a reset and an unrelated commit)
     stays `recovery_required` for the operator.
   - The merge runs only when the update that records `merge_started` matched the `fenced` row; a row
     recovery moved meanwhile ends the refresh `refresh_source_changed` with nothing merged (GST-1623).

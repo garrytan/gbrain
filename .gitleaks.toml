@@ -69,3 +69,11 @@ condition = "AND"
 paths = ['''^\.claude/skills/gstack/supabase/config\.sh$''']
 regexTarget = "secret"
 regexes = ['''^sb_publishable_[A-Za-z0-9_-]+$''']
+
+[[allowlists]]
+description = "The skill resolver's tokenizer id, a version label named TOKENIZER_ID"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^src/core/skills/resolver/tokenize\.ts$''']
+regexTarget = "secret"
+regexes = ['''^gbrain-skill-lex-v1$''']

@@ -37,6 +37,21 @@ function temporalWalkFilter(alias: string, opts?: LinkReadScope) {
   return opts?.temporal ? trustedSql(`AND ${relationshipFilterSql(alias, { ...opts.temporal, excludePrivate: opts.excludePrivate })}`) : sqlFragment``;
 }
 
+const ORIGIN_COLUMNS = { l: 'l.origin_page_id', l2: 'l2.origin_page_id' } as const;
+
+/**
+ * Keeps an edge only while its origin page (the page that authored it) is live
+ * and, under a source scope, inside that scope. An edge with no origin page
+ * passes.
+ */
+function liveOriginFilter(link: keyof typeof ORIGIN_COLUMNS, scope?: { sourceId?: string; sourceIds?: string[] }) {
+  const inScope = scope?.sourceIds?.length
+    ? sqlFragment` AND lo.source_id = ANY(${scope.sourceIds}::text[])`
+    : scope?.sourceId ? sqlFragment` AND lo.source_id = ${scope.sourceId}` : sqlFragment``;
+  const col = trustedSql(ORIGIN_COLUMNS[link]);
+  return sqlFragment`AND (${col} IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = ${col} AND lo.deleted_at IS NULL${inScope}))`;
+}
+
 /**
  * SQL pieces of an opt-in keyset page (LinkReadScope.page, #6876). Without a
  * page every piece renders master's statement text, so internal callers read
@@ -349,10 +364,9 @@ export async function getLinks(exec: ScopedRead, slug: string, opts?: LinkReadSc
     const finish = (rows: unknown[]) => finishTemporal(rows, opts);
     const page = linkPageSql(opts, 'from');
       // #2200: federated grant scopes ALL THREE page endpoints — from, to, AND
-      // the origin (the page that authored the edge, surfaced as origin_slug).
-      // Scoping only from+to would still leak an out-of-grant origin's slug; the
-      // origin LEFT JOIN carries the same ANY($) filter so origin_slug nulls
-      // out of grant. Remote MCP clients always land here.
+      // the origin (the page that authored the edge, surfaced as origin_slug):
+      // an edge whose origin is outside the grant or deleted is dropped with
+      // its context and origin_field. Remote MCP clients always land here.
       if (opts?.sourceIds && opts.sourceIds.length > 0) {
         const ids = opts.sourceIds;
         const rows = (await exec.run(sqlFragment`
@@ -364,9 +378,9 @@ export async function getLinks(exec: ScopedRead, slug: string, opts?: LinkReadSc
           FROM links l
           JOIN pages f ON f.id = l.from_page_id
           JOIN pages t ON t.id = l.to_page_id
-          LEFT JOIN pages o ON o.id = l.origin_page_id AND o.source_id = ANY(${ids}::text[]) ${trustedSql(tJoin)}
+          LEFT JOIN pages o ON o.id = l.origin_page_id ${trustedSql(tJoin)}
           WHERE f.slug = ${slug} AND f.source_id = ANY(${ids}::text[]) AND t.source_id = ANY(${ids}::text[])
-            AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${trustedSql(privacy)}${page.where}
+            AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${liveOriginFilter('l', { sourceIds: ids })} ${trustedSql(privacy)}${page.where}
           ORDER BY l.id${page.limit}
         `)).rows;
         return finish(rows);
@@ -376,8 +390,9 @@ export async function getLinks(exec: ScopedRead, slug: string, opts?: LinkReadSc
       // source filter (cross-source view for internal callers). With
       // opts.sourceId, scope the from-page lookup.
       // #3754: all three arms filter soft-deleted endpoints (f/t deleted_at IS
-      // NULL) so links to/from soft-deleted pages stop voting in the graph,
-      // matching orphans/get/list/search visibility.
+      // NULL) and soft-deleted origins so links to/from or authored by
+      // soft-deleted pages stop voting in the graph, matching
+      // orphans/get/list/search visibility.
       if (opts?.sourceId) {
         const rows = (await exec.run(sqlFragment`
           SELECT f.slug as from_slug, f.source_id as from_source_id,
@@ -390,7 +405,7 @@ export async function getLinks(exec: ScopedRead, slug: string, opts?: LinkReadSc
           JOIN pages t ON t.id = l.to_page_id
           LEFT JOIN pages o ON o.id = l.origin_page_id ${trustedSql(tJoin)}
           WHERE f.slug = ${slug} AND f.source_id = ${opts.sourceId}
-            AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${trustedSql(privacy)}${page.where}
+            AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${liveOriginFilter('l')} ${trustedSql(privacy)}${page.where}
           ORDER BY l.id${page.limit}
         `)).rows;
         return finish(rows);
@@ -406,7 +421,7 @@ export async function getLinks(exec: ScopedRead, slug: string, opts?: LinkReadSc
         JOIN pages t ON t.id = l.to_page_id
         LEFT JOIN pages o ON o.id = l.origin_page_id ${trustedSql(tJoin)}
         WHERE f.slug = ${slug}
-          AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${trustedSql(privacy)}${page.where}
+          AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${liveOriginFilter('l')} ${trustedSql(privacy)}${page.where}
         ORDER BY l.id${page.limit}
       `)).rows;
       return finish(rows);
@@ -433,9 +448,9 @@ export async function getBacklinks(exec: ScopedRead, slug: string, opts?: LinkRe
           FROM links l
           JOIN pages f ON f.id = l.from_page_id
           JOIN pages t ON t.id = l.to_page_id
-          LEFT JOIN pages o ON o.id = l.origin_page_id AND o.source_id = ANY(${ids}::text[]) ${trustedSql(tJoin)}
+          LEFT JOIN pages o ON o.id = l.origin_page_id ${trustedSql(tJoin)}
           WHERE t.slug = ${slug} AND t.source_id = ANY(${ids}::text[]) AND f.source_id = ANY(${ids}::text[])
-            AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${trustedSql(privacy)}${page.where}
+            AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${liveOriginFilter('l', { sourceIds: ids })} ${trustedSql(privacy)}${page.where}
           ORDER BY l.id${page.limit}
         `)).rows;
         return finish(rows);
@@ -454,7 +469,7 @@ export async function getBacklinks(exec: ScopedRead, slug: string, opts?: LinkRe
           JOIN pages t ON t.id = l.to_page_id
           LEFT JOIN pages o ON o.id = l.origin_page_id ${trustedSql(tJoin)}
           WHERE t.slug = ${slug} AND t.source_id = ${opts.sourceId}
-            AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${trustedSql(privacy)}${page.where}
+            AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${liveOriginFilter('l')} ${trustedSql(privacy)}${page.where}
           ORDER BY l.id${page.limit}
         `)).rows;
         return finish(rows);
@@ -470,7 +485,7 @@ export async function getBacklinks(exec: ScopedRead, slug: string, opts?: LinkRe
         JOIN pages t ON t.id = l.to_page_id
         LEFT JOIN pages o ON o.id = l.origin_page_id ${trustedSql(tJoin)}
         WHERE t.slug = ${slug}
-          AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${trustedSql(privacy)}${page.where}
+          AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${liveOriginFilter('l')} ${trustedSql(privacy)}${page.where}
         ORDER BY l.id${page.limit}
       `)).rows;
       return finish(rows);
@@ -482,18 +497,20 @@ export async function listLinkSources(
     opts?: { sourceId?: string; sourceIds?: string[] },
   ): Promise<{ link_source: string | null; count: number }[]> {
       // v114 (#1941): distinct provenances + counts for `gbrain link-sources`.
-      // Scope by the FROM page's source (consistent with getLinks). Federated
-      // {sourceIds} takes precedence over scalar {sourceId}; neither = unscoped.
+      // A scoped read counts an edge only when its from page, its to page and
+      // its origin page (when it has one, and it is live) are all in scope.
+      // Federated {sourceIds} takes precedence over scalar {sourceId}; neither = unscoped.
       const sourceCondition =
         opts?.sourceIds && opts.sourceIds.length > 0
-          ? sqlFragment`WHERE f.source_id = ANY(${opts.sourceIds}::text[])`
+          ? sqlFragment`WHERE f.source_id = ANY(${opts.sourceIds}::text[]) AND t.source_id = ANY(${opts.sourceIds}::text[]) ${liveOriginFilter('l', opts)}`
           : opts?.sourceId
-            ? sqlFragment`WHERE f.source_id = ${opts.sourceId}`
+            ? sqlFragment`WHERE f.source_id = ${opts.sourceId} AND t.source_id = ${opts.sourceId} ${liveOriginFilter('l', opts)}`
             : sqlFragment``;
       const rows = (await exec.run(sqlFragment`
         SELECT l.link_source, COUNT(*)::int AS count
         FROM links l
         JOIN pages f ON f.id = l.from_page_id
+        JOIN pages t ON t.id = l.to_page_id
         ${sourceCondition}
         GROUP BY l.link_source
         ORDER BY count DESC, l.link_source ASC NULLS LAST
@@ -507,6 +524,7 @@ export async function findOrphanPages(exec: LegacyUnscopedRead, opts?: {
     sourceIds?: string[];
     excludePrivate?: boolean;
     mode?: 'inbound' | 'islanded';
+    scopeInbound?: boolean;
   }): Promise<Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean; source_id?: string }>> {
     // Soft-delete filter on BOTH sides:
     //   - candidate: p.deleted_at IS NULL — soft-deleted pages aren't orphan candidates
@@ -515,10 +533,11 @@ export async function findOrphanPages(exec: LegacyUnscopedRead, opts?: {
     // because a soft-deleted page links to it. v0.26.5 invariant; codex C11.
     //
     // v0.41.29.0: scope ONLY the candidate side (`p.source_id`) when opts.sourceId
-    // is set. The inbound-link NOT EXISTS deliberately counts links from ANY source:
-    // a page in source X linked FROM source Y is reachable, so NOT an orphan of X.
-    // Do NOT add `src.source_id = p.source_id` here — that would be the stricter
-    // intra-source-only definition we deliberately reject.
+    // is set. The inbound-link NOT EXISTS deliberately counts links from ANY source
+    // for the local operator: a page in source X linked FROM source Y is reachable,
+    // so NOT an orphan of X. Do NOT add `src.source_id = p.source_id` here — that
+    // would be the stricter intra-source-only definition we deliberately reject.
+    // `scopeInbound` (remote callers) counts only links whose other endpoint and live origin are inside the same scope.
     const sourceFilter =
       opts?.sourceIds && opts.sourceIds.length > 0
         ? sqlFragment`AND p.source_id = ANY(${opts.sourceIds}::text[])`
@@ -536,7 +555,7 @@ export async function findOrphanPages(exec: LegacyUnscopedRead, opts?: {
             FROM links l
             JOIN pages tgt ON tgt.id = l.to_page_id
             WHERE l.from_page_id = p.id
-              AND tgt.deleted_at IS NULL ${opts?.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('tgt')} AND ${privateLinkOriginFilterForCaller('l')}`) : sqlFragment``}
+              AND tgt.deleted_at IS NULL ${opts?.scopeInbound ? sourceScope('tgt', opts) : sqlFragment``} ${opts?.scopeInbound ? liveOriginFilter('l', opts) : sqlFragment``} ${opts?.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('tgt')} AND ${privateLinkOriginFilterForCaller('l')}`) : sqlFragment``}
           )`
         : sqlFragment``;
     const rows = (await exec.run(sqlFragment`
@@ -555,7 +574,7 @@ export async function findOrphanPages(exec: LegacyUnscopedRead, opts?: {
           FROM links l
           JOIN pages src ON src.id = l.from_page_id
           WHERE l.to_page_id = p.id
-            AND src.deleted_at IS NULL ${opts?.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('src')} AND ${privateLinkOriginFilterForCaller('l')}`) : sqlFragment``}
+            AND src.deleted_at IS NULL ${opts?.scopeInbound ? sourceScope('src', opts) : sqlFragment``} ${opts?.scopeInbound ? liveOriginFilter('l', opts) : sqlFragment``} ${opts?.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('src')} AND ${privateLinkOriginFilterForCaller('l')}`) : sqlFragment``}
         )
         ${outboundFilter}
       ORDER BY p.slug
@@ -622,7 +641,7 @@ function bfsWalkCtes(w: {
       )`;
 }
 
-const SCOPED_SOURCE_COLUMNS = { p: 'p.source_id', p2: 'p2.source_id', p3: 'p3.source_id', pf: 'pf.source_id', pt: 'pt.source_id' } as const;
+const SCOPED_SOURCE_COLUMNS = { src: 'src.source_id', tgt: 'tgt.source_id', p: 'p.source_id', p2: 'p2.source_id', p3: 'p3.source_id', pf: 'pf.source_id', pt: 'pt.source_id' } as const;
 
 function sourceScope(alias: keyof typeof SCOPED_SOURCE_COLUMNS, opts?: { sourceId?: string; sourceIds?: string[] }) {
   const column = trustedSql(SCOPED_SOURCE_COLUMNS[alias]);
@@ -649,7 +668,7 @@ export async function traverseGraph(
         seed: sqlFragment`p.slug = ${slug} AND p.deleted_at IS NULL ${privacy('p')} ${sourceScope('p', opts)}`,
         maxLayer: depth,
         direction: 'out',
-        step: sqlFragment`p2.deleted_at IS NULL ${privacy('p2', 'l')} ${sourceScope('p2', opts)} ${temporalWalkFilter('l', opts)}`,
+        step: sqlFragment`p2.deleted_at IS NULL ${privacy('p2', 'l')} ${sourceScope('p2', opts)} ${liveOriginFilter('l', opts)} ${temporalWalkFilter('l', opts)}`,
         layerCap: opts?.frontierCap,
       })}
       SELECT g.slug, g.source_id, g.title, g.type, g.depth,
@@ -663,7 +682,7 @@ export async function traverseGraph(
           (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
            FROM links l2
            JOIN pages p3 ON p3.id = l2.to_page_id
-           WHERE l2.from_page_id = g.id AND p3.deleted_at IS NULL ${privacy('p3', 'l2')} ${sourceScope('p3', opts)} ${temporalWalkFilter('l2', opts)}),
+           WHERE l2.from_page_id = g.id AND p3.deleted_at IS NULL ${privacy('p3', 'l2')} ${sourceScope('p3', opts)} ${liveOriginFilter('l2', opts)} ${temporalWalkFilter('l2', opts)}),
           '[]'::jsonb
         ) as links
       FROM (SELECT p.id, p.slug, p.source_id, p.title, p.type, w.depth
@@ -697,7 +716,8 @@ export async function traversePathsDetailed(
     // v0.34.1 (#861 — P0 leak seal) and #3754: source scope, soft delete,
     // privacy, link type and temporal policy apply at the seed, at every BFS
     // step and on both endpoints of every returned edge, so an out-of-scope,
-    // private or deleted page neither anchors, relays nor terminates a path.
+    // private or deleted page neither anchors, relays nor terminates a path;
+    // an edge whose origin page is deleted or out of scope is not walked.
     // The walk visits pages at depth < `depth`; each qualifying edge is
     // returned once, at one past the depth of its shallower visited endpoint
     // on the walked side ('both' counts either endpoint).
@@ -705,7 +725,7 @@ export async function traversePathsDetailed(
       seed: sqlFragment`p.slug = ${slug} AND p.deleted_at IS NULL ${privacy('p')} ${sourceScope('p', opts)}`,
       maxLayer: depth - 1,
       direction,
-      step: sqlFragment`p2.deleted_at IS NULL ${privacy('p2', 'l')} ${linkTypeFilter} ${temporalWalkFilter('l', opts)} ${sourceScope('p2', opts)}`,
+      step: sqlFragment`p2.deleted_at IS NULL ${privacy('p2', 'l')} ${linkTypeFilter} ${temporalWalkFilter('l', opts)} ${sourceScope('p2', opts)} ${liveOriginFilter('l', opts)}`,
     });
     const visited = sqlFragment`nodes AS (SELECT p.id, p.slug, p.source_id, w.depth FROM walk w JOIN pages p ON p.id = w.id WHERE w.pos <= ${TRAVERSE_WALK_ROW_CAP}::int)`;
     const walkTruncated = sqlFragment`(SELECT count(*) FROM walk) > ${TRAVERSE_WALK_ROW_CAP}::int AS walk_truncated`;
@@ -719,7 +739,7 @@ export async function traversePathsDetailed(
         WHERE w.depth < ${depth}
           AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
           ${linkTypeFilter} ${temporalWalkFilter('l', opts)}
-          ${sourceScope('p2', opts)}`
+          ${sourceScope('p2', opts)} ${liveOriginFilter('l', opts)}`
       : direction === 'in'
         ? sqlFragment`p2.id as from_id, p2.slug as from_slug, p2.source_id as from_source_id,
                w.id as to_id, w.slug as to_slug, w.source_id as to_source_id,
@@ -730,7 +750,7 @@ export async function traversePathsDetailed(
         WHERE w.depth < ${depth}
           AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
           ${linkTypeFilter} ${temporalWalkFilter('l', opts)}
-          ${sourceScope('p2', opts)}`
+          ${sourceScope('p2', opts)} ${liveOriginFilter('l', opts)}`
         : sqlFragment`pf.id as from_id, pf.slug as from_slug, pf.source_id as from_source_id,
                pt.id as to_id, pt.slug as to_slug, pt.source_id as to_source_id,
                l.link_type, l.context, e.depth + 1 as depth
@@ -753,7 +773,7 @@ export async function traversePathsDetailed(
           AND pt.deleted_at IS NULL ${privacy('pt')}
           ${linkTypeFilter} ${temporalWalkFilter('l', opts)}
           ${sourceScope('pf', opts)}
-          ${sourceScope('pt', opts)}`;
+          ${sourceScope('pt', opts)} ${liveOriginFilter('l', opts)}`;
     const rows = (await exec.run(sqlFragment`
       WITH RECURSIVE ${walk}, ${visited}
       SELECT ${walkTruncated}, ${edges}

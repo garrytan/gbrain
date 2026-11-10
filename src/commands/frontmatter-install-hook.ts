@@ -37,6 +37,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { discoverGitRoot } from '../core/sync-git.ts';
+import { gitChildEnv } from '../core/git-env.ts';
 
 const HOOK_BANNER = '# gbrain frontmatter pre-commit hook (v0.22.4+)';
 /** One line per guarded subdirectory (root-relative, trailing slash). No lines = whole repo. */
@@ -406,10 +407,16 @@ function currentHooksPath(root: string): string {
   }
 }
 
-/** The clone's own config turns hooks off (LFS_OFF_CLONE_CONFIG on a URL source a remote caller added); a global or system value does not count. */
+/**
+ * The clone's own config turns hooks off (LFS_OFF_CLONE_CONFIG); a global or system value does not count. Read with
+ * the repository-locating and config variables scrubbed, so an inherited GIT_DIR, GIT_WORK_TREE or GIT_CONFIG* cannot
+ * point the read at another repository or config file.
+ */
 function hooksOffInClone(root: string): boolean {
+  const env = gitChildEnv();
+  delete env.GIT_CONFIG_GLOBAL; delete env.GIT_CONFIG_SYSTEM; delete env.GIT_CONFIG_NOSYSTEM;
   try {
-    return git(root, ['config', '--local', '--get', 'core.hooksPath']) === HOOKS_OFF;
+    return execFileSync('git', ['-C', root, 'config', '--local', '--get', 'core.hooksPath'], { encoding: 'utf8', env }).trim() === HOOKS_OFF;
   } catch {
     return false;
   }
@@ -429,7 +436,7 @@ const samePath = (a: string, b: string): boolean => {
  * `.githooks/<hook>` or a live `.git/hooks/<hook>` both block it too.
  */
 export function hooksPathBlocker(root: string): string | null {
-  if (hooksOffInClone(root)) return `hooks are off in this clone on purpose (core.hooksPath=${HOOKS_OFF}, set on a source a remote caller added by URL), and gbrain leaves them off`;
+  if (hooksOffInClone(root)) return `hooks are off in this clone's own config (core.hooksPath=${HOOKS_OFF}), and gbrain leaves them off`;
   const current = currentHooksPath(root);
   if (current) {
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- fixed literal tail under the discovered git root

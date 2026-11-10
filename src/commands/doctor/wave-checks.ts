@@ -180,6 +180,14 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async (engine, scope) => (await import('./checks/frontmatter-hook.ts')).frontmatterHookCheck(engine, scope.sourceIds),
   },
   {
+    id: 'url_source_origin', resolution: 'operator', registration: 'wave',
+    hostOnly: 'Which caller added a source is a decision only the brain host operator can record.',
+    count: d => Number(d.count ?? 0),
+    impact: 'Some URL source clones have no record of who added them, so their reclones use the clone settings of a local add',
+    instruction: 'Ask the user which of the listed sources a remote caller added; on the brain host, preview `gbrain sources record-origin <id>... --remote` (`--local` for the rest), then rerun it with --apply.',
+    run: async engine => (await import('./checks/url-source-origin.ts')).urlSourceOriginCheck(engine),
+  },
+  {
     id: 'orphan_persistence_bindings', resolution: 'repair', registration: 'wave',
     hostOnly: 'Bindings of removed sources are brain-wide persistence bookkeeping outside any source scope.',
     count: d => Number(d.count ?? 0),
@@ -331,6 +339,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async (engine, scope) => (await import('./checks/atom-retirements.ts')).atomRetirementsRestorableCheck(engine, scope.sourceIds),
   },
   {
+    id: 'atom_fence_rows', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Narrowing atoms to private is a host-side, explicit-only repair.',
+    count: d => Number(d.count ?? 0),
+    impact: 'Some world atoms carry text of a fence row their source page shows only to the owner',
+    run: async (engine, scope) => (await import('./checks/atom-fence-rows.ts')).atomFenceRowsCheck(engine, scope.sourceIds),
+  },
+  {
     id: 'generation_retirements', resolution: 'repair', registration: 'wave',
     hostOnly: 'Restoring a derived generation is a host-side, explicit-only repair.',
     count: d => Number(d.items ?? 0),
@@ -357,6 +372,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     count: d => Number(d.evidenced ?? 0) + Number(d.ambiguous ?? 0),
     impact: 'Some conversation-extractor facts were expired by the pre-v0.60.11.0 canonical projection and recall no longer returns them',
     run: async (engine, scope) => (await import('./checks/extractor-facts.ts')).extractorFactsCheck(engine, scope.sourceIds),
+  },
+  {
+    id: 'unwithdrawn_facts', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Restoring facts a facts-fence generation retired without a withdrawal is a host-side, explicit-only repair.',
+    count: d => Number(d.evidenced ?? 0) + Number(d.ambiguous ?? 0),
+    impact: 'Some facts were retired by a facts-fence generation although no fence of their page held them, and recall no longer returns them',
+    run: async (engine, scope) => (await import('./checks/unwithdrawn-facts.ts')).unwithdrawnFactsCheck(engine, scope.sourceIds),
   },
   {
     id: 'conversation_label_facts', resolution: 'repair', registration: 'wave',

@@ -29,7 +29,7 @@ import { _resetRefreshBarrierCacheForTests, deferredReplayRefusal, expireDeferre
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { prepareFileTarget } from '../src/core/persistence/page-prepare.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
-import { refreshWorktree, resumeWorktreeRefreshes } from '../src/core/persistence/worktree-refresh.ts';
+import { refreshWorktree, resumeWorktreeRefreshes, type RefreshBoundary } from '../src/core/persistence/worktree-refresh.ts';
 import { _transientDelayForTests } from '../src/core/persistence/sync-drain.ts';
 import { deleteSourceRow } from '../src/core/source-delete.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
@@ -100,12 +100,13 @@ const ownerHost = async (f: RefreshFixture) => (await f.engine.executeRaw<{ owne
 /** Drives this process's consumer on `row` for up to `ms`: until it settles, or (a write held again) until the wait ends. */
 const drive = async (f: RefreshFixture, row: WriteRequest, ms = 5_000) => waitForWrite(f.engine, (await getWriteRequestById(f.engine, row.id))!, { engine: f.engine.kind } as never, ms);
 
-/** Runs `fn` while a real refresh of the checkout is paused at its drained boundary; the refresh changes alpha/two.md by default. */
-async function duringRefresh(f: RefreshFixture, fn: () => Promise<void>, change: [string, string] = ['alpha/two.md', page('Alpha two', 'An upstream observation.')]) {
+/** Runs `fn` while a real refresh of the checkout is paused at its drained boundary; the refresh changes alpha/two.md by default. `at` runs at every later boundary. */
+async function duringRefresh(f: RefreshFixture, fn: () => Promise<void>, change: [string, string] = ['alpha/two.md', page('Alpha two', 'An upstream observation.')],
+  at?: (point: RefreshBoundary) => Promise<void>) {
   f.push(...change);
   let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
   let reached!: () => void; const drained = new Promise<void>(resolve => { reached = resolve; });
-  const refresh = refreshWorktree(f.engine, f.alpha, { hooks: { boundary: async point => { if (point === 'drained') { reached(); await gate; } } } });
+  const refresh = refreshWorktree(f.engine, f.alpha, { hooks: { boundary: async point => { if (point === 'drained') { reached(); await gate; } else await at?.(point); } } });
   await drained;
   try { await fn(); } catch (error) { release(); await refresh.catch(() => undefined); throw error; }
   release();
@@ -220,6 +221,60 @@ test('item 1: a deferred write never lands on top of a later write to its page t
   const imported = { ...done, deferred_refresh_id: null, deferred_import_from: '' } as WriteRequest;
   expect(await deferredReplayRefusal(f.engine, imported, [])).toMatchObject({ state: 'conflict', failure: { code: 'revision_conflict' } });
   expect(await deferredReplayRefusal(f.engine, { ...imported, operation: 'remember' } as WriteRequest, [])).toBeNull();
+}), 180_000);
+
+test('#8765 outside voice: a later write counts unless managed sync wrote it (submit_job), its receipt compacted or not; capture refuses a managed_sync_ kind', () => each(async f => {
+  let deferred!: WriteRequest;
+  const refresh = await duringRefresh(f, async () => {
+    const out = await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Deferred, accepted first.') });
+    deferred = await requestRow(f, out.receipt.request_id);
+    expect(deferred.state).toBe('deferred');
+    await disposePersistenceConsumer(f.engine);
+  });
+  expect((await refresh).status).toBe('completed');
+  const later = await requestRow(f, (await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Accepted second.') })).receipt.request_id);
+  expect(later.state).toBe('committed');
+  const held = { ...deferred, deferred_refresh_id: null, deferred_import_from: '' } as WriteRequest;
+  const refusal = () => deferredReplayRefusal(f.engine, held, []);
+  // A foreground row whose stored intent names a managed_sync_ kind (a caller-chosen value) is still a later write.
+  await f.engine.executeRaw(`UPDATE persistence_requests SET intent=intent||'{"kind":"managed_sync_import"}'::jsonb WHERE id=$1::uuid`, [later.id]);
+  expect(await refusal()).toMatchObject({ state: 'conflict', failure: { code: 'revision_conflict' } });
+  // Managed sync's own import is not, before or after receipt compaction drops its intent.
+  await f.engine.executeRaw(`UPDATE persistence_requests SET operation='submit_job', outcome=COALESCE(outcome,'{}'::jsonb)||'{"imported_file":true}'::jsonb WHERE id=$1::uuid`, [later.id]);
+  expect(await refusal()).toBeNull();
+  await f.engine.executeRaw('UPDATE persistence_requests SET intent=NULL, compacted=true WHERE id=$1::uuid', [later.id]);
+  expect(await refusal()).toBeNull();
+  // A compacted foreground write still counts.
+  await f.engine.executeRaw(`UPDATE persistence_requests SET operation='put_page', outcome=outcome-'imported_file' WHERE id=$1::uuid`, [later.id]);
+  expect(await refusal()).toMatchObject({ state: 'conflict', failure: { code: 'revision_conflict' } });
+  // So does a compacted submit_job that imported no file (maintenance work), whose outcome has no imported_file at all.
+  await f.engine.executeRaw(`UPDATE persistence_requests SET operation='submit_job' WHERE id=$1::uuid`, [later.id]);
+  expect(await refusal()).toMatchObject({ state: 'conflict', failure: { code: 'revision_conflict' } });
+  const before = (await f.engine.readPageSnapshot('two', { sourceId: f.alpha }))?.revision;
+  const captured = await local(f, 'capture', { slug: 'two', content: 'An event.', kind: 'managed_sync_import' }).catch(error => error);
+  expect(captured).toBeInstanceOf(OperationError);
+  expect((captured as OperationError).code).toBe('invalid_params');
+  expect((await f.engine.readPageSnapshot('two', { sourceId: f.alpha }))?.revision).toBe(before);
+}), 180_000);
+
+test('#8765 review: a connector import stays a later write after compaction drops its intent, as overwritten-edits counts it', () => each(async f => {
+  let deferred!: WriteRequest;
+  const refresh = await duringRefresh(f, async () => {
+    const out = await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Deferred, accepted first.') });
+    deferred = await requestRow(f, out.receipt.request_id);
+    expect(deferred.state).toBe('deferred');
+    await disposePersistenceConsumer(f.engine);
+  });
+  expect((await refresh).status).toBe('completed');
+  const later = await requestRow(f, (await local(f, 'put_page', { slug: 'one', content: page('Alpha one', 'Accepted second.') })).receipt.request_id);
+  expect(later.state).toBe('committed');
+  const held = { ...deferred, deferred_refresh_id: null, deferred_import_from: '' } as WriteRequest;
+  // connector-sync.ts records every connector import with imported_file and connector_database (false on a bound source).
+  for (const connectorDatabase of [true, false]) {
+    await f.engine.executeRaw(`UPDATE persistence_requests SET operation='submit_job', intent=NULL, compacted=true,
+      outcome=COALESCE(outcome,'{}'::jsonb)||jsonb_build_object('imported_file',true,'connector_database',$2::boolean) WHERE id=$1::uuid`, [later.id, connectorDatabase]);
+    expect(await deferredReplayRefusal(f.engine, held, [])).toMatchObject({ state: 'conflict', failure: { code: 'revision_conflict' } });
+  }
 }), 180_000);
 
 test('item 16: a write deferred behind a refresh is held for an import without its released refresh, unless the refresh changed its file', () => each(async f => {
@@ -422,6 +477,8 @@ test('item 2 (confirmation): polling a receipt never publishes a released deferr
   const refresh = await duringRefresh(f, async () => {
     deferred = await requestRow(f, (await call(f, 'put_page', { slug: 'notes/polled', content: page('Polled', 'deferred') })).body.request_id);
     await disposePersistenceConsumer(f.engine);
+  }, undefined, async point => {
+    if (point === 'synced') await disposePersistenceConsumer(f.engine);
   });
   expect((await refresh).status).toBe('completed');
   for (let i = 0; i < 3; i++) await call(f, 'get_write_request', { request_id: deferred.request_id });

@@ -155,11 +155,15 @@ describe('decideSelfUpgrade — pure branches', () => {
 });
 
 describe('canSelfUpdate', () => {
-  test('bun / bun-link / clawhub always self-update', () => {
-    for (const m of ['bun', 'bun-link', 'clawhub']) {
+  test('bun / bun-link always self-update', () => {
+    for (const m of ['bun', 'bun-link']) {
       expect(canSelfUpdate(m, 'darwin', 'arm64')).toBe(true);
       expect(canSelfUpdate(m, 'win32', 'x64')).toBe(true);
     }
+  });
+  test('#8464: clawhub is never an unattended upgrade path', () => {
+    expect(canSelfUpdate('clawhub', 'darwin', 'arm64')).toBe(false);
+    expect(canSelfUpdate('clawhub', 'linux', 'x64')).toBe(false);
   });
   test('binary self-updates only where a release asset exists (darwin-arm64, linux-x64)', () => {
     expect(canSelfUpdate('binary', 'darwin', 'arm64')).toBe(true);

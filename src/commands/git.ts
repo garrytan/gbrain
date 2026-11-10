@@ -12,7 +12,7 @@
  *   gbrain git guard [--install | --uninstall] [--path <dir>] [--json]
  */
 import { existsSync, realpathSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { commitAndPush, checkoutRoot, pullShared, scopePaths, COMMIT_LOCK_NAME, SOURCE_ROOT_CONFIG, type Resolution } from '../core/git/commit-push.ts';
 import { guardStatus, installGuard, uninstallGuard } from '../core/git/commit-guard.ts';
 import { appendPushLog } from '../core/brain-repo-durability.ts';
@@ -22,8 +22,8 @@ import { writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { execFileSync } from '../core/spawn.ts';
 import { gitChildEnv } from '../core/git-env.ts';
 import { GIT_ENV } from '../core/git-transport.ts';
-import { managedFilesystemRootFor } from '../core/persistence/filesystem-guard.ts';
-import { registeredManagedRootRecords } from '../core/persistence/root-registry.ts';
+import { staleEnclosingMarker } from '../core/persistence/filesystem-guard.ts';
+import { canonicalFilesystemPath, checkoutGitMetadata, managedRootMarkerFor, registeredManagedRootRecords } from '../core/persistence/root-registry.ts';
 
 const HELP = `Usage: gbrain git commit-push [--path <dir>] -m <msg> [--json] [--] <paths...>
        gbrain git commit-push --push-only [--path <dir>] [--branch <b>]
@@ -50,6 +50,8 @@ Flags:
   --keep-checkout     With --push-only: never move the checkout and skip its pre-push hook. The one
                       publish allowed in a managed canonical worktree (its Git effects' integrate_conflict
                       fix); gbrain sources refresh brings the merged remote files in afterwards.
+  --scan-secrets      With --push-only: before pushing, scan what the unpublished commits add (messages,
+                      added lines, merge resolutions) and refuse publish_secret_found on a finding.
   --pull              Bring remote commits in (fast-forward, or an in-memory merge); never pushes.
   --require-clean     Unattended rule: --pull skips when the checkout has any local edit;
                       a push never advances a checkout that has one, and never waits for
@@ -81,12 +83,12 @@ is installed.`;
 interface Parsed {
   sub?: string; path?: string; message?: string; branch?: string; expectRemote?: string; json: boolean; pushOnly: boolean; pull: boolean;
   requireClean: boolean; dryRun: boolean; help: boolean; keepCheckout: boolean; paths: string[]; resolve: string[]; base: string[];
-  pending: boolean; allowOutside: boolean; install: boolean; uninstall: boolean;
+  pending: boolean; allowOutside: boolean; install: boolean; uninstall: boolean; scanSecrets: boolean;
 }
 
 function parse(args: string[]): Parsed {
   const p: Parsed = { json: false, pushOnly: false, pull: false, requireClean: false, dryRun: false, help: false, keepCheckout: false, paths: [], resolve: [], base: [],
-    pending: false, allowOutside: false, install: false, uninstall: false };
+    pending: false, allowOutside: false, install: false, uninstall: false, scanSecrets: false };
   let rest = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -103,6 +105,7 @@ function parse(args: string[]): Parsed {
     else if (a === '--json') p.json = true;
     else if (a === '--push-only') p.pushOnly = true;
     else if (a === '--keep-checkout') p.keepCheckout = true;
+    else if (a === '--scan-secrets') p.scanSecrets = true;
     else if (a === '--pull') p.pull = true;
     else if (a === '--require-clean') p.requireClean = true;
     else if (a === '--dry-run') p.dryRun = true;
@@ -142,11 +145,19 @@ function parseResolutions(specs: string[]): Map<string, Resolution> {
  * them and carries no mark of a gbrain brain checkout is refused before anything is staged (a wrapper that changed into
  * another repository). A legacy source is not in that record, so `gbrain sources harden`'s marks admit it: a
  * gbrain.sourceRoot or gbrain.cliPath entry, or the committed scripts/brain-commit-push.sh (whose own calls pass no --path).
- * An explicit --path names its checkout and is not checked here.
+ * An explicit --path names its checkout and is not checked here. GST-1623: a registered checkout must contain the resolved
+ * one, or be a directory of it that its HEAD tracks; a repository that only encloses a registered checkout (a nested clone)
+ * is not a source checkout, even with the stale marker an older gbrain wrote in its git dir (#7988).
  */
 function assertSourceCheckout(repo: string): void {
   const registered = registeredManagedRootRecords();
-  if (!registered.length || managedFilesystemRootFor(repo)) return;
+  if (!registered.length) return;
+  const marker = managedRootMarkerFor(repo);
+  if (marker && !staleEnclosingMarker({ root: marker.root, evidence: marker.marker })) return;
+  const top = canonicalFilesystemPath(repo);
+  const within = (root: string, path: string) => { const rel = relative(root, path); return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`); };
+  const metadata = checkoutGitMetadata(top);
+  if (registered.some(record => within(record.root, top) || (within(top, record.root) && metadata !== null && existsSync(record.root) && checkoutGitMetadata(record.root) === metadata))) return;
   if (existsSync(join(repo, 'scripts', 'brain-commit-push.sh'))) return;
   try {
     execFileSync('git', ['-C', repo, 'config', '--local', '--get-regexp', `^(${SOURCE_ROOT_CONFIG}|gbrain.clipath)$`.replace(/\./g, '\\.').toLowerCase()], { env: gitChildEnv({ ...GIT_ENV }), stdio: ['ignore', 'pipe', 'ignore'] });
@@ -180,7 +191,7 @@ export async function runGit(args: string[]): Promise<number> {
     if (!p.path) assertSourceCheckout(repo);
     const cwd = p.path ? realpathSync(p.path) : process.cwd();
     if ((p.pull && p.pushOnly) || (p.pull && (p.message || p.paths.length || p.resolve.length || p.branch))
-      || (p.pushOnly && (p.message || p.paths.length)) || ((p.resolve.length || p.branch || p.expectRemote || p.keepCheckout) && !p.pushOnly)
+      || (p.pushOnly && (p.message || p.paths.length)) || ((p.resolve.length || p.branch || p.expectRemote || p.keepCheckout || p.scanSecrets) && !p.pushOnly)
       || (p.pending && (p.pull || p.pushOnly || p.paths.length)) || (p.allowOutside && p.pull) || (p.base.length && (p.pull || p.pushOnly || p.pending))) {
       throw opError('commit_paths_invalid', 'These flags do not combine.',
         'Use one mode: -m <msg> -- <paths> (commit + push), --pending [-m <msg>], --push-only [--keep-checkout] [--branch <b>] [--expect-remote <sha> --resolve ...], or --pull [--require-clean].');
@@ -220,6 +231,7 @@ export async function runGit(args: string[]): Promise<number> {
       ...(p.pending ? { pending: true } : {}),
       ...(p.allowOutside ? { allowOutsideSourceRoot: true } : {}),
       ...(p.keepCheckout ? { keepCheckout: true } : {}),
+      ...(p.scanSecrets ? { scanSecrets: true } : {}),
       ...(p.branch ? { branch: p.branch } : {}),
       ...(p.resolve.length ? { resolutions: parseResolutions(p.resolve) } : {}),
       ...(p.expectRemote ? { expectRemote: p.expectRemote } : {}),
@@ -234,8 +246,12 @@ export async function runGit(args: string[]): Promise<number> {
         : `nothing to commit; not pushed: ${repo} has no Git remote`);
       return 0;
     }
-    if (result.outcome === 'committed_local') {
-      emit(json, { ...result, repo }, `committed ${result.sha!.slice(0, 7)} on ${result.branch}; not pushed: this is a managed checkout, so the owner's next Git publish pushes it (or gbrain git commit-push --push-only --keep-checkout)`);
+    if (result.managed) {
+      const upstream = result.upstream;
+      const state = !upstream ? `${result.branch} has no upstream`
+        : result.unpublished === 0 ? `${result.branch} is on ${upstream} as last fetched`
+        : `${result.unpublished ?? 'an unknown number of'} commit(s) on ${result.branch} ${result.unpublished === null ? 'may not be' : 'are not'} on ${upstream} as last fetched; a managed checkout publishes through its owner (gbrain git commit-push --push-only --keep-checkout --path ${repo} publishes them)`;
+      emit(json, { ...result, repo }, `${result.committed ? `committed ${result.committed.slice(0, 7)} on ${result.branch}` : 'nothing to commit'}; not pushed: ${state}`);
       return 0;
     }
     appendPushLog(result.outcome === 'nothing_to_commit' || result.confirmed === 'remote' ? 'nothing' : result.integrated ? 'ok-after-merge' : 'ok',
@@ -257,11 +273,20 @@ export async function runGit(args: string[]): Promise<number> {
     return 0;
   } catch (e) {
     const code = (e as { code?: string }).code;
-    if (code === 'push_unconfirmed' || code === 'integrate_conflict' || code === 'commit_outside_source_root') {
+    let failed = e as { code?: string | null; detail?: string | null };
+    if (code === 'commit_paths_skipped' || code === 'writer_coordinator_required') {
+      // GST-2116: the other named paths may have been pushed before the run failed, or their push failed (`publish`); the push log records either.
+      try {
+        const d = JSON.parse(String((e as { detail?: string }).detail ?? '{}')) as { pushed?: string; branch?: string; publish?: { code: string | null; detail: string | null } };
+        if (d.pushed && d.branch) appendPushLog('ok', d.branch, d.pushed);
+        if (d.publish) failed = d.publish;
+      } catch { /* best-effort */ }
+    }
+    if (failed.code === 'push_unconfirmed' || failed.code === 'integrate_conflict' || failed.code === 'commit_outside_source_root') {
       try {
         const bi = args.indexOf('--branch');
         const branch = bi !== -1 && args[bi + 1] ? args[bi + 1].replace(/^refs\/heads\//, '') : currentBranchOf(args);
-        appendPushLog(code === 'integrate_conflict' ? 'conflict' : 'local-only', branch, (e as { detail?: string }).detail ?? '');
+        appendPushLog(failed.code === 'integrate_conflict' ? 'conflict' : 'local-only', branch, failed.detail ?? '');
       } catch { /* best-effort */ }
     }
     return writeCliError(e, 'git commit-push', { json });

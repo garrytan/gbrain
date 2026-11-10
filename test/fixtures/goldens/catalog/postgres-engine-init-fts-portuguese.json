@@ -52,6 +52,8 @@
       "chat_usage_log.chat_usage_log_pkey": "p PRIMARY KEY (id)",
       "chronicle_judge_reservations.chronicle_judge_reservations_pkey": "p PRIMARY KEY (id)",
       "chronicle_page_state.chronicle_page_state_attempts_check": "c CHECK ((attempts >= 0))",
+      "chronicle_page_state.chronicle_page_state_judge_input_failures_check": "c CHECK ((judge_input_failures >= 0))",
+      "chronicle_page_state.chronicle_page_state_judge_window_chars_check": "c CHECK ((judge_window_chars >= 0))",
       "chronicle_page_state.chronicle_page_state_max_attempts_check": "c CHECK ((max_attempts > 0))",
       "chronicle_page_state.chronicle_page_state_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "chronicle_page_state.chronicle_page_state_pkey": "p PRIMARY KEY (source_id, page_id, content_hash, extractor_version)",
@@ -161,6 +163,7 @@
       "git_canonical_brain.git_canonical_brain_pkey": "p PRIMARY KEY (singleton)",
       "git_canonical_brain.git_canonical_brain_singleton_check": "c CHECK ((singleton = 1))",
       "git_canonical_brain.git_canonical_brain_strict_sources_check": "c CHECK ((strict_sources >= 0))",
+      "ingest_applied_captures.ingest_applied_captures_pkey": "p PRIMARY KEY (idempotency_key)",
       "ingest_log.ingest_log_pkey": "p PRIMARY KEY (id)",
       "link_edge_proposals.link_edge_proposals_a_to_page_id_fkey": "f FOREIGN KEY (a_to_page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "link_edge_proposals.link_edge_proposals_b_to_page_id_fkey": "f FOREIGN KEY (b_to_page_id) REFERENCES pages(id) ON DELETE CASCADE",
@@ -823,6 +826,9 @@
       "git_canonical_brain": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "ingest_applied_captures": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "ingest_log": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -1413,6 +1419,8 @@
       "idx_timeline_event_page": "CREATE INDEX idx_timeline_event_page ON public.timeline_entries USING btree (event_page_id) WHERE (event_page_id IS NOT NULL)",
       "idx_timeline_page": "CREATE INDEX idx_timeline_page ON public.timeline_entries USING btree (page_id)",
       "idx_versions_page": "CREATE INDEX idx_versions_page ON public.page_versions USING btree (page_id)",
+      "ingest_applied_captures_applied_at_idx": "CREATE INDEX ingest_applied_captures_applied_at_idx ON public.ingest_applied_captures USING btree (applied_at)",
+      "ingest_applied_captures_pkey": "CREATE UNIQUE INDEX ingest_applied_captures_pkey ON public.ingest_applied_captures USING btree (idempotency_key)",
       "ingest_log_marked_idx": "CREATE INDEX ingest_log_marked_idx ON public.ingest_log USING btree (created_at) WHERE (writer_segment_reader IS TRUE)",
       "ingest_log_pkey": "CREATE UNIQUE INDEX ingest_log_pkey ON public.ingest_log USING btree (id)",
       "ingest_log_unmarked_idx": "CREATE INDEX ingest_log_unmarked_idx ON public.ingest_log USING btree (created_at) WHERE (writer_segment_reader IS NOT TRUE)",
@@ -2037,7 +2045,11 @@
           "23 max_attempts integer/int4 NULL",
           "24 pricing_policy text/text NULL",
           "25 campaign_max_usd numeric/numeric NULL",
-          "26 cost_attempts ARRAY/_int4 NOT NULL DEFAULT '{}'::integer[]"
+          "26 cost_attempts ARRAY/_int4 NOT NULL DEFAULT '{}'::integer[]",
+          "27 judge_input_hash text/text NULL",
+          "28 judge_window_chars integer/int4 NULL",
+          "29 judge_window_hash text/text NULL",
+          "30 judge_input_failures integer/int4 NOT NULL DEFAULT 0"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -2728,6 +2740,16 @@
         "columns": [
           "1 singleton integer/int4 NOT NULL DEFAULT 1",
           "2 strict_sources integer/int4 NOT NULL DEFAULT 0"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "ingest_applied_captures": {
+        "columns": [
+          "1 idempotency_key text/text NOT NULL",
+          "2 source_id text/text NOT NULL",
+          "3 slug text/text NOT NULL",
+          "4 result jsonb/jsonb NOT NULL",
+          "5 applied_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

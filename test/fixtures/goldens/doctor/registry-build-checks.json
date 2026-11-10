@@ -226,6 +226,10 @@
         "name": "harness_wiring"
       },
       {
+        "category": "ops",
+        "name": "skill_resolver"
+      },
+      {
         "category": "meta",
         "name": "agent_contract"
       },
@@ -398,6 +402,10 @@
         "name": "function_search_path"
       },
       {
+        "category": "ops",
+        "name": "database_encoding"
+      },
+      {
         "category": "meta",
         "name": "schema_version"
       },
@@ -538,6 +546,10 @@
         "name": "frontmatter_hook"
       },
       {
+        "category": "ops",
+        "name": "url_source_origin"
+      },
+      {
         "category": "brain",
         "name": "orphan_persistence_bindings"
       },
@@ -595,6 +607,10 @@
       },
       {
         "category": "brain",
+        "name": "atom_fence_rows"
+      },
+      {
+        "category": "brain",
         "name": "generation_retirements"
       },
       {
@@ -608,6 +624,10 @@
       {
         "category": "brain",
         "name": "extractor_facts_expired"
+      },
+      {
+        "category": "brain",
+        "name": "unwithdrawn_facts"
       },
       {
         "category": "brain",
@@ -908,6 +928,10 @@
       {
         "category": "brain",
         "name": "chronicle_config_invalid"
+      },
+      {
+        "category": "brain",
+        "name": "chronicle_duplicate_events"
       },
       {
         "category": "brain",
