@@ -21,7 +21,8 @@
  * Under .gstack/ship-policy.json `merge: direct` versions are written at release, which never edits this file, so
  * a TBD row is refused on every tree: a plain-text row is a behavior-changes.d/<id>.md fragment and a function row
  * is dated `since: releasedIn('<id>')` (behavior-changes.d/README.md). With --stamped (the Release workflow) the
- * release commit must also hold no unfolded changelog.d fragment and a fresh behavior-change table.
+ * release commit must also hold no unfolded changelog.d fragment and a fresh behavior-change table, and a missing or
+ * unparsable .gstack/ship-policy.json is refused rather than read as "not direct".
  *
  * Base ref: $GBRAIN_RELEASE_BASE_REF, default origin/master. When it is
  * unavailable the check fails under CI=true and skips locally.
@@ -33,6 +34,7 @@ import { join } from 'node:path';
 import { build, CHANGELOG_FRAGMENT_DIR, OUT } from './build-behavior-changes.ts';
 
 export const NOTICE_FILE = 'src/core/behavior-change-notice.ts';
+const POLICY_FILE = '.gstack/ship-policy.json';
 const TBD = /since:\s*'TBD'/;
 const SEE = 'See:  docs/RELEASING.md#release-restamp';
 
@@ -62,7 +64,15 @@ export function main(argv: string[], opts: { cwd?: string; env?: Record<string, 
     log(SEE);
     return 1;
   }
-  const direct = (() => { try { return JSON.parse(read('.gstack/ship-policy.json') || '{}').merge === 'direct'; } catch { return false; } })();
+  const policy = (() => { try { return { merge: JSON.parse(read(POLICY_FILE)).merge }; } catch (e) { return { error: existsSync(join(root, POLICY_FILE)) ? `cannot be parsed (${e instanceof Error ? e.message : String(e)})` : 'is missing' }; } })();
+  if ('error' in policy && argv.includes('--stamped')) {
+    log(`FAIL: ${POLICY_FILE} ${policy.error}, so this check cannot tell whether the release commit must have folded its changelog.d fragments and regenerated its behavior-change table.`);
+    log('Why:  --stamped guards a stamp or a release; reading no policy as `merge` unset would skip those checks without saying so.');
+    log(`Fix:  restore ${POLICY_FILE} from master (git checkout origin/master -- ${POLICY_FILE}; a sparse checkout must include .gstack), then rerun.`);
+    log(SEE);
+    return 1;
+  }
+  const direct = !('error' in policy) && policy.merge === 'direct';
   if (direct && argv.includes('--stamped')) {
     const unfolded = existsSync(join(root, CHANGELOG_FRAGMENT_DIR)) ? readdirSync(join(root, CHANGELOG_FRAGMENT_DIR)).filter((f) => f.endsWith('.md') && f !== 'README.md') : [];
     const table = build(root);
