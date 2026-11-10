@@ -291,13 +291,16 @@ export async function beliefChanges(engine: BrainEngine, q: BeliefChangesQuery):
 
 /**
  * Fence subjects of a page body, keyed `kind\u0000subject_key`, under the history reader's rules: a subject whose key a
- * purge hid is dropped for every caller; a remote caller gets them only where it may read the interval and it was not quarantined, and only
+ * purge hid is dropped for every caller; a remote caller gets them only where it may read the interval and neither the interval nor the live page is quarantined, and only
  * world rows (takes of holders it may read) whose claim was not made private after the interval's event.
  */
 async function subjectsOf(engine: BrainEngine, q: BeliefChangesQuery, at: Awaited<ReturnType<typeof readPageAtTime>>, interval: NonNullable<Awaited<ReturnType<typeof readPageAtTime>>['current']>,
   privateAfter = interval.event.id) {
   if (!interval.page || interval.body === 'unavailable' || interval.body === 'segmented' || interval.page.compiled_truth == null) return null;
-  if (q.remote && (isQuarantined(interval.page.frontmatter) || !await remoteMayRead(engine, at.page_id, interval))) return null;
+  if (q.remote) {
+    const [live] = at.page_id == null ? [] : await engine.executeRaw<{ frontmatter: Record<string, unknown> | null }>('SELECT frontmatter FROM pages WHERE id = $1', [at.page_id]);
+    if (isQuarantined(interval.page.frontmatter) || isQuarantined(live?.frontmatter) || !await remoteMayRead(engine, at.page_id, interval)) return null;
+  }
   const { subjects } = await bodySubjects(engine, interval.lifetime, `${interval.page.compiled_truth}\n${interval.page.timeline ?? ''}`, interval.event.visibility);
   const holders = new Set(q.takesHolders ?? ['world']);
   const readable = subjects.filter(s => !q.remote || s.visibility === 'world' && (s.kind !== 'take' || holders.has(String(s.value.holder))));

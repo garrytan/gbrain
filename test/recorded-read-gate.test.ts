@@ -100,5 +100,20 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       expect(out.text).toContain('canaryclaimcontrol');
       expect(out.text.includes('canaryqclaim')).toBe(false);
     }), 120_000);
+
+    test('(6) a page created clean and quarantined by a later write: delta {beliefs: true} gives a remote caller none of its creation claims', () => brain(async b => {
+      const t0 = await at(b);
+      const slug = 'companies/late-quarantine-example';
+      await b.put(slug, beliefPage({ facts: ['Canary claim canarylateq'] }));
+      await b.put('companies/plain-late-example', beliefPage({ facts: ['Canary claim canarylatecontrol'] }));
+      await b.put(slug, beliefPage({ title: 'Attention Required! | Cloudflare', facts: ['Canary claim canarylateq'] }));
+      const [row] = await b.engine.executeRaw<{ q: unknown }>(`SELECT frontmatter->'quarantine' AS q FROM pages WHERE source_id = $1 AND slug = $2`, [b.sourceId, slug]);
+      expect(row?.q).toMatchObject({ reason: 'junk_pattern' });
+      await new Promise(resolve => setTimeout(resolve, 2_500));
+      const remote = { ...remoteOf(b), auth: { clientId: 'reader-probe', scopes: ['read'] } } as unknown as BeliefBrain['ctx'];
+      const out = await call(b, remote, 'delta', { since: t0, beliefs: true });
+      expect(out.text).toContain('canarylatecontrol');
+      expect(out.text.includes('canarylateq')).toBe(false);
+    }), 120_000);
   });
 }
