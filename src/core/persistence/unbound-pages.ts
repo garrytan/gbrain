@@ -17,6 +17,7 @@ import { resolveSourceLocalFilePath } from '../markdown.ts';
 import { opError } from '../ops/contract.ts';
 import { scannerSourcePath } from '../write-through.ts';
 import { resolveSlugForPath } from '../sync.ts';
+import { edgeTrimSql } from '../edge-whitespace.ts';
 
 export function isDatabaseOnlyPage(page: { source_path?: string | null; source_uri?: string | null; database_only_reason?: string | null }): boolean {
   return page.database_only_reason === 'unbound_source' && !page.source_path?.trim() && !page.source_uri?.trim();
@@ -24,7 +25,7 @@ export function isDatabaseOnlyPage(page: { source_path?: string | null; source_u
 
 /** `isDatabaseOnlyPage` as a SQL predicate over the `pages` row aliased `alias` (#6536: doctor counts with it). */
 export function databaseOnlyPageSql(alias: string): string {
-  const blank = (column: string) => `COALESCE(btrim(${alias}.${column}, E' \\t\\n\\r\\f\\v'), '')=''`;
+  const blank = (column: string) => `COALESCE(${edgeTrimSql(`${alias}.${column}`)}, '')=''`;
   return `${alias}.database_only_reason IS NOT DISTINCT FROM 'unbound_source' AND ${blank('source_path')} AND ${blank('source_uri')}`;
 }
 
