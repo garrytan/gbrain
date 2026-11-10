@@ -14,11 +14,14 @@ identifiers and attribution are available in the pre-removal Git revision
 
 **A team member's `forget` now says who can withdraw a fact, instead of answering that the fact does not exist.** A remote credential bound to a member, the brain owner's included, withdraws only the facts on its own member page. When it tried to forget a fact it can read but that lives elsewhere (one it saved with `share: true`, or a teammate's shared fact), it got `not_found`, so its agent believed the fact was gone while every reader still recalled it. It is now refused with a reply saying the brain host withdraws it with `gbrain forget <id>`, and the fact stays. A fact the caller cannot read still answers `not_found`, so the reply never confirms a hidden fact exists. The docs that said `remember` defaults to `world` now say that a member-bound credential saves privately on its member page unless it passes `share: true`. Reported by @andreineacsu (#9101).
 
+**An agent that passes `source` to `remember` is now pointed at `provenance`.** The `remember` description said "provenance (required: source)", and agents read that as a parameter named `source`. The call was refused, and since v0.60.635.0 the refusal suggested `source_id`, the write source, which is not what the agent meant. In the nightly write evals, that one refusal caused every failed refresh-barrier episode on master. The description now says "provenance (required)", and an unknown `source` on `remember` suggests `provenance`.
+
 ### Itemized changes
 
 - `src/core/persistence/memory-mutations.ts`: when a member caller's `forget` misses its own member page, the fact is checked against the same visibility, privacy and eligibility filters `recall` uses for that caller; a readable fact is refused (`scope_denied` from `forget`, `permission_denied` from `forget_fact`, class `host_only`) and an unreadable one stays `not_found`.
 - Docs: `docs/guides/access-designations.md` (fact visibility), `docs/mcp/TOOL_REFERENCE.md` (`remember`), `skills/brain-ops/SKILL.md` (and the generated plugin copies), and the `facts.default_visibility` bootstrap check's detail now name the member-bound default.
 - Tests: `test/member-forget-refusal-9101.test.ts` on PGLite and Postgres with member- and owner-bound OAuth credentials on a repo-less brain.
+- `src/mcp/validate-params.ts`: `remember`'s parameter hints map `source` to `provenance` ahead of the source-scope aliases; `src/core/verbs.ts` drops "source" from the description (the starter tool list stays inside its budget). Test in `test/validate-params.test.ts`.
 
 ## [0.60.648.0] - 2026-11-10
 
