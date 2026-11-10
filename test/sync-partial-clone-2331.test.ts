@@ -11,6 +11,7 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { persistencePostgresTemplate } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 // GST-2331: in a partial clone, a managed sync read of an object the repository lacks fetches nothing, so the program the
 // checkout's config names for object fetches (remote.origin.uploadpack) never runs. The file is held git_object_missing
@@ -35,12 +36,6 @@ const rules = async (engine: BrainEngine) => (await engine.executeRaw<{ rule_id:
 const present = (root: string, spec: string) => { execFileSync('git', ['-C', root, 'cat-file', '-e', spec], { env: { ...process.env, GIT_NO_LAZY_FETCH: '1' }, stdio: 'ignore' }); return true; };
 /** Runs the git command a folder-rule problem names, exactly as written there. */
 const runNamed = (message: string, shape: RegExp) => { const [command, ...args] = message.match(shape)![0].split(' '); execFileSync(command!, args, { stdio: 'ignore' }); };
-/** Runs `body` with GIT_ALLOW_PROTOCOL=file in this process, as an operator's environment may carry it. */
-async function allowingFile<T>(body: () => Promise<T>): Promise<T> {
-  const prior = process.env.GIT_ALLOW_PROTOCOL;
-  process.env.GIT_ALLOW_PROTOCOL = 'file';
-  try { return await body(); } finally { if (prior === undefined) delete process.env.GIT_ALLOW_PROTOCOL; else process.env.GIT_ALLOW_PROTOCOL = prior; }
-}
 /** Upstream with notes under hr/ and a folder-rule file, served bare and cloned blobless with a checkout into `root`. */
 function rulesClone(root: string, versions: string[][]): ReturnType<typeof server> {
   const upstream = join(root, '..', 'upstream');
@@ -181,7 +176,7 @@ for (const backend of testBackends()) describe('[' + backend + '] managed sync i
       writeFileSync(join(root, 'notes/missing.md'), note('missing, edited in the checkout'));
       git(root, 'update-index', '--assume-unchanged', 'notes/missing.md');
       const restoreWindow = __setPinnedWindowForTests(arm.window), restoreLazy = __setNoLazyFetchForTests(arm.lazyOff);
-      try { await (arm.allowFile ? allowingFile(() => performManagedSync(engine, OPTS)) : performManagedSync(engine, OPTS)); } finally { restoreLazy(); restoreWindow(); }
+      try { await (arm.allowFile ? withEnv({ GIT_ALLOW_PROTOCOL: 'file' }, () => performManagedSync(engine, OPTS)) : performManagedSync(engine, OPTS)); } finally { restoreLazy(); restoreWindow(); }
       expect(existsSync(marker)).toBe(false);
       const held = await holds(engine);
       expect(held.map(hold => [hold.path, hold.code])).toEqual([['notes/missing.md', 'git_object_missing']]);
@@ -329,7 +324,7 @@ for (const backend of testBackends()) describe('[' + backend + '] managed sync i
     let remote: ReturnType<typeof server> | undefined;
     return brain(async ({ root }) => {
       __resetHistoryIndexesForTest();
-      const evidence = await allowingFile(() => readOriginEvidence(root, [git(root, 'rev-parse', 'HEAD')], ['notes/a.md']));
+      const evidence = await withEnv({ GIT_ALLOW_PROTOCOL: 'file' }, () => readOriginEvidence(root, [git(root, 'rev-parse', 'HEAD')], ['notes/a.md']));
       expect(existsSync(remote!.marker)).toBe(false);
       expect(evidence.get('notes/a.md')).toBe('unknown');
     }, root => { remote = bloblessClone(root, ['seed', 'a'], false, 'tree:0'); });

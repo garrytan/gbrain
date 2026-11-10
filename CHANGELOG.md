@@ -16,7 +16,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ### Itemized changes
 
-- `src/core/hardened-git.ts`: `NO_LAZY_FETCH_ENV` is what a managed-sync read that runs under `gitChildEnv` adds beside `HARDENED_GIT_ARGS`: `GIT_NO_LAZY_FETCH=1` (Git 2.45+) and an empty `GIT_ALLOW_PROTOCOL`, which allows no transport on any Git version and takes precedence over an inherited allowlist and every `protocol.allow` setting.
+- `src/core/hardened-git.ts`: `NO_LAZY_FETCH_ENV` is what a managed-sync read that runs under `gitChildEnv` adds beside `HARDENED_GIT_ARGS`: `GIT_NO_LAZY_FETCH=1` (Git 2.45+) and an empty `GIT_ALLOW_PROTOCOL`, which allows no transport on any Git version.
 - `syncGit` and `syncGitAsync` (`sync-discovery.ts`), every read in `sync-blobs.ts` (`ls-tree`, `cat-file --batch`), the `git show` fallback, the delta and working-tree diff (`sync-delta.ts`), the rename-identity `cat-file` stream, the metafile head reads, the origin-evidence history walk and ignore check, the held-deletion read, the unindexed-file listing and the pending-import checks now run with both.
 - `src/core/persistence/sync-entry-fault.ts`: in a partial clone the `git_object_missing` hold names the partial clone and its fix is `git cat-file -p <blob>`; in any other checkout it still names `git fsck --connectivity-only`.
 - A partial clone with no checkout (`--no-checkout`) holds every committed file `git_object_missing`. When rename detection needs an older blob the partial clone lacks, the sync compares the whole tree instead: the new path imports as a new page and the old page is deleted, so that rename does not keep its page.
