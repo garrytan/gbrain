@@ -1,3 +1,4 @@
+import { validateMaintenanceInputs, type MaintenanceInputGuard } from './maintenance-input-guard.ts';
 import { realpathSync } from 'node:fs';
 import { enterClaimStep, type ClaimPhaseClock } from './claim-phase.ts';
 import { boundedReads } from './bounded-reads.ts';
@@ -257,6 +258,17 @@ export async function publishMaintenancePage(engine: BrainEngine, authority: Mai
   content: string, options: MaintenancePageOptions): Promise<Record<string, unknown>> {
   const { intent, requestId } = maintenancePageRequest(authority, slug, content, options);
   return submitMaintenance(engine, authority, slug, intent, requestId, options.file);
+}
+
+/** The guard travels with the request, including across a worker restart. */
+export async function publishGuardedMaintenancePage(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
+  content: string, options: Omit<MaintenancePageOptions, 'requestId' | 'file'> & { projectConceptLinks?: boolean },
+  inputGuard: MaintenanceInputGuard): Promise<Record<string, unknown>> {
+  const page = maintenancePageRequest(authority, slug, content, { ...options, file: false });
+  const intent = { ...page.intent, kind: 'managed_maintenance_guarded_page_v1', input_guard: inputGuard,
+    ...(options.projectConceptLinks ? { project_concept_links: true } : {}) };
+  const requestId = maintenanceRequestId({ page: page.requestId, intent });
+  return submitMaintenance(engine, authority, slug, intent, requestId, false);
 }
 
 /**
@@ -597,6 +609,42 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   if (row.intent?.kind === 'managed_maintenance_take_reproject') return (await import('../repair/take-supersession.ts')).prepareTakeReprojection(engine, row);
   if (row.intent?.kind === 'managed_maintenance_timeline_extract') return (await import('../../commands/extract-timeline-db.ts')).prepareTimelineExtract(engine, row);
   if (row.intent?.kind === 'managed_maintenance_meeting_timeline') return (await import('../extract-timeline-from-meetings.ts')).prepareMeetingTimeline(engine, row);
+  if (row.intent?.kind === 'managed_maintenance_guarded_page_v1') {
+    const guard = row.intent.input_guard as MaintenanceInputGuard;
+    const prepared = await preparePageMutation(engine, { ...row, intent: {
+      ...row.intent, kind: 'managed_maintenance_page',
+      expected_revision: row.intent.expected_revision ?? undefined,
+    } }, config, undefined, undefined, { clock });
+    const projectLinks = row.intent.project_concept_links === true;
+    return {
+      ...prepared,
+      additionalPageKeys: [...prepared.additionalPageKeys ?? [],
+        ...guard.pages.map(page => ({ sourceId: row.source_id, slug: page.slug }))],
+      validate: async tx => {
+        await validateMaintenanceInputs(tx, row.source_id, guard);
+        await prepared.validate?.(tx);
+      },
+      apply: async (tx, preimage) => {
+        const outcome = await prepared.apply(tx, preimage);
+        if (!projectLinks) return outcome;
+        const snapshot = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id });
+        if (!snapshot || snapshot.page.type !== 'concept') {
+          throw opError('invalid_params', 'Concept provenance requires a concept page.', 'Use guarded concept publication for a concept page.');
+        }
+        const { replaceConceptProvenanceLinks } = await import('../cycle/concept-publication.ts');
+        const links = guard.pages.flatMap(page => [
+          { from_slug: row.slug, to_slug: page.slug, link_type: 'synthesized_from' },
+          { from_slug: page.slug, to_slug: row.slug, link_type: 'synthesizes' },
+        ]).map(link => ({ ...link, link_source: 'concept-provenance',
+          from_source_id: row.source_id, to_source_id: row.source_id }));
+        const projected = await replaceConceptProvenanceLinks(tx, row.source_id, row.slug, links, {
+          expectedRevision: snapshot.revision, managed: false,
+        });
+        if (projected === 'moved') throw opError('revision_conflict', 'Concept moved during provenance projection.', 'Read the current concept before retrying.');
+        return outcome;
+      },
+    };
+  }
   if (row.intent?.kind === 'managed_maintenance_page') {
     const page = await preparePageMutation(engine, row.intent.expected_revision === null
       ? { ...row, intent: { ...row.intent, expected_revision: undefined } } : row, config, undefined, undefined, { clock });
