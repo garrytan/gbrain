@@ -215,7 +215,7 @@ gbrain. MCP `get_skill` is unchanged.
 
 | | |
 |---|---|
-| Select | `--skill-loading off\|spring` on `gbrain setup <harness>`, `gbrain connect --install`, `gbrain connect --harness … --install` and `gbrain bootstrap harness`; or `GBRAIN_SKILL_LOADING`. Flag, then env, then the recorded choice, then `off`. |
+| Select | `--skill-loading off\|spring` on `gbrain setup <harness>` (`resolve` on `setup claude-code\|codex` turns on the per-turn skill resolver instead: [skill-resolver guide](skill-resolver.md#hook-lane-claude-code-and-codex)), `gbrain connect --install`, `gbrain connect --harness … --install` and `gbrain bootstrap harness`; or `GBRAIN_SKILL_LOADING`. Flag, then env, then the recorded choice, then `off`. |
 | Default | `off`: no index is written, and `off` removes one an earlier run wrote. |
 | Which skills | Host installs (`setup`, `bootstrap harness`) list all bundled skills; hosted and thin-client connections leave out the host-maintenance ones. |
 | Opt out | `--skill-loading off`; `--no-instructions` removes both blocks; `--remove` takes both out and deletes a file only gbrain created once nothing else is in it. On Codex, `--skill-loading off`, `--no-instructions` and `GBRAIN_SKILL_LOADING=off` also strip an index gbrain recorded in the other global instruction file of the same `CODEX_HOME` (`AGENTS.md` or `AGENTS.override.md`) and print it as a second skills line (`paired` in `--json`, in `--dry-run` too), so the index cannot return when the override file goes. |

@@ -39,6 +39,7 @@ import { appendCodexTomlTable, readCodexTomlTable, removeCodexTomlTable } from '
 import { buildClaudeHookCommand, classifyHarnessHook, hookEntryHash, removeClaudeHooksAt, writeClaudeHooksAt } from '../bootstrap/hooks.ts';
 import { CLAUDE_HOOK_DEFAULT_TIMEOUT_SECS, GBRAIN_HOOK_MARKER_KEY, claudeManagedSettingsPaths, claudeUserSettingsPath, codexConfigPath, codexHooksPath } from '../bootstrap/host-specs.ts';
 import { ensureHookLauncher, hookLauncherPath, hookLauncherState } from './hook-launcher.ts';
+import { isSkillResolverEntry } from './skill-resolver-lane.ts';
 
 export const TURN_RULE_LANE = 'turn-rule';
 export const TURN_RULE_MARKER = 'turn-rule-v1';
@@ -106,7 +107,7 @@ function claudePromptEntries(path: string): Array<Record<string, unknown>> {
 
 /** An entry another gbrain lane owns (setup, workspace bootstrap, bootstrap harness). A repo's committed settings.json counts only a command that parses as gbrain's hook, never a bare marker. */
 export function isOtherGbrainEntry(e: Record<string, unknown>, committed = false): boolean {
-  if (isTurnRuleEntry(e)) return false;
+  if (isTurnRuleEntry(e) || isSkillResolverEntry(e)) return false;
   return (!committed && typeof e[GBRAIN_HOOK_MARKER_KEY] === 'string') || !!classifyHarnessHook(e, EVENT, 'any');
 }
 

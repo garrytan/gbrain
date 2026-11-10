@@ -13,10 +13,12 @@
 # themselves from scripts/postgres-arm-weights.json.
 test/access-as.test.ts
 test/access-binding.test.ts
+test/access-federated-member-writes.test.ts
 test/access-folder-lock-order.test.ts
 test/access-folder-multiconn.test.ts
 test/access-folder-rules.test.ts
 test/access-folder-scoped-role.test.ts
+test/access-hidden-page-writes.test.ts
 test/access-member-facts.test.ts
 test/access-member-sweep.test.ts
 test/access-members.test.ts
@@ -78,6 +80,7 @@ test/doctor-image-embedding-coverage.test.ts
 test/doctor-keyword-plan-6495.test.ts
 test/doctor-routing-skill-pack-source.test.ts
 test/doctor-sync-freshness-skill-pack-6076.test.ts
+test/edge-whitespace-twins.test.ts
 test/embed-once-per-content-version.serial.test.ts
 test/embed-stale-images-managed-6529.test.ts
 test/embedding-completion-atomic.serial.test.ts
@@ -145,6 +148,7 @@ test/import-frontmatter-key-order-5158.test.ts
 test/import-inline-chunk-keep.test.ts
 test/import-revision-concurrency.test.ts
 test/import-write-barrier.test.ts
+test/ingest-capture-keeps-readers.test.ts
 test/init-cold-home-embedding.test.ts
 test/keyword-statement-timeout-knob-6495.test.ts
 test/keyword-timeout-negative-cache-6495.test.ts

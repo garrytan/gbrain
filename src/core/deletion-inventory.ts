@@ -54,7 +54,7 @@ const ROWS: readonly Row[] = [
   ['calibration_profiles', 'out_of_scope', 'probed_reported', 'source_id holder wave_version domain_scorecards pattern_statements active_bias_tags model_id', 'pattern_statements domain_scorecards'],
   ['chat_usage_log', 'out_of_scope', 'no_memory_text', 'model provider phase'],
   ['chronicle_judge_reservations', 'out_of_scope', 'no_memory_text', 'source_id content_hash'],
-  ['chronicle_page_state', 'out_of_scope', 'no_memory_text', 'source_id content_hash slug state reason trigger principal_kind principal_id event_slugs event_hashes campaign_id pricing_policy'],
+  ['chronicle_page_state', 'out_of_scope', 'no_memory_text', 'source_id content_hash slug state reason trigger principal_kind principal_id event_slugs event_hashes campaign_id pricing_policy judge_input_hash judge_window_hash'],
   ['code_edges_chunk', 'out_of_scope', 'no_memory_text', 'from_symbol_qualified to_symbol_qualified edge_type edge_metadata source_id'],
   ['code_edges_symbol', 'out_of_scope', 'no_memory_text', 'from_symbol_qualified to_symbol_qualified edge_type edge_metadata source_id'],
   ['code_traversal_cache', 'out_of_scope', 'no_memory_text', 'symbol_qualified source_id response_json'],

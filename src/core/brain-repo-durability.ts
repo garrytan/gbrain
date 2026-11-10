@@ -239,7 +239,14 @@ unset $(git rev-parse --local-env-vars) 2>/dev/null || true
 
 _managed_git="$(git rev-parse --git-dir 2>/dev/null || echo .git)"
 if [ -e "$_managed_git/gbrain-managed.json" ] || [ -e .gbrain-managed ]; then
-  echo "writer_coordinator_required: submit managed changes through persistence" >&2; exit 1
+  {
+    echo "Error [writer_coordinator_required]: this checkout is a managed canonical worktree; its persistence owner is the only Git writer of pages, so this helper committed nothing."
+    echo "Why: a page file committed around the owner, or left uncommitted, is out of step with the database."
+    echo "Fix: save pages through gbrain (put_page, edit_page, remember or capture; gbrain put <slug> with the page on stdin). Commit files that are not pages with gbrain git commit-push -m '<msg>' -- <paths>."
+    echo "Next: ask_user"
+    echo "Docs: docs/guides/shared-checkout-git.md#outcomes"
+  } >&2
+  exit 1
 fi
 
 _gbrain_cli() {
@@ -271,6 +278,56 @@ fi
 
 # ── Fallback: no gbrain that knows \`git commit-push\` on this machine ──────────
 _branch="$(git symbolic-ref --quiet --short HEAD)" || { echo "detached HEAD: check out a branch first" >&2; exit 1; }
+# Named paths whose bytes HEAD lacks after the commit: git add stages nothing, exit 0, for an edit flagged
+# assume-unchanged or skip-worktree and for a file inside a nested repository (NUL-separated, so no path is quoted).
+_unindexed() {
+  local p
+  for p in "$@"; do
+    if [ -e "$p" ] && [ ! -d "$p" ] && ! git ls-files --error-unmatch -- "$p" >/dev/null 2>&1; then printf '%s\\n' "$p"; fi
+  done
+  return 0
+}
+_unstaged() {
+  local e p d disk
+  while IFS= read -r -d '' e; do
+    case "$e" in
+      [a-zS]\\ *) p="\${e#??}"
+        if [ -L "$p" ]; then disk="$(printf '%s' "$(readlink -- "$p")" | git hash-object --stdin)"
+        elif [ -e "$p" ]; then disk="$(git hash-object -- "$p")"
+        else case "$e" in [sS]*) continue ;; esac; disk=""; fi
+        [ "$disk" = "$(git rev-parse -q --verify "HEAD:./$p" || true)" ] || printf '%s\\n' "$p" ;;
+    esac
+  done < <(git ls-files -v -z -- "$@")
+  while IFS= read -r -d '' e; do
+    case "$e" in ?\\ *) ;; *) printf '%s\\n' "\${e#???}" ;; esac
+  done < <(git status --porcelain -z --untracked-files=all --no-renames -- "$@")
+  _unindexed "$@"
+  for p in "$@"; do
+    [ -d "$p" ] || continue
+    d="$(dirname -- "$p")"
+    while [ "$d" != "." ] && [ "$d" != "/" ]; do
+      if [ -e "$d/.git" ]; then printf '%s\\n' "$p"; break; fi
+      d="$(dirname -- "$d")"
+    done
+  done
+  return 0
+}
+_skipped=""
+_report_skipped() {
+  [ -n "$_skipped" ] || return 0
+  {
+    echo "Error [commit_paths_skipped]: git did not commit these named path(s); the other named paths were $1:"
+    printf '%s\\n' "$_skipped" | sed 's/^/  /'
+    echo "Why: git add stages nothing and still exits 0 for a modified file flagged assume-unchanged or skip-worktree, or a file inside a nested Git repository."
+    echo "Fix: read the flags with git ls-files -v -- <path> and ask the user (a skip-worktree flag is often set on purpose to keep local edits out of commits); to commit the edits clear them (git update-index --no-assume-unchanged -- <path>, and separately git update-index --no-skip-worktree -- <path>), or move the file out of the nested repository, then rerun."
+    echo "Next: ask_user"
+  } >&2
+}
+_finish() {
+  [ -z "$_skipped" ] && exit 0
+  _report_skipped "committed and pushed"
+  exit 1
+}
 echo "[brain-commit-push] gbrain git commit-push unavailable; using the minimal locked commit + push" >&2
 _log="\${GBRAIN_HOME:-$HOME}/.gbrain/brain-push.log"
 mkdir -p "$(dirname "$_log")" 2>/dev/null || true
@@ -296,7 +353,11 @@ case "\${1:-}" in
     _msg="\${1:?usage: brain-commit-push.sh <message> <path> [paths...]}"; shift
     [ "$#" -gt 0 ] || { echo "refusing a repo-wide commit: pass explicit path(s)" >&2; exit 2; }
     git add -A -- "$@"
-    if git diff --cached --quiet -- "$@"; then echo "nothing to commit"; else git commit --only -m "$_msg" -- "$@"; fi ;;
+    _commit=()
+    _orphans="$(_unindexed "$@")"
+    for _p in "$@"; do printf '%s\\n' "$_orphans" | grep -xF -- "$_p" >/dev/null || _commit+=("$_p"); done
+    if [ "\${#_commit[@]}" -eq 0 ] || git diff --cached --quiet -- "\${_commit[@]}"; then echo "nothing to commit"; else git commit --only -m "$_msg" -- "\${_commit[@]}"; fi
+    _skipped="$(_unstaged "$@" | sort -u)" ;;
 esac
 _head="$(git rev-parse HEAD)"
 # Never hold the commit lock across the network: release it and push under the publish lock, like gbrain.
@@ -304,13 +365,14 @@ exec 9>&- 8>&-
 unset BRAIN_COMMIT_LOCK_HELD GBRAIN_COMMIT_VIA
 if command -v flock >/dev/null 2>&1; then
   exec 7>"$_gd/brain-publish.lock"
-  flock -w "\${GBRAIN_PUBLISH_LOCK_WAIT_SECONDS:-300}" 7 || { echo "PUSH FAILED: another push held this checkout's publish lock; the commit is local-only. Run: gbrain git commit-push --push-only" >&2; exit 4; }
+  flock -w "\${GBRAIN_PUBLISH_LOCK_WAIT_SECONDS:-300}" 7 || { echo "PUSH FAILED: another push held this checkout's publish lock; the commit is local-only. Run: gbrain git commit-push --push-only" >&2; _report_skipped "committed locally, not pushed"; exit 4; }
 fi
 if git push origin "$_head:refs/heads/$_branch" >>"$_log" 2>&1; then
-  echo "$(date -u +%FT%TZ) [push] ok $_branch $(git rev-parse --short "$_head")" >>"$_log"; exit 0
+  echo "$(date -u +%FT%TZ) [push] ok $_branch $(git rev-parse --short "$_head")" >>"$_log"; _finish
 fi
 echo "$(date -u +%FT%TZ) [push] LOCAL-ONLY, NEEDS ATTENTION: $_branch @ $(git rev-parse --short "$_head") push rejected; run gbrain git commit-push --push-only" >>"$_log"
 echo "PUSH FAILED — the commit is local-only. Install gbrain, then run: gbrain git commit-push --push-only (it merges remote commits safely). Never git pull --rebase here." >&2
+_report_skipped "committed locally, not pushed"
 exit 4
 `;
 }
