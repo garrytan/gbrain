@@ -121,8 +121,8 @@ export async function assertWebhookWriterMayReplace(engine: BrainEngine, writer:
   // GST-2051 x GST-2112: POST /ingest refuses a member-bound credential writing to default; a job queued before that
   // refusal (or before the binding) is refused here at write time, since the capture cannot keep the page to the member.
   if (authority.principal && await defaultSourceMemberWriter(engine, authority)) {
-    throw opError('permission_denied', 'A capture from a credential bound to a member whose write source is default is refused: its page would land where other members and unbound credentials read.',
-      'Write through the MCP put_page op, which keeps a new page to its member, or ask the brain operator to grant this credential its own write source (gbrain auth rescope --sources <private-source>,default).');
+    throw opError('permission_denied', `A capture from a credential bound to a member whose write source is ${sourceId}, which every credential without a source grant reads, is refused: its page would land where other members and unbound credentials read.`,
+      'Write through the MCP put_page op, which keeps a new page to its member, or ask the brain operator to grant this credential its own write source that is not federated (gbrain auth rescope --sources <private-source>,default).');
   }
   // GST-2112: the snapshot is read before the visibility check, so the revision returned (which binds the write) is
   // never older than the state the writer was authorized against.

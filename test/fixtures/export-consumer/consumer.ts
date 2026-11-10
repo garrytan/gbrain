@@ -38,6 +38,7 @@ import { LiveServeLockError as e26 } from 'gbrain/pglite-lock';
 import { assembleEvidenceForHits as e27 } from 'gbrain/search/evidence-delivery';
 import { VERSION as e28 } from 'gbrain/version';
 import { openEngine as e29 } from 'gbrain/engine-open';
+import { resolveSkills as e30 } from 'gbrain/skill-resolver';
 import type { BrainEngine } from 'gbrain/engine';
 import type { PageInput, SearchResult } from 'gbrain/types';
 import { PGLiteEngine } from 'gbrain/pglite-engine';
@@ -73,6 +74,7 @@ export const RUNTIME_IMPORTS: readonly unknown[] = [
   e27,
   e28,
   e29,
+  e30,
 ];
 
 export function makeEngine(): BrainEngine {
