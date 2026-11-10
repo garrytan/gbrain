@@ -54,6 +54,7 @@ import { embeddingEffectsRepair } from './embedding-effects.ts';
 import { googleFileModesRepair } from './google-file-modes.ts';
 import { staleAtomsRepair } from './stale-atoms.ts';
 import { atomsRestoreRepair } from './atoms-restore.ts';
+import { atomFenceRowsRepair } from './atom-fence-rows.ts';
 import { extractorFactsRepair } from './extractor-facts.ts';
 import { unwithdrawnFactsRepair } from './unwithdrawn-facts.ts';
 import { conversationLabelsRepair } from './conversation-labels.ts';
@@ -224,6 +225,14 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'generations are kept. Preview-bound: --apply --expect <hash> restores exactly the previewed set (managed: one revision-bound request per atom '
       + 'that writes the canonical file back, its request id in the outcome); an atom that changed since reports changed_since_preview and stays deleted. '
       + 'The purge holds these atoms for 30 days after deletion. Runs only when named; never on upgrade.',
+  },
+  'atom-fence-rows': {
+    handler: atomFenceRowsRepair, embeds: 'effect', checks: ['atom_fence_rows'], explicit_only: true, preview_bound: true,
+    summary: 'Narrow to private the world atoms whose title, body or source_quote carries the claim of a fence row their source page shows only to the owner '
+      + '(a facts row whose visibility is not world, a takes row whose holder is not world), copied by an extraction that read the whole page. The preview lists '
+      + 'each atom with its source page and the row kinds and numbers, never the row text, and changes nothing. Preview-bound: --apply --expect <hash> sets '
+      + 'visibility: private on exactly the previewed set through a revision-bound put_page; an atom that changed since reports changed_since_preview. '
+      + 'Source pages stored in segments are not read (origin_unread). Runs only when named; never on upgrade.',
   },
   'extractor-facts': {
     handler: extractorFactsRepair, embeds: 'none', checks: ['extractor_facts_expired'], explicit_only: true,

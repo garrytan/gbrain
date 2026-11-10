@@ -10,6 +10,20 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.638.0] - 2026-11-10
+
+**Atoms extracted from a world page never carry a fence row the page shows only to its owner, and `gbrain repair atom-fence-rows` finds and narrows atoms stored before.** A world page's facts table can hold rows marked `visibility: private`, and its takes table is never part of what a remote caller reads. Atom extraction, take proposals and the patterns phase read a page as a world reader sees it, so what they produce holds only world rows. Atoms an earlier version stored may still hold such a row: doctor `atom_fence_rows` counts them and names the read-only preview, and only `gbrain repair atom-fence-rows --apply --expect <hash>` makes the previewed atoms private. Nothing runs on upgrade.
+
+### Itemized changes
+
+- `src/core/cycle/extract-atoms-input.ts`: a page's extraction input is its `publicBody` (facts rows other than world and the takes fence removed); the cap, the watermark and quote verification apply to that text, on the cycle phase and the managed path alike.
+- `src/core/cycle/propose-takes.ts`: the extractor receives the page's `publicBody`, and a proposal that restates a take held by someone other than `world` is dropped before it is filed; the content hash, fence skip and dedup rows still read the stored body.
+- `src/core/cycle/patterns.ts`: reflection excerpts in the subagent prompt and the quote-grounding sources are the reflection's `publicBody`.
+- `src/core/repair/atom-fence-rows.ts` (new, registered in `repair/core.ts`, `repair/registry.ts`, `persistence/preview-approval.ts`): explicit-only, preview-bound kind; the preview lists each world atom with its source page and the row kinds and numbers it carries (never the row text) and changes nothing; the apply sets `visibility: private` on exactly the previewed set through a revision-bound put_page.
+- `src/commands/doctor/checks/atom-fence-rows.ts` (new, a host-only `WAVE_CHECKS` entry, BRAIN category): `atom_fence_rows` warns with the count per source and the preview command.
+- Docs: `docs/guides/repair.md#atom-fence-rows` (what is listed, the apply, cost), `skills/RESOLVER.md`, key-files rows in `core-cycle.md`, `hindsight.md`, `core-cycle-patterns.md` and `memory-purge.md`.
+- Tests (PGLite and Postgres): `test/extract-atoms-world-fence-rows.test.ts` (cycle phase and managed brain: prompt, atoms and a remote read of each atom hold only world rows), `test/cycle-world-fence-rows.test.ts` (propose_takes input and proposals, patterns prompt and quote grounding), `test/repair-atom-fence-rows.test.ts` (doctor finding, preview changes nothing, apply without `--expect` refuses, apply narrows exactly the previewed atoms, unmanaged and managed).
+
 ## [0.60.637.0] - 2026-11-10
 
 **A file Git puts back after sync deleted its page brings the page back, and the retention purge never deletes a committed file.** On a managed brain, a commit that removed a Markdown file made sync soft-delete its page. When the same file came back (a `git revert`, switching to a branch and back, a collaborator's delete-then-restore, a file missing from disk for one working-tree sync), sync settled the path as "deleted, file unchanged" and left the page out of get, search and recall while `gbrain sync status` said synced. `gbrain pages purge-deleted --yes` then deleted the restored file from the checkout. Sync now tells a tombstone it made from a missing file apart from a person's delete and imports the file over it, so the same page comes back; a brain an older version left in that state heals on its next sync. The purge leaves a file committed at the source's last synced commit or at HEAD alone, unless a person's delete of the page never removed the file (for example because another page shared it). A page purge also stops leaving timeline text in the write journal.

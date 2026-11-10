@@ -603,6 +603,10 @@
       },
       {
         "category": "brain",
+        "name": "atom_fence_rows"
+      },
+      {
+        "category": "brain",
         "name": "generation_retirements"
       },
       {
