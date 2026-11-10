@@ -49,17 +49,23 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { opError } from '../ops/contract.ts';
+import { opError, type OperationContext } from '../ops/contract.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { withTrustKeep } from '../persistence/context.ts';
-import { maintenancePreflight, publishMaintenancePage } from '../persistence/prepared-maintenance.ts';
+import { maintenancePreflight, publishMaintenancePage, publishMaintenancePages, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
+import { getWriteRequest } from '../persistence/journal.ts';
+import { isTerminal } from '../persistence/model.ts';
+import { requestPrincipalForContext } from '../persistence/page-mutations.ts';
+import { digest } from '../persistence/digest.ts';
+import { modeRequiresSynopsis } from '../embedding-context.ts';
+import { chunkGenerationFilter } from '../search/safe-chunks.ts';
 import { importFromContent } from '../import-file.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { PRIVACY_ALIASES, privacyAliasSql, privacyPartSql, privateSnapshotFilterFragment, readHonorAliases } from '../search/private-visibility.ts';
 import { asciiLower } from '../edge-whitespace.ts';
-import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope } from './core.ts';
+import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairSettlement } from './core.ts';
 
 export type ClearClass = 'alias' | 'alias-and-visibility' | 'git-publish';
 export type KeepClass = 'pinned_question' | 'derived' | 'strong_alias' | 'explicit_visibility';
@@ -77,7 +83,8 @@ const bounded = { timeoutMs: 120_000 };
 type Labels = { access?: string; visibility?: string };
 interface LabelRow { id: number; source_id: string; slug: string; type: string; frontmatter: Record<string, unknown> | null; revision: string | null; chars: number; git: boolean }
 interface Selection { source_ids: string[]; class: LabelsClass | null }
-interface Approved { mode: 'clear' | 'restore'; class: LabelsClass; brain_id: string; source_id: string; slug: string; page_id: number; revision: string | null; labels: Labels; chars: number; selection: Selection; exposes?: number[] }
+/** `tried` (GBRA-443): an earlier apply tried this page and it did not change; its decline again does not count toward the breaker. */
+interface Approved { mode: 'clear' | 'restore'; class: LabelsClass; brain_id: string; source_id: string; slug: string; page_id: number; revision: string | null; labels: Labels; chars: number; selection: Selection; exposes?: number[]; tried?: true }
 interface LabelsItem extends RepairItem { entry: Approved; ledger: PrivateLabelsLedger }
 /**
  * One ledger line. `phase`: `intent` is appended before the page write, `committed` after it landed, with the revision it
@@ -160,7 +167,7 @@ const hashParts = (scope: RepairScope, selection: Selection, entries: Approved[]
   items: entries.map(e => [e.mode, e.class, e.source_id, e.page_id, e.slug, e.revision, Object.entries(e.labels).sort(), e.exposes ?? []]) });
 
 /** Every category's count over the scope and the clear entries of the selected classes, in (class, page id) order. */
-async function planClear(engine: BrainEngine, scope: RepairScope, selection: Selection, classes: readonly ClearClass[]) {
+async function planClear(engine: BrainEngine, scope: RepairScope, selection: Selection, classes: readonly ClearClass[], ledger?: PrivateLabelsLedger) {
   const counts = Object.fromEntries([...KEEP_CLASSES, ...CLEAR_CLASSES].map(cls => [cls, 0])) as Record<KeepClass | ClearClass, number>;
   const entries: Approved[] = [];
   await scanLabelled(engine, scope.source_ids, row => {
@@ -171,7 +178,10 @@ async function planClear(engine: BrainEngine, scope: RepairScope, selection: Sel
     if (classes.includes(decided.clear)) entries.push({ mode: 'clear', class: decided.clear, brain_id: scope.brain_id, source_id: row.source_id, slug: row.slug,
       page_id: Number(row.id), revision: row.revision, labels: decided.removed, chars: Number(row.chars), selection });
   });
-  entries.sort((a, b) => CLEAR_CLASSES.indexOf(a.class as ClearClass) - CLEAR_CLASSES.indexOf(b.class as ClearClass) || a.page_id - b.page_id);
+  const tried = triedBefore(ledger, scope.brain_id);
+  for (const entry of entries) if (tried.has(entry.source_id + '\0' + entry.page_id)) entry.tried = true;
+  const retry = (entry: Approved) => Number(entry.tried === true);
+  entries.sort((a, b) => retry(a) - retry(b) || CLEAR_CLASSES.indexOf(a.class as ClearClass) - CLEAR_CLASSES.indexOf(b.class as ClearClass) || a.page_id - b.page_id);
   return { counts: counts as Record<string, number>, entries, unreadable: 0 };
 }
 
@@ -295,8 +305,123 @@ async function importAtRevision(engine: BrainEngine, entry: Approved, revision: 
   });
 }
 
+/** GBRA-443: lines this run appended to its ledger, by phase (the apply result's ledger_rows_written and ledger_rows), kept on the ledger it was handed. */
+type CountedLedger = PrivateLabelsLedger & { rows?: { intent: number; committed: number } };
+function recordLine(ledger: CountedLedger, line: LedgerLine & { phase: 'intent' | 'committed' }): void {
+  ledger.record(line);
+  (ledger.rows ??= { intent: 0, committed: 0 })[line.phase]++;
+}
+
+/**
+ * GBRA-443: the pages (brain, source, page id) whose latest ledger line is a removal's intent line with nothing after it:
+ * an earlier apply tried to clear them and the write did not land (a declined page; a crash before its write, too). The
+ * preview lists them after every page not tried yet, so a page that keeps declining stops heading each new window.
+ */
+function triedBefore(ledger: PrivateLabelsLedger | undefined, brainId: string): Set<string> {
+  const latest = new Map<string, LedgerLine>();
+  for (const raw of ledger?.lines ?? []) {
+    const line = readableLine(raw);
+    if (line && line.brain_id === brainId) latest.set(line.source_id + '\0' + line.page_id, line);
+  }
+  return new Set([...latest].flatMap(([key, line]) => line.removed && line.phase === 'intent' ? [key] : []));
+}
+
+/** GBRA-443: the listed items whose write embeds: a label-only edit keeps every stored vector except on a page stored under per-chunk synopsis; a page with a chunk that has no vector yet is counted too. */
+async function reembedding(engine: BrainEngine, items: LabelsItem[]): Promise<LabelsItem[]> {
+  if (!items.length) return [];
+  const ids = items.map(item => item.entry.page_id);
+  const rows = await engine.executeRaw<{ id: number; mode: string }>(`SELECT id, contextual_retrieval_mode AS mode FROM pages
+    WHERE id = ANY($1::integer[]) AND contextual_retrieval_mode IS NOT NULL`, [ids], bounded);
+  const unembedded = await engine.executeRaw<{ id: number }>(`SELECT DISTINCT cc.page_id AS id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+    WHERE cc.page_id = ANY($1::integer[]) AND cc.embedding IS NULL AND ${chunkGenerationFilter('p', 'cc')}`, [ids], bounded);
+  const embeds = new Set([...rows.filter(row => modeRequiresSynopsis(row.mode as Parameters<typeof modeRequiresSynopsis>[0])).map(row => Number(row.id)),
+    ...unembedded.map(row => Number(row.id))]);
+  return items.filter(item => embeds.has(item.entry.page_id));
+}
+
+const CHANGED: RepairItemOutcome = { applied: false, outcome: 'changed_since_preview' };
+interface Ready { revision: string; content: string; labels: Labels }
+
+/**
+ * One approved item re-decided against its live page: the page write it needs, or the outcome that leaves it alone (moved
+ * since the preview, segmented, no longer this class, or held as file_backed on an unmanaged brain).
+ */
+async function prepareWrite(ctx: OperationContext, item: LabelsItem): Promise<Ready | { outcome: RepairItemOutcome }> {
+  const { entry } = item;
+  const snapshot = await ctx.engine.readPageSnapshot(entry.slug, { sourceId: entry.source_id });
+  if (!snapshot || Number(snapshot.page.id) !== entry.page_id || snapshot.revision !== entry.revision) return { outcome: CHANGED };
+  if (isSegmentedPage(snapshot.page)) return { outcome: { applied: false, outcome: 'segmented_page', reason: 'The page body is stored in segments; edit its frontmatter by hand on the brain host.' } };
+  const frontmatter = snapshot.page.frontmatter ?? {};
+  const labels = ledgerLabels(entry.labels);
+  if (!labels) return { outcome: CHANGED };
+  let next: Record<string, unknown>;
+  if (entry.mode === 'clear') {
+    let decided: Decision = null;
+    await scanLabelled(ctx.engine, [entry.source_id], row => { decided = classifyPrivateLabel(row); }, [entry.page_id]);
+    const current = decided as Decision;
+    if (!current || !('clear' in current) || current.clear !== entry.class || !sameLabels(current.removed, labels)) return { outcome: CHANGED };
+    next = Object.fromEntries(Object.entries(frontmatter).filter(([key]) => !Object.hasOwn(labels, key)));
+  } else {
+    if (Object.keys(labels).some(key => Object.hasOwn(frontmatter, key))) return { outcome: CHANGED };
+    next = { ...frontmatter, ...labels };
+  }
+  const file = (await filesInCheckout(ctx.engine, [entry.page_id])).get(entry.page_id);
+  if (file) {
+    return { outcome: { applied: false, outcome: 'file_backed', detail: { path: file },
+      reason: `${entry.source_id}:${entry.slug} has a file in its source's checkout (${file}); on a brain without managed persistence this repair writes only the database, `
+        + `so the next sync or re-import would undo it from the file. ${entry.mode === 'clear' ? `Remove ${describeLabels(labels)} from that file's frontmatter`
+          : `Add ${describeLabels(labels)} back to that file's frontmatter if it is missing`}, commit it, then run: gbrain sync --source ${entry.source_id}` } };
+  }
+  return { revision: snapshot.revision, content: serializePageToMarkdown({ ...snapshot.page, frontmatter: next }, snapshot.tags), labels };
+}
+
+/** The item's ledger line under its deterministic request id (a resumed run replays the same request). */
+async function ledgerLine(ctx: OperationContext, item: LabelsItem, ready: Ready): Promise<LedgerLine> {
+  const { entry } = item;
+  return { at: new Date().toISOString(), brain_id: entry.brain_id, source_id: entry.source_id, slug: entry.slug, page_id: entry.page_id,
+    revision_before: ready.revision, request_id: await repairRequestId(ctx, 'private-labels', item, ready.revision),
+    ...(entry.mode === 'clear' ? { removed: ready.labels } : { restored: ready.labels }) };
+}
+
+/** Write-ahead: the intent line lands before the page write, or the item is refused with nothing written. */
+function recordIntent(item: LabelsItem, line: LedgerLine): void {
+  try { recordLine(item.ledger, { ...line, phase: 'intent' }); } catch (error) {
+    throw opError('storage_error', `${line.source_id}:${line.slug} was not written: the undo ledger ${item.ledger.path} did not take its intent line (${error instanceof Error ? error.message : String(error)}).`,
+      `Make ${item.ledger.path} writable by this user, then rerun the same apply command; nothing was changed and the approved preview is kept.`);
+  }
+}
+
+/** The landed write's committed line, with the revision it wrote; a ledger that cannot take it still leaves the intent line restore reads. */
+function committedOutcome(item: LabelsItem, line: LedgerLine, written: string | null): RepairItemOutcome {
+  const outcome = item.entry.mode === 'clear' ? 'cleared' : 'restored';
+  try { recordLine(item.ledger, { ...line, at: new Date().toISOString(), phase: 'committed', ...(written ? { revision_after: written } : {}) }); } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { applied: true, outcome, reason: `The page was written and its intent line is in the ledger, so --class restore finds it, but its commit line was not saved (${message}).`,
+      detail: { ledger: item.ledger.path, ledger_error: message, labels: line.removed ?? line.restored } };
+  }
+  return { applied: true, outcome, detail: { ledger: item.ledger.path } };
+}
+
+const writtenRevision = async (engine: BrainEngine, entry: Approved) => (await engine.readPageSnapshot(entry.slug, { sourceId: entry.source_id }))?.revision ?? null;
+
+/** One item's page write after its intent line: the maintenance door on a managed brain, the legacy import under the page lock otherwise. */
+async function writeOne(ctx: OperationContext, item: LabelsItem, ready: Ready, line: LedgerLine, authority: MaintenanceAuthority | null, embed: boolean): Promise<RepairItemOutcome> {
+  recordIntent(item, line);
+  let written: string | null;
+  if (authority) {
+    await publishMaintenancePage(ctx.engine, authority, item.entry.slug, ready.content, { expectedRevision: ready.revision, requestId: line.request_id, keepTrust: true });
+    written = await writtenRevision(ctx.engine, item.entry);
+  } else {
+    written = await importAtRevision(ctx.engine, item.entry, ready.revision, ready.content, embed);
+    if (!written) return CHANGED;
+  }
+  return committedOutcome(item, line, written);
+}
+
 export const privateLabelsRepair: RepairHandler = {
   kind: 'private-labels',
+  /** GBRA-443: a label-only edit keeps every stored vector; the plan names the pages that re-embed anyway (embedding_items). */
+  embeds: false,
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
     const selection: Selection = { source_ids: scope.source_ids, class: selectedClass(opts) };
     const command = previewCommand(scope, selection);
@@ -305,7 +430,8 @@ export const privateLabelsRepair: RepairHandler = {
       throw opError('invalid_params', 'gbrain repair private-labels needs its undo ledger to apply or restore, and this caller passed none.', `Run it from the CLI on the brain host: ${command}`);
     }
     const toItems = (entries: Approved[]) => entries.map((entry, index): LabelsItem => ({ cursor: { phase: 0, id: index }, source_id: entry.source_id, slug: entry.slug,
-      chars: entry.chars, action: `${entry.mode === 'clear' ? 'remove' : 're-add'} ${describeLabels(entry.labels)}`, entry, ledger: ledger! }));
+      chars: entry.chars, action: `${entry.mode === 'clear' ? 'remove' : 're-add'} ${describeLabels(entry.labels)}`, entry, ledger: ledger!,
+      ...(entry.tried ? { retried: true } : {}) }));
     if (opts?.apply) {
       if (!opts.expect) {
         throw opError('invalid_params', 'gbrain repair private-labels --apply changes only the set a preview printed (clearing a label widens remote reads).',
@@ -318,13 +444,16 @@ export const privateLabelsRepair: RepairHandler = {
       }
       const approvedExposes = new Set(approved.items.flatMap(entry => entry.exposes ?? []));
       if ([...(await windowDependents(engine, approved.items)).exposes.values()].flat().some(id => !approvedExposes.has(id))) throw previewChangedError(opts.expect, command);
-      return { items: toItems(approved.items).filter(item => afterCursor(item.cursor, after)), preview_hash: opts.expect, residuals: {} };
+      (ledger as CountedLedger).rows = { intent: 0, committed: 0 };
+      const items = toItems(approved.items).filter(item => afterCursor(item.cursor, after));
+      return { items, preview_hash: opts.expect, residuals: {}, embedding_items: await reembedding(engine, items) };
     }
     const size = Math.min(Math.max(1, opts?.limit ?? PRIVATE_LABELS_WINDOW), PRIVATE_LABELS_WINDOW_MAX);
     const restore = selection.class === 'restore';
     const planned = restore ? await planRestore(engine, scope, selection, ledger!)
-      : await planClear(engine, scope, selection, selection.class ? [selection.class as ClearClass] : DEFAULT_CLASSES);
+      : await planClear(engine, scope, selection, selection.class ? [selection.class as ClearClass] : DEFAULT_CLASSES, ledger);
     const window = planned.entries.slice(0, size);
+    const retried = window.filter(entry => entry.tried).length;
     const pastWindow = planned.entries.length - window.length;
     const before = { ...planned.counts };
     const projected = { ...before };
@@ -356,84 +485,124 @@ export const privateLabelsRepair: RepairHandler = {
         + 'can read them once this window applies (readable_by and folder rules still apply). To keep one private, give it its own label first; --class restore re-hides them with their origins.'] : []),
       ...(fileBacked ? [`${fileBacked} listed page(s) have a file in their source's checkout on a brain without managed persistence. This repair writes only the database there, `
         + 'and the next sync or re-import would put the label back from the file, so the apply holds each (outcome file_backed) with the file to edit.'] : []),
+      ...(retried ? [`${retried} listed page(s) were tried by an earlier apply and did not change (the ledger has their intent line and nothing after it); `
+        + 'they are listed after every page not tried yet. Each is tried again and, if its page still declines, left unchanged with its reason; '
+        + 'such a decline does not count toward the run\'s systemic-failure stop.'] : []),
       ...(planned.unreadable ? [`${planned.unreadable} ledger line(s) could not be read and are not planned.`] : []),
       ...(restore && before.removed_after_restore ? [`${before.removed_after_restore} page(s) had their label removed after a restore landed (the page changed since the revision the restore wrote), `
         + 'so they are not listed; re-add the label by hand if that edit was a mistake.'] : []),
       ...(restore && !Object.values(before).some(Boolean) ? [`The ledger ${ledger!.path} has no line for brain ${scope.brain_id} in this scope. Restore reads only the ledger on the host `
         + 'and GBRAIN_HOME that ran the clear; run it there.'] : []),
     ];
-    return { items: toItems(window), preview_hash: hash, residuals: {}, warnings,
+    const items = toItems(window);
+    return { items, preview_hash: hash, residuals: {}, warnings, embedding_items: await reembedding(engine, items),
       listing: window.map(entry => ({ item: `${entry.source_id}:${entry.slug}`, class: entry.class,
         detail: entry.mode === 'restore' ? `re-add ${describeLabels(entry.labels)}` : entry.labels.visibility ? 'remove access: private, visibility: private' : 'remove access: private' })),
-      details: { counts: { before, after: projected }, window: { size, listed: window.length, pending_past_window: pastWindow, next_preview: command, file_backed: fileBacked },
+      details: { counts: { before, after: projected }, window: { size, listed: window.length, pending_past_window: pastWindow, next_preview: command, file_backed: fileBacked, tried_before: retried },
         ...(dependents ? { dependents } : {}),
         ledger: ledger?.path ?? null, class: selection.class } };
   },
   async apply(ctx, raw, opts): Promise<RepairItemOutcome> {
     const item = raw as LabelsItem;
-    const { entry } = item;
-    const changed: RepairItemOutcome = { applied: false, outcome: 'changed_since_preview' };
-    const snapshot = await ctx.engine.readPageSnapshot(entry.slug, { sourceId: entry.source_id });
-    if (!snapshot || Number(snapshot.page.id) !== entry.page_id || snapshot.revision !== entry.revision) return changed;
-    if (isSegmentedPage(snapshot.page)) return { applied: false, outcome: 'segmented_page', reason: 'The page body is stored in segments; edit its frontmatter by hand on the brain host.' };
-    const frontmatter = snapshot.page.frontmatter ?? {};
-    const labels = ledgerLabels(entry.labels);
-    if (!labels) return changed;
-    let next: Record<string, unknown>;
-    if (entry.mode === 'clear') {
-      let decided: Decision = null;
-      await scanLabelled(ctx.engine, [entry.source_id], row => { decided = classifyPrivateLabel(row); }, [entry.page_id]);
-      const current = decided as Decision;
-      if (!current || !('clear' in current) || current.clear !== entry.class || !sameLabels(current.removed, labels)) return changed;
-      next = Object.fromEntries(Object.entries(frontmatter).filter(([key]) => !Object.hasOwn(labels, key)));
-    } else {
-      if (Object.keys(labels).some(key => Object.hasOwn(frontmatter, key))) return changed;
-      next = { ...frontmatter, ...labels };
-    }
-    const file = (await filesInCheckout(ctx.engine, [entry.page_id])).get(entry.page_id);
-    if (file) {
-      return { applied: false, outcome: 'file_backed', detail: { path: file },
-        reason: `${entry.source_id}:${entry.slug} has a file in its source's checkout (${file}); on a brain without managed persistence this repair writes only the database, `
-          + `so the next sync or re-import would undo it from the file. ${entry.mode === 'clear' ? `Remove ${describeLabels(labels)} from that file's frontmatter`
-            : `Add ${describeLabels(labels)} back to that file's frontmatter if it is missing`}, commit it, then run: gbrain sync --source ${entry.source_id}` };
-    }
-    const authority = await maintenancePreflight(ctx.engine, entry.source_id);
-    const requestId = await repairRequestId(ctx, 'private-labels', item, snapshot.revision);
-    const line: LedgerLine = { at: new Date().toISOString(), brain_id: entry.brain_id, source_id: entry.source_id, slug: entry.slug, page_id: entry.page_id,
-      revision_before: snapshot.revision, request_id: requestId, ...(entry.mode === 'clear' ? { removed: labels } : { restored: labels }) };
-    try { item.ledger.record({ ...line, phase: 'intent' }); } catch (error) {
-      throw opError('storage_error', `${entry.source_id}:${entry.slug} was not written: the undo ledger ${item.ledger.path} did not take its intent line (${error instanceof Error ? error.message : String(error)}).`,
-        `Make ${item.ledger.path} writable by this user, then rerun the same apply command; nothing was changed and the approved preview is kept.`);
-    }
-    const content = serializePageToMarkdown({ ...snapshot.page, frontmatter: next }, snapshot.tags);
-    let written: string | null;
-    if (authority) {
-      await publishMaintenancePage(ctx.engine, authority, entry.slug, content, { expectedRevision: snapshot.revision, requestId, keepTrust: true });
-      written = (await ctx.engine.readPageSnapshot(entry.slug, { sourceId: entry.source_id }))?.revision ?? null;
-    } else {
-      written = await importAtRevision(ctx.engine, entry, snapshot.revision, content, opts?.embed === true);
-      if (!written) return changed;
-    }
-    const outcome = entry.mode === 'clear' ? 'cleared' : 'restored';
-    try { item.ledger.record({ ...line, at: new Date().toISOString(), phase: 'committed', ...(written ? { revision_after: written } : {}) }); } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { applied: true, outcome, reason: `The page was written and its intent line is in the ledger, so --class restore finds it, but its commit line was not saved (${message}).`,
-        detail: { ledger: item.ledger.path, ledger_error: message, labels } };
-    }
-    return { applied: true, outcome, detail: { ledger: item.ledger.path } };
+    const ready = await prepareWrite(ctx, item);
+    if ('outcome' in ready) return ready.outcome;
+    const authority = await maintenancePreflight(ctx.engine, item.entry.source_id);
+    return writeOne(ctx, item, ready, await ledgerLine(ctx, item, ready), authority, opts?.embed === true);
   },
-  /** GST-2128 item 7: the approved set is retired only by an apply that attempted every item with no failure, stop or pending write. */
+  /**
+   * GBRA-443: a run of approved items at once. Each is re-decided as apply does; on a managed brain every page of a source
+   * gets its intent line first (write-ahead for the whole run), then the pages are admitted together and the owner publishes
+   * them in groups (publishMaintenancePages), each page its own fate: a declined page fails alone. The batch id is the
+   * approval hash, so a window resumed at any item replays its pending requests. An unmanaged source writes one page at a
+   * time, as apply does.
+   */
+  async applyBatch(ctx, raw, opts) {
+    const items = raw as LabelsItem[];
+    const out: RepairSettlement[] = new Array(items.length);
+    // Once any page of this call may have been written, a later throw settles the pages it left instead of discarding the batch.
+    let wrote = false;
+    const settle = (index: number, write: () => Promise<RepairItemOutcome>) => { wrote = true; return write().then(value => { out[index] = { value }; }, error => { out[index] = { error }; }); };
+    const ready: Array<Ready | null> = [];
+    for (const [index, item] of items.entries()) {
+      const prepared = await prepareWrite(ctx, item).catch((error: unknown) => ({ error }));
+      ready.push('revision' in prepared ? prepared : null);
+      if ('error' in prepared) out[index] = { error: prepared.error };
+      else if ('outcome' in prepared) out[index] = { value: prepared.outcome };
+    }
+    const principal = await requestPrincipalForContext(ctx);
+    for (const sourceId of new Set(items.map(item => item.entry.source_id))) {
+      const indices = items.flatMap((item, index) => item.entry.source_id === sourceId && ready[index] ? [index] : []);
+      if (!indices.length) continue;
+      try {
+        const preflight = await maintenancePreflight(ctx.engine, sourceId).then(authority => ({ authority }), (error: unknown) => ({ error }));
+        if ('error' in preflight) { for (const index of indices) out[index] = { error: preflight.error }; continue; }
+        const { authority } = preflight;
+        const batch: Array<{ index: number; line: LedgerLine }> = [];
+        for (const index of indices) {
+          const line = await ledgerLine(ctx, items[index]!, ready[index]!);
+          // An unmanaged source, or a request a single-page apply admitted before batching (its intent has no batch id), writes on its own.
+          const prior = authority ? await getWriteRequest(ctx.engine, principal, line.request_id) : null;
+          if (!authority || (prior && !isTerminal(prior) && typeof prior.intent?.maintenance_batch !== 'string')) {
+            await settle(index, () => writeOne(ctx, items[index]!, ready[index]!, line, authority, opts.embed));
+            continue;
+          }
+          batch.push({ index, line });
+        }
+        if (!batch.length || !authority) continue;
+        const admitted: typeof batch = [];
+        for (const [position, entry] of batch.entries()) {
+          try { recordIntent(items[entry.index]!, entry.line); admitted.push(entry); } catch (error) {
+            // A ledger that refuses one intent line refuses the rest too: nothing after it is written.
+            for (const rest of batch.slice(position)) out[rest.index] = { error };
+            break;
+          }
+        }
+        if (!admitted.length) continue;
+        const published = await publishMaintenancePages(ctx.engine, authority, admitted.map(({ index, line }) => ({ slug: items[index]!.entry.slug, content: ready[index]!.content,
+          expectedRevision: ready[index]!.revision, requestId: line.request_id, keepTrust: true as const })), { batch: digest(['private-labels-batch-v1', opts.expect ?? opts.runId ?? '', sourceId]) });
+        wrote = true;
+        for (const [position, { index, line }] of admitted.entries()) {
+          const settled = published[position]!;
+          if ('error' in settled) { out[index] = { error: settled.error }; continue; }
+          // A failed read of the written revision still records the committed line (without revision_after).
+          out[index] = { value: committedOutcome(items[index]!, line, await writtenRevision(ctx.engine, items[index]!.entry).catch(() => null)) };
+        }
+      } catch (error) {
+        if (!wrote) throw error;
+        for (const index of indices) out[index] ??= { error };
+      }
+    }
+    return out;
+  },
+  /** GBRA-443: a write still pending when its run moved on, committed later in the run: its committed line, as apply writes for one that landed in its wait. */
+  async onCommitted(ctx, raw, requestId) {
+    const item = raw as LabelsItem;
+    const { entry } = item;
+    const line: LedgerLine = { at: new Date().toISOString(), brain_id: entry.brain_id, source_id: entry.source_id, slug: entry.slug, page_id: entry.page_id,
+      revision_before: entry.revision ?? '', request_id: requestId, ...(entry.mode === 'clear' ? { removed: entry.labels } : { restored: entry.labels }) };
+    committedOutcome(item, line, await writtenRevision(ctx.engine, entry));
+  },
+  /**
+   * GST-2128 item 7: the approved set is retired only by an apply that attempted every item with no failure, stop or pending write.
+   * GBRA-443: an apply reports where its ledger is and how many lines it appended (intent and committed), so a caller can
+   * check the file grew by ledger_rows_written and that every applied page has its committed line.
+   */
   async report(ctx, _scope, result, opts) {
     if (result.mode === 'apply' && opts.expect && result.complete && !result.stopped && !result.failed.length && !result.pending?.length) {
       await clearApprovedSet(ctx.engine, { command: 'private-labels', hash: opts.expect });
     }
-    return {};
+    const ledger = opts.privateLabelsLedger;
+    if (result.mode !== 'apply' || !ledger) return {};
+    const rows = (ledger as CountedLedger).rows ?? { intent: 0, committed: 0 };
+    return { details: { ...result.details, ledger: ledger.path, ledger_rows_written: rows.intent + rows.committed, ledger_rows: { ...rows } } };
   },
   render(details) {
     const counts = details.counts as { before: Record<string, number>; after: Record<string, number> } | undefined;
     const line = (values: Record<string, number>) => Object.entries(values).map(([key, value]) => `${key}=${value}`).join(', ');
     const dependents = details.dependents as Record<string, number> | undefined;
+    const rows = details.ledger_rows as { intent: number; committed: number } | undefined;
     return [...(counts ? [`  before: ${line(counts.before)}`, `  after (this window applied): ${line(counts.after)}`] : []),
-      ...(dependents ? [`  also exposed by this window: ${line(dependents)}`] : []), ...(details.ledger ? [`  ledger: ${String(details.ledger)}`] : [])];
+      ...(dependents ? [`  also exposed by this window: ${line(dependents)}`] : []),
+      ...(details.ledger ? [`  ledger: ${String(details.ledger)}${rows ? ` (this run appended ${rows.intent + rows.committed} line(s): ${rows.intent} intent, ${rows.committed} committed)` : ''}`] : [])];
   },
 };
