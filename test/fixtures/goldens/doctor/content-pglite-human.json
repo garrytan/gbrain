@@ -88,7 +88,7 @@
       "  [INFO] access_policy_store_mismatch: Not applicable: no source has a folder rule.",
       "  [INFO] unlabeled_people_folders: Not applicable: this brain serves one person (fewer than two enabled members and no access.serves = several).",
       "  [INFO] unscoped_shared_reads: Not applicable: this brain serves one person (fewer than two enabled members and no access.serves = several).",
-      "  [INFO] shared_stdio_binding: Not applicable: config mcp.stdio_member is unset, so no stdio session on this host reads as a member.",
+      "  [INFO] shared_stdio_binding: Not applicable: config mcp.stdio_member is unset and no claude-code or codex entry starts serve --stdio-member, so no stdio session on this host reads as a member.",
       "  [INFO] access_may_act_for_wildcard: Not applicable: no page names readers and no member exists.",
       "  [OK] rls: Skipped (PGLite — no PostgREST exposure, RLS not applicable)",
       "  [OK] function_search_path: Every gbrain function that pins a search_path ends it with pg_temp",

@@ -72,7 +72,7 @@ const whoami: Operation = {
         if (verified.remote) scopes = verified.grant.scopes;
       } catch { /* no registration: no scopes */ }
       const session = ctx.stdioSurface;
-      return { transport: 'stdio', scopes, ...(session ? { surface: session.surface, surface_source: session.source } : {}), access: await withApplied(await stdioAccessView(ctx.engine)), readiness: readiness('stdio') };
+      return { transport: 'stdio', scopes, ...(session ? { surface: session.surface, surface_source: session.source } : {}), access: await withApplied(await stdioAccessView(ctx.engine, ctx.stdioMember)), readiness: readiness('stdio') };
     }
     if (!ctx.auth) {
       throw opError(

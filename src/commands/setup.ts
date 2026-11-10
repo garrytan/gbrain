@@ -36,6 +36,7 @@ import { hostedOptionMuted, hostedOptionNotice, writeHostedOption } from '../cor
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
 import { configDir, gbrainPath, isThinClient, loadConfig, type GBrainConfig } from '../core/config.ts';
 import { resolveGbrainBin } from '../core/gbrain-bin.ts';
+import { parseStdioMemberFlag } from '../core/stdio-member-flag.ts';
 import { isRegistrationSurface, isValidName, REGISTRATION_SURFACE, registrationAdvertise, stdioServeArgv } from '../core/mcp-registration.ts';
 import { hookLauncherPath } from '../core/setup/hook-launcher.ts';
 import { readResolverConfig, resolverHarnesses } from '../core/setup/skill-resolver-config.ts';
@@ -47,7 +48,7 @@ import { claudeUserSettingsPath, type ClaudeHookEvent } from '../core/bootstrap/
 import { readHarnessReceiptState } from '../core/bootstrap/format.ts';
 import { smokeStdioRegistration } from './doctor/checks/harness-wiring.ts';
 import { finishFreshSetupMigrations } from './setup-migrations.ts';
-import { readServesStatus, sharedStdioHarness, servesApply, servesLines, servesOk, servesPreflight, type ServesOutcome } from './setup-serves.ts';
+import { readServesStatus, sharedStdioHarness, servesApply, servesLines, servesOk, servesPreflight, type EntryBinding, type ServesOutcome } from './setup-serves.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 import {
   SETUP_CAPABILITIES,
@@ -152,13 +153,16 @@ Flags:
                        (a 0600 file under <config>/member-keys/), then one bound read per member
                        proves it. A one-person setup on a brain that already serves several
                        people (2+ enabled members) refuses rather than write a connection bound
-                       to nobody, unless config mcp.stdio_member binds it.
+                       to nobody, unless this harness's entry or config mcp.stdio_member binds it.
   --members IDS        The people of --serves several, comma-separated (e.g. alice-example,bob-example).
   --members-file PATH  The same, one id per line.
-  --stdio-member ID    With --serves several on claude-code or codex: bind the stdio server to ID.
-                       mcp.stdio_member is brain-wide: every stdio session on this host then reads
-                       as ID, so use it only on a machine one person uses; refused where OpenClaw
-                       or Hermes is installed.
+  --stdio-member ID    claude-code or codex: write serve --stdio-member ID into this harness's
+                       MCP entry, so only its sessions read as ID (an enabled member, or one
+                       of --members). Other harnesses on this host are unchanged. Use it for a
+                       harness only ID uses; refused where OpenClaw or Hermes is installed
+                       (give each person their own HTTP key there). A re-run keeps the entry's
+                       member; setup never adds one on its own.
+  --no-stdio-member    Remove --stdio-member from this harness's entry.
   --remove             Remove exactly what setup wrote (unchanged entries only), the
                        brain-first instruction block included. The brain and your
                        notes stay. Combine with --dry-run to preview.
@@ -248,7 +252,9 @@ interface SetupFlags {
   serves?: 'one' | 'several';
   members?: string;
   membersFile?: string;
+  /** GST-363: written into this harness's MCP entry as serve --stdio-member; never into config. */
   stdioMember?: string;
+  noStdioMember: boolean;
 }
 
 const VALUE_FLAGS = new Set(['--surface', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--serves', '--members', '--members-file', '--stdio-member']);
@@ -273,11 +279,14 @@ function parseFlags(args: string[]): SetupFlags | string {
   const serves = value('--serves');
   if (serves !== undefined && serves !== 'one' && serves !== 'several') return `unknown --serves '${serves}'; pass one or several`;
   if ((args.includes('--members') || args.includes('--members-file')) && serves !== 'several') return '--members and --members-file name the people of --serves several';
-  const stdioMember = value('--stdio-member');
-  if (stdioMember !== undefined && serves !== 'several') return '--stdio-member needs --serves several --members <id,...>; nothing was written';
-  if (stdioMember !== undefined && (!['claude-code', 'codex'].includes(positionals[0] ?? '') || args.includes('--instructions-only'))) return '--stdio-member binds the stdio server setup registers for claude-code or codex (not --instructions-only); nothing was written';
+  let stdioMember: string | undefined;
+  try { stdioMember = parseStdioMemberFlag(args); } catch (e) { return `${(e as Error).message}; nothing was written`; }
+  const noStdioMember = args.includes('--no-stdio-member');
+  if (stdioMember !== undefined && noStdioMember) return 'pass --stdio-member or --no-stdio-member, not both';
+  const memberFlag = stdioMember !== undefined ? '--stdio-member' : noStdioMember ? '--no-stdio-member' : null;
+  if (memberFlag && (!['claude-code', 'codex'].includes(positionals[0] ?? '') || args.includes('--instructions-only') || args.includes('--remove'))) return `${memberFlag} changes the stdio MCP entry setup writes for claude-code or codex (not --instructions-only or --remove); nothing was written`;
   const shared = stdioMember === undefined ? null : sharedStdioHarness();
-  if (shared) return `--stdio-member refused: ${shared} is installed on this host and mcp.stdio_member is brain-wide, so the key would bind ${shared}'s shared sessions too; nothing was written`;
+  if (shared) return `--stdio-member refused: ${shared} is installed on this host, and its sessions serve several people, so a stdio entry bound to one member is not something setup writes here; give each person their own key over HTTP instead (gbrain serve --http with gbrain auth create <name> --member <id> per person); nothing was written`;
   const workspace = value('--workspace');
   if (workspace !== undefined && !workspace.startsWith('/') && !workspace.startsWith('~')) return '--workspace needs an absolute path';
   const flagLoading = value('--skill-loading');
@@ -313,6 +322,7 @@ function parseFlags(args: string[]): SetupFlags | string {
     ...(value('--members') !== undefined ? { members: value('--members') } : {}),
     ...(value('--members-file') !== undefined ? { membersFile: value('--members-file') } : {}),
     ...(stdioMember !== undefined ? { stdioMember } : {}),
+    noStdioMember,
   };
 }
 
@@ -346,6 +356,8 @@ interface Target {
   launcher: string;
   surface: McpSurface;
   advertise?: McpSurface;
+  /** GST-363: the serve --stdio-member this entry carries. */
+  stdio_member?: string;
   registration_owner: 'none' | 'setup' | 'plugin';
   live_owner: { pid: number; transport: 'stdio' | 'http'; ours: boolean } | null;
   scope: WiringScope;
@@ -392,7 +404,7 @@ function describeTarget(t: Target, out: Out, harness: SetupHarnessId = 'claude-c
   say(out, `Target (${HARNESS_LABEL[harness]}, ${t.scope} scope):`);
   say(out, `  brain      ${brain}`);
   say(out, `  source     ${t.source.id ? `'${t.source.id}' (pinned, from ${t.source.from === 'flag' ? '--source' : 'GBRAIN_SOURCE'})` : 'the brain\'s default source (unpinned)'}`);
-  say(out, `  transport  stdio MCP: ${[hookLauncherPath(t.brain.config_dir), ...stdioServeArgv(t.launcher, t.surface, t.advertise ?? null)].join(' ')}${t.advertise ? ` (lists the ${t.advertise === 'verbs' ? 'memory verbs and request_tools' : `${t.advertise} tools`}; every ${t.surface} tool stays callable)` : ''}`);
+  say(out, `  transport  stdio MCP: ${[hookLauncherPath(t.brain.config_dir), ...stdioServeArgv(t.launcher, t.surface, t.advertise ?? null, t.stdio_member)].join(' ')}${t.advertise ? ` (lists the ${t.advertise === 'verbs' ? 'memory verbs and request_tools' : `${t.advertise} tools`}; every ${t.surface} tool stays callable)` : ''}`);
   say(out, `  owner      ${t.registration_owner === 'setup' ? `this setup (${t.receipt_path})` : t.registration_owner === 'plugin' ? `the gbrain ${HARNESS_LABEL[harness]} plugin (MCP); setup adds hooks only` : `none yet; setup will own '${t.name}'`}`);
   if (t.live_owner) say(out, `  live       gbrain ${t.live_owner.transport === 'http' ? 'serve --http' : 'stdio serve'} PID ${t.live_owner.pid}${t.live_owner.ours ? ' (started by this registration)' : ''}`);
   say(out, `  files      ${t.config_path} (MCP${t.hooks_path ? ' + hook trust' : ''}), ${t.hooks_path ?? t.settings_path} (hooks)`);
@@ -494,6 +506,8 @@ export async function runSetup(args: string[]): Promise<number> {
       const again = inspectClaudeSetup(listed);
       if (again.mcp.state === 'current') { plan = listed; found = again; }
     }
+    const binding = entryBinding(flags, found.mcp.stdioMember);
+    if (binding.member) { plan = { ...plan, stdioMember: binding.member }; found = inspectClaudeSetup(plan); }
     if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags.name), out);
 
     const pluginOwner = flags.name === 'gbrain' ? claudePluginProvidesName(claudeUserSettingsPath(), 'gbrain') : null;
@@ -502,7 +516,7 @@ export async function runSetup(args: string[]): Promise<number> {
       brain: !cfg ? { kind: 'new-local-pglite', path: gbrainPath('brain.pglite'), config_dir: brainHome }
         : cfg.engine === 'pglite' ? { kind: 'local-pglite', path: dataDir, config_dir: brainHome } : { kind: 'local-postgres', config_dir: brainHome },
       source: { id: sourceId, pinned: sourceId !== null, from: flags.source ? 'flag' : sourceId ? 'env' : 'brain-default' },
-      transport: 'local-stdio', launcher, surface, ...(plan.advertise ? { advertise: plan.advertise } : {}),
+      transport: 'local-stdio', launcher, surface, ...(plan.advertise ? { advertise: plan.advertise } : {}), ...(plan.stdioMember ? { stdio_member: plan.stdioMember } : {}),
       registration_owner: pluginOwner ? 'plugin' : prior ? 'setup' : 'none',
       live_owner: liveOwner, scope, name: flags.name,
       config_path: found.configPath, settings_path: found.settingsPath, receipt_path: found.receiptPath,
@@ -524,7 +538,7 @@ export async function runSetup(args: string[]): Promise<number> {
         actor: 'agent', argv: ['gbrain', 'bootstrap', 'harness', '--remove', '--dry-run'],
         why: 'Preview removing the bootstrap harness wiring first, or keep it and skip setup.', verify: verifyDryRun('claude-code', flags.name) }), out);
     }
-    const servesPlan = servesPreflight(flags, launcher, 'claude-code', !!cfg, !!liveOwner?.ours, !cfg || cfg.engine === 'pglite');
+    const servesPlan = servesPreflight(flags, launcher, 'claude-code', !!cfg, !!liveOwner?.ours, binding);
     if (servesPlan instanceof OperationError) return refuse(servesPlan, out);
 
     const brainCreate = !cfg;
@@ -533,11 +547,11 @@ export async function runSetup(args: string[]): Promise<number> {
       const steps: SetupStep[] = [
         { step: 'receipt', action: found.prior?.status === 'installed' && found.hooksCurrent && (found.mcp.state === 'current' || !!pluginOwner) && !brainCreate ? 'keep' : 'write', detail: found.receiptPath },
         ...(brainCreate ? [{ step: 'brain' as const, action: 'write' as const, detail: `would run: ${initArgv.join(' ')}` }] : []),
-        { step: 'mcp', action: pluginOwner ? 'skip' : found.mcp.state === 'current' ? 'keep' : 'write', detail: `'${flags.name}' in ${found.configPath}` },
+        { step: 'mcp', action: pluginOwner ? 'skip' : found.mcp.state === 'current' ? 'keep' : 'write', detail: `'${flags.name}' in ${found.configPath}${plan.stdioMember ? ` (serve --stdio-member ${plan.stdioMember})` : ''}` },
         { step: 'hooks', action: found.hooksCurrent ? 'keep' : 'write', detail: plan.events.length ? `${plan.events.join(', ')} in ${found.settingsPath}` : `no hooks (${found.settingsPath})` },
         ...Object.entries(found.edited).map(([event]) => ({ step: 'hooks' as const, action: 'preserve' as const, detail: `${event} was edited after setup wrote it; kept` })),
       ];
-      const serves = servesApply(flags, launcher, 'claude-code', servesPlan, !!cfg);
+      const serves = servesApply(flags, launcher, 'claude-code', servesPlan, !!cfg, binding);
       const instructions = brainFirstFor('claude-code', flags, mcpAccess(flags.name, plan.advertise ?? surface, serves), { scope, projectDir });
       const skills = skillsFor('claude-code', flags, launcher, { scope, projectDir }, instructions);
       const resolver = await resolverFor('claude-code', flags, launcher);
@@ -550,7 +564,7 @@ export async function runSetup(args: string[]): Promise<number> {
       beforeMcp: brainCreate ? async () => { notices = runBrainInit(initArgv, out, 'claude-code'); } : undefined,
     });
     for (const s of result.steps) say(out, `  ${s.action.padEnd(8)} ${s.step.padEnd(7)} ${s.detail}`);
-    const serves = servesApply(flags, launcher, 'claude-code', servesPlan, true);
+    const serves = servesApply(flags, launcher, 'claude-code', servesPlan, true, binding);
     const instructions = brainFirstFor('claude-code', flags, mcpAccess(flags.name, plan.advertise ?? surface, serves), { scope, projectDir });
     const skills = skillsFor('claude-code', flags, launcher, { scope, projectDir }, instructions);
     const resolver = await resolverFor('claude-code', flags, launcher);
@@ -672,6 +686,8 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
       const again = inspectCodexSetup(listed);
       if (again.mcp.state === 'current') { plan = listed; found = again; }
     }
+    const binding = entryBinding(flags, found.mcp.stdioMember);
+    if (binding.member) { plan = { ...plan, stdioMember: binding.member }; found = inspectCodexSetup(plan); }
     if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags.name, 'codex'), out);
 
     const pluginOwner = codexPluginProvidesName(paths.configPath, flags.name);
@@ -680,7 +696,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
       brain: !cfg ? { kind: 'new-local-pglite', path: gbrainPath('brain.pglite'), config_dir: brainHome }
         : cfg.engine === 'pglite' ? { kind: 'local-pglite', path: dataDir, config_dir: brainHome } : { kind: 'local-postgres', config_dir: brainHome },
       source: { id: sourceId, pinned: sourceId !== null, from: flags.source ? 'flag' : sourceId ? 'env' : 'brain-default' },
-      transport: 'local-stdio', launcher, surface, ...(plan.advertise ? { advertise: plan.advertise } : {}),
+      transport: 'local-stdio', launcher, surface, ...(plan.advertise ? { advertise: plan.advertise } : {}), ...(plan.stdioMember ? { stdio_member: plan.stdioMember } : {}),
       registration_owner: pluginOwner ? 'plugin' : prior ? 'setup' : 'none',
       live_owner: liveOwner, scope: 'user', name: flags.name,
       config_path: found.configPath, hooks_path: found.hooksPath, receipt_path: found.receiptPath,
@@ -702,7 +718,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
         actor: 'agent', argv: harnessLane ? ['gbrain', 'bootstrap', 'harness', '--remove', '--dry-run'] : ['gbrain', 'setup', 'codex', laneEvents.every((e) => e === 'SessionEnd') ? '--no-capture' : '--no-hooks', '--dry-run', '--json'],
         why: harnessLane ? 'Preview removing the bootstrap harness wiring first, or keep it and skip setup.' : 'Keep the bootstrap lane for those events and preview setup without them.', verify: verifyDryRun('codex', flags.name) }), out);
     }
-    const servesPlan = servesPreflight(flags, launcher, 'codex', !!cfg, !!liveOwner?.ours, !cfg || cfg.engine === 'pglite');
+    const servesPlan = servesPreflight(flags, launcher, 'codex', !!cfg, !!liveOwner?.ours, binding);
     if (servesPlan instanceof OperationError) return refuse(servesPlan, out);
 
     const brainCreate = !cfg;
@@ -712,12 +728,12 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
       const steps: CodexSetupStep[] = [
         { step: 'receipt', action: unchanged ? 'keep' : 'write', detail: found.receiptPath },
         ...(brainCreate ? [{ step: 'brain' as const, action: 'write' as const, detail: `would run: ${initArgv.join(' ')}` }] : []),
-        { step: 'mcp', action: pluginOwner ? 'skip' : found.mcp.state === 'current' ? 'keep' : 'write', detail: `[mcp_servers.${flags.name}] in ${found.configPath}` },
+        { step: 'mcp', action: pluginOwner ? 'skip' : found.mcp.state === 'current' ? 'keep' : 'write', detail: `[mcp_servers.${flags.name}] in ${found.configPath}${plan.stdioMember ? ` (serve --stdio-member ${plan.stdioMember})` : ''}` },
         { step: 'hooks', action: found.hooksCurrent ? 'keep' : 'write', detail: plan.events.length ? `${plan.events.join(', ')} in ${found.hooksPath}` : `no hooks (${found.hooksPath})` },
         { step: 'trust', action: found.trustCurrent ? 'keep' : 'write', detail: `trust entries for setup's groups in ${found.configPath}` },
         ...Object.keys(found.edited).map((event) => ({ step: 'hooks' as const, action: 'preserve' as const, detail: `${event} was edited after setup wrote it; kept` })),
       ];
-      const serves = servesApply(flags, launcher, 'codex', servesPlan, !!cfg);
+      const serves = servesApply(flags, launcher, 'codex', servesPlan, !!cfg, binding);
       const instructions = brainFirstFor('codex', flags, mcpAccess(flags.name, plan.advertise ?? surface, serves), {});
       const skills = skillsFor('codex', flags, launcher, {}, instructions);
       const resolver = await resolverFor('codex', flags, launcher);
@@ -731,7 +747,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     });
     for (const s of result.steps) say(out, `  ${s.action.padEnd(8)} ${s.step.padEnd(7)} ${s.detail}`);
     for (const n of result.notes) say(out, `note: ${n}`);
-    const serves = servesApply(flags, launcher, 'codex', servesPlan, true);
+    const serves = servesApply(flags, launcher, 'codex', servesPlan, true, binding);
     const instructions = brainFirstFor('codex', flags, mcpAccess(flags.name, plan.advertise ?? surface, serves), {});
     const skills = skillsFor('codex', flags, launcher, {}, instructions);
     const resolver = await resolverFor('codex', flags, launcher);
@@ -810,6 +826,11 @@ async function runRemove(flags: SetupFlags, receipt: ClaudeSetupReceipt | null, 
 }
 
 /** The brain-first block for this run: decided from flags, env and the ledger, then applied (or previewed under --dry-run). */
+/** GST-363: the --stdio-member the harness entry will carry: the one named, none for --no-stdio-member, else the one setup's own entry carries now. */
+function entryBinding(flags: SetupFlags, previous: string | undefined): EntryBinding {
+  return { member: flags.noStdioMember ? null : flags.stdioMember ?? previous ?? null, previous: previous ?? null };
+}
+
 /** The access the brain-first block names; a brain that serves several people says the connection is already scoped. */
 function mcpAccess(server: string, surface: McpSurface, serves: ServesOutcome | null): BrainFirstAccess {
   return { kind: 'mcp', server, surface, ...(serves?.brain_serves === 'several' ? { serves: 'several' as const } : {}) };

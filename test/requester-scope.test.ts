@@ -247,12 +247,13 @@ for (const kind of testBackends()) {
       refused(await search('fresh-unbound'), 'created_after');
     }, 60_000);
 
-    test('stdio: unbound reads world pages with a notice in the grace (never a member-restricted page) and is refused after it; the fix follows the engine (PGLite: --stdio-member and per-person HTTP keys; Postgres: only the HTTP key), never config set; bound reads plainly', async () => {
-      const setupFix = kind === 'pglite' ? ['gbrain', 'setup', '<HARNESS>', '--serves', 'several', '--members', '<MEMBERS>', '--stdio-member', '<MEMBER>'] : ['gbrain', 'auth', 'create', '<NAME>', '--member', '<MEMBER>', '--brain', 'host'];
+    test('stdio: unbound reads world pages with a notice in the grace (never a member-restricted page) and is refused after it; the fix is the per-harness --stdio-member on either engine, with per-person HTTP keys for shared harnesses, never config set; bound reads plainly', async () => {
+      const setupFix = ['gbrain', 'setup', '<HARNESS>', '--stdio-member', '<MEMBER>'];
       const route = (text: string) => {
+        expect(text).toContain('gbrain setup <claude-code|codex> --stdio-member');
+        expect(text).toContain('nothing else');
         expect(text).toContain('gbrain serve --http');
-        if (kind === 'pglite') expect(text).toContain('local PGLite brain');
-        else expect(text).not.toContain('--stdio-member');
+        expect(text).not.toContain('--serves several');
       };
       await importFromContent(engine, 'notes/alice-only', '---\ntype: note\ntitle: alice only\nreadable_by: [alice-example]\n---\n# alice only\n\nHarbor ledger notes canaryalice.\n', { sourceId: 'default', noEmbed: true });
       await setSince(1);
@@ -260,7 +261,6 @@ for (const kind of testBackends()) {
       expect(inGrace.isError).toBe(false);
       expect(inGrace.text).toContain('canaryalpha');
       expect(inGrace.meta?.access?.requester_scope).toMatchObject({ state: 'grace', connection: 'this stdio server', fix: { argv: setupFix, next: 'tell_user_to_run' } });
-      if (kind === 'pglite') expect(inGrace.meta?.access?.requester_scope.message).toContain('private pages included');
       route(inGrace.meta?.access?.requester_scope.message);
       expect((await stdio('get_page', { slug: 'notes/alice-only' })).text).not.toContain('canaryalice');
       await setSince(15);
@@ -270,10 +270,15 @@ for (const kind of testBackends()) {
       route(after.text);
       for (const out of [inGrace, after]) expect(JSON.stringify([out.meta, out.structured, out.text])).not.toContain('config set mcp.stdio_member');
       const who = await stdio('whoami', {});
-      if (kind === 'pglite') expect(who.json.access.note).toContain('--stdio-member');
+      expect(who.json.access.note).toContain('--stdio-member');
       route(who.json.access.note);
-      expect(who.json.access.requester_scope.argv).toEqual(setupFix.filter(a => a !== '--brain' && a !== 'host'));
+      expect(who.json.access.requester_scope.argv).toEqual(setupFix);
       expect(JSON.stringify(who.json)).not.toContain('config set mcp.stdio_member');
+      const registered = shape(await dispatchToolCall(engine, 'get_page', { slug: 'notes/harbor-alpha' }, { remote: true, transport: 'stdio', sourceId: 'default', takesHoldersAllowList: ['world'], stdioMember: 'alice-example' }));
+      expect(registered.isError).toBe(false);
+      expect(registered.text).toContain('canaryalpha');
+      expect(registered.meta?.access?.requester_scope).toBeUndefined();
+      expect((await stdio('get_page', { slug: 'notes/harbor-alpha' })).structured?.error).toMatchObject({ code: 'requester_scope_required' });
       await engine.setConfig('mcp.stdio_member', 'alice-example');
       const bound = await stdio('get_page', { slug: 'notes/harbor-alpha' });
       expect(bound.isError).toBe(false);
@@ -344,18 +349,17 @@ for (const kind of testBackends()) {
   });
 }
 
-describe('the access owner hint follows the engine', () => {
+describe('the access owner hint names the per-harness binding on either engine', () => {
   const view = { owner: 'alice-example', bound_credentials: [], inactive: null } as unknown as Parameters<typeof ownerLines>[0];
-  test('PGLite names --stdio-member for a local PGLite brain and the HTTP key; Postgres names only the HTTP key; neither a bare config set', () => {
-    const pglite = ownerLines(view, 'pglite').join('\n');
-    expect(pglite).toContain('--stdio-member alice-example');
-    expect(pglite).toContain('local PGLite brain');
-    expect(pglite).toContain('gbrain serve --http');
-    const postgres = ownerLines(view, 'postgres').join('\n');
-    expect(postgres).not.toContain('--stdio-member');
-    expect(postgres).toContain('gbrain serve --http');
-    expect(postgres).toContain('--member alice-example');
-    for (const text of [pglite, postgres]) expect(text).not.toContain('config set mcp.stdio_member');
+  test('PGLite and Postgres both name setup --stdio-member for one harness and the HTTP key for shared ones; never --serves several or a bare config set', () => {
+    for (const kind of ['pglite', 'postgres'] as const) {
+      const text = ownerLines(view, kind).join('\n');
+      expect(text).toContain('--stdio-member alice-example');
+      expect(text).toContain('gbrain serve --http');
+      expect(text).toContain('--member alice-example');
+      expect(text).not.toContain('--serves several');
+      expect(text).not.toContain('config set mcp.stdio_member');
+    }
   });
 });
 

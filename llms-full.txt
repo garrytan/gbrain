@@ -2846,7 +2846,7 @@ a member, a folder `people/<member>/` only they read and a key bound to them
 the receipt proves no member reads another member's folder.
 `setup_serves_several` means the brain already serves several people and the
 connection would be bound to nobody: rerun with its fix. Add `--stdio-member <member>`
-only when one person alone uses this machine; it binds every stdio session here.
+(claude-code, codex) only when one person alone uses that harness; it binds that entry alone.
 Doctor's `unlabeled_people_folders`
 names any person's folder still without a rule.
 `--remove` undoes only what setup wrote. Guide:

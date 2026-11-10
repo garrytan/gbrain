@@ -175,14 +175,18 @@ The receipt also lists any other `people/<name>/` folder that no rule covers, si
 every member reads it, and the run is not OK until it has a rule.
 Setup leaves the stdio server unbound: stdio sessions read only pages no rule
 restricts, and the harness's instructions keep the one-person scoping lines.
-`mcp.stdio_member` is brain-wide, so binding it makes every stdio MCP session on
-the host, from any harness, read as that member, including pages only that member
-may read. Bind it only on a machine one person uses:
-`gbrain setup claude-code --serves several --members ... --stdio-member <member>`
-(claude-code or codex on a local PGLite brain only; refused where OpenClaw or Hermes
-is installed, because their shared sessions would read as that member too, and on a
-Postgres brain, which other machines can open). A bot that answers several
-people runs `gbrain serve --http` with each member's key.
+For a Claude Code or Codex install only one person uses, bind that harness alone:
+`gbrain setup claude-code --stdio-member <member>` (or `codex`) writes
+`serve --stdio-member <member>` into that harness's MCP entry, so its sessions read
+as that member, including pages only that member may read. Other harnesses on the
+machine, and other machines that open the same brain (PGLite or Postgres), are
+unchanged. The member must be enabled (or one of `--members` in the same run).
+Re-runs, `gbrain post-upgrade` and doctor fixes keep the entry's member and never
+add one; `--no-stdio-member` removes it. Setup refuses `--stdio-member` where
+OpenClaw or Hermes is installed, because those harnesses serve several people: a
+bot that answers several people runs `gbrain serve --http` with each member's key.
+Setup never writes config `mcp.stdio_member`; set by hand, it still binds every
+stdio session on the brain that starts without `--stdio-member`.
 
 The preview runs first, and a BLOCKED line (a disabled member, an existing rule on
 `people/<member>/` that someone else also reads, a key whose file is gone or holds
@@ -193,7 +197,8 @@ its own: revoke it (`gbrain auth revoke member-<id>`) and run setup again. An
 empty roster refuses.
 `--serves one` (the default) changes nothing, but on a brain that already serves
 several people a plain setup refuses (`setup_serves_several`) rather than write a
-connection bound to nobody, unless `mcp.stdio_member` already binds it, and
+connection bound to nobody, unless the harness's entry (`--stdio-member`) or
+`mcp.stdio_member` already binds it, and
 a brain setup cannot read refuses (`setup_serves_unreadable`).
 `gbrain doctor` fails `unlabeled_people_folders` when such a brain has a
 `people/<name>/` folder with pages and no rule naming its readers.
@@ -210,16 +215,17 @@ the refusal) keeps reading for 14 days, with `_meta.access.requester_scope` on
 every answer naming the date and the fix; `gbrain doctor` fails
 `unscoped_shared_reads` and `gbrain post-upgrade` lists each one with its
 command. Bind each connection to its person
-(`gbrain auth rescope --token <name> --member <id>`). On a local PGLite brain, a
-stdio harness only one person uses is bound with
-`gbrain setup <harness> --serves several --members <ids> --stdio-member <id>`;
-every stdio session on this brain, from any harness on this host, then reads as
-that member, private pages included. On a Postgres brain, and for any harness
-several people talk to, give each person a key over HTTP instead
+(`gbrain auth rescope --token <name> --member <id>`). A Claude Code or Codex
+install only one person uses is bound with
+`gbrain setup <claude-code|codex> --stdio-member <id>`, which binds that harness's
+entry on this machine and nothing else, on PGLite and Postgres alike. For any
+harness several people talk to, give each person a key over HTTP instead
 (`gbrain serve --http` with `gbrain auth create <name> --member <id>` keys).
-Nothing binds stdio on its own: upgrade, post-upgrade and doctor never write
-`mcp.stdio_member`, and `gbrain doctor` fails `shared_stdio_binding` when it is
-set on a host where OpenClaw or Hermes is installed (its fix is
+Nothing binds stdio on its own: upgrade, post-upgrade and doctor never add
+`--stdio-member` or write `mcp.stdio_member`, and `gbrain doctor` fails
+`shared_stdio_binding` on a host where OpenClaw or Hermes is installed when a
+claude-code or codex entry starts `serve --stdio-member` (fix:
+`gbrain setup <harness> --no-stdio-member`) or `mcp.stdio_member` is set (fix:
 `gbrain config unset mcp.stdio_member`). A team that shares everything may
 mark one credential `gbrain auth rescope --token <name> --reads-unscoped --yes`
 (`--reads-unscoped none` takes it back); every change is recorded in the
