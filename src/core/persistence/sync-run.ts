@@ -411,7 +411,7 @@ async function freezeEntryOnce(engine: BrainEngine, cursor: Cursor, key: string,
       assertActive();
     } else content = imageBytes ? frozenImageIntent(imageBytes).content : entry.action === 'import' && !oversize && !bodyRef ? pinnedContent(cursor, entry) : null;
     const filtered = !screening && content !== null && !image // GST-2312 (#9024) with sync.holds=fail
-      ? filterOwnedRefusal(entry.path, content, entry.working || cursor.companyPlan ? null : pinnedFilterDriver(cursor, entry.path)) : null;
+      ? filterOwnedRefusal(entry.path, content, entry.working ? null : pinnedFilterDriver(cursor, entry.path)) : null;
     if (filtered) throw syncRunRefusal('content_filter_owned', 'A synced file is stored through a Git filter.', retry, filtered.message);
     const nul = !screening && content !== null && !image ? nullBytesRefusal(entry.path, content) : null; // GBRA-133 S-39 with sync.holds=fail
     if (nul) throw syncRunRefusal('content_null_bytes', 'A synced Markdown file holds NUL bytes.', retry, nul.message);

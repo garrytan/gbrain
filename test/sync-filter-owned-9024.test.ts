@@ -75,6 +75,54 @@ for (const backend of testBackends()) describe('[' + backend + '] a committed fi
     expect(existsSync(marker)).toBe(false);
   }), 240_000);
 
+  test('a clean/smudge driver under sync.holds=fail refuses the run with content_filter_owned', () => brain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await engine.setConfig('sync.holds', 'fail');
+    const marker = filtered(root, false);
+    const error = await performManagedSync(engine, OPTS).then(() => null, (caught: { code?: string }) => caught);
+    expect(error?.code).toBe('content_filter_owned');
+    expect(await live(engine)).not.toContain('secret/one');
+    expect(existsSync(marker)).toBe(false);
+  }), 240_000);
+
+  test('committing the file without the filter clears the hold and imports its text', () => brain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    filtered(root, false);
+    await performManagedSync(engine, OPTS);
+    expect((await holds(engine)).filter(hold => hold.path === 'secret/one.md').map(hold => hold.code)).toEqual(['content_filter_owned']);
+    git(root, 'rm', '-q', '--cached', 'secret/one.md'); writeFileSync(join(root, '.gitattributes'), ''); commit(root, 'unfiltered');
+    await performManagedSync(engine, OPTS);
+    expect((await holds(engine)).filter(hold => hold.path === 'secret/one.md')).toEqual([]);
+    expect(await live(engine)).toContain('secret/one');
+  }), 240_000);
+
+  test('a blob with git-crypt\'s header and no filter attribute is held content_filter_owned', () => brain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    writeFileSync(join(root, 'locked.md'), Buffer.concat([Buffer.from('\0GITCRYPT\0'), Buffer.from('c2VjcmV0Cg==')]));
+    commit(root, 'locked');
+    await performManagedSync(engine, OPTS);
+    expect((await holds(engine)).filter(hold => hold.path === 'locked.md').map(hold => hold.code)).toEqual(['content_filter_owned']);
+  }), 240_000);
+
+  test('a filter attribute whose driver Git has no config for imports the file as text', () => brain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    writeFileSync(join(root, '.gitattributes'), 'notes/** filter=unconfigured\n');
+    mkdirSync(join(root, 'notes')); writeFileSync(join(root, 'notes/plain.md'), note('plain'));
+    commit(root, 'unconfigured filter');
+    await performManagedSync(engine, OPTS);
+    expect((await holds(engine)).filter(hold => hold.code === 'content_filter_owned')).toEqual([]);
+    expect(await live(engine)).toContain('notes/plain');
+  }), 240_000);
+
+  test('the filter attribute is read at the synced commit, not from an uncommitted .gitattributes', () => brain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    filtered(root, false);
+    writeFileSync(join(root, '.gitattributes'), '');
+    await performManagedSync(engine, OPTS);
+    expect((await holds(engine)).filter(hold => hold.path === 'secret/one.md').map(hold => hold.code)).toEqual(['content_filter_owned']);
+    expect(await live(engine)).not.toContain('secret/one');
+  }), 240_000);
+
   test('a Git LFS path is not held content_filter_owned (its pointers keep their own handling)', () => brain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     writeFileSync(join(root, '.gitattributes'), 'big/** filter=lfs diff=lfs merge=lfs -text\n');

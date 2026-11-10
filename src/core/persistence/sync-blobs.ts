@@ -68,16 +68,29 @@ export function readBlobBytes(gitRoot: string, blobs: TreeBlob[]): Map<string, B
   return out;
 }
 
+let checkAttrSource: boolean | undefined;
+
 /**
- * GST-2312 (#9024): the `filter` attribute of Git paths, read with `git check-attr` (attribute files only; it runs no
- * program), null where none names a driver. A committed blob a filter owns holds what the filter's clean program
- * stored (git-crypt ciphertext, for one), not the text of the checkout, and sync never runs a repository's filters.
+ * GST-2312 (#9024): the Git filter driver of each path at commit `target`, null where no `filter` attribute names a driver
+ * the Git config defines (`filter.<driver>.clean`, `.smudge` or `.process`): Git stores a path whose driver is not
+ * configured as its plain bytes. A committed blob a configured filter owns holds what the filter's clean program stored
+ * (git-crypt ciphertext, for one), not the text of the checkout, and sync never runs a repository's filters. Only
+ * `git check-attr` (attribute files at `target` from git 2.40, the checkout's before) and `git config` run.
  */
-export function readFilterDrivers(gitRoot: string, gitPaths: string[]): Map<string, string | null> {
+export function readFilterDrivers(gitRoot: string, target: string, gitPaths: string[]): Map<string, string | null> {
   const out = new Map<string, string | null>();
+  if (gitPaths.length === 0) return out;
+  if (checkAttrSource === undefined) {
+    const [major, minor] = (/git version (\d+)\.(\d+)/.exec(git(gitRoot, ['version']).toString('utf8')) ?? ['', '0', '0']).slice(1).map(Number);
+    checkAttrSource = major! > 2 || major === 2 && minor! >= 40;
+  }
+  let config = '';
+  try { config = git(gitRoot, ['config', '-z', '--get-regexp', '^filter\\.']).toString('utf8'); } catch (error) { if ((error as { status?: number }).status !== 1) throw error; }
+  const configured = new Set(config.split('\0').map(record => record.split('\n')[0]!).filter(key => /\.(clean|smudge|process)$/.test(key))
+    .map(key => key.slice('filter.'.length, key.lastIndexOf('.'))));
   for (let i = 0; i < gitPaths.length; i += 2000) {
-    const fields = git(gitRoot, ['check-attr', '-z', '--stdin', 'filter'], gitPaths.slice(i, i + 2000).join('\0') + '\0').toString('utf8').split('\0');
-    for (let at = 0; at + 2 < fields.length; at += 3) out.set(fields[at]!, ['unspecified', 'unset', 'set'].includes(fields[at + 2]!) ? null : fields[at + 2]!);
+    const fields = git(gitRoot, ['check-attr', ...(checkAttrSource ? [`--source=${target}`] : []), '-z', '--stdin', 'filter'], gitPaths.slice(i, i + 2000).join('\0') + '\0').toString('utf8').split('\0');
+    for (let at = 0; at + 2 < fields.length; at += 3) out.set(fields[at]!, configured.has(fields[at + 2]!) ? fields[at + 2]! : null);
   }
   return out;
 }

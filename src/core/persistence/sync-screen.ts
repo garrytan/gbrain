@@ -84,17 +84,20 @@ export function pinnedBlob(cursor: PinnedCursor, path: string): TreeBlob | null 
 
 let filterDrivers: { key: string; drivers: Map<string, string | null> } | null = null;
 /**
- * GST-2312 (#9024): the Git filter driver of one entry's path (`readFilterDrivers`), or null. A miss reads it with up to
- * 2,000 of the committed imports after it in one `check-attr`; answers are kept per checkout and pinned commit.
+ * GST-2312 (#9024): the Git filter driver of one entry's path at the pinned commit (`readFilterDrivers`), or null; a
+ * company plan's at its approved revision. A miss reads it with up to 2,000 of the committed imports after it in one
+ * `check-attr`; answers are kept per Git root and commit.
  */
-export function pinnedFilterDriver(cursor: Pick<SyncDiscovery, 'root' | 'gitRoot' | 'target' | 'entries'> & { index?: number }, path: string): string | null {
-  const gitPath = syncGitPath(cursor, path), key = `${cursor.gitRoot}\0${cursor.target}`;
+export function pinnedFilterDriver(cursor: Pick<SyncDiscovery, 'root' | 'gitRoot' | 'target' | 'entries' | 'companyPlan'> & { index?: number }, path: string): string | null {
+  const revision = cursor.companyPlan?.revision, gitRoot = revision?.git_root ?? cursor.gitRoot, target = revision?.commit ?? cursor.target;
+  const gitPathOf = (next: string) => revision ? (revision.scope ? `${revision.scope}/${next}` : next) : syncGitPath(cursor, next);
+  const gitPath = gitPathOf(path), key = `${gitRoot}\0${target}`;
   if (filterDrivers?.key !== key) filterDrivers = { key, drivers: new Map() };
   const known = filterDrivers.drivers;
   if (!known.has(gitPath)) {
     const upcoming = cursor.entries.slice(cursor.index ?? 0).filter(entry => entry.action === 'import' && !entry.working)
-      .map(entry => syncGitPath(cursor, entry.path)).filter(next => next !== gitPath && !known.has(next)).slice(0, 2000);
-    for (const [next, driver] of readFilterDrivers(cursor.gitRoot, [gitPath, ...upcoming])) known.set(next, driver);
+      .map(entry => gitPathOf(entry.path)).filter(next => next !== gitPath && !known.has(next)).slice(0, 2000);
+    for (const [next, driver] of readFilterDrivers(gitRoot, target, [gitPath, ...upcoming])) known.set(next, driver);
     if (!known.has(gitPath)) known.set(gitPath, null);
   }
   return known.get(gitPath) ?? null;
@@ -388,7 +391,7 @@ export async function screenFrozenImport(engine: BrainEngine, input: FrozenImpor
   if (content === null) return null;
   // GST-2312 (#9024): a committed blob a Git filter owns is held alone; sync never runs the filter that would turn it into text.
   const { gitRoot, target, entries } = input.cursor;
-  const filtered = filterOwnedRefusal(entry.path, content, entry.working || input.cursor.companyPlan || !gitRoot || !target || !entries ? null
+  const filtered = filterOwnedRefusal(entry.path, content, entry.working || !gitRoot || !target || !entries ? null
     : pinnedFilterDriver({ ...input.cursor, gitRoot, target, entries }, entry.path));
   if (filtered) return heldEntry(entry, slug, pageId, filtered, content, blob);
   // GBRA-133 S-39: text holding NUL cannot be stored or carried in the write intent; only this file is held. A slug conflict
