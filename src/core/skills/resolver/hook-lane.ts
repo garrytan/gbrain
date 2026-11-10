@@ -36,6 +36,10 @@
  * catalog is rebuilt the same way, at most once a minute per catalog, unless
  * skills.resolver.auto_rebuild is false or GBRAIN_SKILLS_NO_AUTOREBUILD=1.
  *
+ * Turn settings: skills.resolver.top_k, min_match, pinned (sent as exclude)
+ * and per_harness.<harness>.{top_k,min_match} (config.ts laneTurnSettings);
+ * unset, a turn is top_k 5 with every match and nothing excluded.
+ *
  * Payload: the lane's own budget (skills.resolver.lane_payload_chars, default
  * 4000 characters of hook JSON); a block that does not fit is dropped whole
  * and counted (outcome payload_dropped in the lane log).
@@ -54,6 +58,7 @@ import { spawn } from '../../spawn.ts';
 import { claudeManagedSettingsPaths, claudeUserSettingsPath, codexHooksPath } from '../../bootstrap/host-specs.ts';
 import { shellWords } from '../../setup/hook-launcher.ts';
 import { isSkillResolverCommand, isSkillResolverEntry } from '../../setup/skill-resolver-lane.ts';
+import { laneTurnSettings, type LaneTurnSettings } from './config.ts';
 import { assertCatalogName, catalogFile, logsDir, resolverHome } from './paths.ts';
 import { type CommitHold, commitSessionAsync, sessionKey, type TurnDelta } from './session.ts';
 import type { TurnOutput } from './resolve.ts';
@@ -122,11 +127,11 @@ export async function skillResolverOwner(harness: LaneHarness, event: 'user-prom
   return undefined;
 }
 
-export interface LaneSettings { state: 'absent' | 'unreadable' | 'invalid' | 'ok'; enabled: boolean; harnesses: string[]; payloadChars: number; autoRebuild: boolean }
+export interface LaneSettings { state: 'absent' | 'unreadable' | 'invalid' | 'ok'; enabled: boolean; harnesses: string[]; payloadChars: number; autoRebuild: boolean; section: Record<string, unknown> }
 
 /** skills.resolver from <home>/config.json, async. absent: no file; unreadable: a file gbrain cannot read or parse. */
 export async function readLaneSettings(home: string, env: NodeJS.ProcessEnv): Promise<LaneSettings> {
-  const base: LaneSettings = { state: 'ok', enabled: false, harnesses: [], payloadChars: LANE_PAYLOAD_CHARS_DEFAULT, autoRebuild: env.GBRAIN_SKILLS_NO_AUTOREBUILD !== '1' };
+  const base: LaneSettings = { state: 'ok', enabled: false, harnesses: [], payloadChars: LANE_PAYLOAD_CHARS_DEFAULT, autoRebuild: env.GBRAIN_SKILLS_NO_AUTOREBUILD !== '1', section: {} };
   let cfg: unknown;
   try { cfg = await readJsonFile(join(home, 'config.json')); } catch (e) {
     return { ...base, state: (e as NodeJS.ErrnoException).code === 'ENOENT' ? 'absent' : 'unreadable' };
@@ -142,6 +147,7 @@ export async function readLaneSettings(home: string, env: NodeJS.ProcessEnv): Pr
     harnesses: Array.isArray(r.harnesses) ? r.harnesses.filter((h): h is string => typeof h === 'string') : [],
     payloadChars: validChars && chars !== undefined ? chars as number : LANE_PAYLOAD_CHARS_DEFAULT,
     autoRebuild: base.autoRebuild && r.auto_rebuild !== false,
+    section: r,
   };
 }
 
@@ -251,6 +257,8 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
   if (!settings.enabled || !settings.harnesses.includes(harness)) return { outcome: 'off' };
   ctl.logged = true;
   if (settings.state === 'invalid') return { outcome: 'error', code: 'skill_resolver_config_invalid' };
+  let turnSettings: LaneTurnSettings;
+  try { turnSettings = laneTurnSettings(settings.section, harness); } catch { return { outcome: 'error', code: 'skill_resolver_config_invalid' }; }
 
   const raw = await readStdinBounded(io.stdin ?? process.stdin, LANE_STDIN_CAP_BYTES);
   let j: Record<string, unknown>;
@@ -282,7 +290,7 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
   const posted = await new Promise<{ output?: TurnOutput; pending?: { key: string; delta: TurnDelta } | null; error?: { code: string } }>((resolve) => {
     worker.once('message', resolve);
     worker.once('error', () => resolve({ error: { code: 'skill_resolver_internal' } }));
-    worker.postMessage({ input: { message: prompt, harness, ...(sessionId ? { session_id: sessionId } : {}) }, home, catalogs, deadlineMs: Math.max(1, deadlineMs - elapsed() - COMMIT_RESERVE_MS) } satisfies LaneWorkerTurn);
+    worker.postMessage({ input: { message: prompt, harness, ...turnSettings, ...(sessionId ? { session_id: sessionId } : {}) }, home, catalogs, deadlineMs: Math.max(1, deadlineMs - elapsed() - COMMIT_RESERVE_MS) } satisfies LaneWorkerTurn);
   });
   if (posted.error || !posted.output) return { outcome: 'error', code: posted.error?.code ?? 'skill_resolver_internal', catalogs };
   const out = posted.output;

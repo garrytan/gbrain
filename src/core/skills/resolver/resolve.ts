@@ -33,6 +33,7 @@ import { dirFingerprintSlice, listCatalogs, readReceipt } from './catalog-files.
 import { readResolverSettings, validateSessionTokenBudget } from './config.ts';
 import { ResolverError } from './errors.ts';
 import { ensureDir, writeFileAtomic, writeFileDurable } from './fsutil.ts';
+import { EXCLUDE_MAX, MATCH_STRENGTHS, type MatchStrength, STRENGTH_FIELDS, TOP_K_DEFAULT, TOP_K_MAX } from './limits.ts';
 import { IndexReader, RANKER_ID, RANKER_VERSION } from './index-format.ts';
 import { assertCatalogName, catalogFile, logsDir, resolverHome } from './paths.ts';
 import { isAcknowledgement, mentionsSkill, rankIndex, reasonText, type RankResult } from './rank.ts';
@@ -40,9 +41,7 @@ import { commitSession, freshState, loadSession, sessionKey, type SessionState, 
 
 export const SCHEMA_VERSION = 1;
 export const MESSAGE_CAP_BYTES = 8192;
-export const TOP_K_DEFAULT = 5;
-export const TOP_K_MAX = 8;
-export const EXCLUDE_MAX = 1024;
+export { EXCLUDE_MAX, MATCH_STRENGTHS, TOP_K_DEFAULT, TOP_K_MAX, type MatchStrength };
 export const RESUGGEST_AFTER_TURNS = 10;
 export const STAT_CHECK_INTERVAL_MS = 60_000;
 /** Stat calls one turn may spend on the freshness sweep; a larger catalog is swept over several turns. */
@@ -61,11 +60,6 @@ export interface TurnInput {
   min_match_strength?: MatchStrength;
 }
 
-/** The strongest way a suggestion matched the turn: named in it, then by field. A body-only match is the weakest. */
-export type MatchStrength = 'named' | 'name' | 'triggers' | 'routing' | 'description' | 'body';
-const STRENGTH_FIELDS = ['name', 'triggers', 'routing', 'description', 'body'] as const;
-/** Strongest first. */
-export const MATCH_STRENGTHS: readonly MatchStrength[] = ['named', ...STRENGTH_FIELDS];
 export interface Suggestion { id: string; name: string; score: number; summary: string; reason: string; match_strength: MatchStrength; path?: string; catalog: string }
 export interface TurnError { code: string; message: string; fix: { suggestion: string; command?: string } }
 export interface TurnOutput {

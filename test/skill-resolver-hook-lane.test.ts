@@ -187,6 +187,50 @@ describe('skill-resolver lane: deadline, measured outside the process', () => {
   }
 });
 
+describe('skill-resolver lane: turn settings from config', () => {
+  const config = async (b: Box, ...args: string[]) => {
+    const r = await runCli(['config', ...args], { env: b.env, cwd: b.project });
+    return r;
+  };
+  test('top_k, min_match and pinned apply; per_harness overrides one harness; Claude Code and Codex default to 5 with no floor', async () => {
+    const b = box();
+    for (const dir of [claudeSkills(b), codexSkills(b)]) {
+      seedSkills(dir);
+      skill(dir, 'deploy-docs', 'Deploy the docs site.');
+      skill(dir, 'deploy-api', 'Deploy the api service.');
+    }
+    await setup(b, 'claude-code');
+    await setup(b, 'codex');
+    const claude = wired(b, 'claude-code'), codex = wired(b, 'codex');
+    const ids = (r: Run) => [...contextOf(r).matchAll(/id: "([^"]+)"/g)].map((m) => m[1]);
+    const ask = (cmd: string, s: string) => hook(b, cmd, { prompt: 'deploy the widget service', session_id: s, hook_event_name: 'UserPromptSubmit' }, WIDE);
+    expect(ids(await ask(claude, 'd1')).length).toBeGreaterThanOrEqual(3);
+    for (const [k, v] of [['skills.resolver.top_k', '1'], ['skills.resolver.per_harness.codex.top_k', '2'], ['skills.resolver.pinned', 'deploy-widget']]) {
+      const r = await config(b, 'set', k, v);
+      expect(r.exitCode, r.stderr).toBe(0);
+    }
+    const c = ids(await ask(claude, 'd2'));
+    expect(c).toHaveLength(1);
+    expect(c).not.toContain('deploy-widget');
+    const x = ids(await ask(codex, 'd3'));
+    expect(x).toHaveLength(2);
+    expect(x).not.toContain('deploy-widget');
+    expect((await config(b, 'set', 'skills.resolver.min_match', 'named')).exitCode).toBe(0);
+    expect((await ask(claude, 'd4')).stdout).toBe('');
+    const bad = await config(b, 'set', 'skills.resolver.per_harness.vim.top_k', '2');
+    expect(bad.exitCode).not.toBe(0);
+    expect(bad.stderr).toContain('names no harness');
+    expect((await config(b, 'set', 'skills.resolver.top_k', '9')).exitCode).not.toBe(0);
+    const cfg = JSON.parse(readFileSync(join(b.home, '.gbrain', 'config.json'), 'utf8')).skills.resolver;
+    expect([cfg.top_k, cfg.min_match, cfg.pinned, cfg.per_harness]).toEqual([1, 'named', ['deploy-widget'], { codex: { top_k: 2 } }]);
+    cfg.top_k = 99;
+    writeFileSync(join(b.home, '.gbrain', 'config.json'), JSON.stringify({ skills: { resolver: cfg } }));
+    const invalid = await ask(claude, 'd5');
+    expect([invalid.exitCode, invalid.stdout]).toEqual([0, '']);
+    expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'error', code: 'skill_resolver_config_invalid' });
+  });
+});
+
 describe('skill-resolver lane: a deadline during the dedupe commit', () => {
   for (const stall of ['commit-held', 'commit-written'] as const) {
     test(`${stall}: the exit releases the session lease and removes the temp file, so the next turn commits`, async () => {

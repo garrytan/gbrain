@@ -78,8 +78,9 @@ per-turn hook that puts the block in front of the model on every prompt:
    holds no engine, so nothing reads it as a brain.
 3. It adds the lane's own hook: Claude Code gets UserPromptSubmit and
    SessionStart entries marked `skill-resolver-v1` in `~/.claude/settings.json`;
-   Codex gets a UserPromptSubmit group in `hooks.json` (`--harness codex`),
-   trusted in `config.toml`. Both run through the existing hook launcher.
+   Codex gets UserPromptSubmit and SessionStart groups in `hooks.json`
+   (`--harness codex`), each trusted in `config.toml`. Both run through the
+   existing hook launcher.
 4. It prints a sample block and `skill resolver: on; N skills; fresh`.
 
 `--dry-run` lists every write, and re-running changes nothing. A bare
@@ -92,6 +93,13 @@ The lane always exits 0 and prints nothing when it cannot deliver:
 
 - **Deadline:** 50 ms from lane start. Ranking runs in a worker thread; at the
   deadline the process prints nothing, exits and commits no session state.
+- **Turn settings:** `skills.resolver.top_k` (1-8, default 5),
+  `skills.resolver.min_match` (the weakest `match_strength` to suggest;
+  default every match) and `skills.resolver.pinned` (skill ids the harness
+  always loads itself, never suggested). `skills.resolver.per_harness.<harness>.top_k`
+  and `.min_match` override one harness; what it leaves out falls back to the
+  global key. Set them with `gbrain config set`; a bad value makes the lane
+  log `skill_resolver_config_invalid` and deliver nothing.
 - **Payload:** at most `skills.resolver.lane_payload_chars` characters of hook
   output (default 4000, 500 to 10,000); a larger block is dropped whole and
   counted as `payload_dropped`.
@@ -103,8 +111,9 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   rebuild the same way, at most once a minute;
   `skills.resolver.auto_rebuild false` or `GBRAIN_SKILLS_NO_AUTOREBUILD=1`
   stops both.
-- **Compaction:** a SessionStart with `source: compact` resets the session, so
-  skills can be offered again.
+- **Compaction:** a SessionStart with `source: compact` (Claude Code, and Codex
+  0.165 and later) resets the session, so skills can be offered again. A Codex
+  install from before gets the SessionStart group on its next setup run.
 
 Each turn appends one line (outcome, error code, duration; never turn text)
 to `skill-index/logs/lane.jsonl`. `gbrain doctor` (`skill_resolver`, and
@@ -326,8 +335,9 @@ The `--from-json` catalog or routing file is malformed or over its size bound
 
 ### skill_resolver_config_invalid
 
-`skills.resolver.session_token_budget` is not 0 or 100-50,000, or GBRAIN_HOME
-is not an absolute path.
+`skills.resolver.session_token_budget` is not 0 or 100-50,000, a lane turn
+setting (`top_k`, `min_match`, `pinned`, `per_harness`) is out of range, or
+GBRAIN_HOME is not an absolute path.
 
 ### skill_resolver_config_unreadable
 
