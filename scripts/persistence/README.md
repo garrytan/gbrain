@@ -146,7 +146,9 @@ key lists every run (schedule, seed, seam and occurrence or process fault),
 `fault_hook_errors` (a fault hook that threw instead of freezing the worker)
 and no `faults_not_reached` (a worker that finished without reaching its
 requested seam, outside the per-scenario `UNREACHED_FAULT_ALLOWLIST` in
-`robot-driver.ts`); either kind of run also fails validation with a nonzero
+`robot-driver.ts`; a run exactly one slot short of its count run, which a
+concurrent group's other legal outcome makes, runs once more at its last slot
+and is listed in `faults_retargeted`); either kind of run also fails validation with a nonzero
 exit and is listed in `failing_runs` for `--replay`.
 
 A failing run prints two commands. `--replay=<manifest>` re-runs exactly the
