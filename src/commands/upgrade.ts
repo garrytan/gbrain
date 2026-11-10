@@ -50,7 +50,7 @@ export function assessUpgradeOutcome(
 
 export async function runUpgrade(args: string[], opts: { targetVersion?: string } = {}) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain upgrade [--channel stable|alpha] [--dry-run] [--stop-mcp] [--no-restart] [--swap-only] [--no-autopilot-install] [--no-bun-floor-check]\n       gbrain upgrade --restart-only [--stop-mcp] [--dry-run] [--json]\n\nSelf-update the CLI, then restart every gbrain process on this host onto the new build.\n\nDetects install method (bun, binary, clawhub) and runs the appropriate update.\nAfter upgrading, shows what\'s new and offers to set up new features.\n\n--channel <name>        stable (weekly, promoted after its gates passed on the exact release; the default) or alpha\n                       (every published release; latest is an alias). Precedence: --channel, GBRAIN_RELEASE_CHANNEL,\n                       self_upgrade.channel, stable. Persist it as self_upgrade.channel in config.\n--stop-mcp              Stop MCP stdio servers agent harnesses started, instead of refusing; reconnect gbrain\n                       in each harness afterwards.\n--no-restart            Install without restarting anything (doctor reports runtime_build_skew until\n                       \'gbrain upgrade --restart-only\' runs).\n--restart-only          Restart serve, autopilot, the jobs supervisor and its worker (and, with --stop-mcp, MCP\n                       servers) onto the installed build, then verify every process reports it and the warm\n                       CLI socket accepts it. A process it cannot restart refuses with the exact step (exit 3).\n--dry-run               Print the effective channel, where it came from and what would install; change nothing.\n                       With --restart-only: print the restart plan instead.\n--no-autopilot-install  Skip autopilot installation and service rewrites, including package postinstall.\n                       Also supported as GBRAIN_NO_AUTOPILOT_INSTALL=1.\n--no-bun-floor-check    Upgrade even when the target release\'s Bun floor cannot be read or is above\n                       this host\'s Bun (manual upgrades only). Docs: docs/guides/upgrades-auto-update.md#bun-floor.\n--swap-only  Perform ONLY the binary/source swap and skip post-upgrade\n             (migrations run on the next launch). Used by the autopilot\n             silent self-upgrade channel so the daemon can swap + relaunch\n             without a 30-min blocking post-upgrade inside its tick.');
+    console.log('Usage: gbrain upgrade [--channel stable|alpha] [--dry-run] [--stop-mcp] [--no-restart] [--swap-only] [--no-autopilot-install] [--no-bun-floor-check]\n       gbrain upgrade --restart-only [--stop-mcp] [--dry-run] [--json]\n\nSelf-update the CLI, then restart every gbrain process on this host onto the new build.\n\nDetects install method (bun, bun-link, binary) and runs the appropriate update.\nAfter upgrading, shows what\'s new and offers to set up new features.\n\n--channel <name>        stable (weekly, promoted after its gates passed on the exact release; the default) or alpha\n                       (every published release; latest is an alias). Precedence: --channel, GBRAIN_RELEASE_CHANNEL,\n                       self_upgrade.channel, stable. Persist it as self_upgrade.channel in config.\n--stop-mcp              Stop MCP stdio servers agent harnesses started, instead of refusing; reconnect gbrain\n                       in each harness afterwards.\n--no-restart            Install without restarting anything (doctor reports runtime_build_skew until\n                       \'gbrain upgrade --restart-only\' runs).\n--restart-only          Restart serve, autopilot, the jobs supervisor and its worker (and, with --stop-mcp, MCP\n                       servers) onto the installed build, then verify every process reports it and the warm\n                       CLI socket accepts it. A process it cannot restart refuses with the exact step (exit 3).\n--dry-run               Print the effective channel, where it came from and what would install; change nothing.\n                       With --restart-only: print the restart plan instead.\n--no-autopilot-install  Skip autopilot installation and service rewrites, including package postinstall.\n                       Also supported as GBRAIN_NO_AUTOPILOT_INSTALL=1.\n--no-bun-floor-check    Upgrade even when the target release\'s Bun floor cannot be read or is above\n                       this host\'s Bun (manual upgrades only). Docs: docs/guides/upgrades-auto-update.md#bun-floor.\n--swap-only  Perform ONLY the binary/source swap and skip post-upgrade\n             (migrations run on the next launch). Used by the autopilot\n             silent self-upgrade channel so the daemon can swap + relaunch\n             without a 30-min blocking post-upgrade inside its tick.');
     return;
   }
 
@@ -186,22 +186,10 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
       break;
     }
 
-    case 'clawhub':
-      console.log('Upgrading via ClawHub...');
-      if (checkBunFloor && refuseForBunFloor(await readPackageTarget(null), opts.targetVersion)) return;
-      try {
-        execSync('clawhub update gbrain', { env: upgradeEnv, stdio: 'inherit', timeout: 120_000 });
-        upgraded = true;
-      } catch {
-        console.error('ClawHub upgrade failed. Try: clawhub update gbrain');
-      }
-      break;
-
     default:
       console.error('Could not detect installation method.');
       console.log('Try one of:');
       console.log('  bun update gbrain');
-      console.log('  clawhub update gbrain');
       console.log('  Download from https://github.com/garrytan/gbrain/releases');
   }
 
@@ -373,12 +361,12 @@ interface StableInstallContext { oldVersion: string; upgradeEnv: NodeJS.ProcessE
 /**
  * GBRA-175: install exactly the stable release. bun: reinstall pinned to its tag (an in-place tag swap corrupts a
  * global install, #5034), restoring the previous release when the add fails. bun-link: fast-forward the clone to the
- * release commit, never backward or across a fork. binary: the release's own asset. clawhub follows its own line.
+ * release commit, never backward or across a fork. binary: the release's own asset.
  */
 async function installStableRelease(method: string, target: { version: string; commit: string }, ctx: StableInstallContext): Promise<'installed' | 'failed' | 'refused'> {
   const spec = `github:${GBRAIN_GITHUB_REPO}#v${target.version}`;
-  if (method === 'clawhub' || method === 'unknown') {
-    console.error(`The stable channel installs through bun, a bun-link clone or the release binary; this install (${method}) follows its own release line. Nothing was changed.`);
+  if (method === 'unknown') {
+    console.error('The stable channel installs through bun, a bun-link clone or the release binary, and this install method could not be detected. Nothing was changed.');
     console.error(`Reinstall on the stable release with: ${bunReinstallCommand(`#v${target.version}`)}`);
     setCliExitVerdict(1);
     return 'refused';
@@ -1282,7 +1270,7 @@ function isNewerThan(version: string, baseline: string): boolean {
   return false;
 }
 
-export function detectInstallMethod(): 'bun' | 'bun-link' | 'binary' | 'clawhub' | 'unknown' {
+export function detectInstallMethod(): 'bun' | 'bun-link' | 'binary' | 'unknown' {
   const execPath = process.execPath || '';
 
   // v0.28.5 cluster D: bun-link signal first.
@@ -1304,19 +1292,14 @@ export function detectInstallMethod(): 'bun' | 'bun-link' | 'binary' | 'clawhub'
     return 'bun';
   }
 
-  // Check if running as compiled binary
-  if (execPath.endsWith('/gbrain') || execPath.endsWith('\\gbrain.exe')) {
+  // A compiled binary runs from Bun's virtual entrypoint whatever its file is
+  // named, so a release asset run as gbrain-linux-x64 is still the binary.
+  if (execPath.endsWith('/gbrain') || execPath.endsWith('\\gbrain.exe') || /^(\/\$bunfs\/|[A-Za-z]:[\\/]~BUN[\\/])/.test(process.argv[1] ?? '')) {
     return 'binary';
   }
 
-  // Check if clawhub is available (use --version, not which, to avoid false positives)
-  try {
-    execSync('clawhub --version', { stdio: 'pipe', timeout: 5_000 });
-    return 'clawhub';
-  } catch {
-    // not available
-  }
-
+  // #8464: never `clawhub update gbrain`. We publish no gbrain skill on ClawHub, and that
+  // command installs whatever skill anyone else publishes under the name.
   return 'unknown';
 }
 

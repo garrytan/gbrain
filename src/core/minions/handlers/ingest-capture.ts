@@ -42,12 +42,13 @@ import { maintenanceTransaction } from '../../persistence/attribution.ts';
 import { managedPersistenceEnabled } from '../../persistence/ownership.ts';
 import { privateRequestRefusal } from '../../persistence/visibility-request.ts';
 import { parseMarkdown } from '../../markdown.ts';
-import { OperationError, type OperationContext } from '../../ops/contract.ts';
+import { OperationError, opError, type OperationContext } from '../../ops/contract.ts';
 import { submitPageMutation } from '../../persistence/page-mutations.ts';
-import { authorizePageVisibility, excludesPrivateWrites } from '../../persistence/page-visibility.ts';
+import { authorizePageVisibility, defaultSourceMemberWriter, excludesPrivateWrites, remoteReadersChecked } from '../../persistence/page-visibility.ts';
 import type { Principal, WriteAuthority } from '../../persistence/model.ts';
 import { assertMemberPageWriter, assertScopePageWriter } from '../../access/member-facts.ts';
 import { validateSlug } from '../../utils.ts';
+import { REVISION_BACKFILL_PENDING, RevisionBackfillPendingError } from '../../page-state/types.ts';
 import { appliedCaptureRequestPrefix, readAppliedCapture, recordAppliedCapture, saveAppliedCapture } from '../../ingestion/applied-captures.ts';
 
 export interface IngestCaptureResult {
@@ -111,12 +112,29 @@ function webhookPrincipal(writer: unknown): Principal | undefined {
  * scope page, and never a page the writer cannot read (another member's readable_by page, a private page). A job with
  * no stored writer is checked as a guest, which reads no restricted page.
  */
-export async function assertWebhookWriterMayReplace(engine: BrainEngine, writer: unknown, sourceId: string, slug: string): Promise<void> {
+export async function assertWebhookWriterMayReplace(engine: BrainEngine, writer: unknown, sourceId: string, slug: string, content?: string): Promise<string | null | undefined> {
   const target = validateSlug(slug);
   assertMemberPageWriter({ remote: true }, target, 'ingest_capture');
   assertScopePageWriter({ remote: true }, target, 'ingest_capture');
-  await authorizePageVisibility(engine, { version: 1, principal: webhookPrincipal(writer), remote: true, sourceId, sourceIncarnation: '',
-    scopes: [], operations: null, slugPrefixes: null, excludePrivate: await excludesPrivateWrites(engine, true) } as WriteAuthority, target);
+  const authority = { version: 1, principal: webhookPrincipal(writer), remote: true, sourceId, sourceIncarnation: '',
+    scopes: [], operations: null, slugPrefixes: null, excludePrivate: await excludesPrivateWrites(engine, true) } as WriteAuthority;
+  // GST-2051 x GST-2112: POST /ingest refuses a member-bound credential writing to default; a job queued before that
+  // refusal (or before the binding) is refused here at write time, since the capture cannot keep the page to the member.
+  if (authority.principal && await defaultSourceMemberWriter(engine, authority)) {
+    throw opError('permission_denied', `A capture from a credential bound to a member whose write source is ${sourceId}, which every credential without a source grant reads, is refused: its page would land where other members and unbound credentials read.`,
+      'Write through the MCP put_page op, which keeps a new page to its member, or ask the brain operator to grant this credential its own write source that is not federated (gbrain auth rescope --sources <private-source>,default).');
+  }
+  // GST-2112: the snapshot is read before the visibility check, so the revision returned (which binds the write) is
+  // never older than the state the writer was authorized against.
+  const stored = content === undefined ? undefined : await engine.readPageSnapshot(target, { sourceId, includeDeleted: true });
+  await authorizePageVisibility(engine, authority, target);
+  if (content === undefined) return;
+  // The capture writes through a trusted local path, so apply the remote put_page readers rule here: a body never
+  // drops readable_by from a page that names readers, and the readers it names keep the writer.
+  await remoteReadersChecked(engine, authority, stored?.page.frontmatter, { parsedPage: { frontmatter: parseMarkdown(content, target + '.md', { validate: true }).frontmatter } });
+  // A page the revision backfill has not reached has no revision to bind the write to: refused, kept in the job row for `gbrain jobs retry`.
+  if (stored?.revision === REVISION_BACKFILL_PENDING) throw new RevisionBackfillPendingError(null);
+  return stored?.revision ?? null;
 }
 
 export function makeIngestCaptureHandler(engine: BrainEngine) {
@@ -272,8 +290,8 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     if (applied) return applied;
 
     const webhookWrite = untrustedPayload && event.source_kind === 'webhook' && !isTombstone;
-    const checkWriter = (sid: string) => webhookWrite ? assertWebhookWriterMayReplace(engine, data.writer, sid, slug) : Promise.resolve();
-    await checkWriter(sourceId ?? 'default');
+    const checkWriter = (sid: string) => webhookWrite ? assertWebhookWriterMayReplace(engine, data.writer, sid, slug, event.content) : Promise.resolve(undefined);
+    let checkedRevision = await checkWriter(sourceId ?? 'default');
     const door = (operation: 'put_page' | 'delete_page', sid: string, params: Record<string, unknown>) => submitPageMutation(
       { engine, config: { engine: engine.kind } as OperationContext['config'], remote: false, dryRun: false, sourceId: sid, logger: { info() {}, warn() {}, error() {} } },
       { operation, params: { ...params, slug, source_id: sid } });
@@ -337,6 +355,8 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       let appliedSince: IngestCaptureResult | null = null;
       const put = async (sid: string, request?: string) => {
         const snapshot = await engine.readPageSnapshot(slug, { sourceId: sid, includeDeleted: true });
+        // Checked after the snapshot the write binds to, so readers added before it are seen and any change after it refuses revision_conflict.
+        await checkWriter(sid);
         appliedSince = appliedKey ? await readAppliedCapture<IngestCaptureResult>(engine, appliedKey, journal) : null;
         if (appliedSince) return {};
         return door('put_page', sid, { content: event.content, content_origin: 'tool_output', source_kind: event.source_kind, source_uri: event.source_uri,
@@ -373,7 +393,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     // whole write rolls back (null) and the stored result is returned. The FK retry's first transaction rolls its record back too.
     const importAs = async (sid: string | undefined) => {
       try {
-        return await importFromContent(engine, slug, event.content, { ...importOpts, sourceId: sid, ...(appliedKey ? { beforeCommit: async (tx: BrainEngine) => {
+        return await importFromContent(engine, slug, event.content, { ...importOpts, sourceId: sid, ...(checkedRevision !== undefined ? { expectedBaseRevision: checkedRevision } : {}), ...(appliedKey ? { beforeCommit: async (tx: BrainEngine) => {
           if (!await recordAppliedCapture(tx, appliedKey, sid ?? 'default', slug, captured('imported', 0))) throw new CaptureAlreadyApplied();
         } } : {}) });
       } catch (err) {
@@ -388,7 +408,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       // The sources row can vanish (ON DELETE CASCADE) between the pre-check and this write.
       if (sourceId !== undefined && isPagesSourceFkViolation(err)) {
         sourceFallback = { requested: sourceId, effective: 'default', reason: 'fk_violation' };
-        await checkWriter('default');
+        checkedRevision = await checkWriter('default');
         result = await importAs(undefined);
       } else {
         throw err;

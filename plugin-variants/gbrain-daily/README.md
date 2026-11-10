@@ -1,4 +1,4 @@
-<!-- gbrain-plugin-tree-stamp: 0.60.624.0 -->
+<!-- gbrain-plugin-tree-stamp: 0.60.635.0 -->
 # gbrain-daily (generated persona variant — do not hand-edit)
 
 Personal knowledge-brain daily use: meetings, tasks, briefings, reading, research. Published as the gbrain-daily marketplace variant.
