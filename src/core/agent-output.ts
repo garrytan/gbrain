@@ -22,7 +22,7 @@ import { isReadOnlyTransactionError } from './postgres-engine/read-write-transac
 import { redactConnectionInfo } from './audit/redact-connection-info.ts';
 import { redactUrlsInText } from './url-redact.ts';
 import { parseRepoBase } from './repo-base.ts';
-import { recordAgentContractEvent } from './agent-contract-log.ts';
+import { recordAgentContractEvent, type AgentContractEvent } from './agent-contract-log.ts';
 import { cliRouting, pinRouting, type FixRouting } from './fix-routing.ts';
 
 export const CONTRACT_VERSION = 1 as const;
@@ -137,6 +137,7 @@ export interface AgentErrorContext {
   idempotent?: boolean;
   outcome?: 'not_started' | 'failed' | 'unknown' | 'committed' | 'pending';
   render: RenderContext;
+  cliFailure?: AgentContractEvent['cli_failure'];
   /** Additive: the configured DB url + resolved brain id for the GBRAIN_DB_ACCESS classifier row (a mount never reads as host). */
   db?: { url: string | null; brainId?: string };
 }
@@ -845,13 +846,13 @@ export function toAgentError(e: unknown, ctx: AgentErrorContext): AgentEnvelope 
     if (ctx.mutating === true && ctx.idempotent !== true && !provesNotAdmitted(e)) parts = { ...parts, retryable: false };
     const env = buildEnvelope(parts, ctx.render);
     if (env.code === 'internal_error' || env.code === 'internal' || !env.suggestion) {
-      recordAgentContractEvent({ transport: ctx.transport, op: ctx.op, command: ctx.command, code: env.code, has_suggestion: !!env.suggestion, outcome: ctx.outcome });
+      recordAgentContractEvent({ transport: ctx.transport, op: ctx.op, command: ctx.command, code: env.code, has_suggestion: !!env.suggestion, outcome: ctx.outcome, cli_failure: ctx.cliFailure });
     }
     return ctx.transport === 'http' ? redactForTransport(env, 'http') : env;
   } catch (fault) {
     recordAgentContractEvent({
       transport: ctx.transport, op: ctx.op, command: ctx.command, code: 'internal_error',
-      fault: fault instanceof Error ? fault.name : typeof fault,
+      fault: fault instanceof Error ? fault.name : typeof fault, cli_failure: ctx.cliFailure,
     });
     return genericEnvelope(e, ctx);
   }
@@ -865,8 +866,8 @@ export function projectionConflictLine(e: unknown, command: string): string | nu
 }
 
 /** Pure: callers write the strings. TTY order: `Error [code]: msg` / `Fix:` / `Why:` / `Docs:`. */
-export function renderCliError(e: unknown, opts: { json: boolean; command: string; tty: boolean }): CliErrorRender {
-  const env = toAgentError(e, { transport: 'cli', command: opts.command, render: cliRenderContext() });
+export function renderCliError(e: unknown, opts: { json: boolean; command: string; tty: boolean; cliFailure?: AgentContractEvent['cli_failure'] }): CliErrorRender {
+  const env = toAgentError(e, { transport: 'cli', command: opts.command, render: cliRenderContext(), cliFailure: opts.cliFailure });
   const exitCode = exitCodeForCode(env.code, env.reason);
   if (opts.json) return { stdout: `${JSON.stringify(env, null, 2)}\n`, exitCode };
   const lines = [`Error [${env.code}]: ${env.message}`];

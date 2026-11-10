@@ -24,6 +24,10 @@ import { suggestNearest } from '../core/levenshtein.ts';
 import { isConsentRefusal, printConsentRefusal } from '../core/consent.ts';
 import { exclusiveFix, liveServeOwner } from '../core/exclusive-fix.ts';
 import { RemoteMcpError } from '../core/remote-mcp-error.ts';
+import type { AgentContractEvent } from '../core/agent-contract-log.ts';
+import { parseGlobalFlags } from '../core/cli-options.ts';
+import { getCode } from '../core/retry-matcher.ts';
+import { GBrainError } from '../core/types.ts';
 
 export interface CliErrorWriteOpts {
   /** Raw argv (defaults to process.argv.slice(2)); decides `--json`. */
@@ -49,11 +53,51 @@ export function cliCommandOf(argv: readonly string[] = process.argv.slice(2)): s
   return argv.find(a => !a.startsWith('-')) ?? '';
 }
 
+// Copy only fixed command words. A source ID, path, or unrecognized token
+// must never be written to the bounded Agent Contract log.
+const SOURCES_AUDIT_VERBS = new Set([
+  'add', 'archive', 'archived', 'attach', 'audit', 'canonical', 'connect', 'current',
+  'default', 'demo', 'detach', 'federate', 'git-gap', 'guard', 'harden', 'host-repo',
+  'inspect', 'list', 'mirror-readonly', 'mirror-writable', 'pull', 'purge', 'push',
+  'reclone', 'reconcile', 'record-origin', 'refresh', 'reindex', 'remove', 'rename', 'reset-upstream',
+  'resolve-path', 'restore', 'retry-held', 'set-calendar', 'set-cr-mode', 'set-path',
+  'set-pull-strategy', 'set-strategy', 'set-sync', 'set-trust', 'shared-skills',
+  'status', 'tracked-branch', 'unfederate', 'unharden', 'webhook', 'writer',
+]);
+const AUDIT_CAUSE_CODES = new Set([
+  'EACCES', 'EPERM', 'EIO', 'ENOENT', 'ETIMEDOUT', 'ECONNREFUSED', 'ECONNRESET',
+  'CONNECTION_CLOSED', 'CONNECTION_DESTROYED', 'CONNECTION_ENDED',
+  '08001', '08003', '08006', '23503', '23505', '42501', '42703', '42P01',
+  '55P03', '57014', '57P01', '57P02', '57P03',
+]);
+
+function sourceAuditVerb(argv: readonly string[]): string | undefined {
+  try {
+    const [command, verb] = parseGlobalFlags([...argv]).rest;
+    if (command !== 'sources') return;
+    return verb && SOURCES_AUDIT_VERBS.has(verb) ? verb : 'unknown';
+  } catch { return undefined; }
+}
+
+function sourceFailureAudit(subcommand: string, error: unknown): AgentContractEvent['cli_failure'] {
+  try {
+    const cause = error instanceof GBrainError && error.cause !== undefined ? error.cause : error;
+    const code = getCode(cause);
+    const error_kind = cause instanceof TypeError ? 'type_error' : cause instanceof RangeError ? 'range_error'
+      : cause instanceof SyntaxError ? 'syntax_error' : cause instanceof ReferenceError ? 'reference_error'
+      : cause instanceof Error ? 'error' : 'non_error';
+    return { pid: process.pid, subcommand, error_kind, ...(code && AUDIT_CAUSE_CODES.has(code) ? { cause_code: code } : {}) };
+  } catch { return undefined; }
+}
+
 /** Render and write `e`; returns the exit code (the caller exits or sets the verdict). */
 export function writeCliError(e: unknown, command: string, opts: CliErrorWriteOpts = {}): number {
-  const json = opts.json ?? jsonRequested(opts.argv ?? process.argv.slice(2));
+  const argv = opts.argv ?? process.argv.slice(2);
+  const json = opts.json ?? jsonRequested(argv);
   if (isConsentRefusal(e)) return printConsentRefusal(e, { json });
-  const r = renderCliError(e, { json, command, tty: process.stderr.isTTY === true });
+  const subcommand = command === 'sources' ? sourceAuditVerb(argv) : undefined;
+  const cliFailure = subcommand ? sourceFailureAudit(subcommand, e) : undefined;
+  const r = renderCliError(e, { json, command, tty: process.stderr.isTTY === true, cliFailure });
   let stderr = r.stderr;
   if (r.stdout !== undefined) {
     const env = JSON.parse(r.stdout) as AgentEnvelope;
@@ -158,7 +202,11 @@ export function unknownFlagError(command: string, flag: string, message: string,
  */
 export function writeFatalCliError(e: unknown, opts: { argv?: readonly string[]; dbUrl?: string | null; brainId?: string } = {}): number {
   const argv = opts.argv ?? process.argv.slice(2);
-  const command = cliCommandOf(argv);
+  let command = 'unknown';
+  try {
+    const [parsed] = parseGlobalFlags([...argv]).rest;
+    command = parsed === 'sources' ? parsed : cliCommandOf(argv);
+  } catch { /* A malformed global flag value must not become the audit command. */ }
   const busy = e as { code?: unknown; reason?: unknown; message?: unknown; fix?: Action } | null;
   if (busy?.code === 'pglite_busy' && busy.reason === 'legacy_owner_unverified' && busy.fix) {
     const next = 'Waiting does not free this lock. Ask the user (fix.user_message); if they agree, run the read-only preview in fix and follow it.';

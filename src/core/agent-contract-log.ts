@@ -34,6 +34,13 @@ export interface AgentContractEvent {
   guard?: 'document' | 'ndjson';
   /** #6629: the process exit code the event was recorded at. */
   exit_code?: number;
+  /** Fixed-vocabulary diagnostics from the local sources CLI. Never argv or error text. */
+  cli_failure?: {
+    pid: number;
+    subcommand: string;
+    error_kind: 'type_error' | 'range_error' | 'syntax_error' | 'reference_error' | 'error' | 'non_error';
+    cause_code?: string;
+  };
 }
 
 export function agentContractLogPath(): string {
