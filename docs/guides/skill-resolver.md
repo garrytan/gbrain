@@ -38,7 +38,7 @@ One catalog per skill set. Names are 1-64 characters of `a-z`, `0-9`, `_` and
 | Harness | Build | Notes |
 |---|---|---|
 | Claude Code | `gbrain skills index build --catalog claude-user --dir ~/.claude/skills --harness claude-code` | Plugin skills get their `<plugin>:` prefix from `.claude-plugin/plugin.json`. |
-| Claude Code plugins | `gbrain skills index build --catalog claude-plugins --claude-plugins ~/.claude --harness claude-code` | The enabled user-scope plugins (`enabledPlugins` in `settings.json`, install paths from `plugins/installed_plugins.json`), each skill as `<plugin>:<skill>`. |
+| Claude Code plugins | `gbrain skills index build --catalog claude-code-plugins --claude-plugins ~/.claude --harness claude-code` | The enabled user-scope plugins (`enabledPlugins` in `settings.json`, install paths from `plugins/installed_plugins.json`), each skill as `<plugin>:<skill>`. |
 | Codex | `gbrain skills index build --catalog codex-user --dir ~/.codex/skills --harness codex` | Suggestion lines carry the SKILL.md path; Codex opens it. |
 | Hermes, qm | `--dir <skills dir> --harness hermes` (or `qm`) | The id is the name the loader takes. |
 | Pi, Cursor | `--dir <skills dir> --harness pi` (or `cursor`) | Suggestion lines carry the SKILL.md path; the agent reads the file. |
@@ -101,9 +101,10 @@ absolute path:
 `/usr/bin/env GBRAIN_HOOK_LANE=skill-resolver /abs/path/to/gbrain hook user-prompt --harness hermes`.
 Setup does not wire it yet, so build `hermes-user` yourself
 (`gbrain skills index build --catalog hermes-user --dir ~/.hermes/skills
---harness hermes`) and add `hermes` to `skills.resolver.harnesses` in
+--harness hermes`), add `hermes` to `skills.resolver.harnesses` in
 `~/.gbrain/config.json` by hand (`gbrain config set` refuses that key, which
-setup owns). Doctor's `skill_resolver` check does not cover Hermes yet. The lane
+setup owns) and set `skills.resolver.enabled` to `true` there; the lane is
+off without it. Doctor's `skill_resolver` check does not cover Hermes yet. The lane
 reads `extra.user_message`, `session_id` and `cwd` from the hook's stdin and
 answers `{"context": "<block>"}`. Hermes sends the whole conversation history
 on every turn, so the lane streams stdin and keeps only those three strings

@@ -15,7 +15,7 @@
  *    missing plugin indexes, or setup leaves the plugin catalog behind.
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
@@ -231,6 +231,20 @@ describe('harness-owned entries in a skills root (HARN-52)', () => {
     const b = await built('skres-edit-skill-');
     writeFileSync(join(b.root, 'deploy', 'SKILL.md'), '---\nname: deploy\ndescription: Deploy a service to staging first\n---\nSteps.\n');
     expect(await stale(b.home)).toBe(true);
+  });
+
+  test('retargeting a SKILL.md symlink in place makes the index stale on the turn path', async () => {
+    const home = tmp();
+    const root = tmp('skres-symlink-');
+    const d = join(root, 'tool');
+    mkdirSync(d);
+    writeFileSync(join(d, 'a.md'), '---\nname: old-deploy\ndescription: Deploy the widget service\n---\nSteps.\n');
+    writeFileSync(join(d, 'b.md'), '---\nname: new-invoice\ndescription: Draft an invoice for a customer\n---\nSteps.\n');
+    symlinkSync('a.md', join(d, 'SKILL.md'));
+    await buildSkillIndex({ catalog: 'h', dirs: [root] }, { home });
+    symlinkSync('b.md', join(d, 'SKILL.md.next'));
+    renameSync(join(d, 'SKILL.md.next'), join(d, 'SKILL.md'));
+    expect(await stale(home)).toBe(true);
   });
 });
 

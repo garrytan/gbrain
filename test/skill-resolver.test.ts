@@ -26,7 +26,7 @@ import { lexTerms } from '../src/core/skills/resolver/tokenize.ts';
 import { isAcknowledgement, mentionsSkill } from '../src/core/skills/resolver/rank.ts';
 import { estimateTokens } from '../src/core/skills/resolver/block.ts';
 import { acquireLease, holdsLease, releaseLease, tryAcquireLease } from '../src/core/skills/resolver/lock.ts';
-import { commitSession, commitSessionAsync, gcSessions, loadSession, sessionKey } from '../src/core/skills/resolver/session.ts';
+import { commitSession, commitSessionAsync, gcSessions, gcSessionsAsync, loadSession, sessionGcSettled, sessionKey } from '../src/core/skills/resolver/session.ts';
 import { catalogFile } from '../src/core/skills/resolver/paths.ts';
 import { appendDailyLog, appendDailyLogSync, DAILY_LOG_DAY_CAP_BYTES, dailyLogFile, LANE_LOG, readRecentDailyLog, RESOLVER_LOG } from '../src/core/skills/resolver/daily-log.ts';
 import { EXCLUDE_MAX, STAT_CHECK_SLICE } from '../src/core/skills/resolver/resolve.ts';
@@ -446,6 +446,21 @@ describe('sessions', () => {
     utimesSync(join(dir, file), old, old);
     expect(gcSessions(home)).toBe(1);
     expect(existsSync(join(dir, file))).toBe(false);
+  });
+
+  test('async GC never deletes an idle session file while a commit holds its lease; the commit keeps the earlier state', async () => {
+    const home = tmp();
+    const key = sessionKey('on', undefined, 'gc-race');
+    expect(await commitSessionAsync(home, key, { tokens: 100, suggested: ['a'], resuggested: [], reset: false })).toBe(true);
+    await sessionGcSettled();
+    const file = join(home, 'skill-index', 'sessions', `${key}.json`);
+    const old = (Date.now() - 8 * 24 * 3600 * 1000) / 1000;
+    utimesSync(file, old, old);
+    let removed = -1;
+    const ok = await commitSessionAsync(home, key, { tokens: 7, suggested: ['b'], resuggested: [], reset: false }, { at: async (stage) => { if (stage === 'held') removed = await gcSessionsAsync(home); } });
+    expect(ok).toBe(true);
+    expect(removed).toBe(0);
+    expect(loadSession(home, key)).toMatchObject({ turn: 2, spent: 107 });
   });
 });
 

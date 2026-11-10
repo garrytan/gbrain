@@ -138,7 +138,7 @@ export function readDirSources(dirs: readonly string[], rootNamespaces: readonly
         try {
           const mtime = statSync(dir).mtimeMs;
           const listed = readdirSync(dir, { withFileTypes: true });
-          fp.dirs.push([dir, mtime, listingKey(listed)]);
+          fp.dirs.push([dir, mtime, listingKey(dir, listed)]);
           entries = listed.map(e => e.name).filter(n => !skippedEntry(n)).sort();
         } catch { skipped.push({ reason: 'unreadable', path: dir }); continue; }
         for (const name of entries) {

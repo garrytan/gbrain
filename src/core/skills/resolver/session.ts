@@ -174,7 +174,12 @@ export function gcSessions(home: string, now: number = Date.now()): number {
   return removed;
 }
 
-/** gcSessions with async I/O only; it touches the GC stamp first, so the commit-path pass skips the next interval. */
+/**
+ * gcSessions with async I/O only; it touches the GC stamp first, so the
+ * commit-path pass skips the next interval. An idle session file is deleted
+ * only under its commit lease and after a second stat, so a commit landing
+ * between the first stat and the unlink keeps its file; a held lease skips it.
+ */
 export async function gcSessionsAsync(home: string, now: number = Date.now()): Promise<number> {
   const dir = sessionsDir(home);
   let names: string[];
@@ -184,9 +189,16 @@ export async function gcSessionsAsync(home: string, now: number = Date.now()): P
     await writeFile(gcStamp(home), '', { mode: 0o600 });
   } catch { return 0; }
   let removed = 0;
+  const idle = async (p: string) => now - (await stat(p)).mtimeMs > SESSION_TTL_MS;
   for (const name of gcSlice(names)) {
     const p = join(dir, name);
-    try { if (now - (await stat(p)).mtimeMs > SESSION_TTL_MS) { await unlink(p); removed++; } } catch { /* raced */ }
+    try {
+      if (!(await idle(p))) continue;
+      if (!name.endsWith('.json')) { await unlink(p); removed++; continue; }
+      const lease = await tryAcquireLeaseAsync(`${p}.lock`, { purpose: 'session-gc', leaseMs: 2000 });
+      if (!lease) continue;
+      try { if (await idle(p)) { await unlink(p); removed++; } } finally { await releaseLeaseAsync(lease); }
+    } catch { /* raced */ }
   }
   return removed;
 }
