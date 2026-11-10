@@ -97,7 +97,7 @@ export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceI
          AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
          AND f.source != ALL($2::text[])
          ${ctx.remote !== false ? `AND f.visibility = 'world'` : ''}`;
-  const eligible = `${excludePrivate ? `AND ${privateFactFilterForCaller('f')}` : ''}
+  const eligible = `${excludePrivate ? `AND ${privateFactFilterForCaller('f', true)}` : ''}
          AND ${projectionEligibleSql('facts', 'f', { floor: scope.minTrust })}`;
   const lang = getFtsLanguage();
   const doc = factsFtsDocument('f');

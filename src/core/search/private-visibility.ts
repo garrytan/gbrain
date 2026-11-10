@@ -689,13 +689,17 @@ export function privateProvenanceFilterUnderPolicy(factAlias: string): string {
  * name keeps the fact and every other remote caller loses it. A fact with no entity page passes. Read sites only; it
  * only ever narrows.
  */
-export function privateEntityFilterForCaller(factAlias: string): string {
-  return `NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug = ${factAlias}.entity_slug AND NOT ${privatePagesFilterForCaller('entity_pp')})`;
+export function privateEntityFilterForCaller(factAlias: string, perCandidate = false): string {
+  return `NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug = ${factAlias}.entity_slug AND NOT ${privatePagesFilterForCaller('entity_pp')}${perCandidate ? ' OFFSET 0' : ''})`;
 }
 
-/** privateProvenanceFilterFragment for a remote fact read: the provenance page gate plus the caller's entity-page gate. */
-export function privateFactFilterForCaller(factAlias: string): string {
-  return `(${privateProvenanceFilterFragment(factAlias)} AND ${privateEntityFilterForCaller(factAlias)})`;
+/**
+ * privateProvenanceFilterFragment for a remote fact read: the provenance page gate plus the caller's entity-page gate.
+ * perCandidate keeps the entity gate a lookup per candidate row (OFFSET 0 stops the planner turning it into a join), so
+ * a scan an index serves, such as the saved-fact keyword match, keeps that index.
+ */
+export function privateFactFilterForCaller(factAlias: string, perCandidate = false): string {
+  return `(${privateProvenanceFilterFragment(factAlias)} AND ${privateEntityFilterForCaller(factAlias, perCandidate)})`;
 }
 
 /** True only inside a remote caller record whose read an operator relaxed (the env hatch or the config opt-out). */
