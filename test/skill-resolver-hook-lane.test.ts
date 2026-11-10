@@ -141,6 +141,27 @@ describe('skill-resolver lane: delivery per harness', () => {
     expect(reset.stdout).toBe('');
     expect(contextOf(await hook(b, cmd, turn, WIDE))).toContain('triage-bug');
   });
+
+  test('codex SessionStart after a compaction (Codex 0.165 sends source "compact") resets the session, so the skill is offered again', async () => {
+    const b = box();
+    seedSkills(codexSkills(b));
+    await setup(b, 'codex');
+    const cmd = wired(b, 'codex');
+    const start = wired(b, 'codex', 'SessionStart');
+    expect(start).toContain('hook session-start --harness codex');
+    const toml = readFileSync(join(b.home, '.codex', 'config.toml'), 'utf8');
+    expect(toml).toContain(':session_start:');
+    expect(toml).toContain(':user_prompt_submit:');
+    const turn = { prompt: 'triage this bug report', session_id: 'sess-cx', hook_event_name: 'UserPromptSubmit' };
+    expect(contextOf(await hook(b, cmd, turn, WIDE))).toContain('triage-bug');
+    expect((await hook(b, cmd, turn, WIDE)).stdout).toBe('');
+    expect((await hook(b, start, { source: 'resume', session_id: 'sess-cx', hook_event_name: 'SessionStart' }, WIDE)).stdout).toBe('');
+    expect((await hook(b, cmd, turn, WIDE)).stdout).toBe('');
+    const reset = await hook(b, start, { source: 'compact', session_id: 'sess-cx', hook_event_name: 'SessionStart' }, WIDE);
+    expect(reset.exitCode).toBe(0);
+    expect(reset.stdout).toBe('');
+    expect(contextOf(await hook(b, cmd, turn, WIDE))).toContain('triage-bug');
+  });
 });
 
 describe('skill-resolver lane: deadline, measured outside the process', () => {

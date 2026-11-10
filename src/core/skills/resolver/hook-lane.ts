@@ -1,7 +1,7 @@
 /**
  * The skill-resolver hook lane (`GBRAIN_HOOK_LANE=skill-resolver`): its own
- * hook entry in Claude Code (UserPromptSubmit, plus SessionStart for the
- * compaction reset) and its own hooks.json group in Codex (UserPromptSubmit),
+ * hook entry in Claude Code and its own hooks.json groups in Codex, each
+ * UserPromptSubmit plus SessionStart for the compaction reset,
  * written by `gbrain setup <claude-code|codex> --skill-loading resolve`
  * (src/core/setup/skill-resolver-hook.ts). It never shares output with the
  * turn-rule, setup or plugin lanes: it prints only the <relevant_skills> block.
@@ -213,7 +213,6 @@ interface Turn { outcome: string; code?: string; catalogs?: string[]; dropped_ch
 export async function runSkillResolverLane(event: string, harness: LaneHarness, io: LaneIo = {}): Promise<number> {
   const t0 = performance.now();
   if (event !== 'user-prompt' && event !== 'session-start') return 0;
-  if (harness === 'codex' && event !== 'user-prompt') return 0;
   const env = io.env ?? process.env;
   let home: string;
   try { home = resolverHome(env); } catch { return 0; }
