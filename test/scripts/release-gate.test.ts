@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import { load } from 'js-yaml';
-import { apiDeps, evaluate, gate, GATED, reuseOutputs, type GateDeps, type GateRun, type Provenance } from '../../scripts/release-gate.ts';
+import { apiDeps, dispatchTarget, evaluate, gate, GATED, reuseOutputs, type CommitDeps, type GateDeps, type GateRun, type Provenance } from '../../scripts/release-gate.ts';
 import type { GitHubClient } from '../../scripts/lib/gh-issue.ts';
 
 const A = 'a'.repeat(40);
@@ -109,6 +109,52 @@ describe('release gate', () => {
   });
 });
 
+describe('a workflow_dispatch gates only the release commit', () => {
+  const D = 'd'.repeat(40);
+  const E = 'e'.repeat(40);
+  /** Master's first-parent line, newest first: C and B landed after the release commit A of 0.60.71.0; D is 0.60.70.0. */
+  const history = (): CommitDeps & { reads: string[] } => {
+    const parent: Record<string, string | null> = { [C]: B, [B]: A, [A]: D, [D]: E, [E]: null };
+    const version: Record<string, string> = { [C]: '0.60.71.0', [B]: '0.60.71.0', [A]: '0.60.71.0', [D]: '0.60.70.0', [E]: '0.60.69.0' };
+    const reads: string[] = [];
+    return { reads, async firstParent(sha) { reads.push(sha.slice(0, 1)); return parent[sha]!; }, async versionAt(sha) { return version[sha]!; } };
+  };
+
+  test('a dispatch whose HEAD is the commit that last changed VERSION gates that commit', async () => {
+    expect(await dispatchTarget(history(), A, '0.60.71.0')).toEqual({ kind: 'gate', sha: A });
+  });
+
+  test('a dispatch on a later master HEAD resolves the release commit and refuses with the re-run of its Release run', async () => {
+    const h = history();
+    const v = await dispatchTarget(h, C, '0.60.71.0');
+    expect(v).toMatchObject({ kind: 'fail', sha: A });
+    expect(h.reads).toEqual(['c', 'b', 'a']);
+    if (v.kind !== 'fail') return;
+    expect(v.why).toContain(`master HEAD ${C.slice(0, 12)}`);
+    expect(v.why).toContain(`v0.60.71.0's release commit is ${A.slice(0, 12)}`);
+    expect(v.next).toContain(`gh run list --workflow release.yml --commit ${A} --event push`);
+    expect(v.next).toContain('gh run rerun');
+    expect(v.next).not.toContain('gh workflow run release.yml');
+  });
+
+  test('the API deps read the first parent and VERSION at a commit', async () => {
+    const paths: string[] = [];
+    const client: GitHubClient = {
+      async request<T>(_m: string, path: string): Promise<T> {
+        paths.push(path);
+        if (path === `repos/{repo}/commits/${C}`) return { parents: [{ sha: B }, { sha: D }] } as T;
+        if (path === `repos/{repo}/commits/${E}`) return { parents: [] } as T;
+        if (path === `repos/{repo}/contents/VERSION?ref=${B}`) return { encoding: 'base64', content: Buffer.from('0.60.71.0\n').toString('base64') } as T;
+        throw new Error(`unexpected ${path}`);
+      },
+    };
+    const api = apiDeps(client);
+    expect(await api.firstParent(C)).toBe(B);
+    expect(await api.firstParent(E)).toBeNull();
+    expect(await api.versionAt(B)).toBe('0.60.71.0');
+  });
+});
+
 /** A one-entry zip, enough for readZipEntry. */
 function zipOf(name: string, content: string): Uint8Array {
   const data = Buffer.from(content);
@@ -169,7 +215,7 @@ describe('release.yml waits for the CI gate', () => {
     expect(wf.on.workflow_dispatch).toBeDefined();
     const gateJob = wf.jobs['ci-gate']!;
     expect(gateJob.permissions).toEqual({ contents: 'read', actions: 'read' });
-    expect(gateJob.steps.some(s => s.run?.includes('bun scripts/release-gate.ts --sha "$GITHUB_SHA"') && s.run.includes('--ref "$GITHUB_REF"'))).toBe(true);
+    expect(gateJob.steps.some(s => s.run?.includes('bun scripts/release-gate.ts --sha "$GITHUB_SHA"') && s.run.includes('--ref "$GITHUB_REF"') && s.run.includes('--event "$GITHUB_EVENT_NAME"'))).toBe(true);
     for (const job of ['build', 'release', 'publish-template', 'publish-codex-plugin']) {
       expect(wf.jobs[job]!.needs).toContain('ci-gate');
       expect(wf.jobs[job]!.if).toContain("needs.ci-gate.outputs.publish == 'true'");

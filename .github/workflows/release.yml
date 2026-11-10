@@ -27,8 +27,9 @@ name: Release
 # and the job fails with the next step; master push runs are keyed by commit,
 # so no newer push cancels them, and no later commit is published in the
 # release commit's place (it may carry unreleased changes under the same
-# VERSION). workflow_dispatch backfills master HEAD's VERSION through the
-# same gate.
+# VERSION). workflow_dispatch backfills only while master HEAD is the release
+# commit (the commit that last changed VERSION); otherwise it refuses and names
+# the re-run of that commit's push Release run.
 #
 # Releases per batch (docs/RELEASING.md#releases-per-batch): PRs land with
 # changelog.d fragments and no version; a release PR moves VERSION, so this
@@ -39,7 +40,7 @@ on:
   push:
     branches: [master]
     paths: [VERSION]
-  workflow_dispatch: {}  # manual first run / backfill of the current VERSION
+  workflow_dispatch: {}  # backfill of the current VERSION while master HEAD is its release commit
 
 permissions:
   contents: read
@@ -112,7 +113,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.version.outputs.version }}
-        run: bun scripts/release-gate.ts --sha "$GITHUB_SHA" --version "$RELEASE_VERSION" --ref "$GITHUB_REF" --repo "$GITHUB_REPOSITORY" --output "$GITHUB_OUTPUT"
+        run: bun scripts/release-gate.ts --sha "$GITHUB_SHA" --version "$RELEASE_VERSION" --ref "$GITHUB_REF" --event "$GITHUB_EVENT_NAME" --repo "$GITHUB_REPOSITORY" --output "$GITHUB_OUTPUT"
 
   build:
     needs: [version, ci-gate]

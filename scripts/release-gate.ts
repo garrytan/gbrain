@@ -3,7 +3,7 @@
  * Release CI gate (green master wave, Garry-approved release gating).
  *
  *   bun scripts/release-gate.ts --sha <sha> --version <v> [--ref refs/heads/master] [--repo owner/name]
- *        [--timeout-minutes 110] [--poll-seconds 60] [--output <file>]
+ *        [--timeout-minutes 110] [--poll-seconds 60] [--output <file>] [--event push|workflow_dispatch]
  *
  * release.yml publishes a release, and moves `latest-stable`, only for a
  * commit whose push-to-master runs of Test and E2E Tests both succeeded.
@@ -20,9 +20,11 @@
  * - still running, or not created yet: wait, up to --timeout-minutes, then
  *   fail naming the re-run of this Release run, which gates the same commit.
  *
- * A workflow_dispatch backfill runs the same gate for master's HEAD, so it is
- * right only while HEAD is the release commit; every failure names the re-run
- * of the Release run instead. Writes
+ * A workflow_dispatch backfill (--event workflow_dispatch) resolves the
+ * release commit, the first-parent commit that last changed VERSION, and
+ * gates only that commit: when master HEAD is a later commit it publishes
+ * nothing and names the re-run of the release commit's push Release run, so
+ * later landings are never published under the release's notes. Writes
  * `publish=true|false` and `sha=<commit>` to --output (GITHUB_OUTPUT).
  *
  * Master-push reuse (scripts/ci-reuse.ts, docs/ci-event-parity.md#master-push-reuse):
@@ -43,7 +45,7 @@ import { fetchArtifactJson, restClient, type GitHubClient } from './lib/gh-issue
 export const GATED = [{ file: 'test.yml', name: 'Test', key: 'test' }, { file: 'e2e.yml', name: 'E2E Tests', key: 'e2e' }] as const;
 export const DOCS = 'docs/RELEASING.md#release-ci-gate';
 const RED = new Set(['failure', 'timed_out', 'startup_failure', 'action_required']);
-const RERUN = `re-run this Release run (gh run rerun ${process.env.GITHUB_RUN_ID ?? '<this Release run id>'}), which gates the same release commit; a dispatch on master would gate master HEAD instead`;
+const RERUN = `re-run this Release run (gh run rerun ${process.env.GITHUB_RUN_ID ?? '<this Release run id>'}), which gates the same release commit; a dispatch on master refuses once master HEAD has moved past it`;
 
 export interface GateRun { id: number; run_number: number; run_attempt: number; status: string; conclusion: string | null; head_sha: string; head_branch: string; event: string; html_url?: string }
 export interface ReusedRun { run_id: number; run_attempt: number; sha: string }
@@ -58,6 +60,28 @@ export type Verdict =
 export interface GateDeps {
   runsFor(file: string, sha: string): Promise<GateRun[]>;
   provenance(file: string, run: GateRun): Promise<Provenance>;
+}
+export interface CommitDeps {
+  firstParent(sha: string): Promise<string | null>;
+  versionAt(sha: string): Promise<string>;
+}
+const WALK_LIMIT = 500;
+
+/** What a workflow_dispatch on master HEAD may gate: the release commit (the first-parent commit that last changed VERSION) when HEAD is it, else nothing. */
+export async function dispatchTarget(deps: CommitDeps, head: string, version: string): Promise<{ kind: 'gate'; sha: string } | { kind: 'fail'; sha: string; why: string; next: string }> {
+  let release = head;
+  for (let i = 0; ; i++) {
+    if (i === WALK_LIMIT) throw new Error(`no commit changed VERSION to ${version} within ${WALK_LIMIT} first parents of ${head.slice(0, 12)}`);
+    const parent = await deps.firstParent(release);
+    if (!parent || (await deps.versionAt(parent)) !== version) break;
+    release = parent;
+  }
+  if (release === head) return { kind: 'gate', sha: release };
+  return {
+    kind: 'fail', sha: release,
+    why: `this dispatch runs on master HEAD ${head.slice(0, 12)}, but v${version}'s release commit is ${release.slice(0, 12)} (the commit that last changed VERSION). The commits after it landed later and their notes are not in v${version}, so a dispatch never publishes them under that version`,
+    next: `re-run the push Release run of the release commit: gh run rerun "$(gh run list --workflow release.yml --commit ${release} --event push --limit 1 --json databaseId --jq '.[0].databaseId')". Changes landed after it ship in the next release (gstack-release-stamp open)`,
+  };
 }
 
 const newest = (runs: GateRun[]) => [...runs].sort((a, b) => b.run_number - a.run_number || b.run_attempt - a.run_attempt)[0];
@@ -97,8 +121,14 @@ export async function evaluate(deps: GateDeps, sha: string, version: string): Pr
   return { kind: 'publish', sha, sources, why: `Test and E2E Tests both succeeded on ${sha.slice(0, 12)}: ${how}` };
 }
 
-export function apiDeps(client: GitHubClient): GateDeps {
+export function apiDeps(client: GitHubClient): GateDeps & CommitDeps {
   return {
+    async firstParent(sha) {
+      return (await client.request<{ parents: Array<{ sha: string }> }>('GET', `repos/{repo}/commits/${sha}`)).parents[0]?.sha ?? null;
+    },
+    async versionAt(sha) {
+      return Buffer.from((await client.request<{ content: string }>('GET', `repos/{repo}/contents/VERSION?ref=${sha}`)).content, 'base64').toString('utf8').trim();
+    },
     async runsFor(file, sha) {
       return (await client.request<{ workflow_runs: GateRun[] }>('GET', `repos/{repo}/actions/workflows/${file}/runs?head_sha=${sha}&event=push&per_page=20`)).workflow_runs;
     },
@@ -144,8 +174,9 @@ if (import.meta.main) {
   const timeoutMs = Number(flag('--timeout-minutes') ?? 110) * 60_000;
   const pollMs = Number(flag('--poll-seconds') ?? 60) * 1000;
   const output = flag('--output');
+  const event = flag('--event') ?? 'push';
   if (!/^[0-9a-f]{40}$/.test(sha) || !/^\d+\.\d+\.\d+(\.\d+)?$/.test(version) || !(timeoutMs > 0) || !(pollMs > 0)) {
-    console.log('Usage: bun scripts/release-gate.ts --sha <40-hex sha> --version <VERSION> [--ref refs/heads/master] [--repo owner/name] [--timeout-minutes 110] [--poll-seconds 60] [--output <file>]');
+    console.log('Usage: bun scripts/release-gate.ts --sha <40-hex sha> --version <VERSION> [--ref refs/heads/master] [--repo owner/name] [--timeout-minutes 110] [--poll-seconds 60] [--output <file>] [--event push|workflow_dispatch]');
     process.exit(2);
   }
   const write = (publish: boolean, at: string) => { if (output) appendFileSync(output, `publish=${publish}\nsha=${at}\n`); };
@@ -155,7 +186,16 @@ if (import.meta.main) {
     process.exit(1);
   }
   try {
-    const v = await gate(apiDeps(restClient(repo)), { sha, version, timeoutMs, pollMs, log: line => console.log(line) });
+    const api = apiDeps(restClient(repo));
+    if (event === 'workflow_dispatch') {
+      const d = await dispatchTarget(api, sha, version);
+      if (d.kind === 'fail') {
+        console.log(`::error::Release v${version} not published: ${d.why}. Next: ${d.next}. Docs: ${DOCS}`);
+        write(false, d.sha);
+        process.exit(1);
+      }
+    }
+    const v = await gate(api, { sha, version, timeoutMs, pollMs, log: line => console.log(line) });
     if (v.kind === 'publish') {
       console.log(`[release-gate] publish v${version} at ${v.sha}: ${v.why}.`);
       write(true, v.sha);
