@@ -263,6 +263,10 @@ for (const kind of testBackends()) {
       expect(after.text).not.toContain('canaryalpha');
       expect(after.text).toContain('gbrain serve --http');
       for (const out of [inGrace, after]) expect(JSON.stringify([out.meta, out.structured, out.text])).not.toContain('config set mcp.stdio_member');
+      const who = await stdio('whoami', {});
+      expect(who.json.access.note).toContain('--stdio-member');
+      expect(who.json.access.note).toContain('gbrain serve --http');
+      expect(JSON.stringify(who.json)).not.toContain('config set mcp.stdio_member');
       await engine.setConfig('mcp.stdio_member', 'alice-example');
       const bound = await stdio('get_page', { slug: 'notes/harbor-alpha' });
       expect(bound.isError).toBe(false);
@@ -458,7 +462,10 @@ describe('the CLI refuses an unbound credential and records the opt-out (pglite,
     expect((await run(['access', 'member', 'add', 'alice-example'])).exitCode).toBe(0);
     expect((await run(['auth', 'create', 'old-bot'])).exitCode).toBe(0);
     expect((await run(['access', 'member', 'add', 'bob-example'])).exitCode).toBe(0);
-    expect((await run(['access', 'owner', 'set', 'alice-example'])).exitCode).toBe(0);
+    const owner = await run(['access', 'owner', 'set', 'alice-example']);
+    expect(owner.exitCode).toBe(0);
+    expect(owner.stdout).toContain('--stdio-member alice-example');
+    expect(owner.stdout).not.toContain('config set mcp.stdio_member');
     const stdioMember = async () => (await run(['config', 'get', 'mcp.stdio_member'])).stdout.trim();
     const before = await stdioMember();
     const post = await run(['post-upgrade']);

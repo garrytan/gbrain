@@ -280,7 +280,7 @@ function ownerLines(v: OwnerView): string[] {
     : ['Owner: none. Every remote caller reads under the ordinary policy (no visibility: private page without a grant).', 'Name one: gbrain access owner set <member>'];
   return [`Owner: ${v.owner}`,
     `  Credentials that read as the owner (${v.bound_credentials.length}): ${v.bound_credentials.map(c => `${c.kind} ${c.name}`).join(', ') || 'none'}`,
-    `  Bind one: gbrain auth rescope --token <name> --member ${v.owner} (a stdio server: gbrain config set mcp.stdio_member ${v.owner})`];
+    `  Bind one: gbrain auth rescope --token <name> --member ${v.owner} (a stdio harness only the owner uses: gbrain setup <harness> --serves several --stdio-member ${v.owner}, which makes every stdio session on this host read as the owner, private pages included; a harness several people talk to gets one key per person over gbrain serve --http)`];
 }
 
 async function ownerCmd(engine: BrainEngine, sub: string | undefined, args: string[], json: boolean): Promise<void> {
