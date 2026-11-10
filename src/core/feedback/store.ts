@@ -334,7 +334,8 @@ export async function scrubPurgedSlugs(
  * #9068: insert one captured eval candidate with only the slugs a page of its sources (any source when it names none)
  * still holds, in retrieval order. Each probe takes the feedback writers' key-share lock on the page row, so a capture
  * deferred past its query's response either commits before a purge takes the row, and the purge's scrub strips it, or
- * waits for the purge and drops the slug. Both engines run this statement.
+ * waits for the purge and drops the slug. A facts-arm result (`facts/<id>`, facts-arm.ts) names a fact, not a page:
+ * it stays while that fact row does. Both engines run this statement.
  */
 export async function insertEvalCandidate(engine: Pick<BrainEngine, 'executeRaw'>, input: EvalCandidateInput): Promise<number> {
   const rows = await engine.executeRaw<{ id: number | string }>(
@@ -346,6 +347,8 @@ export async function insertEvalCandidate(engine: Pick<BrainEngine, 'executeRaw'
        ARRAY(SELECT u.s FROM unnest($3::text[]) WITH ORDINALITY AS u(s, n)
               WHERE EXISTS (SELECT 1 FROM pages pg WHERE pg.slug = u.s
                               AND (cardinality($5::text[]) = 0 OR pg.source_id = ANY($5::text[])) FOR KEY SHARE)
+                 OR CASE WHEN u.s ~ '^facts/[0-9]{1,18}$' THEN EXISTS (SELECT 1 FROM facts f WHERE f.id = substr(u.s, 7)::bigint
+                              AND (cardinality($5::text[]) = 0 OR f.source_id = ANY($5::text[]))) ELSE false END
               ORDER BY u.n),
        $4::int[], $5::text[], $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
      RETURNING id`,

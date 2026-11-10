@@ -19,7 +19,9 @@ export const unverifiedArchiveReason = (id: string) =>
  * claimed. A binding of another incarnation is never touched here; `gbrain
  * repair orphan-bindings` removes those. The same statement runs
  * removedSourceScrubCtes, and a second statement repeats it once the row is
- * gone. Returns whether a row was deleted.
+ * gone, unless a source with this id exists again by then: a replacement
+ * created between the two statements keeps its rows. Returns whether a row
+ * was deleted.
  */
 export async function deleteSourceRow(
   engine: Pick<BrainEngine, 'executeRaw'>,
@@ -38,7 +40,7 @@ export async function deleteSourceRow(
     [id],
   );
   if (!rows.length) return false;
-  await engine.executeRaw(`WITH ${removedSourceScrubCtes('true')} SELECT 1`, [id]);
+  await engine.executeRaw(`WITH ${removedSourceScrubCtes('NOT EXISTS (SELECT 1 FROM sources WHERE id = $1)')} SELECT 1`, [id]);
   return true;
 }
 
@@ -48,8 +50,8 @@ export async function deleteSourceRow(
  * context_volunteer_events rows, and each eval candidate's captured slugs that no other source the candidate covers
  * still has a page for (retrieval_weights and mention_gazetteer_entries cascade from sources). Every removal runs
  * them in the statement that deletes the sources row (gated on that delete), so the source and those rows go
- * together, then again, ungated, in a later statement: that statement reads past a feedback write or eval capture
- * that held one of the source's page rows while the delete waited for it (a later one finds no page).
+ * together, then again in a later statement: that statement reads past a feedback write or eval capture that held one
+ * of the source's page rows while the delete waited for it (a later one finds no page).
  */
 export function removedSourceScrubCtes(gate: string): string {
   const deletes = ['retrieval_event_pages', 'retrieval_event_links', 'retrieval_feedback', 'context_volunteer_events']

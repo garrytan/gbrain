@@ -8,10 +8,12 @@
  *    retrieval logs, ratings, weights, the volunteer log, the gazetteer and the eval candidates' captured slugs for
  *    that source in the delete's transaction, and so does the transcript stale-part delete, which now calls it;
  *    (c) removing a source (unmanaged removeSource -> deleteSourceRow, and the managed lifecycle remove) drops every
- *    such row of the source, and strips its slugs from eval candidates no other covered source still answers.
- * 2. Fails when: logEvalCandidate inserts slugs without probing the page row under a key-share lock, a hard delete or a
- *    source removal leaves any of those rows behind, or a scrub reaches another source's rows or a slug another
- *    source the candidate covers still holds.
+ *    such row of the source, and strips its slugs from eval candidates no other covered source still answers;
+ *    (d) a capture keeps a facts-arm result (facts/<id>) while its fact exists; (e) a source re-created with the same
+ *    id between deleteSourceRow's delete and its second scrub keeps its rows.
+ * 2. Fails when: logEvalCandidate inserts slugs without probing the page row under a key-share lock or drops a live
+ *    fact's result, a hard delete or a source removal leaves any of those rows behind, or a scrub reaches another
+ *    source's rows, a re-created source's rows or a slug another source the candidate covers still holds.
  * 3. Existing coverage: purge-retrieval-feedback-8821 and purge-name-stores-9068 pin delete_page purge and the
  *    tombstone purge only; nothing pinned the capture, the connector and stale-part deletes, or source removal.
  * 4. Real seams: PGLite, and Postgres when DATABASE_URL is set (test/postgres-unit-arms.txt); the feedback store's
@@ -35,6 +37,7 @@ import { captureEvalCandidate } from '../src/core/eval-capture.ts';
 import { withResponseDeferral } from '../src/core/background-work.ts';
 import { deleteConnectorPage } from '../src/core/connectors/api-source.ts';
 import { removeSource } from '../src/core/sources-ops.ts';
+import { deleteSourceRow } from '../src/core/source-delete.ts';
 import { runTranscriptsIngest } from '../src/core/transcripts/ingest.ts';
 import { buildTranscriptSlug } from '../src/core/transcripts/types.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
@@ -145,6 +148,18 @@ describe('#9068 an eval capture does not write a purged slug back', () => {
     }
   }, 120_000);
 
+  test('a capture keeps a facts-arm result while its fact exists', async () => {
+    for (const engine of engines) {
+      await page(engine, 'default', 'notes/live-page');
+      const [fact] = await engine.executeRaw<{ id: number | string }>(
+        `INSERT INTO facts (fact, source, source_id) VALUES ('alice-example joined acme-example', 'fixture', 'default') RETURNING id`);
+      const query = `facts arm ${randomUUID()}`;
+      await engine.logEvalCandidate(candidate(query, [`facts/${fact!.id}`, 'facts/999999999', 'notes/live-page'], ['default']));
+      expect({ engine: engine.kind, slugs: await capturedSlugs(engine, query) })
+        .toEqual({ engine: engine.kind, slugs: [[`facts/${fact!.id}`, 'notes/live-page']] });
+    }
+  }, 120_000);
+
   const postgresTest = testBackends().includes('postgres') ? test : test.skip;
   postgresTest('on Postgres a capture during an open purge waits for it and drops the slug', async () => {
     const engine = engines.find(e => e.kind === 'postgres')!;
@@ -237,6 +252,25 @@ describe('#9068 removing a source scrubs every row that names its pages', () => 
       expect(await residue(engine, 'default', null)).toEqual(before);
       expect(await capturedSlugs(engine, solo)).toEqual([[]]);
       expect(await capturedSlugs(engine, shared)).toEqual([[OTHER]]);
+    }
+  }), 120_000);
+
+  test('a source re-created between the delete and its second scrub keeps its rows', () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      const id = 'source-reused', slug = 'notes/reused-page', query = `reused ${randomUUID()}`;
+      await traced(engine, id, slug);
+      let calls = 0;
+      const racing = { executeRaw: async (sql: string, params?: unknown[]) => {
+        if (calls++ === 1) {
+          await traced(engine, id, slug);
+          await engine.logEvalCandidate(candidate(query, [slug, OTHER], [id]));
+        }
+        return engine.executeRaw(sql, params);
+      } } as Pick<BrainEngine, 'executeRaw'>;
+      expect(await deleteSourceRow(racing, id)).toBe(true);
+      expect({ engine: engine.kind, residue: await residue(engine, id, slug) }).toEqual({ engine: engine.kind, residue: { retrieval_event_pages: 1,
+        retrieval_event_links: 1, retrieval_feedback: 2, retrieval_weights: 2, context_volunteer_events: 1, mention_gazetteer_entries: 1 } });
+      expect(await capturedSlugs(engine, query)).toEqual([[slug, OTHER]]);
     }
   }), 120_000);
 
