@@ -223,11 +223,12 @@ async function evidenceOutput(ctx: OperationContext, p: Record<string, unknown>,
 }
 
 /** Keyword rows (every one a direct FTS hit): the markers hybridSearch would stamp, then bookkeeping. */
-async function stampKeywordRows(ctx: OperationContext, results: SearchResult[], scope: SourceScope & { excludePrivate: boolean }, queryText: string, startedAt: number, timings: SearchTimings): Promise<void> {
+async function stampKeywordRows(ctx: OperationContext, results: SearchResult[], scope: SourceScope & { excludePrivate: boolean }, queryText: string, startedAt: number, timings: SearchTimings, keywordMode: boolean): Promise<void> {
   // #3783: mark before stamping so evidence still reads keyword_exact.
   markKeywordHits(results);
   stampDeepResearchIds(results);
-  stampEvidenceSafe(results);
+  // GBRA-449: with match "keyword" each row satisfies the caller's own keyword statement (this path never OR-relaxes), whatever its score.
+  stampEvidenceSafe(results, { keywordMode });
   // #1699 / #160: the content_flag channel and the unverified-stub marker still surface off the hybrid path.
   await timings.stage('post_fusion', () => stampContentFlags(ctx.engine, results, scope));
   await timings.stage('post_fusion', () => stampUnverifiedExtractions(ctx.engine, results, scope));
@@ -769,7 +770,7 @@ const search: Operation = {
       let keywordBound: DegradedStageEntry | undefined;
       const results = await keepFrontmatterMatches(ctx.engine, (page ? page.rows : dedupResults(await timings.stage('lexical', () => ctx.engine.searchKeyword(queryText, { limit, offset, ...keywordOpts,
         onKeywordIncomplete: reason => { keywordBound = { stage: 'keyword_candidates_incomplete', reason }; } })).finally(lexicalDone.resolve))).map(r => ({ ...r })), where);
-      await stampKeywordRows(ctx, results, { ...scope, excludePrivate }, queryText, startedAt, timings);
+      await stampKeywordRows(ctx, results, { ...scope, excludePrivate }, queryText, startedAt, timings, paging.match === 'keyword');
       // #3800: cap AFTER capture/meta so eval + cache see the real payload.
       return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, null, snippetCap, timings,
         async rows => withCountMeta(withCountMeta(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, null, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, filterHintFor: { op: 'search', p }, timings }),
