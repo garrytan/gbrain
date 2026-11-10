@@ -284,6 +284,7 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
   if (event === 'user-prompt') ctl.worker = startLaneWorker(env);
   const log = (t: Turn) => appendLaneLog(home, { at: new Date().toISOString(), harness, event, outcome: t.outcome, ...(t.code ? { code: t.code } : {}), ms: Math.round(elapsed() * 10) / 10, ...(t.catalogs ? { catalogs: t.catalogs } : {}), ...(t.dropped_chars ? { dropped_chars: t.dropped_chars } : {}) });
 
+  const exit = io.exit ?? ((c: number) => process.exit(c));
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<'deadline'>((resolve) => { timer = setTimeout(() => resolve('deadline'), deadlineMs); });
   const work = laneTurn(event, harness, home, env, io, ctl, elapsed, deadlineMs).catch((): Turn => ({ outcome: 'error', code: 'skill_resolver_internal' }));
@@ -295,13 +296,13 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
     if (tmp) try { unlinkSync(tmp); } catch { /* renamed or never created */ }
     if (lease) releaseLease(lease);
     if (ctl.logged) await Promise.race([log({ outcome: 'timeout', code: 'skill_resolve_timeout' }), new Promise(r => setTimeout(r, 5))]);
-    (io.exit ?? ((c: number) => process.exit(c)))(0);
+    exit(0);
     return 0;
   }
   void ctl.worker?.terminate();
   if (result.outcome !== 'off' && result.outcome !== 'yield') await log(result);
   const gcDone = env.GBRAIN_TEST_SKILL_LANE_STALL === 'gc' ? new Promise<void>(() => {}) : sessionGcSettled();
-  if ((await Promise.race([gcDone, deadline])) === 'deadline') (io.exit ?? ((c: number) => process.exit(c)))(0);
+  if ((await Promise.race([gcDone, deadline])) === 'deadline') exit(0);
   clearTimeout(timer);
   return 0;
 }

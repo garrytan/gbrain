@@ -227,7 +227,7 @@ measurements disagree:
 
 | Source | Turns | Gate fitted on | False suggestions on no-skill turns | hit@5 on skill turns, gated (ungated) |
 |---|---|---|---|---|
-| gbrain-evals `2026-11-07-skill-ranker-offline`, scored with `scripts/gate-probe.ts` | 320 test and gate-stress turns (terse skill requests, long no-skill messages), 250 / 750 / 1,500 skills | dev and stress-dev, at threshold 1.33 | 0.19 / 0.17 / 0.19 | 0.26 / 0.27 / 0.28 (0.52 / 0.56 / 0.61) |
+| [gbrain-evals `2026-11-07-skill-ranker-offline`](https://github.com/garrytan/gbrain-evals/tree/main/docs/benchmarks/2026-11-07-skill-ranker-offline), gate probe | 320 test and gate-stress turns (terse skill requests, long no-skill messages), 250 / 750 / 1,500 skills | dev and stress-dev, at threshold 1.33 | 0.19 / 0.17 / 0.19 | 0.26 / 0.27 / 0.28 (0.515 / 0.555 / 0.611) |
 | harness-evals set P dev half, HARN-52 (descriptive) | 146 turns, one 349-skill catalog | the same rows it is scored on, as a raw score of 4.16 (top_gate 0.76 on that catalog) | 0.03 | 0.71 (0.78) |
 
 The first is a held-out score on turns written to break length-based gates;
