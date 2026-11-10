@@ -591,6 +591,33 @@ function resolveEntryInput(e: Record<string, unknown>): unknown {
 }
 
 /**
+ * #9085: the model sometimes answers in XML tool-call markup
+ * (`<invoke name="x"><parameter name="k">v</parameter></invoke>`) instead of
+ * the `<use_tools>` JSON protocol. Left as prose, the turn ended as a clean
+ * `stop` with no tool run. Parse each `invoke` element into a tool call and
+ * drop the markup (and any stray `use_tools` tags) from the surrounding text.
+ */
+function extractInvokeCalls(raw: string): { toolCalls: ParsedToolCall[]; beforeText: string; afterText: string } | null {
+  const invokeRe = /<invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/invoke>/g;
+  const paramRe = /<parameter\s+name="([^"]+)"\s*>([\s\S]*?)<\/parameter>/g;
+  const toolCalls: ParsedToolCall[] = [];
+  for (const m of raw.matchAll(invokeRe)) {
+    const input: Record<string, unknown> = {};
+    for (const p of m[2]!.matchAll(paramRe)) {
+      const text = p[2]!.trim();
+      try { input[p[1]!] = JSON.parse(text); } catch { input[p[1]!] = text; }
+    }
+    toolCalls.push({ id: `toolu_claude_cli_${randomUUIDv7()}`, name: m[1]!, input: JSON.stringify(input) });
+  }
+  if (toolCalls.length === 0) return null;
+  const rest = raw
+    .replace(invokeRe, '')
+    .replace(/<\/?(?:use_tools|function_calls|antml:function_calls)>/g, '')
+    .trim();
+  return { toolCalls, beforeText: rest, afterText: '' };
+}
+
+/**
  * Locate and parse the `<use_tools>...</use_tools>` block in the assistant's
  * raw text response. Returns the parsed tool calls plus whatever prose
  * surrounded the block. Returns an empty `toolCalls` array when no block is
@@ -646,6 +673,10 @@ function extractToolCalls(raw: string): {
     // turn ends as if the model never called anything. Say so on stderr.
     // (No pair at all — unterminated, absent, or only orphan close tags — and
     // a non-array payload both recover silently as before.)
+    if (firstError === null) {
+      const xml = extractInvokeCalls(raw);
+      if (xml) return xml;
+    }
     if (firstError !== null) {
       process.stderr.write(`[claude-cli] <use_tools> block failed to parse — tool call discarded: ${firstError}\n`);
     }
