@@ -28,6 +28,7 @@ reason.
 
 A remote `not_found` or a short result may be a page whose `readable_by` or folder rule excludes
 this credential or the audience it acts for: check `whoami` (`access.applied`) before telling the user there are no notes.
+On a brain that serves several people (`gbrain access serves`), each connection already reads as the person asking: don't scope it yourself.
 
 ## When to switch brain
 

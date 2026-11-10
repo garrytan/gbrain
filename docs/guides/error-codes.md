@@ -152,6 +152,22 @@ More: [docs/guides/write-refusals.md#access_policy_pending](../../docs/guides/wr
 
 More: [docs/guides/write-refusals.md#access_rule_invalid](../../docs/guides/write-refusals.md#access_rule_invalid)
 
+### access_serves_key_dir_in_git
+
+<a id="access_serves_key_dir_in_git"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The directory the per-member keys would be written to is inside a git work tree, so no key, member or rule was written. | Key files hold live credentials; a file inside a checkout can be committed and pushed. | Point GBRAIN_HOME at a directory outside any git checkout (the default is your home directory) and run the command again. | agent | `repeat the read that failed` | 1 | no |
+
+### access_serves_roster_empty
+
+<a id="access_serves_roster_empty"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup --serves several or gbrain access serves several was given no people (no --members, an empty --members-file), so nothing was written. | Each person gets a member, a folder only they read and a key bound to them; the installer never guesses who they are. | Name every person: --members alice-example,bob-example, or --members-file <file> with one id per line. | agent | `repeat the read that failed` | 1 | no |
+
 ### acknowledgment_unavailable
 
 <a id="acknowledgment_unavailable"></a>
@@ -4489,6 +4505,14 @@ More: [docs/guides/repair.md#setup-hosted-connection](../../docs/guides/repair.m
 Reasons: `live_serve`, `unowned_entry`, `other_install`, `harness_lane`.
 
 More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#setup-owner-conflict)
+
+### setup_serves_several
+
+<a id="setup_serves_several"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup for one person was run on a brain that serves several people, and the stdio connection it would write is bound to nobody, so setup wrote nothing. | On a brain that serves several people an unbound connection reads every page no rule restricts, for whoever is asking; setup never writes one. | Run gbrain setup <harness> --serves several --members <id,...> to label each person, or name the brain owner first (gbrain access owner set <member>) so this harness reads as the owner. Run: gbrain access serves --json | agent | `repeat the read that failed` | 1 | no |
 
 ### shared_skills_unavailable
 

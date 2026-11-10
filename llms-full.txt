@@ -2839,6 +2839,15 @@ whenever the user gives one. Capture
 (`--capture`) and providers (`--providers`) stay off unless the user accepts
 them. A coded refusal (`setup_owner_conflict`, `setup_hosted_connection`) means
 another owner or a hosted brain holds the target; follow its `fix`.
+When the brain will answer several people (a team bot, a shared channel), ask the
+user who they are and add `--serves several --members <id,...>`: each person gets
+a member, a folder `people/<member>/` only they read and a key bound to them
+(`~/.gbrain/member-keys/<member>.key`, 0600; relay paths, never key values), and
+the receipt proves each member reads only their folder plus world pages.
+`setup_serves_several` means the brain already serves several people and the
+connection would be bound to nobody: rerun with its fix, or name the owner
+(`gbrain access owner set <member>`) first. Doctor's `unlabeled_people_folders`
+names any person's folder still without a rule.
 `--remove` undoes only what setup wrote. Guide:
 [docs/guides/setup.md](docs/guides/setup.md). Otherwise:
 
