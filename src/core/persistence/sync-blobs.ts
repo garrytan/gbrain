@@ -5,14 +5,15 @@
  * Managed sync's freeze reads its pinned blobs through `readPinnedBlob` /
  * `readPinnedContent`: one `ls-tree` per window of upcoming entries and one
  * `cat-file --batch` per bounded slice of it, instead of an `ls-tree` and a
- * `git show` per entry.
+ * `git show` per entry. GST-2331: every read runs with `HARDENED_GIT_ARGS` and `NO_LAZY_FETCH_ENV`, so no repository
+ * program runs and a partial clone fetches nothing: an object the repository lacks reads as missing.
  */
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gitChildEnv } from '../git-env.ts';
-import { HARDENED_GIT_ARGS } from '../hardened-git.ts';
+import { HARDENED_GIT_ARGS, noLazyFetchEnv } from '../hardened-git.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 
 /** The sync read bound (`readSyncFile`): bigger files are held without being read. The page ceiling (page-size-policy.ts), which also covers MAX_IMAGE_BYTES. */
@@ -20,15 +21,9 @@ export const SYNC_READ_BOUND = PAGE_MAX_BYTES;
 
 export interface TreeBlob { oid: string; size: number }
 
-/**
- * GST-2312 (#9024): the configuration every read here runs with, so no repository-configured program starts: `check-attr`
- * reads the index, and reading the index runs `core.fsmonitor`.
- */
-export const NO_REPOSITORY_PROGRAMS: readonly string[] = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'];
-
 function git(gitRoot: string, args: string[], input?: string, maxBuffer = 32 * 1024 ** 2, env: NodeJS.ProcessEnv = {}): Buffer {
-  return execFileSync('git', ['-c', 'core.quotepath=false', ...NO_REPOSITORY_PROGRAMS, '--literal-pathspecs', '-C', gitRoot, ...args],
-    { env: gitChildEnv(env), timeout: 60_000, maxBuffer, stdio: ['pipe', 'pipe', 'pipe'], ...(input !== undefined ? { input } : {}) });
+  return execFileSync('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '--literal-pathspecs', '-C', gitRoot, ...args],
+    { env: gitChildEnv({ ...noLazyFetchEnv(), ...env }), timeout: 60_000, maxBuffer, stdio: ['pipe', 'pipe', 'pipe'], ...(input !== undefined ? { input } : {}) });
 }
 
 /** At this many paths `readTreeBlobs` lists the whole tree once instead of path chunks (#6712: the prescreen of a tree walk). */
@@ -79,14 +74,7 @@ export function readBlobBytes(gitRoot: string, blobs: TreeBlob[]): Map<string, B
 }
 
 let checkAttrSource: boolean | undefined;
-let noLazyFetch = true;
-
-/** Test seam: `false` leaves out `GIT_NO_LAZY_FETCH`, as a git older than 2.45 ignores it; returns the restore. */
-export function __setNoLazyFetchForTests(value: boolean): () => void {
-  const previous = noLazyFetch;
-  noLazyFetch = value;
-  return () => { noLazyFetch = previous; };
-}
+export { __setNoLazyFetchForTests } from '../hardened-git.ts';
 
 /** Test seam: `false` takes the path of a git older than 2.40; returns the restore. */
 export function __setCheckAttrSourceForTests(value: boolean | undefined): () => void {
@@ -104,15 +92,14 @@ export interface MissingAttributes { attributes: string; oid: string }
  * committed blob a filter owns holds what the filter's clean program stored (git-crypt ciphertext, for one), not the text
  * of the checkout, and sync never runs a repository's filters. Git 2.40 and newer read the attributes with
  * `check-attr --source=<target>`; an older git reads `target` into a temporary index (`read-tree`) and asks
- * `check-attr --cached` there. Every call takes `HARDENED_GIT_ARGS` and `GIT_NO_LAZY_FETCH=1`, so no repository
- * program runs and a partial clone fetches nothing. Git then reads a `.gitattributes` the repository lacks as empty, so
+ * `check-attr --cached` there. Like every read here, each call fetches nothing in a partial clone (GST-2331). Git then reads a `.gitattributes` the repository lacks as empty, so
  * the ones that apply are checked first (a git older than 2.45 fails the batch on a promisor object instead, so each is then checked alone), and a path
  * under a missing one maps to it instead of to a driver and is not passed to `check-attr`.
  */
 export function readFilterDrivers(gitRoot: string, target: string, gitPaths: string[]): Map<string, string | null | MissingAttributes> {
   const out = new Map<string, string | null | MissingAttributes>();
   if (gitPaths.length === 0) return out;
-  const read = (args: string[], input?: string, env: NodeJS.ProcessEnv = {}) => git(gitRoot, [...HARDENED_GIT_ARGS, ...args], input, undefined, { ...(noLazyFetch ? { GIT_NO_LAZY_FETCH: '1' } : {}), ...env });
+  const read = (args: string[], input?: string, env: NodeJS.ProcessEnv = {}) => git(gitRoot, args, input, undefined, env);
   if (checkAttrSource === undefined) {
     const [major, minor] = (/git version (\d+)\.(\d+)/.exec(read(['version']).toString('utf8')) ?? ['', '0', '0']).slice(1).map(Number);
     checkAttrSource = major! > 2 || major === 2 && minor! >= 40;

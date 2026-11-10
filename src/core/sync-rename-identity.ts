@@ -35,6 +35,7 @@ import { loadBoundedYaml as yamlLoad } from './data-frontmatter.ts';
 import type { BrainEngine } from './engine.ts';
 import { spawn } from './spawn.ts';
 import { GIT_READ_ENV, gitChildEnv } from './git-env.ts';
+import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from './hardened-git.ts';
 import { explicitMarkdownTitle } from './markdown.ts';
 import { isMarkdownFilePath, resolveSlugForPath, type DowngradedRename, type RenameDowngradeReason, type RenameSideSource, type SyncManifest } from './sync.ts';
 import { computeSyncDelta, type SyncDeltaResult } from './sync-delta.ts';
@@ -83,11 +84,11 @@ export function frontmatterIdentity(head: Buffer | string | null): FrontmatterId
   return { id: field('id', true), slug: field('slug'), title, digest };
 }
 
-/** The first 64 KiB of each `<rev>:<path>` object through one `git cat-file --batch` stream; null for a missing object or a non-blob. */
+/** The first 64 KiB of each `<rev>:<path>` object through one `git cat-file --batch` stream; null for a missing object or a non-blob (GST-2331: one a partial clone lacks is never fetched). */
 export async function catFileHeads(repo: string, objects: string[]): Promise<Array<Buffer | null>> {
   if (objects.length === 0) return [];
   return new Promise((done, fail) => {
-    const child = spawn('git', ['-c', 'core.quotepath=false', '-C', repo, 'cat-file', '--batch'], { env: gitChildEnv(GIT_READ_ENV), stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '-C', repo, 'cat-file', '--batch'], { env: gitChildEnv({ ...GIT_READ_ENV, ...NO_LAZY_FETCH_ENV }), stdio: ['pipe', 'pipe', 'pipe'] });
     const out: Array<Buffer | null> = [];
     let pending: Buffer = Buffer.alloc(0), remaining = -1, blob = false, kept: Buffer[] = [], keptBytes = 0, stderr = '';
     child.stdout!.on('data', (chunk: Buffer) => {

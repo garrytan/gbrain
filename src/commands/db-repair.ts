@@ -347,6 +347,7 @@ function tierOf(reason: PgAccessReason): 'auto' | 'rewrite' | 'manual' {
     case 'no_url':
     case 'env_shadowed':
     case 'storage_corrupt':
+    case 'tls_required_default':
     case 'unknown':
       return 'manual';
     default: {
@@ -811,6 +812,7 @@ async function applyLadder(
     case 'no_url':
     case 'env_shadowed':
     case 'storage_corrupt':
+    case 'tls_required_default':
     case 'unknown':
       return manualStop();
 

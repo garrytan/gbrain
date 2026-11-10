@@ -1201,6 +1201,13 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
+            "message": "The Postgres host is on this machine; TLS is not required.",
+            "name": "postgres_tls",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
             "message": "Every gbrain function that pins a search_path ends it with pg_temp",
             "name": "function_search_path",
             "status": "ok"
@@ -6322,6 +6329,13 @@
             "elapsed_ms": "<volatile>",
             "message": "RLS enabled on 174/174 public tables",
             "name": "rls",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "The Postgres host is on this machine; TLS is not required.",
+            "name": "postgres_tls",
             "status": "ok"
           },
           {

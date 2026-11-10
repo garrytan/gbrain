@@ -2118,7 +2118,7 @@ More: [docs/guides/write-refusals.md#git_lfs_not_enabled](../../docs/guides/writ
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A committed file's Git object is missing from the checkout and its working-tree copy differs or is gone, so managed sync holds that file alone. | An interrupted gc, a partial clone without its promisor remote or disk corruption can drop an object a commit still names. Sync imports the working-tree bytes when they hash to the committed blob id; otherwise it imports nothing from a guess, and the rest of the source keeps syncing. | Run git fsck in the checkout to see what is missing, restore it with git fetch (a partial or shallow clone) or from a backup, then sync again; every sync re-tests the hold. | agent | `repeat the read that failed` | 1 | no |
+| A committed file's Git object is missing from the checkout and its working-tree copy differs or is gone, so managed sync holds that file alone; a partial clone that lacks a tree of the synced commit stops the run. | An interrupted gc, a partial clone without its promisor remote or disk corruption can drop an object a commit still names. Sync imports the working-tree bytes when they hash to the committed blob id; otherwise it imports nothing from a guess, and the rest of the source keeps syncing. | In a partial clone (git clone --filter), which sync never fetches from, fetch the blob with git cat-file -p <blob> in the checkout or check the file out, or, when the run stopped on a missing tree, run the git ls-tree -r -d <commit> it names; otherwise run git fsck in the checkout to see what is missing and restore it with git fetch (a shallow clone) or from a backup. Then sync again; every sync re-tests the hold. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#git_object_missing](../../docs/guides/write-refusals.md#git_object_missing)
 
@@ -3611,6 +3611,14 @@ More: [docs/ENGINES.md#serve-deep-health](../../docs/ENGINES.md#serve-deep-healt
 | Google connect credential error: port in use. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### postgres_tls_required
+
+<a id="postgres_tls_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| TLS was required by default for a non-local Postgres host, and the server does not accept TLS connections, so gbrain did not connect. | gbrain connects with sslmode=require to any Postgres host that is not on this machine (localhost, 127.0.0.0/8, ::1 or a Unix socket) unless the database URL names an sslmode, so the password and page contents never cross a network in plaintext without an explicit choice. Brains whose URL had no sslmode connected in plaintext before this default. | Turn TLS on at the database server and keep the default (sslmode=require encrypts; sslmode=verify-full with the server CA also verifies the certificate). To keep connecting without TLS on a network you trust, add sslmode=disable to the database URL. Run: gbrain engine status --probe --json | user | `gbrain doctor --only postgres_tls --json` | 1 | no |
 
 ### preparation_stalled
 
