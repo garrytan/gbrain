@@ -10,6 +10,20 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.636.0] - 2026-11-10
+
+**Facts saved during a session can now reach that session without a restart: the user-prompt hook can refresh the context pack every N prompts.** The boundary context pack loaded once, at SessionStart, so a fact written mid-session stayed out of the conversation until the next session. `gbrain config set hooks.context_refresh_every_turns 5` (or `GBRAIN_CONTEXT_REFRESH_EVERY_TURNS=5`) makes the user-prompt hook also request the session's pack on every 5th human prompt. The serve's per-session since-cursor means each refresh carries only the facts and pages written since the last pack. Unset or 0, the default, keeps the old behavior: one pack at SessionStart. The request runs beside `turn_context` inside the existing user-prompt deadline and fails open like the rest of the hook.
+
+**Say to your agent:** *"Pull new facts from my brain into the chat every 5 messages."*
+
+### Itemized changes
+
+- `src/commands/hook-turn-refresh.ts` (new): reads the interval (env wins over the file-plane key; anything but a positive integer means off), keeps a per-session prompt counter under the gbrain home, and requests the session's `context_pack` with trigger `turn-refresh` when a prompt is due.
+- `src/commands/hook.ts`: `hook user-prompt` starts the refresh after the secret check and puts its block before the per-turn block; usage text names the setting.
+- `src/core/config.ts`, `src/commands/config.ts`: `hooks.context_refresh_every_turns` is a known, file-plane config key.
+- `docs/guides/push-context.md`: config table row.
+- Tests: `test/turn-refresh.serial.test.ts` (interval parsing, per-session counter, and against an in-process IPC server: no pack request by default; with an interval of 2, packs on prompts 2 and 4 only, keyed to the session, while the per-turn block rides every prompt). Goldens regenerated for the new usage lines (`test/fixtures/goldens/cli/engine-free-db-down.json`) and the new config field (`test/fixtures/goldens/exports/types.json`); `test/cli-socket.test.ts` classifies the new env var as hook-only.
+
 ## [0.60.635.0] - 2026-11-10
 
 **A connected agent can no longer change, or learn about, a page it is not allowed to read.** A remote write token that could not read a `visibility: private` page could still overwrite that page's stored raw data, add links to or from it and remove its links, and `extract_entities` would link new entity stubs to a source page the caller could not read, or add a timeline line to an existing person page it could not read. Each of those answers also differed from the answer for a page that does not exist, so a caller could tell which hidden pages exist. They now answer exactly as for a missing page and change nothing. `ontology_propose` refuses an entity page its caller cannot read and stores an observation no wider than that page. `get_ingest_log` no longer names pages its remote caller cannot read or the host's checkout path, and `get_health` no longer lists such a page among the most connected. An MCP read that names a source or filter parameter with a slip (`source` for `source_id`, `type` for `types`) now gets an error naming the right parameter instead of an answer drawn from every source the token can read. `gbrain serve --http` now applies the `/mcp` rate limits and body cap when `GBRAIN_HTTP_RATE_LIMIT_IP`, `GBRAIN_HTTP_RATE_LIMIT_TOKEN` or `GBRAIN_HTTP_MAX_BODY_BYTES` is set; before, only the legacy transport read them. Trusted local CLI calls are unchanged.
