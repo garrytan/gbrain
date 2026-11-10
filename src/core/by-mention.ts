@@ -998,10 +998,10 @@ export async function scanStaleMentions(
      )`;
 
   const bodies = await engine.executeRaw<{
-    id: number; slug: string; source_id: string | null; body: string;
+    id: number; slug: string; source_id: string | null; body: string; title: string | null; body_storage: string | null;
   }>(
     `${scannedCte}
-     SELECT p.id, p.slug, p.source_id,
+     SELECT p.id, p.slug, p.source_id, p.title, p.body_storage,
             COALESCE(p.title, '') || E'\n\n' || COALESCE(p.compiled_truth, '') || E'\n\n' || COALESCE(p.timeline, '') AS body
        FROM pages p
        JOIN scanned s ON s.id = p.id
@@ -1041,13 +1041,14 @@ export async function scanStaleMentions(
     if (!stored || stored.length === 0) continue;
 
     const fromSourceId = page.source_id ?? 'default';
-    const produced = new Set(
-      findMentionedEntities(page.body, gazetteer, {
-        fromSlug: page.slug,
-        fromSourceId,
-        allowCrossSource,
-      }).map(m => `${m.source_id}::${m.slug}`),
-    );
+    const mentionOpts = { fromSlug: page.slug, fromSourceId, allowCrossSource };
+    // A segmented body has NULL body columns; derive it block by block like the rebuild does.
+    const found = page.body_storage === 'segmented'
+      ? await (await import('./mentions/pass.ts')).pageMentions(
+        engine, { id: Number(page.id), slug: page.slug, source_id: fromSourceId, title: page.title, body_storage: page.body_storage },
+        gazetteer, mentionOpts)
+      : findMentionedEntities(page.body, gazetteer, mentionOpts);
+    const produced = new Set(found.map(m => `${m.source_id}::${m.slug}`));
 
     for (const row of stored) {
       const key = `${row.to_source_id ?? 'default'}::${row.to_slug}`;
