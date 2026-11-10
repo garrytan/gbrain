@@ -1,0 +1,40 @@
+name: Skill resolver bench
+
+# GBRA-377: the skill resolver's preregistered latency bars (docs/guides/skill-resolver.md,
+# "Latency"): a cold resolveSkills() turn (index opened again, rank, session read and one
+# slice of the stat freshness sweep) at p95 <= 10 ms with 1,000 skills and <= 40 ms with
+# 7,500 skills, on a 2-vCPU runner. scripts/bench-skill-resolver.ts exits 1 on a miss.
+# Runs on pull requests that touch the resolver or the bench, and on dispatch.
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'src/core/skills/resolver/**'
+      - 'scripts/bench-skill-resolver.ts'
+      - '.github/workflows/skill-resolver-bench.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    name: Skill resolver bench (1,000 and 7,500 skills, p95 bars)
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+      - name: Run the bench
+        timeout-minutes: 10
+        run: bun scripts/bench-skill-resolver.ts --sizes 1000,7500 --turns 100 --rounds 9

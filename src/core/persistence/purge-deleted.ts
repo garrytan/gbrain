@@ -18,6 +18,9 @@ import { writerOnboardingPreflight } from './onboarding.ts';
 import { clearPurgePark, isParked, notePurgeSourceWriter, PURGE_PARK_LIMIT, purgeParkKey, prunePurgeParks, readPurgeParks, recordPurgeFailure, type PurgePark } from './purge-parks.ts';
 import { ItemRun, type ItemFailure } from '../item-failure.ts';
 import { readUnreviewedSyncTombstones, syncDeleteHeld } from './sync-delete-tombstones.ts';
+import { scrubPurgedSlugs } from '../feedback/store.ts';
+import { expireGonePageFacts } from '../facts/gone-page-facts.ts';
+import { maintenanceTransaction } from './attribution.ts';
 
 /** A tombstone that moved under a concurrent writer; the next run retries it. */
 const DEFERRAL_CODES = new Set(['revision_conflict', 'page_not_found', 'page_identity_changed']);
@@ -126,12 +129,17 @@ async function expireRecordedTombstones(engine: BrainEngine, olderThanHours: num
     }
     try {
       const publicationId = randomUUID(), report = { appended: 0 };
-      const deleted = await engine.transaction(async tx => {
+      const deleted = await maintenanceTransaction(engine, async tx => {
         const slugs = [...new Set([row.slug, ...await linkStreamSlugs(tx, row.source_id, row.id)])].sort();
         await tx.lockPageKeys(slugs.map(slug => ({ sourceId: row.source_id, slug })));
         return withBeliefBatch(tx, { sourceId: row.source_id, slugs, publicationId, op: 'purge_deleted_pages', hardDeleteEvent: 'page.expired', report },
-          async () => (await tx.executeRaw(`DELETE FROM pages WHERE id = $1 AND deleted_at IS NOT NULL AND deleted_at < now() - ($2 || ' hours')::interval AND ${identityDowngradePurgeHold('pages')} AND ${atomRetirementPurgeHold('pages')} AND ${derivedRetirementPurgeHold('pages')} RETURNING id`,
-            [row.id, hours])).length > 0);
+          async () => {
+            const gone = await tx.executeRaw<{ source_id: string; slug: string }>(`DELETE FROM pages WHERE id = $1 AND deleted_at IS NOT NULL AND deleted_at < now() - ($2 || ' hours')::interval AND ${identityDowngradePurgeHold('pages')} AND ${atomRetirementPurgeHold('pages')} AND ${derivedRetirementPurgeHold('pages')} RETURNING source_id, slug`,
+              [row.id, hours]);
+            await expireGonePageFacts(tx, gone);
+            if (gone.length > 0) await scrubPurgedSlugs(tx, row.source_id, [row.slug]);
+            return gone.length > 0;
+          });
       });
       run.succeed();
       if (report.appended) await markBeliefCommits(engine, [publicationId]).catch(() => undefined);
@@ -293,7 +301,7 @@ export async function purgeDeletedPagesCoordinated(engine: BrainEngine, olderTha
     const kept = opts.automatic ? await readUnreviewedSyncTombstones(engine, olderThanHours) : [];
     const recorded = await expireRecordedTombstones(engine, olderThanHours, opts.retryParked === true, new Set(kept.map(row => row.id)));
     const exclude = [...recorded.exclude, ...kept.map(row => row.id)];
-    const result = await engine.purgeDeletedPages(olderThanHours, exclude.length ? { excludeIds: exclude } : undefined);
+    const result = await maintenanceTransaction(engine, tx => tx.purgeDeletedPages(olderThanHours, exclude.length ? { excludeIds: exclude } : undefined));
     const held = kept.filter(row => row.expired);
     return { slugs: [...recorded.slugs, ...result.slugs], count: recorded.slugs.length + result.count, blocked: [...recorded.blocked, ...held.map(row => syncDeleteHeld(row, olderThanHours))],
       deferred: 0, failed: recorded.failed, inactive: 0, parked: recorded.parked, capacity_deferred: 0, held: held.length };

@@ -17,7 +17,7 @@
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from './engine.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
-import { privatePagesFilterFragment } from './search/private-visibility.ts';
+import { privatePagesFilterForCaller, privatePagesFilterFragment } from './search/private-visibility.ts';
 import { quarantineFilterFragment } from './quarantine.ts';
 import { compareTrust, OWNER_TIER_FLOOR, type TrustTier } from './trust/tier.ts';
 import type { ReadEligibility } from './eligibility/policy.ts';
@@ -222,6 +222,8 @@ export interface ListCorePagesOpts {
   /** Restrict to these sources; omitted = every source in the brain. */
   sourceIds?: readonly string[];
   excludePrivate?: boolean;
+  /** A remote read: `excludePrivate` applies the caller's policy instead of the plain privacy fragment. */
+  forCaller?: boolean;
   /** Exclude one page (the page being written, measured separately). */
   exclude?: { sourceId: string; slug: string };
   /**
@@ -252,7 +254,7 @@ export async function listCorePages(exec: RawExec, opts: ListCorePagesOpts = {})
     params.push(opts.exclude.sourceId, opts.exclude.slug);
     where.push(`NOT (p.source_id = $${params.length - 1} AND p.slug = $${params.length})`);
   }
-  if (opts.excludePrivate) where.push(privatePagesFilterFragment('p'));
+  if (opts.excludePrivate) where.push(opts.forCaller ? privatePagesFilterForCaller('p') : privatePagesFilterFragment('p'));
   const policy = opts.eligibility;
   if (policy) where.push(quarantineFilterFragment('p'), pageEligibleSql('p', { floor: policy.floor }));
   const trustCols = policy
@@ -300,6 +302,7 @@ export interface LoadCoreBlockOpts {
   /** Federated grant; when set, only these sources render. */
   allowedSources?: readonly string[] | null;
   excludePrivate?: boolean;
+  forCaller?: boolean;
   notices?: string[];
   settings?: CoreSettings;
   /** #5575: the caller's proactive eligibility (token floor); absent, the `core_delivery` surface policy applies. */
@@ -364,7 +367,7 @@ export async function loadCoreBlock(engine: BrainEngine, opts: LoadCoreBlockOpts
   }
   const sourceIds = sessionCoreSources(opts.sessionSourceId, opts.allowedSources ?? null);
   const eligibility = opts.eligibility ?? await proactiveEligibility({ engine }, 'core_delivery');
-  const all = await listCorePages(engine, { sourceIds, excludePrivate: opts.excludePrivate ?? true, eligibility });
+  const all = await listCorePages(engine, { sourceIds, excludePrivate: opts.excludePrivate ?? true, forCaller: opts.forCaller, eligibility });
   const listed = all.filter(p => !p.suppressed);
   const suppressed = all.filter(p => p.suppressed).map(p => ({ source_id: p.source_id, slug: p.slug, family: 'unconfirmed agent-written instruction (gbrain trust review)' }));
   const { pages, withheld } = await applyCoreSensitivity(listed);

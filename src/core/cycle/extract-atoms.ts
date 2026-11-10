@@ -1219,8 +1219,8 @@ export async function runPhaseExtractAtoms(
           // #4706: pin the quote to its origin, or don't claim one. Located:
           // store the ORIGINAL characters (not the model's rendering, so
           // typographic drift can't accumulate) + [start, end) offsets into
-          // promptContent — valid against the full item too, because the cut
-          // is a prefix. Not located: the model paraphrased; drop the quote
+          // promptContent, the item's extraction input (extract-atoms-input.ts:
+          // a page as a world reader sees it). Not located: the model paraphrased; drop the quote
           // rather than persist an unverifiable one (an atom without a
           // quotation is honest; one with a fabricated quote is not, and
           // body/lesson/concepts stay useful either way). Verified against

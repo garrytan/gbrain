@@ -2074,11 +2074,11 @@ CREATE TABLE IF NOT EXISTS page_embedding_budget (
   unpriced_calls INTEGER NOT NULL DEFAULT 0 CHECK (unpriced_calls >= 0),
   cap_usd DOUBLE PRECISION CHECK (cap_usd IS NULL OR cap_usd >= 0),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  -- (migration v299) the approval that last raised cap_usd (an embed job's identity)
+  -- (migration v304) the approval that last raised cap_usd (an embed job's identity)
   approval_id TEXT
 );
 CREATE INDEX IF NOT EXISTS page_embedding_budget_state_idx ON page_embedding_budget (state) WHERE state <> 'open';
--- Wave C 1F (migration v299): embedding progress per segmented page, provider
+-- Wave C 1F (migration v304): embedding progress per segmented page, provider
 -- batch identities with their returned vectors before install, and the 24-hour
 -- spend ledger per source (src/core/embedding-ledger.ts).
 CREATE TABLE IF NOT EXISTS page_embedding_progress (
@@ -2164,6 +2164,11 @@ CREATE TABLE IF NOT EXISTS chronicle_page_state (
   pricing_policy TEXT,
   campaign_max_usd NUMERIC,
   cost_attempts INTEGER[] NOT NULL DEFAULT '{}',
+  -- #8972 (migration chronicle_judge_window): what the judge read.
+  judge_input_hash TEXT,
+  judge_window_chars INTEGER CHECK (judge_window_chars >= 0),
+  judge_window_hash TEXT,
+  judge_input_failures INTEGER NOT NULL DEFAULT 0 CHECK (judge_input_failures >= 0),
   PRIMARY KEY (source_id, page_id, content_hash, extractor_version)
 );
 CREATE INDEX IF NOT EXISTS chronicle_page_state_work_idx
@@ -2211,7 +2216,7 @@ CREATE TABLE IF NOT EXISTS page_view_digests (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (page_id, revision, view, audience)
 );
--- Wave C large pages (migration v297): short-lived read pins of segmented pages,
+-- Wave C large pages (migration v302): short-lived read pins of segmented pages,
 -- a GC root for the pinned body generation (src/core/page-body/read-pins.ts).
 CREATE TABLE IF NOT EXISTS page_read_pins (
   token TEXT PRIMARY KEY,

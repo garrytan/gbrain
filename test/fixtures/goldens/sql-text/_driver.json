@@ -2419,7 +2419,7 @@
         ],
         "sourceId": [
           {
-            "paramCount": 1,
+            "paramCount": 3,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2430,7 +2430,7 @@
         ],
         "sourceIds": [
           {
-            "paramCount": 1,
+            "paramCount": 3,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2825,7 +2825,7 @@
         ],
         "sourceId": [
           {
-            "paramCount": 7,
+            "paramCount": 9,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2836,7 +2836,7 @@
         ],
         "sourceIds": [
           {
-            "paramCount": 7,
+            "paramCount": 9,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2873,7 +2873,7 @@
         ],
         "both+sourceIds+excludePrivate": [
           {
-            "paramCount": 12,
+            "paramCount": 15,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2906,7 +2906,7 @@
         ],
         "out+sourceId+linkType": [
           {
-            "paramCount": 12,
+            "paramCount": 14,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

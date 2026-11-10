@@ -13,8 +13,8 @@ import type { Migration } from './types.ts';
 // CASCADE). DDL only, nothing to backfill. RLS is enabled here (under a role
 // that bypasses it), since `gbrain apply-migrations --yes` never replays the
 // schema blob's RLS block (v275).
-export const v297: Migration = {
-  version: 297,
+export const v302: Migration = {
+  version: 302,
   name: 'page_read_pins',
   idempotent: true,
   sql: `

@@ -88,6 +88,8 @@ export type GitHoldCode = ContentRefusal['code'] | 'rename_held' | 'parser_regre
   | 'frontmatter_alias_limit'
   /** GBRA-133 S-39: a Markdown file whose text holds a NUL byte (U+0000): a binary file, a padded file, a UTF-16 save. */
   | 'content_null_bytes'
+  /** GST-2312 (#9024): a committed blob a Git filter owns (git-crypt, a clean/smudge driver); sync never runs the filter. */
+  | 'content_filter_owned'
   /** GBRA-133 S-33: a committed file whose Git blob the repository no longer has, and whose working-tree copy differs or is gone. */
   | 'git_object_missing'
   /** GBRA-133 S-7: a committed file whose name is not valid UTF-8, so no Git read or file finds it by its decoded name. */
@@ -915,9 +917,14 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'lfs_pointer_unsmudged':
       return lfsPointerHoldFix(record);
+    case 'content_filter_owned':
+      return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
+        user_message: `${record.path} is stored in Git through a filter (git-crypt encryption or another clean/smudge driver), so its committed bytes are not the text in the checkout. gbrain does not run a repository's filter programs during sync, so sync holds it and the rest of source ${source} keeps syncing. Leave it out with sync.exclude, or commit it without the filter so Git stores its text, then run gbrain sync --source ${source} --no-pull. If the filter is not in use and the file is plain text, remove the filter attribute from .gitattributes, commit, and run gbrain sources retry-held ${source}: a commit that changes only .gitattributes does not re-screen the file.`,
+        why: "Running a repository's filter programs would let the repository run code during sync, so the stored bytes cannot become the page; the hold re-screens when the file changes or on gbrain sources retry-held.",
+        verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'git_object_missing':
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
-        user_message: `The Git object of ${record.path}${record.meta.blob_oid ? ` (blob ${record.meta.blob_oid})` : ''} is missing from the checkout of source ${source}, and its working-tree copy differs or is gone, so sync holds it and the rest of the source keeps syncing. Run git fsck in the checkout to see what is missing, restore it with git fetch (a partial or shallow clone) or from a backup, then run gbrain sync --source ${source} --no-pull.`,
+        user_message: `The Git object of ${record.path}${record.meta.blob_oid ? ` (blob ${record.meta.blob_oid})` : ''} is missing from the checkout of source ${source}, and its working-tree copy differs or is gone, so sync holds it and the rest of the source keeps syncing. Sync fetches nothing, so in a partial clone (git clone --filter) fetch the blob with git cat-file -p ${record.meta.blob_oid ?? '<blob>'} in the checkout or check the file out; otherwise run git fsck in the checkout to see what is missing and restore it with git fetch (a shallow clone) or from a backup. Then run gbrain sync --source ${source} --no-pull.`,
         why: 'An interrupted gc, a partial clone without its promisor remote or disk corruption can drop an object a commit still names; nothing is imported from a guess, and every sync re-tests the hold.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'path_not_utf8':

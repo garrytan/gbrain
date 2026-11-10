@@ -378,7 +378,7 @@ CREATE TRIGGER page_segment_derivations_refuse_purging BEFORE INSERT OR UPDATE O
  * the auto-RLS event trigger (v35) missed, or one where it was dropped or disabled, never serves segment text to a
  * role `pages` returns no rows to. Only under a role that bypasses RLS (else the runtime role would lock itself out),
  * and only for a table still without it (ENABLE takes an ACCESS EXCLUSIVE lock even when RLS is on, #5227).
- * `page_view_digests` is absent while migration v248 runs, `page_read_pins` before v297. Postgres only: PGLite has no role system, and its
+ * `page_view_digests` is absent while migration v248 runs, `page_read_pins` before v302. Postgres only: PGLite has no role system, and its
  * bootstrap enables RLS on no core table either. Source-scoped policies are operator SQL (docs/ENGINES.md).
  * Only a full initSchema replays this block: a migration that creates one of these tables enables RLS itself
  * (v275 backfills the v273 tables), since `gbrain apply-migrations --yes` runs migrations without the blob.

@@ -120,7 +120,10 @@ with this machine's git credentials and is never exposed over MCP.
 When gbrain is not installed on the machine, the helper falls back to a locked
 path-scoped commit and a plain push. A rejected push then fails loudly (exit 4)
 and tells you to install gbrain and run `gbrain git commit-push --push-only`;
-the fallback never integrates remote commits itself.
+the fallback never integrates remote commits itself. A named path git left out
+of the commit is reported as `commit_paths_skipped` after the push, as
+`gbrain git commit-push` reports it; the helper then exits 1, or 4 when the
+push failed too.
 
 In a managed canonical worktree (`gbrain sources writer git-durability`) its
 persistence owner is the only Git publisher. Save pages with `put_page`,
@@ -179,6 +182,7 @@ Follow the error's `fix.next` as the
 | `commit_lock_busy` | 1 | Another writer held the lock for the whole wait; nothing was committed. Retry once. If it is still busy, tell the user which checkout and lock path the message names and stop. |
 | <a id="checkout_not_a_source"></a>`checkout_not_a_source` | 1 | The checkout commit-push resolved from the working directory (no `--path`) is not one of the brain's source checkouts on this host, typically a wrapper that changed into another repository; nothing was staged. The message lists the brain's checkouts. Tell the user to make the script pass `--path` with the absolute brain checkout. A repository that only encloses a source checkout (a brain cloned inside another repository) is not one; a source registered at a subdirectory its checkout tracks is. A host whose brain records no source checkout, or a checkout with `gbrain.sourceRoot` set, is never refused this way. |
 | `commit_paths_invalid` | 1 | No paths, a path outside the checkout, the checkout root itself, or a path git would not stage. Name the explicit files you wrote and rerun. |
+| <a id="commit_paths_skipped"></a>`commit_paths_skipped` | 1 | Git left a named path out of the commit: a modified file flagged assume-unchanged or skip-worktree (`reason` `assume_unchanged`, `skip_worktree`) or a file inside a nested Git repository (`not_staged`). The other named paths were committed (and, on a classic checkout, pushed); `detail` lists each skipped path, the commit and the pushed head, or the push failure (`publish`) when the push failed too. Check the flags with `git ls-files -v -- <path>`; clear them only after the user agrees, one flag per call (`git update-index --no-assume-unchanged -- <path>`, `git update-index --no-skip-worktree -- <path>`; given both, git clears only the first), and remember skip-worktree is often set on purpose to keep local edits out of commits, or move the file out of the nested repository, then rerun. A skip-worktree file absent from disk (a sparse checkout), a flagged gitlink and ignored files under a named directory are not reported. |
 | `commit_prestaged_paths` | 1 | Another writer staged files under a directory you named; nothing was staged or committed. Name your own files explicitly. Unstage the others (`git restore --staged -- <file>`, which keeps their bytes) only after the user agrees. |
 | `commit_outside_source_root` | 1 | The commit, or a local commit about to be published, changes files outside the brain's [source root](#source-roots); nothing was pushed. Show the user `git show --stat <sha>`; rerun with `--allow-outside-source-root` only if they want it published. |
 | `git_index_locked` | 1 | A git command that does not take the writer lock held `index.lock`. Retry once after a few seconds. |
@@ -189,7 +193,7 @@ Follow the error's `fix.next` as the
 | <a id="publish_scan_unreadable"></a>`publish_scan_unreadable` | 1 | Only with `--scan-secrets`: the scan could not read the commits about to be pushed in full (a missing or corrupt object, git output it does not recognise, or its 300 s budget), so it reported no secret and nothing was pushed. Run `git fsck` in the checkout, fix what it names, then retry. Never publish with a command that skips the scan. |
 | `integrate_conflict` | 1 | Local and remote commits changed the same file; nothing was merged and the checkout is unchanged. Stop, relay the question to the user, then [resolve](#conflicts). |
 | `push_unconfirmed` | 4 | The commit is durable locally but no push destination confirmed it (network, credentials, branch protection, a remote that kept moving, or another push that held the push lock for the whole wait). Fix what the message names, then run `gbrain git commit-push --push-only`. Never force-push. |
-| `writer_coordinator_required` | 1 | This is a managed worktree. Stop using git for pages; save them through `put_page` and the other gbrain write tools. |
+| `writer_coordinator_required` | 1 | This is a managed worktree. Stop using git for pages; save them through `put_page` and the other gbrain write tools. `scripts/brain-commit-push.sh` refuses this way on a checkout marked managed and commits nothing; `gbrain git commit-push` refuses this way when git left a named page out of its commit (the same causes as `commit_paths_skipped`), after committing the other named paths locally. Ask the user before re-saving such a page through `put_page` with the managed source (`gbrain put --source-id <source> <slug>`, or `source_id` over MCP; without it the write goes to the default source): it replaces the stored page with the file's content. |
 | `git_unavailable` | 1 | A git command failed, often a missing `user.name`/`user.email` or a refusing pre-commit hook. Read the message, fix that, rerun. When the branch names a remote that does not exist (a typo or a broken clone), the run stops before committing: fix the name or add the remote, then rerun. A checkout with no remote at all commits locally instead (`committed_local`). |
 
 `--pull` reports `up_to_date`, `advanced`, `ahead` (local commits not yet
@@ -262,6 +266,9 @@ and gbrain notes it in a pending ledger next to the lock
 write that gets the lock commits the pending files with its own, and
 `gbrain git commit-push --pending` commits and pushes them on demand.
 `gbrain doctor` reports pending files older than 30 minutes as `dirty_age`.
+A file flagged assume-unchanged or skip-worktree that differs from HEAD stays
+in the ledger (git add skips or refuses it), and `--pending` then fails
+`commit_paths_skipped` naming it.
 
 <a id="scripts-and-the-managed-checkout"></a>
 ## Scripts and the managed checkout

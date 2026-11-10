@@ -28,6 +28,26 @@ export const HARDENED_GIT_ARGS: readonly string[] = ['--no-pager', '--no-optiona
   '-c', 'submodule.recurse=false', '-c', 'protocol.allow=never', '-c', 'credential.helper=',
   '-c', 'maintenance.auto=false', '-c', 'gc.auto=0'];
 
+/**
+ * GST-2331: what a managed-sync Git read that runs under `gitChildEnv` adds to it beside `HARDENED_GIT_ARGS`. In a partial
+ * clone, Git fetches an object the repository lacks from the clone's remote; `GIT_NO_LAZY_FETCH=1` (Git 2.45+) reports the
+ * object missing instead. On any Git, an empty `GIT_ALLOW_PROTOCOL` allows no transport and
+ * overrides every `protocol.allow` and `protocol.<name>.allow` setting (an inherited allowlist or a per-protocol config
+ * would otherwise beat the args' `protocol.allow=never`), so the read fails and nothing is fetched.
+ */
+export const NO_LAZY_FETCH_ENV: NodeJS.ProcessEnv = { GIT_NO_LAZY_FETCH: '1', GIT_ALLOW_PROTOCOL: '' };
+let lazyFetchOff = true;
+
+/** Test seam: `false` leaves `GIT_NO_LAZY_FETCH` (never the empty `GIT_ALLOW_PROTOCOL`) out of every hardened and managed-sync read, as a git older than 2.45 ignores it; returns the restore. */
+export function __setNoLazyFetchForTests(value: boolean): () => void {
+  const previous = lazyFetchOff;
+  lazyFetchOff = value;
+  return () => { lazyFetchOff = previous; };
+}
+
+/** `NO_LAZY_FETCH_ENV` as the test seam above leaves it, for a read under `gitChildEnv`. */
+export const noLazyFetchEnv = (): NodeJS.ProcessEnv => lazyFetchOff ? NO_LAZY_FETCH_ENV : { ...NO_LAZY_FETCH_ENV, GIT_NO_LAZY_FETCH: undefined };
+
 const OPERATOR_CONFIG_TTL_MS = 30_000;
 let operatorConfig: { key: string; at: number; values: string[] } | null = null;
 
@@ -71,12 +91,14 @@ export function __resetOperatorGitConfigForTests(): void { operatorConfig = null
 /**
  * System and global config stay off and every `GIT_*` variable is dropped, except the operator's `safe.directory` entries
  * (system, global, then environment, as Git orders them), carried as environment config (#7584). They relax only Git's
- * ownership check for a repository owned by another user, which the operator allowed for their own `git` too.
+ * ownership check for a repository owned by another user, which the operator allowed for their own `git` too. GST-2331: an
+ * empty `GIT_ALLOW_PROTOCOL` allows no transport whatever the repository's `protocol.<name>.allow` says, so a read in a
+ * partial clone fetches nothing even on a Git that ignores `GIT_NO_LAZY_FETCH`.
  */
 export function hardenedGitEnvironment(operatorSafeDirectories: string[] = operatorConfigSafeDirectories()): NodeJS.ProcessEnv {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
   return { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0',
-    GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0', GIT_LFS_SKIP_SMUDGE: '1', LC_ALL: 'C',
+    ...(lazyFetchOff ? { GIT_NO_LAZY_FETCH: '1' } : {}), GIT_ALLOW_PROTOCOL: '', GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0', GIT_LFS_SKIP_SMUDGE: '1', LC_ALL: 'C',
     ...safeDirectoryEnv([...operatorSafeDirectories, ...envSafeDirectories()]) };
 }
 
@@ -106,7 +128,7 @@ const LOG_SHAPES: ReadonlyArray<readonly string[]> = [REASON_LOG_OPTIONS, HISTOR
  * listed here refuses.
  */
 const ALLOWED_OPTIONS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
-  ['rev-parse', new Set(['--show-toplevel', '--absolute-git-dir', '--verify', '--quiet', '--show-object-format'])],
+  ['rev-parse', new Set(['--show-toplevel', '--absolute-git-dir', '--git-common-dir', '--verify', '--quiet', '--show-object-format'])],
   ['ls-files', new Set(['-s', '--stage', '--eol', '-z', '--cached', '--others', '--exclude-standard'])],
   ['ls-tree', new Set(['-r', '-l', '-z', '--full-tree'])],
   ['cat-file', new Set(['--batch', '--batch-check'])],

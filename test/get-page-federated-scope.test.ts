@@ -370,14 +370,22 @@ describe('#2200 get_links honors the grant and scopes BOTH endpoints (D4A)', () 
     expect(links).toEqual([]);
   });
 
-  test('F1: in-grant link authored by an out-of-grant origin does NOT leak origin_slug', async () => {
-    const links = (await get_links.handler(remoteCtx(['alpha', 'beta']), { slug: 'secret/beta-doc' })) as any[];
-    const originLeakLink = links.find(l => l.link_type === 'mentions' && l.to_slug === 'secret/beta-target');
-    expect(originLeakLink).toBeDefined();
-    // origin page 'default/only-doc' is out of the [alpha,beta] grant → origin identity nulled.
-    expect(originLeakLink.origin_slug ?? null).toBeNull();
-    expect(originLeakLink.origin_source_id ?? null).toBeNull();
-    expect(links.map(l => l.origin_slug)).not.toContain('default/only-doc');
+  test('F1: in-grant link authored by an out-of-grant origin is withheld, origin and context included', async () => {
+    await engine.addLink('secret/beta-doc', 'secret/beta-target', 'granted-origin ctx', 'mentions', 'frontmatter', 'secret/beta-target', 'related', { fromSourceId: 'beta', toSourceId: 'beta', originSourceId: 'beta' });
+    try {
+      const links = (await get_links.handler(remoteCtx(['alpha', 'beta']), { slug: 'secret/beta-doc' })) as any[];
+      const mentions = links.filter(l => l.link_type === 'mentions' && l.to_slug === 'secret/beta-target');
+      // Control: the same edge authored by an in-grant origin comes back with its origin.
+      expect(mentions).toHaveLength(1);
+      expect(mentions[0]).toMatchObject({ origin_source_id: 'beta', origin_slug: 'secret/beta-target' });
+      expect(String(mentions[0].context)).toContain('granted-origin ctx');
+      // origin page 'default/only-doc' is out of the [alpha,beta] grant → its edge is absent.
+      expect(links.map(l => l.origin_slug)).not.toContain('default/only-doc');
+      expect(links.map(l => l.origin_source_id)).not.toContain('default');
+      expect(links.some(l => String(l.context).includes('origin-leak ctx'))).toBe(false);
+    } finally {
+      await engine.executeRaw(`DELETE FROM links WHERE context = 'granted-origin ctx'`);
+    }
   });
 
   test('D1: UNTRUSTED remote with a scalar source scope is promoted to all-endpoint scoping (no far-endpoint leak)', async () => {

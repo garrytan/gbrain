@@ -21,6 +21,7 @@ import postgres from '#postgres'
 import { reservedTransactions, type ReservedTransactions } from './postgres-engine/reserved-transactions.ts';
 import { holdSearchConnection } from './search/connection-budget.ts';
 import { traceSqlOptions } from './sql-trace.ts';
+import { tlsRequiredDefaultError, withPgTls } from './pg-tls.ts';
 import { hasPostgresCancellationCapability, postgresCancellationUnavailable, reserveWithCancellation } from './postgres-engine/cancellation.ts';
 import { runBoundedStatement, runDeadlineRead } from './postgres-engine/bounded-statement.ts';
 import { needsJitOff, runJitOffStatement } from './postgres-engine/jit-off-statement.ts';
@@ -123,7 +124,8 @@ import { commonOrTokens, narrowedOrFallbackText, readOrTokenShares } from './sea
 import { keywordArmRows } from './search/keyword-identifier-probe.ts';
 import { RARE_TERM_CHUNK_CAP, rankOrFallbackByRarity, rareTermPagesSql, type RareTermPages } from './search/keyword-or-rarity.ts';
 import { buildKeywordChunkMatch, KEYWORD_RANK_CANDIDATES, KEYWORD_RANKED_ROWS_CTE, KEYWORD_STATEMENT_SETTINGS } from './search/keyword-chunk-match.ts';
-import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment, privatePagesFilterForCaller } from './search/private-visibility.ts';
+import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateFactFilterForCaller, privatePagesFilterForCaller } from './search/private-visibility.ts';
+import { deletedPageProjectionHiddenSql } from './eligibility/sql.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { readStoredEmbeddingIdentity } from './stored-embedding-identity.ts';
 import { assertEmbeddedEmbedding, embeddedSchemaEmbedding, embeddedSettingsRecord, isEmbeddedEngine, settingsConnectionOptions } from './embedded-engine.ts';
@@ -468,8 +470,9 @@ export class PostgresEngine implements BrainEngine {
       if (typeof prepare === 'boolean') {
         opts.prepare = prepare;
       }
-      this._sql = postgres(url, traceSqlOptions(embedded ? { ...opts, ...settingsConnectionOptions(url) } : opts, 'instance'));
-      await db.checkPoolAndLoadSharedTypes(this._sql, url, { persisted: !embedded });
+      const instanceOpts = embedded ? { ...opts, ...settingsConnectionOptions(url) } : opts;
+      this._sql = postgres(url, traceSqlOptions(withPgTls(url, instanceOpts), 'instance'));
+      await db.checkPoolAndLoadSharedTypes(this._sql, url, { persisted: !embedded }).catch(async (e: unknown) => { throw (await tlsRequiredDefaultError(url, e, instanceOpts)) ?? e; });
       await db.setSessionDefaults(this._sql);
       this._connectionStyle = 'instance';
 
@@ -1877,7 +1880,7 @@ export class PostgresEngine implements BrainEngine {
     sourceId?: string;
     sourceIds?: string[];
     excludePrivate?: boolean;
-    mode?: 'inbound' | 'islanded';
+    mode?: 'inbound' | 'islanded'; scopeInbound?: boolean;
   }): Promise<Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean; source_id?: string }>> {
     return linksImpl.findOrphanPages(unscopedExecutor(this.engineSql, 'links: unscoped on master (EO4 inventory)'), opts);
   }
@@ -2013,9 +2016,8 @@ export class PostgresEngine implements BrainEngine {
     const scope = opts?.sourceIds && opts.sourceIds.length
       ? sql`AND source_id = ANY(${opts.sourceIds})`
       : sql`AND (${opts?.sourceId ?? null}::text IS NULL OR source_id = ${opts?.sourceId ?? null})`;
-    // Page-visibility gate on the provenance page, applied BEFORE DISTINCT ON
-    // so the untrusted caller resolves the newest value they may see.
-    const privacy = opts?.excludePrivate ? sql.unsafe(`AND ${privateProvenanceFilterFragment('facts')}`) : sql``;
+    // Provenance/entity page gates and the deleted-page hide, BEFORE DISTINCT ON: the caller gets the newest value they may see.
+    const privacy = sql.unsafe(`AND ${deletedPageProjectionHiddenSql('facts', 'facts')}${opts?.excludePrivate ? ` AND ${privateFactFilterForCaller('facts')}` : ''}`);
     const visibility = opts?.visibility ? sql`AND visibility = ANY(${opts.visibility})` : sql``;
     const rows = await sql<OntologyValue[]>`
       SELECT DISTINCT ON (dimension)
@@ -2052,9 +2054,9 @@ export class PostgresEngine implements BrainEngine {
     const scope = opts?.sourceIds && opts.sourceIds.length
       ? sql`AND source_id = ANY(${opts.sourceIds})`
       : sql`AND (${opts?.sourceId ?? null}::text IS NULL OR source_id = ${opts?.sourceId ?? null})`;
-    // Same provenance-page gate as getOntology, inside the CTE so a conflict
+    // Same page gates as getOntology, inside the CTE so a conflict
     // that only exists because of a hidden provenance is never reported.
-    const privacy = opts?.excludePrivate ? sql.unsafe(`AND ${privateProvenanceFilterFragment('facts')}`) : sql``;
+    const privacy = sql.unsafe(`AND ${deletedPageProjectionHiddenSql('facts', 'facts')}${opts?.excludePrivate ? ` AND ${privateFactFilterForCaller('facts')}` : ''}`);
     const visibility = opts?.visibility ? sql`AND visibility = ANY(${opts.visibility})` : sql``;
     const rows = await sql<{ entity_slug: string; dimension: string; values: OntologyConflict['values'] }[]>`
       WITH cur AS (

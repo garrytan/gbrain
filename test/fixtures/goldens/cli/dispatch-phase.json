@@ -1198,6 +1198,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "memory-proposals": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "migrate": {
         "hasSwitchCase": true,
         "phase": "post-connect",
@@ -1719,6 +1726,25 @@
             "thinClientCheck": false,
             "unconditionalFor": [
               "setup"
+            ]
+          }
+        ],
+        "thinClient": "none",
+        "thinClientRoutedSubcommands": []
+      },
+      "skill-resolver": {
+        "hasSwitchCase": false,
+        "phase": "pre-connect",
+        "preConnectRules": [
+          {
+            "condition": "command === 'skill-resolver'",
+            "connectsEngine": false,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": false,
+            "unconditionalFor": [
+              "skill-resolver"
             ]
           }
         ],

@@ -119,6 +119,9 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   // Wave C 1D: the file is committed as a Git LFS pointer; only storing it without LFS (the user's call) clears it.
   { code: 'lfs_pointer_unsmudged', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: storing the file without LFS changes how it is kept, which is the user\'s call',
     human_reason: 'The file is committed as a Git LFS pointer, so its page text never reached sync; with the user\'s agreement, store it without LFS as the hold\'s fix lists (git lfs pull, a -filter -diff -merge override for the path in .gitattributes, then a commit through gbrain git commit-push), then sync the source.' },
+  // GST-2312 (#9024): the committed blob is a Git filter's stored bytes (git-crypt, a clean/smudge driver); only an edit to the file, its filter or sync.exclude clears it.
+  { code: 'content_filter_owned', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: sync never runs the filter that would turn the file into text',
+    human_reason: "The file is stored in Git through a filter (git-crypt or another clean/smudge driver) and gbrain does not run a repository's filter programs; exclude it with sync.exclude, or commit it without the filter, and commit." },
   // GBRA-133 S-33: the commit names a Git object the checkout no longer has and the working-tree copy differs; only restoring the object clears it.
   { code: 'git_object_missing', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only restoring the Git object clears it',
     human_reason: 'The checkout lost the Git object of this committed file and its working-tree copy differs or is gone; run git fsck in the checkout, restore the object with git fetch or from a backup, then sync (every sync re-tests the hold).' },

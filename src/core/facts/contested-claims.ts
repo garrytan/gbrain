@@ -18,7 +18,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { Contested } from '../eligibility/labels.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
-import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
+import { privateFactFilterForCaller } from '../search/private-visibility.ts';
 
 export interface ContestedReadPolicy { remote: boolean; excludePrivate: boolean; eligibility?: ReadEligibility }
 /** Filled when the lookup failed: recall reports it as facts_degraded. */
@@ -28,7 +28,7 @@ const active = (a: string) => a + '.expired_at IS NULL AND (' + a + '.valid_unti
 const readable = (a: string, policy: ContestedReadPolicy) => [
   active(a),
   ...(policy.remote ? [a + ".visibility = 'world'"] : []),
-  ...(policy.excludePrivate ? [privateProvenanceFilterFragment(a)] : []),
+  ...(policy.excludePrivate ? [privateFactFilterForCaller(a)] : []),
   projectionEligibleSql('facts', a, policy.eligibility),
 ].join(' AND ');
 

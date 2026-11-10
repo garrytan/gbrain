@@ -6,6 +6,7 @@ src/core/access/policy-git.ts	fs_import	1	W7: filesystem boundary moves to the l
 src/core/access/policy-git.ts	process_env	4	W6: settings plane out of the core
 src/core/access/policy-git.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/access/policy-transfer.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/access/scope-read.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (GST-1158 E1 read mode per attested call)
 src/core/advisor/collect-setup-smells.ts	process_env	1	W6: settings plane out of the core
 src/core/advisor/collect-uninstalled-brain-pack.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/advisor/history.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -745,6 +746,7 @@ src/core/persistence/staging.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/switches.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/persistence/switches.ts	process_env	1	W6: settings plane out of the core
 src/core/persistence/sync-authority.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
+src/core/persistence/sync-blobs.ts	fs_import	1	W7: filesystem boundary moves to the local app (the temporary index a git before 2.40 reads attributes from, GST-2312)
 src/core/persistence/sync-blobs.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/persistence/sync-capacity-preflight.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/sync-discovery.ts	fs_import	1	W5: repo-less persistence for hosts
@@ -809,6 +811,7 @@ src/core/persistence/worktree-refresh.ts	process_env	7	W6: settings plane out of
 src/core/persistence/write-wait.ts	load_config	2	W6: settings plane out of the core
 src/core/persistence/write-wait.ts	process_env	3	W6: settings plane out of the core
 src/core/pg-access-classify.ts	process_env	1	W6: settings plane out of the core
+src/core/pg-tls.ts	process_env	1	postgres.js reads PGHOST, PGPORT and PGSSL from the process itself, so the TLS default reads the same values to judge the host it will dial
 src/core/pg-type-cache.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/pg-type-cache.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/pg-type-cache.ts	process_env	1	W6: settings plane out of the core
@@ -1067,6 +1070,19 @@ src/core/skillpack/tarball.ts	process_env	1	W6: settings plane out of the core
 src/core/skillpack/tarball.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/skillpack/writer-guard.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skills-integrity.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/skills/resolver/build.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
+src/core/skills/resolver/config.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
+src/core/skills/resolver/config.ts	process_env	1	GBRA-377 skill resolver: GBRAIN_SKILLS_NO_AUTOREBUILD as the default of an injectable env parameter (callers and tests pass their own); runs with no brain or engine; stays
+src/core/skills/resolver/catalog-files.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
+src/core/skills/resolver/daily-log.ts	fs_import	2	GBRA-399 skill resolver daily logs: appends and prunes lane-<day>.jsonl and resolver-<day>.log under GBRAIN_HOME/skill-index (sync for the CLI, async in the hook); no brain or engine; stays
+src/core/skills/resolver/fsutil.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
+src/core/skills/resolver/index-format.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
+src/core/skills/resolver/lock.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
+src/core/skills/resolver/lane-worker.ts	process_env	1	GBRA-399 skill resolver lane worker: process.env as the default of an injectable env parameter, handed to the worker the hook starts first; no brain or engine; stays
+src/core/skills/resolver/paths.ts	process_env	1	GBRA-377 skill resolver: GBRAIN_HOME as the default of an injectable env parameter (same convention as configDir); runs with no brain or engine; stays
+src/core/skills/resolver/resolve.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
+src/core/skills/resolver/session.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
+src/core/skills/resolver/sources.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
 src/core/source-health.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/source-health.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/source-resolver.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -1154,6 +1170,7 @@ src/core/trust/proposals.ts	module_collection	1	W6: per-engine state, or mark as
 src/core/uncommitted-deletions.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/url-clone.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/url-source-origin.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/url-source-origin.ts	spawn_import	1	W7: process-wide effects move to src/cli (git config --file writes the clone lock-down into an existing checkout)
 src/core/utils.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/verbs/usage-log.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/wakeshift/config.ts	fs_import	1	stays: the Wakeshift key and HMAC secret are host files (0600) by design, never engine settings (docs/guides/wakeshift.md#the-key)
@@ -1169,3 +1186,11 @@ src/core/wsl-paths.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/zombie-reap.ts	process_global	1	W7: process-wide effects move to src/cli
 src/core/git/maintenance.ts	fs_import	1	W7: filesystem boundary moves to the local app; Wave C 1C maintenance takes gbrain-maintenance.lock and records gbrain-maintenance.json in the git common dir
 src/core/cycle/git-maintenance.ts	fs_import	1	W7: filesystem boundary moves to the local app; Wave C 1C phase checks that a strict source checkout exists on this host before maintaining it
+src/core/setup/skill-resolver-config.ts	fs_import	1	GBRA-377 PR B skill-resolver lane: setup writes and reads harness settings files, GBRAIN_HOME/config.json and the skill index directly (no brain or engine is opened); stays
+src/core/setup/skill-resolver-hook.ts	fs_import	1	GBRA-377 PR B skill-resolver lane: setup writes and reads harness settings files, GBRAIN_HOME/config.json and the skill index directly (no brain or engine is opened); stays
+src/core/setup/skill-resolver-setup.ts	fs_import	1	GBRA-377 PR B skill-resolver lane: setup writes and reads harness settings files, GBRAIN_HOME/config.json and the skill index directly (no brain or engine is opened); stays
+src/core/setup/skill-resolver-setup.ts	process_env	1	GBRA-377 PR B skill-resolver lane: setup writes and reads harness settings files, GBRAIN_HOME/config.json and the skill index directly (no brain or engine is opened); stays
+src/core/skills/resolver/hook-lane.ts	fs_import	2	GBRA-399 adds node:fs unlinkSync: the deadline exit removes the commit temp file synchronously before process.exit, so no leftover lock survives the hook. GBRA-377 PR B skill-resolver hook lane: runs in the hook process with no brain or engine, reading config.json, harness settings and the skill index; env carries GBRAIN_HOME and its test seams; it spawns the detached catalog build; stays
+src/core/skills/resolver/hook-lane.ts	process_env	2	GBRA-377 PR B skill-resolver hook lane: runs in the hook process with no brain or engine, reading config.json, harness settings and the skill index; env carries GBRAIN_HOME and its test seams; it spawns the detached catalog build; stays
+src/core/skills/resolver/hook-lane.ts	spawn_import	1	GBRA-377 PR B skill-resolver hook lane: runs in the hook process with no brain or engine, reading config.json, harness settings and the skill index; env carries GBRAIN_HOME and its test seams; it spawns the detached catalog build; stays
+src/core/skills/resolver/hook-lane.ts	process_global	1	GBRA-377 PR B skill-resolver hook lane: at its 50 ms deadline the hook process exits at once without waiting on the abandoned worker (the lane is the whole process); stays

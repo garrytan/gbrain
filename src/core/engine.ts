@@ -1817,7 +1817,7 @@ export interface BrainEngine {
   findOrphanPages(opts?: PageReadScope & {
     sourceId?: string;
     sourceIds?: string[];
-    mode?: 'inbound' | 'islanded';
+    mode?: 'inbound' | 'islanded'; scopeInbound?: boolean;
   }): Promise<Array<{
     slug: string;
     title: string;
