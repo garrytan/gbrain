@@ -157,6 +157,7 @@ Every hold and error has three fields, from one table
 | `file_unreadable` | page | none | yes | always: only a change to the checkout makes the file readable |
 | `visibility_noncanonical` | page | none | yes | always: only an edit to the file clears it |
 | `content_null_bytes` | page | none | yes | always: only an edit to the file or its removal clears it |
+| `content_filter_owned` | page | none | yes | always: sync never runs the filter that would turn the file into text |
 | `git_object_missing` | page | none | yes | always: only restoring the Git object clears it |
 | `path_not_utf8` | page | none | yes | always: only renaming the file clears it |
 | `origin_conflict` | page | repair | no | the hold carries a reason (the pages differ, ids conflict or none is the page the path names), or the heal is off |

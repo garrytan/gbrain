@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.648.0] - 2026-11-10
+
+**A managed sync no longer imports a file that Git stores through a filter, such as a git-crypt encrypted note, as if its stored bytes were the page.** The file alone is held `content_filter_owned` with a message that says gbrain does not run a repository's filter programs during sync (and names git-crypt when the file starts with its header), and the rest of the source imports and moves on. Reported by @JustinTSmith (#9024) and first fixed by @Masashi-Ono0611 (#9026).
+
+### Itemized changes
+
+- `src/core/persistence/sync-blobs.ts`: `readFilterDrivers` reads the `filter` attribute of many paths at the synced commit in one `git check-attr -z --stdin --source=<commit>` (git 2.40 or newer), or from a temporary index of that commit with `check-attr --cached` on an older git. Every Git call it makes runs with the hardened arguments (fsmonitor, hooks and every transport off) and `GIT_NO_LAZY_FETCH=1`, so reading the attribute runs no repository program and fetches nothing. The module's other reads also switch off `core.fsmonitor` and hooks.
+- `src/core/persistence/sync-entry-fault.ts`: `filterOwnedRefusal` refuses a blob that starts with git-crypt's header, or a committed blob whose path names a filter driver other than Git LFS, whether or not this checkout configures it (LFS pointers keep their own handling). For a plain-text file under an attribute nobody uses, a held file's message says to remove the attribute and run `gbrain sources retry-held`. `missingAttributesRefusal` holds a file `git_object_missing` when a partial clone lacks a `.gitattributes` that applies to it.
+- `src/core/persistence/sync-screen.ts`, `sync-run.ts`: the freeze screen and the `sync.holds=fail` path check committed imports with it before the NUL check, so a git-crypt file gets the clear hold instead of `content_null_bytes`. Working-tree reads are unaffected. A company-brain source checks its approved revision and stops with `content_filter_owned`.
+- New hold and error code `content_filter_owned` (error registry, fault class, public category, docs/guides/write-refusals.md, the sync unblock runbook).
+- Tests: `test/sync-filter-owned-9024.test.ts` and `test/sync-filter-owned-company-9024.test.ts` on PGLite and Postgres, with a clean/smudge filter, an `fsmonitor` and an `upload-pack` marker in the test repository, and a check that none of them ran.
+
 ## [0.60.647.0] - 2026-11-10
 
 **A team member's `remember` can now share a fact with the team, and every `remember` reply says where the fact went.** A member credential still saves privately by default, on its own page `memory/members/<member>`, so only that member recalls it. Passing `share: true` saves the fact on its subject's page instead, where everyone who reads the source recalls it, as every other caller's `remember` already does. The tool description tells agents to share facts about the team's work and keep facts about a person private. Before this, a member's `visibility: "world"` was quietly saved as private; it is now refused with `member_share_required` and nothing is saved, so no one believes they shared a fact the team cannot see. For the same reason, `share: true` onto a page whose facts are kept private (a page with readers named, or a brain whose fact default is private) is refused with `share_target_restricted`. A shared fact belongs to the team: only the brain host can withdraw it. Nothing already saved moves.
