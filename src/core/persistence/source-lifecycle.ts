@@ -190,6 +190,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     // (a lock wait, a busy writer, a slow precondition or commit) stops the run with write_pending, and the retry resumes at
     // full size. Only committed batches count toward the pages the run reports.
     let retiredPages=0;
+    const DELETE_BOUND=['remove','purge'].includes(input.operation)?'15min':'5s'; // cascades off a source delete outlast the 5s topology default
     try{
     let deleting=false;
     const retireBatch=async(limit:number):Promise<number|null>=>{ deleting=false; try{ const n=await topologyTransaction(engine,async tx=>{
@@ -210,7 +211,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
           return rows;
         },principalAttribution({kind:'local_cli',id:principal}));
         return gone.length;
-      }); retiredPages+=n; return n; }catch(error){
+      },DELETE_BOUND); retiredPages+=n; return n; }catch(error){
         if(deleting&&error instanceof OperationError&&error.code==='write_pending'&&error.reason==='statement_timeout'&&limit>1) return null;
         throw error;
       } };
@@ -338,7 +339,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     if(admission) await admission.after(tx,String(result.source_incarnation));
     const row=await recordTopologyChange(tx,{principal,requestId,intent,operation:input.operation,sourceId:input.sourceId,incarnation:source?.incarnation??String(result.source_incarnation),worktrees},result);
     return topologyReceipt(row);
-    });
+    },DELETE_BOUND);
     }catch(error){
       if(retiredPages&&error instanceof OperationError&&!error.suggestion?.startsWith('Only the'))
         error.suggestion=`This run had already deleted ${retiredPages} page(s) of source '${input.sourceId}' in committed batches before it stopped; the source and its remaining pages are still registered. ${error.suggestion??''}`.trim();
