@@ -33,7 +33,7 @@ import { assertManagedSyncActive } from './sync-authority.ts';
 import { decideOriginTwins, readOriginClaimants, slugPathOccupied, type OriginConflict } from './origin-twins.ts';
 import { isReservedSkillBundlePath } from '../skill-reserved-paths.ts';
 import { holdBasisMoved, holdRescreenDue, readGitHoldRetryPaths, readGitSourceHolds, readSyncImportProvenances } from './sync-holds.ts';
-import { readBlobContents, readTreeBlobs, SYNC_READ_BOUND } from './sync-blobs.ts';
+import { NO_REPOSITORY_PROGRAMS, readBlobContents, readTreeBlobs, SYNC_READ_BOUND } from './sync-blobs.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { readOriginEvidence } from './sync-origin-evidence.ts';
 import { sourceDbOnlyVerdict } from './source-storage.ts';
@@ -834,5 +834,5 @@ export function readSyncContent(discovery: SyncDiscovery, entry: SyncEntry): str
         argv: ['gbrain', 'sync', '--no-pull', '--working-tree', '--source', discovery.sourceId] } });
     return bytes.toString('utf8');
   }
-  return syncGit(discovery.gitRoot, ['show', `${discovery.target}:${syncGitPath(discovery, entry.path)}`]);
+  return syncGit(discovery.gitRoot, [...NO_REPOSITORY_PROGRAMS, 'show', `${discovery.target}:${syncGitPath(discovery, entry.path)}`]);
 }
