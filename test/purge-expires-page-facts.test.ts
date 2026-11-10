@@ -1,10 +1,11 @@
 /**
  * A retention purge of a soft-deleted page expires that page's active facts, in the same transaction as the purge.
  *
- * 1. Protects: after the purge removes a deleted page's row, the facts the page held and the facts about it that no live
- *    page holds are expired (kept, never deleted), so they don't come back for any reader, local or remote, and a new
- *    page written at the slug starts clean. A fact a live page holds about the slug stays active, and so do facts about
- *    other pages.
+ * 1. Protects: after the purge removes a deleted page's row, the facts filed on the page and the facts about it that no
+ *    page row holds are expired (kept, never deleted), so they don't come back for any reader, local or remote, and a
+ *    new page written at the slug starts clean. A fact another page holds about the slug stays active, live or
+ *    soft-deleted (a restore brings it back), and so does an ontology observation about a live entity sourced from the
+ *    purged page, and facts about other pages.
  * 2. Fails when: a purge deletes the page row and leaves its facts with expired_at NULL (facts have no foreign key to
  *    pages), on the bulk purge (purgeDeletedPages) or the belief-ledger purge of a recorded source
  *    (expireRecordedTombstones); or the fix deletes a fact row instead of expiring it. The managed purge, which already
@@ -41,7 +42,7 @@ function vectorFor(text: string): number[] {
 }
 const text = (out: { content: Array<{ text: string }> }) => out.content.map(c => c.text).join('\n');
 
-const SLUG = 'people/carol-example', OTHER = 'people/dan-example';
+const SLUG = 'people/carol-example', OTHER = 'people/dan-example', SHELVED = 'people/erin-example';
 const person = (title: string, body: string) => `---\ntype: person\ntitle: ${title}\n---\n# ${title}\n\n${body}`;
 
 /** A fixture write outside coordination; on a managed brain the writer guard is paused around it. */
@@ -79,13 +80,21 @@ async function purgedPageScenario(engine: BrainEngine, source: string, purge: ()
     'SELECT fact, expired_at IS NOT NULL AS expired FROM facts WHERE source_id = $1 ORDER BY fact', [source]);
 
   await write('put_page', { slug: OTHER, content: person('Dan Example', 'Dan notes.') });
+  await write('put_page', { slug: SHELVED, content: person('Erin Example', 'Erin notes.') });
   await write('put_page', { slug: SLUG, content: person('Carol Example', 'Carol notes.') });
   await write('remember', { fact: 'Carol Example harbor canarypurgedfact', entity: SLUG, provenance: 'fixture', visibility: 'world' });
   await write('remember', { fact: 'Carol Example harbor canaryheldelsewhere', entity: SLUG, provenance: 'fixture', visibility: 'world' });
   await write('remember', { fact: 'Dan Example harbor canaryotherpage', entity: OTHER, provenance: 'fixture', visibility: 'world' });
-  // A fact the live page OTHER holds about SLUG.
+  await write('remember', { fact: 'Carol Example harbor canarynoholder', entity: SLUG, provenance: 'fixture', visibility: 'world' });
+  await write('remember', { fact: 'Carol Example harbor canaryshelvedholder', entity: SLUG, provenance: 'fixture', visibility: 'world' });
+  await write('ontology_propose', { entity: OTHER, dimension: 'employer', value: 'harbor canaryobservation', source: SLUG, confidence: 0.9, visibility: 'world' });
+  // Facts about SLUG held by the live page OTHER, by no page, and by SHELVED (soft-deleted below, still restorable).
   await fixture(engine, "UPDATE facts SET source_markdown_slug = $2 WHERE source_id = $1 AND fact LIKE '%canaryheldelsewhere'", [source, OTHER]);
-  expect((await facts()).map(f => f.expired)).toEqual([false, false, false]);
+  await fixture(engine, "UPDATE facts SET source_markdown_slug = NULL WHERE source_id = $1 AND fact LIKE '%canarynoholder'", [source]);
+  await fixture(engine, "UPDATE facts SET source_markdown_slug = $2 WHERE source_id = $1 AND fact LIKE '%canaryshelvedholder'", [source, SHELVED]);
+  const shelvedRevision = async () => (JSON.parse(await write('get_page', { slug: SHELVED, include_deleted: true })) as { revision: string }).revision;
+  await write('delete_page', { slug: SHELVED, expected_revision: await shelvedRevision() });
+  expect((await facts()).every(f => !f.expired)).toBe(true);
 
   await write('delete_page', { slug: SLUG, expected_revision: await revision() });
   await fixture(engine, "UPDATE pages SET deleted_at = deleted_at - interval '100 hours' WHERE source_id = $1 AND slug = $2", [source, SLUG]);
@@ -93,12 +102,20 @@ async function purgedPageScenario(engine: BrainEngine, source: string, purge: ()
   expect((await engine.executeRaw('SELECT 1 FROM pages WHERE source_id = $1 AND slug = $2', [source, SLUG])).length).toBe(0);
 
   // The managed purge sweeps the facts filed on the page (page-purge.ts); the other purges keep the row, expired.
+  // The managed purge (page-purge.ts) sweeps the rows filed on the page and leaves facts held by no page alone.
   const expected = [
     { fact: 'Carol Example harbor canaryheldelsewhere', expired: false },
+    { fact: 'Carol Example harbor canarynoholder', expired: !opts.sweepsFiled },
     ...(opts.sweepsFiled ? [] : [{ fact: 'Carol Example harbor canarypurgedfact', expired: true }]),
+    { fact: 'Carol Example harbor canaryshelvedholder', expired: false },
     { fact: 'Dan Example harbor canaryotherpage', expired: false },
+    // The managed purge also deletes the observations sourced from the page; the other purges keep them.
+    ...(opts.sweepsFiled ? [] : [{ fact: expect.stringContaining('canaryobservation'), expired: false }]),
   ];
   expect(await facts()).toEqual(expected);
+  // The soft-deleted holder comes back with its fact about the purged page.
+  await write('restore_page', { slug: SHELVED, expected_revision: await shelvedRevision() });
+  expect((await facts()).find(f => f.fact.includes('canaryshelvedholder'))?.expired).toBe(false);
   const reads = async () => {
     const out = [['local', text(await local('recall', { entity: SLUG }))]];
     if (remoteReader) out.push(['remote', text(await remote('recall', { entity: SLUG }))]);

@@ -12,11 +12,11 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**A purged page's facts no longer come back.** When the 72-hour retention purge removed a soft-deleted page's row, it left the page's facts active, because facts have no foreign key to pages. Once the tombstone was gone, those facts showed up again for every reader, local and remote, and a new page written at the same slug picked them up. The purge now expires those facts in the same transaction as the page delete: the facts filed on the page, and the facts about it that no other live page holds. The rows are kept, expired, never deleted. Facts another live page holds about the slug stay active.
+**A purged page's facts no longer come back.** When the 72-hour retention purge removed a soft-deleted page's row, it left the page's facts active, because facts have no foreign key to pages. Once the tombstone was gone, those facts showed up again for every reader, local and remote, and a new page written at the same slug picked them up. The purge now expires those facts in the same transaction as the page delete: the facts filed on the page, and the facts about it that no page holds. The rows are kept, expired, never deleted. A fact another page holds about the slug stays active, even when that page is soft-deleted, so restoring it brings the fact back. An ontology observation about a live entity that was sourced from the purged page also stays active.
 
 ### Itemized changes
 
-- `src/core/facts/gone-page-facts.ts`: `expireGonePageFacts`, the one predicate for the facts a page takes with it.
+- `src/core/facts/gone-page-facts.ts`: `expireGonePageFacts`, the facts a purged page takes with it, as two updates that each use their slug index.
 - `src/core/engine-sql/pages.ts` (`purgeDeletedPages`, the bulk purge) and `src/core/persistence/purge-deleted.ts` (`expireRecordedTombstones`, the belief-ledger purge of a recorded source) call it in the purge transaction. The managed purge already sweeps the facts filed on the page.
 - Tests: `test/purge-expires-page-facts.test.ts` (PGLite and Postgres), which fails before the fix on the bulk and recorded purges.
 
