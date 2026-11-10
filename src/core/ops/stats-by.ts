@@ -73,6 +73,7 @@ async function countReadPolicy(ctx: OperationContext, scope: { sourceId?: string
  * `type` filter, and an empty list_pages names them.
  */
 export async function visiblePageTypes(ctx: OperationContext, scope: { sourceId?: string; sourceIds?: string[] }): Promise<Array<{ type: string; pages: number }>> {
+  if (scope.sourceIds?.length === 0) return [];
   const counts = await ctx.engine.countPagesBy({ ...scope, untrusted: await countReadPolicy(ctx, scope) });
   const byType = new Map<string, number>();
   for (const row of counts.bySourceType) if (row.type) byType.set(row.type, (byType.get(row.type) ?? 0) + row.pages);

@@ -17,6 +17,7 @@ identifiers and attribution are available in the pre-removal Git revision
 ### Itemized changes
 
 - `get_backlinks` with a `type` that other pages in the brain have, but no page linking to this one has, now returns the normal empty answer plus a note listing the types the linking pages do have. Before, it refused with `unknown type`, so an agent walking several accounts by type was refused once per account. A type no page has is still refused, and the refusal now also lists the brain's own page types. For a remote caller, both checks count only pages that caller can read: a type found only on private pages, pages whose readers leave the caller out, deleted pages or another source is treated as a type that does not exist and is never named.
+- `list_pages` with a `type` that no page has still returns the same empty list, but now adds a note naming the page types the brain does have, most common first (up to 12, with counts). Before, a guessed type such as `account` on a brain that files accounts as `crm` came back as a bare `[]`, which reads like "no such pages". A remote caller's note names only types of pages it can read.
 
 ## [0.60.651.0] - 2026-11-10
 
