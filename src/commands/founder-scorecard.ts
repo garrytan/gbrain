@@ -278,6 +278,7 @@ export async function runFounder(engine: BrainEngine, args: string[]): Promise<v
     const points: TrajectoryPoint[] = trajWire.points.map(p => ({
       fact_id: p.fact_id,
       valid_from: new Date(p.valid_from),
+      valid_until: null,
       metric: p.metric,
       value: p.value,
       unit: p.unit,

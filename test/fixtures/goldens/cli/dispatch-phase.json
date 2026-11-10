@@ -1725,6 +1725,25 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "skill-resolver": {
+        "hasSwitchCase": false,
+        "phase": "pre-connect",
+        "preConnectRules": [
+          {
+            "condition": "command === 'skill-resolver'",
+            "connectsEngine": false,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": false,
+            "unconditionalFor": [
+              "skill-resolver"
+            ]
+          }
+        ],
+        "thinClient": "none",
+        "thinClientRoutedSubcommands": []
+      },
       "skillify": {
         "hasSwitchCase": false,
         "phase": "pre-connect",

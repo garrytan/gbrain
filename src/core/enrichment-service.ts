@@ -34,6 +34,8 @@ import { isJunkEntityName } from './entity-name-quality.ts';
 import { followRetirement } from './entities/resolve.ts';
 import { maintenanceTransaction } from './persistence/attribution.ts';
 import { managedPersistenceEnabled } from './persistence/ownership.ts';
+import { remoteReadPolicySql, remoteTargetHidden } from './persistence/page-visibility.ts';
+import { resolveExcludePrivatePages } from './search/private-visibility.ts';
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
 import { deriveTrust, derivedMaintenanceTransaction, lowerDerivedPage, lowerDerivedPageIn, lowerToDerivedTier } from './trust/taint.ts';
 import { derivedGateConfig, derivedGateInput, recordTimelineFlag, timelineRowAllowed } from './trust/derived-gate.ts';
@@ -73,6 +75,8 @@ export interface EnrichmentTrustOptions {
   sourceId?: string;
   /** #6262: the caller's context; on a managed brain every write goes through the coordinator under its authority. */
   ctx?: OperationContext;
+  /** GBRA-431: the source page exists but the remote caller cannot read it, so it is treated exactly as a missing page (no taint read from it, no backlink to it). */
+  sourceHidden?: boolean;
 }
 
 export interface EnrichmentResult {
@@ -84,7 +88,7 @@ export interface EnrichmentResult {
    * Why nothing was written: the page is retired and its superseded_by / merged_into chain has no live target (B-9),
    * or both this entity's slug and its hash-tagged slug hold pages that name another entity.
    */
-  skipped_reason?: 'retired_page_unfollowable' | 'entity_slug_taken';
+  skipped_reason?: 'retired_page_unfollowable' | 'entity_slug_taken' | 'page_not_found';
   tier: 1 | 2 | 3;
   backlinkCreated: boolean;
   timelineAdded: boolean;
@@ -224,7 +228,7 @@ async function planEntity(
   const trusted = opts?.trusted === true;
   const scope = opts?.sourceId ? { sourceId: opts.sourceId } : undefined;
   // #5575 I2: a stub and its timeline row restate the source page's mention, so they carry its taint (capped at agent_written).
-  const derivation = await deriveTrust(engine, [{ table: 'pages', sourceId, slug: request.sourceSlug }], { channel: 'derive:enrichment' });
+  const derivation = await deriveTrust(engine, [{ table: 'pages', sourceId, slug: request.sourceSlug, hidden: opts?.sourceHidden === true }], { channel: 'derive:enrichment' });
   const ctx = opts?.ctx;
   // #6262: a managed brain refuses direct writes, so each one goes through the coordinator under the caller's authority.
   const managedBrain = await managedPersistenceEnabled(engine);
@@ -232,7 +236,9 @@ async function planEntity(
   // G6: the direct branch below writes the database first (and falls back to a raw page write), so a git-canonical source refuses here.
   if (!managedBrain) await assertUnmanagedCanonicalWriter(engine, 'extract_entities', { sourceId });
   // 1. Count existing mentions for tier auto-escalation
-  const { mentionCount, mentionSources } = await countMentions(engine, request.entityName, opts?.sourceId);
+  // GBRA-431: a remote caller's count covers only the pages it can read.
+  const { mentionCount, mentionSources } = await countMentions(engine, request.entityName, opts?.sourceId,
+    ctx && ctx.remote !== false && await resolveExcludePrivatePages(engine, ctx.remote));
 
   // 2. Determine tier (auto-escalate based on mentions)
   const suggestedTier = suggestTier(mentionCount, mentionSources, request.context);
@@ -240,7 +246,13 @@ async function planEntity(
   const tierEscalated = suggestedTier < (request.tier || 3); // lower tier number = higher importance
 
   // 3. Check if entity page exists
+  // GBRA-431: a remote caller never writes onto, or learns anything from, an entity page it cannot read: the first
+  // such page met while resolving the slug skips this entity as not found, under the slug its name maps to.
+  const hidden = async (at: string, page: unknown) => page !== null && ctx !== undefined && await remoteTargetHidden(engine, ctx.remote, sourceId, at);
+  const notFound = (): EnrichmentResult => ({ slug: candidateSlug, action: 'skipped', skipped_reason: 'page_not_found', tier, backlinkCreated: false,
+    timelineAdded: false, mentionCount, mentionSources, suggestedTier, tierEscalated });
   let existingPage = await engine.getPage(slug, scope);
+  if (await hidden(slug, existingPage)) return notFound();
   // F8: a page whose title maps to this slug base names this entity; any other page at the slug may name another one.
   const namesEntity = (title: string | undefined) => entitySlugBase(title ?? '') === base;
   if (!existingPage || !namesEntity(existingPage.title)) {
@@ -250,6 +262,7 @@ async function planEntity(
     if (legacy !== candidateSlug && !/^(people|companies)\/$/.test(legacy)) {
       const legacySlug = await engine.resolveSlugWithAlias(legacy, sourceId);
       const legacyPage = await engine.getPage(legacySlug, { sourceId });
+      if (await hidden(legacySlug, legacyPage)) return notFound();
       // The legacy slug is lossy (José -> people/jos), so only reuse a page that names this entity.
       const same = (t: string) => t.normalize('NFC').trim().toLowerCase();
       if (legacyPage && same(legacyPage.title ?? '') === same(request.entityName)) { slug = legacySlug; existingPage = legacyPage; legacyFound = true; }
@@ -259,6 +272,7 @@ async function planEntity(
     if (!legacyFound && !existingPage && untagged !== candidateSlug) {
       const untaggedSlug = await engine.resolveSlugWithAlias(untagged, sourceId);
       const untaggedPage = await engine.getPage(untaggedSlug, scope);
+      if (await hidden(untaggedSlug, untaggedPage)) return notFound();
       if (untaggedPage && namesEntity(untaggedPage.title)) { slug = untaggedSlug; existingPage = untaggedPage; legacyFound = true; }
     }
     // An escaped slug (Aux -> companies/aux-company) can be another entity's natural slug, and a natural slug can be
@@ -271,6 +285,7 @@ async function planEntity(
       const tagged = `${prefix}/${entitySegment(base, request.entityType, true)}`;
       const taggedSlug = tagged === candidateSlug ? null : await engine.resolveSlugWithAlias(tagged, sourceId);
       const taggedPage = taggedSlug === null ? null : await engine.getPage(taggedSlug, scope);
+      if (taggedSlug !== null && await hidden(taggedSlug, taggedPage)) return notFound();
       if (taggedSlug === null || (taggedPage && !namesEntity(taggedPage.title))) {
         return { slug, action: 'skipped', skipped_reason: 'entity_slug_taken', tier, backlinkCreated: false, timelineAdded: false,
           mentionCount, mentionSources, suggestedTier, tierEscalated };
@@ -281,7 +296,7 @@ async function planEntity(
   }
   // B-9: a retired page (canonical: false, superseded_by) answers through its canonical page, as fact resolution does (#6898).
   if (existingPage) {
-    const live = await followRetirement(engine, sourceId, slug);
+    const live = await followRetirement(engine, sourceId, slug, ctx && ctx.remote !== false ? `AND ${await remoteReadPolicySql(engine, 'p')}` : '');
     if (!live) {
       return { slug, action: 'skipped', skipped_reason: 'retired_page_unfollowable', tier, backlinkCreated: false, timelineAdded: false,
         mentionCount, mentionSources, suggestedTier, tierEscalated };
@@ -377,7 +392,7 @@ async function planEntity(
 
   // 5. Add backlink from entity to source
   let backlinkCreated = false;
-  try {
+  if (!opts?.sourceHidden) try {
     await engine.addLink(slug, request.sourceSlug, `Entity mention from ${request.sourceSlug}`, undefined, undefined, undefined, undefined, opts?.sourceId ? { fromSourceId: opts.sourceId, toSourceId: opts.sourceId } : undefined); // gbrain-allow-direct-insert: auto-link reconciliation triggered by entity reference in source markdown
     backlinkCreated = true;
   } catch {
@@ -435,7 +450,7 @@ export async function enrichEntities(
     if (config?.throttle !== false) {
       await waitForCapacity({ maxAttempts: 5 }); // shorter timeout for batch items
     }
-    const plan = () => planEntity(engine, req, { trusted: config?.trusted, sourceId: config?.sourceId, ctx: config?.ctx });
+    const plan = () => planEntity(engine, req, { trusted: config?.trusted, sourceId: config?.sourceId, ctx: config?.ctx, sourceHidden: config?.sourceHidden });
     let step: EnrichmentResult | ManagedEntity;
     try {
       step = await plan();
@@ -561,9 +576,10 @@ async function countMentions(
   engine: BrainEngine,
   entityName: string,
   sourceId?: string,
+  excludePrivate = false,
 ): Promise<{ mentionCount: number; mentionSources: string[] }> {
   try {
-    const results = await engine.searchKeyword(entityName, { limit: 100, ...(sourceId ? { sourceId } : {}) });
+    const results = await engine.searchKeyword(entityName, { limit: 100, ...(sourceId ? { sourceId } : {}), ...(excludePrivate ? { excludePrivate } : {}) });
     // Derive sources from slug prefixes since SearchResult has no metadata.skill
     const sources = new Set<string>();
     for (const r of results) {
