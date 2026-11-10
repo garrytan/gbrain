@@ -10,6 +10,20 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.641.0] - 2026-11-10
+
+**Facts, timeline entries, tags and ontology observations now follow the page they are about, so a remote caller who cannot read a page learns nothing about it from fact reads, and a deleted page's facts, timeline and tags stay hidden from everyone until it is restored.** Before this, a fact saved on an open page about a page with `readable_by` or `visibility: private` still reached remote callers through recall, ontology_get, volunteer_chronicle, delta, find_trajectory, hot memory and the entity card, and a soft-deleted page's facts, timeline rows and tags kept answering every reader. Recorded-time reads (get_page and get_versions with known_as_of), plain get_versions with include_body, and delta's belief changes now also keep a quarantined page's bodies and claims from remote callers, including a page quarantined only by a later write and a version history that spans several sources. Nothing is deleted or expired, so restore_page brings every row back as it was. A new page written at a deleted page's slug still shows the deleted page's facts, and a purged page's facts still come back, as before; both are follow-up work.
+
+### Itemized changes
+
+- `src/core/search/private-visibility.ts`: `privateFactFilterForCaller` and `privateEntityFilterForCaller` add the entity-page read gate to the provenance-page gate; recall, the entity card, contested claims, attribution, saved-fact matching, entity facts and the proactive brief use it.
+- `src/core/eligibility/sql.ts`: `deletedPageProjectionHiddenSql` hides facts on or about a soft-deleted page, and that page's takes and timeline rows, in every projection read; fact list reads, ontology reads and the unattributed-facts review list apply it even without a read policy.
+- `src/core/ops/tags.ts`: `get_tags` reads live pages only, for local callers too.
+- `src/core/ops/get-page-projection.ts`, `admin.ts`, `known-as-of.ts`: `historyQuarantine` gives each stored version the quarantine view of its own page (quarantined now or in that version), so a remote caller gets no body for it.
+- `src/core/belief/history.ts`, `changes.ts`: a quarantined page's fact and take events and fence claims stay out of a remote caller's belief history and delta.
+- `src/core/persistence/page-prepare.ts`: a put over a soft-deleted page takes its tags from its own content and does not write the deleted page's database-only timeline rows into the new page's first version.
+- Tests: `test/fact-reads-page-access.test.ts` (new), `test/recorded-read-gate.test.ts` (new cases 4 to 7), `test/get-tags-remote-privacy.test.ts`, on PGLite and Postgres.
+
 ## [0.60.640.0] - 2026-11-10
 
 **The skill resolver's hook lane is faster and safer at its 50 ms deadline, offers skills again after a Codex compaction, supports Pi and Cursor, and takes per-harness settings.** The hook starts its worker first and skips the CLI dispatcher, so the worker bundle drops from 172 KB to 62 KB and the lane's p90 drops from 58.9 ms to 38.1 ms on a 2-CPU machine (0 of 40 turns over 50 ms, was 7). A turn the deadline ends mid-commit now removes its session temp file and releases the session lease. The resolver stays off by default, lexical-only and fail-open.

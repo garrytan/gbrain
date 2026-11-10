@@ -584,7 +584,7 @@ async function assembleCard(
   const visibility = remote ? (['world'] as ('private' | 'world')[]) : undefined;
   // Facts saved about this entity may sit under a sibling page or the bare subject slug (siblings.ts).
   const factSlugs = await factEntitySlugs(engine, sourceId, pageSlug, { excludePrivate }).catch(() => [pageSlug]);
-  const { privatePagesFilterForCaller, privateLinkOriginFilterForCaller, privateProvenanceFilterFragment } = await import('../search/private-visibility.ts');
+  const { privatePagesFilterForCaller, privateLinkOriginFilterForCaller, privateFactFilterForCaller } = await import('../search/private-visibility.ts');
   const inboundPrivacy = (excludePrivate
     ? ` AND ${privatePagesFilterForCaller('f')} AND ${privateLinkOriginFilterForCaller('l')}`
     : '') + ` AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${remote ? ' AND lo.source_id = $2' : ''}))`;
@@ -656,7 +656,7 @@ async function assembleCard(
         `SELECT COUNT(*) AS n
            FROM facts
           WHERE source_id = $1 AND entity_slug = ANY($2::text[])
-            AND expired_at IS NULL${remote ? ` AND visibility = 'world'` : ''}${excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}
+            AND expired_at IS NULL${remote ? ` AND visibility = 'world'` : ''}${excludePrivate ? ` AND ${privateFactFilterForCaller('facts')}` : ''}
             AND ${projectionEligibleSql('facts', 'facts', eligibility)}`,
         [sourceId, factSlugs],
       )

@@ -907,6 +907,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted page identity changed.');
   const observedRevision = snapshot?.revision ?? null;
   const activePack = pack?.manifest;
+  const replacesTombstone = snapshot?.page.deleted_at != null && (row.operation === 'put_page' || row.operation === 'capture');
   if (row.operation === 'put_page' && snapshot && !snapshot.page.deleted_at && typeof p.content === 'string'
     && `${snapshot.page.compiled_truth}\n${snapshot.page.timeline ?? ''}`.trim()) {
     const incoming = parseMarkdown(p.content, row.slug, { activePack });
@@ -925,7 +926,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   let content = edited?.content ?? preparedIntent?.content ?? p.content as string;
   const privateRequest = privateRequestGuarded(row.operation, p.kind) && typeof content === 'string' ? readPrivateRequest(content, () => parseMarkdown(content as string, row.slug, { activePack }).frontmatter) : null;
   if (privateRequest) assertPrivateRequestAllowed(row, content as string, privateRequest.frontmatter);
-  let versionTags: string[] | undefined = preparedIntent?.tags;
+  let versionTags: string[] | undefined = replacesTombstone && typeof content === 'string' ? parseMarkdown(content, row.slug, { activePack }).tags : preparedIntent?.tags;
   // A replacement/restore publishes a live page. Only a recorded version may
   // explicitly restore a tombstone; legacy versions leave this state unchanged.
   let targetDeleted = false;
@@ -970,8 +971,8 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     }
   }
   const projected = !(options.unprojected || row.operation === 'remember' || row.operation.startsWith('takes_') || (row.operation === 'extract_facts' && p.kind === 'managed_facts_entity'));
-  const writer = (row.operation === 'put_page' || row.operation === 'edit_page') && p.kind !== 'managed_maintenance_page'
-    && (preparedIntent !== undefined || typeof p.expected_revision === 'string') ? 'editing' : 'preserving';
+  const writer = replacesTombstone || ((row.operation === 'put_page' || row.operation === 'edit_page') && p.kind !== 'managed_maintenance_page'
+    && (preparedIntent !== undefined || typeof p.expected_revision === 'string')) ? 'editing' : 'preserving';
   // #5969 (D3): only an ordinary put_page intent carries a timeline section; every other writer keeps the shared policy.
   const timelinePolicy = row.operation === 'put_page' ? timelineWritePolicy(p, row.authority.remote, writer) : undefined;
   enterClaimStep(clock, 'timeline_policy', undefined, 'db');
@@ -979,7 +980,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     slug: row.slug, sourceId: row.source_id, content, prior: snapshot });
   // #5567: database-only timeline rows are written back into the page before
   // the no-op check, digest, rendering and chunking see the body.
-  if (projected && snapshot && typeof content === 'string') {
+  if (projected && snapshot && !replacesTombstone && typeof content === 'string') {
     const parsed = parseMarkdown(content,row.slug);
     enterClaimStep(clock, 'materialize_timeline', undefined, 'db');
     const { timeline, materialized } = await materializeTimeline(engine,parsed,row.slug,snapshot,writer,timelinePolicy);
