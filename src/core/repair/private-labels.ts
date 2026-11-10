@@ -226,6 +226,46 @@ async function planRestore(engine: BrainEngine, scope: RepairScope, selection: S
   return { counts: counts as Record<string, number>, entries, unreadable };
 }
 
+/**
+ * The windowDependents statement: (id, cleared_id, category) for each exposed page and the cleared page it is tied to, from
+ * the cleared pages ($1 ids, $2 source ids, $3 slugs, $4 comma-joined label keys). It never pairs every page with every
+ * cleared page: one scan of the window's sources lists each page's references (source_slug, event.depth, each
+ * derived_from slug without `.md`), and every tie is an equality join of those references, or of concept-provenance
+ * links through idx_links_to, to the cleared pages. The postimage is the pages table shadowed with the window's keys
+ * removed; its privacy rules read only candidate pages and the pages they name.
+ */
+export function dependentsSql(): string {
+  return `WITH cleared AS MATERIALIZED (
+      SELECT * FROM unnest($1::integer[], $2::text[], $3::text[], $4::text[]) AS c(id, source_id, slug, keys)),
+    refs AS MATERIALIZED (SELECT p.id, p.source_id, p.slug, p.deleted_at, r.kind, r.ref FROM pages p
+      CROSS JOIN LATERAL (SELECT 'source_slug' AS kind, p.frontmatter->>'source_slug' AS ref
+        UNION ALL SELECT 'depth', p.frontmatter->'event'->>'depth'
+        UNION ALL SELECT 'declared', regexp_replace(declared.slug, '\\.md$', '') FROM jsonb_array_elements_text(
+          CASE jsonb_typeof(p.frontmatter->'derived_from') WHEN 'array' THEN p.frontmatter->'derived_from'
+            WHEN 'string' THEN jsonb_build_array(p.frontmatter->'derived_from') ELSE '[]'::jsonb END) AS declared(slug)) r
+      WHERE p.source_id = ANY($2::text[]) AND r.ref IS NOT NULL),
+    hits AS MATERIALIZED (SELECT r.id, r.source_id, r.slug, r.deleted_at, r.kind, c.id AS cleared_id
+      FROM refs r JOIN cleared c ON c.source_id = r.source_id AND c.slug = r.ref),
+    provenance AS MATERIALIZED (SELECT l.from_page_id, x.cleared_id, x.source_id
+      FROM (SELECT c.id, c.id AS cleared_id, c.source_id FROM cleared c UNION ALL SELECT h.id, h.cleared_id, h.source_id FROM hits h WHERE h.kind = 'source_slug') x
+      JOIN links l ON l.to_page_id = x.id WHERE l.link_source = 'concept-provenance' AND l.link_type = 'synthesized_from'),
+    ties AS (SELECT h.id, h.cleared_id FROM hits h WHERE h.deleted_at IS NULL
+      UNION ALL SELECT r.id, h.cleared_id FROM hits h JOIN refs r ON r.source_id = h.source_id AND r.kind = 'depth' AND r.ref = h.slug
+        WHERE h.kind = 'declared' AND r.deleted_at IS NULL
+      UNION ALL SELECT p.id, t.cleared_id FROM provenance t JOIN pages p ON p.id = t.from_page_id AND p.source_id = t.source_id AND p.deleted_at IS NULL),
+    candidates AS MATERIALIZED (SELECT DISTINCT t.id, t.cleared_id FROM ties t WHERE NOT EXISTS (SELECT 1 FROM cleared x WHERE x.id = t.id)),
+    public_after AS MATERIALIZED (WITH pages AS NOT MATERIALIZED (SELECT pg.id, pg.source_id, pg.slug, pg.type, pg.deleted_at,
+          CASE WHEN c.id IS NULL THEN pg.frontmatter ELSE pg.frontmatter - string_to_array(c.keys, ',') END AS frontmatter
+        FROM pages pg LEFT JOIN cleared c ON c.id = pg.id)
+      SELECT after_clear.id FROM (SELECT a.id, a.source_id, a.slug, a.type, a.frontmatter FROM (SELECT DISTINCT id FROM candidates) k
+        JOIN pages a ON a.id = k.id OFFSET 0) after_clear WHERE ${privacyPartSql('after_clear')})
+    SELECT cand.id, cand.cleared_id, CASE WHEN p.type = 'event' AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%' THEN 'life_chronicle'
+        WHEN p.type = 'atom' THEN 'atom' WHEN p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL THEN 'concept' ELSE 'derived_from' END AS category
+      FROM candidates cand JOIN pages p ON p.id = cand.id
+      WHERE cand.id IN (SELECT id FROM public_after) AND NOT ${privacyPartSql('p')}
+      ORDER BY cand.id, cand.cleared_id`;
+}
+
 type Dependents = { derived_from: number; atom: number; concept: number; life_chronicle: number };
 
 /**
@@ -242,30 +282,9 @@ async function windowDependents(engine: BrainEngine, window: Approved[]): Promis
   const clears = window.filter(entry => entry.mode === 'clear');
   if (!clears.length) return { counts, exposes };
   await readHonorAliases(engine);
-  const rows = await engine.executeRaw<{ id: number; cleared_id: number; category: keyof Dependents }>(`WITH cleared AS (
-      SELECT * FROM unnest($1::integer[], $2::text[], $3::text[], $4::text[]) AS c(id, source_id, slug, keys)),
-    candidates AS (SELECT DISTINCT p.id, c.id AS cleared_id FROM pages p JOIN cleared c ON c.source_id = p.source_id
-      WHERE p.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM cleared x WHERE x.id = p.id) AND (
-        p.frontmatter->>'source_slug' = c.slug OR p.frontmatter->'event'->>'depth' = c.slug
-        OR (jsonb_typeof(p.frontmatter->'derived_from') IN ('array', 'string') AND c.slug = ANY(ARRAY(SELECT regexp_replace(declared.slug, '\\.md$', '')
-          FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(p.frontmatter->'derived_from') = 'array' THEN p.frontmatter->'derived_from'
-            ELSE jsonb_build_array(p.frontmatter->'derived_from') END) AS declared(slug))))
-        OR EXISTS (SELECT 1 FROM pages o WHERE o.source_id = c.source_id AND o.slug = p.frontmatter->'event'->>'depth'
-          AND jsonb_typeof(o.frontmatter->'derived_from') IN ('array', 'string') AND c.slug = ANY(ARRAY(SELECT regexp_replace(declared.slug, '\\.md$', '')
-            FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(o.frontmatter->'derived_from') = 'array' THEN o.frontmatter->'derived_from'
-              ELSE jsonb_build_array(o.frontmatter->'derived_from') END) AS declared(slug))))
-        OR EXISTS (SELECT 1 FROM links l JOIN pages a ON a.id = l.to_page_id WHERE l.from_page_id = p.id AND l.link_source = 'concept-provenance'
-          AND l.link_type = 'synthesized_from' AND (a.id = c.id OR (a.source_id = c.source_id AND a.frontmatter->>'source_slug' = c.slug)))))
-    SELECT cand.id, cand.cleared_id, CASE WHEN p.type = 'event' AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%' THEN 'life_chronicle'
-        WHEN p.type = 'atom' THEN 'atom' WHEN p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL THEN 'concept' ELSE 'derived_from' END AS category
-      FROM candidates cand JOIN pages p ON p.id = cand.id
-      WHERE NOT ${privacyPartSql('p')} AND cand.id IN (
-        WITH pages AS NOT MATERIALIZED (SELECT pg.id, pg.source_id, pg.slug, pg.type, pg.deleted_at,
-            CASE WHEN c.id IS NULL THEN pg.frontmatter ELSE pg.frontmatter - string_to_array(c.keys, ',') END AS frontmatter
-          FROM pages pg LEFT JOIN cleared c ON c.id = pg.id)
-        SELECT after_clear.id FROM pages after_clear WHERE after_clear.id IN (SELECT id FROM candidates) AND ${privacyPartSql('after_clear')})
-      ORDER BY cand.id`,
-    [clears.map(entry => entry.page_id), clears.map(entry => entry.source_id), clears.map(entry => entry.slug), clears.map(entry => Object.keys(entry.labels).sort().join(','))], bounded);
+  const rows = await engine.executeRaw<{ id: number; cleared_id: number; category: keyof Dependents }>(dependentsSql(),
+    [clears.map(entry => entry.page_id), clears.map(entry => entry.source_id), clears.map(entry => entry.slug), clears.map(entry => Object.keys(entry.labels).sort().join(','))],
+    { ...bounded, jitOff: true, prepare: false });
   const counted = new Set<number>();
   for (const row of rows) {
     const id = Number(row.id);
