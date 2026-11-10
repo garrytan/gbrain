@@ -84,6 +84,7 @@ export function servesUnreadable(error: string, harness: string): OperationError
 /** The refusal for a one-person setup that would write an unbound connection on a brain that serves several people. */
 export function servesOneRefusal(status: ServesStatus | null, harness: string, entry: EntryBinding = { member: null, previous: null }): OperationError | null {
   if (!status || status.serves !== 'several' || status.stdio_member || (entry.member && status.enabled_members.includes(entry.member))) return null;
+  if (!entry.member && entry.previous) return null;
   const why = status.from === 'config' ? 'config access.serves is several' : `it has ${status.enabled_members.length} enabled members (${status.enabled_members.join(', ')})`;
   const argv = ['gbrain', 'setup', harness, '--serves', 'several', '--members', status.enabled_members.join(',') || '<id,...>'];
   return opError('setup_serves_several',

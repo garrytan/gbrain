@@ -429,6 +429,43 @@ describe('gbrain setup --serves (spawned, PGLite)', () => {
     expect(await stdioKey(b)).toBe('');
   }, 360_000);
 
+  test('codex keeps an entry member on a bare re-run and --no-stdio-member removes it on a several-person brain; a plugin-served harness and serve on a shared host refuse the flag', async () => {
+    const b = box();
+    await brainWithPages(b);
+    for (const m of ROSTER) expect((await gbrain(b, ['access', 'member', 'add', m])).exitCode).toBe(0);
+    const codexArgs = () => (Bun.TOML.parse(readFileSync(join(b.home, '.codex', 'config.toml'), 'utf8')) as any).mcp_servers.gbrain.args as string[];
+    expect((await setup(b, ['codex', '--stdio-member', 'alice-example'])).exitCode).toBe(0);
+    expect(codexArgs().slice(-2)).toEqual(['--stdio-member', 'alice-example']);
+    const rerun = await setup(b, ['codex', '--json']);
+    expect(rerun.exitCode).toBe(0);
+    expect(rerun.doc.serves.stdio).toMatchObject({ member: 'alice-example', action: 'keep' });
+    expect(codexArgs().slice(-2)).toEqual(['--stdio-member', 'alice-example']);
+    const removed = await setup(b, ['codex', '--no-stdio-member', '--json']);
+    expect(removed.exitCode).toBe(0);
+    expect(removed.doc.serves.stdio).toMatchObject({ member: null, action: 'remove' });
+    expect(codexArgs()).not.toContain('--stdio-member');
+    expect(await stdioKey(b)).toBe('');
+
+    mkdirSync(join(b.home, '.claude'), { recursive: true });
+    writeFileSync(join(b.home, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'gbrain@gbrain': true } }));
+    const plugin = await gbrain(b, ['setup', 'claude-code', '--stdio-member', 'alice-example', '--gbrain-bin', b.bin]);
+    expect(plugin.exitCode).toBe(2);
+    expect(plugin.stderr).toContain("plugin serves this claude-code gbrain MCP server");
+    expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
+
+    const serveRefusals: Array<[string[], string, Record<string, string>]> = [
+      [['--stdio-member', 'alice-example', '--http'], 'binds a stdio serve only', {}],
+      [['--stdio-member', 'Alice Example'], 'needs a member id', {}],
+      [['--stdio-member', 'alice-example', '--stdio-member=bob-example'], 'was given 2 times', {}],
+      [['--stdio-member', 'alice-example'], 'OpenClaw is installed on this host', { PATH: `${fakeOpenclaw(b)}:${process.env.PATH}` }],
+    ];
+    for (const [args, says, env] of serveRefusals) {
+      const r = await gbrain(b, ['serve', ...args], env);
+      expect(r.exitCode).not.toBe(0);
+      expect(r.stderr).toContain(says);
+    }
+  }, 360_000);
+
   test('--stdio-member is checked against --members when this run labels them, and needs a brain otherwise; the engine no longer matters', () => {
     const outside = servesPreflight({ serves: 'several', members: 'alice-example,bob-example', stdioMember: 'carol-example', dryRun: false }, '/nonexistent/gbrain', 'claude-code', false, false);
     expect(outside).toMatchObject({ code: 'invalid_params' });

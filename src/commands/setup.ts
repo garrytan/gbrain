@@ -511,6 +511,7 @@ export async function runSetup(args: string[]): Promise<number> {
     if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags.name), out);
 
     const pluginOwner = flags.name === 'gbrain' ? claudePluginProvidesName(claudeUserSettingsPath(), 'gbrain') : null;
+    if (pluginOwner && flags.stdioMember !== undefined) return refuse(pluginBindingRefusal(pluginOwner, 'claude-code', flags.stdioMember), out);
     const { dataDir, liveOwner } = liveOwnerOf(cfg, prior?.status === 'installed' && (found.mcp.state === 'current' || found.mcp.state === 'owned'));
     const target: Target = {
       brain: !cfg ? { kind: 'new-local-pglite', path: gbrainPath('brain.pglite'), config_dir: brainHome }
@@ -691,6 +692,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags.name, 'codex'), out);
 
     const pluginOwner = codexPluginProvidesName(paths.configPath, flags.name);
+    if (pluginOwner && flags.stdioMember !== undefined) return refuse(pluginBindingRefusal(pluginOwner, 'codex', flags.stdioMember), out);
     const { dataDir, liveOwner } = liveOwnerOf(cfg, prior?.status === 'installed' && (found.mcp.state === 'current' || found.mcp.state === 'owned'));
     const target: Target = {
       brain: !cfg ? { kind: 'new-local-pglite', path: gbrainPath('brain.pglite'), config_dir: brainHome }
@@ -826,6 +828,12 @@ async function runRemove(flags: SetupFlags, receipt: ClaudeSetupReceipt | null, 
 }
 
 /** The brain-first block for this run: decided from flags, env and the ledger, then applied (or previewed under --dry-run). */
+/** GST-363: a plugin serves this harness's MCP server, and setup never writes the plugin's launch arguments, so a member named here would bind nothing. */
+function pluginBindingRefusal(plugin: string, harness: SetupHarnessId, member: string): OperationError {
+  return opError('invalid_params', `--stdio-member ${member} refused: the '${plugin}' plugin serves this ${harness} gbrain MCP server, and setup does not write the plugin's launch arguments, so its sessions would not read as ${member}; nothing was written.`,
+    `Disable the '${plugin}' plugin and run gbrain setup ${harness} --stdio-member ${member}, or serve this brain over HTTP with one key per person (gbrain serve --http; for ${member}: gbrain auth create ${member}-key --member ${member}).`);
+}
+
 /** GST-363: the --stdio-member the harness entry will carry: the one named, none for --no-stdio-member, else the one setup's own entry carries now. */
 function entryBinding(flags: SetupFlags, previous: string | undefined): EntryBinding {
   return { member: flags.noStdioMember ? null : flags.stdioMember ?? previous ?? null, previous: previous ?? null };

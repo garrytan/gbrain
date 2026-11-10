@@ -14,7 +14,7 @@ export const help: CliHelpSpec = {
     { name: '--access', type: 'enum', values: ['full', 'read-only'], desc: 'stdio only: read-only exposes read-scoped, non-mutating operations.' },
     { name: '--source-guard', type: 'boolean', desc: 'stdio only: refuse writes unless the source binding is deliberate or unambiguous.' },
     { name: '--stdio-idle-timeout', type: 'number', desc: 'stdio only: exit after this many idle seconds (0 = never).' },
-    { name: '--stdio-member', type: 'string', desc: 'stdio only: answer as this enabled access member (written into one harness entry by gbrain setup claude-code|codex --stdio-member <id>). Wins over config mcp.stdio_member; a disabled or unknown member reads as nobody.' },
+    { name: '--stdio-member', type: 'string', desc: 'stdio only: answer as this enabled access member (written into one harness entry by gbrain setup claude-code|codex --stdio-member <id>). Wins over config mcp.stdio_member; a disabled or unknown member reads as nobody. Refused where OpenClaw or Hermes is installed.' },
     { name: '--fail-fast', type: 'boolean', desc: 'Exit non-zero with the classified error when the database is unreachable (no degraded mode).' },
     { name: '--cli-socket', type: 'boolean', desc: 'Postgres only, off by default (or config serve.cli_socket): answer this user\'s CLI search, query, get and recall over a private Unix socket in $GBRAIN_HOME/.gbrain/run/ instead of a cold connection per call.' },
     { name: '--port', type: 'number', desc: 'HTTP port (default 3131).' },

@@ -182,9 +182,12 @@ as that member, including pages only that member may read. Other harnesses on th
 machine, and other machines that open the same brain (PGLite or Postgres), are
 unchanged. The member must be enabled (or one of `--members` in the same run).
 Re-runs, `gbrain post-upgrade` and doctor fixes keep the entry's member and never
-add one; `--no-stdio-member` removes it. Setup refuses `--stdio-member` where
-OpenClaw or Hermes is installed, because those harnesses serve several people: a
-bot that answers several people runs `gbrain serve --http` with each member's key.
+add one; `--no-stdio-member` removes it, also on a brain that serves several
+people. Setup refuses `--stdio-member` where OpenClaw or Hermes is installed,
+because those harnesses serve several people, and `gbrain serve` refuses to start
+with the flag there too: a bot that answers several people runs
+`gbrain serve --http` with each member's key. Setup also refuses it when a gbrain
+plugin serves the harness, since setup does not write the plugin's launch arguments.
 Setup never writes config `mcp.stdio_member`; set by hand, it still binds every
 stdio session on the brain that starts without `--stdio-member`.
 

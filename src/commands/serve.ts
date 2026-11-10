@@ -301,6 +301,10 @@ async function serveBrain(
     throw new Error('--stdio-member binds a stdio serve only; over HTTP bind each key to its person with ' +
       'gbrain auth create <name> --member <id> (or gbrain auth rescope --token <name> --member <id>)');
   }
+  const sharedHarness = stdioMember !== undefined ? (await import('./setup-serves.ts')).sharedStdioHarness() : null;
+  if (sharedHarness) {
+    throw new Error(`--stdio-member refused: ${sharedHarness} is installed on this host, and its sessions serve several people, so serve does not start a stdio server bound to one member here; remove the flag from this harness entry (gbrain setup claude-code|codex --no-stdio-member) and give each person their own key over HTTP (gbrain serve --http with gbrain auth create <name> --member <id>)`);
+  }
 
   // --source-guard (plugin lanes, EV1): fail-closed write routing for
   // user-global serves whose cwd is meaningless (plugin snapshots). Write/

@@ -343,6 +343,9 @@ for (const kind of testBackends()) {
         expect({ isError: appended.isError, code: appended.json.code }).toEqual({ isError: false, code: undefined });
         const rows = await engine.executeRaw<{ member: string | null }>("SELECT authority->>'stdioMember' AS member FROM persistence_requests WHERE slug = $1 AND authority->>'stdioMember' IS NOT NULL", [ALICE_PAGE]);
         expect(rows.map(r => r.member)).toContain('alice-example');
+        expect((await call('get_write_request', { request_id: requestId }, 'alice-example')).isError).toBe(false);
+        expect((await call('get_write_request', { request_id: requestId }, 'bob-example')).isError).toBe(true);
+        expect((await call('get_write_request', { request_id: requestId })).isError).toBe(true);
       } finally {
         await engine.setConfig(STDIO_MEMBER_KEY, '');
       }
