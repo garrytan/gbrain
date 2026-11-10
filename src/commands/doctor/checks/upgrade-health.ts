@@ -163,20 +163,6 @@ export function checkSelfUpgradeHealth(restart?: RestartPlan | null): Check {
       }
     }
 
-    if (restart?.manual.length) {
-      const autopilot = restart.manual.find((m) => m.role === 'autopilot');
-      return {
-        name: 'self_upgrade_health',
-        status: 'warn',
-        message: `gbrain upgrade refuses on this host, so ${mode === 'auto' ? 'auto-upgrades' : 'upgrades'} cannot finish: ${restart.manual.map((m) => m.instruction).join(' ')} (${parts.join('; ')}).`,
-        fix: autopilot
-          ? agentFix(['gbrain', 'autopilot', '--install'], 'Runs autopilot under launchd, systemd or a gbrain cron line, which every upgrade restarts; the launcher that starts it now has to be retired first.', 'self_upgrade_health', {
-            ask_user: true, docs: 'docs/guides/upgrades-auto-update.md#restart',
-            user_message: `autopilot pid ${autopilot.pid} was started outside gbrain's autopilot service, so gbrain upgrade refuses on this host. May I run gbrain autopilot --install, which runs autopilot under launchd, systemd or a gbrain cron line so upgrades restart it, after you retire whatever starts it now? If that launcher starts autopilot again within 5 minutes of it exiting, gbrain config set self_upgrade.autopilot_launcher external keeps it and lets upgrades hand autopilot to it instead.`,
-          })
-          : agentFix(['gbrain', 'upgrade', '--restart-only', '--dry-run', '--json'], 'Read-only: lists every gbrain process on this host with the restart each one needs and the steps the upgrade cannot take.', 'self_upgrade_health', { docs: 'docs/guides/upgrades-auto-update.md#restart' }),
-      };
-    }
     // readRecent lists the current week before the previous one; order by ts.
     const recent = (readRecentSelfUpgrades(7) as SelfUpgradeAuditEvent[])
       .toSorted((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
@@ -201,6 +187,21 @@ export function checkSelfUpgradeHealth(restart?: RestartPlan | null): Check {
       };
     }
 
+    const blockers = (restart?.manual ?? []).filter((m) => m.role !== 'sync' && !(m.role === 'mcp' && m.argv[0] === 'kill'));
+    if (blockers.length) {
+      const autopilot = blockers.find((m) => m.role === 'autopilot');
+      return {
+        name: 'self_upgrade_health',
+        status: 'warn',
+        message: `gbrain upgrade refuses on this host: ${blockers.map((m) => m.instruction).join(' ')} (${parts.join('; ')}).`,
+        fix: autopilot
+          ? agentFix(['gbrain', 'autopilot', '--install'], 'Runs autopilot under launchd, systemd or a gbrain cron line, which every upgrade restarts; the launcher that starts it now has to be retired first.', 'self_upgrade_health', {
+            ask_user: true, docs: 'docs/guides/upgrades-auto-update.md#restart',
+            user_message: `autopilot pid ${autopilot.pid} was started outside gbrain's autopilot service, so gbrain upgrade refuses on this host. May I run gbrain autopilot --install, which runs autopilot under launchd, systemd or a gbrain cron line so upgrades restart it, after you retire whatever starts it now? If that launcher starts autopilot again within 5 minutes of it exiting, gbrain config set self_upgrade.autopilot_launcher external keeps it and lets upgrades hand autopilot to it instead.`,
+          })
+          : agentFix(['gbrain', 'upgrade', '--restart-only', '--dry-run', '--json'], 'Read-only: lists every gbrain process on this host with the restart each one needs and the steps the upgrade cannot take.', 'self_upgrade_health', { docs: 'docs/guides/upgrades-auto-update.md#restart' }),
+      };
+    }
     return { name: 'self_upgrade_health', status: 'ok', message: parts.join('; ') };
   } catch (e) {
     return {

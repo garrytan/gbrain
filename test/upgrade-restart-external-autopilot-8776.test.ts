@@ -14,6 +14,9 @@ import { checkSelfUpgradeHealth } from '../src/commands/doctor/checks/upgrade-he
 import { resolveAutopilotJob } from '../src/core/autopilot-paths.ts';
 import { parseSelfUpgradeConfigValue, SELF_UPGRADE_CONFIG_LEAVES } from '../src/core/self-upgrade.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { logSelfUpgrade } from '../src/core/audit/self-upgrade-audit.ts';
 
 const NEW = '0.60.400.0';
 const OLD = '0.60.390.0';
@@ -121,7 +124,8 @@ describe('doctor self_upgrade_health with the restart plan', () => {
     await withEnv({ GBRAIN_SELF_UPGRADE_MODE: 'auto' }, () => {
       const check = checkSelfUpgradeHealth(planRestart([autopilot()], ctx({ expected: PENDING_BUILD })));
       expect(check.status).toBe('warn');
-      expect(check.message).toContain('gbrain upgrade refuses on this host, so auto-upgrades cannot finish');
+      expect(check.message).toContain('gbrain upgrade refuses on this host: ');
+      expect(check.message).not.toContain('auto-upgrades cannot finish');
       expect(check.message).toContain('autopilot pid 30');
       expect(check.fix).toMatchObject({ ask_user: true, argv: ['gbrain', 'autopilot', '--install'] });
       expect(check.fix?.user_message).toContain('self_upgrade.autopilot_launcher external');
@@ -140,5 +144,28 @@ describe('doctor self_upgrade_health with the restart plan', () => {
       expect(checkSelfUpgradeHealth(null).message).toBe(plain);
       expect(checkSelfUpgradeHealth(planRestart([], ctx({ expected: PENDING_BUILD }))).message).toBe(plain);
     });
+  });
+test('an MCP server a harness started and a running sync do not warn: --stop-mcp and the sync finishing clear them', async () => {
+    await withEnv({ GBRAIN_SELF_UPGRADE_MODE: 'auto' }, () => {
+      const mcp: HostProcess = { pid: 40, ppid: null, role: 'mcp', version: OLD, started_ms: 1_000, ancestors: [99], args: ['serve'] };
+      const sync: HostProcess = { pid: 41, ppid: null, role: 'sync', version: OLD, started_ms: 1_000, ancestors: [98], args: ['sync'] };
+      const plan = planRestart([mcp, sync], ctx({ expected: PENDING_BUILD }));
+      expect(plan.manual.map(m => m.role)).toEqual(['mcp', 'sync']);
+      expect(checkSelfUpgradeHealth(plan).status).toBe('ok');
+    });
+  });
+
+  test('a held auto-upgrade is reported ahead of the restart warning', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-8776-held-'));
+    try {
+      await withEnv({ GBRAIN_HOME: dir, GBRAIN_AUDIT_DIR: join(dir, 'audit'), GBRAIN_SELF_UPGRADE_MODE: 'auto' }, () => {
+        logSelfUpgrade({ channel: 'autopilot', action: 'unsupported_runtime', current: '0.43.0', latest: '0.99.0', outcome: 'skipped', reason: 'gbrain 0.99.0 requires Bun >=9.0.0' });
+        const check = checkSelfUpgradeHealth(planRestart([autopilot()], ctx({ expected: PENDING_BUILD })));
+        expect(check.status).toBe('warn');
+        expect(check.message).toContain('Auto-upgrade to 0.99.0 held');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
