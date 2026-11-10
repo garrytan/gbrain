@@ -1,0 +1,248 @@
+{
+ "note": "Outputs of the Step 1 prototype lex() (gbrain-evals rank.ts). Product tokenizer must equal these exactly. cjk_inputs differ by design: the prototype keeps a CJK run as one token, the product splits CJK runs into overlapping bigrams.",
+ "vectors": [
+  {
+   "input": "Summarize the meeting notes and email the attendees",
+   "prototype": [
+    "summarize",
+    "meet",
+    "note",
+    "email",
+    "attendee"
+   ]
+  },
+  {
+   "input": "running tests, fixing builds; deployed services",
+   "prototype": [
+    "runn",
+    "test",
+    "fix",
+    "build",
+    "deploy",
+    "service"
+   ]
+  },
+  {
+   "input": "The QUICK brown fox jumps over the lazy dogs!",
+   "prototype": [
+    "quick",
+    "brown",
+    "fox",
+    "jump",
+    "lazy",
+    "dog"
+   ]
+  },
+  {
+   "input": "policies companies studies parties",
+   "prototype": [
+    "policy",
+    "company",
+    "study",
+    "party"
+   ]
+  },
+  {
+   "input": "boxes matches wishes buzzes quizzes",
+   "prototype": [
+    "box",
+    "match",
+    "wish",
+    "buzz",
+    "quizz"
+   ]
+  },
+  {
+   "input": "class bus analysis status gas",
+   "prototype": [
+    "class",
+    "bus",
+    "analysis",
+    "status",
+    "gas"
+   ]
+  },
+  {
+   "input": "is it a an the and or of to for in on at",
+   "prototype": []
+  },
+  {
+   "input": "meeting-ingestion brain_ops gbrain:briefing",
+   "prototype": [
+    "meet",
+    "ingestion",
+    "brain",
+    "ops",
+    "gbrain",
+    "brief"
+   ]
+  },
+  {
+   "input": "v1.2.3 2026-11-07 42 x 7z",
+   "prototype": [
+    "v1",
+    "2026",
+    "11",
+    "07",
+    "42",
+    "7z"
+   ]
+  },
+  {
+   "input": "Café résumé naïve façade",
+   "prototype": [
+    "café",
+    "résumé",
+    "naïve",
+    "façade"
+   ]
+  },
+  {
+   "input": "Привет мир, встреча завтра",
+   "prototype": [
+    "привет",
+    "мир",
+    "встреча",
+    "завтра"
+   ]
+  },
+  {
+   "input": "emoji 👍 test 🚀 launch",
+   "prototype": [
+    "emoji",
+    "test",
+    "launch"
+   ]
+  },
+  {
+   "input": "don't won't it's user's",
+   "prototype": [
+    "don",
+    "won",
+    "user"
+   ]
+  },
+  {
+   "input": "URL https://example.com/path?q=1&r=2",
+   "prototype": [
+    "url",
+    "http",
+    "example",
+    "com",
+    "path"
+   ]
+  },
+  {
+   "input": "CamelCaseWord snake_case_word kebab-case-word",
+   "prototype": [
+    "camelcaseword",
+    "snake",
+    "case",
+    "word",
+    "kebab",
+    "case",
+    "word"
+   ]
+  },
+  {
+   "input": "aa a bb b",
+   "prototype": [
+    "aa",
+    "bb"
+   ]
+  },
+  {
+   "input": "ingest ingested ingesting ingests",
+   "prototype": [
+    "ingest",
+    "ingest",
+    "ingest",
+    "ingest"
+   ]
+  },
+  {
+   "input": "shipping shipped ships ship",
+   "prototype": [
+    "shipp",
+    "shipp",
+    "ship",
+    "ship"
+   ]
+  },
+  {
+   "input": "ranked ranking ranks",
+   "prototype": [
+    "rank",
+    "rank",
+    "rank"
+   ]
+  },
+  {
+   "input": "  leading and trailing  ",
+   "prototype": [
+    "lead",
+    "trail"
+   ]
+  },
+  {
+   "input": "",
+   "prototype": []
+  },
+  {
+   "input": "please just also any all some them they their there here its",
+   "prototype": []
+  },
+  {
+   "input": "what which who how when where why",
+   "prototype": []
+  },
+  {
+   "input": "Ünïcödé ÀÉÎÕÜ",
+   "prototype": [
+    "ünïcödé",
+    "àéîõü"
+   ]
+  },
+  {
+   "input": "tabs\tand\nnewlines\r\nhere",
+   "prototype": [
+    "tab",
+    "newline"
+   ]
+  }
+ ],
+ "cjk_inputs": [
+  {
+   "input": "会议纪要整理",
+   "prototype": [
+    "会议纪要整理"
+   ]
+  },
+  {
+   "input": "meeting会议notes",
+   "prototype": [
+    "meeting会议note"
+   ]
+  },
+  {
+   "input": "東京の天気を調べて",
+   "prototype": [
+    "東京の天気を調べて"
+   ]
+  },
+  {
+   "input": "회의록 정리해줘",
+   "prototype": [
+    "회의록",
+    "정리해줘"
+   ]
+  },
+  {
+   "input": "API文档 update",
+   "prototype": [
+    "api文档",
+    "update"
+   ]
+  }
+ ]
+}

@@ -1065,8 +1065,9 @@ export async function requireWritablePage(
     sourceId: writeSource,
     includeDeleted: true,
   });
-  // GBRA-218: a page the remote caller cannot read under the member-access part answers exactly as a missing slug.
-  const hidden = !!writable && await remoteTargetHidden(ctx.engine, ctx.remote, writeSource, slug);
+  // GBRA-218 / GBRA-431: a page the remote caller cannot read answers exactly as a missing slug. A delegated subagent
+  // write keeps its own privacy refusal below.
+  const hidden = !!writable && await remoteTargetHidden(ctx.engine, ctx.remote, writeSource, slug, ctx.viaSubagent === true);
   if (writable && !hidden) {
     if (ctx.viaSubagent === true && ctx.auth && isPrivatePage(writable)
       && await resolveExcludePrivatePages(ctx.engine, ctx.remote)) {

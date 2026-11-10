@@ -56,6 +56,7 @@ import { GBrainError } from '../types.ts';
 import { isConfigTruthy } from '../config.ts';
 import { matchingCloseBracket } from '../llm-json.ts';
 import { TAKE_KIND_VALUES } from '../takes-fence.ts';
+import { publicBody } from '../mentions/aliases.ts';
 import { attributionChecksEnabled } from './attribution-checks.ts';
 import { downgradeAssistantOnlyHolders } from './propose-takes-attribution.ts';
 import { ProposeTakesFailures, PROPOSE_TAKES_HOLD_RUNS, type FailedPage } from './propose-takes-failures.ts';
@@ -1015,7 +1016,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
       try {
         proposals = await extractor({
           pagePath: page.slug,
-          pageBody: body,
+          pageBody: publicBody(body),
           existingTakes,
           modelHint: opts.model,
           // #4494: configurable output caps (see resolution above).
@@ -1067,6 +1068,9 @@ class ProposeTakesPhase extends BaseCyclePhase {
       failures.succeed(sourceId, page.slug, ch);
       llmHalt.reset();
       if (attributionChecks) proposals = downgradeAssistantOnlyHolders(proposals, body);
+      const fold = (text: string) => text.replace(/\s+/g, ' ').trim().toLowerCase();
+      const heldTakes = existingTakes.filter(take => take.holder !== 'world').map(take => fold(take.claim)).filter(claim => claim.length >= 12);
+      proposals = proposals.filter(p => !heldTakes.some(claim => fold(p.claim_text).includes(claim)));
 
       // Write proposals to take_proposals. #2138: the idempotency key is
       // per-CLAIM — take_proposals_idempotency_idx folds md5(claim_text) into

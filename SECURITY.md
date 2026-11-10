@@ -514,6 +514,11 @@ window):
 On exhaustion the server returns `429 Too Many Requests` with a
 `Retry-After` header.
 
+`gbrain serve --http` applies each bucket only when its env var is set
+(`GBRAIN_HTTP_RATE_LIMIT_IP=30 GBRAIN_HTTP_RATE_LIMIT_TOKEN=60` gives the
+defaults above); with neither set it does not rate-limit `/mcp`. The legacy
+bearer transport always applies the defaults.
+
 **Caveat for tunneled deployments (ngrok, Tailscale Funnel, Cloudflare
 Tunnel):** all requests share one egress IP, so the pre-auth IP bucket
 becomes effectively shared by all clients on that tunnel. The
@@ -570,8 +575,9 @@ forwarded-for headers and using the socket peer address.
 
 ### Body size cap
 
-Default 1 MiB, stream-counted (chunked transfers without
-`Content-Length` are still capped). Override:
+Default 4 MiB on `gbrain serve --http` and 1 MiB on the legacy bearer
+transport, stream-counted (chunked transfers without `Content-Length` are
+still capped). `GBRAIN_HTTP_MAX_BODY_BYTES` overrides both:
 
 ```bash
 GBRAIN_HTTP_MAX_BODY_BYTES=2097152 gbrain serve --http   # 2 MiB

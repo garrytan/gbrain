@@ -13,10 +13,12 @@
 # themselves from scripts/postgres-arm-weights.json.
 test/access-as.test.ts
 test/access-binding.test.ts
+test/access-federated-member-writes.test.ts
 test/access-folder-lock-order.test.ts
 test/access-folder-multiconn.test.ts
 test/access-folder-rules.test.ts
 test/access-folder-scoped-role.test.ts
+test/access-hidden-page-writes.test.ts
 test/access-member-facts.test.ts
 test/access-member-sweep.test.ts
 test/access-members.test.ts
@@ -65,6 +67,7 @@ test/contact-rows-drift-8109.test.ts
 test/conversation-facts-outcome-marker-purge-7778.test.ts
 test/conversation-facts-oversized-sidecar.test.ts
 test/conversation-facts-purged-claim-7438.test.ts
+test/cycle-world-fence-rows.test.ts
 test/cycle/derived-write-through-commit.test.ts
 test/cycle/dream-reverse-write-commit.test.ts
 test/cycle/synthesize-concepts-merge.test.ts
@@ -79,6 +82,7 @@ test/doctor-image-embedding-coverage.test.ts
 test/doctor-keyword-plan-6495.test.ts
 test/doctor-routing-skill-pack-source.test.ts
 test/doctor-sync-freshness-skill-pack-6076.test.ts
+test/edge-whitespace-twins.test.ts
 test/embed-once-per-content-version.serial.test.ts
 test/embed-stale-images-managed-6529.test.ts
 test/embedding-completion-atomic.serial.test.ts
@@ -86,6 +90,7 @@ test/engine-sql-facts-keyset.test.ts
 test/extract-all-stamp-intersection.serial.test.ts
 test/extract-atoms-input-truncated-6503.test.ts
 test/extract-atoms-raised-cap-drain-7391.test.ts
+test/extract-atoms-world-fence-rows.test.ts
 test/extract-endpoint-revision.serial.test.ts
 test/extract-entities-managed.test.ts
 test/extract-timeline-from-meetings-managed.test.ts
@@ -98,6 +103,7 @@ test/facts-entity-moved-7602.test.ts
 test/facts-insert-guards-7105.test.ts
 test/facts-publication-large-fence-6898.test.ts
 test/facts-subject-infer-7405.test.ts
+test/fence-absent-append-keeps-rows.test.ts
 test/fence-fact-append.test.ts
 test/fence-first-generation-8819.test.ts
 test/fence-repair-receipts.test.ts
@@ -145,6 +151,7 @@ test/import-frontmatter-key-order-5158.test.ts
 test/import-inline-chunk-keep.test.ts
 test/import-revision-concurrency.test.ts
 test/import-write-barrier.test.ts
+test/ingest-capture-keeps-readers.test.ts
 test/init-cold-home-embedding.test.ts
 test/keyword-statement-timeout-knob-6495.test.ts
 test/keyword-timeout-negative-cache-6495.test.ts
@@ -475,6 +482,7 @@ test/refresh-write-barrier.test.ts
 test/remediation-manual-only.test.ts
 test/remember-batch-entity-7432.test.ts
 test/repair-apply-pending-6543.test.ts
+test/repair-atom-fence-rows.test.ts
 test/repair-database-stop-gbra133.test.ts
 test/repair-embedding-effects.test.ts
 test/repair-failed-writes-conflict-6429.test.ts
@@ -488,6 +496,7 @@ test/repair-file-drift-provenance-gbra133.test.ts
 test/repair-frontmatter-keys-sweep-6454.test.ts
 test/repair-frontmatter.test.ts
 test/repair-ghost-database-ahead-gbra133.test.ts
+test/repair-lost-fence-rows.test.ts
 test/repair-quoted-markers-8059.test.ts
 test/repair-receipt-compaction.test.ts
 test/repair-rename-identity-6729.test.ts
@@ -576,6 +585,7 @@ test/sync-pass-stop-in-level-gbra133.test.ts
 test/sync-plain-directory-7973.test.ts
 test/sync-prescreen-both-delta-6712.test.ts
 test/sync-prescreen-drift-6712.test.ts
+test/sync-restored-file-purge.test.ts
 test/sync-slug-root-mode-6694.test.ts
 test/sync-staged-catchup.test.ts
 test/sync-status-failure-detail-6513.test.ts

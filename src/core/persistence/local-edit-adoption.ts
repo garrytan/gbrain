@@ -60,6 +60,7 @@ import { ledgerLocation, messageDigest, readLedger } from '../git/commit-ledger.
 import { adoptedBy, localEditAdoptionCommit, type GitCommitNote } from './effect-model.ts';
 import { claimOwner } from './claim-phase.ts';
 import type { PreparedMutation } from './coordinator.ts';
+import { EDGE_WHITESPACE } from '../edge-whitespace.ts';
 
 export const ADOPTED_CHANGE_REASON = 'adopted_local_edit';
 export const ADOPT_QUIET_KEY = 'persistence.adopt_quiet_ms';
