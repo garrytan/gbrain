@@ -43,6 +43,7 @@ import { factPreimages, recordConsolidationGeneration } from '../generations/ada
 export interface MaintenanceAuthority {
   writer: WriteAuthority;
   binding: WorktreeBinding | null;
+  guardedDatabaseOnly?: true;
   /** #5854: the job's publish wait (one wait per job, bounded by its deadline); a fresh 30 s budget when absent. */
   wait?: MaintenanceWriteWait;
 }
@@ -85,6 +86,17 @@ export async function maintenanceCallerPreflight(engine: BrainEngine, sourceId: 
 
 export async function maintenancePreflight(engine: BrainEngine, sourceId: string, root?: string,
   opts: { deadlineAtMs?: number | null } = {}): Promise<MaintenanceAuthority | null> {
+  return resolveMaintenanceAuthority(engine, sourceId, root, opts.deadlineAtMs);
+}
+
+/** A database-only guarded page still checks the source's registered owner. The producer never opens or writes its worktree. */
+export function guardedDatabasePagePreflight(engine: BrainEngine, sourceId: string,
+  deadlineAtMs?: number | null): Promise<MaintenanceAuthority | null> {
+  return resolveMaintenanceAuthority(engine, sourceId, undefined, deadlineAtMs, true);
+}
+
+async function resolveMaintenanceAuthority(engine: BrainEngine, sourceId: string, root?: string,
+  deadlineAtMs?: number | null, guardedDatabaseOnly?: true): Promise<MaintenanceAuthority | null> {
   if (!await managedPersistenceEnabled(engine)) return null;
   assertPersistenceAccepting(engine);
   const job = currentSubmissionAuthority();
@@ -108,7 +120,7 @@ export async function maintenancePreflight(engine: BrainEngine, sourceId: string
   // (its local_path is the connector's state directory, not a canonical checkout).
   if (!binding && isConnectorSourceKind(source.kind)) {
     writer.databaseOnlyReason = 'connector_database';
-    return { writer, binding: null, wait: new MaintenanceWriteWait(opts.deadlineAtMs) };
+    return { writer, binding: null, guardedDatabaseOnly, wait: new MaintenanceWriteWait(deadlineAtMs) };
   }
   const writeThrough = !/^(false|0|off|no)$/i.test(await engine.getConfig('sync.write_through') ?? 'true');
   const configuredRoot = source.local_path || (sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
@@ -121,12 +133,14 @@ export async function maintenancePreflight(engine: BrainEngine, sourceId: string
         `Run maintenance for '${sourceId}' against its registered canonical root (the command in fix shows it), or without a directory argument; nothing was submitted.`,
         { fix: ownerStatusFix(sourceId) });
     }
-    await nativeLockCapability();
-    assertPhysicalRoot(owner.binding.local_path, { worktreeId: owner.binding.worktree_id, coordinationPath: owner.binding.coordination_path });
+    if (!guardedDatabaseOnly) {
+      await nativeLockCapability();
+      assertPhysicalRoot(owner.binding.local_path, { worktreeId: owner.binding.worktree_id, coordinationPath: owner.binding.coordination_path });
+    }
   }
   if (!writeThrough) writer.databaseOnlyReason = 'disabled_by_config';
   else if (!binding) writer.databaseOnlyReason = 'no_repo_configured';
-  return { writer, binding: writeThrough ? binding : null, wait: new MaintenanceWriteWait(opts.deadlineAtMs) };
+  return { writer, binding: writeThrough && !guardedDatabaseOnly ? binding : null, guardedDatabaseOnly, wait: new MaintenanceWriteWait(deadlineAtMs) };
 }
 
 async function validateMaintenance(engine: BrainEngine, authority: MaintenanceAuthority, slug: string): Promise<void> {
@@ -159,6 +173,9 @@ function awaitMaintenance(engine: BrainEngine, authority: MaintenanceAuthority, 
 /** Every check a maintenance request passes before it is journaled: the authorized prior request with its id (a replay), or the admission to submit. */
 async function prepareMaintenanceAdmission(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
   intent: Record<string, unknown>, requestId: string, file: boolean): Promise<{ prior: WriteRequest } | { admission: WriteAdmission }> {
+  if (authority.guardedDatabaseOnly && (file || intent.kind !== 'managed_maintenance_guarded_page_v1')) {
+    throw new TypeError('Guarded database-only authority cannot publish this maintenance intent');
+  }
   await validateMaintenance(engine, authority, slug);
   const prior = await getWriteRequest(engine, authority.writer.principal, requestId);
   if (prior) {

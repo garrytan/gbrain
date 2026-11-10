@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
@@ -9,6 +9,7 @@ import type { WriteRequest } from '../../src/core/persistence/model.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { __setMaintenanceWriteWaitForTests } from '../../src/core/persistence/maintenance-wait.ts';
 import { submitPageMutation } from '../../src/core/persistence/page-mutations.ts';
+import { guardedDatabasePagePreflight, maintenancePreflight, publishMaintenancePage } from '../../src/core/persistence/prepared-maintenance.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { isolatedPersistencePostgres } from '../../test/helpers/persistence-postgres.ts';
 import { withEnv } from '../../test/helpers/with-env.ts';
@@ -35,7 +36,7 @@ afterAll(async () => {
 });
 
 async function fixture(run: (ctx: {
-  sourceId: string; key: string; contract: string; put: (body: string, membership?: string, native?: string) => Promise<unknown>;
+  sourceId: string; key: string; contract: string; root: string; put: (body: string, membership?: string, native?: string) => Promise<unknown>;
 }) => Promise<void>) {
   const { engine } = db;
   const path = mkdtempSync(join(tmpdir(), 'gbrain-minion-fidelity-test-'));
@@ -60,7 +61,7 @@ async function fixture(run: (ctx: {
     await put(rule);
     await engine.setConfig(key, contract);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
-    try { await run({ sourceId, key, contract, put }); }
+    try { await run({ sourceId, key, contract, root, put }); }
     finally {
       await disposePersistenceConsumer(engine);
       await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
@@ -257,5 +258,25 @@ test('a pending durable publication keeps its original receipt identity on repla
     expect(replay).toMatchObject({ receipt: { request_id: id!, state: 'committed' } });
     const rows = await other.executeRaw('SELECT request_id FROM persistence_requests WHERE source_id=$1 AND slug=$2', [sourceId, output]);
     expect(rows).toHaveLength(1);
+  });
+}, 45000);
+
+
+test('only guarded database publication can preflight without a readable worktree', async () => {
+  await fixture(async ({ sourceId, root }) => {
+    const engine = db.engine;
+    const hidden = root + '-offline';
+    renameSync(root, hidden);
+    try {
+      await expect(maintenancePreflight(engine, sourceId)).rejects.toThrow();
+      const authority = await guardedDatabasePagePreflight(engine, sourceId);
+      expect(authority?.binding).toBeNull();
+      await expect(publishMaintenancePage(engine, authority!, 'notes/should-not-publish', 'test', { expectedRevision: null }))
+        .rejects.toThrow('Guarded database-only authority');
+      const prepared = await prepareConcept(engine, { sourceId, topic });
+      expect(await publishConcept(engine, prepared)).toMatchObject({ receipt: { state: 'committed' } });
+      expect((await other.getPage(output, { sourceId }))?.source_path).toBeNull();
+      expect(existsSync(join(hidden, output + '.md'))).toBe(false);
+    } finally { renameSync(hidden, root); }
   });
 }, 45000);

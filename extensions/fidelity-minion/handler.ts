@@ -6,7 +6,7 @@ import { MinionWorker, UnrecoverableError } from '../../src/core/minions/index.t
 import { parseFidelityContracts, prepareFidelityExcerpts, renderFidelityNarrative } from './concept-fidelity.ts';
 import { stripFenceSections } from '../../src/core/cycle/concept-publication.ts';
 import { validateMaintenanceInputs, type MaintenanceInputGuard } from '../../src/core/persistence/maintenance-input-guard.ts';
-import { maintenancePreflight, publishGuardedMaintenancePage } from '../../src/core/persistence/prepared-maintenance.ts';
+import { guardedDatabasePagePreflight, publishGuardedMaintenancePage } from '../../src/core/persistence/prepared-maintenance.ts';
 import { declareDerivation, derivedWriteTrust } from '../../src/core/trust/taint.ts';
 
 import { storedTrustTier } from '../../src/core/trust/tier.ts';
@@ -69,7 +69,7 @@ export async function prepareConcept(engine: BrainEngine, target: Target) {
 
 export async function publishConcept(engine: BrainEngine, prepared: Awaited<ReturnType<typeof prepareConcept>>, deadlineAtMs?: number | null) {
   const { sourceId, slug, guard, digest, title, narrative, derivation } = prepared;
-  const authority = await maintenancePreflight(engine, sourceId, undefined, { deadlineAtMs });
+  const authority = await guardedDatabasePagePreflight(engine, sourceId, deadlineAtMs);
   if (!authority) throw new UnrecoverableError('A managed persistence coordinator is required');
   const current = await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
   if (current && (current.page.deleted_at || current.page.frontmatter?.generated_by !== owner ||

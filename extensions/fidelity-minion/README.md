@@ -21,6 +21,8 @@ queue and managed persistence coordinator and does not call a chat model.
    elected HTTP Serve consumer that advertises guarded maintenance support,
    with managed persistence and
    `persistence.single_consumer` enabled. Use the same brain configuration.
+   The runner checks the registered source owner and publishes through Serve.
+   It does not need filesystem access to the source worktree.
    Set your scheduler to invoke that command for each approved topic.
 
 A replay of unchanged inputs keeps the existing page revision. A concurrent
