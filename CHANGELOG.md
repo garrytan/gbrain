@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.652.0] - 2026-11-10
 
 **The private-labels preview finishes on large sources.** On a source with a few hundred thousand pages, `gbrain repair private-labels` ran past its 120-second statement bound while counting the pages a window of clears would expose, so the preview failed, and so did every `--apply --expect`, which repeats the check. The count used to pair every page with every cleared page. It now reads each page's references once and joins them to the cleared pages, so it returns the same pages and the same exposure map well inside the bound, which is unchanged. On a synthetic brain (`scripts/bench/private-labels-dependents.ts`: 300,000 pages in the window's source, 100,000 in another, 8 links per page) with a 1,000-page window, master hit the 120-second bound and this release took 0.33 to 1.06 seconds across the four shapes.
 
