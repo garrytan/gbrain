@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.652.0] - 2026-11-10
 
 **Postgres connections to a database that isn't on your machine now use TLS unless the URL opts out.** Before this release gbrain's Postgres driver connected in plaintext whenever the database URL had no `sslmode`, so the password and every page crossed the network unencrypted, even to a hosted database that supports TLS. Now every connection pool requires TLS (`sslmode=require`) for any host other than `localhost`, `127.0.0.0/8`, `::1` or a Unix socket; private addresses and Docker service names count as remote. An sslmode in the URL is always honored, so `?sslmode=disable` keeps a plaintext connection on a network you trust. A server that has no TLS no longer connects silently: it fails with `postgres_tls_required`, which says to turn TLS on at the server or add `sslmode=disable`. `sslmode=require` encrypts but does not verify the server certificate; `sslmode=verify-full`, with the provider's CA in `NODE_EXTRA_CA_CERTS`, verifies it too. A new doctor check, `postgres_tls`, warns when a brain on a remote host is connected without TLS. PGLite has no network connection and is unchanged.
 
