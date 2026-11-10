@@ -4644,7 +4644,7 @@ More: [docs/guides/skill-resolver.md#skill_resolve_timeout](../../docs/guides/sk
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A skill resolver setting is out of range (skills.resolver.session_token_budget must be 0 or 100-50000) or GBRAIN_HOME is not an absolute path. | The request itself was wrong or no longer matches the brain; nothing was changed. | Fix the value in config.json under skills.resolver (default budget 2000), or GBRAIN_HOME. | agent | `repeat the read that failed` | 1 | no |
+| A skill resolver setting is out of range (skills.resolver.session_token_budget must be 0 or 100-50000; top_k, min_match, pinned and per_harness must be valid) or GBRAIN_HOME is not an absolute path. | The request itself was wrong or no longer matches the brain; nothing was changed. | Fix the value in config.json under skills.resolver (default budget 2000), or GBRAIN_HOME. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_resolver_config_invalid](../../docs/guides/skill-resolver.md#skill_resolver_config_invalid)
 

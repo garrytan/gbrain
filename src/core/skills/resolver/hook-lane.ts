@@ -1,7 +1,7 @@
 /**
  * The skill-resolver hook lane (`GBRAIN_HOOK_LANE=skill-resolver`): its own
- * hook entry in Claude Code (UserPromptSubmit, plus SessionStart for the
- * compaction reset) and its own hooks.json group in Codex (UserPromptSubmit),
+ * hook entry in Claude Code and its own hooks.json groups in Codex, each
+ * UserPromptSubmit plus SessionStart for the compaction reset,
  * written by `gbrain setup <claude-code|codex> --skill-loading resolve`
  * (src/core/setup/skill-resolver-hook.ts). It never shares output with the
  * turn-rule, setup or plugin lanes: it prints only the <relevant_skills> block.
@@ -13,7 +13,10 @@
  * Deadline (50 ms from lane entry): the main thread does only async I/O (the
  * config, stdin, the carriers, the commit) and every synchronous step (index
  * and session reads, ranking, rendering) runs in a worker thread
- * (hook-worker.ts) that checks the deadline inside each stage. At the
+ * (hook-worker.ts) that checks the deadline inside each stage. The worker is
+ * started before that I/O (by the CLI's lane fast path, before the lane
+ * module even loads, else at lane entry), so its start-up overlaps it; a turn
+ * that ends before the worker is needed terminates it. At the
  * deadline the main thread prints nothing and exits the process at once,
  * abandoning the worker, and commits no dedupe state: a commit starts only
  * after the block was written, on the main thread, before the deadline.
@@ -33,47 +36,49 @@
  * catalog is rebuilt the same way, at most once a minute per catalog, unless
  * skills.resolver.auto_rebuild is false or GBRAIN_SKILLS_NO_AUTOREBUILD=1.
  *
+ * Turn settings: skills.resolver.top_k, min_match, pinned (sent as exclude)
+ * and per_harness.<harness>.{top_k,min_match} (config.ts laneTurnSettings);
+ * unset, a turn is top_k 5 with every match and nothing excluded.
+ *
  * Payload: the lane's own budget (skills.resolver.lane_payload_chars, default
  * 4000 characters of hook JSON); a block that does not fit is dropped whole
  * and counted (outcome payload_dropped in the lane log).
  *
- * Lane log: <home>/skill-index/logs/lane.jsonl, one line per turn that got
- * past the on/off check (outcome, error code, duration; never turn text),
- * capped at 256 KB; doctor's skill_resolver check reads it.
+ * Lane log: <home>/skill-index/logs/lane-<UTC day>.jsonl (daily-log.ts, kept
+ * 14 days), one line per turn that got past the on/off check (outcome, error
+ * code, duration, catalogs; never turn text); doctor's skill_resolver check
+ * reads the last day of it.
  */
 import { createHash } from 'node:crypto';
-import { appendFile, mkdir, readFile, realpath, stat, truncate, unlink, writeFile } from 'node:fs/promises';
+import { unlinkSync } from 'node:fs';
+import { mkdir, readFile, realpath, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { Worker } from 'node:worker_threads';
+import type { Worker } from 'node:worker_threads';
 import { spawn } from '../../spawn.ts';
 import { claudeManagedSettingsPaths, claudeUserSettingsPath, codexHooksPath } from '../../bootstrap/host-specs.ts';
 import { shellWords } from '../../setup/hook-launcher.ts';
 import { isSkillResolverCommand, isSkillResolverEntry } from '../../setup/skill-resolver-lane.ts';
+import { laneTurnSettings, type LaneTurnSettings } from './config.ts';
+import { appendDailyLog, LANE_LOG } from './daily-log.ts';
 import { assertCatalogName, catalogFile, logsDir, resolverHome } from './paths.ts';
-import { commitSessionAsync, sessionKey, type TurnDelta } from './session.ts';
+import { type CommitHold, commitSessionAsync, sessionKey, type TurnDelta } from './session.ts';
 import type { TurnOutput } from './resolve.ts';
-import type { LaneWorkerData } from './hook-worker.ts';
+import type { LaneWorkerTurn } from './hook-worker.ts';
+import { laneWorkerFailed, startLaneWorker } from './lane-worker.ts';
+import { releaseLease } from './lock.ts';
+
+export { WORKER_SRC_PATH } from './lane-worker.ts';
 
 export const LANE_DEADLINE_MS = 50;
 export const LANE_STDIN_CAP_BYTES = 256 * 1024;
 export const LANE_PAYLOAD_CHARS_DEFAULT = 4000;
 export const LANE_PAYLOAD_CHARS_MIN = 500;
 export const LANE_PAYLOAD_CHARS_MAX = 10_000;
-export const LANE_LOG_FILE = 'lane.jsonl';
-const LANE_LOG_CAP_BYTES = 256 * 1024;
 const CONFIG_CAP_BYTES = 1024 * 1024;
 const SPAWN_INTERVAL_MS = 60_000;
 /** Time kept back from the worker's own deadline for delivery and the commit. */
 const COMMIT_RESERVE_MS = 10;
-/**
- * The worker's entry. A compiled binary bundles src/ under a virtual root
- * (/$bunfs/root/, ~BUN on Windows) and carries hook-worker.ts as a second
- * entrypoint at its src-relative path (every release build passes it); the
- * bundle's own import.meta.url is the binary, so the path is taken from there.
- */
-export const WORKER_SRC_PATH = 'core/skills/resolver/hook-worker.ts';
-const workerEntry = (): string | URL => (/[\\/](\$bunfs|~BUN)[\\/]/.test(import.meta.url) ? Bun.main.replace(/[^\\/]*$/, '') + WORKER_SRC_PATH : new URL('./hook-worker.ts', import.meta.url));
 
 export type LaneHarness = 'claude-code' | 'codex';
 export const userCatalogName = (harness: LaneHarness) => `${harness}-user`;
@@ -122,11 +127,11 @@ export async function skillResolverOwner(harness: LaneHarness, event: 'user-prom
   return undefined;
 }
 
-export interface LaneSettings { state: 'absent' | 'unreadable' | 'invalid' | 'ok'; enabled: boolean; harnesses: string[]; payloadChars: number; autoRebuild: boolean }
+export interface LaneSettings { state: 'absent' | 'unreadable' | 'invalid' | 'ok'; enabled: boolean; harnesses: string[]; payloadChars: number; autoRebuild: boolean; section: Record<string, unknown> }
 
 /** skills.resolver from <home>/config.json, async. absent: no file; unreadable: a file gbrain cannot read or parse. */
 export async function readLaneSettings(home: string, env: NodeJS.ProcessEnv): Promise<LaneSettings> {
-  const base: LaneSettings = { state: 'ok', enabled: false, harnesses: [], payloadChars: LANE_PAYLOAD_CHARS_DEFAULT, autoRebuild: env.GBRAIN_SKILLS_NO_AUTOREBUILD !== '1' };
+  const base: LaneSettings = { state: 'ok', enabled: false, harnesses: [], payloadChars: LANE_PAYLOAD_CHARS_DEFAULT, autoRebuild: env.GBRAIN_SKILLS_NO_AUTOREBUILD !== '1', section: {} };
   let cfg: unknown;
   try { cfg = await readJsonFile(join(home, 'config.json')); } catch (e) {
     return { ...base, state: (e as NodeJS.ErrnoException).code === 'ENOENT' ? 'absent' : 'unreadable' };
@@ -142,6 +147,7 @@ export async function readLaneSettings(home: string, env: NodeJS.ProcessEnv): Pr
     harnesses: Array.isArray(r.harnesses) ? r.harnesses.filter((h): h is string => typeof h === 'string') : [],
     payloadChars: validChars && chars !== undefined ? chars as number : LANE_PAYLOAD_CHARS_DEFAULT,
     autoRebuild: base.autoRebuild && r.auto_rebuild !== false,
+    section: r,
   };
 }
 
@@ -151,9 +157,7 @@ async function appendLaneLog(home: string, line: LaneLogLine): Promise<void> {
   try {
     const dir = logsDir(home);
     await mkdir(dir, { recursive: true, mode: 0o700 });
-    const p = join(dir, LANE_LOG_FILE);
-    try { if ((await stat(p)).size > LANE_LOG_CAP_BYTES) await truncate(p, 0); } catch { /* new */ }
-    await appendFile(p, `${JSON.stringify(line)}\n`, { mode: 0o600 });
+    await appendDailyLog(dir, LANE_LOG, `${JSON.stringify(line)}\n`);
   } catch { /* logging never fails a turn */ }
 }
 
@@ -213,13 +217,13 @@ interface Turn { outcome: string; code?: string; catalogs?: string[]; dropped_ch
 export async function runSkillResolverLane(event: string, harness: LaneHarness, io: LaneIo = {}): Promise<number> {
   const t0 = performance.now();
   if (event !== 'user-prompt' && event !== 'session-start') return 0;
-  if (harness === 'codex' && event !== 'user-prompt') return 0;
   const env = io.env ?? process.env;
   let home: string;
   try { home = resolverHome(env); } catch { return 0; }
   const deadlineMs = io.deadlineMs ?? (Number(env.GBRAIN_TEST_SKILL_LANE_DEADLINE_MS) || LANE_DEADLINE_MS);
   const elapsed = () => performance.now() - t0;
-  const ctl = { expired: false, worker: null as Worker | null, logged: false };
+  const ctl: LaneCtl = { expired: false, worker: null, logged: false, commit: {} };
+  if (event === 'user-prompt') ctl.worker = startLaneWorker(env);
   const log = (t: Turn) => appendLaneLog(home, { at: new Date().toISOString(), harness, event, outcome: t.outcome, ...(t.code ? { code: t.code } : {}), ms: Math.round(elapsed() * 10) / 10, ...(t.catalogs ? { catalogs: t.catalogs } : {}), ...(t.dropped_chars ? { dropped_chars: t.dropped_chars } : {}) });
 
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -229,6 +233,9 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
   if (result === 'deadline') {
     ctl.expired = true;
     void ctl.worker?.terminate();
+    const { tmp, lease } = ctl.commit;
+    if (tmp) try { unlinkSync(tmp); } catch { /* renamed or never created */ }
+    if (lease) releaseLease(lease);
     if (ctl.logged) await Promise.race([log({ outcome: 'timeout', code: 'skill_resolve_timeout' }), new Promise(r => setTimeout(r, 5))]);
     (io.exit ?? ((c: number) => process.exit(c)))(0);
     return 0;
@@ -239,13 +246,17 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
   return 0;
 }
 
-async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHarness, home: string, env: NodeJS.ProcessEnv, io: LaneIo, ctl: { expired: boolean; worker: Worker | null; logged: boolean }, elapsed: () => number, deadlineMs: number): Promise<Turn> {
+interface LaneCtl { expired: boolean; worker: Worker | null; logged: boolean; commit: CommitHold }
+
+async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHarness, home: string, env: NodeJS.ProcessEnv, io: LaneIo, ctl: LaneCtl, elapsed: () => number, deadlineMs: number): Promise<Turn> {
   const settings = await readLaneSettings(home, env);
   if (settings.state === 'absent') return { outcome: 'off' };
   if (settings.state === 'unreadable') { ctl.logged = true; return { outcome: 'error', code: 'skill_resolver_config_unreadable' }; }
   if (!settings.enabled || !settings.harnesses.includes(harness)) return { outcome: 'off' };
   ctl.logged = true;
   if (settings.state === 'invalid') return { outcome: 'error', code: 'skill_resolver_config_invalid' };
+  let turnSettings: LaneTurnSettings;
+  try { turnSettings = laneTurnSettings(settings.section, harness); } catch { return { outcome: 'error', code: 'skill_resolver_config_invalid' }; }
 
   const raw = await readStdinBounded(io.stdin ?? process.stdin, LANE_STDIN_CAP_BYTES);
   let j: Record<string, unknown>;
@@ -272,14 +283,13 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
     else if (project && settings.autoRebuild) await scheduleBuild(home, project.name, ['skills', 'index', 'build', '--catalog', project.name, '--dir', project.dir, '--scope', 'project', '--harness', harness], spawnFn);
   }
 
+  const worker = ctl.worker;
+  if (!worker || laneWorkerFailed()) return { outcome: 'error', code: 'skill_resolver_internal', catalogs };
   const posted = await new Promise<{ output?: TurnOutput; pending?: { key: string; delta: TurnDelta } | null; error?: { code: string } }>((resolve) => {
-    const worker = new Worker(workerEntry(), {
-      workerData: { input: { message: prompt, harness, ...(sessionId ? { session_id: sessionId } : {}) }, home, catalogs, deadlineMs: Math.max(1, deadlineMs - elapsed() - COMMIT_RESERVE_MS), stall: env.GBRAIN_TEST_SKILL_LANE_STALL } satisfies LaneWorkerData,
-    });
-    ctl.worker = worker;
-    worker.unref();
     worker.once('message', resolve);
     worker.once('error', () => resolve({ error: { code: 'skill_resolver_internal' } }));
+    worker.once('exit', () => resolve({ error: { code: 'skill_resolver_internal' } }));
+    worker.postMessage({ input: { message: prompt, harness, ...turnSettings, ...(sessionId ? { session_id: sessionId } : {}) }, home, catalogs, deadlineMs: Math.max(1, deadlineMs - elapsed() - COMMIT_RESERVE_MS) } satisfies LaneWorkerTurn);
   });
   if (posted.error || !posted.output) return { outcome: 'error', code: posted.error?.code ?? 'skill_resolver_internal', catalogs };
   const out = posted.output;
@@ -293,7 +303,9 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
     if (payload.length > settings.payloadChars) return { outcome: 'payload_dropped', catalogs, dropped_chars: payload.length };
     await (io.write ?? writeStdout)(`${payload}\n`);
   }
-  if (posted.pending && !ctl.expired) await commitSessionAsync(home, posted.pending.key, posted.pending.delta);
+  const stall = env.GBRAIN_TEST_SKILL_LANE_STALL;
+  if (stall === 'commit-held' || stall === 'commit-written') ctl.commit.at = (stage) => (`commit-${stage}` === stall ? new Promise(() => {}) : Promise.resolve());
+  if (posted.pending && !ctl.expired) await commitSessionAsync(home, posted.pending.key, posted.pending.delta, ctl.commit);
   return { outcome, catalogs };
 }
 

@@ -18,7 +18,7 @@ const { mkdir, open, readdir, readFile, rename, stat, unlink } = promises;
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { ensureDir, writeFileDurable } from './fsutil.ts';
-import { acquireLease, releaseLease, releaseLeaseAsync, tryAcquireLeaseAsync } from './lock.ts';
+import { acquireLease, type Lease, releaseLease, releaseLeaseAsync, tryAcquireLeaseAsync } from './lock.ts';
 import { sessionsDir } from './paths.ts';
 
 export const MAX_SESSION_FILES = 10_000;
@@ -93,7 +93,9 @@ function applyDelta(s: SessionState, delta: TurnDelta): SessionState {
  * lease is retried a few times over at most ~15 ms, then the commit is
  * skipped (a skipped commit only means a repeat).
  */
-export async function commitSessionAsync(home: string, key: string, delta: TurnDelta): Promise<boolean> {
+export interface CommitHold { lease?: Lease | null; tmp?: string | null; at?: (stage: 'held' | 'written') => Promise<void> }
+
+export async function commitSessionAsync(home: string, key: string, delta: TurnDelta, hold: CommitHold = {}): Promise<boolean> {
   const dir = sessionsDir(home);
   const p = statePath(home, key);
   try {
@@ -107,7 +109,9 @@ export async function commitSessionAsync(home: string, key: string, delta: TurnD
       if (!lease && attempt < 3) await new Promise(r => setTimeout(r, 2 ** attempt * 2));
     }
     if (!lease) return false;
+    hold.lease = lease;
     try {
+      await hold.at?.('held');
       let s = freshState();
       if (!delta.reset) {
         try {
@@ -118,12 +122,15 @@ export async function commitSessionAsync(home: string, key: string, delta: TurnD
         } catch { /* none or unreadable: fresh */ }
       }
       const tmp = join(dir, `.${key}.json.tmp-${randomBytes(6).toString('hex')}`);
+      hold.tmp = tmp;
       const fh = await open(tmp, 'wx', 0o600);
       try { await fh.writeFile(JSON.stringify(applyDelta(s, delta))); await fh.sync(); } finally { await fh.close(); }
-      try { await rename(tmp, p); } catch (e) { await unlink(tmp).catch(() => {}); throw e; }
+      await hold.at?.('written');
+      try { await rename(tmp, p); } catch (e) { await unlink(tmp).catch(() => {}); throw e; } finally { hold.tmp = null; }
       return true;
     } finally {
       await releaseLeaseAsync(lease);
+      hold.lease = null;
     }
   } catch {
     return false;

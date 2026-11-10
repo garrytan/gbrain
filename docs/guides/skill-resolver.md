@@ -40,6 +40,7 @@ One catalog per skill set. Names are 1-64 characters of `a-z`, `0-9`, `_` and
 | Claude Code | `gbrain skills index build --catalog claude-user --dir ~/.claude/skills --harness claude-code` | Plugin skills get their `<plugin>:` prefix from `.claude-plugin/plugin.json`. |
 | Codex | `gbrain skills index build --catalog codex-user --dir ~/.codex/skills --harness codex` | Suggestion lines carry the SKILL.md path; Codex opens it. |
 | Hermes, qm | `--dir <skills dir> --harness hermes` (or `qm`) | The id is the name the loader takes. |
+| Pi, Cursor | `--dir <skills dir> --harness pi` (or `cursor`) | Suggestion lines carry the SKILL.md path; the agent reads the file. |
 | OpenClaw and other adapters | `gbrain skills index build --catalog openclaw-main --from-json - --harness openclaw` | The adapter pipes its skill list (schema below) and owns rebuilds. |
 | gbrain's own skills | `gbrain skills index build --catalog gbrain --bundled` | Rebuilt when the gbrain version changes. |
 
@@ -77,8 +78,9 @@ per-turn hook that puts the block in front of the model on every prompt:
    holds no engine, so nothing reads it as a brain.
 3. It adds the lane's own hook: Claude Code gets UserPromptSubmit and
    SessionStart entries marked `skill-resolver-v1` in `~/.claude/settings.json`;
-   Codex gets a UserPromptSubmit group in `hooks.json` (`--harness codex`),
-   trusted in `config.toml`. Both run through the existing hook launcher.
+   Codex gets UserPromptSubmit and SessionStart groups in `hooks.json`
+   (`--harness codex`), each trusted in `config.toml`. Both run through the
+   existing hook launcher.
 4. It prints a sample block and `skill resolver: on; N skills; fresh`.
 
 `--dry-run` lists every write, and re-running changes nothing. A bare
@@ -91,6 +93,13 @@ The lane always exits 0 and prints nothing when it cannot deliver:
 
 - **Deadline:** 50 ms from lane start. Ranking runs in a worker thread; at the
   deadline the process prints nothing, exits and commits no session state.
+- **Turn settings:** `skills.resolver.top_k` (1-8, default 5),
+  `skills.resolver.min_match` (the weakest `match_strength` to suggest;
+  default every match) and `skills.resolver.pinned` (skill ids the harness
+  always loads itself, never suggested). `skills.resolver.per_harness.<harness>.top_k`
+  and `.min_match` override one harness; what it leaves out falls back to the
+  global key. Set them with `gbrain config set`; a bad value makes the lane
+  log `skill_resolver_config_invalid` and deliver nothing.
 - **Payload:** at most `skills.resolver.lane_payload_chars` characters of hook
   output (default 4000, 500 to 10,000); a larger block is dropped whole and
   counted as `payload_dropped`.
@@ -102,11 +111,13 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   rebuild the same way, at most once a minute;
   `skills.resolver.auto_rebuild false` or `GBRAIN_SKILLS_NO_AUTOREBUILD=1`
   stops both.
-- **Compaction:** a SessionStart with `source: compact` resets the session, so
-  skills can be offered again.
+- **Compaction:** a SessionStart with `source: compact` (Claude Code, and Codex
+  0.165 and later) resets the session, so skills can be offered again. A Codex
+  install from before gets the SessionStart group on its next setup run.
 
-Each turn appends one line (outcome, error code, duration; never turn text)
-to `skill-index/logs/lane.jsonl`. `gbrain doctor` (`skill_resolver`, and
+Each turn appends one line (outcome, error code, duration, catalogs; never
+turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
+kept 14 days and capped at 2 MB a day. `gbrain doctor` (`skill_resolver`, and
 `harness_wiring`'s details) reports the hook, each catalog's freshness and
 the recent error codes; it says nothing while the resolver is off.
 
@@ -119,8 +130,9 @@ binary built without it delivers nothing and logs `skill_resolver_internal`.
 The JSON Schemas are checked in under `docs/schemas/`:
 
 - `skill-resolver.v1.turn-input.json`: `{message, previous_user_message?,
-  session_id?, harness?, top_k (1-8, default 5), exclude?, shadow?,
-  expected_catalog_hash?, reset_session?}` for `--input-json -` or the library.
+  session_id?, harness?, top_k (1-8, default 5), exclude? (up to 1,024 ids),
+  min_match_strength?, shadow?, expected_catalog_hash?, reset_session?}` for
+  `--input-json -` or the library.
 - `skill-resolver.v1.turn-output.json`: the `--json` result. Everything outside
   `meta` is byte-identical for the same index, input and session state.
 - `skill-resolver.v1.build-input.json`: the `--from-json` catalog,
@@ -135,9 +147,12 @@ Within v1, changes are additive only.
 (`"no_match"`). There is no score threshold: a weak match is still
 suggested, and each suggestion's `match_strength` says how it matched
 (`named` in the turn, else the first of `name`, `triggers`, `routing`,
-`description`, `body`) so an adapter can set its own floor, for example
-dropping body-only matches. A skill named in the turn (`$name`, `@name`, a leading `/name`,
-"the name skill", or its full id) ranks first.
+`description`, `body`). `min_match_strength` (`--min-match`) sets a floor:
+weaker matches are dropped before the cut to `top_k`, so `description` drops
+body-only matches and the stronger ones still fill the block. A skill named in
+the turn (`$name`, `@name`, a leading `/name`, "the name skill", or its full
+id) ranks first. When the message matches no catalog word (a follow-up such
+as "do it again"), `previous_user_message` (`--previous`) is ranked instead.
 
 ### Exit codes and fail-open
 
@@ -164,7 +179,9 @@ With `--session <id>` the resolver remembers which skills it suggested:
   in `config.json` (default 2,000 tokens; 0 silences the resolver, otherwise
   100-50,000). k drops to 3 once half is spent and to 1 at 80%; after half,
   only a turn whose top result matched on name, triggers or routing spends
-  any. When it is spent, `budget_exhausted` is true and the block is empty;
+  any. When it is spent, `budget_exhausted` is true and the block is empty,
+  except for a skill the turn names, which still gets its line (and its
+  tokens still count);
 - state is committed only after the block was delivered: the CLI commits
   after writing stdout, the library through `result.commit()`;
 - `--reset-session` (`reset_session: true`) on the first turn after a
@@ -209,7 +226,7 @@ Nothing leaves the machine. Everything lives under `$GBRAIN_HOME/.gbrain/skill-i
 | `<catalog>/source.json` | the `--from-json` snapshot |
 | `<catalog>/fingerprint.json`, `stat-check`, `stale.stamp`, `lock`, `build.log` | freshness, lease and the last build error |
 | `sessions/<key>.json` | skill ids and turn counters; never turn text |
-| `logs/resolver.log` | scrubbed stack traces of unexpected failures; never turn text |
+| `logs/lane-<date>.jsonl`, `logs/resolver-<date>.log` | one line per lane turn, and scrubbed stack traces of unexpected failures; never turn text; one file per day, kept 14 days |
 
 The block never echoes the user's text. Summaries (each skill's description
 cut at 120 characters, the `summary` field) are catalog text, so they are
@@ -253,10 +270,14 @@ source as the CLI:
 The CLI JSON contract stays the primary interface.
 
 ```ts
-const r = await resolveSkills({ message, session_id, harness: 'codex' }, { catalogs: ['codex-user'], failOpen: true });
-inject(r.output.suggestions.filter(s => s.match_strength !== 'body').length ? r.output.block : '');
+const r = await resolveSkills({ message, session_id, harness: 'codex', min_match_strength: 'description' }, { catalogs: ['codex-user'], failOpen: true });
+inject(r.output.block);
 await r.commit();
 ```
+
+`RESOLVER_FEATURES` lists what this build supports beyond the first v1
+release (for example `min_match_strength`), so an adapter can check before
+it sends a field an older gbrain would refuse.
 
 On an event loop that must not block, commit with async I/O instead:
 `if (r.pending) await commitSessionAsync(home, r.pending.key, r.pending.delta)`
@@ -279,8 +300,8 @@ is rebuilt by its adapter.
 ### skill_catalog_mismatch
 
 `expected_catalog_hash` (`--expect-catalog`) differs from the index: the catalog
-was built from another skill list. Nothing was suggested or committed. Rebuild
-from the current list.
+was built from another skill list. Nothing was suggested or committed; the
+output's `catalog_hash` is the index's own hash. Rebuild from the current list.
 
 ### skill_index_locked
 
@@ -315,8 +336,9 @@ The `--from-json` catalog or routing file is malformed or over its size bound
 
 ### skill_resolver_config_invalid
 
-`skills.resolver.session_token_budget` is not 0 or 100-50,000, or GBRAIN_HOME
-is not an absolute path.
+`skills.resolver.session_token_budget` is not 0 or 100-50,000, a lane turn
+setting (`top_k`, `min_match`, `pinned`, `per_harness`) is out of range, or
+GBRAIN_HOME is not an absolute path.
 
 ### skill_resolver_config_unreadable
 
@@ -336,7 +358,7 @@ written (an empty catalog is removed). Add a skill there, or pass
 ### skill_resolver_internal
 
 An unexpected failure; a scrubbed trace was written to
-`skill-index/logs/resolver.log`. Run `gbrain skills index status` and report it
+`skill-index/logs/resolver-<UTC date>.log`. Run `gbrain skills index status` and report it
 if it repeats.
 
 ### skill_catalog_unknown

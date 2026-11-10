@@ -997,8 +997,11 @@
       ],
       "./skill-resolver": [
         "BLOCK_TOKEN_CAP",
+        "EXCLUDE_MAX",
         "GBRAIN_VERSION",
         "HARNESSES",
+        "MATCH_STRENGTHS",
+        "RESOLVER_FEATURES",
         "ResolverError",
         "SCHEMA_VERSION",
         "buildSkillIndex",
