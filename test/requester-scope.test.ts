@@ -41,6 +41,7 @@ import { assertCredentialScoped, OWN_JOB_OPS, printUnscopedReadsUpgradeNotice, R
 import { unscopedSharedReadsEntry } from '../src/commands/doctor/checks/unscoped-shared-reads.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import { takeBindingFlags } from '../src/commands/auth-binding.ts';
+import { ownerLines } from '../src/commands/access.ts';
 import { buildBrainTools } from '../src/core/minions/tools/brain-allowlist.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -246,26 +247,32 @@ for (const kind of testBackends()) {
       refused(await search('fresh-unbound'), 'created_after');
     }, 60_000);
 
-    test('stdio: unbound reads world pages with a notice in the grace (never a member-restricted page) and is refused after it; the fix names --stdio-member and per-person HTTP keys, never config set; bound reads plainly', async () => {
-      const setupFix = ['gbrain', 'setup', '<HARNESS>', '--serves', 'several', '--stdio-member', '<MEMBER>'];
+    test('stdio: unbound reads world pages with a notice in the grace (never a member-restricted page) and is refused after it; the fix follows the engine (PGLite: --stdio-member and per-person HTTP keys; Postgres: only the HTTP key), never config set; bound reads plainly', async () => {
+      const setupFix = kind === 'pglite' ? ['gbrain', 'setup', '<HARNESS>', '--serves', 'several', '--members', '<MEMBERS>', '--stdio-member', '<MEMBER>'] : ['gbrain', 'auth', 'create', '<NAME>', '--member', '<MEMBER>', '--brain', 'host'];
+      const route = (text: string) => {
+        expect(text).toContain('gbrain serve --http');
+        if (kind === 'pglite') expect(text).toContain('local PGLite brain');
+        else expect(text).not.toContain('--stdio-member');
+      };
       await importFromContent(engine, 'notes/alice-only', '---\ntype: note\ntitle: alice only\nreadable_by: [alice-example]\n---\n# alice only\n\nHarbor ledger notes canaryalice.\n', { sourceId: 'default', noEmbed: true });
       await setSince(1);
       const inGrace = await stdio('get_page', { slug: 'notes/harbor-alpha' });
       expect(inGrace.isError).toBe(false);
       expect(inGrace.text).toContain('canaryalpha');
       expect(inGrace.meta?.access?.requester_scope).toMatchObject({ state: 'grace', connection: 'this stdio server', fix: { argv: setupFix, next: 'tell_user_to_run' } });
-      expect(inGrace.meta?.access?.requester_scope.message).toContain('private pages included');
-      expect(inGrace.meta?.access?.requester_scope.message).toContain('gbrain serve --http');
+      if (kind === 'pglite') expect(inGrace.meta?.access?.requester_scope.message).toContain('private pages included');
+      route(inGrace.meta?.access?.requester_scope.message);
       expect((await stdio('get_page', { slug: 'notes/alice-only' })).text).not.toContain('canaryalice');
       await setSince(15);
       const after = await stdio('get_page', { slug: 'notes/harbor-alpha' });
       expect(after.structured?.error).toMatchObject({ code: 'requester_scope_required', reason: 'grace_ended', fix: { argv: setupFix } });
       expect(after.text).not.toContain('canaryalpha');
-      expect(after.text).toContain('gbrain serve --http');
+      route(after.text);
       for (const out of [inGrace, after]) expect(JSON.stringify([out.meta, out.structured, out.text])).not.toContain('config set mcp.stdio_member');
       const who = await stdio('whoami', {});
-      expect(who.json.access.note).toContain('--stdio-member');
-      expect(who.json.access.note).toContain('gbrain serve --http');
+      if (kind === 'pglite') expect(who.json.access.note).toContain('--stdio-member');
+      route(who.json.access.note);
+      expect(who.json.access.requester_scope.argv).toEqual(setupFix.filter(a => a !== '--brain' && a !== 'host'));
       expect(JSON.stringify(who.json)).not.toContain('config set mcp.stdio_member');
       await engine.setConfig('mcp.stdio_member', 'alice-example');
       const bound = await stdio('get_page', { slug: 'notes/harbor-alpha' });
@@ -336,6 +343,21 @@ for (const kind of testBackends()) {
     }, 60_000);
   });
 }
+
+describe('the access owner hint follows the engine', () => {
+  const view = { owner: 'alice-example', bound_credentials: [], inactive: null } as unknown as Parameters<typeof ownerLines>[0];
+  test('PGLite names --stdio-member for a local PGLite brain and the HTTP key; Postgres names only the HTTP key; neither a bare config set', () => {
+    const pglite = ownerLines(view, 'pglite').join('\n');
+    expect(pglite).toContain('--stdio-member alice-example');
+    expect(pglite).toContain('local PGLite brain');
+    expect(pglite).toContain('gbrain serve --http');
+    const postgres = ownerLines(view, 'postgres').join('\n');
+    expect(postgres).not.toContain('--stdio-member');
+    expect(postgres).toContain('gbrain serve --http');
+    expect(postgres).toContain('--member alice-example');
+    for (const text of [pglite, postgres]) expect(text).not.toContain('config set mcp.stdio_member');
+  });
+});
 
 describe('doctor unscoped_shared_reads and the post-upgrade list (pglite, repo-less)', () => {
   let engine: BrainEngine;

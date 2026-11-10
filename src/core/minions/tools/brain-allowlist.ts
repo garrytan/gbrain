@@ -341,7 +341,7 @@ function brainTool(op: Operation, opts: BuildBrainToolsOpts): ToolDef {
  */
 async function scopedJobAccess(engine: BrainEngine, op: Operation, auth: NonNullable<OperationContext['auth']>, actingFor: AudiencePrincipal[] | undefined) {
   const access = await remoteCallerAccess(engine, auth, [], undefined, actingFor);
-  if (requiresRequesterScope(op, auth)) requesterScopeGate(op, access, await credentialScopeFor(engine, auth), 'http');
+  if (requiresRequesterScope(op, auth)) requesterScopeGate(op, access, await credentialScopeFor(engine, auth), 'http', engine.kind);
   return access;
 }
 

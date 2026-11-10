@@ -1012,7 +1012,7 @@ export async function dispatchToolCall(
       // An op this connection cannot reach (hidden by its surface, or localOnly off stdio) keeps the unknown-tool envelope instead.
       const reachable = !!op && (!opts.allowedOps || opts.allowedOps.has(name)) && (!op.localOnly || opts.transport === 'stdio');
       if (!attested?.actor && reachable && requiresRequesterScope(op, opts.auth)) {
-        scopeNotice = requesterScopeGate(op, access, opts.auth ? await credentialScopeFor(engine, opts.auth) : undefined, opts.transport);
+        scopeNotice = requesterScopeGate(op, access, opts.auth ? await credentialScopeFor(engine, opts.auth) : undefined, opts.transport, engine.kind);
       }
     } catch (e) {
       // GST-359: a call that names a person gets every failure here (a lock timeout reading its link included) in the

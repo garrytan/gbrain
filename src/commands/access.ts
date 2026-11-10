@@ -25,6 +25,7 @@ import { identityFor, normalizePrincipal, normalizeReaders, readersAllow } from 
 import { mayActForCovers, singleMemberAudience, type AudiencePrincipal } from '../core/access/audience.ts';
 import { linkMember, listMemberLinks, unlinkMember } from '../core/access/actor.ts';
 import { clearOwner, ownerMemberId, ownerView, setOwner, type OwnerView } from '../core/access/owner.ts';
+import { stdioBindRoute, type EngineKind } from '../core/access/stdio-bind-route.ts';
 import {
   addGroup, addMember, assertAccessId, disableMember, enableMember, getMember, legacyTokenByName, listGroups, listMembers,
   parseIdList, previewRemoveGroup, previewRemoveMember, removeGroup, removeGroupMembers, removeMember, type MemberRecord,
@@ -275,12 +276,12 @@ async function memberLinksCmd(engine: BrainEngine, sub: 'link' | 'unlink' | 'lin
     r.applied ? 'Takes effect on the next attested call.' : `Apply without --dry-run.`]);
 }
 
-function ownerLines(v: OwnerView): string[] {
+export function ownerLines(v: OwnerView, kind: EngineKind): string[] {
   if (!v.owner) return v.inactive ? [`Owner: none in effect. access.owner_member names "${v.inactive.value}": ${v.inactive.reason}`, 'Fix it with gbrain access owner set <member> or gbrain access owner clear.']
     : ['Owner: none. Every remote caller reads under the ordinary policy (no visibility: private page without a grant).', 'Name one: gbrain access owner set <member>'];
   return [`Owner: ${v.owner}`,
     `  Credentials that read as the owner (${v.bound_credentials.length}): ${v.bound_credentials.map(c => `${c.kind} ${c.name}`).join(', ') || 'none'}`,
-    `  Bind one: gbrain auth rescope --token <name> --member ${v.owner} (a stdio harness only the owner uses: gbrain setup <harness> --serves several --stdio-member ${v.owner}, which makes every stdio session on this host read as the owner, private pages included; a harness several people talk to gets one key per person over gbrain serve --http)`];
+    `  Bind one: gbrain auth rescope --token <name> --member ${v.owner}. Stdio: ${stdioBindRoute(kind, v.owner).text}`];
 }
 
 async function ownerCmd(engine: BrainEngine, sub: string | undefined, args: string[], json: boolean): Promise<void> {
@@ -289,15 +290,15 @@ async function ownerCmd(engine: BrainEngine, sub: string | undefined, args: stri
     case '--json':
     case 'show': {
       const v = await ownerView(engine);
-      return print(json, v, () => ownerLines(v));
+      return print(json, v, () => ownerLines(v, engine.kind));
     }
     case 'set': {
       const v = await setOwner(engine, positionals(args)[0]);
-      return print(json, v, () => ownerLines(v));
+      return print(json, v, () => ownerLines(v, engine.kind));
     }
     case 'clear': {
       const v = await clearOwner(engine);
-      return print(json, v, () => ownerLines(v));
+      return print(json, v, () => ownerLines(v, engine.kind));
     }
     default:
       throw usageError(`Unknown access owner subcommand: ${sub}.`, 'Use gbrain access owner, gbrain access owner set <member> or gbrain access owner clear.');
