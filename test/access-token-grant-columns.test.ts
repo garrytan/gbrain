@@ -7,7 +7,8 @@
  * 1. Protects: the publication authority read (FOR SHARE) and the membership authority read, run on every
  *    pooled connection before and after `ALTER TABLE access_tokens ADD COLUMN`, succeed; so does a
  *    legacy-token put_page after the column is added.
- * 2. Fails when: either read selects every column of access_tokens inside its transaction.
+ * 2. Fails when: either read selects every column of access_tokens inside its transaction, or the membership read
+ *    (which no schema admission guards) names a column a schema behind this build does not have.
  * 3. Real seams: the token service, the serve --http token verifier, MCP dispatch and the durable write path.
  *    Each read runs in POOL concurrent transactions held open together, so every pooled connection prepares it
  *    first and every one reuses its cached plan after the column is added.
@@ -73,6 +74,18 @@ for (const kind of testBackends()) {
       expect(await read()).toEqual(Array(POOL).fill(principal));
       await addColumn();
       expect(await read()).toEqual(Array(POOL).fill(principal));
+    }, 240_000);
+
+    test('the membership authority read works on a schema that predates an access_tokens column it names', async () => {
+      const minted = await mintLegacyToken(engine, { name: 'behind', scopes: ['read', 'skills_member_self'], takesHolders: ['world'], allowedOperations: ['join_brain'] });
+      const rollback = new Error('roll back the simulated older schema');
+      const principal = await engine.transaction(async tx => {
+        await tx.executeRaw('ALTER TABLE access_tokens DROP COLUMN private_pages');
+        const result = (await memberAuthority({ engine: tx, remote: true, sourceId: 'default',
+          auth: { principal: { kind: 'legacy_token', id: minted.id }, scopes: ['read', 'skills_member_self'], allowedOperations: ['join_brain'] } } as unknown as OperationContext, 'join_brain')).principal;
+        throw Object.assign(rollback, { result });
+      }).catch(error => { if (error !== rollback) throw error; return (error as { result: unknown }).result; });
+      expect(principal).toEqual({ kind: 'legacy_token', id: minted.id });
     }, 240_000);
 
     test('a legacy-token put_page after the column is added publishes', async () => {
