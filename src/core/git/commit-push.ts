@@ -436,16 +436,9 @@ interface CommitScope { roots: string[]; lockPath: string; markHeld: boolean; ba
 /** A named path `git add -A` left out of the index while still exiting 0 (GST-2116). */
 export interface SkippedPath { path: string; reason: 'assume_unchanged' | 'skip_worktree' | 'not_staged' }
 
-/**
- * GST-2116: the named paths whose bytes on disk HEAD still lacks once the commit step is done. `git add -A` stages
- * nothing and exits 0 for a modified entry flagged assume-unchanged or skip-worktree (`ls-files -v`: lower case, or S;
- * `commit --only` may still pick one up beside another path, so the check reads HEAD) and for a file inside an untracked
- * nested repository. A skip-worktree entry absent from disk is a sparse checkout, not a change, and a flagged gitlink
- * is left out (its commit lives in the nested repository, which hash-object cannot read). Ignored files under a named
- * directory are left out as git leaves them; a named ignored file is refused by `git add` itself.
- */
-function unstagedPaths(root: string, rel: string[], listed: string[]): SkippedPath[] {
-  const skipped = new Map<string, SkippedPath['reason']>();
+/** The flagged index entries in `listed` (`ls-files -v`: lower case for assume-unchanged, S for skip-worktree) whose bytes on disk HEAD lacks. A skip-worktree entry absent from disk is a sparse checkout, not a change. */
+function flaggedChanges(root: string, listed: string[]): SkippedPath[] {
+  const changed: SkippedPath[] = [];
   const flagged = listed.filter(entry => /^[a-zS] /.test(entry));
   const gitlinks = new Set(flagged.length
     ? gitOk(root, ['ls-files', '-s', '-z', '--', ...literalPathspecs(flagged.map(line => line.slice(2)))], 'ls-files -s')
@@ -458,12 +451,27 @@ function unstagedPaths(root: string, rel: string[], listed: string[]): SkippedPa
     const reason = /^[sS]/.test(line) ? 'skip_worktree' as const : 'assume_unchanged' as const;
     const stat = (() => { try { return lstatSync(abs); } catch { return null; } })();
     if (!stat && reason === 'skip_worktree') continue;
-    const disk = !stat ? null : stat.isSymbolicLink()
-      ? gitOk(root, ['hash-object', '--stdin'], 'hash-object', { input: readlinkSync(abs) })
-      : gitOk(root, ['hash-object', '--', path], 'hash-object');
+    const hashed = !stat ? null : stat.isSymbolicLink()
+      ? git(root, ['hash-object', '--stdin'], { input: readlinkSync(abs) })
+      : git(root, ['hash-object', '--', path]);
+    // An entry git cannot hash (a missing required filter, an unreadable file, a directory now) counts as changed, so it is reported, never dropped.
+    const disk = hashed && (hashed.code === 0 ? hashed.stdout.trim() : undefined);
     const committed = git(root, ['rev-parse', '--verify', '--quiet', `HEAD:${path}`]).stdout.trim() || null;
-    if (disk !== committed) skipped.set(path, reason);
+    if (disk !== committed) changed.push({ path, reason });
   }
+  return changed;
+}
+
+/**
+ * GST-2116: the named paths whose bytes on disk HEAD still lacks once the commit step is done. `git add -A` stages
+ * nothing and exits 0 for a modified entry flagged assume-unchanged or skip-worktree (`ls-files -v`: lower case, or S;
+ * `commit --only` may still pick one up beside another path, so the check reads HEAD) and for a file inside an untracked
+ * nested repository. A skip-worktree entry absent from disk is a sparse checkout, not a change, and a flagged gitlink
+ * is left out (its commit lives in the nested repository, which hash-object cannot read). Ignored files under a named
+ * directory are left out as git leaves them; a named ignored file is refused by `git add` itself.
+ */
+function unstagedPaths(root: string, rel: string[], listed: string[]): SkippedPath[] {
+  const skipped = new Map(flaggedChanges(root, listed).map(s => [s.path, s.reason]));
   for (const path of unindexedFiles(root, rel, listed)) if (!skipped.has(path)) skipped.set(path, 'not_staged');
   // Only a named directory can hide an unstaged change from the two checks above (a nested repository inside it).
   const dirs = rel.filter(path => { try { return lstatSync(join(root, path)).isDirectory(); } catch { return false; } });
@@ -588,7 +596,10 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
         docs: 'docs/guides/shared-checkout-git.md#outcomes' } });
   }
   const before = indexEntries(root, rel);
-  const add = withIndexRetry(root, ['add', '-A', '--', ...literalPathspecs(rel)], 'git add');
+  // GST-2118: git add refuses a named skip-worktree file that is on disk; it is left to the skipped-path check, so the other paths still commit.
+  const sparse = new Set(gitOk(root, ['ls-files', '-v', '-z', '--', ...literalPathspecs(rel)], 'ls-files -v').split('\0')
+    .filter(entry => /^[sS] /.test(entry) && rel.includes(entry.slice(2)) && existsSync(join(root, entry.slice(2)))).map(entry => entry.slice(2)));
+  const add = rel.some(p => !sparse.has(p)) ? withIndexRetry(root, ['add', '-A', '--', ...literalPathspecs(rel.filter(p => !sparse.has(p)))], 'git add') : { code: 0, stdout: '', stderr: '' };
   if (add.code !== 0) {
     throw opError('commit_paths_invalid', 'git add refused the given paths.', add.stderr.trim().slice(0, 300) || 'Check the paths exist or are tracked.');
   }
@@ -600,7 +611,7 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
     // A file git did not index would fail `commit --only` for every path; it is left out here and reported as skipped.
     const listed = gitOk(root, ['ls-files', '-v', '-z', '--', ...literalPathspecs(paths)], 'ls-files -v').split('\0').filter(Boolean);
     const unindexed = new Set(unindexedFiles(root, paths, listed));
-    const staged = paths.filter(p => !unindexed.has(p));
+    const staged = paths.filter(p => !unindexed.has(p) && !sparse.has(p));
     if (!staged.length || git(root, ['diff', '--cached', '--quiet', '--', ...literalPathspecs(staged)]).code === 0) {
       landed = { committed: false, paths, listed };
     } else {
@@ -678,7 +689,10 @@ export function notePending(root: string, paths: string[]): void {
 function dirtyPaths(root: string, paths: string[]): Set<string> {
   const out = new Set<string>();
   for (let i = 0; i < paths.length; i += 500) {
-    const entries = git(root, ['status', '--porcelain', '-z', '--untracked-files=all', '--', ...literalPathspecs(paths.slice(i, i + 500))]).stdout.split('\0');
+    const specs = literalPathspecs(paths.slice(i, i + 500));
+    // GST-2118: status is blind to an assume-unchanged or skip-worktree entry, so a flagged edit is read from HEAD.
+    for (const { path } of flaggedChanges(root, git(root, ['ls-files', '-v', '-z', '--', ...specs]).stdout.split('\0').filter(Boolean))) out.add(path);
+    const entries = git(root, ['status', '--porcelain', '-z', '--untracked-files=all', '--', ...specs]).stdout.split('\0');
     for (let j = 0; j < entries.length; j++) {
       if (entries[j].length < 4) continue;
       out.add(entries[j].slice(3));
@@ -698,8 +712,8 @@ function settlePending(root: string): void {
     const entries = new Map<string, string>();
     readPendingFile(settle, entries);
     readPendingFile(moved, entries);
-    const dirty = dirtyPaths(root, [...entries.keys()]);
-    const keep = [...entries].filter(([path]) => dirty.has(path)).map(([path, since]) => `${since}\t${JSON.stringify(path)}\n`);
+    const dirty = (() => { try { return dirtyPaths(root, [...entries.keys()]); } catch { return null; } })();
+    const keep = [...entries].filter(([path]) => !dirty || dirty.has(path)).map(([path, since]) => `${since}\t${JSON.stringify(path)}\n`);
     if (keep.length) { writeFileSync(`${settle}.tmp`, keep.join('')); renameSync(`${settle}.tmp`, settle); }
     else rmSync(settle, { force: true });
     rmSync(moved, { force: true });
@@ -740,10 +754,13 @@ export function commitPathsLocked(repo: string, rel: string[], message: string, 
       if (!pending.length) throw e;
       commit = commitPaths(root, paths, message, scope);
     }
+    // GST-2118: a file git left out stays in the ledger, so doctor dirty_age reports it and --pending retries it loudly.
+    const ownSkipped = commit.skipped.filter(s => paths.includes(s.path));
+    if (ownSkipped.length) notePending(root, ownSkipped.map(s => s.path));
     settlePending(root);
-    if (commit.skipped.length) {
+    if (ownSkipped.length) {
       const branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).stdout.trim();
-      throw skippedPathsError(root, commit.skipped, { outcome: commit.sha ? 'committed_local' : 'nothing_to_commit', sha: commit.sha, committed: commit.sha, branch, remote: '', paths, integrated: 0, checkout: 'unchanged' });
+      throw skippedPathsError(root, ownSkipped, { outcome: commit.sha ? 'committed_local' : 'nothing_to_commit', sha: commit.sha, committed: commit.sha, branch, remote: '', paths, integrated: 0, checkout: 'unchanged' });
     }
     return commit.sha;
   } catch (e) {
