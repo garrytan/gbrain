@@ -2145,6 +2145,37 @@ it resumes after the last applied page. You need a new preview only after the
 window has been applied in full, or when the preview hash changed
 ([`preview_changed`](#preview-changed)).
 
+**Batches, declines and the exit code.** On a brain with managed persistence the
+apply admits a window's pages together, up to 64 at a time (fewer when the
+writer's outstanding-request cap is low), and the owner
+publishes them in groups of up to 8, instead of one page and one wait at a time.
+Each page still has its own fate: a page whose write is declined fails alone and
+the rest of its group lands. A decline is the page's own state refusing the
+write: its file differs from the database or is gone (`source_changed`), or its
+body is stored in segments. The page is left unchanged, the result counts it
+under `declined` by reason, and when every failure of a complete run is a
+decline the command exits 0, so a script working through windows carries on.
+Any other failure, or a stop, still exits 1. The next preview lists pages an
+earlier apply tried and that didn't change after every page not tried yet
+(`details.window.tried_before` counts them), so they stop heading each window.
+Clearing a declined page is a separate choice per page: see
+[file drift](#file-drift). Such a page declining again doesn't count toward the
+run's systemic-failure stop (`item_failures_systemic`), so a window whose tail,
+or whole listing, is carried declines completes; pages not tried yet that all
+fail the same way, as a dirty checkout makes them, still stop the run.
+
+An apply that meets a `gbrain sources refresh` waits for the refresh to
+finish, for up to 10 minutes per step, instead of being refused after 10
+seconds. A refresh that runs longer ends the apply with `worktree_refreshing`
+(exit 1): the message names the refresh, its phase, how long it has run and how
+long the apply waited. The pages already published stay published, each with its
+undo line, the rest are unchanged, and rerunning the same
+`--apply --expect <hash>` after the refresh resumes the window.
+
+A brain without managed persistence (repo-less included) writes one page at a
+time, as before; the ordering, the exit code, the decline rule and the ledger
+fields below apply there too.
+
 **Git-canonical sources.** Private pages there are database-only, so clearing
 one commits it into the source's Git history for the first time. That class,
 `git-publish`, is never in the default preview. Run it only by name:
@@ -2157,7 +2188,12 @@ earlier commit, and any remote it was pushed to, keeps the page's content.
 set) on the host that ran it. Each page gets an `intent` line with the exact
 removed values before its write and a `committed` line after it. A run that
 stops between the two can still be undone. If the ledger can't take the intent
-line, the apply refuses with `storage_error` and changes nothing.
+line, the apply refuses with `storage_error` and changes nothing. An apply
+result names the ledger (`details.ledger`) and the lines it appended:
+`details.ledger_rows_written`, split into `details.ledger_rows.intent` and
+`.committed`. The file grows by exactly `ledger_rows_written`, and `committed`
+equals `applied` unless a commit line could not be saved, which the item's
+outcome then says.
 
 ```bash
 gbrain repair private-labels --source <id> --class restore --json
