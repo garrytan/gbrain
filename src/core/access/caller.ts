@@ -21,6 +21,7 @@ import { currentCallerAccess } from '../search/private-visibility.ts';
 import { edgeTrimSql } from '../edge-whitespace.ts';
 import { GUEST, STDIO_MAY_ACT_FOR_KEY, mayActForCovers, singleMemberAudience, type AudiencePrincipal } from './audience.ts';
 import { parseMayActFor } from './members.ts';
+import { stdioBindRoute } from './stdio-bind-route.ts';
 
 /** Config key binding a local stdio MCP server to one member. */
 export const STDIO_MEMBER_KEY = 'mcp.stdio_member';
@@ -318,5 +319,5 @@ export async function stdioAccessView(engine: BrainEngine): Promise<CallerAccess
   if (identity.length) return accessView(identity, 'stdio_config');
   return accessView([], 'none', null, configured
     ? `mcp.stdio_member names "${configured}", which is not an enabled member, so this server reads no page that names readers.`
-    : `${UNBOUND_NOTE} For a harness only one person uses, bind it with gbrain setup <harness> --serves several --stdio-member <id> (every stdio session on this brain, from any harness on this host, then reads as that member, private pages included); a harness several people talk to gets one key per person over HTTP instead (gbrain serve --http with gbrain auth create --member <id> keys).`);
+    : `${UNBOUND_NOTE} ${stdioBindRoute(engine.kind).text}`);
 }

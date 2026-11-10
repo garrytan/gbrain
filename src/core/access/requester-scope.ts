@@ -26,6 +26,7 @@ import { hostFix, hostOnlyError } from '../ops/op-fix.ts';
 import { hasScope } from '../scope.ts';
 import { createAuditWriter } from '../audit/audit-writer.ts';
 import { credentialScopeFields } from './token-binding.ts';
+import { stdioBindRoute, type EngineKind } from './stdio-bind-route.ts';
 
 /** Read operations that read no page: the caller's own identity, the brain's identity and health, search mode names. */
 export const REQUESTER_SCOPE_EXEMPT: ReadonlySet<string> = new Set(['whoami', 'get_brain_identity', 'get_status_snapshot', 'search_modes', 'get_health']);
@@ -54,9 +55,9 @@ type Inputs = NonNullable<Action['inputs']>;
 
 const MEMBER_INPUTS: Inputs = [{ name: 'MEMBER', how: 'The member this connection serves; gbrain access member list on the brain host names them. Ask the user which person it is.' }];
 
-interface Connection { handle: string; argv: string[]; inputs: Inputs; check?: string[]; optOut?: string[] }
+interface Connection { handle: string; argv: string[]; inputs: Inputs; check?: string[]; optOut?: string[]; route?: string }
 
-function connectionOf(auth: Pick<ScopeAuth, 'clientName' | 'principal'> | undefined): Connection {
+function connectionOf(auth: Pick<ScopeAuth, 'clientName' | 'principal'> | undefined, kind: EngineKind): Connection {
   const principal = auth?.principal;
   if (principal?.kind === 'legacy_token') {
     const target = auth?.clientName ? ['--token', auth.clientName] : ['--id', principal.id];
@@ -67,8 +68,8 @@ function connectionOf(auth: Pick<ScopeAuth, 'clientName' | 'principal'> | undefi
     return { handle: `OAuth client ${principal.id}`, argv: ['gbrain', 'auth', 'rescope', '--client', principal.id, '--member', '<MEMBER>'], inputs: MEMBER_INPUTS,
       check: ['gbrain', 'access', 'check', '--client', principal.id], optOut: ['gbrain', 'auth', 'rescope', '--client', principal.id, '--reads-unscoped', '--yes'] };
   }
-  return { handle: 'this stdio server', argv: ['gbrain', 'setup', '<HARNESS>', '--serves', 'several', '--stdio-member', '<MEMBER>'],
-    inputs: [{ name: 'HARNESS', how: 'The harness only this one person uses (for example claude-code or codex). Never a harness several people talk to.' }, ...MEMBER_INPUTS] };
+  const route = stdioBindRoute(kind);
+  return { handle: 'this stdio server', argv: route.argv, inputs: [...route.inputs, ...MEMBER_INPUTS], route: route.text };
 }
 
 type Transport = 'stdio' | 'http' | undefined;
@@ -78,9 +79,7 @@ function why(policy: ServesPolicy): string {
 }
 
 function alternatives(c: Connection): string {
-  if (!c.optOut) return `On the brain host, for a harness only one person uses: ${c.argv.join(' ')} (gbrain access member list names the members). `
-    + 'Every stdio session on this brain, from any harness on this host, then reads as that member, private pages included. '
-    + 'For a harness several people talk to, give each person a key over HTTP instead: gbrain serve --http with one gbrain auth create --member key per person.';
+  if (!c.optOut) return `On the brain host (gbrain access member list names the members): ${c.route}`;
   return `On the brain host, see what the connection reads with ${c.check!.join(' ')}, then bind it to the person it serves: ${c.argv.join(' ')} (gbrain access member list names the members). `
     + `A shared agent instead lists whom it may act for (--may-act-for <members>) and names the person on each call (X-Gbrain-On-Behalf-Of). `
     + `Last resort, for a team that shares everything: ${c.optOut.join(' ')} lets it read every page no rule restricts for whoever is asking.`;
@@ -98,14 +97,14 @@ function fixFor(c: Connection, transport: Transport): Action {
  * reach it. `auth` carries readsUnscoped and createdAt from the verifier (credentialScopeFor fills them otherwise).
  */
 export function requesterScopeGate(op: Pick<Operation, 'name' | 'mutating'> | undefined, access: Partial<CallerAccess>, auth: ScopeAuth | undefined,
-  via: string | undefined, nowMs = Date.now()): RequesterScopeNotice | null {
+  via: string | undefined, kind: EngineKind, nowMs = Date.now()): RequesterScopeNotice | null {
   if (!requiresRequesterScope(op, auth)) return null;
   const serves = access.remotePolicy?.serves;
   if (!serves?.several) return null;
   const transport: Transport = via === 'http' ? 'http' : 'stdio';
   if (access.audience?.length || access.actor || (access.identity ?? []).some(p => p.startsWith('member:'))) return null;
   if (auth?.readsUnscoped) return null;
-  const c = connectionOf(auth);
+  const c = connectionOf(auth, kind);
   const created = auth?.createdAt ?? null;
   const since = serves.since;
   const refusesAt = since === null ? null : since + GRACE_SECONDS;
@@ -175,14 +174,14 @@ export async function assertCredentialScoped(engine: Pick<BrainEngine, 'executeR
  * connection can learn why its reads are refused): not_required on a one-person brain, scoped, reads_unscoped, or the
  * state a read would get, with the command that binds the connection.
  */
-export async function requesterScopeView(engine: Pick<BrainEngine, 'executeRaw'>, access: Partial<CallerAccess>, auth: ScopeAuth | undefined, transport: string | undefined): Promise<{ state: string; refuses_at?: string | null; reason?: string; argv?: string[] }> {
+export async function requesterScopeView(engine: Pick<BrainEngine, 'executeRaw' | 'kind'>, access: Partial<CallerAccess>, auth: ScopeAuth | undefined, transport: string | undefined): Promise<{ state: string; refuses_at?: string | null; reason?: string; argv?: string[] }> {
   const serves = access.remotePolicy?.serves;
   if (!serves?.several) return { state: 'not_required' };
   if (access.audience?.length || access.actor || (access.identity ?? []).some(p => p.startsWith('member:'))) return { state: 'scoped' };
   const scoped = auth ? await credentialScopeFor(engine, auth) : undefined;
   if (scoped?.readsUnscoped) return { state: 'reads_unscoped' };
   try {
-    const notice = requesterScopeGate({ name: 'search', mutating: false }, access, scoped, transport);
+    const notice = requesterScopeGate({ name: 'search', mutating: false }, access, scoped, transport, engine.kind);
     return { state: notice!.state, refuses_at: notice!.refuses_at, argv: notice!.fix.argv };
   } catch (e) {
     const err = e as OperationError;
@@ -204,7 +203,7 @@ export interface UnscopedConnection {
  * attest right), each with the state the requester-scope gate gives its reads and the one command that binds it.
  * Null when the brain serves one person.
  */
-export async function unscopedConnections(engine: Pick<BrainEngine, 'executeRaw'>, nowMs = Date.now()): Promise<{ serves: ServesPolicy; connections: UnscopedConnection[] } | null> {
+export async function unscopedConnections(engine: Pick<BrainEngine, 'executeRaw' | 'kind'>, nowMs = Date.now()): Promise<{ serves: ServesPolicy; connections: UnscopedConnection[] } | null> {
   const serves = (await readRemotePolicyNow(engine)).serves;
   if (!serves?.several) return null;
   const unbound = 'member_id IS NULL AND COALESCE(cardinality(may_act_for), 0) = 0 AND attest_actor IS NULL';
@@ -221,13 +220,13 @@ export async function unscopedConnections(engine: Pick<BrainEngine, 'executeRaw'
     return { connection: c.handle, state, refuses_at: state === 'grace' ? new Date(refusesAt! * 1000).toISOString() : null, argv: c.argv };
   };
   return { serves, connections: [
-    ...tokens.map(t => entry(connectionOf({ principal: { kind: 'legacy_token', id: t.id }, clientName: t.name }), t)),
-    ...clients.map(c => entry(connectionOf({ principal: { kind: 'oauth_client', id: c.id } }), c)),
+    ...tokens.map(t => entry(connectionOf({ principal: { kind: 'legacy_token', id: t.id }, clientName: t.name }, engine.kind), t)),
+    ...clients.map(c => entry(connectionOf({ principal: { kind: 'oauth_client', id: c.id } }, engine.kind), c)),
   ] };
 }
 
 /** `gbrain post-upgrade`: each credential whose reads are (or will be) refused, with its one command. Best effort. */
-export async function printUnscopedReadsUpgradeNotice(engine: Pick<BrainEngine, 'executeRaw'>): Promise<void> {
+export async function printUnscopedReadsUpgradeNotice(engine: Pick<BrainEngine, 'executeRaw' | 'kind'>): Promise<void> {
   try {
     const found = await unscopedConnections(engine);
     const pending = found?.connections.filter(c => c.state !== 'reads_unscoped') ?? [];

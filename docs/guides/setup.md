@@ -210,13 +210,17 @@ the refusal) keeps reading for 14 days, with `_meta.access.requester_scope` on
 every answer naming the date and the fix; `gbrain doctor` fails
 `unscoped_shared_reads` and `gbrain post-upgrade` lists each one with its
 command. Bind each connection to its person
-(`gbrain auth rescope --token <name> --member <id>`). A stdio harness only one
-person uses is bound with `gbrain setup <harness> --serves several --stdio-member <id>`;
+(`gbrain auth rescope --token <name> --member <id>`). On a local PGLite brain, a
+stdio harness only one person uses is bound with
+`gbrain setup <harness> --serves several --members <ids> --stdio-member <id>`;
 every stdio session on this brain, from any harness on this host, then reads as
-that member, private pages included, so a harness several people talk to gets
-one key per person over HTTP instead (`gbrain serve --http` with
-`gbrain auth create --member <id>` keys). Nothing binds stdio on its own:
-upgrade, post-upgrade and doctor never write `mcp.stdio_member`. A team that shares everything may
+that member, private pages included. On a Postgres brain, and for any harness
+several people talk to, give each person a key over HTTP instead
+(`gbrain serve --http` with `gbrain auth create <name> --member <id>` keys).
+Nothing binds stdio on its own: upgrade, post-upgrade and doctor never write
+`mcp.stdio_member`, and `gbrain doctor` fails `shared_stdio_binding` when it is
+set on a host where OpenClaw or Hermes is installed (its fix is
+`gbrain config unset mcp.stdio_member`). A team that shares everything may
 mark one credential `gbrain auth rescope --token <name> --reads-unscoped --yes`
 (`--reads-unscoped none` takes it back); every change is recorded in the
 `access-reads-unscoped` audit file. Hosted brains keep
