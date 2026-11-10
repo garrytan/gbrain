@@ -145,13 +145,17 @@ describe('doctor self_upgrade_health with the restart plan', () => {
       expect(checkSelfUpgradeHealth(planRestart([], ctx({ expected: PENDING_BUILD }))).message).toBe(plain);
     });
   });
-test('an MCP server a harness started and a running sync do not warn: --stop-mcp and the sync finishing clear them', async () => {
+  test('an MCP server a harness started does not warn (--stop-mcp stops it); a running sync still does, since a sync --watch never finishes', async () => {
     await withEnv({ GBRAIN_SELF_UPGRADE_MODE: 'auto' }, () => {
       const mcp: HostProcess = { pid: 40, ppid: null, role: 'mcp', version: OLD, started_ms: 1_000, ancestors: [99], args: ['serve'] };
-      const sync: HostProcess = { pid: 41, ppid: null, role: 'sync', version: OLD, started_ms: 1_000, ancestors: [98], args: ['sync'] };
-      const plan = planRestart([mcp, sync], ctx({ expected: PENDING_BUILD }));
-      expect(plan.manual.map(m => m.role)).toEqual(['mcp', 'sync']);
-      expect(checkSelfUpgradeHealth(plan).status).toBe('ok');
+      const sync: HostProcess = { pid: 41, ppid: null, role: 'sync', version: OLD, started_ms: 1_000, ancestors: [98], args: ['sync', '--watch'] };
+      const mcpOnly = planRestart([mcp], ctx({ expected: PENDING_BUILD }));
+      expect(mcpOnly.manual.map(m => m.role)).toEqual(['mcp']);
+      expect(checkSelfUpgradeHealth(mcpOnly).status).toBe('ok');
+      const check = checkSelfUpgradeHealth(planRestart([mcp, sync], ctx({ expected: PENDING_BUILD })));
+      expect(check.status).toBe('warn');
+      expect(check.message).toContain('pid 41');
+      expect(check.message).not.toContain('pid 40');
     });
   });
 

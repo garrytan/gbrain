@@ -332,9 +332,9 @@ warns while the next `gbrain upgrade` would refuse, naming each process and its
 step (for an autopilot started outside gbrain's service, `gbrain autopilot
 --install`, after retiring the launcher that starts it now, or the declared
 hand-off above), and names a hand-off or a second Bun global install the
-upgrade replaces itself. An MCP server a harness started (`--stop-mcp` stops
-it) and a running `gbrain sync` (it finishes) do not make it warn, and a held
-or failed auto-upgrade is reported first.
+upgrade replaces itself. An MCP server a harness started does not make it
+warn (`gbrain upgrade --stop-mcp` stops it), and a held or failed auto-upgrade
+is reported first.
 
 On an always-on host, start with `gbrain autopilot pause --reason "upgrade"`
 and wait until `gbrain jobs list --status active --json` returns no jobs, so no

@@ -20,7 +20,7 @@ The upgrade restarted autopilot only through an installed launchd or systemd ser
 |---|---|---|
 | Autopilot started by this brain's gbrain cron line | `restart_refused` | handed to the cron line and verified back on the new build |
 | Autopilot started by your own cron entry or wrapper | `restart_refused`, fix `kill <pid>` | still refuses, naming `gbrain autopilot --install` or `gbrain config set self_upgrade.autopilot_launcher external` (declare it only when the launcher starts autopilot again within 5 minutes); declared, it is handed over like the cron line |
-| doctor `self_upgrade_health` | silent until an upgrade failed | runs the same pre-swap plan read-only: warns while `gbrain upgrade` would refuse, naming each process and its step (autopilot outside gbrain's service, a process from another install), and names a hand-off or a second Bun global install the upgrade replaces itself; a harness MCP server or a running sync does not warn, and a held or failed auto-upgrade is reported first |
+| doctor `self_upgrade_health` | silent until an upgrade failed | runs the same pre-swap plan read-only: warns while `gbrain upgrade` would refuse, naming each process and its step (autopilot outside gbrain's service, a process from another install), and names a hand-off or a second Bun global install the upgrade replaces itself; a harness MCP server does not warn (`--stop-mcp` stops it), and a held or failed auto-upgrade is reported first |
 
 **The daily stable check no longer sticks on a rolled-back release.** A release that was stable before (its `stable-v<version>` record tag exists) or that `stable.json` lists in `known_bad` is skipped and logged, so the newest release gets its soak instead of a refused promotion on every scheduled run (#8792).
 
