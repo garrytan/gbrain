@@ -17,6 +17,8 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { runManagedSourceLifecycle, SOURCE_RETIRE_BATCH_PAGES } from '../src/core/persistence/source-lifecycle.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { deactivationBlockers } from '../src/core/persistence/deactivation.ts';
+import { graduationBlockers } from '../src/core/persistence/graduation-drain.ts';
+import { localHostId } from '../src/core/persistence/identity.ts';
 
 let engine: PGLiteEngine;
 beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); });
@@ -61,6 +63,20 @@ async function failFinalTransaction<T>(run: () => Promise<T>): Promise<T> {
     await engine.executeRaw('DROP FUNCTION IF EXISTS retire_final_fn()');
   }
 }
+/** Arms a failure of the second page batch, so exactly one batch of SOURCE_RETIRE_BATCH_PAGES pages commits. */
+async function failAfterFirstBatch<T>(run: () => Promise<T>): Promise<T> {
+  await engine.executeRaw('CREATE TABLE retire_fail(armed boolean NOT NULL, seen integer NOT NULL)');
+  await engine.executeRaw(`CREATE FUNCTION retire_fail_fn() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE n integer; BEGIN
+    UPDATE retire_fail SET seen=seen+1 WHERE armed RETURNING seen INTO n;
+    IF n > ${SOURCE_RETIRE_BATCH_PAGES} THEN RAISE EXCEPTION 'injected retire batch failure'; END IF; RETURN OLD; END $$`);
+  await engine.executeRaw('CREATE TRIGGER retire_fail BEFORE DELETE ON pages FOR EACH ROW EXECUTE FUNCTION retire_fail_fn()');
+  try {
+    await engine.executeRaw('INSERT INTO retire_fail VALUES(true,0)');
+    return await run();
+  } finally {
+    for (const sql of ['DROP TRIGGER IF EXISTS retire_fail ON pages', 'DROP FUNCTION IF EXISTS retire_fail_fn()', 'DROP TABLE IF EXISTS retire_fail']) await engine.executeRaw(sql);
+  }
+}
 /** Raw page writes stand in for an import; the managed guard admits them only while the brain is briefly unmanaged. */
 async function unmanaged(run: () => Promise<unknown>) {
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
@@ -88,35 +104,40 @@ test('a retry after the source was removed and re-added refuses and keeps the ne
 }), 60_000);
 
 test('a batched retry after partial deletion refuses once the source was replaced out of band, and settles its record', () => fixture(SOURCE_RETIRE_BATCH_PAGES * 2 + 17, async root => {
-  await engine.executeRaw('CREATE TABLE retire_fail(armed boolean NOT NULL, seen integer NOT NULL)');
-  await engine.executeRaw(`CREATE FUNCTION retire_fail_fn() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE n integer; BEGIN
-    UPDATE retire_fail SET seen=seen+1 WHERE armed RETURNING seen INTO n;
-    IF n > ${SOURCE_RETIRE_BATCH_PAGES} THEN RAISE EXCEPTION 'injected retire batch failure'; END IF; RETURN OLD; END $$`);
-  await engine.executeRaw('CREATE TRIGGER retire_fail BEFORE DELETE ON pages FOR EACH ROW EXECUTE FUNCTION retire_fail_fn()');
-  try {
-    await engine.executeRaw('INSERT INTO retire_fail VALUES(true,0)');
-    const requestId = randomUUID();
-    const remove = () => runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: source, confirmDestructive: true, requestId });
-    const first = await incarnation();
-    await expect(remove()).rejects.toThrow('injected retire batch failure');
-    await engine.executeRaw('DELETE FROM retire_fail');
-    expect(await pages()).toBe(SOURCE_RETIRE_BATCH_PAGES + 17);
-    expect(await change(requestId)).toMatchObject({ state: 'recovering', source_incarnation: first });
-    await unmanaged(async () => {
-      await engine.executeRaw('DELETE FROM pages WHERE source_id=$1', [source]);
-      await engine.executeRaw('DELETE FROM persistence_source_bindings WHERE source_id=$1', [source]);
-      await engine.executeRaw('DELETE FROM sources WHERE id=$1', [source]);
-    });
-    await readd(root, 3);
-    await expect(remove()).rejects.toMatchObject({ code: 'source_retire_superseded' });
-    expect(await change(requestId)).toMatchObject({ state: 'failed', source_incarnation: first });
-    await expect(remove()).rejects.toMatchObject({ code: 'source_retire_superseded' });
-    await expect(runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: source, confirmDestructive: true, requestId, dryRun: true }))
-      .rejects.toMatchObject({ code: 'source_retire_superseded' });
-    expect(await pages()).toBe(3);
-  } finally {
-    for (const sql of ['DROP TRIGGER IF EXISTS retire_fail ON pages', 'DROP FUNCTION IF EXISTS retire_fail_fn()', 'DROP TABLE IF EXISTS retire_fail']) await engine.executeRaw(sql);
-  }
+  const requestId = randomUUID();
+  const remove = () => runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: source, confirmDestructive: true, requestId });
+  const first = await incarnation();
+  await expect(failAfterFirstBatch(remove)).rejects.toThrow('injected retire batch failure');
+  expect(await pages()).toBe(SOURCE_RETIRE_BATCH_PAGES + 17);
+  expect(await change(requestId)).toMatchObject({ state: 'recovering', source_incarnation: first });
+  await unmanaged(async () => {
+    await engine.executeRaw('DELETE FROM pages WHERE source_id=$1', [source]);
+    await engine.executeRaw('DELETE FROM persistence_source_bindings WHERE source_id=$1', [source]);
+    await engine.executeRaw('DELETE FROM sources WHERE id=$1', [source]);
+  });
+  await readd(root, 3);
+  await expect(remove()).rejects.toMatchObject({ code: 'source_retire_superseded' });
+  expect(await change(requestId)).toMatchObject({ state: 'failed', source_incarnation: first });
+  await expect(remove()).rejects.toMatchObject({ code: 'source_retire_superseded' });
+  await expect(runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: source, confirmDestructive: true, requestId, dryRun: true }))
+    .rejects.toMatchObject({ code: 'source_retire_superseded' });
+  expect(await pages()).toBe(3);
+}), 60_000);
+
+test('a restore after an interrupted purge abandons the purge: its retry refuses and nothing blocks deactivate or graduation', () => fixture(SOURCE_RETIRE_BATCH_PAGES * 2, async () => {
+  expect(await runManagedSourceLifecycle(engine, { operation: 'archive', sourceId: source })).toMatchObject({ state: 'committed' });
+  const requestId = randomUUID();
+  const purge = () => runManagedSourceLifecycle(engine, { operation: 'purge', sourceId: source, confirmDestructive: true, requestId });
+  const first = await incarnation();
+  await expect(failAfterFirstBatch(purge)).rejects.toThrow('injected retire batch failure');
+  expect(await pages()).toBe(SOURCE_RETIRE_BATCH_PAGES);
+  expect(await runManagedSourceLifecycle(engine, { operation: 'restore', sourceId: source })).toMatchObject({ state: 'committed' });
+  expect(await change(requestId)).toMatchObject({ state: 'failed', source_incarnation: first });
+  for (let i = 0; i < 2; i++) await expect(purge()).rejects.toMatchObject({ code: 'source_retire_superseded' });
+  expect(await pages()).toBe(SOURCE_RETIRE_BATCH_PAGES);
+  expect(await incarnation()).toBe(first);
+  expect((await deactivationBlockers(engine)).filter(b => b.kind === 'topology_recovery')).toEqual([]);
+  expect((await graduationBlockers(engine, localHostId())).filter(b => b.kind === 'topology_recovery')).toEqual([]);
 }), 60_000);
 
 test('a retry against the same incarnation resumes, finishes and settles its record committed', () => fixture(SOURCE_RETIRE_BATCH_PAGES + 3, async () => {
@@ -128,7 +149,10 @@ test('a retry against the same incarnation resumes, finishes and settles its rec
   expect(await pages()).toBe(0);
   expect(await change(requestId)).toMatchObject({ state: 'recovering', source_incarnation: first });
   expect((await deactivationBlockers(engine)).find(b => b.kind === 'topology_recovery')).toMatchObject({
-    detail: `remove of ${source} (request ${requestId}) stopped before it finished`, exit: expect.stringContaining(`--request-id ${requestId}`) });
+    detail: `remove of ${source} (request ${requestId}) stopped before it finished`,
+    exit: expect.stringMatching(new RegExp(`^ask the user .*--request-id ${requestId}`)) });
+  expect((await graduationBlockers(engine, localHostId())).find(b => b.kind === 'topology_recovery')).toMatchObject({
+    argv: ['gbrain', 'sources', 'writer', 'status', source, '--json'], needsUser: true });
   const receipt = await remove();
   expect(receipt).toMatchObject({ state: 'committed', operation: 'remove', source_incarnation: first });
   expect(await remove()).toEqual(receipt);

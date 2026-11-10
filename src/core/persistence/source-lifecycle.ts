@@ -54,10 +54,10 @@ function ownerStatusFix(sourceId:string):Action{
     {argv:['gbrain','sources','writer','status','--source',sourceId,'--json']});
 }
 
-/** #8984: this request_id was admitted against an incarnation of the source that has since been removed or replaced. */
+/** #8984: the source this request_id was admitted against has since been removed, replaced or changed by another lifecycle operation. */
 function retireSuperseded(row:TopologyChange):OperationError{
-  return opError(RETIRE_SUPERSEDED,`This ${row.operation} request was admitted against an earlier incarnation of source '${row.source_id}', which has since been removed or replaced.`,
-    `Nothing was changed: request ${row.request_id} can only act on incarnation ${row.source_incarnation} of '${row.source_id}', so retrying it can never delete the pages of the source registered under that ID now. Do not retry it. Read the source's current state with the command in fix; removing the current source is a new decision for the user, made with a new request id.`,
+  return opError(RETIRE_SUPERSEDED,`This ${row.operation} request was superseded: source '${row.source_id}' has since been removed, replaced or changed by another lifecycle operation.`,
+    `Nothing was changed: request ${row.request_id} can only act on incarnation ${row.source_incarnation} of '${row.source_id}' as it stood when the request was admitted, so retrying it can never delete pages the source holds now. Do not retry it. Read the source's current state with the command in fix; removing the current source is a new decision for the user, made with a new request id.`,
     {fix:ownerStatusFix(row.source_id)});
 }
 /** A prior receipt of this request_id, replayed; a retire admission (#8984) returns null so the run resumes. */
@@ -341,6 +341,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         await tx.executeRaw('DELETE FROM persistence_source_bindings WHERE source_id=$1 AND source_incarnation=$2::uuid',[input.sourceId,incarnation]);
         await supersedeTopologyRetires(tx,input.sourceId,incarnation,requestId);
       }
+      if(source&&!['remove','purge'].includes(input.operation)) await supersedeTopologyRetires(tx,input.sourceId,source.incarnation,requestId);
       const contentReceipts=input.operation==='rebind'?await rebindContentReceipts(tx,worktrees,hostIdFor(tx),relocated?undefined:[input.sourceId]):[];
       await advanceTopology(tx,worktrees);
       for(const id of worktrees){

@@ -118,7 +118,7 @@ export async function deactivationBlockers(engine: BrainEngine): Promise<Deactiv
     "SELECT id::text AS id, operation, source_id, request_id::text AS request_id, (state='recovering' AND recovery IS NULL) AS admission FROM persistence_topology_changes WHERE state='recovering' OR recovery IS NOT NULL ORDER BY created_at LIMIT 20");
   for (const t of topology) blockers.push({ kind: 'topology_recovery', id: t.id, source_id: t.source_id,
     detail: t.admission ? `${t.operation} of ${t.source_id} (request ${t.request_id}) stopped before it finished` : `${t.operation} for ${t.source_id} is recovering`,
-    exit: t.admission ? `rerun gbrain sources ${t.operation} ${t.source_id} --confirm-destructive --request-id ${t.request_id} (the user already confirmed it; it resumes, or refuses with source_retire_superseded if the source was replaced), then rerun deactivate`
+    exit: t.admission ? `ask the user whether to finish it, because finishing deletes the rest of ${t.source_id}'s pages: to finish, rerun the same gbrain sources ${t.operation} command with all its original flags and --request-id ${t.request_id} (an automatic expired-archive purge finishes on its next run); to keep what is left, any other lifecycle change to the source (gbrain sources restore of an archived source, or archive then restore) abandons the request; then rerun deactivate`
       : `gbrain sources writer status ${t.source_id} --json, then let the owner finish recovery` });
   // GBRA-130 A-15: only work that can still change blocks, as activation checks; terminal failures are failedEffectHistory's.
   const effects = await engine.executeRaw<EffectRow>(`${EFFECT_ROWS} WHERE e.state IN ('queued','running') OR e.recovery IS NOT NULL ORDER BY e.id LIMIT 50`);
