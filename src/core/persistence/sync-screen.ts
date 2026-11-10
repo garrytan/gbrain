@@ -312,7 +312,8 @@ function runWriteGateSource(engine: BrainEngine, run: SyncScreenRun, sourceId: s
 }
 
 export interface FrozenImportScreen {
-  cursor: Pick<SyncDiscovery, 'sourceId' | 'incarnation' | 'root' | 'gitRoot' | 'target' | 'entries' | 'companyPlan'> & { index?: number };
+  /** Without its Git fields (a content repair's screen of checkout bytes), no filter driver is read. */
+  cursor: Pick<SyncDiscovery, 'sourceId' | 'incarnation' | 'root'> & Partial<Pick<SyncDiscovery, 'gitRoot' | 'target' | 'entries' | 'companyPlan'>> & { index?: number };
   entry: SyncEntry; slug: string; pageId: number | null; snapshot: Snapshot;
   /** null only for an over-size file, whose content is never read. */
   content: string | null; rawHash: string | null; lineEndingOnly: boolean;
@@ -386,7 +387,9 @@ export async function screenFrozenImport(engine: BrainEngine, input: FrozenImpor
   }
   if (content === null) return null;
   // GST-2312 (#9024): a committed blob a Git filter owns is held alone; sync never runs the filter that would turn it into text.
-  const filtered = filterOwnedRefusal(entry.path, content, entry.working || input.cursor.companyPlan ? null : pinnedFilterDriver(input.cursor, entry.path));
+  const { gitRoot, target, entries } = input.cursor;
+  const filtered = filterOwnedRefusal(entry.path, content, entry.working || input.cursor.companyPlan || !gitRoot || !target || !entries ? null
+    : pinnedFilterDriver({ ...input.cursor, gitRoot, target, entries }, entry.path));
   if (filtered) return heldEntry(entry, slug, pageId, filtered, content, blob);
   // GBRA-133 S-39: text holding NUL cannot be stored or carried in the write intent; only this file is held. A slug conflict
   // still names the hold (#6749): its message carries the path alone, and the slug-conflicts lane reports NULL_BYTES as still_invalid.
