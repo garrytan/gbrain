@@ -41,7 +41,7 @@ export const REQUESTER_SCOPE_GRACE_DAYS = 14;
 const GRACE_SECONDS = REQUESTER_SCOPE_GRACE_DAYS * 24 * 3600;
 /** Whether `op` needs a scoped requester on a brain that serves several people. */
 export function requiresRequesterScope(op: Pick<Operation, 'name' | 'mutating' | 'scope'> | undefined, auth?: Pick<AuthInfo, 'scopes'>): boolean {
-  if (!op || (op.mutating === true && op.scope !== 'read') || REQUESTER_SCOPE_EXEMPT.has(op.name)) return false;
+  if (!op || (op.mutating === true && (op.scope ?? 'read') !== 'read') || REQUESTER_SCOPE_EXEMPT.has(op.name)) return false;
   return !(OWN_JOB_OPS.has(op.name) && auth && !hasScope(auth.scopes ?? [], 'admin'));
 }
 

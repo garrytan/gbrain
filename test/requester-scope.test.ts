@@ -76,12 +76,13 @@ describe('requiresRequesterScope: every read op is classified (deny by default)'
     expect([...REQUESTER_SCOPE_EXEMPT].sort()).toEqual(REVIEWED_EXEMPT);
     expect([...OWN_JOB_OPS].sort()).toEqual(['get_job', 'wait_job']);
     for (const op of operations) {
-      const expected = (op.mutating === false || op.scope === 'read') && !REVIEWED_EXEMPT.includes(op.name);
+      const expected = (op.mutating === false || (op.scope ?? 'read') === 'read') && !REVIEWED_EXEMPT.includes(op.name);
       expect({ op: op.name, gated: requiresRequesterScope(op, { scopes: ['read', 'write', 'admin'] }) }).toEqual({ op: op.name, gated: expected });
     }
     expect(requiresRequesterScope({ name: 'brand_new_read', mutating: undefined })).toBe(true);
     expect(requiresRequesterScope(operations.find(op => op.name === 'think'))).toBe(true);
     expect(requiresRequesterScope({ name: 'brand_new_read_scope_write', mutating: true, scope: 'read' })).toBe(true);
+    expect(requiresRequesterScope({ name: 'brand_new_mutating_no_scope', mutating: true })).toBe(true);
     expect(requiresRequesterScope({ name: 'get_job', mutating: false }, { scopes: ['read'] })).toBe(false);
     expect(requiresRequesterScope({ name: 'get_job', mutating: false }, { scopes: ['admin'] })).toBe(true);
     expect(requiresRequesterScope({ name: 'get_job', mutating: false })).toBe(true);
