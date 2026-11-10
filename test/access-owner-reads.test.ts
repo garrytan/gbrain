@@ -29,6 +29,7 @@ import { openAsPreview } from '../src/cli/as-preview.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 
 const DIMS = 1536;
 function vectorFor(text: string): number[] {
@@ -121,6 +122,7 @@ for (const kind of testBackends()) {
         const minted = await mintLegacyToken(engine, { name, scopes: ['read'], takesHolders: ['world'], sourceGrant: [SRC] });
         tokens[name] = minted.token;
         if (member) await bindCredential(engine, { kind: 'token', id: minted.id }, { member, ...(mayActFor ? { mayActFor } : {}) });
+        else await readsUnscopedOnPurpose(engine, minted.id);
       };
       await mint('owner', OWNER, [`member:${OWNER}`, 'member:bob-example']);
       await mint('delegate', OWNER);

@@ -139,6 +139,7 @@ import { ghostPagesEntry } from './checks/ghost-pages.ts';
 import { memberAccessEntry } from './checks/member-access.ts';
 import { folderAccessEntry } from './checks/folder-access.ts';
 import { unlabeledPeopleFoldersEntry } from './checks/unlabeled-people-folders.ts';
+import { unscopedSharedReadsEntry } from './checks/unscoped-shared-reads.ts';
 import { sharedAgentAccessEntry } from './checks/shared-agent-access.ts';
 import { originTwinsEntry } from './checks/origin-twins.ts';
 import { slugPathMismatchEntry } from './checks/slug-path-mismatch.ts';
@@ -224,6 +225,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   memberAccessEntry,
   folderAccessEntry,
   unlabeledPeopleFoldersEntry,
+  unscopedSharedReadsEntry,
   sharedAgentAccessEntry,
   rlsEntry,
   functionSearchPathEntry,

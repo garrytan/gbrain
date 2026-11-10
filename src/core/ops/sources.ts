@@ -51,7 +51,9 @@ const whoami: Operation = {
     const { accessView, appliedAccessSummary, credentialAccessView, stdioAccessView } = await import('../access/caller.ts');
     // GBRA-231: the view this call is answered under (the shared-agent audience when the harness asserted one), so a
     // model can check it when its harness does not forward _meta.access.
-    const withApplied = async <T extends object>(view: T) => ({ ...view, applied: await appliedAccessSummary(ctx.engine, ctx.auth, [ctx.sourceId, ...(ctx.localFederatedSourceIds ?? [])]) });
+    // GST-363: and, remotely, what the requester-scope gate does with this connection's reads.
+    const withApplied = async <T extends object>(view: T) => ({ ...view, applied: await appliedAccessSummary(ctx.engine, ctx.auth, [ctx.sourceId, ...(ctx.localFederatedSourceIds ?? [])]),
+      requester_scope: await (await import('../access/requester-scope.ts')).requesterScopeView(ctx.engine, (await import('../search/private-visibility.ts')).currentCallerAccess(), ctx.auth, ctx.transport) });
     if (ctx.remote === false) {
       // GBRA-218: a local --as <member> preview reports the member it reads as; the plain local CLI reads every page.
       const access = ctx.applyRemoteReadPolicy && ctx.accessIdentity?.length ? accessView(ctx.accessIdentity, 'as')

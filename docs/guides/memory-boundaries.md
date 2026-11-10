@@ -405,6 +405,14 @@ Read [brains and sources](../architecture/brains-and-sources.md#what-confines-re
 before choosing a sharing topology. Tests cover specific boundaries, not a
 universal security guarantee.
 
+A brain that serves several people (two or more enabled members, or config
+`access.serves = several`) refuses remote reads from a connection bound to no
+member (`requester_scope_required`, after a 14-day grace for connections that
+already existed), so a shared bot cannot read everyone's unmarked notes for
+whoever is asking. That covers reads only: writes keep their own rules, and a
+page that names no readers is still read by every member.
+[The refusal and its fix](write-refusals.md#requester_scope_required).
+
 <a id="fence-markers-in-code"></a>
 **Fence markers quoted in code.** Since 0.60.97.0 the readers (the fence
 parser, projections, repair) ignore a takes or facts fence marker that sits in

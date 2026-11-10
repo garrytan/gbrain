@@ -131,7 +131,7 @@ export function servesApply(flags: ServesFlags, launcher: string, plan: ServesPl
     : { mode: 'several' as const, note: `the new brain is created first; then ${plan.roster.join(', ')} each get a member, a folder rule and a bound key` };
   const reread = several && !flags.dryRun ? readServesStatus(launcher) : null;
   const status = reread ? ('status' in reread ? reread.status : null) : plan.status;
-  const stdio = bindStdioToOwner(launcher, several && !status ? { serves: 'several', from: 'config', enabled_members: plan.roster, owner: null, stdio_member: null } : status, flags.dryRun);
+  const stdio = bindStdioToOwner(launcher, several && !status ? { serves: 'several', from: 'config', enabled_members: plan.roster, since: null, owner: null, stdio_member: null } : status, flags.dryRun);
   if (!labelled && !stdio) return null;
   const outcome: ServesOutcome = { ...(labelled ?? { mode: 'one' as const }), brain_serves: 'one', ...(stdio ? { stdio } : {}),
     ...(reread && 'error' in reread ? { error: `reading the brain back failed: ${reread.error}` } : {}) };

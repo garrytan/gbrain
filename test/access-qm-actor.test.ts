@@ -124,7 +124,8 @@ for (const kind of testBackends()) {
         clients[name] = { id: c.clientId, secret: c.clientSecret ?? '', token: '' };
         return c.clientId;
       };
-      await bindCredential(engine, { kind: 'client', id: await register('qm') }, { attestActor: 'qm', attestOps: ATTEST_OPS });
+      // GST-363: these attest credentials' calls without x-qm-actor read unscoped on purpose on this several-member brain.
+      await bindCredential(engine, { kind: 'client', id: await register('qm') }, { attestActor: 'qm', attestOps: ATTEST_OPS, readsUnscoped: true });
       await register('plain');
       await bindCredential(engine, { kind: 'client', id: await register('defaults') }, { attestActor: 'qm' });
       await register('code', ['authorization_code']);
@@ -137,7 +138,7 @@ for (const kind of testBackends()) {
       await engine.executeRaw("UPDATE oauth_clients SET private_pages = 'granted_sources' WHERE client_id = $1", [clients.qm!.id]);
       const minted = await mintLegacyToken(engine, { name: 'qm-legacy', scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [SRC] });
       tokens.legacy = { id: minted.id, token: minted.token };
-      await bindCredential(engine, { kind: 'token', id: minted.id }, { attestActor: 'qm', attestOps: ATTEST_OPS });
+      await bindCredential(engine, { kind: 'token', id: minted.id }, { attestActor: 'qm', attestOps: ATTEST_OPS, readsUnscoped: true });
       await rescopeLegacyToken(engine, parseRescopeTokenArgs(['qm-legacy', '--private-pages', 'granted-sources']));
       await linkMember(engine, 'alice-example', 'qm', ALICE_ID);
       await linkMember(engine, 'alice-example', 'qm', OIDC_ID);

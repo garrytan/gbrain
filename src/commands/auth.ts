@@ -39,6 +39,7 @@ import { migrateLegacyTokens, parseRescopeTokenArgs, renderLegacyGrantAxis, resc
 import { bindCredential, type BindingPatch, type BindingResult } from '../core/access/members.ts';
 import { bindingLine, checkBindingTarget, takeBindingFlags } from './auth-binding.ts';
 import { mintToken } from './auth-mint.ts';
+import { assertCredentialScoped, logReadsUnscopedChange } from '../core/access/requester-scope.ts';
 import { exitCliError } from '../cli/cli-error.ts';
 import { OperationError } from '../core/ops/contract.ts';
 
@@ -91,7 +92,9 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
   }
   try {
     await withConfiguredSql(async (_sql, engine) => {
+      await assertCredentialScoped(engine, opts.binding ?? null, 'token', name);
       const { token, takesHolders, bound } = await mintToken(engine, name, opts);
+      if (bound) auditReadsUnscoped(bound, `token ${name}`, false);
       const scopeLine = opts.scopes !== undefined
         ? `scopes=${JSON.stringify(opts.scopes)}`
         : 'scopes=full access (grandfathered — pass --scopes read,write to narrow)';
@@ -770,11 +773,13 @@ async function registerClient(name: string, args: string[]) {
   try {
     await withConfiguredSql(async (sql, engine) => {
       await checkBindingTarget(engine, binding.patch);
+      await assertCredentialScoped(engine, binding.patch, 'client', name);
       const columns = parsed.tokenTtlSeconds !== undefined
         ? await preflightOauthClientColumns(sql)
         : undefined;
       const registered = await registerScopedClient(sql, name, parsed, { columns, transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
       const bound = binding.patch ? await bindCredential(engine, { kind: 'client', id: registered.clientId }, binding.patch) : null;
+      if (bound) auditReadsUnscoped(bound, `OAuth client ${registered.clientId}`, false);
       if (registered.skipped?.tokenTtl) {
         console.error('Note: this brain predates the token_ttl column; run `gbrain apply-migrations --yes`, then rescope. The server default TTL applies.');
       }
@@ -848,13 +853,18 @@ async function runRescope(rawArgs: string[], clientParser?: (args: string[]) => 
       if (target.kind === 'client') {
         const clientId = target.clientId;
         const parsedClient = clientParser ? clientParser(command.args) : parseClientRescopeArgs(clientId, command.args);
-        const bindLater = async () => bindCredential(engine, { kind: 'client', id: clientId }, binding.patch!, { dryRun });
+        const bindLater = async () => {
+          const bound = await bindCredential(engine, { kind: 'client', id: clientId }, binding.patch!, { dryRun });
+          auditReadsUnscoped(bound, `OAuth client ${clientId}`, dryRun);
+          return bound;
+        };
         return rescopeClientWith(engine, clientId, parsedClient, bindLater);
       }
       const tokenArgv = command.kind === 'bare' ? [command.name, ...command.args] : command.args;
       const parsed = parseRescopeTokenArgs(tokenArgv);
       const result = await rescopeLegacyToken(engine, parsed);
       const bound = await bindCredential(engine, { kind: 'token', id: result.id }, binding.patch, { dryRun });
+      auditReadsUnscoped(bound, `token ${result.name}`, dryRun);
       printTokenRescope(result, parsed.json, bound);
     });
   } catch (error) {
@@ -869,6 +879,11 @@ async function runRescope(rawArgs: string[], clientParser?: (args: string[]) => 
     if (fix) console.error('Fix: Run gbrain auth clients --json on this brain, then retry with an existing client id. No grants or tokens changed.');
     process.exit(1);
   }
+}
+
+/** GST-363: every grant or removal of --reads-unscoped lands in the access-reads-unscoped audit trail. */
+function auditReadsUnscoped(b: BindingResult, credential: string, dryRun: boolean): void {
+  if (b.reads_unscoped !== undefined && b.changed && !dryRun) logReadsUnscopedChange({ credential, reads_unscoped: b.reads_unscoped, by: 'gbrain auth' });
 }
 
 const CLIENT_NOT_FOUND_FIX = {

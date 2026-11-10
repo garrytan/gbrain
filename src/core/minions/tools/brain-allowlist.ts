@@ -36,6 +36,7 @@ import { BRAIN_TOOL_ALLOWLIST } from './brain-tool-allowlist.ts';
 import { stagePutPage } from './staged-put-page.ts';
 import { withCallerAccess } from '../../search/private-visibility.ts';
 import { remoteCallerAccess } from '../../access/caller.ts';
+import { credentialScopeFor, requesterScopeGate, requiresRequesterScope } from '../../access/requester-scope.ts';
 import { attestedCallerAccess, storedActorIdentity } from '../../access/actor.ts';
 import type { AudiencePrincipal } from '../../access/audience.ts';
 import { currentSubmissionAuthority } from '../submission-authority.ts';
@@ -323,7 +324,7 @@ function brainTool(op: Operation, opts: BuildBrainToolsOpts): ToolDef {
       const output = agent && actor
         ? await withCallerAccess(await attestedCallerAccess(ctx.engine, actor, await storedActorIdentity(ctx.engine, agent.principal, actor, op.name)), run)
         : opCtx.auth
-        ? await withCallerAccess(await remoteCallerAccess(ctx.engine, opCtx.auth, [], undefined, actingFor), run)
+        ? await withCallerAccess(await scopedJobAccess(ctx.engine, op, opCtx.auth, actingFor), run)
         : await run();
       const rejection = op.name === 'put_page' ? putPageRejection(output) : null;
       if (rejection) throw new Error(rejection);
@@ -331,6 +332,17 @@ function brainTool(op: Operation, opts: BuildBrainToolsOpts): ToolDef {
       return output;
     },
   };
+}
+
+/**
+ * The caller access of a remote-owned job's tool call. GST-363: the same requester-scope gate as dispatch, read live
+ * on every call: on a brain that serves several people, a read by a job whose credential is bound to nobody (and that
+ * names no audience) is refused with requester_scope_required once the grace ends; during it the call runs.
+ */
+async function scopedJobAccess(engine: BrainEngine, op: Operation, auth: NonNullable<OperationContext['auth']>, actingFor: AudiencePrincipal[] | undefined) {
+  const access = await remoteCallerAccess(engine, auth, [], undefined, actingFor);
+  if (requiresRequesterScope(op, auth)) requesterScopeGate(op, access, await credentialScopeFor(engine, auth), 'http');
+  return access;
 }
 
 /**

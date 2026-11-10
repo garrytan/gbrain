@@ -99,6 +99,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'access_policy_store_mismatch',
   // GST-363: a brain that serves several people keeps each people/<name>/ folder to its readers (doctor/checks/unlabeled-people-folders.ts).
   'unlabeled_people_folders',
+  // GST-363: credentials bound to nobody on a brain that serves several people (doctor/checks/unscoped-shared-reads.ts).
+  'unscoped_shared_reads',
   // GBRA-231: shared agents (doctor/checks/shared-agent-access.ts).
   'access_may_act_for_wildcard',
   'extractor_facts_expired',

@@ -26,5 +26,6 @@ export const RUNTIME_READER_CONFIG_KEYS: readonly string[] = [
   'persistence.adopt_quiet_ms', // persistence/local-edit-adoption.ts (GST-1601): how long a local edit must be quiet before it is adopted, default 5000
   'access.owner_member', // access/owner.ts (GST-2059): the member who owns this brain; credentials bound to it read private pages (gbrain access owner set)
   'access.serves', // access/serves.ts (GST-363): one or several; explicit wins over the enabled-member count (gbrain setup --serves several writes it)
+  'access.requester_scope_enforce', // access/requester-scope.ts (GST-363): false turns the unscoped-read refusal on a brain that serves several people into a notice (hosted, until connections are bound); default on
   'mcp.stdio_may_act_for', // access/audience.ts (GBRA-231): whom a local stdio server may act for (_meta.on_behalf_of); unset, stdio refuses every audience
 ];

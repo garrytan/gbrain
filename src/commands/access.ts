@@ -149,6 +149,8 @@ export interface AccessCheckResult {
   identity: string[];
   may_act_for: string[] | null;
   verdict: 'reads_as_member' | 'unbound' | 'refused';
+  /** GST-363: marked with auth rescope --reads-unscoped --yes, so it reads unscoped on purpose on a brain that serves several people. */
+  reads_unscoped: boolean;
   /** GST-2059: the credential reads as the brain owner (config access.owner_member). */
   owner: boolean;
   explanation: string;
@@ -169,7 +171,7 @@ export async function accessCheck(engine: BrainEngine, target: { token?: string;
   } else {
     const client = await readClientGrant(engine, target.client!);
     if (client.revoked) throw opError('client_not_found', `OAuth client "${target.client}" is revoked.`, 'List the clients with gbrain auth clients --json.');
-    [row] = await engine.executeRaw<Record<string, unknown>>('SELECT member_id, may_act_for FROM oauth_clients WHERE client_id = $1', [client.clientId]) as [Record<string, unknown>];
+    [row] = await engine.executeRaw<Record<string, unknown>>('SELECT member_id, may_act_for, reads_unscoped FROM oauth_clients WHERE client_id = $1', [client.clientId]) as [Record<string, unknown>];
     grant = grantFromClient(client);
     credential = { kind: 'client', id: client.clientId, name: client.clientName };
   }
@@ -180,8 +182,10 @@ export async function accessCheck(engine: BrainEngine, target: { token?: string;
   const identity = live ? identityFor(member!.id, member!.groups) : [];
   const mayActFor = Array.isArray(row.may_act_for) ? (row.may_act_for as string[]) : null;
   const verdict: AccessCheckResult['verdict'] = !member ? 'unbound' : live ? 'reads_as_member' : 'refused';
+  const readsUnscoped = row.reads_unscoped != null;
   const owner = live && member!.id === await ownerMemberId(engine);
   const explanation = verdict === 'unbound' ? 'Bound to no member: reads every page its grant allows except pages that name readers (readable_by).'
+      + (readsUnscoped ? ' Marked --reads-unscoped: on a brain that serves several people it reads every page no rule restricts, for any asker (gbrain auth rescope --reads-unscoped none removes the mark).' : '')
     : verdict === 'refused' ? `Bound to member "${member!.id}", which is ${member!.status}: the credential is refused at verification (access_member_disabled).`
     : `Reads as member "${member!.id}"${member!.groups.length ? ` (groups: ${member!.groups.join(', ')})` : ''}: pages naming readers are visible when they list the member or one of its groups, within the grant below.`
       + (owner ? ' It is the brain owner: it also reads visibility: private pages, privacy-alias pages, derived and pinned-question pages and private facts in every source the grant reads.' : '');
@@ -189,7 +193,7 @@ export async function accessCheck(engine: BrainEngine, target: { token?: string;
     credential,
     grant: { scopes: grant.scopes, sources: grant.sources, takes_holders: grant.takesHolders, private_pages: grant.privatePages,
       operations: grant.allowedOperations ?? 'unrestricted', revision: grant.revision },
-    member, identity, may_act_for: mayActFor, verdict, owner, explanation,
+    member, identity, may_act_for: mayActFor, verdict, reads_unscoped: readsUnscoped, owner, explanation,
   };
   if (target.as !== undefined) {
     const audience: NonNullable<AccessCheckResult['audience']> = [];
