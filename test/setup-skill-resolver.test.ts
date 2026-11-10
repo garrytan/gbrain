@@ -310,6 +310,19 @@ describe('per_harness.<harness>.dirs: extra skill directories setup keeps', () =
     expect(receipt(b).catalog.source.dirs).toEqual([HARNESS['claude-code'].skills(b)]);
   });
 
+  test('a hand-edited dir with a trailing or doubled slash is the same directory: one source dir, and a re-run keeps the catalog', async () => {
+    const b = box();
+    skill(HARNESS['claude-code'].skills(b), 'deploy-widget', 'Deploy the widget service.');
+    const extra = join(b.root, 'shared-skills');
+    skill(extra, 'citation-fixer', 'Fix broken citations across brain pages.');
+    mkdirSync(gb(b), { recursive: true });
+    writeFileSync(configPath(b), JSON.stringify({ skills: { resolver: { per_harness: { 'claude-code': { dirs: [`${extra}/`, extra.replace('/shared-skills', '//shared-skills')] } } } } }));
+    expect((await setup(b, 'claude-code', ['--skill-loading', 'resolve'])).exitCode).toBe(0);
+    expect(receipt(b).catalog.source.dirs).toEqual([HARNESS['claude-code'].skills(b), extra]);
+    const again = await setup(b, 'claude-code', ['--skill-loading', 'resolve']);
+    expect(again.stdout).toMatch(/keep\s+resolver catalog: 2 skills/);
+  });
+
   test('refused: a relative or .. path, more than 32 dirs, and a harness setup does not build a catalog for', async () => {
     const b = box();
     for (const [key, value, needle] of [

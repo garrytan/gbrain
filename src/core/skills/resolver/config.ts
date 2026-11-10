@@ -17,8 +17,8 @@
  *   skills.resolver.top_k       suggestions per turn (1..8, default 5)
  *   skills.resolver.min_match   the weakest match_strength to suggest
  *     (default: every match)
- *   skills.resolver.top_gate    empty the block when the best skill's score
- *     over its catalog's maxIdf is below this (0..100; default off)
+ *   skills.resolver.top_gate    empty the block when the best skill it would
+ *     show scores below this over its catalog's maxIdf (0..100; default off)
  *   skills.resolver.per_harness.<harness>.{top_k,min_match,top_gate}  overrides
  *     for one harness; a key it leaves out falls back to the global one, and
  *     an entry that is not an object (a hand-edited null) counts as unset
@@ -29,7 +29,7 @@
  *     never suggested (at most 1,024)
  */
 import { readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { HARNESSES } from './block.ts';
 import { ResolverError } from './errors.ts';
 import { EXCLUDE_MAX, MATCH_STRENGTHS, type MatchStrength, TOP_GATE_MAX, TOP_K_MAX } from './limits.ts';
@@ -94,7 +94,7 @@ export function validateTopGate(v: unknown, key: string): number {
 }
 
 export function validateSkillDirs(v: unknown, key: string): string[] {
-  if (Array.isArray(v) && v.length <= SKILL_DIRS_MAX && v.every(x => typeof x === 'string' && x.startsWith('/') && x.length <= 4096 && !x.includes('\0') && !x.split('/').includes('..'))) return v as string[];
+  if (Array.isArray(v) && v.length <= SKILL_DIRS_MAX && v.every(x => typeof x === 'string' && x.startsWith('/') && x.length <= 4096 && !x.includes('\0') && !x.split('/').includes('..'))) return [...new Set((v as string[]).map(d => resolve(d)))];
   throw configInvalid(key, `must be a list of at most ${SKILL_DIRS_MAX} absolute directory paths`);
 }
 

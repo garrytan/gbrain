@@ -69,9 +69,10 @@ and no brain connection is needed.
   --min-match <s>      drop candidates weaker than this match: named, name, triggers,
                        routing, description or body (default: every match). It filters;
                        stronger matches still fill the block, so it never empties it
-  --top-gate <x>       empty the block when the best skill's score over its catalog's
-                       maximum word weight is below x (0-100; default off); a skill
-                       named in the turn bypasses it
+  --top-gate <x>       empty the block when the best skill it would show (after
+                       --exclude and --min-match) scores below x over its catalog's
+                       maximum word weight (0-100; default off); a skill named in the
+                       turn bypasses it
   --shadow             compute the block without injecting it (block "" on stdout);
                        --shadow-log <file> appends what would have been injected
   --expect-catalog <h> refuse with skill_catalog_mismatch unless the catalog hash is h

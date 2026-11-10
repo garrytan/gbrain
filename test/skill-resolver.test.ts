@@ -132,6 +132,20 @@ describe('turn rules', () => {
     expect(named.output.suggestions[0]).toMatchObject({ id: 'gbrain:deploy', match_strength: 'named' });
   });
 
+  test('top_gate reads the best skill the block would show: an excluded top skill does not open it, and an empty window stays filtered', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', BASIC);
+    const open = await resolveSkills({ message: 'weekly meeting notes' }, { home });
+    const [top, second] = open.output.suggestions;
+    expect(second!.score).toBeLessThan(top!.score);
+    const gate = (top!.score + second!.score) / 2 / maxIdf(BASIC.length);
+    expect((await resolveSkills({ message: 'weekly meeting notes', top_gate: gate }, { home })).output.suggestions[0]!.id).toBe(top!.id);
+    const excluded = await resolveSkills({ message: 'weekly meeting notes', exclude: [top!.id], top_gate: gate }, { home });
+    expect([excluded.output.suggestions, excluded.output.block_reason]).toEqual([[], 'weak_top_match']);
+    const none = await resolveSkills({ message: 'weekly meeting notes', exclude: open.output.suggestions.map(s => s.id), top_gate: 0.0001 }, { home });
+    expect(none.output.block_reason).toBe('filtered');
+  });
+
   test('top_gate reads the same at any catalog size: the score is divided by the maxIdf of its own catalog', async () => {
     const home = tmp();
     const pad = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `p:${word(i, 3)}`, name: word(i, 3), description: Array.from({ length: 8 }, (_, s) => word(i, 5 + s)).join(' ') }));

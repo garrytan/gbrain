@@ -300,6 +300,20 @@ describe('skill-resolver lane: session GC before the process exits', () => {
   });
 });
 
+describe('skill-resolver lane: a deadline during the session GC pass', () => {
+  test('the delivered turn is logged as delivered, the process still exits at the deadline, and the commit landed', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    const cmd = wired(b, 'claude-code');
+    const r = await hook(b, cmd, { prompt: 'please deploy the widget to staging', session_id: 'sess-gc-stall' }, { GBRAIN_TEST_SKILL_LANE_STALL: 'gc', GBRAIN_TEST_SKILL_LANE_DEADLINE_MS: '3000' });
+    expect(r.exitCode).toBe(0);
+    expect(contextOf(r)).toContain('id: "deploy-widget"');
+    expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'delivered' });
+    expect(sessions(b).filter((s) => s.endsWith('.json'))).toHaveLength(1);
+  });
+});
+
 describe('skill-resolver lane: a deadline during the dedupe commit', () => {
   for (const stall of ['commit-held', 'commit-written'] as const) {
     test(`${stall}: the exit releases the session lease and removes the temp file, so the next turn commits`, async () => {

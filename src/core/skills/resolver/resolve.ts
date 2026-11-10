@@ -22,9 +22,9 @@
  * min_match_strength drops weaker matches before the cut to k, so a floor
  * never shrinks the block below what the stronger matches fill: it filters
  * candidates and does not gate the block. top_gate (off unless set) does:
- * when the best-ranked skill's score over its catalog's maxIdf is below it,
- * the block is empty (block_reason weak_top_match), unless the turn names a
- * skill. A message that matches no catalog word falls back to
+ * when the best skill the block would show (after exclude and
+ * min_match_strength) scores below it over its catalog's maxIdf, the block is
+ * empty (block_reason weak_top_match), unless the turn names a skill. A message that matches no catalog word falls back to
  * previous_user_message.
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -382,8 +382,8 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
     const resuggested: string[] = [];
     const deduped: string[] = [];
     let paced = false;
-    const gated = input.top_gate !== undefined && !window.some(x => x.explicit)
-      && Math.max(...ranks.map((r, c) => (r.ranked[0] ? r.ranked[0].score / maxIdf(loaded[c]!.ix.n) : 0))) < input.top_gate;
+    const gated = input.top_gate !== undefined && window.length > 0 && !window.some(x => x.explicit)
+      && Math.max(...window.map(x => x.score / maxIdf(loaded[x.c]!.ix.n))) < input.top_gate;
     if (budget > 0 && window.length && spentFrac >= 0.5 && !strong(window[0]!)) paced = true;
     if (!paced && !gated) {
       window.forEach((x, i) => {

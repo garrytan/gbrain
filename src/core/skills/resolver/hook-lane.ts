@@ -29,9 +29,10 @@
  * that ends before the worker is needed terminates it. At the
  * deadline the main thread prints nothing and exits the process at once,
  * abandoning the worker, and commits no dedupe state: a commit starts only
- * after the block was written, on the main thread, before the deadline. The
- * commit's session GC pass is awaited before the lane returns, bounded by
- * LANE_GC_FILES files and by the time left before the deadline.
+ * after the block was written, on the main thread, before the deadline. Once
+ * the turn is logged, the lane awaits the commit's session GC pass, bounded by
+ * LANE_GC_FILES files and by the time left before the deadline; a deadline
+ * that lands during it exits without changing the logged outcome.
  *
  * One owner per event: like the harness, plugin and turn-rule lanes, it parses
  * the carriers the harness merges (Claude Code: managed settings, the
@@ -101,7 +102,7 @@ const CONFIG_CAP_BYTES = 1024 * 1024;
 const SPAWN_INTERVAL_MS = 60_000;
 /** Time kept back from the worker's own deadline for delivery and the commit. */
 const COMMIT_RESERVE_MS = 10;
-/** Time kept back from the deadline after the session GC pass, for the lane log and the exit. */
+/** Time kept back from the deadline after the session GC pass, for the exit. */
 const GC_RESERVE_MS = 5;
 
 export type LaneHarness = 'claude-code' | 'codex' | 'hermes';
@@ -297,9 +298,11 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
     (io.exit ?? ((c: number) => process.exit(c)))(0);
     return 0;
   }
-  clearTimeout(timer);
   void ctl.worker?.terminate();
   if (result.outcome !== 'off' && result.outcome !== 'yield') await log(result);
+  const gcDone = env.GBRAIN_TEST_SKILL_LANE_STALL === 'gc' ? new Promise<void>(() => {}) : sessionGcSettled();
+  if ((await Promise.race([gcDone, deadline])) === 'deadline') (io.exit ?? ((c: number) => process.exit(c)))(0);
+  clearTimeout(timer);
   return 0;
 }
 
@@ -366,7 +369,6 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
   if (posted.pending && !ctl.expired) {
     const gc = { files: LANE_GC_FILES, until: performance.now() + deadlineMs - elapsed() - GC_RESERVE_MS };
     await commitSessionAsync(home, posted.pending.key, posted.pending.delta, ctl.commit, gc);
-    await sessionGcSettled();
   }
   return { outcome, catalogs };
 }
