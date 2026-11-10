@@ -155,7 +155,7 @@ for (const kind of testBackends()) {
       expect(commits()).toEqual(pages.map(() => 1));
     }, 300_000);
 
-    test('the commit wait lets a pass parked on a timer resume (GST-2314 forced probe)', async () => {
+    test('the commit wait yields to timers between effect passes, so a timer-parked pass can resume (GST-2314 forced probe)', async () => {
       let resumed = false;
       setTimeout(() => { resumed = true; }, 25);
       await untilDone(() => withEnv({ GBRAIN_HOME: home }, () => runPersistenceEffects(engine, { engine: kind, embedding_disabled: true } as never, { hostId: localHostId(), limit: 50 })),
