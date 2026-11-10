@@ -27,6 +27,7 @@ test/access-owner-default-writes.test.ts
 test/access-owner-reads.test.ts
 test/access-page-indexes-online.test.ts
 test/access-qm-actor.test.ts
+test/access-token-grant-columns.test.ts
 test/access-ungranted-member-writes.test.ts
 test/access-writes.test.ts
 test/activation-unbound-rooted-6449.test.ts
@@ -450,6 +451,7 @@ test/persistence-reconcile-git-dirty-6138.test.ts
 test/persistence-skill-bundles.serial.test.ts
 test/persistence-skill-crash.slow.test.ts
 test/persistence-skip-cost.test.ts
+test/persistence-stale-plan-retry.test.ts
 test/persistence-sync-cursor-options.test.ts
 test/persistence-sync-cursor-strategy-6696.test.ts
 test/persistence-sync-fence-holds.test.ts
