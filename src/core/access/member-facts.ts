@@ -34,13 +34,19 @@ export function callerMember(): string | null {
   return member && ACCESS_ID_RE.test(member) ? member : null;
 }
 
+/** The caller is a credential bound to the brain owner (not an attested actor): it writes shared memory as an unbound operator does. */
+export function callerIsOwnerCredential(): boolean {
+  const access = currentCallerAccess();
+  return access.owner === true && !access.actor;
+}
+
 /**
  * The member page a remote memory write goes to, or null when the caller writes as no single member (local or
  * unbound). A member id whose page slug a repo brain would rename on sync (`a--b`, `zed-`) is refused: its facts
  * would land on another path.
  */
 export function memberFactPage(ctx: Pick<OperationContext, 'remote'>): string | null {
-  if (ctx.remote === false) return null;
+  if (ctx.remote === false || callerIsOwnerCredential()) return null;
   const member = callerMember();
   if (!member) return null;
   const slug = memberPageSlug(member);

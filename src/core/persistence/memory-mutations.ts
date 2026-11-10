@@ -26,7 +26,7 @@ import { prepareMemoryMutation } from './memory-prepare.ts';
 import { readForgetTarget, refuseForgetReachingOtherCopies } from './forget-prepare.ts';
 import { UNATTRIBUTED_MEMORY_SLUG } from '../facts/extract-from-fence.ts';
 import { resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
-import { callerMember, memberFactAdmitSql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug, scopePageIsShared, scopePageNotShared, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
+import { callerIsOwnerCredential, callerMember, memberFactAdmitSql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug, scopePageIsShared, scopePageNotShared, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
 import { perCallWriteSource } from '../access/attest-sources.ts';
 
 export { prepareMemoryMutation } from './memory-prepare.ts';
@@ -323,7 +323,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   // on its own member page, and only there (the page is the withdrawal's subject), so another member's copy of the same
   // claim stays active and rememberable. Ownership is judged first: any other fact is not_found before a trust check,
   // so no owner proposal is filed and its tier is never disclosed.
-  const member = remote ? callerMember() : null;
+  const member = remote && !callerIsOwnerCredential() ? callerMember() : null;
   const ownPage = member ? memberPageSlug(member) : null;
   if (ownPage && !(await ctx.engine.executeRaw(`SELECT 1 FROM facts WHERE id=$1 AND source_id=$2 AND ${memberFactAdmitSql('facts')}`, [id, sourceId])).length) throw missing();
   // #5575 I3: a remote caller cannot forget a fact more trusted than its own writes; the owner is asked instead.
