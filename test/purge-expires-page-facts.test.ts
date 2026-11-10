@@ -8,7 +8,7 @@
  *    purged page, and facts about other pages.
  * 2. Fails when: a purge deletes the page row and leaves its facts with expired_at NULL (facts have no foreign key to
  *    pages), on the bulk purge (purgeDeletedPages) or the belief-ledger purge of a recorded source
- *    (expireRecordedTombstones); or the fix deletes a fact row instead of expiring it. The managed purge, which already
+ *    (expireRecordedTombstones); or the fix deletes a fact row instead of expiring it, or expires it with no write attribution. The managed purge, which already
  *    sweeps the facts filed on the page, is pinned alongside.
  * 3. Real seams: writes and reads dispatched through MCP dispatch, remote reads with a minted token verified by the
  *    OAuth provider; a repo-less source, an unmanaged source the belief ledger records, and a managed brain; embeddings stubbed.
@@ -113,6 +113,8 @@ async function purgedPageScenario(engine: BrainEngine, source: string, purge: ()
     ...(opts.sweepsFiled ? [] : [{ fact: expect.stringContaining('canaryobservation'), expired: false }]),
   ];
   expect(await facts()).toEqual(expected);
+  // The expiry is attributed to the maintenance principal, like every other fact write.
+  expect(await engine.executeRaw('SELECT fact FROM facts WHERE source_id = $1 AND expired_at IS NOT NULL AND last_write_principal_kind IS NULL', [source])).toEqual([]);
   // The soft-deleted holder comes back with its fact about the purged page.
   await write('restore_page', { slug: SHELVED, expected_revision: await shelvedRevision() });
   expect((await facts()).find(f => f.fact.includes('canaryshelvedholder'))?.expired).toBe(false);
@@ -146,7 +148,7 @@ for (const kind of testBackends()) {
       else { const pglite = new PGLiteEngine(); await pglite.connect({ engine: 'pglite' } as never); await pglite.initSchema(); engine = pglite; close = () => pglite.disconnect(); }
       try {
         await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-a', 'source-a') ON CONFLICT (id) DO NOTHING");
-        await purgedPageScenario(engine, 'source-a', async () => (await engine.purgeDeletedPages(72)).slugs, { remoteReader: true });
+        await purgedPageScenario(engine, 'source-a', async () => (await purgeDeletedPagesCoordinated(engine, 72)).slugs, { remoteReader: true });
       } finally { await close(); }
     }, 240_000);
 
