@@ -22,6 +22,9 @@
  *   skills.resolver.per_harness.<harness>.{top_k,min_match,top_gate}  overrides
  *     for one harness; a key it leaves out falls back to the global one, and
  *     an entry that is not an object (a hand-edited null) counts as unset
+ *   skills.resolver.per_harness.<claude-code|codex>.dirs  extra absolute
+ *     skill directories setup adds to that harness's user catalog (at most
+ *     SKILL_DIRS_MAX); setup and the catalog's recorded rebuild keep them
  *   skills.resolver.pinned      skill ids the harness always loads itself,
  *     never suggested (at most 1,024)
  */
@@ -35,6 +38,9 @@ export const DEFAULT_SESSION_TOKEN_BUDGET = 2000;
 export const MIN_SESSION_TOKEN_BUDGET = 100;
 export const MAX_SESSION_TOKEN_BUDGET = 50_000;
 const CONFIG_CAP = 1024 * 1024;
+export const SKILL_DIRS_MAX = 32;
+/** The harnesses whose user catalog setup builds, so the only ones a dirs key applies to. */
+const DIRS_HARNESSES = ['claude-code', 'codex'];
 
 export interface ResolverSettings {
   sessionTokenBudget: number;
@@ -87,6 +93,19 @@ export function validateTopGate(v: unknown, key: string): number {
   throw configInvalid(key, `must be a number from 0 to ${TOP_GATE_MAX} (0 or unset: off)`);
 }
 
+export function validateSkillDirs(v: unknown, key: string): string[] {
+  if (Array.isArray(v) && v.length <= SKILL_DIRS_MAX && v.every(x => typeof x === 'string' && x.startsWith('/') && x.length <= 4096 && !x.includes('\0') && !x.split('/').includes('..'))) return v as string[];
+  throw configInvalid(key, `must be a list of at most ${SKILL_DIRS_MAX} absolute directory paths`);
+}
+
+/** The extra skill directories configured for one harness's user catalog (empty when none). Throws skill_resolver_config_invalid on a bad value. */
+export function configuredSkillDirs(section: Record<string, unknown>, harness: string): string[] {
+  const per = section.per_harness;
+  const mine = per && typeof per === 'object' && !Array.isArray(per) ? (per as Record<string, unknown>)[harness] : undefined;
+  const dirs = mine && typeof mine === 'object' && !Array.isArray(mine) ? (mine as Record<string, unknown>).dirs : undefined;
+  return dirs === undefined ? [] : validateSkillDirs(dirs, `skills.resolver.per_harness.${harness}.dirs`);
+}
+
 export function validatePinned(v: unknown, key: string): string[] {
   if (Array.isArray(v) && v.length <= EXCLUDE_MAX && v.every(x => typeof x === 'string' && x.length > 0 && x.length <= 256)) return v as string[];
   throw configInvalid(key, `must be a list of at most ${EXCLUDE_MAX} skill ids`);
@@ -109,8 +128,12 @@ export function laneTurnSettings(section: Record<string, unknown>, harness: stri
     const key = `${p}per_harness.${h}`;
     if (!(HARNESSES as readonly string[]).includes(h)) throw configInvalid(key, `names no harness (one of ${HARNESSES.join(', ')})`);
     if (!o || typeof o !== 'object' || Array.isArray(o)) continue;
-    if (Object.keys(o).some(k => k !== 'top_k' && k !== 'min_match' && k !== 'top_gate')) throw configInvalid(key, 'may hold only top_k, min_match and top_gate');
+    if (Object.keys(o).some(k => k !== 'top_k' && k !== 'min_match' && k !== 'top_gate' && k !== 'dirs')) throw configInvalid(key, 'may hold only top_k, min_match, top_gate and dirs');
     const r = o as Record<string, unknown>;
+    if (r.dirs !== undefined) {
+      if (!DIRS_HARNESSES.includes(h)) throw configInvalid(`${key}.dirs`, `applies only to ${DIRS_HARNESSES.join(' and ')}, whose user catalog setup builds`);
+      validateSkillDirs(r.dirs, `${key}.dirs`);
+    }
     const parsed: LaneTurnSettings = {
       ...(r.top_k !== undefined ? { top_k: validateTopK(r.top_k, `${key}.top_k`) } : {}),
       ...(r.min_match !== undefined ? { min_match_strength: validateMinMatch(r.min_match, `${key}.min_match`) } : {}),
