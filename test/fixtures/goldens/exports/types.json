@@ -8754,6 +8754,13 @@
         "name": "CatalogStatus"
       },
       {
+        "kind": "variable",
+        "name": "EXCLUDE_MAX",
+        "signature": [
+          "1024"
+        ]
+      },
+      {
         "kind": "interface",
         "members": [
           "catalog: string | null",
@@ -8781,7 +8788,14 @@
         "kind": "variable",
         "name": "HARNESSES",
         "signature": [
-          "readonly [\"openclaw\", \"claude-code\", \"codex\", \"hermes\", \"qm\"]"
+          "readonly [\"openclaw\", \"claude-code\", \"codex\", \"hermes\", \"qm\", \"pi\", \"cursor\"]"
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "MATCH_STRENGTHS",
+        "signature": [
+          "readonly MatchStrength[]"
         ]
       },
       {
@@ -8789,6 +8803,13 @@
         "name": "MatchStrength",
         "signature": [
           "\"body\" | \"name\" | \"description\" | \"named\" | \"triggers\" | \"routing\""
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "RESOLVER_FEATURES",
+        "signature": [
+          "readonly string[]"
         ]
       },
       {
@@ -8888,6 +8909,7 @@
           "expected_catalog_hash?: string | undefined",
           "harness?: string | undefined",
           "message: string",
+          "min_match_strength?: MatchStrength | undefined",
           "previous_user_message?: string | undefined",
           "reset_session?: boolean | undefined",
           "session_id?: string | undefined",
@@ -8937,7 +8959,7 @@
         "kind": "function",
         "name": "commitSessionAsync",
         "signature": [
-          "(home: string, key: string, delta: TurnDelta) => Promise<boolean>"
+          "(home: string, key: string, delta: TurnDelta, hold?: CommitHold) => Promise<boolean>"
         ]
       },
       {
