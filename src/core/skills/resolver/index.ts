@@ -31,7 +31,7 @@ import { gcSessionsAsync, resetSession, sessionKey } from './session.ts';
  * harnesses, the warm handle (openCatalog), the worker-thread build
  * (buildSkillIndexOffThread) and gcSkillSessions.
  */
-export const RESOLVER_FEATURES: readonly string[] = ['min_match_strength', 'exclude_1024', 'mismatch_catalog_hash', 'named_past_budget', 'previous_user_message', 'harness_pi', 'harness_cursor', 'open_catalog', 'build_off_thread', 'gc_sessions'];
+export const RESOLVER_FEATURES: readonly string[] = ['min_match_strength', 'exclude_1024', 'mismatch_catalog_hash', 'named_past_budget', 'previous_user_message', 'harness_pi', 'harness_cursor', 'openclaw_skills_list', 'from_json_with_dirs', 'claude_plugins', 'open_catalog', 'build_off_thread', 'gc_sessions'];
 
 /** One bounded pass (at most 1,000 files, async I/O) deleting session files idle for 7 days; returns how many it deleted. Commits already run one at most every 10 minutes. */
 export async function gcSkillSessions(opts: { home?: string; now?: number } = {}): Promise<number> {

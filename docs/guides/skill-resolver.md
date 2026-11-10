@@ -38,10 +38,12 @@ One catalog per skill set. Names are 1-64 characters of `a-z`, `0-9`, `_` and
 | Harness | Build | Notes |
 |---|---|---|
 | Claude Code | `gbrain skills index build --catalog claude-user --dir ~/.claude/skills --harness claude-code` | Plugin skills get their `<plugin>:` prefix from `.claude-plugin/plugin.json`. |
+| Claude Code plugins | `gbrain skills index build --catalog claude-plugins --claude-plugins ~/.claude --harness claude-code` | The enabled user-scope plugins (`enabledPlugins` in `settings.json`, install paths from `plugins/installed_plugins.json`), each skill as `<plugin>:<skill>`. |
 | Codex | `gbrain skills index build --catalog codex-user --dir ~/.codex/skills --harness codex` | Suggestion lines carry the SKILL.md path; Codex opens it. |
 | Hermes, qm | `--dir <skills dir> --harness hermes` (or `qm`) | The id is the name the loader takes. |
 | Pi, Cursor | `--dir <skills dir> --harness pi` (or `cursor`) | Suggestion lines carry the SKILL.md path; the agent reads the file. |
-| OpenClaw and other adapters | `gbrain skills index build --catalog openclaw-main --from-json - --harness openclaw` | The adapter pipes its skill list (schema below) and owns rebuilds. |
+| OpenClaw | `openclaw skills list --json \| gbrain skills index build --catalog openclaw-main --from-json - --dir <skills dir> --harness openclaw` | The list builds as is: the name is the id, and a skill OpenClaw hides from the model is skipped as ineligible. Each listed skill takes its body, path and triggers from the `--dir` skill of the same name; folder-only skills stay out. |
+| Other adapters | `gbrain skills index build --catalog <name> --from-json - --harness <h>` | The adapter pipes its skill list (schema below) and owns rebuilds. |
 | gbrain's own skills | `gbrain skills index build --catalog gbrain --bundled` | Rebuilt when the gbrain version changes. |
 
 - `--dir` is repeatable; earlier directories win duplicate ids (the loser is
@@ -52,7 +54,10 @@ One catalog per skill set. Names are 1-64 characters of `a-z`, `0-9`, `_` and
   the skills they name.
 - `--scope project` marks a cloned repository's skills: their blocks show ids
   and names only, never their summaries, because the text came from someone else.
-- Bounds: 10,000 skills per catalog, 64 KB per SKILL.md, 8 MB of JSON.
+- Bounds: 10,000 skills per catalog, 64 KB per SKILL.md, 64 MB of JSON. JSON
+  bodies are trimmed to the 4 KB the ranker reads, and a snapshot over 8 MB is
+  kept trimmed. An invalid JSON entry fails with `skill_source_invalid`, naming
+  the entry and the field.
 - Several catalogs merge on one turn: `--catalog user --catalog project`.
   Each ranks with its own variant; the session's no-repeat set and budget are
   shared.
@@ -69,10 +74,11 @@ recorded in the receipt.
 `gbrain setup claude-code --skill-loading resolve` (or `codex`) turns on a
 per-turn hook that puts the block in front of the model on every prompt:
 
-1. It builds the user catalog `claude-code-user` from `~/.claude/skills`
-   (Codex: `codex-user` from `~/.agents/skills` and `$CODEX_HOME/skills`).
-   With no skill found it stops with `skill_resolver_setup_incomplete` and
-   writes nothing else.
+1. It builds the user catalog `claude-code-user` from `~/.claude/skills` and
+   `claude-code-plugins` from the enabled Claude Code plugins (Codex:
+   `codex-user` from `~/.agents/skills` and `$CODEX_HOME/skills`). With no
+   skill found it stops with `skill_resolver_setup_incomplete` and writes
+   nothing else.
 2. It sets `skills.resolver.enabled` and `skills.resolver.harnesses` in
    `~/.gbrain/config.json`. A brainless install stays brainless: the file
    holds no engine, so nothing reads it as a brain.
@@ -205,10 +211,11 @@ median 267 tokens (Claude Code), 268 (Hermes), 270 (qm), 334 (Codex) and 339
 `resolve` never rebuilds. When the source changed it still answers from the
 existing index with `meta.index_stale: true` and writes `stale.stamp` once (a
 later stale turn leaves it alone; a `--from-json -` catalog, which only its
-adapter rebuilds, never gets one); the
-rebuild runs from `gbrain skills index build` (which prints the exact command
-in `skills index status`). For a `--dir` catalog the turn checks file sizes and
-mtimes, at most 1,024 per turn and a full sweep at most once a minute;
+adapter rebuilds, never gets one); the rebuild runs from
+`gbrain skills index build` (which prints the exact command in
+`skills index status`). For a `--dir` or `--claude-plugins` catalog the turn
+checks file sizes and mtimes, at most 1,024 per turn and a full sweep at most
+once a minute;
 `skills index status` re-reads the source and re-hashes the index. A bundled
 catalog is stale after a gbrain upgrade; a `--from-json` catalog is never
 rebuilt by gbrain: the adapter passes `expected_catalog_hash` and rebuilds

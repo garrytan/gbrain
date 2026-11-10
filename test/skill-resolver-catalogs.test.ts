@@ -19,7 +19,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, wri
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
-import { buildSkillIndex, catalogStatus, resolveSkills, ResolverError } from '../src/core/skills/resolver/index.ts';
+import { buildSkillIndex, catalogStatus, resolveSkills, RESOLVER_FEATURES, ResolverError } from '../src/core/skills/resolver/index.ts';
 
 setDefaultTimeout(60_000);
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
@@ -52,6 +52,7 @@ describe('OpenClaw skills list --json', () => {
     expect(rec.catalog.skipped.map((s) => [s.id, s.reason]).sort()).toEqual([['off-agent', 'ineligible'], ['off-allowlist', 'ineligible'], ['off-disabled', 'ineligible'], ['off-eligible', 'ineligible'], ['off-hidden', 'ineligible']]);
     const t = await resolveSkills({ message: 'deploy the widget service', harness: 'openclaw' }, { home, catalogs: ['oc'] });
     expect(t.output.suggestions[0]?.id).toBe('deploy-widget');
+    expect(RESOLVER_FEATURES).toContain('openclaw_skills_list');
   });
 
   test('with --dir folders: bodies, paths and triggers come from the folder skill of the same name; folder-only skills stay out', async () => {
@@ -69,6 +70,7 @@ describe('OpenClaw skills list --json', () => {
     expect(t.output.suggestions.map((s) => [s.id, s.path])).toEqual([['deploy-widget', path]]);
     expect((await resolveSkills({ message: 'not listed skill' }, { home, catalogs: ['oc'] })).output.suggestions.map((s) => s.id)).not.toContain('not-listed');
     expect((await catalogStatus('oc', { home })).fresh).toBe(true);
+    expect(RESOLVER_FEATURES).toContain('from_json_with_dirs');
   });
 
   test('an invalid entry names itself and the field; an id-less plain list points at the OpenClaw shape', async () => {
@@ -117,6 +119,7 @@ describe('Claude Code plugin skills (--claude-plugins)', () => {
     expect(ids).toEqual(['acme-tools:deploy', 'beta:notes']);
     expect(rec.catalog.skill_count).toBe(2);
     expect((await catalogStatus('claude-code-plugins', { home })).fresh).toBe(true);
+    expect(RESOLVER_FEATURES).toContain('claude_plugins');
   });
 
   test('enabling a plugin makes the catalog stale, and the recorded rebuild picks it up', async () => {
