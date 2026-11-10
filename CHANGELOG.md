@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.642.0] - 2026-11-10
 
 **A purged page's facts no longer come back.** When the 72-hour retention purge removed a soft-deleted page's row, it left the page's facts active, because facts have no foreign key to pages. Once the tombstone was gone, those facts showed up again for every reader, local and remote, and a new page written at the same slug picked them up. The purge now expires those facts in the same transaction as the page delete: the facts filed on the page, and the facts about it that no page holds. The rows are kept, expired, never deleted. A fact another page holds about the slug stays active, even when that page is soft-deleted, so restoring it brings the fact back. An ontology observation about a live entity that was sourced from the purged page also stays active.
 
