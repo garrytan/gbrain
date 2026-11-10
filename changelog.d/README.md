@@ -14,7 +14,7 @@ the package.json version or CHANGELOG.md in a PR.
 Optional front matter marks the change important for the stable channel
 (`important: security|regression|data-loss|blocker`), which makes the merge
 lane open a release right after it lands the PR. Releases are PATCH only, so
-there is no `bump:` line.
+a `bump:` line other than `patch` is refused (scripts/build-behavior-changes.ts).
 A PR that changes behavior also names its behavior-changes.d row here
 (`<!-- behavior-change: <id> -->`, see behavior-changes.d/README.md).
 

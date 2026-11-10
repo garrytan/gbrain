@@ -148,7 +148,8 @@ master since the last release one version and writes all the stamps at once.
   heading (bold one-line summary, then the itemized sections; voice rules
   below). /ship writes it. Front matter may say
   `important: security|regression|data-loss|blocker`; releases are PATCH
-  only, so there is no `bump:` line. Format:
+  only, so `scripts/build-behavior-changes.ts` (in `check:regen-all`) refuses
+  a `bump:` line other than `patch`. Format:
   [changelog.d/README.md](../changelog.d/README.md).
 - One `behavior-changes.d/<id>.md` file per new upgrade-notice row, named
   in the fragment as `<!-- behavior-change: <id> -->`
@@ -186,10 +187,12 @@ changes anything but stamps, the CHANGELOG fold and `release_outputs` (here
 `src/core/behavior-changes.generated.ts`, which it regenerates and compares
 byte for byte). release.yml runs `bun scripts/check-behavior-since.ts --stamped`,
 which refuses a release commit that still holds a `changelog.d` fragment,
-a literal `since: 'TBD'` row or a stale behavior-change table. A cancelled
+a literal `since: 'TBD'` row or a stale behavior-change table, and fails
+closed when `.gstack/ship-policy.json` is missing or unparsable. A cancelled
 or skipped Test or E2E push run fails the gate with the `gh run rerun <id>`
 to run; the gate no longer follows to a later commit with the same VERSION,
-because between releases every master commit shares one.
+because between releases every master commit shares one, and a
+`workflow_dispatch` refuses unless master HEAD is the release commit.
 
 **Migration collisions.** Two open PRs can take the same migration number.
 GitHub then reports the second one conflicting (both edit the generated
@@ -655,9 +658,11 @@ succeed on the release commit.
   no longer cancels them; and between releases many master commits share one
   VERSION, so the gate never follows to a later commit.
 - **Backfill:** `gh workflow run release.yml --ref master` gates and publishes
-  master HEAD's VERSION, so use it only while HEAD is the release commit:
-  between releases a later commit carries the same VERSION with unreleased
-  changes. Other refs are refused.
+  master HEAD's VERSION only while HEAD is the release commit (the
+  first-parent commit that last changed VERSION): between releases a later
+  commit carries the same VERSION with unreleased changes, so the gate then
+  refuses and names the re-run of the release commit's push Release run.
+  Other refs are refused.
 - The gate waits up to 110 minutes, then fails naming the re-run of the
   Release run.
 - **Reused push run:** a push run that reused a passed full-suite run of its
