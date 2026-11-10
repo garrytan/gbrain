@@ -120,8 +120,9 @@ binary built without it delivers nothing and logs `skill_resolver_internal`.
 The JSON Schemas are checked in under `docs/schemas/`:
 
 - `skill-resolver.v1.turn-input.json`: `{message, previous_user_message?,
-  session_id?, harness?, top_k (1-8, default 5), exclude?, shadow?,
-  expected_catalog_hash?, reset_session?}` for `--input-json -` or the library.
+  session_id?, harness?, top_k (1-8, default 5), exclude? (up to 1,024 ids),
+  min_match_strength?, shadow?, expected_catalog_hash?, reset_session?}` for
+  `--input-json -` or the library.
 - `skill-resolver.v1.turn-output.json`: the `--json` result. Everything outside
   `meta` is byte-identical for the same index, input and session state.
 - `skill-resolver.v1.build-input.json`: the `--from-json` catalog,
@@ -136,9 +137,12 @@ Within v1, changes are additive only.
 (`"no_match"`). There is no score threshold: a weak match is still
 suggested, and each suggestion's `match_strength` says how it matched
 (`named` in the turn, else the first of `name`, `triggers`, `routing`,
-`description`, `body`) so an adapter can set its own floor, for example
-dropping body-only matches. A skill named in the turn (`$name`, `@name`, a leading `/name`,
-"the name skill", or its full id) ranks first.
+`description`, `body`). `min_match_strength` (`--min-match`) sets a floor:
+weaker matches are dropped before the cut to `top_k`, so `description` drops
+body-only matches and the stronger ones still fill the block. A skill named in
+the turn (`$name`, `@name`, a leading `/name`, "the name skill", or its full
+id) ranks first. When the message matches no catalog word (a follow-up such
+as "do it again"), `previous_user_message` (`--previous`) is ranked instead.
 
 ### Exit codes and fail-open
 
@@ -165,7 +169,9 @@ With `--session <id>` the resolver remembers which skills it suggested:
   in `config.json` (default 2,000 tokens; 0 silences the resolver, otherwise
   100-50,000). k drops to 3 once half is spent and to 1 at 80%; after half,
   only a turn whose top result matched on name, triggers or routing spends
-  any. When it is spent, `budget_exhausted` is true and the block is empty;
+  any. When it is spent, `budget_exhausted` is true and the block is empty,
+  except for a skill the turn names, which still gets its line (and its
+  tokens still count);
 - state is committed only after the block was delivered: the CLI commits
   after writing stdout, the library through `result.commit()`;
 - `--reset-session` (`reset_session: true`) on the first turn after a
@@ -254,10 +260,14 @@ source as the CLI:
 The CLI JSON contract stays the primary interface.
 
 ```ts
-const r = await resolveSkills({ message, session_id, harness: 'codex' }, { catalogs: ['codex-user'], failOpen: true });
-inject(r.output.suggestions.filter(s => s.match_strength !== 'body').length ? r.output.block : '');
+const r = await resolveSkills({ message, session_id, harness: 'codex', min_match_strength: 'description' }, { catalogs: ['codex-user'], failOpen: true });
+inject(r.output.block);
 await r.commit();
 ```
+
+`RESOLVER_FEATURES` lists what this build supports beyond the first v1
+release (for example `min_match_strength`), so an adapter can check before
+it sends a field an older gbrain would refuse.
 
 On an event loop that must not block, commit with async I/O instead:
 `if (r.pending) await commitSessionAsync(home, r.pending.key, r.pending.delta)`
@@ -280,8 +290,8 @@ is rebuilt by its adapter.
 ### skill_catalog_mismatch
 
 `expected_catalog_hash` (`--expect-catalog`) differs from the index: the catalog
-was built from another skill list. Nothing was suggested or committed. Rebuild
-from the current list.
+was built from another skill list. Nothing was suggested or committed; the
+output's `catalog_hash` is the index's own hash. Rebuild from the current list.
 
 ### skill_index_locked
 

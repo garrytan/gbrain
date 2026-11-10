@@ -46,7 +46,7 @@ Guide: docs/guides/skill-resolver.md
 `;
 
 const HELP_RESOLVE = `Usage: gbrain skills resolve [--catalog <name>]... (--text <t> [--previous <t>] | --input-json -)
-        [--session <id>] [--harness <h>] [--exclude a,b] [--top-k n] [--shadow [--shadow-log <file>]]
+        [--session <id>] [--harness <h>] [--exclude a,b] [--top-k n] [--min-match <strength>] [--shadow [--shadow-log <file>]]
         [--expect-catalog <hash>] [--reset-session] [--names-only] [--load-hint <text>]
         [--explain-target <id>] [--fail-open] [--json]
 
@@ -61,6 +61,8 @@ and no brain connection is needed.
   --harness <h>        picks the load line: openclaw, claude-code, codex, hermes, qm, pi or cursor
   --top-k <n>          at most n suggestions (1-8, default 5)
   --exclude <ids>      comma-separated skill ids to leave out
+  --min-match <s>      the weakest match to suggest: named, name, triggers, routing,
+                       description or body (default: every match)
   --shadow             compute the block without injecting it (block "" on stdout);
                        --shadow-log <file> appends what would have been injected
   --expect-catalog <h> refuse with skill_catalog_mismatch unless the catalog hash is h
@@ -195,7 +197,7 @@ async function runIndex(args: string[]): Promise<void> {
 }
 
 async function runResolve(args: string[]): Promise<void> {
-  const p = parseFlags(args, ['--catalog', '--text', '--previous', '--input-json', '--session', '--harness', '--exclude', '--top-k', '--shadow-log', '--explain-target', '--expect-catalog', '--load-hint'],
+  const p = parseFlags(args, ['--catalog', '--text', '--previous', '--input-json', '--session', '--harness', '--exclude', '--top-k', '--min-match', '--shadow-log', '--explain-target', '--expect-catalog', '--load-hint'],
     ['--shadow', '--json', '--fail-open', '--reset-session', '--names-only'], HELP_RESOLVE);
   if (p.positionals.length) usage(`Unexpected argument "${p.positionals[0]}".`, 'Pass the message with --text "<message>" or turn JSON with --input-json -.');
   const json = p.bools.has('--json');
@@ -220,6 +222,7 @@ async function runResolve(args: string[]): Promise<void> {
     const exclude = one(p, '--exclude'); if (exclude !== undefined) input.exclude = exclude.split(',').map(s => s.trim()).filter(Boolean);
     const topK = one(p, '--top-k');
     if (topK !== undefined) { if (!/^\d+$/.test(topK)) throw new ResolverError('skill_resolve_invalid_input', '--top-k takes an integer from 1 to 8.', { suggestion: 'Example: --top-k 3' }); input.top_k = Number(topK); }
+    const minMatch = one(p, '--min-match'); if (minMatch !== undefined) input.min_match_strength = minMatch;
     if (p.bools.has('--shadow')) input.shadow = true;
     if (p.bools.has('--reset-session')) input.reset_session = true;
     const expect = one(p, '--expect-catalog'); if (expect !== undefined) input.expected_catalog_hash = expect;

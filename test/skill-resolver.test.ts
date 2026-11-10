@@ -28,7 +28,7 @@ import { estimateTokens } from '../src/core/skills/resolver/block.ts';
 import { acquireLease, holdsLease, releaseLease, tryAcquireLease } from '../src/core/skills/resolver/lock.ts';
 import { commitSession, commitSessionAsync, gcSessions, loadSession, sessionKey } from '../src/core/skills/resolver/session.ts';
 import { catalogFile } from '../src/core/skills/resolver/paths.ts';
-import { STAT_CHECK_SLICE } from '../src/core/skills/resolver/resolve.ts';
+import { EXCLUDE_MAX, STAT_CHECK_SLICE } from '../src/core/skills/resolver/resolve.ts';
 import { RACY_MTIME_MS } from '../src/core/skills/resolver/build.ts';
 
 const scratch: string[] = [];
@@ -97,6 +97,45 @@ describe('turn rules', () => {
     expect(by).toEqual({ 'x:zorvek': 'name', 'x:beta': 'triggers', 'x:gamma': 'routing', 'x:alpha': 'description', 'x:delta': 'body' });
     const named = await resolveSkills({ message: 'use the delta skill for zorvek' }, { home });
     expect(named.output.suggestions[0]).toMatchObject({ id: 'x:delta', match_strength: 'named' });
+  });
+
+  test('min_match_strength drops weaker matches before the cut to top_k, and only kept suggestions are committed', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', [
+      ...Array.from({ length: 6 }, (_, i) => ({ id: `x:desc-${i}`, name: `desc-${i}`, description: `Rotate the zorvek keys, part ${i}`, triggers: ['unrelated chore'] })),
+      { id: 'x:route', name: 'route', description: 'Other work', routing: ['zorvek'] },
+    ]);
+    const all = await resolveSkills({ message: 'rotate the zorvek keys', top_k: 2 }, { home });
+    expect(all.output.suggestions.map(s => s.match_strength)).toEqual(['description', 'description']);
+    const floored = await resolveSkills({ message: 'rotate the zorvek keys', top_k: 2, min_match_strength: 'routing', session_id: 'f' }, { home });
+    expect(floored.output.suggestions.map(s => [s.id, s.match_strength])).toEqual([['x:route', 'routing']]);
+    expect(floored.pending!.delta.suggested).toEqual(['x:route']);
+    const strict = await resolveSkills({ message: 'rotate the zorvek keys', min_match_strength: 'name' }, { home });
+    expect([strict.output.suggestions, strict.output.block, strict.output.no_skill]).toEqual([[], '', false]);
+    const named = await resolveSkills({ message: 'use the desc-3 skill', min_match_strength: 'named' }, { home });
+    expect(named.output.suggestions.map(s => s.id)).toEqual(['x:desc-3']);
+  });
+
+  test('previous_user_message is ranked only when the current message matches nothing', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', BASIC);
+    const follow = await resolveSkills({ message: 'do it again', previous_user_message: 'write the weekly status reports' }, { home });
+    expect(follow.output.suggestions[0]!.id).toBe('gbrain:reports');
+    const own = await resolveSkills({ message: 'deploy the service', previous_user_message: 'write the weekly status reports' }, { home });
+    expect(own.output.suggestions[0]!.id).toBe('gbrain:deploy');
+    expect(own.output.suggestions.map(s => s.id)).not.toContain('gbrain:reports');
+    const none = await resolveSkills({ message: 'do it again', previous_user_message: 'zzqx' }, { home });
+    expect([none.output.no_skill, none.output.no_skill_reason]).toEqual([true, 'no_match']);
+  });
+
+  test('exclude takes up to EXCLUDE_MAX ids and still fills top_k from what is left', async () => {
+    const home = tmp();
+    const skills = Array.from({ length: 1100 }, (_, i) => ({ id: `x:s${i}`, name: `s${i}`, description: `Rotate the zorvek keys step ${i}` }));
+    await jsonCatalog(home, 'c', skills);
+    const exclude = skills.slice(0, EXCLUDE_MAX).map(s => s.id);
+    const r = await resolveSkills({ message: 'rotate zorvek keys', exclude, top_k: 3 }, { home });
+    expect(r.output.suggestions).toHaveLength(3);
+    for (const s of r.output.suggestions) expect(exclude).not.toContain(s.id);
   });
 
   test('ack and no_match are the only no_skill results; short imperatives and CJK turns are ranked', async () => {
@@ -176,7 +215,7 @@ describe('turn rules', () => {
     const r = await resolveSkills({ message: 'meeting notes email reports', top_k: 2, exclude: ['gbrain:meeting-notes'] }, { home });
     expect(r.output.suggestions.length).toBe(2);
     expect(r.output.suggestions.map(s => s.id)).not.toContain('gbrain:meeting-notes');
-    for (const bad of [{}, { message: 1 }, { message: 'x', top_k: 9 }, { message: 'x', top_k: 0 }, { message: 'x', extra: 1 }, { message: 'x', exclude: new Array(65).fill('a') },
+    for (const bad of [{}, { message: 1 }, { message: 'x', top_k: 9 }, { message: 'x', top_k: 0 }, { message: 'x', extra: 1 }, { message: 'x', exclude: new Array(EXCLUDE_MAX + 1).fill('a') }, { message: 'x', min_match_strength: 'weak' },
       { message: 'x', session_id: 'has space' }, { message: 'x', session_id: 'é' }, { message: 'x', session_id: 'a'.repeat(257) }, { message: 'x', harness: 'vim' }, { message: 'x', expected_catalog_hash: 'abc' }]) {
       expect(await codeOf(resolveSkills(bad as TurnInput, { home }))).toBe('skill_resolve_invalid_input');
     }
@@ -260,6 +299,21 @@ describe('sessions', () => {
     expect(reset.output.block).not.toBe('');
     await reset.commit();
     expect(loadSession(home, key).turn).toBe(1);
+  });
+
+  test('a skill the turn names still gets its line after the budget is spent; its tokens count', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', BASIC);
+    const key = sessionKey('on', 'claude-code', 'n');
+    await commitSession(home, key, { tokens: 2000, suggested: [], resuggested: [], reset: false });
+    const r = await resolveSkills({ message: 'run the deploy skill and write the reports', session_id: 'n', harness: 'claude-code' }, { home });
+    expect(r.output.budget_exhausted).toBe(true);
+    expect(r.output.suggestions.map(s => [s.id, s.match_strength])).toEqual([['gbrain:deploy', 'named']]);
+    expect(r.output.block).toContain('id: "gbrain:deploy"');
+    await r.commit();
+    expect(loadSession(home, key).spent).toBe(2000 + r.output.block_tokens);
+    const silent = await resolveSkills({ message: 'run the deploy skill' }, { home, sessionTokenBudget: 0 });
+    expect(silent.output.block).toBe('');
   });
 
   test('a budget of 0 silences the resolver; out-of-range budgets refuse', async () => {
@@ -741,6 +795,7 @@ describe('freshness and errors', () => {
     expect(ok.output.catalog_hash).toBe(rec.catalog.catalog_hash);
     const bad = await resolveSkills({ message: 'deploy', session_id: 'h', expected_catalog_hash: 'f'.repeat(64) }, { home, failOpen: true });
     expect([bad.output.error!.code, bad.output.block, bad.failOpen]).toEqual(['skill_catalog_mismatch', '', true]);
+    expect(bad.output.catalog_hash).toBe(rec.catalog.catalog_hash);
     expect(await bad.commit()).toBe(false);
     expect(sessionStatus('h', { home }).turn).toBe(0);
   });
