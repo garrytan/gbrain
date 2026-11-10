@@ -4618,6 +4618,14 @@ More: [docs/guides/write-refusals.md#slug_page_mismatch](../../docs/guides/write
 |---|---|---|---|---|---|---|
 | OAuth clients still reference this source. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### source_retire_superseded
+
+<a id="source_retire_superseded"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A retried source remove or purge was admitted against an earlier incarnation of its source, which has since been removed or replaced; nothing was changed. | A remove or purge records the source incarnation it was admitted against before it deletes its first page, so a retry of its request id can never delete the pages of a source re-added under the same ID. A request refused this way stays refused. | Do not retry this request id. Read the source's current state; removing the current source is a new decision for the user, made with a new request id. Run: gbrain sources writer status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | no |
+
 ### source_root_conflict
 
 <a id="source_root_conflict"></a>

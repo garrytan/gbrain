@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Retrying an interrupted `gbrain sources remove` or `purge` can no longer delete a re-added source's pages.** A managed remove or purge deletes a large source's pages in batches, and a run that stops partway can be finished by rerunning it with the same `--request-id`. Until now nothing tied that request id to the source it was started against: if the source was removed and added again under the same ID in between, the rerun deleted the new source's pages. The first batch now records which incarnation of the source the request was admitted against, in the same transaction as its first deletion. A rerun against the same incarnation still resumes and finishes; a rerun after the source was replaced refuses with `source_retire_superseded` and changes nothing.
+
+### Itemized changes
+
+- `src/core/persistence/topology-receipts.ts`: `admitTopologyRetire` records a retire admission (a `persistence_topology_changes` row in state `recovering` with no recovery record, bound to the source incarnation, holding one lifetime ID and a full receipt reservation after the same quota check `assertTopologyChangeCapacity` made); `recordTopologyChange` settles a request's own admission `committed` and trues up its receipt bytes; `supersedeTopologyRetires` settles other requests' admissions `failed` when a remove or purge deletes their incarnation.
+- `src/core/persistence/source-lifecycle.ts`: a request id whose admission names another incarnation than the source registered now refuses `source_retire_superseded` before any lock or deletion (a dry run too) and settles the admission `failed`, so a later retry refuses the same way; the batches and the final transaction resume past their own admission (#8984).
+- `src/core/error-registry.ts`: new caller code `source_retire_superseded`, with a read-only writer-status fix.
+- `src/core/persistence/deactivation.ts`, `graduation-drain.ts`: an unfinished retire is listed as a blocker that names its request id and how to finish it.
+- Tests: `test/source-retire-incarnation.test.ts` (PGLite) and `test/e2e/source-retire-incarnation-postgres.test.ts`: a retry after the final transaction failed, and a retry after committed batches already deleted part of the source, both refuse once the source was replaced and keep the new source's pages (both resolved `committed` on master); a same-incarnation retry resumes and settles. `test/source-retire-batched.test.ts` and its Postgres twin now expect the interrupted run's admission row.
+
 ## [0.60.629.0] - 2026-11-09
 
 **`gbrain repair file-drift` now agrees with sync on a held origin-twin page.** A legacy page left as an origin twin with no recorded file (no import record) could be held `file_drift` by sync while `repair file-drift --slug <slug>` reported `no_drift`. The hold's own suggested fix couldn't clear it, and scripts that use the preview as a drift check passed falsely. The preview now reads such a twin against its slug-path file, the same way sync imports it, and lists it with an apply command.

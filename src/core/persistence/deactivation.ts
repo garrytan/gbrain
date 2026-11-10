@@ -114,10 +114,12 @@ export async function deactivationBlockers(engine: BrainEngine): Promise<Deactiv
         : r.state === 'running' && !r.recovering ? 'wait for the owner to finish publishing it, then rerun deactivate'
           : `gbrain sync --source ${r.source_id} --no-pull` });
   }
-  const topology = await engine.executeRaw<{ id: string; operation: string; source_id: string }>(
-    "SELECT id::text AS id, operation, source_id FROM persistence_topology_changes WHERE state='recovering' OR recovery IS NOT NULL ORDER BY created_at LIMIT 20");
-  for (const t of topology) blockers.push({ kind: 'topology_recovery', id: t.id, source_id: t.source_id, detail: `${t.operation} for ${t.source_id} is recovering`,
-    exit: `gbrain sources writer status ${t.source_id} --json, then let the owner finish recovery` });
+  const topology = await engine.executeRaw<{ id: string; operation: string; source_id: string; request_id: string; admission: boolean }>(
+    "SELECT id::text AS id, operation, source_id, request_id::text AS request_id, (state='recovering' AND recovery IS NULL) AS admission FROM persistence_topology_changes WHERE state='recovering' OR recovery IS NOT NULL ORDER BY created_at LIMIT 20");
+  for (const t of topology) blockers.push({ kind: 'topology_recovery', id: t.id, source_id: t.source_id,
+    detail: t.admission ? `${t.operation} of ${t.source_id} (request ${t.request_id}) stopped before it finished` : `${t.operation} for ${t.source_id} is recovering`,
+    exit: t.admission ? `rerun gbrain sources ${t.operation} ${t.source_id} --confirm-destructive --request-id ${t.request_id} (the user already confirmed it; it resumes, or refuses with source_retire_superseded if the source was replaced), then rerun deactivate`
+      : `gbrain sources writer status ${t.source_id} --json, then let the owner finish recovery` });
   // GBRA-130 A-15: only work that can still change blocks, as activation checks; terminal failures are failedEffectHistory's.
   const effects = await engine.executeRaw<EffectRow>(`${EFFECT_ROWS} WHERE e.state IN ('queued','running') OR e.recovery IS NOT NULL ORDER BY e.id LIMIT 50`);
   for (const e of effects) {
