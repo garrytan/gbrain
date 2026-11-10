@@ -111,4 +111,24 @@ describe('retrying a managed remove after its source was re-added (postgres)', (
     await expect(remove()).rejects.toMatchObject({ code: 'source_retire_superseded' });
     expect(await pages(engine)).toBe(3);
   }), 300_000);
+
+  test('a retry under a replaced CLI registration after the source was removed and re-added refuses', () => fixture(async (engine, root) => {
+    await engine.executeRaw('CREATE TABLE retire_fail(armed boolean NOT NULL, seen integer NOT NULL)');
+    await engine.executeRaw(`CREATE FUNCTION retire_fail_fn() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE n integer; BEGIN
+      UPDATE retire_fail SET seen=seen+1 WHERE armed RETURNING seen INTO n;
+      IF n > ${SOURCE_RETIRE_BATCH_PAGES} THEN RAISE EXCEPTION 'injected retire batch failure'; END IF; RETURN OLD; END $$`);
+    await engine.executeRaw('CREATE TRIGGER retire_fail BEFORE DELETE ON pages FOR EACH ROW EXECUTE FUNCTION retire_fail_fn()');
+    await engine.executeRaw('INSERT INTO retire_fail VALUES(true,0)');
+    const requestId = randomUUID();
+    const remove = () => runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: source, confirmDestructive: true, requestId });
+    const first = await incarnation(engine);
+    await expect(remove()).rejects.toThrow('injected retire batch failure');
+    await engine.executeRaw('DROP TRIGGER retire_fail ON pages');
+    expect(await change(engine, requestId)).toMatchObject({ state: 'recovering', source_incarnation: first });
+    await registerLocalWriter(engine, 'cli', undefined, true);
+    expect(await runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: source, confirmDestructive: true })).toMatchObject({ state: 'committed' });
+    await readd(engine, root, 2);
+    for (let i = 0; i < 2; i++) await expect(remove()).rejects.toMatchObject({ code: 'source_retire_superseded' });
+    expect(await pages(engine)).toBe(2);
+  }), 300_000);
 });

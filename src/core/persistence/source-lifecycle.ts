@@ -160,9 +160,14 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     `Pass the canonical directory for '${input.sourceId}' (the one the command in fix reports, or its verified successor), then rerun the ${input.operation}.`,
     {fix:ownerStatusFix(input.sourceId)});
   const [before]=await engine.executeRaw<SourceState>('SELECT id,incarnation,archived,local_path,config,name,last_commit FROM sources WHERE id=$1',[input.sourceId]);
-  if(prior&&prior.source_incarnation!==before?.incarnation){
-    if(!input.dryRun) await topologyTransaction(engine,async tx=>{await lockTopologyPrincipal(tx,principal);await settleTopologyRetire(tx,prior,'failed',{...prior.outcome,error:RETIRE_SUPERSEDED});});
-    throw retireSuperseded(prior);
+  // #8984: idempotency is per principal, so a request_id another CLI registration admitted against an earlier incarnation
+  // (the registration was replaced since) refuses too; one bound to this incarnation still resumes under the new registration.
+  const [superseded]=prior?[prior]:['remove','purge'].includes(input.operation)?await engine.executeRaw<TopologyChange>(`SELECT * FROM persistence_topology_changes
+    WHERE request_id=$1::uuid AND source_id=$2 AND principal_id<>$3::uuid AND operation IN ('remove','purge') AND source_incarnation IS DISTINCT FROM $4::uuid
+    ORDER BY created_at LIMIT 1`,[requestId,input.sourceId,principal,before?.incarnation??null]):[];
+  if(superseded&&superseded.source_incarnation!==before?.incarnation){
+    if(!input.dryRun) await topologyTransaction(engine,async tx=>{await lockTopologyPrincipal(tx,principal);await settleTopologyRetire(tx,superseded,'failed',{...superseded.outcome,error:RETIRE_SUPERSEDED});});
+    throw retireSuperseded(superseded);
   }
   if(input.operation!=='add'&&!before) throw opError('not_found','Source not found.',
     `No source '${input.sourceId}' is registered on this brain. Check the ID against the command in fix, which lists archived sources too.`,{fix:sourcesListFix()});
