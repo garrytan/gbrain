@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.636.0] - 2026-11-10
 
 **A fact or take no longer disappears when gbrain re-creates a `## Facts` or takes section that a page rewrite dropped.** When an agent rewrote a page without its facts or takes section, gbrain correctly kept those rows live until the user decided. But the next `remember`, `takes add`, fact extraction, `gbrain facts relink` or dream-cycle merge of a duplicate stub page into that page built a new section holding only its own row, and the write after that (a tag, a timeline entry, an append, or a get and put round trip) read the new section as the user's answer: the remembered facts expired and the takes were deleted, on repo-less and Git-backed brains alike. Those writers now render the held rows back into the section they create, so nothing is lost; a fact the user forgot, a take they removed, and rows retired by an explicit empty section stay withdrawn. `gbrain repair lost-fence-rows` previews the rows an older gbrain already lost this way and, after `--apply --expect <hash> --yes`, puts exactly those rows back from page history.
 
