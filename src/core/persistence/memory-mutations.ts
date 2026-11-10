@@ -279,9 +279,9 @@ async function resolveRememberEntity(ctx: OperationContext, sourceId: string, en
   const { entityReferenceCandidates, resolveEntitySlugWithSource, resolveStrictEntityReference } = await import('../entities/resolve.ts');
   if (entity.includes('/')) return (await resolveEntitySlugWithSource(ctx.engine, sourceId, entity))!;
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
-  const strict = await resolveStrictEntityReference(ctx.engine, sourceId, entity, { sameName: true, excludePrivate });
+  const strict = await resolveStrictEntityReference(ctx.engine, sourceId, entity, { sameName: true, excludePrivate, forCaller: true });
   if (strict.slug !== null) return { slug: strict.slug };
-  const candidates = await entityReferenceCandidates(ctx.engine, sourceId, entity, { excludePrivate });
+  const candidates = await entityReferenceCandidates(ctx.engine, sourceId, entity, { excludePrivate, forCaller: true });
   if (strict.miss === 'no_page' && !candidates.length) {
     const unnamed = await resolveEntitySlugWithSource(ctx.engine, sourceId, entity);
     if (unnamed?.source === 'fallback_slugify') return { slug: unnamed.slug };

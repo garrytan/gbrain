@@ -668,10 +668,12 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     summary: 'Clear privacy labels writer templates over-stamped on ordinary pages: access: private (and the visibility: private stamped from it) is removed, '
       + 'which widens what remote callers that are not the brain owner can read. Real restrictions are kept and counted: pinned questions, derived pages '
       + '(atoms, synthesized concepts, chronicle events), access restricted or confidential, a confidentiality value, and visibility: private with no alias. '
-      + 'The preview lists one window (--limit, default 1000) by class (alias, alias-and-visibility) with every category\'s count before and after; '
-      + '--apply --expect <hash> applies exactly that window, one revision-bound page write each; a bare --apply is refused. Pages in git-canonical sources '
-      + '(git-publish: clearing commits them into Git) run only with --class git-publish. Each cleared label is recorded in '
-      + '~/.gbrain/repair/private-labels/<brain>.jsonl (under $GBRAIN_HOME/.gbrain/ if set), and --class restore re-adds it. Runs only when named; never on upgrade.',
+      + 'The preview lists one window (--limit, default 1000) by class (alias, alias-and-visibility) with every category\'s count before and after, and counts '
+      + 'the derived_from pages and chronicle events the window would also expose; --apply --expect <hash> applies exactly that window, one revision-bound page '
+      + 'write each (a run that fails keeps the preview, so the same command resumes); a bare --apply is refused. Pages in git-canonical sources '
+      + '(git-publish: clearing commits them into Git) run only with --class git-publish; without managed persistence a page with a file in its checkout is held '
+      + '(file_backed). Each change is recorded ahead of its write in ~/.gbrain/repair/private-labels/<brain>.jsonl (under $GBRAIN_HOME/.gbrain/ if set), '
+      + 'and --class restore re-adds access and visibility: private from it. Runs only when named; never on upgrade.',
   },
   'generations': {
     handler: generationsRepair, embeds: 'effect', checks: ['generation_retirements', 'generation_held', 'generation_pending'], explicit_only: true, preview_bound: true, consent: 'destructive',

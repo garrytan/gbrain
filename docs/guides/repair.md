@@ -144,7 +144,7 @@ work behind exits 0, so scripts should also check `results[].complete`.
 | Kind | Doctor check that points here | What it does | Left alone and counted |
 | --- | --- | --- | --- |
 | `timeline` | `timeline_history` | Re-saves each page with its current body through a revision-bound `put_page`. The save writes each database-only timeline entry back into the page as a bullet preceded by `<!-- gbrain:materialized v1 <hash> -->`. | `kept_unrenderable_rows`: entries that would change if written as a bullet (for example an empty source). They stay in the database. |
-| `visibility` | `derived_visibility` | Stamps an explicit `visibility` on extracted atoms and synthesized concepts. An atom takes its origin page's visibility; transcript atoms and atoms whose origin is gone become `private`; a concept takes the strictest visibility of its input atoms. A concept input found only through an atom's `concepts:` list counts as private. Atoms are repaired before concepts. It never loosens an explicit value: `private` stays `private`, and `world` can only become `private`. A missing value is stamped with the origin's value, which is `world` when the origin page is public. | `concepts_without_lineage`: concepts whose inputs cannot be found. They stay as they are, and remote readers already treat a missing visibility as private. `atoms_origin_gone_to_private` counts atoms made private because their origin page no longer exists. |
+| `visibility` | `derived_visibility` | Stamps an explicit `visibility` on extracted atoms and synthesized concepts. An atom takes its origin page's visibility; transcript atoms and atoms whose origin is gone become `private`; a concept takes the strictest visibility of its input atoms. A concept input found only through an atom's `concepts:` list counts as private. Atoms are repaired before concepts. It never loosens an explicit value: `private` stays `private`, and `world` can only become `private`. A missing value is stamped with the origin's value, which is `world` when the origin page is public. | `concepts_without_lineage`: concepts whose inputs cannot be found. One with no visibility is stamped `private` (what remote readers already treat it as), so the doctor warning clears; an explicit value stays as it is. `atoms_origin_gone_to_private` counts atoms made private because their origin page no longer exists. |
 | `request-indexes` | `persistence_request_indexes` | Creates a missing request-table index (the managed sync checkpoint pair, the purge slug index, the dream postprocess request-id index, the write claims' foreground-commit index, the failed-writes replay and page-sequence indexes), or drops an INVALID one (left by an interrupted concurrent build) and rebuilds it, on a brain whose schema version is already current. Postgres builds each index `CONCURRENTLY`, one at a time, so writes continue; PGLite builds inline. It changes no user data, takes no journal admission and runs brain-wide (`--source` does not narrow it). See [managed sync request indexes](#request-indexes). | `building`: an index another session is still building; it is never dropped. |
 | `connector-fences` | none (a `connector_fence_below_timeline` refusal names it) | Moves a facts or takes fence that sits below the timeline sentinel of a Google or GitHub page into the page body through a revision-bound `put_page`, so the connector's next re-render carries the fence instead of refusing. Then re-attempt the held item with `gbrain sources retry-held <source>`. | `kept_ambiguous_pages`: pages whose fences are duplicated, unbalanced or unparseable. Move the fence by hand: read the page, place the fence above the `<!-- timeline -->` line, and save it with the current `expected_revision`. |
 | `take-supersession` | none | Rebuilds `takes.superseded_by` for supersession chains written before the pointer moved onto the old fence row (#5886). Each struck take is linked to the row that replaced it only from evidence: a committed `takes_supersede` receipt, a stored `superseded_by`, or a row carrying the old `superseded by #<own row>` pointer with exactly one possible predecessor. The pointer is written onto the old row (`<source>; superseded by #N`) and stale self-pointers are dropped through a revision-bound `put_page`; a page whose fence is already right but whose stored pointers differ is reprojected without a page write. See [take supersession](#take-supersession). | `ambiguous_pages` / `ambiguous_rows`: pages where a new row has two or more possible predecessors, or where evidence conflicts. The preview lists each with its candidates and the manual edit; nothing on them changes. `unparsed_pages`: pages whose takes fence does not parse cleanly. |
@@ -2129,6 +2129,89 @@ A page with no file changes through `get_page` (`include_content: true`) and
 `put_page` with that revision as `expected_revision`; `edit_page` refuses to
 write fence markers. Neither outcome is a default, and nothing changes until the
 user chooses.
+
+### Private labels (over-stamped `access: private`)
+
+Older writer templates stamped `access: private` on ordinary research and ops
+pages, so remote callers other than the brain owner get `not_found` for them.
+`gbrain repair private-labels` clears those labels in reviewed windows and can
+put every one back. It is explicit-only and preview-bound, and nothing runs on
+upgrade.
+
+**Say to your agent:** *"Preview which of my pages carry an over-stamped access: private label."*
+
+```bash
+gbrain repair private-labels --source <id> --json                          # preview: one window, counts and a hash
+gbrain repair private-labels --source <id> --apply --expect <preview_hash>
+```
+
+What it clears and what it keeps:
+
+- **Cleared:** `access: private` with no `visibility` (class `alias`: the
+  `access` key goes), and `access: private` with `visibility: private` (class
+  `alias-and-visibility`: both keys go). Nothing else on the page changes, and
+  `readable_by` and folder rules still apply.
+- **Kept and counted:** pinned questions; derived pages (atoms, pages with
+  `derived_from` or `source_slug`, synthesized concepts, life-chronicle
+  events), whose privacy follows their origin; `access: restricted` or
+  `confidential` and any `confidentiality` value; an explicit
+  `visibility: private` with no `access: private`.
+
+The preview lists one window of pages under a hash, with every class's count
+before and after the window. It also counts, by category and without slugs, the
+pages that the window would expose along with its own (`details.dependents`).
+It judges each page by the same rules remote reads use, before and after the
+window: `derived_from` pages, atoms whose origin is a listed page, synthesized
+concepts built from such atoms, and life-chronicle events extracted from a
+listed page. A warning names the counts when they aren't zero. To keep one of
+those pages private, give it its own label before you apply. The preview hash
+covers the pages it counted, so if a new page would be exposed by the time you
+apply, the apply refuses with `preview_changed` and you preview again.
+
+`--apply --expect <preview_hash>` applies exactly that window and checks each
+page against its current revision and labels first. A page edited since the
+preview reports `changed_since_preview` and is left alone. A bare `--apply` is
+refused. On a brain without managed persistence the repair writes only the
+database, so a page whose file sits in its source's checkout is held with
+outcome `file_backed`. The next sync or re-import would put the label back from
+the file, so edit the file's frontmatter, commit it, and run
+`gbrain sync --source <id>`. Repo-less pages clear as usual.
+
+**Windows and resume.** `--limit <n>` sets the window size (default 1000, at
+most 10000). When more pages remain past the window, the preview says so: apply
+this window, then preview again for the next one. An apply that stops before
+it's done (an interrupt, a time or capacity stop, a pending write or a failed
+page) keeps its approved preview. Rerun the same `--apply --expect` command and
+it resumes after the last applied page. You need a new preview only after the
+window has been applied in full, or when the preview hash changed
+([`preview_changed`](#preview-changed)).
+
+**Git-canonical sources.** Private pages there are database-only, so clearing
+one commits it into the source's Git history for the first time. That class,
+`git-publish`, is never in the default preview. Run it only by name:
+`gbrain repair private-labels --class git-publish`. The commit is one-way:
+restore re-adds the label and removes the file from the checkout, but every
+earlier commit, and any remote it was pushed to, keeps the page's content.
+
+**Undo.** Every change goes to an undo ledger at
+`~/.gbrain/repair/private-labels/<brain>.jsonl` (under `$GBRAIN_HOME/.gbrain/` if
+set) on the host that ran it. Each page gets an `intent` line with the exact
+removed values before its write and a `committed` line after it. A run that
+stops between the two can still be undone. If the ledger can't take the intent
+line, the apply refuses with `storage_error` and changes nothing.
+
+```bash
+gbrain repair private-labels --source <id> --class restore --json
+gbrain repair private-labels --source <id> --class restore --apply --expect <preview_hash>
+```
+
+Restore re-adds only `access` and `visibility: private` from the ledger, and
+only to pages that are still live and lack those keys. It counts `restorable`,
+`already_restored`, `page_gone` and `removed_after_restore` (a page whose label
+was removed by hand after a restore landed; it isn't listed again). A ledger
+line with any other key, a non-string value or a page id that isn't an integer
+is counted as unreadable and never applied. Run restore on the host and
+`GBRAIN_HOME` that ran the clear, because the ledger lives there.
 
 ### Lost fence rows
 

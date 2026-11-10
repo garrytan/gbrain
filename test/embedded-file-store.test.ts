@@ -184,7 +184,10 @@ describe('hashing a stored object', () => {
   test('an s3 store with an endpoint builds file URLs from it', async () => {
     const { S3Storage } = await import('../src/core/storage/s3.ts');
     const s3 = new S3Storage({ backend: 's3', bucket: 'test', endpoint: 'http://127.0.0.1:9000', region: 'us-east-1', accessKeyId: 'k', secretAccessKey: 's' });
-    expect(await s3.getUrl('notes/plan/a.txt')).toBe('http://127.0.0.1:9000/test/notes/plan/a.txt');
+    const url = new URL(await s3.getUrl('notes/plan/a.txt'));
+    expect(`${url.origin}${url.pathname}`).toBe('http://127.0.0.1:9000/test/notes/plan/a.txt');
+    expect(url.searchParams.get('X-Amz-Expires')).toBe('3600');
+    expect(url.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/);
   });
 
   test('a backend without hashObject is hashed from one download', async () => {
