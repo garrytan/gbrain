@@ -6,7 +6,7 @@ import { slugUnderBoundPrefixes, matchesSlugAllowList, noSourceGrantError } from
 import { NO_SOURCES } from '../source-id.ts';
 import { hasScope } from '../scope.ts';
 import { normalizeTokenScopes } from '../legacy-token-scope.ts';
-import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
+import { authSourcesFromGrant, grantFromTokenRow, tokenGrantRowSelect, type TokenGrantRow } from '../grants/model.ts';
 import { readLocalWriter, currentVerifiedLocalWriter, takeRegisteredWriterRow, verifyLocalWriter, type LocalGrant } from './identity.ts';
 import type { Principal, SqlEngine, WriteAuthority, WriteRequest } from './model.ts';
 import { authorizePageVisibility, excludesPrivateWritesAtAdmission } from './page-visibility.ts';
@@ -180,7 +180,8 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
     return;
   }
   if (a.principal.kind === 'legacy_token') {
-    const [row] = await engine.executeRaw<Record<string, unknown>>(`SELECT * FROM access_tokens WHERE id=$1${suffix}`, [a.principal.id]);
+    // GST-2314: named columns, not SELECT *: inside this transaction a plan cached before a migration added a column fails 0A000.
+    const [row] = await engine.executeRaw<TokenGrantRow & { revoked_at: unknown }>(`SELECT ${await tokenGrantRowSelect(engine)},revoked_at FROM access_tokens WHERE id=$1${suffix}`, [a.principal.id]);
     if (!row || row.revoked_at != null) deny('The owning token is revoked.');
     const grant = grantFromTokenRow(row);
     if (grant.permissionsMalformed) deny('The current legacy grant is malformed.');
@@ -284,7 +285,7 @@ export async function ownRequestAccessible(ctx: OperationContext, row: WriteRequ
     const engine = onceReads(ctx.engine);
     const auth = await submissionAuthority({ ...ctx, engine, attestedOp: row.authority?.attestedOp, attestedSource: row.authority?.attestedSource }, row.operation, row.source_id, row.source_incarnation, row.slug);
     if (auth.principal.kind !== row.principal_kind || auth.principal.id !== row.principal_id) return false;
-    // GST-359 C2: under one attest credential, a receipt belongs to the person it was written for.
+    // GST-359 C2: under one credential, a receipt belongs to the person or audience it was written for.
     if (!sameAttestedActor(row.authority?.actingFor)) return false;
     await authorizeStoredRequest(engine, row);
     return true;

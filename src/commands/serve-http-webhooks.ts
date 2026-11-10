@@ -34,6 +34,7 @@ import { assertWebhookWriterMayReplace } from '../core/minions/handlers/ingest-c
 import { defaultSourceMemberWriter } from '../core/persistence/page-visibility.ts';
 import type { WriteAuthority } from '../core/persistence/model.ts';
 import { validateSlug } from '../core/utils.ts';
+import { RevisionBackfillPendingError } from '../core/page-state/types.ts';
 
 /**
  * v0.46: normalize the per-event GitHub webhook payload shape into
@@ -302,16 +303,18 @@ function verifyWebhookSig(secret: unknown, sigHeader: string, payload: Buffer): 
 }
 
 /**
- * GST-2051: a member-bound credential writing to default would publish where every no-grant credential reads; the capture
- * job cannot keep the page to the member, so POST /ingest refuses it (answering res) and put_page, which does, stays open.
+ * GST-2051: a member-bound credential writing to default or a federated source would publish where every no-grant credential
+ * reads; the capture job cannot keep the page to the member, so POST /ingest refuses it (answering res) and put_page, which
+ * does, stays open.
  */
 async function refusedDefaultSourceMember(engine: BrainEngine, authInfo: AuthInfo, res: Response): Promise<boolean> {
-  if (!authInfo.principal || !await defaultSourceMemberWriter(engine, { remote: true, principal: authInfo.principal as WriteAuthority['principal'], sourceId: authInfo.sourceId ?? 'default' })) return false;
+  const sourceId = authInfo.sourceId ?? 'default';
+  if (!authInfo.principal || !await defaultSourceMemberWriter(engine, { remote: true, principal: authInfo.principal as WriteAuthority['principal'], sourceId })) return false;
   res.status(403).json({
     error: 'permission_denied',
-    message: 'POST /ingest is unavailable to a credential bound to a member whose write source is default: its pages would land where other members ' +
+    message: `POST /ingest is unavailable to a credential bound to a member whose write source is ${sourceId}, which every credential without a source grant reads: its pages would land where other members ` +
       'and unbound credentials read. Write through the MCP put_page op, which keeps a new page to its member, ' +
-      'or ask the brain operator to grant this credential its own write source (gbrain auth rescope --sources <private-source>,default).',
+      'or ask the brain operator to grant this credential its own write source that is not federated (gbrain auth rescope --sources <private-source>,default).',
   });
   return true;
 }
@@ -561,10 +564,10 @@ async function handleIngest(
       return;
     }
     try {
-      await assertWebhookWriterMayReplace(engine, writer, writeSourceId, callerSlug);
+      await assertWebhookWriterMayReplace(engine, writer, writeSourceId, callerSlug, content);
     } catch (err) {
-      if (!(err instanceof OperationError)) throw err;
-      res.status(err.code === 'page_not_found' ? 404 : 403).json({ error: err.code, message: err.message });
+      if (!(err instanceof OperationError) && !(err instanceof RevisionBackfillPendingError)) throw err;
+      res.status(err.code === 'page_not_found' ? 404 : err.code === 'revision_backfill_pending' ? 409 : 403).json({ error: err.code, message: err.message });
       return;
     }
   }

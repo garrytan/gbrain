@@ -240,7 +240,7 @@ Inside one source, bind each member's credential with `gbrain auth rescope
 only some members may read, or keep a whole folder to them with `gbrain access
 rule add --prefix <folder>/ --readers <members> --source <id>`.
 A member-bound credential whose write source is `default` (no `--sources`, or an
-OAuth client at its registration default) keeps a page it creates to that
+OAuth client at its registration default) or a federated source keeps a page it creates to that
 member until the member names more readers
 ([details](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
 One agent serving several people in a shared channel holds `--may-act-for
@@ -256,7 +256,10 @@ access member link <member> --qm <id>` (`unlink`, `links`). Its `x-qm-actor`
 header then runs each attested operation as that member, never reading private
 pages; see [attested-actor refusals](../guides/write-refusals.md#attested-actor-refusals).
 `remember` saves to the person's own page `memory/members/<member>` (private,
-read back only by that member, written remotely by no one else), and `delta` cursors, write receipts
+read back only by that member, written remotely by no one else) unless the call
+passes `share: true`, which saves on the subject's page for everyone who reads
+the source (refused with `share_target_restricted` on a page whose facts are kept private;
+only the brain host withdraws a shared fact); the reply names the `page` and `visibility`. `delta` cursors, write receipts
 (`get_write_request`, `list_write_requests`, `cancel_write_request`) and agent
 jobs (`submit_agent`, `get_agent_job`) belong to the person they were made for.
 QM's memory pair, `memory_recall` and `memory_write`, reads and saves that

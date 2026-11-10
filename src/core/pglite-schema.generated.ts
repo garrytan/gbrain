@@ -1366,6 +1366,10 @@ CREATE TABLE IF NOT EXISTS chronicle_page_state (
   pricing_policy TEXT,
   campaign_max_usd NUMERIC,
   cost_attempts INTEGER[] NOT NULL DEFAULT '{}',
+  judge_input_hash TEXT,
+  judge_window_chars INTEGER CHECK (judge_window_chars >= 0),
+  judge_window_hash TEXT,
+  judge_input_failures INTEGER NOT NULL DEFAULT 0 CHECK (judge_input_failures >= 0),
   PRIMARY KEY (source_id, page_id, content_hash, extractor_version)
 );
 CREATE INDEX IF NOT EXISTS chronicle_page_state_work_idx

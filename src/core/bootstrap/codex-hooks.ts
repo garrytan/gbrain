@@ -365,6 +365,7 @@ export function removeCodexHooks(opts: { hooksPath?: string; configPath?: string
 
 export const CODEX_SETUP_LANE_TOKEN = 'GBRAIN_HOOK_LANE=setup';
 const TURN_RULE_LANE_TOKEN = 'GBRAIN_HOOK_LANE=turn-rule';
+const SKILL_RESOLVER_LANE_TOKEN = 'GBRAIN_HOOK_LANE=skill-resolver';
 export const CODEX_SETUP_EVENTS = ['SessionStart', 'UserPromptSubmit', 'SessionEnd'] as const;
 export type CodexSetupEvent = (typeof CODEX_SETUP_EVENTS)[number];
 
@@ -426,7 +427,9 @@ export function codexHookCensus(hooksPath: string): CodexHookCensusGroup[] {
     if (!Array.isArray(groups)) continue;
     groups.forEach((group, index) => {
       const commands = (Array.isArray(group?.hooks) ? group.hooks : []).map((h) => h?.command).filter((c): c is string => typeof c === 'string');
-      const lane = commands.some((c) => c.includes(CODEX_SETUP_LANE_TOKEN)) ? 'setup'
+      // The skill-resolver lane (setup/skill-resolver-lane.ts) wires UserPromptSubmit with the context command shape but adds only its skills block: never a context lane.
+      const lane = commands.some((c) => c.includes(SKILL_RESOLVER_LANE_TOKEN)) ? 'other'
+        : commands.some((c) => c.includes(CODEX_SETUP_LANE_TOKEN)) ? 'setup'
         : commands.some((c) => c.includes(TURN_RULE_LANE_TOKEN)) ? 'turn-rule'
         : commands.some((c) => CONTEXT_LANE_TOKENS.some((t) => c.includes(t))) ? 'bootstrap' : 'other';
       out.push({ event, index, hash: ownedEntryFingerprint(group), lane, commands });

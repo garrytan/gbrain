@@ -1,6 +1,6 @@
 /**
  * GST-1158 memory_propose (GBRA-284): QM's held writes, a timeline entry or a typed link it proposes for the person it
- * attests, waiting in memory_proposals (v299) for the brain owner's yes. Nothing here is page content and nothing here
+ * attests, waiting in memory_proposals (v300) for the brain owner's yes. Nothing here is page content and nothing here
  * reaches git, an export or a recall: on approval the write is admitted into the persistence journal under the
  * proposal's stored authority, in the same transaction that marks the proposal approved (the failed-writes replay seam,
  * replayAuthority), and published through the normal writer door. One request id names the proposal and the write.
@@ -359,7 +359,7 @@ export async function listMemoryProposals(engine: BrainEngine, opts: { sourceId?
   return rows.map(normalize);
 }
 
-/** Pending count and the oldest pending proposal's age, for doctor and status; zero on a schema that predates v287. */
+/** Pending count and the oldest pending proposal's age, for doctor and status; zero on a schema that predates v300. */
 export async function pendingProposalSummary(engine: SqlEngine): Promise<{ pending: number; oldest_hours: number | null }> {
   try {
     const [row] = await engine.executeRaw<{ n: number | string; oldest: number | string | null }>(`SELECT count(*) AS n,

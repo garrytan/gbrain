@@ -165,7 +165,7 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
   return {
     contract: 'gbrain.qm-memory-provider', version,
     transport: { protocol: 'mcp', session: 'stateless', session_header_issued: false, success_codes_in: 'structuredContent',
-      ...(v2 ? { unknown_arguments: 'an argument a read tool does not declare is ignored and reported only in _meta.warnings ([{code: "unknown_param", param, suggestion?}]), never in content; a write tool refuses it with invalid_params' } : {}) },
+      ...(v2 ? { unknown_arguments: 'an argument a read tool does not declare is refused with invalid_params, and nothing is read, when its nearest declared argument is a source scope or a filter (source for source_id, sources for source_ids, type for types) or its own name is in a scope or filter family the tool declares (source_name on a tool that declares source_id); any other argument a read tool does not declare is ignored and reported only in _meta.warnings ([{code: "unknown_param", param, suggestion?}]), never in content, unless the brain sets mcp.strict_params to reject; a write tool refuses every argument it does not declare with invalid_params' } : {}) },
     actor: {
       header: ACTOR_HEADER, argument: ACTOR_ARGUMENT, argument_rule: v2
         ? 'optional; on an attested call it must equal the header; with no header it is accepted only from a credential bound to a member and only naming that member (its member id or a canonical id linked to it), and the call then runs exactly as the credential; never chooses the person on its own'

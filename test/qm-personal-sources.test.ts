@@ -1,5 +1,5 @@
 /**
- * GBRA-284 (GST-359 G1 wave 2): personal sources. A source bound to a member (access_member_sources, v298) is read by an
+ * GBRA-284 (GST-359 G1 wave 2): personal sources. A source bound to a member (access_member_sources, v299) is read by an
  * attested call only for that member, and never by a scope read; the rule only hides inside the credential's grant.
  *
  * 1. Protects: the HARN-1 gate shape. An attest client granted {source-a, dm-alice-example, dm-bob-example}, each DM

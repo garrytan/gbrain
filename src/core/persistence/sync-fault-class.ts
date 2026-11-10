@@ -116,6 +116,9 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   // GBRA-133 S-39: the file's text holds NUL bytes (a UTF-16 save, a binary file, a padded file); only an edit or its removal clears it.
   { code: 'content_null_bytes', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only an edit to the file or its removal clears it',
     human_reason: 'The file holds NUL bytes, which page text cannot store; save a UTF-16 file as UTF-8, remove the NUL bytes, or remove a binary file (or exclude it with sync.exclude), and commit.' },
+  // GST-2312 (#9024): the committed blob is a Git filter's stored bytes (git-crypt, a clean/smudge driver); only an edit to the file, its filter or sync.exclude clears it.
+  { code: 'content_filter_owned', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: sync never runs the filter that would turn the file into text',
+    human_reason: "The file is stored in Git through a filter (git-crypt or another clean/smudge driver) and gbrain does not run a repository's filter programs; exclude it with sync.exclude, or commit it without the filter, and commit." },
   // GBRA-133 S-33: the commit names a Git object the checkout no longer has and the working-tree copy differs; only restoring the object clears it.
   { code: 'git_object_missing', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only restoring the Git object clears it',
     human_reason: 'The checkout lost the Git object of this committed file and its working-tree copy differs or is gone; run git fsck in the checkout, restore the object with git fetch or from a backup, then sync (every sync re-tests the hold).' },

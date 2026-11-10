@@ -1,0 +1,376 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "skill-resolver.v1.build-receipt.json",
+  "title": "gbrain skill resolver: build receipt (schema_version 1)",
+  "description": "Printed by `gbrain skills index build --json` and written last, as receipt.json, beside index.bin. Within v1, changes are additive only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "gbrain_version",
+    "gbrain_commit",
+    "catalog",
+    "ranker",
+    "index",
+    "block",
+    "build"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "gbrain_version": {
+      "type": "string"
+    },
+    "gbrain_commit": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "catalog_hash",
+        "source",
+        "fingerprint_sha256",
+        "skill_count",
+        "skipped",
+        "scope",
+        "hints",
+        "harness",
+        "routing"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+        },
+        "catalog_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "dir",
+                "bundled",
+                "json"
+              ]
+            },
+            "dirs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "stdin": {
+              "const": true
+            },
+            "file": {
+              "type": "string"
+            },
+            "snapshot": {
+              "const": "source.json"
+            },
+            "bundled_skills": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "fingerprint_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "skill_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "reason"
+            ],
+            "properties": {
+              "reason": {
+                "enum": [
+                  "duplicate_id",
+                  "not_model_invocable",
+                  "ineligible",
+                  "symlink_outside_root",
+                  "unreadable",
+                  "invalid_entry"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "kept": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "scope": {
+          "enum": [
+            "user",
+            "project"
+          ]
+        },
+        "hints": {
+          "enum": [
+            "shown",
+            "names_only"
+          ]
+        },
+        "harness": {
+          "enum": [
+            "openclaw",
+            "claude-code",
+            "codex",
+            "hermes",
+            "qm",
+            "pi",
+            "cursor",
+            null
+          ]
+        },
+        "routing": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "file",
+            "rows",
+            "unmatched",
+            "stat"
+          ],
+          "properties": {
+            "file": {
+              "type": "string"
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "unmatched": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "stat": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3
+            }
+          }
+        }
+      }
+    },
+    "ranker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "variant",
+        "params",
+        "calibration_split_sha256",
+        "tokenizer",
+        "k",
+        "hint_chars",
+        "trigger_share"
+      ],
+      "properties": {
+        "id": {
+          "const": "bm25f-a5"
+        },
+        "version": {
+          "const": 1
+        },
+        "variant": {
+          "enum": [
+            "D",
+            "T"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "k1",
+            "b",
+            "w"
+          ],
+          "properties": {
+            "k1": {
+              "type": "number"
+            },
+            "b": {
+              "type": "number"
+            },
+            "w": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "description",
+                "triggers",
+                "routing",
+                "body"
+              ],
+              "properties": {
+                "name": {
+                  "type": "number"
+                },
+                "description": {
+                  "type": "number"
+                },
+                "triggers": {
+                  "type": "number"
+                },
+                "routing": {
+                  "type": "number"
+                },
+                "body": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        },
+        "calibration_split_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "tokenizer": {
+          "const": "gbrain-skill-lex-v1"
+        },
+        "k": {
+          "type": "integer"
+        },
+        "hint_chars": {
+          "type": "integer"
+        },
+        "trigger_share": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "index": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "index_hash",
+        "size",
+        "n_terms",
+        "n_postings",
+        "truncated_skills"
+      ],
+      "properties": {
+        "file": {
+          "const": "index.bin"
+        },
+        "index_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "n_terms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "n_postings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated_skills": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "token_cap",
+        "tokenizer"
+      ],
+      "properties": {
+        "token_cap": {
+          "const": 400
+        },
+        "tokenizer": {
+          "const": "gbrain-estimate-tokens-v1"
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "args",
+        "rebuild_argv",
+        "ms",
+        "built_at",
+        "generation"
+      ],
+      "properties": {
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rebuild_argv": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "built_at": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

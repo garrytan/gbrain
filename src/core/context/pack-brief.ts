@@ -35,7 +35,7 @@ export async function contextPackBrief(
     ...(local ? {} : { withheld_arms: ['loops'] }),
   };
   const cp = await resolvePullCounterparty(ctx.engine, opts.sourceId, p.counterparty.slice(0, 200), {
-    excludePrivate: !opts.includePrivate, eligibility: opts.eligibility,
+    excludePrivate: !opts.includePrivate, forCaller: !local, eligibility: opts.eligibility,
   });
   if (!cp) return { text: '', view: { ...label, counterparty: null, items: [], reason: 'counterparty_unresolved' } };
   const now = Date.now();

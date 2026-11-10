@@ -5,8 +5,13 @@
  * dispatcher (cli/main.ts) and the docs command checker so both read the same
  * command. The `ask` alias stays inline in main.ts, where the dispatch-shape
  * analyzer reads it.
+ *
+ * GBRA-377: `skills index ...`, `skills resolve ...` and `skills library` route to the
+ * engine-free skill resolver (`skill-resolver`) before help, prewarming or
+ * any engine work; plain `skills` stays the `list_skills` listing.
  */
 export function routeCommand(command: string, subArgs: string[]): { command: string; subArgs: string[] } {
+  if (command === 'skills' && (subArgs[0] === 'index' || subArgs[0] === 'resolve' || subArgs[0] === 'library')) return { command: 'skill-resolver', subArgs };
   if (command !== 'search') return { command, subArgs };
   const at = subArgs.indexOf('--exact');
   const end = subArgs.indexOf('--');

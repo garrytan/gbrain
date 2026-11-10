@@ -13,8 +13,8 @@ import type { Migration } from './types.ts';
 // window (proposals.retention_days). Database only, so a repo-less brain gets
 // it unchanged. No schema.sql mirror: like v282, v283 and v286, it exists only
 // through migrations. Numbered when its PR takes the merge slot.
-export const v299: Migration = {
-  version: 299,
+export const v300: Migration = {
+  version: 300,
   name: 'memory_proposals',
   idempotent: true,
   sql: `

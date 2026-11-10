@@ -16,6 +16,7 @@ import { ACTOR_REASON_FIXES, QM_CONTRACT_PATH, QM_CONTRACT_PATHS, renderQmMemory
 import { CODES } from '../src/core/error-registry.ts';
 import { operations } from '../src/core/operations.ts';
 import { buildToolDefs } from '../src/mcp/tool-defs.ts';
+import { findUnknownParams, narrowingUnknownParams } from '../src/mcp/validate-params.ts';
 import { QM_PERSONAL_OPS, unlinkedRecallResult } from '../src/core/ops/qm-memory.ts';
 import { WRITE_REQUEST_STATES } from '../src/core/persistence/types.ts';
 import { DEFAULT_ATTEST_OPS } from '../src/core/access/actor-model.ts';
@@ -116,6 +117,19 @@ describe('QM memory-provider contract v2 (GST-1094 scope read, GST-900)', () => 
     expect(write.input_schema.required).toEqual(v1.tools.find((t: { name: string }) => t.name === 'memory_write').input_schema.required);
     expect(scopeWrite.saved_as).toMatchObject({ page: 'memory/scope', visibility: 'world' });
     expect(scopeWrite.rule).toContain('attest_sources');
+  });
+
+  test('unknown_arguments says what dispatch does: a scope-like unknown read argument is refused, any other is only warned (GBRA-431)', () => {
+    expect(fixture.transport.unknown_arguments).toContain('refused with invalid_params, and nothing is read');
+    expect(fixture.transport.unknown_arguments).toContain('source for source_id');
+    const recall = operations.find(op => op.name === 'memory_recall')!;
+    const unknown = (params: Record<string, unknown>) => findUnknownParams(recall, { query: 'q', ...params });
+    expect(narrowingUnknownParams(unknown({ source: 'a' }), Object.keys(recall.params)).map(w => w.suggestion)).toEqual(['source_id']);
+    expect(narrowingUnknownParams(unknown({ sources: ['a'] }), Object.keys(recall.params)).map(w => w.suggestion)).toEqual(['source_ids']);
+    expect(narrowingUnknownParams(unknown({ source_name: 'a' }), Object.keys(recall.params))).toHaveLength(1);
+    const plain = unknown({ conversation: 'c' });
+    expect(plain).toHaveLength(1);
+    expect(narrowingUnknownParams(plain, Object.keys(recall.params))).toEqual([]);
   });
 
   test('it says what an over-long query, an over-long recall question and an unattested acting_user get (GST-1304)', () => {

@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 295,
+    "count": 296,
     "gaps": [
       17,
       18,
@@ -97,7 +97,7 @@
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 300,
+    "latest": 301,
     "records": [
       {
         "handler": {
@@ -4830,6 +4830,19 @@
       {
         "handler": "absent",
         "idempotent": true,
+        "name": "chronicle_judge_window",
+        "sql": {
+          "length": 441,
+          "sha256": "c9c5914995a27a7ed7724a433c42565f8aca86cd633c5a9d38930319b4f7bf05"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 297
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
         "name": "attest_read",
         "sql": {
           "length": 139,
@@ -4838,7 +4851,7 @@
         "sqlFor": "absent",
         "transaction": "absent",
         "verify": "absent",
-        "version": 297
+        "version": 298
       },
       {
         "handler": "absent",
@@ -4851,7 +4864,7 @@
         "sqlFor": "absent",
         "transaction": "absent",
         "verify": "absent",
-        "version": 298
+        "version": 299
       },
       {
         "handler": "absent",
@@ -4864,7 +4877,7 @@
         "sqlFor": "absent",
         "transaction": "absent",
         "verify": "absent",
-        "version": 299
+        "version": 300
       },
       {
         "handler": "absent",
@@ -4877,7 +4890,7 @@
         "sqlFor": "absent",
         "transaction": "absent",
         "verify": "absent",
-        "version": 300
+        "version": 301
       }
     ],
     "versions": [
@@ -5175,7 +5188,8 @@
       297,
       298,
       299,
-      300
+      300,
+      301
     ]
   },
   "normalizer": "migrations-record-v1"
