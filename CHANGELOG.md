@@ -10,6 +10,20 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.625.0] - 2026-11-10
+
+**Facts saved during a session can now reach that session without a restart: the user-prompt hook can refresh the context pack every N prompts.** The boundary context pack loaded once, at SessionStart, so a fact written mid-session stayed out of the conversation until the next session. `gbrain config set hooks.context_refresh_every_turns 5` (or `GBRAIN_CONTEXT_REFRESH_EVERY_TURNS=5`) makes the user-prompt hook also request the session's pack on every 5th human prompt. The serve's per-session since-cursor means each refresh carries only the facts and pages written since the last pack. Unset or 0, the default, keeps the old behavior: one pack at SessionStart. The request runs beside `turn_context` inside the existing user-prompt deadline and fails open like the rest of the hook.
+
+**Say to your agent:** *"Pull new facts from my brain into the chat every 5 messages."*
+
+### Itemized changes
+
+- `src/commands/hook-turn-refresh.ts` (new): reads the interval (env wins over the file-plane key; anything but a positive integer means off), keeps a per-session prompt counter under the gbrain home, and requests the session's `context_pack` with trigger `turn-refresh` when a prompt is due.
+- `src/commands/hook.ts`: `hook user-prompt` starts the refresh after the secret check and puts its block before the per-turn block; usage text names the setting.
+- `src/core/config.ts`, `src/commands/config.ts`: `hooks.context_refresh_every_turns` is a known, file-plane config key.
+- `docs/guides/push-context.md`: config table row.
+- Tests: `test/turn-refresh.serial.test.ts` (interval parsing, per-session counter, and against an in-process IPC server: no pack request by default; with an interval of 2, packs on prompts 2 and 4 only, keyed to the session, while the per-turn block rides every prompt). Goldens regenerated for the new usage lines (`test/fixtures/goldens/cli/engine-free-db-down.json`) and the new config field (`test/fixtures/goldens/exports/types.json`); `test/cli-socket.test.ts` classifies the new env var as hook-only.
+
 ## [0.60.624.0] - 2026-11-09
 
 **`gbrain doctor` now ends on its `--budget-ms` deadline when a local probe hangs, and the cheap incident checks keep their share of the budget.** The `home_dir_in_worktree` entry, which runs before the connection checks, ran `npm root -g`, `which -a gbrain` and `crontab -l` synchronously, with 5-second limits on the first and last and none on `which`. While one of them hung, nothing else in the process could run, the deadline included. So a 2500 ms run took about 5100 ms, and every later check, `links_extraction_lag` and `persistence_capacity` included, came back unknown with `elapsed_ms: 0`. Those probes now run asynchronously and are killed with SIGKILL at the entry's deadline (5 s at most, less the 250 ms report reserve), so none of them outlives the run. The entries before the connection checks may use at most half of the time left when the check run starts, so the ops sections and the cheap incident checks keep the other half. `--only`, `--fast` and a run with no database connection still give those entries the whole budget. This was the flaky `#6803 doctor deadlines (postgres)` E2E case (#8979). It failed on every backend-matrix job that ran on the 20261026.1 runner image, where a probe ran into its 5 s limit.
