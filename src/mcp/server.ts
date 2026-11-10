@@ -30,6 +30,7 @@ import { isEngineDegraded, onEngineRecovered } from '../core/degraded-marker.ts'
 import { assertStdioSourceBindable } from './source-preflight.ts';
 import { readOnlyServeSkipsResidentDuties } from '../core/direct-pool-profile.ts';
 import { hookSessionCwd } from '../core/session-cwd.ts';
+import { stdioMemberIdentity } from '../core/access/caller.ts';
 
 /**
  * Largest JSON-RPC message the stdio server reads (the SDK default is 10 MiB,
@@ -368,6 +369,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   const writebackOpts = writeback ? ambientOptsFrom(writeback, {
     remember: session.allowedOps ? session.allowedOps.has('remember') : true,
     extractFacts: session.allowedOps ? session.allowedOps.has('extract_facts') : true,
+    member: (await stdioMemberIdentity(engine)).some(p => p.startsWith('member:')),
   }) : null;
   server = new Server(
     { name: 'gbrain', version: VERSION, description: MCP_SERVER_DESCRIPTION },

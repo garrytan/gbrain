@@ -16,6 +16,7 @@ import { buildAmbientWritebackSection } from '../src/core/facts/writeback-instru
 import { ambientOptsFrom, captureLaneStates, resolveWritebackConfig } from '../src/core/facts/writeback-config.ts';
 import { resolveAgentWriteback } from '../src/core/facts/writeback-settings.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
+import { addMember } from '../src/core/access/members.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 
 const CONFIG = { engine: 'pglite' } as GBrainConfig;
@@ -243,6 +244,16 @@ describe('get_memory_settings', () => {
 });
 
 describe('memory_conversation_mode', () => {
+  test('GST-2243: a stdio server bound to a member (mcp.stdio_member) gets the member rule, never "pass visibility: world"', async () => {
+    await addMember(engine, 'alice-example');
+    await engine.setConfig('mcp.stdio_member', 'alice-example');
+    const res = await dispatchToolCall(engine, 'memory_conversation_mode', { mode: 'all' }, { remote: true, transport: 'stdio', config: CONFIG, sourceId: 'default' });
+    const body = JSON.parse(res.content[0].text) as Record<string, any>;
+    expect(res.isError === true).toBe(false);
+    expect(body.rule_text).toContain('share: true');
+    expect(body.rule_text).not.toContain('Pass visibility:');
+  });
+
   test('all returns a conversation rule with the brain\'s private posture, even when the operator set off; nothing is stored', async () => {
     await engine.setConfig('memory.auto_writeback', 'off');
     await engine.setConfig('facts.default_visibility', 'private');
