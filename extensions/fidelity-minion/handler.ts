@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { OperationError } from '../../src/core/ops/contract.ts';
 import { serializeMarkdown } from '../../src/core/markdown.ts';
-import { MinionWorker, UnrecoverableError } from '../../src/core/minions/index.ts';
+import { MinionWorker, UnrecoverableError, type MinionHandler } from '../../src/core/minions/index.ts';
 import { parseFidelityContracts, prepareFidelityExcerpts, renderFidelityNarrative } from './concept-fidelity.ts';
 import { stripFenceSections } from '../../src/core/cycle/concept-publication.ts';
 import { validateMaintenanceInputs, type MaintenanceInputGuard } from '../../src/core/persistence/maintenance-input-guard.ts';
@@ -94,13 +94,18 @@ export async function publishConcept(engine: BrainEngine, prepared: Awaited<Retu
   return { status: 'published', slug, receipt };
 }
 
-export function registerFidelityMinion(worker: MinionWorker, engine: BrainEngine, target: Target): void {
-  worker.register(JOB, async job => {
+export function makeFidelityHandler(engine: BrainEngine, target: Target,
+    extraction?: Pick<MaintenanceInputGuard, 'pages' | 'activation'>): MinionHandler {
+  return async job => {
     if (job.data.sourceId !== target.sourceId || job.data.topic !== target.topic) {
       throw new UnrecoverableError('Fidelity job target does not match this worker');
     }
     if (job.signal.aborted || !await job.isActive()) throw new Error('Job no longer active');
     const prepared = await prepareConcept(engine, target);
+    if (extraction) {
+      prepared.guard.evidencePages = extraction.pages;
+      prepared.guard.activation = extraction.activation;
+    }
     if (job.signal.aborted || !await job.isActive()) throw new Error('Job no longer active');
     const deadline = job.deadlineAtMs === null ? null : job.deadlineAtMs - 3000;
     try {
@@ -111,5 +116,9 @@ export function registerFidelityMinion(worker: MinionWorker, engine: BrainEngine
       }
       throw error;
     }
-  });
+  };
+}
+
+export function registerFidelityMinion(worker: MinionWorker, engine: BrainEngine, target: Target): void {
+  worker.register(JOB, makeFidelityHandler(engine, target));
 }

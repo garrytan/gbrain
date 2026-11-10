@@ -173,7 +173,8 @@ function awaitMaintenance(engine: BrainEngine, authority: MaintenanceAuthority, 
 /** Every check a maintenance request passes before it is journaled: the authorized prior request with its id (a replay), or the admission to submit. */
 async function prepareMaintenanceAdmission(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
   intent: Record<string, unknown>, requestId: string, file: boolean): Promise<{ prior: WriteRequest } | { admission: WriteAdmission }> {
-  if (authority.guardedDatabaseOnly && (file || intent.kind !== 'managed_maintenance_guarded_page_v1')) {
+  if (authority.guardedDatabaseOnly && (file ||
+      (intent.kind !== 'managed_maintenance_guarded_page_v1' && intent.kind !== FIDELITY_DREAM_INTENT))) {
     throw new TypeError('Guarded database-only authority cannot publish this maintenance intent');
   }
   await validateMaintenance(engine, authority, slug);
@@ -282,7 +283,9 @@ export async function publishGuardedMaintenancePage(engine: BrainEngine, authori
   content: string, options: Omit<MaintenancePageOptions, 'requestId' | 'file'> & { projectConceptLinks?: boolean },
   inputGuard: MaintenanceInputGuard): Promise<Record<string, unknown>> {
   const page = maintenancePageRequest(authority, slug, content, { ...options, file: false });
-  const intent = { ...page.intent, kind: 'managed_maintenance_guarded_page_v1', input_guard: inputGuard,
+  const intent = { ...page.intent,
+    kind: inputGuard.activation ? FIDELITY_DREAM_INTENT : 'managed_maintenance_guarded_page_v1',
+    input_guard: inputGuard,
     ...(options.projectConceptLinks ? { project_concept_links: true } : {}) };
   const requestId = maintenanceRequestId({ page: page.requestId, intent });
   return submitMaintenance(engine, authority, slug, intent, requestId, false);
@@ -585,6 +588,8 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
  * (fail closed) with no input edges. #7917: a page the publication lowered
  * files a `lower_page` proposal the owner sees in `gbrain trust review`.
  */
+export const FIDELITY_DREAM_INTENT = 'managed_maintenance_fidelity_dream_v1';
+
 export async function prepareMaintenanceMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, clock?: ClaimPhaseClock): Promise<PreparedMutation> {
   const prepared = await prepareMaintenanceKind(engine, row, config, clock);
   const trust = derivationWriteTrust(row.intent);
@@ -626,8 +631,11 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   if (row.intent?.kind === 'managed_maintenance_take_reproject') return (await import('../repair/take-supersession.ts')).prepareTakeReprojection(engine, row);
   if (row.intent?.kind === 'managed_maintenance_timeline_extract') return (await import('../../commands/extract-timeline-db.ts')).prepareTimelineExtract(engine, row);
   if (row.intent?.kind === 'managed_maintenance_meeting_timeline') return (await import('../extract-timeline-from-meetings.ts')).prepareMeetingTimeline(engine, row);
-  if (row.intent?.kind === 'managed_maintenance_guarded_page_v1') {
+  if (row.intent?.kind === 'managed_maintenance_guarded_page_v1' || row.intent?.kind === FIDELITY_DREAM_INTENT) {
     const guard = row.intent.input_guard as MaintenanceInputGuard;
+    if (row.intent.kind === FIDELITY_DREAM_INTENT && !guard?.activation) {
+      throw opError('invalid_params', 'Fidelity Dream publication requires a scope pin.', 'Keep the original receipt and check the scheduled scope.');
+    }
     const prepared = await preparePageMutation(engine, { ...row, intent: {
       ...row.intent, kind: 'managed_maintenance_page',
       expected_revision: row.intent.expected_revision ?? undefined,
@@ -636,7 +644,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
     return {
       ...prepared,
       additionalPageKeys: [...prepared.additionalPageKeys ?? [],
-        ...guard.pages.map(page => ({ sourceId: row.source_id, slug: page.slug }))],
+        ...[...guard.pages, ...(guard.evidencePages ?? [])].map(page => ({ sourceId: row.source_id, slug: page.slug }))],
       validate: async tx => {
         await validateMaintenanceInputs(tx, row.source_id, guard);
         await prepared.validate?.(tx);

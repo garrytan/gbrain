@@ -132,17 +132,19 @@ export async function runSubagentsInline(
    *  handler stops too; the current child is cancelled (truthful 'cancelled',
    *  not dead or a burned delayed retry) before the drain unwinds. */
   signal: AbortSignal | null = null,
+  jobName = 'subagent',
+  minChildBudgetMs = MIN_CHILD_BUDGET_MS,
 ): Promise<void> {
   const n = Math.max(1, Math.floor(concurrency));
   if (n === 1) {
     // Serial fast path: identical semantics to the pre-#4194 drain.
-    await drainLoop(engine, queue, queueName, yieldDuringPhase, handler, lockMs, 0, null, deadlineAtMs, signal);
+    await drainLoop(engine, queue, queueName, yieldDuringPhase, handler, lockMs, 0, null, deadlineAtMs, signal, jobName, minChildBudgetMs);
     return;
   }
   const poolAbort = new AbortController();
   const settled = await Promise.allSettled(
     Array.from({ length: n }, (_, loopIdx) =>
-      drainLoop(engine, queue, queueName, yieldDuringPhase, handler, lockMs, loopIdx, poolAbort, deadlineAtMs, signal)),
+      drainLoop(engine, queue, queueName, yieldDuringPhase, handler, lockMs, loopIdx, poolAbort, deadlineAtMs, signal, jobName, minChildBudgetMs)),
   );
   // allSettled (not all): a rejecting loop must not strand siblings'
   // in-flight children mid-record. The first non-retryable rejection is
@@ -162,6 +164,8 @@ async function drainLoop(
   poolAbort: AbortController | null,
   deadlineAtMs: number | null = null,
   signal: AbortSignal | null = null,
+  jobName = 'subagent',
+  minChildBudgetMs = MIN_CHILD_BUDGET_MS,
 ): Promise<void> {
   // #3555 interaction: the drain's queue ops used to be bare awaits, so a
   // transient pooler reap mid-drain threw out of the loop and stranded the
@@ -196,7 +200,7 @@ async function drainLoop(
       // children stay 'waiting' for the caller's cancel-and-defer pass.
       if (
         deadlineAtMs != null &&
-        deadlineAtMs - CYCLE_DEADLINE_RESERVE_MS - Date.now() < MIN_CHILD_BUDGET_MS
+        deadlineAtMs - CYCLE_DEADLINE_RESERVE_MS - Date.now() < minChildBudgetMs
       ) {
         return;
       }
@@ -214,7 +218,7 @@ async function drainLoop(
           await queue.handleTimeouts();
           await queue.handleWallClockTimeouts(lockMs);
         }
-        job = await queue.claim(lockToken, lockMs, queueName, ['subagent']);
+        job = await queue.claim(lockToken, lockMs, queueName, [jobName]);
       } catch (e) {
         await recoverOrThrow('queue-ops', e);
         continue;

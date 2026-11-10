@@ -4,6 +4,10 @@ import { existsSync, mkdirSync, mkdtempSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
+import { runPhaseSynthesizeConcepts } from '../../src/core/cycle/synthesize-concepts.ts';
+import { cycleLockIdFor } from '../../src/core/cycle.ts';
+import { withRefreshingLock } from '../../src/core/db-lock.ts';
+import { makeExtractAtomsDrainHandler } from '../../src/core/minions/handlers/extract-atoms-drain.ts';
 import { MinionQueue, MinionWorker } from '../../src/core/minions/index.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
@@ -14,6 +18,7 @@ import { disposePersistenceConsumer } from '../../src/core/persistence/service.t
 import { isolatedPersistencePostgres } from '../../test/helpers/persistence-postgres.ts';
 import { withEnv } from '../../test/helpers/with-env.ts';
 import { fidelityQueue, JOB, prepareConcept, publishConcept, registerFidelityMinion } from './handler.ts';
+import { dreamFidelityScopeKey, readCompletedDreamInputs, readDreamFidelityScope } from './dream-scope.ts';
 
 const url = process.env.FIDELITY_ISOLATED_DATABASE_URL;
 let db: Awaited<ReturnType<typeof isolatedPersistencePostgres>>;
@@ -106,6 +111,110 @@ test('registered Minion writes one private page and the next job is unchanged', 
       expect(second.result).toMatchObject({ status: 'unchanged', revision: before?.revision });
       expect((await other.readPageSnapshot(output, { sourceId }))?.revision).toBe(before?.revision);
     } finally { worker.stop(); await task; }
+  });
+}, 45000);
+
+test('Dream waits for complete evidence and rechecks the source revision and activation before publication', async () => {
+  await fixture(async ({ sourceId }) => {
+    const engine = db.engine;
+    const slug = 'notes/example-review';
+    const scopeKey = `cycle.synthesize_concepts.fidelity_dream.${sourceId}`;
+    const activation = JSON.stringify({ topic, pages: [slug] });
+    const writeEvidence = async (text: string) => {
+      const current = await engine.readPageSnapshot(slug, { sourceId });
+      await submitPageMutation({
+        engine, sourceId, remote: false, config: { engine: 'postgres', embedding_disabled: true } as never,
+        dryRun: false, logger: {info() {}, warn() {}, error() {}},
+      }, { operation: 'put_page', params: { slug, request_id: randomUUID(), expected_revision: current?.revision,
+        content: `---\ntype: note\ntitle: Example review\nfacts_backstop: false\n---\n${text}` } });
+    };
+    const checkpoint = async (partial: boolean) => {
+      await engine.executeRaw(`INSERT INTO extract_atoms_page_state
+        (source_incarnation, page_id, content_hash, fail_count, tombstoned, partial_input_chars)
+        SELECT s.incarnation, p.id, p.content_hash, 0, true, $3::integer
+          FROM pages p JOIN sources s ON s.id=p.source_id WHERE p.source_id=$1 AND p.slug=$2
+        ON CONFLICT (source_incarnation, page_id, content_hash)
+        DO UPDATE SET partial_input_chars=excluded.partial_input_chars`, [sourceId, slug, partial ? 100 : null]);
+    };
+    await writeEvidence('A synthetic decision was recorded.');
+    expect(await readDreamFidelityScope(engine, sourceId)).toBeNull();
+    await engine.setConfig(scopeKey, activation);
+    const scope = (await readDreamFidelityScope(engine, sourceId))!;
+    expect(await readCompletedDreamInputs(engine, sourceId, scope)).toBeNull();
+    await checkpoint(true);
+    expect(await readCompletedDreamInputs(engine, sourceId, scope)).toBeNull();
+    await checkpoint(false);
+    const evidence = (await readCompletedDreamInputs(engine, sourceId, scope))!;
+    expect(evidence).toEqual([expect.objectContaining({ slug })]);
+    const prepared = await prepareConcept(engine, { sourceId, topic });
+    prepared.guard.evidencePages = evidence;
+    prepared.guard.activation = scope.activation;
+
+    await writeEvidence('A later revision contains a different decision.');
+    expect(await readCompletedDreamInputs(engine, sourceId, scope)).toBeNull();
+    await expect(publishConcept(engine, prepared)).rejects.toMatchObject({ code: 'revision_conflict' });
+
+    await checkpoint(false);
+    prepared.guard.evidencePages = (await readCompletedDreamInputs(engine, sourceId, scope))!;
+    await engine.unsetConfig(scopeKey);
+    await engine.setConfig(scopeKey, activation);
+    await expect(publishConcept(engine, prepared)).rejects.toMatchObject({ code: 'revision_conflict' });
+    expect(await other.getPage(output, { sourceId })).toBeNull();
+
+    prepared.guard.activation = (await readDreamFidelityScope(engine, sourceId))!.activation;
+    expect(await publishConcept(engine, prepared)).toMatchObject({ status: 'published', receipt: { state: 'committed' } });
+    const first = await other.readPageSnapshot(output, { sourceId });
+    expect(await publishConcept(engine, prepared)).toMatchObject({ status: 'unchanged', revision: first?.revision });
+  });
+}, 45000);
+
+test('native Dream skips the reserved topic after resolving spelling variants and still publishes other topics', async () => {
+  await fixture(async ({ sourceId }) => {
+    const engine = db.engine;
+    const scopeKey = `cycle.synthesize_concepts.fidelity_dream.${sourceId}`;
+    await engine.setConfig(scopeKey, JSON.stringify({ topic, pages: ['notes/example-review'] }));
+    const _atoms = [
+      { slug: 'atoms/native-example-a', title: 'First example', body: 'First synthetic finding.', concept_refs: ['writebackacceptance', 'other-topic'] },
+      { slug: 'atoms/native-example-b', title: 'Second example', body: 'Second synthetic finding.', concept_refs: ['Writeback acceptance', 'other-topic'] },
+    ];
+    const result = await runPhaseSynthesizeConcepts(engine, { sourceId, _atoms, dryRun: true });
+    expect(result.details.concepts_written).toBe(1);
+    await engine.unsetConfig(scopeKey);
+    const ordinary = await runPhaseSynthesizeConcepts(engine, { sourceId, _atoms, dryRun: true });
+    expect(ordinary.details.concepts_written).toBe(2);
+  });
+}, 45000);
+
+test('a busy source lock retries the original scoped job instead of completing its daily slot', async () => {
+  await fixture(async ({ sourceId }) => {
+    const engine = db.engine;
+    await engine.setConfig(`cycle.synthesize_concepts.fidelity_dream.${sourceId}`,
+      JSON.stringify({ topic, pages: ['notes/example-review'] }));
+    const scope = (await readDreamFidelityScope(engine, sourceId))!;
+    const queueName = `lock-fixture-${sourceId}`;
+    const queue = new MinionQueue(engine);
+    const worker = new MinionWorker(engine, { queue: queueName, pollInterval: 50 });
+    worker.register('extract-atoms-fidelity', makeExtractAtomsDrainHandler(engine, true));
+    await withRefreshingLock(engine, cycleLockIdFor(sourceId), async () => {
+      const idempotencyKey = `test-fidelity:${sourceId}`;
+      const job = await queue.add('extract-atoms-fidelity', { sourceId, fidelityScopeKey: dreamFidelityScopeKey(scope) },
+        { queue: queueName, idempotency_key: idempotencyKey, max_attempts: 3, backoff_type: 'fixed', backoff_delay: 60_000 },
+        { allowProtectedSubmit: true });
+      const running = worker.start();
+      try {
+        let result = await queue.getJob(job.id);
+        for (let i = 0; i < 100 && result?.status !== 'delayed' && result?.status !== 'completed'; i++) {
+          await Bun.sleep(50);
+          result = await queue.getJob(job.id);
+        }
+        expect(result).toMatchObject({ id: job.id, idempotency_key: idempotencyKey, status: 'delayed', attempts_made: 1 });
+        expect(result?.error_text).toContain('waiting for the source cycle lock');
+        expect(await other.getPage(output, { sourceId })).toBeNull();
+      } finally {
+        worker.stop();
+        await running;
+      }
+    });
   });
 }, 45000);
 

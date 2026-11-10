@@ -44,6 +44,32 @@ describe('runExtractAtomsDrain (issue #1678)', () => {
     expect(batches).toBe(3);
   });
 
+  it('hands off a drained batch exactly once before releasing the source lock', async () => {
+    const events: string[] = [];
+    await runExtractAtomsDrain({
+      withLock: async work => {
+        events.push('locked');
+        try {
+          return await work(new AbortController().signal);
+        } finally {
+          events.push('unlocked');
+        }
+      },
+      countRemaining: seq([1, 0, 0]),
+      runBatch: async () => {
+        events.push('extracted');
+        return { extracted: 1, skipped: 0 };
+      },
+      now: () => 0,
+      onDrained: async result => {
+        expect(result.remaining).toBe(0);
+        events.push('handoff');
+        return result;
+      },
+    }, { windowMs: 1_000_000 });
+    expect(events).toEqual(['locked', 'extracted', 'handoff', 'unlocked']);
+  });
+
   it('stops at the wallclock window with remaining > 0', async () => {
     // SYNC stepping clock: now() #1 sets deadline (0+100=100); the while-check
     // then sees 50, 50 (two batches), then 999999 → past deadline → stop.

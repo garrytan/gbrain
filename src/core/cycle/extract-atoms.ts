@@ -197,12 +197,21 @@ async function resolveExtractableTypes(): Promise<string[]> {
   return unionExtractableTypes(packExtractable, packExcluded);
 }
 
+/** Scoped extraction leaves its approved topic to the Fidelity Minion. */
+function nativeConceptFrontmatter(concepts: string[] | undefined, fidelityTopic?: string): { concepts?: string[] } {
+  const nativeConcepts = fidelityTopic ? concepts?.filter(topic => topic !== fidelityTopic) : concepts;
+  return nativeConcepts?.length ? { concepts: nativeConcepts } : {};
+}
+
 export interface ExtractAtomsOpts {
   _managedRetry?: { requestId: string; retryId: string };
   brainDir?: string;
   sourceId?: string;
   dryRun?: boolean;
   affectedSlugs?: string[];
+  pageScope?: string[];
+  /** A scoped fidelity topic has one concept publisher. */
+  fidelityTopic?: string;
   /** Test seam: alternative chat function (bypasses real LLM calls). */
   _chat?: typeof gatewayChat;
   /**
@@ -474,7 +483,7 @@ export async function discoverExtractablePages(
  * atom row yet. Single source of truth for the backlog number: the doctor
  * `extract_atoms_backlog` check calls this so its definition can't drift from
  * what the phase actually processes. Uses the SAME eligibility predicate as
- * `discoverExtractablePages` (minus the LIMIT and affectedSlugs filter) so it
+ * `discoverExtractablePages` (minus the LIMIT, with optional explicit page scope) so it
  * rides migration v104's `pages_atom_source_hash_idx` partial index and stays
  * O(log n) on 100K+ brains.
  *
@@ -492,7 +501,7 @@ export async function discoverExtractablePages(
 export async function countExtractAtomsBacklog(
   engine: BrainEngine,
   sourceId?: string,
-  opts: { signal?: AbortSignal } = {},
+  opts: { signal?: AbortSignal; pageScope?: string[] } = {},
 ): Promise<number | null> {
   try {
     // Two modes: scoped (the phase's per-source `remaining`) vs brain-wide
@@ -500,10 +509,12 @@ export async function countExtractAtomsBacklog(
     // The atom must live in the SAME source as the page either way, so the
     // brain-wide form keys the NOT EXISTS on `atom.source_id = p.source_id`.
     const scoped = sourceId !== undefined;
+    if (opts.pageScope && !scoped) return null;
     const connectorExclusion = await connectorAtomExclusionSql(engine);
     const sql = scoped
       ? `SELECT COUNT(*) AS cnt FROM pages p
          WHERE p.source_id = $1
+           ${opts.pageScope ? 'AND p.slug = ANY($5::text[])' : ''}
            AND p.type = ANY($2::text[])
            AND p.deleted_at IS NULL
            AND p.content_hash IS NOT NULL
@@ -542,7 +553,7 @@ export async function countExtractAtomsBacklog(
     const extractableTypes = await resolveExtractableTypes();
     const maxInputChars = await resolveExtractAtomsInputCap(engine);
     const params = scoped
-      ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars]
+      ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, ...(opts.pageScope ? [opts.pageScope] : [])]
       : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars];
     const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params, { signal: opts.signal });
     return Number(rows[0]?.cnt ?? 0);
@@ -715,7 +726,7 @@ export async function runPhaseExtractAtoms(
   } catch { transcriptDirs = undefined; }
   const sourceRouting = emptySessionSourceRouting();
   if (managed && !opts.dryRun) { // GBRA-161 PR 1b: finish what a crash after an activation left
-    for (const member of await resumeManagedGenerationMembers(engine, managed, { corpusDir: transcriptDirs?.session_corpus_dir ?? null })) {
+    for (const member of await resumeManagedGenerationMembers(engine, managed, { corpusDir: transcriptDirs?.session_corpus_dir ?? null, pageScope: opts.pageScope })) {
       if (member.outcome !== 'held_session_source') continue;
       const held = sourceRouting.generation_members_held ??= {};
       held[member.reason!] = (held[member.reason!] ?? 0) + 1;
@@ -734,6 +745,7 @@ export async function runPhaseExtractAtoms(
     transcripts.length === 0
     && opts.brainDir !== undefined
     && opts._transcripts === undefined
+    && opts.pageScope === undefined
   ) {
     try {
       const { discoverTranscripts } = await import('./transcript-discovery.ts');
@@ -758,7 +770,7 @@ export async function runPhaseExtractAtoms(
   // #6503: the input cap is read before discovery so the partial dispositions
   // a raised cap supersedes are released and their items offered in this run.
   const maxInputChars = await resolveExtractAtomsInputCap(engine);
-  if (!opts.dryRun) await releasePartialDispositions(engine, sourceId, maxInputChars);
+  if (!opts.dryRun) await releasePartialDispositions(engine, sourceId, maxInputChars, opts.pageScope);
 
   // 1b. Get pages (test seam OR production discovery).
   //     _pages === undefined triggers discovery; _pages: [] suppresses it
@@ -772,7 +784,7 @@ export async function runPhaseExtractAtoms(
     pages = await discoverExtractablePages(
       engine,
       sourceId,
-      opts.affectedSlugs,
+      opts.pageScope ?? opts.affectedSlugs,
       await resolvePageDiscoveryLimit(engine),
     );
   }
@@ -1257,7 +1269,7 @@ export async function runPhaseExtractAtoms(
               visibility, ...(origin ? { managed_extraction: true } : {}),
               ...quoteFields,
               ...(atom.lesson && { lesson: atom.lesson }),
-              ...(atom.concepts && atom.concepts.length > 0 && { concepts: atom.concepts }),
+              ...nativeConceptFrontmatter(atom.concepts, opts.fidelityTopic),
               ...(atom.virality_score !== undefined && { virality_score: atom.virality_score }),
               ...(atom.emotional_register && { emotional_register: atom.emotional_register }),
               extracted_at: new Date().toISOString(),

@@ -1,11 +1,15 @@
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 
+type GuardedPage = { slug: string; revision: string; trustTier: string | null };
+
 export interface MaintenanceInputGuard {
   approvalKey: string;
   approvalVersion: string;
   sourceIncarnation: string;
-  pages: ReadonlyArray<{ slug: string; revision: string; trustTier: string | null }>;
+  activation?: { key: string; version: string };
+  pages: ReadonlyArray<GuardedPage>;
+  evidencePages?: ReadonlyArray<GuardedPage>;
 }
 
 export async function validateMaintenanceInputs(tx: BrainEngine, sourceId: string, guard: MaintenanceInputGuard): Promise<void> {
@@ -17,7 +21,12 @@ export async function validateMaintenanceInputs(tx: BrainEngine, sourceId: strin
   const [approval] = await tx.executeRaw<{ version: string }>(
     'SELECT xmin::text AS version FROM config WHERE key=$1 FOR SHARE', [guard.approvalKey]);
   if (approval?.version !== guard.approvalVersion) throw changed();
-  const expected = new Map(guard.pages.map(page => [page.slug, page]));
+  if (guard.activation) {
+    const [activation] = await tx.executeRaw<{ version: string }>(
+      'SELECT xmin::text AS version FROM config WHERE key=$1 FOR SHARE', [guard.activation.key]);
+    if (activation?.version !== guard.activation.version) throw changed();
+  }
+  const expected = new Map([...guard.pages, ...(guard.evidencePages ?? [])].map(page => [page.slug, page]));
   const current = await tx.executeRaw<{ slug: string; revision: string; trust_tier: string | null }>(
     'SELECT slug, knowledge_revision::text AS revision, trust_tier FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL ORDER BY slug FOR SHARE',
     [sourceId, [...expected.keys()]]);

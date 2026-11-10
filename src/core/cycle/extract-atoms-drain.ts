@@ -35,6 +35,7 @@ import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import { redactFindings } from '../secret-scan.ts';
 import { ensureWellFormed, truncateUtf8 } from '../text-safe.ts';
 import { anyAbortSignal } from '../abort-signals.ts';
+import { extractionCompletedForFidelity } from './extraction-completion.ts';
 
 /** #4730: bounded operator-facing failure detail; totals stay exact above the cap. */
 export const MAX_DRAIN_FAILURE_RECORDS = 25;
@@ -121,6 +122,7 @@ export interface ExtractAtomsDrainDeps {
     budget?: { spentUsd: number; capUsd: number };
     /** #6503: items the batch cut at `cycle.extract_atoms.max_input_chars` (partial disposition, not complete). */
     inputTruncated?: number;
+    incompleteForFidelity?: boolean;
     /** #6817: with `providerFailure`, what the outage was; unset reads as `transient`. */
     providerFailureClass?: DrainProviderFailureClass;
   }>;
@@ -134,6 +136,7 @@ export interface ExtractAtomsDrainDeps {
   now: () => number;
   /** Optional progress sink (one line per batch). */
   onBatch?: (info: { batch: number; extracted: number; remaining: number | null }) => void;
+  onDrained?: (result: ExtractAtomsDrainResult, signal: AbortSignal) => Promise<ExtractAtomsDrainResult>;
 }
 
 export interface ExtractAtomsDrainOpts {
@@ -232,6 +235,8 @@ export interface ExtractAtomsDrainResult {
   budget_usd?: number;
   /** #6503: items cut at the input cap across every batch; the model did not read their tails and they are not marked complete. */
   input_truncated?: number;
+  incomplete_fidelity_batches?: number;
+  fidelity?: import('../../../extensions/fidelity-minion/dream-handoff.ts').FidelityHandoff;
   /** #6817: with `status: 'provider_failure'`, the failing batch's class (`transient` when the batch named none). */
   provider_failure_class?: DrainProviderFailureClass;
 }
@@ -278,6 +283,7 @@ export async function runExtractAtomsDrain(
   let lockSignal: AbortSignal | null = null;
   let budget: { spentUsd: number; capUsd: number } | undefined;
   let inputTruncated = 0;
+  let incompleteFidelityBatches = 0;
   const result = (stopped: DrainStop, remaining: number | null): ExtractAtomsDrainResult => ({
     phase: 'extract_atoms',
     status: providerFailure ? 'provider_failure' : 'ok',
@@ -292,6 +298,7 @@ export async function runExtractAtomsDrain(
     last_error: lastError,
     ...(stopped === 'budget' && budget ? { spent_usd: budget.spentUsd, budget_usd: budget.capUsd } : {}),
     input_truncated: inputTruncated,
+    ...(incompleteFidelityBatches > 0 ? { incomplete_fidelity_batches: incompleteFidelityBatches } : {}),
     ...(providerFailure ? { provider_failure_class: providerFailureClass } : {}),
   });
   try {
@@ -349,6 +356,7 @@ export async function runExtractAtomsDrain(
           skipped += r.skipped;
           inputTruncated += Math.max(0, Math.floor(Number(r.inputTruncated ?? 0)) || 0);
           batches++;
+          if (r.incompleteForFidelity) incompleteFidelityBatches++;
           // #4730: preserve typed per-item records (bounded, sanitized) while
           // keeping failure_count exact and reconcilable — count-only adapters
           // (the #4539 shape) still contribute to the total via failureCount.
@@ -441,7 +449,8 @@ export async function runExtractAtomsDrain(
         // status already takes precedence for the Minion handler's retry
         // decision; keep `stopped` consistent with it once a failure latched.
         if (!providerFailure && remaining === 0) stopped = 'drained';
-        return result(stopped, remaining);
+        const finished = result(stopped, remaining);
+        return stopped === 'drained' && deps.onDrained ? await deps.onDrained(finished, hard.signal) : finished;
       } finally {
         clearTimeout(deadlineTimer);
         clearTimeout(windowTimer);
@@ -509,6 +518,7 @@ export interface DrainForSourceOpts {
   signal?: AbortSignal;
   /** #5809: the Minion job's `deadlineAtMs`. */
   deadlineAtMs?: number | null;
+  fidelity?: { scope: import('../../../extensions/fidelity-minion/dream-scope.ts').DreamFidelityScope; ownerJobId: number };
 }
 
 export async function runExtractAtomsDrainForSource(
@@ -531,11 +541,21 @@ export async function runExtractAtomsDrainForSource(
   return runExtractAtomsDrain(
     {
       withLock: (work) => withRefreshingLock(engine, lockId, (signal) => work(signal), { ttlMinutes: 5 }),
+      onDrained: async (result, signal) => {
+        if (!opts.fidelity || result.failure_count !== 0 || result.incomplete_fidelity_batches) return result;
+        const { handoffFidelity } = await import('../../../extensions/fidelity-minion/dream-handoff.ts');
+        const fidelity = await handoffFidelity(engine, extractionSourceId, opts.fidelity.scope, {
+          signal, deadlineAtMs: opts.deadlineAtMs, ownerJobId: opts.fidelity.ownerJobId,
+        });
+        return fidelity ? { ...result, fidelity } : result;
+      },
       runBatch: async ({ signal, stopSignal }) => {
         const r = await runPhaseExtractAtomsStamped(engine, {
           sourceId: extractionSourceId,
           dryRun: false,
           brainDir: opts.brainDir,
+          pageScope: opts.fidelity?.scope.pages,
+          fidelityTopic: opts.fidelity?.scope.topic,
           signal,
           stopSignal,
           attempt,
@@ -583,9 +603,10 @@ export async function runExtractAtomsDrainForSource(
           budgetSkipped: Number(d.pages_skipped_budget ?? 0) + Number(d.transcripts_skipped_budget ?? 0),
           budget: { spentUsd: Number(d.estimated_spend_usd ?? 0), capUsd: Number(d.budget_usd ?? 0) },
           inputTruncated: Number(d.input_truncated ?? 0),
+          incompleteForFidelity: !!opts.fidelity && !extractionCompletedForFidelity(r),
         };
       },
-      countRemaining: (signal) => countExtractAtomsBacklog(engine, extractionSourceId, { signal }),
+      countRemaining: (signal) => countExtractAtomsBacklog(engine, extractionSourceId, { signal, pageScope: opts.fidelity?.scope.pages }),
       now: Date.now,
       onBatch: opts.onBatch,
     },

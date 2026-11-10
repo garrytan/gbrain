@@ -113,6 +113,7 @@ export const GATEWAY_REFRESH_JOB_NAMES = new Set([
   'consolidate',
   'extract_facts',
   'extract-atoms-drain',
+  'extract-atoms-fidelity',
   'embed-backfill',
   // connector-sync's PGLite embed kickoff calls runEmbedCore inline (the
   // embedding gateway), so it must see a refreshed gateway config like the
@@ -639,6 +640,7 @@ export async function registerBuiltinHandlers(
   worker.register('resolve_symbol_edges', makeCyclePhaseHandler(engine, 'resolve_symbol_edges'));
   worker.register('recompute_emotional_weight', makeCyclePhaseHandler(engine, 'recompute_emotional_weight'));
   registerBuiltinJob(worker, engine, 'extract-atoms-drain', makeExtractAtomsDrainHandler(engine));
+  registerBuiltinJob(worker, engine, 'extract-atoms-fidelity', makeExtractAtomsDrainHandler(engine, true));
 
   // v0.40 Federated Sync v2 — embed-backfill: per-source decoupled embed.
   // Cost-bounded via D6 ($10/job BudgetTracker) + D19 (source-level cooldown

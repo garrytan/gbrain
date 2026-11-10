@@ -217,12 +217,14 @@ export async function settleMember(tx: BrainEngine, activationId: string, slug: 
 export interface PendingMember { source_id: string; kind: string; owner_key: string; generation_id: number; activation_id: string; slug: string; action: 'overwrite' | 'retire'; identity: string }
 
 /** Items live generations still wait on a member request for (retire_pending and pending overwrites). */
-export async function listPendingMembers(db: BrainEngine, sourceIds: readonly string[], kind?: string): Promise<PendingMember[]> {
+export async function listPendingMembers(db: BrainEngine, sourceIds: readonly string[], kind?: string, ownerKeys?: readonly string[]): Promise<PendingMember[]> {
   const rows = await db.executeRaw<PendingMember & { item_action: string }>(
     `SELECT g.source_id, g.kind, g.owner_key, g.id AS generation_id, g.activation_id, i.item_key AS slug, i.action AS item_action, i.identity_hash AS identity
        FROM derived_generation_items i JOIN derived_generations g ON g.id=i.generation_id
-      WHERE i.pending AND g.state='live' AND g.source_id=ANY($1::text[]) AND ($2::text IS NULL OR g.kind=$2) ORDER BY g.source_id, g.kind, g.owner_key, i.item_key`,
-    [[...sourceIds], kind ?? null]);
+      WHERE i.pending AND g.state='live' AND g.source_id=ANY($1::text[]) AND ($2::text IS NULL OR g.kind=$2)
+        AND ($3::text[] IS NULL OR g.owner_key=ANY($3::text[]))
+      ORDER BY g.source_id, g.kind, g.owner_key, i.item_key`,
+    [[...sourceIds], kind ?? null, ownerKeys ?? null]);
   return rows.map(row => ({ source_id: row.source_id, kind: row.kind, owner_key: row.owner_key, generation_id: Number(row.generation_id), activation_id: row.activation_id,
     slug: row.slug, action: row.item_action === 'retired' ? 'retire' as const : 'overwrite' as const, identity: row.identity }));
 }

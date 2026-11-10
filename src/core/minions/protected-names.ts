@@ -76,6 +76,7 @@ export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   // from the CLI — which sets allowProtectedSubmit for protected names itself;
   // no submit flag exists or is needed) can insert it.
   'extract-atoms-drain',
+  'extract-atoms-fidelity',
 ]);
 
 /** Check a job name against the protected set. Normalizes whitespace first. */

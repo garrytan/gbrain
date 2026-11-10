@@ -220,7 +220,9 @@ type DirectEngine = SqlEngine & Partial<Pick<BrainEngine, 'kind' | 'executeRawDi
  * `refresh_barrier_import_1` (v294) writes held for an import.
  */
 export const GUARDED_MAINTENANCE_CAPABILITY = 'guarded_maintenance_page_v1';
-export const CONSUMER_CAPABILITIES = ['refresh_barrier_1', 'refresh_barrier_import_1', GUARDED_MAINTENANCE_CAPABILITY] as const;
+export const FIDELITY_DREAM_GUARD_CAPABILITY = 'fidelity_dream_guard_v1';
+export const CONSUMER_CAPABILITIES = ['refresh_barrier_1', 'refresh_barrier_import_1',
+  GUARDED_MAINTENANCE_CAPABILITY, FIDELITY_DREAM_GUARD_CAPABILITY] as const;
 const RENEW_SQL = `WITH purged AS (
     DELETE FROM persistence_consumers WHERE host_id=$1::uuid AND renewed_at < now() - ($14::integer * interval '1 millisecond') AND NOT (pid=$2::integer AND nonce=$3))
   INSERT INTO persistence_consumers(host_id,pid,nonce,pid_ns,kind,mode,restart_required,root_barrier_age_ms,pool,host_json_path,persistence_home,minted_under,version,boot_id,process_start,segment_reader,capabilities)

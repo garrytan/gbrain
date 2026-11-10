@@ -24,7 +24,7 @@ import { effectiveVisibility, withFolderRestricted } from '../search/private-vis
 import { declareDerivation, deriveTrust, lowerToDerivedTier, recordTaintEdges } from '../trust/taint.ts';
 import type { DerivedRetiredBy } from './derived-retirement-hold.ts';
 import type { GenerationKey, HeldReason } from '../generations/contract.ts';
-import { atomGenerationAdapter, atomPagePin, type AtomGenerationContext } from '../generations/adapters/atoms.ts';
+import { atomGenerationAdapter, atomOwnerKey, atomPagePin, type AtomGenerationContext } from '../generations/adapters/atoms.ts';
 import { markdownItem } from '../generations/adapters/page.ts';
 import { assertMemberPending, GENERATION_ACTIVATE_SLUG, listPendingMembers, memberRequestId, planManagedGeneration,
   recordActivation, settleMember, type ActivationIntent } from '../generations/managed.ts';
@@ -418,8 +418,9 @@ export interface ResumedMember { slug: string; activation_id: string; action: 'o
  * with the reason. Returns one entry per pending member.
  */
 export async function resumeManagedGenerationMembers(engine: BrainEngine, session: ManagedAtomSession,
-  opts: { corpusDir: string | null }): Promise<ResumedMember[]> {
-  const pending = await listPendingMembers(engine, [session.sourceId], atomGenerationAdapter.kind);
+  opts: { corpusDir: string | null; pageScope?: readonly string[] }): Promise<ResumedMember[]> {
+  const ownerKeys = opts.pageScope?.map(slug => atomOwnerKey({ kind: 'page', slug }));
+  const pending = await listPendingMembers(engine, [session.sourceId], atomGenerationAdapter.kind, ownerKeys);
   const resumed: ResumedMember[] = [];
   for (const member of pending) {
     let row = await getWriteRequest(engine, session.authority.principal, memberRequestId(member.activation_id, member.slug, member.action));
