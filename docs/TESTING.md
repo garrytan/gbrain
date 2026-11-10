@@ -656,7 +656,9 @@ or release code asks for it in the pull request. Scheduled and dispatched runs
 use the default branch's workflow file, so the label is the way to get this
 evidence for a change before it merges. `test.yml`'s security matrix,
 `release.yml`'s darwin build and `native-locks.yml`'s darwin cells pin
-`macos-26` / `macos-26-intel` rather than `macos-latest`.
+`macos-26` / `macos-26-intel` rather than `macos-latest`. Its typecheck job runs on `macos-26-intel`
+(14 GB): tsc on this tree needs about 6.7 GB resident and swapped on the 7 GB
+arm64 runner, taking up to 15 minutes from an older incremental state.
 
 ### Keeping CI partitions balanced
 
