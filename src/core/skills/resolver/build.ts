@@ -18,10 +18,11 @@ import { VERSION } from '../../../version.ts';
 import { ResolverError } from './errors.ts';
 import { ensureDir, readBounded, writeFileDurable } from './fsutil.ts';
 import { CALIBRATION_SPLIT_SHA256, encodeIndex, HINT_CHARS, RANKER_ID, RANKER_VERSION, VARIANT_PARAMS, type Variant } from './index-format.ts';
+import { listCatalogs, readReceipt } from './catalog-files.ts';
 import { acquireLease, holdsLease, releaseLease, tryAcquireLease } from './lock.ts';
 import { catalogDir, catalogFile, resolverHome, skillIndexRoot, validCatalogName, assertCatalogName } from './paths.ts';
 import { gcSessions, loadSession, sessionKey } from './session.ts';
-import { applyRouting, fingerprintChanged, readBundledSource, readDirSources, readJsonSource, type DirFingerprint, type SkillRecord, type SkippedSkill, type SourceRead } from './sources.ts';
+import { applyRouting, readBundledSource, readDirSources, readJsonSource, type DirFingerprint, type SkillRecord, type SkippedSkill, type SourceRead } from './sources.ts';
 import { TOKENIZER_ID } from './tokenize.ts';
 import { BLOCK_TOKEN_CAP, BLOCK_TOKENIZER, HARNESSES } from './block.ts';
 import { readResolverSettings } from './config.ts';
@@ -30,7 +31,6 @@ export const RECEIPT_SCHEMA_VERSION = 1;
 export const T_SHARE_ON = 0.25;
 export const T_SHARE_KEEP = 0.2;
 const BUILD_LEASE_MS = 120_000;
-const RECEIPT_CAP_BYTES = 32 * 1024 * 1024;
 
 export interface BuildInput {
   catalog: string;
@@ -95,14 +95,6 @@ export function catalogHash(skills: readonly SkillRecord[], skipped: readonly Sk
   return sha(JSON.stringify({ v: 1, skills: rows, skipped: skips, routing_rows: routingRows, scope }));
 }
 
-export function readReceipt(home: string, name: string): BuildReceipt | null {
-  try {
-    const b = readBounded(catalogFile(home, name, 'receipt.json'), RECEIPT_CAP_BYTES);
-    if (b === 'too_large') return null;
-    const r = JSON.parse(b.toString('utf8')) as BuildReceipt;
-    return r && typeof r === 'object' && r.catalog && r.index ? r : null;
-  } catch { return null; }
-}
 
 export function chooseVariant(skills: readonly SkillRecord[], previous: Variant | undefined): { variant: Variant; share: number } {
   const share = skills.length ? skills.filter(s => s.triggers.length || s.routing.length).length / skills.length : 0;
@@ -236,11 +228,6 @@ export async function buildSkillIndex(input: BuildInput, opts: { home?: string; 
   }
 }
 
-export function listCatalogs(home: string): string[] {
-  try {
-    return readdirSync(skillIndexRoot(home)).filter(n => validCatalogName(n) && existsSync(join(skillIndexRoot(home), n, 'receipt.json'))).sort();
-  } catch { return []; }
-}
 
 export async function removeSkillIndex(name: string, opts: { home?: string } = {}): Promise<{ catalog: string; removed: boolean }> {
   const home = opts.home ?? resolverHome();
@@ -312,14 +299,5 @@ export function sessionStatus(sessionId: string, opts: { home?: string; harness?
  * directory and file entries from `cursor` (the routing file every time).
  * `next` is 0 once the sweep has covered every entry.
  */
-export function dirFingerprintSlice(home: string, name: string, cursor: number, limit: number): { changed: boolean; next: number } {
-  try {
-    const f = JSON.parse(readFileSync(catalogFile(home, name, 'fingerprint.json'), 'utf8')) as { fingerprint: DirFingerprint; routing: [string, number, number] | null };
-    const { dirs, files } = f.fingerprint;
-    const total = dirs.length + files.length;
-    const from = cursor > 0 && cursor < total ? cursor : 0;
-    const to = Math.min(total, from + limit);
-    const part: DirFingerprint = { dirs: dirs.slice(Math.min(from, dirs.length), Math.min(to, dirs.length)), files: files.slice(Math.max(0, from - dirs.length), Math.max(0, to - dirs.length)) };
-    return { changed: fingerprintChanged(part, f.routing ?? undefined), next: to >= total ? 0 : to };
-  } catch { return { changed: true, next: 0 }; }
-}
+
+export { listCatalogs, readReceipt };

@@ -117,7 +117,7 @@ for (const harness of ['claude-code', 'codex'] as H[]) {
       expect(JSON.parse(read(configPath(b))!)).toEqual({ skills: { resolver: { enabled: true, harnesses: [harness] } } });
       expect(catalogs(b)).toEqual([`${harness}-user`]);
       const hooks = read(HARNESS[harness].hookFile(b))!;
-      expect(hooks.split('GBRAIN_HOOK_LANE=skill-resolver').length - 1).toBe(harness === 'codex' ? 1 : 2);
+      expect(hooks.split('GBRAIN_HOOK_LANE=skill-resolver').length - 1).toBe(2);
       if (harness === 'claude-code') expect(hooks).toContain(SKILL_RESOLVER_MARKER);
       else expect(read(join(b.home, '.codex', 'config.toml'))).toContain('skill-resolver');
       const launcherDir = join(gb(b), 'hook-launcher');

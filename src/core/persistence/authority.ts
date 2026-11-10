@@ -284,7 +284,7 @@ export async function ownRequestAccessible(ctx: OperationContext, row: WriteRequ
     const engine = onceReads(ctx.engine);
     const auth = await submissionAuthority({ ...ctx, engine, attestedOp: row.authority?.attestedOp, attestedSource: row.authority?.attestedSource }, row.operation, row.source_id, row.source_incarnation, row.slug);
     if (auth.principal.kind !== row.principal_kind || auth.principal.id !== row.principal_id) return false;
-    // GST-359 C2: under one attest credential, a receipt belongs to the person it was written for.
+    // GST-359 C2: under one credential, a receipt belongs to the person or audience it was written for.
     if (!sameAttestedActor(row.authority?.actingFor)) return false;
     await authorizeStoredRequest(engine, row);
     return true;

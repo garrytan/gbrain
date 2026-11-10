@@ -23,6 +23,7 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { acquireWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import type { PageSnapshot } from '../src/core/page-state/types.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { disposePersistenceConsumer, waitForWrite } from '../src/core/persistence/service.ts';
@@ -35,7 +36,7 @@ import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { ledgerFiles, readLedger, recordIntent } from '../src/core/git/commit-ledger.ts';
 import { isTerminal, requestPrincipal, type WriteRequest } from '../src/core/persistence/model.ts';
 import { cancelWriteRequest } from '../src/core/persistence/control.ts';
-import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { encodedPostgres, isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { commitFile, git, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
@@ -68,8 +69,8 @@ const setConfig = (engine: BrainEngine, key: string, value: string) => engine.ex
 const clearConfig = (engine: BrainEngine) => engine.executeRaw("DELETE FROM config WHERE key LIKE 'persistence.adopt%'");
 
 /** The fixture with Git durability on, a Git identity, and adoption on for `on` (alpha by default) with no quiet window. */
-const each = (fn: (f: RefreshFixture) => Promise<void>, opts: { on?: 'alpha' | 'beta' | 'none'; quietMs?: number } = {}) => (async () => {
-  for (const engine of engines) await withRefreshFixture(engine, async f => {
+const each = (fn: (f: RefreshFixture) => Promise<void>, opts: { on?: 'alpha' | 'beta' | 'none'; quietMs?: number; engines?: BrainEngine[] } = {}) => (async () => {
+  for (const engine of opts.engines ?? engines) await withRefreshFixture(engine, async f => {
     git(f.root, 'config', 'user.name', 'Example'); git(f.root, 'config', 'user.email', 'example@example.invalid'); git(f.root, 'config', 'commit.gpgsign', 'false');
     await f.engine.executeRaw("UPDATE persistence_host_bindings SET git_durability='enabled'");
     await clearConfig(f.engine);
@@ -623,6 +624,40 @@ test('#8755 p: a stale editor save matches an earlier revision whose edges hold 
   await expectRefused(f, page('Alpha one', EARLIER), timeline(f), 'add_timeline_entry');
   expect(published).toBe(0);
 }), 180_000);
+
+const NON_ASCII_EARLIER = 'An earlier body a stale editor buffer still held, written at the café';
+/** A file equal to an earlier revision whose last character is non-ASCII keeps the refusal, and no adoption publishes. */
+async function nonAsciiStaleSave(f: RefreshFixture) {
+  const { localEditAdoptionSeams } = await import('../src/core/persistence/local-edit-adoption.ts');
+  let published = 0;
+  localEditAdoptionSeams.beforePublish = () => { published++; };
+  await f.engine.executeRaw(`INSERT INTO page_versions (page_id, compiled_truth, timeline, frontmatter)
+    SELECT id, $1, timeline, frontmatter FROM pages WHERE source_id=$2 AND slug='one'`, [`${NON_ASCII_EARLIER}\n`, f.alpha]);
+  await expectRefused(f, page('Alpha one', NON_ASCII_EARLIER), timeline(f), 'add_timeline_entry');
+  expect(published).toBe(0);
+}
+
+test('a stale editor save matches an earlier revision that ends in a non-ASCII character', () => each(nonAsciiStaleSave), 180_000);
+
+test.skipIf(!backends.includes('postgres'))('a stale editor save ending in a non-ASCII character is caught on a SQL_ASCII database', async () => {
+  const db = await encodedPostgres(process.env.DATABASE_URL!, 'SQL_ASCII');
+  try {
+    await db.engine.initSchema();
+    await each(nonAsciiStaleSave, { engines: [db.engine] });
+  } finally { await disposePersistenceConsumer(db.engine); await db.close(); }
+}, 300_000);
+
+/** The stock schema does not initialize on LATIN1 (its SQL text holds characters LATIN1 lacks): this runs the comparison on the one table it reads. */
+test.skipIf(!backends.includes('postgres'))('a stale editor save ending in a non-ASCII character is caught on a LATIN1 database', async () => {
+  const { staleEditorSave } = await import('../src/core/persistence/local-edit-adoption.ts');
+  const db = await encodedPostgres(process.env.DATABASE_URL!, 'LATIN1');
+  try {
+    await db.engine.executeRaw('CREATE TABLE page_versions (id serial PRIMARY KEY, page_id integer NOT NULL, compiled_truth text, timeline text)');
+    await db.engine.executeRaw('INSERT INTO page_versions (page_id, compiled_truth) VALUES (1, $1)', [`${NON_ASCII_EARLIER}\n`]);
+    const snapshot = { page: { id: 1, compiled_truth: 'The current body.', timeline: '' } } as unknown as PageSnapshot;
+    expect(await staleEditorSave(db.engine, 'one', page('Alpha one', NON_ASCII_EARLIER), snapshot, undefined)).toBe(true);
+  } finally { await db.close(); }
+}, 60_000);
 
 
 // ── #8824 / #8767 / #8826 ───────────────────────────────────────────────────

@@ -15,7 +15,7 @@
     },
     "previous_user_message": {
       "type": "string",
-      "description": "The user's previous message. Accepted for adapters; v1 ranks the current message only."
+      "description": "The user's previous message. Ranked only when the current message matches no catalog word (a short follow-up such as \"do it again\"); a skill named only there is not treated as named."
     },
     "session_id": {
       "type": "string",
@@ -28,9 +28,11 @@
         "claude-code",
         "codex",
         "hermes",
-        "qm"
+        "qm",
+        "pi",
+        "cursor"
       ],
-      "description": "Picks the load line, and whether suggestion lines carry the SKILL.md path (codex, openclaw)."
+      "description": "Picks the load line, and whether suggestion lines carry the SKILL.md path (codex, openclaw, pi, cursor)."
     },
     "top_k": {
       "type": "integer",
@@ -40,7 +42,7 @@
     },
     "exclude": {
       "type": "array",
-      "maxItems": 64,
+      "maxItems": 1024,
       "items": {
         "type": "string",
         "maxLength": 256
@@ -56,6 +58,17 @@
       "type": "string",
       "pattern": "^[0-9a-f]{64}$",
       "description": "Refuse with skill_catalog_mismatch unless the catalog hash matches."
+    },
+    "min_match_strength": {
+      "enum": [
+        "named",
+        "name",
+        "triggers",
+        "routing",
+        "description",
+        "body"
+      ],
+      "description": "The weakest match_strength to suggest (strongest first: named, name, triggers, routing, description, body). Weaker matches are dropped before the cut to top_k. Omit it to keep every match."
     },
     "reset_session": {
       "type": "boolean",

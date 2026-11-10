@@ -83,6 +83,8 @@ export interface FenceTarget {
    * stub-create (DB↔file drift repair) stays allowed for them.
    */
   resolutionSource: ResolutionSource | null;
+  /** Automatic extraction (the facts backstop): a claim withdrawn at any visibility is skipped, not only at the fact's own. */
+  automatic?: boolean;
 }
 
 /** Input fact prepared by runPipelineWithBody (post-dedup). */
@@ -334,7 +336,7 @@ export async function writeFactsToFence(
     // fence rows through its fact intent instead of editing the file here.
     const kept: FenceInputFact[] = [];
     for (const f of facts) {
-      if (!await isFactWithdrawn(engine, target.sourceId, f.visibility, f.fact, target.slug)) kept.push(f);
+      if (!await isFactWithdrawn(engine, target.sourceId, target.automatic ? null : f.visibility, f.fact, target.slug)) kept.push(f);
     }
     const withdrawnSkipped = facts.length - kept.length ? { withdrawnSkipped: facts.length - kept.length } : {};
     if (!kept.length) return { inserted: 0, ids: [], ...withdrawnSkipped };
@@ -386,7 +388,7 @@ export async function writeFactsToFence(
     async () => {
       const kept: FenceInputFact[] = [];
       for (const f of facts) {
-        if (!await isFactWithdrawn(engine, target.sourceId, f.visibility, f.fact, target.slug)) kept.push(f);
+        if (!await isFactWithdrawn(engine, target.sourceId, target.automatic ? null : f.visibility, f.fact, target.slug)) kept.push(f);
       }
       const withdrawnSkipped = facts.length - kept.length ? { withdrawnSkipped: facts.length - kept.length } : {};
       facts = kept;

@@ -10,12 +10,16 @@
  * invocation does, and runs the turn-path stat freshness check over every
  * skill file (the clock is advanced past the check interval each turn).
  *
- * Each size runs --rounds rounds of --turns turns and is judged on the median
- * round's p95, so one burst of host stalls on a shared 2-vCPU runner (one
- * round at 45 ms beside rounds at 7 ms on the same tree) does not decide the
- * bar, while a regression that slows every round still fails it.
+ * Each size runs one discarded warm-up round, then --rounds short rounds of
+ * --turns turns, and is judged on the median round's p95. On a shared 2-vCPU
+ * runner the host stalls in bursts that last a second or more (a neighbour's
+ * job, not the resolver: the same tree measured one round at 50 ms beside
+ * rounds at 5 ms), and the first round after a build pays for cold caches.
+ * Three long rounds let one such burst land in two of them and fail the bar;
+ * nine short ones need a burst over most of the run, while a regression that
+ * slows every turn, or one turn in ten, still fails every round.
  *
- * Usage: bun scripts/bench-skill-resolver.ts [--sizes 1000,7500] [--turns 200] [--rounds 3] [--json]
+ * Usage: bun scripts/bench-skill-resolver.ts [--sizes 1000,7500] [--turns 100] [--rounds 9] [--json]
  * Exit 1 when a size misses its bar (--no-gate to only report).
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -27,8 +31,8 @@ const BARS_MS: Record<number, number> = { 1000: 10, 7500: 40 };
 const args = process.argv.slice(2);
 const opt = (f: string, d: string) => { const i = args.indexOf(f); return i >= 0 && args[i + 1] ? args[i + 1]! : d; };
 const sizes = opt('--sizes', '1000,7500').split(',').map(Number);
-const turns = Number(opt('--turns', '200'));
-const rounds = Number(opt('--rounds', '3'));
+const turns = Number(opt('--turns', '100'));
+const rounds = Number(opt('--rounds', '9'));
 const json = args.includes('--json');
 const gate = !args.includes('--no-gate');
 
@@ -46,7 +50,7 @@ const pick = (seed: number, n: number) => Array.from({ length: n }, (_, k) => VO
 const p95 = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.ceil(0.95 * s.length) - 1)]!; };
 const p50 = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]!; };
 
-const cells: { skills: number; turns: number; rounds_p95_ms: number[]; build_ms: number; p50_ms: number; p95_ms: number; bar_ms: number | null; pass: boolean }[] = [];
+const cells: { skills: number; turns: number; rounds_p95_ms: number[]; build_ms: number; p50_ms: number; p95_ms: number; p95_all_ms: number; bar_ms: number | null; pass: boolean }[] = [];
 const round2 = (x: number) => Math.round(x * 100) / 100;
 for (const n of sizes) {
   const root = mkdtempSync(join(tmpdir(), 'skres-bench-'));
@@ -65,7 +69,7 @@ for (const n of sizes) {
     let clock = Date.now();
     const all: number[] = [];
     const roundsP95: number[] = [];
-    for (let round = 0; round < rounds; round++) {
+    for (let round = -1; round < rounds; round++) {
       const times: number[] = [];
       for (let t = 0; t < turns + 10; t++) {
         clock += 61_000;
@@ -76,16 +80,17 @@ for (const n of sizes) {
         if (r.output.error) throw new Error(r.output.error.code);
         if (t >= 10) times.push(e);
       }
+      if (round < 0) continue;
       all.push(...times);
       roundsP95.push(p95(times));
     }
     const bar = BARS_MS[n] ?? null;
     const p = p50(roundsP95);
-    cells.push({ skills: n, turns, rounds_p95_ms: roundsP95.map(round2), build_ms: Math.round(buildMs), p50_ms: round2(p50(all)), p95_ms: round2(p), bar_ms: bar, pass: bar === null || p <= bar });
+    cells.push({ skills: n, turns, rounds_p95_ms: roundsP95.map(round2), build_ms: Math.round(buildMs), p50_ms: round2(p50(all)), p95_ms: round2(p), p95_all_ms: round2(p95(all)), bar_ms: bar, pass: bar === null || p <= bar });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 }
 if (json) console.log(JSON.stringify({ bench: 'skill-resolver', cpus: navigator.hardwareConcurrency, cells }));
-else for (const c of cells) console.log(`${c.skills} skills: build ${c.build_ms} ms, turn p50 ${c.p50_ms} ms, p95 ${c.p95_ms} ms (median of rounds ${c.rounds_p95_ms.join(', ')})${c.bar_ms !== null ? ` (bar ${c.bar_ms} ms: ${c.pass ? 'pass' : 'FAIL'})` : ''}`);
+else for (const c of cells) console.log(`${c.skills} skills: build ${c.build_ms} ms, turn p50 ${c.p50_ms} ms, p95 ${c.p95_ms} ms (median of rounds ${c.rounds_p95_ms.join(', ')}; all turns ${c.p95_all_ms} ms)${c.bar_ms !== null ? ` (bar ${c.bar_ms} ms: ${c.pass ? 'pass' : 'FAIL'})` : ''}`);
 if (gate && cells.some(c => !c.pass)) process.exit(1);

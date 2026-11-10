@@ -9,8 +9,9 @@
  *    Node with no node_modules. In CI a missing node fails instead of skipping.
  * 2. Fails when: the export path moves, the bundle stops building or running
  *    under Node (a Bun-only API, an unbundled dependency, a JSON import
- *    without its attribute), the CLI and the release build differ, or the
- *    release stops attaching or checking the sha256.
+ *    without its attribute), the CLI and the release build differ, the build
+ *    depends on the working directory, or the release stops attaching or
+ *    checking the sha256.
  */
 import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -57,6 +58,21 @@ describe('skill resolver packaging', () => {
       const probe = Bun.spawnSync([NODE!, '--input-type=module', '-e', `const m = await import(${JSON.stringify(lib.path)}); console.log(m.GBRAIN_VERSION, typeof m.resolveSkills, typeof m.commitSessionAsync);`], { cwd: dir, stdout: 'pipe', stderr: 'pipe' });
       expect(probe.exitCode, probe.stderr.toString()).toBe(0);
       expect(probe.stdout.toString().trim()).toBe(`${VERSION} function function`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  test('the bundle is byte-identical whatever directory it is built from', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skres-repro-'));
+    try {
+      const sums = [ROOT, dir].map((cwd, i) => {
+        const out = join(dir, `b${i}.mjs`);
+        const run = Bun.spawnSync([process.execPath, join(ROOT, 'scripts/build-skill-resolver-bundle.ts'), '--out', out], { cwd, stdout: 'pipe', stderr: 'pipe' });
+        expect(run.exitCode, run.stderr.toString()).toBe(0);
+        return createHash('sha256').update(readFileSync(out)).digest('hex');
+      });
+      expect(sums[1]).toBe(sums[0]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

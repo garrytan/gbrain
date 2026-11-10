@@ -172,7 +172,8 @@ for their own subtree. This costs nothing when the working directory has no
   `GBRAIN_ALLOW_SHELL_JOBS`, `GBRAIN_ALLOW_PRIVATE_REMOTES`,
   `GBRAIN_ALLOW_UNVERIFIED_REMOTE`, `GBRAIN_GIT_ALLOW_FILE_TRANSPORT`,
   `GBRAIN_ALLOW_MASS_RECONCILE`, `GBRAIN_ALLOW_DEFAULT_WRITE`,
-  `GBRAIN_NO_SANITY`, `GBRAIN_REMOTE_PRIVATE_PAGES`.
+  `GBRAIN_NO_SANITY`, `GBRAIN_REMOTE_PRIVATE_PAGES`, and the stdio MCP tool
+  surface `GBRAIN_SURFACE`.
 - The variable families through which a checkout could hijack the programs
   gbrain spawns rather than gbrain itself (`CWD_DOTENV_PROTECTED_PREFIXES`,
   `CWD_DOTENV_PROTECTED_TOOLCHAIN_KEYS`): the `LD_*`/`DYLD_*` dynamic-loader

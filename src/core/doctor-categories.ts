@@ -59,6 +59,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'atom_provenance_drift',
   // #7013: atoms an empty managed re-extraction retired that atoms-restore can bring back (doctor/checks/atom-retirements.ts).
   'atom_retirements_restorable',
+  // World atoms that carry an owner-only fence row of their source page (doctor/checks/atom-fence-rows.ts).
+  'atom_fence_rows',
   'captured_facts_active',
   // #8064: owner-attributed capture facts from agent-launched sessions (doctor/checks/agent-session-facts.ts).
   'agent_session_facts',
@@ -439,6 +441,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'rls',
   // #7632: every gbrain function that pins a search_path ends it with pg_temp.
   'function_search_path',
+  // A Postgres brain whose server_encoding is not UTF8 (doctor/checks/database-encoding.ts).
+  'database_encoding',
   'rls_event_trigger',
   'search_mode',
   'decide_health',

@@ -100,6 +100,7 @@ describe('gbrain skills (CLI)', () => {
       [['skills', 'resolve'], undefined, 'skill_resolve_no_input'],
       [['skills', 'resolve', '--catalog', '../config', '--text', 'x'], undefined, 'skill_catalog_unknown'],
       [['skills', 'resolve', '--text', 'x', '--top-k', '9'], undefined, 'skill_resolve_invalid_input'],
+      [['skills', 'resolve', '--text', 'x', '--min-match', 'weak'], undefined, 'skill_resolve_invalid_input'],
       [['skills', 'index', 'build', '--catalog', 'c', '--from-json', '-'], '{"skills": 1}', 'skill_source_invalid'],
       [['skills', 'index', 'frobnicate'], undefined, 'Unknown subcommand'],
     ];
