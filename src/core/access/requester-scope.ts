@@ -33,8 +33,6 @@ export const REQUESTER_SCOPE_EXEMPT: ReadonlySet<string> = new Set(['whoami', 'g
 export const OWN_JOB_OPS: ReadonlySet<string> = new Set(['get_job', 'wait_job']);
 export const REQUESTER_SCOPE_GRACE_DAYS = 14;
 const GRACE_SECONDS = REQUESTER_SCOPE_GRACE_DAYS * 24 * 3600;
-const STDIO_MEMBER_KEY = 'mcp.stdio_member';
-
 /** Whether `op` needs a scoped requester on a brain that serves several people. */
 export function requiresRequesterScope(op: Pick<Operation, 'name' | 'mutating'> | undefined, auth?: Pick<AuthInfo, 'scopes'>): boolean {
   if (!op || op.mutating === true || REQUESTER_SCOPE_EXEMPT.has(op.name)) return false;
@@ -69,7 +67,8 @@ function connectionOf(auth: Pick<ScopeAuth, 'clientName' | 'principal'> | undefi
     return { handle: `OAuth client ${principal.id}`, argv: ['gbrain', 'auth', 'rescope', '--client', principal.id, '--member', '<MEMBER>'], inputs: MEMBER_INPUTS,
       check: ['gbrain', 'access', 'check', '--client', principal.id], optOut: ['gbrain', 'auth', 'rescope', '--client', principal.id, '--reads-unscoped', '--yes'] };
   }
-  return { handle: 'this stdio server', argv: ['gbrain', 'config', 'set', STDIO_MEMBER_KEY, '<MEMBER>'], inputs: MEMBER_INPUTS };
+  return { handle: 'this stdio server', argv: ['gbrain', 'setup', '<HARNESS>', '--serves', 'several', '--stdio-member', '<MEMBER>'],
+    inputs: [{ name: 'HARNESS', how: 'The harness only this one person uses (for example claude-code or codex). Never a harness several people talk to.' }, ...MEMBER_INPUTS] };
 }
 
 type Transport = 'stdio' | 'http' | undefined;
@@ -79,7 +78,9 @@ function why(policy: ServesPolicy): string {
 }
 
 function alternatives(c: Connection): string {
-  if (!c.optOut) return `On the brain host, bind this server to the person who uses it: ${c.argv.join(' ')} (gbrain access member list names the members). A bot for several people runs gbrain serve --http with one key bound to each member.`;
+  if (!c.optOut) return `On the brain host, for a harness only one person uses: ${c.argv.join(' ')} (gbrain access member list names the members). `
+    + 'Every stdio session on this brain, from any harness on this host, then reads as that member, private pages included. '
+    + 'For a harness several people talk to, give each person a key over HTTP instead: gbrain serve --http with one gbrain auth create --member key per person.';
   return `On the brain host, see what the connection reads with ${c.check!.join(' ')}, then bind it to the person it serves: ${c.argv.join(' ')} (gbrain access member list names the members). `
     + `A shared agent instead lists whom it may act for (--may-act-for <members>) and names the person on each call (X-Gbrain-On-Behalf-Of). `
     + `Last resort, for a team that shares everything: ${c.optOut.join(' ')} lets it read every page no rule restricts for whoever is asking.`;

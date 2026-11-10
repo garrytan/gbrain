@@ -204,8 +204,13 @@ the refusal) keeps reading for 14 days, with `_meta.access.requester_scope` on
 every answer naming the date and the fix; `gbrain doctor` fails
 `unscoped_shared_reads` and `gbrain post-upgrade` lists each one with its
 command. Bind each connection to its person
-(`gbrain auth rescope --token <name> --member <id>`, or for this harness
-`gbrain config set mcp.stdio_member <member>`). A team that shares everything may
+(`gbrain auth rescope --token <name> --member <id>`). A stdio harness only one
+person uses is bound with `gbrain setup <harness> --serves several --stdio-member <id>`;
+every stdio session on this brain, from any harness on this host, then reads as
+that member, private pages included, so a harness several people talk to gets
+one key per person over HTTP instead (`gbrain serve --http` with
+`gbrain auth create --member <id>` keys). Nothing binds stdio on its own:
+upgrade, post-upgrade and doctor never write `mcp.stdio_member`. A team that shares everything may
 mark one credential `gbrain auth rescope --token <name> --reads-unscoped --yes`
 (`--reads-unscoped none` takes it back); every change is recorded in the
 `access-reads-unscoped` audit file. Hosted brains keep

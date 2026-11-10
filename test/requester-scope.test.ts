@@ -246,15 +246,23 @@ for (const kind of testBackends()) {
       refused(await search('fresh-unbound'), 'created_after');
     }, 60_000);
 
-    test('stdio: unbound reads with a notice in the grace and is refused after it with the mcp.stdio_member fix; bound reads plainly', async () => {
+    test('stdio: unbound reads world pages with a notice in the grace (never a member-restricted page) and is refused after it; the fix names --stdio-member and per-person HTTP keys, never config set; bound reads plainly', async () => {
+      const setupFix = ['gbrain', 'setup', '<HARNESS>', '--serves', 'several', '--stdio-member', '<MEMBER>'];
+      await importFromContent(engine, 'notes/alice-only', '---\ntype: note\ntitle: alice only\nreadable_by: [alice-example]\n---\n# alice only\n\nHarbor ledger notes canaryalice.\n', { sourceId: 'default', noEmbed: true });
       await setSince(1);
       const inGrace = await stdio('get_page', { slug: 'notes/harbor-alpha' });
       expect(inGrace.isError).toBe(false);
-      expect(inGrace.meta?.access?.requester_scope).toMatchObject({ state: 'grace', connection: 'this stdio server', fix: { argv: expect.arrayContaining(['gbrain', 'config', 'set', 'mcp.stdio_member', '<MEMBER>']), next: 'tell_user_to_run' } });
+      expect(inGrace.text).toContain('canaryalpha');
+      expect(inGrace.meta?.access?.requester_scope).toMatchObject({ state: 'grace', connection: 'this stdio server', fix: { argv: setupFix, next: 'tell_user_to_run' } });
+      expect(inGrace.meta?.access?.requester_scope.message).toContain('private pages included');
+      expect(inGrace.meta?.access?.requester_scope.message).toContain('gbrain serve --http');
+      expect((await stdio('get_page', { slug: 'notes/alice-only' })).text).not.toContain('canaryalice');
       await setSince(15);
       const after = await stdio('get_page', { slug: 'notes/harbor-alpha' });
-      expect(after.structured?.error).toMatchObject({ code: 'requester_scope_required', reason: 'grace_ended', fix: { argv: expect.arrayContaining(['gbrain', 'config', 'set', 'mcp.stdio_member', '<MEMBER>']) } });
+      expect(after.structured?.error).toMatchObject({ code: 'requester_scope_required', reason: 'grace_ended', fix: { argv: setupFix } });
       expect(after.text).not.toContain('canaryalpha');
+      expect(after.text).toContain('gbrain serve --http');
+      for (const out of [inGrace, after]) expect(JSON.stringify([out.meta, out.structured, out.text])).not.toContain('config set mcp.stdio_member');
       await engine.setConfig('mcp.stdio_member', 'alice-example');
       const bound = await stdio('get_page', { slug: 'notes/harbor-alpha' });
       expect(bound.isError).toBe(false);
@@ -441,4 +449,22 @@ describe('the CLI refuses an unbound credential and records the opt-out (pglite,
       expect(readReadsUnscopedChanges()).toEqual([expect.objectContaining({ credential: 'token shared-bot', reads_unscoped: true, by: 'gbrain auth' })]);
     });
   }, 180_000);
+
+  test('the upgrade path never binds stdio: post-upgrade and apply-migrations on a brain with an owner and two members leave mcp.stdio_member unset', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-scope-upgrade-')); roots.push(home);
+    const env = { GBRAIN_HOME: home, HOME: home, GBRAIN_AUDIT_DIR: join(home, 'audit') };
+    const run = (args: string[]) => runCli(args, { env, timeoutMs: 180_000 });
+    expect((await run(['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
+    expect((await run(['access', 'member', 'add', 'alice-example'])).exitCode).toBe(0);
+    expect((await run(['auth', 'create', 'old-bot'])).exitCode).toBe(0);
+    expect((await run(['access', 'member', 'add', 'bob-example'])).exitCode).toBe(0);
+    expect((await run(['access', 'owner', 'set', 'alice-example'])).exitCode).toBe(0);
+    const stdioMember = async () => (await run(['config', 'get', 'mcp.stdio_member'])).stdout.trim();
+    const before = await stdioMember();
+    const post = await run(['post-upgrade']);
+    expect(post.stdout + post.stderr).toContain('token old-bot');
+    expect(post.stdout + post.stderr).not.toContain('config set mcp.stdio_member');
+    await run(['apply-migrations', '--yes', '--non-interactive']);
+    expect({ before, after: await stdioMember() }).toEqual({ before: '', after: '' });
+  }, 600_000);
 });
