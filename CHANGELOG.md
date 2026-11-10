@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**The private-labels preview finishes on large sources.** On a source with a few hundred thousand pages, `gbrain repair private-labels` ran past its 120-second statement bound while counting the pages a window of clears would expose, so the preview failed, and so did every `--apply --expect`, which repeats the check. The count used to pair every page with every cleared page. It now reads each page's references once and joins them to the cleared pages, so it returns the same pages and the same exposure map well inside the bound, which is unchanged. On a synthetic brain (`scripts/bench/private-labels-dependents.ts`: 300,000 pages in the window's source, 100,000 in another, 8 links per page) with a 1,000-page window, master hit the 120-second bound and this release took 0.33 to 1.06 seconds across the four shapes.
+
+### Itemized changes
+
+- The dependents statement in `src/core/repair/private-labels.ts` lists each page's `source_slug`, `event.depth` and `derived_from` slugs (with `.md` removed) in one pass, matches them to the cleared pages with equality joins, and applies the post-clear privacy rules only to the candidate pages. It runs with JIT off and is planned for its real parameters. No migration and no new index.
+- New equivalence tests on PGLite and Postgres run the old statement, kept verbatim in a test helper, next to the new one and require identical rows: a fixture with every kind of tie, each cleared page alone, a generated source and privacy aliases turned off.
+- A Postgres scale test requires a 50,000-page source with a 1,000-page window to finish inside 20 seconds. The old statement fails it.
+- `scripts/bench/private-labels-dependents.ts` builds the synthetic brain and times the preview, with `--lineage` for common `derived_from` chains and `--class alias-and-visibility`.
+
 ## [0.60.651.0] - 2026-11-10
 
 **CI wastes fewer reruns: the macOS type check stops running out of memory, and a worktree test stops stalling for two minutes.** The macOS type check now runs on GitHub's 14 GB Intel runner. On the 7 GB arm64 runner, a check that couldn't reuse a recent saved state ran short of memory, took 7 to 15 minutes and sometimes hit its 15-minute limit. On Intel a check with no saved state takes about 4 minutes. The stale-plan worktree test no longer waits out a 2-minute lease on PGLite: its wait for commits now lets timers run, so the background writer finishes its pass.
