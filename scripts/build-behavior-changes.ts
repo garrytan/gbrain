@@ -75,7 +75,7 @@ export function build(root: string): Built {
     ? readdirSync(join(root, CHANGELOG_FRAGMENT_DIR)).filter(f => f.endsWith('.md') && f !== 'README.md').sort() : [];
   for (const f of pendingFiles) {
     const front = /^---\r?\n([\s\S]*?)\r?\n---\s*(\n|$)/.exec(read(root, join(CHANGELOG_FRAGMENT_DIR, f)))?.[1] ?? '';
-    const bump = /^\s*bump\s*:\s*['"]?([^'"\s]*)['"]?\s*$/m.exec(front)?.[1];
+    const bump = /^\s*['"]?bump['"]?\s*:(.*)$/m.exec(front)?.[1]?.trim().replace(/^(['"])(.*)\1$/, '$2');
     if (bump !== undefined && bump !== 'patch') problems.push(`${CHANGELOG_FRAGMENT_DIR}/${f} says bump: ${bump}; gbrain releases are PATCH only and the release takes the highest bump in the batch, so delete the bump: line (or write bump: patch)`);
   }
   const pending = [...pendingFiles.flatMap(f => markers(read(root, join(CHANGELOG_FRAGMENT_DIR, f)))), ...releases.filter(r => !r.version).flatMap(r => r.ids)];
