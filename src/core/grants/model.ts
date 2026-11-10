@@ -397,5 +397,14 @@ export const TOKEN_GRANT_COLUMNS = ['source_grant', 'source_id', 'federated_read
  * fails there with 0A000 ("cached plan must not change result type") until the connection re-prepares it.
  */
 export const TOKEN_GRANT_ROW_COLUMNS = ['id', 'scopes', 'permissions', 'private_pages', 'grant_revision', ...TOKEN_GRANT_COLUMNS] as const;
-export const TOKEN_GRANT_ROW_SELECT = TOKEN_GRANT_ROW_COLUMNS.join(',');
+/**
+ * The select list of `TOKEN_GRANT_ROW_COLUMNS` that this brain's access_tokens has. Admission authorizes before it
+ * replays an accepted request or refuses a schema behind this build, and membership has no schema admission, so a
+ * column a pending migration adds reads as absent, as it did under SELECT *.
+ */
+export async function tokenGrantRowSelect(engine: { executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> }): Promise<string> {
+  const present = new Set((await engine.executeRaw<{ attname: string }>(
+    "SELECT attname FROM pg_attribute WHERE attrelid=to_regclass('access_tokens') AND attnum>0 AND NOT attisdropped")).map(c => c.attname));
+  return TOKEN_GRANT_ROW_COLUMNS.filter(c => present.has(c)).join(',');
+}
 export type TokenGrantRow = Partial<Record<(typeof TOKEN_GRANT_ROW_COLUMNS)[number], unknown>>;

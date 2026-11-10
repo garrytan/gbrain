@@ -6,7 +6,7 @@ import { slugUnderBoundPrefixes, matchesSlugAllowList, noSourceGrantError } from
 import { NO_SOURCES } from '../source-id.ts';
 import { hasScope } from '../scope.ts';
 import { normalizeTokenScopes } from '../legacy-token-scope.ts';
-import { authSourcesFromGrant, grantFromTokenRow, TOKEN_GRANT_ROW_SELECT, type TokenGrantRow } from '../grants/model.ts';
+import { authSourcesFromGrant, grantFromTokenRow, tokenGrantRowSelect, type TokenGrantRow } from '../grants/model.ts';
 import { readLocalWriter, currentVerifiedLocalWriter, takeRegisteredWriterRow, verifyLocalWriter, type LocalGrant } from './identity.ts';
 import type { Principal, SqlEngine, WriteAuthority, WriteRequest } from './model.ts';
 import { authorizePageVisibility, excludesPrivateWritesAtAdmission } from './page-visibility.ts';
@@ -181,7 +181,7 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
   }
   if (a.principal.kind === 'legacy_token') {
     // GST-2314: named columns, not SELECT *: inside this transaction a plan cached before a migration added a column fails 0A000.
-    const [row] = await engine.executeRaw<TokenGrantRow & { revoked_at: unknown }>(`SELECT ${TOKEN_GRANT_ROW_SELECT},revoked_at FROM access_tokens WHERE id=$1${suffix}`, [a.principal.id]);
+    const [row] = await engine.executeRaw<TokenGrantRow & { revoked_at: unknown }>(`SELECT ${await tokenGrantRowSelect(engine)},revoked_at FROM access_tokens WHERE id=$1${suffix}`, [a.principal.id]);
     if (!row || row.revoked_at != null) deny('The owning token is revoked.');
     const grant = grantFromTokenRow(row);
     if (grant.permissionsMalformed) deny('The current legacy grant is malformed.');

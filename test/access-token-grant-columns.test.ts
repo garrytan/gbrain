@@ -8,7 +8,8 @@
  *    pooled connection before and after `ALTER TABLE access_tokens ADD COLUMN`, succeed; so does a
  *    legacy-token put_page after the column is added.
  * 2. Fails when: either read selects every column of access_tokens inside its transaction, or the membership read
- *    (which no schema admission guards) names a column a schema behind this build does not have.
+ *    (which no schema admission guards) or the publication read (which admission runs before it replays an accepted
+ *    request or refuses a schema behind this build) names a column that schema does not have.
  * 3. Real seams: the token service, the serve --http token verifier, MCP dispatch and the durable write path.
  *    Each read runs in POOL concurrent transactions held open together, so every pooled connection prepares it
  *    first and every one reuses its cached plan after the column is added.
@@ -86,6 +87,43 @@ for (const kind of testBackends()) {
         throw Object.assign(rollback, { result });
       }).catch(error => { if (error !== rollback) throw error; return (error as { result: unknown }).result; });
       expect(principal).toEqual({ kind: 'legacy_token', id: minted.id });
+    }, 240_000);
+
+    test('the publication authority read works on a schema that predates an access_tokens column it names', async () => {
+      const minted = await mintLegacyToken(engine, { name: 'behind-writer', scopes: ['read', 'write'], takesHolders: ['world'] });
+      const [source] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation FROM sources WHERE id='default'");
+      const authority: WriteAuthority = { version: 1, principal: { kind: 'legacy_token', id: minted.id }, remote: true, sourceId: 'default',
+        sourceIncarnation: source.incarnation, scopes: ['read', 'write'], operations: null, slugPrefixes: null, takesHolders: ['world'] };
+      const rollback = new Error('roll back the simulated older schema');
+      await engine.transaction(async tx => {
+        await tx.executeRaw('ALTER TABLE access_tokens DROP COLUMN private_pages');
+        await authorizeWrite(tx, authority, 'put_page', 'notes/behind-schema', true);
+        throw rollback;
+      }).catch(error => { if (error !== rollback) throw error; });
+    }, 240_000);
+
+    test('on a schema behind the build, an accepted legacy-token write replays and a new one is refused migrations_pending', async () => {
+      const minted = await mintLegacyToken(engine, { name: 'replayer', scopes: ['read', 'write'], takesHolders: ['world'] });
+      const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+      const put = async (slug: string, requestId: string) => {
+        const auth = await provider.verifyAccessToken(minted.token) as unknown as AuthInfo;
+        const out = await dispatchToolCall(engine, 'put_page', { slug, content: note(slug), request_id: requestId },
+          { remote: true, transport: 'http', auth, sourceId: 'default', takesHoldersAllowList: ['world'] });
+        const text = out.content.map(c => c.text).join('\n');
+        return out.isError === true ? String(JSON.parse(text).code) : String(JSON.parse(text).state ?? 'ok');
+      };
+      const accepted = randomUUID();
+      expect(await put('notes/replayed', accepted)).not.toMatch(/error|denied|pending_/);
+      const [version] = await engine.executeRaw<{ value: string }>("SELECT value FROM config WHERE key='version'");
+      await engine.executeRaw('ALTER TABLE access_tokens DROP COLUMN private_pages');
+      await engine.executeRaw("UPDATE config SET value='279' WHERE key='version'");
+      try {
+        expect(await put('notes/replayed', accepted)).toBe('committed');
+        expect(await put('notes/not-admitted', randomUUID())).toBe('migrations_pending');
+      } finally {
+        await engine.executeRaw("ALTER TABLE access_tokens ADD COLUMN private_pages TEXT NOT NULL DEFAULT 'none' CHECK (private_pages IN ('none', 'granted_sources'))");
+        await engine.executeRaw("UPDATE config SET value=$1 WHERE key='version'", [version.value]);
+      }
     }, 240_000);
 
     test('a legacy-token put_page after the column is added publishes', async () => {
