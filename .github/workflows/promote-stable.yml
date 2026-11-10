@@ -70,6 +70,11 @@ on:
         required: false
         type: string
         default: ''
+      not_promotable_remove:
+        description: Versions to take off the not_promotable list, comma-separated
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: write  # create and push the stable-v<version> and stable tags and the stable-record branch
@@ -105,6 +110,7 @@ jobs:
           PROMOTE_NOT_PROMOTABLE: ${{ inputs.not_promotable }}
           PROMOTE_NOT_PROMOTABLE_REASON: ${{ inputs.not_promotable_reason }}
           PROMOTE_NOT_PROMOTABLE_FIXED_IN: ${{ inputs.not_promotable_fixed_in }}
+          PROMOTE_NOT_PROMOTABLE_REMOVE: ${{ inputs.not_promotable_remove }}
         run: |
           git config user.name "gbrain-release-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

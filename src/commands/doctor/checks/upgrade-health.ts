@@ -189,7 +189,7 @@ export function checkSelfUpgradeHealth(restart?: RestartPlan | null): Check {
 
     const blockers = (restart?.manual ?? []).filter((m) => !(m.role === 'mcp' && m.argv[0] === 'kill'));
     if (blockers.length) {
-      const autopilot = blockers.find((m) => m.role === 'autopilot');
+      const autopilot = blockers.find((m) => m.role === 'autopilot' && m.argv[0] === 'gbrain');
       return {
         name: 'self_upgrade_health',
         status: 'warn',

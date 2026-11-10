@@ -320,6 +320,7 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
         if (runsUnder(p, ctx.autopilotService)) addService('autopilot', p.pid);
         else if (launcherOf(p)) addHandoff(p, launcherOf(p)!);
         else if (ctx.autopilotLauncher?.pid === p.pid) kill(p, `${label(p)} is known only from its heartbeat row (the process table could not be read), so the upgrade cannot confirm it is the process to stop before handing autopilot to its launcher: stop it (\`kill ${p.pid}\`) and let the launcher start it again, then run the upgrade.`);
+        else if (ctx.autopilotLauncher) kill(p, `${label(p)} is not the daemon this brain's autopilot lock names (it names ${ctx.autopilotLauncher.pid === null ? 'no running autopilot' : `pid ${ctx.autopilotLauncher.pid}`}), so the upgrade does not hand it to ${launcherName(ctx.autopilotLauncher)}: if it is this brain's autopilot, stop it (\`kill ${p.pid}\`) and let the launcher start it again, then run the upgrade; if it serves another brain, upgrade from that brain.`);
         else manual.push({ role: p.role, pid: p.pid, version: p.version, argv: ['gbrain', 'autopilot', '--install'],
           instruction: `${label(p)} was started outside gbrain's autopilot service (by a cron entry, a wrapper or by hand), so the upgrade cannot restart it. `
             + 'Either run `gbrain autopilot --install`, which runs autopilot under launchd, systemd or a gbrain cron line so every upgrade restarts it (retire the launcher that starts it now first, or both race for the autopilot lock), '

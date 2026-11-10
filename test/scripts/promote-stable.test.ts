@@ -19,10 +19,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { load } from 'js-yaml';
 import {
-  checkOrder, checkSoakRun, compareVersions, mergeKnownBad, mergeNotPromotable, normaliseWorkflowPath, parseRunUrl, parseTagMessage, processDeps, promote, Refusal, renderRecord, renderSummary, renderTagMessage,
+  checkOrder, checkSoakRun, compareVersions, mergeKnownBad, mergeNotPromotable, normaliseWorkflowPath, parseRunUrl, parseTagMessage, processDeps, promote, Refusal, renderRecord, renderSummary, renderTagMessage, STABLE_RECORD_MAX_BYTES,
   type GitResult, type PromoteDeps, type PromoteInputs, type SoakRun, type TagFields,
 } from '../../scripts/promote-stable.ts';
 import { offeredVersion } from '../../src/core/self-upgrade.ts';
+import { RECORD_MAX_BYTES } from '../../src/core/stable-channel.ts';
 import { parseStableRecord } from '../../src/core/stable-channel.ts';
 
 const ROOT = join(import.meta.dir, '..', '..');
@@ -438,6 +439,29 @@ describe('evidence record (GBRA-224 W1)', () => {
     expect(corrupt.calls.filter(c => c.startsWith('push'))).toEqual([]);
   });
 
+  test('a reason over 500 characters is refused, and a record over the size clients accept is refused before anything is pushed', async () => {
+    expect(STABLE_RECORD_MAX_BYTES).toBe(RECORD_MAX_BYTES);
+    refused(() => mergeNotPromotable([], [{ ...bad('0.60.362.0'), reason: 'x'.repeat(501) }], '0.60.361.0'), /reason is 501 characters; keep it to 500/);
+    expect(mergeNotPromotable([], [{ ...bad('0.60.362.0'), reason: 'x'.repeat(500) }], '0.60.361.0')).toHaveLength(1);
+    const big = harness();
+    const many = Array.from({ length: 200 }, (_, i) => ({ version: '0.59.' + i + '.0', reason: 'y'.repeat(400), fixed_in: '0.60.365.0' }));
+    big.repo.records = { 'rec-prior': JSON.stringify({ schema: 1, version: '0.60.360.0', known_bad: [], not_promotable: many }) };
+    big.repo.recordBranch = 'rec-prior';
+    await refusedAsync(promote(big.deps, inputs()), /stable\.json would be \d+ bytes, over the 65536 clients accept/);
+    expect(big.calls.filter(c => c.startsWith('push'))).toEqual([]);
+  });
+
+  test('not_promotable_remove takes a listed release off the list, so it can be promoted; a version not on the list is refused', async () => {
+    expect(mergeNotPromotable([bad('0.60.362.0'), bad('0.60.363.0')], [], '0.60.361.0', ['0.60.362.0'])).toEqual([bad('0.60.363.0')]);
+    refused(() => mergeNotPromotable([bad('0.60.362.0')], [], '0.60.361.0', ['0.60.364.0']), /v0\.60\.364\.0 is not on the not_promotable list/);
+    refused(() => mergeNotPromotable([bad('0.60.362.0')], [bad('0.60.362.0')], '0.60.361.0', ['0.60.362.0']), /both added to and removed from/);
+    const h = harness();
+    h.repo.records = { 'rec-prior': JSON.stringify({ schema: 1, version: '0.60.360.0', known_bad: [], not_promotable: [bad('0.60.361.0'), bad('0.60.363.0')] }) };
+    h.repo.recordBranch = 'rec-prior';
+    await promote(h.deps, inputs({ notPromotableRemove: ['0.60.361.0'] }));
+    expect(JSON.parse(h.repo.records![h.repo.recordBranch!]!)).toMatchObject({ version: '0.60.361.0', not_promotable: [bad('0.60.363.0')] });
+  });
+
   test('a client reads a record carrying not_promotable exactly as one without it: a client on a listed release is offered nothing, never a downgrade', () => {
     const fields: TagFields = {
       version: '0.60.361.0', commit: sha('b'), tree: sha('2'), soakRun: RUN_URL, scoreboard: RUN_URL,
@@ -596,6 +620,8 @@ describe('stable.json bridge for a stable promoted before the evidence record (G
     await refusedAsync(promote(h.deps, inputs({ notPromotable: [bad('0.60.362.0')] })), /already the stable release, and stable\.json on stable-record records it/);
     await promote(h.deps, inputs({ withdraw: ['0.60.355.0'] }));
     expect(JSON.parse(h.repo.records![h.repo.recordBranch!]!)).toMatchObject({ known_bad: ['0.60.355.0'], not_promotable: [bad('0.60.362.0'), bad('0.60.363.0')] });
+    await promote(h.deps, inputs({ notPromotableRemove: ['0.60.363.0'] }));
+    expect(JSON.parse(h.repo.records![h.repo.recordBranch!]!)).toMatchObject({ known_bad: ['0.60.355.0'], not_promotable: [bad('0.60.362.0')] });
   });
 
   test('a record left behind by a later record-less promotion is brought up to the stable tag, keeping known_bad', async () => {
@@ -699,8 +725,8 @@ describe('promote-stable.yml', () => {
   test('dispatch only, with the decided inputs, one serial group and scoped permissions', () => {
     expect(Object.keys(wf.on)).toEqual(['workflow_dispatch']);
     const i = wf.on.workflow_dispatch!.inputs;
-    expect(Object.keys(i)).toEqual(['version', 'soak_run_url', 'scoreboard_url', 'rollback', 'reason', 'withdraw', 'not_promotable', 'not_promotable_reason', 'not_promotable_fixed_in']);
-    for (const k of ['withdraw', 'not_promotable', 'not_promotable_reason', 'not_promotable_fixed_in']) expect(i[k]).toMatchObject({ required: false, type: 'string', default: '' });
+    expect(Object.keys(i)).toEqual(['version', 'soak_run_url', 'scoreboard_url', 'rollback', 'reason', 'withdraw', 'not_promotable', 'not_promotable_reason', 'not_promotable_fixed_in', 'not_promotable_remove']);
+    for (const k of ['withdraw', 'not_promotable', 'not_promotable_reason', 'not_promotable_fixed_in', 'not_promotable_remove']) expect(i[k]).toMatchObject({ required: false, type: 'string', default: '' });
     expect([i.version!.required, i.soak_run_url!.required, i.scoreboard_url!.required]).toEqual([true, true, false]);
     expect(i.rollback).toMatchObject({ type: 'boolean', default: false });
     expect(wf.concurrency).toEqual({ group: 'promote-stable', 'cancel-in-progress': false });
@@ -715,6 +741,7 @@ describe('promote-stable.yml', () => {
       PROMOTE_VERSION: '${{ inputs.version }}', PROMOTE_SOAK_RUN_URL: '${{ inputs.soak_run_url }}', PROMOTE_SCOREBOARD_URL: '${{ inputs.scoreboard_url }}',
       PROMOTE_ROLLBACK: '${{ inputs.rollback }}', PROMOTE_REASON: '${{ inputs.reason }}', PROMOTE_WITHDRAW: '${{ inputs.withdraw }}',
       PROMOTE_NOT_PROMOTABLE: '${{ inputs.not_promotable }}', PROMOTE_NOT_PROMOTABLE_REASON: '${{ inputs.not_promotable_reason }}', PROMOTE_NOT_PROMOTABLE_FIXED_IN: '${{ inputs.not_promotable_fixed_in }}',
+      PROMOTE_NOT_PROMOTABLE_REMOVE: '${{ inputs.not_promotable_remove }}',
     });
     for (const s of steps) expect(s.run ?? '').not.toContain('${{');
     const releaseYml = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');

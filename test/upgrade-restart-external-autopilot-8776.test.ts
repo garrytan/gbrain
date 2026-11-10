@@ -65,6 +65,22 @@ describe('planRestart: an autopilot started outside gbrain\'s service', () => {
     expect(planRestart([autopilot(30)], ctx({ autopilotLauncher: { ...CRON, pid: null } })).manual.map(m => m.pid)).toEqual([30]);
   });
 
+  test('with a launcher known but a lock that names another pid or none, the refusal says so instead of asking for the launcher again', async () => {
+    for (const launcher of [{ ...DECLARED, pid: null }, { ...DECLARED, pid: 31 }, { ...CRON, pid: null }]) {
+      const plan = planRestart([autopilot(30)], ctx({ expected: PENDING_BUILD, autopilotLauncher: launcher }));
+      expect(plan.steps).toEqual([]);
+      expect(plan.manual.map(m => [m.role, m.pid, m.argv])).toEqual([['autopilot', 30, ['kill', '30']]]);
+      expect(plan.manual[0]!.instruction).toContain(launcher.pid ? 'names pid 31' : 'names no running autopilot');
+      expect(plan.manual[0]!.instruction).not.toContain('gbrain config set self_upgrade.autopilot_launcher external');
+    }
+    await withEnv({ GBRAIN_SELF_UPGRADE_MODE: 'auto' }, () => {
+      const check = checkSelfUpgradeHealth(planRestart([autopilot(30)], ctx({ expected: PENDING_BUILD, autopilotLauncher: { ...DECLARED, pid: null } })));
+      expect(check.status).toBe('warn');
+      expect(check.fix?.ask_user).not.toBe(true);
+      expect(check.fix?.argv).toEqual(['gbrain', 'upgrade', '--restart-only', '--dry-run', '--json']);
+    });
+  });
+
   test('an autopilot from another install that is not a Bun global copy still refuses: the hand-off never moves a clone', () => {
     const plan = planRestart([autopilot(30, OLD, { install_root: '/srv/gbrain-checkout', install_version: OLD })], ctx({ ownInstallRoot: '/opt/gbrain', autopilotLauncher: CRON }));
     expect(plan.steps).toEqual([]);

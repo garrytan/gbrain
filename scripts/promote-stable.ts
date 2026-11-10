@@ -72,10 +72,16 @@ export interface PromoteInputs {
   withdraw?: string[];
   /** Releases to add to the record's not_promotable list: stable-daily never soaks or promotes them; clients never read it. */
   notPromotable?: NotPromotable[];
+  /** Releases to take off the record's not_promotable list (one listed by mistake, say). */
+  notPromotableRemove?: string[];
 }
 
 /** A release outside evidence shows is bad although it may soak clean, with the release that fixes it. */
 export interface NotPromotable { version: string; reason: string; fixed_in: string }
+
+/** The largest stable.json clients accept (src/core/stable-channel.ts RECORD_MAX_BYTES; a test pins the two). */
+export const STABLE_RECORD_MAX_BYTES = 64 * 1024;
+const NOT_PROMOTABLE_REASON_MAX = 500;
 
 export interface GitResult { code: number; stdout: string; stderr: string }
 
@@ -144,14 +150,20 @@ export function mergeKnownBad(previous: readonly string[], withdraw: readonly st
   return all;
 }
 
-/** The previous record's not_promotable plus this run's entries (a new entry replaces one for its version), sorted; refuses one naming the promoted version. */
-export function mergeNotPromotable(previous: readonly NotPromotable[], add: readonly NotPromotable[], version: string): NotPromotable[] {
+/** The previous record's not_promotable minus `remove`, plus this run's entries (a new entry replaces one for its version), sorted; refuses one naming the promoted version. */
+export function mergeNotPromotable(previous: readonly NotPromotable[], add: readonly NotPromotable[], version: string, remove: readonly string[] = []): NotPromotable[] {
+  for (const v of remove) {
+    if (add.some(e => e.version === v)) throw new Refusal(`v${v} is both added to and removed from the not_promotable list; pass it in one of not_promotable or not_promotable_remove.`);
+    if (!previous.some(e => e.version === v)) throw new Refusal(`v${v} is not on the not_promotable list, so there is nothing to remove; check the version against stable.json on stable-record.`);
+  }
   for (const e of add) {
     if (!VERSION_RE.test(e.version)) throw new Refusal(`not_promotable entry "${e.version}" is not a release version; pass versions like 0.60.649.0, comma-separated.`);
     if (!VERSION_RE.test(e.fixed_in) || compareVersions(e.fixed_in, e.version) <= 0) throw new Refusal(`not_promotable v${e.version} needs fixed_in: the newer release that carries the fix, like 0.60.652.0 (got "${e.fixed_in}").`);
     if (!e.reason.trim()) throw new Refusal(`not_promotable v${e.version} needs a reason: say what shows the release is bad.`);
+    const length = e.reason.trim().replace(/\s+/g, ' ').length;
+    if (length > NOT_PROMOTABLE_REASON_MAX) throw new Refusal(`not_promotable v${e.version}'s reason is ${length} characters; keep it to ${NOT_PROMOTABLE_REASON_MAX} (link the evidence instead of pasting it).`);
   }
-  const byVersion = new Map(previous.map(e => [e.version, e]));
+  const byVersion = new Map(previous.filter(e => !remove.includes(e.version)).map(e => [e.version, e]));
   for (const e of add) byVersion.set(e.version, { version: e.version, reason: e.reason.trim().replace(/\s+/g, ' '), fixed_in: e.fixed_in });
   const all = [...byVersion.values()].sort((a, b) => compareVersions(a.version, b.version));
   const own = all.find(e => e.version === version);
@@ -348,7 +360,10 @@ export async function readPriorRecord(deps: PromoteDeps): Promise<PriorRecord | 
 
 /** Commit stable.json for `fields` on top of the previous record commit (none before the first record). */
 async function commitRecord(deps: PromoteDeps, fields: TagFields, knownBad: string[], notPromotable: NotPromotable[], parent: string | null): Promise<string> {
-  const blob = await gitOut(deps, ['hash-object', '-w', '--stdin'], 'Could not write the stable record blob; re-run this workflow.', renderRecord(fields, knownBad, notPromotable));
+  const record = renderRecord(fields, knownBad, notPromotable);
+  const bytes = Buffer.byteLength(record);
+  if (bytes > STABLE_RECORD_MAX_BYTES) throw new Refusal(`stable.json would be ${bytes} bytes, over the ${STABLE_RECORD_MAX_BYTES} clients accept, so nothing was pushed; shorten the not_promotable reasons or take old entries off with not_promotable_remove.`);
+  const blob = await gitOut(deps, ['hash-object', '-w', '--stdin'], 'Could not write the stable record blob; re-run this workflow.', record);
   const recordTree = await gitOut(deps, ['mktree'], 'Could not write the stable record tree; re-run this workflow.', `100644 blob ${blob}\t${RECORD_FILE}\n`);
   const recordCommit = await gitOut(deps, ['commit-tree', recordTree, ...(parent ? ['-p', parent] : []), '-m', `stable record: v${fields.version}`],
     'Could not commit the stable record; re-run this workflow.');
@@ -374,7 +389,7 @@ async function recordCurrentStable(deps: PromoteDeps, inputs: PromoteInputs, rel
 
   const prior = await readPriorRecord(deps);
   const knownBad = mergeKnownBad(prior?.knownBad ?? [], inputs.withdraw ?? [], version);
-  const notPromotable = mergeNotPromotable(prior?.notPromotable ?? [], inputs.notPromotable ?? [], version);
+  const notPromotable = mergeNotPromotable(prior?.notPromotable ?? [], inputs.notPromotable ?? [], version, inputs.notPromotableRemove ?? []);
   const sameNotPromotable = JSON.stringify(notPromotable) === JSON.stringify(mergeNotPromotable(prior?.notPromotable ?? [], [], version));
   if (prior && prior.version === version && prior.releaseCommit === commit && knownBad.length === new Set(prior.knownBad).size && sameNotPromotable) {
     throw new Refusal(`${already}, and stable.json on stable-record records it, so there is nothing to promote.`);
@@ -455,7 +470,7 @@ export async function promote(deps: PromoteDeps, inputs: PromoteInputs): Promise
   const prior = await readPriorRecord(deps);
   const priorRecordCommit = prior?.commit ?? null;
   const knownBad = mergeKnownBad(prior?.knownBad ?? [], inputs.withdraw ?? [], version);
-  const notPromotable = mergeNotPromotable(prior?.notPromotable ?? [], inputs.notPromotable ?? [], version);
+  const notPromotable = mergeNotPromotable(prior?.notPromotable ?? [], inputs.notPromotable ?? [], version, inputs.notPromotableRemove ?? []);
   const recordCommit = await commitRecord(deps, fields, knownBad, notPromotable, priorRecordCommit);
 
   if (!recordExists) {
@@ -508,6 +523,7 @@ if (import.meta.main) {
     withdraw: (env.PROMOTE_WITHDRAW ?? '').split(',').map(v => v.trim().replace(/^v/, '')).filter(Boolean),
     notPromotable: (env.PROMOTE_NOT_PROMOTABLE ?? '').split(',').map(v => v.trim().replace(/^v/, '')).filter(Boolean)
       .map(version => ({ version, reason: env.PROMOTE_NOT_PROMOTABLE_REASON ?? '', fixed_in: (env.PROMOTE_NOT_PROMOTABLE_FIXED_IN ?? '').trim().replace(/^v/, '') })),
+    notPromotableRemove: (env.PROMOTE_NOT_PROMOTABLE_REMOVE ?? '').split(',').map(v => v.trim().replace(/^v/, '')).filter(Boolean),
   };
   const deps = processDeps();
   try {

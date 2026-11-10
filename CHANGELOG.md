@@ -24,7 +24,7 @@ The upgrade restarted autopilot only through an installed launchd or systemd ser
 
 **The daily stable check no longer sticks on a rolled-back release.** A release that was stable before (its `stable-v<version>` record tag exists) or that `stable.json` lists in `known_bad` is skipped and logged, so the newest release gets its soak instead of a refused promotion on every scheduled run (#8792).
 
-**A release can be marked not promotable when it soaked clean but is known bad from outside evidence.** Dispatch `promote-stable.yml` for the current stable with `not_promotable`, `not_promotable_reason` and `not_promotable_fixed_in`. The stable record gains a `not_promotable` list, and no tag moves. The daily check never soaks or promotes a release on it, on the important path and the weekly floor alike, and a manual promotion of one is refused. Clients ignore the list, so unlike `withdraw` it moves no install to another release.
+**A release can be marked not promotable when it soaked clean but is known bad from outside evidence.** Dispatch `promote-stable.yml` for the current stable with `not_promotable`, `not_promotable_reason` and `not_promotable_fixed_in`. The stable record gains a `not_promotable` list, and no tag moves. The daily check never soaks or promotes a release on it, on the important path and the weekly floor alike, and a manual promotion of one is refused. Clients ignore the list, so unlike `withdraw` it moves no install to another release. `not_promotable_remove` takes a release off the list. A reason over 500 characters is refused, and so is a record larger than clients accept; nothing is pushed in either case.
 
 ## [0.60.655.0] - 2026-11-10
 

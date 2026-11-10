@@ -626,8 +626,8 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   `rollback` (default false), `reason` (required with rollback) and
   `withdraw` (versions added to the carried-forward `known_bad` list;
   clients on one are offered the current stable, even when older), and
-  `not_promotable` with `not_promotable_reason` and `not_promotable_fixed_in`
-  (see below).
+  `not_promotable` with `not_promotable_reason` and `not_promotable_fixed_in`,
+  and `not_promotable_remove` (see below).
 - **Not promotable.** A release can soak clean and still be bad, when the
   evidence comes from outside the soak (a regression found on a large brain,
   say). Record it so the daily check never soaks or promotes it: dispatch this
@@ -636,8 +636,12 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   `not_promotable_reason` saying why and `not_promotable_fixed_in` naming the
   newer release that fixes them. The list is carried forward on every later
   record, and `promote()` refuses a release on it. Clients never read it, so
-  unlike `withdraw` it offers nobody a different release. Use `withdraw`
-  only for a release that was stable, so its installs move off it:
+  unlike `withdraw` it offers nobody a different release. To take a release
+  off the list (one listed by mistake), pass it in `not_promotable_remove` the
+  same way. A reason is at most 500 characters (link the evidence), and a
+  record larger than clients accept (64 KiB) is refused before anything is
+  pushed. Use `withdraw` only for a release that was stable, so its installs
+  move off it:
 
   ```bash
   gh workflow run promote-stable.yml -f version=<current stable> -f soak_run_url=<its soak run> \
