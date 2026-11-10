@@ -120,7 +120,7 @@ jobs:
     # #6056: tsc ran inside the verify step's pool, cold on every nightly (the
     # tsbuildinfo cache was saved only after a fully green job, so a red
     # nightly never saved it), and was killed at the 240 s per-check cap:
-    # 110-142 s alone on this 3-core arm64 runner, 121-167 s inside verify.
+    # 110-142 s alone on the earlier 3-core arm64 runner, 121-167 s inside verify.
     # Same shape as test.yml's typecheck job: its own job, a step timeout from
     # measurement, and the incremental state saved on every outcome. Step
     # timeout: 3 x the worst measured run is about 15 minutes (282 s from an
