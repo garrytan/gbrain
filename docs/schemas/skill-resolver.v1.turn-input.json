@@ -28,9 +28,11 @@
         "claude-code",
         "codex",
         "hermes",
-        "qm"
+        "qm",
+        "pi",
+        "cursor"
       ],
-      "description": "Picks the load line, and whether suggestion lines carry the SKILL.md path (codex, openclaw)."
+      "description": "Picks the load line, and whether suggestion lines carry the SKILL.md path (codex, openclaw, pi, cursor)."
     },
     "top_k": {
       "type": "integer",

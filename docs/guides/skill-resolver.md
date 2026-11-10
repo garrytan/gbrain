@@ -40,6 +40,7 @@ One catalog per skill set. Names are 1-64 characters of `a-z`, `0-9`, `_` and
 | Claude Code | `gbrain skills index build --catalog claude-user --dir ~/.claude/skills --harness claude-code` | Plugin skills get their `<plugin>:` prefix from `.claude-plugin/plugin.json`. |
 | Codex | `gbrain skills index build --catalog codex-user --dir ~/.codex/skills --harness codex` | Suggestion lines carry the SKILL.md path; Codex opens it. |
 | Hermes, qm | `--dir <skills dir> --harness hermes` (or `qm`) | The id is the name the loader takes. |
+| Pi, Cursor | `--dir <skills dir> --harness pi` (or `cursor`) | Suggestion lines carry the SKILL.md path; the agent reads the file. |
 | OpenClaw and other adapters | `gbrain skills index build --catalog openclaw-main --from-json - --harness openclaw` | The adapter pipes its skill list (schema below) and owns rebuilds. |
 | gbrain's own skills | `gbrain skills index build --catalog gbrain --bundled` | Rebuilt when the gbrain version changes. |
 

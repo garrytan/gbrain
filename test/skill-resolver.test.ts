@@ -366,17 +366,17 @@ describe('sessions', () => {
 });
 
 describe('block', () => {
-  test('load line per harness; codex and openclaw carry the path; the user text is never echoed', async () => {
+  test('load line per harness; codex, openclaw, pi and cursor carry the path; the user text is never echoed', async () => {
     const home = tmp();
     const root = tmp('skres-dir-');
     const p = skillDir(root, 'deploy', { name: 'deploy', description: 'Ship a service to production' });
     await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
-    const lines: Record<string, string> = { 'claude-code': 'Skill tool', 'codex': 'open the SKILL.md at its path', 'hermes': 'skill_view(name)', 'openclaw': 'skills_read({name}) using its name', 'qm': 'action read' };
+    const lines: Record<string, string> = { 'claude-code': 'Skill tool', 'codex': 'open the SKILL.md at its path', 'hermes': 'skill_view(name)', 'openclaw': 'skills_read({name}) using its name', 'qm': 'action read', 'pi': 'read the SKILL.md at its path', 'cursor': 'read the SKILL.md at its path' };
     for (const [h, needle] of Object.entries(lines)) {
       const r = await resolveSkills({ message: 'deploy acme-example-secret-words', harness: h }, { home });
       expect(r.output.block).toContain(needle);
       expect(r.output.block).not.toContain('acme-example-secret-words');
-      expect(r.output.block.includes(JSON.stringify(p))).toBe(h === 'codex' || h === 'openclaw');
+      expect(r.output.block.includes(JSON.stringify(p))).toBe(['codex', 'openclaw', 'pi', 'cursor'].includes(h));
     }
     const custom = await resolveSkills({ message: 'deploy' }, { home, loadHint: 'Load it with my_loader <now>' });
     expect(custom.output.block).toContain('Load it with my_loader  now');

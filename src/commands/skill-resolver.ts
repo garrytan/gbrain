@@ -38,7 +38,7 @@ No brain connection is needed.
   --bundled          gbrain's own bundled skills
   --from-json <f|->  an adapter's skill list ([{id, name, description, triggers?, path?, eligible?}])
   --routing <file>   one RESOLVER-style routing table; rows add trigger text to skills
-  --harness <h>      openclaw, claude-code, codex, hermes or qm (recorded in the receipt)
+  --harness <h>      openclaw, claude-code, codex, hermes, qm, pi or cursor (recorded in the receipt)
   --scope project    a cloned repository's skills: blocks show ids and names only
   --session <id>     status: that session's turn count and token budget
 
@@ -58,7 +58,7 @@ and no brain connection is needed.
   --text <t>           the user message (or send turn JSON with --input-json -)
   --session <id>       the harness session: suggestions are not repeated within it, and its
                        block tokens are capped by skills.resolver.session_token_budget (2000)
-  --harness <h>        picks the load line: openclaw, claude-code, codex, hermes or qm
+  --harness <h>        picks the load line: openclaw, claude-code, codex, hermes, qm, pi or cursor
   --top-k <n>          at most n suggestions (1-8, default 5)
   --exclude <ids>      comma-separated skill ids to leave out
   --shadow             compute the block without injecting it (block "" on stdout);
