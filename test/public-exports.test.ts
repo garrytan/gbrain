@@ -63,6 +63,8 @@ const EXPECTED_EXPORTS: ExpectedExport[] = [
   // 2026-08 fix wave (audit skillopt-cats-11): the surface gbrain-evals
   // cat30–33 consume, replacing physical node_modules deep imports.
   { subpath: 'gbrain/core/skillopt', canary: ['runSkillOpt', 'scoreSkillOnTasks', 'loadHeldOut'] },
+  // GBRA-377: the engine-free skill resolver library (docs/guides/skill-resolver.md#library).
+  { subpath: 'gbrain/skill-resolver', canary: ['resolveSkills', 'buildSkillIndex', 'ResolverError'] },
   { subpath: 'gbrain/pglite-lock', canary: ['peekLock'] },
   { subpath: 'gbrain/version', canary: ['VERSION'] },
 ];
@@ -83,7 +85,8 @@ describe('public exports — package.json exports map', () => {
     // 23→24 (2026-08 fix wave): ./core/skillopt (audit skillopt-cats-11).
     // 28→29: ./version (gbrain-evals reads the installed version directly).
     // 29→30: ./engine-open (experimental openEngine(settings), GBRA-283 Wave B1).
-    expect(count).toBe(30);
+    // 30→31: ./skill-resolver (the engine-free skill resolver, GBRA-377).
+    expect(count).toBe(31);
   });
 
   test('EXPECTED_EXPORTS list matches the exports map exactly (no drift)', () => {

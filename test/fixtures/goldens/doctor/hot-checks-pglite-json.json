@@ -1219,7 +1219,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1388 column(s) verified against live schema",
+            "message": "1392 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
@@ -3164,6 +3164,13 @@
             "elapsed_ms": "<volatile>",
             "message": "chronicle.* settings are valid.",
             "name": "chronicle_config_invalid",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "No page holds live events from an earlier extraction run beside its newest one.",
+            "name": "chronicle_duplicate_events",
             "status": "ok"
           },
           {
@@ -6316,7 +6323,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1388 column(s) verified against live schema",
+            "message": "1392 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
@@ -8273,6 +8280,13 @@
             "elapsed_ms": "<volatile>",
             "message": "chronicle.* settings are valid.",
             "name": "chronicle_config_invalid",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "No page holds live events from an earlier extraction run beside its newest one.",
+            "name": "chronicle_duplicate_events",
             "status": "ok"
           },
           {

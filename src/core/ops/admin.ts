@@ -20,6 +20,7 @@ import { enforceClientSlugFence, sourceScopeOpts } from './context.ts';
 import { VERSION } from '../../version.ts';
 import { resolveActiveEmbeddingColumnFromEngine } from '../search/embedding-column.ts';
 import { memoizedHealth } from '../health-memo.ts';
+import { remoteReadPolicySql } from '../persistence/page-visibility.ts';
 import { LARGE_PAGES_CAPABILITY } from './get-page-body.ts';
 import { isSegmentedPage, pageBodyBytes } from '../page-body/page-shape.ts';
 import { openSegmentedBody } from '../page-body/read-range.ts';
@@ -57,6 +58,20 @@ const get_stats: Operation = {
   cliHints: { name: 'stats' },
 };
 
+/**
+ * GBRA-431: most_connected names pages, so a remote caller sees only the ones its get_page would show (a live page
+ * of the slug in its scope that it can read). The counters stay as memoized per scope.
+ */
+async function visibleMostConnected(ctx: OperationContext, scope: { sourceId?: string; sourceIds?: string[] }, entries: Array<{ slug: string; link_count: number }>) {
+  if (ctx.remote === false || !entries?.length) return entries;
+  const sourceIds = scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : null);
+  const rows = await ctx.engine.executeRaw<{ slug: string }>(`SELECT DISTINCT p.slug FROM pages p
+    WHERE p.slug = ANY($1::text[]) AND p.deleted_at IS NULL AND ($2::text[] IS NULL OR p.source_id = ANY($2::text[]))
+      AND ${await remoteReadPolicySql(ctx.engine, 'p')}`, [entries.map(e => e.slug), sourceIds]);
+  const visible = new Set(rows.map(r => r.slug));
+  return entries.filter(e => visible.has(e.slug));
+}
+
 const get_health: Operation = {
   name: 'get_health',
   mutating: false,
@@ -93,7 +108,7 @@ const get_health: Operation = {
     } catch {
       migrations = { error: 'ledger_unreadable' };
     }
-    return { ...health, migrations };
+    return { ...health, most_connected: await visibleMostConnected(ctx, scope, health.most_connected), migrations };
   },
   scope: 'admin',
   cliHints: { name: 'health' },

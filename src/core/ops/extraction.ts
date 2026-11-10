@@ -21,6 +21,7 @@ import { withoutBody } from '../page-body/page-shape.ts';
 import type { Page } from '../types.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { withPublicationGuard } from '../persistence/publication-guard.ts';
+import { remoteTargetHidden } from '../persistence/page-visibility.ts';
 
 // ---------------------------------------------------------------------------
 // Extraction quarantine lane (issue #160)
@@ -85,6 +86,8 @@ const extract_entities: Operation = {
     const { extractEntities, enrichEntities } = await import('../enrichment-service.ts');
     const found = extractEntities(text);
     const capped = found.slice(0, MAX_EXTRACT_ENTITIES);
+    // GBRA-431: a source page the remote caller cannot read is treated exactly as a missing one (no backlink to it).
+    const sourceHidden = await remoteTargetHidden(ctx.engine, ctx.remote, ctx.sourceId || 'default', p.source_slug as string);
     const results = await enrichEntities(
       ctx.engine,
       capped.map((e) => ({ entityName: e.name, entityType: e.type, context: e.context, sourceSlug: p.source_slug as string })),
@@ -92,6 +95,7 @@ const extract_entities: Operation = {
         trusted,
         ...(ctx.sourceId ? { sourceId: ctx.sourceId } : {}),
         ctx,
+        sourceHidden,
         // Pure local DB writes — no external API call to pace, so the
         // system-load capacity gate would only stall the caller.
         throttle: false,

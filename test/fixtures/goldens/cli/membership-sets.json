@@ -202,6 +202,7 @@
         "self-upgrade",
         "serve",
         "setup",
+        "skill-resolver",
         "skillify",
         "skillopt",
         "skillpack",
@@ -308,6 +309,7 @@
         "schema",
         "self-upgrade",
         "setup",
+        "skill-resolver",
         "skillify",
         "skillopt",
         "skillpack",
@@ -379,6 +381,7 @@
         "hook",
         "post-upgrade",
         "self-upgrade",
+        "skill-resolver",
         "trust",
         "upgrade"
       ],

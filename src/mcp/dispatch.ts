@@ -48,6 +48,7 @@ import {
   findInvalidParam,
   schemaInvalidParams,
   findUnknownParams,
+  narrowingUnknownParams,
   resolveStrictParamsMode,
 } from './validate-params.ts';
 import { backupCheckDisabled, backupNagGate, backupNoticeText, loadBackupStatus } from '../core/backup/status-file.ts';
@@ -1179,7 +1180,9 @@ async function dispatchResolvedCall(
   const unknownParamWarnings = findUnknownParams(op, safeParams);
   if (unknownParamWarnings.length > 0) {
     const strictMode = op.mutating === true ? 'reject' : await resolveStrictParamsMode(engine, opts.config ?? loadConfig());
-    if (strictMode === 'reject') {
+    // GBRA-431: a misspelled scope or filter on a read would answer unnarrowed, so it rejects in every mode.
+    const narrowing = strictMode === 'reject' ? [] : narrowingUnknownParams(unknownParamWarnings, Object.keys(op.params));
+    if (strictMode === 'reject' || narrowing.length > 0) {
       logVerb(false);
       // Privacy (amendment 11): the raw unknown key rides `suggestion` ONLY.
       // serve-http persists the envelope's `message` into
@@ -1192,7 +1195,7 @@ async function dispatchResolvedCall(
           : `Unknown parameter "${w.param}".`)
         .join(' ') + (op.callShape ? ` ${op.callShape}` : '');
       const strict = new OperationError('invalid_params',
-        `${n} unknown parameter${n === 1 ? '' : 's'} not declared in the ${name} tool schema (${op.mutating === true ? 'write operations always reject unknown parameters; nothing was written' : 'mcp.strict_params=reject'}). See suggestion for the submitted name${n === 1 ? '' : 's'}.`,
+        `${n} unknown parameter${n === 1 ? '' : 's'} not declared in the ${name} tool schema (${op.mutating === true ? 'write operations always reject unknown parameters; nothing was written' : narrowing.length > 0 ? 'a read rejects an unknown scope or filter parameter, which would otherwise return unnarrowed results; nothing was read' : 'mcp.strict_params=reject'}). See suggestion for the submitted name${n === 1 ? '' : 's'}.`,
         suggestion);
       if (isVerb) strict.protocolVersion = MEMORY_VERBS_VERSION;
       return errorResult(strict, opts, { op: name });
