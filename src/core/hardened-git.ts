@@ -28,6 +28,14 @@ export const HARDENED_GIT_ARGS: readonly string[] = ['--no-pager', '--no-optiona
   '-c', 'submodule.recurse=false', '-c', 'protocol.allow=never', '-c', 'credential.helper=',
   '-c', 'maintenance.auto=false', '-c', 'gc.auto=0'];
 
+/**
+ * GST-2331: what a managed-sync Git read that runs under `gitChildEnv` adds to it beside `HARDENED_GIT_ARGS`. In a partial
+ * clone, Git fetches an object the repository lacks, and a fetch is configured by the checkout; `GIT_NO_LAZY_FETCH=1`
+ * (Git 2.45+) reports the object missing instead, and the args' `protocol.allow=never` fails the fetch on any Git, so the
+ * read fails and nothing is fetched.
+ */
+export const NO_LAZY_FETCH_ENV: NodeJS.ProcessEnv = { GIT_NO_LAZY_FETCH: '1' };
+
 const OPERATOR_CONFIG_TTL_MS = 30_000;
 let operatorConfig: { key: string; at: number; values: string[] } | null = null;
 

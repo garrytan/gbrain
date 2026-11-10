@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A managed sync no longer fetches Git objects in a partial clone (`git clone --filter`).** Every Git read a managed sync makes now runs with Git's transports and lazy fetching switched off. A file whose blob the clone never fetched is imported from your checkout when the checkout holds exactly that blob, and otherwise held alone as `git_object_missing`, with a message that names the partial clone and the `git cat-file -p <blob>` that fetches it. A blobless clone with a normal checkout syncs every file as before.
+
+### Itemized changes
+
+- `src/core/hardened-git.ts`: `NO_LAZY_FETCH_ENV` (`GIT_NO_LAZY_FETCH=1`, Git 2.45+) is what a managed-sync read that runs under `gitChildEnv` adds beside `HARDENED_GIT_ARGS`, whose `protocol.allow=never` fails an object fetch on any Git version.
+- `syncGit` and `syncGitAsync` (`sync-discovery.ts`), every read in `sync-blobs.ts` (`ls-tree`, `cat-file --batch`), the `git show` fallback, the delta and working-tree diff (`sync-delta.ts`), the rename-identity `cat-file` stream, the metafile head reads, the origin-evidence history walk and ignore check, the held-deletion read, the unindexed-file listing and the pending-import checks now run with both.
+- `src/core/persistence/sync-entry-fault.ts`: in a partial clone the `git_object_missing` hold names the partial clone and its fix is `git cat-file -p <blob>`; in any other checkout it still names `git fsck --connectivity-only`.
+- A partial clone with no checkout (`--no-checkout`) holds every committed file `git_object_missing`. When rename detection needs an older blob the partial clone lacks, the sync compares the whole tree instead: the new path imports as a new page and the old page is deleted, so that rename does not keep its page.
+- Tests: `test/sync-partial-clone-2331.test.ts` on PGLite and Postgres, with a marker on the partial clone's object fetches and a check that it never ran, plus a blobless clone that syncs a second commit after a pull.
+
 ## [0.60.648.0] - 2026-11-10
 
 **A managed sync no longer imports a file that Git stores through a filter, such as a git-crypt encrypted note, as if its stored bytes were the page.** The file alone is held `content_filter_owned` with a message that says gbrain does not run a repository's filter programs during sync (and names git-crypt when the file starts with its header), and the rest of the source imports and moves on. Reported by @JustinTSmith (#9024) and first fixed by @Masashi-Ono0611 (#9026).

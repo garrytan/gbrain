@@ -11,7 +11,8 @@
  *   `content_filter_owned` instead of importing ciphertext as the page (or, with git-crypt's NUL header, a generic NUL hold).
  * - `committedContentOrMissing` (S-33): a committed file whose Git blob is gone (an interrupted gc, a partial clone
  *   without its promisor, disk corruption) imports from the working tree when those bytes hash to the committed blob
- *   id; otherwise it is refused `git_object_missing`, which the freeze holds, naming `git fsck` / `git fetch`.
+ *   id; otherwise it is refused `git_object_missing`, which the freeze holds, naming `git fsck` / `git fetch`. GST-2331: sync
+ *   fetches nothing, so in a partial clone the refusal names the partial clone and the `git cat-file -p` that fetches the blob.
  * - `committedContentOrMissing` (S-7): a committed name that is not valid UTF-8 (Latin-1 bytes from an old system or a zip)
  *   reads back from Git with U+FFFD for its undecodable bytes, a name no Git read or file finds; it is refused
  *   `path_not_utf8`, which the freeze holds, naming the rename that fixes it.
@@ -33,7 +34,7 @@ import { isWriteCapacityWait } from './admission-retry.ts';
 import { PAGE_BODY_FAULT_CODES } from './sync-fault-class.ts';
 import { gitBlobOid } from './digest.ts';
 import { readBlobBytes, type MissingAttributes, type TreeBlob } from './sync-blobs.ts';
-import { readSyncFile, type SyncEntry } from './sync-discovery.ts';
+import { readSyncFile, syncGit, type SyncEntry } from './sync-discovery.ts';
 import type { GitHoldRecord } from './sync-holds.ts';
 
 type HoldEntry = Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld' | 'action'>;
@@ -84,7 +85,9 @@ export function missingAttributesRefusal(cursor: { gitRoot: string; sourceId: st
 /**
  * S-33: the content of a committed entry whose pinned read failed with `error`. When the commit names a blob for the path
  * that the repository no longer has, the working-tree bytes are used if they hash to that blob id (the same bytes);
- * otherwise `git_object_missing` is thrown. Any other failure (no blob at the path, the object present) is rethrown.
+ * otherwise `git_object_missing` is thrown. Any other failure (no blob at the path, the object present) is rethrown. GST-2331:
+ * in a partial clone (a promisor remote, or `extensions.partialClone`) the blob was never fetched, and sync fetches nothing, so the refusal says so
+ * and its fix is the `git cat-file -p` that fetches it.
  */
 export function committedContentOrMissing(cursor: { root: string; gitRoot: string; sourceId: string }, entry: Pick<SyncEntry, 'path'>, blob: TreeBlob | null, error: unknown): string {
   if (entry.path.includes('\uFFFD') && !existsAt(cursor.root, entry.path)) {
@@ -98,9 +101,18 @@ export function committedContentOrMissing(cursor: { root: string; gitRoot: strin
   let bytes: Buffer | null = null;
   try { bytes = readSyncFile(cursor.root, entry.path); } catch { bytes = null; }
   if (bytes && gitBlobOid(bytes, blob.oid.length === 64 ? 'sha256' : 'sha1') === blob.oid) return bytes.toString('utf8');
+  let partial = false;
+  try { partial = syncGit(cursor.gitRoot, ['config', '--get-regexp', '^(extensions\\.partialclone|remote\\..*\\.promisor)$']).split('\n').some(line => /^extensions\.partialclone \S|^remote\..*\.promisor (true|yes|on|1)$/i.test(line)); } catch { partial = false; }
+  const copy = bytes ? ' and the working-tree file differs from it' : ' and the working tree has no copy of it';
+  if (partial) throw opError('git_object_missing', `The Git object of ${entry.path} at the synced commit is missing from the repository.`,
+    `${entry.path} is committed as blob ${blob.oid}, which the repository of source ${cursor.sourceId}, a partial clone (git clone --filter), never fetched${copy}. `
+      + 'Sync fetches nothing from a remote, so nothing was imported from it. '
+      + `Fetch the object in the checkout (git cat-file -p ${blob.oid} fetches it from the partial clone's remote) or check the file out, then run gbrain sync --source ${cursor.sourceId} --no-pull.`,
+    { detail: blob.oid, fix: { argv: ['git', '-C', cursor.gitRoot, 'cat-file', '-p', blob.oid], consent: [], actor: 'user', requires_exclusive: false,
+      why: 'Fetches the missing blob from the partial clone\'s remote, so the next sync can read the file.', verify: { argv: ['gbrain', 'sources', 'status', cursor.sourceId, '--json'] } } });
   throw opError('git_object_missing', `The Git object of ${entry.path} at the synced commit is missing from the repository.`,
-    `${entry.path} is committed as blob ${blob.oid}, but the repository of source ${cursor.sourceId} no longer has that object${bytes ? ' and the working-tree file differs from it' : ' and the working tree has no copy of it'}, so nothing was imported from it. `
-      + `Run git fsck in the checkout to see what is missing, restore it with git fetch (a partial or shallow clone) or from a backup, then run gbrain sync --source ${cursor.sourceId} --no-pull.`,
+    `${entry.path} is committed as blob ${blob.oid}, but the repository of source ${cursor.sourceId} no longer has that object${copy}, so nothing was imported from it. `
+      + `Run git fsck in the checkout to see what is missing, restore it with git fetch (a shallow clone) or from a backup, then run gbrain sync --source ${cursor.sourceId} --no-pull.`,
     { detail: blob.oid, fix: { argv: ['git', '-C', cursor.gitRoot, 'fsck', '--connectivity-only'], consent: [], actor: 'user', requires_exclusive: false,
       why: 'Lists the missing objects (read-only); git fetch, or a restore from a backup, brings them back.', verify: { argv: ['gbrain', 'sources', 'status', cursor.sourceId, '--json'] } } });
 }

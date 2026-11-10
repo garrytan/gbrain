@@ -33,8 +33,9 @@ import { assertManagedSyncActive } from './sync-authority.ts';
 import { decideOriginTwins, readOriginClaimants, slugPathOccupied, type OriginConflict } from './origin-twins.ts';
 import { isReservedSkillBundlePath } from '../skill-reserved-paths.ts';
 import { holdBasisMoved, holdRescreenDue, readGitHoldRetryPaths, readGitSourceHolds, readSyncImportProvenances } from './sync-holds.ts';
-import { NO_REPOSITORY_PROGRAMS, readBlobContents, readTreeBlobs, SYNC_READ_BOUND } from './sync-blobs.ts';
+import { readBlobContents, readTreeBlobs, SYNC_READ_BOUND } from './sync-blobs.ts';
 import { gitChildEnv } from '../git-env.ts';
+import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from '../hardened-git.ts';
 import { readOriginEvidence } from './sync-origin-evidence.ts';
 import { sourceDbOnlyVerdict } from './source-storage.ts';
 import { dbOnlyVerdict, storageConfigFromYaml, unresolvedDbOnlyIn } from '../storage-config.ts';
@@ -111,14 +112,15 @@ export async function syncExcludePatterns(engine: Pick<BrainEngine, 'getConfig'>
   return [...extra, ...(await engine.getConfig('sync.exclude') ?? '').split(/[\n,]/).map(v => v.trim()).filter(Boolean)]
     .map(v => v.endsWith('/') ? `${v}**` : v);
 }
+/** GST-2331: one managed-sync Git read, under `HARDENED_GIT_ARGS` and `NO_LAZY_FETCH_ENV`: no repository program runs, and a partial clone fetches nothing (a missing object fails the read). */
 export function syncGit(root: string, args: string[]): string {
-  return execFileSync('git', ['-c', 'core.quotepath=false', '-C', root, ...args],
-    { env: gitChildEnv(), encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2, stdio: ['ignore', 'pipe', 'pipe'] });
+  return execFileSync('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '-C', root, ...args],
+    { env: gitChildEnv(NO_LAZY_FETCH_ENV), encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2, stdio: ['ignore', 'pipe', 'pipe'] });
 }
 /** `syncGit` without blocking the event loop while Git runs (a level read: a synchronous spawn held timers for 200+ ms on a loaded host). */
 const execFileAsync = promisify(execFile);
 export async function syncGitAsync(root: string, args: string[]): Promise<string> {
-  return (await execFileAsync('git', ['-c', 'core.quotepath=false', '-C', root, ...args], { env: gitChildEnv(), encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2 })).stdout;
+  return (await execFileAsync('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '-C', root, ...args], { env: gitChildEnv(NO_LAZY_FETCH_ENV), encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2 })).stdout;
 }
 /**
  * A sync file or root failed a confinement or identity check. These helpers
@@ -834,5 +836,5 @@ export function readSyncContent(discovery: SyncDiscovery, entry: SyncEntry): str
         argv: ['gbrain', 'sync', '--no-pull', '--working-tree', '--source', discovery.sourceId] } });
     return bytes.toString('utf8');
   }
-  return syncGit(discovery.gitRoot, [...NO_REPOSITORY_PROGRAMS, 'show', `${discovery.target}:${syncGitPath(discovery, entry.path)}`]);
+  return syncGit(discovery.gitRoot, ['show', `${discovery.target}:${syncGitPath(discovery, entry.path)}`]);
 }
