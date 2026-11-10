@@ -667,7 +667,7 @@ const list_pages: Operation = {
     const truncatedNotice = isLocal ? null : listingTruncatedNotice(pagination, p);
     if (truncatedNotice) ctx.emitNotice?.(truncatedNotice);
     if (pages.length === 0 && typeof p.type === 'string' && p.type) {
-      const notice = unusedTypeNotice(p.type, await (await import('./stats-by.ts')).visiblePageTypes(ctx, scope));
+      const notice = unusedTypeNotice(p.type, await (await import('./stats-by.ts')).visiblePageTypes(ctx, scope).catch(() => null));
       if (notice) ctx.emitNotice?.(notice);
     }
     return pages.map(pg => ({

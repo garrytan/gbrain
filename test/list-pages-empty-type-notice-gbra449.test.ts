@@ -106,6 +106,20 @@ for (const backend of testBackends()) {
       }
     });
 
+    test('the notice is best effort: a failed type count still answers the bare empty array', async () => {
+      const countPagesBy = engine.countPagesBy.bind(engine);
+      engine.countPagesBy = async () => { throw new Error('canceling statement due to statement timeout'); };
+      try {
+        for (const opts of [local, remote]) {
+          const r = await call({ type: 'account' }, opts);
+          expect(r.json).toEqual([]);
+          expect(r.empty).toBe('');
+        }
+      } finally {
+        engine.countPagesBy = countPagesBy;
+      }
+    });
+
     test('local: a private page type is listed; a soft-deleted page type gets the notice without naming itself', async () => {
       expect((await call({ type: 'memo-private' })).json.map((row: { slug: string }) => row.slug)).toEqual(['memos/private']);
       const gone = await call({ type: 'memo-deleted' });

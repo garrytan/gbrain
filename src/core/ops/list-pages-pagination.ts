@@ -85,9 +85,9 @@ export function listingTruncatedNotice(pagination: ListPagesPagination, params: 
 /** How many page types the unused-type notice names, most pages first. */
 export const UNUSED_TYPE_NAMED = 12;
 
-/** The notice for an empty list_pages whose `type` no visible page has; null when some visible page has it. */
-export function unusedTypeNotice(type: string, visible: Array<{ type: string; pages: number }>): Notice | null {
-  if (visible.some(t => t.type === type)) return null;
+/** The notice for an empty list_pages whose `type` no visible page has; null when some visible page has it or the type count failed (null). */
+export function unusedTypeNotice(type: string, visible: Array<{ type: string; pages: number }> | null): Notice | null {
+  if (!visible || visible.some(t => t.type === type)) return null;
   const named = visible.slice(0, UNUSED_TYPE_NAMED).map(t => `${t.type} (${t.pages})`).join(', ');
   const more = visible.length > UNUSED_TYPE_NAMED ? `, and ${visible.length - UNUSED_TYPE_NAMED} more` : '';
   return {
