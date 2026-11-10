@@ -6,6 +6,9 @@
  * - `nullBytesRefusal` (S-39/S-44/S-53): a Markdown file whose text holds U+0000 (a binary file named `.md`, a
  *   crash-padded file, a UTF-16 save) cannot be stored as text or carried in a write intent, so it is held
  *   `content_null_bytes` with the first NUL's line instead of failing the admission with 22P05 forever.
+ * - `filterOwnedRefusal` (GST-2312, #9024): a committed blob a Git filter owns (git-crypt, a clean/smudge driver) holds the
+ *   filter's stored bytes, not the checkout's text, and sync never runs the filter, so the file is held
+ *   `content_filter_owned` instead of importing ciphertext as the page (or, with git-crypt's NUL header, a generic NUL hold).
  * - `committedContentOrMissing` (S-33): a committed file whose Git blob is gone (an interrupted gc, a partial clone
  *   without its promisor, disk corruption) imports from the working tree when those bytes hash to the committed blob
  *   id; otherwise it is refused `git_object_missing`, which the freeze holds, naming `git fsck` / `git fetch`.
@@ -46,6 +49,21 @@ export function nullBytesRefusal(path: string, content: string): { code: 'conten
   return { code: 'content_null_bytes', line, message: `${path} holds a NUL byte (U+0000) on line ${line}${utf16 ? ' and starts with a UTF-16 byte order mark, so it is UTF-16 text, not UTF-8' : ''}; `
     + 'gbrain stores page text as UTF-8 without NUL bytes, so sync held this file and the rest of the source synced. '
     + `${utf16 ? 'Save it as UTF-8' : 'Remove the NUL bytes (or, for a binary file, remove it or exclude it with sync.exclude)'}, then commit and sync again.` };
+}
+
+const GIT_CRYPT_HEADER = '\u0000GITCRYPT\u0000';
+
+/**
+ * GST-2312 (#9024): the `content_filter_owned` refusal of a blob that starts with git-crypt's header, or of a committed
+ * blob whose path names a Git filter `driver` (Git LFS excepted: its pointers keep their own hold), or null. Such bytes
+ * are what the filter's clean program stored, not the text of the checkout, and sync never runs a repository's filters.
+ */
+export function filterOwnedRefusal(path: string, content: string, driver: string | null): { code: 'content_filter_owned'; message: string } | null {
+  const gitCrypt = content.startsWith(GIT_CRYPT_HEADER);
+  if (!gitCrypt && (driver === null || driver === 'lfs')) return null;
+  return { code: 'content_filter_owned', message: `${path} is ${gitCrypt ? 'encrypted with git-crypt' : `stored through the Git filter "${driver}"`}, so its committed bytes are not the text in your checkout. `
+    + "gbrain does not run a repository's filter programs during sync, so sync held this file and the rest of the source synced. "
+    + 'Leave it out with sync.exclude, or commit it without the filter so Git stores its text, then sync again.' };
 }
 
 /**

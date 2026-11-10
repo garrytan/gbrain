@@ -1038,6 +1038,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 More: [docs/guides/troubleshooting.md#consumers-without-heartbeat](../../docs/guides/troubleshooting.md#consumers-without-heartbeat)
 
+### content_filter_owned
+
+<a id="content_filter_owned"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A synced file is stored in Git through a filter (git-crypt or another clean/smudge driver), so managed sync holds that file alone. | A filter's committed bytes (git-crypt ciphertext, for one) are not the file's text, and gbrain does not run a repository's filter programs during sync, so the file cannot be imported as it stands. The rest of the source keeps syncing. | Leave the file out with sync.exclude, or commit it without the filter so Git stores its text, then sync again. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#content_filter_owned](../../docs/guides/write-refusals.md#content_filter_owned)
+
 ### content_null_bytes
 
 <a id="content_null_bytes"></a>

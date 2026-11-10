@@ -68,6 +68,20 @@ export function readBlobBytes(gitRoot: string, blobs: TreeBlob[]): Map<string, B
   return out;
 }
 
+/**
+ * GST-2312 (#9024): the `filter` attribute of Git paths, read with `git check-attr` (attribute files only; it runs no
+ * program), null where none names a driver. A committed blob a filter owns holds what the filter's clean program
+ * stored (git-crypt ciphertext, for one), not the text of the checkout, and sync never runs a repository's filters.
+ */
+export function readFilterDrivers(gitRoot: string, gitPaths: string[]): Map<string, string | null> {
+  const out = new Map<string, string | null>();
+  for (let i = 0; i < gitPaths.length; i += 2000) {
+    const fields = git(gitRoot, ['check-attr', '-z', '--stdin', 'filter'], gitPaths.slice(i, i + 2000).join('\0') + '\0').toString('utf8').split('\0');
+    for (let at = 0; at + 2 < fields.length; at += 3) out.set(fields[at]!, ['unspecified', 'unset', 'set'].includes(fields[at + 2]!) ? null : fields[at + 2]!);
+  }
+  return out;
+}
+
 /** Entries one pinned `ls-tree` covers, and the bytes one window's `cat-file --batch` loads at most. */
 export const PINNED_WINDOW = 256;
 const PINNED_WINDOW_BYTES = 8 * 1024 ** 2;

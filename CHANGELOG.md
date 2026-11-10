@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A managed sync no longer imports a file that Git stores through a filter, such as a git-crypt encrypted note, as if its stored bytes were the page.** The file alone is held `content_filter_owned` with a message that says gbrain does not run a repository's filter programs during sync (and names git-crypt when the file starts with its header), and the rest of the source imports and moves on. Reported by @JustinTSmith (#9024) and first fixed by @Masashi-Ono0611 (#9026).
+
+### Itemized changes
+
+- `src/core/persistence/sync-blobs.ts`: `readFilterDrivers` reads the `filter` attribute of many paths in one `git check-attr -z --stdin`, which reads attribute files and runs no program.
+- `src/core/persistence/sync-entry-fault.ts`: `filterOwnedRefusal` refuses a blob that starts with git-crypt's header, or a committed blob whose path names a filter driver other than Git LFS (LFS pointers keep their own handling).
+- `src/core/persistence/sync-screen.ts`, `sync-run.ts`: the freeze screen and the `sync.holds=fail` path check committed imports with it before the NUL check, so a git-crypt file gets the clear hold instead of `content_null_bytes`. Working-tree reads are unaffected.
+- New hold and error code `content_filter_owned` (error registry, fault class, public category, docs/guides/write-refusals.md, the sync unblock runbook).
+- Tests: `test/sync-filter-owned-9024.test.ts` on PGLite and Postgres, with a clean/smudge filter in the test repository and a check that no filter program ran.
+
 ## [0.60.645.0] - 2026-11-10
 
 **A GitHub (or other API) connector source no longer stops for good when one of its items is a page stored in segments.** A long issue (a body plus hundreds of comments) grows past 1 MiB and is stored in segments. Before, that item could never import, and once such a page existed, every later sweep of a bound source stopped on `page_body_segmented` with no item named, so nothing after it imported and the cursor never moved. Now an item up to 24 MiB imports and re-renders like any other, and one the sweep cannot read whole (over 24 MiB) fails on its own from the first sweep, and is held after three (`gbrain sources status`), while the rest of the run imports and the cursor moves; a new comment on it re-tries only that item. Reported and first diagnosed in #9062.
