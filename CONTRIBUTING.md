@@ -322,7 +322,7 @@ blocker when it points anywhere but the target.
 docker run -d --name gbrain-graduation-pg \
   -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=gbrain_graduation_test \
-  -p 5436:5432 pgvector/pgvector:pg16
+  -p 127.0.0.1:5436:5432 pgvector/pgvector:pg16
 until docker exec gbrain-graduation-pg pg_isready -U postgres; do sleep 1; done
 
 # 2. Source brain with write history, in a throwaway home

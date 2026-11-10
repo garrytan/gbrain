@@ -64,6 +64,7 @@ import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { PRIVACY_ALIASES, privacyAliasSql, privacyPartSql, privateSnapshotFilterFragment, readHonorAliases } from '../search/private-visibility.ts';
+import { asciiLower } from '../edge-whitespace.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairSettlement } from './core.ts';
 
 export type ClearClass = 'alias' | 'alias-and-visibility' | 'git-publish';
@@ -99,7 +100,7 @@ type Decision = { keep: KeepClass } | { clear: ClearClass; removed: Labels } | n
 /** KEEP or CLEAR for a page that is private by its label; null for a page no label makes private. */
 export function classifyPrivateLabel(row: Pick<LabelRow, 'type' | 'frontmatter' | 'git'>): Decision {
   const fm = row.frontmatter ?? {};
-  const value = (key: string) => typeof fm[key] === 'string' ? (fm[key] as string).trim().toLowerCase() : null;
+  const value = (key: string) => typeof fm[key] === 'string' ? asciiLower((fm[key] as string).trim()) : null;
   const aliased = Object.entries(PRIVACY_ALIASES).some(([key, values]) => values.includes(value(key) ?? ''));
   if (!(fm.visibility === 'private' || (fm.visibility == null && aliased))) return null;
   if (Object.hasOwn(fm, 'pinned_question') || row.type === 'question') return { keep: 'pinned_question' };

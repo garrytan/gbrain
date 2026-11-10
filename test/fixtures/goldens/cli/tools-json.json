@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 282967,
-    "stdoutSha256": "73f135de04ba7cceced4d9fd952b23aaefd7fb4cad5ebdf3dce1aca953c70f84",
+    "stdoutBytes": 283203,
+    "stdoutSha256": "23664efbc72f9a715e0ba28ccb01c58cf4c23153946044b5fd49202391570778",
     "toolNames": [
       "remember",
       "entity",
@@ -223,6 +223,7 @@
           "provenance": "string?",
           "replaces": "string?",
           "request_id": "string?",
+          "share": "boolean?",
           "source_id": "string?",
           "ttl": "string?",
           "valid_from": "string?",
@@ -306,6 +307,10 @@
               "description": "Reuse only to retry.",
               "type": "string"
             },
+            "share": {
+              "description": "Members save privately; true: all source readers recall it. Share team work, not facts about a person.",
+              "type": "boolean"
+            },
             "source_id": {
               "description": "Write source.",
               "type": "string"
@@ -319,7 +324,7 @@
               "type": "string"
             },
             "visibility": {
-              "description": "world (default) or private (local CLI).",
+              "description": "world (default) or private (local CLI). Members: use share.",
               "enum": [
                 "world",
                 "private"

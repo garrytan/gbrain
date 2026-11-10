@@ -128,7 +128,8 @@ describe('#5929 owner exceptions keep a bounded identity', () => {
 
 describe('#6719 owner_exception diagnostics', () => {
   test('writer status recent_failures gives an owner exception its own next_action, never the database-trigger hint', async () => {
-    const { row } = await failingWrite(Object.assign(new Error('cached plan must not change result type'), { code: '0A000' }));
+    // GST-2314: the stale-plan 0A000 ("cached plan must not change result type") is a transient retry, so any other 0A000 stands in.
+    const { row } = await failingWrite(Object.assign(new Error('FOR SHARE is not allowed with aggregate functions'), { code: '0A000' }));
     expect(row.error_detail).toMatchObject({ origin: 'owner_exception', errno: '0A000' });
     const status = await withEnv({ GBRAIN_HOME: join(dir, 'home') }, () => readWriterDiagnostics(engine));
     const failure = status.recent_failures.find(f => f.request_id === row.request_id)!;

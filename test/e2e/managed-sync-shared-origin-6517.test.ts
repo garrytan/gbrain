@@ -89,7 +89,7 @@ for (const backend of testBackends()) describe(`[${backend}] #6517 managed sync 
     rmSync(home, { recursive: true, force: true });
   }, 60_000);
 
-  test('two live claimants hold their file (the rest syncs); after the loser is soft-deleted the file imports, edits and deletes through both guards; a single edited tombstone is held', async () => {
+  test('two live claimants hold their file (the rest syncs); after the loser is soft-deleted the file imports, edits and deletes through both guards; a single sync-made tombstone whose file returns edited is restored', async () => {
     const f = await twins();
     writeFileSync(f.file, note('Alpha, version two.')); commit(f.root, 'version two');
     // #6948: the twin no longer refuses the source; only its file is held origin_conflict (the bodies differ: a person decides).
@@ -131,21 +131,19 @@ for (const backend of testBackends()) describe(`[${backend}] #6517 managed sync 
     expect((await page(f.id, 'alpha'))!.deleted_at).not.toBeNull();
     expect((await page(f.id, 'alpha'))!.compiled_truth).toContain('version three');
     expect((await page(f.id, 'alpha-twin'))!.deleted_at).not.toBeNull();
-    // Point the twin tombstone elsewhere: one tombstone left. #6712 PR 4b (design v3.2 §2.3 row 9, `deleted_edited`): the file
-    // changed after its page was deleted, so the pass holds it (side deleted, state tombstone_edited) for a person's Decision
-    // instead of reviving the page; repair file-drift --held --prefer file is the way back.
+    // Point the twin tombstone elsewhere: one tombstone left. GST-2201: sync made that tombstone (the file left in a commit), so the
+    // file's return is the page's return: the pass imports the edited bytes into the same page, and the identity hold clears.
     await coordinated(f.id, 'UPDATE pages SET source_path=NULL WHERE source_id=$1 AND slug=$2', [f.id, 'alpha-twin']);
-    // The file is already held page_identity_changed, so this run re-screens it (holdRescreenDue) rather than holding it anew:
-    // the result lists no new hold, and the source's one hold becomes the file_drift above in place of the identity hold.
     const returned = await sync(f.opts);
     expect(returned.managedWrite).toBeUndefined();
-    expect(returned).toMatchObject({ status: 'up_to_date', filesImported: 0, held_count: 0, holds_outstanding: 1 });
-    const rescreened = (await readGitSourceHolds(engine, { sourceIds: [f.id] }))[0]?.holds ?? [];
-    expect(rescreened.map(item => [item.path, item.code, item.meta.side, item.meta.state, item.slug])).toEqual([['alpha.md', 'file_drift', 'deleted', 'tombstone_edited', 'alpha']]);
+    expect(returned).toMatchObject({ status: 'synced', filesImported: 1 });
+    expect(returned.held_count ?? 0).toBe(0);
+    expect((await readGitSourceHolds(engine, { sourceIds: [f.id] }))[0]?.holds ?? []).toEqual([]);
     const back = (await page(f.id, 'alpha'))!;
     expect(back.id).toBe(survivor.id);
-    expect(back.deleted_at).not.toBeNull();
-    expect(back.compiled_truth).toContain('version three');
+    expect(back.deleted_at).toBeNull();
+    expect(back.compiled_truth).toContain('Alpha returns.');
+    expect((await page(f.id, 'alpha-twin'))!.deleted_at).not.toBeNull();
     expect(await readManagedSyncFailures(engine, [f.id])).toEqual([]);
   }, 180_000);
 

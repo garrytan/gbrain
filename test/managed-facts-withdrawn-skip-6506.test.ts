@@ -106,6 +106,8 @@ async function managedSource(engine: BrainEngine, seed: { withdraw?: string[]; p
   const page = async () => (await engine.getPage(SLUG, { sourceId }))!.compiled_truth;
   const active = () => engine.executeRaw<{ id: number; fact: string }>('SELECT id,fact FROM facts WHERE source_id=$1 AND expired_at IS NULL ORDER BY id', [sourceId])
     .then(rows => rows.map(row => ({ id: Number(row.id), fact: row.fact })));
+  const activeWithVisibility = () => engine.executeRaw<{ fact: string; visibility: string }>('SELECT fact,visibility FROM facts WHERE source_id=$1 AND expired_at IS NULL ORDER BY id', [sourceId])
+    .then(rows => rows.map(row => `${row.fact}:${row.visibility}`));
   const quiet = () => waitFor(async () => (await engine.executeRaw<{ n: number }>(
     `SELECT COUNT(*)::int AS n FROM persistence_requests WHERE source_id=$1 AND state IN ('queued','running','recovering')`, [sourceId]))[0].n === 0,
   { timeoutMs: 30_000, label: 'fact requests settled' });
@@ -117,12 +119,12 @@ async function managedSource(engine: BrainEngine, seed: { withdraw?: string[]; p
   const flagTypes = () => engine.executeRaw<{ kind: string; flag: string | null; value: string | null }>(
     `SELECT intent->>'kind' AS kind, jsonb_typeof(intent->'withdrawn') AS flag, intent->>'withdrawn' AS value FROM persistence_requests
        WHERE source_id=$1 AND operation='extract_facts' ORDER BY sequence`, [sourceId]);
-  const extract = (facts: string[], requestId: string) => {
+  const extract = (facts: string[], requestId: string, visibility: 'world' | null = 'world') => {
     extracted = facts;
-    return operationsByName.extract_facts.handler(ctx, { turn_text: `A synthetic workshop record. ${WITHDRAWN} ${NOVEL}`, visibility: 'world', request_id: requestId }) as
+    return operationsByName.extract_facts.handler(ctx, { turn_text: `A synthetic workshop record. ${WITHDRAWN} ${NOVEL}`, ...(visibility ? { visibility } : {}), request_id: requestId }) as
       Promise<{ inserted: number; duplicate: number; fact_ids: number[]; withdrawn_skipped?: number }>;
   };
-  return { sourceId, ctx, page, active, journal, flagTypes, extract };
+  return { sourceId, ctx, page, active, activeWithVisibility, journal, flagTypes, extract };
 }
 
 /** A purge tombstone for `fact` about the entity, the row `purge_fact` leaves behind. */
@@ -249,6 +251,50 @@ describe('managed automatic extraction meets a withdrawn claim (#6506)', () => {
       expect(journal[0].error_detail).toMatchObject({ origin: 'withdrawal', withdrawn: { subject: SLUG, visibility: 'world' } });
       expect((journal[0].intent as { facts: unknown[] }).facts).toHaveLength(2);
       expect(calls).toBe(1);
+    });
+  }, 180_000);
+
+  test('a world claim forgotten at private visibility between preparation and locked validation still names the withdrawal', async () => {
+    await onEachEngine('race-private', async engine => {
+      const s = await managedSource(engine);
+      installFaultHook(async (point, detail) => {
+        if (point !== 'consumer:prepared' || detail.operation !== 'extract_facts' || detail.sourceId !== s.sourceId) return;
+        await engine.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash) VALUES($1,'private',$2,gbrain_fact_fingerprint($3)) ON CONFLICT DO NOTHING`,
+          [s.sourceId, SLUG, WITHDRAWN]);
+      });
+      await expect(s.extract([WITHDRAWN, NOVEL], randomUUID())).rejects.toMatchObject({ code: 'revision_conflict' });
+      expect(await s.active()).toEqual([]);
+      const journal = await s.journal();
+      expect(journal[0].error_detail).toMatchObject({ origin: 'withdrawal', withdrawn: { subject: SLUG, visibility: 'private' } });
+    });
+  }, 180_000);
+});
+
+describe('a claim forgotten at world visibility stays forgotten after the default visibility narrows', () => {
+  for (const managed of [true, false]) {
+    test(`${managed ? 'managed' : 'unmanaged'}: a fresh private extraction skips the forgotten claim and publishes the novel one`, async () => {
+      await onEachEngine(managed ? 'narrow-managed' : 'narrow-unmanaged', async engine => {
+        const s = await managedSource(engine, { withdraw: [WITHDRAWN] });
+        if (!managed) {
+          await disposePersistenceConsumer(engine);
+          await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+        }
+        await engine.setConfig('facts.default_visibility', 'private');
+        const result = await s.extract([WITHDRAWN, NOVEL], randomUUID(), null);
+        expect(result).toMatchObject({ inserted: 1, withdrawn_skipped: 1 });
+        expect(await s.activeWithVisibility()).toEqual([`${NOVEL}:private`]);
+      });
+    }, 180_000);
+  }
+
+  test('an explicit remember of the forgotten claim in the user\'s own words still saves it', async () => {
+    await onEachEngine('narrow-remember', async engine => {
+      const s = await managedSource(engine, { withdraw: [WITHDRAWN] });
+      await engine.setConfig('facts.default_visibility', 'private');
+      expect(await s.extract([WITHDRAWN], randomUUID(), null)).toMatchObject({ inserted: 0, withdrawn_skipped: 1 });
+      await operationsByName.remember.handler(s.ctx, { fact: WITHDRAWN, entity: SLUG, visibility: 'private', content_origin: 'user_said',
+        provenance: 'Synthetic regression: the user restated it.' });
+      expect(await s.activeWithVisibility()).toEqual([`${WITHDRAWN}:private`]);
     });
   }, 180_000);
 });

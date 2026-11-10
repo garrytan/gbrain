@@ -18,6 +18,7 @@ import { ACCESS_ID_RE, identityFor, normalizePrincipal } from './principals.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
+import { edgeTrimSql } from '../edge-whitespace.ts';
 import { GUEST, STDIO_MAY_ACT_FOR_KEY, mayActForCovers, singleMemberAudience, type AudiencePrincipal } from './audience.ts';
 import { parseMayActFor } from './members.ts';
 
@@ -50,7 +51,7 @@ async function liveIdentity(engine: Pick<BrainEngine, 'executeRaw'>, memberSql: 
 export async function memberIdentityFor(engine: Pick<BrainEngine, 'executeRaw'>, auth: Pick<AuthInfo, 'member'> & { principal?: { kind: string; id: string } } | undefined): Promise<string[]> {
   if (auth?.member !== undefined) return auth.member ? identityFor(auth.member.id, auth.member.groups) : [];
   const principal = auth?.principal;
-  if (principal?.kind === 'local_stdio') return liveIdentity(engine, 'SELECT btrim(value) FROM config WHERE key = $1', STDIO_MEMBER_KEY);
+  if (principal?.kind === 'local_stdio') return liveIdentity(engine, `SELECT ${edgeTrimSql('value')} FROM config WHERE key = $1`, STDIO_MEMBER_KEY);
   if (!principal || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return [];
   return liveIdentity(engine, principal.kind === 'legacy_token'
     ? 'SELECT member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'

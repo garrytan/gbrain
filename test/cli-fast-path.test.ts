@@ -42,6 +42,18 @@ describe('cliFastPath mirrors main()\'s first branches', () => {
     expect(cliFastPath(['--tools-json'])).toBeNull();
     expect(cliFastPath(['--brain'])).toBeNull();
   });
+
+  test('the skill-resolver hook lane takes its own fast path; other lanes, events and help forms go to the dispatcher', () => {
+    const lane = { GBRAIN_HOOK_LANE: 'skill-resolver' };
+    expect(cliFastPath(['hook', 'user-prompt'], lane)).toBe('skill-resolver-lane');
+    expect(cliFastPath(['hook', 'user-prompt', '--harness', 'codex'], lane)).toBe('skill-resolver-lane');
+    expect(cliFastPath(['hook', 'session-start'], lane)).toBe('skill-resolver-lane');
+    expect(cliFastPath(['hook', 'user-prompt'], {})).toBeNull();
+    expect(cliFastPath(['hook', 'user-prompt'], { GBRAIN_HOOK_LANE: 'turn-rule' })).toBeNull();
+    expect(cliFastPath(['hook', 'stop'], lane)).toBeNull();
+    expect(cliFastPath(['hook', 'user-prompt', '--help'], lane)).toBeNull();
+    expect(cliFastPath(['get', 'some/page'], lane)).toBeNull();
+  });
 });
 
 describe('import graphs', () => {
