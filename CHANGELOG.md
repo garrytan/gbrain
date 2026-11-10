@@ -26,6 +26,7 @@ identifiers and attribution are available in the pre-removal Git revision
 - `gbrain init` prints the Supabase URL format with `?sslmode=require`; `docs/ENGINES.md#tls-for-postgres-connections` documents the modes, `verify-full` with Supabase's CA, and the opt-out; the personal-brain tutorial and the other documented Postgres URLs carry `?sslmode=require`.
 - `scripts/ci-local.sh`, `scripts/run-e2e.sh`: the Docker CI gate reaches its untrusted-by-name service hosts (`postgres-N`, `pgbouncer`) with an explicit `sslmode=disable`, and the derived PgBouncer E2E URL keeps the base URL's query.
 - Tests: `test/pg-tls.test.ts` (loopback, remote, explicit modes, opt-out, a guard that every `postgres()` pool in `src/` goes through `withPgTls`), `test/pg-tls-default-refusal.test.ts` (a fake server without TLS on a non-loopback interface gets the coded error; `sslmode=disable` and a TLS-capable server do not), `test/doctor-postgres-tls.test.ts`, `test/e2e/pg-tls-postgres.test.ts` (real servers: a TLS server through a non-loopback address connects with `pg_stat_ssl.ssl = true` on both pool kinds; an `ssl=off` server refuses, then connects with `sslmode=disable` and doctor warns; `sslmode=prefer` falls back and doctor says so; an opt-in TLS-client pooler with a plaintext upstream reads ok).
+- `bun.lock`: moves `fast-xml-parser` to 5.12.0 and `fast-xml-builder` to 1.3.1 (the minimum 5.12.0 declares) for a Low advisory in the parser's non-default `stopNodes` option, which gbrain's code does not reach; package.json ranges are unchanged.
 
 ## [0.60.652.0] - 2026-11-10
 
