@@ -808,6 +808,7 @@ src/core/persistence/worktree-refresh.ts	process_env	7	W6: settings plane out of
 src/core/persistence/write-wait.ts	load_config	2	W6: settings plane out of the core
 src/core/persistence/write-wait.ts	process_env	3	W6: settings plane out of the core
 src/core/pg-access-classify.ts	process_env	1	W6: settings plane out of the core
+src/core/pg-tls.ts	process_env	1	postgres.js reads PGHOST, PGPORT and PGSSL from the process itself, so the TLS default reads the same values to judge the host it will dial
 src/core/pg-type-cache.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/pg-type-cache.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/pg-type-cache.ts	process_env	1	W6: settings plane out of the core

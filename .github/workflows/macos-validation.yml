@@ -120,16 +120,20 @@ jobs:
     # #6056: tsc ran inside the verify step's pool, cold on every nightly (the
     # tsbuildinfo cache was saved only after a fully green job, so a red
     # nightly never saved it), and was killed at the 240 s per-check cap:
-    # 110-142 s alone on this 3-core arm64 runner, 121-167 s inside verify.
+    # 110-142 s alone on the earlier 3-core arm64 runner, 121-167 s inside verify.
     # Same shape as test.yml's typecheck job: its own job, a step timeout from
     # measurement, and the incremental state saved on every outcome. Step
     # timeout: 3 x the worst measured run is about 15 minutes (282 s from an
     # older commit's state, run 39168836406; a cold run is no faster).
     # Same gate as macos-26 (named exception, docs/TESTING.md#event-parity).
+    # GST-2333: on Intel (4 cores, 14 GB). tsc on this tree peaks near 6.7 GB
+    # resident; the 7 GB arm64 runner swapped, and a check from an older state
+    # took 7 to 15 minutes (915 s hit the step cap, run 42813311634). Intel,
+    # cold: 234 s, 6.68 GB peak, no swap (run 42821135693).
     if: |
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'macos-validation')
-    runs-on: macos-26
+    runs-on: macos-26-intel
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4

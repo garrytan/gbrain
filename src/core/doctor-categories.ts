@@ -439,6 +439,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'grant_new_ops_available',
   'reranker_health',
   'rls',
+  // The session's TLS state on a non-loopback Postgres host (doctor/checks/postgres-tls.ts).
+  'postgres_tls',
   // #7632: every gbrain function that pins a search_path ends it with pg_temp.
   'function_search_path',
   // A Postgres brain whose server_encoding is not UTF8 (doctor/checks/database-encoding.ts).

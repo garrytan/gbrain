@@ -25,6 +25,118 @@ identifiers and attribution are available in the pre-removal Git revision
 - Git 2.40 to 2.44 ignore `GIT_NO_LAZY_FETCH`. There the empty `GIT_ALLOW_PROTOCOL` refuses the fetch instead, so a missing object reads as missing and nothing is fetched, the same outcome as on 2.45 and newer.
 - Tests: `test/sync-partial-clone-2331.test.ts` on PGLite and Postgres, with a marker on the partial clone's object fetches and a check that it never ran: a blobless clone that syncs a second commit after a pull, both blob read paths with and without `GIT_NO_LAZY_FETCH` (also with the file transport allowed in the environment), two treeless clones, the history walk that dates deletions, and folder rules whose committed file or history the clone lacks, which read as nobody until the command the problem names runs and then clear on the next plain sync.
 
+## [0.60.653.0] - 2026-11-10
+
+**Postgres connections to a database that isn't on your machine now use TLS unless the URL opts out.** Before this release gbrain's Postgres driver connected in plaintext whenever the database URL had no `sslmode`, so the password and every page crossed the network unencrypted, even to a hosted database that supports TLS. Now every connection pool requires TLS (`sslmode=require`) for any host other than `localhost`, `127.0.0.0/8`, `::1` or a Unix socket; private addresses and Docker service names count as remote. An sslmode in the URL is always honored, so `?sslmode=disable` keeps a plaintext connection on a network you trust. A server that has no TLS no longer connects silently: it fails with `postgres_tls_required`, which says to turn TLS on at the server or add `sslmode=disable`. `sslmode=require` encrypts but does not verify the server certificate; `sslmode=verify-full`, with the provider's CA in `NODE_EXTRA_CA_CERTS`, verifies it too. A new doctor check, `postgres_tls`, warns when a brain on a remote host is connected without TLS. PGLite has no network connection and is unchanged.
+
+**If you self-host Postgres without TLS on another machine:** after upgrading, gbrain refuses to connect with `postgres_tls_required`. Either enable TLS on the server (`ssl = on` with a certificate), or add `?sslmode=disable` (or `&sslmode=disable`) to your database URL in `~/.gbrain/config.json` or `GBRAIN_DATABASE_URL`/`DATABASE_URL`.
+
+### Itemized changes
+
+- `src/core/pg-tls.ts` (new): `resolvePgTls` / `withPgTls`, the one TLS resolver every `postgres()` call site in `src/` uses (the module pool in `db.ts`, worker instance pools in `postgres-engine.ts`, the read and direct pools in `connection-manager.ts`, the graduation target probe and the schema-lock diagnostic connection). An `ssl` option, `sslmode` / `ssl` / `sslrootcert=system` in the URL, or the driver's `PGSSL` variable is explicit and left alone; a loopback host or socket keeps the driver default; anything else gets `ssl: 'require'`. After a failed default-required connect, `tlsRequiredDefaultError` sends the protocol's SSLRequest to the server and turns a "no" into `postgres_tls_required` (DNS, refused and timeout failures are not probed).
+- `src/core/error-registry.ts`: new code `postgres_tls_required` (host_only, actor user; fix asks the user, reads `gbrain engine status --probe --json`, verifies with `gbrain doctor --only postgres_tls --json`). `docs/guides/error-codes.md` regenerated.
+- `src/core/pg-access-classify.ts`: new reason `tls_required_default` (manual tier in `gbrain db-repair`, which never removes TLS on its own; fatal for persistence reads).
+- `src/commands/doctor/checks/postgres-tls.ts` (new): `postgres_tls` (ops) judges TLS from the client side, from the mode the driver used for the URL the engine connected with. It warns on `sslmode=disable` and on a `sslmode=prefer` connection that fell back or may have fallen back to plaintext (it never certifies prefer as encrypted), and is ok for a TLS client behind a pooler. The session's `pg_stat_ssl` row, which behind a pooler describes the pooler's hop, is detail only. It emits nothing on PGLite.
+- `src/core/behavior-change-notice.ts`: one row (`postgres_tls_default`) disclosing the new default and the opt-out.
+- `gbrain init` prints the Supabase URL format with `?sslmode=require`; `docs/ENGINES.md#tls-for-postgres-connections` documents the modes, `verify-full` with Supabase's CA, and the opt-out; the personal-brain tutorial and the other documented Postgres URLs carry `?sslmode=require`.
+- `scripts/ci-local.sh`, `scripts/run-e2e.sh`: the Docker CI gate reaches its untrusted-by-name service hosts (`postgres-N`, `pgbouncer`) with an explicit `sslmode=disable`, and the derived PgBouncer E2E URL keeps the base URL's query.
+- Tests: `test/pg-tls.test.ts` (loopback, remote, explicit modes, opt-out, a guard that every `postgres()` pool in `src/` goes through `withPgTls`), `test/pg-tls-default-refusal.test.ts` (a fake server without TLS on a non-loopback interface gets the coded error; `sslmode=disable` and a TLS-capable server do not), `test/doctor-postgres-tls.test.ts`, `test/e2e/pg-tls-postgres.test.ts` (real servers: a TLS server through a non-loopback address connects with `pg_stat_ssl.ssl = true` on both pool kinds; an `ssl=off` server refuses, then connects with `sslmode=disable` and doctor warns; `sslmode=prefer` falls back and doctor says so; an opt-in TLS-client pooler with a plaintext upstream reads ok).
+- `bun.lock`: moves `fast-xml-parser` to 5.12.0 and `fast-xml-builder` to 1.3.1 (the minimum 5.12.0 declares) for a Low advisory in the parser's non-default `stopNodes` option, which gbrain's code does not reach; package.json ranges are unchanged.
+
+## [0.60.652.0] - 2026-11-10
+
+**The private-labels preview finishes on large sources.** On a source with a few hundred thousand pages, `gbrain repair private-labels` ran past its 120-second statement bound while counting the pages a window of clears would expose, so the preview failed, and so did every `--apply --expect`, which repeats the check. The count used to pair every page with every cleared page. It now reads each page's references once and joins them to the cleared pages, so it returns the same pages and the same exposure map well inside the bound, which is unchanged. On a synthetic brain (`scripts/bench/private-labels-dependents.ts`: 300,000 pages in the window's source, 100,000 in another, 8 links per page) with a 1,000-page window, master hit the 120-second bound and this release took 0.33 to 1.06 seconds across the four shapes.
+
+### Itemized changes
+
+- The dependents statement in `src/core/repair/private-labels.ts` lists each page's `source_slug`, `event.depth` and `derived_from` slugs (with `.md` removed) in one pass, matches them to the cleared pages with equality joins, and applies the post-clear privacy rules only to the candidate pages. It runs with JIT off and is planned for its real parameters. No migration and no new index.
+- New equivalence tests on PGLite and Postgres run the old statement, kept verbatim in a test helper, next to the new one and require identical rows: a fixture with every kind of tie, each cleared page alone, a generated source and privacy aliases turned off.
+- A Postgres scale test requires a 50,000-page source with a 1,000-page window to finish inside 20 seconds. The old statement fails it.
+- `scripts/bench/private-labels-dependents.ts` builds the synthetic brain and times the preview, with `--lineage` for common `derived_from` chains and `--class alias-and-visibility`.
+
+## [0.60.651.0] - 2026-11-10
+
+**CI wastes fewer reruns: the macOS type check stops running out of memory, and a worktree test stops stalling for two minutes.** The macOS type check now runs on GitHub's 14 GB Intel runner. On the 7 GB arm64 runner, a check that couldn't reuse a recent saved state ran short of memory, took 7 to 15 minutes and sometimes hit its 15-minute limit. On Intel a check with no saved state takes about 4 minutes. The stale-plan worktree test no longer waits out a 2-minute lease on PGLite: its wait for commits now lets timers run, so the background writer finishes its pass.
+
+### Itemized changes
+
+- The `typecheck` job in `macos-validation.yml` runs on `macos-26-intel`. It still fails on a real type error: a forced probe failed with `TS2322` and exit code 2.
+- `test/persistence-stale-plan-retry.test.ts` pauses for timers after every pass of its commit wait, and a new probe pins that a timer-parked pass resumes during the wait. No assertion changed. The stall was test timing, and every page was committed.
+- actionlint moves from v1.7.11 to v1.7.12, which knows the `macos-26-intel` runner label.
+- The advisory harness check runs against harness-evals 7e8d872edb (v0.0.136). A hand run at that pin against this branch passed with 0 cross-scope pages, 36 assertions passed and 0 failed.
+- The shard weight maps for unit, serial and E2E tests are refreshed from the latest nightly runs.
+
+## [0.60.650.0] - 2026-11-10
+
+**Private-labels windows publish together and finish past declined pages.** `gbrain repair private-labels --apply --expect <hash>` on a brain with managed persistence now admits a window's pages together and publishes them in groups, instead of one page and one wait at a time. On a 1,000-page window with Git commits and a second queue consumer (`scripts/bench/private-labels-apply.ts`), it went from 181.4 to 1365.3 pages a minute with no added database latency, and from 19.9 to 37.1 pages a minute with 20 ms added to each database round trip. Git commits for the window dropped from 990 to 22. The preview no longer claims a re-embed for every page: only pages stored under per-chunk synopsis, or with a chunk that has no vector yet, count.
+
+### Itemized changes
+
+A page whose own state declines the write (its file changed outside gbrain, `source_changed`, or its body is stored in segments) fails alone and the rest of its group lands. A preview-bound apply of any repair kind that completes with only such declines now exits 0 and counts them under `declined`. The next private-labels preview lists pages an earlier apply tried and that did not change after every page not tried yet, and such a page declining again no longer counts toward the `item_failures_systemic` stop, so windows that carry declines forward keep finishing; pages not tried yet that all fail the same way still stop the run. A page that declined under a release before 0.60.649.0 has no ledger line, because those releases recorded only writes that landed, so the first apply after upgrading stops once with `item_failures_systemic` when five or more such pages head its window; that run leaves intent lines for its batch, so the next preview lists them last. The apply result names its ledger (`details.ledger`, `details.ledger_rows_written`).
+
+A preview-bound repair apply now waits out a `gbrain sources refresh` for up to 10 minutes per step instead of 10 seconds. A refresh that runs longer ends the apply with `worktree_refreshing`, naming the refresh and how long it has run; rerunning the same apply resumes it (GBRA-443).
+
+## [0.60.649.0] - 2026-11-10
+
+**Access and privacy fixes.** A member-bound credential now sees its own readable pages on every read surface, the brain owner's remote credentials get private facts on every fact surface, `gbrain sources federate` names the member-written pages it makes readable to everyone, and seven community-reported bugs in access, privacy, purge, repair and secret scanning are fixed.
+
+### Community-reported access, privacy, purge, repair and secret-scan fixes
+
+**Seven community-reported bugs in access, privacy, purge, repair and secret scanning are fixed.** A member-bound caller now gets its own readable pages in core memory, entity lookups, reflex pointers and pull briefs, the same pages `get_page` returns. `gbrain access who-can-read` names the members a folder rule admits instead of saying everyone. Purging a page removes its name from the retrieval feedback tables and captured eval candidates. S3 and MinIO file URLs are signed for one hour, so a private bucket's file opens from another machine. The secret scanner now also catches a key right after a written `\e[` terminal colour code. `gbrain repair visibility` now stamps a synthesized concept that has no visibility and no inputs, so the doctor warning about it can clear.
+
+| What you did | Before | Now |
+|---|---|---|
+| A member-bound credential reads core memory or resolves its own `readable_by` page | the page was hidden | the page is there, as in `get_page` |
+| `gbrain access who-can-read team-b/profile` under a folder rule | "every caller entitled to the source" | the members the rule admits |
+| `delete_page purge:true`, or the expired-tombstone purge | the slug stayed in `retrieval_*` and `eval_candidates` | removed, and the receipt checks each store |
+| `gbrain files signed-url` with S3 or MinIO storage | an unsigned URL, 403 on a private bucket | a presigned GET that expires in an hour |
+| `gbrain repair visibility` on a concept with no visibility and no inputs | planned nothing, and doctor kept warning | stamped `private`, and the warning clears |
+| A browser MCP client sends `X-Gbrain-Client` from an allowlisted origin | the preflight blocked the call | allowed on both HTTP transports |
+| Transcript text with a key right after a written `\e[32m` colour code | the key was kept | redacted |
+
+After upgrading, `gbrain doctor` asks for a fresh `gbrain transcripts audit-secrets` run (read-only) if your brain has imported transcripts, because the detectors changed.
+
+#### Itemized changes
+
+- `src/core/core-memory.ts`, `src/core/entities/resolve.ts`, `src/core/context/retrieval-reflex.ts`, `src/core/context/proactive-brief.ts`: these reads filter with `privatePagesFilterForCaller` (and `privateTimelineEventFilterForCaller` for brief edits), the caller's member access plus the privacy rule with its grant and opt-out. Entity resolution and core memory take it only when asked (`forCaller`: the remote `remember` path, `get_brain_context` and the remote core budget message), so fence repair, subject inference and local core readers (`compile-context --include-core`, `gbrain core`, the session hook) keep the plain privacy fragment. Retrieval pointers and brief arms take the same `forCaller` option, which only the remote `context_pack` pull brief sets, so the per-turn hook, the OpenClaw context engine and `gbrain watch` keep the plain fragment even with the remote read hatch open. Reported by @javieraldape (#8442).
+- `src/commands/access.ts`: `whoCanRead` asks the read path's own predicate (`accessAllowedSql` with each member's satisfied folder rules) per enabled member, and the note names folder rules. Reported by @Masashi-Ono0611 (#8743).
+- `src/core/feedback/store.ts`: `scrubPurgedSlugs` deletes the source's `retrieval_event_pages`, `retrieval_event_links`, `retrieval_feedback` and `retrieval_weights` rows naming the slug (a page key or either end of a `from|type|to` edge key) and drops it from `eval_candidates.retrieved_slugs` where the results came from that source. Called in the purge transaction by `purgePageInTransaction`, the belief-ledger tombstone expiry and the bulk `purgeDeletedPages`. A federated capture keeps a slug that another of its sources still has a page for. The feedback writers insert rows only for pages that still exist, checked under a key-share lock on the page row, and the page purge scrubs after it deletes the page, so a write that races the purge on Postgres cannot bring the slug back. `src/core/deletion-inventory.ts` moves the four tables to `swept`; `verifyPagePurge` reports each store. A restore that replays a page purge (`restorePgliteBackup`, `beliefs replay-purges`) runs the same scrub on the restored brain (`src/core/belief/purge-mirror.ts`). Reported by @Masashi-Ono0611 (#8822) and @alanshurafa (#8823).
+- `src/core/storage/s3.ts`: `getUrl` returns a SigV4 presigned GET with a 3600 s expiry. New dependency `@aws-sdk/s3-request-presigner` 3.1028.0 (the `client-s3` release), with `@aws-sdk/util-format-url` pinned to 3.972.9 from the same release. Reported by @liuwenyong1985 (#8793).
+- `src/core/repair/visibility.ts`: `planLineage` stamps `private` on a concept with no recoverable lineage and no visibility; an explicit value stays, and both still count in `concepts_without_lineage`. Reported by @Masashi-Ono0611 (#8856).
+- `src/mcp/http-transport.ts`, `src/commands/serve-http-oauth.ts`: `X-Gbrain-Client` joins the CORS allowed headers. Reported by @dajiaohuang (#8691).
+- `src/core/secret-scan.ts`: the escape boundary also accepts a written `\e[…m` colour code, next to the forms #8266 added. `TRANSCRIPT_SECRET_AUDIT_VERSION` is 4. Reported by @javieraldape (#8764).
+- Tests: `test/caller-aux-page-reads.test.ts`, `test/access-who-can-read-folder-rules.test.ts`, `test/purge-retrieval-feedback-8821.test.ts`, `test/storage-s3-signed-url.test.ts`, `test/mcp-cors-client-header.test.ts`, a `\e[32m` case in `test/secret-scan-encoded-boundary-8266.test.ts`, a new case in `test/derived-visibility-repair.test.ts`; `test/storage-s3.test.ts` checks the same URL bases on a presigned URL.
+
+### The brain owner's private facts, and a crash-safe private-labels repair
+
+The brain owner's remote credentials (`gbrain access owner set <member>`) now get private facts beyond list-style `recall`: in the `query` facts arm, `think` trajectories, hot memory (`_meta.brain_hot_memory`), `delta` and `context_pack` hot facts. Facts taken from a page the owner cannot read (`readable_by`, folder rules) and facts in sources its grant does not read stay hidden, and the owner speaking for a shared-room audience gets world-only facts. Other members, unbound and public callers are unchanged, and the hot-memory cache keeps the owner's entries apart from every other caller's.
+
+The owner's `recall` with a `question` now returns its private facts, as `recall` by entity or session already did. Before, ranking a question dropped them.
+
+`gbrain repair private-labels` now writes its undo ledger ahead of each page. Every cleared or restored page gets an `intent` line before the page write and a `committed` line after it, so a run that stops between the two can still be undone with `--class restore`. When the ledger can't take the intent line, the apply refuses with `storage_error` and changes nothing (GST-2092).
+
+`--class restore` treats ledger lines as untrusted input. It re-adds only `access` (a string) and `visibility: private`. A line with any other key, a non-string value or a page id that isn't an integer is counted as unreadable instead of failing the preview (GST-2092, GST-2128).
+
+The private-labels preview now counts the pages each window would expose along with its own: `derived_from` pages, atoms whose origin is a listed page, synthesized concepts built from such atoms, and life-chronicle events extracted from a listed page or from a page whose only privacy is a `derived_from` naming one, each judged by the rules remote reads use. It reports them by category (`details.dependents`, no slugs) and warns when the count isn't zero. The preview hash covers the pages it counted, so an apply that would expose a page added since the preview refuses `preview_changed` (GST-2093). A ledger line a crash cut off no longer swallows the next one.
+
+On a brain without managed persistence, a page whose file sits in its source's checkout is no longer cleared in the database only, because the next sync or re-import would put the label back from the file. The apply holds it with outcome `file_backed` and names the file to edit. Repo-less pages clear as before (GST-2128).
+
+An apply that ends with a failure, a stop or a pending write keeps its approved preview, so rerunning the same `--apply --expect <hash>` resumes it instead of asking for a new preview (GST-2128).
+
+Restore no longer lists a page whose label was removed by hand after a restore landed. The preview counts it as `removed_after_restore` and says so (GST-2128).
+
+### Federating a source names the member pages it exposes
+
+**`gbrain sources federate` now names the pages it makes readable to everyone that a member's credential wrote.** A token or OAuth client bound to a member and granted its own source (the documented `--sources private-<member>,default` shape) writes there without `readable_by`, which is right while that source is not federated: only credentials granted it read it. Federating the source adds it to what every connection with no source grant reads, so each such page became readable by every unbound token and agent connection, and nothing said so. `sources federate <id>` still federates exactly as before, with the same exit code, and then prints on stderr how many pages in the source a remote token or OAuth client wrote that name no readers and no folder rule, up to five slugs with the member each credential is bound to now, `gbrain access who-can-read <slug> --source <id>` to check one, and `gbrain access rule add --prefix <folder/> --readers <member> --source <id>` (which previews before `--yes`) to keep a folder to its member; every command is shell-quoted. No record keeps which member a credential was bound to when it wrote, so pages from a credential unbound, rebound or deleted since then are listed too. A page whose remote author was followed only by a tag change (which moves the revision attribution without a version snapshot) is not listed. `sources federate --json` prints one object (`id`, `federated`, and `pages_exposed` when there are such pages) and moves the human lines to stderr. `sources restore`, which re-federates by default, prints the same list, and a managed restore returns it as `pages_exposed`. The pages are read from the database's write attribution after the change commits, so a repo-less brain reports them the same way. Writes made through an attested actor (`x-qm-actor`) carry the attesting system's credential and are listed under it.
+
+#### Itemized changes
+
+- `src/core/access/federation-exposure.ts`: `remotePagesFederationExposes` reads the live pages of a source with no readers and no folder rule whose live revision or any earlier version a token or OAuth client wrote; `remotePagesFederationExposesOrWarn` runs it only for a change that federated the source and reports a failed read as a warning without changing the federation.
+- `src/commands/sources.ts`: `sources federate` (and `--json`) and the unmanaged `sources restore` print the list on stderr after the change commits.
+- `src/core/persistence/administration.ts`: a managed `source_lifecycle` restore that re-federates adds `pages_exposed` to its result.
+- Docs: `docs/guides/multi-source-brains.md`.
+- Tests: `test/sources-federate-member-pages.test.ts` (repo-less PGLite: a member-bound token's remote `put_page` into an unfederated source, then `sources federate` names that page and its member and not a page with readers or an operator page, and an unbound token then reads it; `--json`; a credential unbound or deleted since it wrote and a slug holding `$(...)`, quoted in the commands; unmanaged `restore` and `--no-federate`; the managed restore result). It fails on master with an empty stderr.
+
 ## [0.60.648.0] - 2026-11-10
 
 **A managed sync no longer imports a file that Git stores through a filter, such as a git-crypt encrypted note, as if its stored bytes were the page.** The file alone is held `content_filter_owned` with a message that says gbrain does not run a repository's filter programs during sync (and names git-crypt when the file starts with its header), and the rest of the source imports and moves on. Reported by @JustinTSmith (#9024) and first fixed by @Masashi-Ono0611 (#9026).

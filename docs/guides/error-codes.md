@@ -3612,6 +3612,14 @@ More: [docs/ENGINES.md#serve-deep-health](../../docs/ENGINES.md#serve-deep-healt
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### postgres_tls_required
+
+<a id="postgres_tls_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| TLS was required by default for a non-local Postgres host, and the server does not accept TLS connections, so gbrain did not connect. | gbrain connects with sslmode=require to any Postgres host that is not on this machine (localhost, 127.0.0.0/8, ::1 or a Unix socket) unless the database URL names an sslmode, so the password and page contents never cross a network in plaintext without an explicit choice. Brains whose URL had no sslmode connected in plaintext before this default. | Turn TLS on at the database server and keep the default (sslmode=require encrypts; sslmode=verify-full with the server CA also verifies the certificate). To keep connecting without TLS on a network you trust, add sslmode=disable to the database URL. Run: gbrain engine status --probe --json | user | `gbrain doctor --only postgres_tls --json` | 1 | no |
+
 ### preparation_stalled
 
 <a id="preparation_stalled"></a>
