@@ -6,9 +6,10 @@
  *    context_volunteer_events rows for the slug (slug plus a rationale that quotes the matched name) and its
  *    mention_gazetteer_entries rows (the page's normalized title and aliases keyed to the slug), in the purge
  *    transaction; the delete_page result counts both, and its receipt reports the gazetteer as deleted (the
- *    volunteer log stays a probed store in the receipt, as on master).
- * 2. Fails when: a purged slug or the name it was matched by stays readable in either table, or the scrub reaches
- *    another source's rows or another page's rows.
+ *    volunteer log stays a probed store in the receipt, as on master). A fact purge sweeps neither table: when the
+ *    claim is also a live page's name, its receipt reports the gazetteer entry as out-of-scope prose, like the title.
+ * 2. Fails when: a purged slug or the name it was matched by stays readable in either table, the scrub reaches
+ *    another source's rows or another page's rows, or a fact purge is reported incomplete over a live page's name.
  * 3. Existing coverage: page-purge pins the page-keyed stores and the retrieval logs; nothing pinned these two.
  * 4. Real seams: PGLite, insertVolunteerEvents, runMentionPass, enableBeliefLedger, the delete_page op and
  *    purgeDeletedPagesCoordinated; repo-less brain, local blob storage, no provider calls.
@@ -28,6 +29,8 @@ import { purgeDeletedPagesCoordinated } from '../src/core/persistence/purge-dele
 import { insertVolunteerEvents } from '../src/core/context/volunteer-events.ts';
 import { runMentionPass } from '../src/core/mentions/pass.ts';
 import { enableBeliefLedger } from '../src/core/belief/coverage.ts';
+import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
+import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
@@ -109,4 +112,30 @@ describe('a page purge removes the slug and its name from the volunteer log and 
     expect(await residue()).toEqual(ONLY_SOURCE_B);
     await otherPageUntouched();
   }, 60_000);
+
+  test('a fact purge reports a live page name that carries the claim as out of scope, not as an incomplete sweep', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const claim = 'Carol Placeholder leads platform';
+    const named = `SELECT 1 FROM mention_gazetteer_entries WHERE source_id = 'default' AND strpos(name_norm, lower($1)) > 0`;
+    const fence = `<!--- gbrain:facts:begin -->
+| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |
+|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|
+| 1 | ${claim} | fact | 1.0 | world | medium | 2026-01-01 |  | chat |  |
+<!--- gbrain:facts:end -->`;
+    await registerLocalWriter(engine, 'cli');
+    await importFromContent(engine, 'people/carol-placeholder', `---\ntitle: ${claim}\ntype: person\n---\n# Carol\n\nBody text.\n`, { noEmbed: true, sourceId: 'default' });
+    await importFromContent(engine, 'people/dan-sample', `---\ntitle: Dan Sample\ntype: person\n---\n# Dan Sample\n\n## Facts\n\n${fence}\n`, { noEmbed: true, sourceId: 'default' });
+    await runExtractFacts(engine, { slugs: ['people/dan-sample'] });
+    expect((await runMentionPass(engine)).state).toBe('complete');
+    expect(await engine.executeRaw(named, [claim])).toHaveLength(1);
+    const [fact] = await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source_id = 'default' AND fact = $1`, [claim]);
+    const purge = (params: Record<string, unknown>) => operations.find(o => o.name === 'purge_fact')!.handler(context(), params) as Promise<Record<string, any>>;
+    const dry = await purge({ id: Number(fact!.id), dry_run: true });
+    const done = await purge({ id: Number(fact!.id), confirm: dry.confirm_token, expected_revision: dry.expected_revision, request_id: randomUUID() });
+    const stores = done.stores as Array<{ store: string; status: string }>;
+    expect(stores.find(s => s.store === 'facts')).toMatchObject({ status: 'deleted', removed: 1 });
+    expect(stores.find(s => s.store === 'mention_gazetteer_entries')).toMatchObject({ status: 'out_of_scope', reason: 'source_prose', remaining: 1 });
+    expect(stores.filter(s => s.status === 'incomplete')).toEqual([]);
+    expect(done.completion).not.toBe('incomplete');
+    expect(await engine.executeRaw(named, [claim])).toHaveLength(1);
+  }), 60_000);
 });

@@ -541,6 +541,9 @@ export async function verifyFactPurge(engine: BrainEngine, input: { target: Purg
     stores.push(...await ledgerReports(engine, src, [claim], input.ledger, deadline));
     stores.push(await effectPayloadReport(engine, src, [...new Set([claim, canonicalChangeReason(claim) ?? claim])], deadline, removed.persistence_effects ?? 0));
   }
+  // Only a page purge sweeps the gazetteer; an entry carrying the claim here is a live page's title or alias.
+  await swept('mention_gazetteer_entries', 'SELECT 1 FROM mention_gazetteer_entries WHERE source_id=$1 AND (strpos(name_norm,$2)>0 OR strpos(target_slug,$2)>0)', [src, needle], 0, undefined,
+    { ...prose, detail: 'A live page\'s title or alias carries the claim text, so the saved mention gazetteer names it; rename or purge that page to remove it.' });
   stores.push(...await sweptInventoryReports(engine, new Set(stores.map(s => s.store)), src, [claim], removed, deadline, dryRun));
   for (const entry of DELETION_INVENTORY) {
     if (entry.class !== 'out_of_scope' || entry.reason !== 'probed_reported') continue;
