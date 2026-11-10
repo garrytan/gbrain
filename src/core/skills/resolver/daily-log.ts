@@ -23,8 +23,11 @@ export const dailyLogFile = (log: DailyLog, ms: number) => `${log.prefix}-${day(
 /** The log's files in `names` that fall out of the window on day `ms`, plus the undated legacy file. */
 function expired(log: DailyLog, names: string[], ms: number): string[] {
   const oldest = day(ms - (DAILY_LOG_KEEP_DAYS - 1) * 86_400_000);
-  const re = new RegExp(`^${log.prefix}-(\\d{4}-\\d{2}-\\d{2})${log.ext.replace('.', '\\.')}$`);
-  return names.filter(n => n === `${log.prefix}${log.ext}` || (re.exec(n)?.[1] ?? '9999') < oldest);
+  const dayOf = (n: string) => {
+    const mid = n.startsWith(`${log.prefix}-`) && n.endsWith(log.ext) ? n.slice(log.prefix.length + 1, -log.ext.length) : null;
+    return mid !== null && /^\d{4}-\d{2}-\d{2}$/.test(mid) ? mid : '9999';
+  };
+  return names.filter(n => n === `${log.prefix}${log.ext}` || dayOf(n) < oldest);
 }
 
 export async function appendDailyLog(dir: string, log: DailyLog, line: string, now = Date.now()): Promise<void> {
