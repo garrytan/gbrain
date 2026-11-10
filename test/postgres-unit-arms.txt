@@ -482,6 +482,7 @@ test/recorded-read-gate.test.ts
 test/refresh-barrier-gst1623.test.ts
 test/refresh-barrier-held-after-abort.test.ts
 test/refresh-barrier-purge-gst1602.test.ts
+test/refresh-fence-retry-id-gst2353.test.ts
 test/refresh-own-commits-replan-8828.test.ts
 test/refresh-retry-hint-gst1582.test.ts
 test/refresh-write-barrier.test.ts

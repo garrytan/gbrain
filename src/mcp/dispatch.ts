@@ -1372,6 +1372,10 @@ async function dispatchResolvedCall(
     // never tells a mutating op with an unknown outcome to retry.
     notices.push(...await sessionSafetyNotices(engine, opts, ctx.config));
     notices.push(...await grantBlockedNotices(engine, opts, refusedByGrant(e)));
+    // GST-2353: a refusal safe to retry under its request id carries the call to repeat, that id included (next: wait).
+    if (op.mutating && e instanceof OperationError && e.retryable === true && e.requestId && e.fix && !e.fix.mcp) {
+      e.fix = { ...e.fix, mcp: { tool: name, arguments: { ...safeParams, request_id: e.requestId } } };
+    }
     return deferredWriteResult(e, notices, opts) ?? errorResult(e, opts, { op: name, mutating: op.mutating === true, idempotent: op.idempotent === true, notices: admitNotices(notices, opts) });
   }
 }
