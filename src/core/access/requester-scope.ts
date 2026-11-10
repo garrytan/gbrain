@@ -5,7 +5,8 @@
  * person (exempt in dispatch); the brain operator may also let one credential read unscoped on purpose
  * (reads_unscoped). Every other remote read is refused with requester_scope_required before any work.
  *
- * Deny by default: every operation not marked mutating: true is covered except the short list below, which reads no
+ * Deny by default: every operation not marked mutating: true, and every read-scope one (think), is covered except the
+ * short list below, which reads no
  * page (the caller's own identity and the brain's health) or, for a token fenced to its own jobs, only its own jobs.
  * test/requester-scope.test.ts fails when a new read operation is neither refused nor listed here.
  *
@@ -28,15 +29,19 @@ import { createAuditWriter } from '../audit/audit-writer.ts';
 import { credentialScopeFields } from './token-binding.ts';
 import { stdioBindRoute, type EngineKind } from './stdio-bind-route.ts';
 
-/** Read operations that read no page: the caller's own identity, the brain's identity and health, search mode names. */
-export const REQUESTER_SCOPE_EXEMPT: ReadonlySet<string> = new Set(['whoami', 'get_brain_identity', 'get_status_snapshot', 'search_modes', 'get_health']);
+/**
+ * Read operations that read no page: the caller's own identity, the brain's identity and health, search mode names,
+ * and the read-scope operations that only manage the caller's own shared-skills enrollment and tool catalog.
+ */
+export const REQUESTER_SCOPE_EXEMPT: ReadonlySet<string> = new Set(['whoami', 'get_brain_identity', 'get_status_snapshot', 'search_modes', 'get_health',
+  'join_brain', 'leave_brain', 'sync_brain_skills', 'request_tools']);
 /** Exempt only for a credential without admin scope, which sees only the jobs it owns (ops/jobs.ts agentOwnerFence). */
 export const OWN_JOB_OPS: ReadonlySet<string> = new Set(['get_job', 'wait_job']);
 export const REQUESTER_SCOPE_GRACE_DAYS = 14;
 const GRACE_SECONDS = REQUESTER_SCOPE_GRACE_DAYS * 24 * 3600;
 /** Whether `op` needs a scoped requester on a brain that serves several people. */
-export function requiresRequesterScope(op: Pick<Operation, 'name' | 'mutating'> | undefined, auth?: Pick<AuthInfo, 'scopes'>): boolean {
-  if (!op || op.mutating === true || REQUESTER_SCOPE_EXEMPT.has(op.name)) return false;
+export function requiresRequesterScope(op: Pick<Operation, 'name' | 'mutating' | 'scope'> | undefined, auth?: Pick<AuthInfo, 'scopes'>): boolean {
+  if (!op || (op.mutating === true && (op.scope ?? 'read') !== 'read') || REQUESTER_SCOPE_EXEMPT.has(op.name)) return false;
   return !(OWN_JOB_OPS.has(op.name) && auth && !hasScope(auth.scopes ?? [], 'admin'));
 }
 

@@ -60,7 +60,7 @@ afterAll(() => { for (const r of roots) rmSync(r, { recursive: true, force: true
  * Every read operation's requester-scope class, reviewed by hand: a new read op fails this list until someone decides
  * whether an unbound connection on a several-people brain may call it (add it to REQUESTER_SCOPE_EXEMPT) or not.
  */
-const REVIEWED_EXEMPT = ['get_brain_identity', 'get_health', 'get_status_snapshot', 'search_modes', 'whoami'];
+const REVIEWED_EXEMPT = ['get_brain_identity', 'get_health', 'get_status_snapshot', 'join_brain', 'leave_brain', 'request_tools', 'search_modes', 'sync_brain_skills', 'whoami'];
 
 type Call = { isError: boolean; text: string; json: Record<string, any>; meta: Record<string, any> | undefined; structured: Record<string, any> | undefined };
 function shape(out: ToolResult): Call {
@@ -76,10 +76,13 @@ describe('requiresRequesterScope: every read op is classified (deny by default)'
     expect([...REQUESTER_SCOPE_EXEMPT].sort()).toEqual(REVIEWED_EXEMPT);
     expect([...OWN_JOB_OPS].sort()).toEqual(['get_job', 'wait_job']);
     for (const op of operations) {
-      const expected = op.mutating === false && !REVIEWED_EXEMPT.includes(op.name);
+      const expected = (op.mutating === false || (op.scope ?? 'read') === 'read') && !REVIEWED_EXEMPT.includes(op.name);
       expect({ op: op.name, gated: requiresRequesterScope(op, { scopes: ['read', 'write', 'admin'] }) }).toEqual({ op: op.name, gated: expected });
     }
     expect(requiresRequesterScope({ name: 'brand_new_read', mutating: undefined })).toBe(true);
+    expect(requiresRequesterScope(operations.find(op => op.name === 'think'))).toBe(true);
+    expect(requiresRequesterScope({ name: 'brand_new_read_scope_write', mutating: true, scope: 'read' })).toBe(true);
+    expect(requiresRequesterScope({ name: 'brand_new_mutating_no_scope', mutating: true })).toBe(true);
     expect(requiresRequesterScope({ name: 'get_job', mutating: false }, { scopes: ['read'] })).toBe(false);
     expect(requiresRequesterScope({ name: 'get_job', mutating: false }, { scopes: ['admin'] })).toBe(true);
     expect(requiresRequesterScope({ name: 'get_job', mutating: false })).toBe(true);
@@ -220,7 +223,7 @@ for (const kind of testBackends()) {
       for (const op of operations) op.handler = (async () => { ran.push(op.name); return {}; }) as typeof op.handler;
       const answered: string[] = [];
       try {
-        for (const op of operations.filter(o => o.mutating === false && !o.localOnly)) {
+        for (const op of operations.filter(o => (o.mutating === false || o.scope === 'read') && !o.localOnly)) {
           const out = shape(await dispatchToolCall(engine, op.name, {}, { remote: true, transport: 'http', auth, sourceId: 'default', takesHoldersAllowList: ['world'] }));
           if (requiresRequesterScope(op, auth)) {
             expect({ op: op.name, code: out.structured?.error?.code }).toEqual({ op: op.name, code: 'requester_scope_required' });
@@ -231,6 +234,7 @@ for (const kind of testBackends()) {
       }
       expect(ran.filter(n => !answered.includes(n))).toEqual([]);
       expect(answered.sort()).toEqual([...REVIEWED_EXEMPT, ...OWN_JOB_OPS].sort());
+      expect(ran).not.toContain('think');
     }, 120_000);
 
     test('the opt-out: --reads-unscoped lets one key read with no notice, and removing it refuses again', async () => {
