@@ -125,9 +125,10 @@ export async function seedDependentsFixture(engine: BrainEngine): Promise<Depend
   return { name, params: [cleared.map(row => Number(row.id)), cleared.map(row => row.source_id), cleared.map(row => row.slug), cleared.map(row => keys(typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter))] };
 }
 
-/** Rows as [dependent, cleared, category] by source:slug, sorted. */
+/** Rows as [dependent, cleared, category], each page by its source:slug in `name` or else its id, sorted. */
 export function named(rows: DependentRow[], name: Map<number, string>): string[][] {
-  return rows.map(row => [name.get(Number(row.id))!, name.get(Number(row.cleared_id))!, row.category]).sort((a, b) => (a.join('|') < b.join('|') ? -1 : 1));
+  const label = (id: number) => name.get(Number(id)) ?? String(Number(id));
+  return rows.map(row => [label(row.id), label(row.cleared_id), row.category]).sort((a, b) => (a.join('|') < b.join('|') ? -1 : 1));
 }
 
 /**
