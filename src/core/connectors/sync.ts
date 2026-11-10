@@ -32,6 +32,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import type { OperationContext } from '../ops/contract.ts';
 import { runTranscriptsIngest } from '../transcripts/ingest.ts';
 import type { TranscriptsIngestResult } from '../transcripts/ingest.ts';
 import { submitEmbedBackfill } from '../embed-backfill-submit.ts';
@@ -190,6 +191,8 @@ export interface ConnectorSyncOpts {
   /** Epoch ms after which the run starts no request (#7515). */
   deadlineAt?: number;
   signal?: AbortSignal;
+  /** Trusted-local write context; a managed brain refuses the ingest without one. */
+  context?: OperationContext;
   onProgress?: (p: { phase: 'list' | 'fetch' | 'ingest'; listed: number; fetched: number; imported: number }) => void;
   deps?: ConnectorSyncDeps;
 }
@@ -419,6 +422,7 @@ export async function runConnectorSync(
           sourceId,
           format: spoolFormat,
           embed: opts.embed ?? false,
+          context: opts.context,
         });
         importedTotal += r.pages.imported;
         skippedTotal += r.pages.skipped;

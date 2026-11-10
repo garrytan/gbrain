@@ -15,6 +15,7 @@ import type { BrainEngine } from '../../core/engine.ts';
 import { setCliExitVerdict } from '../../core/cli-force-exit.ts';
 import { createProgress } from '../../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../../core/cli-options.ts';
+import type { CliDispatchContext } from '../../cli/command-table.ts';
 import { runConnectorSync } from '../../core/connectors/sync.ts';
 import type { ConnectorSyncResult } from '../../core/connectors/sync.ts';
 import { connectorProviderNames, isConnectorProviderName } from '../../core/connectors/registry.ts';
@@ -84,7 +85,7 @@ function syncUsageError(message: string, fix: { argv: string[]; inputs: Array<{ 
   });
 }
 
-export async function runConnectorSyncCmd(engine: BrainEngine, args: string[]): Promise<void> {
+export async function runConnectorSyncCmd(engine: BrainEngine, args: string[], dispatch: Pick<CliDispatchContext, 'makeContext'> = {}): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`Usage: ${SYNC_USAGE}`);
     return;
@@ -137,7 +138,9 @@ export async function runConnectorSyncCmd(engine: BrainEngine, args: string[]): 
     const reporter = createProgress(cliOptsToProgressOptions(getCliOptions()));
     reporter.start(`connector.sync.${p}`);
     try {
+      const context = flags.dryRun ? undefined : await dispatch.makeContext?.(engine, { source: sourceId });
       const r = await runConnectorSync(engine, {
+        context,
         provider: p,
         sourceId,
         full: flags.full,
