@@ -1,5 +1,5 @@
 {
-  "RESOLVER.md": "587768c702e0badf5e7d6201cd5902b7313b218e5663ab527e3a8365f5c438ee",
+  "RESOLVER.md": "6dabebd93961bc8e970ae8455414d82a88a0c6490d2aed35f4aeca888ec76a20",
   "_AGENT_README.md": "d66098abeb735975ffed54cb9c89d51255996500a9554ae1d1e996db4171631f",
   "_brain-filing-rules.json": "4e6ecee2d94867d146583d60bf98dccdd9205bb70793af56fe1397a2b258ae0d",
   "_brain-filing-rules.md": "ff42b331bce542d708f97ff0a73ff0fb5664b46ee9b1862a5478b15dc637487e",
@@ -45,7 +45,7 @@
   "context-audit/SKILL.md": "6d786629d40544ddaab4f4e6e333569d270bcb8b581589dc16fb9f8bcb4f6207",
   "context-audit/routing-eval.jsonl": "fb1832e24cc1b04163a74c5cde72bca53050a66246ca902e1a5f40303f52b5ab",
   "conventions/agent-operator-protocol.md": "12c7b876994b96babdffa903326f7e23253d54ad9023248820337f56f8770512",
-  "conventions/brain-first.md": "26035e2e1bb1f8386180ec4cdc6525ab2375c0f350af394b4de0d2e67987c899",
+  "conventions/brain-first.md": "f84f03b9619a1c9302a231bd43957c6987d55084f56eee351434b85ec2646a5c",
   "conventions/brain-routing.md": "f11c3e7c4f98163aa6c68aa7d8f09a7acb7b6a8695f42eb7d92d4ee5787d428a",
   "conventions/calibration.md": "500dc26bd7c8400f50dc4c16fd83f1a588f3e7e68c59050a21fd8a0f69e4d198",
   "conventions/cron-via-minions.md": "badb1cd6cd825d6f1ac0b6b28cc47e5d80facc783a3e59a14146ae901ee0f933",

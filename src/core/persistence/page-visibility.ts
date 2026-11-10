@@ -8,6 +8,7 @@ import { ACCESS_ID_RE, hasReaders, normalizePrincipal, normalizeReaders, readers
 import { catalogueError } from '../error-catalogue.ts';
 import type { SqlEngine, WriteAuthority } from './model.ts';
 import type { BrainEngine } from '../engine.ts';
+import { noGrantFloorReads } from '../source-resolver.ts';
 
 /** Publication uses fresh policy, independent of the read-side telemetry cache (read through the resolver). */
 export async function excludesPrivateWrites(engine: SqlEngine, remote: boolean): Promise<boolean> {
@@ -174,20 +175,21 @@ export async function remoteReadersChecked<T extends { parsedPage: { frontmatter
 }
 
 /**
- * GST-2051: the member a remote write's token or OAuth client is bound to, as `member:<id>`, when the write goes to
- * `default`: the no-grant floor of every token without `--sources` and the registration default of every OAuth
- * client, read by every credential without a source grant, unbound ones included. Null for a local, unbound, attested
- * or audience write, and for any other source (the operator chose that source's audience). Read from the stored
- * binding at preparation, so a binding removed after submission takes effect; a disabled member's page names a reader
- * nobody holds and is refused, and a binding that cannot be read throws instead of publishing the page shared.
+ * GST-2051: the member a remote write's token or OAuth client is bound to, as `member:<id>`, when the write goes to a
+ * source every credential without a source grant reads, unbound ones included (noGrantFloorReads): `default`, the
+ * no-grant floor of every token without `--sources` and the registration default of every OAuth client, and since
+ * #8982 every federated source. Null for a local, unbound, attested or audience write, and for any other source (the
+ * operator chose that source's audience through its grants). Read from the stored binding and source config at
+ * preparation, so a binding removed after submission takes effect; a disabled member's page names a reader nobody
+ * holds and is refused, and a binding or source table that cannot be read throws instead of publishing the page shared.
  */
-export async function defaultSourceMemberWriter(engine: SqlEngine, authority: Pick<WriteAuthority, 'remote' | 'actingFor' | 'principal' | 'sourceId'>): Promise<string | null> {
+export async function defaultSourceMemberWriter(engine: BrainEngine, authority: Pick<WriteAuthority, 'remote' | 'actingFor' | 'principal' | 'sourceId'>): Promise<string | null> {
   const { principal } = authority;
-  if (!authority.remote || authority.actingFor || authority.sourceId !== 'default' || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return null;
+  if (!authority.remote || authority.actingFor || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return null;
   const [row] = await engine.executeRaw<{ member_id: string | null }>(principal.kind === 'legacy_token'
     ? 'SELECT member_id FROM access_tokens WHERE id::text = $1'
     : 'SELECT member_id FROM oauth_clients WHERE client_id = $1', [principal.id]);
-  return row?.member_id ? `member:${row.member_id}` : null;
+  return row?.member_id && await noGrantFloorReads(engine, authority.sourceId) ? `member:${row.member_id}` : null;
 }
 
 /**

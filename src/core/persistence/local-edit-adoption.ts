@@ -60,6 +60,7 @@ import { ledgerLocation, messageDigest, readLedger } from '../git/commit-ledger.
 import { adoptedBy, localEditAdoptionCommit, type GitCommitNote } from './effect-model.ts';
 import { claimOwner } from './claim-phase.ts';
 import type { PreparedMutation } from './coordinator.ts';
+import { EDGE_WHITESPACE } from '../edge-whitespace.ts';
 
 export const ADOPTED_CHANGE_REASON = 'adopted_local_edit';
 export const ADOPT_QUIET_KEY = 'persistence.adopt_quiet_ms';
@@ -118,8 +119,6 @@ async function settled(path: string, quiet: number): Promise<boolean> {
   }
 }
 
-/** The whitespace JS `trim` strips; the SQL side trims the same set, so an earlier revision matches whatever its edges hold. */
-const EDGE_WHITESPACE = ' \t\n\v\f\r\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff';
 const edgeTrim = (text: string | null | undefined) => (text ?? '').trim();
 /** Body lines that are Facts or timeline fence rows (list items and table rows, not a table's separator line). */
 function fenceRows(...texts: Array<string | null | undefined>): Set<string> {

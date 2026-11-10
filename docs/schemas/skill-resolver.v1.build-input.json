@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "skill-resolver.v1.build-input.json",
+  "title": "gbrain skill resolver: catalog snapshot for `skills index build --from-json` (schema_version 1)",
+  "description": "An adapter's skill list: an array of skills, or {\"skills\": [...]}. At most 10,000 entries and 8 MB. A stdin snapshot is kept as source.json beside the index and is never rebuilt automatically.",
+  "$defs": {
+    "skill": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "The harness's load selector."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "triggers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "routing": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "body": {
+          "type": "string",
+          "description": "Only the first 4 KB is indexed."
+        },
+        "path": {
+          "type": "string"
+        },
+        "eligible": {
+          "type": "boolean",
+          "description": "false: never indexed (recorded as skipped: ineligible)."
+        }
+      }
+    },
+    "list": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/skill"
+      }
+    }
+  },
+  "anyOf": [
+    {
+      "$ref": "#/$defs/list"
+    },
+    {
+      "type": "object",
+      "required": [
+        "skills"
+      ],
+      "properties": {
+        "skills": {
+          "$ref": "#/$defs/list"
+        }
+      }
+    }
+  ]
+}

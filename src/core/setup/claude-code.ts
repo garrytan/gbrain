@@ -38,6 +38,7 @@ import {
 } from '../bootstrap/host-specs.ts';
 import { stdioServeArgv } from '../mcp-registration.ts';
 import { isTurnRuleEntry } from './turn-hook.ts';
+import { isSkillResolverEntry } from './skill-resolver-lane.ts';
 import { ensureHookLauncher, hookLauncherPath } from './hook-launcher.ts';
 import type { McpSurface } from '../../mcp/surface.ts';
 
@@ -210,7 +211,7 @@ function hookCensus(settingsPath: string): HookCensus {
       if (!Array.isArray(entries)) continue;
       for (const entry of entries) {
         const marker = (entry as Record<string, unknown> | null)?.[GBRAIN_HOOK_MARKER_KEY];
-        if (isTurnRuleEntry(entry)) continue;
+        if (isTurnRuleEntry(entry) || isSkillResolverEntry(entry)) continue;
         if ((typeof marker === 'string' && marker !== GBRAIN_SETUP_MARKER_VALUE) || classifyHarnessHook(entry, event, 'any')) {
           if ((CLAUDE_HOOK_EVENTS as readonly string[]).includes(event)) otherLane.add(event);
           continue;
