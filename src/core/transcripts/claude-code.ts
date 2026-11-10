@@ -88,11 +88,13 @@ export function isClaudeCodeWorkflowArtifactFile(path: string): boolean {
  */
 const CCR_TIP_SUFFIX = '.ccr-tip.json';
 const CCR_BRIDGE_POINTER = 'bridge-pointer.json';
+/** Per-project session index (`{version, entries}`), not a transcript. */
+const SESSIONS_INDEX = 'sessions-index.json';
 
 /** True for Claude Code Remote Control state files (never transcripts). */
 export function isClaudeCodeRemoteControlStateFile(path: string): boolean {
   const base = path.split(/[/\\]/).pop() ?? '';
-  return base.endsWith(CCR_TIP_SUFFIX) || base === CCR_BRIDGE_POINTER;
+  return base.endsWith(CCR_TIP_SUFFIX) || base === CCR_BRIDGE_POINTER || base === SESSIONS_INDEX;
 }
 
 /** Keys that mark a Claude Code project transcript. */
