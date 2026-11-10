@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A purged page's facts no longer come back.** When the 72-hour retention purge removed a soft-deleted page's row, it left the page's facts active, because facts have no foreign key to pages. Once the tombstone was gone, those facts showed up again for every reader, local and remote, and a new page written at the same slug picked them up. The purge now expires those facts in the same transaction as the page delete: the facts filed on the page, and the facts about it that no other live page holds. The rows are kept, expired, never deleted. Facts another live page holds about the slug stay active.
+
+### Itemized changes
+
+- `src/core/facts/gone-page-facts.ts`: `expireGonePageFacts`, the one predicate for the facts a page takes with it.
+- `src/core/engine-sql/pages.ts` (`purgeDeletedPages`, the bulk purge) and `src/core/persistence/purge-deleted.ts` (`expireRecordedTombstones`, the belief-ledger purge of a recorded source) call it in the purge transaction. The managed purge already sweeps the facts filed on the page.
+- Tests: `test/purge-expires-page-facts.test.ts` (PGLite and Postgres), which fails before the fix on the bulk and recorded purges.
+
 ## [0.60.637.0] - 2026-11-10
 
 **A file Git puts back after sync deleted its page brings the page back, and the retention purge never deletes a committed file.** On a managed brain, a commit that removed a Markdown file made sync soft-delete its page. When the same file came back (a `git revert`, switching to a branch and back, a collaborator's delete-then-restore, a file missing from disk for one working-tree sync), sync settled the path as "deleted, file unchanged" and left the page out of get, search and recall while `gbrain sync status` said synced. `gbrain pages purge-deleted --yes` then deleted the restored file from the checkout. Sync now tells a tombstone it made from a missing file apart from a person's delete and imports the file over it, so the same page comes back; a brain an older version left in that state heals on its next sync. The purge leaves a file committed at the source's last synced commit or at HEAD alone, unless a person's delete of the page never removed the file (for example because another page shared it). A page purge also stops leaving timeline text in the write journal.
