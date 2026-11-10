@@ -19,7 +19,7 @@ import { isConfigTruthy } from '../config.ts';
 import { HALFLIFE_DAYS } from '../facts/decay.ts';
 import { listOpenLoops, type OpenLoopRow } from '../loops/loops-store.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
-import { privatePagesFilterFragment, privateProvenanceFilterFragment, privateTimelineEventFilterFragment } from '../search/private-visibility.ts';
+import { privateFactFilterForCaller, privatePagesFilterForCaller, privatePagesFilterFragment, privateTimelineEventFilterForCaller, privateTimelineEventFilterFragment } from '../search/private-visibility.ts';
 import { pageEligibleSql, projectionEligibleSql } from '../eligibility/sql.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 import { renderTrustedInline, trustFields } from '../eligibility/labels.ts';
@@ -165,7 +165,7 @@ export async function resolveBriefCounterparties(
   engine: BrainEngine,
   sourceId: string,
   text: string,
-  opts: { excludePrivate: boolean; eligibility?: ReadEligibility },
+  opts: { excludePrivate: boolean; forCaller?: boolean; eligibility?: ReadEligibility },
 ): Promise<BriefCounterparty[]> {
   const candidates = extractCandidatesFromWindow([{ role: 'user', text }])
     .filter((c) => !c.weak && !isCommonWordSurface(c.query));
@@ -174,6 +174,7 @@ export async function resolveBriefCounterparties(
     suppression: 'slug-only',
     maxPointers: candidates.length,
     excludePrivate: opts.excludePrivate,
+    forCaller: opts.forCaller,
     eligibility: opts.eligibility,
   });
   const order = new Map(candidates.map((c, i) => [normalizeAlias(c.query), i]));
@@ -196,13 +197,13 @@ async function entityPages(
   engine: BrainEngine,
   sourceId: string,
   slugs: string[],
-  opts: { excludePrivate: boolean; eligibility?: ReadEligibility },
+  opts: { excludePrivate: boolean; forCaller?: boolean; eligibility?: ReadEligibility },
 ): Promise<Map<string, string>> {
   if (!slugs.length) return new Map();
   const rows = await engine.executeRaw<{ slug: string; title: string | null; type: string | null }>(
     `SELECT p.slug, p.title, p.type FROM pages p
       WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND p.deleted_at IS NULL
-        ${opts.excludePrivate ? `AND ${privatePagesFilterFragment('p')}` : ''}
+        ${opts.excludePrivate ? `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : privatePagesFilterFragment('p')}` : ''}
         AND ${pageEligibleSql('p', opts.eligibility)}`,
     [sourceId, slugs],
   );
@@ -219,7 +220,7 @@ export async function resolvePullCounterparty(
   engine: BrainEngine,
   sourceId: string,
   name: string,
-  opts: { excludePrivate: boolean; eligibility?: ReadEligibility },
+  opts: { excludePrivate: boolean; forCaller?: boolean; eligibility?: ReadEligibility },
 ): Promise<BriefCounterparty | null> {
   const raw = name.trim().replace(/\.md$/i, '');
   if (!raw) return null;
@@ -367,7 +368,7 @@ export async function meetingCounterparties(
 
 // ── Item arms ─────────────────────────────────────────────────────────────
 
-interface ArmOpts { includePrivate: boolean; eligibility?: ReadEligibility }
+interface ArmOpts { includePrivate: boolean; forCaller: boolean; eligibility?: ReadEligibility }
 
 const ymd = (v: string | Date | null | undefined): string | null => {
   if (!v) return null;
@@ -423,7 +424,7 @@ async function loopItems(engine: BrainEngine, cp: BriefCounterparty, clock: Brie
     const rows = await e.executeRaw<{ id: number | string; fact: string; trust_tier: unknown; write_origin: unknown }>(
       `SELECT facts.id, facts.fact, facts.trust_tier, facts.write_origin FROM facts
         WHERE facts.id = ANY($1::bigint[]) AND facts.expired_at IS NULL AND facts.visibility = 'world'
-          AND ${privateProvenanceFilterFragment('facts')}
+          AND ${privateFactFilterForCaller('facts')}
           AND ${projectionEligibleSql('facts', 'facts', o.eligibility)}`,
       [factIds],
     );
@@ -483,7 +484,7 @@ async function editItem(engine: BrainEngine, cp: BriefCounterparty, clock: Brief
             p.timeline, p.trust_tier, p.write_origin
        FROM pages p
       WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL
-        AND ${opts.includePrivate ? 'TRUE' : privatePagesFilterFragment('p')}
+        AND ${opts.includePrivate ? 'TRUE' : opts.forCaller ? privatePagesFilterForCaller('p') : privatePagesFilterFragment('p')}
         AND ${pageEligibleSql('p', opts.eligibility)}`,
     [cp.source_id, cp.slug, EDIT_MAX_PAGE_BYTES],
   );
@@ -493,7 +494,7 @@ async function editItem(engine: BrainEngine, cp: BriefCounterparty, clock: Brief
     engine.executeRaw<{ id: number; date: string; summary: string; detail: string; created_at: string | Date }>(
       `SELECT te.id, te.date::text AS date, te.summary, te.detail, te.created_at FROM timeline_entries te
         WHERE te.page_id = $1 AND te.created_at >= $2::timestamptz AND te.date >= $2::timestamptz::date
-          AND ${opts.includePrivate ? 'TRUE' : privateTimelineEventFilterFragment('te')}
+          AND ${opts.includePrivate ? 'TRUE' : opts.forCaller ? privateTimelineEventFilterForCaller('te') : privateTimelineEventFilterFragment('te')}
           AND ${projectionEligibleSql('timeline_entries', 'te', opts.eligibility)}
         ORDER BY te.created_at DESC, te.date DESC, te.id DESC LIMIT 1`,
       [pg.id, since],
@@ -605,7 +606,7 @@ export interface AssembleBriefOpts {
  * Stops issuing queries once the clock passes. Null when nothing survives.
  */
 export async function assembleBrief(engine: BrainEngine, opts: AssembleBriefOpts): Promise<Brief | null> {
-  const arm: ArmOpts = { includePrivate: opts.local && opts.includePrivate === true, eligibility: opts.eligibility };
+  const arm: ArmOpts = { includePrivate: opts.local && opts.includePrivate === true, forCaller: !opts.local, eligibility: opts.eligibility };
   const seen = (id: string) => opts.suppressIds?.has(id) === true || (opts.priorContextText?.includes(`[${id}]`) ?? false);
   const items: BriefItem[] = [];
   for (const cp of opts.counterparties) {

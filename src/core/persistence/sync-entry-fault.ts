@@ -6,6 +6,9 @@
  * - `nullBytesRefusal` (S-39/S-44/S-53): a Markdown file whose text holds U+0000 (a binary file named `.md`, a
  *   crash-padded file, a UTF-16 save) cannot be stored as text or carried in a write intent, so it is held
  *   `content_null_bytes` with the first NUL's line instead of failing the admission with 22P05 forever.
+ * - `filterOwnedRefusal` (GST-2312, #9024): a committed blob a Git filter owns (git-crypt, a clean/smudge driver) holds the
+ *   filter's stored bytes, not the checkout's text, and sync never runs the filter, so the file is held
+ *   `content_filter_owned` instead of importing ciphertext as the page (or, with git-crypt's NUL header, a generic NUL hold).
  * - `committedContentOrMissing` (S-33): a committed file whose Git blob is gone (an interrupted gc, a partial clone
  *   without its promisor, disk corruption) imports from the working tree when those bytes hash to the committed blob
  *   id; otherwise it is refused `git_object_missing`, which the freeze holds, naming `git fsck` / `git fetch`.
@@ -29,7 +32,7 @@ import { VERSION } from '../../version.ts';
 import { isWriteCapacityWait } from './admission-retry.ts';
 import { PAGE_BODY_FAULT_CODES } from './sync-fault-class.ts';
 import { gitBlobOid } from './digest.ts';
-import { readBlobBytes, type TreeBlob } from './sync-blobs.ts';
+import { readBlobBytes, type MissingAttributes, type TreeBlob } from './sync-blobs.ts';
 import { readSyncFile, type SyncEntry } from './sync-discovery.ts';
 import type { GitHoldRecord } from './sync-holds.ts';
 
@@ -46,6 +49,36 @@ export function nullBytesRefusal(path: string, content: string): { code: 'conten
   return { code: 'content_null_bytes', line, message: `${path} holds a NUL byte (U+0000) on line ${line}${utf16 ? ' and starts with a UTF-16 byte order mark, so it is UTF-16 text, not UTF-8' : ''}; `
     + 'gbrain stores page text as UTF-8 without NUL bytes, so sync held this file and the rest of the source synced. '
     + `${utf16 ? 'Save it as UTF-8' : 'Remove the NUL bytes (or, for a binary file, remove it or exclude it with sync.exclude)'}, then commit and sync again.` };
+}
+
+const GIT_CRYPT_HEADER = '\u0000GITCRYPT\u0000';
+
+/**
+ * GST-2312 (#9024): the `content_filter_owned` refusal of a blob that starts with git-crypt's header, or of a committed
+ * blob whose path names a Git filter `driver` (Git LFS excepted: its pointers keep their own hold), or null. Such bytes
+ * are what the filter's clean program stored, not the text of the checkout, and sync never runs a repository's filters.
+ * `held` is false where the run stops instead (`sync.holds=fail`, a company-brain source).
+ */
+export function filterOwnedRefusal(path: string, content: string, driver: string | null, sourceId: string, held: boolean): { code: 'content_filter_owned'; message: string } | null {
+  const gitCrypt = content.startsWith(GIT_CRYPT_HEADER);
+  if (!gitCrypt && (driver === null || driver === 'lfs')) return null;
+  return { code: 'content_filter_owned', message: `${path} is ${gitCrypt ? 'encrypted with git-crypt' : `stored through the Git filter "${driver}"`}, so its committed bytes are not the text in your checkout. `
+    + `gbrain does not run a repository's filter programs during sync, so ${held ? 'sync held this file and the rest of the source synced' : 'this sync stopped at this file'}. `
+    + 'Leave it out with sync.exclude, or commit it without the filter so Git stores its text, then sync again.'
+    + (gitCrypt || !held ? '' : ` If no filter "${driver}" is in use and the file is plain text, remove the filter attribute from .gitattributes, commit, and run gbrain sources retry-held ${sourceId}: a commit that changes only .gitattributes does not re-screen the file.`) };
+}
+
+/**
+ * GST-2312 (#9024): the `git_object_missing` refusal of a committed file whose `.gitattributes` at the synced commit the
+ * repository lacks (`readFilterDrivers`), so whether a Git filter owns it cannot be read; sync fetches nothing to find out.
+ */
+export function missingAttributesRefusal(cursor: { gitRoot: string; sourceId: string }, path: string, lost: MissingAttributes): OperationError {
+  return opError('git_object_missing', `The .gitattributes that applies to ${path} at the synced commit is missing from the repository.`,
+    `${lost.attributes} is committed as blob ${lost.oid}, but the repository of source ${cursor.sourceId} does not have that object, as in a partial clone (git clone --filter) that never fetched it. `
+      + `Sync reads a file's Git filter attribute without fetching anything, so it cannot tell whether a filter owns ${path}, and nothing was imported from it. `
+      + `Fetch the object in the checkout (git cat-file -p ${lost.oid} fetches it from the partial clone's remote) or use a clone without --filter, then run gbrain sync --source ${cursor.sourceId} --no-pull.`,
+    { detail: lost.oid, fix: { argv: ['git', '-C', cursor.gitRoot, 'cat-file', '-p', lost.oid], consent: [], actor: 'user', requires_exclusive: false,
+      why: 'Fetches the missing .gitattributes from the partial clone\'s remote, so the next sync can read the attribute.', verify: { argv: ['gbrain', 'sources', 'status', cursor.sourceId, '--json'] } } });
 }
 
 /**

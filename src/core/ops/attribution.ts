@@ -18,7 +18,7 @@ import type { McpCall } from '../agent-output.ts';
 import { opTransport, paramUse, readFix } from './op-fix.ts';
 import { readHolders, readPolicyOpts } from './context.ts';
 import { storedTrustTier, type TrustTier, type WriteOrigin } from '../trust/tier.ts';
-import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
+import { privateFactFilterForCaller } from '../search/private-visibility.ts';
 
 const DOCS = 'docs/mcp/ADMIN.md#write-attribution';
 
@@ -222,7 +222,7 @@ function rowTarget(ctx: OperationContext, pageId: number, slug: string, sourceId
   if (ids.fact !== undefined) {
     return { kind: 'fact', label: `fact #${ids.fact}`, list: { tool: 'recall', arguments: { entity: slug } },
       sql: `SELECT id, ${cols} FROM facts WHERE id = $1 AND source_id = $2 AND (entity_slug = $3 OR source_markdown_slug = $3)
-        ${ctx.remote === false ? '' : "AND visibility = 'world'"} ${excludePrivate ? `AND ${privateProvenanceFilterFragment('facts')}` : ''}`, params: [ids.fact, sourceId, slug] };
+        ${ctx.remote === false ? '' : "AND visibility = 'world'"} ${excludePrivate ? `AND ${privateFactFilterForCaller('facts')}` : ''}`, params: [ids.fact, sourceId, slug] };
   }
   if (ids.take !== undefined) {
     const holders = readHolders(ctx);

@@ -5,7 +5,8 @@
  * through the shared dispatcher, request logging and the admin SSE feed.
  */
 import { createHash } from 'node:crypto';
-import type { Express, Request, Response } from 'express';
+import type { Express, NextFunction, Request, Response } from 'express';
+import { buildDefaultLimiters, type RateLimiter } from '../mcp/rate-limit.ts';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { DEFAULT_MAX_REQUEST_BODY_SIZE } from '@modelcontextprotocol/sdk/server/requestBody.js';
@@ -20,7 +21,7 @@ import { httpInstructionTools } from '../mcp/initialize-context.ts';
 import { installCapabilitiesResource, mcpAdministrationGuidance } from '../mcp/capabilities.ts';
 import { createSkillResources } from '../mcp/skill-resources.ts';
 import { resolveAuthCapabilities } from '../core/harness/capabilities.ts';
-import { ambientOptsFrom, type WritebackConfig } from '../core/facts/writeback-config.ts';
+import { ambientOptsFrom, writebackCaller, type WritebackConfig } from '../core/facts/writeback-config.ts';
 import { resolveAgentWriteback } from '../core/facts/writeback-settings.ts';
 import { hasScope, operationScopesAllowed } from '../core/scope.ts';
 import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult, requestMetaSessionId, hotMemoryOffIn, acceptedPendingReceipt, unknownToolEnvelope, errorResult, dispatchRenderContext, grantBlockedNotices, admitNotices, audienceRefusal, type ToolResult } from '../mcp/dispatch.ts';
@@ -143,9 +144,15 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
   // #5277: hint every scope a connector may need. Clients that request exactly
   // the hinted scope and never step up (claude.ai connectors) otherwise stay
   // read-only; grantScopes still caps each grant to the client row's scope.
-  app.post('/mcp', withBearerScopeHint(
+  // GBRA-431: the rate limits SECURITY.md documents for /mcp, applied when the operator sets them: the IP bucket before
+  // the token lookup, the token bucket after it. Unset, serve --http keeps its unlimited default.
+  const limiters = buildDefaultLimiters();
+  const ipLimit = rateLimitStep('GBRAIN_HTTP_RATE_LIMIT_IP', limiters.ip, req => req.ip ?? req.socket.remoteAddress ?? 'unknown', 'Too many requests');
+  const tokenLimit = rateLimitStep('GBRAIN_HTTP_RATE_LIMIT_TOKEN', limiters.token,
+    req => createHash('sha256').update(((req as any).auth as AuthInfo).token).digest('hex'), 'Too many requests for this token');
+  app.post('/mcp', ipLimit, withBearerScopeHint(
     requireBearerAuth({ verifier: resourceVerifier, resourceMetadataUrl }), ['read', 'write'],
-  ), (req: Request, res: Response) => withEngineScope(engine, () => withRequestConfigSnapshot(engine, () => handleMcpPost(req, res))));
+  ), tokenLimit, (req: Request, res: Response) => withEngineScope(engine, () => withRequestConfigSnapshot(engine, () => handleMcpPost(req, res))));
 
   // #6721: one config snapshot serves every config read of one POST /mcp (the
   // surface, row-shape and writeback reads below, tools/list and a read op's
@@ -219,6 +226,7 @@ function createMcpRequestServer(
     writebackOpts = ambientOptsFrom(writeback, {
       remember: rememberOp !== undefined && opAllowedForBoundClient(authInfo, rememberOp),
       extractFacts: extractFactsOp !== undefined && opAllowedForBoundClient(authInfo, extractFactsOp),
+      ...writebackCaller(authInfo),
     });
   }
   const server = new Server(
@@ -442,7 +450,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
       // WP1/D7: network transport — the dispatch-layer localOnly
       // backstop keys off this marker.
       transport: 'http',
-      inboundFrameBytes: DEFAULT_MAX_REQUEST_BODY_SIZE,
+      inboundFrameBytes: mcpBodyCap(),
       ...(sessionId ? { sessionId } : {}),
       ...(hotMemoryOffIn(request.params) ? { hotMemoryOff: true } : {}),
       onBehalfOf: { header: state.onBehalfOfHeader, requestMeta: (request.params as { _meta?: unknown })._meta },
@@ -663,6 +671,32 @@ async function recordMcpToolResult(
   return toolResult;
 }
 
+/** A positive integer env var, or undefined when unset or not one. */
+function positiveEnvInt(name: string): number | undefined {
+  const raw = process.env[name]?.trim();
+  if (!raw) return undefined;
+  const n = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (Number.isSafeInteger(n) && n > 0) return n;
+  console.error(`[serve-http] ${name}=${JSON.stringify(raw)} is not a positive whole number; ignoring it.`);
+  return undefined;
+}
+
+/** GBRA-431: the POST /mcp body cap, GBRAIN_HTTP_MAX_BODY_BYTES when the operator sets it, else the SDK's 4 MiB. Over it the SDK answers 413 before the body is read. */
+function mcpBodyCap(): number {
+  return positiveEnvInt('GBRAIN_HTTP_MAX_BODY_BYTES') ?? DEFAULT_MAX_REQUEST_BODY_SIZE;
+}
+
+/** One rate-limit bucket as an Express step: a no-op while `envName` is unset, else 429 with Retry-After once the key's bucket is empty. */
+function rateLimitStep(envName: string, limiter: RateLimiter, key: (req: Request) => string, message: string) {
+  const enabled = positiveEnvInt(envName) !== undefined;
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!enabled) return next();
+    const check = limiter.check(key(req));
+    if (check.allowed) return next();
+    res.set('Retry-After', String(check.retryAfter ?? 60)).status(429).json({ error: 'rate_limited', message });
+  };
+}
+
 async function serveMcpRequest(server: Server, req: Request, res: Response): Promise<void> {
   // F14: wrap transport setup + handleRequest in try/catch. Without this,
   // an SDK-level throw (e.g., schema parse failure on a malformed request)
@@ -671,7 +705,7 @@ async function serveMcpRequest(server: Server, req: Request, res: Response): Pro
   // !res.headersSent we emit a minimal JSON 500 so the client at least
   // gets parseable JSON back.
   try {
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined as any });
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined as any, maxRequestBodySize: mcpBodyCap() });
     // #2844: per-request teardown (SDK stateless pattern) — without it every POST /mcp leaks the transport+Server pair (~3GB/day RSS). Registered BEFORE connect/handleRequest so early disconnects and handleRequest throws still clean up; best-effort catches so cleanup never surfaces an unhandledRejection.
     res.on('close', () => { transport.close().catch(() => {}); server.close().catch(() => {}); });
     await server.connect(transport);

@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "skill-resolver.v1.turn-input.json",
+  "title": "gbrain skill resolver: turn input (schema_version 1)",
+  "description": "One user turn for `gbrain skills resolve --input-json -` or resolveSkills(). Unknown fields are refused. Within v1, changes are additive only. Guide: docs/guides/skill-resolver.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "message"
+  ],
+  "properties": {
+    "message": {
+      "type": "string",
+      "description": "The user message. Capped at 8192 UTF-8 bytes (cut at a character boundary). Never echoed in the block."
+    },
+    "previous_user_message": {
+      "type": "string",
+      "description": "The user's previous message. Ranked only when the current message matches no catalog word (a short follow-up such as \"do it again\"); a skill named only there is not treated as named."
+    },
+    "session_id": {
+      "type": "string",
+      "pattern": "^[\\x21-\\x7e]{1,256}$",
+      "description": "The harness session id (1-256 visible ASCII characters). With it, suggestions are not repeated within the session and the session token budget applies."
+    },
+    "harness": {
+      "enum": [
+        "openclaw",
+        "claude-code",
+        "codex",
+        "hermes",
+        "qm",
+        "pi",
+        "cursor"
+      ],
+      "description": "Picks the load line, and whether suggestion lines carry the SKILL.md path (codex, openclaw, pi, cursor)."
+    },
+    "top_k": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8,
+      "default": 5
+    },
+    "exclude": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {
+        "type": "string",
+        "maxLength": 256
+      },
+      "description": "Skill ids to leave out (for example the ones already loaded)."
+    },
+    "shadow": {
+      "type": "boolean",
+      "default": false,
+      "description": "Compute the block without injecting it; state goes to a separate shadow namespace."
+    },
+    "expected_catalog_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Refuse with skill_catalog_mismatch unless the catalog hash matches."
+    },
+    "min_match_strength": {
+      "enum": [
+        "named",
+        "name",
+        "triggers",
+        "routing",
+        "description",
+        "body"
+      ],
+      "description": "The weakest match_strength to suggest (strongest first: named, name, triggers, routing, description, body). Weaker matches are dropped before the cut to top_k. Omit it to keep every match."
+    },
+    "reset_session": {
+      "type": "boolean",
+      "default": false,
+      "description": "The session was compacted: start its dedupe and budget again."
+    }
+  }
+}

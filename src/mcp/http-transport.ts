@@ -34,7 +34,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { MCP_SERVER_DESCRIPTION, readInstructionContent, resolveMcpInstructions } from './instructions.ts';
 import { httpInstructionTools } from './initialize-context.ts';
-import { ambientOptsFrom } from '../core/facts/writeback-config.ts';
+import { ambientOptsFrom, writebackCaller } from '../core/facts/writeback-config.ts';
 import { resolveAgentWriteback } from '../core/facts/writeback-settings.ts';
 import { operations, operationsByName, opAllowedForBoundClient } from '../core/operations.ts';
 import { scopeDeniedError } from '../core/ops/op-fix.ts';
@@ -279,7 +279,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       headers['Vary'] = 'Origin';
       if (preflight) {
         headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS';
-        headers['Access-Control-Allow-Headers'] = `Content-Type, Authorization, Accept, ${AGENT_LABEL_HEADER}`;
+        headers['Access-Control-Allow-Headers'] = `Content-Type, Authorization, Accept, ${AGENT_LABEL_HEADER}, ${GBRAIN_CLIENT_HEADER}`;
       }
     }
     return headers;
@@ -473,7 +473,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
               capabilities: { tools: {}, resources: {} },
               // #4748: contract (+ opt-in writeback section) + deployment identity.
               instructions: resolveMcpInstructions(fileConfig, process.env, {
-                writeback: ambientOptsFrom(writeback, { remember: canWriteOp('remember'), extractFacts: canWriteOp('extract_facts') }),
+                writeback: ambientOptsFrom(writeback, { remember: canWriteOp('remember'), extractFacts: canWriteOp('extract_facts'), ...writebackCaller(auth.auth) }),
                 tools: await httpInstructionTools(engine, fileConfig, { ops: surfacedOps, surface, auth: auth.auth!, allowedOps: surfaceAllowedOps }), // F1
                 ...await readInstructionContent(engine),
               }),

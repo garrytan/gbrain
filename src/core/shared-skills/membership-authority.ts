@@ -4,7 +4,7 @@ import { sourceScopeOpts } from '../ops/context.ts';
 import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, type LocalGrant } from '../persistence/identity.ts';
 import type { Principal } from '../persistence/model.ts';
 import { normalizeTokenScopes } from '../legacy-token-scope.ts';
-import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
+import { authSourcesFromGrant, grantFromTokenRow, tokenGrantRowSelect, type TokenGrantRow } from '../grants/model.ts';
 import { hasScope } from '../scope.ts';
 
 const deny = (): never => {
@@ -30,7 +30,8 @@ export async function memberAuthority(ctx: OperationContext, operation: string):
       sources = [...new Set([row.source_id, ...(row.federated_read ?? [])])].filter(Boolean);
       grant = row;
     } else {
-      const [row] = await ctx.engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE id=$1 AND revoked_at IS NULL FOR SHARE', [principal.id]);
+      // GST-2314: named columns, not SELECT *: inside this transaction a plan cached before a migration added a column fails 0A000.
+      const [row] = await ctx.engine.executeRaw<TokenGrantRow>(`SELECT ${await tokenGrantRowSelect(ctx.engine)} FROM access_tokens WHERE id=$1 AND revoked_at IS NULL FOR SHARE`, [principal.id]);
       if (!row) deny();
       const scopes = normalizeTokenScopes(row.scopes) ?? [];
       const tokenGrant = grantFromTokenRow(row);

@@ -26,6 +26,7 @@ import type { GBrainConfig } from '../config.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { formatFenceDate, parseFactsFence, upsertFactRow } from '../facts-fence.ts';
+import { withHeldFactsFence } from './unfenced-facts.ts';
 import { digest } from '../persistence/digest.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteRequest } from '../persistence/model.ts';
@@ -189,7 +190,7 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
   if (links.length) {
     // #6188 (D20): Tier 1 normalizes the entity's stored fence in this write; a residual refuses typed `target_fence_malformed`.
     const target = await normalizeTargetFences(engine, { sourceId: row.source_id, slug: row.slug, kind: 'facts', page: snapshot.page });
-    ({ compiled_truth: body, timeline } = target.page);
+    ({ compiled_truth: body, timeline } = await withHeldFactsFence(engine, row.source_id, row.slug, { compiled_truth: target.page.compiled_truth, timeline: target.page.timeline }));
     if (target.fixes.length) normalized = { fences_normalized: pageFencesNormalized({ sourceId: row.source_id, slug: row.slug, fixes: target.fixes,
       writer: row.principal_kind, path: snapshot.page.source_path ?? null, remote: row.authority.remote }) };
     const parsed = parseFactsFence(body);

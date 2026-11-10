@@ -1,5 +1,5 @@
 import { opError } from '../ops/contract.ts';
-import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, OWNER_MEMBER_KEY, readPolicyFragment, readRemotePolicyNow, withCallerAccess } from '../search/private-visibility.ts';
+import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, OWNER_MEMBER_KEY, privatePagesFilterForCaller, readPolicyFragment, readRemotePolicyNow, resolveExcludePrivatePages, withCallerAccess } from '../search/private-visibility.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { folderAccessForAll, memberIdentityFor, resolveAudienceIdentities } from '../access/caller.ts';
 import type { AudiencePrincipal } from '../access/audience.ts';
@@ -84,11 +84,42 @@ async function writerIdentities(engine: SqlEngine, authority: WriteAuthority): P
   }
 }
 
-/** Whether an existing page is hidden from the current remote caller by the member-access part (never for a trusted local caller). */
-export async function remoteTargetHidden(engine: SqlEngine, remote: boolean | undefined, sourceId: string, slug: string): Promise<boolean> {
+/**
+ * The read policy a remote caller's get_page applies, as a predicate on `pageAlias`: the member-access part, then the
+ * privacy part with its grant and hatch; the member-access part alone where get_page applies no policy (an operator
+ * relaxed privacy and the brain holds no member-access restriction). Call inside the caller's access record.
+ */
+export async function remoteReadPolicySql(engine: BrainEngine, pageAlias: string): Promise<string> {
+  return await resolveExcludePrivatePages(engine, true) ? privatePagesFilterForCaller(pageAlias) : callerAccessAllowedSql(pageAlias);
+}
+
+/**
+ * Whether an existing page is hidden from the current remote caller (never for a trusted local caller). GBRA-431: the
+ * full read policy, so a `visibility: private` page answers like a missing one as well as a page whose readers omit
+ * the caller; `memberAccessOnly` keeps the member-access part alone for a caller that refuses privacy itself.
+ */
+export async function remoteTargetHidden(engine: BrainEngine, remote: boolean | undefined, sourceId: string, slug: string, memberAccessOnly = false): Promise<boolean> {
   if (remote === false) return false;
-  const rows = await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND NOT ${callerAccessAllowedSql('pages')} LIMIT 1`, [sourceId, slug]);
+  const policy = memberAccessOnly ? callerAccessAllowedSql('pages') : await remoteReadPolicySql(engine, 'pages');
+  const rows = await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND NOT ${policy} LIMIT 1`, [sourceId, slug]);
   return rows.length > 0;
+}
+
+/**
+ * GBRA-431: for the (source_id, slug) pairs among `pages`, keyed `${source_id}\u0000${slug}`, which name any page row
+ * (`known`, soft-deleted rows included) and which name a live page the current remote caller can read (`readable`).
+ * A slug with no live page row (never written, deleted, purged or renamed) is not readable, so a caller that must
+ * fail closed keeps only `readable`. Call for remote callers only.
+ */
+export async function remotePageAccess(engine: BrainEngine, pages: readonly { source_id: string; slug: string }[]): Promise<{ known: Set<string>; readable: Set<string> }> {
+  if (pages.length === 0) return { known: new Set(), readable: new Set() };
+  const policy = await remoteReadPolicySql(engine, 'p');
+  const rows = await engine.executeRaw<{ source_id: string; slug: string; readable: boolean }>(`SELECT p.source_id, p.slug,
+      bool_or(p.deleted_at IS NULL AND ${policy}) AS readable FROM pages p
+    JOIN unnest($1::text[], $2::text[]) AS t(source_id, slug) ON p.source_id = t.source_id AND p.slug = t.slug
+    GROUP BY p.source_id, p.slug`, [pages.map(p => p.source_id), pages.map(p => p.slug)]);
+  const key = (r: { source_id: string; slug: string }) => `${r.source_id}\u0000${r.slug}`;
+  return { known: new Set(rows.map(key)), readable: new Set(rows.filter(r => r.readable).map(key)) };
 }
 
 /**
