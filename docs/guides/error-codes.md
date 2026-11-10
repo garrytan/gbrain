@@ -4530,6 +4530,76 @@ More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#s
 |---|---|---|---|---|---|---|
 | The optimized candidate changed protected frontmatter or has an empty/invalid body. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### skill_catalog_mismatch
+
+<a id="skill_catalog_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The skill catalog was built from a different skill list than the caller expects (expected_catalog_hash / --expect-catalog), so no suggestion was made and no session state was committed. | A block built from another skill list could name skills the harness cannot load. | Rebuild the catalog from the current skill list (an adapter passes its new snapshot to gbrain skills index build --from-json -), then retry. Run: gbrain skills index status --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_catalog_mismatch](../../docs/guides/skill-resolver.md#skill_catalog_mismatch)
+
+### skill_catalog_too_large
+
+<a id="skill_catalog_too_large"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A skill source is over the resolver bounds (10,000 SKILL.md files or 100,000 directories per catalog), so nothing was built. | The request itself was wrong or no longer matches the brain; nothing was changed. | Split the source into several catalogs and pass them together with --catalog a --catalog b. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_catalog_too_large](../../docs/guides/skill-resolver.md#skill_catalog_too_large)
+
+### skill_catalog_unknown
+
+<a id="skill_catalog_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The catalog name is not valid, or no catalog was named while several exist. | The request itself was wrong or no longer matches the brain; nothing was changed. | Pass --catalog with a name from gbrain skills index status (a-z, 0-9, _ and -, up to 64 characters). Run: gbrain skills index status --json | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/skill-resolver.md#skill_catalog_unknown](../../docs/guides/skill-resolver.md#skill_catalog_unknown)
+
+### skill_index_incompatible
+
+<a id="skill_index_incompatible"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The skill index is damaged or was built by an incompatible gbrain (another index format, ranker or tokenizer), so it was not read. | The request itself was wrong or no longer matches the brain; nothing was changed. | Rebuild the catalog with the command its receipt recorded (gbrain skills index status shows it); a catalog an adapter built from stdin is rebuilt by that adapter. Run: gbrain skills index status --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_index_incompatible](../../docs/guides/skill-resolver.md#skill_index_incompatible)
+
+### skill_index_locked
+
+<a id="skill_index_locked"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another process holds the skill-index lease for this catalog (a build, or a remove racing it), so this call gave up after its bounded wait. | Builds are serialized per catalog; a crashed holder is reclaimed only when its lease expires, never because its pid looks dead. | Retry after the holder finishes or its lease expires (gbrain skills index status names the holder). Run: gbrain skills index status --json | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/skill-resolver.md#skill_index_locked](../../docs/guides/skill-resolver.md#skill_index_locked)
+
+### skill_index_missing
+
+<a id="skill_index_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The named skill catalog (or any catalog, when none was named) has not been built. | The request itself was wrong or no longer matches the brain; nothing was changed. | Build it: gbrain skills index build --catalog <name> --dir <skills dir> (or --bundled, or --from-json <file>). Run: gbrain skills index status --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_index_missing](../../docs/guides/skill-resolver.md#skill_index_missing)
+
+### skill_index_removed
+
+<a id="skill_index_removed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The catalog was removed while a build ran, so the build published nothing (a remove always wins). | The request itself was wrong or no longer matches the brain; nothing was changed. | Run the build again if the catalog should exist. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_index_removed](../../docs/guides/skill-resolver.md#skill_index_removed)
+
 ### skill_not_found
 
 <a id="skill_not_found"></a>
@@ -4538,6 +4608,76 @@ More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#s
 |---|---|---|---|---|---|---|
 | No authorized published skill matches this key. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### skill_resolve_invalid_input
+
+<a id="skill_resolve_invalid_input"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The turn or build input is not valid: bad JSON, an unknown field or harness, or a value out of range. | The request itself was wrong or no longer matches the brain; nothing was changed. | Send input that matches docs/schemas/skill-resolver.v1.turn-input.json (or the build flags in gbrain skills index --help). | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolve_invalid_input](../../docs/guides/skill-resolver.md#skill_resolve_invalid_input)
+
+### skill_resolve_no_input
+
+<a id="skill_resolve_no_input"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain skills resolve got no message: no --text, and stdin was a terminal or empty. | The request itself was wrong or no longer matches the brain; nothing was changed. | Pass --text "<message>", or pipe turn JSON to gbrain skills resolve --input-json -. | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolve_no_input](../../docs/guides/skill-resolver.md#skill_resolve_no_input)
+
+### skill_resolve_timeout
+
+<a id="skill_resolve_timeout"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The skill resolver ran past its deadline, so the turn got no block and no session state was committed. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | The turn proceeds without a block; check the catalog size with gbrain skills index status. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/skill-resolver.md#skill_resolve_timeout](../../docs/guides/skill-resolver.md#skill_resolve_timeout)
+
+### skill_resolver_config_invalid
+
+<a id="skill_resolver_config_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A skill resolver setting is out of range (skills.resolver.session_token_budget must be 0 or 100-50000) or GBRAIN_HOME is not an absolute path. | The request itself was wrong or no longer matches the brain; nothing was changed. | Fix the value in config.json under skills.resolver (default budget 2000), or GBRAIN_HOME. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_config_invalid](../../docs/guides/skill-resolver.md#skill_resolver_config_invalid)
+
+### skill_resolver_config_unreadable
+
+<a id="skill_resolver_config_unreadable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| config.json exists but cannot be read or parsed, so the skill resolver lane stays silent and setup writes none of its keys (the file is never rewritten). | The request itself was wrong or no longer matches the brain; nothing was changed. | Fix or move config.json in the gbrain config directory (GBRAIN_HOME/.gbrain, else ~/.gbrain; it must be a JSON object), then run gbrain doctor --only skill_resolver. Run: gbrain doctor --only skill_resolver --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_config_unreadable](../../docs/guides/skill-resolver.md#skill_resolver_config_unreadable)
+
+### skill_resolver_internal
+
+<a id="skill_resolver_internal"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The skill resolver failed unexpectedly; a scrubbed trace (no turn text) was written under skill-index/logs/. | The server failed; this is not a caller mistake. | Run gbrain skills index status and report the trace if it repeats. Run: gbrain skills index status --json | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_internal](../../docs/guides/skill-resolver.md#skill_resolver_internal)
+
+### skill_resolver_setup_incomplete
+
+<a id="skill_resolver_setup_incomplete"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup --skill-loading resolve found no skill to index (or could not build the catalog or wire the hook), so it wrote no config keys and no hook. | The request itself was wrong or no longer matches the brain; nothing was changed. | Add a skill to one of the scanned directories (the message names them), then run setup again. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_setup_incomplete](../../docs/guides/skill-resolver.md#skill_resolver_setup_incomplete)
+
 ### skill_retention_capacity
 
 <a id="skill_retention_capacity"></a>
@@ -4545,6 +4685,26 @@ More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#s
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Retained skill revisions exceed this source storage budget. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### skill_source_invalid
+
+<a id="skill_source_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The --from-json catalog or --routing file is not valid (not JSON, a malformed entry, over 10,000 skills or 8 MB, or a routing file over 1 MB), so nothing was built. | The request itself was wrong or no longer matches the brain; nothing was changed. | Pass a JSON array of {id, name, description, triggers?, routing?, body?, path?, eligible?} objects. | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/skill-resolver.md#skill_source_invalid](../../docs/guides/skill-resolver.md#skill_source_invalid)
+
+### skill_source_unreadable
+
+<a id="skill_source_unreadable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A --dir or --routing path (or, for `gbrain skills library`, gbrain's own source in a compiled binary) does not exist or cannot be read, so nothing was built. | The request itself was wrong or no longer matches the brain; nothing was changed. | Pass an existing directory (or file) you can read; for the Node library from a compiled binary, download the release asset. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_source_unreadable](../../docs/guides/skill-resolver.md#skill_source_unreadable)
 
 ### skill_unavailable
 

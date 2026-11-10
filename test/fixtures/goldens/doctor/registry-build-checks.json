@@ -226,6 +226,10 @@
         "name": "harness_wiring"
       },
       {
+        "category": "ops",
+        "name": "skill_resolver"
+      },
+      {
         "category": "meta",
         "name": "agent_contract"
       },
