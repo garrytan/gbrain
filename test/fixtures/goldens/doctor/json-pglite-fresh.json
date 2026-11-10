@@ -1131,7 +1131,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 175 table(s) the applied migrations create exist.",
+          "message": "All 177 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
