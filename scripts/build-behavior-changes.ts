@@ -15,6 +15,7 @@
  * Unreleased markers (changelog.d, `## [Unreleased]`) count only while a release is being stamped: VERSION is
  * newer than the CHANGELOG's top release heading (gstack-restamp --release runs this before it folds the
  * fragments). On every other tree they are pending and generate nothing, so a PR never changes the generated file.
+ * A changelog.d fragment whose front matter says `bump:` anything but `patch` is refused: releases are PATCH only.
  * Dependency-free and history-free: gstack's release check reruns it in a bare worktree of the release head.
  *
  * Exit: 0 written or fresh, 1 stale or invalid (FAIL/Why/Fix printed), 2 usage.
@@ -72,6 +73,11 @@ export function build(root: string): Built {
   const stamping = !!version && (!top || cmp(version, top) > 0);
   const pendingFiles = existsSync(join(root, CHANGELOG_FRAGMENT_DIR))
     ? readdirSync(join(root, CHANGELOG_FRAGMENT_DIR)).filter(f => f.endsWith('.md') && f !== 'README.md').sort() : [];
+  for (const f of pendingFiles) {
+    const front = /^---\r?\n([\s\S]*?)\r?\n---\s*(\n|$)/.exec(read(root, join(CHANGELOG_FRAGMENT_DIR, f)))?.[1] ?? '';
+    const bump = /^\s*bump\s*:\s*['"]?([^'"\s]*)['"]?\s*$/m.exec(front)?.[1];
+    if (bump !== undefined && bump !== 'patch') problems.push(`${CHANGELOG_FRAGMENT_DIR}/${f} says bump: ${bump}; gbrain releases are PATCH only and the release takes the highest bump in the batch, so delete the bump: line (or write bump: patch)`);
+  }
   const pending = [...pendingFiles.flatMap(f => markers(read(root, join(CHANGELOG_FRAGMENT_DIR, f)))), ...releases.filter(r => !r.version).flatMap(r => r.ids)];
   const sinceOf = new Map<string, string>();
   const order: string[] = [];

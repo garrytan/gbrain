@@ -193,6 +193,16 @@ describe('build()', () => {
     expect(remarked.problems).toEqual(['old_row_abc is marked again after release 0.1.0.0; a released id is never marked again']);
   });
 
+  test('a changelog.d fragment whose front matter bumps anything but patch is refused, naming the file and the fix', () => {
+    const base = { VERSION: '0.1.0.0\n', 'CHANGELOG.md': changelog(section('0.1.0.0', 'First.')) };
+    for (const bump of ['minor', 'major', "'micro'"]) {
+      const { problems } = build(tree({ ...base, 'changelog.d/feature-x.md': `---\nbump: ${bump}\nimportant: security\n---\n**Faster sync.**\n` }));
+      expect(problems).toEqual([`changelog.d/feature-x.md says bump: ${bump.replace(/'/g, '')}; gbrain releases are PATCH only and the release takes the highest bump in the batch, so delete the bump: line (or write bump: patch)`]);
+    }
+    expect(build(tree({ ...base, 'changelog.d/feature-x.md': '---\nbump: patch\n---\n**Faster sync.**\n' })).problems).toEqual([]);
+    expect(build(tree({ ...base, 'changelog.d/feature-x.md': '**Faster sync.**\n\nbump: minor appears in prose here.\n' })).problems).toEqual([]);
+  });
+
   test('an id starting with a digit is refused, so the generated map never holds an unquoted numeric key', () => {
     const root = tree({
       VERSION: '0.1.0.0\n',
