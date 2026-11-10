@@ -10,6 +10,14 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Agent reads answer "nothing here" instead of refusing, and say why a list came back empty.** These fixes come from agent transcripts where models kept getting refused or got bare empty answers.
+
+### Itemized changes
+
+- `get_backlinks` with a `type` that other pages in the brain have, but no page linking to this one has, now returns the normal empty answer plus a note listing the types the linking pages do have. Before, it refused with `unknown type`, so an agent walking several accounts by type was refused once per account. A type no page has is still refused, and the refusal now also lists the brain's own page types. For a remote caller, both checks count only pages that caller can read: a type found only on private pages, pages whose readers leave the caller out, deleted pages or another source is treated as a type that does not exist and is never named.
+
 ## [0.60.651.0] - 2026-11-10
 
 **CI wastes fewer reruns: the macOS type check stops running out of memory, and a worktree test stops stalling for two minutes.** The macOS type check now runs on GitHub's 14 GB Intel runner. On the 7 GB arm64 runner, a check that couldn't reuse a recent saved state ran short of memory, took 7 to 15 minutes and sometimes hit its 15-minute limit. On Intel a check with no saved state takes about 4 minutes. The stale-plan worktree test no longer waits out a 2-minute lease on PGLite: its wait for commits now lets timers run, so the background writer finishes its pass.

@@ -34,6 +34,7 @@ test/activation-unbound-rooted-6449.test.ts
 test/adopt-local-edit.test.ts
 test/alias-source-cascade-5094.test.ts
 test/attribution-backfill-history.test.ts
+test/backlinks-type-exists-gbra449.test.ts
 test/backstop-same-page-shadow-managed-6333.test.ts
 test/behavior-change-notice.test.ts
 test/belief-ledger-append-owner.test.ts
