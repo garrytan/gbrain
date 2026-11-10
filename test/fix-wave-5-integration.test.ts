@@ -201,7 +201,7 @@ for (const backend of testBackends()) {
           'segmented-tiling': 'gbrain repair segmented-tiling',
           'uncommitted-deletions': 'gbrain repair uncommitted-deletions',
           // GBRA-161: the generations preview carries its ledger kind and the restore window, so the printed command runs as is.
-          generations: 'gbrain repair generations --kind atom --since 30d', 'fact-claim-dates': 'gbrain repair fact-claim-dates',
+          generations: 'gbrain repair generations --kind atom --since 30d', 'lost-fence-rows': 'gbrain repair lost-fence-rows', 'fact-claim-dates': 'gbrain repair fact-claim-dates',
           provenance: 'gbrain repair provenance', 'secret-spans': 'gbrain repair secret-spans', 'rows-behind': 'gbrain repair rows-behind',
           'private-labels': 'gbrain repair private-labels' };
 

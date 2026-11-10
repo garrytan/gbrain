@@ -49,6 +49,7 @@ import { gbrainPath } from '../config.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { isDurabilityHardened, commitWriteThroughFile } from '../brain-repo-durability.ts';
 import { upsertFactRow, parseFactsFence, formatFenceDate } from '../facts-fence.ts';
+import { withHeldFactsFence } from './unfenced-facts.ts';
 import { unparsedFenceRefusal } from '../fence-repair/refusal.ts';
 import type { OperationError } from '../ops/contract.ts';
 import { extractFactsFromFenceText } from './extract-from-fence.ts';
@@ -510,6 +511,7 @@ export async function writeFactsToFence(
       } catch (err) {
         console.warn(`[facts.fence] FACTS_ROW_NUM_HINT_UNAVAILABLE: ${target.slug} (source ${target.sourceId}): ${err instanceof Error ? err.message : String(err)}; numbering from the file alone`);
       }
+      body = (await withHeldFactsFence(engine, target.sourceId, target.slug, { compiled_truth: body })).compiled_truth;
       const fenceRefusal = refuseUnparsedFence(body, target, filePath);
       if (fenceRefusal) return { inserted: 0, ids: [], fenceWriteFailed: true, fenceRefusal, ...withdrawnSkipped };
       const { facts: existingFenceFacts } = parseFactsFence(body);

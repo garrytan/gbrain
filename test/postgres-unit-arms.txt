@@ -100,6 +100,7 @@ test/facts-entity-moved-7602.test.ts
 test/facts-insert-guards-7105.test.ts
 test/facts-publication-large-fence-6898.test.ts
 test/facts-subject-infer-7405.test.ts
+test/fence-absent-append-keeps-rows.test.ts
 test/fence-fact-append.test.ts
 test/fence-first-generation-8819.test.ts
 test/fence-repair-receipts.test.ts
@@ -490,6 +491,7 @@ test/repair-file-drift-provenance-gbra133.test.ts
 test/repair-frontmatter-keys-sweep-6454.test.ts
 test/repair-frontmatter.test.ts
 test/repair-ghost-database-ahead-gbra133.test.ts
+test/repair-lost-fence-rows.test.ts
 test/repair-quoted-markers-8059.test.ts
 test/repair-receipt-compaction.test.ts
 test/repair-rename-identity-6729.test.ts

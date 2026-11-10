@@ -94,6 +94,7 @@ import { secretSpansRepair } from './secret-spans.ts';
 import { rowsBehindRepair } from './rows-behind.ts';
 import { privateLabelsRepair, type PrivateLabelsLedger } from './private-labels.ts';
 import { generationsRepair, generationsSelectionArgv, type GenerationsSelection } from '../generations/repair.ts';
+import { lostFenceRowsRepair } from './lost-fence-rows.ts';
 import { restoreDaysHint } from '../generations/config.ts';
 import { ERROR_CATALOGUE, catalogueError } from '../error-catalogue.ts';
 import { shellQuote } from '../shell-quote.ts';
@@ -679,6 +680,22 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'One selector bounds the set: --run <id>, --since <ISO-8601|7d>, --key <owner>, --generation <id>, or --held (release-held). The preview lists each key '
       + 'and saves the set under its hash; --apply --expect <hash> --yes applies exactly that set, refusing a key edited since or with no stored preimage. '
       + 'Runs only when named; never on upgrade.',
+  },
+  'lost-fence-rows': {
+    handler: lostFenceRowsRepair, embeds: 'effect', checks: [], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: {
+      what: 'Put the previewed fact and take rows back into their pages\' Facts and Takes sections',
+      why: 'The preview listed each row an older gbrain expired or deleted after a page rewrite dropped its section and a later remember or takes add re-created the section without it; page history holds each row. A section rebuilt by hand without a row looks the same, so check the list.',
+      risk: 'Each listed page is republished through a revision-bound put_page with the rows added and nothing else changed; a page that changed since the preview is skipped. A restored row never gets more trust than it had: a fact comes back at the tier the expired row had, and a take, or a fact with no recorded tier, at the lowest tier. If the page write is left pending, rerun the same apply to finish lowering the tiers. Page history keeps the earlier revision, and a managed source commits the file, so git revert undoes it.',
+      user_message: 'Put the previewed facts and takes back into their pages? Only those rows are added',
+    },
+    summary: 'Restore fact and take rows an older gbrain retired after a page rewrite dropped their Facts or Takes section: the next remember or takes add '
+      + 're-created the section with only its own row, and the write after that expired the facts and deleted the takes. Lists only rows the records '
+      + 'prove: a fence generation retired the row without an empty-section proof, nothing on the page carries it now, and page history holds it in a '
+      + 'section that then vanished before the retirement (a row an edit removed from a section that stayed is a deliberate removal and is not listed). '
+      + 'A section a person rebuilt by hand without a row leaves the same records, so show the user the preview and let them drop what they meant to remove. '
+      + 'Each cell comes back byte for byte from the newest version that held it, at its row number when free. --source narrows. The preview lists each '
+      + 'page; --apply --expect <hash> --yes republishes exactly that set, one revision-bound put_page per page. Runs only when named; never on upgrade.',
   },
 };
 
