@@ -20,7 +20,7 @@ import { httpInstructionTools } from '../mcp/initialize-context.ts';
 import { installCapabilitiesResource, mcpAdministrationGuidance } from '../mcp/capabilities.ts';
 import { createSkillResources } from '../mcp/skill-resources.ts';
 import { resolveAuthCapabilities } from '../core/harness/capabilities.ts';
-import { ambientOptsFrom, type WritebackConfig } from '../core/facts/writeback-config.ts';
+import { ambientOptsFrom, writebackCaller, type WritebackConfig } from '../core/facts/writeback-config.ts';
 import { resolveAgentWriteback } from '../core/facts/writeback-settings.ts';
 import { hasScope, operationScopesAllowed } from '../core/scope.ts';
 import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult, requestMetaSessionId, hotMemoryOffIn, acceptedPendingReceipt, unknownToolEnvelope, errorResult, dispatchRenderContext, grantBlockedNotices, admitNotices, audienceRefusal, type ToolResult } from '../mcp/dispatch.ts';
@@ -219,7 +219,7 @@ function createMcpRequestServer(
     writebackOpts = ambientOptsFrom(writeback, {
       remember: rememberOp !== undefined && opAllowedForBoundClient(authInfo, rememberOp),
       extractFacts: extractFactsOp !== undefined && opAllowedForBoundClient(authInfo, extractFactsOp),
-      member: !!authInfo?.member,
+      ...writebackCaller(authInfo),
     });
   }
   const server = new Server(

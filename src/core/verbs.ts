@@ -190,7 +190,7 @@ const remember: Operation = {
     // GST-2243: a member shares only with share: true, so its explicit visibility "world" is refused, never quietly made private.
     if (p.share !== true && p.visibility === 'world' && ctx.attestedOp !== 'memory_write' && (await import('./access/member-facts.ts')).memberFactPage(ctx)) {
       throw Object.assign(verbError('invalid_params', 'remember: a member credential shares a fact with share: true, not visibility "world"; nothing was saved.',
-        'Facts about the team\'s work: pass share: true and everyone who reads this source recalls them. Facts about a person: drop visibility and they stay on your own member page, recalled by you alone.'),
+        'Retry the same call with share: true in place of visibility "world" to share a fact about the team\'s work with everyone who reads this source, or with no visibility to keep a fact about a person on your own member page. A member shares only this way: pass share: true, never visibility "world".'),
         { reason: 'member_share_required' });
     }
     if (p.valid_from !== undefined && !isStrictIsoDateTime(p.valid_from)) {

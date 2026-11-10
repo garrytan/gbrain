@@ -25,6 +25,8 @@ import { addMember, bindCredential } from '../src/core/access/members.ts';
 import { prepareMemoryMutation } from '../src/core/persistence/memory-prepare.ts';
 import { linkMember } from '../src/core/access/actor.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
+import { ambientOptsFrom, writebackCaller } from '../src/core/facts/writeback-config.ts';
+import { buildAmbientWritebackSection } from '../src/core/facts/writeback-instructions.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
@@ -169,6 +171,24 @@ for (const kind of testBackends()) {
       expect(mixed.all).toContain('member_share_required');
       expect(await factRow('canarymixedone')).toBeUndefined();
       expect(await factRow('canarymixedtwo')).toBeUndefined();
+    }, 120_000);
+
+    test('a QM service acting for a member is told both cases, and its plain remember with visibility "world" is refused with the exact retry', async () => {
+      const opts = ambientOptsFrom({ enabled: true, mode: 'salient', transient_ttl: '3d', visibility: 'world' } as never, { remember: true, extractFacts: true, ...writebackCaller(await verify(tokens.qm!)) });
+      const section = buildAmbientWritebackSection(opts!);
+      expect(section).toContain('share: true');
+      expect(section).toContain('visibility: "world"');
+      expect(writebackCaller(await verify(tokens.plain!))).toEqual({});
+      expect(writebackCaller(await verify(tokens.alice!))).toEqual({ member: true });
+      const world = await remember(who.alice(), 'Acme asked for audit logs canaryactorworld', { entity: ACME, visibility: 'world' });
+      expect(world.isError).toBe(true);
+      expect(world.all).toContain('member_share_required');
+      expect(world.all).toContain('Retry the same call with share: true in place of visibility');
+      expect(await factRow('canaryactorworld')).toBeUndefined();
+      const retried = await remember(who.alice(), 'Acme asked for audit logs canaryactorworld', { entity: ACME, share: true });
+      expect([retried.isError, retried.json.page, retried.json.visibility]).toEqual([false, ACME, 'world']);
+      const kept = await remember(who.alice(), 'Acme audit worried me canaryactorkept', { entity: ACME });
+      expect([kept.isError, kept.json.page, kept.json.visibility]).toEqual([false, 'memory/members/alice-example', 'private']);
     }, 120_000);
 
     test('QM memory_write, which takes no share, still saves on the member page, and share is on the starter surface', async () => {
