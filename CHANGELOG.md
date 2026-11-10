@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A GitHub (or other API) connector source no longer stops for good when one of its items is a page stored in segments.** A long issue (a body plus hundreds of comments) grows past 1 MiB and is stored in segments. Before, that item could never import, and once such a page existed, every later sweep of a bound source stopped on `page_body_segmented` with no item named, so nothing after it imported and the cursor never moved. Now an item up to 24 MiB imports and re-renders like any other, and one the sweep cannot read whole is held on its own (`gbrain sources status`) while the rest of the run imports and the cursor moves. Reported and first diagnosed in #9062.
+
+### Itemized changes
+
+- `src/core/persistence/connector-sync.ts`: the connector publication reads a segmented page back as strings (up to 24 MiB) before it carries its timeline and fences into the re-render, seals a segmented body through its import (never the inline text seal, which read the whole timeline), and runs the import's after-commit step, so a segmented page left unsealed is chunked. The freshness read (`page()`) reads a segmented page back the same way.
+- `src/core/github-source.ts`: a stored page the sweep cannot read fails that item (a content hold after three runs), not the run.
+- Tests: `test/connector-segmented-page-9062.test.ts` (PGLite) and its PostgreSQL arm `test/e2e/connector-segmented-page-9062.test.ts`.
+
 ## [0.60.641.0] - 2026-11-10
 
 **Facts, timeline entries, tags and ontology observations now follow the page they are about, so a remote caller who cannot read a page learns nothing about it from fact reads, and a deleted page's facts, timeline and tags stay hidden from everyone until it is restored.** Before this, a fact saved on an open page about a page with `readable_by` or `visibility: private` still reached remote callers through recall, ontology_get, volunteer_chronicle, delta, find_trajectory, hot memory and the entity card, and a soft-deleted page's facts, timeline rows and tags kept answering every reader. Recorded-time reads (get_page and get_versions with known_as_of), plain get_versions with include_body, and delta's belief changes now also keep a quarantined page's bodies and claims from remote callers, including a page quarantined only by a later write and a version history that spans several sources. Nothing is deleted or expired, so restore_page brings every row back as it was. A new page written at a deleted page's slug still shows the deleted page's facts, and a purged page's facts still come back, as before; both are follow-up work.
