@@ -47,7 +47,7 @@ import { laneApplyMsPerMember, lanePolicy, openLanes } from './sync-lanes.ts';
 import { SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
 import { readDryRunWriterState } from './sync-dry-run-writer.ts';
 import { fileMatchesSnapshot } from './page-prepare.ts';
-import { pageHoldsDriftBaseline, dryRunScreen, heldImageEntry, isSyncReadBound, loadSyncScreenRun, originConflictHold, oversizeHold, pinnedBlob, pinnedContent, pinnedImageBytes, preparationStalledHold, prepareTimeFenceHold, screenFrozenImport, streamedRefusalHold, unreadableFileHold, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
+import { pageHoldsDriftBaseline, dryRunScreen, heldImageEntry, isSyncReadBound, loadSyncScreenRun, originConflictHold, oversizeHold, pinnedBlob, pinnedContent, pinnedFilterDriver, pinnedImageBytes, preparationStalledHold, prepareTimeFenceHold, screenFrozenImport, streamedRefusalHold, unreadableFileHold, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
 import { frozenImageIntent, sameImageBytes } from './sync-image.ts';
 import { fenceReceiptLocation } from '../fence-repair/refusal.ts';
 import { managedSyncWriteDiagnostic, writeWaitOf } from './sync-write-diagnostic.ts';
@@ -56,7 +56,7 @@ import { publicFailureDetail } from './publication-failure.ts';
 import { dependentHold, fileDriftHold, sharedOriginSurvivor, fileChangedAfterAdmission, headCommittedBytes, liveRevision, idempotentDeletionProof, originFaultHold, pageChangeProof, pageChangedHold, pinnedWorktreeConflict, receiptPageFaultHold, worktreeDirtyHold } from './sync-page-fault.ts';
 import { faultPoint } from './fault-points.ts';
 import { syncReceiptWait } from './sync-receipt-wait.ts';
-import { directoryAt, freezeFaultHold, noteFrozen, nullBytesRefusal } from './sync-entry-fault.ts';
+import { directoryAt, filterOwnedRefusal, freezeFaultHold, noteFrozen, nullBytesRefusal } from './sync-entry-fault.ts';
 import { syncCursorOptions } from './sync-slices.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { withManagedReasonNotices } from './sync-reasons.ts';
@@ -410,6 +410,9 @@ async function freezeEntryOnce(engine: BrainEngine, cursor: Cursor, key: string,
       content = (await readCommittedBlob(cursor.companyPlan.revision!, blob, cursor.companyPlan.limits)).toString('utf8');
       assertActive();
     } else content = imageBytes ? frozenImageIntent(imageBytes).content : entry.action === 'import' && !oversize && !bodyRef ? pinnedContent(cursor, entry) : null;
+    const filtered = !screening && content !== null && !image // GST-2312 (#9024) with sync.holds=fail
+      ? filterOwnedRefusal(entry.path, content, entry.working ? null : pinnedFilterDriver(cursor, entry.path), cursor.sourceId, false) : null;
+    if (filtered) throw syncRunRefusal('content_filter_owned', 'A synced file is stored through a Git filter.', retry, filtered.message);
     const nul = !screening && content !== null && !image ? nullBytesRefusal(entry.path, content) : null; // GBRA-133 S-39 with sync.holds=fail
     if (nul) throw syncRunRefusal('content_null_bytes', 'A synced Markdown file holds NUL bytes.', retry, nul.message);
     // #6340: working-tree bytes that differ from the pinned blob but are committed at HEAD (a commit past the pin on a
