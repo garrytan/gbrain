@@ -5,17 +5,22 @@
  *    struck row (`~~claim~~`), the same rule it already applies to `forgotten:`. An unstruck row stays a live
  *    fact: facts.superseded_by is NULL after extract_facts and the fact is in recall's candidate pool.
  * 2. Fails when: an unstruck row whose context mentions `superseded by #N` gets facts.superseded_by set (on
- *    first reconcile, or when a struck row is reinstated by removing the strikethrough), which hides it from
- *    every read that filters `superseded_by IS NULL`.
+ *    first reconcile, when a struck row is reinstated by removing the strikethrough, or when a fact is written
+ *    with that context), which hides it from every read that filters `superseded_by IS NULL`.
  * 3. Existing coverage: facts-fence and extract-facts-phase pin struck rows with the context note and active
  *    rows without it; nothing pinned an active row that carries the note.
- * 4. Real seams: PGLite, putPage, runExtractFacts and collectFactCandidates; no provider calls (keyword arm only).
+ * 4. Real seams: PGLite, putPage, runExtractFacts, writeFactsToFence on a temp brain directory and
+ *    collectFactCandidates; no provider calls (keyword arm only).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { parseFactsFence } from '../src/core/facts-fence.ts';
+import { writeFactsToFence, type FenceInputFact } from '../src/core/facts/fence-write.ts';
 import { collectFactCandidates } from '../src/core/search/fact-relevance.ts';
 
 let engine: PGLiteEngine;
@@ -47,9 +52,9 @@ async function reconcile(rows: string): Promise<void> {
   await runExtractFacts(engine, { slugs: [SLUG] });
 }
 
-async function row1(): Promise<{ superseded: boolean; expired: boolean }> {
+async function row1(rowNum = 1): Promise<{ superseded: boolean; expired: boolean }> {
   const [r] = await engine.executeRaw<{ superseded: boolean; expired: boolean }>(
-    `SELECT superseded_by IS NOT NULL AS superseded, expired_at IS NOT NULL AS expired FROM facts WHERE source_markdown_slug = $1 AND row_num = 1`, [SLUG]);
+    `SELECT superseded_by IS NOT NULL AS superseded, expired_at IS NOT NULL AS expired FROM facts WHERE source_markdown_slug = $1 AND row_num = $2`, [SLUG, rowNum]);
   return r!;
 }
 
@@ -82,5 +87,21 @@ describe('an active fence row whose context says "superseded by #N"', () => {
     await reconcile(ACTIVE);
     expect(await row1()).toEqual({ superseded: false, expired: false });
     expect(await recalled()).toContain('Will close by Q2');
+  }, 60_000);
+
+  test('a fact written with that context lands live, unlinked and recallable', async () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-fence-active-superseded-'));
+    try {
+      await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [brainDir]);
+      const target = { sourceId: 'default', localPath: brainDir, slug: SLUG, resolutionSource: 'exact_page' as const };
+      const input = (fact: string, context?: string): FenceInputFact => ({ fact, kind: 'fact', notability: 'high', source: 'call', visibility: 'world',
+        confidence: 1.0, validFrom: new Date(Date.UTC(2026, 0, 1)), embedding: null, sessionId: null, ...(context ? { context } : {}) });
+      expect((await writeFactsToFence(engine, target, [input('Closed in Q3')])).inserted).toBe(1);
+      expect((await writeFactsToFence(engine, target, [input('Will close by Q2', 'superseded by #1')])).inserted).toBe(1);
+      expect(await row1(2)).toEqual({ superseded: false, expired: false });
+      expect(await recalled()).toContain('Will close by Q2');
+    } finally {
+      rmSync(brainDir, { recursive: true, force: true });
+    }
   }, 60_000);
 });
