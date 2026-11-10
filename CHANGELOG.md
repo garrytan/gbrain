@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.645.0] - 2026-11-10
 
 **A GitHub (or other API) connector source no longer stops for good when one of its items is a page stored in segments.** A long issue (a body plus hundreds of comments) grows past 1 MiB and is stored in segments. Before, that item could never import, and once such a page existed, every later sweep of a bound source stopped on `page_body_segmented` with no item named, so nothing after it imported and the cursor never moved. Now an item up to 24 MiB imports and re-renders like any other, and one the sweep cannot read whole (over 24 MiB) fails on its own from the first sweep, and is held after three (`gbrain sources status`), while the rest of the run imports and the cursor moves; a new comment on it re-tries only that item. Reported and first diagnosed in #9062.
 
