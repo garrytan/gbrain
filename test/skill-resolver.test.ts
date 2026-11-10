@@ -448,6 +448,20 @@ describe('sessions', () => {
     expect(existsSync(join(dir, file))).toBe(false);
   });
 
+  test('a bounded async GC pass examines at most its file budget and stamps; one past its deadline deletes nothing and leaves no stamp', async () => {
+    const home = tmp();
+    const dir = join(home, 'skill-index', 'sessions');
+    mkdirSync(dir, { recursive: true });
+    const old = (Date.now() - 8 * 24 * 3600 * 1000) / 1000;
+    for (let i = 0; i < 10; i++) { const p = join(dir, `${String(i).repeat(64)}.json`); writeFileSync(p, '{}'); utimesSync(p, old, old); }
+    const stamp = join(home, 'skill-index', 'logs', 'session-gc.stamp');
+    expect(await gcSessionsAsync(home, Date.now(), { files: 3, until: performance.now() - 1 })).toBe(0);
+    expect(existsSync(stamp)).toBe(false);
+    expect(await gcSessionsAsync(home, Date.now(), { files: 3, until: performance.now() + 60_000 })).toBe(3);
+    expect(readdirSync(dir)).toHaveLength(7);
+    expect(existsSync(stamp)).toBe(true);
+  });
+
   test('async GC never deletes an idle session file while a commit holds its lease; the commit keeps the earlier state', async () => {
     const home = tmp();
     const key = sessionKey('on', undefined, 'gc-race');

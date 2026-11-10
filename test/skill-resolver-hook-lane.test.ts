@@ -17,7 +17,7 @@
  * and answers {"context"}; with the lane off it prints and writes nothing.
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -252,6 +252,27 @@ describe('skill-resolver lane: turn settings from config', () => {
     const invalid = await ask(claude, 'd5');
     expect([invalid.exitCode, invalid.stdout]).toEqual([0, '']);
     expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'error', code: 'skill_resolver_config_invalid' });
+  });
+});
+
+describe('skill-resolver lane: session GC before the process exits', () => {
+  test('a delivered turn deletes idle session files and stamps the pass; a turn within the interval leaves new ones', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    const cmd = wired(b, 'claude-code');
+    const dir = join(b.home, '.gbrain', 'skill-index', 'sessions');
+    mkdirSync(dir, { recursive: true });
+    const old = (Date.now() - 8 * 86_400_000) / 1000;
+    const plant = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => { const p = join(dir, `${prefix}${String(i).padStart(63, '0')}.json`); writeFileSync(p, '{}'); utimesSync(p, old, old); return p; });
+    const idle = plant('a', 40);
+    const r = await hook(b, cmd, { prompt: 'please deploy the widget to staging', session_id: 'gc-a' }, WIDE);
+    expect(contextOf(r)).toContain('deploy-widget');
+    expect(idle.filter((p) => existsSync(p))).toEqual([]);
+    expect(existsSync(join(b.home, '.gbrain', 'skill-index', 'logs', 'session-gc.stamp'))).toBe(true);
+    const later = plant('b', 3);
+    await hook(b, cmd, { prompt: 'write a changelog entry for the release', session_id: 'gc-b' }, WIDE);
+    expect(later.filter((p) => existsSync(p))).toHaveLength(3);
   });
 });
 

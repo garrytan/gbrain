@@ -29,7 +29,9 @@
  * that ends before the worker is needed terminates it. At the
  * deadline the main thread prints nothing and exits the process at once,
  * abandoning the worker, and commits no dedupe state: a commit starts only
- * after the block was written, on the main thread, before the deadline.
+ * after the block was written, on the main thread, before the deadline. The
+ * commit's session GC pass is awaited before the lane returns, bounded by
+ * LANE_GC_FILES files and by the time left before the deadline.
  *
  * One owner per event: like the harness, plugin and turn-rule lanes, it parses
  * the carriers the harness merges (Claude Code: managed settings, the
@@ -54,9 +56,10 @@
  * minute per catalog, unless skills.resolver.auto_rebuild is false or
  * GBRAIN_SKILLS_NO_AUTOREBUILD=1.
  *
- * Turn settings: skills.resolver.top_k, min_match, pinned (sent as exclude)
- * and per_harness.<harness>.{top_k,min_match} (config.ts laneTurnSettings);
- * unset, a turn is top_k 5 with every match and nothing excluded.
+ * Turn settings: skills.resolver.top_k, min_match, top_gate, pinned (sent as
+ * exclude) and per_harness.<harness>.{top_k,min_match,top_gate} (config.ts
+ * laneTurnSettings); unset, a turn is top_k 5 with every match, no gate and
+ * nothing excluded.
  *
  * Payload: the lane's own budget (skills.resolver.lane_payload_chars, default
  * 4000 characters of hook JSON, Hermes's included); a block that does not fit
@@ -81,7 +84,7 @@ import { laneTurnSettings, type LaneTurnSettings } from './config.ts';
 import { appendDailyLog, LANE_LOG } from './daily-log.ts';
 import { HOOK_FIELD_CAP, readJsonFields } from './hook-input.ts';
 import { assertCatalogName, catalogFile, CLAUDE_PLUGINS_CATALOG, logsDir, resolverHome } from './paths.ts';
-import { type CommitHold, commitSessionAsync, sessionKey, type TurnDelta } from './session.ts';
+import { type CommitHold, commitSessionAsync, LANE_GC_FILES, sessionGcSettled, sessionKey, type TurnDelta } from './session.ts';
 import type { TurnOutput } from './resolve.ts';
 import type { LaneWorkerTurn } from './hook-worker.ts';
 import { laneWorkerFailed, startLaneWorker } from './lane-worker.ts';
@@ -98,6 +101,8 @@ const CONFIG_CAP_BYTES = 1024 * 1024;
 const SPAWN_INTERVAL_MS = 60_000;
 /** Time kept back from the worker's own deadline for delivery and the commit. */
 const COMMIT_RESERVE_MS = 10;
+/** Time kept back from the deadline after the session GC pass, for the lane log and the exit. */
+const GC_RESERVE_MS = 5;
 
 export type LaneHarness = 'claude-code' | 'codex' | 'hermes';
 export { CLAUDE_PLUGINS_CATALOG };
@@ -358,7 +363,11 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
   }
   const stall = env.GBRAIN_TEST_SKILL_LANE_STALL;
   if (stall === 'commit-held' || stall === 'commit-written') ctl.commit.at = (stage) => (`commit-${stage}` === stall ? new Promise(() => {}) : Promise.resolve());
-  if (posted.pending && !ctl.expired) await commitSessionAsync(home, posted.pending.key, posted.pending.delta, ctl.commit);
+  if (posted.pending && !ctl.expired) {
+    const gc = { files: LANE_GC_FILES, until: performance.now() + deadlineMs - elapsed() - GC_RESERVE_MS };
+    await commitSessionAsync(home, posted.pending.key, posted.pending.delta, ctl.commit, gc);
+    await sessionGcSettled();
+  }
   return { outcome, catalogs };
 }
 
