@@ -302,6 +302,35 @@ describe('sessions', () => {
     expect(loadSession(home, key).turn).toBe(1);
   });
 
+  test('a spent budget stays spent on an acknowledgement or a no-match turn (HARN-52)', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', BASIC);
+    await commitSession(home, sessionKey('on', 'claude-code', 'a'), { tokens: 2000, suggested: [], resuggested: [], reset: false });
+    for (const message of ['ok thanks', 'zzqxv']) {
+      const r = await resolveSkills({ message, session_id: 'a', harness: 'claude-code' }, { home });
+      expect([r.output.no_skill, r.output.budget_exhausted, r.output.block_reason]).toEqual([true, true, message === 'zzqxv' ? 'no_match' : 'ack']);
+    }
+    expect((await resolveSkills({ message: 'ok thanks', session_id: 'fresh', harness: 'claude-code' }, { home })).output.budget_exhausted).toBe(false);
+  });
+
+  test('block_reason says why a block is empty: deduped, paced, budget_exhausted, filtered, shadow', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', BASIC);
+    const first = await resolveSkills({ message: 'deploy', session_id: 'd' }, { home, sessionTokenBudget: 50_000 });
+    expect(first.output.block_reason).toBeNull();
+    await first.commit();
+    const again = await resolveSkills({ message: 'deploy', session_id: 'd' }, { home, sessionTokenBudget: 50_000 });
+    expect([again.output.block, again.output.block_reason]).toEqual(['', 'deduped']);
+    await commitSession(home, sessionKey('on', undefined, 'p'), { tokens: 1000, suggested: [], resuggested: [], reset: false });
+    const paced = await resolveSkills({ message: 'team status', session_id: 'p' }, { home });
+    expect([paced.output.block, paced.output.block_reason]).toEqual(['', 'paced']);
+    await commitSession(home, sessionKey('on', undefined, 'p'), { tokens: 1000, suggested: [], resuggested: [], reset: false });
+    expect((await resolveSkills({ message: 'team status', session_id: 'p' }, { home })).output.block_reason).toBe('budget_exhausted');
+    expect((await resolveSkills({ message: 'deploy', exclude: ['gbrain:deploy'], min_match_strength: 'name' }, { home })).output.block_reason).toBe('filtered');
+    const shadow = await resolveSkills({ message: 'deploy', shadow: true }, { home });
+    expect([shadow.output.block_reason, shadow.shadowOutput?.block_reason]).toEqual(['shadow', null]);
+  });
+
   test('a skill the turn names still gets its line after the budget is spent; its tokens count', async () => {
     const home = tmp();
     await jsonCatalog(home, 'c', BASIC);

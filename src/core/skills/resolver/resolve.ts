@@ -63,6 +63,8 @@ export interface TurnInput {
 
 export interface Suggestion { id: string; name: string; score: number; summary: string; reason: string; match_strength: MatchStrength; path?: string; catalog: string }
 export interface TurnError { code: string; message: string; fix: { suggestion: string; command?: string } }
+/** Why a block is empty; null when it has a suggestion. */
+export type BlockReason = 'ack' | 'no_match' | 'filtered' | 'deduped' | 'paced' | 'budget_exhausted' | 'shadow' | 'error';
 export interface TurnOutput {
   schema_version: 1;
   gbrain_version: string;
@@ -73,6 +75,7 @@ export interface TurnOutput {
   no_skill: boolean;
   no_skill_reason: 'ack' | 'no_match' | null;
   budget_exhausted: boolean;
+  block_reason: BlockReason | null;
   suggestions: Suggestion[];
   block: string;
   block_tokens: number;
@@ -244,7 +247,7 @@ function emptyOutput(input: { shadow?: boolean }, extra: Partial<TurnOutput>): T
   return {
     schema_version: 1, gbrain_version: VERSION, catalog: null, catalog_hash: null, index_hash: null,
     ranker: { id: RANKER_ID, version: RANKER_VERSION, variant: null, k: 0 },
-    no_skill: false, no_skill_reason: null, budget_exhausted: false, suggestions: [], block: '', block_tokens: 0, tokenizer: BLOCK_TOKENIZER,
+    no_skill: false, no_skill_reason: null, budget_exhausted: false, block_reason: extra.error ? 'error' : null, suggestions: [], block: '', block_tokens: 0, tokenizer: BLOCK_TOKENIZER,
     deduped: [], shadow: Boolean(input.shadow), meta: { timing_ms: 0, index_age_s: null, index_stale: false }, ...extra,
   };
 }
@@ -317,23 +320,23 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
     const kEff = spentFrac < 0.5 ? input.top_k : spentFrac < 0.8 ? Math.min(input.top_k, 3) : 1;
     const base: TurnOutput = {
       ...emptyOutput(input, {}), catalog, catalog_hash: catalogHash, index_hash: indexHash,
-      ranker: { id: RANKER_ID, version: RANKER_VERSION, variant, k: kEff }, meta,
+      ranker: { id: RANKER_ID, version: RANKER_VERSION, variant, k: kEff }, meta, budget_exhausted: budget === 0 || state.spent >= budget,
     };
     const finish = (out: TurnOutput, delta: { tokens: number; suggested: string[]; resuggested: string[] }, explain?: Explain): ResolveResult => {
       out.meta.timing_ms = round4(performance.now() - t0);
       const pending = key ? { key, delta: { ...delta, reset: input.reset_session } } : null;
       const commit = async () => (pending ? commitSession(home, pending.key, pending.delta) : false);
       if (!input.shadow) return { output: out, ...(explain ? { explain } : {}), commit, pending };
-      const quiet: TurnOutput = { ...out, suggestions: [], block: '', block_tokens: 0, deduped: [], shadow: true };
+      const quiet: TurnOutput = { ...out, block_reason: 'shadow', suggestions: [], block: '', block_tokens: 0, deduped: [], shadow: true };
       return { output: quiet, shadowOutput: { ...out, shadow: true }, ...(explain ? { explain } : {}), commit, pending };
     };
 
-    if (isAcknowledgement(input.message)) return finish({ ...base, no_skill: true, no_skill_reason: 'ack' }, { tokens: 0, suggested: [], resuggested: [] });
+    if (isAcknowledgement(input.message)) return finish({ ...base, no_skill: true, no_skill_reason: 'ack', block_reason: 'ack' }, { tokens: 0, suggested: [], resuggested: [] });
 
     const rankText = (text: string): RankResult[] => loaded.map(l => { const r = rankIndex(l.ix, text, check); check(); return r; });
     let ranks = rankText(input.message);
     if (ranks.every(r => r.idfSum === 0) && input.previous_user_message?.trim()) ranks = rankText(input.previous_user_message);
-    if (ranks.every(r => r.idfSum === 0)) return finish({ ...base, no_skill: true, no_skill_reason: 'no_match' }, { tokens: 0, suggested: [], resuggested: [] });
+    if (ranks.every(r => r.idfSum === 0)) return finish({ ...base, no_skill: true, no_skill_reason: 'no_match', block_reason: 'no_match' }, { tokens: 0, suggested: [], resuggested: [] });
 
     interface Cand { c: number; doc: number; score: number; id: string; explicit: boolean }
     const metaOf = (c: number, doc: number) => loaded[c]!.ix.meta(doc);
@@ -401,7 +404,8 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
       const match_strength = strengthOf(x);
       return { id: m.id, name: m.name, score: round4(x.score), summary: namesOnly ? '' : m.summary, reason: x.explicit ? `named in the turn; ${reasonText(fields)}` : reasonText(fields), match_strength, ...(m.path ? { path: m.path } : {}), catalog: loaded[x.c]!.name };
     });
-    const out: TurnOutput = { ...base, budget_exhausted: exhausted, suggestions, block: r.block, block_tokens: r.tokens, deduped };
+    const blockReason: BlockReason | null = suggestions.length ? null : exhausted ? 'budget_exhausted' : paced ? 'paced' : window.length ? 'deduped' : 'filtered';
+    const out: TurnOutput = { ...base, budget_exhausted: exhausted, block_reason: blockReason, suggestions, block: r.block, block_tokens: r.tokens, deduped };
     let explain: Explain | undefined;
     if (opts.explainTarget !== undefined) {
       const target = opts.explainTarget;

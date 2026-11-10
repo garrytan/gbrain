@@ -34,6 +34,7 @@ import { ResolverError } from './errors.ts';
 import { readBounded, readHead } from './fsutil.ts';
 import { boundBody, cleanText, parseSkillDoc, SKILL_FILE_CAP_BYTES } from './frontmatter.ts';
 import { parseRoutingTable } from './routing.ts';
+import { listingKey, skippedEntry } from './catalog-files.ts';
 export { fingerprintChanged } from './catalog-files.ts';
 
 export const MAX_SKILLS = 10_000;
@@ -65,7 +66,7 @@ export interface SkillRecord {
 export type SkipReason = 'duplicate_id' | 'not_model_invocable' | 'ineligible' | 'symlink_outside_root' | 'unreadable' | 'invalid_entry';
 export interface SkippedSkill { reason: SkipReason; id?: string; path?: string; kept?: string }
 
-export interface DirFingerprint { dirs: [string, number][]; files: [string, number, number][] }
+export interface DirFingerprint { dirs: [string, number, string?][]; files: [string, number, number][] }
 
 export interface SourceRead {
   kind: 'dir' | 'bundled' | 'json' | 'claude_plugins';
@@ -135,11 +136,12 @@ export function readDirSources(dirs: readonly string[], rootNamespaces: readonly
         if (++visited > MAX_DIRS_VISITED) throw tooLarge(`more than ${MAX_DIRS_VISITED} directories under the --dir roots`);
         let entries: string[];
         try {
-          fp.dirs.push([dir, statSync(dir).mtimeMs]);
-          entries = readdirSync(dir).sort();
+          const mtime = statSync(dir).mtimeMs;
+          const listed = readdirSync(dir, { withFileTypes: true });
+          fp.dirs.push([dir, mtime, listingKey(listed)]);
+          entries = listed.map(e => e.name).filter(n => !skippedEntry(n)).sort();
         } catch { skipped.push({ reason: 'unreadable', path: dir }); continue; }
         for (const name of entries) {
-          if (name === 'node_modules' || name === '.git') continue;
           const full = join(dir, name);
           let real = full;
           let st;

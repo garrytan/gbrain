@@ -49,7 +49,9 @@ One catalog per skill set. Names are 1-64 characters of `a-z`, `0-9`, `_` and
 - `--dir` is repeatable; earlier directories win duplicate ids (the loser is
   listed in the receipt as `duplicate_id`). Symlinks that leave the root,
   skills with `disable-model-invocation: true` and JSON entries with
-  `eligible: false` are never indexed.
+  `eligible: false` are never indexed. Dot-entries (harness-owned state such
+  as Codex's `.system/` or Hermes's `.usage.json`) and `node_modules` are
+  never read, so a harness writing them does not make the index stale.
 - `--routing <file>` adds the rows of one RESOLVER-style routing table to
   the skills they name.
 - `--scope project` marks a cloned repository's skills: their blocks show ids
@@ -92,6 +94,16 @@ per-turn hook that puts the block in front of the model on every prompt:
 `--dry-run` lists every write, and re-running changes nothing. A bare
 `gbrain setup <harness>` refreshes a lane that is on.
 
+**Hermes** runs the same lane as a `pre_llm_call` shell hook:
+`GBRAIN_HOOK_LANE=skill-resolver gbrain hook user-prompt --harness hermes`.
+Setup does not wire it yet, so build `hermes-user` yourself
+(`gbrain skills index build --catalog hermes-user --dir ~/.hermes/skills
+--harness hermes`) and add `hermes` to `skills.resolver.harnesses`. The lane
+reads `extra.user_message`, `session_id` and `cwd` from the hook's stdin and
+answers `{"context": "<block>"}`. Hermes sends the whole conversation history
+on every turn, so the lane streams stdin and keeps only those three strings
+(each capped at 8 KB): a history of any size is read, never refused.
+
 The lane runs the resolver in the hook process (never through `gbrain serve`),
 so it works with serve down and with no brain. Each block names the skill ids
 and gives the harness's own load line; Codex lines also carry the SKILL.md path.
@@ -104,32 +116,46 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   default every match) and `skills.resolver.pinned` (skill ids the harness
   always loads itself, never suggested). `skills.resolver.per_harness.<harness>.top_k`
   and `.min_match` override one harness; what it leaves out falls back to the
-  global key. Set them with `gbrain config set`; a bad value makes the lane
+  global key, and an entry that is not an object counts as unset. Set them with `gbrain config set`; a bad value makes the lane
   log `skill_resolver_config_invalid` and deliver nothing.
 - **Payload:** at most `skills.resolver.lane_payload_chars` characters of hook
   output (default 4000, 500 to 10,000); a larger block is dropped whole and
   counted as `payload_dropped`.
 - **One owner:** when several settings files wire the lane, only the first
   entry whose home has the lane on delivers.
-- **Project skills (Claude Code):** a project's `.claude/skills` gets its own
-  catalog, `claude-code-project-<hash of the root>`, built in the background
-  the first time the project is seen and merged by name only. Stale catalogs
-  rebuild the same way, at most once a minute;
-  `skills.resolver.auto_rebuild false` or `GBRAIN_SKILLS_NO_AUTOREBUILD=1`
-  stops both.
+- **Catalogs:** a turn searches the user catalog, Claude Code's
+  `claude-code-plugins` (setup builds it from enabled plugins) and the project
+  catalog, each only once it is built. With none built the turn prints nothing
+  and logs `no_catalog`.
+- **Project skills:** Claude Code's `.claude/skills` in the project gets its
+  own catalog, `claude-code-project-<hash of the root>`. Codex's gets
+  `codex-project-<hash of the dirs>`, over every `.agents/skills` from the
+  project root (the nearest folder above the working directory that holds a
+  `.git`, else the working directory) down to the working directory, root
+  first, the way Codex 0.165 loads them; your own `~/.agents/skills` stays in
+  `codex-user`. Each is built in the background the first time the project is
+  seen and merged by name only. Stale catalogs rebuild the same way, at most
+  once a minute; `skills.resolver.auto_rebuild false` or
+  `GBRAIN_SKILLS_NO_AUTOREBUILD=1` stops both.
 - **Compaction:** a SessionStart with `source: compact` (Claude Code, and Codex
   0.165 and later) resets the session, so skills can be offered again. A Codex
   install from before gets the SessionStart group on its next setup run.
+  Hermes has no compaction event yet.
 
 Each turn appends one line (outcome, error code, duration, catalogs; never
 turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
 kept 14 days and capped at 2 MB a day. `gbrain doctor` (`skill_resolver`, and
 `harness_wiring`'s details) reports the hook, each catalog's freshness and
-the recent error codes; it says nothing while the resolver is off.
+the recent error codes; it says nothing while the resolver is off. A hook from
+before the compaction reset (UserPromptSubmit without SessionStart) shows as
+`outdated` and warns with its fix, `gbrain setup codex --skill-loading
+resolve` (or `claude-code`).
 
 Compiled binaries carry the lane's worker as a second entrypoint
 (`bun build --compile src/cli.ts src/core/skills/resolver/hook-worker.ts`); a
 binary built without it delivers nothing and logs `skill_resolver_internal`.
+The release and `bun run build` also pass `--define GBRAIN_BUILD_COMMIT=<sha>`,
+so a compiled binary's build receipts record `gbrain_commit`.
 
 ## The contract (schema_version 1)
 
@@ -160,6 +186,13 @@ the turn (`$name`, `@name`, a leading `/name`, "the name skill", or its full
 id) ranks first. When the message matches no catalog word (a follow-up such
 as "do it again"), `previous_user_message` (`--previous`) is ranked instead.
 
+An empty block carries `block_reason`: `ack`, `no_match`, `filtered` (every
+match was excluded or below `min_match_strength`), `deduped` (every match was
+already suggested in the session), `paced` (past half the budget and the top
+match is not on a name, trigger or routing row), `budget_exhausted`, `shadow`
+(the live output of a `--shadow` turn) or `error`. It is null when the block
+has a suggestion.
+
 ### Exit codes and fail-open
 
 | Result | Exit | stdout |
@@ -185,7 +218,8 @@ With `--session <id>` the resolver remembers which skills it suggested:
   in `config.json` (default 2,000 tokens; 0 silences the resolver, otherwise
   100-50,000). k drops to 3 once half is spent and to 1 at 80%; after half,
   only a turn whose top result matched on name, triggers or routing spends
-  any. When it is spent, `budget_exhausted` is true and the block is empty,
+  any. When it is spent, `budget_exhausted` is true on every turn (an
+  acknowledgement included) and the block is empty,
   except for a skill the turn names, which still gets its line (and its
   tokens still count);
 - state is committed only after the block was delivered: the CLI commits

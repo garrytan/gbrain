@@ -69,7 +69,11 @@ export interface BuildReceipt {
   build: { args: string[]; rebuild_argv: string[] | null; ms: number; built_at: string; generation: number };
 }
 
+/** Set by `bun build --define` in the release and `bun run build` compiles, where no .git sits beside the source. */
+declare const GBRAIN_BUILD_COMMIT: string | undefined;
+
 function gbrainCommit(): string | null {
+  if (typeof GBRAIN_BUILD_COMMIT === 'string' && /^[0-9a-f]{40}$/.test(GBRAIN_BUILD_COMMIT)) return GBRAIN_BUILD_COMMIT;
   try {
     let d = dirname(new URL(import.meta.url).pathname);
     for (let i = 0; i < 6; i++, d = dirname(d)) {

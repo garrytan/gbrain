@@ -15,7 +15,7 @@
  *    missing plugin indexes, or setup leaves the plugin catalog behind.
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
@@ -190,5 +190,46 @@ describe('setup claude-code --skill-loading resolve with plugins', () => {
     expect(on.exitCode, on.stderr).toBe(0);
     expect(index(b.home)).toEqual(['claude-code-plugins', 'claude-code-user']);
     expect(on.stdout).toContain('skill resolver: on; 2 skills; fresh');
+  });
+});
+
+describe('harness-owned entries in a skills root (HARN-52)', () => {
+  const built = async (prefix: string) => {
+    const home = tmp();
+    const root = tmp(prefix);
+    skill(root, 'deploy', 'deploy', 'Deploy a service to production');
+    await buildSkillIndex({ catalog: 'h', dirs: [root], harness: 'codex' }, { home });
+    return { home, root };
+  };
+  const stale = async (home: string) => (await resolveSkills({ message: 'deploy a service' }, { home, catalogs: ['h'] })).output.meta.index_stale;
+
+  test('Codex creating .system/ with its own skills leaves the index fresh, and dot-directories are never indexed', async () => {
+    const { home, root } = await built('skres-codex-root-');
+    skill(join(root, '.system'), 'skill-creator', 'skill-creator', 'Create a new skill');
+    expect(await stale(home)).toBe(false);
+    expect((await catalogStatus('h', { home })).fresh).toBe(true);
+    const ids = (await resolveSkills({ message: 'create a new skill' }, { home, catalogs: ['h'] })).output.suggestions.map((s) => s.id);
+    expect(ids).not.toContain('skill-creator');
+  });
+
+  test('Hermes rewriting a dot-file in the root (write and rename) leaves the index fresh', async () => {
+    const { home, root } = await built('skres-hermes-root-');
+    writeFileSync(join(root, '.usage.json.tmp'), '{"deploy":1}');
+    renameSync(join(root, '.usage.json.tmp'), join(root, '.usage.json'));
+    writeFileSync(join(root, '.hub'), 'x');
+    expect(await stale(home)).toBe(false);
+    writeFileSync(join(root, '.usage.json.tmp'), '{"deploy":2}');
+    renameSync(join(root, '.usage.json.tmp'), join(root, '.usage.json'));
+    expect(await stale(home)).toBe(false);
+    expect((await catalogStatus('h', { home })).fresh).toBe(true);
+  });
+
+  test('a new skill folder or an edited SKILL.md still makes the index stale', async () => {
+    const a = await built('skres-new-skill-');
+    skill(a.root, 'notes', 'notes', 'Take meeting notes');
+    expect(await stale(a.home)).toBe(true);
+    const b = await built('skres-edit-skill-');
+    writeFileSync(join(b.root, 'deploy', 'SKILL.md'), '---\nname: deploy\ndescription: Deploy a service to staging first\n---\nSteps.\n');
+    expect(await stale(b.home)).toBe(true);
   });
 });

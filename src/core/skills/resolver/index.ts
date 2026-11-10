@@ -28,10 +28,14 @@ import { gcSessionsAsync, resetSession, sessionKey } from './session.ts';
  * turn input, exclude up to EXCLUDE_MAX ids, the index's catalog_hash on
  * skill_catalog_mismatch, a named skill's line past a spent budget,
  * previous_user_message as the fallback ranking text, the pi and cursor
- * harnesses, the warm handle (openCatalog), the worker-thread build
- * (buildSkillIndexOffThread) and gcSkillSessions.
+ * harnesses, OpenClaw's skills list --json as a catalog, --from-json with
+ * --dir bodies, Claude Code plugin catalogs, the warm handle (openCatalog),
+ * the worker-thread build (buildSkillIndexOffThread), gcSkillSessions, the
+ * hook lane for Hermes (`hook user-prompt --harness hermes`, answering
+ * {"context"}) and the lane's Codex project catalog (codex-project-<hash>,
+ * the .agents/skills dirs from the project root to cwd).
  */
-export const RESOLVER_FEATURES: readonly string[] = ['min_match_strength', 'exclude_1024', 'mismatch_catalog_hash', 'named_past_budget', 'previous_user_message', 'harness_pi', 'harness_cursor', 'openclaw_skills_list', 'from_json_with_dirs', 'claude_plugins', 'open_catalog', 'build_off_thread', 'gc_sessions'];
+export const RESOLVER_FEATURES: readonly string[] = ['min_match_strength', 'exclude_1024', 'mismatch_catalog_hash', 'named_past_budget', 'previous_user_message', 'harness_pi', 'harness_cursor', 'openclaw_skills_list', 'from_json_with_dirs', 'claude_plugins', 'open_catalog', 'build_off_thread', 'gc_sessions', 'harness_hermes_lane', 'codex_project_catalog'];
 
 /** One bounded pass (at most 1,000 files, async I/O) deleting session files idle for 7 days; returns how many it deleted. Commits already run one at most every 10 minutes. */
 export async function gcSkillSessions(opts: { home?: string; now?: number } = {}): Promise<number> {

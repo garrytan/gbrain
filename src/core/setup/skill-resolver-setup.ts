@@ -26,7 +26,7 @@ import { dirname, join } from 'node:path';
 import { claudeUserSkillsDir, codexConfigPath } from '../bootstrap/host-specs.ts';
 import { buildSkillIndex, catalogStatus, listCatalogs, removeSkillIndex } from '../skills/resolver/build.ts';
 import { ResolverError } from '../skills/resolver/errors.ts';
-import { logsDir, sessionsDir, skillIndexRoot } from '../skills/resolver/paths.ts';
+import { CLAUDE_PLUGINS_CATALOG, logsDir, sessionsDir, skillIndexRoot } from '../skills/resolver/paths.ts';
 import { resolveSkills } from '../skills/resolver/resolve.ts';
 import { claudePluginRoots, readDirSources } from '../skills/resolver/sources.ts';
 import { readResolverConfig, resolverHarnesses, setResolverHarness } from './skill-resolver-config.ts';
@@ -44,7 +44,6 @@ export interface ResolverSetupResult {
 }
 
 export const userCatalog = (harness: ResolverHarness) => `${harness}-user`;
-export const CLAUDE_PLUGINS_CATALOG = 'claude-code-plugins';
 const isHarnessCatalog = (harness: ResolverHarness, name: string) => name === userCatalog(harness) || name === `${harness}-plugins` || name.startsWith(`${harness}-project-`);
 
 /** The Claude Code config directory whose plugins the plugin catalog indexes. */
