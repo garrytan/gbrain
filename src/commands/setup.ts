@@ -47,7 +47,7 @@ import { claudeUserSettingsPath, type ClaudeHookEvent } from '../core/bootstrap/
 import { readHarnessReceiptState } from '../core/bootstrap/format.ts';
 import { smokeStdioRegistration } from './doctor/checks/harness-wiring.ts';
 import { finishFreshSetupMigrations } from './setup-migrations.ts';
-import { servesApply, servesLines, servesOk, servesPreflight, type ServesOutcome } from './setup-serves.ts';
+import { readServesStatus, servesApply, servesLines, servesOk, servesPreflight, type ServesOutcome } from './setup-serves.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 import {
   SETUP_CAPABILITIES,
@@ -869,6 +869,15 @@ function describeInstructions(o: BrainFirstOutcome, dryRun: boolean): string {
   return `${describeBrainFirstOutcome(o, dryRun)} [${o.decision.source}; ${how}]`;
 }
 
+/** --serves several on the instructions alone: the brain must serve several people and its stdio server be bound. */
+function servesBound(flags: SetupFlags): boolean {
+  const launcher = flags.gbrainBin ?? resolveGbrainBin();
+  const read = launcher && launcher.startsWith('/') ? readServesStatus(launcher) : null;
+  const ok = !!read && 'status' in read && read.status.serves === 'several' && !!read.status.stdio_member;
+  if (!ok) process.stderr.write('gbrain setup: --serves several: this brain does not serve several people with a bound stdio server, so the instructions keep the one-person scoping lines.\n');
+  return ok;
+}
+
 /**
  * `--instructions-only`, and the harnesses whose MCP registration setup does
  * not write (opencode, openclaw, hermes, cursor): manage the brain-first
@@ -880,7 +889,7 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   const adapter = HARNESS_ADAPTERS.find((a) => a.id === harness)!;
   const envSurface = process.env.GBRAIN_SURFACE;
   const surface = flags.surface ?? (isRegistrationSurface(envSurface) ? envSurface : undefined);
-  const access: BrainFirstAccess = { kind: 'mcp', server: flags.name, ...(surface ? { surface } : {}), ...(flags.serves === 'several' ? { serves: 'several' as const } : {}) };
+  const access: BrainFirstAccess = { kind: 'mcp', server: flags.name, ...(surface ? { surface } : {}), ...(flags.serves === 'several' && servesBound(flags) ? { serves: 'several' as const } : {}) };
   const mcp = { setup: flags.instructionsOnly ? 'unchanged' as const : 'manual' as const, docs: adapter.guide };
   if (!isBrainFirstHarness(harness)) {
     const pasted: BrainFirstAccess = adapter.connection === 'thin-cli' ? { kind: 'cli', launcher: flags.gbrainBin ?? 'gbrain' } : access;

@@ -8,8 +8,7 @@
 import type { Check } from '../../doctor.ts';
 import { agentFix, checkError, infoCheck } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
-import { appliedRules } from '../../../core/access/policy.ts';
-import { brainServes } from '../../../core/access/serves.ts';
+import { brainServes, unlabeledPeopleFolders } from '../../../core/access/serves.ts';
 
 const NAME = 'unlabeled_people_folders';
 
@@ -22,16 +21,7 @@ async function runUnlabeledPeopleFolders(ctx: DoctorContext): Promise<Check[]> {
       checks.push(infoCheck(NAME, 'Not applicable: this brain serves one person (fewer than two enabled members and no access.serves = several).', 'not_applicable'));
       return checks;
     }
-    const folders = await engine.executeRaw<{ source_id: string; folder: string; pages: number }>(
-      `SELECT source_id, split_part(slug, '/', 2) AS folder, count(*)::int AS pages FROM pages
-        WHERE deleted_at IS NULL AND slug LIKE 'people/%/%' GROUP BY 1, 2 ORDER BY 1, 2`);
-    const rulesBySource = new Map<string, string[]>();
-    const unlabeled: Array<{ source: string; prefix: string; pages: number }> = [];
-    for (const f of folders) {
-      if (!rulesBySource.has(f.source_id)) rulesBySource.set(f.source_id, (await appliedRules(engine, f.source_id)).map(r => r.prefix));
-      const prefix = `people/${f.folder}/`;
-      if (!rulesBySource.get(f.source_id)!.some(p => p === prefix || p === 'people/')) unlabeled.push({ source: f.source_id, prefix, pages: Number(f.pages) });
-    }
+    const unlabeled = await unlabeledPeopleFolders(engine);
     const why = view.from === 'config' ? 'config access.serves is several' : `it has ${view.enabled_members.length} enabled members`;
     if (!unlabeled.length) {
       checks.push({ name: 'unlabeled_people_folders', status: 'ok', details: { serves: view, folders: [] }, message: `This brain serves several people (${why}), and every people/<name>/ folder with pages has a folder rule naming its readers.` });

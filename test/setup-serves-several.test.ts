@@ -18,7 +18,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -29,7 +29,8 @@ import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { labelSeveral, type ServesReceipt } from '../src/commands/access-serves.ts';
+import { labelSeveral, receiptOk, servesStatus, type ServesReceipt } from '../src/commands/access-serves.ts';
+import { addMember } from '../src/core/access/members.ts';
 import { unlabeledPeopleFoldersEntry } from '../src/commands/doctor/checks/unlabeled-people-folders.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import { addFolderRules } from '../src/commands/access-rules.ts';
@@ -111,7 +112,8 @@ for (const kind of testBackends()) {
     test('labels each person: members, folder rules, a bound read-write key per member in a 0600 file outside git', async () => {
       const r = await label(ROSTER);
       expect(r.error).toBeUndefined();
-      expect(r.completed).toEqual(['config', 'members', 'rules', 'keys']);
+      expect(r.completed).toEqual(['members', 'rules', 'keys', 'config']);
+      expect(r.unlabeled).toEqual([]);
       expect(r.members.map(m => m.action)).toEqual(['add', 'add']);
       expect(r.rules.map(x => [x.prefix, x.readers, x.action])).toEqual([['people/alice-example/', ['member:alice-example'], 'add'], ['people/bob-example/', ['member:bob-example'], 'add']]);
       expect(r.rule_write).toMatchObject({ store: 'database', state: 'applied' });
@@ -156,7 +158,7 @@ for (const kind of testBackends()) {
       const roster = [...ROSTER, 'erin-example', 'finn-example'];
       const stopped = await label(roster, { GBRAIN_SETUP_ABORT_AFTER: 'serves-key' });
       expect(stopped.error?.message).toContain('serves-key');
-      expect(stopped.completed).toEqual(['config', 'members', 'rules']);
+      expect(stopped.completed).toEqual(['members', 'rules']);
       const keyDir = join(home, '.gbrain', 'member-keys');
       expect(existsSync(join(keyDir, 'erin-example.key'))).toBe(true);
       expect(existsSync(join(keyDir, 'finn-example.key'))).toBe(false);
@@ -178,6 +180,87 @@ for (const kind of testBackends()) {
     }, 60_000);
   });
 }
+
+describe('labelling refuses or reports what it cannot make safe (pglite, repo-less)', () => {
+  let engine: BrainEngine;
+  let home: string;
+  const label = (roster: string[], gbrainHome?: string, sourceId = 'default') => withEnv({ GBRAIN_HOME: gbrainHome ?? home, GBRAIN_SETUP_ABORT_AFTER: undefined }, () => labelSeveral(engine, roster, sourceId, true, true));
+  const liveToken = async (name: string) => (await engine.executeRaw<{ source_grant: string }>('SELECT source_grant FROM access_tokens WHERE name = $1 AND revoked_at IS NULL', [name]))[0];
+  const memberCount = async (id: string) => Number((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM access_members WHERE id = $1', [id]))[0]!.n);
+  beforeAll(async () => {
+    engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema();
+    home = tempDir('gbrain-serves-refuse-');
+  }, 120_000);
+  afterAll(async () => { await engine?.disconnect(); }, 60_000);
+
+  test('a key directory inside a git work tree, or linked into one, refuses before anything is written', async () => {
+    const repo = tempDir('gbrain-serves-git-');
+    execFileSync('git', ['init', '-q', repo]);
+    mkdirSync(join(repo, 'brain-home'));
+    const linked = join(tempDir('gbrain-serves-link-'), 'home');
+    symlinkSync(join(repo, 'brain-home'), linked);
+    for (const gbrainHome of [repo, linked]) {
+      await expect(label(['kim-example'], gbrainHome)).rejects.toMatchObject({ code: 'access_serves_key_dir_in_git' });
+    }
+    expect(await memberCount('kim-example')).toBe(0);
+    expect(await engine.getConfig('access.serves')).toBeFalsy();
+    expect(existsSync(join(repo, 'brain-home', '.gbrain', 'member-keys'))).toBe(false);
+  }, 60_000);
+
+  test('an existing rule that lets someone else read a folder blocks the whole run, and nothing is written', async () => {
+    for (const m of ['lee-example', 'mia-example']) await addMember(engine, m);
+    await addFolderRules(engine, 'default', [{ id: 'people-lee-example', prefix: 'people/lee-example/', readable_by: ['member:lee-example', 'member:mia-example'] }], { apply: true, json: true });
+    const r = await label(['lee-example', 'mia-example']);
+    expect(r.applied).toBe(false);
+    expect(receiptOk(r)).toBe(false);
+    expect(r.rules.find(x => x.prefix === 'people/lee-example/')).toMatchObject({ action: 'blocked' });
+    expect(r.rules.find(x => x.prefix === 'people/lee-example/')!.detail).toContain('mia-example');
+    expect(await liveToken('member-mia-example')).toBeUndefined();
+    expect(await engine.getConfig('access.serves')).toBeFalsy();
+  }, 60_000);
+
+  test('a key file that does not hold the live key is BLOCKED, never reported as kept', async () => {
+    expect((await label(['nia-example'])).keys[0]!.action).toBe('mint');
+    writeFileSync(join(home, '.gbrain', 'member-keys', 'nia-example.key'), 'gbrain_notthelivekey\n', { mode: 0o600 });
+    const r = await label(['nia-example']);
+    expect(r.keys[0]).toMatchObject({ action: 'blocked' });
+    expect(r.keys[0]!.detail).toContain('does not hold the live key member-nia-example');
+  }, 60_000);
+
+  test('a key file that cannot be written revokes the key it just minted, and the next run mints a new one', async () => {
+    const path = join(home, '.gbrain', 'member-keys', 'oli-example.key');
+    mkdirSync(join(path, 'in-the-way'), { recursive: true });
+    const r = await label(['oli-example']);
+    expect(r.error).toBeDefined();
+    expect(r.completed).toEqual(['members', 'rules']);
+    expect(await liveToken('member-oli-example')).toBeUndefined();
+    rmSync(path, { recursive: true });
+    const again = await label(['oli-example']);
+    expect(again.error).toBeUndefined();
+    expect(again.keys[0]!.action).toBe('mint');
+  }, 60_000);
+
+  test('keys minted for a named source are granted that source', async () => {
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', ['team']);
+    const r = await label(['pat-example'], undefined, 'team');
+    expect(r.error).toBeUndefined();
+    expect(await liveToken('member-pat-example')).toMatchObject({ source_grant: 'scalar' });
+  }, 60_000);
+
+  test('people folders no rule covers are reported, and the run is not ok', async () => {
+    await importFromContent(engine, 'people/quinn-example/notes', pageText('people/quinn-example/notes', 'quinncanary'), { sourceId: 'default', noEmbed: true });
+    const r = await label(['ray-example']);
+    expect(r.error).toBeUndefined();
+    expect(r.unlabeled).toEqual([{ source: 'default', prefix: 'people/quinn-example/', pages: 1 }]);
+    expect(receiptOk(r)).toBe(false);
+  }, 60_000);
+
+  test('an owner or stdio member who is not an enabled member does not count as binding the connection', async () => {
+    await engine.setConfig('access.owner_member', 'zed-example');
+    await engine.setConfig('mcp.stdio_member', 'zed-example');
+    expect(await servesStatus(engine)).toMatchObject({ owner: null, stdio_member: null });
+  }, 60_000);
+});
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
 const CLEAN = { CLAUDE_CONFIG_DIR: undefined, CODEX_HOME: undefined, GBRAIN_SOURCE: undefined, GBRAIN_SURFACE: undefined, GBRAIN_HOOKS: undefined, GBRAIN_SETUP_ABORT_AFTER: undefined };
@@ -217,17 +300,48 @@ describe('gbrain setup --serves (spawned, PGLite)', () => {
       const key = readFileSync(join(b.home, '.gbrain', 'member-keys', `${m}.key`), 'utf8').trim();
       expect(first.stdout + first.stderr).not.toContain(key);
       expect(first.stdout).toContain(`key        ${m}: ${join(b.home, '.gbrain', 'member-keys', `${m}.key`)} (minted, 0600; token member-${m})`);
-      expect(first.stdout).toContain(`proof      a read bound to ${m} sees its own folder (1 page(s)) and 1 world page(s) under people/, and no other member's folder`);
+      expect(first.stdout).toContain(`proof      a read bound to ${m} sees its own folder (1 page(s)) and no page of another member's folder`);
     }
     expect(first.stdout).toContain('stdio      this harness reads as nobody in particular');
-    expect(claudeMd(b)).toContain(`- ${SERVES_SEVERAL_LINE}`);
+    expect(claudeMd(b)).not.toContain(SERVES_SEVERAL_LINE);
+    expect(claudeMd(b)).toContain('apply your own access rules to what comes back');
     const again = await setup(b, ['claude-code', '--serves', 'several', '--members', 'alice-example,bob-example', '--json']);
     expect(again.exitCode).toBe(0);
     expect(again.doc.serves.receipt.keys.map((k: any) => k.action)).toEqual(['keep', 'keep']);
     expect(again.doc.serves.proof).toEqual([
-      { member: 'alice-example', own: 1, world: 1, leaked: [] },
-      { member: 'bob-example', own: 1, world: 1, leaked: [] },
+      { member: 'alice-example', own: 1, leaked: [] },
+      { member: 'bob-example', own: 1, leaked: [] },
     ]);
+    expect(again.doc.serves.brain_serves).toBe('one');
+    expect((await gbrain(b, ['access', 'owner', 'set', 'alice-example'])).exitCode).toBe(0);
+    const bound = await setup(b, ['claude-code', '--serves', 'several', '--members', 'alice-example,bob-example', '--json']);
+    expect(bound.exitCode).toBe(0);
+    expect(bound.doc.serves).toMatchObject({ brain_serves: 'several', stdio: { member: 'alice-example', action: 'write' } });
+    expect(claudeMd(b)).toContain(`- ${SERVES_SEVERAL_LINE}`);
+  }, 360_000);
+
+  test('a brain setup cannot read refuses and writes nothing', async () => {
+    const b = box();
+    expect((await gbrain(b, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
+    const broken = join(b.root, 'bin', 'gbrain-unreadable');
+    writeFileSync(broken, `#!/bin/sh
+if [ "$1" = access ] && [ "$2" = serves ]; then echo 'the brain is locked' >&2; exit 1; fi
+exec '${process.execPath}' --no-env-file '${CLI}' "$@"
+`);
+    chmodSync(broken, 0o755);
+    const r = await gbrain(b, ['setup', 'claude-code', '--json', '--gbrain-bin', broken]);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stdout + r.stderr).toContain('setup_serves_unreadable');
+    expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
+  }, 240_000);
+
+  test('--instructions-only --serves several keeps the one-person lines unless the brain serves several people with a bound stdio server', async () => {
+    const b = box();
+    expect((await gbrain(b, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
+    const r = await setup(b, ['claude-code', '--instructions-only', '--serves', 'several']);
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toContain('keep the one-person scoping lines');
+    expect(claudeMd(b)).not.toContain(SERVES_SEVERAL_LINE);
   }, 240_000);
 
   test('an empty roster refuses with the fix and writes nothing', async () => {

@@ -9,20 +9,22 @@
  * (preview, then write at the previewed revision; a git-store source commits .gbrain/access.yml through the commit
  * door, a repo-less source writes the database revision log), and mints one key per member through the auth create
  * mint, bound to that member and written to a 0600 file under <configDir>/member-keys/, never inside a git work tree.
- * Every step is idempotent on the member id, so a re-run after a partial failure converges; the receipt names paths,
+ * A preview with any BLOCKED line writes nothing; config access.serves is written last, once members, rules and keys
+ * are in place. Every step is idempotent on the member id, so a re-run after a partial failure converges; the receipt names paths,
  * never key values. `gbrain setup <harness> --serves several` runs this as a child and adds the bound-read proof.
  */
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import { configDir } from '../core/config.ts';
+import { hashToken } from '../core/utils.ts';
 import { opError } from '../core/ops/contract.ts';
 import { usageError } from '../cli/cli-error.ts';
 import { normalizeRule, type FolderRule } from '../core/access/folder-rules.ts';
 import { addMember, getMember, parseIdList } from '../core/access/members.ts';
 import { ownerMemberId } from '../core/access/owner.ts';
 import { stdioMemberId } from '../core/access/caller.ts';
-import { brainServes, SERVES_KEY, type ServesView } from '../core/access/serves.ts';
+import { brainServes, SERVES_KEY, unlabeledPeopleFolders, type PeopleFolder, type ServesView } from '../core/access/serves.ts';
 import { addFolderRules, currentFolderRules } from './access-rules.ts';
 import { mintToken } from './auth-mint.ts';
 
@@ -32,7 +34,7 @@ export const memberKeyDir = (): string => join(configDir(), MEMBER_KEY_DIR);
 
 export interface ServesStatus extends ServesView { owner: string | null; stdio_member: string | null }
 
-type Step = 'config' | 'members' | 'rules' | 'keys';
+type Step = 'members' | 'rules' | 'keys' | 'config';
 export interface ServesReceipt {
   serves: 'several';
   source_id: string;
@@ -43,6 +45,8 @@ export interface ServesReceipt {
   rule_write?: { store: string; revision: number | null; state: string; git_commit?: string | null };
   keys: Array<{ member: string; token_name: string; path: string; action: 'mint' | 'keep' | 'blocked'; detail?: string }>;
   key_dir: string;
+  /** People folders with pages that no rule covers once this run's rules are in place: every member reads them. */
+  unlabeled: PeopleFolder[];
   /** The steps finished before a failure (partial-failure report); every one is idempotent, so a re-run converges. */
   completed: Step[];
   error?: { code: string; message: string };
@@ -60,16 +64,21 @@ export function rosterEmpty(command: string): Error {
     { why: 'Each person gets a member, a folder only they read and a key bound to them; setup never guesses who they are.' });
 }
 
-/** The first directory at or above `dir` that holds .git, or null. */
+/** The first directory at or above `dir` that holds .git, or null; symlinks are resolved, so a link into a checkout counts. */
 function gitRootAbove(dir: string): string | null {
-  for (let d = dir; ; d = dirname(d)) {
+  let existing = dir;
+  while (!existsSync(existing) && dirname(existing) !== existing) existing = dirname(existing);
+  const physical = join(realpathSync(existing), relative(existing, dir));
+  for (let d = physical; ; d = dirname(d)) {
     if (existsSync(join(d, '.git'))) return d;
     if (dirname(d) === d) return null;
   }
 }
 
 export async function servesStatus(engine: BrainEngine): Promise<ServesStatus> {
-  return { ...(await brainServes(engine)), owner: await ownerMemberId(engine), stdio_member: await stdioMemberId(engine) };
+  const view = await brainServes(engine);
+  const live = (id: string | null) => (id && view.enabled_members.includes(id) ? id : null);
+  return { ...view, owner: live(await ownerMemberId(engine)), stdio_member: live(await stdioMemberId(engine)) };
 }
 
 async function plan(engine: BrainEngine, roster: string[], sourceId: string): Promise<ServesReceipt> {
@@ -93,24 +102,34 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string): Pr
     if ('problem' in r) return { id, prefix: `people/${id}/`, readers: [id], action: 'blocked', detail: r.problem };
     const clash = base.find(b => b.prefix === r.rule.prefix || b.id === r.rule.id);
     if (!clash) return { id: r.rule.id, prefix: r.rule.prefix, readers: r.rule.readable_by, action: 'add' };
-    if (clash.prefix === r.rule.prefix && clash.readable_by.includes(`member:${id}`)) return { id: clash.id, prefix: clash.prefix, readers: clash.readable_by, action: 'keep' };
+    if (clash.prefix === r.rule.prefix && clash.readable_by.length === 1 && clash.readable_by[0] === `member:${id}`) return { id: clash.id, prefix: clash.prefix, readers: clash.readable_by, action: 'keep' };
+    const readers = clash.readable_by.map(p => p.replace(/^member:/, '')).join(', ');
     return { id: r.rule.id, prefix: r.rule.prefix, readers: r.rule.readable_by, action: 'blocked',
-      detail: `rule "${clash.id}" on ${clash.prefix} already exists and does not name ${id}; change it with gbrain access rule add --id ${clash.id} --prefix ${clash.prefix} --readers <list>` };
+      detail: `rule "${clash.id}" on ${clash.prefix} already exists, readable by ${readers}, not by ${id} alone; change it with gbrain access rule add --id ${clash.id} --prefix ${clash.prefix} --readers ${id} --source ${sourceId}` };
   });
   const keys: ServesReceipt['keys'] = [];
   for (const id of roster) {
     const name = memberKeyName(id);
     const path = join(keyDir, `${id}.key`);
-    const [token] = await engine.executeRaw<{ member_id: string | null }>('SELECT member_id FROM access_tokens WHERE name = $1 AND revoked_at IS NULL', [name]);
+    const [token] = await engine.executeRaw<{ member_id: string | null; token_hash: string }>('SELECT member_id, token_hash FROM access_tokens WHERE name = $1 AND revoked_at IS NULL', [name]);
     if (members.find(m => m.id === id)?.action === 'blocked') keys.push({ member: id, token_name: name, path, action: 'blocked', detail: 'the member is not enabled' });
     else if (!token) keys.push({ member: id, token_name: name, path, action: 'mint' });
     else if (token.member_id !== id) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `a token named ${name} exists but is not bound to ${id}; revoke it (gbrain auth revoke ${name}) or bind it (gbrain auth rescope --token ${name} --member ${id})` });
     else if (!existsSync(path)) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `the key ${name} exists but its file is gone and a key is shown only once; revoke it (gbrain auth revoke ${name}) and run this again to mint a new one` });
+    else if (hashToken(readFileSync(path, 'utf8').trim()) !== token.token_hash) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `the file does not hold the live key ${name} (it was revoked and made again, or another brain wrote it); revoke it (gbrain auth revoke ${name}) and run this again to mint a new one` });
     else keys.push({ member: id, token_name: name, path, action: 'keep' });
   }
   return { serves: 'several', source_id: sourceId, applied: false, config: { key: SERVES_KEY, value: 'several', action: explicit === 'several' ? 'keep' : 'write' },
-    members, rules, keys, key_dir: keyDir, completed: [] };
+    members, rules, keys, key_dir: keyDir, unlabeled: await unlabeledOutside(engine, sourceId, rules), completed: [] };
 }
+
+/** Unlabeled people folders, not counting the ones this run's rules cover. */
+async function unlabeledOutside(engine: BrainEngine, sourceId: string, rules: ServesReceipt['rules']): Promise<PeopleFolder[]> {
+  const covered = new Set(rules.filter(r => r.action !== 'blocked').map(r => r.prefix));
+  return (await unlabeledPeopleFolders(engine)).filter(u => !(u.source === sourceId && covered.has(u.prefix)));
+}
+
+const blocked = (r: ServesReceipt): boolean => [...r.members, ...r.rules, ...r.keys].some(x => x.action === 'blocked');
 
 function writeKeyFile(path: string, token: string): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -128,11 +147,9 @@ function abortAfter(step: string): void {
 /** Plans, and with `apply` writes, the several-people labelling; a failure is reported in the receipt, never thrown. */
 export async function labelSeveral(engine: BrainEngine, roster: string[], sourceId: string, apply: boolean, json: boolean): Promise<ServesReceipt> {
   const receipt = await plan(engine, roster, sourceId);
-  if (!apply) return receipt;
+  if (!apply || blocked(receipt)) return receipt;
   receipt.applied = true;
   try {
-    if (receipt.config.action === 'write') await engine.setConfig(SERVES_KEY, 'several');
-    receipt.completed.push('config');
     for (const m of receipt.members.filter(x => x.action === 'add')) await addMember(engine, m.id);
     receipt.completed.push('members');
     abortAfter('serves-members');
@@ -144,16 +161,27 @@ export async function labelSeveral(engine: BrainEngine, roster: string[], source
     receipt.completed.push('rules');
     abortAfter('serves-rules');
     for (const k of receipt.keys.filter(x => x.action === 'mint')) {
-      const minted = await mintToken(engine, k.token_name, { scopes: ['read', 'write'], binding: { member: k.member } });
-      writeKeyFile(k.path, minted.token);
+      const minted = await mintToken(engine, k.token_name, { scopes: ['read', 'write'], binding: { member: k.member },
+        ...(sourceId === 'default' ? {} : { sources: { kind: 'scalar' as const, writeSource: sourceId } }) });
+      try {
+        writeKeyFile(k.path, minted.token);
+      } catch (e) {
+        await engine.executeRaw('UPDATE access_tokens SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL', [minted.id]);
+        throw e;
+      }
       abortAfter('serves-key');
     }
     receipt.completed.push('keys');
+    if (receipt.config.action === 'write') await engine.setConfig(SERVES_KEY, 'several');
+    receipt.completed.push('config');
+    receipt.unlabeled = await unlabeledOutside(engine, sourceId, receipt.rules);
   } catch (e) {
     receipt.error = { code: (e as { code?: string }).code ?? 'internal_error', message: e instanceof Error ? e.message : String(e) };
   }
   return receipt;
 }
+
+const ruleWritePending = (r: ServesReceipt): boolean => !!r.rule_write && r.rule_write.state !== 'applied' && r.rule_write.state !== 'unchanged';
 
 export function receiptLines(r: ServesReceipt): string[] {
   const verb = (a: string) => (r.applied ? { add: 'added', mint: 'minted', write: 'written', keep: 'kept', blocked: 'BLOCKED' } : { add: 'will add', mint: 'will mint', write: 'will write', keep: 'keep', blocked: 'BLOCKED' })[a] ?? a;
@@ -164,12 +192,14 @@ export function receiptLines(r: ServesReceipt): string[] {
     ...r.rules.map(x => `  rule       ${x.prefix} readable by ${x.readers.map(p => p.replace(/^member:/, '')).join(', ')} (${verb(x.action)})${x.detail ? `: ${x.detail}` : ''}`),
     ...(r.rule_write ? [`             ${r.rule_write.store} store, revision ${r.rule_write.revision ?? '-'} ${r.rule_write.state}${r.rule_write.git_commit ? `, committed ${r.rule_write.git_commit.slice(0, 12)}` : ''}`] : []),
     ...r.keys.map(k => `  key        ${k.member}: ${k.path} (${verb(k.action)}${k.action === 'blocked' ? '' : ', 0600'}; token ${k.token_name})${k.detail ? `: ${k.detail}` : ''}`),
+    ...(ruleWritePending(r) ? [`  The rules are not enforced yet: finish with gbrain access resume --source ${r.source_id}`] : []),
+    ...r.unlabeled.map(u => `  unlabeled  ${u.source}:${u.prefix} (${u.pages} page(s)) has no folder rule, so every member reads it: name its readers with gbrain access rule add --prefix ${u.prefix} --readers <list> --source ${u.source}, or add the person with --members`),
     ...(r.error ? [`Stopped: ${r.error.message}`, `  Finished before it stopped: ${r.completed.join(', ') || 'nothing'}. Every step is idempotent: run the same command again to finish.`] : []),
-    ...(r.applied ? [] : ['Nothing written. Add --yes to apply.']),
+    ...(r.applied ? [] : [blocked(r) ? 'Nothing written: fix each BLOCKED line, then run this again.' : 'Nothing written. Add --yes to apply.']),
   ];
 }
 
-export const receiptOk = (r: ServesReceipt): boolean => !r.error && [...r.members, ...r.rules, ...r.keys].every(x => x.action !== 'blocked');
+export const receiptOk = (r: ServesReceipt): boolean => !r.error && !blocked(r) && !ruleWritePending(r) && (!r.applied || r.unlabeled.length === 0);
 
 export async function runAccessServes(engine: BrainEngine, mode: string | undefined, args: string[], json: boolean, flagValue: (args: string[], name: string) => string | undefined): Promise<void> {
   if (mode === undefined) {

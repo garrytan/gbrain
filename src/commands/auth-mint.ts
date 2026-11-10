@@ -6,12 +6,13 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { generateToken, hashToken } from '../core/utils.ts';
 import { insertUnifiedToken } from '../core/token-mint.ts';
+import type { GrantSources } from '../core/grants/model.ts';
 import { setTokenMinTrust } from '../core/trust/min-trust.ts';
 import type { TrustTier } from '../core/trust/tier.ts';
 import { bindCredential, type BindingPatch, type BindingResult } from '../core/access/members.ts';
 import { checkBindingTarget } from './auth-binding.ts';
 
-export interface MintTokenOpts { takesHolders?: string[]; scopes?: string[]; minTrust?: TrustTier; binding?: BindingPatch | null }
+export interface MintTokenOpts { takesHolders?: string[]; scopes?: string[]; minTrust?: TrustTier; binding?: BindingPatch | null; sources?: GrantSources }
 export interface MintedToken { token: string; id: string; takesHolders: string[]; bound: BindingResult | null }
 
 export async function mintToken(engine: BrainEngine, name: string, opts: MintTokenOpts = {}): Promise<MintedToken> {
@@ -26,7 +27,7 @@ export async function mintToken(engine: BrainEngine, name: string, opts: MintTok
   // grandfathered full-access grant.
   const [row] = await insertUnifiedToken(engine, {
     name, tokenHash: hashToken(token), ...(opts.scopes !== undefined ? { scopes: opts.scopes } : {}),
-    grant: { sources: { kind: 'default' }, takesHolders, allowedOperations: null },
+    grant: { sources: opts.sources ?? { kind: 'default' }, takesHolders, allowedOperations: null },
   });
   // #5575 (CEO-18): the read floor; the CLI is the only writer of it.
   if (opts.minTrust) await setTokenMinTrust(engine, row!.id, opts.minTrust);

@@ -168,19 +168,27 @@ For each person this adds a member (existing ones are kept), a folder rule
 `.gbrain/access.yml` through `gbrain git commit-push`; repo-less brain: the
 database rule log), and one key bound to that member, written to
 `~/.gbrain/member-keys/<member>.key` (mode 0600, never inside a git checkout; the
-receipt prints the path, never the key). It sets `access.serves = several`, then
-proves the labels with one read per member (`gbrain find people/ --as <member>`):
-each member sees its own folder and world pages, never another member's folder.
+receipt prints the path, never the key). It sets `access.serves = several` last,
+then proves the labels by reading every other member's folder as each member
+(`gbrain find people/<other>/ --as <member>`): none may return a page.
+The receipt also lists any other `people/<name>/` folder that no rule covers, since
+every member reads it, and the run is not OK until it has a rule.
 When the brain names an owner (`gbrain access owner set <member>`), this harness's
-own stdio server is bound to it (`mcp.stdio_member`); a bot that answers several
+own stdio server is bound to it (`mcp.stdio_member`); until it is bound, its
+instructions keep the one-person scoping lines. A bot that answers several
 people runs `gbrain serve --http` with each member's key.
 
-Every step is idempotent on the member id, so a re-run after a failure finishes the
-rest. A key whose file is gone is reported, never replaced on its own: revoke it
-(`gbrain auth revoke member-<id>`) and run setup again. An empty roster refuses.
+The preview runs first, and a BLOCKED line (a disabled member, an existing rule on
+`people/<member>/` that someone else also reads, a key whose file is gone or holds
+another key) stops the whole run with nothing written. Every step is idempotent on
+the member id, so a re-run after a failure finishes the rest; a key whose file could
+not be written is revoked on the spot. A key whose file is gone is never replaced on
+its own: revoke it (`gbrain auth revoke member-<id>`) and run setup again. An
+empty roster refuses.
 `--serves one` (the default) changes nothing, but on a brain that already serves
 several people a plain setup refuses (`setup_serves_several`) rather than write a
-connection bound to nobody, unless an owner or `mcp.stdio_member` binds it.
+connection bound to nobody, unless an owner or `mcp.stdio_member` binds it, and
+a brain setup cannot read refuses (`setup_serves_unreadable`).
 `gbrain doctor` fails `unlabeled_people_folders` when such a brain has a
 `people/<name>/` folder with pages and no rule naming its readers.
 `gbrain access serves several --members ...` does the labelling alone (preview, then
@@ -195,8 +203,9 @@ brain. So setup also writes one short marked block (`<!-- gbrain:brain-first:beg
 session: before answering any turn, search the brain first, read the best hit,
 fill gaps with other tools, apply your own access rules (`source_ids` narrows a
 search to what the current requester may see), then finish the task. On a brain
-that serves several people the access line says instead that the connection reads
-only what the person asking may read (see below).
+that serves several people, once this harness's stdio server is bound to a member,
+the access line says instead that the connection reads only what the person asking
+may read (see below).
 
 | Harness | File |
 |---|---|
