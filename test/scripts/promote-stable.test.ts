@@ -19,9 +19,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { load } from 'js-yaml';
 import {
-  checkOrder, checkSoakRun, compareVersions, mergeKnownBad, normaliseWorkflowPath, parseRunUrl, parseTagMessage, processDeps, promote, Refusal, renderRecord, renderSummary, renderTagMessage,
+  checkOrder, checkSoakRun, compareVersions, mergeKnownBad, mergeNotPromotable, normaliseWorkflowPath, parseRunUrl, parseTagMessage, processDeps, promote, Refusal, renderRecord, renderSummary, renderTagMessage,
   type GitResult, type PromoteDeps, type PromoteInputs, type SoakRun, type TagFields,
 } from '../../scripts/promote-stable.ts';
+import { offeredVersion } from '../../src/core/self-upgrade.ts';
 import { parseStableRecord } from '../../src/core/stable-channel.ts';
 
 const ROOT = join(import.meta.dir, '..', '..');
@@ -168,6 +169,7 @@ function harness(setup: Setup = {}) {
   return { deps, calls, api, logs, summaries, repo };
 }
 
+const bad = (version: string, fixed_in = '0.60.365.0') => ({ version, reason: 'preview exceeds its statement bound', fixed_in });
 const inputs = (over: Partial<PromoteInputs> = {}): PromoteInputs => ({ version: '0.60.361.0', soakRunUrl: RUN_URL, scoreboardUrl: '', rollback: false, reason: '', ...over });
 
 describe('soak run URL parsing', () => {
@@ -409,6 +411,48 @@ describe('evidence record (GBRA-224 W1)', () => {
     expect(h.calls.filter(c => c.startsWith('push'))[0]).toContain('--force-with-lease=refs/heads/stable-record:rec-prior');
   });
 
+  test('not_promotable carries forward through a promotion, gains this run\'s entries, and refuses promoting a listed release before anything moves', async () => {
+    const h = harness();
+    h.repo.records = { 'rec-prior': JSON.stringify({ schema: 1, version: '0.60.360.0', known_bad: [], not_promotable: [bad('0.60.363.0')] }) };
+    h.repo.recordBranch = 'rec-prior';
+    await promote(h.deps, inputs({ notPromotable: [bad('0.60.362.0')] }));
+    expect(JSON.parse(h.repo.records![h.repo.recordBranch!]!)).toMatchObject({ known_bad: [], not_promotable: [bad('0.60.362.0'), bad('0.60.363.0')] });
+    expect(h.summaries.at(-1)).toContain('v0.60.362.0 (preview exceeds its statement bound; fixed in v0.60.365.0)');
+    const listed = harness();
+    listed.repo.records = { 'rec-prior': JSON.stringify({ schema: 1, version: '0.60.360.0', known_bad: [], not_promotable: [bad('0.60.361.0')] }) };
+    listed.repo.recordBranch = 'rec-prior';
+    await refusedAsync(promote(listed.deps, inputs()), /v0\.60\.361\.0 is on the stable record's not_promotable list \(preview exceeds its statement bound; fixed in v0\.60\.365\.0\)/);
+    expect(listed.calls.filter(c => c.startsWith('push'))).toEqual([]);
+  });
+
+  test('refuses a not_promotable entry without a release version, a newer fixed_in or a reason, and a previous list it cannot read', async () => {
+    refused(() => mergeNotPromotable([], [bad('0.60.x')], '0.60.361.0'), /not_promotable entry "0\.60\.x" is not a release version/);
+    refused(() => mergeNotPromotable([], [bad('0.60.362.0', '0.60.362.0')], '0.60.361.0'), /needs fixed_in: the newer release that carries the fix/);
+    refused(() => mergeNotPromotable([], [bad('0.60.362.0', '')], '0.60.361.0'), /needs fixed_in/);
+    refused(() => mergeNotPromotable([], [{ ...bad('0.60.362.0'), reason: ' ' }], '0.60.361.0'), /needs a reason/);
+    expect(mergeNotPromotable([bad('0.60.362.0')], [{ ...bad('0.60.362.0'), reason: 'a  newer\nreason' }], '0.60.361.0')).toEqual([{ ...bad('0.60.362.0'), reason: 'a newer reason' }]);
+    const corrupt = harness();
+    corrupt.repo.records = { 'rec-prior': JSON.stringify({ schema: 1, version: '0.60.360.0', known_bad: [], not_promotable: ['0.60.362.0'] }) };
+    corrupt.repo.recordBranch = 'rec-prior';
+    await refusedAsync(promote(corrupt.deps, inputs()), /has a not_promotable list that is not \{version, reason, fixed_in\} entries/);
+    expect(corrupt.calls.filter(c => c.startsWith('push'))).toEqual([]);
+  });
+
+  test('a client reads a record carrying not_promotable exactly as one without it: a client on a listed release is offered nothing, never a downgrade', () => {
+    const fields: TagFields = {
+      version: '0.60.361.0', commit: sha('b'), tree: sha('2'), soakRun: RUN_URL, scoreboard: RUN_URL,
+      promotedBy: 'alice-example', promotedAt: '2026-10-20T09:00:00Z', previous: '0.60.360.0', rollback: false, reason: '',
+    };
+    const without = parseStableRecord(renderRecord(fields, []));
+    const listed = parseStableRecord(renderRecord(fields, [], [bad('0.60.362.0')]));
+    expect(without.ok).toBe(true);
+    expect(listed).toEqual(without);
+    if (!listed.ok) return;
+    expect(offeredVersion('0.60.362.0', listed.record.version, listed.record.known_bad)).toBeNull();
+    expect(offeredVersion('0.60.360.0', listed.record.version, listed.record.known_bad)).toBe('0.60.361.0');
+    expect(offeredVersion('0.60.362.0', listed.record.version, ['0.60.362.0'])).toBe('0.60.361.0');
+  });
+
   test('refuses promoting a withdrawn version, a malformed withdrawal and an unreadable previous record, before anything moves', async () => {
     refused(() => mergeKnownBad(['0.60.361.0'], [], '0.60.361.0'), /known_bad list \(withdrawn\)/);
     refused(() => mergeKnownBad([], ['0.60.x'], '0.60.361.0'), /withdraw entry "0\.60\.x" is not a release version/);
@@ -542,6 +586,18 @@ describe('stable.json bridge for a stable promoted before the evidence record (G
     expect(JSON.parse(h.repo.records![h.repo.recordBranch!]!).known_bad).toEqual(['0.60.355.0']);
   });
 
+  test('not_promotable is written through the current-stable re-record path, moving no tag; the same list again is a no-op', async () => {
+    const h = preRecord();
+    await promote(h.deps, inputs());
+    await promote(h.deps, inputs({ notPromotable: [bad('0.60.363.0'), bad('0.60.362.0')] }));
+    expect(h.calls.filter(c => c.startsWith('tag -a'))).toEqual([]);
+    expect(h.repo.remote).toEqual({ stable: 'tagobj-stable-361', 'stable-v0.60.361.0': 'tagobj-record-361' });
+    expect(JSON.parse(h.repo.records![h.repo.recordBranch!]!)).toMatchObject({ version: '0.60.361.0', known_bad: [], not_promotable: [bad('0.60.362.0'), bad('0.60.363.0')] });
+    await refusedAsync(promote(h.deps, inputs({ notPromotable: [bad('0.60.362.0')] })), /already the stable release, and stable\.json on stable-record records it/);
+    await promote(h.deps, inputs({ withdraw: ['0.60.355.0'] }));
+    expect(JSON.parse(h.repo.records![h.repo.recordBranch!]!)).toMatchObject({ known_bad: ['0.60.355.0'], not_promotable: [bad('0.60.362.0'), bad('0.60.363.0')] });
+  });
+
   test('a record left behind by a later record-less promotion is brought up to the stable tag, keeping known_bad', async () => {
     const h = preRecord();
     h.repo.records = { 'rec-360': renderRecord({ ...prior, version: '0.60.360.0', commit: sha('a'), tree: sha('1'), previous: null }, ['0.60.300.0']) };
@@ -643,8 +699,8 @@ describe('promote-stable.yml', () => {
   test('dispatch only, with the decided inputs, one serial group and scoped permissions', () => {
     expect(Object.keys(wf.on)).toEqual(['workflow_dispatch']);
     const i = wf.on.workflow_dispatch!.inputs;
-    expect(Object.keys(i)).toEqual(['version', 'soak_run_url', 'scoreboard_url', 'rollback', 'reason', 'withdraw']);
-    expect(i.withdraw).toMatchObject({ required: false, type: 'string', default: '' });
+    expect(Object.keys(i)).toEqual(['version', 'soak_run_url', 'scoreboard_url', 'rollback', 'reason', 'withdraw', 'not_promotable', 'not_promotable_reason', 'not_promotable_fixed_in']);
+    for (const k of ['withdraw', 'not_promotable', 'not_promotable_reason', 'not_promotable_fixed_in']) expect(i[k]).toMatchObject({ required: false, type: 'string', default: '' });
     expect([i.version!.required, i.soak_run_url!.required, i.scoreboard_url!.required]).toEqual([true, true, false]);
     expect(i.rollback).toMatchObject({ type: 'boolean', default: false });
     expect(wf.concurrency).toEqual({ group: 'promote-stable', 'cancel-in-progress': false });
@@ -657,7 +713,8 @@ describe('promote-stable.yml', () => {
     expect(run.env).toMatchObject({
       GH_TOKEN: '${{ github.token }}', STABLE_SOAK_WORKFLOW: '${{ vars.STABLE_SOAK_WORKFLOW }}',
       PROMOTE_VERSION: '${{ inputs.version }}', PROMOTE_SOAK_RUN_URL: '${{ inputs.soak_run_url }}', PROMOTE_SCOREBOARD_URL: '${{ inputs.scoreboard_url }}',
-      PROMOTE_ROLLBACK: '${{ inputs.rollback }}', PROMOTE_REASON: '${{ inputs.reason }}',
+      PROMOTE_ROLLBACK: '${{ inputs.rollback }}', PROMOTE_REASON: '${{ inputs.reason }}', PROMOTE_WITHDRAW: '${{ inputs.withdraw }}',
+      PROMOTE_NOT_PROMOTABLE: '${{ inputs.not_promotable }}', PROMOTE_NOT_PROMOTABLE_REASON: '${{ inputs.not_promotable_reason }}', PROMOTE_NOT_PROMOTABLE_FIXED_IN: '${{ inputs.not_promotable_fixed_in }}',
     });
     for (const s of steps) expect(s.run ?? '').not.toContain('${{');
     const releaseYml = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');

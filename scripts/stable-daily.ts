@@ -26,8 +26,9 @@
  *    promoted through scripts/promote-stable.ts promote(), so every promotion
  *    check (published release, exact tree, never older) still applies. A release
  *    that was stable before (its stable-v<version> record tag exists: promoted,
- *    then rolled back) or that stable.json lists as known_bad is never a
- *    candidate or soaked (#8792).
+ *    then rolled back) or that stable.json lists as known_bad or not_promotable
+ *    (bad on outside evidence the soak cannot see) is never a candidate or soaked
+ *    (#8792).
  * 4. Nothing promotable yet: the newest release is soaked (one dispatch of the
  *    soak on its tag) unless a soak is already running, or a soak on any newer
  *    release did not qualify (a maintainer decides; past the weekly floor it
@@ -154,6 +155,8 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
     const commit = await ok(deps, ['rev-parse', `refs/tags/${tag}^{commit}`]);
     if (!(await onReleaseBranch(deps, commit))) { deps.log(`[stable-daily] skipping ${tag}: ${commit} is not on master.`); continue; }
     if (published.knownBad.includes(version)) { deps.log(`[stable-daily] skipping ${tag}: stable.json lists it as known bad (withdrawn).`); continue; }
+    const blocked = published.notPromotable.find(e => e.version === version);
+    if (blocked) { deps.log(`[stable-daily] skipping ${tag}: stable.json lists it as not promotable (${blocked.reason}; fixed in v${blocked.fixed_in}).`); continue; }
     if (await refExists(deps, `refs/tags/stable-v${version}`)) { deps.log(`[stable-daily] skipping ${tag}: stable-v${version} exists, so it was stable before and was rolled back; a maintainer re-promotes it by hand if it should return.`); continue; }
     releases.push({ version, commit });
   }
