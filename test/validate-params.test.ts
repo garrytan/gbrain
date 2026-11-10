@@ -528,11 +528,17 @@ describe('a read rejects an unknown scope or filter parameter even in warn mode 
     });
   });
 
-  test('narrowingUnknownParams picks scope and filter names, by the key or by its nearest declared param', () => {
+  test('narrowingUnknownParams picks keys whose nearest declared param is a scope or filter of the op', () => {
     expect(narrowingUnknownParams([
-      { code: 'unknown_param', param: 'source' }, { code: 'unknown_param', param: 'Source-IDs' },
-      { code: 'unknown_param', param: 'srcid', suggestion: 'source_id' }, { code: 'unknown_param', param: 'tag' },
+      { code: 'unknown_param', param: 'source', suggestion: 'source_id' }, { code: 'unknown_param', param: 'Source-IDs', suggestion: 'source_ids' },
+      { code: 'unknown_param', param: 'srcid', suggestion: 'source_id' }, { code: 'unknown_param', param: 'tag', suggestion: 'types' },
       { code: 'unknown_param', param: 'limt', suggestion: 'limit' }, { code: 'unknown_param', param: 'partal', suggestion: 'partial' },
     ]).map(w => w.param)).toEqual(['source', 'Source-IDs', 'srcid', 'tag']);
+  });
+
+  test('a scope key sent to an op that declares no scope param keeps the warn grace period', () => {
+    expect(narrowingUnknownParams([
+      { code: 'unknown_param', param: 'source_id' }, { code: 'unknown_param', param: 'source_id', suggestion: 'request_id' },
+    ])).toEqual([]);
   });
 });
