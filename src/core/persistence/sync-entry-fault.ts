@@ -34,7 +34,7 @@ import { isWriteCapacityWait } from './admission-retry.ts';
 import { PAGE_BODY_FAULT_CODES } from './sync-fault-class.ts';
 import { gitBlobOid } from './digest.ts';
 import { readBlobBytes, type MissingAttributes, type TreeBlob } from './sync-blobs.ts';
-import { readSyncFile, syncGit, type SyncEntry } from './sync-discovery.ts';
+import { readSyncFile, syncPartialClone, type SyncEntry } from './sync-discovery.ts';
 import type { GitHoldRecord } from './sync-holds.ts';
 
 type HoldEntry = Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld' | 'action'>;
@@ -101,10 +101,8 @@ export function committedContentOrMissing(cursor: { root: string; gitRoot: strin
   let bytes: Buffer | null = null;
   try { bytes = readSyncFile(cursor.root, entry.path); } catch { bytes = null; }
   if (bytes && gitBlobOid(bytes, blob.oid.length === 64 ? 'sha256' : 'sha1') === blob.oid) return bytes.toString('utf8');
-  let partial = false;
-  try { partial = syncGit(cursor.gitRoot, ['config', '--get-regexp', '^(extensions\\.partialclone|remote\\..*\\.promisor)$']).split('\n').some(line => /^extensions\.partialclone \S|^remote\..*\.promisor (true|yes|on|1)$/i.test(line)); } catch { partial = false; }
   const copy = bytes ? ' and the working-tree file differs from it' : ' and the working tree has no copy of it';
-  if (partial) throw opError('git_object_missing', `The Git object of ${entry.path} at the synced commit is missing from the repository.`,
+  if (syncPartialClone(cursor.gitRoot)) throw opError('git_object_missing', `The Git object of ${entry.path} at the synced commit is missing from the repository.`,
     `${entry.path} is committed as blob ${blob.oid}, which the repository of source ${cursor.sourceId}, a partial clone (git clone --filter), never fetched${copy}. `
       + 'Sync fetches nothing from a remote, so nothing was imported from it. '
       + `Fetch the object in the checkout (git cat-file -p ${blob.oid} fetches it from the partial clone's remote) or check the file out, then run gbrain sync --source ${cursor.sourceId} --no-pull.`,
