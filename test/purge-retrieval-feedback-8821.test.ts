@@ -23,7 +23,7 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 import { purgeDeletedPagesCoordinated } from '../src/core/persistence/purge-deleted.ts';
-import { applyRatings, insertRetrievalEvents } from '../src/core/feedback/store.ts';
+import { applyRatings, insertRetrievalEvents, scrubPurgedSlugs } from '../src/core/feedback/store.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { beliefBrain, beliefPage, openFileBeliefBrain, withFileBeliefBrain } from './helpers/belief-ledger.ts';
 import { createPgliteBackup, restorePgliteBackup } from '../src/core/backup/snapshot.ts';
@@ -132,6 +132,37 @@ describe('#8821 a page purge removes the slug from the retrieval logs and eval c
     expect(await engine.executeRaw(`SELECT retrieved_slugs FROM eval_candidates WHERE query = 'federated'`)).toEqual([{ retrieved_slugs: [SLUG, OTHER] }]);
     const stores = new Map((result.receipt.stores as Array<{ store: string; status: string }>).map(s => [s.store, s.status]));
     expect(stores.get('eval_candidates.retrieved_slugs')).toBe('deleted');
+  }, 60_000);
+
+  // Added by /ship coverage audit.
+  // Value: protects=purging the page at the to end of a from|type|to edge removes that edge's link rating, weight and event row;
+  //   fails_when=the edge match keeps only the starts_with arm and drops the right-end arm; why_new=every case above purges the from end;
+  //   seam=none; no_claim=Postgres parity (PGLite only)
+  test('purging the page at the to end of an edge scrubs the edge\'s link rows too', async () => {
+    const snapshot = await engine.readPageSnapshot(OTHER, { sourceId: 'default' });
+    const result = await withEnv({ GBRAIN_HOME: home }, () => operations.find(o => o.name === 'delete_page')!.handler(context(),
+      { slug: OTHER, purge: true, request_id: randomUUID(), expected_revision: snapshot!.revision })) as Record<string, any>;
+    expect(result.status).toBe('purged');
+    for (const table of ['retrieval_feedback', 'retrieval_weights']) {
+      expect({ table, rows: await engine.executeRaw(`SELECT source_id FROM ${table} WHERE element_kind = 'link' AND element_key = $1 ORDER BY 1`, [EDGE]) })
+        .toEqual({ table, rows: [] });
+    }
+    expect(await engine.executeRaw(`SELECT source_id FROM retrieval_event_links WHERE edge_key = $1 ORDER BY 1`, [EDGE])).toEqual([{ source_id: 'source-b' }]);
+    expect(await engine.executeRaw(`SELECT 1 FROM retrieval_weights WHERE source_id = 'default' AND element_kind = 'page' AND element_key = $1`, [SLUG])).toHaveLength(1);
+  }, 60_000);
+
+  // Added by /ship coverage audit.
+  // Value: protects=a slug that is a prefix of another page's slug scrubs none of that page's rows or edges;
+  //   fails_when=the edge match drops its '|' delimiter (a LIKE/prefix match) or the page match loosens; why_new=no case purges a prefix slug;
+  //   seam=none; no_claim=the purge transaction around the scrub (called directly)
+  test('a slug that prefixes another page\'s slug scrubs none of its rows', async () => {
+    expect(await scrubPurgedSlugs(engine, 'default', ['people/alice', 'companies/acme', 'works_at'])).toEqual({
+      retrieval_event_pages: 0, retrieval_event_links: 0, retrieval_feedback: 0, retrieval_weights: 0, 'eval_candidates.retrieved_slugs': 0 });
+    expect(await residue()).toEqual({ ...ONLY_SOURCE_B,
+      retrieval_event_pages: [{ source_id: 'default' }, { source_id: 'source-b' }], retrieval_event_links: [{ source_id: 'default' }, { source_id: 'source-b' }],
+      retrieval_feedback: [{ source_id: 'default' }, { source_id: 'default' }, { source_id: 'source-b' }],
+      retrieval_weights: [{ source_id: 'default' }, { source_id: 'default' }, { source_id: 'source-b' }],
+      eval_candidates: [{ source_ids: ['default'] }, { source_ids: ['source-b'] }] });
   }, 60_000);
 });
 
