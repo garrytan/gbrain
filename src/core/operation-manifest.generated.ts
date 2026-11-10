@@ -87,13 +87,17 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
           "fact"
         ]
       },
+      "share": {
+        "type": "boolean",
+        "description": "Members save privately; true: all source readers recall it. Share team work, not facts about a person."
+      },
       "visibility": {
         "type": "string",
         "enum": [
           "world",
           "private"
         ],
-        "description": "world (default) or private (local CLI).",
+        "description": "world (default) or private (local CLI). Members: use share.",
         "fullSurfaceOnly": true
       },
       "replaces": {
