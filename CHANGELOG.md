@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.645.0] - 2026-11-10
+
+**A GitHub (or other API) connector source no longer stops for good when one of its items is a page stored in segments.** A long issue (a body plus hundreds of comments) grows past 1 MiB and is stored in segments. Before, that item could never import, and once such a page existed, every later sweep of a bound source stopped on `page_body_segmented` with no item named, so nothing after it imported and the cursor never moved. Now an item up to 24 MiB imports and re-renders like any other, and one the sweep cannot read whole (over 24 MiB) fails on its own from the first sweep, and is held after three (`gbrain sources status`), while the rest of the run imports and the cursor moves; a new comment on it re-tries only that item. Reported and first diagnosed in #9062.
+
+### Itemized changes
+
+- `src/core/persistence/connector-sync.ts`: the connector publication reads a segmented page back as strings (up to 24 MiB) before it carries its timeline and fences into the re-render, seals a segmented body through its import (never the inline text seal, which read the whole timeline), and runs the import's after-commit step, so a segmented page left unsealed is chunked. The freshness read (`page()`) reads a segmented page back the same way.
+- `src/core/github-source.ts`: a stored page the sweep cannot read fails that item (a content hold after three runs), not the run.
+- `src/core/connectors/connector-hold-session.ts`: on a bound source, `page_body_segmented` raised before any write request is counted against the item instead of aborting the run, as invalid connector text already was.
+- Tests: `test/connector-segmented-page-9062.test.ts` (PGLite) and its PostgreSQL arm `test/e2e/connector-segmented-page-9062.test.ts`.
+
 ## [0.60.644.0] - 2026-11-10
 
 **`gbrain doctor` now ends on its `--budget-ms` deadline when `git` hangs in an OpenClaw workspace.** The bootstrap entry checks push health by running `git status`, `git branch` and `git rev-list` on the install receipt's workspace, and on a workspace whose last push failed. Those calls ran synchronously with a 10-second limit each. While one hung, nothing else in the process could run, so the run overran its budget and every later check, the cheap incident checks included, started with no time left. They now run asynchronously, like the home-dir probes since #8979. Each call is killed with SIGKILL, together with its process group, at 10 seconds or at the entry's deadline, whichever comes first, and a call that fails or is cut short reads as unverified, as before. Every local probe's output is also capped at 1 MiB again: a probe that prints more than that is killed and reads as absent, which is what `execFile`'s buffer limit did before #8979.
@@ -46,6 +57,7 @@ identifiers and attribution are available in the pre-removal Git revision
 - `src/core/facts/gone-page-facts.ts`: `expireGonePageFacts`, the facts a purged page takes with it, as two updates that each use their slug index.
 - `src/core/engine-sql/pages.ts` (`purgeDeletedPages`, the bulk purge) and `src/core/persistence/purge-deleted.ts` (`expireRecordedTombstones`, the belief-ledger purge of a recorded source) call it in the purge transaction. The managed purge already sweeps the facts filed on the page.
 - Tests: `test/purge-expires-page-facts.test.ts` (PGLite and Postgres), which fails before the fix on the bulk and recorded purges.
+
 
 ## [0.60.641.0] - 2026-11-10
 
