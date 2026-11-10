@@ -99,7 +99,13 @@ test('#9062 (bound managed source): a segmented page over the single-string ceil
       await engine.executeRaw('UPDATE pages SET body_bytes=$3 WHERE source_id=$1 AND slug=$2', [f.id, 'gh/acme-example/app/1', PAGE_MAX_BYTES + 1]);
       fx.issues = [{ number: 1, title: 'Synthetic long issue', body: longThread('second'), updated_at: '2026-02-02T00:00:00Z' },
         { number: 2, title: 'Synthetic short issue', body: 'Short body.', updated_at: '2026-02-03T00:00:00Z' }];
-      for (let i = 0; i < 3; i++) { await run().catch(() => undefined); await settleConnectorWrites(engine, f.id).catch(() => undefined); await disposePersistenceConsumer(engine); }
+      // Every run before the hold fails only that item: the run finishes partial and the rest of the source imports.
+      for (let i = 0; i < 3; i++) {
+        expect((await run()).status).toBe('partial');
+        await settleConnectorWrites(engine, f.id);
+        await disposePersistenceConsumer(engine);
+        expect(await storage(engine, f.id, 'gh/acme-example/app/2')).toBe('inline');
+      }
       const held = (await readAllSourceHolds(engine, { sourceIds: [f.id] }))[0]?.held ?? [];
       expect(held.map(h => ({ key: h.key, code: h.code, class: h.class, slug: h.slug }))).toEqual([
         { key: 'acme-example/app#1', code: 'page_body_segmented', class: 'content', slug: 'gh/acme-example/app/1' }]);
@@ -114,6 +120,14 @@ test('#9062 (bound managed source): a segmented page over the single-string ceil
       expect(fx.since).toEqual(['2026-02-03T00:00:00Z']);
       await settleConnectorWrites(engine, f.id);
       await disposePersistenceConsumer(engine);
+      // A new comment re-admits the held item; it fails again on its own and a newer item still imports.
+      fx.issues = [{ number: 1, title: 'Synthetic long issue', body: longThread('third'), updated_at: '2026-02-04T00:00:00Z' },
+        { number: 3, title: 'Synthetic newer issue', body: 'Newer body.', updated_at: '2026-02-05T00:00:00Z' }];
+      await run();
+      await settleConnectorWrites(engine, f.id);
+      await disposePersistenceConsumer(engine);
+      expect(await storage(engine, f.id, 'gh/acme-example/app/3')).toBe('inline');
+      expect((await state(engine, f.id)).last_failure).toBeNull();
     } finally { errors.mockRestore(); stderr.mockRestore(); }
   }
 }), 300_000);

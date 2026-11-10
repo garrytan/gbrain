@@ -12,12 +12,13 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**A GitHub (or other API) connector source no longer stops for good when one of its items is a page stored in segments.** A long issue (a body plus hundreds of comments) grows past 1 MiB and is stored in segments. Before, that item could never import, and once such a page existed, every later sweep of a bound source stopped on `page_body_segmented` with no item named, so nothing after it imported and the cursor never moved. Now an item up to 24 MiB imports and re-renders like any other, and one the sweep cannot read whole is held on its own (`gbrain sources status`) while the rest of the run imports and the cursor moves. Reported and first diagnosed in #9062.
+**A GitHub (or other API) connector source no longer stops for good when one of its items is a page stored in segments.** A long issue (a body plus hundreds of comments) grows past 1 MiB and is stored in segments. Before, that item could never import, and once such a page existed, every later sweep of a bound source stopped on `page_body_segmented` with no item named, so nothing after it imported and the cursor never moved. Now an item up to 24 MiB imports and re-renders like any other, and one the sweep cannot read whole (over 24 MiB) fails on its own from the first sweep, and is held after three (`gbrain sources status`), while the rest of the run imports and the cursor moves; a new comment on it re-tries only that item. Reported and first diagnosed in #9062.
 
 ### Itemized changes
 
 - `src/core/persistence/connector-sync.ts`: the connector publication reads a segmented page back as strings (up to 24 MiB) before it carries its timeline and fences into the re-render, seals a segmented body through its import (never the inline text seal, which read the whole timeline), and runs the import's after-commit step, so a segmented page left unsealed is chunked. The freshness read (`page()`) reads a segmented page back the same way.
 - `src/core/github-source.ts`: a stored page the sweep cannot read fails that item (a content hold after three runs), not the run.
+- `src/core/connectors/connector-hold-session.ts`: on a bound source, `page_body_segmented` raised before any write request is counted against the item instead of aborting the run, as invalid connector text already was.
 - Tests: `test/connector-segmented-page-9062.test.ts` (PGLite) and its PostgreSQL arm `test/e2e/connector-segmented-page-9062.test.ts`.
 
 ## [0.60.644.0] - 2026-11-10
