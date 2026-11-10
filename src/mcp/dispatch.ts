@@ -16,7 +16,7 @@ import { loadConfig } from '../core/config.ts';
 import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { withCallerAccess } from '../core/search/private-visibility.ts';
 import { appliedAccessSummary, remoteCallerAccess } from '../core/access/caller.ts';
-import { credentialScopeFor, requesterScopeGate, requiresRequesterScope, type RequesterScopeNotice } from '../core/access/requester-scope.ts';
+import { credentialScopeFor, requesterScopeGate, requiresRequesterScope, withServesReread, type RequesterScopeNotice } from '../core/access/requester-scope.ts';
 import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, parseAudience, type AudienceAuditEvent, type AudienceChannels, type AudiencePrincipal } from '../core/access/audience.ts';
 import { ACTOR_ARGUMENT, actorNotAttested, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
 import { qmMemoryToolResult, recallArguments, unlinkedRecallResult } from '../core/ops/qm-memory.ts';
@@ -1015,17 +1015,19 @@ export async function dispatchToolCall(
       // An op this connection cannot reach (hidden by its surface, or localOnly off stdio) keeps the unknown-tool envelope instead.
       const reachable = !!op && (!opts.allowedOps || opts.allowedOps.has(name)) && (!op.localOnly || opts.transport === 'stdio');
       if (!attested?.actor && reachable && requiresRequesterScope(op, opts.auth)) {
-        scopeNotice = requesterScopeGate(op, access, opts.auth ? await credentialScopeFor(engine, opts.auth) : undefined, opts.transport, engine.kind);
+        const scoped = opts.auth ? await credentialScopeFor(engine, opts.auth) : undefined;
+        access = await withServesReread(engine, access, scoped);
+        scopeNotice = requesterScopeGate(op, access, scoped, opts.transport, engine.kind);
       }
     } catch (e) {
       // GST-359: a call that names a person gets every failure here (a lock timeout reading its link included) in the
       // envelope QM reads, never a thrown call; anything else keeps the caller's own error path.
-      if (!(e instanceof OperationError) || !/^(on_behalf_of_|actor_|requester_scope_required$)/.test(String(e.code))) {
+      if (!(e instanceof OperationError) || !/^(on_behalf_of_|actor_|requester_scope_(required|unknown)$)/.test(String(e.code))) {
         if (!actorNamed) throw e;
         return withStructuredError(errorResult(e, opts, { op: name }));
       }
       assertion(e.code as AudienceAuditEvent['outcome'], e.reason);
-      if (e.code === 'requester_scope_required') return qmMemoryToolResult(name, withStructuredError(errorResult(e, opts, { op: name })));
+      if (e.code === 'requester_scope_required' || e.code === 'requester_scope_unknown') return qmMemoryToolResult(name, withStructuredError(errorResult(e, opts, { op: name })));
       return qmMemoryToolResult(name, actorNamed ? actorRefusal(e, opts, name, header, args) : errorResult(e, opts, { op: name }));
     }
     if (audience || attested?.actor) assertion('accepted');

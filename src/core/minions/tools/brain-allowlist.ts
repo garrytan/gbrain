@@ -36,7 +36,7 @@ import { BRAIN_TOOL_ALLOWLIST } from './brain-tool-allowlist.ts';
 import { stagePutPage } from './staged-put-page.ts';
 import { withCallerAccess } from '../../search/private-visibility.ts';
 import { remoteCallerAccess } from '../../access/caller.ts';
-import { credentialScopeFor, requesterScopeGate, requiresRequesterScope } from '../../access/requester-scope.ts';
+import { credentialScopeFor, requesterScopeGate, requiresRequesterScope, withServesReread } from '../../access/requester-scope.ts';
 import { attestedCallerAccess, storedActorIdentity } from '../../access/actor.ts';
 import type { AudiencePrincipal } from '../../access/audience.ts';
 import { currentSubmissionAuthority } from '../submission-authority.ts';
@@ -341,8 +341,11 @@ function brainTool(op: Operation, opts: BuildBrainToolsOpts): ToolDef {
  */
 async function scopedJobAccess(engine: BrainEngine, op: Operation, auth: NonNullable<OperationContext['auth']>, actingFor: AudiencePrincipal[] | undefined) {
   const access = await remoteCallerAccess(engine, auth, [], undefined, actingFor);
-  if (requiresRequesterScope(op, auth)) requesterScopeGate(op, access, await credentialScopeFor(engine, auth), 'http', engine.kind);
-  return access;
+  if (!requiresRequesterScope(op, auth)) return access;
+  const scoped = await credentialScopeFor(engine, auth);
+  const resolved = await withServesReread(engine, access, scoped);
+  requesterScopeGate(op, resolved, scoped, 'http', engine.kind);
+  return resolved;
 }
 
 /**
