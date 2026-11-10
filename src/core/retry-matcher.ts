@@ -103,6 +103,16 @@ export function getMessage(err: unknown): string {
 }
 
 /**
+ * GST-2314: a prepared statement whose cached plan went stale because a migration changed a table it reads (SQLSTATE
+ * 0A000 "cached plan must not change result type"). Outside a transaction the driver re-prepares it; inside one the
+ * transaction is already aborted, so the caller sees the error and a re-run on a fresh transaction succeeds. Every other
+ * 0A000 (feature_not_supported) stays a refusal.
+ */
+export function isStalePlanError(err: unknown): boolean {
+  return getCode(err) === '0A000' && /cached plan must not change result type/i.test(getMessage(err));
+}
+
+/**
  * SQLSTATE 57014: query_canceled / statement_timeout.
  * Postgres signals this when a statement exceeds `statement_timeout`.
  */
