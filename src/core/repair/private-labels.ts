@@ -65,7 +65,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { PRIVACY_ALIASES, privacyAliasSql, privacyPartSql, privateSnapshotFilterFragment, readHonorAliases } from '../search/private-visibility.ts';
 import { asciiLower } from '../edge-whitespace.ts';
-import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairSettlement } from './core.ts';
+import { afterCursor, REPAIR_DECLINE_CODES, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairSettlement } from './core.ts';
 
 export type ClearClass = 'alias' | 'alias-and-visibility' | 'git-publish';
 export type KeepClass = 'pinned_question' | 'derived' | 'strong_alias' | 'explicit_visibility';
@@ -179,7 +179,8 @@ async function planClear(engine: BrainEngine, scope: RepairScope, selection: Sel
       page_id: Number(row.id), revision: row.revision, labels: decided.removed, chars: Number(row.chars), selection });
   });
   const tried = triedBefore(ledger, scope.brain_id);
-  for (const entry of entries) if (tried.has(entry.source_id + '\0' + entry.page_id)) entry.tried = true;
+  const declined = await declinedInJournal(engine, entries);
+  for (const entry of entries) if (tried.has(entry.source_id + '\0' + entry.page_id) || declined.has(entry.source_id + '\0' + entry.slug)) entry.tried = true;
   const retry = (entry: Approved) => Number(entry.tried === true);
   entries.sort((a, b) => retry(a) - retry(b) || CLEAR_CLASSES.indexOf(a.class as ClearClass) - CLEAR_CLASSES.indexOf(b.class as ClearClass) || a.page_id - b.page_id);
   return { counts: counts as Record<string, number>, entries, unreadable: 0 };
@@ -324,6 +325,26 @@ function triedBefore(ledger: PrivateLabelsLedger | undefined, brainId: string): 
     if (line && line.brain_id === brainId) latest.set(line.source_id + '\0' + line.page_id, line);
   }
   return new Set([...latest].flatMap(([key, line]) => line.removed && line.phase === 'intent' ? [key] : []));
+}
+
+/**
+ * GBRA-443: on a managed brain, the pages whose latest maintenance write in the journal ended in a decline
+ * (REPAIR_DECLINE_CODES) at the revision the page still has. A release before the write-ahead ledger left no ledger line
+ * for a declined page, so this is how its decline carries over. One query for the whole candidate set; a page whose
+ * journal row was compacted or pruned is not found here and is ordered like a page not tried yet.
+ */
+async function declinedInJournal(engine: BrainEngine, entries: Approved[]): Promise<Set<string>> {
+  if (!entries.length || !await managedPersistenceEnabled(engine)) return new Set();
+  const rows = await engine.executeRaw<{ source_id: string; slug: string; error_code: string | null; expected: string | null }>(
+    `SELECT DISTINCT ON (r.source_id, r.slug) r.source_id, r.slug, r.error_code, r.intent->>'expected_revision' AS expected
+       FROM persistence_requests r JOIN unnest($1::text[], $2::text[]) AS t(source_id, slug) ON r.source_id = t.source_id AND r.slug = t.slug
+      WHERE r.intent IS NOT NULL AND NOT r.compacted AND r.intent->>'kind' = 'managed_maintenance_page'
+      ORDER BY r.source_id, r.slug, r.sequence DESC`, [entries.map(entry => entry.source_id), entries.map(entry => entry.slug)], bounded);
+  const revision = new Map(entries.map(entry => [entry.source_id + '\0' + entry.slug, entry.revision]));
+  return new Set(rows.flatMap(row => {
+    const key = row.source_id + '\0' + row.slug;
+    return row.error_code && REPAIR_DECLINE_CODES.has(row.error_code) && row.expected !== null && row.expected === revision.get(key) ? [key] : [];
+  }));
 }
 
 /** GBRA-443: the listed items whose write embeds: a label-only edit keeps every stored vector except on a page stored under per-chunk synopsis; a page with a chunk that has no vector yet is counted too. */

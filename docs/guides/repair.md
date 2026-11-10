@@ -2199,6 +2199,13 @@ decline the command exits 0, so a script working through windows carries on.
 Any other failure, or a stop, still exits 1. The next preview lists pages an
 earlier apply tried and that didn't change after every page not tried yet
 (`details.window.tried_before` counts them), so they stop heading each window.
+On a brain with managed persistence a page also counts as tried when its latest
+maintenance write in the write journal was declined at the revision the page
+still has, which covers pages that declined under a release whose ledger kept no
+line for them. A page whose journal row was already compacted or pruned isn't
+found that way: it's listed like a page not tried yet, and if five or more such
+pages fail first, the run stops with `item_failures_systemic` once; the stopped
+run leaves intent lines for them, so the next preview lists them last.
 Clearing a declined page is a separate choice per page: see
 [file drift](#file-drift). Such a page declining again doesn't count toward the
 run's systemic-failure stop (`item_failures_systemic`), so a window whose tail,
