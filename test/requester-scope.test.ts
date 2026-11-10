@@ -185,6 +185,60 @@ for (const kind of testBackends()) {
       expect(notice.message).toContain('--reads-unscoped --yes');
     }, 60_000);
 
+    /**
+     * The request's config reads fail (a statement timeout under load): the whole-table snapshot and the policy read that
+     * names the serves keys. With `reread` the gate's one re-read of the serves keys fails too.
+     */
+    async function withConfigReadsFailing<T>(reread: boolean, fn: () => Promise<T>): Promise<T> {
+      const target = engine as unknown as Record<string, unknown>;
+      const own = { executeRaw: Object.getOwnPropertyDescriptor(engine, 'executeRaw'), getAllConfig: Object.getOwnPropertyDescriptor(engine, 'getAllConfig') };
+      const realRaw = engine.executeRaw.bind(engine);
+      const timeout = () => Promise.reject(new Error('canceling statement due to statement timeout'));
+      target.getAllConfig = timeout;
+      target.executeRaw = (sql: string, params?: unknown[]) => {
+        const keys = params?.[0];
+        const servesRead = /FROM config WHERE key/.test(sql) && Array.isArray(keys) && keys.includes('access.serves');
+        if (servesRead && (reread || keys.includes('search.remote_private_pages'))) return timeout();
+        return realRaw(sql, params as never);
+      };
+      try { return await fn(); } finally {
+        for (const [k, d] of Object.entries(own)) if (d) Object.defineProperty(engine, k, d); else delete target[k];
+      }
+    }
+
+    test('an unreadable serves policy is read again: an unbound key in its grace still gets the notice', async () => {
+      await engine.setConfig('access.serves', 'several');
+      await setSince(1);
+      await backdate('old-unbound', 2);
+      try {
+        const out = await withConfigReadsFailing(false, () => search('old-unbound'));
+        expect(out.isError).toBe(false);
+        expect(out.meta?.access?.requester_scope).toMatchObject({ state: 'grace', connection: 'token old-unbound' });
+      } finally { await engine.unsetConfig('access.serves'); }
+    }, 60_000);
+
+    test('when the re-read fails too, the unbound read is refused as retryable and nothing is read', async () => {
+      await engine.setConfig('access.serves', 'several');
+      try {
+        const out = await withConfigReadsFailing(true, () => search('old-unbound'));
+        expect({ isError: out.isError, code: out.json.code }).toEqual({ isError: true, code: 'requester_scope_unknown' });
+        expect(out.structured?.error).toMatchObject({ code: 'requester_scope_unknown', fix: { next: 'wait' } });
+        expect(out.json.message).not.toContain('serves several');
+        for (const canary of Object.values(PAGES)) expect(out.text).not.toContain(canary);
+        expect((await withConfigReadsFailing(true, () => search('alice-key'))).isError).toBe(false);
+      } finally { await engine.unsetConfig('access.serves'); }
+    }, 60_000);
+
+    test('on a one-person brain, a failed first read and a good re-read run the call with no notice', async () => {
+      await engine.setConfig('access.serves', 'one');
+      try {
+        const out = await withConfigReadsFailing(false, () => search('old-unbound'));
+        expect(out.isError).toBe(false);
+        expect(out.text).toContain('canaryalpha');
+        expect(out.meta?.access?.requester_scope).toBeUndefined();
+      } finally { await engine.unsetConfig('access.serves'); }
+    }, 60_000);
+
     test('over HTTP, the same key after the grace is refused with the structured code, and the audit line records it', async () => {
       await setSince(15);
       await backdate('old-unbound', 16);

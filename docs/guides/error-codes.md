@@ -4198,6 +4198,16 @@ Reasons: `grace_ended`, `created_after`, `since_unknown`.
 
 More: [docs/guides/write-refusals.md#requester_scope_required](../../docs/guides/write-refusals.md#requester_scope_required)
 
+### requester_scope_unknown
+
+<a id="requester_scope_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote read came from a connection bound to no member, and whether the brain serves one person or several could not be read (the config read failed, and so did one re-read), so it was refused before any work and nothing was read. | A statement timeout, a lock wait or a dropped pooled connection can fail one config read while the next read succeeds. Reading that as a one-person brain would let a connection bound to nobody read every page no rule restricts on a brain that may serve several people, so gbrain refuses until it can tell. | Retry the same call in a few seconds. If it keeps failing, the brain host's operator checks the database with gbrain doctor --json. A connection bound to a member is never refused this way. | provider | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/write-refusals.md#requester_scope_unknown](../../docs/guides/write-refusals.md#requester_scope_unknown)
+
 ### requirements_changed
 
 <a id="requirements_changed"></a>

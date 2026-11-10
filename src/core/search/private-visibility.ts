@@ -834,7 +834,8 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
 /** GST-363: whom the brain serves, as a remote request reads it from config (no query). `since` is epoch seconds. */
 export interface ServesPolicy { several: boolean; from: 'config' | 'members'; since: number | null; enforce: boolean }
 
-export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean; ownerMember?: string | null; serves?: ServesPolicy }
+/** `servesUnknown`: the config read failed, so whom the brain serves is not known (never read as one person, GST-363). */
+export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean; ownerMember?: string | null; serves?: ServesPolicy; servesUnknown?: boolean }
 
 /** GST-363: an explicit access.serves wins over the trigger-kept member count; enforcement is on unless set to false. */
 export function servesPolicyFrom(config: Record<string, string | undefined>): ServesPolicy {
@@ -854,17 +855,25 @@ export function servesPolicyFrom(config: Record<string, string | undefined>): Se
  * relaxed privacy (the env hatch or the config opt-out, uncached) and whether
  * the brain holds member-access restrictions. Takes any executeRaw engine (a
  * transaction included). An unreadable config counts as not opted out and
- * restricted (fail closed); the env hatch needs no read. It names no serves
- * policy (GST-363): the read that follows meets the same unreadable database
- * and returns that error, rather than a requester-scope refusal that hides it.
+ * restricted (fail closed); the env hatch needs no read. Whom the brain serves
+ * is then unknown (servesUnknown, GST-363): the requester-scope gate reads the
+ * serves keys once more (readServesPolicy) and refuses an unbound read when that
+ * fails too, because a timeout or a dropped pooled connection can fail this one
+ * statement while the next read succeeds.
  */
 export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<RemotePolicy> {
   try {
     const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY, OWNER_MEMBER_KEY, SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY]]);
     return remotePolicyFrom(Object.fromEntries(rows.map(r => [r.key, r.value])));
   } catch {
-    return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true, ownerMember: null };
+    return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true, ownerMember: null, servesUnknown: true };
   }
+}
+
+/** GST-363: whom the brain serves, read on its own (the requester-scope gate's re-read after an unreadable policy read). Throws when unreadable. */
+export async function readServesPolicy(engine: Pick<BrainEngine, 'executeRaw'>): Promise<ServesPolicy> {
+  const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY]]);
+  return servesPolicyFrom(Object.fromEntries(rows.map(r => [r.key, r.value])));
 }
 
 /**

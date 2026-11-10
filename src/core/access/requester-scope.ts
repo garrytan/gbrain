@@ -21,7 +21,7 @@ import type { BrainEngine } from '../engine.ts';
 import { opError, type AuthInfo, type Operation, type OperationError } from '../ops/contract.ts';
 import type { Action } from '../agent-output.ts';
 import { agentBlock } from '../agent-markers.ts';
-import { readRemotePolicyNow, type CallerAccess, type ServesPolicy } from '../search/private-visibility.ts';
+import { readServesPolicy, type CallerAccess, type ServesPolicy } from '../search/private-visibility.ts';
 import type { BindingPatch } from './members.ts';
 import { hostFix, hostOnlyError } from '../ops/op-fix.ts';
 import { hasScope } from '../scope.ts';
@@ -105,11 +105,13 @@ export function requesterScopeGate(op: Pick<Operation, 'name' | 'mutating'> | un
   via: string | undefined, kind: EngineKind, nowMs = Date.now()): RequesterScopeNotice | null {
   if (!requiresRequesterScope(op, auth)) return null;
   const serves = access.remotePolicy?.serves;
-  if (!serves?.several) return null;
+  const unknown = access.remotePolicy?.servesUnknown === true;
+  if (!serves?.several && !unknown) return null;
   const transport: Transport = via === 'http' ? 'http' : 'stdio';
-  if (access.audience?.length || access.actor || (access.identity ?? []).some(p => p.startsWith('member:'))) return null;
+  if (boundToSomeone(access)) return null;
   if (auth?.readsUnscoped) return null;
   const c = connectionOf(auth, kind);
+  if (unknown || !serves) throw requesterScopeUnknown(op!.name, c);
   const created = auth?.createdAt ?? null;
   const since = serves.since;
   const refusesAt = since === null ? null : since + GRACE_SECONDS;
@@ -125,6 +127,34 @@ export function requesterScopeGate(op: Pick<Operation, 'name' | 'mutating'> | un
       message: `This brain serves several people (${why(serves)}) and ${c.handle} is bound to nobody. From ${date} its reads are refused (requester_scope_required). ${alternatives(c)}` };
   }
   throw requesterScopeRequired(op!.name, c, serves, transport, old ? 'grace_ended' : since === null ? 'since_unknown' : 'created_after');
+}
+
+function boundToSomeone(access: Partial<CallerAccess>): boolean {
+  return !!access.audience?.length || !!access.actor || (access.identity ?? []).some(p => p.startsWith('member:'));
+}
+
+/**
+ * The access a requester-scope decision reads: unchanged unless whom the brain serves could not be read (servesUnknown)
+ * and the call is from a connection bound to nobody, which gets one targeted re-read of the serves keys. A second
+ * failure leaves it unknown, and requesterScopeGate refuses (requester_scope_unknown) rather than read it as one person.
+ */
+export async function withServesReread<T extends Partial<CallerAccess>>(engine: Pick<BrainEngine, 'executeRaw'>, access: T, auth: Pick<ScopeAuth, 'readsUnscoped'> | undefined): Promise<T> {
+  const policy = access.remotePolicy;
+  if (!policy?.servesUnknown || boundToSomeone(access) || auth?.readsUnscoped) return access;
+  try {
+    return { ...access, remotePolicy: { ...policy, serves: await readServesPolicy(engine), servesUnknown: false } };
+  } catch {
+    return access;
+  }
+}
+
+function requesterScopeUnknown(op: string, c: Connection): OperationError {
+  return opError('requester_scope_unknown',
+    `Whether this brain serves one person or several could not be read (its config read failed twice), so ${op} from ${c.handle}, which is bound to no member, was refused and nothing was read.`,
+    'Retry the same call in a few seconds. If it keeps failing, the brain host\'s operator checks the database with gbrain doctor --json.',
+    { retryable: true, detail: 'retry_after_ms=2000',
+      fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'provider', requires_exclusive: false,
+        why: 'Nothing was read. Repeat the same call after about 2 s (retry_after_ms=2000); this read-only command shows whether the database is answering.' } });
 }
 
 function requesterScopeRequired(op: string, c: Connection, serves: ServesPolicy, transport: Transport, reason: string): OperationError {
@@ -163,8 +193,8 @@ export async function credentialScopeFor<T extends ScopeAuth>(engine: Pick<Brain
  */
 export async function assertCredentialScoped(engine: Pick<BrainEngine, 'executeRaw'>, patch: BindingPatch | null, kind: 'token' | 'client', name: string): Promise<void> {
   if (patch?.member || patch?.mayActFor?.length || patch?.attestActor || patch?.readsUnscoped) return;
-  const serves = (await readRemotePolicyNow(engine)).serves;
-  if (!serves?.several || !serves.enforce) return;
+  const serves = await readServesPolicy(engine);
+  if (!serves.several || !serves.enforce) return;
   const create = kind === 'token' ? ['gbrain', 'auth', 'create', name] : ['gbrain', 'auth', 'register-client', name];
   throw opError('credential_scope_required',
     `This brain serves several people (${why(serves)}), so the ${kind === 'token' ? 'token' : 'OAuth client'} ${name} was not created bound to nobody; nothing was created.`,
@@ -176,20 +206,24 @@ export async function assertCredentialScoped(engine: Pick<BrainEngine, 'executeR
 
 /**
  * whoami's view of the requester-scope gate for the calling connection (whoami itself is exempt, so an unbound
- * connection can learn why its reads are refused): not_required on a one-person brain, scoped, reads_unscoped, or the
+ * connection can learn why its reads are refused): not_required on a one-person brain, scoped, reads_unscoped, unknown
+ * when whom the brain serves could not be read (even after one re-read), or the
  * state a read would get, with the command that binds the connection.
  */
 export async function requesterScopeView(engine: Pick<BrainEngine, 'executeRaw' | 'kind'>, access: Partial<CallerAccess>, auth: ScopeAuth | undefined, transport: string | undefined): Promise<{ state: string; refuses_at?: string | null; reason?: string; argv?: string[] }> {
-  const serves = access.remotePolicy?.serves;
-  if (!serves?.several) return { state: 'not_required' };
-  if (access.audience?.length || access.actor || (access.identity ?? []).some(p => p.startsWith('member:'))) return { state: 'scoped' };
+  const policy = access.remotePolicy;
+  if (!policy?.serves?.several && !policy?.servesUnknown) return { state: 'not_required' };
+  if (boundToSomeone(access)) return { state: 'scoped' };
   const scoped = auth ? await credentialScopeFor(engine, auth) : undefined;
   if (scoped?.readsUnscoped) return { state: 'reads_unscoped' };
+  const resolved = await withServesReread(engine, access, scoped);
+  if (!resolved.remotePolicy?.servesUnknown && !resolved.remotePolicy?.serves?.several) return { state: 'not_required' };
   try {
-    const notice = requesterScopeGate({ name: 'search', mutating: false }, access, scoped, transport, engine.kind);
+    const notice = requesterScopeGate({ name: 'search', mutating: false }, resolved, scoped, transport, engine.kind);
     return { state: notice!.state, refuses_at: notice!.refuses_at, argv: notice!.fix.argv };
   } catch (e) {
     const err = e as OperationError;
+    if (err.code === 'requester_scope_unknown') return { state: 'unknown' };
     return { state: 'refused', reason: err.reason, argv: err.fix?.argv };
   }
 }
@@ -209,8 +243,8 @@ export interface UnscopedConnection {
  * Null when the brain serves one person.
  */
 export async function unscopedConnections(engine: Pick<BrainEngine, 'executeRaw' | 'kind'>, nowMs = Date.now()): Promise<{ serves: ServesPolicy; connections: UnscopedConnection[] } | null> {
-  const serves = (await readRemotePolicyNow(engine)).serves;
-  if (!serves?.several) return null;
+  const serves = await readServesPolicy(engine);
+  if (!serves.several) return null;
   const unbound = 'member_id IS NULL AND COALESCE(cardinality(may_act_for), 0) = 0 AND attest_actor IS NULL';
   const [tokens, clients] = await Promise.all([
     engine.executeRaw<{ id: string; name: string; created: unknown; reads_unscoped: unknown }>(`SELECT id::text AS id, name, created_at AS created, reads_unscoped FROM access_tokens WHERE revoked_at IS NULL AND ${unbound} ORDER BY name, id`),
