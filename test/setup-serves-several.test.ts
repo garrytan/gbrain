@@ -227,14 +227,25 @@ describe('labelling refuses or reports what it cannot make safe (pglite, repo-le
     expect(r.keys[0]!.detail).toContain('does not hold the live key member-nia-example');
   }, 60_000);
 
+  test('a key file left by another brain or a revoked key is BLOCKED, never overwritten', async () => {
+    const path = join(home, '.gbrain', 'member-keys', 'sam-example.key');
+    mkdirSync(join(home, '.gbrain', 'member-keys'), { recursive: true, mode: 0o700 });
+    writeFileSync(path, 'gbrain_anotherbrainskey\n', { mode: 0o600 });
+    const r = await label(['sam-example']);
+    expect(r.keys[0]).toMatchObject({ action: 'blocked' });
+    expect(r.keys[0]!.detail).toContain('move or delete the file');
+    expect(readFileSync(path, 'utf8')).toBe('gbrain_anotherbrainskey\n');
+    expect(await liveToken('member-sam-example')).toBeUndefined();
+  }, 60_000);
+
   test('a key file that cannot be written revokes the key it just minted, and the next run mints a new one', async () => {
-    const path = join(home, '.gbrain', 'member-keys', 'oli-example.key');
-    mkdirSync(join(path, 'in-the-way'), { recursive: true });
+    const inTheWay = join(home, '.gbrain', 'member-keys', `oli-example.key.${process.pid}.tmp`);
+    mkdirSync(join(inTheWay, 'x'), { recursive: true });
     const r = await label(['oli-example']);
     expect(r.error).toBeDefined();
     expect(r.completed).toEqual(['members', 'rules']);
     expect(await liveToken('member-oli-example')).toBeUndefined();
-    rmSync(path, { recursive: true });
+    rmSync(inTheWay, { recursive: true });
     const again = await label(['oli-example']);
     expect(again.error).toBeUndefined();
     expect(again.keys[0]!.action).toBe('mint');

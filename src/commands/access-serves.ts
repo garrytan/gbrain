@@ -113,10 +113,11 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string): Pr
     const path = join(keyDir, `${id}.key`);
     const [token] = await engine.executeRaw<{ member_id: string | null; token_hash: string }>('SELECT member_id, token_hash FROM access_tokens WHERE name = $1 AND revoked_at IS NULL', [name]);
     if (members.find(m => m.id === id)?.action === 'blocked') keys.push({ member: id, token_name: name, path, action: 'blocked', detail: 'the member is not enabled' });
+    else if (!token && existsSync(path)) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `a key file is already at ${path} but no live key is named ${name} (another brain's key, or one revoked by hand); move or delete the file, then run this again` });
     else if (!token) keys.push({ member: id, token_name: name, path, action: 'mint' });
     else if (token.member_id !== id) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `a token named ${name} exists but is not bound to ${id}; revoke it (gbrain auth revoke ${name}) or bind it (gbrain auth rescope --token ${name} --member ${id})` });
     else if (!existsSync(path)) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `the key ${name} exists but its file is gone and a key is shown only once; revoke it (gbrain auth revoke ${name}) and run this again to mint a new one` });
-    else if (hashToken(readFileSync(path, 'utf8').trim()) !== token.token_hash) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `the file does not hold the live key ${name} (it was revoked and made again, or another brain wrote it); revoke it (gbrain auth revoke ${name}) and run this again to mint a new one` });
+    else if (hashToken(readFileSync(path, 'utf8').trim()) !== token.token_hash) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `the file does not hold the live key ${name} (it was revoked and made again, or another brain wrote it); revoke it (gbrain auth revoke ${name}), delete ${path} and run this again to mint a new one` });
     else keys.push({ member: id, token_name: name, path, action: 'keep' });
   }
   return { serves: 'several', source_id: sourceId, applied: false, config: { key: SERVES_KEY, value: 'several', action: explicit === 'several' ? 'keep' : 'write' },
