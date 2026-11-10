@@ -8,7 +8,7 @@ can load, and Google source files other local users can read. `gbrain repair`
 fixes those and the other kinds listed in
 [What each kind fixes](#what-each-kind-fixes). Every run is a preview unless
 you pass `--apply`.
-The explicit-only kinds, among them `google-file-modes`, `stale-atoms`, `atoms-restore`, `extractor-facts`, `unwithdrawn-facts`,
+The explicit-only kinds, among them `google-file-modes`, `stale-atoms`, `atoms-restore`, `atom-fence-rows`, `extractor-facts`, `unwithdrawn-facts`,
 `captured-facts`, `agent-session-facts`, `redacted-facts`, `loop-facts`, `ontology-facts`, `orphan-children`, `failed-writes`, `frontmatter`, `managed-sync-orphans`, `content-receipt-root`, `stuck-recovery`, `aliases`, `rename-identity` and `segmented-mirror`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
 `gbrain doctor --remediation-plan` lists the same kinds as repair steps, and
 `gbrain doctor --remediate --yes --include-repairs --expect <plan_hash>` runs them under a budget
@@ -1976,6 +1976,47 @@ their count, origins, oldest and newest retirement and the date the first hold
 ends; its fix is the read-only preview. Show the user the preview before
 running the apply.
 
+### Atom fence rows
+
+A world atom carries the claim of a fence row its source page shows only to
+the owner when an older extraction read the whole page: a facts row whose
+`visibility` is not `world`, or a takes row whose holder is not `world`.
+Extraction now reads a page as a world reader sees it, so new atoms never
+carry such a row, but atoms already stored keep what they copied and a remote
+read returns it. `gbrain repair atom-fence-rows` finds them and, only when you
+apply it, makes them private. It is explicit-only and preview-bound, and
+nothing runs on upgrade.
+
+```bash
+gbrain doctor --only atom_fence_rows --json            # count per source; ok when none
+gbrain repair atom-fence-rows --source <id> --json     # preview: each atom, its source page, the row kinds and numbers, and a hash
+gbrain repair atom-fence-rows --source <id> --apply --expect <hash>
+```
+
+An atom is listed when it is live, page-bound (`source_slug`), stamped
+`visibility: world`, and its title, body or `source_quote` contains (case and
+whitespace folded) the claim of such a row in any fence of its live source page
+a world reader does not see (a fence quoted in a code block included), unless
+the page's world text holds the same claim too. Claims shorter than 12 characters
+are not matched. The preview names each atom with its source page and the
+rows (`facts row 2`, `takes row 1`), never the row text, and changes nothing.
+A source page stored in segments is not read: its world atoms are counted as
+`origin_unread`.
+
+The apply sets `visibility: private` on exactly the previewed set through a
+revision-bound put_page, which re-chunks and re-embeds each atom; remote reads
+and search stop returning it, local reads keep it. An atom whose revision,
+source page or matched rows changed since the preview reports
+`changed_since_preview` and is kept. `--apply` without `--expect` refuses
+with the preview and apply commands; a stale hash or another `--source`
+refuses with [`preview_changed`](#preview-changed).
+
+Cost: doctor and the preview read every world atom whose source page names a
+facts or takes fence, in pages of 500 by id, and each such source page once;
+no model is called. Doctor bounds each statement at 120 seconds and reports
+the count as unknown when one overruns. Show the user the preview before
+running the apply.
+
 ### Generations
 
 Unmanaged atom extraction publishes each page's or transcript's atoms as one
@@ -2088,6 +2129,51 @@ A page with no file changes through `get_page` (`include_content: true`) and
 `put_page` with that revision as `expected_revision`; `edit_page` refuses to
 write fence markers. Neither outcome is a default, and nothing changes until the
 user chooses.
+
+### Lost fence rows
+
+A page rewrite that drops its `## Facts` or takes section is safe on its
+own: the section's rows stay live, held `fence_absent`, until you put the
+section back or write an empty one. Before this release, a later `remember`,
+`takes add`, fact extraction or `gbrain facts relink` on that page built a
+new section holding only its own rows, and the next ordinary write (a tag, a
+timeline entry, an append, a get and put) read that section as your answer:
+the held facts expired and the held takes were deleted. Those writers now put
+the held rows back into the section they create. `gbrain repair
+lost-fence-rows` brings back the rows an older gbrain already lost.
+
+```bash
+gbrain repair lost-fence-rows --json                      # preview; writes nothing
+gbrain repair lost-fence-rows --source <id> --json        # one source
+gbrain repair lost-fence-rows --apply --expect <hash> --yes
+```
+
+A row is listed only when the records prove this shape: a facts or takes
+generation retired it without an empty-section proof, no row with the same
+claim is on the page now, and page history shows the row in a section that
+then vanished before the retirement. A row you removed by editing a section
+that stayed in place, a row retired by an explicit empty section, and a
+forgotten fact are never listed, and neither is a row you re-added after the
+loss and then removed again, or any row of a page where you wrote an empty
+section after the loss. A section you rebuilt by hand without a row
+leaves the same records as the bug, so read the preview with the user before
+applying it. `gbrain repair generations --mode restore`
+does not cover this case, because the retiring write published a fence that
+parsed; this kind reads page history instead.
+
+Each row comes back byte for byte from the newest page version that held it,
+at its old row number when that number is free. The apply republishes each
+page through one revision-bound page write that adds only those rows; a page
+changed since the preview is skipped and asks for a new preview. A restored
+fact is a new facts row (the expired row stays as history). A restored row
+never gets more trust than it had: a fact comes back at the tier the expired
+row had, and a take, or a fact with no recorded tier, at the lowest tier
+(`external_untrusted`); the preview says which on each row. If the apply
+stops because its page write is still pending, rerun the same apply command:
+it finishes lowering the tiers.
+
+It is explicit-only and nothing runs on upgrade: show the
+user the preview before running the apply.
 
 ### Extractor facts
 
@@ -2835,25 +2921,64 @@ gbrain sources record-origin <id>... --remote --apply           # records the id
 gbrain sources record-origin <id>... --local --apply            # records the rest as local adds
 ```
 
-`--remote` writes the same record a remote add writes, so the next reclone
-clones with git-lfs downloads and hooks off; `--local` records a local add, and
+`--remote` writes the same record a remote add writes, so every later reclone
+clones with git-lfs downloads and hooks off, and it turns the same settings on
+in the existing checkout's own `.git/config` now (`lfs.fetchexclude=*`,
+`core.hooksPath=/dev/null`, `lfs.locksverify=false`). That is the safer of the
+two choices: a reclone happens only when a checkout is lost or replaced, so
+without it the checkout would keep fetching git-lfs objects from the endpoint
+its repository names, and keep running hooks, while doctor already reads
+green. The settings go into the repository's shared config (the one
+`git rev-parse --git-common-dir` names, so a linked worktree gets them too),
+and the command then reads back the values Git uses in the checkout: when a
+worktree-scoped or included setting still overrides one, it refuses
+`write_failed`, names the key, and says the settings were already written.
+A source already recorded as remote whose checkout lacks the lock-down (one
+recorded before this) gets it on `--remote --apply` and reports `recorded`,
+even when its files now use git-lfs (no `lfs_tracked` refusal for it; only a
+checkout Git cannot place refuses it, as `lfs_unknown`); one that has it stays
+`already_recorded`, and the record is never removed. Each setting's existing values are removed before it is written, so a key that
+already holds several values ends with the one clone-time value. The settings
+are written to a copy held as Git's `config.lock` and renamed over the config in
+one step, so a failure part way leaves the config as it was (a `config.lock`
+another Git process holds refuses `write_failed`).
+Only `.git/config` changes, never a tracked file; a gbrain frontmatter
+hook wired through `core.hooksPath` stops running there, as on any clone a
+remote caller adds. `--local` records a local add and changes no checkout, and
 doctor stops listing either. Each apply re-reads the source inside one
-transaction and refuses `source_changed` if it moved since the check. Without
-git-lfs files a clone with these settings holds the same tracked bytes, so the
-stored writer manifest needs no change and the reclone verifies as before.
-`--remote` refuses, writing nothing:
+transaction and refuses `source_changed` if it moved since the check. On a
+managed brain it first takes the worktree locks and rows a reclone takes, so
+no reclone runs between the record and the clone; while a reclone, refresh or
+write holds them the id is refused `source_busy` (nothing changed, unless
+the reason says the checkout already got the lock-down; run it again once
+that process or refresh has finished). A write that fails is reported for its own id as
+`write_failed`, saying whether the checkout already got all or part of the
+lock-down, and the other ids keep their results. Without git-lfs files a
+clone with these settings holds the same tracked bytes, so the stored writer
+manifest needs no change and the reclone verifies as before. `--remote`
+refuses, writing nothing:
 
-- `lfs_tracked`: the checkout tracks files with git-lfs (any tracked path with
-  `filter=lfs`, or a committed `.gitattributes` that names `filter=lfs`; a
-  reclone gets only the committed attributes, so clone-local ones do not count).
-  An apply inspects the checkout again under the row lock before it writes. A clone with git-lfs downloads off holds pointer files where
+- `lfs_tracked`: the checkout tracks files with git-lfs (a tracked path with
+  `filter=lfs`), or a committed `.gitattributes` declares an LFS filter (a
+  rule naming `filter=lfs`, even one that matches no file yet; comment lines
+  do not count). A reclone gets only the committed attributes, so clone-local
+  ones do not count either.
+  An apply inspects the checkout again under its locks before it writes. A clone with git-lfs downloads off holds pointer files where
   this checkout holds their content, so its next reclone would stop at
   `writer_manifest_mismatch`, and converting the checkout rewrites its files,
   which this command does not do. If the source should not keep those files,
   check that nothing in its checkout is unpushed or only local, then remove it
   with `gbrain sources remove <id> --confirm-destructive`.
-- `lfs_unknown`: the checkout is missing or Git cannot list it, so gbrain
-  cannot confirm it has no git-lfs files. Restore the checkout and run it again.
+- `lfs_unknown`: gbrain cannot confirm the checkout has no git-lfs files (for
+  a source already recorded as remote, cannot reach it to turn them off),
+  and the reason names which cause applies: the checkout is missing (restore
+  it, then run this again); the clone directory is not the top level of its
+  own Git repository, because Git resolves it to an enclosing repository or to
+  none (check what the directory holds); Git refuses the checkout because
+  another user owns it (`safe.directory`); or Git could not list or read it
+  (for example a corrupt `.git`). A
+  clone of an empty repository (no commit yet) has no committed attributes,
+  so it is not refused.
 - `custom_clone_dir`: the clone sits where only the local CLI can clone.
 - `recorded_remote` (`--local`): the source is already recorded as a remote
   add; this command never removes that record.

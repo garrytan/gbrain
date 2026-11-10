@@ -25,6 +25,7 @@
  * process is gone.
  */
 import type { SkillsIndexState, SkillsIndexView } from '../../../core/setup/skills-block.ts';
+import type { SkillResolverView } from './skill-resolver.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
@@ -602,12 +603,15 @@ export function withHookLaunchers(check: Check, problem: HookLauncherProblem | n
   return { name: NAME, status: 'warn', message, details: { ...details, code: 'hook_session_cwd', hook_launcher_reason: problem.reason }, fix };
 }
 
-/** Registration read (full run) or registration read + smoke (`--only harness_wiring`), plus the brain-first block, its per-turn hook and the hook launcher. */
-export async function harnessWiringCheck(opts: { smoke: boolean }): Promise<Check> {
+/** Registration read (full run) or registration read + smoke (`--only harness_wiring`), plus the brain-first block, its per-turn hook, the hook launcher and the skill-resolver lane (when configured). */
+export async function harnessWiringCheck(opts: { smoke: boolean; skillResolver?: SkillResolverView | null }): Promise<Check> {
   const regs = readHarnessRegistrations();
   const { skillsIndexViews } = await import('../../../core/setup/skills-block.ts');
   const views = instructionBlockViews(regs);
-  return withSkillsIndex(withHookLaunchers(withSurfaceNote(withTurnHooks(withInstructionBlocks(await registrationCheck(opts, regs), views), views, turnHookViews(views)), regs), hookLauncherProblems(views)), skillsIndexViews());
+  const check = withSkillsIndex(withHookLaunchers(withSurfaceNote(withTurnHooks(withInstructionBlocks(await registrationCheck(opts, regs), views), views, turnHookViews(views)), regs), hookLauncherProblems(views)), skillsIndexViews());
+  if (!opts.skillResolver) return check;
+  const { describeSkillResolver } = await import('./skill-resolver.ts');
+  return { ...check, message: `${check.message} ${describeSkillResolver(opts.skillResolver)}`, details: { ...(check.details ?? {}), skill_resolver: opts.skillResolver } };
 }
 
 /**
@@ -668,16 +672,30 @@ async function registrationCheck(opts: { smoke: boolean }, regs: HarnessRegistra
 
 async function runHarnessWiring(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
+  const { skillResolverCheck, skillResolverView } = await import('./skill-resolver.ts');
+  let skillResolver: SkillResolverView | null = null;
+  let resolverError: unknown = null;
   try {
-    checks.push(await harnessWiringCheck({ smoke: !!ctx.only?.has('harness_wiring') }));
+    skillResolver = await skillResolverView();
+  } catch (e) {
+    resolverError = e;
+  }
+  try {
+    checks.push(await harnessWiringCheck({ smoke: !!ctx.only?.has('harness_wiring'), skillResolver }));
   } catch (e) {
     checks.push(checkError('harness_wiring', 'read the harness registrations', e));
+  }
+  if (resolverError) {
+    checks.push(checkError('skill_resolver', 'read the skill resolver state', resolverError));
+  } else {
+    const resolverCheck = skillResolverCheck(skillResolver);
+    if (resolverCheck) checks.push(resolverCheck);
   }
   return checks;
 }
 
 export const harnessWiringDoctorEntry: DoctorEntry = {
   name: 'harness_wiring',
-  emits: ['harness_wiring'],
+  emits: ['harness_wiring', 'skill_resolver'],
   run: runHarnessWiring,
 };

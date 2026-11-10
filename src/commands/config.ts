@@ -77,9 +77,11 @@ const FILE_PLANE_DOTTED_KEYS: ReadonlySet<string> = new Set([
  * never written to a DB row nothing reads. */
 const SELF_UPGRADE_KEY_PREFIX = 'self_upgrade.';
 
+/** GBRA-377: skills.resolver.* are file-plane only, set|unset|get before any engine (logic in core/setup/skill-resolver-config.ts). */
+const runSkillResolverKey = async (args: string[]) => (await import('../core/setup/skill-resolver-config.ts')).runSkillResolverConfigKey(args, (await import('../core/config.ts')).configDir());
 /** The single membership test the get/set/unset lanes share. */
 function isFilePlaneDottedKey(key: string): boolean {
-  return FILE_PLANE_DOTTED_KEYS.has(key) || key.startsWith(SELF_UPGRADE_KEY_PREFIX) || isConsentConfigKey(key);
+  return FILE_PLANE_DOTTED_KEYS.has(key) || key.startsWith(SELF_UPGRADE_KEY_PREFIX) || key.startsWith('skills.resolver.') || isConsentConfigKey(key);
 }
 
 /** Delete the DB-plane row of a file-plane key: a `config set` from before
@@ -361,6 +363,7 @@ export async function handleDbPlaneRoutedKeys(key: string, value: string): Promi
  * to change when the engine can't connect. Returns true when handled.
  */
 export async function tryRunConfigEngineFree(args: string[]): Promise<boolean> {
+  if (args[1]?.startsWith('skills.resolver.')) return runSkillResolverKey(args);
   if (args[0] !== 'set') return false;
   const key = args[1];
   const value = args.slice(2).find((a) => !a.startsWith('-'));
@@ -623,6 +626,7 @@ async function setFilePlaneKey(key: string, value: string, tail: string[]): Prom
  * refusal. Returns true when handled.
  */
 export async function tryRunConfigThinClient(args: string[]): Promise<boolean> {
+  if (args[1]?.startsWith('skills.resolver.')) return runSkillResolverKey(args);
   const [action, key, ...rest] = args;
   if (!key || !key.startsWith(SELF_UPGRADE_KEY_PREFIX) || rest.some((a) => a.startsWith('-'))) return false;
   if (action === 'set' && rest.length === 1) {

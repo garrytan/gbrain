@@ -40,6 +40,7 @@ import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fra
 import { frontmatterWhereFragment } from '../search/frontmatter-where.ts';
 import { quoteIdentifier, resolveWriteColumnFromConfigRows } from '../search/embedding-column.ts';
 import { pickCanonicalOrigin } from '../persistence/origin-guard.ts';
+import { expireGonePageFacts } from '../facts/gone-page-facts.ts';
 
 /**
  * PGLite can return zero rows from `INSERT ... ON CONFLICT DO UPDATE ...
@@ -353,6 +354,7 @@ export async function purgeDeletedPages(
           AND ${trustedSql(derivedRetirementPurgeHold('pages'))}${excluded}
         RETURNING slug, source_id
       `);
+      await expireGonePageFacts(tx, rows);
       if (rows.length) await tx.run(sqlFragment`DELETE FROM page_body_stagings s USING unnest(${rows.map(r => r.source_id)}::text[], ${rows.map(r => r.slug)}::text[]) AS d(source_id, slug)
         WHERE s.source_id = d.source_id AND s.slug = d.slug`);
       if (texts.length) await tx.run(sqlFragment`DELETE FROM page_segment_texts t

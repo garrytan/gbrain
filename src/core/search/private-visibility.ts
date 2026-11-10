@@ -25,6 +25,7 @@ import type { BrainEngine } from '../engine.ts';
 import { embeddedKey, embeddedKeyInScope, unscopedWithOpenEmbeddedEngines } from '../engine-scope-store.ts';
 import { requestConfigRows } from '../config-snapshot.ts';
 import { isValidSourceId } from '../source-id.ts';
+import { asciiLower, asciiLowerSql, edgeTrimSql } from '../edge-whitespace.ts';
 import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
 import { validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
 
@@ -172,15 +173,16 @@ function originAllowedSql(p: string): string {
 /**
  * `privatePagesFilterFragment` with a cheap first test: a page with no
  * `visibility` or `derived_from` key (nor, unless the operator turned
- * `visibility.honor_aliases` off, a privacy-alias key) whose type is not atom, concept or event is visible by every rule
+ * `visibility.honor_aliases` off, a privacy-alias key, nor `readable_by` or `pinned_question`) whose type is not atom, concept,
+ * event or question is visible by every rule
  * above, so only the remaining pages run the full check. For scans over thousands of
  * candidate pages (an entity's referrers).
  */
 export function privatePagesFilterFragmentFast(pageAlias: string): string {
   return `(${folderRulesAllowedSql(pageAlias, [])} AND ((${pageAlias}.frontmatter->'visibility' IS NULL AND ${pageAlias}.frontmatter->'derived_from' IS NULL${honorAliases()
       ? `\n      AND ${pageAlias}.frontmatter->'access' IS NULL AND ${pageAlias}.frontmatter->'confidentiality' IS NULL` : ''}
-      AND ${pageAlias}.frontmatter->'readable_by' IS NULL
-      AND ${pageAlias}.type NOT IN ('atom', 'concept', 'event'))
+      AND ${pageAlias}.frontmatter->'readable_by' IS NULL AND ${pageAlias}.frontmatter->'pinned_question' IS NULL
+      AND ${pageAlias}.type NOT IN ('atom', 'concept', 'event', 'question'))
     OR ${privatePagesFilterFragment(pageAlias)}))`;
 }
 
@@ -392,7 +394,8 @@ export function privatePagesFilterFastForCaller(pageAlias: string): string {
 function privacyPartFastSql(pageAlias: string): string {
   return `((${pageAlias}.frontmatter->'visibility' IS NULL AND ${pageAlias}.frontmatter->'derived_from' IS NULL${honorAliases()
       ? `\n      AND ${pageAlias}.frontmatter->'access' IS NULL AND ${pageAlias}.frontmatter->'confidentiality' IS NULL` : ''}
-      AND ${pageAlias}.type NOT IN ('atom', 'concept', 'event'))
+      AND ${pageAlias}.frontmatter->'pinned_question' IS NULL
+      AND ${pageAlias}.type NOT IN ('atom', 'concept', 'event', 'question'))
     OR ${privacyPartSql(pageAlias)})`;
 }
 
@@ -484,7 +487,8 @@ export type Visibility = 'private' | 'world';
 /**
  * Privacy aliases: keys a page may carry instead of `visibility` (the
  * bulk-ingestion template's `access`, a `confidentiality` field), with the
- * values that mean private. Matching is case-insensitive on the trimmed value.
+ * values that mean private. Matching is ASCII case-insensitive on the value trimmed of
+ * edge whitespace, the same on the TypeScript and SQL sides.
  * Everything derived from an aliased page (facts, chronicle events, timeline
  * rows, remember saves into it) is private. Remote page reads honor the aliases
  * too unless the operator sets `visibility.honor_aliases false`.
@@ -498,14 +502,14 @@ export const HONOR_ALIASES_KEY = 'visibility.honor_aliases';
 function hasPrivacyAlias(frontmatter: Record<string, unknown>): boolean {
   return Object.entries(PRIVACY_ALIASES).some(([key, values]) => {
     const value = frontmatter[key];
-    return typeof value === 'string' && values.includes(value.trim().toLowerCase());
+    return typeof value === 'string' && values.includes(asciiLower(value.trim()));
   });
 }
 
 /** SQL twin of hasPrivacyAlias on a page alias (a code-provided literal). */
 export function privacyAliasSql(alias: string): string {
   return `(${Object.entries(PRIVACY_ALIASES).map(([key, values]) =>
-    `COALESCE(lower(btrim(${alias}.frontmatter->>'${key}')) IN (${values.map(v => `'${v}'`).join(',')}), false)`).join(' OR ')})`;
+    `COALESCE(${asciiLowerSql(edgeTrimSql(`${alias}.frontmatter->>'${key}'`))} IN (${values.map(v => `'${v}'`).join(',')}), false)`).join(' OR ')})`;
 }
 
 /**
@@ -676,7 +680,26 @@ export function privateProvenanceFilterUnderPolicy(factAlias: string): string {
   const policy = member && ACCESS_ID_RE.test(member)
     ? `CASE WHEN pp.slug = '${MEMBER_PAGE_PREFIX}${member}' THEN ${readPolicyFragment('pp', access.identity, hide, access.satisfiedRuleIds)} ELSE ${readPolicyFragment('pp', [], hide)} END`
     : readPolicyFragment('pp', [], hide);
-  return `NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy}))`;
+  return `(NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy})) AND ${privateEntityFilterForCaller(factAlias)})`;
+}
+
+/**
+ * A fact is never wider than the page it is about: hide a fact whose entity page (`entity_slug`, looked up in the fact's
+ * own source) the current caller cannot read under the read policy its page reads use, so a member the page's readers
+ * name keeps the fact and every other remote caller loses it. A fact with no entity page passes. Read sites only; it
+ * only ever narrows.
+ */
+export function privateEntityFilterForCaller(factAlias: string, perCandidate = false): string {
+  return `NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug = ${factAlias}.entity_slug AND NOT ${privatePagesFilterForCaller('entity_pp')}${perCandidate ? ' OFFSET 0' : ''})`;
+}
+
+/**
+ * privateProvenanceFilterFragment for a remote fact read: the provenance page gate plus the caller's entity-page gate.
+ * perCandidate keeps the entity gate a lookup per candidate row (OFFSET 0 stops the planner turning it into a join), so
+ * a scan an index serves, such as the saved-fact keyword match, keeps that index.
+ */
+export function privateFactFilterForCaller(factAlias: string, perCandidate = false): string {
+  return `(${privateProvenanceFilterFragment(factAlias)} AND ${privateEntityFilterForCaller(factAlias, perCandidate)})`;
 }
 
 /** True only inside a remote caller record whose read an operator relaxed (the env hatch or the config opt-out). */
