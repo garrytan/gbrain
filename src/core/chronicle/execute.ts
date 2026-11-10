@@ -12,7 +12,10 @@
  * reservation, no model call. A failed or superseded run never retires
  * the previous generation, and neither does an empty or partial one (#7013:
  * no events, a proposal dropped or capped, or a body longer than the judge
- * read); an ineligible revision still retires it. A segmented page is never
+ * read, unless that window re-read the text of every live event, #8972); an
+ * ineligible revision still retires it. A revision whose judge input matches
+ * the input of the page's newest extracted generation makes no call and writes
+ * nothing (#8972: a long page whose tail changed). A segmented page is never
  * materialized: the judge reads its compiled truth's first JUDGE_BODY_CHARS
  * and its last message time comes from a block-by-block parse
  * (segmentedJudgePage).
@@ -32,14 +35,15 @@ import type { ChronicleReasonCode } from './reasons.ts';
 import type { ChronicleSettings } from './config.ts';
 import { chroniclePageDate, isChronicleEligible } from './eligibility.ts';
 import {
-  allDroppedReason, buildChronicleEvents, chronicleJudgeContext, isValidProposal, JUDGE_BODY_CHARS, lastMessageAt, replacesPreviousGeneration,
+  allDroppedReason, buildChronicleEvents, chronicleEventCutoff, chronicleJudgeContext, chronicleJudgedInput, cutoffInputHash, isValidProposal, JUDGE_BODY_CHARS, lastMessageAt, replacesPreviousGeneration,
   type ChronicleDropCounts, type ChronicleJudge, type ChronicleJudgeResult,
 } from './extract-events.ts';
 import { endedInviteProposal, markInviteEvents } from './invite-projection.ts';
 import { RETIRE_REASONS, reserveChronicleSlot } from './ledger.ts';
 import { CAMPAIGN_PRICING_POLICY, rowMaxAttempts } from './campaign.ts';
-import { pinDepth, publishChronicleGeneration, type ChronicleDepthPin } from './publish.ts';
+import { CHRONICLE_RETIRED_BY, pinDepth, publishChronicleGeneration, type ChronicleDepthPin } from './publish.ts';
 import { describeMalformedProposals, diagnoseMalformedProposals, type MalformedProposalDiagnostics } from './proposal-diagnostics.ts';
+import { sha256 } from '../persistence/digest.ts';
 
 export interface ChronicleExecContext {
   engine: BrainEngine;
@@ -65,6 +69,8 @@ export type ChronicleRowOutcome =
       malformed?: MalformedProposalDiagnostics };
 
 const CONFIG_BLOCKED = new Set(['judge_llm_unavailable', 'no_pricing']);
+/** #8972: outcomes of a paid judge call that a re-judge of the same input would repeat; only these count toward the same-input cap. */
+const SAME_INPUT_FAILURES = ['judge_truncated', 'judge_parse_failed', 'malformed_proposal', 'budget_exhausted', 'judge_refused'];
 const LEASE_MS = 15 * 60_000;
 
 function key(row: ChronicleLedgerRow) {
@@ -109,6 +115,11 @@ async function setNextAttempt(engine: BrainEngine, row: ChronicleLedgerRow, at: 
 async function finish(engine: BrainEngine, row: ChronicleLedgerRow, attempt: number, patch: {
   state: ChronicleLedgerRow['state']; reason: string | null; nextAttemptAt: Date | null;
   costUsd?: number | null; unpriced?: boolean; events?: Array<{ slug: string; hash: string }>;
+  judged?: ReturnType<typeof chronicleJudgedInput>;
+  /** A revision replaced the row before this run judged it: keep what an earlier attempt judged (and its counted failures). */
+  keepJudged?: boolean;
+  /** This attempt was a paid judge call that ended in a SAME_INPUT_FAILURES outcome. */
+  countFailure?: boolean;
 }): Promise<void> {
   if (patch.costUsd != null) {
     await engine.executeRaw(
@@ -118,15 +129,75 @@ async function finish(engine: BrainEngine, row: ChronicleLedgerRow, attempt: num
   }
   await engine.executeRaw(
     `UPDATE chronicle_page_state SET state=$5, reason=$6, next_attempt_at=$7::timestamptz, unpriced=COALESCE($8::boolean, unpriced),
-       event_slugs=COALESCE($9::text[], event_slugs), event_hashes=COALESCE($10::text[], event_hashes), updated_at=now()
+       event_slugs=COALESCE($9::text[], event_slugs), event_hashes=COALESCE($10::text[], event_hashes),
+       judge_input_hash=CASE WHEN $15::boolean THEN judge_input_hash ELSE $12 END,
+       judge_window_chars=CASE WHEN $15::boolean THEN judge_window_chars ELSE $13::int END,
+       judge_window_hash=CASE WHEN $15::boolean THEN judge_window_hash ELSE $14 END,
+       judge_input_failures=judge_input_failures + $16::int, updated_at=now()
       WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4 AND attempts=$11`,
     [...key(row), patch.state, patch.reason, patch.nextAttemptAt ? patch.nextAttemptAt.toISOString() : null, patch.unpriced ?? null,
-      patch.events ? patch.events.map((e) => e.slug) : null, patch.events ? patch.events.map((e) => e.hash) : null, attempt]);
+      patch.events ? patch.events.map((e) => e.slug) : null, patch.events ? patch.events.map((e) => e.hash) : null, attempt,
+      patch.judged?.inputHash ?? null, patch.judged?.window.length ?? null, patch.judged?.windowHash ?? null,
+      patch.keepJudged === true, patch.countFailure ? 1 : 0]);
 }
 
 function backoff(attempts: number, now: Date, maxAttempts: number): Date | null {
   if (attempts >= maxAttempts) return null;
   return new Date(now.getTime() + Math.min(6 * 3_600_000, 5 * 60_000 * 2 ** Math.max(0, attempts - 1)));
+}
+
+/**
+ * #8972: whether the page's newest generation was judged on exactly this input and its events still stand. The newest
+ * generation is the extracted row of the latest decided revision, unless a later revision retired the page's events
+ * (an ineligible revision, RETIRE_REASONS); events of it that a chronicle retirement removed since (a deleted and
+ * restored page) mean the page needs judging again.
+ */
+async function judgedOnSameInput(engine: BrainEngine, row: ChronicleLedgerRow, inputHashes: string[]): Promise<boolean> {
+  const [latest] = await engine.executeRaw<{ state: string; judge_input_hash: string | null; retired: boolean }>(
+    `SELECT c.state, c.judge_input_hash, EXISTS (SELECT 1 FROM pages e WHERE e.source_id=c.source_id AND e.slug = ANY(c.event_slugs)
+        AND e.deleted_at IS NOT NULL AND e.frontmatter->>'retired_by' = $6) AS retired
+       FROM chronicle_page_state c
+      WHERE c.source_id=$1 AND c.page_id=$2 AND c.extractor_version=$3 AND c.content_hash<>$4
+        AND (c.state='extracted' OR (c.state='skipped' AND c.reason = ANY($5::text[])))
+      ORDER BY c.decided_at DESC, c.updated_at DESC LIMIT 1`,
+    [row.source_id, Number(row.page_id), CHRONICLE_EXTRACTOR_VERSION, row.content_hash, [...RETIRE_REASONS], CHRONICLE_RETIRED_BY]);
+  return latest?.state === 'extracted' && latest.judge_input_hash != null && inputHashes.includes(latest.judge_input_hash) && !latest.retired;
+}
+
+/**
+ * #8972: paid attempts the page already spent on exactly this input without publishing it, this revision's own retries
+ * included, so a judge that keeps failing on an unchanged window (output cap, malformed output, per-page cap) is paid
+ * at most the attempt limit across revisions; `refused` when one of them was refused. Only attempts that ended in an
+ * outcome a re-judge would repeat count (SAME_INPUT_FAILURES, each recorded in judge_input_failures): a judged run a
+ * newer revision superseded, a provider or pricing that was not configured, or a chat error never exhausts the page.
+ */
+async function failedAttemptsOnSameInput(engine: BrainEngine, row: ChronicleLedgerRow, inputHash: string): Promise<{ attempts: number; refused: boolean }> {
+  const [prior] = await engine.executeRaw<{ attempts: number | string | null; refused: boolean | null }>(
+    `SELECT sum(judge_input_failures) AS attempts, bool_or(state='skipped' AND reason='judge_refused') AS refused FROM chronicle_page_state
+      WHERE source_id=$1 AND page_id=$2 AND extractor_version=$3 AND judge_input_hash=$4`,
+    [row.source_id, Number(row.page_id), CHRONICLE_EXTRACTOR_VERSION, inputHash]);
+  return { attempts: Number(prior?.attempts ?? 0), refused: prior?.refused === true };
+}
+
+/**
+ * #8972: whether a judge that read `window` (a body longer than the window) re-read every text the page's live events
+ * came from. Fails closed: every live chronicle event naming the depth page must be one a ledger row of the page
+ * recorded, and every such row must have recorded a judged window that `window` starts with. An event no row accounts
+ * for, or a row recorded before the window was stored (or by an earlier extractor), keeps the generation additive (#7013).
+ */
+async function windowCoversLiveEvents(engine: BrainEngine, row: ChronicleLedgerRow, depthSlug: string, window: string): Promise<boolean> {
+  const live = (await engine.executeRaw<{ slug: string }>(
+    `SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND type='event'
+        AND frontmatter->'event'->>'depth' = $2 AND frontmatter->>'captured_via' LIKE 'life-chronicle:%'`,
+    [row.source_id, depthSlug])).map((r) => r.slug);
+  if (!live.length) return true;
+  const producers = await engine.executeRaw<{ event_slugs: string[]; judge_window_chars: number | null; judge_window_hash: string | null }>(
+    `SELECT event_slugs, judge_window_chars, judge_window_hash FROM chronicle_page_state
+      WHERE source_id=$1 AND page_id=$2 AND event_slugs && $3::text[]`,
+    [row.source_id, Number(row.page_id), live]);
+  const attributed = new Set(producers.flatMap((p) => p.event_slugs));
+  return live.every((slug) => attributed.has(slug)) && producers.every((p) => p.judge_window_chars != null && p.judge_window_hash != null
+    && Number(p.judge_window_chars) <= window.length && sha256(window.slice(0, Number(p.judge_window_chars))) === p.judge_window_hash);
 }
 
 /** Copy a child scope's spend onto the ambient tracker so an enclosing budget sees it. */
@@ -172,7 +243,7 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
     return done('skipped', 'page_missing');
   }
   if (String(snapshot.page.content_hash ?? '') !== row.content_hash) {
-    await finish(engine, row, row.attempts, { state: 'skipped', reason: 'superseded', nextAttemptAt: null });
+    await finish(engine, row, row.attempts, { state: 'skipped', reason: 'superseded', nextAttemptAt: null, keepJudged: true });
     return done('skipped', 'superseded');
   }
   const pin = await pinDepth(engine, snapshot);
@@ -211,6 +282,22 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
 
   const judgeCtx = chronicleJudgeContext(page, lastMessage);
   const invite = endedInviteProposal(page, judgeCtx.attendees, now);
+  const judgedInput = chronicleJudgedInput(judgeCtx.input,
+    { visibility: pin.visibility, incarnation: pin.incarnation, tz: ctx.tz, maxEvents: settings.maxEventsPerPage });
+  const cutoff = chronicleEventCutoff(judgeCtx, ctx.tz, now);
+  // #8972: a revision changed only where the judge does not read (a long page's tail) would pay for the same answer.
+  if (!invite && await judgedOnSameInput(engine, row, [judgedInput.inputHash, cutoffInputHash(judgedInput.inputHash, cutoff)])) {
+    await finish(engine, row, row.attempts, { state: 'skipped', reason: 'judge_input_unchanged', nextAttemptAt: null, judged: judgedInput });
+    return done('skipped', 'judge_input_unchanged');
+  }
+  if (!invite && auto) {
+    const prior = await failedAttemptsOnSameInput(engine, row, judgedInput.inputHash);
+    if (prior.refused || prior.attempts >= rowMaxAttempts(row)) {
+      const reason = prior.refused ? 'judge_refused' : 'judge_input_failed';
+      await finish(engine, row, row.attempts, { state: prior.refused ? 'skipped' : 'failed', reason, nextAttemptAt: null, judged: judgedInput });
+      return done(prior.refused ? 'skipped' : 'failed', reason);
+    }
+  }
   if (auto && !invite && !(await reserveChronicleSlot(engine, settings.dailyLimit, { sourceId: row.source_id, pageId: Number(row.page_id), contentHash: row.content_hash }))) {
     await setNextAttempt(engine, row, null);
     return { kind: 'deferred', reason: 'daily_limit' };
@@ -248,7 +335,8 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
   const failure: JudgeFailure | null = overCap && !thrown ? { state: 'failed', reason: 'budget_exhausted' } : classifyJudge(result, thrown);
   if (failure) {
     const next = failure.state === 'skipped' || CONFIG_BLOCKED.has(failure.reason) ? null : backoff(attempts, now, maxAttempts);
-    await finish(engine, row, attempts, { state: failure.state, reason: failure.reason, nextAttemptAt: next, ...spend });
+    await finish(engine, row, attempts, { state: failure.state, reason: failure.reason, nextAttemptAt: next, judged: invite ? undefined : judgedInput,
+      countFailure: !invite && SAME_INPUT_FAILURES.includes(failure.reason), ...spend });
     if (!failure.malformed) return done(failure.state, failure.reason, judged);
     console.warn(`[chronicle] ${row.slug}: the judge's events failed validation (malformed_proposal: ${describeMalformedProposals(failure.malformed)}); nothing was written${next ? ' and the row retries with backoff' : ''}.`);
     return done(failure.state, failure.reason, { ...judged, malformed: failure.malformed });
@@ -258,11 +346,13 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
   const built = buildChronicleEvents(proposals, judgeCtx,
     { slug: pin.slug, visibility: pin.visibility, contentHash: pin.contentHash }, { tz: ctx.tz, now, maxEvents: settings.maxEventsPerPage });
   const { events, dropped } = built;
+  // #8972: a truncated generation that re-read the text of every live event is complete for what the page has produced.
+  const truncated = bodyTruncated && !(replacesPreviousGeneration(built, false) && await windowCoversLiveEvents(engine, row, pin.slug, judgedInput.window));
   let generation;
   try {
     generation = await publishChronicleGeneration(engine, {
       sourceId: row.source_id, pin, decisionRequestId: row.request_id, maintenance: ctx.maintenance, signal: ctx.signal,
-      events: invite ? markInviteEvents(events) : events, replaces: replacesPreviousGeneration(built, bodyTruncated),
+      events: invite ? markInviteEvents(events) : events, replaces: replacesPreviousGeneration(built, truncated),
     });
   } catch (error) {
     if ((error as Error)?.name === 'AbortError') throw error;
@@ -271,11 +361,15 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
     return done('failed', 'publish_error', { ...judged, dropped });
   }
   if (generation.superseded) {
-    await finish(engine, row, attempts, { state: 'skipped', reason: 'superseded', nextAttemptAt: null, events: generation.written, ...spend });
+    await finish(engine, row, attempts, { state: 'skipped', reason: 'superseded', nextAttemptAt: null, events: generation.written, judged: invite ? undefined : judgedInput, ...spend });
     return done('skipped', 'superseded', { ...judged, written: generation.written.length, dropped });
   }
   const reason = events.length > 0 ? null : proposals.length === 0 ? 'no_events' : allDroppedReason(dropped);
-  await finish(engine, row, attempts, { state: 'extracted', reason, nextAttemptAt: null, events: generation.written, ...spend });
+  // An ended invite's projection and a held result (nothing published) never stand for a judged input; a generation that
+  // dropped future-dated proposals stands for it only until the screen's cutoff day moves.
+  await finish(engine, row, attempts, { state: 'extracted', reason, nextAttemptAt: null, events: generation.written,
+    judged: invite || generation.held ? undefined
+      : dropped.future_dated ? { ...judgedInput, inputHash: cutoffInputHash(judgedInput.inputHash, cutoff) } : judgedInput, ...spend });
   return done('extracted', reason, { ...judged, written: generation.written.length, retired: generation.retired.length, dropped });
 }
 

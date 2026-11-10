@@ -198,6 +198,7 @@ export const CWD_DOTENV_PROTECTED_KEYS: readonly string[] = [
   'GBRAIN_ALLOW_DEFAULT_WRITE',      // permits writes into the 'default' source
   'GBRAIN_NO_SANITY',                // disables content sanity checks
   'GBRAIN_REMOTE_PRIVATE_PAGES',     // exposes private pages to remote callers
+  'GBRAIN_SURFACE',                  // stdio MCP tool surface: a planted `full` widens the tools an agent sees (a shell export still widens; GBRAIN_MCP_FORCE_SURFACE stays narrow-only)
 ];
 
 /**

@@ -50,6 +50,8 @@ import {
 import { loadOrDeriveManifest, type ManifestEntry } from './skill-manifest.ts';
 import { loadSkillTriggerIndex, FRONTMATTER_SECTION } from './skill-trigger-index.ts';
 import { parseSkillFrontmatter } from './skill-frontmatter.ts';
+import { oneLineDescription } from './skill-description.ts';
+import { splitWords } from './skills/resolver/tokenize.ts';
 import { operationScopesAllowed } from './scope.ts';
 import { currentVerifiedLocalWriter } from './persistence/identity.ts';
 import { disabledOpsForPublishGates } from '../mcp/publish-gates.ts';
@@ -378,72 +380,13 @@ function resolveSkillTools(
 // Frontmatter projection + description
 // ---------------------------------------------------------------------------
 
-/**
- * Parse a `description:` from raw frontmatter (best-effort).
- *
- * #1711: handles YAML block scalars. `description: |` (literal) and
- * `description: >` (folded), with optional chomping/indent indicators
- * (`|-`, `>+`, `|2`), are parsed by reading the following indented lines and
- * folding them into a single line for the one-line catalog. Pre-fix the regex
- * captured the bare `|`/`>` indicator as the description, so block-scalar skills
- * showed a literal "|" in the catalog instead of their text.
- */
-function parseDescriptionField(raw: string): string | undefined {
-  const lines = raw.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^description:[ \t]*(.*)$/);
-    if (!m) continue;
-    const inline = m[1].trim();
-
-    // Block scalar indicator (`|`, `>`, with optional chomp `+`/`-` and indent digit).
-    if (/^[|>][+-]?\d*$/.test(inline)) {
-      const block: string[] = [];
-      let baseIndent: number | null = null;
-      for (let j = i + 1; j < lines.length; j++) {
-        const line = lines[j];
-        if (line.trim().length === 0) { block.push(''); continue; }
-        const indent = line.length - line.trimStart().length;
-        if (baseIndent === null) {
-          if (indent === 0) break;   // no indented continuation
-          baseIndent = indent;
-        }
-        if (indent < baseIndent) break;  // dedent ends the block
-        block.push(line.slice(baseIndent));
-      }
-      // Catalog descriptions are one line; collapse literal/folded whitespace.
-      const folded = block.join(' ').replace(/\s+/g, ' ').trim();
-      return folded.length > 0 ? folded : undefined;
-    }
-
-    // Inline scalar: strip a matching pair of surrounding quotes.
-    const unq = inline.replace(/^(['"])([\s\S]*)\1$/, '$2').trim();
-    return unq.length > 0 ? unq : undefined;
-  }
-  return undefined;
-}
-
 /** Strip the leading `---\n...\n---` fence; return the prose body. */
 function stripFrontmatterFence(content: string): string {
   const m = content.match(/^---\n[\s\S]*?\n---\n?/);
   return m ? content.slice(m[0].length) : content;
 }
 
-/** First non-empty, non-heading prose line of the body (description fallback). */
-function firstProseLine(body: string): string {
-  for (const line of body.split('\n')) {
-    const t = line.trim();
-    if (t.length === 0) continue;
-    if (t.startsWith('#')) continue;
-    if (t.startsWith('<!--')) continue;
-    return t.replace(/^[*_>`-]+\s*/, '').trim();
-  }
-  return '';
-}
-
-/** description = frontmatter `description:` or first prose line, else ''. */
-export function oneLineDescription(raw: string, body: string): string {
-  return parseDescriptionField(raw) ?? firstProseLine(body);
-}
+export { oneLineDescription };
 
 // ---------------------------------------------------------------------------
 // Catalog assembly
@@ -488,7 +431,7 @@ const QUERY_RESULT_LIMIT_MAX = 100;
 
 /** Lowercased word tokens; hyphens and punctuation split, so `meeting-prep` is `meeting` + `prep`. */
 function queryTokens(text: string): string[] {
-  return text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(t => t.length >= 2 && !QUERY_STOPWORDS.has(t));
+  return splitWords(text).filter(t => t.length >= 2 && !QUERY_STOPWORDS.has(t));
 }
 
 /**

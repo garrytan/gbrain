@@ -33,7 +33,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: gbrain_test
     ports:
-      - "${GBRAIN_CI_PG_PORT:-5434}:5432"
+      - "127.0.0.1:${GBRAIN_CI_PG_PORT:-5434}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d gbrain_test"]
       interval: 10s
@@ -50,7 +50,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: gbrain_test
     ports:
-      - "${GBRAIN_CI_PG_PORT_2:-5435}:5432"
+      - "127.0.0.1:${GBRAIN_CI_PG_PORT_2:-5435}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d gbrain_test"]
       interval: 10s
@@ -67,7 +67,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: gbrain_test
     ports:
-      - "${GBRAIN_CI_PG_PORT_3:-5436}:5432"
+      - "127.0.0.1:${GBRAIN_CI_PG_PORT_3:-5436}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d gbrain_test"]
       interval: 10s
@@ -84,7 +84,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: gbrain_test
     ports:
-      - "${GBRAIN_CI_PG_PORT_4:-5437}:5432"
+      - "127.0.0.1:${GBRAIN_CI_PG_PORT_4:-5437}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d gbrain_test"]
       interval: 10s
@@ -122,7 +122,7 @@ services:
       # before the teardown path is even reached.
       IGNORE_STARTUP_PARAMETERS: extra_float_digits,statement_timeout,idle_in_transaction_session_timeout,search_path
     ports:
-      - "${GBRAIN_CI_PGBOUNCER_PORT:-6543}:5432"
+      - "127.0.0.1:${GBRAIN_CI_PGBOUNCER_PORT:-6543}:5432"
     depends_on:
       postgres-1:
         condition: service_healthy

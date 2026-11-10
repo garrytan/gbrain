@@ -124,6 +124,20 @@ describe('CWD_DOTENV_PROTECTED_KEYS', () => {
       expect(isCwdDotenvProtectedKey(k)).toBe(true);
     }
   });
+
+  test('GBRAIN_SURFACE from a cwd .env is dropped like GBRAIN_ALLOW_SHELL_JOBS; the same value exported from the shell is kept', () => {
+    expect(CWD_DOTENV_PROTECTED_KEYS).toContain('GBRAIN_SURFACE');
+    expect(isCwdDotenvProtectedKey('GBRAIN_SURFACE')).toBe(true);
+    const dir = tmpProject({ '.env': 'GBRAIN_SURFACE=full\nGBRAIN_ALLOW_SHELL_JOBS=1\n' });
+    const env: Record<string, string | undefined> = { GBRAIN_SURFACE: 'full', GBRAIN_ALLOW_SHELL_JOBS: '1' };
+    const warnings: string[] = [];
+    expect(quarantineCwdDotenv(env, dir, { warn: (m) => warnings.push(m) }).sort()).toEqual(['GBRAIN_ALLOW_SHELL_JOBS', 'GBRAIN_SURFACE']);
+    expect('GBRAIN_SURFACE' in env).toBe(false);
+    expect(warnings[0]).toContain('GBRAIN_SURFACE');
+    const exported: Record<string, string | undefined> = { GBRAIN_SURFACE: 'full' };
+    expect(quarantineCwdDotenv(exported, tmpProject({ '.env': 'PROJECT_NAME=demo\n' }), { warn: () => {} })).toEqual([]);
+    expect(exported.GBRAIN_SURFACE).toBe('full');
+  });
 });
 
 // ── Parse once (A2-7): the pre-parsed list is interchangeable with `dir` ─────
