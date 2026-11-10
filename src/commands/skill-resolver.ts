@@ -70,7 +70,7 @@ and no brain connection is needed.
                        routing, description or body (default: every match). It filters;
                        stronger matches still fill the block, so it never empties it
   --top-gate <x>       empty the block when the best skill it would show (after
-                       --exclude and --min-match) scores below x over its catalog's
+                       --exclude, --min-match and session dedupe) scores below x over its catalog's
                        maximum word weight (0-100; default off); a skill named in the
                        turn bypasses it
   --shadow             compute the block without injecting it (block "" on stdout);

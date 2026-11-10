@@ -22,9 +22,10 @@
  * min_match_strength drops weaker matches before the cut to k, so a floor
  * never shrinks the block below what the stronger matches fill: it filters
  * candidates and does not gate the block. top_gate (off unless set) does:
- * when the best skill the block would show (after exclude and
- * min_match_strength) scores below it over its catalog's maxIdf, the block is
- * empty (block_reason weak_top_match), unless the turn names a skill. A message that matches no catalog word falls back to
+ * when the best skill the block would show (after exclude,
+ * min_match_strength, session dedupe and pacing) scores below it over its
+ * catalog's maxIdf, the block is empty (block_reason weak_top_match), unless
+ * the turn names a skill. A message that matches no catalog word falls back to
  * previous_user_message.
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -382,10 +383,8 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
     const resuggested: string[] = [];
     const deduped: string[] = [];
     let paced = false;
-    const gated = input.top_gate !== undefined && window.length > 0 && !window.some(x => x.explicit)
-      && Math.max(...window.map(x => x.score / maxIdf(loaded[x.c]!.ix.n))) < input.top_gate;
     if (budget > 0 && window.length && spentFrac >= 0.5 && !strong(window[0]!)) paced = true;
-    if (!paced && !gated) {
+    if (!paced) {
       window.forEach((x, i) => {
         const last = state.last[x.id];
         if (last !== undefined) {
@@ -396,6 +395,9 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
         picked.push(x);
       });
     }
+    const gated = input.top_gate !== undefined && picked.length > 0 && !picked.some(x => x.explicit)
+      && Math.max(...picked.map(x => x.score / maxIdf(loaded[x.c]!.ix.n))) < input.top_gate;
+    if (gated) picked.length = 0;
     const remaining = Math.max(0, budget - state.spent);
     const lines: BlockLine[] = picked.map(x => {
       const m = metaOf(x.c, x.doc);

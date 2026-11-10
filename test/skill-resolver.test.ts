@@ -146,6 +146,28 @@ describe('turn rules', () => {
     expect(none.output.block_reason).toBe('filtered');
   });
 
+  test('top_gate reads the skills left after session dedupe: a deduped strong skill does not open it for a weak one', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', [
+      { id: 'x:release-widget', name: 'release-widget', description: 'Release the widget staging service' },
+      { id: 'x:deploy-notes', name: 'deploy-notes', description: 'Write deploy notes for the team' },
+    ]);
+    const msg = 'deploy release widget staging service';
+    const open = await resolveSkills({ message: msg }, { home });
+    expect(open.output.suggestions.map(s => s.id)).toEqual(['x:release-widget', 'x:deploy-notes']);
+    const [strong, weak] = open.output.suggestions.map(s => s.score / maxIdf(2));
+    const gate = (strong! + weak!) / 2;
+    expect(weak!).toBeLessThan(gate);
+    const first = await resolveSkills({ message: 'release widget staging service', session_id: 'dd', top_gate: gate }, { home });
+    expect(first.output.suggestions.map(s => s.id)).toEqual(['x:release-widget']);
+    expect(await first.commit()).toBe(true);
+    const again = await resolveSkills({ message: msg, session_id: 'dd', top_gate: gate }, { home });
+    expect([again.output.suggestions, again.output.block, again.output.block_reason, again.output.deduped]).toEqual([[], '', 'weak_top_match', ['x:release-widget']]);
+    expect(again.pending!.delta.suggested).toEqual([]);
+    const named = await resolveSkills({ message: 'use the deploy-notes skill', session_id: 'dd', top_gate: 100 }, { home });
+    expect(named.output.suggestions.map(s => s.id)).toEqual(['x:deploy-notes']);
+  });
+
   test('top_gate reads the same at any catalog size: the score is divided by the maxIdf of its own catalog', async () => {
     const home = tmp();
     const pad = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `p:${word(i, 3)}`, name: word(i, 3), description: Array.from({ length: 8 }, (_, s) => word(i, 5 + s)).join(' ') }));

@@ -119,6 +119,9 @@ export async function syncSkillResolverSetup(opts: { harness: ResolverHarness; g
   } else if (dirs.length) {
     skills = status!.receipt!.skill_count;
     out.steps.push({ step: 'catalog', action: 'keep', detail: `${skills} skills from ${dirs.join(', ')} in ${where}` });
+  } else if (status) {
+    if (!dryRun) await removeSkillIndex(catalog, { home });
+    out.steps.push({ step: 'catalog', action: 'remove', detail: `${where} (no skill directory is left for it)` });
   }
   let pluginSkills = 0;
   if (harness === 'claude-code') {

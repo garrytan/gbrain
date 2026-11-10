@@ -213,8 +213,8 @@ as "do it again"), `previous_user_message` (`--previous`) is ranked instead.
 ### top_gate: an experimental gate, off by default
 
 `top_gate` (`--top-gate`, `skills.resolver.top_gate`) empties the block
-when the best skill the block would show (after `exclude`, pinned skills
-and `min_match_strength`) has a score that, divided by its catalog's maximum
+when the best skill the block would show (after `exclude`, pinned skills,
+`min_match_strength`, session dedupe and pacing) has a score that, divided by its catalog's maximum
 idf, `ln(1 + (n - 0.5) / 1.5)` for a catalog of `n` skills, is below the
 threshold (0 to 100; unset or 0 is off). With merged catalogs it takes the
 highest of those candidates. A skill named in the turn bypasses it. The
