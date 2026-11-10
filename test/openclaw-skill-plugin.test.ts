@@ -109,7 +109,7 @@ await sleep(300);
 console.log(JSON.stringify(out));
 process.exit(0);
 `);
-  const r = Bun.spawnSync([NODE!, script, pluginDir(b), statePath(b), JSON.stringify(steps)], { env: { PATH: b.env.PATH!, HOME: b.home, ...(nodeOptions ? { NODE_OPTIONS: nodeOptions } : {}), ...env }, stdout: 'pipe', stderr: 'pipe', timeout: 60_000 });
+  const r = Bun.spawnSync([NODE!, script, pluginDir(b), statePath(b), JSON.stringify(steps)], { env: { PATH: b.env.PATH!, HOME: b.home, ...(nodeOptions ? { NODE_OPTIONS: nodeOptions } : {}), GBRAIN_TEST_OPENCLAW_SKILL_DEADLINE_MS: '2000', ...env }, stdout: 'pipe', stderr: 'pipe', timeout: 60_000 });
   const text = r.stdout.toString().trim().split('\n').at(-1) ?? '';
   try { return JSON.parse(text); } catch { throw new Error('drive failed: ' + r.stderr.toString() + text); }
 }
@@ -262,6 +262,24 @@ describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
     expect(sessions.length).toBeGreaterThan(0);
   });
 
+  test('the description floor holds on a library without native floor support: body-only matches are never suggested', async () => {
+    const b = box();
+    const skills = join(b.state, 'workspace', 'skills');
+    mkdirSync(join(skills, 'zeta-notes'), { recursive: true });
+    writeFileSync(join(skills, 'zeta-notes', 'SKILL.md'), '---\nname: zeta-notes\ndescription: Use when you keep a journal\n---\nAlso covers quarterly xylophone tuning.\n');
+    expect((await setup(b, ['--skill-loading', 'resolve'])).exitCode).toBe(0);
+    const out = drive(b, [
+      ['turn', { text: 'xylophone tuning', id: 'm1' }],
+      ['turn', { text: 'triage the email inbox and the xylophone tuning', id: 'm2', session: 'agent:main:s2' }],
+    ]);
+    expect(out[0]).toBeNull();
+    expect(out[1].appendContext).toContain('email-triage');
+    expect(out[1].appendContext).not.toContain('zeta-notes');
+    const lines = logLines(b).filter((l) => l.agent === 'main');
+    expect(lines[0]).toMatchObject({ outcome: 'below_floor', suggested: [] });
+    expect(lines[1].strengths.every((s: string) => ['named', 'name', 'triggers', 'routing', 'description'].includes(s))).toBe(true);
+  });
+
   test('rollout knobs: control arm, owner senders, first-turn pins and compaction', async () => {
     const b = box();
     await setup(b, ['--skill-loading', 'resolve', '--pins-route', 'first_turn', '--owner-sender', 'owner-1']);
@@ -335,7 +353,7 @@ describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
     st.library_sha256 = sha;
     writeFileSync(statePath(b), JSON.stringify(st));
     const t0 = Date.now();
-    drive(b, [1, 2, 3].map((i) => ['turn', { text: 'triage the email inbox ' + i, id: 'm' + i }]));
+    drive(b, [1, 2, 3].map((i) => ['turn', { text: 'triage the email inbox ' + i, id: 'm' + i }]), undefined, { GBRAIN_TEST_OPENCLAW_SKILL_DEADLINE_MS: '' });
     const outcomes = logLines(b).map((l) => l.code ?? l.outcome);
     expect(outcomes.filter((c) => c === 'skill_resolve_timeout').length).toBe(3);
     expect(outcomes).toContain('skill_resolver_worker_stuck');
