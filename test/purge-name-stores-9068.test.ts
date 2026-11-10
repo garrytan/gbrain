@@ -138,6 +138,7 @@ describe('#9068 a page purge removes the slug and name from the volunteer log an
 <!--- gbrain:facts:end -->\n`, { noEmbed: true, sourceId: 'default' });
       await runExtractFacts(engine, { slugs: [slug] });
       const [fact] = await engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE fact = $1 AND entity_slug = $2', [claim, slug]);
+      await importFromContent(engine, 'notes/door-code-example', `---\ntitle: Door code example\ntype: note\n---\n# Door code example\n\nBody text.\n`, { noEmbed: true, sourceId: 'default' });
       await nameRows(engine, 'default', 'notes/door-code-example', claim);
       const purge = (params: Record<string, unknown>) => op('purge_fact').handler(ctx(engine), params) as Promise<Record<string, any>>;
       const dry = await purge({ id: Number(fact.id), dry_run: true });

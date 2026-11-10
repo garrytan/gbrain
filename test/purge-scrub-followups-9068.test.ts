@@ -10,9 +10,11 @@
  *    (c) removing a source (unmanaged removeSource -> deleteSourceRow, and the managed lifecycle remove) drops every
  *    such row of the source, and strips its slugs from eval candidates no other covered source still answers;
  *    (d) a capture keeps a facts-arm result (facts/<id>) while its fact exists; (e) a source re-created with the same
- *    id between deleteSourceRow's delete and its second scrub keeps its rows.
+ *    id between deleteSourceRow's delete and its second scrub keeps its rows; (f) a fire-and-forget volunteer-log write
+ *    built before a purge and landing after it (or, on Postgres, while the purge is open) drops the purged page's slug
+ *    and rationale and keeps live pages.
  * 2. Fails when: logEvalCandidate inserts slugs without probing the page row under a key-share lock or drops a live
- *    fact's result, a hard delete or a source removal leaves any of those rows behind, or a scrub reaches another
+ *    fact's result, insertVolunteerEvents writes a row for a page that no longer exists, a hard delete or a source removal leaves any of those rows behind, or a scrub reaches another
  *    source's rows, a re-created source's rows or a slug another source the candidate covers still holds.
  * 3. Existing coverage: purge-retrieval-feedback-8821 and purge-name-stores-9068 pin delete_page purge and the
  *    tombstone purge only; nothing pinned the capture, the connector and stale-part deletes, or source removal.
@@ -32,7 +34,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operations } from '../src/core/operations.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { applyRatings, insertRetrievalEvents, scrubPurgedSlugs } from '../src/core/feedback/store.ts';
-import { insertVolunteerEvents } from '../src/core/context/volunteer-events.ts';
+import { awaitPendingVolunteerEventWrites, insertVolunteerEvents, logVolunteerEventsFireAndForget, type VolunteerEventRow } from '../src/core/context/volunteer-events.ts';
+import { scrubPurgedNameStores } from '../src/core/persistence/purge-name-stores.ts';
 import { captureEvalCandidate } from '../src/core/eval-capture.ts';
 import { withResponseDeferral } from '../src/core/background-work.ts';
 import { deleteConnectorPage } from '../src/core/connectors/api-source.ts';
@@ -176,6 +179,48 @@ describe('#9068 an eval capture does not write a purged slug back', () => {
     });
     await late;
     expect(await capturedSlugs(engine, query)).toEqual([[OTHER]]);
+  }, 120_000);
+});
+
+const volunteered = (sourceId: string, slug: string, name: string): VolunteerEventRow =>
+  ({ source_id: sourceId, slug, confidence: 0.9, match_arm: 'alias', rationale: `alias match "${name}"`, channel: 'op' });
+const volunteerRows = async (engine: BrainEngine, slug: string, name: string) =>
+  (await engine.executeRaw<{ slug: string }>('SELECT slug FROM context_volunteer_events WHERE slug = $1 OR strpos(rationale, $2) > 0 ORDER BY id', [slug, name])).map(r => r.slug);
+
+describe('#9068 a late volunteer-log write does not restore a purged page', () => {
+  test('a volunteer write built before delete_page purge:true and landing after it keeps only live pages', () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      const slug = 'people/alice-late-volunteer', name = 'Alice Late Volunteer';
+      const live = `notes/live-volunteer-${engine.kind}`;
+      await page(engine, 'default', slug);
+      await page(engine, 'default', live);
+      const rows = [volunteered('default', slug, name), volunteered('default', live, 'Live Volunteer')];
+      const snapshot = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+      const result = await op('delete_page').handler(ctx(engine), { slug, purge: true, request_id: randomUUID(), expected_revision: snapshot!.revision }) as Record<string, any>;
+      expect(result.status).toBe('purged');
+      logVolunteerEventsFireAndForget(engine, rows);
+      expect(await awaitPendingVolunteerEventWrites()).toEqual({ unfinished: 0 });
+      expect({ engine: engine.kind, purged: await volunteerRows(engine, slug, name), live: await volunteerRows(engine, live, 'Live Volunteer') })
+        .toEqual({ engine: engine.kind, purged: [], live: [live] });
+    }
+  }), 120_000);
+
+  const postgresTest = testBackends().includes('postgres') ? test : test.skip;
+  postgresTest('on Postgres a volunteer write during an open purge waits for it and drops the purged page', async () => {
+    const engine = engines.find(e => e.kind === 'postgres')!;
+    const slug = 'people/alice-volunteer-race', name = 'Alice Volunteer Race';
+    await page(engine, 'default', slug);
+    await page(engine, 'default', OTHER);
+    let late: Promise<void> | null = null;
+    await engine.transaction(async tx => {
+      await tx.executeRaw(`DELETE FROM pages WHERE source_id = 'default' AND slug = $1`, [slug]);
+      await scrubPurgedNameStores(tx, 'default', [slug]);
+      late = insertVolunteerEvents(engine, [volunteered('default', slug, name), volunteered('default', OTHER, 'Acme Race')]);
+      await new Promise(r => setTimeout(r, 500));
+    });
+    await late;
+    expect(await volunteerRows(engine, slug, name)).toEqual([]);
+    expect((await volunteerRows(engine, OTHER, 'Acme Race')).length).toBeGreaterThan(0);
   }, 120_000);
 });
 
