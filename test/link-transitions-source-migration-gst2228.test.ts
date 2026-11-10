@@ -6,9 +6,9 @@
  *    name (CONCURRENTLY on Postgres), and one short transaction swaps it into the canonical name. A rerun after the run
  *    stopped at any step finishes the job, and an INVALID leftover of an interrupted concurrent build is dropped and
  *    rebuilt. Statements stored before the column keep a NULL source and are not rewritten.
- * 2. Writes between the column and the swap: the old index still keys a statement without its source, so a second row's
- *    statement for the same relationship and date is dropped by ON CONFLICT DO NOTHING, as before the migration; the
- *    page's next write after the swap adds it.
+ * 2. Writes between the column and the swap: the old index still keys a statement without its source, so the projection
+ *    writes statements without a source there, as before the migration, and never deletes a stored statement for a
+ *    replacement the old index would drop; the page's next write after the swap labels them per row.
  * 3. Real seams: runMigrations and buildIndexOnline on PGLite, and on Postgres when DATABASE_URL is set (testBackends).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -136,18 +136,18 @@ describe('GST-2228 v297 link_transitions_source', () => {
       });
     }
 
-    test(`[${backend}] a links-section write between the column and the swap keeps one statement per date, and the next write after the swap adds the other row's`, async () => {
+    test(`[${backend}] a links-section write between the column and the swap keeps one sourceless statement per date, and the next write after the swap labels each row's`, async () => {
       const { engine, alice } = brain();
       const rows = [
         { to: 'companies/acme-example', type: 'works_at', source: 'manual', context: 'typed in', validFrom: '2020-01-01' },
         { to: 'companies/acme-example', type: 'works_at', source: 'crm-import', context: 'from the import', validFrom: '2020-01-01' },
       ];
-      const statements = async () => (await engine.executeRaw<{ source: string }>(
+      const statements = async () => (await engine.executeRaw<{ source: string | null }>(
         "SELECT link_source AS source FROM link_transitions WHERE origin_page_id=$1 AND producer='manual' ORDER BY 1", [alice])).map(r => r.source);
       await beforeV297();
       await engine.executeRaw('ALTER TABLE link_transitions ADD COLUMN link_source TEXT');
       await projectLinksFence(engine, { id: alice, source_id: 'default' }, rows);
-      expect(await statements()).toEqual(['manual']);
+      expect(await statements()).toEqual([null]);
       await runMigrations(engine);
       expect(await identity()).toEqual(DONE);
       await projectLinksFence(engine, { id: alice, source_id: 'default' }, rows);

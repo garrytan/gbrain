@@ -7,7 +7,9 @@
  * source of the row whose cell stated it (link_source), and transitions are
  * compared per row, so a row whose dates changed replaces only its own
  * statements; one with no source (written before the column existed) is
- * replaced by the row that states the same date. Database-only manual edges
+ * replaced by the row that states the same date. While migration v297 has added the column but not yet swapped in the
+ * identity index that includes it, statements are written without a source, as before the migration, so a second
+ * row's same-date statement is not dropped in place of a stored one. Database-only manual edges
  * (origin_field NULL) and every derived producer are left alone. A row whose
  * target is not a live page in the source, or whose type the active schema
  * pack does not declare, yields no edge and stays in the file.
@@ -18,6 +20,7 @@ import { sanitizeForJsonb } from './batch-rows.ts';
 import { refreshRelationships, type RelationshipKey } from './link-relationships.ts';
 import { loadActivePackForLocalEngine } from './schema-pack/best-effort.ts';
 import { LINKS_FENCE_ORIGIN_FIELD, readPageLinksFence, type LinksFenceRow } from './links-fence.ts';
+import { identityIndexHasSource } from './schema-migrations/v297-link-transitions-source.ts';
 
 type Tx = Pick<BrainEngine, 'executeRaw'>;
 
@@ -62,10 +65,14 @@ export async function projectLinksFence(tx: Tx, page: { id: number | string; sou
   });
   const transitionKey = (row: { to_page_id: number; link_type: string; link_source: string | null; kind: string; occurred_on: string }) =>
     `${Number(row.to_page_id)}\u0000${row.link_type}\u0000${row.link_source ?? '\u0001'}\u0000${row.kind}\u0000${row.occurred_on}`;
-  const transitions = new Map(desired.flatMap(row => [
-    ...(row.validFrom ? [{ to_page_id: row.to_page_id, link_type: row.link_type, link_source: row.link_source, kind: 'start', occurred_on: row.validFrom }] : []),
-    ...(row.validUntil ? [{ to_page_id: row.to_page_id, link_type: row.link_type, link_source: row.link_source, kind: 'end', occurred_on: row.validUntil }] : []),
-  ]).map(row => [transitionKey(row), row]));
+  const tagged = (existingTransitions.length > 0 || desired.some(row => row.validFrom || row.validUntil)) && await identityIndexHasSource(tx);
+  const transitions = new Map(desired.flatMap(row => {
+    const link_source = tagged ? row.link_source : null;
+    return [
+      ...(row.validFrom ? [{ to_page_id: row.to_page_id, link_type: row.link_type, link_source, kind: 'start', occurred_on: row.validFrom }] : []),
+      ...(row.validUntil ? [{ to_page_id: row.to_page_id, link_type: row.link_type, link_source, kind: 'end', occurred_on: row.validUntil }] : []),
+    ];
+  }).map(row => [transitionKey(row), row]));
   const haveTransitions = new Set(existingTransitions.map(transitionKey));
   const staleTransitions = existingTransitions.filter(row => !transitions.has(transitionKey(row)));
   const newTransitions = [...transitions.entries()].filter(([key]) => !haveTransitions.has(key)).map(([, row]) => row);

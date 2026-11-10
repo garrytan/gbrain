@@ -13,6 +13,7 @@ import { linksFenceProjectionRows, projectLinksFence } from '../links-fence-proj
 import { removeManualTransitions } from '../link-temporal-apply.ts';
 import { refreshRelationships, type RelationshipKey } from '../link-relationships.ts';
 import { executeRawJsonb } from '../sql-query.ts';
+import { authorizePageVisibility } from './page-visibility.ts';
 
 const optional = (value: unknown) => typeof value === 'string' && value ? value : undefined;
 
@@ -96,7 +97,8 @@ async function assertRemovalAttributable(engine: BrainEngine, pageId: number, re
  * The publication projects the fence (canonical-projections.ts) and the apply projects it once more, so a fence
  * the write left unchanged (an idempotent add) still has its edges. `add_link` drops the database-only twin of
  * the edge it fences (same endpoints, type and provenance, no origin); on a page with no links fence, the section it
- * creates lists the edges a dropped section left first, each with its own dates (`keptLinksFenceRows`). `remove_link`
+ * creates lists the edges a dropped section left first, each with its own dates (`keptLinksFenceRows`), and a remote
+ * writer that cannot read one of their targets gets the same page_not_found as for a missing page. `remove_link`
  * deletes the removed rows' own dated statements, whatever their source, and also the matching database-only edges
  * written before the fence existed, with their manual dated statements, so a removal only moves the database toward
  * git; edges a reconciliation producer derives from the page text stay, and the result names them
@@ -114,6 +116,7 @@ export async function prepareManualLinkMutation(engine: BrainEngine, row: WriteR
   const pageId = Number(stored.page.id);
   const absent = readPageLinksFence(snapshot.page).state === 'absent';
   const kept = row.operation === 'add_link' && absent ? await keptLinksFenceRows(engine, pageId) : [];
+  for (const keptRow of kept) await authorizePageVisibility(engine, row.authority, keptRow.to);
   if (row.operation === 'remove_link' && absent) await assertRemovalAttributable(engine, pageId, { to, linkType, linkSource });
   const current = kept.length ? replaceOrInsertLinksFence(snapshot.page[section] ?? '', renderLinksFence(kept)) : snapshot.page[section] ?? '';
   let body: string;

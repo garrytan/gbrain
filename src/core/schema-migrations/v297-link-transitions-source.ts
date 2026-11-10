@@ -43,7 +43,7 @@ const POSTGRES_15_GATE = `DO $$ BEGIN
 END $$`;
 
 /** Whether the canonical identity index already includes link_source (fresh install, or a finished swap). */
-export async function identityIndexHasSource(engine: BrainEngine): Promise<boolean> {
+export async function identityIndexHasSource(engine: Pick<BrainEngine, 'executeRaw'>): Promise<boolean> {
   const [row] = await engine.executeRaw<{ has: boolean }>(
     `SELECT EXISTS (SELECT 1 FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
         WHERE i.indexrelid = to_regclass($1) AND a.attname = 'link_source') AS has`, [LINK_TRANSITIONS_IDENTITY_INDEX]);

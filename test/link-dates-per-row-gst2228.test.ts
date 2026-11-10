@@ -131,6 +131,39 @@ for (const backend of testBackends()) {
         expect({ revision: await revision(engine), statements: await statements(engine), edges: await edges(engine) }).toEqual(before);
       }, opts), 180_000);
 
+      test('statements from before the source column that do not fit the one kept row: add_link refuses dates_do_not_fit and changes nothing', () => managedBrain(async ({ engine, ctx }) => {
+        await seed(ctx);
+        await put(ctx, ALICE, PERSON(`Alice v1.\n\n${SECTION([FIRST_STINT])}`));
+        await put(ctx, ALICE, PERSON(DROPPED));
+        await forgetSources(engine);
+        await engine.executeRaw(`INSERT INTO link_transitions (source_id, from_page_id, to_page_id, link_type, kind, occurred_on, producer, origin_page_id)
+          SELECT 'default', f.id, t.id, 'works_at', 'start', '2023-01-01', 'manual', f.id FROM pages f, pages t
+          WHERE f.source_id='default' AND f.slug=$1 AND t.source_id='default' AND t.slug=$2`, [ALICE, ACME]);
+        const before = { revision: await revision(engine), statements: await statements(engine), edges: await edges(engine) };
+        expect(before.statements).toEqual([`${ACME} end 2021-01-01 NULL`, `${ACME} start 2020-01-01 NULL`, `${ACME} start 2023-01-01 NULL`]);
+        await expect(addBeta(ctx)).rejects.toMatchObject({ code: 'link_dates_unattributed', message: expect.stringContaining('do not fit its one row') });
+        expect({ revision: await revision(engine), statements: await statements(engine), edges: await edges(engine) }).toEqual(before);
+      }, opts), 180_000);
+
+      test('a remote writer that cannot read a kept row\'s target is refused as for a missing page, and the section is not rebuilt', () => managedBrain(async ({ engine, ctx }) => {
+        const hidden: LinksFenceRow = { to: 'companies/hidden-example', type: 'works_at', source: 'manual', validFrom: '2020-01-01', context: 'private stint' };
+        await seed(ctx);
+        await put(ctx, hidden.to, '---\ntype: company\ntitle: Hidden Example\nvisibility: private\n---\n\n# Hidden Example\n\nA private company.\n');
+        await put(ctx, ALICE, PERSON(`Alice v1.\n\n${SECTION([hidden])}`));
+        await put(ctx, ALICE, PERSON(DROPPED));
+        const clientId = `client-${randomUUID().slice(0, 8)}`;
+        await engine.executeRaw(`INSERT INTO oauth_clients(client_id,client_secret_hash,client_name,scope,source_id) VALUES($1,'fixture-hash','example-client','read write','default')`, [clientId]);
+        const remote = { ...ctx, remote: true, transport: 'http', auth: { token: 'fixture', clientId, principal: { kind: 'oauth_client', id: clientId }, scopes: ['read', 'write'], sourceId: 'default' } } as OperationContext;
+        const before = await revision(engine);
+        const missing = await op(remote, 'add_link', { from: ALICE, to: hidden.to, link_type: BETA.type }).then(() => null, (error: { code?: string; message?: string }) => ({ code: error.code, message: error.message }));
+        expect(missing?.code).toBe('page_not_found');
+        await expect(op(remote, 'add_link', { from: ALICE, to: BETA.to, link_type: BETA.type, context: BETA.context })).rejects.toMatchObject(missing!);
+        expect(await revision(engine)).toBe(before);
+        expect(await pageRows(engine)).toEqual([]);
+        await addBeta(ctx);
+        expect(await pageRows(engine)).toEqual(sortRows([hidden, BETA]));
+      }, opts), 180_000);
+
       test('statements from before the source column, one kept row: add_link puts them on that row and labels them with its source', () => managedBrain(async ({ engine, ctx, root }) => {
         await seed(ctx);
         await put(ctx, ALICE, PERSON(`Alice v1.\n\n${SECTION([FIRST_STINT])}`));
