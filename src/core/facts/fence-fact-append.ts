@@ -12,6 +12,9 @@
  *   number past both the fence and every facts row indexed from the page (a row the fence lost still owns its number,
  *   #6696 C9), optionally strikes the superseded row of the same page, and prepares the page write. The stored fence is
  *   normalized first (#6188); a fence that does not parse cleanly refuses typed (`target_fence_malformed`, #6385 R12).
+ *   When the page has no facts fence at all (a rewrite dropped the section, so its rows are held `fence_absent`), the
+ *   live rows a fence of the page held are rendered back into the section this append creates (`withHeldFactsFence`):
+ *   otherwise the next projected write reads the new one-row section as the user's answer and expires them.
  * - A request on `memory/unattributed` (`UNATTRIBUTED_MEMORY_SLUG`) with no page yet creates it: a `note` whose body is
  *   the one facts fence. Its rows project with no entity (extract-from-fence.ts), so a fact saved without an entity
  *   has a file home (GBRA-190 G4, D3). No other page is ever created here.
@@ -45,7 +48,7 @@ import { withPageTierKept } from '../trust/fence-append.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { extractFactsFromFenceText, UNATTRIBUTED_MEMORY_SLUG } from './extract-from-fence.ts';
 import { rememberAcceptsPageCreatedSince } from '../persistence/page-identity.ts';
-import { fenceRowOf, type FenceRowInput } from './unfenced-facts.ts';
+import { fenceRowOf, withHeldFactsFence, type FenceRowInput } from './unfenced-facts.ts';
 
 export type FenceFactAppendInput = {
   /** The facts row to publish; `row_num` and `source_markdown_slug` are the helper's. kind and visibility default as insertFacts does. */
@@ -164,8 +167,9 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
   const fenced = { compiled_truth: target.page.compiled_truth, timeline: target.page.timeline ?? '' };
   const rowNum = Math.max(indexedMax?.n ?? 0, ...[fenced.compiled_truth, fenced.timeline].flatMap(text => parseFactsFence(text).facts.map(f => f.rowNum))) + 1;
   const cell = fenceCellFor(fact, rowNum);
+  const unfenced = snapshot ? (await withHeldFactsFence(engine, row.source_id, row.slug, fenced))[section] : fenced[section];
   // #6385 R12: an entity fence that does not parse cleanly refuses typed instead of losing the rows it skipped.
-  const appended = refuseUnparsedRewrite(target.page, row.slug, row.source_id, () => upsertFactRow(fenced[section], cell));
+  const appended = refuseUnparsedRewrite(target.page, row.slug, row.source_id, () => upsertFactRow(unfenced, cell));
   let next = { ...fenced, [section]: appended.body };
   if (input.supersede) next = strikeFactRowInPage(next, input.supersede.rowNum, rowNum, input.supersede.validUntil ? formatFenceDate(input.supersede.validUntil) : undefined);
   const content = serializePageToMarkdown({ ...base, ...next }, snapshot?.tags ?? []);

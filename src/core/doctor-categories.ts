@@ -119,6 +119,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'auto_chronicle',
   'auto_chronicle_default_on',
   'chronicle_config_invalid',
+  'chronicle_duplicate_events',
   'facts_drain',
   'fact_take_vectors',
   'code_chunk_metadata',
@@ -314,6 +315,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'chat_fallback_chain',
   // Agent operator wave: is an agent harness wired to this brain (registration read; --only adds the smoke test).
   'harness_wiring',
+  // GBRA-377 PR B: the skill-resolver hook lane's hook, catalog freshness and recent error codes; silent when unconfigured (doctor/checks/skill-resolver.ts).
+  'skill_resolver',
   // Cat 41: the provider-use decision gbrain setup recorded; declined = no provider request (discovery, probe).
   'provider_consent',
   'frontmatter_hook',

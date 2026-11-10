@@ -11,7 +11,7 @@ import {
   AUTO_CHRONICLE_KEEP_ARGV, AUTO_CHRONICLE_OPT_OUT_ARGV, CHRONICLE_NUMERIC_KEYS, autoChronicleNeedsAcknowledgement,
   autoChronicleSetting, chronicleSettings,
 } from '../../../core/chronicle/config.ts';
-import { describeChronicleActivity, readChronicleLedgerStats } from '../../../core/chronicle/ledger-stats.ts';
+import { describeChronicleActivity, readChronicleDuplicateEvents, readChronicleLedgerStats } from '../../../core/chronicle/ledger-stats.ts';
 import { CHRONICLE_REASONS, CHRONICLE_RUN_NOW_ARGV, chronicleBackfillArgv } from '../../../core/chronicle/reasons.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import type { ReadinessState } from '../../../core/readiness.ts';
@@ -118,6 +118,17 @@ async function runAutoChronicle(ctx: DoctorContext): Promise<Check[]> {
     checks.push({ name: 'chronicle_config_invalid', status: 'ok', message: 'chronicle.* settings are valid.' });
   }
 
+  const duplicates = await readChronicleDuplicateEvents(engine);
+  if (duplicates.pages > 0) {
+    checks.push(infoCheck('chronicle_duplicate_events',
+      `${duplicates.pages} meeting or conversation page(s) hold ${duplicates.surplus} live event(s) from earlier extraction runs that their newest extraction did not produce. ` +
+        'Most are reworded copies an earlier release added each time it re-read a long page (#8972); this release no longer adds them. ' +
+        'Nothing is changed automatically; a preview-first repair is tracked in https://github.com/garrytan/gbrain/issues/9012.',
+      'ok', undefined, { code: 'chronicle_duplicate_events', severity: 'info', pages: duplicates.pages, surplus_events: duplicates.surplus, docs: AUTO_CHRONICLE_DOCS }));
+  } else {
+    checks.push({ name: 'chronicle_duplicate_events', status: 'ok', message: 'No page holds live events from an earlier extraction run beside its newest one.' });
+  }
+
   if (await autoChronicleNeedsAcknowledgement(engine)) {
     const ceiling = settings.dailyLimit * settings.jobBudgetUsd;
     checks.push(infoCheck('auto_chronicle_default_on',
@@ -139,6 +150,6 @@ async function runAutoChronicle(ctx: DoctorContext): Promise<Check[]> {
 
 export const autoChronicleEntry: DoctorEntry = {
   name: 'auto_chronicle',
-  emits: ['auto_chronicle', 'chronicle_config_invalid', 'auto_chronicle_default_on'],
+  emits: ['auto_chronicle', 'chronicle_config_invalid', 'chronicle_duplicate_events', 'auto_chronicle_default_on'],
   run: runAutoChronicle,
 };

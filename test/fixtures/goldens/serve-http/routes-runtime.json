@@ -658,6 +658,8 @@
         {
           "handlers": [
             "<anonymous>",
+            "<anonymous>",
+            "<anonymous>",
             "<anonymous>"
           ],
           "method": "post",
@@ -1381,6 +1383,8 @@
         },
         {
           "handlers": [
+            "<anonymous>",
+            "<anonymous>",
             "<anonymous>",
             "<anonymous>"
           ],
