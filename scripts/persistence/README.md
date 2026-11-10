@@ -147,7 +147,10 @@ key lists every run (schedule, seed, seam and occurrence or process fault),
 and no `faults_not_reached` (a worker that finished without reaching its
 requested seam, outside the per-scenario `UNREACHED_FAULT_ALLOWLIST` in
 `robot-driver.ts`); either kind of run also fails validation with a nonzero
-exit and is listed in `failing_runs` for `--replay`.
+exit and is listed in `failing_runs` for `--replay`. A run with no violations that
+misses its fault by exactly one slot of its count run, which a concurrent
+group's other legal outcome makes, runs once more at its last slot and is
+listed in `faults_retargeted`.
 
 A failing run prints two commands. `--replay=<manifest>` re-runs exactly the
 manifest's failing runs. `--shrink=<manifest>` removes ops from the first
