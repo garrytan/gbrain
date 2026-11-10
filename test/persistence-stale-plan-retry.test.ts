@@ -47,6 +47,17 @@ async function settle(engine: BrainEngine, ids: string[]): Promise<Settled[]> {
   }
   return rows;
 }
+/**
+ * Runs `pass` until `done()` or `ms` elapse, yielding to timers after each pass. PGLite queries settle as microtasks and
+ * `git log` runs synchronously, so a loop without that yield starves the resident consumer: its effect pass, parked on a
+ * lock-poll timer while it holds git claims, never resumes, and the claims sit out their 2-minute lease.
+ */
+async function untilDone(pass: () => Promise<unknown>, done: () => boolean, ms: number): Promise<void> {
+  for (const until = Date.now() + ms; Date.now() < until && !done();) {
+    await pass();
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+}
 
 for (const kind of testBackends()) {
   describe('accepted writes after a migration adds a persistence_requests column (' + kind + ')', () => {
@@ -138,13 +149,18 @@ for (const kind of testBackends()) {
       expect(readdirSync(join(brainDir, 'wt')).sort()).toEqual(pages.map(p => p.slug.slice(3) + '.md').sort());
       for (const p of pages) expect(readFileSync(join(brainDir, p.slug + '.md'), 'utf8')).toContain('Body of ' + p.slug + '.');
       const commits = () => pages.map(p => git('log', '--format=%H', '--', p.slug + '.md').split('\n').filter(Boolean).length);
-      let counts = commits();
-      for (const until = Date.now() + 120_000; Date.now() < until && counts.some(c => c < 1); counts = commits()) {
-        await withEnv({ GBRAIN_HOME: home }, () => runPersistenceEffects(engine, { engine: kind, embedding_disabled: true } as never, { hostId: localHostId(), limit: 50 }));
-      }
-      await withEnv({ GBRAIN_HOME: home }, () => runPersistenceEffects(engine, { engine: kind, embedding_disabled: true } as never, { hostId: localHostId(), limit: 50 }));
-      counts = commits();
-      expect(counts).toEqual(pages.map(() => 1));
+      const effects = () => withEnv({ GBRAIN_HOME: home }, () => runPersistenceEffects(engine, { engine: kind, embedding_disabled: true } as never, { hostId: localHostId(), limit: 50 }));
+      await untilDone(effects, () => commits().every(c => c >= 1), 120_000);
+      await effects();
+      expect(commits()).toEqual(pages.map(() => 1));
     }, 300_000);
+
+    test('the commit wait lets a pass parked on a timer resume (GST-2314 forced probe)', async () => {
+      let resumed = false;
+      setTimeout(() => { resumed = true; }, 25);
+      await untilDone(() => withEnv({ GBRAIN_HOME: home }, () => runPersistenceEffects(engine, { engine: kind, embedding_disabled: true } as never, { hostId: localHostId(), limit: 50 })),
+        () => resumed, 10_000);
+      expect(resumed).toBe(true);
+    }, 60_000);
   });
 }
