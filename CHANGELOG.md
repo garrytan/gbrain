@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A team member's `forget` now says who can withdraw a fact, instead of answering that the fact does not exist.** A remote credential bound to a member, the brain owner's included, withdraws only the facts on its own member page. When it tried to forget a fact it can read but that lives elsewhere (one it saved with `share: true`, or a teammate's shared fact), it got `not_found`, so its agent believed the fact was gone while every reader still recalled it. It is now refused with a reply saying the brain host withdraws it with `gbrain forget <id>`, and the fact stays. A fact the caller cannot read still answers `not_found`, so the reply never confirms a hidden fact exists. The docs that said `remember` defaults to `world` now say that a member-bound credential saves privately on its member page unless it passes `share: true`. Reported by @andreineacsu (#9101).
+
+### Itemized changes
+
+- `src/core/persistence/memory-mutations.ts`: when a member caller's `forget` misses its own member page, the fact is checked against the same visibility, privacy and eligibility filters `recall` uses for that caller; a readable fact is refused (`scope_denied` from `forget`, `permission_denied` from `forget_fact`, class `host_only`) and an unreadable one stays `not_found`.
+- Docs: `docs/guides/access-designations.md` (fact visibility), `docs/mcp/TOOL_REFERENCE.md` (`remember`), `skills/brain-ops/SKILL.md` (and the generated plugin copies), and the `facts.default_visibility` bootstrap check's detail now name the member-bound default.
+- Tests: `test/member-forget-refusal-9101.test.ts` on PGLite and Postgres with member- and owner-bound OAuth credentials on a repo-less brain.
+
 ## [0.60.648.0] - 2026-11-10
 
 **A managed sync no longer imports a file that Git stores through a filter, such as a git-crypt encrypted note, as if its stored bytes were the page.** The file alone is held `content_filter_owned` with a message that says gbrain does not run a repository's filter programs during sync (and names git-crypt when the file starts with its header), and the rest of the source imports and moves on. Reported by @JustinTSmith (#9024) and first fixed by @Masashi-Ono0611 (#9026).

@@ -115,7 +115,10 @@ except the owner's, whose new pages stay shared (`POST /ingest` still refuses bo
 ### Fact visibility (`private` | `world`)
 
 Each fact row has its own visibility. `remember` defaults to `world`, except into a private page or under an
-explicit private `facts.default_visibility`; extracted facts follow `facts.default_visibility` (private when unset)
+explicit private `facts.default_visibility`. A remote credential bound to a member, the owner's included, saves
+`private` on its own member page (`memory/members/<member>`) unless the call passes `share: true`, and its
+`visibility: "world"` is refused; it withdraws only facts on that page, and the brain host withdraws the rest
+(`gbrain forget <id>`). Extracted facts follow `facts.default_visibility` (private when unset)
 and are never wider than their page. Remote `recall` returns private facts to the owner only.
 
 ### The owner (`gbrain access owner`)
