@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { markNotAdmitted, OperationError, opError } from '../ops/contract.ts';
-import { getCode, isConnectionLoss } from '../retry-matcher.ts';
+import { getCode, isConnectionLoss, isStalePlanError } from '../retry-matcher.ts';
 
 /** #6355: how many times an admission attempt is re-run after the session dropped under it, and the pauses before each re-run. */
 export const CONNECTION_LOSS_RETRY_MS = [100, 300, 900] as const;
@@ -50,7 +50,7 @@ export async function retryWriteAdmission<T>(requestId: string, attempt: (remain
         await recover?.(error).catch(() => undefined);
         continue;
       }
-      if (!['40001', '40P01', '55P03', '57014'].includes(code ?? '')) throw error;
+      if (!['40001', '40P01', '55P03', '57014'].includes(code ?? '') && !isStalePlanError(error)) throw error;
       const remaining = deadline - performance.now();
       if (remaining <= 25) {
         const unavailable = new OperationError('storage_error', 'Write admission is temporarily blocked by database contention.',

@@ -27,6 +27,7 @@ test/access-owner-default-writes.test.ts
 test/access-owner-reads.test.ts
 test/access-page-indexes-online.test.ts
 test/access-qm-actor.test.ts
+test/access-token-grant-columns.test.ts
 test/access-ungranted-member-writes.test.ts
 test/access-writes.test.ts
 test/activation-unbound-rooted-6449.test.ts
@@ -450,6 +451,7 @@ test/persistence-reconcile-git-dirty-6138.test.ts
 test/persistence-skill-bundles.serial.test.ts
 test/persistence-skill-crash.slow.test.ts
 test/persistence-skip-cost.test.ts
+test/persistence-stale-plan-retry.test.ts
 test/persistence-sync-cursor-options.test.ts
 test/persistence-sync-cursor-strategy-6696.test.ts
 test/persistence-sync-fence-holds.test.ts
@@ -484,6 +486,7 @@ test/refresh-retry-hint-gst1582.test.ts
 test/refresh-write-barrier.test.ts
 test/remediation-manual-only.test.ts
 test/remember-batch-entity-7432.test.ts
+test/remember-share-gst2243.test.ts
 test/repair-apply-pending-6543.test.ts
 test/repair-atom-fence-rows.test.ts
 test/repair-database-stop-gbra133.test.ts

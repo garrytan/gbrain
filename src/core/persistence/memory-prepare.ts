@@ -84,6 +84,11 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   if (p.scope_page === true && snapshot && !await scopePageIsShared(engine, { ...snapshot.page, source_id: row.source_id, slug: row.slug })) throw scopePageNotShared(row.source_id);
   // A defaulted visibility never lands broader than the target page as it stands at publication.
   if (p.visibility_defaulted === true && snapshot) input.visibility = tightenToPage(input.visibility, await withFolderRestricted(engine, snapshot.page));
+  // GST-2243: a shared fact whose page turned restricted after admission is refused, never saved private under a world receipt.
+  if (p.share === true && input.visibility !== 'world') {
+    throw Object.assign(opError('invalid_params', `remember: share: true cannot share a fact on ${row.slug}, whose facts are now kept private; nothing was saved.`,
+      'Share it on a page every reader of this source can read, or drop share to keep the fact on your own page.'), { reason: 'share_target_restricted' });
+  }
   if (p.expected_revision !== undefined) assertPageRevision(snapshot, engineMutationPrecondition(parseMutationPrecondition(p)));
   const observedRevision = snapshot?.revision ?? null;
   const excludePrivate = await resolveExcludePrivatePages(engine, row.authority.remote === true);
