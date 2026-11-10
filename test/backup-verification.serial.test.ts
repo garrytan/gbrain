@@ -421,3 +421,100 @@ test('a local git probe that times out keeps an established bad verdict and neve
     expect(await assessBackupRepository(root, 'source_repo', 'source-id', now)).toMatchObject({ state: 'unknown', detail: 'probe_failed' });
   } finally { slow.mockRestore(); }
 });
+
+
+test('backup verification follows the configured upstream branch instead of the local branch name', async () => {
+  const { root } = await repository();
+  git(root, 'checkout', '-b', 'work');
+  git(root, 'push', 'origin', 'HEAD:refs/heads/work');
+  git(root, 'commit', '--allow-empty', '-m', 'backed up on another branch');
+  git(root, 'push', '-u', 'origin', 'HEAD:refs/heads/backup-ref');
+  const result = await assessBackupRepository(root, 'source_repo', 'source-id', now, { remaining: 1 });
+  expect(result.state).toBe('ok');
+  expect(result.verification).toMatchObject({ state: 'verified', local_commit: git(root, 'rev-parse', 'HEAD'), remote_commit: git(root, 'rev-parse', 'HEAD') });
+  expect(await assessBackupRepository(root, 'source_repo', 'source-id', now)).toMatchObject({ state: 'ok', verification: { state: 'not_checked' } });
+});
+
+test('backup verification follows a configured remote even without origin', async () => {
+  const { root } = await repository();
+  git(root, 'remote', 'rename', 'origin', 'backup');
+  git(root, 'checkout', '-b', 'work');
+  git(root, 'push', '-u', 'backup', 'HEAD:refs/heads/backup-ref');
+  const result = await assessBackupRepository(root, 'source_repo', 'source-id', now, { remaining: 1 });
+  expect(result).toMatchObject({ state: 'ok', configured_remote: true, verification: { state: 'verified' } });
+});
+
+test('backup verification retains the origin branch fallback only when no upstream is configured', async () => {
+  const { root } = await repository();
+  git(root, 'branch', '--unset-upstream');
+  expect(await assessBackupRepository(root, 'source_repo', 'source-id', now, { remaining: 1 })).toMatchObject({ state: 'ok', verification: { state: 'verified' } });
+  git(root, 'checkout', '-b', 'not-pushed');
+  expect(await assessBackupRepository(root, 'source_repo', 'source-id', now, { remaining: 1 })).toMatchObject({ verification: { state: 'missing_ref' } });
+});
+
+test('a missing configured backup branch never falls back to the matching origin local branch', async () => {
+  const { root } = await repository();
+  git(root, 'config', 'branch.main.merge', 'refs/heads/missing-backup');
+  expect(await assessBackupRepository(root, 'source_repo', 'source-id', now, { remaining: 1 })).toMatchObject({ verification: { state: 'missing_ref' } });
+});
+
+test('local, invalid and partially configured upstreams cannot certify an external backup', async () => {
+  const { root } = await repository();
+  for (const [remote, ref] of [['.', 'refs/heads/main'], ['origin', 'refs/tags/main'], ['origin', 'refs/heads/bad..ref']]) {
+    git(root, 'config', 'branch.main.remote', remote);
+    git(root, 'config', 'branch.main.merge', ref);
+    const budget = { remaining: 1 };
+    expect(await assessBackupRepository(root, 'source_repo', 'source-id', now, budget)).toMatchObject({ state: 'unknown', verification: { state: 'unavailable' } });
+    expect(budget.remaining).toBe(1);
+  }
+  git(root, 'config', 'branch.main.remote', 'origin');
+  git(root, 'config', '--unset', 'branch.main.merge');
+  expect(await assessBackupRepository(root, 'source_repo', 'source-id', now, { remaining: 1 })).toMatchObject({ state: 'unknown', verification: { state: 'unavailable' } });
+});
+
+test('a configured upstream remote that is unavailable never falls back to origin', async () => {
+  const { root } = await repository();
+  git(root, 'remote', 'add', 'backup', join(tmp, 'missing.git'));
+  git(root, 'config', 'branch.main.remote', 'backup');
+  expect(await assessBackupRepository(root, 'source_repo', 'source-id', now, { remaining: 1 })).toMatchObject({ verification: { state: 'unavailable' } });
+  git(root, 'remote', 'remove', 'backup');
+  git(root, 'config', 'branch.main.remote', 'backup');
+  git(root, 'config', 'branch.main.merge', 'refs/heads/main');
+  expect(await assessBackupRepository(root, 'source_repo', 'source-id', now, { remaining: 1 })).toMatchObject({ state: 'no_remote', configured_remote: false });
+});
+
+test('changing the configured backup ref invalidates cached verification even when HEAD is unchanged', async () => {
+  const { root } = await repository();
+  const first = await assessBackupRepository(root, 'source_repo', 'source-id', now, { remaining: 1 });
+  expect(first.verification?.state).toBe('verified');
+  git(root, 'config', 'branch.main.merge', 'refs/heads/missing-backup');
+  const retained = await assessBackupRepository(root, 'source_repo', 'source-id', now, undefined, first);
+  expect(retained.verification?.state).not.toBe('verified');
+  expect(retained.verification?.repository_fingerprint).not.toBe(first.verification?.repository_fingerprint);
+});
+
+
+test('an upstream changed during remote readback is not certified or cached as verified', async () => {
+  const { root } = await repository();
+  const real = childProcess.execFile;
+  const probe = spyOn(childProcess, 'execFile').mockImplementation(((file: string, args: string[], options: unknown, callback: Function) => {
+    return (real as Function)(file, args, options, (error: Error | null, stdout: string) => {
+      git(root, 'config', 'branch.main.merge', 'refs/heads/changed-during-probe');
+      callback(error, stdout);
+    });
+  }) as typeof childProcess.execFile);
+  try {
+    const result = await assessBackupRepository(root, 'source_repo', 'source-id', now, { remaining: 1 });
+    expect(result.verification?.state).toBe('mismatch');
+  } finally { probe.mockRestore(); }
+});
+
+test('an unreadable upstream configuration fails closed before any remote probe', async () => {
+  const { root } = await repository();
+  const slow = timeOutLocalGit(args => args.includes('for-each-ref'));
+  const budget = { remaining: 1 };
+  try {
+    expect(await assessBackupRepository(root, 'source_repo', 'source-id', now, budget)).toMatchObject({ state: 'unknown', detail: 'probe_failed', verification: { state: 'unavailable' } });
+    expect(budget.remaining).toBe(1);
+  } finally { slow.mockRestore(); }
+});

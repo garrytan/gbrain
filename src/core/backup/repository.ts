@@ -105,14 +105,43 @@ function worktreeDirty(root: string): Promise<boolean> {
   });
 }
 
-function repositoryFingerprint(root: string, origin: string, branch: string, head: string): string {
+/** Resolve tracking configuration without using publisher helpers or relaxing the probe environment. */
+function backupTarget(root: string, branch: string, validatedRef?: string): { remote: string; ref: string; trackingRef: string } {
+  let [remote, ref, trackingRef] = git(root, ['for-each-ref',
+    '--format=%(upstream:remotename)%00%(upstream:remoteref)%00%(upstream)', `refs/heads/${branch}`]).split('\0');
+  if (!remote && !ref && !trackingRef) {
+    // Distinguish no upstream from malformed/incomplete configuration; only absence gets the legacy fallback.
+    const escapedBranch = branch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    try {
+      const entries = git(root, ['config', '--null', '--get-regexp', `^branch\\.${escapedBranch}\\.(remote|merge)$`]);
+      const config = new Map(entries.split('\0').filter(Boolean).map(entry => {
+        const separator = entry.indexOf('\n');
+        return [entry.slice(0, separator), entry.slice(separator + 1)];
+      }));
+      remote = config.get(`branch.${branch}.remote`) ?? '';
+      ref = config.get(`branch.${branch}.merge`) ?? '';
+    } catch (error) {
+      if ((error as { status?: number }).status === 1) {
+        return { remote: 'origin', ref: `refs/heads/${branch}`, trackingRef: `refs/remotes/origin/${branch}` };
+      }
+      throw error;
+    }
+  }
+  // A local upstream is not an external backup; incomplete/invalid configuration must not fall back to origin.
+  if (!remote || remote === '.' || !ref?.startsWith('refs/heads/')) throw new Error('unusable backup upstream');
+  // The post-probe identity check can reuse syntax validation for the exact same immutable ref string.
+  if (ref !== validatedRef) git(root, ['check-ref-format', ref]);
+  return { remote, ref, trackingRef };
+}
+
+function repositoryFingerprint(root: string, origin: string, branch: string, head: string, target: ReturnType<typeof backupTarget>): string {
   const directory = realpathSync(git(root, ['rev-parse', '--absolute-git-dir']));
   const stat = statSync(directory, { bigint: true });
   const push = readPushStatusForRoot(root);
   const pushFile = push?.file ?? pushStatusPathForRoot(root);
   const pushStat = existsSync(pushFile) ? statSync(pushFile, { bigint: true }) : null;
   return createHash('sha256').update(JSON.stringify([
-    realpathSync(root), directory, String(stat.dev), String(stat.ino), String(stat.birthtimeNs), origin, branch, head,
+    realpathSync(root), directory, String(stat.dev), String(stat.ino), String(stat.birthtimeNs), origin, branch, head, target,
     push?.ok, push?.ts, pushStat ? [String(pushStat.dev), String(pushStat.ino), String(pushStat.mtimeNs)] : null,
   ])).digest('hex');
 }
@@ -133,9 +162,11 @@ export async function assessBackupRepository(
     const managed = managedFilesystemRootFor(root);
     const managedFix = managed ? ['gbrain', 'sources', 'writer', 'status', ...(managed.sourceId ? [managed.sourceId] : []), '--probe', '--json'] : null;
     if (failedPush && kind === 'bootstrap_workspace') asset.fix_argv = managedFix ?? ['gbrain', 'sources', 'push', '--path', root];
+    const branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+    const target = backupTarget(root, branch);
     let origin: string;
     try {
-      origin = git(root, ['remote', 'get-url', 'origin']);
+      origin = git(root, ['remote', 'get-url', '--', target.remote]);
       asset.configured_remote = true;
     } catch (error) {
       if ((error as { status?: number }).status !== 2) {
@@ -145,21 +176,20 @@ export async function assessBackupRepository(
       asset.configured_remote = false;
       asset.state = 'no_remote';
       asset.fix_argv = null;
-      asset.detail = `${failedPush ? 'the last recorded push failed because there is no origin remote; ' : ''}fix: git remote add origin <url> && git push -u origin <branch>, then gbrain sources harden <id>`;
+      asset.detail = `${failedPush ? `the last recorded push failed because there is no ${target.remote} remote; ` : ''}fix: git remote add ${target.remote} <url> && git push -u ${target.remote} <branch>, then gbrain sources harden <id>`;
       try { if (readManifest(root).state === 'initialized') asset.fix_argv = ['gbrain', 'bootstrap', 'repo']; } catch {}
       return asset;
     }
-    const branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
     const head = git(root, ['rev-parse', '--verify', 'HEAD']);
     const dirty = await worktreeDirty(root);
     let ahead: number | undefined;
-    try { ahead = Number(git(root, ['rev-list', '--count', `refs/remotes/origin/${branch}..HEAD`])); } catch {}
+    try { if (target.trackingRef) ahead = Number(git(root, ['rev-list', '--count', `${target.trackingRef}..HEAD`])); } catch {}
     asset.state = ahead && ahead > 0 ? 'unpushed' : dirty ? 'dirty' : 'ok';
-    if (ahead && ahead > 0) { asset.ahead = ahead; asset.detail = `${ahead} commit(s) ahead of origin/${branch} (local tracking ref only)`; }
+    if (ahead && ahead > 0) { asset.ahead = ahead; asset.detail = `${ahead} commit(s) ahead of ${target.remote}/${target.ref.slice('refs/heads/'.length)} (local tracking ref only)`; }
     else if (dirty) asset.detail = 'uncommitted changes';
     if (failedPush) { asset.state = 'failing'; asset.detail = 'last_push_failed'; }
     if (managedFix && (dirty || (ahead ?? 0) > 0 || failedPush)) asset.fix_argv = managedFix;
-    const fingerprint = repositoryFingerprint(root, origin, branch, head);
+    const fingerprint = repositoryFingerprint(root, origin, branch, head, target);
     asset.verification = { state: 'not_checked', repository_fingerprint: fingerprint };
     if (!budget) {
       const prior = previous?.verification;
@@ -176,7 +206,7 @@ export async function assessBackupRepository(
       }
       if (ahead === undefined && !dirty && !failedPush) {
         asset.state = 'no_remote';
-        asset.detail = 'remote configured but nothing pushed is recorded locally — run: git push -u origin <branch>; verify with gbrain backup check';
+        asset.detail = `remote configured but nothing pushed is recorded locally — run: git push -u ${target.remote} HEAD:${target.ref}; verify with gbrain backup check`;
       }
       return asset;
     }
@@ -187,11 +217,11 @@ export async function assessBackupRepository(
       return asset;
     }
     budget.remaining--;
-    const ref = `refs/heads/${branch}`;
+    const ref = target.ref;
     const output = await new Promise<string>((resolve, reject) => {
       execFile('git', ['-C', root, '-c', 'protocol.allow=never', '-c', 'protocol.file.allow=always',
         '-c', 'protocol.https.allow=always', '-c', 'protocol.http.allow=always', '-c', 'protocol.ssh.allow=always',
-        '-c', 'http.followRedirects=false', '-c', 'credential.interactive=false', 'ls-remote', '--exit-code', '--refs', 'origin', ref], {
+        '-c', 'http.followRedirects=false', '-c', 'credential.interactive=false', 'ls-remote', '--exit-code', '--refs', '--', target.remote, ref], {
         encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64 * 1024,
         env: { ...backupGitEnv(), GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '', SSH_ASKPASS_REQUIRE: 'never',
           GIT_SSH_COMMAND: `ssh -oBatchMode=yes -oStrictHostKeyChecking=yes -oConnectTimeout=${Math.ceil(timeoutMs / 1000)}` },
@@ -211,8 +241,9 @@ export async function assessBackupRepository(
     const stillClean = git(root, ['rev-parse', '--verify', 'HEAD']) === head
       && git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']) === branch
       && !await worktreeDirty(root)
-      && git(root, ['remote', 'get-url', 'origin']) === origin
-      && repositoryFingerprint(root, origin, branch, head) === fingerprint;
+      && git(root, ['remote', 'get-url', '--', target.remote]) === origin
+      && JSON.stringify(backupTarget(root, branch, target.ref)) === JSON.stringify(target)
+      && repositoryFingerprint(root, origin, branch, head, target) === fingerprint;
     asset.verification = { state: remoteHead === head && stillClean && !dirty ? 'verified' : 'mismatch', checked_at: now.toISOString(), local_commit: head, remote_commit: remoteHead, repository_fingerprint: fingerprint };
     if (asset.verification.state === 'verified') {
       asset.state = 'ok';
