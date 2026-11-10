@@ -73,7 +73,7 @@ interface PreparedMutationBase {
   /** #7866: a content no-op whose chunks all hold a vector for their text: publication queues no embedding effect (`embedding_state: current`). */
   embeddingCurrent?: boolean;
   /** Why a page write bound to a worktree publishes no file (receipt `write_through.skipped`). */
-  databaseOnlyReason?: 'db_only' | 'unbound_source' | 'mirror_read_only' | 'sync_excluded' | 'shared_origin' | 'origin_twin' | 'detached';
+  databaseOnlyReason?: 'db_only' | 'unbound_source' | 'mirror_read_only' | 'sync_excluded' | 'shared_origin' | 'origin_twin' | 'detached' | 'committed_file';
   /** #6517: the receipt's `write_through.warning` for a database-only publication, set by `validate` under the publication guards. */
   databaseOnlyWarning?: string;
   /**

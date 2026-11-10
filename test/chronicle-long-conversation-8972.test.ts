@@ -22,7 +22,9 @@ import { requirePostgresTestDatabase } from './helpers/test-backends.ts';
 const databaseUrl = process.env.GBRAIN_TEST_BACKEND === 'postgres' ? requirePostgresTestDatabase() : undefined;
 const brain = (run: (b: ManagedBrain) => Promise<void>) => managedBrain(run, { databaseUrl });
 
-const today = new Date().toISOString().slice(0, 10);
+/** One clock for the whole file: the test's dates and every chronicle run read it, so a run that crosses 00:00 UTC cannot move the cutoff day. */
+const NOW = new Date();
+const today = NOW.toISOString().slice(0, 10);
 const SLUG = 'conversations/launch-thread';
 
 /** Chat lines numbered from `from` until the body reaches `chars`. */
@@ -56,7 +58,7 @@ function rewordingJudge() {
 }
 async function run(engine: BrainEngine, judge: ChronicleJudge) {
   await settle(engine);
-  return runPhaseChronicle(engine, { judge });
+  return runPhaseChronicle(engine, { judge, now: () => NOW });
 }
 async function liveEvents(engine: BrainEngine): Promise<string[]> {
   return (await engine.executeRaw<{ what: string }>(
@@ -223,7 +225,7 @@ describe('#8972 fix round: what counts as judged, and what exhausts a page', () 
     };
     return Object.assign(judge, { calls: () => calls });
   }
-  const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+  const day = (offset: number) => new Date(NOW.getTime() + offset * 86_400_000).toISOString().slice(0, 10);
 
   test('runs on an unconfigured provider never exhaust the page', () => brain(async ({ engine, ctx }) => {
     let body = messages(1, JUDGE_BODY_CHARS + 1_000);

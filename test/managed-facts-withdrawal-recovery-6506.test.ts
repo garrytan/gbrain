@@ -224,6 +224,31 @@ describe('a stored facts batch refused for a withdrawn claim (#6506, UC1)', () =
     });
   }, 180_000);
 
+  test('a claim forgotten at world visibility between preparation and publication of a narrowed follow-up is not published as private', async () => {
+    await onEachEngine('narrow-race', async engine => {
+      const s = await recoverySource(engine);
+      await s.seedLegacyBatch();
+      await expect(s.run()).rejects.toMatchObject({ code: 'invalid_params' });
+      await engine.setConfig('facts.default_visibility', 'private');
+      let armed = true;
+      installFaultHook(async (point, detail) => {
+        if (!armed || point !== 'consumer:prepared' || detail.operation !== 'extract_facts' || detail.sourceId !== s.sourceId) return;
+        armed = false;
+        await engine.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash) VALUES($1,'world','*',gbrain_fact_fingerprint($2)) ON CONFLICT DO NOTHING`,
+          [s.sourceId, NOVEL]);
+      });
+      await expect(s.run()).rejects.toMatchObject({ code: 'revision_conflict' });
+      const journal = await s.journal();
+      expect(journal.slice(-2).map(row => `${row.slug}:${row.state}:${row.error_code}`)).toEqual([`${ENTITY}:conflict:revision_conflict`, `${COMPLETE}:conflict:revision_conflict`]);
+      expect(journal.at(-2)!.error_detail).toMatchObject({ origin: 'withdrawal', withdrawn: { subject: 'all_entities', visibility: 'world' } });
+      expect(await s.active()).toEqual([]);
+      installFaultHook(undefined);
+      expect(await s.run()).toMatchObject({ inserted: 0, withdrawn_skipped: 2 });
+      expect(await s.active()).toEqual([]);
+      expect(calls).toBe(0);
+    });
+  }, 180_000);
+
   test('a follow-up that keeps racing a withdrawal gets three attempts, then the refusal stands with nothing published', async () => {
     await onEachEngine('cap', async engine => {
       const s = await recoverySource(engine);

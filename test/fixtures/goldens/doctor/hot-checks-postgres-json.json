@@ -1206,6 +1206,13 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "The database encoding is UTF8",
+            "name": "database_encoding",
+            "status": "ok"
+          },
+          {
             "category": "meta",
             "elapsed_ms": "<volatile>",
             "message": "Version <latest> (latest: <latest>)",
@@ -2027,6 +2034,20 @@
             "elapsed_ms": "<volatile>",
             "message": "No atom retired by an empty re-extraction is waiting to be restored.",
             "name": "atom_retirements_restorable",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "by_source": [],
+              "count": 0,
+              "docs": "docs/guides/repair.md#atom-fence-rows",
+              "origin_unread": 0,
+              "repair": "atom-fence-rows"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No world atom carries a fence row its source page shows only to the owner.",
+            "name": "atom_fence_rows",
             "status": "ok"
           },
           {
@@ -6311,6 +6332,13 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "The database encoding is UTF8",
+            "name": "database_encoding",
+            "status": "ok"
+          },
+          {
             "category": "meta",
             "elapsed_ms": "<volatile>",
             "message": "Version <latest> (latest: <latest>)",
@@ -7132,6 +7160,20 @@
             "elapsed_ms": "<volatile>",
             "message": "No atom retired by an empty re-extraction is waiting to be restored.",
             "name": "atom_retirements_restorable",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "by_source": [],
+              "count": 0,
+              "docs": "docs/guides/repair.md#atom-fence-rows",
+              "origin_unread": 0,
+              "repair": "atom-fence-rows"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No world atom carries a fence row its source page shows only to the owner.",
+            "name": "atom_fence_rows",
             "status": "ok"
           },
           {

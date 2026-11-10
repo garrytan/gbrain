@@ -585,9 +585,9 @@ async function assembleCard(
   // Facts saved about this entity may sit under a sibling page or the bare subject slug (siblings.ts).
   const factSlugs = await factEntitySlugs(engine, sourceId, pageSlug, { excludePrivate }).catch(() => [pageSlug]);
   const { privatePagesFilterForCaller, privateLinkOriginFilterForCaller, privateProvenanceFilterFragment } = await import('../search/private-visibility.ts');
-  const inboundPrivacy = excludePrivate
+  const inboundPrivacy = (excludePrivate
     ? ` AND ${privatePagesFilterForCaller('f')} AND ${privateLinkOriginFilterForCaller('l')}`
-    : '';
+    : '') + ` AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${remote ? ' AND lo.source_id = $2' : ''}))`;
 
   // Parallel depth-1 reads — every arm individually fail-soft so a partial
   // brain (no aliases, no timeline) still returns a card.
@@ -605,7 +605,8 @@ async function assembleCard(
   // The referrer must also be live and, for an untrusted caller,
   // readable: the same private-page and private-origin predicates get_backlinks
   // applies, so a private or derived page never surfaces its slug, its
-  // links.context sentence, or a count.
+  // links.context sentence, or a count. An edge whose origin page is deleted
+  // (or, for an untrusted caller, in another source) is left out the same way.
   const [aka, outLinks, inEdges, backlinkCount, timeline, facts, activeFactCount] = await Promise.all([
     readAka(engine, sourceId, pageSlug),
     engine.getLinks(pageSlug, { ...(remote ? { sourceIds: [sourceId] } : { sourceId }), excludePrivate, temporal: { status: 'all' } }).catch(() => []),
