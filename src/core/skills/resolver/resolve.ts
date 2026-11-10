@@ -193,7 +193,7 @@ function loadCatalog(home: string, name: string, now: number, autoRebuild: boole
     if (again && again.index.size === size) receipt = again; else stale = 'publishing';
   }
   if (!stale && receipt.gbrain_version !== VERSION) stale = 'gbrain_version_changed';
-  if (!stale && receipt.catalog.source.kind === 'dir') {
+  if (!stale && (receipt.catalog.source.kind === 'dir' || receipt.catalog.source.kind === 'claude_plugins')) {
     const stamp = catalogFile(home, name, 'stat-check');
     let last: { verdict: 'fresh' | 'stale'; cursor: number } | null = null;
     let age = Infinity;

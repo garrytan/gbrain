@@ -541,15 +541,29 @@ describe('catalog sources and bounds', () => {
     }
   });
 
-  test('bounds: 10,000 skills build, 10,001 refuse; over 8 MB refuses; the body is capped at 4 KB', async () => {
+  test('bounds: 10,000 skills build, 10,001 refuse; over 64 MB refuses; the body is capped at 4 KB', async () => {
     const home = tmp();
     const many = Array.from({ length: 10_000 }, (_, i) => ({ id: `s${i}`, name: `skill-${i}`, description: `${word(i, 9)} task` }));
     const rec = await buildSkillIndex({ catalog: 'big', fromJson: JSON.stringify(many), fromJsonStdin: true }, { home });
     expect(rec.catalog.skill_count).toBe(10_000);
     expect(await codeOf(buildSkillIndex({ catalog: 'big2', fromJson: JSON.stringify([...many, { id: 'one-more', name: 'x' }]), fromJsonStdin: true }, { home }))).toBe('skill_source_invalid');
-    expect(await codeOf(buildSkillIndex({ catalog: 'huge', fromJson: JSON.stringify([{ id: 'a', name: 'a', description: 'x'.repeat(9 * 1024 * 1024) }]), fromJsonStdin: true }, { home }))).toBe('skill_source_invalid');
+    expect(await codeOf(buildSkillIndex({ catalog: 'huge', fromJson: JSON.stringify([{ id: 'a', name: 'a', description: 'x'.repeat(65 * 1024 * 1024) }]), fromJsonStdin: true }, { home }))).toBe('skill_source_invalid');
     await jsonCatalog(home, 'body', [{ id: 'b', name: 'b', description: 'd', body: `${'filler '.repeat(700)} zebrafinch` }]);
     expect((await resolveSkills({ message: 'zebrafinch' }, { home, catalogs: ['body'] })).output.no_skill_reason).toBe('no_match');
+  });
+
+  test('a JSON catalog over 8 MB of full bodies builds: bodies are trimmed to 4 KB, the snapshot is kept trimmed and stays fresh', async () => {
+    const home = tmp();
+    const full = Array.from({ length: 300 }, (_, i) => ({ id: `s${i}`, name: `skill-${i}`, description: `${word(i, 9)} task`, body: `${i === 7 ? 'zebrafinch ' : ''}${'filler text '.repeat(3000)}` }));
+    const text = JSON.stringify(full);
+    expect(Buffer.byteLength(text)).toBeGreaterThan(8 * 1024 * 1024);
+    const rec = await buildSkillIndex({ catalog: 'full', fromJson: text, fromJsonStdin: true }, { home });
+    expect(rec.catalog.skill_count).toBe(300);
+    const snap = readFileSync(join(home, 'skill-index', 'full', 'source.json'), 'utf8');
+    expect(Buffer.byteLength(snap)).toBeLessThan(2 * 1024 * 1024);
+    expect((JSON.parse(snap) as { body: string }[])[0]!.body.length).toBeLessThanOrEqual(4096);
+    expect((await catalogStatus('full', { home })).fresh).toBe(true);
+    expect((await resolveSkills({ message: 'zebrafinch' }, { home, catalogs: ['full'] })).output.suggestions[0]?.id).toBe('s7');
   });
 
   test('a SKILL.md over 64 KB is skipped as unreadable, not read whole', async () => {

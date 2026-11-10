@@ -22,7 +22,7 @@ import { listCatalogs, readReceipt } from './catalog-files.ts';
 import { acquireLease, holdsLease, releaseLease, tryAcquireLease } from './lock.ts';
 import { catalogDir, catalogFile, resolverHome, skillIndexRoot, validCatalogName, assertCatalogName } from './paths.ts';
 import { gcSessions, loadSession, sessionKey } from './session.ts';
-import { applyRouting, readBundledSource, readDirSources, readJsonSource, type DirFingerprint, type SkillRecord, type SkippedSkill, type SourceRead } from './sources.ts';
+import { applyRouting, JSON_INPUT_CAP_BYTES, mergeSkillFolders, readBundledSource, readClaudePluginSources, readDirSources, readJsonSource, type DirFingerprint, type SkillRecord, type SkippedSkill, type SourceRead } from './sources.ts';
 import { TOKENIZER_ID } from './tokenize.ts';
 import { BLOCK_TOKEN_CAP, BLOCK_TOKENIZER, HARNESSES } from './block.ts';
 import { readResolverSettings } from './config.ts';
@@ -39,6 +39,8 @@ export interface BuildInput {
   /** A file path, or the JSON text itself when read from stdin (fromJsonStdin). */
   fromJson?: string;
   fromJsonStdin?: boolean;
+  /** A Claude Code config directory (~/.claude): the skills of its enabled user-scope plugins. */
+  claudePlugins?: string;
   routing?: string;
   harness?: string;
   /** project: a cloned repository's skills; its hints are never shown. */
@@ -52,7 +54,7 @@ export interface BuildReceipt {
   catalog: {
     name: string;
     catalog_hash: string;
-    source: { kind: 'dir' | 'bundled' | 'json'; dirs?: string[]; stdin?: boolean; file?: string; snapshot?: 'source.json'; bundled_skills?: number };
+    source: { kind: 'dir' | 'bundled' | 'json' | 'claude_plugins'; dirs?: string[]; stdin?: boolean; file?: string; snapshot?: 'source.json'; bundled_skills?: number; claude_dir?: string };
     fingerprint_sha256: string | null;
     skill_count: number;
     skipped: SkippedSkill[];
@@ -107,6 +109,7 @@ export function buildArgs(input: BuildInput): { args: string[]; fix: string[] | 
   for (const d of input.dirs ?? []) args.push('--dir', resolve(d));
   if (input.bundled) args.push('--bundled');
   if (input.fromJson !== undefined) args.push('--from-json', input.fromJsonStdin ? '-' : resolve(input.fromJson));
+  if (input.claudePlugins !== undefined) args.push('--claude-plugins', resolve(input.claudePlugins));
   if (input.routing) args.push('--routing', resolve(input.routing));
   if (input.harness) args.push('--harness', input.harness);
   if (input.scope === 'project') args.push('--scope', 'project');
@@ -115,8 +118,9 @@ export function buildArgs(input: BuildInput): { args: string[]; fix: string[] | 
 
 function validateBuild(input: BuildInput): void {
   assertCatalogName(input.catalog);
-  const kinds = [input.dirs?.length ? 1 : 0, input.bundled ? 1 : 0, input.fromJson !== undefined ? 1 : 0].reduce((a, b) => a + b, 0);
-  if (kinds !== 1) throw new ResolverError('skill_resolve_invalid_input', 'Pass exactly one source: --dir <d> (repeatable), --bundled or --from-json <file|->.', { suggestion: 'Example: gbrain skills index build --catalog claude-user --dir ~/.claude/skills' });
+  const json = input.fromJson !== undefined;
+  const kinds = [input.dirs?.length && !json ? 1 : 0, input.bundled ? 1 : 0, json ? 1 : 0, input.claudePlugins !== undefined ? 1 : 0].reduce((a, b) => a + b, 0);
+  if (kinds !== 1) throw new ResolverError('skill_resolve_invalid_input', 'Pass exactly one source: --dir <d> (repeatable), --bundled, --from-json <file|-> (optionally with --dir folders to take bodies from) or --claude-plugins <dir>.', { suggestion: 'Example: gbrain skills index build --catalog claude-user --dir ~/.claude/skills' });
   if (input.harness !== undefined && !(HARNESSES as readonly string[]).includes(input.harness)) {
     throw new ResolverError('skill_resolve_invalid_input', `Unknown harness "${input.harness}".`, { suggestion: `Use one of: ${HARNESSES.join(', ')}.` });
   }
@@ -124,14 +128,16 @@ function validateBuild(input: BuildInput): void {
 }
 
 async function readSource(input: BuildInput): Promise<SourceRead> {
-  if (input.dirs?.length) return readDirSources(input.dirs);
+  if (input.claudePlugins !== undefined) return readClaudePluginSources(input.claudePlugins);
+  if (input.fromJson === undefined && input.dirs?.length) return readDirSources(input.dirs);
   if (input.bundled) return readBundledSource();
   const text = input.fromJsonStdin ? input.fromJson! : (() => {
-    const b = readBounded(input.fromJson!, 8 * 1024 * 1024);
-    if (b === 'too_large') throw new ResolverError('skill_source_invalid', 'The JSON catalog is over 8 MB.', { suggestion: 'Pass at most 10,000 skills in at most 8 MB.' });
+    const b = readBounded(input.fromJson!, JSON_INPUT_CAP_BYTES);
+    if (b === 'too_large') throw new ResolverError('skill_source_invalid', 'The JSON catalog is over 64 MB.', { suggestion: 'Pass at most 10,000 skills in at most 64 MB; bodies past 4 KB are trimmed.' });
     return b.toString('utf8');
   })();
-  return readJsonSource(text);
+  const json = readJsonSource(text);
+  return input.dirs?.length ? mergeSkillFolders(json, readDirSources(input.dirs)) : json;
 }
 
 interface Prepared { records: SkillRecord[]; skipped: SkippedSkill[]; source: SourceRead; routing: BuildReceipt['catalog']['routing']; catalog_hash: string }
@@ -195,7 +201,8 @@ export async function buildSkillIndex(input: BuildInput, opts: { home?: string; 
         name: input.catalog, catalog_hash: p.catalog_hash,
         source: p.source.kind === 'dir' ? { kind: 'dir', dirs: input.dirs!.map(d => resolve(d)) }
           : p.source.kind === 'bundled' ? { kind: 'bundled', bundled_skills: p.records.length }
-          : { kind: 'json', snapshot: 'source.json', ...(input.fromJsonStdin ? { stdin: true } : { file: resolve(input.fromJson!) }) },
+          : p.source.kind === 'claude_plugins' ? { kind: 'claude_plugins', claude_dir: resolve(input.claudePlugins!) }
+          : { kind: 'json', snapshot: 'source.json', ...(input.fromJsonStdin ? { stdin: true } : { file: resolve(input.fromJson!) }), ...(input.dirs?.length ? { dirs: input.dirs.map(d => resolve(d)) } : {}) },
         fingerprint_sha256: p.source.fingerprint ? sha(JSON.stringify(p.source.fingerprint)) : null,
         skill_count: p.records.length, skipped: p.skipped, scope, hints: scope === 'project' ? 'names_only' : 'shown', harness: input.harness ?? null, routing: p.routing,
       },
@@ -271,7 +278,7 @@ export async function catalogStatus(name: string, opts: { home?: string } = {}):
   if (!staleReason) {
     try {
       const src = r.catalog.source;
-      const input: BuildInput = { catalog: name, ...(src.kind === 'dir' ? { dirs: src.dirs } : src.kind === 'bundled' ? { bundled: true } : { fromJson: join(dir, 'source.json') }), ...(r.catalog.routing ? { routing: r.catalog.routing.file } : {}), scope: r.catalog.scope };
+      const input: BuildInput = { catalog: name, ...(src.kind === 'dir' ? { dirs: src.dirs } : src.kind === 'bundled' ? { bundled: true } : src.kind === 'claude_plugins' ? { claudePlugins: src.claude_dir } : { fromJson: join(dir, 'source.json'), ...(src.dirs?.length ? { dirs: src.dirs } : {}) }), ...(r.catalog.routing ? { routing: r.catalog.routing.file } : {}), scope: r.catalog.scope };
       const p = await prepare(input);
       if (p.catalog_hash !== r.catalog.catalog_hash) staleReason = src.kind === 'json' ? 'snapshot_changed' : 'source_changed';
     } catch (e) {
