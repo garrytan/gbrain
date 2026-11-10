@@ -86,7 +86,7 @@ export function __resetHistoryIndexesForTest(): void { historyIndexes.clear(); }
 function walkHistory(gitRoot: string, revs: string[], onCommit?: (commits: number) => void): Promise<Map<string, PathHistory> | null> {
   return new Promise(resolve => {
     const child = spawn('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '-C', gitRoot, 'log', '--full-history', '--no-renames', '--diff-merges=first-parent', '-z',
-      '--format=%x1e%H%x1f%P%x1f%an%x1f%aI%x1f%s', '--name-status', ...revs, '--'], { env: gitChildEnv(), stdio: ['ignore', 'pipe', 'ignore'] });
+      '--format=%x1e%H%x1f%P%x1f%an%x1f%aI%x1f%s', '--name-status', ...revs, '--'], { env: gitChildEnv(NO_LAZY_FETCH_ENV), stdio: ['ignore', 'pipe', 'ignore'] });
     const paths = new Map<string, PathHistory>();
     const splitter = new NulRecordSplitter();
     let commit: { deletion: Deletion; merge: boolean } | null = null, status: string | null = null, commits = 0, settled = false;

@@ -23,7 +23,7 @@ export interface TreeBlob { oid: string; size: number }
 
 function git(gitRoot: string, args: string[], input?: string, maxBuffer = 32 * 1024 ** 2, env: NodeJS.ProcessEnv = {}): Buffer {
   return execFileSync('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '--literal-pathspecs', '-C', gitRoot, ...args],
-    { env: gitChildEnv({ ...(noLazyFetch ? NO_LAZY_FETCH_ENV : {}), ...env }), timeout: 60_000, maxBuffer, stdio: ['pipe', 'pipe', 'pipe'], ...(input !== undefined ? { input } : {}) });
+    { env: gitChildEnv({ ...NO_LAZY_FETCH_ENV, ...(noLazyFetch ? {} : { GIT_NO_LAZY_FETCH: undefined }), ...env }), timeout: 60_000, maxBuffer, stdio: ['pipe', 'pipe', 'pipe'], ...(input !== undefined ? { input } : {}) });
 }
 
 /** At this many paths `readTreeBlobs` lists the whole tree once instead of path chunks (#6712: the prescreen of a tree walk). */
@@ -76,7 +76,7 @@ export function readBlobBytes(gitRoot: string, blobs: TreeBlob[]): Map<string, B
 let checkAttrSource: boolean | undefined;
 let noLazyFetch = true;
 
-/** Test seam: `false` leaves `GIT_NO_LAZY_FETCH` out of every read here, as a git older than 2.45 ignores it; returns the restore. */
+/** Test seam: `false` leaves `GIT_NO_LAZY_FETCH` (not the empty `GIT_ALLOW_PROTOCOL`) out of every read here, as a git older than 2.45 ignores it; returns the restore. */
 export function __setNoLazyFetchForTests(value: boolean): () => void {
   const previous = noLazyFetch;
   noLazyFetch = value;

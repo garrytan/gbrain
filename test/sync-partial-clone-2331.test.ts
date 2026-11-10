@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { __setNoLazyFetchForTests, __setPinnedWindowForTests } from '../src/core/persistence/sync-blobs.ts';
 import { readGitSourceHolds } from '../src/core/persistence/sync-holds.ts';
+import { __resetHistoryIndexesForTest, readOriginEvidence } from '../src/core/persistence/sync-origin-evidence.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
@@ -29,6 +30,30 @@ async function refusal(engine: BrainEngine): Promise<OperationError> {
   try { await performManagedSync(engine, OPTS); } catch (error) { if (error instanceof OperationError) return error; throw error; }
   throw new Error('the sync did not stop');
 }
+const rules = async (engine: BrainEngine) => (await engine.executeRaw<{ rule_id: string }>("SELECT rule_id FROM access_rules WHERE source_id='default' ORDER BY rule_id")).map(row => row.rule_id);
+/** Present in the clone without a fetch: a read with lazy fetching off succeeds. */
+const present = (root: string, spec: string) => { execFileSync('git', ['-C', root, 'cat-file', '-e', spec], { env: { ...process.env, GIT_NO_LAZY_FETCH: '1' }, stdio: 'ignore' }); return true; };
+/** Runs the git command a folder-rule problem names, exactly as written there. */
+const runNamed = (message: string, shape: RegExp) => { const [command, ...args] = message.match(shape)![0].split(' '); execFileSync(command!, args, { stdio: 'ignore' }); };
+/** Runs `body` with GIT_ALLOW_PROTOCOL=file in this process, as an operator's environment may carry it. */
+async function allowingFile<T>(body: () => Promise<T>): Promise<T> {
+  const prior = process.env.GIT_ALLOW_PROTOCOL;
+  process.env.GIT_ALLOW_PROTOCOL = 'file';
+  try { return await body(); } finally { if (prior === undefined) delete process.env.GIT_ALLOW_PROTOCOL; else process.env.GIT_ALLOW_PROTOCOL = prior; }
+}
+/** Upstream with notes under hr/ and a folder-rule file, served bare and cloned blobless with a checkout into `root`. */
+function rulesClone(root: string, versions: string[][]): ReturnType<typeof server> {
+  const upstream = join(root, '..', 'upstream');
+  mkdirSync(join(upstream, '.gbrain'), { recursive: true }); mkdirSync(join(upstream, 'hr'), { recursive: true }); git(upstream, 'init', '-q', '-b', 'main');
+  writeFileSync(join(upstream, 'hr/x.md'), note('x'));
+  for (const ids of versions) { writeFileSync(join(upstream, '.gbrain/access.yml'), ruleFile(ids)); commit(upstream, 'rules ' + ids.join(' ')); }
+  const remote = server(upstream);
+  execFileSync('git', ['clone', '-q', '--filter=blob:none', remote.url, root]);
+  git(root, 'config', 'remote.origin.uploadpack', remote.uploadPack);
+  rmSync(remote.marker, { force: true });
+  return remote;
+}
+const ruleFile = (ids: string[]) => 'version: 1\nrules:\n' + ids.map(id => '  - id: ' + id + '\n    prefix: ' + id + '/\n    readable_by: [alice-example]\n').join('');
 const coverage = async (engine: BrainEngine) => (await engine.executeRaw<{ prefix: string; reason: string; detail: { problems?: Array<{ message: string }> } | null }>("SELECT prefix, reason, detail FROM access_pending_coverage WHERE source_id='default' ORDER BY prefix"));
 
 /** A bare server holding every object of `root` and an upload-pack wrapper that leaves `marker` when Git runs it. */
@@ -144,8 +169,9 @@ for (const backend of testBackends()) describe('[' + backend + '] managed sync i
       expect(await live(engine)).toEqual([]);
     }, root => { remote = bloblessClone(root, ['seed', 'a'], false); });
   }, 240_000);
-  test('a missing blob is fetched on neither read path, nor by a Git that ignores GIT_NO_LAZY_FETCH: the cat-file --batch window and the git show fallback each hold it', async () => {
-    for (const arm of [{ window: null, lazyOff: true }, { window: 0, lazyOff: true }, { window: null, lazyOff: false }, { window: 0, lazyOff: false }]) await brain(async ({ engine, root }) => {
+  test('a missing blob is fetched on neither read path, nor by a Git that ignores GIT_NO_LAZY_FETCH, even where the environment allows the file transport: the cat-file --batch window and the git show fallback each hold it', async () => {
+    for (const arm of [{ window: null, lazyOff: true, allowFile: false }, { window: 0, lazyOff: true, allowFile: false }, { window: null, lazyOff: false, allowFile: false }, { window: 0, lazyOff: false, allowFile: false },
+      { window: null, lazyOff: false, allowFile: true }, { window: 0, lazyOff: false, allowFile: true }]) await brain(async ({ engine, root }) => {
       expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
       writeFileSync(join(root, 'notes/missing.md'), note('missing'));
       commit(root, 'missing');
@@ -155,7 +181,7 @@ for (const backend of testBackends()) describe('[' + backend + '] managed sync i
       writeFileSync(join(root, 'notes/missing.md'), note('missing, edited in the checkout'));
       git(root, 'update-index', '--assume-unchanged', 'notes/missing.md');
       const restoreWindow = __setPinnedWindowForTests(arm.window), restoreLazy = __setNoLazyFetchForTests(arm.lazyOff);
-      try { await performManagedSync(engine, OPTS); } finally { restoreLazy(); restoreWindow(); }
+      try { await (arm.allowFile ? allowingFile(() => performManagedSync(engine, OPTS)) : performManagedSync(engine, OPTS)); } finally { restoreLazy(); restoreWindow(); }
       expect(existsSync(marker)).toBe(false);
       const held = await holds(engine);
       expect(held.map(hold => [hold.path, hold.code])).toEqual([['notes/missing.md', 'git_object_missing']]);
@@ -246,5 +272,66 @@ for (const backend of testBackends()) describe('[' + backend + '] managed sync i
       git(root, 'config', 'remote.origin.uploadpack', remote.uploadPack);
       rmSync(remote.marker, { force: true });
     });
+  }, 240_000);
+
+  test('a built source whose committed access.yml the clone has not fetched reads as nobody; the command its problem names fetches it, and the next plain sync applies the rules and clears the mark', () => {
+    let remote: ReturnType<typeof server> | undefined;
+    return brain(async ({ engine, root }) => {
+      await engine.executeRaw("INSERT INTO access_members (id) VALUES ('alice-example')");
+      await performManagedSync(engine, OPTS);
+      expect(await coverage(engine)).toEqual([]);
+      expect(await rules(engine)).toEqual(['hr']);
+      const upstream = join(root, '..', 'upstream');
+      writeFileSync(join(upstream, '.gbrain/access.yml'), ruleFile(['hr', 'ops'])); commit(upstream, 'rules hr ops'); git(upstream, 'push', '-q', remote!.url, 'HEAD:main');
+      git(root, 'fetch', '-q', 'origin'); git(root, 'reset', '-q', '--soft', 'origin/main');
+      rmSync(remote!.marker, { force: true });
+      expect(() => present(root, 'HEAD:.gbrain/access.yml')).toThrow();
+      await performManagedSync(engine, OPTS);
+      expect(existsSync(remote!.marker)).toBe(false);
+      const blocked = await coverage(engine);
+      expect(blocked.map(row => [row.prefix, row.reason])).toEqual([['', 'invalid']]);
+      const message = blocked[0]!.detail?.problems?.[0]?.message ?? '';
+      expect(message).toContain('partial clone');
+      expect(message).toContain('git -C ' + root + ' cat-file -p HEAD:./.gbrain/access.yml');
+      expect(await rules(engine)).toEqual(['hr']);
+      runNamed(message, /git -C \S+ cat-file -p \S+/);
+      expect(present(root, 'HEAD:.gbrain/access.yml')).toBe(true);
+      rmSync(remote!.marker, { force: true });
+      await performManagedSync(engine, OPTS);
+      expect(existsSync(remote!.marker)).toBe(false);
+      expect(await coverage(engine)).toEqual([]);
+      expect(await rules(engine)).toEqual(['hr', 'ops']);
+    }, root => { remote = rulesClone(root, [['hr']]); });
+  }, 240_000);
+
+  test('a folder-rule history the clone has not fetched reads as nobody; the command its problem names fetches it, and the next plain sync applies the rules and clears the mark', () => {
+    let remote: ReturnType<typeof server> | undefined;
+    return brain(async ({ engine, root }) => {
+      await engine.executeRaw("INSERT INTO access_members (id) VALUES ('alice-example')");
+      expect(() => present(root, 'HEAD~1:.gbrain/access.yml')).toThrow();
+      await performManagedSync(engine, OPTS);
+      expect(existsSync(remote!.marker)).toBe(false);
+      const blocked = await coverage(engine);
+      expect(blocked.map(row => [row.prefix, row.reason])).toEqual([['', 'invalid']]);
+      const message = blocked[0]!.detail?.problems?.[0]?.message ?? '';
+      expect(message).toContain('git -C ' + root + ' log --first-parent -p HEAD -- .gbrain/access.yml');
+      runNamed(message, /git -C \S+ log --first-parent -p \S+ -- \S+/);
+      expect(present(root, 'HEAD~1:.gbrain/access.yml')).toBe(true);
+      rmSync(remote!.marker, { force: true });
+      await performManagedSync(engine, OPTS);
+      expect(existsSync(remote!.marker)).toBe(false);
+      expect(await coverage(engine)).toEqual([]);
+      expect(await rules(engine)).toEqual(['hr', 'ops']);
+    }, root => { remote = rulesClone(root, [['hr'], ['hr', 'ops']]); });
+  }, 240_000);
+
+  test('the history walk that dates deletions fetches nothing in a treeless clone, even where the environment allows the file transport', () => {
+    let remote: ReturnType<typeof server> | undefined;
+    return brain(async ({ root }) => {
+      __resetHistoryIndexesForTest();
+      const evidence = await allowingFile(() => readOriginEvidence(root, [git(root, 'rev-parse', 'HEAD')], ['notes/a.md']));
+      expect(existsSync(remote!.marker)).toBe(false);
+      expect(evidence.get('notes/a.md')).toBe('unknown');
+    }, root => { remote = bloblessClone(root, ['seed', 'a'], false, 'tree:0'); });
   }, 240_000);
 });
