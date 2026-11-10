@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.654.0] - 2026-11-10
 
 **A managed sync no longer fetches Git objects in a partial clone (`git clone --filter`).** Every Git read a managed sync makes now runs with Git's transports and lazy fetching switched off. A file whose blob the clone never fetched is imported from your checkout when the checkout holds exactly that blob, and otherwise held alone as `git_object_missing`, with a message that names the partial clone and the `git cat-file -p <blob>` that fetches it. A blobless clone with a normal checkout syncs every file as before; an older object it never fetched (an earlier version of a renamed file or of the folder rules) is read only once you fetch it. A treeless clone (`--filter=tree:0`) that lacks a tree of the commit being synced stops the run with `git_object_missing`, naming the partial clone and the `git ls-tree -r -d <commit>` that fetches the trees; nothing is synced or deleted until then. The folder rules in `.gbrain/access.yml` are read the same way. A rule file or rule history the clone has not fetched makes the source read as nobody to remote members, as a shallow checkout already does, with a message that names the exact `git` command that fetches it. Run that command in the checkout and the next sync applies the rules and clears the mark.
 
