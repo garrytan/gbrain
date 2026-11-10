@@ -157,6 +157,7 @@ for (const backend of testBackends()) {
         expect((await takes(engine, slug)).map(t => t.claim)).toEqual([TAKE_A]);
         await op(ctx, 'takes_add', { slug, claim: TAKE_B, kind: 'bet', holder: 'world' });
         expect(await fenceTakes(engine, slug)).toEqual([TAKE_A, TAKE_B].sort());
+        expect(await held(engine, slug)).toEqual([]);
         await op(ctx, 'add_tag', { slug, tag: 'example' });
         expect(await takes(engine, slug)).toEqual([{ row_num: 1, claim: TAKE_A, active: true }, { row_num: 2, claim: TAKE_B, active: true }]);
         expect(await fenceTakes(engine, slug)).toEqual([TAKE_A, TAKE_B].sort());

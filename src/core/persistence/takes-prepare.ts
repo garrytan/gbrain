@@ -30,7 +30,7 @@ import { withWriteAttribution } from './context.ts';
 import { decideTakeWrite, recordFlaggedRow, recordWriteGateHold } from '../write-gate-store.ts';
 import { writeGateRejectedError } from '../write-gate.ts';
 import { beliefTransaction } from '../belief/writers.ts';
-import { fenceOwnerKey, readFenceBlocks, TAKE_FENCE_KIND } from '../generations/fence.ts';
+import { clearFenceHold, fenceOwnerKey, readFenceBlocks, TAKE_FENCE_KIND } from '../generations/fence.ts';
 
 /** Server-derived values are frozen after replay lookup, before admission. */
 export async function normalizeTakesIntent(ctx: OperationContext, params: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -134,7 +134,8 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
   const rendered = serializePageToMarkdown(target ? { ...snapshot.page, ...target.page } : snapshot.page,snapshot.tags);
   // A rewrite that dropped the takes fence left the page's takes stored (held fence_absent): a takes write that creates
   // the fence again renders them into it first, or the next projected write would read the new fence as their removal.
-  const held = readFenceBlocks(target?.page ?? snapshot.page,'takes').state==='absent' ? await heldTakeRows(engine,row.source_id,row.slug,snapshot.page.id) : [];
+  const recreated = readFenceBlocks(target?.page ?? snapshot.page,'takes').state==='absent';
+  const held = recreated ? await heldTakeRows(engine,row.source_id,row.slug,snapshot.page.id) : [];
   const body = held.length ? edit.replaceFence(upsertTakeRow(rendered,held[0]!).body,held) : rendered;
   const parsed = parseTakesFence(body);
   edit.assertFenceRoundTrips(parsed);
@@ -283,6 +284,7 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
       if (written && contestedOld) result.contested=await recordContestedTake(tx,{sourceId:row.source_id,oldId:contestedOld.id,oldTier:storedTrustTier(contestedOld.tier),
         newId:Number(written.id),newTier:storedTrustTier(written.trust_tier),guard:'takes_supersede'});
       if (acceptedProposal) await finishOwnerAcceptedTake(tx,acceptedProposal);
+      if (recreated && readFenceBlocks({compiled_truth:next},'takes').state==='parsed') await clearFenceHold(tx,{kind:TAKE_FENCE_KIND,sourceId:row.source_id,ownerKey:fenceOwnerKey(row.slug)});
       const flagged=written && gate ? gateField(gate.assessment,`t${written.id}`,await recordFlaggedRow(tx,gate,{table:'takes',id:Number(written.id),sourceId:row.source_id})) : undefined;
       if (flagged) result.gate=flagged;
     }
