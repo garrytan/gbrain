@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.651.0] - 2026-11-10
+
+**CI wastes fewer reruns: the macOS type check stops running out of memory, and a worktree test stops stalling for two minutes.** The macOS type check now runs on GitHub's 14 GB Intel runner. On the 7 GB arm64 runner, a check that couldn't reuse a recent saved state ran short of memory, took 7 to 15 minutes and sometimes hit its 15-minute limit. On Intel a check with no saved state takes about 4 minutes. The stale-plan worktree test no longer waits out a 2-minute lease on PGLite: its wait for commits now lets timers run, so the background writer finishes its pass.
+
+### Itemized changes
+
+- The `typecheck` job in `macos-validation.yml` runs on `macos-26-intel`. It still fails on a real type error: a forced probe failed with `TS2322` and exit code 2.
+- `test/persistence-stale-plan-retry.test.ts` pauses for timers after every pass of its commit wait, and a new probe pins that a timer-parked pass resumes during the wait. No assertion changed. The stall was test timing, and every page was committed.
+- actionlint moves from v1.7.11 to v1.7.12, which knows the `macos-26-intel` runner label.
+- The advisory harness check runs against harness-evals 7e8d872edb (v0.0.136). A hand run at that pin against this branch passed with 0 cross-scope pages, 36 assertions passed and 0 failed.
+- The shard weight maps for unit, serial and E2E tests are refreshed from the latest nightly runs.
+
 ## [0.60.650.0] - 2026-11-10
 
 **Private-labels windows publish together and finish past declined pages.** `gbrain repair private-labels --apply --expect <hash>` on a brain with managed persistence now admits a window's pages together and publishes them in groups, instead of one page and one wait at a time. On a 1,000-page window with Git commits and a second queue consumer (`scripts/bench/private-labels-apply.ts`), it went from 181.4 to 1365.3 pages a minute with no added database latency, and from 19.9 to 37.1 pages a minute with 20 ms added to each database round trip. Git commits for the window dropped from 990 to 22. The preview no longer claims a re-embed for every page: only pages stored under per-chunk synopsis, or with a chunk that has no vector yet, count.
