@@ -277,12 +277,20 @@ export async function readGrep(stream: AsyncIterable<Buffer>, term: string, cont
     }
   };
   let para: Paragraph | null = null;
+  let paraRow = false;
   for await (const l of documentLines(stream)) {
     if (!l.continued && !l.text.trim()) {
       if (para) close(para);
       para = null;
       continue;
     }
+    // A table has no blank lines: each row is its own record, not one paragraph.
+    const row = !l.continued && l.text.trimStart().startsWith('|');
+    if (para && !l.continued && (row || paraRow)) {
+      close(para);
+      para = null;
+    }
+    if (!para) paraRow = row;
     if (!para) para = { line_start: l.line, line_end: l.line, text: '', match: false };
     const sep = para.text && !l.continued ? '\n' : '';
     if (para.text.length <= budget) para.text += sep + head(l.text, budget + 1 - para.text.length);
