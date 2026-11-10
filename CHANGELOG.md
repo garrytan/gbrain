@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.650.0] - 2026-11-10
+
+**Private-labels windows publish together and finish past declined pages.** `gbrain repair private-labels --apply --expect <hash>` on a brain with managed persistence now admits a window's pages together and publishes them in groups, instead of one page and one wait at a time. On a 1,000-page window with Git commits and a second queue consumer (`scripts/bench/private-labels-apply.ts`), it went from 181.4 to 1365.3 pages a minute with no added database latency, and from 19.9 to 37.1 pages a minute with 20 ms added to each database round trip. Git commits for the window dropped from 990 to 22. The preview no longer claims a re-embed for every page: only pages stored under per-chunk synopsis, or with a chunk that has no vector yet, count.
+
+### Itemized changes
+
+A page whose own state declines the write (its file changed outside gbrain, `source_changed`, or its body is stored in segments) fails alone and the rest of its group lands. A preview-bound apply of any repair kind that completes with only such declines now exits 0 and counts them under `declined`. The next private-labels preview lists pages an earlier apply tried and that did not change after every page not tried yet, and such a page declining again no longer counts toward the `item_failures_systemic` stop, so windows that carry declines forward keep finishing; pages not tried yet that all fail the same way still stop the run. A page that declined under a release before 0.60.649.0 has no ledger line, because those releases recorded only writes that landed, so the first apply after upgrading stops once with `item_failures_systemic` when five or more such pages head its window; that run leaves intent lines for its batch, so the next preview lists them last. The apply result names its ledger (`details.ledger`, `details.ledger_rows_written`).
+
+A preview-bound repair apply now waits out a `gbrain sources refresh` for up to 10 minutes per step instead of 10 seconds. A refresh that runs longer ends the apply with `worktree_refreshing`, naming the refresh and how long it has run; rerunning the same apply resumes it (GBRA-443).
+
 ## [0.60.649.0] - 2026-11-10
 
 **Access and privacy fixes.** A member-bound credential now sees its own readable pages on every read surface, the brain owner's remote credentials get private facts on every fact surface, `gbrain sources federate` names the member-written pages it makes readable to everyone, and seven community-reported bugs in access, privacy, purge, repair and secret scanning are fixed.
