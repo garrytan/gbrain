@@ -472,6 +472,7 @@ test/refresh-retry-hint-gst1582.test.ts
 test/refresh-write-barrier.test.ts
 test/remediation-manual-only.test.ts
 test/remember-batch-entity-7432.test.ts
+test/remember-share-gst2243.test.ts
 test/repair-apply-pending-6543.test.ts
 test/repair-database-stop-gbra133.test.ts
 test/repair-embedding-effects.test.ts
