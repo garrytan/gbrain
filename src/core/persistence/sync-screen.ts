@@ -91,13 +91,17 @@ let filterDrivers: { key: string; drivers: Map<string, string | null | MissingAt
  */
 export function pinnedFilterDriver(cursor: Pick<SyncDiscovery, 'root' | 'gitRoot' | 'target' | 'entries' | 'companyPlan' | 'sourceId'> & { index?: number }, path: string): string | null {
   const revision = cursor.companyPlan?.revision, gitRoot = revision?.git_root ?? cursor.gitRoot, target = revision?.commit ?? cursor.target;
-  const gitPathOf = (next: string) => revision ? (revision.scope ? `${revision.scope}/${next}` : next) : syncGitPath(cursor, next);
+  const real = revision ? null : { gitRoot: realpathSync.native(cursor.gitRoot), root: realpathSync.native(cursor.root) };
+  const gitPathOf = (next: string) => real ? relative(real.gitRoot, resolve(real.root, next)).split(sep).join('/') : revision!.scope ? `${revision!.scope}/${next}` : next;
   const gitPath = gitPathOf(path), key = `${gitRoot}\0${target}`;
   if (filterDrivers?.key !== key) filterDrivers = { key, drivers: new Map() };
   const known = filterDrivers.drivers;
   if (!known.has(gitPath)) {
-    const upcoming = cursor.entries.slice(cursor.index ?? 0).filter(entry => entry.action === 'import' && !entry.working)
-      .map(entry => gitPathOf(entry.path)).filter(next => next !== gitPath && !known.has(next)).slice(0, 2000);
+    const upcoming: string[] = [];
+    for (let at = cursor.index ?? 0; at < cursor.entries.length && upcoming.length < 2000; at++) {
+      const entry = cursor.entries[at]!, next = entry.action === 'import' && !entry.working ? gitPathOf(entry.path) : gitPath;
+      if (next !== gitPath && !known.has(next)) upcoming.push(next);
+    }
     for (const [next, driver] of readFilterDrivers(gitRoot, target, [gitPath, ...upcoming])) known.set(next, driver);
     if (!known.has(gitPath)) known.set(gitPath, null);
   }

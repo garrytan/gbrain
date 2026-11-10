@@ -23,7 +23,7 @@ export interface TreeBlob { oid: string; size: number }
 
 function git(gitRoot: string, args: string[], input?: string, maxBuffer = 32 * 1024 ** 2, env: NodeJS.ProcessEnv = {}): Buffer {
   return execFileSync('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '--literal-pathspecs', '-C', gitRoot, ...args],
-    { env: gitChildEnv({ ...NO_LAZY_FETCH_ENV, ...env }), timeout: 60_000, maxBuffer, stdio: ['pipe', 'pipe', 'pipe'], ...(input !== undefined ? { input } : {}) });
+    { env: gitChildEnv({ ...(noLazyFetch ? NO_LAZY_FETCH_ENV : {}), ...env }), timeout: 60_000, maxBuffer, stdio: ['pipe', 'pipe', 'pipe'], ...(input !== undefined ? { input } : {}) });
 }
 
 /** At this many paths `readTreeBlobs` lists the whole tree once instead of path chunks (#6712: the prescreen of a tree walk). */
@@ -74,6 +74,14 @@ export function readBlobBytes(gitRoot: string, blobs: TreeBlob[]): Map<string, B
 }
 
 let checkAttrSource: boolean | undefined;
+let noLazyFetch = true;
+
+/** Test seam: `false` leaves `GIT_NO_LAZY_FETCH` out of every read here, as a git older than 2.45 ignores it; returns the restore. */
+export function __setNoLazyFetchForTests(value: boolean): () => void {
+  const previous = noLazyFetch;
+  noLazyFetch = value;
+  return () => { noLazyFetch = previous; };
+}
 
 /** Test seam: `false` takes the path of a git older than 2.40; returns the restore. */
 export function __setCheckAttrSourceForTests(value: boolean | undefined): () => void {
@@ -92,7 +100,8 @@ export interface MissingAttributes { attributes: string; oid: string }
  * of the checkout, and sync never runs a repository's filters. Git 2.40 and newer read the attributes with
  * `check-attr --source=<target>`; an older git reads `target` into a temporary index (`read-tree`) and asks
  * `check-attr --cached` there. Like every read here, each call fetches nothing in a partial clone (GST-2331). Git then reads a `.gitattributes` the repository lacks as empty, so
- * the ones that apply are checked first, and a path under a missing one maps to it instead of to a driver.
+ * the ones that apply are checked first (a git older than 2.45 fails the batch on a promisor object instead, so each is then checked alone), and a path
+ * under a missing one maps to it instead of to a driver and is not passed to `check-attr`.
  */
 export function readFilterDrivers(gitRoot: string, target: string, gitPaths: string[]): Map<string, string | null | MissingAttributes> {
   const out = new Map<string, string | null | MissingAttributes>();
@@ -112,19 +121,29 @@ export function readFilterDrivers(gitRoot: string, target: string, gitPaths: str
     }
   }
   const missing = new Map<string, MissingAttributes>();
-  const checked = present.length ? read(['cat-file', '--batch-check'], present.map(file => file.oid).join('\n') + '\n').toString('utf8').split('\n') : [];
+  let checked: string[] = [];
+  try {
+    if (present.length) checked = read(['cat-file', '--batch-check'], present.map(file => file.oid).join('\n') + '\n').toString('utf8').split('\n');
+  } catch (error) {
+    if (!String((error as { stderr?: unknown }).stderr ?? '').includes('from promisor remote')) throw error;
+    checked = present.map(file => {
+      try { read(['cat-file', '-e', file.oid]); return ''; } catch { return `${file.oid} missing`; }
+    });
+  }
   present.forEach((file, at) => { if (checked[at]?.endsWith(' missing')) missing.set(file.attributes.slice(0, -'.gitattributes'.length).replace(/\/$/, ''), file); });
+  const screened = gitPaths.filter(path => {
+    const lost = dirsOf(path).map(dir => missing.get(dir)).find(Boolean);
+    if (lost) out.set(path, lost);
+    return !lost;
+  });
   const scratch = checkAttrSource ? null : mkdtempSync(join(tmpdir(), 'gbrain-attributes-'));
   const env = scratch ? { GIT_INDEX_FILE: join(scratch, 'index') } : {};
   try {
     if (scratch) read(['read-tree', target], undefined, env);
-    for (let i = 0; i < gitPaths.length; i += 2000) {
+    for (let i = 0; i < screened.length; i += 2000) {
       const fields = read(['check-attr', ...(scratch ? ['--cached'] : [`--source=${target}`]), '-z', '--stdin', 'filter'],
-        gitPaths.slice(i, i + 2000).join('\0') + '\0', env).toString('utf8').split('\0');
-      for (let at = 0; at + 2 < fields.length; at += 3) {
-        const lost = dirsOf(fields[at]!).map(dir => missing.get(dir)).find(Boolean);
-        out.set(fields[at]!, lost ?? (['unspecified', 'unset', 'set'].includes(fields[at + 2]!) ? null : fields[at + 2]!));
-      }
+        screened.slice(i, i + 2000).join('\0') + '\0', env).toString('utf8').split('\0');
+      for (let at = 0; at + 2 < fields.length; at += 3) out.set(fields[at]!, ['unspecified', 'unset', 'set'].includes(fields[at + 2]!) ? null : fields[at + 2]!);
     }
   } finally {
     if (scratch) rmSync(scratch, { recursive: true, force: true });

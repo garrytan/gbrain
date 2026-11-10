@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { __setCheckAttrSourceForTests, __setPinnedWindowForTests } from '../src/core/persistence/sync-blobs.ts';
+import { __setCheckAttrSourceForTests, __setNoLazyFetchForTests, __setPinnedWindowForTests } from '../src/core/persistence/sync-blobs.ts';
 import { retryHeld } from '../src/commands/sources-retry-held.ts';
 import { filterOwnedRefusal } from '../src/core/persistence/sync-entry-fault.ts';
 import { readGitSourceHolds } from '../src/core/persistence/sync-holds.ts';
@@ -139,9 +139,9 @@ for (const backend of testBackends()) describe('[' + backend + '] a committed fi
     expect(filterOwnedRefusal('a.md', 'text', 'secret', 'default', true)!.message).toContain('gbrain sources retry-held default');
   });
 
-  for (const source of [true, false]) {
-    test('a partial clone missing the commit\'s .gitattributes holds the file git_object_missing and fetches nothing (' + (source ? 'check-attr --source' : 'git before 2.40: a temporary index') + ')', () => brain(async ({ engine, root }) => {
-      const restore = __setCheckAttrSourceForTests(source);
+  for (const source of [true, false]) for (const lazyOff of [true, false]) {
+    test('a partial clone missing the commit\'s .gitattributes holds the file git_object_missing and fetches nothing (' + (source ? 'check-attr --source' : 'git before 2.40: a temporary index') + (lazyOff ? '' : ', git before 2.45: no GIT_NO_LAZY_FETCH') + ')', () => brain(async ({ engine, root }) => {
+      const restore = __setCheckAttrSourceForTests(source), restoreLazy = __setNoLazyFetchForTests(lazyOff);
       try {
         expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
         const marker = filtered(root, false);
@@ -151,7 +151,12 @@ for (const backend of testBackends()) describe('[' + backend + '] a committed fi
         writeFileSync(uploadPack, '#!/bin/sh\ntouch ' + marker + '.upload-pack\nexec git-upload-pack "$@"\n'); chmodSync(uploadPack, 0o755);
         for (const [key, value] of [['core.repositoryformatversion', '1'], ['extensions.partialClone', 'origin'], ['remote.origin.url', 'file://' + server],
           ['remote.origin.promisor', 'true'], ['remote.origin.partialclonefilter', 'blob:none'], ['remote.origin.uploadpack', uploadPack]]) git(root, 'config', key!, value!);
+        // Every object but the .gitattributes blob goes into a promisor pack, as in a real partial clone that never fetched it.
         const oid = git(root, 'rev-parse', 'HEAD:.gitattributes');
+        const objects = git(root, 'rev-list', '--objects', '--all').split('\n').map(line => line.split(' ')[0]).filter(object => object !== oid);
+        const pack = execFileSync('git', ['-C', root, 'pack-objects', '-q', join(root, '.git', 'objects', 'pack', 'pack')], { input: objects.join('\n') + '\n', encoding: 'utf8' }).trim();
+        writeFileSync(join(root, '.git', 'objects', 'pack', 'pack-' + pack + '.promisor'), '');
+        git(root, 'prune-packed');
         rmSync(join(root, '.git', 'objects', oid.slice(0, 2), oid.slice(2)));
         await performManagedSync(engine, OPTS);
         expect(existsSync(marker + '.upload-pack')).toBe(false);
@@ -163,7 +168,7 @@ for (const backend of testBackends()) describe('[' + backend + '] a committed fi
         expect(await live(engine)).toEqual(['seed']);
         expect(existsSync(marker)).toBe(false);
         expect(existsSync(marker + '.fsmonitor')).toBe(false);
-      } finally { restore(); }
+      } finally { restore(); restoreLazy(); }
     }), 240_000);
   }
 
