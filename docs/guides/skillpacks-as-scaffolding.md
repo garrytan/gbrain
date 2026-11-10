@@ -28,6 +28,12 @@ out here: **`gbrain skillpack init-brain-pack <name>`** scaffolds a
 plus a machine-parseable README) that connecting harnesses discover on
 `gbrain sources add`.
 
+Note on the registry: `search`, `info` and `registry` read a registry
+catalog, and the default registry URL is currently unavailable
+(unauthenticated fetches 404). Until it is public, point these commands
+at your own catalog with `--url` or the `skillpack.registry_url` config
+key; a non-2xx registry response is reported with the URL and status.
+
 ### `gbrain skillpack scaffold <name> [--workspace PATH]`
 
 One-time, additive copy of a bundled skill into your repo. Refuses to
