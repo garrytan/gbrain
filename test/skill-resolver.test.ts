@@ -595,6 +595,16 @@ describe('catalog sources and bounds', () => {
     expect((await resolveSkills({ message: 'zebrafinch' }, { home, catalogs: ['full'] })).output.suggestions[0]?.id).toBe('s7');
   });
 
+  test('a JSON catalog over 8 MB stays fresh when a 4 KB cut ends on whitespace or a body opens with two frontmatter blocks', async () => {
+    const home = tmp();
+    const full = Array.from({ length: 900 }, (_, i) => ({ id: `s${i}`, name: `skill-${i}`, description: `${word(i, 9)} task`,
+      body: i === 1 ? `---\nkind: a\n---\n---\nkind: b\n---\n${'abc '.repeat(2500)}` : 'abc '.repeat(2500) }));
+    const text = JSON.stringify(full);
+    expect(Buffer.byteLength(text)).toBeGreaterThan(8 * 1024 * 1024);
+    await buildSkillIndex({ catalog: 'ws', fromJson: text, fromJsonStdin: true }, { home });
+    expect(await catalogStatus('ws', { home })).toMatchObject({ fresh: true, stale_reason: null });
+  });
+
   test('a SKILL.md over 64 KB is skipped as unreadable, not read whole', async () => {
     const home = tmp();
     const root = tmp('skres-dir-');

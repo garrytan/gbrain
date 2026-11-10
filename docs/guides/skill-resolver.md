@@ -94,11 +94,16 @@ per-turn hook that puts the block in front of the model on every prompt:
 `--dry-run` lists every write, and re-running changes nothing. A bare
 `gbrain setup <harness>` refreshes a lane that is on.
 
-**Hermes** runs the same lane as a `pre_llm_call` shell hook:
-`GBRAIN_HOOK_LANE=skill-resolver gbrain hook user-prompt --harness hermes`.
+**Hermes** runs the same lane as a `pre_llm_call` shell hook. Hermes splits
+the command without a shell and needs its first word to be a path that
+exists, so pass the environment through `/usr/bin/env` and name gbrain by its
+absolute path:
+`/usr/bin/env GBRAIN_HOOK_LANE=skill-resolver /abs/path/to/gbrain hook user-prompt --harness hermes`.
 Setup does not wire it yet, so build `hermes-user` yourself
 (`gbrain skills index build --catalog hermes-user --dir ~/.hermes/skills
---harness hermes`) and add `hermes` to `skills.resolver.harnesses`. The lane
+--harness hermes`) and add `hermes` to `skills.resolver.harnesses` in
+`~/.gbrain/config.json` by hand (`gbrain config set` refuses that key, which
+setup owns). Doctor's `skill_resolver` check does not cover Hermes yet. The lane
 reads `extra.user_message`, `session_id` and `cwd` from the hook's stdin and
 answers `{"context": "<block>"}`. Hermes sends the whole conversation history
 on every turn, so the lane streams stdin and keeps only those three strings

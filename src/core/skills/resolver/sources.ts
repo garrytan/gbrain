@@ -203,6 +203,12 @@ const optStr = (v: unknown) => v === undefined || typeof v === 'string';
 const optStrList = (v: unknown) => v === undefined || (Array.isArray(v) && v.every(x => typeof x === 'string'));
 const optBool = (v: unknown) => v === undefined || typeof v === 'boolean';
 const OPENCLAW_HIDDEN = ['disabled', 'blockedByAllowlist', 'blockedByAgentFilter'] as const;
+/** boundBody repeated until it changes nothing (each pass only removes text): an over-cap snapshot stores this, so its re-read bounds every body to itself. */
+function settledBody(text: string): string {
+  let b = boundBody(text);
+  for (let next = boundBody(b); next !== b; next = boundBody(b)) b = next;
+  return b;
+}
 
 /** The first field that makes entry `o` invalid, or null. OpenClaw entries carry no id: the name stands in. */
 function badField(o: Record<string, unknown>, openclaw: boolean): string | null {
@@ -228,6 +234,7 @@ export function readJsonSource(text: string): SourceRead {
   if (!list) throw invalid('The JSON catalog must be an array of skills (or {"skills": [...]}).');
   if (list.length > MAX_SKILLS) throw invalid(`The JSON catalog has ${list.length} skills; the bound is ${MAX_SKILLS}.`);
   const openclaw = !!doc && ('workspaceDir' in doc || 'managedSkillsDir' in doc);
+  const bodyOf = bytes > JSON_SOURCE_CAP_BYTES ? settledBody : boundBody;
   const skills: SkillRecord[] = [];
   const skipped: SkippedSkill[] = [];
   const seen = new Map<string, string>();
@@ -249,10 +256,10 @@ export function readJsonSource(text: string): SourceRead {
     skills.push({ id, name: cut(cleanText(o.name), MAX_NAME), description: cut(cleanText(o.description ?? ''), MAX_DESCRIPTION), ...(whenToUse ? { whenToUse } : {}),
       triggers: boundTriggers(((o.triggers as string[] | undefined) ?? []).map(cleanText).filter(Boolean)),
       routing: ((o.routing as string[] | undefined) ?? []).map(cleanText).filter(Boolean).slice(0, MAX_ROUTING_ROWS),
-      body: typeof o.body === 'string' ? boundBody(o.body) : '', ...at });
+      body: typeof o.body === 'string' ? bodyOf(o.body) : '', ...at });
   });
   if (bytes <= JSON_SOURCE_CAP_BYTES) return { kind: 'json', skills, skipped, snapshot: text };
-  for (const e of list) { const o = e as Record<string, unknown>; if (typeof o.body === 'string') o.body = boundBody(o.body); }
+  for (const e of list) { const o = e as Record<string, unknown>; if (typeof o.body === 'string') o.body = settledBody(o.body); }
   return { kind: 'json', skills, skipped, snapshot: JSON.stringify(parsed) };
 }
 
