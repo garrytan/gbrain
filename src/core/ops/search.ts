@@ -773,7 +773,7 @@ const search: Operation = {
       let keywordBound: DegradedStageEntry | undefined;
       const results = await keepFrontmatterMatches(ctx.engine, (page ? page.rows : dedupResults(await timings.stage('lexical', () => ctx.engine.searchKeyword(queryText, { limit, offset, ...keywordOpts,
         onKeywordIncomplete: reason => { keywordBound = { stage: 'keyword_candidates_incomplete', reason }; } })).finally(lexicalDone.resolve))).map(r => ({ ...r })), where);
-      await stampKeywordRows(ctx, results, { ...scope, excludePrivate }, queryText, startedAt, timings, paging.match === 'keyword');
+      await stampKeywordRows(ctx, results, { ...scope, excludePrivate }, queryText, startedAt, timings, paging.match === 'keyword' && !names);
       // #3800: cap AFTER capture/meta so eval + cache see the real payload.
       return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, null, snippetCap, timings,
         async rows => withCountMeta(withCountMeta(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, null, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, filterHintFor: { op: 'search', p }, timings }),
