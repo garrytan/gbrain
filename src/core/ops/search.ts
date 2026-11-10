@@ -753,11 +753,14 @@ const search: Operation = {
       const keywordOpts = { ...readOpts, source_boosts: sourceBoosts, keywordPhrase, ...(types ? { types } : {}) };
       // F2 `match: "keyword"`: page-grain enumeration, no diversity pruning, every page keeps a row.
       // A query that is one entity's name lists records filed under any of its names (the agent no longer walks each alias).
-      const names = paging.match === 'keyword' && !paging.cursor ? await setup(() => wholeQueryEntityNames(ctx.engine, queryText, { ...scope, excludePrivate })) : null;
-      const pageParams = names ? { ...p, query: names.map(aliasPhrase).join(' OR ') } : p;
-      const page = paging.match === 'keyword' ? await timings.stage('lexical', () => readKeywordPage(ctx.engine, pageParams, keywordOpts, paging, Math.min(limit, searchLimitCap()))) : null;
+      // A cursor page's query is already the first page's OR of names; the cursor carries the names for matched_alias.
+      const names = paging.match !== 'keyword' ? null
+        : paging.cursor ? paging.cursor.names ?? null
+        : await setup(() => wholeQueryEntityNames(ctx.engine, queryText, { ...scope, excludePrivate }));
+      const pageParams = names && !paging.cursor ? { ...p, query: names.map(aliasPhrase).join(' OR ') } : p;
+      const page = paging.match === 'keyword' ? await timings.stage('lexical', () => readKeywordPage(ctx.engine, pageParams, keywordOpts, paging, Math.min(limit, searchLimitCap()), names)) : null;
       if (page && names) {
-        page.meta.match_names = names;
+        if (!paging.cursor) page.meta.match_names = names;
         for (const row of page.rows) {
           const text = (row.chunk_text ?? '').toLowerCase();
           const hit = names.slice(1).find(n => text.includes(n.toLowerCase()));
